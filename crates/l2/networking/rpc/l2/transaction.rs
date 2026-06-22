@@ -17,8 +17,6 @@ use serde_json::Value;
 
 const DELGATION_PREFIX: [u8; 3] = [0xef, 0x01, 0x00];
 const EIP7702_DELEGATED_CODE_LEN: usize = 23;
-// This could be an environment variable set in the config.toml is the max amount of gas we are willing to sponsor
-const GAS_LIMIT_HARD_LIMIT: u64 = 200000;
 
 #[derive(Deserialize, Debug)]
 pub struct SponsoredTx {
@@ -101,14 +99,12 @@ impl RpcHandler for SponsoredTx {
                 .map_err(RpcErr::from)?
                 .unwrap_or_default();
 
-            if code.bytecode.len() != EIP7702_DELEGATED_CODE_LEN
-                || code.bytecode[..3] != DELGATION_PREFIX
-            {
+            if code.len() != EIP7702_DELEGATED_CODE_LEN || code.code()[..3] != DELGATION_PREFIX {
                 return Err(RpcErr::InvalidEthrexL2Message(
                     "Invalid tx trying to call non delegated account".to_string(),
                 ));
             }
-            let address = Address::from_slice(&code.bytecode[3..]);
+            let address = Address::from_slice(&code.code()[3..EIP7702_DELEGATED_CODE_LEN]);
             if address.is_zero() {
                 return Err(RpcErr::InvalidEthrexL2Message(
                     "Invalid tx trying to call non delegated account".to_string(),
@@ -224,10 +220,11 @@ impl RpcHandler for SponsoredTx {
                 "Estimate gas request has invalid size: {error}"
             ))
         })?;
-        if gas_limit == 0 || gas_limit > GAS_LIMIT_HARD_LIMIT {
-            return Err(RpcErr::InvalidEthrexL2Message(
-                "tx too expensive".to_string(),
-            ));
+        if gas_limit == 0 || gas_limit > context.sponsored_gas_limit {
+            return Err(RpcErr::InvalidEthrexL2Message(format!(
+                "estimated gas {gas_limit} exceeds sponsored gas limit {}",
+                context.sponsored_gas_limit,
+            )));
         }
 
         let signer = LocalSigner::new(context.sponsor_pk).into();

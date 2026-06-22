@@ -35,7 +35,7 @@ pub static EMPTY_WITHDRAWALS_HASH: LazyLock<H256> = LazyLock::new(|| {
 });
 
 // Keccak256(""), represents the code hash for an account without code
-pub static EMPTY_KECCACK_HASH: LazyLock<H256> = LazyLock::new(|| {
+pub static EMPTY_KECCAK_HASH: LazyLock<H256> = LazyLock::new(|| {
     H256::from_slice(
         &hex::decode("c5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470")
             .expect("Failed to decode hex from string"),
@@ -77,3 +77,8 @@ pub const BLOB_BASE_COST: u64 = 8192;
 // === EIP-7825 constants ===
 // https://eips.ethereum.org/EIPS/eip-7825
 pub const POST_OSAKA_GAS_LIMIT_CAP: u64 = 16777216;
+pub const TX_MAX_GAS_LIMIT_AMSTERDAM: u64 = 1 << 24; // 16,777,216
+
+// === EIP-7928 BAL size cap constants ===
+/// GAS_BLOCK_ACCESS_LIST_ITEM = GAS_WARM_ACCESS (100) + TX_ACCESS_LIST_STORAGE_KEY_COST (1900)
+pub const BAL_ITEM_COST: u64 = 2000;

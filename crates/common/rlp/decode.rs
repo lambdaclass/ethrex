@@ -2,16 +2,22 @@ use super::{
     constants::{RLP_EMPTY_LIST, RLP_NULL},
     error::RLPDecodeError,
 };
+use alloc::string::String;
+use alloc::vec::Vec;
 use bytes::{Bytes, BytesMut};
+use core::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use ethereum_types::{
     Address, Bloom, H32, H64, H128, H160, H256, H264, H512, H520, Signature, U256,
 };
-use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
 /// Max payload size accepted when decoding.
 /// While technically any size is RLP spec-compliant, there are no well-formed messages
 /// in our protocols that could carry such big payloads, so they are either bugs or malicious.
 const MAX_RLP_BYTES: usize = 1024 * 1024 * 1024;
+/// Strings and lists of fewer than this many bytes must use the short form
+/// (`0x80..=0xB7` / `0xC0..=0xF7`); using the long form for a shorter payload is
+/// non-canonical RLP and is rejected.
+const RLP_SHORT_ITEM_LIMIT: usize = 56;
 
 /// Trait for decoding RLP encoded slices of data.
 /// See <https://ethereum.org/en/developers/docs/data-structures-and-encoding/rlp/#rlp-decoding> for more information.
@@ -385,7 +391,13 @@ pub fn decode_rlp_item(data: &[u8]) -> Result<(bool, &[u8], &[u8]), RLPDecodeErr
             if length > MAX_RLP_BYTES || data.len() < length + 1 {
                 return Err(RLPDecodeError::InvalidLength);
             }
-            Ok((false, &data[1..length + 1], &data[length + 1..]))
+            let payload = &data[1..length + 1];
+            // Canonical RLP: a single byte in 0x00..=0x7f is its own encoding, so it must
+            // never be wrapped in a 1-byte string (e.g. `0x81 0x01` instead of `0x01`).
+            if length == 1 && payload[0] < 0x80 {
+                return Err(RLPDecodeError::MalformedData);
+            }
+            Ok((false, payload, &data[length + 1..]))
         }
         0xB8..=0xBF => {
             let length_of_length = (first_byte - 0xB7) as usize;
@@ -393,7 +405,12 @@ pub fn decode_rlp_item(data: &[u8]) -> Result<(bool, &[u8], &[u8]), RLPDecodeErr
                 return Err(RLPDecodeError::InvalidLength);
             }
             let length_bytes = &data[1..length_of_length + 1];
+            // `static_left_pad` rejects leading-zero length bytes (non-minimal length).
             let length = usize::from_be_bytes(static_left_pad(length_bytes)?);
+            // Canonical RLP: lengths < 56 must use the short-string form (0x80..=0xB7).
+            if length < RLP_SHORT_ITEM_LIMIT {
+                return Err(RLPDecodeError::MalformedData);
+            }
             if length > MAX_RLP_BYTES || data.len() < length_of_length + length + 1 {
                 return Err(RLPDecodeError::InvalidLength);
             }
@@ -416,7 +433,12 @@ pub fn decode_rlp_item(data: &[u8]) -> Result<(bool, &[u8], &[u8]), RLPDecodeErr
                 return Err(RLPDecodeError::InvalidLength);
             }
             let length_bytes = &data[1..list_length + 1];
+            // `static_left_pad` rejects leading-zero length bytes (non-minimal length).
             let payload_length = usize::from_be_bytes(static_left_pad(length_bytes)?);
+            // Canonical RLP: payloads < 56 must use the short-list form (0xC0..=0xF7).
+            if payload_length < RLP_SHORT_ITEM_LIMIT {
+                return Err(RLPDecodeError::MalformedData);
+            }
             if payload_length > MAX_RLP_BYTES || data.len() < list_length + payload_length + 1 {
                 return Err(RLPDecodeError::InvalidLength);
             }

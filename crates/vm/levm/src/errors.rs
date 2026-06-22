@@ -140,6 +140,8 @@ pub enum TxValidationError {
     Type4TxAuthorizationListIsEmpty,
     #[error("Contract creation in type 4 transaction")]
     Type4TxContractCreation,
+    #[error("Frame transactions (EIP-8141) are not supported before the Hegota fork")]
+    FrameTxPreFork,
     #[error("Gas limit price product overflow")]
     GasLimitPriceProductOverflow,
     #[error(
@@ -246,6 +248,9 @@ pub struct ExecutionReport {
     /// Post-EIP-7778: gas_used - refunds (capped).
     pub gas_spent: u64,
     pub gas_refunded: u64,
+    /// EIP-8037: State gas portion of gas_used (Amsterdam+).
+    /// Block gas_used = max(sum(regular_gas), sum(state_gas)).
+    pub state_gas_used: u64,
     pub output: Bytes,
     pub logs: Vec<Log>,
     /// For frame transactions: the address that paid for gas
@@ -275,5 +280,22 @@ pub struct ContextResult {
 impl ContextResult {
     pub fn is_success(&self) -> bool {
         matches!(self.result, TxResult::Success)
+    }
+
+    /// Returns true if this result is an address collision error.
+    pub fn is_collision(&self) -> bool {
+        matches!(
+            self.result,
+            TxResult::Revert(VMError::ExceptionalHalt(
+                ExceptionalHalt::AddressAlreadyOccupied
+            ))
+        )
+    }
+
+    /// True if the failure was caused by the REVERT opcode (intentional revert).
+    /// Used to gate behaviour that differs between REVERT and ExceptionalHalt —
+    /// e.g. return data is propagated to the parent on REVERT only.
+    pub fn is_revert_opcode(&self) -> bool {
+        matches!(self.result, TxResult::Revert(VMError::RevertOpcode))
     }
 }

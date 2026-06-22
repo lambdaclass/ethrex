@@ -1,8 +1,9 @@
 use std::collections::BTreeMap;
+use std::sync::{Arc, LazyLock};
 
 use bytes::{BufMut, Bytes};
 use ethereum_types::{H256, U256};
-use ethrex_crypto::keccak::keccak_hash;
+use ethrex_crypto::{Crypto, NativeCrypto};
 use ethrex_trie::Trie;
 use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
@@ -15,12 +16,21 @@ use ethrex_rlp::{
 };
 
 use super::GenesisAccount;
-use crate::{
-    constants::{EMPTY_KECCACK_HASH, EMPTY_TRIE_HASH},
-    utils::keccak,
-};
+use crate::constants::{EMPTY_KECCAK_HASH, EMPTY_TRIE_HASH};
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Hash)]
+/// Shared empty jump-target table. `Code::default()` and any bytecode without a
+/// `JUMPDEST` clone this (a refcount bump) instead of allocating a fresh empty
+/// `Arc` header each time. This matters because the per-tx `Code::default()`
+/// placeholder and every EOA / empty-code load would otherwise each allocate.
+static EMPTY_JUMP_TARGETS: LazyLock<Arc<[u32]>> = LazyLock::new(|| Arc::from(Vec::new()));
+
+/// Trailing STOP bytes appended to every bytecode so the dispatch loop can read
+/// the next opcode without a bounds check. 33 is the widest single-opcode advance
+/// (PUSH32: 1 opcode byte + 32 immediate bytes), so `pc` can never step past the
+/// padding regardless of which opcode sits at the last real byte.
+pub const BYTECODE_PADDING: usize = 33;
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Code {
     // hash is only used for bytecodes stored in the DB, either for reading it from the DB
     // or with the CODEHASH opcode, which needs an account address as argument and
@@ -28,37 +38,60 @@ pub struct Code {
     // We use a bogus H256::zero() value for initcodes as there is no way for the VM or
     // endpoints to access that hash, saving one expensive Keccak hash.
     pub hash: H256,
-    pub bytecode: Bytes,
-    // TODO: Consider using Arc<[u32]> (needs to enable serde rc feature)
+    /// bytecode padded with 33 zeroes (STOP opcodes, due to PUSH32) to avoid checks on the hot path.
+    bytecode: Bytes,
+    /// The real bytecode length, needed for some opcodes, `bytecode` is padded with 33 STOPs to avoid checked adds on hot loop.
+    bytecode_len: usize,
+    // `Arc<[u32]>` so cloning `Code` (hot: every message-call resolves and clones
+    // the callee's code) is a refcount bump instead of deep-copying the table.
+    // Serializes via serde's `rc` feature (enabled workspace-wide).
     // The valid addresses are 32-bit because, despite EIP-3860 restricting initcode size,
     // this does not apply to previous forks. This is tested in the EEST tests, which would
     // panic in debug mode.
-    pub jump_targets: Vec<u32>,
+    pub jump_targets: Arc<[u32]>,
 }
 
 impl Code {
     // SAFETY: hash will be stored as-is, so it either needs to match
     // the real code hash (i.e. it was precomputed and we're reusing)
     // or never be read (e.g. for initcode).
+    //
+    // `code` is the logical, unpadded bytecode; `BYTECODE_PADDING` STOP bytes are
+    // appended internally by `from_parts_unchecked`.
     pub fn from_bytecode_unchecked(code: Bytes, hash: H256) -> Self {
         let jump_targets = Self::compute_jump_targets(&code);
+        Self::from_parts_unchecked(hash, &code, jump_targets)
+    }
+
+    /// `code` is the logical, unpadded bytecode; `BYTECODE_PADDING` STOP bytes are
+    /// appended internally by `from_parts_unchecked`.
+    pub fn from_bytecode(code: Bytes, crypto: &dyn Crypto) -> Self {
+        let jump_targets = Self::compute_jump_targets(&code);
+        let hash = H256(crypto.keccak256(code.as_ref()));
+        Self::from_parts_unchecked(hash, &code, jump_targets)
+    }
+
+    /// Builds a `Code` from precomputed parts. The caller must guarantee `hash`
+    /// and `jump_targets` correspond to `code`; neither is recomputed or validated.
+    ///
+    /// `code` is the logical, unpadded bytecode: this function appends
+    /// `BYTECODE_PADDING` STOP bytes and records the original length in
+    /// `bytecode_len`. Never pass a pre-padded buffer, or the logical length and
+    /// every `JUMPDEST`/`PUSH` offset derived from it would be wrong.
+    pub fn from_parts_unchecked(hash: H256, code: &[u8], jump_targets: Arc<[u32]>) -> Self {
+        let bytecode_len = code.len();
+        let mut padded_code = Vec::with_capacity(bytecode_len + BYTECODE_PADDING);
+        padded_code.extend_from_slice(code);
+        padded_code.extend_from_slice(&[0u8; BYTECODE_PADDING]);
         Self {
             hash,
-            bytecode: code,
+            bytecode: Bytes::from_owner(padded_code),
+            bytecode_len,
             jump_targets,
         }
     }
 
-    pub fn from_bytecode(code: Bytes) -> Self {
-        let jump_targets = Self::compute_jump_targets(&code);
-        Self {
-            hash: keccak(code.as_ref()),
-            bytecode: code,
-            jump_targets,
-        }
-    }
-
-    fn compute_jump_targets(code: &[u8]) -> Vec<u32> {
+    fn compute_jump_targets(code: &[u8]) -> Arc<[u32]> {
         debug_assert!(code.len() <= u32::MAX as usize);
         let mut targets = Vec::new();
         let mut i = 0;
@@ -78,7 +111,41 @@ impl Code {
             }
             i += 1;
         }
-        targets
+        // Share the single empty table for jumpless bytecode (very common: EOAs,
+        // tiny contracts) so we don't allocate an `Arc` header for an empty slice.
+        if targets.is_empty() {
+            EMPTY_JUMP_TARGETS.clone()
+        } else {
+            Arc::from(targets)
+        }
+    }
+
+    #[inline]
+    pub fn code(&self) -> &[u8] {
+        self.bytecode.get(..self.bytecode_len).unwrap_or_default()
+    }
+
+    #[inline]
+    pub fn code_bytes(&self) -> Bytes {
+        self.bytecode.slice(..self.bytecode_len)
+    }
+
+    #[inline]
+    pub fn len(&self) -> usize {
+        self.bytecode_len
+    }
+
+    #[inline]
+    pub fn is_empty(&self) -> bool {
+        self.bytecode_len == 0
+    }
+
+    /// Returns the padded bytecode buffer (real code + [`BYTECODE_PADDING`] trailing
+    /// STOPs) used by the opcode dispatch loop to read opcodes without bounds checks.
+    /// Use [`Code::code`] for the real, unpadded bytecode.
+    #[inline]
+    pub fn dispatch_buf(&self) -> &[u8] {
+        &self.bytecode
     }
 
     /// Estimates the size of the Code struct in bytes
@@ -92,14 +159,43 @@ impl Code {
     pub fn size(&self) -> usize {
         let hash_size = size_of::<H256>();
         let bytes_size = size_of::<Bytes>();
-        let vec_size = size_of::<Vec<u32>>() + self.jump_targets.len() * size_of::<u32>();
+        let vec_size = size_of::<Arc<[u32]>>() + self.jump_targets.len() * size_of::<u32>();
         hash_size + bytes_size + vec_size
     }
 }
 
-impl AsRef<Bytes> for Code {
-    fn as_ref(&self) -> &Bytes {
-        &self.bytecode
+/// Serde shadow for [`Code`]. Stores the *logical* (unpadded) bytecode so the
+/// padding is never part of the serialized form. Deserialization re-pads through
+/// [`Code::from_parts_unchecked`], which keeps the dispatch-loop invariant (every
+/// `Code` is padded with [`BYTECODE_PADDING`] trailing STOPs) sound regardless of
+/// where the bytes came from. Deserializing the padded buffer directly would
+/// otherwise let unpadded input through and cause OOB reads during execution.
+#[derive(Serialize, Deserialize)]
+struct CodeSerde {
+    hash: H256,
+    code: Bytes,
+    jump_targets: Arc<[u32]>,
+}
+
+impl Serialize for Code {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        CodeSerde {
+            hash: self.hash,
+            code: self.code_bytes(),
+            jump_targets: self.jump_targets.clone(),
+        }
+        .serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for Code {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let CodeSerde {
+            hash,
+            code,
+            jump_targets,
+        } = CodeSerde::deserialize(deserializer)?;
+        Ok(Self::from_parts_unchecked(hash, &code, jump_targets))
     }
 }
 
@@ -143,7 +239,7 @@ pub struct AccountStateSlimCodec(pub AccountState);
 impl Default for AccountInfo {
     fn default() -> Self {
         Self {
-            code_hash: *EMPTY_KECCACK_HASH,
+            code_hash: *EMPTY_KECCAK_HASH,
             balance: Default::default(),
             nonce: Default::default(),
         }
@@ -156,7 +252,7 @@ impl Default for AccountState {
             nonce: Default::default(),
             balance: Default::default(),
             storage_root: *EMPTY_TRIE_HASH,
-            code_hash: *EMPTY_KECCACK_HASH,
+            code_hash: *EMPTY_KECCAK_HASH,
         }
     }
 }
@@ -164,16 +260,17 @@ impl Default for AccountState {
 impl Default for Code {
     fn default() -> Self {
         Self {
-            bytecode: Bytes::new(),
-            hash: *EMPTY_KECCACK_HASH,
-            jump_targets: Vec::new(),
+            bytecode: Bytes::from_static(&[0u8; BYTECODE_PADDING]),
+            bytecode_len: 0,
+            hash: *EMPTY_KECCAK_HASH,
+            jump_targets: EMPTY_JUMP_TARGETS.clone(),
         }
     }
 }
 
 impl From<GenesisAccount> for Account {
     fn from(genesis: GenesisAccount) -> Self {
-        let code = Code::from_bytecode(genesis.code);
+        let code = Code::from_bytecode(genesis.code, &NativeCrypto);
         Self {
             info: AccountInfo {
                 code_hash: code.hash,
@@ -190,8 +287,8 @@ impl From<GenesisAccount> for Account {
     }
 }
 
-pub fn code_hash(code: &Bytes) -> H256 {
-    keccak(code.as_ref())
+pub fn code_hash(code: &Bytes, crypto: &dyn Crypto) -> H256 {
+    H256(crypto.keccak256(code.as_ref()))
 }
 
 impl RLPEncode for AccountInfo {
@@ -265,7 +362,7 @@ impl RLPEncode for AccountStateSlimCodec {
         struct CodeHashCodec<'a>(&'a H256);
         impl RLPEncode for CodeHashCodec<'_> {
             fn encode(&self, buf: &mut dyn BufMut) {
-                let data = if *self.0 != *EMPTY_KECCACK_HASH {
+                let data = if *self.0 != *EMPTY_KECCAK_HASH {
                     self.0.as_bytes()
                 } else {
                     &[]
@@ -309,7 +406,7 @@ impl RLPDecode for AccountStateSlimCodec {
         impl RLPDecode for CodeHashCodec {
             fn decode_unfinished(mut rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
                 let value = match rlp.split_off_first() {
-                    Some(0x80) => *EMPTY_KECCACK_HASH,
+                    Some(0x80) => *EMPTY_KECCAK_HASH,
                     Some(0xA0) => {
                         let data;
                         (data, rlp) = rlp
@@ -342,11 +439,14 @@ impl RLPDecode for AccountStateSlimCodec {
     }
 }
 
-pub fn compute_storage_root(storage: &BTreeMap<U256, U256>) -> H256 {
+pub fn compute_storage_root(storage: &BTreeMap<U256, U256>, crypto: &dyn Crypto) -> H256 {
     let iter = storage.iter().filter_map(|(k, v)| {
-        (!v.is_zero()).then_some((keccak_hash(k.to_big_endian()).to_vec(), v.encode_to_vec()))
+        (!v.is_zero()).then_some((
+            crypto.keccak256(&k.to_big_endian()).to_vec(),
+            v.encode_to_vec(),
+        ))
     });
-    Trie::compute_hash_from_unsorted_iter(iter)
+    Trie::compute_hash_from_unsorted_iter(iter, crypto)
 }
 
 impl From<&GenesisAccount> for AccountState {
@@ -354,8 +454,8 @@ impl From<&GenesisAccount> for AccountState {
         AccountState {
             nonce: value.nonce,
             balance: value.balance,
-            storage_root: compute_storage_root(&value.storage),
-            code_hash: code_hash(&value.code),
+            storage_root: compute_storage_root(&value.storage, &NativeCrypto),
+            code_hash: code_hash(&value.code, &NativeCrypto),
         }
     }
 }
@@ -376,7 +476,7 @@ impl Account {
 
 impl AccountInfo {
     pub fn is_empty(&self) -> bool {
-        self.balance.is_zero() && self.nonce == 0 && self.code_hash == *EMPTY_KECCACK_HASH
+        self.balance.is_zero() && self.nonce == 0 && self.code_hash == *EMPTY_KECCAK_HASH
     }
 }
 
@@ -389,7 +489,7 @@ mod test {
     #[test]
     fn test_code_hash() {
         let empty_code = Bytes::new();
-        let hash = code_hash(&empty_code);
+        let hash = code_hash(&empty_code, &NativeCrypto);
         assert_eq!(
             hash,
             H256::from_str("c5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470")

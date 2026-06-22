@@ -53,7 +53,7 @@
 //! use levm::{VM, Environment};
 //!
 //! // Create VM with database and environment
-//! let mut vm = VM::new(env, db, &tx, tracer, debug_mode, vm_type);
+//! let mut vm = VM::new(env, db, &tx, tracer, vm_type, &NativeCrypto);
 //!
 //! // Execute the transaction
 //! let report = vm.execute()?;
@@ -75,10 +75,12 @@ pub mod gas_cost;
 pub mod hooks;
 pub mod memory;
 pub mod opcode_handlers;
+pub mod opcode_tracer;
 pub mod opcodes;
 pub mod precompiles;
 pub mod tracing;
 pub mod utils;
+pub mod validation_observer;
 pub mod vm;
 pub use environment::*;
 pub mod account;

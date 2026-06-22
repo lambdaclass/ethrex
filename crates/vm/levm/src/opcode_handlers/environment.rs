@@ -236,7 +236,7 @@ impl OpcodeHandler for OpCodeSizeHandler {
 
         vm.current_call_frame
             .stack
-            .push(vm.current_call_frame.bytecode.bytecode.len().into())?;
+            .push(vm.current_call_frame.bytecode.len().into())?;
 
         Ok(OpcodeResult::Continue)
     }
@@ -262,7 +262,7 @@ impl OpcodeHandler for OpCodeCopyHandler {
             let data = vm
                 .current_call_frame
                 .bytecode
-                .bytecode
+                .dispatch_buf()
                 .get(src_offset..)
                 .unwrap_or_default();
             let data = data.get(..len).unwrap_or(data);
@@ -293,6 +293,12 @@ impl OpcodeHandler for OpExtCodeSizeHandler {
             .increase_consumed_gas(gas_cost::extcodesize(
                 vm.substate.add_accessed_address(address),
             )?)?;
+
+        // EIP-8141 mempool validation-trace: EXTCODESIZE target must exist and
+        // not be EIP-7702-delegated (sender exempt).
+        if vm.validation_observer.active {
+            vm.validation_check_extcode_target(address)?;
+        }
 
         // State access AFTER gas check passes (using optimized code length lookup)
         let account_code_length = vm.db.get_code_length(address)?.into();
@@ -331,13 +337,19 @@ impl OpcodeHandler for OpExtCodeCopyHandler {
             recorder.record_touched_address(address);
         }
 
+        // EIP-8141 mempool validation-trace: EXTCODECOPY target must exist and
+        // not be EIP-7702-delegated (sender exempt).
+        if vm.validation_observer.active {
+            vm.validation_check_extcode_target(address)?;
+        }
+
+        // EELS reads the account's code unconditionally (even for size=0), so
+        // fetch the code — not just the account — to keep the read observable
+        // for execution witnesses (EIP-8025) and parallel-BAL access tracking.
+        let code = vm.db.get_account_code(address)?;
+
         if len > 0 {
-            let data = vm
-                .db
-                .get_account_code(address)?
-                .bytecode
-                .get(src_offset..)
-                .unwrap_or_default();
+            let data = code.dispatch_buf().get(src_offset..).unwrap_or_default();
             let data = data.get(..len).unwrap_or(data);
 
             vm.current_call_frame.memory.store_data(dst_offset, data)?;
@@ -366,6 +378,12 @@ impl OpcodeHandler for OpExtCodeHashHandler {
             .increase_consumed_gas(gas_cost::extcodehash(
                 vm.substate.add_accessed_address(address),
             )?)?;
+
+        // EIP-8141 mempool validation-trace: EXTCODEHASH target must exist and
+        // not be EIP-7702-delegated (sender exempt).
+        if vm.validation_observer.active {
+            vm.validation_check_extcode_target(address)?;
+        }
 
         let account = vm.db.get_account(address)?;
         let account_is_empty = account.is_empty();

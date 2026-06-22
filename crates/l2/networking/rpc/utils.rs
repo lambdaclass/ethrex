@@ -36,8 +36,8 @@ impl From<serde_json::Error> for RpcErr {
     }
 }
 
-impl From<ethrex_common::EcdsaError> for RpcErr {
-    fn from(error: ethrex_common::EcdsaError) -> Self {
+impl From<ethrex_crypto::CryptoError> for RpcErr {
+    fn from(error: ethrex_crypto::CryptoError) -> Self {
         Self::L1RpcErr(error.into())
     }
 }

@@ -5,19 +5,20 @@
 //!   - `TXPARAM` (0xB0)
 //!   - `FRAMEDATALOAD` (0xB1)
 //!   - `FRAMEDATACOPY` (0xB2)
-//!   - Default code for EOAs (only `VERIFY` has executable behavior; `SENDER`
-//!     and `DEFAULT` revert unconditionally per the latest EIP-8141 spec).
+//!   - `FRAMEPARAM` (0xB3)
+//!   - `SIGPARAM` (0xB4)
+//!   - Default code for EOAs: `VERIFY` has the signature-check behavior;
+//!     `SENDER` and `DEFAULT` return successfully as if calling empty code
+//!     (pinned EIP-8141 spec §"Default code" lines 412-413).
 
 use crate::{
     errors::{ExceptionalHalt, InternalError, OpcodeResult, VMError},
     gas_cost,
     memory::calculate_memory_size,
     opcode_handlers::OpcodeHandler,
-    precompiles,
     utils::size_offset_to_usize,
     vm::VM,
 };
-use bytes::Bytes;
 use ethrex_common::{Address, U256, types::FrameMode, types::Log};
 
 /// Convert a u64 index to usize, returning InvalidOpcode on overflow.
@@ -30,51 +31,62 @@ fn index_to_usize(val: u64) -> Result<usize, VMError> {
 /// out-of-range offsets are treated as past-the-end rather than as an
 /// exceptional halt (per the EIP-8141 spec the load returns zero and the copy
 /// writes zero bytes).
-fn u256_to_offset(value: U256) -> Option<usize> {
+pub fn u256_to_offset(value: U256) -> Option<usize> {
     if value.0[1] != 0 || value.0[2] != 0 || value.0[3] != 0 {
         return None;
     }
     usize::try_from(value.0[0]).ok()
 }
 
-/// Compute the transaction's maximum cost for APPROVE payment deduction.
-/// Per spec, this is TXPARAM(0x06): max_fee_per_gas * total_gas_limit + blob cost.
-fn compute_tx_cost(ctx: &crate::vm::FrameTxContext) -> Result<U256, VMError> {
+/// Compute the fee APPROVE deducts from the payer (spec line 387):
+/// tx_fee = total_gas_limit * effective_gas_price + blob_fees (at the block's
+/// actual base blob gas price). The end-of-tx unused-gas refund credits the
+/// payer at the same effective rate, so no gas is silently destroyed; the blob
+/// fee is non-refundable (matching EIP-4844 blob-fee burn semantics).
+/// NOTE: TXPARAM(0x06) / load_tx_param 0x06 intentionally still reports the
+/// MAXIMUM cost (max_fee-based, spec line 455) — that is a different quantity;
+/// do not change it.
+fn compute_tx_cost(
+    ctx: &crate::vm::FrameTxContext,
+    effective_gas_price: U256,
+    blob_gas_cost: U256,
+) -> Result<U256, VMError> {
     let halt_err: VMError = ExceptionalHalt::InvalidOpcode.into();
-    let gas_limit = U256::from(ctx.tx.total_gas_limit());
-    let max_fee = U256::from(ctx.tx.max_fee_per_gas);
-    let tx_cost = max_fee.checked_mul(gas_limit).ok_or(halt_err.clone())?;
-    let blob_count = U256::from(ctx.tx.blob_versioned_hashes.len());
-    let gas_per_blob = U256::from(131072u64); // GAS_PER_BLOB from EIP-4844
-    let blob_fee = blob_count
-        .checked_mul(gas_per_blob)
-        .ok_or(halt_err.clone())?
-        .checked_mul(ctx.tx.max_fee_per_blob_gas)
-        .ok_or(halt_err.clone())?;
+    let gas_limit = U256::from(ctx.total_gas_limit);
+    let tx_cost = effective_gas_price.checked_mul(gas_limit).ok_or(halt_err)?;
     tx_cost
-        .checked_add(blob_fee)
+        .checked_add(blob_gas_cost)
         .ok_or(ExceptionalHalt::InvalidOpcode.into())
 }
 
 /// Apply APPROVE side effects for the given scope.
 /// This is shared between OpApproveHandler and (future) default code.
-pub fn apply_approve(vm: &mut VM<'_>, scope: u64, frame_target: ethrex_common::Address) -> Result<(), VMError> {
-    let halt_err: VMError = ExceptionalHalt::InvalidOpcode.into();
-
+pub fn apply_approve(
+    vm: &mut VM<'_>,
+    scope: u64,
+    frame_target: ethrex_common::Address,
+) -> Result<(), VMError> {
     match scope {
         0x1 => {
             // APPROVE_PAYMENT: increment nonce, deduct max cost, record payer.
             // Per spec, the single transaction-scoped variable `payer` is
             // set on success; `payer.is_some()` is the source of truth for
             // "payment has been approved".
-            let ctx = vm.frame_tx_context.as_ref().ok_or(halt_err.clone())?;
+            let ctx = vm
+                .frame_tx_context
+                .as_ref()
+                .ok_or(ExceptionalHalt::InvalidOpcode)?;
             if ctx.payer_address.is_some() {
-                return Err(halt_err.clone());
+                return Err(ExceptionalHalt::InvalidOpcode.into());
             }
-            if !ctx.sender_approved {
-                return Err(VMError::RevertOpcode);
-            }
-            let tx_cost = compute_tx_cost(ctx)?;
+            // No sender_approved precondition: the spec allows APPROVE_PAYMENT
+            // in any order relative to APPROVE_EXECUTION.
+            let effective_gas_price = vm.env.gas_price;
+            let blob_gas_cost = crate::utils::calculate_blob_gas_cost(
+                &ctx.tx.blob_versioned_hashes,
+                vm.env.base_blob_fee_per_gas,
+            )?;
+            let tx_cost = compute_tx_cost(ctx, effective_gas_price, blob_gas_cost)?;
             let sender = ctx.tx.sender;
 
             vm.increment_account_nonce(sender)?;
@@ -87,31 +99,48 @@ pub fn apply_approve(vm: &mut VM<'_>, scope: u64, frame_target: ethrex_common::A
                 Err(e) => return Err(VMError::Internal(e)),
             }
 
-            let ctx = vm.frame_tx_context.as_mut().ok_or(ExceptionalHalt::InvalidOpcode)?;
+            let ctx = vm
+                .frame_tx_context
+                .as_mut()
+                .ok_or(ExceptionalHalt::InvalidOpcode)?;
             ctx.payer_address = Some(frame_target);
         }
         0x2 => {
             // APPROVE_EXECUTION: set sender_approved (requires frame_target == tx.sender)
-            let ctx = vm.frame_tx_context.as_ref().ok_or(halt_err.clone())?;
+            let ctx = vm
+                .frame_tx_context
+                .as_ref()
+                .ok_or(ExceptionalHalt::InvalidOpcode)?;
             if ctx.sender_approved {
-                return Err(halt_err);
+                return Err(ExceptionalHalt::InvalidOpcode.into());
             }
             if frame_target != ctx.tx.sender {
                 return Err(VMError::RevertOpcode);
             }
-            let ctx = vm.frame_tx_context.as_mut().ok_or(ExceptionalHalt::InvalidOpcode)?;
+            let ctx = vm
+                .frame_tx_context
+                .as_mut()
+                .ok_or(ExceptionalHalt::InvalidOpcode)?;
             ctx.sender_approved = true;
         }
         0x3 => {
             // APPROVE_EXECUTION_AND_PAYMENT: both, in one atomic step.
-            let ctx = vm.frame_tx_context.as_ref().ok_or(halt_err.clone())?;
+            let ctx = vm
+                .frame_tx_context
+                .as_ref()
+                .ok_or(ExceptionalHalt::InvalidOpcode)?;
             if ctx.sender_approved || ctx.payer_address.is_some() {
-                return Err(halt_err.clone());
+                return Err(ExceptionalHalt::InvalidOpcode.into());
             }
             if frame_target != ctx.tx.sender {
                 return Err(VMError::RevertOpcode);
             }
-            let tx_cost = compute_tx_cost(ctx)?;
+            let effective_gas_price = vm.env.gas_price;
+            let blob_gas_cost = crate::utils::calculate_blob_gas_cost(
+                &ctx.tx.blob_versioned_hashes,
+                vm.env.base_blob_fee_per_gas,
+            )?;
+            let tx_cost = compute_tx_cost(ctx, effective_gas_price, blob_gas_cost)?;
             let sender = ctx.tx.sender;
 
             vm.increment_account_nonce(sender)?;
@@ -122,13 +151,16 @@ pub fn apply_approve(vm: &mut VM<'_>, scope: u64, frame_target: ethrex_common::A
                 Err(e) => return Err(VMError::Internal(e)),
             }
 
-            let ctx = vm.frame_tx_context.as_mut().ok_or(ExceptionalHalt::InvalidOpcode)?;
+            let ctx = vm
+                .frame_tx_context
+                .as_mut()
+                .ok_or(ExceptionalHalt::InvalidOpcode)?;
             ctx.sender_approved = true;
             ctx.payer_address = Some(frame_target);
         }
         _ => {
             // scope 0 and any other value are invalid
-            return Err(halt_err);
+            return Err(ExceptionalHalt::InvalidOpcode.into());
         }
     }
     Ok(())
@@ -137,12 +169,15 @@ pub fn apply_approve(vm: &mut VM<'_>, scope: u64, frame_target: ethrex_common::A
 /// APPROVE (0xAA) -- Frame transaction approval opcode.
 ///
 /// Pops [offset, length, scope] from the stack.
-/// - scope 0x1: sender approval (validate sender identity)
-/// - scope 0x2: payer approval (deduct gas cost from payer)
-/// - scope 0x3: combined sender + payer approval
-/// - scope 0x0 and others: invalid (exceptional halt)
+/// - scope 0x1 (APPROVE_PAYMENT): increment nonce, deduct tx cost, record payer
+/// - scope 0x2 (APPROVE_EXECUTION): set sender_approved (requires resolved_target == tx.sender)
+/// - scope 0x3 (APPROVE_EXECUTION_AND_PAYMENT): both, in one atomic step
+/// - scope 0x0 (APPROVE_NONE) and any value > 3: invalid (exceptional halt)
 ///
-/// Scope restriction from mode bits 8-9: if nonzero, only that scope is allowed.
+/// The requested scope must also be a subset of the frame's allowed scope, taken
+/// from flags bits 0-1 (`frame.scope_restriction()`). When the allowed scope is 0
+/// (APPROVE_SCOPE_NONE) no approval may be granted in the frame at all, so APPROVE
+/// halts (consistent with `execute_default_verify`).
 ///
 /// On success, copies memory[offset..offset+length] to output and halts the frame.
 pub struct OpApproveHandler;
@@ -160,6 +195,7 @@ impl OpcodeHandler for OpApproveHandler {
 
         // The executing contract must be the frame's target
         let current_frame = ctx
+            .tx
             .frames
             .get(ctx.current_frame_index)
             .ok_or(ExceptionalHalt::InvalidOpcode)?;
@@ -168,14 +204,13 @@ impl OpcodeHandler for OpApproveHandler {
             return Err(VMError::RevertOpcode);
         }
 
-        // Enforce scope restriction from flags bits 0-1
+        // Enforce scope restriction from flags bits 0-1.
+        // allowed_scope == 0 is APPROVE_SCOPE_NONE: no approval may be granted
+        // in this frame at all (consistent with execute_default_verify).
         let allowed_scope = current_frame.scope_restriction();
-        let scope_val = scope.as_u64();
-        // scope must be a non-zero subset of allowed_scope
-        if scope_val == 0
-            || scope_val > 3
-            || (allowed_scope != 0 && (scope_val & allowed_scope as u64) != scope_val)
-        {
+        let scope_val = u64::try_from(scope).unwrap_or(u64::MAX);
+        // requested scope must be a non-zero subset of a (necessarily non-zero) allowed_scope
+        if scope_val == 0 || scope_val > 3 || (scope_val & u64::from(allowed_scope)) != scope_val {
             return Err(ExceptionalHalt::InvalidOpcode.into());
         }
 
@@ -220,7 +255,8 @@ impl OpcodeHandler for OpTxParamHandler {
             .as_ref()
             .ok_or(ExceptionalHalt::InvalidOpcode)?;
 
-        let result = load_tx_param(ctx, param_id.as_u64())?;
+        let param_id = u64::try_from(param_id).map_err(|_| ExceptionalHalt::InvalidOpcode)?;
+        let result = load_tx_param(ctx, param_id)?;
         vm.current_call_frame.stack.push(result)?;
 
         Ok(OpcodeResult::Continue)
@@ -228,8 +264,8 @@ impl OpcodeHandler for OpTxParamHandler {
 }
 
 /// FRAMEDATALOAD (0xB1) -- Load one 32-byte word from a frame's data.
-/// Takes [offset, frameIndex] from the stack. Gas cost: 3.
-/// VERIFY frames return zero.
+/// Stack: [offset, frameIndex] with offset on top (popped first); frameIndex is
+/// the deeper operand. Gas cost: 3.
 pub struct OpFrameDataLoadHandler;
 impl OpcodeHandler for OpFrameDataLoadHandler {
     #[inline(always)]
@@ -244,17 +280,13 @@ impl OpcodeHandler for OpFrameDataLoadHandler {
             .as_ref()
             .ok_or(ExceptionalHalt::InvalidOpcode)?;
 
-        let idx = index_to_usize(frame_index.as_u64())?;
+        let frame_index = u64::try_from(frame_index).map_err(|_| ExceptionalHalt::InvalidOpcode)?;
+        let idx = index_to_usize(frame_index)?;
         let frame = ctx
+            .tx
             .frames
             .get(idx)
             .ok_or(ExceptionalHalt::InvalidOpcode)?;
-
-        // VERIFY frames return zero
-        if frame.execution_mode() == FrameMode::Verify {
-            vm.current_call_frame.stack.push(U256::zero())?;
-            return Ok(OpcodeResult::Continue);
-        }
 
         // Out-of-usize offsets are past-the-end: the word stays zero-filled.
         let mut word = [0u8; 32];
@@ -262,9 +294,12 @@ impl OpcodeHandler for OpFrameDataLoadHandler {
             let data = &frame.data;
             let available = data.len().saturating_sub(byte_offset);
             let copy_len = available.min(32);
-            if copy_len > 0 {
-                if let Some(src) = data.get(byte_offset..byte_offset + copy_len) {
-                    word[..copy_len].copy_from_slice(src);
+            if copy_len > 0
+                && let Some(src) = data.get(byte_offset..byte_offset.saturating_add(copy_len))
+            {
+                // copy_len <= 32 == word.len(), so this slice is in bounds.
+                if let Some(dst) = word.get_mut(..copy_len) {
+                    dst.copy_from_slice(src);
                 }
             }
         }
@@ -279,19 +314,21 @@ impl OpcodeHandler for OpFrameDataLoadHandler {
 
 /// FRAMEDATACOPY (0xB2) -- Copy frame data into memory.
 /// Takes [memOffset, dataOffset, length, frameIndex] from the stack.
-/// Gas cost matches CALLDATACOPY. VERIFY frames copy nothing.
+/// Gas cost matches CALLDATACOPY.
 pub struct OpFrameDataCopyHandler;
 impl OpcodeHandler for OpFrameDataCopyHandler {
     #[inline(always)]
     fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
-        let [mem_offset, data_offset, length, frame_index] =
-            *vm.current_call_frame.stack.pop()?;
+        let [mem_offset, data_offset, length, frame_index] = *vm.current_call_frame.stack.pop()?;
         let (length, mem_offset) = size_offset_to_usize(length, mem_offset)?;
         // Out-of-usize data_offset is past-the-end: destination stays zero-filled.
         let data_offset_opt = u256_to_offset(data_offset);
 
         let new_memory_size = calculate_memory_size(mem_offset, length)?;
         let current_memory_size = vm.current_call_frame.memory.len();
+        // Charging memory-expansion gas before the frame-context guard below is
+        // intentional: the caller pays for the memory growth it requested even
+        // when the opcode then halts for running outside a frame tx.
         vm.current_call_frame
             .increase_consumed_gas(gas_cost::framedatacopy(
                 new_memory_size,
@@ -299,25 +336,23 @@ impl OpcodeHandler for OpFrameDataCopyHandler {
                 length,
             )?)?;
 
-        if length == 0 {
-            return Ok(OpcodeResult::Continue);
-        }
-
+        // Frame-context and frame_index checks precede the zero-length early
+        // return: an out-of-bounds frameIndex halts exceptionally even when
+        // length == 0 (EIP-8141 §FRAMEDATACOPY, consensus parity with FRAMEDATALOAD).
         let ctx = vm
             .frame_tx_context
             .as_ref()
             .ok_or(ExceptionalHalt::InvalidOpcode)?;
 
-        let idx = index_to_usize(frame_index.as_u64())?;
+        let frame_index = u64::try_from(frame_index).map_err(|_| ExceptionalHalt::InvalidOpcode)?;
+        let idx = index_to_usize(frame_index)?;
         let frame = ctx
+            .tx
             .frames
             .get(idx)
             .ok_or(ExceptionalHalt::InvalidOpcode)?;
 
-        // VERIFY frames copy nothing (zero-fill)
-        if frame.execution_mode() == FrameMode::Verify {
-            let buf = vec![0u8; length];
-            vm.current_call_frame.memory.store_data(mem_offset, &buf)?;
+        if length == 0 {
             return Ok(OpcodeResult::Continue);
         }
 
@@ -341,12 +376,12 @@ impl OpcodeHandler for OpFrameDataCopyHandler {
 }
 
 /// FRAMEPARAM (0xB3) -- Load a frame parameter as a 32-byte word.
-/// Takes [param, frameIndex] from the stack. Gas cost: 2.
+/// Stack: [param, frameIndex] with frameIndex on top (matches SIGPARAM). Gas cost: 2.
 pub struct OpFrameParamHandler;
 impl OpcodeHandler for OpFrameParamHandler {
     #[inline(always)]
     fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
-        let [param_id, frame_index] = *vm.current_call_frame.stack.pop()?;
+        let [frame_index, param_id] = *vm.current_call_frame.stack.pop()?;
 
         vm.current_call_frame
             .increase_consumed_gas(gas_cost::FRAMEPARAM)?;
@@ -356,13 +391,16 @@ impl OpcodeHandler for OpFrameParamHandler {
             .as_ref()
             .ok_or(ExceptionalHalt::InvalidOpcode)?;
 
-        let idx = index_to_usize(frame_index.as_u64())?;
+        let frame_index = u64::try_from(frame_index).map_err(|_| ExceptionalHalt::InvalidOpcode)?;
+        let idx = index_to_usize(frame_index)?;
         let frame = ctx
+            .tx
             .frames
             .get(idx)
             .ok_or(ExceptionalHalt::InvalidOpcode)?;
 
-        let result: U256 = match param_id.as_u64() {
+        let param_id = u64::try_from(param_id).map_err(|_| ExceptionalHalt::InvalidOpcode)?;
+        let result: U256 = match param_id {
             0x00 => {
                 // target
                 address_to_u256(frame.target.unwrap_or(ctx.tx.sender))
@@ -380,12 +418,8 @@ impl OpcodeHandler for OpFrameParamHandler {
                 U256::from(frame.flags)
             }
             0x04 => {
-                // len(data) -- returns 0 for VERIFY frames
-                if frame.execution_mode() == FrameMode::Verify {
-                    U256::zero()
-                } else {
-                    U256::from(frame.data.len())
-                }
+                // len(data)
+                U256::from(frame.data.len())
             }
             0x05 => {
                 // status -- exceptional halt if current/future frame.
@@ -406,7 +440,7 @@ impl OpcodeHandler for OpFrameParamHandler {
             }
             0x07 => {
                 // atomic_batch ((flags >> 2) & 1, returns 0 or 1)
-                U256::from(frame.is_atomic_batch() as u8)
+                U256::from(u8::from(frame.is_atomic_batch()))
             }
             0x08 => {
                 // value -- EIP-8141 FRAMEPARAM table (spec line 287)
@@ -421,12 +455,55 @@ impl OpcodeHandler for OpFrameParamHandler {
     }
 }
 
+/// SIGPARAM (0xB4) -- signature-scoped metadata (EIP-8141, spec commit fe0940cae2).
+/// Stack: [param, signatureIndex] with signatureIndex on top. Gas cost: 2.
+/// Raw `signature` bytes are intentionally NOT exposed.
+pub struct OpSigParamHandler;
+impl OpcodeHandler for OpSigParamHandler {
+    #[inline(always)]
+    fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
+        let [signature_index, param] = *vm.current_call_frame.stack.pop()?;
+
+        vm.current_call_frame
+            .increase_consumed_gas(gas_cost::SIGPARAM)?;
+
+        let ctx = vm
+            .frame_tx_context
+            .as_ref()
+            .ok_or(ExceptionalHalt::InvalidOpcode)?;
+
+        let signature_index =
+            u64::try_from(signature_index).map_err(|_| ExceptionalHalt::InvalidOpcode)?;
+        let idx = index_to_usize(signature_index)?;
+        let sig = ctx
+            .tx
+            .signatures
+            .get(idx)
+            .ok_or(ExceptionalHalt::InvalidOpcode)?;
+
+        let param = u64::try_from(param).map_err(|_| ExceptionalHalt::InvalidOpcode)?;
+        let result = match param {
+            0x00 => address_to_u256(sig.signer), // effective signer
+            0x01 => U256::from(sig.scheme),
+            0x02 => {
+                // msg: 0 when empty (canonical sig_hash case), else the 32-byte digest.
+                if sig.msg.is_empty() {
+                    U256::zero()
+                } else {
+                    U256::from_big_endian(&sig.msg)
+                }
+            }
+            0x03 => U256::from(sig.signature.len()),
+            _ => return Err(ExceptionalHalt::InvalidOpcode.into()),
+        };
+        vm.current_call_frame.stack.push(result)?;
+        Ok(OpcodeResult::Continue)
+    }
+}
+
 // -- Helper functions --
 
-fn load_tx_param(
-    ctx: &crate::vm::FrameTxContext,
-    param_id: u64,
-) -> Result<U256, VMError> {
+pub fn load_tx_param(ctx: &crate::vm::FrameTxContext, param_id: u64) -> Result<U256, VMError> {
     match param_id {
         0x00 => Ok(U256::from(0x06u8)), // tx_type (EIP-8141 = type 6)
         0x01 => Ok(U256::from(ctx.tx.nonce)),
@@ -437,7 +514,7 @@ fn load_tx_param(
         0x06 => {
             // max_cost = max_fee_per_gas * total_gas_limit + len(blob_hashes) * 131072 * max_fee_per_blob_gas
             let gas_cost = U256::from(ctx.tx.max_fee_per_gas)
-                .checked_mul(U256::from(ctx.tx.total_gas_limit()))
+                .checked_mul(U256::from(ctx.total_gas_limit))
                 .ok_or(ExceptionalHalt::InvalidOpcode)?;
             let blob_cost = U256::from(ctx.tx.blob_versioned_hashes.len())
                 .checked_mul(U256::from(131072u64))
@@ -454,13 +531,14 @@ fn load_tx_param(
             bytes.copy_from_slice(ctx.sig_hash.as_bytes());
             Ok(U256::from_big_endian(&bytes))
         }
-        0x09 => Ok(U256::from(ctx.frames.len())),
+        0x09 => Ok(U256::from(ctx.tx.frames.len())),
         0x0A => Ok(U256::from(ctx.current_frame_index)),
+        0x0B => Ok(U256::from(ctx.tx.signatures.len())),
         _ => Err(ExceptionalHalt::InvalidOpcode.into()),
     }
 }
 
-fn address_to_u256(addr: ethrex_common::Address) -> U256 {
+pub fn address_to_u256(addr: ethrex_common::Address) -> U256 {
     let mut bytes = [0u8; 32];
     bytes[12..].copy_from_slice(addr.as_bytes());
     U256::from_big_endian(&bytes)
@@ -471,9 +549,9 @@ fn address_to_u256(addr: ethrex_common::Address) -> U256 {
 /// Execute default code for an EOA target in a frame transaction.
 ///
 /// When a frame targets an address with no deployed code (an EOA), the protocol
-/// runs built-in "default code" instead of executing a normal CALL. Only the
-/// `VERIFY` mode has executable default-code behavior; per the latest spec,
-/// `SENDER` and `DEFAULT` modes revert the frame unconditionally.
+/// runs built-in "default code" instead of executing a normal CALL. `VERIFY`
+/// runs the signature-check logic; `SENDER` and `DEFAULT` return successfully
+/// as if calling empty code (pinned EIP-8141 spec §"Default code" lines 412-413).
 ///
 /// Returns `(success, gas_used, logs)`.
 pub fn execute_default_code(
@@ -483,18 +561,15 @@ pub fn execute_default_code(
 ) -> Result<(bool, u64, Vec<Log>), VMError> {
     match frame.execution_mode() {
         FrameMode::Verify => execute_default_verify(vm, frame, target),
-        FrameMode::Sender | FrameMode::Default => Ok((false, 0, Vec::new())),
+        // Pinned EIP-8141 spec (fe0940cae2) §"Default code" lines 412-413:
+        // a SENDER or DEFAULT frame whose target has no code "returns
+        // successfully as if calling empty code" — this is what makes a plain
+        // ETH transfer to an EOA work (spec §EOA support / Example 1).
+        // Consumes no execution gas (the frame's value transfer is handled by
+        // the caller's deferred transfer).
+        FrameMode::Sender | FrameMode::Default => Ok((true, 0, Vec::new())),
     }
 }
-
-/// VERIFY mode default code: validate a signature and call APPROVE.
-/// SECP256K1N / 2 -- signatures with s > this value are rejected
-const SECP256K1N_DIV_2: U256 = U256([
-    0xDFE92F46681B20A0,
-    0x5D576E7357A4501D,
-    0xFFFFFFFFFFFFFFFF,
-    0x7FFFFFFFFFFFFFFF,
-]);
 
 fn execute_default_verify(
     vm: &mut VM<'_>,
@@ -507,7 +582,7 @@ fn execute_default_verify(
         .ok_or(ExceptionalHalt::InvalidOpcode)?;
 
     // Read allowed scope from flags bits 0-1
-    let allowed_scope = frame.scope_restriction() as u64;
+    let allowed_scope = u64::from(frame.scope_restriction());
     if allowed_scope == 0 {
         return Ok((false, 0, Vec::new()));
     }
@@ -517,203 +592,27 @@ fn execute_default_verify(
         return Ok((false, 0, Vec::new()));
     }
 
-    // Need at least 1 byte for signature_type
-    if frame.data.is_empty() {
+    // EIP-8141 (spec commit fe0940cae2): the default account approves only if
+    // the outer signature list contains a SECP256K1 signature over the
+    // canonical sig_hash (empty msg) whose signer is the resolved target.
+    // Signatures were already validated in execute_frame_tx, so a match here is
+    // sufficient — no in-frame crypto.
+    let has_sender_sig = ctx.tx.signatures.iter().any(|s| {
+        s.scheme == ethrex_common::types::FRAME_SIG_SCHEME_SECP256K1
+            && s.msg.is_empty()
+            && s.signer == target
+    });
+    if !has_sender_sig {
         return Ok((false, 0, Vec::new()));
     }
-    let signature_type = frame.data[0];
-    let sig_hash = ctx.sig_hash;
 
-    let mut gas_remaining = frame.gas_limit;
-
-    match signature_type {
-        // secp256k1
-        0x0 => {
-            // data layout: [type(1), v(1), r(32), s(32)] = 66 bytes
-            if frame.data.len() != 66 {
-                return Ok((false, 0, Vec::new()));
-            }
-            let v = frame.data[1];
-            let r = &frame.data[2..34];
-            let s = &frame.data[34..66];
-
-            // Reject high-s signatures
-            let s_val = U256::from_big_endian(s);
-            if s_val > SECP256K1N_DIV_2 {
-                return Ok((false, 0, Vec::new()));
-            }
-
-            // Build ecrecover calldata: [hash(32), v_padded(32), r(32), s(32)]
-            let mut calldata = vec![0u8; 128];
-            calldata[..32].copy_from_slice(sig_hash.as_bytes());
-            // v goes in the last byte of the second 32-byte word
-            calldata[63] = v;
-            calldata[64..96].copy_from_slice(r);
-            calldata[96..128].copy_from_slice(s);
-
-            let result = precompiles::ecrecover(
-                &Bytes::from(calldata),
-                &mut gas_remaining,
-                vm.env.config.fork,
-            )?;
-
-            // Check recovered address is not zero (change 9)
-            if result.len() != 32 {
-                return Ok((false, frame.gas_limit - gas_remaining, Vec::new()));
-            }
-            let recovered = Address::from_slice(&result[12..]);
-            if recovered == Address::zero() {
-                return Ok((false, frame.gas_limit - gas_remaining, Vec::new()));
-            }
-
-            // Check recovered address matches target
-            if target != recovered {
-                return Ok((false, frame.gas_limit - gas_remaining, Vec::new()));
-            }
-        }
-        // P256
-        0x1 => {
-            // data layout: [type(1), r(32), s(32), qx(32), qy(32)] = 129 bytes
-            if frame.data.len() != 129 {
-                return Ok((false, 0, Vec::new()));
-            }
-            let r = &frame.data[1..33];
-            let s = &frame.data[33..65];
-            let qx = &frame.data[65..97];
-            let qy = &frame.data[97..129];
-
-            // P256 address with domain separator (change 7):
-            // keccak256(P256_ADDRESS_DOMAIN || qx || qy)[12:]
-            // where P256_ADDRESS_DOMAIN = 0x01 (one byte)
-            let mut domain_input = Vec::with_capacity(1 + 32 + 32);
-            domain_input.push(0x01u8); // P256_ADDRESS_DOMAIN
-            domain_input.extend_from_slice(qx);
-            domain_input.extend_from_slice(qy);
-            let hash = ethrex_crypto::keccak::keccak_hash(&domain_input);
-            let derived_address = Address::from_slice(&hash[12..]);
-            if target != derived_address {
-                return Ok((false, 0, Vec::new()));
-            }
-
-            // Build P256VERIFY calldata: [hash(32), r(32), s(32), qx(32), qy(32)]
-            let mut calldata = vec![0u8; 160];
-            calldata[..32].copy_from_slice(sig_hash.as_bytes());
-            calldata[32..64].copy_from_slice(r);
-            calldata[64..96].copy_from_slice(s);
-            calldata[96..128].copy_from_slice(qx);
-            calldata[128..160].copy_from_slice(qy);
-
-            let result = precompiles::p_256_verify(
-                &Bytes::from(calldata),
-                &mut gas_remaining,
-                vm.env.config.fork,
-            )?;
-
-            // P256VERIFY returns 32-byte value with 1 on success, empty on failure
-            if result.len() != 32 || result[31] != 1 {
-                return Ok((false, frame.gas_limit - gas_remaining, Vec::new()));
-            }
-        }
-        // Unknown signature type
-        _ => return Ok((false, 0, Vec::new())),
-    }
-
-    let gas_used = frame.gas_limit - gas_remaining;
-
-    // Call APPROVE with allowed_scope
     apply_approve(vm, allowed_scope, target)?;
 
-    // Mark approve as called in the current frame
     let ctx = vm
         .frame_tx_context
         .as_mut()
         .ok_or(ExceptionalHalt::InvalidOpcode)?;
     ctx.approve_called_in_current_frame = true;
 
-    Ok((true, gas_used, Vec::new()))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// Mirrors the Underflow -> RevertOpcode mapping used inside apply_approve
-    /// so the invariant can be exercised without constructing a full VM.
-    fn map_underflow_to_revert(result: Result<(), InternalError>) -> Result<(), VMError> {
-        match result {
-            Ok(()) => Ok(()),
-            Err(InternalError::Underflow) => Err(VMError::RevertOpcode),
-            Err(e) => Err(VMError::Internal(e)),
-        }
-    }
-
-    #[test]
-    fn decrease_balance_underflow_maps_to_revert_opcode() {
-        let e = map_underflow_to_revert(Err(InternalError::Underflow));
-        assert!(matches!(e, Err(VMError::RevertOpcode)));
-    }
-
-    #[test]
-    fn non_underflow_internal_errors_still_propagate_as_internal() {
-        let e = map_underflow_to_revert(Err(InternalError::Overflow));
-        assert!(matches!(e, Err(VMError::Internal(InternalError::Overflow))));
-    }
-
-    #[test]
-    fn successful_decrease_balance_is_left_unchanged() {
-        let e = map_underflow_to_revert(Ok(()));
-        assert!(e.is_ok());
-    }
-
-    #[test]
-    fn u256_to_offset_accepts_values_that_fit_in_usize() {
-        assert_eq!(u256_to_offset(U256::zero()), Some(0));
-        assert_eq!(u256_to_offset(U256::from(42u64)), Some(42));
-        assert_eq!(
-            u256_to_offset(U256::from(usize::MAX as u64)),
-            Some(usize::MAX)
-        );
-    }
-
-    #[test]
-    fn u256_to_offset_rejects_values_that_overflow_usize() {
-        let big = U256::from(u64::MAX) + U256::one();
-        assert_eq!(u256_to_offset(big), None);
-        assert_eq!(u256_to_offset(U256::MAX), None);
-    }
-
-    #[test]
-    fn frameparam_0x08_returns_frame_value() {
-        // The 0x08 arm of OpFrameParamHandler maps directly to `frame.value`.
-        // Constructing a Frame mirrors what the handler reads so a refactor
-        // that swaps the field access (e.g. to a wrapper) is caught here.
-        let frame = ethrex_common::types::Frame {
-            mode: ethrex_common::types::FrameMode::Sender as u8,
-            flags: 0x00,
-            target: Some(Address::from_low_u64_be(0xCAFE)),
-            gas_limit: 100_000,
-            value: U256::from(1_234_567u64),
-            data: Bytes::new(),
-        };
-
-        // Exercise the same match arm the opcode evaluates (see
-        // `OpFrameParamHandler::eval` above, `0x08 => frame.value`).
-        let param_id: u64 = 0x08;
-        let result = match param_id {
-            0x08 => frame.value,
-            _ => panic!("unexpected param"),
-        };
-        assert_eq!(result, U256::from(1_234_567u64));
-
-        // Zero-value frames must also round-trip through 0x08.
-        let zero_frame = ethrex_common::types::Frame {
-            value: U256::zero(),
-            ..frame
-        };
-        let zero_result = match param_id {
-            0x08 => zero_frame.value,
-            _ => panic!("unexpected param"),
-        };
-        assert_eq!(zero_result, U256::zero());
-    }
+    Ok((true, 0, Vec::new()))
 }

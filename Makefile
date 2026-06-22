@@ -1,7 +1,7 @@
 .PHONY: build lint test clean run-image build-image clean-vectors \
 		setup-hive test-pattern-default run-hive run-hive-debug clean-hive-logs \
 		load-test-fibonacci load-test-io run-hive-eels-blobs run-hive-eels-amsterdam \
-		run-hive-eels-bal-quick
+		run-hive-eels-bal-quick bench-rlp
 
 help: ## 📚 Show help for each of the Makefile recipes
 	@grep -E '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-30s\033[0m %s\n", $$1, $$2}'
@@ -42,22 +42,35 @@ clean: clean-vectors ## 🧹 Remove build artifacts
 	cargo clean
 	rm -rf hive
 
-STAMP_FILE := .docker_build_stamp
-$(STAMP_FILE): $(shell find crates cmd -type f -name '*.rs') Cargo.toml Dockerfile
-	docker build -t ethrex:local .
-	touch $(STAMP_FILE)
+# Docker image tag (override with `make build-image TAG=foo`).
+TAG ?= local
+IMAGE := ethrex:$(TAG)
 
-build-image: $(STAMP_FILE) ## 🐳 Build the Docker image
+# Git metadata baked into the image via Dockerfile ARGs. Falls back to "unknown"
+# / "dev" if not in a git checkout.
+GIT_SHA    := $(shell git rev-parse HEAD 2>/dev/null || echo unknown)
+GIT_BRANCH := $(shell git rev-parse --abbrev-ref HEAD 2>/dev/null || echo unknown)
+VERSION    := $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
+
+# Always invoke docker build; BuildKit's layer cache makes a no-op rebuild
+# sub-second, and GIT_SHA/VERSION are late-stage ARGs, so this keeps the baked
+# git metadata accurate without a stamp file that can't see commit/branch changes.
+build-image: ## 🐳 Build the Docker image (override tag with TAG=foo)
+	docker build \
+		--build-arg GIT_SHA=$(GIT_SHA) \
+		--build-arg GIT_BRANCH=$(GIT_BRANCH) \
+		--build-arg VERSION=$(VERSION) \
+		-t $(IMAGE) .
 
 run-image: build-image ## 🏃 Run the Docker image
-	docker run --rm -p 127.0.0.1:8545:8545 ethrex:main --http.addr 0.0.0.0
+	docker run --rm -p 127.0.0.1:8545:8545 $(IMAGE) --http.addr 0.0.0.0
 
 dev: ## 🏃 Run the ethrex client in DEV_MODE with the InMemory Engine
 	cargo run $(PROFILING_CFG) --release -- \
 		--dev \
 		--datadir memory
 
-ETHEREUM_PACKAGE_REVISION := e4b330579580477814cfaebb004e354f7eb396f4
+ETHEREUM_PACKAGE_REVISION := d47e98799c84a71d94371472e05f5e93030b3a7b
 ETHEREUM_PACKAGE_DIR := ethereum-package
 
 checkout-ethereum-package: ## 📦 Checkout specific Ethereum package revision
@@ -84,7 +97,7 @@ localnet: build-image checkout-ethereum-package ## 🌐 Start kurtosis network
 	trap 'printf "\nStopping localnet...\n"; $(MAKE) stop-localnet || true; exit 0' INT TERM HUP QUIT; \
 	cp metrics/provisioning/grafana/dashboards/common_dashboards/ethrex_l1_perf.json ethereum-package/src/grafana/ethrex_l1_perf.json; \
 	kurtosis run --enclave $(ENCLAVE) ethereum-package --args-file $(KURTOSIS_CONFIG_FILE); \
-	CID=$$(docker ps -q --filter ancestor=ethrex:local | head -n1); \
+	CID=$$(docker ps -q --filter ancestor=$(IMAGE) | head -n1); \
 	if [ -n "$$CID" ]; then docker logs -f $$CID || true; else echo "No ethrex container found; skipping logs."; fi
 
 stop-localnet: ## 🛑 Stop local network
@@ -148,13 +161,13 @@ run-hive-eels-rlp: ## Run hive EELS RLP tests
 run-hive-eels-blobs: ## Run hive EELS Blobs tests
 	$(MAKE) run-hive-eels EELS_SIM=ethereum/eels/execute-blobs
 
-AMSTERDAM_FIXTURES_URL ?= https://github.com/ethereum/execution-spec-tests/releases/download/bal@v5.1.0/fixtures_bal.tar.gz
-AMSTERDAM_FIXTURES_BRANCH ?= devnets/bal/2
+AMSTERDAM_FIXTURES_URL ?= $(shell cat tooling/ef_tests/blockchain/.fixtures_url_amsterdam)
+AMSTERDAM_FIXTURES_BRANCH ?= devnets/bal/7
 run-hive-eels-amsterdam: build-image setup-hive ## 🧪 Run hive EELS Amsterdam Engine tests
 	- cd hive && ./hive --client-file $(HIVE_CLIENT_FILE) --client ethrex --sim ethereum/eels/consume-engine --sim.limit ".*fork_Amsterdam.*" --sim.parallelism $(SIM_PARALLELISM) --sim.loglevel $(SIM_LOG_LEVEL) --sim.buildarg fixtures=$(AMSTERDAM_FIXTURES_URL) --sim.buildarg branch=$(AMSTERDAM_FIXTURES_BRANCH)
 
-run-hive-eels-bal-quick: build-image setup-hive ## 🧪 Run hive EELS BAL quick tests (~850 tests for EIPs 7708,7778,7843,7928,8024)
-	- cd hive && ./hive --client-file $(HIVE_CLIENT_FILE) --client ethrex --sim ethereum/eels/consume-engine --sim.limit ".*(8024|7708|7778|7843|7928).*" --sim.parallelism $(SIM_PARALLELISM) --sim.loglevel $(SIM_LOG_LEVEL) --sim.buildarg fixtures=$(AMSTERDAM_FIXTURES_URL) --sim.buildarg branch=$(AMSTERDAM_FIXTURES_BRANCH)
+run-hive-eels-bal-quick: build-image setup-hive ## 🧪 Run hive EELS BAL quick tests for EIPs 7708,7778,7843,7928,7954,8024,8037
+	- cd hive && ./hive --client-file $(HIVE_CLIENT_FILE) --client ethrex --sim ethereum/eels/consume-engine --sim.limit ".*(8024|7708|7778|7843|7928|7954|8037).*" --sim.parallelism $(SIM_PARALLELISM) --sim.loglevel $(SIM_LOG_LEVEL) --sim.buildarg fixtures=$(AMSTERDAM_FIXTURES_URL) --sim.buildarg branch=$(AMSTERDAM_FIXTURES_BRANCH)
 
 clean-hive-logs: ## 🧹 Clean Hive logs
 	rm -rf ./hive/workspace/logs
@@ -194,6 +207,9 @@ fixtures/ERC20/ERC20.bin: ## 🔨 Build the ERC20 contract for the load test
 sort-genesis-files:
 	cd ./tooling/genesis && cargo run
 
+bench-rlp: ## ⚡ Bench the RLP decoder/encoder
+	cd ./crates/common/rlp && cargo bench
+
 # Using & so make calls this recipe only once per run
 mermaid-init.js mermaid.min.js &:
 	@# Required for mdbook-mermaid to work
@@ -202,10 +218,9 @@ mermaid-init.js mermaid.min.js &:
 		&& exit 1)
 
 docs-deps: ## 📦 Install dependencies for generating the documentation
-	cargo install --version 0.9.4 mdbook-katex
-	cargo install --version 0.9.1 mdbook-linkcheck2
-	cargo install --version 0.8.0 mdbook-alerts
-	cargo install --version 0.15.0 mdbook-mermaid
+	cargo install --locked --version 0.10.0-alpha mdbook-katex
+	cargo install --locked --version 0.12.0 mdbook-linkcheck2
+	cargo install --locked --version 0.17.0 mdbook-mermaid
 
 docs: mermaid-init.js mermaid.min.js ## 📚 Generate the documentation
 	mdbook build

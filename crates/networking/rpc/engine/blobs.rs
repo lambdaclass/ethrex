@@ -1,7 +1,7 @@
 use ethrex_common::{
     H256,
     serde_utils::{self},
-    types::{Blob, CELLS_PER_EXT_BLOB, Proof, blobs_bundle::kzg_commitment_to_versioned_hash},
+    types::{Blob, Proof},
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -64,37 +64,43 @@ impl RpcHandler for BlobsV1Request {
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
         debug!("Received new engine request: Requested Blobs");
 
-        if self.blob_versioned_hashes.len() >= GET_BLOBS_V1_REQUEST_MAX_SIZE {
+        // Intentional fall-through: before a canonical tip exists, there is no
+        // block timestamp to compare against Osaka, so the node is treated as pre-Osaka.
+        if let Some(current_block_header) = context
+            .storage
+            .get_block_header(context.storage.get_latest_block_number().await?)?
+            && context
+                .storage
+                .get_chain_config()
+                .is_osaka_activated(current_block_header.timestamp)
+        {
+            return Err(RpcErr::UnsupportedFork(
+                "getBlobsV1 engine only supported before Osaka".to_string(),
+            ));
+        }
+
+        if self.blob_versioned_hashes.len() > GET_BLOBS_V1_REQUEST_MAX_SIZE {
             return Err(RpcErr::TooLargeRequest);
         }
 
-        let mut res: Vec<Option<BlobAndProofV1>> = vec![None; self.blob_versioned_hashes.len()];
+        let blob_tuples = context
+            .blockchain
+            .mempool
+            .get_blobs_data_by_versioned_hashes(&self.blob_versioned_hashes)?;
 
-        for blobs_bundle in context.blockchain.mempool.get_blobs_bundle_pool()? {
-            // Go over all blobs bundles from the blobs bundle pool.
-            let blobs_in_bundle = blobs_bundle.blobs;
-            let commitments_in_bundle = blobs_bundle.commitments;
-            let proofs_in_bundle = blobs_bundle.proofs;
+        debug_assert_eq!(self.blob_versioned_hashes.len(), blob_tuples.len());
 
-            // Go over all the commitments in each blobs bundle to calculate the blobs versioned hash.
-            for (commitment, (blob, proof)) in commitments_in_bundle
-                .iter()
-                .zip(blobs_in_bundle.iter().zip(proofs_in_bundle.iter()))
-            {
-                let current_versioned_hash = kzg_commitment_to_versioned_hash(commitment);
-                if let Some(index) = self
-                    .blob_versioned_hashes
-                    .iter()
-                    .position(|&hash| hash == current_versioned_hash)
-                {
-                    // If the versioned hash is one of the requested we save its corresponding blob and proof in the returned vector. We store them in the same position as the versioned hash was received.
-                    res[index] = Some(BlobAndProofV1 {
-                        blob: *blob,
-                        proof: *proof,
-                    });
-                }
-            }
-        }
+        let res: Vec<Option<BlobAndProofV1>> = blob_tuples
+            .into_iter()
+            .map(|b| {
+                b.map(|(blob, _, proofs)| BlobAndProofV1 {
+                    blob: *blob,
+                    // If blob bundle version is 0 then the proofs vec will have only one proof.
+                    // Look at `get_blob_tuple_by_index` for reference.
+                    proof: proofs[0],
+                })
+            })
+            .collect();
 
         serde_json::to_value(res).map_err(|error| RpcErr::Internal(error.to_string()))
     }
@@ -115,7 +121,7 @@ impl RpcHandler for BlobsV2Request {
 
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
         debug!("Received new engine request: Requested Blobs V2");
-        let res = get_blobs_and_proof(&self.blob_versioned_hashes, context, 2).await?;
+        let res = get_blobs_and_proof(&self.blob_versioned_hashes, context).await?;
         if res.iter().any(|blob| blob.is_none()) {
             return Ok(Value::Null);
         }
@@ -138,7 +144,7 @@ impl RpcHandler for BlobsV3Request {
 
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
         debug!("Received new engine request: Requested Blobs V3");
-        let res = get_blobs_and_proof(&self.blob_versioned_hashes, context, 3).await?;
+        let res = get_blobs_and_proof(&self.blob_versioned_hashes, context).await?;
         serde_json::to_value(res).map_err(|error| RpcErr::Internal(error.to_string()))
     }
 }
@@ -147,54 +153,50 @@ impl RpcHandler for BlobsV3Request {
 async fn get_blobs_and_proof(
     blob_versioned_hashes: &[H256],
     context: RpcApiContext,
-    version: u64,
 ) -> Result<Vec<Option<BlobAndProofV2>>, RpcErr> {
-    if blob_versioned_hashes.len() >= GET_BLOBS_V1_REQUEST_MAX_SIZE {
+    if blob_versioned_hashes.len() > GET_BLOBS_V1_REQUEST_MAX_SIZE {
         return Err(RpcErr::TooLargeRequest);
     }
 
-    if let Some(current_block_header) = context
+    // getBlobsV2/V3 (EIP-7594) serve cell proofs, which only exist once the chain is at
+    // Osaka. The engine spec does NOT define a pre-fork `-38005` for these methods (that
+    // code is for the opposite direction, e.g. getBlobsV1 *after* Osaka); their contract is
+    // simply to return `null` for any blob we don't have. So before our canonical tip is at
+    // Osaka, return `null` for every requested hash rather than a bespoke error. This also
+    // covers the syncing case, where the local head is still pre-Osaka while we catch up
+    // (the spec likewise prescribes `null` while syncing).
+    let head_is_osaka = match context
         .storage
         .get_block_header(context.storage.get_latest_block_number().await?)?
-        && !context
+    {
+        Some(current_block_header) => context
             .storage
             .get_chain_config()
-            .is_osaka_activated(current_block_header.timestamp)
-    {
-        // validation requested in https://github.com/ethereum/execution-apis/blob/a1d95fb555cd91efb3e0d6555e4ab556d9f5dd06/src/engine/osaka.md?plain=1#L130
-        return Err(RpcErr::UnsupportedFork(format!(
-            "getBlobsV{} engine only supported for Osaka",
-            version
-        )));
+            .is_osaka_activated(current_block_header.timestamp),
+        // No canonical tip yet: treat as pre-Osaka.
+        None => false,
     };
-
-    let mut res: Vec<Option<BlobAndProofV2>> = vec![None; blob_versioned_hashes.len()];
-
-    for blobs_bundle in context.blockchain.mempool.get_blobs_bundle_pool()? {
-        // Go over all blobs bundles from the blobs bundle pool.
-        let blobs_in_bundle = blobs_bundle.blobs;
-        let commitments_in_bundle = blobs_bundle.commitments;
-        let proofs_in_bundle = blobs_bundle.proofs;
-
-        // Go over all the commitments in each blobs bundle to calculate the blobs versioned hash.
-        for (commitment, (blob, proofs)) in commitments_in_bundle.iter().zip(
-            blobs_in_bundle
-                .iter()
-                .zip(proofs_in_bundle.chunks(CELLS_PER_EXT_BLOB)),
-        ) {
-            let current_versioned_hash = kzg_commitment_to_versioned_hash(commitment);
-            if let Some(index) = blob_versioned_hashes
-                .iter()
-                .position(|&hash| hash == current_versioned_hash)
-            {
-                // If the versioned hash is one of the requested we save its corresponding blob and proof in the returned vector. We store them in the same position as the versioned hash was received.
-                res[index] = Some(BlobAndProofV2 {
-                    blob: *blob,
-                    proofs: proofs.to_vec(),
-                });
-            }
-        }
+    if !head_is_osaka {
+        return Ok(vec![None; blob_versioned_hashes.len()]);
     }
+
+    let blob_tuples = context
+        .blockchain
+        .mempool
+        .get_blobs_data_by_versioned_hashes(blob_versioned_hashes)?;
+
+    debug_assert_eq!(blob_versioned_hashes.len(), blob_tuples.len());
+
+    let res = blob_tuples
+        .into_iter()
+        .map(|b| {
+            b.map(|(blob, _, proofs)| BlobAndProofV2 {
+                blob: *blob,
+                proofs,
+            })
+        })
+        .collect();
+
     Ok(res)
 }
 
@@ -204,7 +206,10 @@ mod tests {
     use crate::test_utils::default_context_with_storage;
     use ethrex_common::{
         Address, H256,
-        types::{BYTES_PER_BLOB, BlobsBundle, ChainConfig, Commitment, Proof},
+        types::{
+            BYTES_PER_BLOB, BlobsBundle, CELLS_PER_EXT_BLOB, ChainConfig, Commitment, Proof,
+            kzg_commitment_to_versioned_hash,
+        },
     };
     use ethrex_storage::{EngineType, Store};
 
@@ -277,6 +282,29 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn blobs_v2_returns_full_when_all_present() {
+        let context = context_with_chain_config(true).await;
+        let (bundle, hashes) = sample_bundle(2);
+        context
+            .blockchain
+            .mempool
+            .add_blobs_bundle(H256::from_low_u64_be(1), bundle.clone())
+            .unwrap();
+
+        let request = BlobsV2Request {
+            blob_versioned_hashes: hashes.clone(),
+        };
+
+        let result = request.handle(context).await.unwrap();
+        let expected = serde_json::to_value(vec![
+            Some(blob_and_proof(&bundle, 0)),
+            Some(blob_and_proof(&bundle, 1)),
+        ])
+        .unwrap();
+        assert_eq!(result, expected);
+    }
+
+    #[tokio::test]
     async fn blobs_v3_returns_partial_results() {
         let context = context_with_chain_config(true).await;
         let (bundle, hashes) = sample_bundle(2);
@@ -296,14 +324,52 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn blobs_v3_requires_osaka() {
+    async fn blobs_v1_returns_full_before_osaka() {
         let context = context_with_chain_config(false).await;
-        let request = BlobsV3Request {
+        let (bundle, hashes) = sample_bundle(1);
+        context
+            .blockchain
+            .mempool
+            .add_blobs_bundle(H256::from_low_u64_be(1), bundle.clone())
+            .unwrap();
+
+        let request = BlobsV1Request {
+            blob_versioned_hashes: hashes,
+        };
+
+        let result = request.handle(context).await.unwrap();
+        let expected = serde_json::to_value(vec![Some(BlobAndProofV1 {
+            blob: bundle.blobs[0],
+            proof: bundle.proofs[0],
+        })])
+        .unwrap();
+        assert_eq!(result, expected);
+    }
+
+    #[tokio::test]
+    async fn blobs_v1_rejects_after_osaka() {
+        let context = context_with_chain_config(true).await;
+        let request = BlobsV1Request {
             blob_versioned_hashes: vec![H256::from_low_u64_be(1)],
         };
 
         let err = request.handle(context).await.unwrap_err();
         assert!(matches!(err, RpcErr::UnsupportedFork(_)));
+    }
+
+    #[tokio::test]
+    async fn blobs_v3_returns_null_before_osaka() {
+        // Pre-Osaka, getBlobsV3 must not error: the spec contract is to return `null`
+        // for blobs we don't have (which, pre-Osaka, is all of them). Returning a bespoke
+        // -38005 here is a spec misread and spams the CL while the node is still syncing.
+        let context = context_with_chain_config(false).await;
+        let request = BlobsV3Request {
+            blob_versioned_hashes: vec![H256::from_low_u64_be(1), H256::from_low_u64_be(2)],
+        };
+
+        let result = request.handle(context).await.unwrap();
+        let expected = serde_json::to_value(vec![None::<BlobAndProofV2>, None]).unwrap();
+        assert_eq!(result, expected);
     }
 
     #[tokio::test]
@@ -315,5 +381,26 @@ mod tests {
 
         let err = request.handle(context).await.unwrap_err();
         assert!(matches!(err, RpcErr::TooLargeRequest));
+    }
+
+    #[tokio::test]
+    async fn blobs_v3_accepts_exactly_max_size() {
+        // Spec: clients MUST support at least MAX hashes, so exactly MAX must not be rejected.
+        let context = context_with_chain_config(true).await;
+        let request = BlobsV3Request {
+            blob_versioned_hashes: vec![H256::zero(); GET_BLOBS_V1_REQUEST_MAX_SIZE],
+        };
+        let result = request.handle(context).await;
+        assert!(!matches!(result, Err(RpcErr::TooLargeRequest)));
+    }
+
+    #[tokio::test]
+    async fn blobs_v1_accepts_exactly_max_size_before_osaka() {
+        let context = context_with_chain_config(false).await;
+        let request = BlobsV1Request {
+            blob_versioned_hashes: vec![H256::zero(); GET_BLOBS_V1_REQUEST_MAX_SIZE],
+        };
+        let result = request.handle(context).await;
+        assert!(!matches!(result, Err(RpcErr::TooLargeRequest)));
     }
 }

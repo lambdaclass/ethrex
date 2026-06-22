@@ -129,10 +129,14 @@ Once you have the new contract, you need to do the following three steps:
     rex send <PROXY_ADDRESS> 'upgradeToAndCall(address,bytes)' <NEW_IMPLEMENTATION_ADDRESS> <INITIALIZATION_CALLDATA> --private-key <PRIVATE_KEY>
     ```
 
+    > **Note:** The `OnChainProposer` is owned by the Timelock contract. You cannot call `upgradeToAndCall` on the OCP directly — it will revert with `onlyOwner`. The call must be routed through the Timelock. See [Timelock](./timelock.md) for the available paths (schedule + execute with delay, or `emergencyExecute` for immediate execution by the Security Council).
+    >
+    > The same applies to any operation restricted by `onlyOwner` on the OCP (e.g., `pause`, `unpause`).
+
 3. Check the proxy updated the pointed address to the new implementation. It should return the address of the new implementation:
 
     ```sh
-    curl http://localhost:8545 -d '{"jsonrpc": "2.0", "id": "1", "method": "eth_getStorageAt", "params": [<PROXY_ADDRESS>, "0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc", "latest"]}'
+    curl <L1_RPC_URL> -d '{"jsonrpc": "2.0", "id": "1", "method": "eth_getStorageAt", "params": ["<PROXY_ADDRESS>", "0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc", "latest"]}'
     ```
 
 ## Transfer ownership

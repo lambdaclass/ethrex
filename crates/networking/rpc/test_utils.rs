@@ -7,8 +7,15 @@
 
 use crate::{
     eth::gas_tip_estimator::GasTipEstimator,
-    rpc::{ClientVersion, NodeData, RpcApiContext, start_api, start_block_executor},
+    rpc::{
+        ClientVersion, NodeData, RpcApiContext, handle_authrpc_request, handle_http_request,
+        start_api, start_block_executor,
+    },
+    utils::RpcNamespace,
 };
+use axum::extract::State;
+use axum_extra::TypedHeader;
+use axum_extra::headers::{Authorization, authorization::Bearer};
 use bytes::Bytes;
 use ethrex_blockchain::Blockchain;
 use ethrex_common::{
@@ -22,23 +29,49 @@ use ethrex_common::{
 use ethrex_p2p::{
     network::P2PContext,
     peer_handler::PeerHandler,
-    peer_table::{PeerTable, TARGET_PEERS},
+    peer_table::{PeerTable, PeerTableServer, TARGET_PEERS},
     rlpx::initiator::RLPxInitiator,
     sync::SyncMode,
     sync_manager::SyncManager,
-    types::{Node, NodeRecord},
+    types::{NetworkConfig, Node, NodeRecord},
 };
 use ethrex_storage::{EngineType, Store};
 use hex_literal::hex;
+use jsonwebtoken::{Algorithm, EncodingKey, Header, encode};
 use secp256k1::SecretKey;
-use spawned_concurrency::tasks::{GenServer, GenServerHandle};
-use std::{net::SocketAddr, str::FromStr, sync::Arc};
+use serde_json::Value;
+use spawned_concurrency::tasks::ActorRef;
+use std::time::{SystemTime, UNIX_EPOCH};
+use std::{collections::HashSet, net::SocketAddr, str::FromStr, sync::Arc};
 use tokio::sync::Mutex as TokioMutex;
 use tokio_util::{sync::CancellationToken, task::TaskTracker};
-use tracing::info;
 // Base price for each test transaction.
 pub const BASE_PRICE_IN_WEI: u64 = 10_u64.pow(9);
 pub const TEST_GENESIS: &str = include_str!("../../../fixtures/genesis/l1.json");
+
+thread_local! {
+    /// Per-OS-thread merkleization pool, lazily built on first use. Mirrors the
+    /// pattern in `tooling/ef_tests/*` so RPC tests don't each spawn a fresh
+    /// 17-thread rayon pool inside `Blockchain::new` (which exhausts the macOS
+    /// runner's thread limit and panics with `EAGAIN` under parallel test runs).
+    /// The merkle protocol's 16 worker jobs cross-communicate via channels, so
+    /// each pool may have only one concurrent `in_place_scope` caller (two would
+    /// deadlock). The caller is not the test thread: `default_with_store_and_pool`
+    /// contexts run block execution on a dedicated `block_executor` thread (see
+    /// `start_block_executor`). Sharing this pool is safe only because tests run
+    /// sequentially per OS thread, each builds one context, and that context's
+    /// executor processes blocks serially -> at most one live `in_place_scope` at
+    /// a time. LATENT RISK: a single test that drives block execution on two
+    /// contexts built on this thread concurrently would share this pool and
+    /// deadlock; give such a test its own pool via `Blockchain::build_merkle_pool`.
+    static MERKLE_POOL: std::cell::OnceCell<Arc<rayon::ThreadPool>> =
+        const { std::cell::OnceCell::new() };
+}
+
+/// Returns this thread's shared merkleization pool, building it on first use.
+fn merkle_pool() -> Arc<rayon::ThreadPool> {
+    MERKLE_POOL.with(|cell| cell.get_or_init(Blockchain::build_merkle_pool).clone())
+}
 
 fn test_header(block_num: u64) -> BlockHeader {
     BlockHeader {
@@ -225,7 +258,6 @@ pub fn example_local_node_record() -> NodeRecord {
 // ```
 pub async fn start_test_api() -> tokio::task::JoinHandle<()> {
     let http_addr: SocketAddr = "127.0.0.1:8500".parse().unwrap();
-    let ws_addr: SocketAddr = "127.0.0.1:8546".parse().unwrap();
     let authrpc_addr: SocketAddr = "127.0.0.1:8501".parse().unwrap();
     let mut storage =
         Store::new("", EngineType::InMemory).expect("Failed to create in-memory storage");
@@ -233,14 +265,17 @@ pub async fn start_test_api() -> tokio::task::JoinHandle<()> {
         .add_initial_state(serde_json::from_str(TEST_GENESIS).unwrap())
         .await
         .expect("Failed to build test genesis");
-    let blockchain = Arc::new(Blockchain::default_with_store(storage.clone()));
+    let blockchain = Arc::new(Blockchain::default_with_store_and_pool(
+        storage.clone(),
+        merkle_pool(),
+    ));
     let jwt_secret = Default::default();
     let local_p2p_node = example_p2p_node();
     let local_node_record = example_local_node_record();
     tokio::spawn(async move {
         start_api(
             http_addr,
-            Some(ws_addr),
+            None,
             authrpc_addr,
             storage.clone(),
             blockchain.clone(),
@@ -260,14 +295,30 @@ pub async fn start_test_api() -> tokio::task::JoinHandle<()> {
             None,
             DEFAULT_BUILDER_GAS_CEIL,
             String::new(),
+            all_namespaces_for_tests(),
         )
         .await
         .unwrap()
     })
 }
 
+/// All known namespaces, used in tests so handlers from any namespace can be exercised.
+pub fn all_namespaces_for_tests() -> HashSet<RpcNamespace> {
+    HashSet::from([
+        RpcNamespace::Eth,
+        RpcNamespace::Net,
+        RpcNamespace::Web3,
+        RpcNamespace::Debug,
+        RpcNamespace::Admin,
+        RpcNamespace::Mempool,
+    ])
+}
+
 pub async fn default_context_with_storage(storage: Store) -> RpcApiContext {
-    let blockchain = Arc::new(Blockchain::default_with_store(storage.clone()));
+    let blockchain = Arc::new(Blockchain::default_with_store_and_pool(
+        storage.clone(),
+        merkle_pool(),
+    ));
     let local_node_record = example_local_node_record();
     let block_worker_channel = start_block_executor(blockchain.clone());
     RpcApiContext {
@@ -294,6 +345,8 @@ pub async fn default_context_with_storage(storage: Store) -> RpcApiContext {
         log_filter_handler: None,
         gas_ceil: DEFAULT_BUILDER_GAS_CEIL,
         block_worker_channel,
+        ws: None,
+        allowed_namespaces: Arc::new(all_namespaces_for_tests()),
     }
 }
 
@@ -301,7 +354,10 @@ pub async fn default_context_with_storage(storage: Store) -> RpcApiContext {
 /// This should only be used in tests as it won't be able to connect to the p2p network
 pub async fn dummy_sync_manager() -> SyncManager {
     let store = Store::new("", EngineType::InMemory).expect("Failed to start Store Engine");
-    let blockchain = Arc::new(Blockchain::default_with_store(store.clone()));
+    let blockchain = Arc::new(Blockchain::default_with_store_and_pool(
+        store.clone(),
+        merkle_pool(),
+    ));
     SyncManager::new(
         dummy_peer_handler(store).await,
         &SyncMode::Full,
@@ -317,16 +373,14 @@ pub async fn dummy_sync_manager() -> SyncManager {
 /// Creates a dummy PeerHandler for tests where interacting with peers is not needed
 /// This should only be used in tests as it won't be able to interact with the node's connected peers
 pub async fn dummy_peer_handler(store: Store) -> PeerHandler {
-    let peer_table = PeerTable::spawn(TARGET_PEERS, store);
-    PeerHandler::new(peer_table.clone(), dummy_gen_server(peer_table).await)
+    let peer_table = PeerTableServer::spawn(H256::random(), TARGET_PEERS, store);
+    PeerHandler::new(peer_table.clone(), dummy_actor(peer_table).await)
 }
 
-/// Creates a dummy GenServer for tests
+/// Creates a dummy RLPx initiator actor for tests
 /// This should only be used in tests
-pub async fn dummy_gen_server(peer_table: PeerTable) -> GenServerHandle<RLPxInitiator> {
-    info!("Starting RLPx Initiator");
-    let state = RLPxInitiator::new(dummy_p2p_context(peer_table).await);
-    RLPxInitiator::start_on_thread(state)
+pub async fn dummy_actor(peer_table: PeerTable) -> ActorRef<RLPxInitiator> {
+    RLPxInitiator::spawn_on_thread(dummy_p2p_context(peer_table).await)
 }
 
 /// Creates a dummy P2PContext for tests
@@ -335,19 +389,62 @@ pub async fn dummy_p2p_context(peer_table: PeerTable) -> P2PContext {
     let local_node = Node::from_enode_url(
         "enode://d860a01f9722d78051619d1e2351aba3f43f943f6f00718d1b9baa4101932a1f5011f16bb2b1bb35db20d6fe28fa0bf09636d26a87d31de9ec6203eeedb1f666@18.138.108.67:30303",
     ).expect("Bad enode url");
+    let network_config = NetworkConfig::from_node(&local_node);
     let storage = Store::new("./temp", EngineType::InMemory).expect("Failed to create Store");
 
     P2PContext::new(
         local_node,
+        network_config,
         TaskTracker::default(),
         SecretKey::from_byte_array(&[0xcd; 32]).expect("32 bytes, within curve order"),
         peer_table,
         storage.clone(),
-        Arc::new(Blockchain::default_with_store(storage)),
+        Arc::new(Blockchain::default_with_store_and_pool(
+            storage,
+            merkle_pool(),
+        )),
         "".to_string(),
         None,
         1000,
         100.0,
     )
     .unwrap()
+}
+
+/// Mint a valid bearer header for the given context's JWT secret, with a
+/// fresh `iat` claim. For integration tests of the engine RPC port.
+pub fn jwt_auth_header_for(context: &RpcApiContext) -> Option<TypedHeader<Authorization<Bearer>>> {
+    let iat = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    let token = encode(
+        &Header::new(Algorithm::HS256),
+        &serde_json::json!({ "iat": iat }),
+        &EncodingKey::from_secret(&context.node_data.jwt_secret),
+    )
+    .unwrap();
+    Some(TypedHeader(Authorization::bearer(&token).unwrap()))
+}
+
+/// Drive the auth RPC handler without needing axum extractor types at the
+/// call site.
+pub async fn call_authrpc(
+    context: RpcApiContext,
+    auth_header: Option<TypedHeader<Authorization<Bearer>>>,
+    body: String,
+) -> Value {
+    handle_authrpc_request(State(context), auth_header, body)
+        .await
+        .expect("handle_authrpc_request should not return a status code error")
+        .0
+}
+
+/// Drive the public HTTP RPC handler without needing axum extractor types at
+/// the call site.
+pub async fn call_http(context: RpcApiContext, body: String) -> Value {
+    handle_http_request(State(context), body)
+        .await
+        .expect("handle_http_request should not return a status code error")
+        .0
 }

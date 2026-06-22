@@ -1,10 +1,34 @@
-use std::{cmp::min, fmt::Display};
+use std::{
+    cmp::min,
+    fmt::Display,
+    num::NonZeroUsize,
+    sync::{LazyLock, Mutex},
+};
 
-use crate::{errors::EcdsaError, utils::keccak};
+use crate::utils::keccak;
 use bytes::Bytes;
-use ethereum_types::{Address, H256, Signature, U256};
-use hex_literal::hex;
+use ethereum_types::{Address, H256, U256};
+use ethrex_crypto::{Crypto, CryptoError};
+use lru::LruCache;
 pub use mempool::MempoolTransaction;
+
+const MAX_SIGNER_CACHE_ENTRIES: usize = 100_000;
+
+/// Global cache mapping transaction hash → recovered sender address.
+/// Keyed by tx hash (unique per transaction), so each entry is safe to reuse.
+/// Not suitable for EIP-7702 authorization tuples where the same message hash
+/// can correspond to different signers (the message excludes the signature).
+/// Uses LRU eviction to avoid periodic cold-start spikes from clearing all entries.
+///
+/// Lock with `.unwrap_or_else(|e| e.into_inner())` — a poisoned mutex just means
+/// a thread panicked mid-update; the LruCache invariants are maintained by the
+/// std Mutex (data is still accessible), and a missing entry only costs one
+/// redundant recovery, so it's safe to keep using.
+pub static GLOBAL_SIGNER_CACHE: LazyLock<Mutex<LruCache<H256, Address>>> = LazyLock::new(|| {
+    Mutex::new(LruCache::new(
+        NonZeroUsize::new(MAX_SIGNER_CACHE_ENTRIES).expect("MAX_SIGNER_CACHE_ENTRIES is non-zero"),
+    ))
+});
 use rkyv::{Archive, Deserialize as RDeserialize, Serialize as RSerialize};
 use serde::{Serialize, ser::SerializeStruct};
 pub use serde_impl::{
@@ -23,7 +47,10 @@ use ethrex_rlp::{
     structs::{Decoder, Encoder},
 };
 
+#[cfg(all(feature = "eip-8025", target_arch = "riscv64"))]
+use super::eip8025_cell::OnceCell;
 use crate::types::{AccessList, AuthorizationList, BlobsBundle};
+#[cfg(not(all(feature = "eip-8025", target_arch = "riscv64")))]
 use once_cell::sync::OnceCell;
 
 // The `#[serde(untagged)]` attribute allows the `Transaction` enum to be serialized without
@@ -58,6 +85,7 @@ pub enum P2PTransaction {
     EIP4844TransactionWithBlobs(WrappedEIP4844Transaction),
     EIP7702Transaction(EIP7702Transaction),
     FeeTokenTransaction(FeeTokenTransaction),
+    FrameTransaction(FrameTransaction),
 }
 
 impl TryInto<Transaction> for P2PTransaction {
@@ -69,6 +97,7 @@ impl TryInto<Transaction> for P2PTransaction {
             P2PTransaction::EIP2930Transaction(itx) => Ok(Transaction::EIP2930Transaction(itx)),
             P2PTransaction::EIP1559Transaction(itx) => Ok(Transaction::EIP1559Transaction(itx)),
             P2PTransaction::EIP7702Transaction(itx) => Ok(Transaction::EIP7702Transaction(itx)),
+            P2PTransaction::FrameTransaction(itx) => Ok(Transaction::FrameTransaction(itx)),
             _ => Err("Can't convert blob p2p transaction into regular transaction. Blob bundle would be lost.".to_string()),
         }
     }
@@ -109,6 +138,9 @@ impl RLPDecode for P2PTransaction {
                 // FeeToken
                 0x7d => FeeTokenTransaction::decode(tx_encoding)
                     .map(|tx| (P2PTransaction::FeeTokenTransaction(tx), remainder)),
+                // Frame (EIP-8141)
+                0x06 => FrameTransaction::decode(tx_encoding)
+                    .map(|tx| (P2PTransaction::FrameTransaction(tx), remainder)),
                 ty => Err(RLPDecodeError::Custom(format!(
                     "Invalid transaction type: {ty}"
                 ))),
@@ -436,10 +468,22 @@ impl Transaction {
             TxType::Privileged => self.gas_price(),
         };
 
-        Some(U256::saturating_add(
+        let base = U256::saturating_add(
             U256::saturating_mul(price, self.gas_limit().into()),
             self.value(),
-        ))
+        );
+
+        // EIP-4844 blob txs pay an additional `blob_gas * max_fee_per_blob_gas`
+        // upfront. Every peer client (geth, reth, nethermind, erigon, besu)
+        // includes this in the balance-sufficiency check.
+        if let Transaction::EIP4844Transaction(tx) = self {
+            let blob_gas = U256::from(crate::constants::GAS_PER_BLOB)
+                .saturating_mul(U256::from(tx.blob_versioned_hashes.len() as u64));
+            let blob_cost = blob_gas.saturating_mul(tx.max_fee_per_blob_gas);
+            return Some(base.saturating_add(blob_cost));
+        }
+
+        Some(base)
     }
 
     pub fn fee_token(&self) -> Option<Address> {
@@ -1096,7 +1140,7 @@ impl RLPDecode for FeeTokenTransaction {
 }
 
 impl Transaction {
-    pub fn sender(&self) -> Result<Address, EcdsaError> {
+    pub fn sender(&self, crypto: &dyn Crypto) -> Result<Address, CryptoError> {
         // Frame transactions have explicit sender, no ECDSA recovery
         if let Transaction::FrameTransaction(tx) = self {
             return Ok(tx.sender);
@@ -1112,16 +1156,35 @@ impl Transaction {
             Transaction::FrameTransaction(_) => unreachable!(),
         };
         sender_cache
-            .get_or_try_init(|| self.compute_sender())
+            .get_or_try_init(|| {
+                let tx_hash = self.hash();
+                // Fast path: check process-level signer cache
+                let mut cache = GLOBAL_SIGNER_CACHE
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner());
+                if let Some(&addr) = cache.get(&tx_hash) {
+                    return Ok(addr);
+                }
+                drop(cache);
+                // Slow path: actual secp256k1 recovery
+                let sender = self.compute_sender(crypto)?;
+                // Store in global cache for future lookups (LRU evicts oldest on overflow)
+                GLOBAL_SIGNER_CACHE
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .put(tx_hash, sender);
+                Ok(sender)
+            })
             .copied()
     }
 
-    fn compute_sender(&self) -> Result<Address, EcdsaError> {
-        match self {
+    fn compute_sender(&self, crypto: &dyn Crypto) -> Result<Address, CryptoError> {
+        let (buf, sig) = match self {
             Transaction::LegacyTransaction(tx) => {
+                let v = u64::try_from(tx.v).map_err(|_| CryptoError::InvalidSignature)?;
                 let signature_y_parity = match self.chain_id() {
-                    Some(chain_id) => tx.v.as_u64().saturating_sub(35 + chain_id * 2) != 0,
-                    None => tx.v.as_u64().saturating_sub(27) != 0,
+                    Some(chain_id) => v.saturating_sub(35 + chain_id * 2) != 0,
+                    None => v.saturating_sub(27) != 0,
                 };
                 let mut buf = vec![];
                 match self.chain_id() {
@@ -1149,7 +1212,7 @@ impl Transaction {
                 sig[..32].copy_from_slice(&tx.r.to_big_endian());
                 sig[32..64].copy_from_slice(&tx.s.to_big_endian());
                 sig[64] = signature_y_parity as u8;
-                recover_address_from_message(Signature::from_slice(&sig), &Bytes::from(buf))
+                (buf, sig)
             }
             Transaction::EIP2930Transaction(tx) => {
                 let mut buf = vec![self.tx_type() as u8];
@@ -1167,7 +1230,7 @@ impl Transaction {
                 sig[..32].copy_from_slice(&tx.signature_r.to_big_endian());
                 sig[32..64].copy_from_slice(&tx.signature_s.to_big_endian());
                 sig[64] = tx.signature_y_parity as u8;
-                recover_address_from_message(Signature::from_slice(&sig), &Bytes::from(buf))
+                (buf, sig)
             }
             Transaction::EIP1559Transaction(tx) => {
                 let mut buf = vec![self.tx_type() as u8];
@@ -1186,7 +1249,7 @@ impl Transaction {
                 sig[..32].copy_from_slice(&tx.signature_r.to_big_endian());
                 sig[32..64].copy_from_slice(&tx.signature_s.to_big_endian());
                 sig[64] = tx.signature_y_parity as u8;
-                recover_address_from_message(Signature::from_slice(&sig), &Bytes::from(buf))
+                (buf, sig)
             }
             Transaction::EIP4844Transaction(tx) => {
                 let mut buf = vec![self.tx_type() as u8];
@@ -1207,7 +1270,7 @@ impl Transaction {
                 sig[..32].copy_from_slice(&tx.signature_r.to_big_endian());
                 sig[32..64].copy_from_slice(&tx.signature_s.to_big_endian());
                 sig[64] = tx.signature_y_parity as u8;
-                recover_address_from_message(Signature::from_slice(&sig), &Bytes::from(buf))
+                (buf, sig)
             }
             Transaction::EIP7702Transaction(tx) => {
                 let mut buf = vec![self.tx_type() as u8];
@@ -1227,10 +1290,10 @@ impl Transaction {
                 sig[..32].copy_from_slice(&tx.signature_r.to_big_endian());
                 sig[32..64].copy_from_slice(&tx.signature_s.to_big_endian());
                 sig[64] = tx.signature_y_parity as u8;
-                recover_address_from_message(Signature::from_slice(&sig), &Bytes::from(buf))
+                (buf, sig)
             }
-            Transaction::PrivilegedL2Transaction(tx) => Ok(tx.from),
-            Transaction::FrameTransaction(tx) => Ok(tx.sender),
+            Transaction::PrivilegedL2Transaction(tx) => return Ok(tx.from),
+            Transaction::FrameTransaction(tx) => return Ok(tx.sender),
             Transaction::FeeTokenTransaction(tx) => {
                 let mut buf = vec![self.tx_type() as u8];
                 Encoder::new(&mut buf)
@@ -1249,9 +1312,11 @@ impl Transaction {
                 sig[..32].copy_from_slice(&tx.signature_r.to_big_endian());
                 sig[32..64].copy_from_slice(&tx.signature_s.to_big_endian());
                 sig[64] = tx.signature_y_parity as u8;
-                recover_address_from_message(Signature::from_slice(&sig), &Bytes::from(buf))
+                (buf, sig)
             }
-        }
+        };
+        let msg = keccak(&buf).to_fixed_bytes();
+        crypto.recover_signer(&sig, &msg)
     }
 
     pub fn gas_limit(&self) -> u64 {
@@ -1472,21 +1537,30 @@ impl Transaction {
         *inner_hash.get_or_init(|| self.compute_hash())
     }
 
-    pub fn gas_tip_cap(&self) -> u64 {
-        self.max_priority_fee().unwrap_or(self.gas_price().as_u64())
+    pub fn gas_tip_cap(&self) -> U256 {
+        self.max_priority_fee()
+            .map(U256::from)
+            .unwrap_or_else(|| self.gas_price())
     }
 
-    pub fn gas_fee_cap(&self) -> u64 {
-        self.max_fee_per_gas().unwrap_or(self.gas_price().as_u64())
+    pub fn gas_fee_cap(&self) -> U256 {
+        self.max_fee_per_gas()
+            .map(U256::from)
+            .unwrap_or_else(|| self.gas_price())
     }
 
-    pub fn effective_gas_tip(&self, base_fee: Option<u64>) -> Option<u64> {
+    /// Returns the effective tip per gas for this transaction.
+    /// Returns `None` if the transaction's fee cap is below the base fee (i.e. the
+    /// transaction cannot pay for its inclusion).
+    pub fn effective_gas_tip(&self, base_fee: Option<u64>) -> Option<U256> {
+        let tip_cap = self.gas_tip_cap();
         let Some(base_fee) = base_fee else {
-            return Some(self.gas_tip_cap());
+            return Some(tip_cap);
         };
-        self.gas_fee_cap()
-            .checked_sub(base_fee)
-            .map(|tip| min(tip, self.gas_tip_cap()))
+        let base_fee = U256::from(base_fee);
+        let fee_cap = self.gas_fee_cap();
+        let tip = fee_cap.checked_sub(base_fee)?;
+        Some(min(tip, tip_cap))
     }
 
     /// Returns whether the transaction is replay-protected.
@@ -1494,7 +1568,7 @@ impl Transaction {
     pub fn protected(&self) -> bool {
         match self {
             Transaction::LegacyTransaction(tx) if tx.v.bits() <= 8 => {
-                let v = tx.v.as_u64();
+                let v = tx.v.low_u64();
                 v != 27 && v != 28 && v != 1 && v != 0
             }
             _ => true,
@@ -1502,103 +1576,13 @@ impl Transaction {
     }
 }
 
-pub fn recover_address_from_message(
-    signature: Signature,
-    message: &Bytes,
-) -> Result<Address, EcdsaError> {
-    // Hash message
-    let payload = keccak(message);
-    recover_address(signature, payload).map_err(EcdsaError::from)
-}
-
-// Half the secp256k1 curve order (n/2), i.e. the upper bound for a valid `s` value per EIP-2.
-const SECP256K1_N_HALF: [u8; 32] =
-    hex!("7fffffffffffffffffffffffffffffff5d576e7357a4501ddfe92f46681b20a0");
-
-fn signature_has_high_s(signature_bytes: &[u8; 65]) -> bool {
-    signature_bytes[32..64] > SECP256K1_N_HALF[..]
-}
-
-#[cfg(all(
-    not(feature = "zisk"),
-    not(feature = "risc0"),
-    not(feature = "sp1"),
-    feature = "secp256k1"
-))]
-pub fn recover_address(signature: Signature, payload: H256) -> Result<Address, secp256k1::Error> {
-    // Create signature
-    let signature_bytes = signature.to_fixed_bytes();
-    // EIP-2: reject high-s signatures (s > secp256k1n/2).
-    if signature_has_high_s(&signature_bytes) {
-        return Err(secp256k1::Error::InvalidSignature);
-    }
-    let signature = secp256k1::ecdsa::RecoverableSignature::from_compact(
-        &signature_bytes[..64],
-        secp256k1::ecdsa::RecoveryId::try_from(signature_bytes[64] as i32)?,
-    )?;
-    // Recover public key
-    let public = secp256k1::SECP256K1.recover_ecdsa(
-        &secp256k1::Message::from_digest(payload.to_fixed_bytes()),
-        &signature,
-    )?;
-    // Hash public key to obtain address
-    let hash = ethrex_crypto::keccak::keccak_hash(&public.serialize_uncompressed()[1..]);
-    Ok(Address::from_slice(&hash[12..]))
-}
-
-#[cfg(any(
-    feature = "zisk",
-    feature = "risc0",
-    feature = "sp1",
-    not(feature = "secp256k1")
-))]
-pub fn recover_address(signature: Signature, payload: H256) -> Result<Address, k256::ecdsa::Error> {
-    use sha2::Digest;
-    use sha3::Keccak256;
-
-    // Create signature
-    let signature_bytes = signature.to_fixed_bytes();
-    // EIP-2: signatures must use "low-s" (s <= secp256k1n/2).
-    // Standard k256 rejects high-s signatures by default but it's best to leave this for 3 reasons:
-    // 1. Make it more explicit
-    // 2. Sometimes it can happen that the zkVM patch can have a different behavior than the original crate (shouldn't happen, but has happened). So we put this just in case.
-    // 3. Fail fast
-    if signature_has_high_s(&signature_bytes) {
-        return Err(k256::ecdsa::Error::from_source("High-s signature"));
-    }
-
-    let signature = k256::ecdsa::Signature::from_slice(&signature_bytes[..64])?;
-
-    let recovery_id_byte = signature_bytes[64];
-    let recovery_id = k256::ecdsa::RecoveryId::from_byte(recovery_id_byte).ok_or(
-        k256::ecdsa::Error::from_source("Failed to parse recovery id"),
-    )?;
-
-    // Recover public key
-    let public = k256::ecdsa::VerifyingKey::recover_from_prehash(
-        payload.as_bytes(),
-        &signature,
-        recovery_id,
-    )?;
-
-    let uncompressed = public.to_encoded_point(false);
-
-    let mut uncompressed = uncompressed.to_bytes();
-
-    let xy = &mut uncompressed[1..65];
-
-    let hash = Keccak256::digest(xy);
-
-    Ok(Address::from_slice(&hash[12..]))
-}
-
 fn derive_legacy_chain_id(v: U256) -> Option<u64> {
-    let v = v.as_u64(); //TODO: Could panic if v is bigger than Max u64
-    if v == 27 || v == 28 {
-        None
-    } else {
-        Some((v - 35) / 2)
-    }
+    let v = u64::try_from(v).ok()?;
+    // EIP-155 encodes the chain id as `v = chain_id * 2 + 35` (or 36), so any
+    // replay-protected `v` is >= 35. Pre-EIP-155 txs use v=27/28, and malformed
+    // signatures (e.g. v=0 from an unsigned IL transaction) are < 35 too; none
+    // carry a chain id. Guard the subtraction to avoid an underflow panic.
+    if v < 35 { None } else { Some((v - 35) / 2) }
 }
 
 impl TxType {
@@ -1613,6 +1597,25 @@ impl TxType {
             0x7d => Some(Self::FeeToken),
             0x7e => Some(Self::Privileged),
             _ => None,
+        }
+    }
+
+    /// Transaction types that only exist on the L2 rollup and must never appear in
+    /// an L1 block (`FeeToken` 0x7d, `Privileged` 0x7e). Privileged transactions in
+    /// particular take their sender from an unsigned, caller-chosen `from` field.
+    ///
+    /// This match is intentionally exhaustive (no wildcard arm): adding a new
+    /// `TxType` variant will not compile until it is explicitly classified here,
+    /// so an L2-only type can never be silently accepted on L1 by omission.
+    pub fn is_l2_only(self) -> bool {
+        match self {
+            Self::Legacy
+            | Self::EIP2930
+            | Self::EIP1559
+            | Self::EIP4844
+            | Self::EIP7702
+            | Self::Frame => false,
+            Self::FeeToken | Self::Privileged => true,
         }
     }
 }
@@ -1714,10 +1717,9 @@ impl From<FrameMode> for u8 {
 
 /// EIP-8141 Frame: a single execution step within a frame transaction.
 ///
-/// The `mode` field is a u32 where:
-/// - Bits 0-7: execution mode (0=DEFAULT, 1=VERIFY, 2=SENDER; 3-255 reserved)
-/// - Bits 8-9: APPROVE scope restriction
-/// - Bit 10: atomic batch flag (only valid with SENDER mode)
+/// `mode` is the execution mode (0=DEFAULT, 1=VERIFY, 2=SENDER; 3-255 reserved).
+/// `flags` bits: 0-1 = APPROVE scope restriction, 2 = atomic batch flag
+/// (valid with any mode per spec commit 8b61fdc4), 3-7 reserved (must be zero).
 #[derive(Clone, Debug, PartialEq, Eq, Default, RSerialize, RDeserialize, Archive)]
 pub struct Frame {
     pub mode: u8,
@@ -1748,6 +1750,13 @@ impl Frame {
     /// Check if the atomic batch flag (bit 2 of `flags`) is set.
     pub fn is_atomic_batch(&self) -> bool {
         (self.flags >> 2) & 1 == 1
+    }
+
+    /// An expiry verifier frame is a VERIFY frame targeting EXPIRY_VERIFIER
+    /// (EIP-8141, spec commit 0b197156).
+    pub fn is_expiry_verifier(&self) -> bool {
+        self.execution_mode() == FrameMode::Verify
+            && self.target == Some(frame_tx_expiry_verifier())
     }
 }
 
@@ -1798,6 +1807,51 @@ impl RLPDecode for Frame {
     }
 }
 
+/// EIP-8141 transaction signature (spec commit fe0940cae2). RLP: `[scheme, signer, msg, signature]`.
+/// `scheme`: 0 = SECP256K1 (sig = v||r||s, 65 bytes), 1 = P256 (sig = r||s||qx||qy, 128 bytes).
+/// `msg`: empty = signs compute_sig_hash(tx); 32 bytes = signs that explicit digest.
+/// Raw `signature` bytes are intentionally not EVM-introspectable.
+#[derive(Clone, Debug, PartialEq, Eq, Default, RSerialize, RDeserialize, Archive)]
+pub struct FrameSignature {
+    pub scheme: u8,
+    #[rkyv(with=crate::rkyv_utils::H160Wrapper)]
+    pub signer: Address,
+    #[rkyv(with=crate::rkyv_utils::BytesWrapper)]
+    pub msg: Bytes,
+    #[rkyv(with=crate::rkyv_utils::BytesWrapper)]
+    pub signature: Bytes,
+}
+
+impl RLPEncode for FrameSignature {
+    fn encode(&self, buf: &mut dyn bytes::BufMut) {
+        Encoder::new(buf)
+            .encode_field(&self.scheme)
+            .encode_field(&self.signer)
+            .encode_field(&self.msg)
+            .encode_field(&self.signature)
+            .finish();
+    }
+}
+
+impl RLPDecode for FrameSignature {
+    fn decode_unfinished(rlp: &[u8]) -> Result<(FrameSignature, &[u8]), RLPDecodeError> {
+        let decoder = Decoder::new(rlp)?;
+        let (scheme, decoder) = decoder.decode_field("scheme")?;
+        let (signer, decoder) = decoder.decode_field("signer")?;
+        let (msg, decoder) = decoder.decode_field("msg")?;
+        let (signature, decoder) = decoder.decode_field("signature")?;
+        Ok((
+            FrameSignature {
+                scheme,
+                signer,
+                msg,
+                signature,
+            },
+            decoder.finish()?,
+        ))
+    }
+}
+
 /// EIP-8141 Frame Transaction
 /// A transaction whose validity and gas payment are defined abstractly via frames.
 /// No ECDSA signature — sender is explicit. Authentication happens via APPROVE opcode.
@@ -1808,6 +1862,9 @@ pub struct FrameTransaction {
     #[rkyv(with=crate::rkyv_utils::H160Wrapper)]
     pub sender: Address,
     pub frames: Vec<Frame>,
+    /// EIP-8141 outer signature list (spec commit fe0940cae2). Validated
+    /// before any frame executes; referenced by VERIFY frames and SIGPARAM.
+    pub signatures: Vec<FrameSignature>,
     pub max_priority_fee_per_gas: u64,
     pub max_fee_per_gas: u64,
     #[rkyv(with=crate::rkyv_utils::U256Wrapper)]
@@ -1828,6 +1885,25 @@ pub const FRAME_TX_PER_FRAME_COST: u64 = 475;
 pub const FRAME_TX_ENTRY_POINT_U64: u64 = 0xaa;
 /// Maximum number of frames allowed per EIP-8141 frame transaction.
 pub const FRAME_TX_MAX_FRAMES: usize = 64;
+/// EIP-8141 signature schemes (spec commit fe0940cae2).
+pub const FRAME_SIG_SCHEME_SECP256K1: u8 = 0;
+pub const FRAME_SIG_SCHEME_P256: u8 = 1;
+/// EIP-8141 §Mempool `MAX_VERIFY_GAS` (spec commit fe0940cae2): the maximum gas
+/// a public-mempool node should expend validating signatures and simulating the
+/// validation prefix. Signature validation counts against this budget (rule #6),
+/// so a frame tx whose `signature_verification_cost()` alone exceeds it can never
+/// satisfy the prefix budget and must be rejected at admission.
+pub const FRAME_TX_MAX_VERIFY_GAS: u64 = 100_000;
+/// EIP-8141 APPROVE scope-restriction values (bits 0-1 of `Frame.flags`).
+/// Used by VERIFY and PAY frames to declare which capabilities they grant.
+pub const APPROVE_PAYMENT: u8 = 0x1;
+pub const APPROVE_EXECUTION: u8 = 0x2;
+pub const APPROVE_EXECUTION_AND_PAYMENT: u8 = 0x3;
+/// Maximum number of pending frame txs using a non-canonical paymaster per
+/// paymaster address. Per OQ1, all paymasters are currently non-canonical
+/// (FRAME_CANONICAL_PAYMASTER_CODE_HASH is unresolved in the draft EIP), so
+/// this de-facto limits sponsored frame txs to 1 per paymaster in the pool.
+pub const FRAME_TX_MAX_PENDING_NONCANONICAL_PAYMASTER: u8 = 1;
 
 /// Returns the ENTRY_POINT `Address` (0x…00aa) used as caller for
 /// DEFAULT/VERIFY frames per EIP-8141.
@@ -1835,38 +1911,47 @@ pub fn frame_tx_entry_point() -> Address {
     Address::from_low_u64_be(FRAME_TX_ENTRY_POINT_U64)
 }
 
+/// EXPIRY_VERIFIER predeploy address (EIP-8141, spec commit 0b197156).
+pub const FRAME_TX_EXPIRY_VERIFIER_U64: u64 = 0x8141;
+/// Required `data` length for an expiry verifier frame (8-byte BE deadline).
+pub const FRAME_TX_EXPIRY_DATA_LENGTH: usize = 8;
+
+/// Returns the EXPIRY_VERIFIER `Address` (0x…8141) per EIP-8141.
+pub fn frame_tx_expiry_verifier() -> Address {
+    Address::from_low_u64_be(FRAME_TX_EXPIRY_VERIFIER_U64)
+}
+
 impl FrameTransaction {
-    /// Compute the signature hash per EIP-8141:
-    /// VERIFY frame data is elided before hashing.
-    /// The full mode value (including bit flags) is preserved.
+    /// Canonical signature hash (EIP-8141, spec commit fe0940cae2): the raw
+    /// `signature` bytes of every signature with empty `msg` are elided (a
+    /// signature over this hash cannot commit to its own bytes). Frame data is
+    /// NO LONGER elided — it is fully covered. Signatures with an explicit
+    /// 32-byte `msg` keep their bytes (they sign that digest, not this hash).
     pub fn compute_sig_hash(&self) -> H256 {
         let mut buf = vec![TxType::Frame as u8];
-        // Build a copy with VERIFY frame data elided
-        let elided_frames: Vec<Frame> = self
-            .frames
+        let elided_signatures: Vec<FrameSignature> = self
+            .signatures
             .iter()
-            .map(|f| {
-                if f.execution_mode() == FrameMode::Verify {
-                    // Only `data` is elided; per spec line 770 everything else
-                    // on a VERIFY frame (including `value`) remains covered.
-                    Frame {
-                        mode: f.mode,
-                        flags: f.flags,
-                        target: f.target,
-                        gas_limit: f.gas_limit,
-                        value: f.value,
-                        data: Bytes::new(),
+            .map(|s| {
+                if s.msg.is_empty() {
+                    FrameSignature {
+                        scheme: s.scheme,
+                        signer: s.signer,
+                        msg: s.msg.clone(),
+                        signature: Bytes::new(),
                     }
                 } else {
-                    f.clone()
+                    s.clone()
                 }
             })
             .collect();
+        // RLP-encode the tx with elided signature bytes, frames verbatim.
         Encoder::new(&mut buf)
             .encode_field(&self.chain_id)
             .encode_field(&self.nonce)
             .encode_field(&self.sender)
-            .encode_field(&elided_frames)
+            .encode_field(&self.frames)
+            .encode_field(&elided_signatures)
             .encode_field(&self.max_priority_fee_per_gas)
             .encode_field(&self.max_fee_per_gas)
             .encode_field(&self.max_fee_per_blob_gas)
@@ -1875,19 +1960,53 @@ impl FrameTransaction {
         keccak(&buf)
     }
 
-    /// Compute total gas limit: intrinsic + calldata cost + sum of frame gas limits
+    /// Per EIP-8141 (spec commit fe0940cae2): 2800 gas per SECP256K1 signature,
+    /// 6700 per P256. Unknown schemes are rejected by static validation, so
+    /// they are treated as 0 here (validation runs first).
+    pub fn signature_verification_cost(&self) -> u64 {
+        self.signatures
+            .iter()
+            .map(|s| match s.scheme {
+                FRAME_SIG_SCHEME_SECP256K1 => 2800u64,
+                FRAME_SIG_SCHEME_P256 => 6700u64,
+                _ => 0,
+            })
+            .sum()
+    }
+
+    /// Compute total gas limit: intrinsic + calldata cost (frames + signatures)
+    /// + signature verification cost + sum of frame gas limits.
     pub fn total_gas_limit(&self) -> u64 {
         let mut calldata_gas: u64 = 0;
         // RLP-encode frames to compute calldata cost
         let mut frames_buf = Vec::new();
         self.frames.encode(&mut frames_buf);
         for byte in &frames_buf {
-            calldata_gas += if *byte == 0 { 4 } else { 16 };
+            calldata_gas = calldata_gas.saturating_add(if *byte == 0 { 4 } else { 16 });
+        }
+        // RLP-encode signatures to compute their calldata cost
+        let mut sigs_buf = Vec::new();
+        self.signatures.encode(&mut sigs_buf);
+        for byte in &sigs_buf {
+            calldata_gas = calldata_gas.saturating_add(if *byte == 0 { 4 } else { 16 });
         }
         FRAME_TX_INTRINSIC_COST
             .saturating_add((self.frames.len() as u64).saturating_mul(FRAME_TX_PER_FRAME_COST))
             .saturating_add(calldata_gas)
+            .saturating_add(self.signature_verification_cost())
             .saturating_add(self.frames.iter().map(|f| f.gas_limit).sum::<u64>())
+    }
+
+    /// The expiry deadline (8-byte big-endian) of this transaction's expiry
+    /// verifier frame, if one exists with well-formed data.
+    pub fn expiry_deadline(&self) -> Option<u64> {
+        self.frames
+            .iter()
+            .find(|f| f.is_expiry_verifier())
+            .and_then(|f| {
+                let bytes: [u8; FRAME_TX_EXPIRY_DATA_LENGTH] = f.data.as_ref().try_into().ok()?;
+                Some(u64::from_be_bytes(bytes))
+            })
     }
 
     /// Validate static constraints per EIP-8141 spec.
@@ -1902,9 +2021,32 @@ impl FrameTransaction {
                 "Frame count must be between 1 and {FRAME_TX_MAX_FRAMES}"
             ));
         }
+        // EIP-8141 signature list validation (spec commit fe0940cae2): scheme
+        // must be a known value; msg must be empty or a non-zero 32-byte digest.
+        for (i, sig) in self.signatures.iter().enumerate() {
+            if sig.scheme != FRAME_SIG_SCHEME_SECP256K1 && sig.scheme != FRAME_SIG_SCHEME_P256 {
+                return Err(format!("Signature {i}: unsupported scheme {}", sig.scheme));
+            }
+            match sig.msg.len() {
+                0 => {}
+                32 => {
+                    if sig.msg.iter().all(|&b| b == 0) {
+                        return Err(format!(
+                            "Signature {i}: explicit msg must not be zero digest"
+                        ));
+                    }
+                }
+                other => {
+                    return Err(format!(
+                        "Signature {i}: msg must be empty or 32 bytes, got {other}"
+                    ));
+                }
+            }
+        }
         // Tracked as u128 so the running addition itself cannot overflow; the
         // bound below rejects tx-level totals that don't fit in signed i64.
         let mut total_frame_gas: u128 = 0;
+        let mut expiry_frame_count: usize = 0;
         for (i, frame) in self.frames.iter().enumerate() {
             // Reject reserved execution modes (3-255)
             if frame.mode >= 3 {
@@ -1912,11 +2054,30 @@ impl FrameTransaction {
             }
             // Reserved flag bits 3-7 must be zero
             if frame.flags >= 8 {
-                return Err(format!("Frame {i}: reserved flag bits must be zero (flags={:#04x})", frame.flags));
+                return Err(format!(
+                    "Frame {i}: reserved flag bits must be zero (flags={:#04x})",
+                    frame.flags
+                ));
             }
-            // VERIFY frames must have non-zero scope in flags
-            if frame.mode == 1 && (frame.flags & 0x03) == 0 {
-                return Err(format!("Frame {i}: VERIFY frames must permit a non-zero APPROVE scope"));
+            // Expiry verifier frames (EIP-8141, spec commit 0b197156): VERIFY
+            // frames targeting EXPIRY_VERIFIER must have flags == 0, value == 0
+            // (already enforced by the non-SENDER value rule below), and exactly
+            // EXPIRY_DATA_LENGTH bytes of data; at most one per transaction.
+            if frame.is_expiry_verifier() {
+                expiry_frame_count = expiry_frame_count.saturating_add(1);
+                if expiry_frame_count > 1 {
+                    return Err(format!("Frame {i}: more than one expiry verifier frame"));
+                }
+                if frame.flags != 0 {
+                    return Err(format!(
+                        "Frame {i}: expiry verifier frame must have flags == 0"
+                    ));
+                }
+                if frame.data.len() != FRAME_TX_EXPIRY_DATA_LENGTH {
+                    return Err(format!(
+                        "Frame {i}: expiry verifier frame data must be {FRAME_TX_EXPIRY_DATA_LENGTH} bytes"
+                    ));
+                }
             }
             // Per EIP-8141 spec line 140, only SENDER frames may carry a
             // non-zero value. DEFAULT and VERIFY frames with a non-zero
@@ -1942,29 +2103,273 @@ impl FrameTransaction {
                     total_frame_gas
                 ));
             }
-            // Atomic batch flag (bit 2 of flags) is only valid with SENDER mode
-            if frame.is_atomic_batch() {
-                if frame.mode != 2 {
-                    return Err(format!(
-                        "Frame {i}: atomic batch flag only valid with SENDER mode"
-                    ));
-                }
-                // Must not be last frame
-                if i + 1 >= self.frames.len() {
-                    return Err(format!(
-                        "Frame {i}: atomic batch flag on last frame"
-                    ));
-                }
-                // Next frame must also be SENDER
-                if self.frames[i + 1].mode != 2 {
-                    return Err(format!(
-                        "Frame {i}: atomic batch requires next frame to be SENDER"
-                    ));
-                }
+            // Atomic batch flag (bit 2 of flags) requires a subsequent frame
+            // to batch with. Valid with any mode per EIP-8141 (spec commit
+            // 8b61fdc4, "Support atomic batching with any frames").
+            if frame.is_atomic_batch() && i + 1 >= self.frames.len() {
+                return Err(format!("Frame {i}: atomic batch flag on last frame"));
             }
         }
         Ok(())
     }
+
+    /// Identify and return the validation prefix of this frame transaction.
+    ///
+    /// The validation prefix is the minimal leading subsequence of frames (ignoring
+    /// expiry-verifier frames) that establishes who pays for the transaction.
+    /// Four shapes are recognized (per EIP-8141 §Mempool):
+    ///
+    /// - `SelfVerify`: one VERIFY frame targeting `tx.sender` with scope `APPROVE_EXECUTION_AND_PAYMENT`.
+    /// - `DeploySelfVerify`: one DEFAULT frame (deploy) then one VERIFY frame as above.
+    /// - `OnlyVerifyPay`: one VERIFY frame (only_verify, scope `APPROVE_EXECUTION`) +
+    ///   one VERIFY frame (pay, scope `APPROVE_PAYMENT`).
+    /// - `DeployOnlyVerifyPay`: DEFAULT deploy frame + OnlyVerifyPay pair.
+    ///
+    /// Expiry-verifier frames (see `Frame::is_expiry_verifier`) are transparent; they
+    /// are skipped during shape matching but their indices are NOT included in
+    /// `frame_indices` (which holds only the semantically meaningful prefix frames).
+    pub fn validation_prefix(&self) -> Result<ValidationPrefix, FrameValidationError> {
+        // Collect non-expiry frame indices in order.
+        let non_expiry: Vec<usize> = self
+            .frames
+            .iter()
+            .enumerate()
+            .filter(|(_, f)| !f.is_expiry_verifier())
+            .map(|(i, _)| i)
+            .collect();
+
+        // Helper to get a frame by its position in non_expiry.
+        let frame = |pos: usize| -> Option<&Frame> {
+            non_expiry.get(pos).and_then(|&idx| self.frames.get(idx))
+        };
+
+        let is_default = |pos: usize| -> bool {
+            frame(pos).is_some_and(|f| f.execution_mode() == FrameMode::Default)
+        };
+        let is_verify = |pos: usize| -> bool {
+            frame(pos).is_some_and(|f| f.execution_mode() == FrameMode::Verify)
+        };
+        let scope_of = |pos: usize| -> u8 { frame(pos).map_or(0, |f| f.scope_restriction()) };
+
+        if non_expiry.is_empty() {
+            return Err(FrameValidationError::UnrecognizedPrefix);
+        }
+
+        // Attempt to match each of the four shapes.
+        //
+        // Shape: DeployOnlyVerifyPay — DEFAULT + VERIFY(exec) + VERIFY(pay)
+        if is_default(0)
+            && is_verify(1)
+            && scope_of(1) == APPROVE_EXECUTION
+            && is_verify(2)
+            && scope_of(2) == APPROVE_PAYMENT
+        {
+            return Ok(ValidationPrefix {
+                shape: PrefixShape::DeployOnlyVerifyPay,
+                frame_indices: vec![non_expiry[0], non_expiry[1], non_expiry[2]],
+                deploy_index: Some(non_expiry[0]),
+                pay_index: Some(non_expiry[2]),
+            });
+        }
+
+        // Shape: DeploySelfVerify — DEFAULT + VERIFY(exec+pay)
+        if is_default(0) && is_verify(1) && scope_of(1) == APPROVE_EXECUTION_AND_PAYMENT {
+            return Ok(ValidationPrefix {
+                shape: PrefixShape::DeploySelfVerify,
+                frame_indices: vec![non_expiry[0], non_expiry[1]],
+                deploy_index: Some(non_expiry[0]),
+                pay_index: Some(non_expiry[1]),
+            });
+        }
+
+        // Shape: OnlyVerifyPay — VERIFY(exec) + VERIFY(pay)
+        if is_verify(0)
+            && scope_of(0) == APPROVE_EXECUTION
+            && is_verify(1)
+            && scope_of(1) == APPROVE_PAYMENT
+        {
+            return Ok(ValidationPrefix {
+                shape: PrefixShape::OnlyVerifyPay,
+                frame_indices: vec![non_expiry[0], non_expiry[1]],
+                deploy_index: None,
+                pay_index: Some(non_expiry[1]),
+            });
+        }
+
+        // Shape: SelfVerify — VERIFY(exec+pay)
+        if is_verify(0) && scope_of(0) == APPROVE_EXECUTION_AND_PAYMENT {
+            return Ok(ValidationPrefix {
+                shape: PrefixShape::SelfVerify,
+                frame_indices: vec![non_expiry[0]],
+                deploy_index: None,
+                pay_index: Some(non_expiry[0]),
+            });
+        }
+
+        Err(FrameValidationError::UnrecognizedPrefix)
+    }
+
+    /// Validate structural rules for the identified validation prefix.
+    ///
+    /// Checks:
+    /// - Deploy frame (if any) is at index 0 and uses DEFAULT execution mode.
+    /// - At most one deploy frame exists in the prefix.
+    /// - self_verify / only_verify / pay frames use VERIFY execution mode.
+    /// - Resolved target of each VERIFY frame matches `tx.sender` (target == None
+    ///   means sender; a non-None target must equal sender).
+    /// - Scope restriction matches the frame's role:
+    ///   self_verify → `APPROVE_EXECUTION_AND_PAYMENT`, only_verify → `APPROVE_EXECUTION`,
+    ///   pay → `APPROVE_PAYMENT`.
+    /// - No frame in the prefix has the atomic-batch flag set.
+    /// - Total gas budget: Σ(prefix frame gas_limits) + signature_verification_cost() ≤ MAX_VERIFY_GAS.
+    pub fn validate_prefix_structure(
+        &self,
+        prefix: &ValidationPrefix,
+    ) -> Result<(), FrameValidationError> {
+        let mut deploy_count = 0usize;
+
+        for &idx in &prefix.frame_indices {
+            let frame = &self.frames[idx];
+
+            if frame.is_atomic_batch() {
+                return Err(FrameValidationError::AtomicBatchInPrefix { frame_index: idx });
+            }
+
+            match prefix.deploy_index {
+                Some(deploy_idx) if deploy_idx == idx => {
+                    // This is the deploy frame.
+                    deploy_count += 1;
+                    if deploy_count > 1 {
+                        return Err(FrameValidationError::MultipleDeploys { frame_index: idx });
+                    }
+                    // The deploy must be first among prefix frames. `validation_prefix`
+                    // structurally guarantees this, but the raw frame index can be
+                    // non-zero when expiry-verifier frames precede the deploy — check
+                    // against the first element of `frame_indices`, not the raw index.
+                    if prefix.frame_indices.first() != Some(&idx) {
+                        return Err(FrameValidationError::DeployNotFirst { frame_index: idx });
+                    }
+                    if frame.execution_mode() != FrameMode::Default {
+                        return Err(FrameValidationError::DeployNotDefaultMode {
+                            frame_index: idx,
+                        });
+                    }
+                }
+                _ => {
+                    // VERIFY frame (self_verify, only_verify, or pay).
+                    if frame.execution_mode() != FrameMode::Verify {
+                        return Err(FrameValidationError::VerifyFrameNotVerifyMode {
+                            frame_index: idx,
+                        });
+                    }
+
+                    // Resolved target must be tx.sender (None means sender).
+                    let target_ok = match frame.target {
+                        None => true,
+                        Some(addr) => addr == self.sender,
+                    };
+                    if !target_ok {
+                        return Err(FrameValidationError::VerifyTargetNotSender {
+                            frame_index: idx,
+                        });
+                    }
+
+                    // Scope restriction must match role.
+                    let expected_scope = match prefix.shape {
+                        PrefixShape::SelfVerify | PrefixShape::DeploySelfVerify => {
+                            APPROVE_EXECUTION_AND_PAYMENT
+                        }
+                        PrefixShape::OnlyVerifyPay | PrefixShape::DeployOnlyVerifyPay => {
+                            // The only_verify frame comes before the pay frame.
+                            if prefix.pay_index == Some(idx) {
+                                APPROVE_PAYMENT
+                            } else {
+                                APPROVE_EXECUTION
+                            }
+                        }
+                    };
+                    if frame.scope_restriction() != expected_scope {
+                        return Err(FrameValidationError::WrongScopeRestriction {
+                            frame_index: idx,
+                            expected: expected_scope,
+                            actual: frame.scope_restriction(),
+                        });
+                    }
+                }
+            }
+        }
+
+        // Gas budget: prefix frame gas limits + signature cost ≤ MAX_VERIFY_GAS.
+        let prefix_gas: u64 = prefix
+            .frame_indices
+            .iter()
+            .map(|&i| self.frames[i].gas_limit)
+            .fold(0u64, |acc, g| acc.saturating_add(g));
+        let total_verify_gas = prefix_gas.saturating_add(self.signature_verification_cost());
+        if total_verify_gas > FRAME_TX_MAX_VERIFY_GAS {
+            return Err(FrameValidationError::VerifyGasBudgetExceeded {
+                actual: total_verify_gas,
+                limit: FRAME_TX_MAX_VERIFY_GAS,
+            });
+        }
+
+        Ok(())
+    }
+}
+
+/// The four recognized shapes of an EIP-8141 validation prefix (§Mempool).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum PrefixShape {
+    /// Single VERIFY frame: sender verifies + authorizes payment for itself.
+    SelfVerify,
+    /// DEFAULT (deploy) frame, then VERIFY frame that verifies + authorizes payment.
+    DeploySelfVerify,
+    /// VERIFY(exec) + VERIFY(pay): separate verifier and paymaster.
+    OnlyVerifyPay,
+    /// DEFAULT (deploy) + VERIFY(exec) + VERIFY(pay).
+    DeployOnlyVerifyPay,
+}
+
+/// Identified validation prefix of an EIP-8141 frame transaction.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ValidationPrefix {
+    /// Recognized shape of this prefix.
+    pub shape: PrefixShape,
+    /// Frame indices (into `FrameTransaction.frames`) that form the prefix,
+    /// in order. Does not include expiry-verifier frames.
+    pub frame_indices: Vec<usize>,
+    /// Index of the deploy frame within `frames`, if this shape has one.
+    pub deploy_index: Option<usize>,
+    /// Index of the pay (or self_verify) frame within `frames`.
+    pub pay_index: Option<usize>,
+}
+
+/// Errors produced by `FrameTransaction::validation_prefix` and
+/// `FrameTransaction::validate_prefix_structure`.
+#[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
+pub enum FrameValidationError {
+    #[error("frame transaction validation prefix does not match any recognized shape")]
+    UnrecognizedPrefix,
+    #[error("frame {frame_index}: prefix has more than one DEFAULT deploy frame")]
+    MultipleDeploys { frame_index: usize },
+    #[error("frame {frame_index}: deploy frame must be at index 0")]
+    DeployNotFirst { frame_index: usize },
+    #[error("frame {frame_index}: deploy frame must use DEFAULT execution mode")]
+    DeployNotDefaultMode { frame_index: usize },
+    #[error("frame {frame_index}: prefix VERIFY frame does not use VERIFY execution mode")]
+    VerifyFrameNotVerifyMode { frame_index: usize },
+    #[error("frame {frame_index}: VERIFY frame target is not tx.sender")]
+    VerifyTargetNotSender { frame_index: usize },
+    #[error("frame {frame_index}: scope restriction is {actual:#04x}, expected {expected:#04x}")]
+    WrongScopeRestriction {
+        frame_index: usize,
+        expected: u8,
+        actual: u8,
+    },
+    #[error("frame {frame_index}: prefix frame has atomic-batch flag set")]
+    AtomicBatchInPrefix { frame_index: usize },
+    #[error("prefix gas budget exceeded: {actual} > {limit} (MAX_VERIFY_GAS)")]
+    VerifyGasBudgetExceeded { actual: u64, limit: u64 },
 }
 
 impl RLPEncode for FrameTransaction {
@@ -1974,6 +2379,7 @@ impl RLPEncode for FrameTransaction {
             .encode_field(&self.nonce)
             .encode_field(&self.sender)
             .encode_field(&self.frames)
+            .encode_field(&self.signatures)
             .encode_field(&self.max_priority_fee_per_gas)
             .encode_field(&self.max_fee_per_gas)
             .encode_field(&self.max_fee_per_blob_gas)
@@ -1989,6 +2395,7 @@ impl RLPDecode for FrameTransaction {
         let (nonce, decoder) = decoder.decode_field("nonce")?;
         let (sender, decoder) = decoder.decode_field("sender")?;
         let (frames, decoder) = decoder.decode_field("frames")?;
+        let (signatures, decoder) = decoder.decode_field("signatures")?;
         let (max_priority_fee_per_gas, decoder) =
             decoder.decode_field("max_priority_fee_per_gas")?;
         let (max_fee_per_gas, decoder) = decoder.decode_field("max_fee_per_gas")?;
@@ -1999,6 +2406,7 @@ impl RLPDecode for FrameTransaction {
             nonce,
             sender,
             frames,
+            signatures,
             max_priority_fee_per_gas,
             max_fee_per_gas,
             max_fee_per_blob_gas,
@@ -2117,6 +2525,28 @@ mod canonic_encoding {
             self.encode_canonical(&mut buf);
             buf
         }
+
+        /// Canonical-encoded length without allocating a buffer. Counts the
+        /// 1-byte type prefix for typed txs (EIP-2718) plus the inner RLP
+        /// payload length. Use this when only the size is needed (e.g.
+        /// admission-time size caps) to avoid `encode_canonical_to_vec().len()`.
+        pub fn encode_canonical_len(&self) -> usize {
+            let prefix_len = match self {
+                Transaction::LegacyTransaction(_) => 0,
+                _ => 1,
+            };
+            let inner_len = match self {
+                Transaction::LegacyTransaction(t) => t.length(),
+                Transaction::EIP2930Transaction(t) => t.length(),
+                Transaction::EIP1559Transaction(t) => t.length(),
+                Transaction::EIP4844Transaction(t) => t.length(),
+                Transaction::EIP7702Transaction(t) => t.length(),
+                Transaction::FeeTokenTransaction(t) => t.length(),
+                Transaction::PrivilegedL2Transaction(t) => t.length(),
+                Transaction::FrameTransaction(t) => t.length(),
+            };
+            prefix_len + inner_len
+        }
     }
 
     impl P2PTransaction {
@@ -2128,6 +2558,7 @@ mod canonic_encoding {
                 P2PTransaction::EIP4844TransactionWithBlobs(_) => TxType::EIP4844,
                 P2PTransaction::EIP7702Transaction(_) => TxType::EIP7702,
                 P2PTransaction::FeeTokenTransaction(_) => TxType::FeeToken,
+                P2PTransaction::FrameTransaction(_) => TxType::Frame,
             }
         }
 
@@ -2144,6 +2575,7 @@ mod canonic_encoding {
                 P2PTransaction::EIP4844TransactionWithBlobs(t) => t.encode(buf),
                 P2PTransaction::EIP7702Transaction(t) => t.encode(buf),
                 P2PTransaction::FeeTokenTransaction(t) => t.encode(buf),
+                P2PTransaction::FrameTransaction(t) => t.encode(buf),
             };
         }
 
@@ -2172,6 +2604,9 @@ mod canonic_encoding {
                 }
                 P2PTransaction::FeeTokenTransaction(t) => {
                     Transaction::FeeTokenTransaction(t.clone()).compute_hash()
+                }
+                P2PTransaction::FrameTransaction(t) => {
+                    Transaction::FrameTransaction(t.clone()).compute_hash()
                 }
             }
         }
@@ -2319,6 +2754,30 @@ mod serde_impl {
         pub value: U256,
         #[serde(with = "crate::serde_utils::bytes")]
         pub data: Bytes,
+    }
+
+    /// JSON shape of an EIP-8141 outer signature (spec commit fe0940cae2).
+    #[derive(Serialize, Deserialize, Debug, PartialEq, Clone)]
+    #[serde(rename_all = "camelCase")]
+    pub struct SignatureEntry {
+        #[serde(with = "crate::serde_utils::u64::hex_str")]
+        pub scheme: u64,
+        pub signer: Address,
+        #[serde(with = "crate::serde_utils::bytes")]
+        pub msg: Bytes,
+        #[serde(with = "crate::serde_utils::bytes")]
+        pub signature: Bytes,
+    }
+
+    impl From<&FrameSignature> for SignatureEntry {
+        fn from(value: &FrameSignature) -> SignatureEntry {
+            SignatureEntry {
+                scheme: value.scheme as u64,
+                signer: value.signer,
+                msg: value.msg.clone(),
+                signature: value.signature.clone(),
+            }
+        }
     }
 
     fn serialize_u256_hex<S: serde::Serializer>(value: &U256, s: S) -> Result<S::Ok, S::Error> {
@@ -2617,17 +3076,21 @@ mod serde_impl {
         where
             S: serde::Serializer,
         {
-            let mut s = serializer.serialize_struct("FrameTransaction", 9)?;
+            let mut s = serializer.serialize_struct("FrameTransaction", 10)?;
             s.serialize_field("type", &TxType::Frame)?;
             s.serialize_field("chainId", &format!("{:#x}", self.chain_id))?;
             s.serialize_field("nonce", &format!("{:#x}", self.nonce))?;
             s.serialize_field("sender", &format!("{:#x}", self.sender))?;
             s.serialize_field(
                 "frames",
+                &self.frames.iter().map(FrameEntry::from).collect::<Vec<_>>(),
+            )?;
+            s.serialize_field(
+                "signatures",
                 &self
-                    .frames
+                    .signatures
                     .iter()
-                    .map(FrameEntry::from)
+                    .map(SignatureEntry::from)
                     .collect::<Vec<_>>(),
             )?;
             s.serialize_field(
@@ -2751,6 +3214,17 @@ mod serde_impl {
             })
     }
 
+    fn deserialize_u64_field<'de, D>(
+        map: &mut HashMap<String, serde_json::Value>,
+        key: &str,
+    ) -> Result<u64, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let value = deserialize_field::<U256, D>(map, key)?;
+        u64::try_from(value).map_err(|_| D::Error::custom(format!("{key} value overflows u64")))
+    }
+
     impl<'de> Deserialize<'de> for LegacyTransaction {
         fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
         where
@@ -2759,9 +3233,9 @@ mod serde_impl {
             let mut map = <HashMap<String, serde_json::Value>>::deserialize(deserializer)?;
 
             Ok(LegacyTransaction {
-                nonce: deserialize_field::<U256, D>(&mut map, "nonce")?.as_u64(),
+                nonce: deserialize_u64_field::<D>(&mut map, "nonce")?,
                 gas_price: deserialize_field::<U256, D>(&mut map, "gasPrice")?,
-                gas: deserialize_field::<U256, D>(&mut map, "gas")?.as_u64(),
+                gas: deserialize_u64_field::<D>(&mut map, "gas")?,
                 to: deserialize_field::<TxKind, D>(&mut map, "to")?,
                 value: deserialize_field::<U256, D>(&mut map, "value")?,
                 data: deserialize_input_field(&mut map).map_err(serde::de::Error::custom)?,
@@ -2781,10 +3255,10 @@ mod serde_impl {
             let mut map = <HashMap<String, serde_json::Value>>::deserialize(deserializer)?;
 
             Ok(EIP2930Transaction {
-                chain_id: deserialize_field::<U256, D>(&mut map, "chainId")?.as_u64(),
-                nonce: deserialize_field::<U256, D>(&mut map, "nonce")?.as_u64(),
+                chain_id: deserialize_u64_field::<D>(&mut map, "chainId")?,
+                nonce: deserialize_u64_field::<D>(&mut map, "nonce")?,
                 gas_price: deserialize_field::<U256, D>(&mut map, "gasPrice")?,
-                gas_limit: deserialize_field::<U256, D>(&mut map, "gas")?.as_u64(),
+                gas_limit: deserialize_u64_field::<D>(&mut map, "gas")?,
                 to: deserialize_field::<TxKind, D>(&mut map, "to")?,
                 value: deserialize_field::<U256, D>(&mut map, "value")?,
                 data: deserialize_input_field(&mut map).map_err(serde::de::Error::custom)?,
@@ -2812,15 +3286,14 @@ mod serde_impl {
         {
             let mut map = <HashMap<String, serde_json::Value>>::deserialize(deserializer)?;
             Ok(EIP1559Transaction {
-                chain_id: deserialize_field::<U256, D>(&mut map, "chainId")?.as_u64(),
-                nonce: deserialize_field::<U256, D>(&mut map, "nonce")?.as_u64(),
-                max_priority_fee_per_gas: deserialize_field::<U256, D>(
+                chain_id: deserialize_u64_field::<D>(&mut map, "chainId")?,
+                nonce: deserialize_u64_field::<D>(&mut map, "nonce")?,
+                max_priority_fee_per_gas: deserialize_u64_field::<D>(
                     &mut map,
                     "maxPriorityFeePerGas",
-                )?
-                .as_u64(),
-                max_fee_per_gas: deserialize_field::<U256, D>(&mut map, "maxFeePerGas")?.as_u64(),
-                gas_limit: deserialize_field::<U256, D>(&mut map, "gas")?.as_u64(),
+                )?,
+                max_fee_per_gas: deserialize_u64_field::<D>(&mut map, "maxFeePerGas")?,
+                gas_limit: deserialize_u64_field::<D>(&mut map, "gas")?,
                 to: deserialize_field::<TxKind, D>(&mut map, "to")?,
                 value: deserialize_field::<U256, D>(&mut map, "value")?,
                 data: deserialize_input_field(&mut map).map_err(serde::de::Error::custom)?,
@@ -2849,15 +3322,14 @@ mod serde_impl {
             let mut map = <HashMap<String, serde_json::Value>>::deserialize(deserializer)?;
 
             Ok(EIP4844Transaction {
-                chain_id: deserialize_field::<U256, D>(&mut map, "chainId")?.as_u64(),
-                nonce: deserialize_field::<U256, D>(&mut map, "nonce")?.as_u64(),
-                max_priority_fee_per_gas: deserialize_field::<U256, D>(
+                chain_id: deserialize_u64_field::<D>(&mut map, "chainId")?,
+                nonce: deserialize_u64_field::<D>(&mut map, "nonce")?,
+                max_priority_fee_per_gas: deserialize_u64_field::<D>(
                     &mut map,
                     "maxPriorityFeePerGas",
-                )?
-                .as_u64(),
-                max_fee_per_gas: deserialize_field::<U256, D>(&mut map, "maxFeePerGas")?.as_u64(),
-                gas: deserialize_field::<U256, D>(&mut map, "gas")?.as_u64(),
+                )?,
+                max_fee_per_gas: deserialize_u64_field::<D>(&mut map, "maxFeePerGas")?,
+                gas: deserialize_u64_field::<D>(&mut map, "gas")?,
                 to: deserialize_field::<Address, D>(&mut map, "to")?,
                 value: deserialize_field::<U256, D>(&mut map, "value")?,
                 data: deserialize_input_field(&mut map).map_err(serde::de::Error::custom)?,
@@ -2891,15 +3363,14 @@ mod serde_impl {
             let mut map = <HashMap<String, serde_json::Value>>::deserialize(deserializer)?;
 
             Ok(EIP7702Transaction {
-                chain_id: deserialize_field::<U256, D>(&mut map, "chainId")?.as_u64(),
-                nonce: deserialize_field::<U256, D>(&mut map, "nonce")?.as_u64(),
-                max_priority_fee_per_gas: deserialize_field::<U256, D>(
+                chain_id: deserialize_u64_field::<D>(&mut map, "chainId")?,
+                nonce: deserialize_u64_field::<D>(&mut map, "nonce")?,
+                max_priority_fee_per_gas: deserialize_u64_field::<D>(
                     &mut map,
                     "maxPriorityFeePerGas",
-                )?
-                .as_u64(),
-                max_fee_per_gas: deserialize_field::<U256, D>(&mut map, "maxFeePerGas")?.as_u64(),
-                gas_limit: deserialize_field::<U256, D>(&mut map, "gas")?.as_u64(),
+                )?,
+                max_fee_per_gas: deserialize_u64_field::<D>(&mut map, "maxFeePerGas")?,
+                gas_limit: deserialize_u64_field::<D>(&mut map, "gas")?,
                 to: deserialize_field::<Address, D>(&mut map, "to")?,
                 value: deserialize_field::<U256, D>(&mut map, "value")?,
                 data: deserialize_input_field(&mut map).map_err(serde::de::Error::custom)?,
@@ -2935,15 +3406,14 @@ mod serde_impl {
             let mut map = <HashMap<String, serde_json::Value>>::deserialize(deserializer)?;
 
             Ok(PrivilegedL2Transaction {
-                chain_id: deserialize_field::<U256, D>(&mut map, "chainId")?.as_u64(),
-                nonce: deserialize_field::<U256, D>(&mut map, "nonce")?.as_u64(),
-                max_priority_fee_per_gas: deserialize_field::<U256, D>(
+                chain_id: deserialize_u64_field::<D>(&mut map, "chainId")?,
+                nonce: deserialize_u64_field::<D>(&mut map, "nonce")?,
+                max_priority_fee_per_gas: deserialize_u64_field::<D>(
                     &mut map,
                     "maxPriorityFeePerGas",
-                )?
-                .as_u64(),
-                max_fee_per_gas: deserialize_field::<U256, D>(&mut map, "maxFeePerGas")?.as_u64(),
-                gas_limit: deserialize_field::<U256, D>(&mut map, "gas")?.as_u64(),
+                )?,
+                max_fee_per_gas: deserialize_u64_field::<D>(&mut map, "maxFeePerGas")?,
+                gas_limit: deserialize_u64_field::<D>(&mut map, "gas")?,
                 to: deserialize_field::<TxKind, D>(&mut map, "to")?,
                 value: deserialize_field::<U256, D>(&mut map, "value")?,
                 data: deserialize_input_field(&mut map).map_err(serde::de::Error::custom)?,
@@ -2965,15 +3435,14 @@ mod serde_impl {
             let mut map = <HashMap<String, serde_json::Value>>::deserialize(deserializer)?;
 
             Ok(FeeTokenTransaction {
-                chain_id: deserialize_field::<U256, D>(&mut map, "chainId")?.as_u64(),
-                nonce: deserialize_field::<U256, D>(&mut map, "nonce")?.as_u64(),
-                max_priority_fee_per_gas: deserialize_field::<U256, D>(
+                chain_id: deserialize_u64_field::<D>(&mut map, "chainId")?,
+                nonce: deserialize_u64_field::<D>(&mut map, "nonce")?,
+                max_priority_fee_per_gas: deserialize_u64_field::<D>(
                     &mut map,
                     "maxPriorityFeePerGas",
-                )?
-                .as_u64(),
-                max_fee_per_gas: deserialize_field::<U256, D>(&mut map, "maxFeePerGas")?.as_u64(),
-                gas_limit: deserialize_field::<U256, D>(&mut map, "gas")?.as_u64(),
+                )?,
+                max_fee_per_gas: deserialize_u64_field::<D>(&mut map, "maxFeePerGas")?,
+                gas_limit: deserialize_u64_field::<D>(&mut map, "gas")?,
                 to: deserialize_field::<TxKind, D>(&mut map, "to")?,
                 value: deserialize_field::<U256, D>(&mut map, "value")?,
                 data: deserialize_input_field(&mut map).map_err(serde::de::Error::custom)?,
@@ -3003,6 +3472,8 @@ mod serde_impl {
         BlobBundleError(#[from] BlobsBundleError),
         #[error("Missing field: {0}")]
         MissingField(String),
+        #[error("Invalid field: {0}")]
+        InvalidField(String),
     }
 
     /// Unsigned Transaction struct generic to all types which may not contain all required transaction fields
@@ -3021,8 +3492,8 @@ mod serde_impl {
         pub gas: Option<u64>,
         #[serde(default)]
         pub value: U256,
-        #[serde(default, with = "crate::serde_utils::u64::hex_str")]
-        pub gas_price: u64,
+        #[serde(default)]
+        pub gas_price: U256,
         #[serde(default, with = "crate::serde_utils::u64::hex_str_opt")]
         pub max_priority_fee_per_gas: Option<u64>,
         #[serde(default, with = "crate::serde_utils::u64::hex_str_opt")]
@@ -3090,7 +3561,7 @@ mod serde_impl {
                 gas: Some(value.gas_limit),
                 value: value.value,
                 input: value.data.clone(),
-                gas_price: value.max_fee_per_gas,
+                gas_price: U256::from(value.max_fee_per_gas),
                 max_priority_fee_per_gas: Some(value.max_priority_fee_per_gas),
                 max_fee_per_gas: Some(value.max_fee_per_gas),
                 max_fee_per_blob_gas: None,
@@ -3125,7 +3596,11 @@ mod serde_impl {
                 value: value.value,
                 data: value.input.clone(),
                 max_priority_fee_per_gas: value.max_priority_fee_per_gas.unwrap_or_default(),
-                max_fee_per_gas: value.max_fee_per_gas.unwrap_or(value.gas_price),
+                max_fee_per_gas: value.max_fee_per_gas.unwrap_or(
+                    u64::try_from(value.gas_price).map_err(|_| {
+                        GenericTransactionError::InvalidField("gas_price overflows u64".to_owned())
+                    })?,
+                ),
                 access_list: value
                     .access_list
                     .into_iter()
@@ -3146,7 +3621,7 @@ mod serde_impl {
                 gas: Some(value.gas),
                 value: value.value,
                 input: value.data.clone(),
-                gas_price: value.max_fee_per_gas,
+                gas_price: U256::from(value.max_fee_per_gas),
                 max_priority_fee_per_gas: Some(value.max_priority_fee_per_gas),
                 max_fee_per_gas: Some(value.max_fee_per_gas),
                 max_fee_per_blob_gas: Some(value.max_fee_per_blob_gas),
@@ -3208,7 +3683,11 @@ mod serde_impl {
                 value: value.value,
                 data: value.input.clone(),
                 max_priority_fee_per_gas: value.max_priority_fee_per_gas.unwrap_or_default(),
-                max_fee_per_gas: value.max_fee_per_gas.unwrap_or(value.gas_price),
+                max_fee_per_gas: value.max_fee_per_gas.unwrap_or(
+                    u64::try_from(value.gas_price).map_err(|_| {
+                        GenericTransactionError::InvalidField("gas_price overflows u64".to_owned())
+                    })?,
+                ),
                 max_fee_per_blob_gas: value.max_fee_per_blob_gas.unwrap_or_default(),
                 access_list: value
                     .access_list
@@ -3231,7 +3710,7 @@ mod serde_impl {
                 gas: Some(value.gas_limit),
                 value: value.value,
                 input: value.data.clone(),
-                gas_price: value.max_fee_per_gas,
+                gas_price: U256::from(value.max_fee_per_gas),
                 max_priority_fee_per_gas: Some(value.max_priority_fee_per_gas),
                 max_fee_per_gas: Some(value.max_fee_per_gas),
                 max_fee_per_blob_gas: None,
@@ -3271,7 +3750,11 @@ mod serde_impl {
                 chain_id: value.chain_id.unwrap_or_default(),
                 nonce: value.nonce.unwrap_or_default(),
                 max_priority_fee_per_gas: value.max_priority_fee_per_gas.unwrap_or_default(),
-                max_fee_per_gas: value.max_fee_per_gas.unwrap_or(value.gas_price),
+                max_fee_per_gas: value.max_fee_per_gas.unwrap_or(
+                    u64::try_from(value.gas_price).map_err(|_| {
+                        GenericTransactionError::InvalidField("gas_price overflows u64".to_owned())
+                    })?,
+                ),
                 gas_limit: value.gas.unwrap_or_default(),
                 to,
                 value: value.value,
@@ -3301,7 +3784,7 @@ mod serde_impl {
                 gas: Some(value.gas_limit),
                 value: value.value,
                 input: value.data.clone(),
-                gas_price: value.max_fee_per_gas,
+                gas_price: U256::from(value.max_fee_per_gas),
                 max_priority_fee_per_gas: Some(value.max_priority_fee_per_gas),
                 max_fee_per_gas: Some(value.max_fee_per_gas),
                 max_fee_per_blob_gas: None,
@@ -3335,7 +3818,11 @@ mod serde_impl {
                 value: value.value,
                 data: value.input.clone(),
                 max_priority_fee_per_gas: value.max_priority_fee_per_gas.unwrap_or_default(),
-                max_fee_per_gas: value.max_fee_per_gas.unwrap_or(value.gas_price),
+                max_fee_per_gas: value.max_fee_per_gas.unwrap_or(
+                    u64::try_from(value.gas_price).map_err(|_| {
+                        GenericTransactionError::InvalidField("gas_price overflows u64".to_owned())
+                    })?,
+                ),
                 access_list: value
                     .access_list
                     .into_iter()
@@ -3357,7 +3844,7 @@ mod serde_impl {
                 gas: Some(value.gas_limit),
                 value: value.value,
                 input: value.data.clone(),
-                gas_price: value.max_fee_per_gas,
+                gas_price: U256::from(value.max_fee_per_gas),
                 max_priority_fee_per_gas: Some(value.max_priority_fee_per_gas),
                 max_fee_per_gas: Some(value.max_fee_per_gas),
                 max_fee_per_blob_gas: None,
@@ -3392,7 +3879,11 @@ mod serde_impl {
                 value: value.value,
                 data: value.input.clone(),
                 max_priority_fee_per_gas: value.max_priority_fee_per_gas.unwrap_or_default(),
-                max_fee_per_gas: value.max_fee_per_gas.unwrap_or(value.gas_price),
+                max_fee_per_gas: value.max_fee_per_gas.unwrap_or(
+                    u64::try_from(value.gas_price).map_err(|_| {
+                        GenericTransactionError::InvalidField("gas_price overflows u64".to_owned())
+                    })?,
+                ),
                 access_list: value
                     .access_list
                     .into_iter()
@@ -3418,7 +3909,7 @@ mod serde_impl {
                 from: Address::default(),
                 gas: Some(value.gas),
                 value: value.value,
-                gas_price: value.gas_price.as_u64(),
+                gas_price: value.gas_price,
                 max_priority_fee_per_gas: None,
                 max_fee_per_gas: None,
                 max_fee_per_blob_gas: None,
@@ -3443,7 +3934,7 @@ mod serde_impl {
                 from: Address::default(),
                 gas: Some(value.gas_limit),
                 value: value.value,
-                gas_price: value.gas_price.as_u64(),
+                gas_price: value.gas_price,
                 max_priority_fee_per_gas: None,
                 max_fee_per_gas: None,
                 max_fee_per_blob_gas: None,
@@ -3490,7 +3981,7 @@ mod serde_impl {
                 from: value.sender,
                 gas: Some(value.total_gas_limit()),
                 value: U256::zero(),
-                gas_price: value.max_fee_per_gas,
+                gas_price: value.max_fee_per_gas.into(),
                 max_priority_fee_per_gas: Some(value.max_priority_fee_per_gas),
                 max_fee_per_gas: Some(value.max_fee_per_gas),
                 max_fee_per_blob_gas: if value.blob_versioned_hashes.is_empty() {
@@ -3623,6 +4114,29 @@ mod tests {
     use std::str::FromStr;
 
     #[test]
+    fn legacy_chain_id_handles_out_of_range_v_without_underflow() {
+        // A legacy transaction decodes `v` as an arbitrary U256, so a malformed tx can
+        // carry any value. `derive_legacy_chain_id` must return None for the pre-EIP-155
+        // values (27/28) and any v < 35 rather than underflowing `v - 35`, which panics
+        // in debug and wraps to a bogus chain id in release. This is reachable on the
+        // block-import path (every tx's chain id is now checked pre-execution).
+        let legacy_chain_id = |v: u64| {
+            Transaction::LegacyTransaction(LegacyTransaction {
+                v: U256::from(v),
+                ..Default::default()
+            })
+            .chain_id()
+        };
+        for v in [0u64, 1, 26, 27, 28, 34] {
+            assert_eq!(legacy_chain_id(v), None, "v={v} must yield no chain id");
+        }
+        // EIP-155 values (v = chain_id * 2 + 35/36) still derive correctly.
+        assert_eq!(legacy_chain_id(35), Some(0));
+        assert_eq!(legacy_chain_id(36), Some(0));
+        assert_eq!(legacy_chain_id(37), Some(1));
+    }
+
+    #[test]
     fn test_compute_transactions_root() {
         let mut body = BlockBody::empty();
         let tx = LegacyTransaction {
@@ -3644,7 +4158,7 @@ mod tests {
         body.transactions.push(Transaction::LegacyTransaction(tx));
         let expected_root =
             hex!("8151d548273f6683169524b66ca9fe338b9ce42bc3540046c828fd939ae23bcb");
-        let result = compute_transactions_root(&body.transactions);
+        let result = compute_transactions_root(&body.transactions, &ethrex_crypto::NativeCrypto);
 
         assert_eq!(result, expected_root.into());
     }
@@ -3695,7 +4209,7 @@ mod tests {
         let logs = vec![];
         let receipt = Receipt::new(tx_type, succeeded, cumulative_gas_used, logs);
 
-        let result = compute_receipts_root(&[receipt]);
+        let result = compute_receipts_root(&[receipt], &ethrex_crypto::NativeCrypto);
         let expected_root =
             hex!("056b23fbba480696b65fe5a59b8f2148a1299103c4f57df839233af2cf4ca2d2");
         assert_eq!(result, expected_root.into());
@@ -3829,7 +4343,7 @@ mod tests {
             gas: Some(0x5208),
             value: U256::from(1),
             input: Bytes::from(hex::decode("010203040506").unwrap()),
-            gas_price: 7,
+            gas_price: U256::from(7),
             max_priority_fee_per_gas: Default::default(),
             max_fee_per_gas: Default::default(),
             max_fee_per_blob_gas: Default::default(),
@@ -3884,7 +4398,7 @@ mod tests {
             gas: Some(0x5208),
             value: U256::from(1),
             input: Bytes::from(hex::decode("010203040506").unwrap()),
-            gas_price: 7,
+            gas_price: U256::from(7),
             max_priority_fee_per_gas: Default::default(),
             max_fee_per_gas: Default::default(),
             max_fee_per_blob_gas: Default::default(),
@@ -4088,7 +4602,7 @@ mod tests {
         let generic_tx: GenericTransaction = legacy_tx.into();
         assert_eq!(generic_tx.r#type, TxType::Legacy);
         assert_eq!(generic_tx.nonce, Some(1));
-        assert_eq!(generic_tx.gas_price, 20_000_000_000);
+        assert_eq!(generic_tx.gas_price, U256::from(20_000_000_000u64));
         assert_eq!(generic_tx.gas, Some(21000));
         assert_eq!(generic_tx.max_priority_fee_per_gas, None);
         assert_eq!(generic_tx.max_fee_per_gas, None);
@@ -4128,7 +4642,7 @@ mod tests {
         let generic_tx: GenericTransaction = eip2930_tx.into();
         assert_eq!(generic_tx.r#type, TxType::EIP2930);
         assert_eq!(generic_tx.nonce, Some(1));
-        assert_eq!(generic_tx.gas_price, 20_000_000_000);
+        assert_eq!(generic_tx.gas_price, U256::from(20_000_000_000u64));
         assert_eq!(generic_tx.gas, Some(21000));
         assert_eq!(generic_tx.max_priority_fee_per_gas, None);
         assert_eq!(generic_tx.max_fee_per_gas, None);
@@ -4140,7 +4654,10 @@ mod tests {
 
     #[test]
     fn recover_address_rejects_high_s_signatures() {
+        use ethrex_crypto::NativeCrypto;
         use k256::ecdsa::SigningKey;
+
+        let crypto = NativeCrypto;
 
         // 1. Setup: Create a signer and a message
         // A random private key for testing
@@ -4150,17 +4667,15 @@ mod tests {
         // The message we want to sign
         let msg = b"Test message for high-s signature rejection";
         // Calculate the Keccak256 hash of the message (the payload)
-        let payload = keccak(msg);
+        let payload = keccak(msg).to_fixed_bytes();
 
         // 2. Generate a valid low-s signature
         // k256's sign_prehash_recoverable produces canonical low-s signatures by default.
-        // We use the pre-calculated hash (payload).
         let (signature, recovery_id) = signing_key
-            .sign_prehash_recoverable(payload.as_bytes())
+            .sign_prehash_recoverable(&payload)
             .expect("Signing failed");
 
-        // 3. Construct the signature bytes expected by recover_address
-        // Format: [r (32 bytes), s (32 bytes), v (1 byte)]
+        // 3. Construct the signature bytes (r||s||v, 65 bytes)
         let mut sig_bytes = [0u8; 65];
         sig_bytes[..64].copy_from_slice(&signature.to_bytes());
         sig_bytes[64] = recovery_id.to_byte();
@@ -4171,7 +4686,8 @@ mod tests {
         let pub_hash = ethrex_crypto::keccak::keccak_hash(&uncompressed_pub.as_bytes()[1..]);
         let expected_address = Address::from_slice(&pub_hash[12..]);
 
-        let recovered = recover_address(Signature::from_slice(&sig_bytes), payload)
+        let recovered = crypto
+            .recover_signer(&sig_bytes, &payload)
             .expect("Valid low-s signature should recover successfully");
         assert_eq!(recovered, expected_address, "Recovered address mismatch");
 
@@ -4201,7 +4717,7 @@ mod tests {
         // 6. Verify that the high-s signature is rejected
         // EIP-2 requires rejecting s > N/2 to prevent malleability
         assert!(
-            recover_address(Signature::from_slice(&sig_high_bytes), payload).is_err(),
+            crypto.recover_signer(&sig_high_bytes, &payload).is_err(),
             "High-s signature should be rejected (EIP-2 compliance)"
         );
     }
@@ -4248,6 +4764,12 @@ mod tests {
                     data: Bytes::from_static(b"call_data"),
                 },
             ],
+            signatures: vec![FrameSignature {
+                scheme: FRAME_SIG_SCHEME_SECP256K1,
+                signer: Address::from_low_u64_be(0xABCD),
+                msg: Bytes::new(),
+                signature: Bytes::from(vec![0u8; 65]),
+            }],
             max_priority_fee_per_gas: 1_000_000_000,
             max_fee_per_gas: 30_000_000_000,
             max_fee_per_blob_gas: U256::zero(),
@@ -4255,6 +4777,54 @@ mod tests {
             inner_hash: OnceCell::new(),
             cached_canonical: OnceCell::new(),
         }
+    }
+
+    #[test]
+    fn atomic_batch_flag_valid_on_default_and_verify_frames() {
+        // Spec commit 8b61fdc4: the atomic batch flag is valid with any mode.
+        let mut tx = make_test_frame_tx();
+        tx.frames = vec![
+            Frame {
+                mode: FrameMode::Default as u8,
+                flags: 0x04, // atomic batch
+                target: Some(Address::from_low_u64_be(0xB0B)),
+                gas_limit: 21_000,
+                value: U256::zero(),
+                data: Bytes::new(),
+            },
+            Frame {
+                mode: FrameMode::Verify as u8,
+                flags: 0x04 | 0x03, // atomic batch + scope bits
+                target: None,
+                gas_limit: 21_000,
+                value: U256::zero(),
+                data: Bytes::new(),
+            },
+            Frame {
+                mode: FrameMode::Sender as u8,
+                flags: 0x00, // terminator: no flag
+                target: Some(Address::from_low_u64_be(0xCAFE)),
+                gas_limit: 21_000,
+                value: U256::zero(),
+                data: Bytes::new(),
+            },
+        ];
+        assert!(tx.validate_static_constraints().is_ok());
+    }
+
+    #[test]
+    fn atomic_batch_flag_on_last_frame_still_invalid() {
+        let mut tx = make_test_frame_tx();
+        tx.frames = vec![Frame {
+            mode: FrameMode::Sender as u8,
+            flags: 0x04,
+            target: Some(Address::from_low_u64_be(0xCAFE)),
+            gas_limit: 21_000,
+            value: U256::zero(),
+            data: Bytes::new(),
+        }];
+        let err = tx.validate_static_constraints().unwrap_err();
+        assert!(err.contains("atomic batch flag on last frame"), "{err}");
     }
 
     #[test]
@@ -4293,7 +4863,7 @@ mod tests {
         for mode_val in [0u8, 1, 2] {
             let frame = Frame {
                 mode: mode_val,
-                flags: if mode_val == 1 { 0x03 } else { 0x00 }, // VERIFY needs nonzero scope
+                flags: if mode_val == 1 { 0x03 } else { 0x00 },
                 target: Some(Address::from_low_u64_be(0x1234)),
                 gas_limit: 50_000,
                 value: U256::zero(),
@@ -4305,7 +4875,7 @@ mod tests {
         }
         // Test mode with scope restriction (bits 0-1 of flags) and atomic batch (bit 2 of flags)
         let frame = Frame {
-            mode: 2, // SENDER
+            mode: 2,            // SENDER
             flags: 0x01 | 0x04, // scope=1 + atomic_batch
             target: Some(Address::from_low_u64_be(0x1234)),
             gas_limit: 50_000,
@@ -4358,18 +4928,19 @@ mod tests {
     }
 
     #[test]
-    fn test_frame_transaction_sig_hash_elides_verify_data() {
+    fn test_frame_transaction_sig_hash_covers_all_frame_data() {
+        // Updated for spec commit fe0940cae2: frame data is NO LONGER elided.
         let tx = make_test_frame_tx();
         let hash1 = tx.compute_sig_hash();
 
-        // Same tx but with different VERIFY frame data should produce the same sig_hash
+        // Changing VERIFY frame data now DOES change the sig_hash.
         let mut tx2 = tx.clone();
         tx2.frames[0].data = Bytes::from_static(b"completely_different_verify_data");
         let hash2 = tx2.compute_sig_hash();
-        assert_eq!(hash1, hash2);
+        assert_ne!(hash1, hash2);
 
-        // But changing SENDER frame data should produce a different hash
-        let mut tx3 = tx.clone();
+        // Changing SENDER frame data also produces a different hash.
+        let mut tx3 = tx;
         tx3.frames[1].data = Bytes::from_static(b"different_call_data");
         let hash3 = tx3.compute_sig_hash();
         assert_ne!(hash1, hash3);
@@ -4378,7 +4949,7 @@ mod tests {
     #[test]
     fn test_frame_transaction_accessor_methods() {
         let frame_tx = make_test_frame_tx();
-        let tx = Transaction::FrameTransaction(frame_tx.clone());
+        let tx = Transaction::FrameTransaction(frame_tx);
 
         assert_eq!(tx.tx_type(), TxType::Frame);
         assert_eq!(tx.nonce(), 42);
@@ -4393,7 +4964,10 @@ mod tests {
         assert_eq!(tx.max_fee_per_blob_gas(), None); // no blobs
         assert!(!tx.is_contract_creation());
         // sender returns explicit sender, no ECDSA
-        assert_eq!(tx.sender().unwrap(), Address::from_low_u64_be(0xABCD));
+        assert_eq!(
+            tx.sender(&ethrex_crypto::NativeCrypto).unwrap(),
+            Address::from_low_u64_be(0xABCD)
+        );
         // gas_limit = intrinsic + calldata_cost + sum(frame.gas_limit)
         assert!(tx.gas_limit() >= 300_000); // at least sum of frame gas limits
     }
@@ -4424,6 +4998,23 @@ mod tests {
         assert!(matches!(tx, Transaction::FrameTransaction(_)));
     }
 
+    #[test]
+    fn frame_transaction_serializes_signatures_as_array() {
+        // RPC must expose the full signature objects, not just a count.
+        let tx = make_test_frame_tx();
+        let json = serde_json::to_value(&tx).unwrap();
+        let sigs = json
+            .get("signatures")
+            .expect("signatures field present")
+            .as_array()
+            .expect("signatures serialized as an array");
+        assert_eq!(sigs.len(), tx.signatures.len());
+        assert_eq!(sigs[0].get("scheme").unwrap(), "0x0");
+        assert!(sigs[0].get("signer").is_some());
+        assert!(sigs[0].get("signature").is_some());
+        assert!(sigs[0].get("msg").is_some());
+    }
+
     fn make_frame_tx_with_gas_limits(limits: Vec<u64>) -> FrameTransaction {
         let frames = limits
             .into_iter()
@@ -4441,6 +5032,7 @@ mod tests {
             nonce: 0,
             sender: Address::from_low_u64_be(0xABCD),
             frames,
+            signatures: vec![],
             max_priority_fee_per_gas: 1_000_000_000,
             max_fee_per_gas: 30_000_000_000,
             max_fee_per_blob_gas: U256::zero(),
@@ -4486,7 +5078,7 @@ mod tests {
     #[test]
     fn sig_hash_covers_frame_value() {
         // Changing `value` on any frame (SENDER or VERIFY) must change the
-        // canonical signature hash; only VERIFY.data is elided per spec.
+        // canonical signature hash (spec commit fe0940cae2: all frame data covered).
         let tx = make_test_frame_tx();
         let baseline = tx.compute_sig_hash();
 
@@ -4503,16 +5095,16 @@ mod tests {
         assert_ne!(
             baseline,
             with_verify_value.compute_sig_hash(),
-            "sig_hash must change when a VERIFY frame's value changes (only data is elided)"
+            "sig_hash must change when a VERIFY frame's value changes"
         );
 
-        // Sanity: changing VERIFY.data still does NOT change the hash.
-        let mut with_verify_data = tx.clone();
+        // VERIFY.data is now covered too (spec commit fe0940cae2 removed elision).
+        let mut with_verify_data = tx;
         with_verify_data.frames[0].data = Bytes::from_static(b"different_verify_data");
-        assert_eq!(
+        assert_ne!(
             baseline,
             with_verify_data.compute_sig_hash(),
-            "VERIFY.data must remain elided from sig_hash"
+            "VERIFY.data is now covered by sig_hash (no longer elided)"
         );
     }
 
@@ -4531,6 +5123,7 @@ mod tests {
                 value: U256::from(1u64),
                 data: Bytes::new(),
             }],
+            signatures: vec![],
             max_priority_fee_per_gas: 1_000_000_000,
             max_fee_per_gas: 30_000_000_000,
             max_fee_per_blob_gas: U256::zero(),
@@ -4577,5 +5170,380 @@ mod tests {
         sender_tx
             .validate_static_constraints()
             .expect("SENDER frames may carry non-zero value");
+    }
+
+    // ── EIP-8141 fork-gate predicate tests ──
+
+    fn chain_config_with_hegota(hegota_time: Option<u64>) -> crate::types::ChainConfig {
+        crate::types::ChainConfig {
+            hegota_time,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn test_frame_tx_pre_fork_chain_config_rejects() {
+        let cfg = chain_config_with_hegota(None);
+        assert!(!cfg.is_hegota_activated(0));
+        assert!(!cfg.is_hegota_activated(u64::MAX));
+    }
+
+    #[test]
+    fn test_frame_tx_post_fork_admits() {
+        let cfg = chain_config_with_hegota(Some(1000));
+        assert!(cfg.is_hegota_activated(2000));
+    }
+
+    #[test]
+    fn test_frame_tx_fork_boundary_admits() {
+        let activation_time = 1_700_000_000u64;
+        let cfg = chain_config_with_hegota(Some(activation_time));
+        assert!(cfg.is_hegota_activated(activation_time));
+        assert!(!cfg.is_hegota_activated(activation_time - 1));
+    }
+
+    #[test]
+    fn test_frame_tx_devnet_fork_epoch_zero_admits() {
+        let cfg = chain_config_with_hegota(Some(0));
+        assert!(cfg.is_hegota_activated(0));
+        assert!(cfg.is_hegota_activated(1));
+        assert!(cfg.is_hegota_activated(u64::MAX));
+    }
+
+    #[test]
+    fn test_frame_tx_pre_fork_rlp_roundtrip_still_decodes() {
+        // RLP decoding is fork-unaware and must stay lossless so validators surface
+        // a FrameTxPreFork error downstream rather than a corrupt-RLP error.
+        let tx = make_test_frame_tx();
+        let mut buf = Vec::new();
+        tx.encode(&mut buf);
+        let (decoded, rest) = FrameTransaction::decode_unfinished(&buf).unwrap();
+        assert!(rest.is_empty());
+        assert_eq!(decoded.chain_id, tx.chain_id);
+        assert_eq!(decoded.nonce, tx.nonce);
+        assert_eq!(decoded.sender, tx.sender);
+    }
+
+    // ── EIP-8141 expiry verifier frame tests (spec commit 0b197156) ──
+
+    fn expiry_frame(deadline: u64) -> Frame {
+        Frame {
+            mode: FrameMode::Verify as u8,
+            flags: 0x00,
+            target: Some(frame_tx_expiry_verifier()),
+            gas_limit: 30_000,
+            value: U256::zero(),
+            data: Bytes::copy_from_slice(&deadline.to_be_bytes()),
+        }
+    }
+
+    #[test]
+    fn expiry_verifier_frame_passes_static_validation() {
+        let mut tx = make_test_frame_tx();
+        tx.frames.insert(0, expiry_frame(1_700_000_000));
+        assert!(tx.validate_static_constraints().is_ok());
+    }
+
+    #[test]
+    fn expiry_verifier_frame_rejects_bad_data_length() {
+        let mut tx = make_test_frame_tx();
+        let mut f = expiry_frame(0);
+        f.data = Bytes::from_static(b"short");
+        tx.frames.insert(0, f);
+        let err = tx.validate_static_constraints().unwrap_err();
+        assert!(err.contains("8 bytes"), "{err}");
+    }
+
+    #[test]
+    fn expiry_verifier_frame_rejects_nonzero_flags() {
+        let mut tx = make_test_frame_tx();
+        let mut f = expiry_frame(0);
+        f.flags = 0x01;
+        tx.frames.insert(0, f);
+        let err = tx.validate_static_constraints().unwrap_err();
+        assert!(err.contains("flags == 0"), "{err}");
+    }
+
+    #[test]
+    fn at_most_one_expiry_verifier_frame() {
+        let mut tx = make_test_frame_tx();
+        tx.frames.insert(0, expiry_frame(1));
+        tx.frames.insert(0, expiry_frame(2));
+        let err = tx.validate_static_constraints().unwrap_err();
+        assert!(err.contains("more than one expiry"), "{err}");
+    }
+
+    #[test]
+    fn verify_frame_with_zero_scope_is_now_statically_valid() {
+        // Spec commit 0b197156 removed the VERIFY-needs-nonzero-scope rule.
+        // make_test_frame_tx() frame[0] is VERIFY with flags=0x03 targeting sender;
+        // setting flags to 0 makes it a zero-scope VERIFY (not an expiry frame,
+        // since target is the sender address, not EXPIRY_VERIFIER).
+        let mut tx = make_test_frame_tx();
+        tx.frames[0].flags = 0x00;
+        assert!(tx.validate_static_constraints().is_ok());
+    }
+
+    #[test]
+    fn sig_hash_covers_expiry_deadline_and_all_verify_data() {
+        // Updated for spec commit fe0940cae2: all frame data is now covered.
+        let mut tx_a = make_test_frame_tx();
+        tx_a.frames.insert(0, expiry_frame(100));
+        let mut tx_b = make_test_frame_tx();
+        tx_b.frames.insert(0, expiry_frame(200));
+        // Different deadlines -> different sig hashes (expiry data covered).
+        assert_ne!(tx_a.compute_sig_hash(), tx_b.compute_sig_hash());
+
+        // Different NON-expiry VERIFY data -> different sig hash (no longer elided).
+        let tx_c = make_test_frame_tx();
+        let mut tx_d = make_test_frame_tx();
+        tx_d.frames[0].data = Bytes::from_static(b"different_verify_data");
+        assert_ne!(tx_c.compute_sig_hash(), tx_d.compute_sig_hash());
+    }
+
+    #[test]
+    fn expiry_deadline_parses_or_none() {
+        let mut tx = make_test_frame_tx();
+        assert_eq!(tx.expiry_deadline(), None);
+        tx.frames.insert(0, expiry_frame(1_700_000_123));
+        assert_eq!(tx.expiry_deadline(), Some(1_700_000_123));
+    }
+
+    #[test]
+    fn signature_rlp_roundtrip() {
+        let sig = FrameSignature {
+            scheme: FRAME_SIG_SCHEME_P256,
+            signer: Address::from_low_u64_be(0x1234),
+            msg: Bytes::from(vec![7u8; 32]),
+            signature: Bytes::from(vec![9u8; 128]),
+        };
+        let mut buf = Vec::new();
+        sig.encode(&mut buf);
+        let (decoded, rest) = FrameSignature::decode_unfinished(&buf).unwrap();
+        assert!(rest.is_empty());
+        assert_eq!(decoded, sig);
+    }
+
+    #[test]
+    fn frame_tx_with_signatures_rlp_roundtrip() {
+        let tx = make_test_frame_tx();
+        assert!(!tx.signatures.is_empty());
+        let mut buf = Vec::new();
+        tx.encode(&mut buf);
+        let (decoded, rest) = FrameTransaction::decode_unfinished(&buf).unwrap();
+        assert!(rest.is_empty());
+        assert_eq!(decoded.signatures, tx.signatures);
+        assert_eq!(decoded.frames, tx.frames);
+        assert_eq!(decoded.nonce, tx.nonce);
+    }
+
+    #[test]
+    fn p2p_frame_transaction_rlp_roundtrip() {
+        // A frame tx (EIP-8141) must survive a full P2PTransaction RLP
+        // encode/decode round-trip so it can be served over the wire on request.
+        let ft = make_test_frame_tx();
+        assert!(!ft.signatures.is_empty());
+        assert!(!ft.frames.is_empty());
+        let original = P2PTransaction::FrameTransaction(ft);
+
+        let encoded = original.encode_to_vec();
+        let (decoded, rest) = P2PTransaction::decode_unfinished(&encoded).unwrap();
+        assert!(rest.is_empty());
+        assert_eq!(decoded, original);
+        assert_eq!(decoded.tx_type(), TxType::Frame);
+
+        // The decoded variant converts cleanly into a regular Transaction
+        // (frame txs carry no blobs bundle).
+        let as_tx: Transaction = decoded.try_into().unwrap();
+        assert!(matches!(as_tx, Transaction::FrameTransaction(_)));
+    }
+
+    #[test]
+    fn static_validation_rejects_unknown_scheme() {
+        let mut tx = make_test_frame_tx();
+        tx.signatures[0].scheme = 2;
+        assert!(
+            tx.validate_static_constraints()
+                .unwrap_err()
+                .contains("unsupported scheme"),
+        );
+    }
+
+    #[test]
+    fn static_validation_rejects_bad_msg_length() {
+        let mut tx = make_test_frame_tx();
+        tx.signatures[0].msg = Bytes::from(vec![1u8; 16]);
+        assert!(
+            tx.validate_static_constraints()
+                .unwrap_err()
+                .contains("32 bytes"),
+        );
+    }
+
+    #[test]
+    fn static_validation_rejects_zero_explicit_msg() {
+        let mut tx = make_test_frame_tx();
+        tx.signatures[0].msg = Bytes::from(vec![0u8; 32]);
+        assert!(
+            tx.validate_static_constraints()
+                .unwrap_err()
+                .contains("zero digest"),
+        );
+    }
+
+    #[test]
+    fn sig_hash_elides_empty_msg_signature_bytes() {
+        let mut a = make_test_frame_tx();
+        let mut b = make_test_frame_tx();
+        // empty-msg signature: changing raw bytes must NOT change the hash.
+        assert!(a.signatures[0].msg.is_empty());
+        a.signatures[0].signature = Bytes::from(vec![1u8; 65]);
+        b.signatures[0].signature = Bytes::from(vec![2u8; 65]);
+        assert_eq!(a.compute_sig_hash(), b.compute_sig_hash());
+    }
+
+    #[test]
+    fn sig_hash_covers_frame_data_now() {
+        let mut a = make_test_frame_tx();
+        let mut b = make_test_frame_tx();
+        // frame 0 is a VERIFY frame; its data is now COVERED (not elided).
+        a.frames[0].data = Bytes::from_static(b"aaaa");
+        b.frames[0].data = Bytes::from_static(b"bbbb");
+        assert_ne!(a.compute_sig_hash(), b.compute_sig_hash());
+    }
+
+    #[test]
+    fn sig_hash_covers_explicit_msg_signature_bytes() {
+        let mut a = make_test_frame_tx();
+        let mut b = make_test_frame_tx();
+        a.signatures[0].msg = Bytes::from(vec![9u8; 32]);
+        b.signatures[0].msg = Bytes::from(vec![9u8; 32]);
+        a.signatures[0].signature = Bytes::from(vec![1u8; 65]);
+        b.signatures[0].signature = Bytes::from(vec![2u8; 65]);
+        // explicit-msg signatures keep their bytes -> different hash.
+        assert_ne!(a.compute_sig_hash(), b.compute_sig_hash());
+    }
+
+    #[test]
+    fn total_gas_limit_includes_signature_costs() {
+        let mut tx = make_test_frame_tx();
+        let base = tx.total_gas_limit();
+        // Add a P256 signature; cost must rise by at least 6700 + its calldata.
+        tx.signatures.push(FrameSignature {
+            scheme: FRAME_SIG_SCHEME_P256,
+            signer: Address::from_low_u64_be(1),
+            msg: Bytes::new(),
+            signature: Bytes::from(vec![0u8; 128]),
+        });
+        assert!(tx.total_gas_limit() >= base + 6700);
+        assert_eq!(tx.signature_verification_cost(), 2800 + 6700);
+    }
+
+    #[test]
+    fn golden_frame_tx_rlp_and_sig_hash() {
+        // Regression lock for the EIP-8141 signatures-list wire format (spec
+        // commit fe0940cae2). No external EEST reference vectors exist yet;
+        // these values are the current canonical output and must only change
+        // with a deliberate, reviewed format change.
+        let tx = FrameTransaction {
+            chain_id: 1,
+            nonce: 7,
+            sender: Address::from_low_u64_be(0xABCD),
+            frames: vec![
+                Frame {
+                    mode: 1,
+                    flags: 3,
+                    target: None,
+                    gas_limit: 0x5208,
+                    value: U256::zero(),
+                    data: Bytes::from_static(&[0x11, 0x22]),
+                },
+                Frame {
+                    mode: 2,
+                    flags: 0,
+                    target: Some(Address::from_low_u64_be(0x1234)),
+                    gas_limit: 0x9c40,
+                    value: U256::zero(),
+                    data: Bytes::new(),
+                },
+            ],
+            signatures: vec![FrameSignature {
+                scheme: FRAME_SIG_SCHEME_SECP256K1,
+                signer: Address::from_low_u64_be(0xABCD),
+                msg: Bytes::new(),
+                signature: Bytes::from(vec![0x01u8; 65]),
+            }],
+            max_priority_fee_per_gas: 0x3b9aca00,
+            max_fee_per_gas: 0x6fc23ac00,
+            max_fee_per_blob_gas: U256::zero(),
+            blob_versioned_hashes: vec![],
+            inner_hash: OnceCell::new(),
+            cached_canonical: OnceCell::new(),
+        };
+
+        let mut buf = Vec::new();
+        tx.encode(&mut buf);
+        let rlp_hex = hex::encode(&buf);
+        // GOLDEN_RLP: obtained from first run
+        assert_eq!(
+            rlp_hex,
+            "f8ab010794000000000000000000000000000000000000abcde8ca01038082520880821122dc0280940000000000000000000000000000000000001234829c408080f85cf85a8094000000000000000000000000000000000000abcd80b8410101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101843b9aca008506fc23ac0080c0"
+        );
+
+        // Round-trips losslessly.
+        let (decoded, rest) = FrameTransaction::decode_unfinished(&buf).unwrap();
+        assert!(rest.is_empty());
+        assert_eq!(decoded, tx);
+
+        let sig_hash = tx.compute_sig_hash();
+        // GOLDEN_SIG_HASH: obtained from first run
+        assert_eq!(
+            format!("{:#x}", sig_hash),
+            "0x87d1a9ce8a1f242345bb20deab5e5111a41780814ea497fbd20700a60a2ecd8d",
+        );
+
+        // Elision invariant: changing empty-msg signature bytes must NOT change sig_hash.
+        let mut tx2 = tx.clone();
+        tx2.signatures[0].signature = Bytes::from(vec![0x02u8; 65]);
+        assert_eq!(
+            tx.compute_sig_hash(),
+            tx2.compute_sig_hash(),
+            "sig_hash must be independent of empty-msg signature bytes",
+        );
+    }
+
+    #[test]
+    fn test_cost_without_base_fee_eip4844_includes_blob_gas() {
+        // Regression test for mempool balance check: for EIP-4844 txs,
+        // cost_without_base_fee() MUST include blob_gas_used * max_fee_per_blob_gas.
+        // Every peer client (geth, reth, nethermind, erigon, besu) does this.
+        use crate::constants::GAS_PER_BLOB;
+
+        let max_fee_per_gas: u64 = 100;
+        let gas: u64 = 21_000;
+        let value = U256::from(7u64);
+        let max_fee_per_blob_gas = U256::from(50u64);
+        let blob_count: usize = 1;
+
+        let tx = Transaction::EIP4844Transaction(EIP4844Transaction {
+            max_fee_per_gas,
+            gas,
+            value,
+            max_fee_per_blob_gas,
+            blob_versioned_hashes: vec![H256::zero(); blob_count],
+            ..Default::default()
+        });
+
+        let got = tx.cost_without_base_fee().expect("cost is computable");
+
+        let gas_cost = U256::from(max_fee_per_gas) * U256::from(gas);
+        let blob_gas = U256::from(GAS_PER_BLOB) * U256::from(blob_count as u64);
+        let blob_cost = blob_gas * max_fee_per_blob_gas;
+        let expected = gas_cost + blob_cost + value;
+
+        assert_eq!(
+            got, expected,
+            "blob-gas term missing from cost_without_base_fee() for EIP-4844"
+        );
     }
 }

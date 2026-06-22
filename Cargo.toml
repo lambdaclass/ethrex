@@ -11,6 +11,7 @@ members = [
   "crates/l2/",
   "crates/l2/common",
   "crates/l2/prover",
+  "crates/prover",
   "crates/guest-program",
   "crates/l2/sdk",
   "crates/l2/sdk/contract_utils",
@@ -32,7 +33,7 @@ resolver = "2"
 default-members = ["cmd/ethrex"]
 
 [workspace.package]
-version = "9.0.0"
+version = "17.0.0"
 edition = "2024"
 authors = ["LambdaClass"]
 documentation = "https://docs.ethrex.xyz"
@@ -54,6 +55,17 @@ debug = 2
 inherits = "release"
 debug-assertions = true
 
+# Used by the ef_tests targets: keeps release-grade opt-level for the hot EVM /
+# trie / RLP paths but drops thin-LTO, raises codegen-units, and uses
+# line-tables-only debuginfo so cargo test rebuilds finish in a fraction of the
+# time of release-with-debug.
+[profile.release-fast]
+inherits = "release"
+lto = false
+codegen-units = 16
+debug = "line-tables-only"
+incremental = true
+
 [workspace.dependencies]
 ethrex-blockchain = { path = "./crates/blockchain", default-features = false }
 ethrex-common = { path = "./crates/common", default-features = false }
@@ -65,13 +77,14 @@ ethrex-vm = { path = "./crates/vm", default-features = false }
 ethrex-levm = { path = "./crates/vm/levm" }
 ethrex-trie = { path = "./crates/common/trie" }
 ethrex-rlp = { path = "./crates/common/rlp" }
-ethrex-crypto = { path = "./crates/common/crypto" }
+ethrex-crypto = { path = "./crates/common/crypto", default-features = false }
 ethrex-metrics = { path = "./crates/blockchain/metrics" }
 ethrex-l2 = { path = "./crates/l2" }
 ethrex-l2-common = { path = "./crates/l2/common" }
 ethrex-sdk = { path = "./crates/l2/sdk" }
-ethrex-prover = { path = "./crates/l2/prover" }
-ethrex-guest-program = { path = "./crates/guest-program" }
+ethrex-l2-prover = { path = "./crates/l2/prover" }
+ethrex-prover = { path = "./crates/prover" }
+ethrex-guest-program = { path = "./crates/guest-program", default-features = false }
 ethrex-storage-rollup = { path = "./crates/l2/storage" }
 ethrex = { path = "./cmd/ethrex" }
 ethrex-l2-rpc = { path = "./crates/l2/networking/rpc" }
@@ -93,6 +106,7 @@ hex = "0.4.3"
 hex-literal = "0.4.1"
 crc32fast = "1.4.2"
 lazy_static = "1.5.0"
+lru = "0.16.2"
 sha2 = "0.10.9"
 sha3 = "0.10.8"
 tokio-util = { version = "0.7.15", features = ["rt"] }
@@ -116,8 +130,8 @@ kzg-rs = "0.2.6"
 libsql = "0.9.10"
 futures = "0.3.31"
 aligned-sdk = { git = "https://github.com/yetanotherco/aligned_layer", rev = "54ca2471624700536561b6bd369ed9f4d327991e", package = "agg_mode_sdk" }
-spawned-concurrency = "0.4.2"
-spawned-rt = "0.4.2"
+spawned-concurrency = "0.5.0"
+spawned-rt = "0.5.0"
 lambdaworks-crypto = "0.13.0"
 tui-logger = { version = "0.17.3", features = ["tracing-support"] }
 crossbeam = "0.8.4"
@@ -134,6 +148,12 @@ rocksdb = { version = "0.24.0", default-features = false, features = [
   "bindgen-runtime",
   "lz4",
 ] }
+
+# libssz (EIP-8025 SSZ support)
+libssz = "0.2.2"
+libssz-types = "0.2.2"
+libssz-merkle = "0.2.2"
+libssz-derive = "0.2.2"
 
 [workspace.lints.clippy]
 redundant_clone = "warn"

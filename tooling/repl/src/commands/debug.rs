@@ -89,13 +89,6 @@ pub fn commands() -> Vec<CommandDef> {
         },
         CommandDef {
             namespace: "debug",
-            name: "getBlockAccessList",
-            rpc_method: "debug_getBlockAccessList",
-            params: BLOCK_ONLY,
-            description: "Returns the access list for a block",
-        },
-        CommandDef {
-            namespace: "debug",
             name: "traceTransaction",
             rpc_method: "debug_traceTransaction",
             params: HASH_OPTIONS,
