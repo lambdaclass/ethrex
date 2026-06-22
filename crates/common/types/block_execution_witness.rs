@@ -215,7 +215,7 @@ impl RpcExecutionWitness {
         // Drop the `0x80` Null-node sentinel some `debug_executionWitness` producers emit.
         // Undecodable/unused nodes are dropped per EELS
         // `test_validation_state_extra_unused_trie_node`; missing needed nodes surface
-        // later as `RootNotFound` from `get_embedded_root`.
+        // later as `RootNotFound` from `get_embedded_root_committed`.
         let nodes: FxHashMap<H256, Node> = self
             .state
             .into_iter()
@@ -230,7 +230,7 @@ impl RpcExecutionWitness {
 
         // get state trie root and embed the rest of the trie into it
         let state_trie_root = if let NodeRef::Node(state_trie_root, _) =
-            Trie::get_embedded_root(&nodes, initial_state_root, crypto)?
+            Trie::get_embedded_root_committed(&nodes, initial_state_root, crypto)?
         {
             Some((*state_trie_root).clone())
         } else {
@@ -257,7 +257,7 @@ impl RpcExecutionWitness {
                 if !nodes.contains_key(&storage_root_hash) {
                     continue;
                 }
-                let node = Trie::get_embedded_root(&nodes, storage_root_hash, crypto)?;
+                let node = Trie::get_embedded_root_committed(&nodes, storage_root_hash, crypto)?;
                 let NodeRef::Node(node, _) = node else {
                     return Err(GuestProgramStateError::Custom(
                         "execution witness does not contain non-empty storage trie".to_string(),

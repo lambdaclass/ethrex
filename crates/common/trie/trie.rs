@@ -317,6 +317,63 @@ impl Trie {
 
     /// Gets node with embedded references to child nodes, all in just one `Node`.
     pub fn get_embedded_root(
+        all_nodes: &BTreeMap<H256, Node>,
+        root_hash: H256,
+    ) -> Result<NodeRef, TrieError> {
+        // If the root hash is of the empty trie then we can get away by setting the NodeRef to default
+        if root_hash == *EMPTY_TRIE_HASH {
+            return Ok(NodeRef::default());
+        }
+
+        let root_rlp = all_nodes.get(&root_hash).ok_or_else(|| {
+            TrieError::InconsistentTree(Box::new(InconsistentTreeError::RootNotFound(root_hash)))
+        })?;
+
+        fn get_embedded_node(
+            all_nodes: &BTreeMap<H256, Node>,
+            cur_node: &Node,
+        ) -> Result<Node, TrieError> {
+            Ok(match cur_node.clone() {
+                Node::Branch(mut node) => {
+                    for choice in &mut node.choices {
+                        let NodeRef::Hash(hash) = *choice else {
+                            continue;
+                        };
+
+                        if hash.is_valid() {
+                            *choice = match all_nodes.get(&hash.finalize(&NativeCrypto)) {
+                                Some(node) => get_embedded_node(all_nodes, node)?.into(),
+                                None => hash.into(),
+                            };
+                        }
+                    }
+
+                    (*node).into()
+                }
+                Node::Extension(mut node) => {
+                    let NodeRef::Hash(hash) = node.child else {
+                        return Ok(node.into());
+                    };
+
+                    node.child = match all_nodes.get(&hash.finalize(&NativeCrypto)) {
+                        Some(node) => get_embedded_node(all_nodes, node)?.into(),
+                        None => hash.into(),
+                    };
+
+                    node.into()
+                }
+                Node::Leaf(node) => node.into(),
+            })
+        }
+
+        let root = get_embedded_node(all_nodes, root_rlp)?;
+        Ok(root.into())
+    }
+
+    /// Gets node with embedded references to child nodes, all in just one `Node`.
+    ///
+    /// Note that this method caches the hash of each node, so it assumes the provided `all_nodes` are well-formed.
+    pub fn get_embedded_root_committed(
         all_nodes: &FxHashMap<H256, Node>,
         root_hash: H256,
         crypto: &dyn Crypto,
@@ -340,7 +397,7 @@ impl Trie {
             NodeRef::Node(Arc::new(node), OnceLock::from(hash))
         }
 
-        fn get_embedded_node(
+        fn get_embedded_node_committed(
             all_nodes: &FxHashMap<H256, Node>,
             cur_node: &Node,
             crypto: &dyn Crypto,
@@ -355,7 +412,7 @@ impl Trie {
                         if hash.is_valid() {
                             *choice = match all_nodes.get(&hash.finalize(crypto)) {
                                 Some(node) => node_with_hash(
-                                    get_embedded_node(all_nodes, node, crypto)?,
+                                    get_embedded_node_committed(all_nodes, node, crypto)?,
                                     hash,
                                 ),
                                 None => hash.into(),
@@ -371,9 +428,10 @@ impl Trie {
                     };
 
                     node.child = match all_nodes.get(&hash.finalize(crypto)) {
-                        Some(node) => {
-                            node_with_hash(get_embedded_node(all_nodes, node, crypto)?, hash)
-                        }
+                        Some(node) => node_with_hash(
+                            get_embedded_node_committed(all_nodes, node, crypto)?,
+                            hash,
+                        ),
                         None => hash.into(),
                     };
 
@@ -383,7 +441,7 @@ impl Trie {
             })
         }
 
-        let root = get_embedded_node(all_nodes, root_rlp, crypto)?;
+        let root = get_embedded_node_committed(all_nodes, root_rlp, crypto)?;
         Ok(node_with_hash(root, NodeHash::Hashed(root_hash)))
     }
 
@@ -396,10 +454,10 @@ impl Trie {
     ///   root node are considered dangling.
     pub fn from_nodes(
         root_hash: H256,
-        state_nodes: &FxHashMap<H256, Node>,
+        state_nodes: &BTreeMap<H256, Node>,
     ) -> Result<Self, TrieError> {
         let mut trie = Trie::new(Box::new(InMemoryTrieDB::default()));
-        let root = Self::get_embedded_root(state_nodes, root_hash, &NativeCrypto)?;
+        let root = Self::get_embedded_root(state_nodes, root_hash)?;
         trie.root = root;
 
         Ok(trie)
