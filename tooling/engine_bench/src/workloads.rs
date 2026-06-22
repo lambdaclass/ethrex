@@ -388,10 +388,10 @@ async fn run_blobs_ssz(
         (204, _) => Some(0),
         (200, 1) => BlobsV1Response::from_ssz_bytes(&resp.body)
             .ok()
-            .map(|r| r.iter().filter(|e| e.available).count()),
+            .map(|r| r.entries.iter().filter(|e| e.available).count()),
         (200, _) => BlobsV2Response::from_ssz_bytes(&resp.body)
             .ok()
-            .map(|r| r.iter().filter(|e| e.available).count()),
+            .map(|r| r.entries.iter().filter(|e| e.available).count()),
         _ => None,
     };
     Ok(IterationRecord {
@@ -468,15 +468,15 @@ async fn run_bodies_ssz(
         match ctx.fork {
             ForkArg::Paris => BodiesResponseParis::from_ssz_bytes(&resp.body)
                 .ok()
-                .map(|r| r.iter().filter(|e| e.available).count()),
+                .map(|r| r.entries.iter().filter(|e| e.available).count()),
             ForkArg::Shanghai | ForkArg::Cancun | ForkArg::Prague | ForkArg::Osaka => {
                 BodiesResponseShanghai::from_ssz_bytes(&resp.body)
                     .ok()
-                    .map(|r| r.iter().filter(|e| e.available).count())
+                    .map(|r| r.entries.iter().filter(|e| e.available).count())
             }
             ForkArg::Amsterdam => BodiesResponseAmsterdam::from_ssz_bytes(&resp.body)
                 .ok()
-                .map(|r| r.iter().filter(|e| e.available).count()),
+                .map(|r| r.entries.iter().filter(|e| e.available).count()),
         }
     } else {
         None
