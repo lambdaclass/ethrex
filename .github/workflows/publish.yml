@@ -65,14 +65,13 @@ jobs:
           for c in "${CRATES[@]}"; do
             echo "::group::$c"
             if [ "${DRY_RUN:-false}" = "true" ]; then
-              # `cargo publish --dry-run` can't validate a whole unpublished
-              # workspace: each crate's siblings aren't on the index yet, so every
-              # dependent stops at dependency resolution before it ever compiles.
-              # Instead verify each crate against its workspace path deps, which
-              # needs nothing published: package (manifest + tarball file list) and
-              # compile with default features (the same build cargo's verify step
-              # runs from the tarball).
-              cargo package -p "$c" --no-verify --allow-dirty >/dev/null
+              # `cargo publish --dry-run` (and `cargo package` without --list)
+              # resolve each crate's siblings against the crates.io index, which
+              # aren't published yet -- so dependents fail at resolution before they
+              # ever compile. Validate against workspace path deps instead, which
+              # needs nothing published: list the tarball file set (no index lookup)
+              # and compile with default features (what cargo's verify step builds).
+              cargo package -p "$c" --no-verify --list >/dev/null
               cargo check -p "$c"
             else
               OUTPUT=$(cargo publish -p "$c" 2>&1) || {
