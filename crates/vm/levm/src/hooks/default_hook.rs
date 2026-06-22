@@ -417,9 +417,12 @@ pub fn delete_self_destruct_accounts(vm: &mut VM<'_>) -> Result<(), VMError> {
         *account_to_remove = LevmAccount::default();
         account_to_remove.mark_destroyed();
 
-        // EIP-7928: Clean up BAL for selfdestructed account
+        // EIP-7928: Clean up BAL for selfdestructed account. Under EIP-8246 (Amsterdam+)
+        // the balance is preserved (no burn), so the BAL keeps its balance changes; pre-
+        // Amsterdam the account is wiped and its balance collapses to 0.
+        let preserve_balance = vm.env.config.fork >= Fork::Amsterdam;
         if let Some(recorder) = vm.db.bal_recorder.as_mut() {
-            recorder.track_selfdestruct(*address);
+            recorder.track_selfdestruct(*address, preserve_balance);
         }
     }
 

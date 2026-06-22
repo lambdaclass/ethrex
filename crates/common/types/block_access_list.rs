@@ -1560,7 +1560,7 @@ impl BlockAccessListRecorder {
     /// Called after destroy_account for contracts created and destroyed in the same tx.
     /// Removes nonce/code changes, converts storage writes to reads.
     /// Matches EELS `track_selfdestruct` in state_tracker.py:315.
-    pub fn track_selfdestruct(&mut self, address: Address) {
+    pub fn track_selfdestruct(&mut self, address: Address, preserve_balance: bool) {
         let idx = self.current_index;
 
         // 1. Remove nonce changes for this address at current tx index
@@ -1571,34 +1571,34 @@ impl BlockAccessListRecorder {
             }
         }
 
-        // 2. Collapse balance changes to the account's final post-tx balance of 0.
-        // The account is destroyed at end-of-tx, so its post-transaction balance is 0
-        // regardless of any intermediate value transfers (e.g. a later CALL that sent
-        // wei to the now-destroyed address, which is burned at finalization). EELS
-        // derives BAL balance changes by diffing pre-tx vs final post-tx account state
-        // (block_access_lists.py:update_builder_from_tx), so only the final 0 matters.
-        //
-        // In practice `pre_balance` is always 0 here: under EIP-6780, track_selfdestruct
-        // only runs for accounts created and destroyed in the same tx. The non-zero branch
-        // below mirrors EELS's general pre/post diff and guards future spec/fixture changes.
-        //
-        // If the pre-tx balance was also 0, this is a net-zero round-trip (0→X→0) and the
-        // change MUST NOT be recorded (EIP-7928). Otherwise record a single (idx, 0).
-        // If initial_balance was never set, treat it as 0 (contract created with no value).
-        let pre_balance = self
-            .initial_balances
-            .get(&address)
-            .copied()
-            .unwrap_or_default();
-        if let Some(changes) = self.balance_changes.get_mut(&address) {
-            // Drop all intermediate balance changes recorded for this tx.
-            changes.retain(|(i, _)| *i != idx);
-            // Record the final post-tx balance of 0 unless it equals the pre-tx balance.
-            if !pre_balance.is_zero() {
-                changes.push((idx, U256::zero()));
-            }
-            if changes.is_empty() {
-                self.balance_changes.remove(&address);
+        // 2. Balance handling depends on the fork:
+        // - Pre-Amsterdam (EIP-6780): the account is fully wiped, so its post-tx balance is
+        //   0. Collapse intermediate changes to a single (idx, 0), or drop entirely if the
+        //   pre-tx balance was also 0 (net-zero round-trip, EIP-7928). EELS derives BAL
+        //   balance changes by diffing pre-tx vs final post-tx state, so only the final 0
+        //   matters.
+        // - Amsterdam+ (EIP-8246): SELFDESTRUCT no longer burns ETH; the account keeps its
+        //   balance and becomes a plain account (delete_self_destruct_accounts preserves it).
+        //   The recorded balance changes already reflect the preserved post-tx balance, so
+        //   they are kept as-is (the create-time value transfer is a genuine 0→balance
+        //   change, not a net-zero round-trip).
+        if !preserve_balance {
+            // If initial_balance was never set, treat it as 0 (contract created with no value).
+            let pre_balance = self
+                .initial_balances
+                .get(&address)
+                .copied()
+                .unwrap_or_default();
+            if let Some(changes) = self.balance_changes.get_mut(&address) {
+                // Drop all intermediate balance changes recorded for this tx.
+                changes.retain(|(i, _)| *i != idx);
+                // Record the final post-tx balance of 0 unless it equals the pre-tx balance.
+                if !pre_balance.is_zero() {
+                    changes.push((idx, U256::zero()));
+                }
+                if changes.is_empty() {
+                    self.balance_changes.remove(&address);
+                }
             }
         }
 
