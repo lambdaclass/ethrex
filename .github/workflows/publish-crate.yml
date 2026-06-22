@@ -1,0 +1,66 @@
+name: Publish a single crate
+
+# Reusable workflow: publishes (or, in dry-run, verifies) exactly one crate.
+# All the shared setup and logic lives here once; the caller (publish.yml) invokes
+# it per crate with `needs:` enforcing dependency order.
+on:
+  workflow_call:
+    inputs:
+      crate:
+        description: "Crate package name (e.g. ethrex-rlp)"
+        required: true
+        type: string
+      dry_run:
+        description: "Verify only (package + compile), do not publish"
+        required: true
+        type: boolean
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    environment: crates-release-prod
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Set up Rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@11df97af8e8102fd60b60a77dfbf58d40cd843b8 # v1.10.1
+        with:
+          toolchain: stable
+          # This action defaults RUSTFLAGS to "-D warnings", which (a) makes the
+          # cargo-publish verify build fail on lints and (b) overrides the
+          # `[target.*].rustflags` target-features in .cargo/config.toml. Publishing
+          # already-reviewed, CI-linted code should not deny warnings -- lints are
+          # gated on PRs separately -- so disable it here.
+          rustflags: ""
+
+      - name: ${{ inputs.dry_run && 'Verify' || 'Publish' }} ${{ inputs.crate }}
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CRATES_IO_TOKEN }}
+          CRATE: ${{ inputs.crate }}
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          set -euo pipefail
+          if [ "$DRY_RUN" = "true" ]; then
+            # `cargo publish --dry-run` (and `cargo package` without --list) resolve
+            # the crate's siblings against the crates.io index, which aren't published
+            # yet -- so dependents fail at resolution before they ever compile. Validate
+            # against workspace path deps instead, which needs nothing published: list the
+            # tarball file set (no index lookup) and compile with default features.
+            cargo package -p "$CRATE" --no-verify --list >/dev/null
+            cargo check -p "$CRATE"
+          else
+            OUTPUT=$(cargo publish -p "$CRATE" 2>&1) || {
+              echo "$OUTPUT"
+              # Idempotent re-runs: skip versions already on crates.io. cargo emits
+              # "already uploaded" (modern) or "already exists" (older/other registries).
+              if echo "$OUTPUT" | grep -qiE "already (uploaded|exists)"; then
+                echo "$CRATE already published, skipping"
+                exit 0
+              fi
+              exit 1
+            }
+          fi
