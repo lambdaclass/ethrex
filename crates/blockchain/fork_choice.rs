@@ -219,7 +219,7 @@ fn check_order(
 // - Ok(Some([])): the block is already canonical.
 // - Ok(Some(branch)): the "branch" is a sequence of blocks that connects the ancestor and the
 //   descendant.
-async fn find_link_with_canonical_chain(
+pub(crate) async fn find_link_with_canonical_chain(
     store: &Store,
     block_header: &BlockHeader,
 ) -> Result<Option<Vec<(BlockNumber, BlockHash)>>, StoreError> {

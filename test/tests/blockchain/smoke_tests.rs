@@ -345,6 +345,74 @@ async fn unfinalized_reorg_deeper_than_32_is_allowed() {
     }
 }
 
+#[tokio::test]
+async fn advance_canonical_head_repoints_reorged_heights() {
+    // Regression for the BSC stale canonical-index bug. The BSC sync + NewBlock
+    // import paths canonicalize each block via `advance_canonical_head`. When a
+    // heavier chain reorgs heights at or below the current head and then extends
+    // past it, every reorged height must be repointed to the new chain's hash —
+    // not just the new head. Otherwise the number→hash index keeps pointing at
+    // the reorged-out fork, and BLOCKHASH/get_block_hash return stale hashes,
+    // diverging EVM execution (this is what wedged bnb-mainnet at block
+    // 105536921: a betting contract read BLOCKHASH of a reorged height).
+    let store = test_store().await;
+    let genesis_header = store.get_block_header(0).unwrap().unwrap();
+    let blockchain = Blockchain::default_with_store(store.clone());
+
+    // Chain A: genesis → A1 → A2 → A3, canonicalized per-block via
+    // advance_canonical_head (mirroring the BSC import path).
+    let mut parent = genesis_header.clone();
+    let mut chain_a = Vec::new();
+    for _ in 0..3 {
+        let block = new_block(&store, &parent).await;
+        parent = block.header.clone();
+        chain_a.push((block.header.number, block.hash()));
+        blockchain.add_block(block).unwrap();
+    }
+    for (number, hash) in &chain_a {
+        blockchain
+            .advance_canonical_head(*number, *hash)
+            .await
+            .unwrap();
+    }
+    let (_, head_a) = *chain_a.last().unwrap();
+    assert!(is_canonical(&store, 3, head_a).await.unwrap());
+
+    // Chain B: genesis → B1 → B2 → B3 → B4. Reorgs heights 1-3 (<= head) and
+    // extends to height 4. `new_block` randomizes fields so B hashes differ.
+    let mut parent = genesis_header.clone();
+    let mut chain_b = Vec::new();
+    for _ in 0..4 {
+        let block = new_block(&store, &parent).await;
+        parent = block.header.clone();
+        chain_b.push((block.header.number, block.hash()));
+        blockchain.add_block(block).unwrap();
+    }
+    // Import chain B per-block via advance_canonical_head, exactly as BSC does.
+    for (number, hash) in &chain_b {
+        blockchain
+            .advance_canonical_head(*number, *hash)
+            .await
+            .unwrap();
+    }
+
+    // Every chain-B height must now be canonical — including the reorged 1-3.
+    for (number, hash) in &chain_b {
+        assert!(
+            is_canonical(&store, *number, *hash).await.unwrap(),
+            "chain B block at height {number} should be canonical after reorg"
+        );
+    }
+    // And the by-number index must not still return chain A's stale hashes.
+    for (number, hash) in &chain_a {
+        assert_ne!(
+            store.get_canonical_block_hash(*number).await.unwrap(),
+            Some(*hash),
+            "stale chain A hash still indexed at height {number} (BLOCKHASH bug)"
+        );
+    }
+}
+
 async fn new_block(store: &Store, parent: &BlockHeader) -> Block {
     let args = BuildPayloadArgs {
         parent: parent.hash(),

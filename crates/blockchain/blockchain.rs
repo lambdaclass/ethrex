@@ -1941,8 +1941,25 @@ impl Blockchain {
         if number <= latest {
             return Ok(());
         }
+        // Repoint the canonical number→hash index for every reorged height, not
+        // just the new head. When a heavier chain replaces blocks at heights
+        // <= the previous head before extending past it, those heights must be
+        // re-canonicalized; otherwise BLOCKHASH / get_block_hash return the
+        // reorged-out fork's hashes, diverging EVM execution (see
+        // smoke_tests::advance_canonical_head_repoints_reorged_heights). Mirror
+        // `apply_fork_choice`: walk back to the common canonical ancestor and
+        // hand the whole branch to `forkchoice_update`. The `number > latest`
+        // guard above is kept so a concurrently-advanced head is never rewound.
+        let new_canonical_blocks = match self.storage.get_block_header_by_hash(hash)? {
+            Some(header) => {
+                crate::fork_choice::find_link_with_canonical_chain(&self.storage, &header)
+                    .await?
+                    .unwrap_or_default()
+            }
+            None => Vec::new(),
+        };
         self.storage
-            .forkchoice_update(vec![(number, hash)], number, hash, None, None)
+            .forkchoice_update(new_canonical_blocks, number, hash, None, None)
             .await
             .map_err(Into::into)
     }
