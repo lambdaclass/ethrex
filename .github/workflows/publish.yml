@@ -11,7 +11,7 @@ on:
   workflow_dispatch:
     inputs:
       dry_run:
-        description: "List package contents only, do not publish"
+        description: "Verify each crate (package + compile) without publishing"
         type: boolean
         default: true
 
@@ -30,6 +30,12 @@ jobs:
         uses: actions-rust-lang/setup-rust-toolchain@11df97af8e8102fd60b60a77dfbf58d40cd843b8 # v1.10.1
         with:
           toolchain: stable
+          # This action defaults RUSTFLAGS to "-D warnings", which (a) makes the
+          # cargo-publish verify build fail on lints and (b) overrides the
+          # `[target.*].rustflags` target-features in .cargo/config.toml. Publishing
+          # already-reviewed, CI-linted code should not deny warnings -- lints are
+          # gated on PRs separately -- so disable it here.
+          rustflags: ""
 
       - name: Publish crates in dependency order
         env:
@@ -59,18 +65,20 @@ jobs:
           for c in "${CRATES[@]}"; do
             echo "::group::$c"
             if [ "${DRY_RUN:-false}" = "true" ]; then
-              # Real publish dry-run: packaging + index resolution + verify build.
-              # On a dry-run nothing is actually published, so crates later in the
-              # order can't resolve their siblings yet -- tolerate ONLY that error.
-              OUTPUT=$(cargo publish -p "$c" --dry-run 2>&1) || {
-                echo "$OUTPUT"
-                echo "$OUTPUT" | grep -q "no matching package named" || exit 1
-                echo "$c: sibling not on crates.io yet (expected during a dry-run)"
-              }
+              # `cargo publish --dry-run` (and `cargo package` without --list)
+              # resolve each crate's siblings against the crates.io index, which
+              # aren't published yet -- so dependents fail at resolution before they
+              # ever compile. Validate against workspace path deps instead, which
+              # needs nothing published: list the tarball file set (no index lookup)
+              # and compile with default features (what cargo's verify step builds).
+              cargo package -p "$c" --no-verify --list >/dev/null
+              cargo check -p "$c"
             else
               OUTPUT=$(cargo publish -p "$c" 2>&1) || {
                 echo "$OUTPUT"
-                if echo "$OUTPUT" | grep -q "already exists"; then
+                # Idempotent re-runs: skip versions already on crates.io. cargo emits
+                # "already uploaded" (modern) or "already exists" (older/other registries).
+                if echo "$OUTPUT" | grep -qiE "already (uploaded|exists)"; then
                   echo "$c already published, skipping"
                   echo "::endgroup::"
                   continue
