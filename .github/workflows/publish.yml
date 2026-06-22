@@ -6,6 +6,9 @@ run-name: Publish crates to crates.io${{ (github.event_name == 'workflow_dispatc
 # It does NOT fire on `vX.Y.Z-rc.W` pre-release creation, so release candidates
 # never publish to crates.io (crates.io versions are immutable).
 on:
+  # TEMP-DEBUG (revert before merge): validate the dry-run on x86_64 CI for this branch.
+  push:
+    branches: [fix-publish-verify-and-rerun]
   release:
     types: [released]
   workflow_dispatch:
@@ -40,7 +43,10 @@ jobs:
       - name: Publish crates in dependency order
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CRATES_IO_TOKEN }}
-          DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run }}
+          # TEMP-DEBUG (revert before merge): dry-run for everything except a real
+          # release, so the push trigger above can never publish. Restore
+          # `github.event_name == 'workflow_dispatch' && inputs.dry_run` before merge.
+          DRY_RUN: ${{ github.event_name != 'release' }}
         run: |
           set -euo pipefail
           # Topological order: each crate is published after all of its dependencies.
