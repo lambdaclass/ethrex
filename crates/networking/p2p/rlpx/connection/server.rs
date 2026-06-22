@@ -77,6 +77,13 @@ const PING_INTERVAL: Duration = Duration::from_secs(10);
 const BLOCK_RANGE_UPDATE_INTERVAL: Duration = Duration::from_secs(60);
 const INFLIGHT_TX_SWEEP_INTERVAL: Duration = Duration::from_secs(15);
 const INFLIGHT_TX_TIMEOUT: Duration = Duration::from_secs(30);
+/// Max time a single outbound frame may take to flush to a peer's socket before we
+/// consider the peer wedged and drop it. Without this bound, a slow/half-dead peer
+/// (TCP send window full, never draining) blocks the connection actor's serial drain
+/// indefinitely while its unbounded mailbox keeps growing — the timer/broadcast
+/// producers below enqueue regardless of drain progress — leaking memory that is
+/// never reclaimed (the actor cannot be stopped while a handler is wedged in `.await`).
+const OUTBOUND_SEND_TIMEOUT: Duration = Duration::from_secs(30);
 /// How often to flush buffered transaction hash requests into a single
 /// batched GetPooledTransactions message.
 const TX_REQUEST_BATCH_INTERVAL: Duration = Duration::from_millis(50);
@@ -659,7 +666,8 @@ impl PeerConnectionServer {
                 | PeerConnectionError::InvalidPeerId
                 | PeerConnectionError::InvalidMessageLength
                 | PeerConnectionError::StateError(_)
-                | PeerConnectionError::InvalidRecoveryId => {
+                | PeerConnectionError::InvalidRecoveryId
+                | PeerConnectionError::OutboundSendTimeout => {
                     trace!(peer=%established_state.node, error=e.to_string(), "Peer connection error");
                     ctx.stop();
                 }
@@ -1111,7 +1119,13 @@ pub(crate) async fn send(
         use ethrex_metrics::p2p::METRICS_P2P;
         METRICS_P2P.inc_outgoing_message(message.metric_label());
     }
-    state.sink.send(message).await
+    // Bound the flush so a wedged peer cannot block the actor's serial drain forever.
+    // On timeout we return an error; `process_cast_error` then stops the actor, which
+    // drops its (unbounded) mailbox and reclaims the accumulated memory.
+    match tokio::time::timeout(OUTBOUND_SEND_TIMEOUT, state.sink.send(message)).await {
+        Ok(result) => result,
+        Err(_elapsed) => Err(PeerConnectionError::OutboundSendTimeout),
+    }
 }
 
 /// Reads from the frame until a frame is available.

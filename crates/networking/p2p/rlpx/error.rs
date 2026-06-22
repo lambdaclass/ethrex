@@ -30,6 +30,8 @@ pub enum PeerConnectionError {
     NoMatchingCapabilities,
     #[error("Too many peers")]
     TooManyPeers,
+    #[error("Outbound send to peer timed out")]
+    OutboundSendTimeout,
     #[error("Peer disconnected")]
     Disconnected,
     #[error("Disconnect requested: {0}")]
