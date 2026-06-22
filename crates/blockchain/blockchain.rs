@@ -756,7 +756,7 @@ impl Blockchain {
                             )?;
                         } else if let Some(header_bal) = bal
                             && chain_config.is_amsterdam_activated(block.header.timestamp)
-                            && !header_bal.matches_commitment(block.header.block_access_list_hash)
+                            && !header_bal.matches_commitment(block.header.block_access_list_hash, &NativeCrypto)
                         {
                             return Err(InvalidBlockError::BlockAccessListHashMismatch.into());
                         }
