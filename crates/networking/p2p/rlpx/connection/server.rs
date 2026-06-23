@@ -84,6 +84,15 @@ const INFLIGHT_TX_TIMEOUT: Duration = Duration::from_secs(30);
 /// producers below enqueue regardless of drain progress — leaking memory that is
 /// never reclaimed (the actor cannot be stopped while a handler is wedged in `.await`).
 const OUTBOUND_SEND_TIMEOUT: Duration = Duration::from_secs(30);
+/// Max time the RLPx handshake may take before we abandon the connection. Without
+/// this, an inbound peer that opens TCP and then stalls before/at the auth read
+/// parks a connection actor + socket indefinitely (the handshake runs inside
+/// `started()` with no timeout), so established sockets accumulate far beyond the
+/// peer target.
+const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
+/// If a peer fails to answer this many consecutive pings, consider it dead and drop it.
+/// Catches application-dead-but-TCP-alive peers that would otherwise never be removed.
+const MAX_MISSED_PONGS: u8 = 3;
 /// How often to flush buffered transaction hash requests into a single
 /// batched GetPooledTransactions message.
 const TX_REQUEST_BATCH_INTERVAL: Duration = Duration::from_millis(50);
@@ -272,6 +281,10 @@ pub struct Established {
     pub(crate) txs_sent_to_peer: u64,
     // Leech detection: whether we have received any transactions from this peer
     pub(crate) received_txs_from_peer: bool,
+    // Liveness: consecutive pings sent without a matching pong. Reset to 0 on every Pong,
+    // incremented on each Ping we send; at MAX_MISSED_PONGS the peer is considered dead
+    // and dropped (catches application-dead-but-TCP-alive peers that otherwise linger).
+    pub(crate) missed_pongs: u8,
 }
 
 impl Established {
@@ -330,7 +343,24 @@ impl PeerConnectionServer {
         let eth_version = Arc::new(RwLock::new(EthCapVersion::default()));
         // Take ownership of the state, replacing with HandshakeFailed as placeholder
         let state = std::mem::replace(&mut self.state, ConnectionState::HandshakeFailed);
-        match handshake::perform(state, eth_version.clone()).await {
+        // Bound the handshake: a peer that opens TCP and then stalls must not park this
+        // actor + socket forever (otherwise established sockets accumulate above the peer
+        // target). On timeout the handshake future is dropped, closing the socket.
+        let handshake_result = match tokio::time::timeout(
+            HANDSHAKE_TIMEOUT,
+            handshake::perform(state, eth_version.clone()),
+        )
+        .await
+        {
+            Ok(result) => result,
+            Err(_elapsed) => {
+                debug!("Handshake timed out on RLPx connection");
+                self.state = ConnectionState::HandshakeFailed;
+                ctx.stop();
+                return;
+            }
+        };
+        match handshake_result {
             Ok((mut established_state, stream)) => {
                 trace!(peer=%established_state.node, "Starting RLPx connection");
                 if let Err(reason) =
@@ -508,6 +538,14 @@ impl PeerConnectionServer {
         ctx: &Context<Self>,
     ) {
         if let ConnectionState::Established(ref mut established_state) = self.state {
+            // Liveness: if the peer hasn't answered the last MAX_MISSED_PONGS pings, treat it
+            // as dead and drop it instead of pinging a corpse (and keeping its actor) forever.
+            if established_state.missed_pongs >= MAX_MISSED_PONGS {
+                debug!(peer=%established_state.node, missed=MAX_MISSED_PONGS, "Peer missed max pongs, dropping");
+                ctx.stop();
+                return;
+            }
+            established_state.missed_pongs = established_state.missed_pongs.saturating_add(1);
             let result = send(established_state, Message::Ping(PingMessage {})).await;
             Self::process_cast_error(&self.state, result, ctx);
         } else {
@@ -1216,7 +1254,8 @@ async fn handle_incoming_message(
             send(state, Message::Pong(PongMessage {})).await?;
         }
         Message::Pong(_) => {
-            // We ignore received Pong messages
+            // Liveness: the peer answered our ping; reset the missed-pong counter.
+            state.missed_pongs = 0;
         }
         Message::Status68(msg_data) => {
             if let Some(eth) = &state.negotiated_eth_capability {

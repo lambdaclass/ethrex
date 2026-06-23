@@ -151,6 +151,7 @@ pub(crate) async fn perform(
             serve_requests_in_window: 0,
             txs_sent_to_peer: 0,
             received_txs_from_peer: false,
+            missed_pongs: 0,
         },
         stream,
     ))
