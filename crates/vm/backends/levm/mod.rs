@@ -61,7 +61,6 @@ use ethrex_levm::memory::Memory;
 use ethrex_levm::timings::{OPCODE_TIMINGS, PRECOMPILES_TIMINGS};
 use ethrex_levm::tracing::LevmCallTracer;
 use ethrex_levm::utils::get_base_fee_per_blob_gas;
-use ethrex_levm::utils::intrinsic_gas_dimensions;
 use ethrex_levm::vm::VMType;
 use ethrex_levm::{
     Environment,
@@ -108,10 +107,14 @@ fn check_gas_limit(
 /// A tx is rejected (block invalid) if its worst-case contribution to either
 /// dimension exceeds the remaining budget at tx inclusion time:
 ///
-/// - regular dim: `min(TX_MAX_GAS_LIMIT, tx.gas - intrinsic.state) > block_gas_limit - block_regular_gas_used`
-/// - state dim:   `tx.gas - intrinsic.regular > block_gas_limit - block_state_gas_used`
+/// - regular dim: `min(TX_MAX_GAS_LIMIT, tx.gas) > block_gas_limit - block_regular_gas_used`
+/// - state dim:   `tx.gas > block_gas_limit - block_state_gas_used`
 ///
-/// Mirrors `src/ethereum/forks/amsterdam/fork.py:560-578` at eels_commit `524b446`.
+/// The full `tx.gas` is used in both dimensions (only the regular dimension is
+/// capped at `TX_MAX_GAS_LIMIT`); intrinsic underfunding is rejected separately
+/// in transaction validation, not here. Mirrors
+/// `src/ethereum/forks/amsterdam/fork.py` `check_transaction` at the
+/// `tests-glamsterdam-devnet@v6.0.0` spec.
 ///
 /// Note: `block_gas_used_regular` here equals EELS's `block_output.block_gas_used`
 /// because our `report.gas_used` already reflects `max(raw_regular, calldata_floor)`
@@ -119,27 +122,21 @@ fn check_gas_limit(
 /// sync with the aggregation loop in [`execute_block_parallel`].
 pub fn check_2d_gas_allowance(
     tx: &Transaction,
-    sender: Address,
-    fork: Fork,
+    _sender: Address,
+    _fork: Fork,
     block_gas_used_regular: u64,
     block_gas_used_state: u64,
     block_gas_limit: u64,
 ) -> Result<(), EvmError> {
-    let (intrinsic_regular, intrinsic_state) =
-        intrinsic_gas_dimensions(tx, sender, fork, block_gas_limit)
-            .map_err(|e| EvmError::Transaction(format!("intrinsic gas computation failed: {e}")))?;
-
     let tx_gas = tx.gas_limit();
     let regular_available = block_gas_limit.saturating_sub(block_gas_used_regular);
     let state_available = block_gas_limit.saturating_sub(block_gas_used_state);
 
-    // Regular dim: worst-case regular contribution = tx.gas - intrinsic.state,
-    // capped at TX_MAX_GAS_LIMIT. If tx.gas < intrinsic.state the tx is
-    // intrinsic-underfunded and will be rejected later; treat the subtraction
-    // as zero so the 2D check doesn't spuriously reject on saturation.
-    let regular_contrib = tx_gas
-        .saturating_sub(intrinsic_state)
-        .min(TX_MAX_GAS_LIMIT_AMSTERDAM);
+    // Regular dim: worst-case regular contribution = full tx.gas, capped at
+    // TX_MAX_GAS_LIMIT. The spec uses the full tx gas with no intrinsic
+    // subtraction; intrinsic underfunding is rejected separately in transaction
+    // validation, not by this inclusion check.
+    let regular_contrib = tx_gas.min(TX_MAX_GAS_LIMIT_AMSTERDAM);
     if regular_contrib > regular_available {
         return Err(EvmError::Transaction(format!(
             "Gas allowance exceeded: regular dim worst-case {regular_contrib} > \
@@ -148,8 +145,8 @@ pub fn check_2d_gas_allowance(
         )));
     }
 
-    // State dim: worst-case state contribution = tx.gas - intrinsic.regular.
-    let state_contrib = tx_gas.saturating_sub(intrinsic_regular);
+    // State dim: worst-case state contribution = full tx.gas.
+    let state_contrib = tx_gas;
     if state_contrib > state_available {
         return Err(EvmError::Transaction(format!(
             "Gas allowance exceeded: state dim worst-case {state_contrib} > \
