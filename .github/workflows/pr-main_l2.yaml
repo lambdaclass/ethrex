@@ -28,8 +28,8 @@ jobs:
     outputs:
       run_tests: ${{ steps.finish.outputs.run_tests }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: dorny/paths-filter@v3
+      - uses: actions/checkout@v6
+      - uses: dorny/paths-filter@v4
         id: filter
         with:
           filters: |
@@ -79,7 +79,7 @@ jobs:
     if: ${{ needs.detect-changes.outputs.run_tests == 'true' }}
     steps:
       - name: Checkout sources
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Free Disk Space
         uses: ./.github/actions/free-disk
@@ -123,7 +123,7 @@ jobs:
     if: ${{ needs.detect-changes.outputs.run_tests == 'true' && github.event_name != 'merge_group' }}
     steps:
       - name: Checkout sources
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Setup Rust Environment
         uses: ./.github/actions/setup-rust
@@ -140,10 +140,10 @@ jobs:
     if: ${{ needs.detect-changes.outputs.run_tests == 'true' && github.event_name != 'merge_group' }}
     steps:
       - name: Checkout sources
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
 
       - name: Build L1 docker image
         uses: ./.github/actions/build-docker
@@ -158,7 +158,7 @@ jobs:
           cache_write: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.fork != true }}
 
       - name: Upload artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: ethrex_image
           path: /tmp/ethrex_image.tar
@@ -172,10 +172,10 @@ jobs:
     if: ${{ needs.detect-changes.outputs.run_tests == 'true' && github.event_name != 'merge_group' }}
     steps:
       - name: Checkout sources
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
 
       - name: Build L2 docker image
         uses: ./.github/actions/build-docker
@@ -192,7 +192,7 @@ jobs:
           cache_write: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.fork != true }}
 
       - name: Upload artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: ethrex_image_l2
           path: /tmp/ethrex_image_l2.tar
@@ -205,7 +205,7 @@ jobs:
     timeout-minutes: 60
     steps:
       - name: Checkout sources
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Free Disk Space
         uses: ./.github/actions/free-disk
@@ -214,7 +214,7 @@ jobs:
         uses: ./.github/actions/setup-rust
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: "20"
 
@@ -337,7 +337,7 @@ jobs:
             compose_targets: [docker-compose.yaml]
     steps:
       - name: Checkout sources
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
       - name: Setup Rust Environment
         uses: ./.github/actions/setup-rust
 
@@ -361,7 +361,7 @@ jobs:
           docker compose -f ${{ join(matrix.compose_targets, ' -f ') }} up --detach web3signer
 
       - name: Download ethrex image artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v6
         with:
           name: ethrex_image
           path: /tmp
@@ -371,7 +371,7 @@ jobs:
           docker load --input /tmp/ethrex_image.tar
 
       - name: Download ethrex L2 image artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v6
         with:
           name: ethrex_image_l2
           path: /tmp
@@ -497,7 +497,7 @@ jobs:
     if: ${{ needs.detect-changes.outputs.run_tests == 'true' && github.event_name != 'merge_group' }}
     steps:
       - name: Checkout sources
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Free Disk Space
         uses: ./.github/actions/free-disk
@@ -509,7 +509,7 @@ jobs:
         uses: ./.github/actions/install-solc
 
       - name: Download ethrex image artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v6
         with:
           name: ethrex_image
           path: /tmp
@@ -519,7 +519,7 @@ jobs:
           docker load --input /tmp/ethrex_image.tar
 
       - name: Download ethrex L2 image artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v6
         with:
           name: ethrex_image_l2
           path: /tmp
@@ -530,6 +530,18 @@ jobs:
 
       - name: Set up Nix
         uses: cachix/install-nix-action@v31
+        with:
+          # crates.io 403s any User-Agent containing "curl/", which is what Nix's
+          # fetchurl sends by default, breaking crate downloads during the image
+          # build. In multi-user (daemon) mode the FOD builds run under the
+          # nix-daemon and don't see the caller's environment, so override the
+          # User-Agent via impure-env (honored because the runner is a trusted
+          # user). Use curl's glued short option `-A<value>`: a single space-free
+          # token that survives impure-env's space-separated parsing and
+          # fetchurl's unquoted word-split (curl rejects the --user-agent=value form).
+          extra_nix_config: |
+            extra-experimental-features = configurable-impure-env
+            impure-env = NIX_CURL_FLAGS=-Aethrex-ci+https://github.com/lambdaclass/ethrex
 
       - name: Set up QEMU
         run: |
@@ -632,12 +644,12 @@ jobs:
     if: ${{ needs.detect-changes.outputs.run_tests == 'true' && github.event_name != 'merge_group' }}
     steps:
       - name: Checkout sources
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
       - name: Setup Rust Environment
         uses: ./.github/actions/setup-rust
 
       - name: Download ethrex image artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v6
         with:
           name: ethrex_image
           path: /tmp
@@ -647,7 +659,7 @@ jobs:
           docker load --input /tmp/ethrex_image.tar
 
       - name: Download ethrex L2 image artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v6
         with:
           name: ethrex_image_l2
           path: /tmp
@@ -699,7 +711,7 @@ jobs:
 
     steps:
       - name: Checkout sources
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
       - name: Setup Rust Environment
         uses: ./.github/actions/setup-rust
 
@@ -723,7 +735,7 @@ jobs:
           cargo test -p ethrex-test l2:: --no-run --release
 
       - name: Download ethrex image artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v6
         with:
           name: ethrex_image
           path: /tmp
@@ -733,7 +745,7 @@ jobs:
           docker load --input /tmp/ethrex_image.tar
 
       - name: Download ethrex L2 image artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v6
         with:
           name: ethrex_image_l2
           path: /tmp

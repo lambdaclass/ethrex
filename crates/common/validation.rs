@@ -7,9 +7,9 @@ use crate::constants::{GAS_PER_BLOB, MAX_RLP_BLOCK_SIZE, POST_OSAKA_GAS_LIMIT_CA
 use crate::errors::InvalidBlockError;
 use crate::types::requests::{EncodedRequests, Requests, compute_requests_hash};
 use crate::types::{
-    Block, BlockHeader, ChainConfig, EIP4844Transaction, Receipt, compute_receipts_root,
-    validate_block_header, validate_cancun_header_fields, validate_prague_header_fields,
-    validate_pre_cancun_header_fields,
+    Block, BlockHeader, ChainConfig, EIP4844Transaction, Receipt, Transaction,
+    compute_receipts_root_and_logs_bloom, validate_block_header, validate_cancun_header_fields,
+    validate_prague_header_fields, validate_pre_cancun_header_fields,
 };
 use ethrex_crypto::Crypto;
 use ethrex_rlp::encode::RLPEncode;
@@ -57,6 +57,32 @@ pub fn validate_block_pre_execution(
         validate_pre_cancun_header_fields(&block.header)?;
     }
 
+    // A transaction's chain id is bound into its signature (EIP-155 / the typed-tx
+    // `chain_id` field), so the recovered sender is only valid for that chain. Reject any
+    // transaction whose chain id does not match this chain: other clients (geth's signer)
+    // reject it at block validation, so accepting one would split consensus. Legacy
+    // pre-EIP-155 transactions carry no chain id (`None`) and are left untouched.
+    //
+    // Privileged (L2) transactions are exempt: their sender comes from an unsigned `from`
+    // field, so chain id is not a signature-binding scalar for them, and on L2 it may name
+    // a different source chain (cross-chain deposits). On L1 they are rejected outright as
+    // an unsupported transaction type, so this exemption opens no L1 gap. The other L2-only
+    // type, `FeeTokenTransaction` (0x7d), is signature-recovered and therefore stays
+    // checked — on L2 it carries the L2 chain id; on L1 it is rejected as unsupported.
+    for tx in &block.body.transactions {
+        if matches!(tx, Transaction::PrivilegedL2Transaction(_)) {
+            continue;
+        }
+        if let Some(tx_chain_id) = tx.chain_id()
+            && tx_chain_id != chain_config.chain_id
+        {
+            return Err(InvalidBlockError::InvalidTransactionChainId {
+                have: tx_chain_id,
+                want: chain_config.chain_id,
+            });
+        }
+    }
+
     Ok(())
 }
 
@@ -76,19 +102,28 @@ pub fn validate_gas_used(
     Ok(())
 }
 
-/// Validates that the receipts root matches the block header.
-pub fn validate_receipts_root(
+/// Validates both the receipts root and the header `logs_bloom` against the executed
+/// receipts in a single pass.
+///
+/// The receipts root commits to each receipt's per-receipt bloom, but *not* to the
+/// header's aggregate `logs_bloom` field — so the aggregate must be checked separately
+/// or a block with a correct receipts root but an arbitrary bloom would be accepted,
+/// diverging from geth/reth. Both checks need each receipt's bloom, so computing them
+/// together hashes it only once (it is cycle-counted in the zkVM guest).
+pub fn validate_receipts_root_and_logs_bloom(
     block_header: &BlockHeader,
     receipts: &[Receipt],
     crypto: &dyn Crypto,
 ) -> Result<(), InvalidBlockError> {
-    let receipts_root = compute_receipts_root(receipts, crypto);
+    let (receipts_root, logs_bloom) = compute_receipts_root_and_logs_bloom(receipts, crypto);
 
-    if receipts_root == block_header.receipts_root {
-        Ok(())
-    } else {
-        Err(InvalidBlockError::ReceiptsRootMismatch)
+    if receipts_root != block_header.receipts_root {
+        return Err(InvalidBlockError::ReceiptsRootMismatch);
     }
+    if logs_bloom != block_header.logs_bloom {
+        return Err(InvalidBlockError::LogsBloomMismatch);
+    }
+    Ok(())
 }
 
 /// Validates that the requests hash matches the block header (Prague+).
@@ -117,8 +152,8 @@ pub fn validate_requests_hash(
 
 /// Helper to validate that all indices in an iterator are within bounds.
 fn validate_bal_indices(
-    indices: impl Iterator<Item = u16>,
-    max_valid_index: u16,
+    indices: impl Iterator<Item = u32>,
+    max_valid_index: u32,
 ) -> Result<(), InvalidBlockError> {
     for index in indices {
         if index > max_valid_index {
@@ -139,8 +174,7 @@ pub fn validate_header_bal_indices(
     bal: &crate::types::block_access_list::BlockAccessList,
     transaction_count: usize,
 ) -> Result<(), InvalidBlockError> {
-    #[allow(clippy::cast_possible_truncation)]
-    let max_valid_index = transaction_count as u16 + 1;
+    let max_valid_index = u32::try_from(transaction_count + 1).unwrap_or(u32::MAX);
 
     for account in bal.accounts() {
         validate_bal_indices(
@@ -184,8 +218,7 @@ pub fn validate_block_access_list_hash(
 
     // Per EIP-7928: "Invalidate block if access list...contains indices exceeding len(transactions) + 1"
     // Index semantics: 0=pre-exec, 1..n=tx indices, n+1=post-exec (withdrawals)
-    #[allow(clippy::cast_possible_truncation)]
-    let max_valid_index = transaction_count as u16 + 1;
+    let max_valid_index = u32::try_from(transaction_count + 1).unwrap_or(u32::MAX);
 
     // Validate all indices and compute item count in a single pass over the BAL.
     let mut bal_items: u64 = 0;

@@ -57,18 +57,15 @@ failed_logs_root="${results_dir}/failed_logs"
 rm -rf "${failed_logs_root}"
 mkdir -p "${failed_logs_root}"
 
-# Known-flaky tests to ignore (substring match against test case name).
-# These are hive framework issues, not ethrex bugs.
-KNOWN_FLAKY_TESTS=(
-  "Invalid Missing Ancestor Syncing ReOrg, Timestamp, EmptyTxs=False, CanonicalReOrg=False, Invalid P8"
-  "Invalid Missing Ancestor Syncing ReOrg, Timestamp, EmptyTxs=False, CanonicalReOrg=True, Invalid P8"
-  "Invalid Missing Ancestor Syncing ReOrg, Transaction Value, EmptyTxs=False, CanonicalReOrg=False, Invalid P9"
+# Tests excluded from the failure count (substring match against test case
+# name).
+KNOWN_EXCLUDED_TESTS=(
 )
 
-# Build a jq filter that excludes known-flaky tests.
-flaky_filter='true'
-for pattern in "${KNOWN_FLAKY_TESTS[@]}"; do
-  flaky_filter="${flaky_filter} and (.name | contains(\"${pattern}\") | not)"
+# Build a jq filter that excludes the known-excluded tests.
+exclude_filter='true'
+for pattern in "${KNOWN_EXCLUDED_TESTS[@]}"; do
+  exclude_filter="${exclude_filter} and (.name | contains(\"${pattern}\") | not)"
 done
 
 for json_file in "${json_files[@]}"; do
@@ -77,11 +74,11 @@ for json_file in "${json_files[@]}"; do
   fi
 
   suite_name="$(jq -r '.name // empty' "${json_file}")"
-  failed_cases="$(jq '[.testCases[]? | select(.summaryResult.pass != true) | select('"${flaky_filter}"')] | length' "${json_file}")"
+  failed_cases="$(jq '[.testCases[]? | select(.summaryResult.pass != true) | select('"${exclude_filter}"')] | length' "${json_file}")"
 
-  skipped_flaky="$(jq '[.testCases[]? | select(.summaryResult.pass != true) | select(('"${flaky_filter}"') | not)] | length' "${json_file}")"
-  if [ "${skipped_flaky}" -gt 0 ]; then
-    echo "Ignoring ${skipped_flaky} known-flaky test(s) in ${suite_name:-$(basename "${json_file}")}"
+  skipped_excluded="$(jq '[.testCases[]? | select(.summaryResult.pass != true) | select(('"${exclude_filter}"') | not)] | length' "${json_file}")"
+  if [ "${skipped_excluded}" -gt 0 ]; then
+    echo "Ignoring ${skipped_excluded} known-excluded test(s) in ${suite_name:-$(basename "${json_file}")}"
   fi
 
   if [ "${failed_cases}" -gt 0 ]; then
@@ -90,7 +87,7 @@ for json_file in "${json_files[@]}"; do
       jq -r '
         .testCases[]?
         | select(.summaryResult.pass != true)
-        | select('"${flaky_filter}"')
+        | select('"${exclude_filter}"')
         | . as $case
         | ($case.summaryResult // {}) as $summary
         | ($summary.message // $summary.reason // $summary.error // "") as $message
@@ -144,9 +141,9 @@ for json_file in "${json_files[@]}"; do
         [
           .simLog?,
           .testDetailsLog?,
-          (.testCases[]? | select(.summaryResult.pass != true) | select('"${flaky_filter}"') | .clientInfo? | to_entries? // [] | map(.value.logFile? // empty) | .[]),
-          (.testCases[]? | select(.summaryResult.pass != true) | select('"${flaky_filter}"') | .summaryResult.logFile?),
-          (.testCases[]? | select(.summaryResult.pass != true) | select('"${flaky_filter}"') | .logFile?)
+          (.testCases[]? | select(.summaryResult.pass != true) | select('"${exclude_filter}"') | .clientInfo? | to_entries? // [] | map(.value.logFile? // empty) | .[]),
+          (.testCases[]? | select(.summaryResult.pass != true) | select('"${exclude_filter}"') | .summaryResult.logFile?),
+          (.testCases[]? | select(.summaryResult.pass != true) | select('"${exclude_filter}"') | .logFile?)
         ]
         | map(select(. != null and . != ""))
         | unique
@@ -216,7 +213,7 @@ for json_file in "${json_files[@]}"; do
         .testCases
         | to_entries[]
         | select(.value.summaryResult.pass != true)
-        | select(.value | '"${flaky_filter}"')
+        | select(.value | '"${exclude_filter}"')
         | . as $case_entry
         | ($case_entry.value.clientInfo? // {}) | to_entries[]
         | [

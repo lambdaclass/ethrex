@@ -8,6 +8,9 @@ on:
   pull_request:
     paths:
       - ".github/workflows/main_prover.yaml"
+      - "Dockerfile"
+      - ".dockerignore"
+      - "crates/l2/docker-compose*.yaml"
   workflow_dispatch:
     inputs:
       ref:
@@ -28,14 +31,24 @@ env:
   # Work around frequent libgit2/submodule fetch flakiness in CI.
   CARGO_NET_GIT_FETCH_WITH_CLI: "true"
   CARGO_NET_RETRY: "10"
+  # Image metadata for the compose-built images (consumed by docker-compose.yaml
+  # build args). Without these, compose-built images bake revision=unknown/version=dev.
+  GIT_SHA: ${{ github.sha }}
+  GIT_BRANCH: ${{ github.head_ref || github.ref_name }}
+  VERSION: dev-${{ github.sha }}
 
 jobs:
   test:
     name: Integration Test Prover SP1
+    # Self-hosted GPU runner: only fire for non-PR events or in-org PRs.
+    # Fork PRs would otherwise execute attacker-controlled code on the GPU CI machine.
+    if: >-
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name == github.repository
     runs-on: gpu
     steps:
       - name: Checkout sources
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           ref: ${{ github.event_name == 'workflow_dispatch' && inputs.ref || github.sha }}
       - name: Setup Rust Environment
@@ -52,7 +65,7 @@ jobs:
 
       - name: Set up Docker Buildx
         # if: ${{ always() && github.event_name == 'merge_group' }}
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
 
       # This step is needed because of an state bug in the GPU runner.
       # Issue to fix this: https://github.com/lambdaclass/ethrex/pull/2741.

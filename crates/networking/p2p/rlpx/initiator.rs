@@ -1,4 +1,4 @@
-use crate::discv4::server::{LOOKUP_INTERVAL_MS, lookup_interval_function};
+use crate::discovery::{LOOKUP_INTERVAL_MS, lookup_interval_function};
 use crate::peer_table::PeerTableServerProtocol as _;
 use crate::types::Node;
 use crate::{metrics::METRICS, network::P2PContext, rlpx::connection::server::PeerConnection};
@@ -11,7 +11,7 @@ use spawned_concurrency::{
     },
 };
 use std::time::Duration;
-use tracing::{debug, error, info};
+use tracing::{debug, error};
 
 #[derive(Debug, thiserror::Error)]
 pub enum RLPxInitiatorError {
@@ -49,7 +49,7 @@ impl RLPxInitiator {
         context: P2PContext,
         backend: Option<Backend>,
     ) -> ActorRef<RLPxInitiator> {
-        info!("Starting RLPx Initiator");
+        debug!("Starting RLPx initiator");
         let state = RLPxInitiator::new(context);
         let actor_ref = match backend {
             Some(b) => state.start_with_backend(b),

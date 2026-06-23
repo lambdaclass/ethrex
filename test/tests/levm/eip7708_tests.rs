@@ -89,7 +89,7 @@ impl Database for TestDatabase {
         for acc in self.accounts.values() {
             if acc.info.code_hash == code_hash {
                 return Ok(CodeMetadata {
-                    length: acc.code.bytecode.len() as u64,
+                    length: acc.code.len() as u64,
                 });
             }
         }
@@ -202,6 +202,7 @@ impl TestBuilder {
             is_privileged: false,
             fee_token: None,
             disable_balance_check: false,
+            is_system_call: false,
         };
 
         let tx = Transaction::EIP1559Transaction(EIP1559Transaction {

@@ -87,25 +87,25 @@ runs:
 
     - name: Login to DockerHub (for rate limiting)
       if: inputs.dockerhub_username != '' && inputs.dockerhub_password != ''
-      uses: docker/login-action@v3
+      uses: docker/login-action@v4
       with:
         username: ${{ inputs.dockerhub_username }}
         password: ${{ inputs.dockerhub_password }}
 
     - name: Login to ghcr.io (for cache)
       if: inputs.username != '' && inputs.password != '' && inputs.cache_write == 'true'
-      uses: docker/login-action@v3
+      uses: docker/login-action@v4
       with:
         registry: ghcr.io
         username: ${{ inputs.username }}
         password: ${{ inputs.password }}
 
     - name: Set up Docker Buildx
-      uses: docker/setup-buildx-action@v3
+      uses: docker/setup-buildx-action@v4
 
     - id: build-image
       name: Build Docker image
-      uses: docker/build-push-action@v6
+      uses: docker/build-push-action@v7
       with:
         context: .
         file: ./Dockerfile
@@ -116,7 +116,11 @@ runs:
           type=registry,ref=${{ inputs.registry }}/${{ github.repository }}:cache-${{ steps.cache-config.outputs.cache_scope }}-${{ inputs.variant }}-${{ steps.cache-config.outputs.platform_safe }}
           type=registry,ref=${{ inputs.registry }}/${{ github.repository }}:cache-main-${{ inputs.variant }}-${{ steps.cache-config.outputs.platform_safe }}
         cache-to: ${{ inputs.cache_write == 'true' && format('type=registry,ref={0}/{1}:cache-{2}-{3}-{4},mode=max', inputs.registry, github.repository, steps.cache-config.outputs.cache_scope, inputs.variant, steps.cache-config.outputs.platform_safe) || format('type=gha,mode=max,scope={0}-{1}-{2}', steps.cache-config.outputs.cache_scope, inputs.variant, steps.cache-config.outputs.platform_safe) }}
-        build-args: ${{ inputs.build_args }}
+        build-args: |
+          ${{ inputs.build_args }}
+          GIT_SHA=${{ github.sha }}
+          GIT_BRANCH=${{ github.head_ref || github.ref_name }}
+          VERSION=${{ github.ref_type == 'tag' && github.ref_name || format('dev-{0}', github.sha) }}
         platforms: ${{ inputs.platforms }}
 
     # Since we're exporting the image as a tar, we need to load it manually as well

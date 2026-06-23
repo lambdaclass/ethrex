@@ -10,6 +10,7 @@ use tracing::{debug, info, warn};
 
 use crate::{
     rpc::{RpcApiContext, RpcHandler},
+    subscription_manager::SubscriptionManagerProtocol,
     types::{
         fork_choice::{
             ForkChoiceResponse, ForkChoiceState, PayloadAttributesV3, PayloadAttributesV4,
@@ -220,7 +221,7 @@ async fn handle_forkchoice(
         version = %format!("v{}", version),
         head = %format!("{:#x}", fork_choice_state.head_block_hash),
         safe = %format!("{:#x}", fork_choice_state.safe_block_hash),
-        finalized = %format!("v{:#x}", fork_choice_state.finalized_block_hash),
+        finalized = %format!("{:#x}", fork_choice_state.finalized_block_hash),
         "New fork choice update",
     );
 
@@ -289,6 +290,16 @@ async fn handle_forkchoice(
                     context
                         .blockchain
                         .remove_block_transactions_from_pool(&block)?;
+                    // Reset blob sub-pool against on-chain nonces (head-block
+                    // pruning above misses stale blobs from non-head blocks).
+                    // Best-effort housekeeping: a state-read failure here must
+                    // not fail an otherwise-successful FCU, so log and continue
+                    // rather than propagating. The next FCU re-runs the sweep.
+                    if let Err(err) = context.blockchain.remove_stale_blob_txs(block.hash()) {
+                        warn!(
+                            "Failed to prune stale blob txs from mempool after fork choice: {err}"
+                        );
+                    }
                 }
                 Ok(None) => {
                     warn!(
@@ -303,6 +314,11 @@ async fn handle_forkchoice(
                 }
             };
 
+            // Notify all eth_subscribe("newHeads") subscribers.
+            if let Some(ws) = &context.ws {
+                let _ = ws.subscription_manager.new_head(head.clone());
+            }
+
             Ok((
                 Some(head),
                 ForkChoiceResponse::from(PayloadStatus::valid_with_hash(
@@ -312,9 +328,20 @@ async fn handle_forkchoice(
         }
         Err(forkchoice_error) => {
             let forkchoice_response = match forkchoice_error {
-                InvalidForkChoice::NewHeadAlreadyCanonical => ForkChoiceResponse::from(
-                    PayloadStatus::valid_with_hash(fork_choice_state.head_block_hash),
-                ),
+                InvalidForkChoice::NewHeadAlreadyCanonical => {
+                    // execution-apis PR 786: when head references a VALID ancestor of
+                    // the latest known finalized block, return VALID + null payloadId
+                    // and MUST NOT begin a payload build process. We return `None` for
+                    // the head header so the V3/V4 dispatch short-circuits the
+                    // build_payload call.
+                    context.blockchain.set_synced();
+                    return Ok((
+                        None,
+                        ForkChoiceResponse::from(PayloadStatus::valid_with_hash(
+                            fork_choice_state.head_block_hash,
+                        )),
+                    ));
+                }
                 InvalidForkChoice::Syncing => {
                     // Start sync
                     syncer.sync_to_head(fork_choice_state.head_block_hash);
@@ -322,12 +349,24 @@ async fn handle_forkchoice(
                 }
                 // TODO(#5564): handle arbitrary reorgs
                 InvalidForkChoice::StateNotReachable => {
-                    // Ignore the FCU
+                    // We can't reach the head's state from our DB (the nearest
+                    // link block has pruned or not-yet-executed state). Kick off
+                    // a sync toward the head instead of reporting SYNCING while
+                    // sitting idle, which wedges the node: the CL keeps resending
+                    // FCUs we keep ignoring and we never make progress.
+                    // sync_to_head is idempotent (only starts a cycle if the
+                    // syncer is inactive) and mode-agnostic, so this is safe for
+                    // both full and snap clients.
+                    syncer.sync_to_head(fork_choice_state.head_block_hash);
                     ForkChoiceResponse::from(PayloadStatus::syncing())
                 }
                 InvalidForkChoice::Disconnected(_, _) | InvalidForkChoice::ElementNotFound(_) => {
                     warn!("Invalid fork choice state. Reason: {:?}", forkchoice_error);
                     return Err(RpcErr::InvalidForkChoiceState(forkchoice_error.to_string()));
+                }
+                InvalidForkChoice::TooDeepReorg { .. } => {
+                    warn!("Rejecting fork choice update. Reason: {forkchoice_error}");
+                    return Err(RpcErr::TooDeepReorg(forkchoice_error.to_string()));
                 }
                 InvalidForkChoice::InvalidAncestor(last_valid_hash) => {
                     ForkChoiceResponse::from(PayloadStatus::invalid_with(

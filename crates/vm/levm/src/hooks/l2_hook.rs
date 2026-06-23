@@ -146,9 +146,9 @@ fn finalize_non_privileged_execution(
     // EIP-7778: pre-refund gas for block accounting
     let total_gas_pre_refund = ctx_result.gas_used;
 
-    // Clear the backup so that Phase 2's rollback only undoes mutations
-    // from apply_finalize_mutations, not the gas-overuse revert above.
-    vm.current_call_frame.call_frame_backup.clear();
+    // Save the execution backup (contains storage slot backups from SSTORE, etc.)
+    // before clearing, so BackupHook can include it in the tx-level undo snapshot.
+    let execution_backup = std::mem::take(&mut vm.current_call_frame.call_frame_backup);
 
     // === Phase 1: Fallible computations (no state mutations) ===
     // Perform contract calls and conversions that can fail BEFORE any
@@ -176,6 +176,7 @@ fn finalize_non_privileged_execution(
     // Mutations record original values in call_frame_backup via
     // backup_account_info / backup_storage_slot. If any step fails,
     // we restore the cache to undo all partial mutations.
+    // The call_frame_backup is empty here so rollback only undoes Phase 2.
     let result = apply_finalize_mutations(
         vm,
         ctx_result,
@@ -198,6 +199,12 @@ fn finalize_non_privileged_execution(
         vm.restore_cache_state()?;
         return Err(e);
     }
+
+    // Merge the saved execution backup back so BackupHook can capture
+    // both execution-time and finalize-time state for tx-level undo.
+    vm.current_call_frame
+        .call_frame_backup
+        .extend(execution_backup);
 
     Ok(())
 }
@@ -238,13 +245,7 @@ fn apply_finalize_mutations(
             fee_token_ratio,
         )?;
     } else {
-        default_hook::refund_sender(
-            vm,
-            ctx_result,
-            gas_refunded,
-            actual_gas_used,
-            total_gas_pre_refund,
-        )?;
+        default_hook::refund_sender(vm, ctx_result, gas_refunded, actual_gas_used)?;
     }
 
     pay_coinbase_l2(
@@ -490,7 +491,11 @@ fn prepare_execution_privileged(vm: &mut VM<'_>) -> Result<(), crate::errors::VM
 
     // (6) INTRINSIC_GAS_TOO_LOW
     // CHANGED: the gas should be charged, but the transaction shouldn't error
-    if vm.add_intrinsic_gas().is_err() {
+    let intrinsic_failed = match vm.get_intrinsic_gas() {
+        Ok(intrinsic) => vm.add_intrinsic_gas(&intrinsic).is_err(),
+        Err(_) => true,
+    };
+    if intrinsic_failed {
         tx_should_fail = true;
     }
 
@@ -517,11 +522,11 @@ fn prepare_execution_privileged(vm: &mut VM<'_>) -> Result<(), crate::errors::VM
         // If the transaction failed some validation, but it must still be included
         // To prevent it from taking effect, we force it to revert
         vm.current_call_frame.msg_value = U256::zero();
-        vm.current_call_frame.set_code(Code {
-            hash: H256::zero(),
-            bytecode: vec![Opcode::INVALID.into()].into(),
-            jump_targets: Vec::new(),
-        })?;
+        vm.current_call_frame
+            .set_code(Code::from_bytecode_unchecked(
+                vec![Opcode::INVALID.into()].into(),
+                H256::zero(),
+            ))?;
         return Ok(());
     }
 
@@ -578,8 +583,12 @@ fn prepare_execution_fee_token(vm: &mut VM<'_>) -> Result<U256, crate::errors::V
     let sender_address = vm.env.origin;
     let sender_info = vm.db.get_account(sender_address)?.info.clone();
 
+    // Compute intrinsic gas once; reused by the min-gas-limit validation and
+    // `add_intrinsic_gas` below (mirrors the default hook).
+    let intrinsic = vm.get_intrinsic_gas()?;
+
     if vm.env.config.fork >= Fork::Prague {
-        default_hook::validate_min_gas_limit(vm)?;
+        default_hook::validate_min_gas_limit(vm, &intrinsic)?;
         // EIP-7825 (Prague to pre-Amsterdam): reject tx if gas_limit > TX_MAX_GAS_LIMIT_AMSTERDAM.
         // Amsterdam removes this restriction (EIP-8037 reservoir model).
         if vm.env.config.fork < Fork::Amsterdam && vm.tx.gas_limit() > TX_MAX_GAS_LIMIT_AMSTERDAM {
@@ -625,7 +634,7 @@ fn prepare_execution_fee_token(vm: &mut VM<'_>) -> Result<U256, crate::errors::V
     }
 
     // (6) INTRINSIC_GAS_TOO_LOW
-    vm.add_intrinsic_gas()?;
+    vm.add_intrinsic_gas(&intrinsic)?;
 
     // (7) NONCE_IS_MAX
     vm.increment_account_nonce(sender_address)
@@ -655,7 +664,7 @@ fn prepare_execution_fee_token(vm: &mut VM<'_>) -> Result<U256, crate::errors::V
 
     // (9) SENDER_NOT_EOA
     let code = vm.db.get_code(sender_info.code_hash)?;
-    default_hook::validate_sender(sender_address, &code.bytecode)?;
+    default_hook::validate_sender(sender_address, code.code())?;
 
     // (10) GAS_ALLOWANCE_EXCEEDED
     default_hook::validate_gas_allowance(vm)?;

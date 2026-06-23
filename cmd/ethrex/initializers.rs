@@ -9,6 +9,7 @@ use ethrex_blockchain::{Blockchain, BlockchainOptions, BlockchainType};
 use ethrex_common::fd_limit::raise_fd_limit;
 use ethrex_common::types::Genesis;
 use ethrex_config::networks::Network;
+use ethrex_rpc::WebSocketConfig;
 
 use ethrex_metrics::profiling::{FunctionProfilingLayer, initialize_block_processing_profile};
 use ethrex_metrics::rpc::initialize_rpc_metrics;
@@ -23,7 +24,9 @@ use ethrex_p2p::{
     types::{NetworkConfig, Node, NodeRecord},
     utils::public_key_from_signing_key,
 };
-use ethrex_storage::{EngineType, Store, error::StoreError, has_valid_db, read_chain_id_from_db};
+use ethrex_storage::{
+    EngineType, Store, StoreConfig, error::StoreError, has_valid_db, read_chain_id_from_db,
+};
 use local_ip_address::{local_ip, local_ipv6};
 use rand::rngs::OsRng;
 use secp256k1::SecretKey;
@@ -142,30 +145,76 @@ pub fn init_metrics(opts: &Options, network: &Network, tracker: TaskTracker) {
     tracker.spawn(metrics_api);
 }
 
-/// Opens a new or pre-existing Store and loads the initial state provided by the network
+/// Opens a new or pre-existing Store with default tunables and loads the initial
+/// state provided by the network. See [`init_store_with_config`] for the variant
+/// that lets production callers thread CLI-provided storage tunables through.
 pub async fn init_store(datadir: impl AsRef<Path>, genesis: Genesis) -> Result<Store, StoreError> {
-    let mut store = open_store(datadir.as_ref())?;
+    init_store_with_config(datadir, genesis, StoreConfig::default()).await
+}
+
+/// Opens a Store with the supplied [`StoreConfig`] and loads the initial state.
+pub async fn init_store_with_config(
+    datadir: impl AsRef<Path>,
+    genesis: Genesis,
+    config: StoreConfig,
+) -> Result<Store, StoreError> {
+    let mut store = open_store_with_config(datadir.as_ref(), config)?;
     store.add_initial_state(genesis).await?;
     Ok(store)
 }
 
-/// Initializes a pre-existing Store
+/// Like [`init_store`], but trusts a pre-existing datadir's genesis instead of
+/// validating it against `genesis`. See [`Store::add_initial_state_skip_validation`].
+pub async fn init_store_skip_validation(
+    datadir: impl AsRef<Path>,
+    genesis: Genesis,
+) -> Result<Store, StoreError> {
+    init_store_skip_validation_with_config(datadir, genesis, StoreConfig::default()).await
+}
+
+/// Like [`init_store_with_config`], but trusts a pre-existing datadir's genesis
+/// instead of validating it against `genesis`.
+pub async fn init_store_skip_validation_with_config(
+    datadir: impl AsRef<Path>,
+    genesis: Genesis,
+    config: StoreConfig,
+) -> Result<Store, StoreError> {
+    let mut store = open_store_with_config(datadir.as_ref(), config)?;
+    store.add_initial_state_skip_validation(genesis).await?;
+    Ok(store)
+}
+
+/// Initializes a pre-existing Store with default tunables. See [`load_store_with_config`].
 pub async fn load_store(datadir: &Path) -> Result<Store, StoreError> {
-    let store = open_store(datadir)?;
+    load_store_with_config(datadir, StoreConfig::default()).await
+}
+
+/// Initializes a pre-existing Store, applying the supplied [`StoreConfig`].
+pub async fn load_store_with_config(
+    datadir: &Path,
+    config: StoreConfig,
+) -> Result<Store, StoreError> {
+    let store = open_store_with_config(datadir, config)?;
     store.load_initial_state().await?;
     Ok(store)
 }
 
-/// Opens a pre-existing Store or creates a new one
+/// Opens a pre-existing Store or creates a new one with default tunables.
+/// See [`open_store_with_config`].
 pub fn open_store(datadir: &Path) -> Result<Store, StoreError> {
+    open_store_with_config(datadir, StoreConfig::default())
+}
+
+/// Opens a pre-existing Store or creates a new one, applying the supplied [`StoreConfig`].
+pub fn open_store_with_config(datadir: &Path, config: StoreConfig) -> Result<Store, StoreError> {
     if is_memory_datadir(datadir) {
-        Store::new(datadir, EngineType::InMemory)
+        Store::new_with_config(datadir, EngineType::InMemory, config)
     } else {
         #[cfg(feature = "rocksdb")]
         let engine_type = EngineType::RocksDB;
         #[cfg(feature = "metrics")]
         ethrex_metrics::process::set_datadir_path(datadir.to_path_buf());
-        Store::new(datadir, engine_type)
+        Store::new_with_config(datadir, engine_type, config)
     }
 }
 
@@ -208,15 +257,18 @@ pub async fn init_rpc_api(
     )
     .await;
 
-    let ws_socket_opts = if opts.ws_enabled {
-        Some(get_ws_socket_addr(opts))
+    let ws_config = if opts.ws_enabled {
+        Some(WebSocketConfig {
+            addr: get_ws_socket_addr(opts),
+            subscription_manager: ethrex_rpc::SubscriptionManager::spawn(),
+        })
     } else {
         None
     };
 
     let rpc_api = ethrex_rpc::start_api(
         get_http_socket_addr(opts),
-        ws_socket_opts,
+        ws_config,
         get_authrpc_socket_addr(opts),
         store,
         blockchain,
@@ -229,6 +281,7 @@ pub async fn init_rpc_api(
         log_filter_handler,
         opts.gas_limit,
         opts.extra_data.clone(),
+        opts.http_api.iter().copied().collect(),
     );
 
     tracker.spawn(rpc_api);
@@ -257,6 +310,7 @@ pub async fn init_network(
     let discovery_config = DiscoveryConfig {
         discv4_enabled: opts.discv4_enabled,
         discv5_enabled: opts.discv5_enabled,
+        ..Default::default()
     };
 
     ethrex_p2p::start_network(context, bootnodes, discovery_config)
@@ -354,27 +408,27 @@ pub fn get_signer(datadir: &Path) -> SecretKey {
     }
 }
 
-pub fn get_local_p2p_node(opts: &Options, signer: &SecretKey) -> (Node, NetworkConfig) {
-    let tcp_port = opts.p2p_port.parse().expect("Failed to parse p2p port");
-    let udp_port = opts
-        .discovery_port
-        .parse()
-        .expect("Failed to parse discovery port");
-
-    let local_public_key = public_key_from_signing_key(signer);
-
-    // Determine bind and external addresses.
-    //
-    // --nat.extip sets the address announced to peers (for nodes behind NAT).
-    // --p2p.addr sets the bind address (defaults to the auto-detected local IP
-    //   when --nat.extip is not given, or to the unspecified address when it is:
-    //   0.0.0.0 for IPv4, :: for IPv6).
-    let (bind_addr, external_addr): (IpAddr, IpAddr) = match (&opts.p2p_addr, &opts.nat_extip) {
+/// Decide the bind and externally-announced addresses for the P2P endpoint.
+///
+/// Precedence:
+/// - `--nat.extip` wins for the announced address; bind comes from `--p2p.addr` if given,
+///   else the unspecified address of the matching family.
+/// - `--p2p.addr` alone is used for both bind and announce, except when it's an unspecified
+///   address (`0.0.0.0` / `::`). In that case the announced address falls back to the
+///   auto-detected local IP of the matching family; this avoids advertising `0.0.0.0` in
+///   the ENR, which would make the node unreachable for inbound connections. Operators
+///   behind NAT still need `--nat.extip` for that case to resolve correctly.
+/// - With neither flag set, the auto-detected local IP is used for both bind and announce.
+fn resolve_p2p_endpoints(
+    p2p_addr: Option<&str>,
+    nat_extip: Option<&str>,
+    local_v4: Option<IpAddr>,
+    local_v6: Option<IpAddr>,
+) -> (IpAddr, IpAddr) {
+    match (p2p_addr, nat_extip) {
         (_, Some(extip)) => {
             let external: IpAddr = extip.parse().expect("Failed to parse --nat.extip address");
-            let bind: IpAddr = opts
-                .p2p_addr
-                .as_deref()
+            let bind: IpAddr = p2p_addr
                 .map(|a| {
                     let addr: IpAddr = a.parse().expect("Failed to parse p2p address");
                     assert!(
@@ -393,16 +447,59 @@ pub fn get_local_p2p_node(opts: &Options, signer: &SecretKey) -> (Node, NetworkC
             (bind, external)
         }
         (Some(addr), None) => {
-            let ip: IpAddr = addr.parse().expect("Failed to parse p2p address");
-            (ip, ip)
+            let bind: IpAddr = addr.parse().expect("Failed to parse p2p address");
+            if bind.is_unspecified() {
+                // Stay in the same address family: an IPv4 socket can't accept
+                // inbound IPv6 connections (and vice versa), so falling back
+                // across families would just advertise an unreachable address.
+                let external = if bind.is_ipv6() { local_v6 } else { local_v4 };
+                match external {
+                    Some(ext) => {
+                        info!(
+                            announced = %ext,
+                            bind = %bind,
+                            "--p2p.addr is unspecified; announcing auto-detected local IP. Set --nat.extip to override."
+                        );
+                        (bind, ext)
+                    }
+                    None => {
+                        warn!(
+                            bind = %bind,
+                            "--p2p.addr is unspecified and no local IP could be detected; \
+                             announcing the unspecified address. Inbound peer connections will fail. \
+                             Set --nat.extip=<ip> or --p2p.addr=<ip> to fix."
+                        );
+                        (bind, bind)
+                    }
+                }
+            } else {
+                (bind, bind)
+            }
         }
         (None, None) => {
-            let ip = local_ip().unwrap_or_else(|_| {
-                local_ipv6().expect("Neither ipv4 nor ipv6 local address found")
-            });
+            let ip = local_v4
+                .or(local_v6)
+                .expect("Neither ipv4 nor ipv6 local address found");
             (ip, ip)
         }
-    };
+    }
+}
+
+pub fn get_local_p2p_node(opts: &Options, signer: &SecretKey) -> (Node, NetworkConfig) {
+    let tcp_port = opts.p2p_port.parse().expect("Failed to parse p2p port");
+    let udp_port = opts
+        .discovery_port
+        .parse()
+        .expect("Failed to parse discovery port");
+
+    let local_public_key = public_key_from_signing_key(signer);
+
+    let (bind_addr, external_addr) = resolve_p2p_endpoints(
+        opts.p2p_addr.as_deref(),
+        opts.nat_extip.as_deref(),
+        local_ip().ok(),
+        local_ipv6().ok(),
+    );
 
     let node = Node::new(external_addr, udp_port, tcp_port, local_public_key);
     let network_config = NetworkConfig {
@@ -493,7 +590,15 @@ pub async fn init_l1(
     debug!("Preloading KZG trusted setup");
     ethrex_crypto::kzg::warm_up_trusted_setup();
 
-    let store = match init_store(&datadir, genesis).await {
+    let store_config = StoreConfig {
+        rocksdb_block_cache_size: opts.rocksdb_block_cache_size,
+    };
+    let store_result = if opts.skip_genesis_validation {
+        init_store_skip_validation_with_config(&datadir, genesis, store_config).await
+    } else {
+        init_store_with_config(&datadir, genesis, store_config).await
+    };
+    let store = match store_result {
         Ok(store) => store,
         Err(err @ StoreError::IncompatibleDBVersion { .. })
         | Err(err @ StoreError::NotFoundDBVersion) => {
@@ -524,6 +629,10 @@ pub async fn init_l1(
             r#type: BlockchainType::L1,
             max_blobs_per_block: opts.max_blobs_per_block,
             precompute_witnesses: opts.precompute_witnesses,
+            precompile_cache_enabled: !opts.no_precompile_cache,
+            bal_parallel_exec_enabled: !opts.no_bal_parallel_exec,
+            bal_prefetch_enabled: !opts.no_bal_prefetch,
+            bal_parallel_trie_enabled: !opts.no_bal_parallel_trie,
         },
     );
 
@@ -535,7 +644,8 @@ pub async fn init_l1(
 
     let local_node_record = get_local_node_record(&datadir, &local_p2p_node, &signer);
 
-    let peer_table = PeerTableServer::spawn(opts.target_peers, store.clone());
+    let peer_table =
+        PeerTableServer::spawn(local_p2p_node.node_id(), opts.target_peers, store.clone());
 
     // TODO: Check every module starts properly.
     let tracker = TaskTracker::new();
@@ -804,4 +914,78 @@ pub async fn regenerate_head_state(
     info!("Finished regenerating state");
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::resolve_p2p_endpoints;
+    use std::net::IpAddr;
+
+    fn ip(s: &str) -> IpAddr {
+        s.parse().unwrap()
+    }
+
+    #[test]
+    fn p2p_addr_unspecified_v4_announces_local_ip() {
+        let local = ip("10.0.0.5");
+        let (bind, ext) = resolve_p2p_endpoints(Some("0.0.0.0"), None, Some(local), None);
+        assert_eq!(bind, ip("0.0.0.0"));
+        assert_eq!(ext, local);
+    }
+
+    #[test]
+    fn p2p_addr_unspecified_without_local_ip_keeps_unspecified() {
+        let (bind, ext) = resolve_p2p_endpoints(Some("0.0.0.0"), None, None, None);
+        assert_eq!(bind, ip("0.0.0.0"));
+        assert_eq!(ext, ip("0.0.0.0"));
+    }
+
+    #[test]
+    fn extip_overrides_unspecified_bind() {
+        let (bind, ext) = resolve_p2p_endpoints(
+            Some("0.0.0.0"),
+            Some("203.0.113.5"),
+            Some(ip("10.0.0.5")),
+            None,
+        );
+        assert_eq!(bind, ip("0.0.0.0"));
+        assert_eq!(ext, ip("203.0.113.5"));
+    }
+
+    #[test]
+    fn specific_p2p_addr_used_for_both() {
+        let (bind, ext) =
+            resolve_p2p_endpoints(Some("10.0.0.5"), None, Some(ip("192.168.1.1")), None);
+        assert_eq!(bind, ip("10.0.0.5"));
+        assert_eq!(ext, ip("10.0.0.5"));
+    }
+
+    #[test]
+    fn no_flags_uses_local_v4_when_available() {
+        let local = ip("10.0.0.5");
+        let (bind, ext) = resolve_p2p_endpoints(None, None, Some(local), Some(ip("fe80::1")));
+        assert_eq!(bind, local);
+        assert_eq!(ext, local);
+    }
+
+    #[test]
+    fn extip_only_uses_unspecified_bind() {
+        let (bind, ext) = resolve_p2p_endpoints(None, Some("203.0.113.5"), None, None);
+        assert_eq!(bind, ip("0.0.0.0"));
+        assert_eq!(ext, ip("203.0.113.5"));
+    }
+
+    #[test]
+    fn p2p_addr_unspecified_v6_announces_local_ipv6() {
+        let local6 = ip("fe80::1");
+        let (bind, ext) = resolve_p2p_endpoints(Some("::"), None, None, Some(local6));
+        assert_eq!(bind, ip("::"));
+        assert_eq!(ext, local6);
+    }
+
+    #[test]
+    #[should_panic(expected = "--p2p.addr and --nat.extip must use the same address family")]
+    fn family_mismatch_panics() {
+        let _ = resolve_p2p_endpoints(Some("0.0.0.0"), Some("::1"), None, None);
+    }
 }

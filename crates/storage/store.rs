@@ -6,9 +6,10 @@ use crate::{
         StorageBackend, StorageReadView,
         tables::{
             ACCOUNT_CODE_METADATA, ACCOUNT_CODES, ACCOUNT_FLATKEYVALUE, ACCOUNT_TRIE_NODES,
-            BLOCK_NUMBERS, BODIES, CANONICAL_BLOCK_HASHES, CHAIN_DATA, EXECUTION_WITNESSES,
-            FULLSYNC_HEADERS, HEADERS, INVALID_CHAINS, MISC_VALUES, PENDING_BLOCKS, RECEIPTS,
-            SNAP_STATE, STORAGE_FLATKEYVALUE, STORAGE_TRIE_NODES, TRANSACTION_LOCATIONS,
+            BLOCK_ACCESS_LISTS, BLOCK_NUMBERS, BODIES, CANONICAL_BLOCK_HASHES, CHAIN_DATA,
+            EXECUTION_WITNESSES, FULLSYNC_HEADERS, HEADERS, INVALID_CHAINS, MISC_VALUES,
+            PENDING_BLOCKS, RECEIPTS_V2, SNAP_STATE, STORAGE_FLATKEYVALUE, STORAGE_TRIE_NODES,
+            TRANSACTION_LOCATIONS,
         },
     },
     apply_prefix,
@@ -20,13 +21,13 @@ use crate::{
     utils::{ChainDataIndex, SnapStateIndex},
 };
 
-use bytes::Bytes;
 use ethrex_common::{
     Address, H256, U256,
     types::{
         AccountInfo, AccountState, AccountUpdate, Block, BlockBody, BlockHash, BlockHeader,
         BlockNumber, ChainConfig, Code, CodeMetadata, ForkId, Genesis, GenesisAccount, Index,
         Receipt, Transaction,
+        block_access_list::BlockAccessList,
         block_execution_witness::{ExecutionWitness, RpcExecutionWitness},
     },
     utils::keccak,
@@ -69,6 +70,42 @@ const IN_MEMORY_COMMIT_THRESHOLD: usize = 10000;
 /// Commit threshold for batch (full sync) mode. Each batch layer holds ~1024
 /// blocks of trie diffs (~1 GB), so we flush aggressively to bound memory.
 const BATCH_COMMIT_THRESHOLD: usize = 4;
+
+/// Default size in bytes of the RocksDB shared block cache: 12 GiB.
+///
+/// This cache holds both data blocks AND the index/bloom-filter blocks for every
+/// open SST file (because we enable `cache_index_and_filter_blocks`), so its size
+/// is the effective upper bound on RocksDB's resident memory footprint. 12 GiB
+/// keeps the filter/index working set resident plus hot EVM state; a sweep on a
+/// synced mainnet node (32 GiB cap) found 8-16 GiB all keep up with head-following,
+/// with larger giving no gain (the OS page cache backstops the uncompressed state
+/// CFs) and ~8 GiB the floor where the filter set starts to thrash.
+pub const DEFAULT_ROCKSDB_BLOCK_CACHE_SIZE_BYTES: usize = 12 * 1024 * 1024 * 1024;
+
+/// Tunable configuration for [`Store::new_with_config`] and related constructors.
+///
+/// Use [`StoreConfig::default()`] for production-tuned defaults; callers that
+/// don't need to override anything should keep calling [`Store::new`] directly.
+#[derive(Debug, Clone, Copy)]
+pub struct StoreConfig {
+    /// Total size in bytes of the RocksDB shared block cache. With
+    /// `cache_index_and_filter_blocks` enabled (the ethrex default), this cache
+    /// stores data blocks AND the per-SST index + bloom-filter blocks, so it is
+    /// the effective ceiling on RocksDB's resident memory. Lowering it below
+    /// the filter + working-set size degrades block-import performance —
+    /// see the `--rocksdb.block-cache-size` CLI flag for guidance.
+    ///
+    /// Ignored when the engine type is in-memory.
+    pub rocksdb_block_cache_size: usize,
+}
+
+impl Default for StoreConfig {
+    fn default() -> Self {
+        Self {
+            rocksdb_block_cache_size: DEFAULT_ROCKSDB_BLOCK_CACHE_SIZE_BYTES,
+        }
+    }
+}
 
 /// Control messages for the FlatKeyValue generator
 #[derive(Debug, PartialEq)]
@@ -166,8 +203,8 @@ pub struct Store {
     trie_cache: Arc<RwLock<Arc<TrieLayerCache>>>,
     /// Channel for controlling the FlatKeyValue generator background task.
     flatkeyvalue_control_tx: std::sync::mpsc::SyncSender<FKVGeneratorControlMessage>,
-    /// Channel for sending trie updates to the background worker.
-    trie_update_worker_tx: std::sync::mpsc::SyncSender<TrieUpdate>,
+    /// Channel for sending trie updates (and idle pings) to the background worker.
+    trie_update_worker_tx: std::sync::mpsc::SyncSender<TrieMessage>,
     /// Cached latest canonical block header.
     ///
     /// Wrapped in Arc for cheap reads with infrequent writes.
@@ -188,6 +225,10 @@ pub struct Store {
     /// Cache for code metadata (code length), keyed by the bytecode hash.
     /// Uses FxHashMap for efficient lookups, much smaller than code cache.
     code_metadata_cache: Arc<Mutex<rustc_hash::FxHashMap<H256, CodeMetadata>>>,
+
+    /// Serializes concurrent `forkchoice_update` callers so that the cache
+    /// update and the DB write transaction remain mutually ordered.
+    fcu_lock: Arc<tokio::sync::Mutex<()>>,
 
     background_threads: Arc<ThreadList>,
 }
@@ -263,7 +304,128 @@ pub struct AccountUpdatesList {
     pub code_updates: Vec<(H256, Code)>,
 }
 
+/// Encodes a tx-location entry as the operand passed to `merge_cf`.
+///
+/// The operand uses the **same encoding as the stored value** — a
+/// `Vec<(BlockNumber, BlockHash, Index)>` with a single element. This is
+/// required for an *associative* merge operator: RocksDB folds operands
+/// together with PartialMerge (during compaction, without a base value), and
+/// the result becomes an operand for a later merge. If the operand format
+/// differed from the merge output (e.g. operand = bare tuple, output = Vec),
+/// the re-fed result would fail to decode and entries would be silently
+/// dropped. Keeping both as `Vec` makes the merge truly associative.
+pub(crate) fn encode_tx_location_operand(
+    block_number: BlockNumber,
+    block_hash: BlockHash,
+    index: Index,
+) -> Vec<u8> {
+    vec![(block_number, block_hash, index)].encode_to_vec()
+}
+
+/// Merge function for the `TRANSACTION_LOCATIONS` column family.
+///
+/// The CF is keyed by tx hash and stores `Vec<(BlockNumber, BlockHash, Index)>` —
+/// one entry per block the tx appears in (multiple only on reorgs). Both the
+/// stored value and every merge operand are encoded as this same `Vec` type.
+/// Writers call `merge_cf` with a single-element `Vec` operand per tx; RocksDB
+/// invokes this function on `get_cf` and during compaction to fold the base
+/// value plus pending operands into one `Vec`. Within the fold, a later entry
+/// replaces any earlier entry with the same `block_hash`, preserving the dedupe
+/// semantics of the previous composite-key schema.
+///
+/// Associativity: because input operands and the output are the same `Vec`
+/// format, PartialMerge (operand-only folding) produces a valid operand that
+/// can be re-merged later. This is essential for correctness — see
+/// `encode_tx_location_operand`.
+///
+/// Used by:
+/// - The RocksDB backend, via `set_merge_operator_associative`.
+/// - The InMemory backend, which dispatches by table name and applies this
+///   inline at `merge()` call time.
+///
+/// Why merge instead of read-modify-write: a per-tx `get_cf` on the write path
+/// is expensive (~5–20 ms/block on mainnet, dominated by the per-tx point
+/// lookup, not fully fixable by a bloom filter). With merge, the write path is
+/// a pure `merge_cf` append (no read), and consolidation is deferred to
+/// compaction or the next read. As a bonus the merge is atomic at the RocksDB
+/// level — no serialized-writer assumption is needed at the application layer.
+///
+/// Failure mode: any RLP decode error (base value or operand) returns `None`,
+/// which makes RocksDB treat the merge as failed and surface a corruption error
+/// on the affected key rather than silently dropping locations. We prefer
+/// failing loud — a corrupt operand signals real DB damage, and a silently
+/// half-populated `Vec` committed at the next compaction would be undetectable.
+pub fn tx_locations_merge(
+    existing: Option<&[u8]>,
+    operands: impl IntoIterator<Item = impl AsRef<[u8]>>,
+) -> Option<Vec<u8>> {
+    // Fold one RLP-encoded `Vec` chunk into `list`, deduping by block_hash
+    // (later entry wins). Returns false on decode failure so the caller can
+    // abort the whole merge.
+    fn fold_chunk(
+        list: &mut Vec<(BlockNumber, BlockHash, Index)>,
+        bytes: &[u8],
+        what: &str,
+    ) -> bool {
+        match <Vec<(BlockNumber, BlockHash, Index)>>::decode(bytes) {
+            Ok(entries) => {
+                for (bn, bh, idx) in entries {
+                    list.retain(|(_, existing_bh, _)| *existing_bh != bh);
+                    list.push((bn, bh, idx));
+                }
+                true
+            }
+            Err(e) => {
+                error!(
+                    "tx_locations_merge: failed to decode {what} ({} bytes): {e}; \
+                     aborting merge to avoid silent data loss",
+                    bytes.len()
+                );
+                false
+            }
+        }
+    }
+
+    let mut list: Vec<(BlockNumber, BlockHash, Index)> = Vec::new();
+
+    // Order matters: RocksDB delivers operands oldest-first.
+    if let Some(bytes) = existing
+        && !fold_chunk(&mut list, bytes, "existing value")
+    {
+        return None;
+    }
+    for op in operands {
+        if !fold_chunk(&mut list, op.as_ref(), "operand") {
+            return None;
+        }
+    }
+    Some(list.encode_to_vec())
+}
+
 impl Store {
+    /// Block until the trie-update background worker has drained every prior
+    /// message and is waiting for new work — i.e. Phase 2 (disk write of the
+    /// bottom-most diff layer) and Phase 3 (in-memory layer removal) for all
+    /// previously-applied updates have completed.
+    ///
+    /// Implementation: the worker channel is `sync_channel(0)`, so a send only
+    /// returns once the worker calls `recv()` on the next loop iteration.
+    /// `TrieMessage::Ping` carries no work, so the send completing is itself
+    /// the idle signal.
+    ///
+    /// Caller's responsibility: hold off other senders to `trie_update_worker_tx`
+    /// while this is in flight. Under concurrent producers the rendezvous
+    /// guarantee degrades to "the prior message has been drained", not
+    /// "persistence is idle going forward" — a racing `Update` from another
+    /// thread can be in-flight by the time this returns.
+    pub async fn wait_for_persistence_idle(&self) -> Result<(), StoreError> {
+        let tx = self.trie_update_worker_tx.clone();
+        tokio::task::spawn_blocking(move || tx.send(TrieMessage::Ping))
+            .await
+            .map_err(|e| StoreError::Custom(format!("wait_for_persistence_idle join: {e}")))?
+            .map_err(|e| StoreError::Custom(format!("wait_for_persistence_idle send: {e}")))
+    }
+
     /// Add a block in a single transaction.
     /// This will store -> BlockHeader, BlockBody, BlockTransactions, BlockNumber.
     pub async fn add_block(&self, block: Block) -> Result<(), StoreError> {
@@ -292,15 +454,14 @@ impl Store {
                 tx.put(BLOCK_NUMBERS, &hash_key, &block_number.to_le_bytes())?;
 
                 for (index, transaction) in block.body.transactions.iter().enumerate() {
-                    let tx_hash = transaction.hash();
-                    // Key: tx_hash + block_hash
-                    let mut composite_key = Vec::with_capacity(64);
-                    composite_key.extend_from_slice(tx_hash.as_bytes());
-                    composite_key.extend_from_slice(block_hash.as_bytes());
-                    let location_value = (block_number, block_hash, index as u64).encode_to_vec();
-                    tx.put(TRANSACTION_LOCATIONS, &composite_key, &location_value)?;
+                    tx.merge(
+                        TRANSACTION_LOCATIONS,
+                        transaction.hash().as_bytes(),
+                        &encode_tx_location_operand(block_number, block_hash, index as u64),
+                    )?;
                 }
             }
+
             tx.commit()
         })
         .await
@@ -543,13 +704,7 @@ impl Store {
         block_hash: BlockHash,
         index: Index,
     ) -> Result<(), StoreError> {
-        // FIXME: Use dupsort table
-        let mut composite_key = Vec::with_capacity(64);
-        composite_key.extend_from_slice(transaction_hash.as_bytes());
-        composite_key.extend_from_slice(block_hash.as_bytes());
-        let location_value = (block_number, block_hash, index).encode_to_vec();
-
-        self.write_async(TRANSACTION_LOCATIONS, composite_key, location_value)
+        self.add_transaction_locations(vec![(transaction_hash, block_number, block_hash, index)])
             .await
     }
 
@@ -558,19 +713,20 @@ impl Store {
         &self,
         locations: Vec<(H256, BlockNumber, BlockHash, Index)>,
     ) -> Result<(), StoreError> {
-        let batch_items: Vec<_> = locations
-            .iter()
-            .map(|(tx_hash, block_number, block_hash, index)| {
-                let mut composite_key = Vec::with_capacity(64);
-                composite_key.extend_from_slice(tx_hash.as_bytes());
-                composite_key.extend_from_slice(block_hash.as_bytes());
-                let location_value = (*block_number, *block_hash, *index).encode_to_vec();
-                (composite_key, location_value)
-            })
-            .collect();
-
-        self.write_batch_async(TRANSACTION_LOCATIONS, batch_items)
-            .await
+        let db = self.backend.clone();
+        tokio::task::spawn_blocking(move || {
+            let mut tx = db.begin_write()?;
+            for (tx_hash, block_number, block_hash, index) in locations {
+                tx.merge(
+                    TRANSACTION_LOCATIONS,
+                    tx_hash.as_bytes(),
+                    &encode_tx_location_operand(block_number, block_hash, index),
+                )?;
+            }
+            tx.commit()
+        })
+        .await
+        .map_err(|e| StoreError::Custom(format!("Task panicked: {}", e)))?
     }
 
     /// Obtain transaction location (block hash and index)
@@ -580,35 +736,22 @@ impl Store {
     ) -> Result<Option<(BlockNumber, BlockHash, Index)>, StoreError> {
         let db = self.backend.clone();
         tokio::task::spawn_blocking(move || {
-            let tx_hash_bytes = transaction_hash.as_bytes();
             let tx = db.begin_read()?;
-
-            // Use prefix iterator to find all entries with this transaction hash
-            let mut iter = tx.prefix_iterator(TRANSACTION_LOCATIONS, tx_hash_bytes)?;
-            let mut transaction_locations = Vec::new();
-
-            while let Some(Ok((key, value))) = iter.next() {
-                // Ensure key is exactly tx_hash + block_hash (32 + 32 = 64 bytes)
-                // and starts with our exact tx_hash
-                if key.len() == 64 && &key[0..32] == tx_hash_bytes {
-                    transaction_locations.push(<(BlockNumber, BlockHash, Index)>::decode(&value)?);
-                }
-            }
-
-            if transaction_locations.is_empty() {
+            let Some(bytes) = tx.get(TRANSACTION_LOCATIONS, transaction_hash.as_bytes())? else {
                 return Ok(None);
-            }
+            };
+            let locations = <Vec<(BlockNumber, BlockHash, Index)>>::decode(&bytes)?;
 
-            // If there are multiple locations, filter by the canonical chain
-            for (block_number, block_hash, index) in transaction_locations {
-                let canonical_hash = {
-                    tx.get(
+            // In the absence of reorgs, locations has exactly one entry.
+            // If multiple, filter by the canonical chain.
+            for (block_number, block_hash, index) in locations {
+                let canonical_hash = tx
+                    .get(
                         CANONICAL_BLOCK_HASHES,
                         block_number.to_le_bytes().as_slice(),
                     )?
                     .map(|bytes| H256::decode(bytes.as_slice()))
-                    .transpose()?
-                };
+                    .transpose()?;
 
                 if canonical_hash == Some(block_hash) {
                     return Ok(Some((block_number, block_hash, index)));
@@ -628,10 +771,9 @@ impl Store {
         index: Index,
         receipt: Receipt,
     ) -> Result<(), StoreError> {
-        // FIXME: Use dupsort table
-        let key = (block_hash, index).encode_to_vec();
+        let key = receipt_key(&block_hash, index);
         let value = receipt.encode_to_vec();
-        self.write_async(RECEIPTS, key, value).await
+        self.write_async(RECEIPTS_V2, key, value).await
     }
 
     /// Add receipts
@@ -644,12 +786,12 @@ impl Store {
             .into_iter()
             .enumerate()
             .map(|(index, receipt)| {
-                let key = (block_hash, index as u64).encode_to_vec();
+                let key = receipt_key(&block_hash, index as u64);
                 let value = receipt.encode_to_vec();
                 (key, value)
             })
             .collect();
-        self.write_batch_async(RECEIPTS, batch_items).await
+        self.write_batch_async(RECEIPTS_V2, batch_items).await
     }
 
     /// Obtain receipt for a canonical block represented by the block number.
@@ -671,8 +813,8 @@ impl Store {
         block_hash: BlockHash,
         index: Index,
     ) -> Result<Option<Receipt>, StoreError> {
-        let key = (block_hash, index).encode_to_vec();
-        self.read_async(RECEIPTS, key)
+        let key = receipt_key(&block_hash, index);
+        self.read_async(RECEIPTS_V2, key)
             .await?
             .map(|bytes| Receipt::decode(bytes.as_slice()))
             .transpose()
@@ -701,15 +843,12 @@ impl Store {
         else {
             return Ok(None);
         };
-        let bytes = Bytes::from_owner(bytes);
         let (bytecode_slice, targets) = decode_bytes(&bytes)?;
-        let bytecode = bytes.slice_ref(bytecode_slice);
-
-        let code = Code {
-            hash: code_hash,
-            bytecode,
-            jump_targets: <Vec<_>>::decode(targets)?,
-        };
+        let code = Code::from_parts_unchecked(
+            code_hash,
+            bytecode_slice,
+            <Vec<u32>>::decode(targets)?.into(),
+        );
 
         // insert into cache and evict if needed
         self.account_code_cache
@@ -748,10 +887,10 @@ impl Store {
     /// Checks cache first, falls back to database. If metadata is missing,
     /// falls back to loading full code and extracts length (auto-migration).
     pub fn get_code_metadata(&self, code_hash: H256) -> Result<Option<CodeMetadata>, StoreError> {
-        use ethrex_common::constants::EMPTY_KECCACK_HASH;
+        use ethrex_common::constants::EMPTY_KECCAK_HASH;
 
         // Empty code special case
-        if code_hash == *EMPTY_KECCACK_HASH {
+        if code_hash == *EMPTY_KECCAK_HASH {
             return Ok(Some(CodeMetadata { length: 0 }));
         }
 
@@ -783,7 +922,7 @@ impl Store {
                 return Ok(None);
             };
             let metadata = CodeMetadata {
-                length: code.bytecode.len() as u64,
+                length: code.len() as u64,
             };
 
             // Write metadata for future use (async, fire and forget)
@@ -818,7 +957,7 @@ impl Store {
     pub async fn add_account_code(&self, code: Code) -> Result<(), StoreError> {
         let hash_key = code.hash.0.to_vec();
         let buf = encode_code(&code);
-        let metadata_buf = (code.bytecode.len() as u64).to_be_bytes();
+        let metadata_buf = (code.len() as u64).to_be_bytes();
 
         // Write both code and metadata atomically
         let backend = self.backend.clone();
@@ -1007,7 +1146,12 @@ impl Store {
             .transpose()
     }
 
-    pub async fn forkchoice_update_inner(
+    /// DB mutation step of `forkchoice_update`.
+    ///
+    /// Callers MUST hold `fcu_lock` (only `forkchoice_update` should invoke this).
+    /// The read of `LatestBlockNumber` below happens outside the write
+    /// transaction and would be a TOCTOU window without that serialization.
+    async fn forkchoice_update_inner(
         &self,
         new_canonical_blocks: Vec<(BlockNumber, BlockHash)>,
         head_number: BlockNumber,
@@ -1026,6 +1170,12 @@ impl Store {
                 txn.put(CANONICAL_BLOCK_HASHES, &head_key, &head_value)?;
             }
 
+            // Delete canonical entries above the new head by enumerating each key.
+            // `delete_range` is not safe here: keys are `u64::to_le_bytes()`, and
+            // RocksDB's lexicographic comparator does not match LE numeric order
+            // (e.g. block 256 = [0x00, 0x01, ..] sorts before block 11 = [0x0B, ..]),
+            // so a range-delete would silently miss blocks whose LE first byte is
+            // smaller than `head+1`'s first byte.
             for number in (head_number + 1)..=(latest) {
                 txn.delete(CANONICAL_BLOCK_HASHES, number.to_le_bytes().as_slice())?;
             }
@@ -1059,33 +1209,55 @@ impl Store {
         &self,
         block_hash: &BlockHash,
     ) -> Result<Vec<Receipt>, StoreError> {
-        self.get_receipts_for_block_from_index(block_hash, 0).await
+        self.get_receipts_for_block_from_index(block_hash, 0, None)
+            .await
     }
 
-    /// Retrieves receipts for a block starting from the given index.
-    /// Used by eth/70 partial receipt requests (EIP-7975).
+    /// Retrieves receipts for a block starting from the given index,
+    /// optionally limited to `max_count` receipts.
+    ///
+    /// Uses cursor-based prefix iteration over the 32-byte block hash prefix
+    /// for efficient batch retrieval. Used by:
+    /// - eth/70 partial receipt requests (EIP-7975) via p2p
+    /// - `eth_getTransactionReceipt` RPC with a count limit to avoid
+    ///   fetching the entire block's receipts
     pub async fn get_receipts_for_block_from_index(
         &self,
         block_hash: &BlockHash,
         start_index: u64,
+        max_count: Option<usize>,
     ) -> Result<Vec<Receipt>, StoreError> {
-        let mut receipts = Vec::new();
-        let mut index = start_index;
+        let backend = self.backend.clone();
+        let block_hash = *block_hash;
 
-        let txn = self.backend.begin_read()?;
-        loop {
-            let key = (*block_hash, index).encode_to_vec();
-            match txn.get(RECEIPTS, key.as_slice())? {
-                Some(receipt_bytes) => {
-                    let receipt = Receipt::decode(receipt_bytes.as_slice())?;
-                    receipts.push(receipt);
-                    index += 1;
+        tokio::task::spawn_blocking(move || {
+            let txn = backend.begin_read()?;
+            let prefix = block_hash.as_bytes().to_vec();
+            // Seek directly to block_hash || start_index to avoid O(start_index) scan.
+            // Keys are big-endian u64, so lexicographic order matches numeric order.
+            let mut seek_key = prefix.clone();
+            seek_key.extend_from_slice(&start_index.to_be_bytes());
+            let iter = txn.prefix_iterator(RECEIPTS_V2, &seek_key)?;
+            let mut receipts = Vec::new();
+            for result in iter {
+                let (k, v) = result?;
+                if !k.starts_with(&prefix) {
+                    break;
                 }
-                None => break,
+                if k.len() != 40 {
+                    continue;
+                }
+                receipts.push(Receipt::decode(v.as_ref())?);
+                if let Some(max) = max_count
+                    && receipts.len() >= max
+                {
+                    break;
+                }
             }
-        }
-
-        Ok(receipts)
+            Ok(receipts)
+        })
+        .await
+        .map_err(|e| StoreError::Custom(format!("Task panicked: {e}")))?
     }
 
     // Snap State methods
@@ -1209,7 +1381,7 @@ impl Store {
 
         for (code_hash, code) in account_codes {
             let buf = encode_code(&code);
-            let metadata_buf = (code.bytecode.len() as u64).to_be_bytes().to_vec();
+            let metadata_buf = (code.len() as u64).to_be_bytes().to_vec();
             code_batch_items.push((code_hash.as_bytes().to_vec(), buf));
             metadata_batch_items.push((code_hash.as_bytes().to_vec(), metadata_buf));
         }
@@ -1397,9 +1569,11 @@ impl Store {
             child_state_root: last_state_root,
             is_batch,
         };
-        trie_upd_worker_tx.send(trie_update).map_err(|e| {
-            StoreError::Custom(format!("failed to read new trie layer notification: {e}"))
-        })?;
+        trie_upd_worker_tx
+            .send(TrieMessage::Update(trie_update))
+            .map_err(|e| {
+                StoreError::Custom(format!("failed to read new trie layer notification: {e}"))
+            })?;
         let mut tx = db.begin_write()?;
 
         for block in update_batch.blocks {
@@ -1416,27 +1590,25 @@ impl Store {
             tx.put(BLOCK_NUMBERS, &hash_key, &block_number.to_le_bytes())?;
 
             for (index, transaction) in block.body.transactions.iter().enumerate() {
-                let tx_hash = transaction.hash();
-                // Key: tx_hash + block_hash
-                let mut composite_key = Vec::with_capacity(64);
-                composite_key.extend_from_slice(tx_hash.as_bytes());
-                composite_key.extend_from_slice(block_hash.as_bytes());
-                let location_value = (block_number, block_hash, index as u64).encode_to_vec();
-                tx.put(TRANSACTION_LOCATIONS, &composite_key, &location_value)?;
+                tx.merge(
+                    TRANSACTION_LOCATIONS,
+                    transaction.hash().as_bytes(),
+                    &encode_tx_location_operand(block_number, block_hash, index as u64),
+                )?;
             }
         }
 
         for (block_hash, receipts) in update_batch.receipts {
             for (index, receipt) in receipts.into_iter().enumerate() {
-                let key = (block_hash, index as u64).encode_to_vec();
+                let key = receipt_key(&block_hash, index as u64);
                 let value = receipt.encode_to_vec();
-                tx.put(RECEIPTS, &key, &value)?;
+                tx.put(RECEIPTS_V2, &key, &value)?;
             }
         }
 
         for (code_hash, code) in update_batch.code_updates {
             let buf = encode_code(&code);
-            let metadata_buf = (code.bytecode.len() as u64).to_be_bytes();
+            let metadata_buf = (code.len() as u64).to_be_bytes();
             tx.put(ACCOUNT_CODES, code_hash.as_ref(), &buf)?;
             tx.put(ACCOUNT_CODE_METADATA, code_hash.as_ref(), &metadata_buf)?;
         }
@@ -1452,19 +1624,37 @@ impl Store {
         Ok(())
     }
 
+    /// Opens (or creates) a store at `path` with the default [`StoreConfig`].
+    ///
+    /// Production callers that need to override storage tunables (e.g. the RocksDB
+    /// block cache size from a CLI option) should use [`Store::new_with_config`].
     pub fn new(path: impl AsRef<Path>, engine_type: EngineType) -> Result<Self, StoreError> {
+        Self::new_with_config(path, engine_type, StoreConfig::default())
+    }
+
+    /// Opens (or creates) a store at `path`, applying the supplied [`StoreConfig`].
+    pub fn new_with_config(
+        path: impl AsRef<Path>,
+        engine_type: EngineType,
+        // `config` only feeds the RocksDB backend; without that feature it is unused.
+        #[cfg_attr(not(feature = "rocksdb"), allow(unused_variables))] config: StoreConfig,
+    ) -> Result<Self, StoreError> {
         let db_path = path.as_ref().to_path_buf();
 
         if engine_type != EngineType::InMemory {
             let version = read_store_schema_version(&db_path)?;
 
             match version {
-                None if db_path.exists() && !dir_is_empty(&db_path)? => {
+                None if db_path.exists() && dir_contains_legacy_db(&db_path)? => {
                     // Pre-metadata DB — cannot migrate safely
                     return Err(StoreError::NotFoundDBVersion);
                 }
                 None => {
-                    // Fresh / empty directory — write initial metadata
+                    // No metadata and no recognizable database files. The directory
+                    // may still hold unrelated files (e.g. a JWT secret placed in the
+                    // datadir by tooling such as EthDocker, see issue #5680), so treat
+                    // this as a fresh datadir and write the initial metadata instead
+                    // of erroring out.
                     init_metadata_file(&db_path)?;
                 }
                 Some(v) if v < 1 => {
@@ -1485,10 +1675,16 @@ impl Store {
                 }
                 #[cfg(feature = "rocksdb")]
                 Some(v) if v < STORE_SCHEMA_VERSION => {
-                    // Open backend, run migrations, then proceed with the same Arc
-                    let backend: Arc<dyn crate::api::StorageBackend> =
-                        Arc::new(RocksDBBackend::open(&path)?);
-                    crate::migrations::run_pending_migrations(backend.as_ref(), &db_path, v)?;
+                    // Open backend, run migrations, then drop obsolete CFs.
+                    // Cleanup must happen AFTER migrations so legacy CFs (e.g.
+                    // `receipts`) are still readable during the migration.
+                    let rocksdb = Arc::new(RocksDBBackend::open(
+                        &path,
+                        config.rocksdb_block_cache_size,
+                    )?);
+                    crate::migrations::run_pending_migrations(rocksdb.as_ref(), &db_path, v)?;
+                    rocksdb.drop_obsolete_cfs(&path);
+                    let backend: Arc<dyn crate::api::StorageBackend> = rocksdb;
                     return Self::from_backend(backend, db_path, DB_COMMIT_THRESHOLD);
                 }
                 Some(_) => {
@@ -1503,7 +1699,9 @@ impl Store {
         match engine_type {
             #[cfg(feature = "rocksdb")]
             EngineType::RocksDB => {
-                let backend = Arc::new(RocksDBBackend::open(path)?);
+                let rocksdb = RocksDBBackend::open(&path, config.rocksdb_block_cache_size)?;
+                rocksdb.drop_obsolete_cfs(&path);
+                let backend: Arc<dyn StorageBackend> = Arc::new(rocksdb);
                 Self::from_backend(backend, db_path, DB_COMMIT_THRESHOLD)
             }
             EngineType::InMemory => {
@@ -1545,6 +1743,7 @@ impl Store {
             last_computed_flatkeyvalue: Arc::new(RwLock::new(last_written)),
             account_code_cache: Arc::new(Mutex::new(CodeCache::default())),
             code_metadata_cache: Arc::new(Mutex::new(rustc_hash::FxHashMap::default())),
+            fcu_lock: Arc::new(tokio::sync::Mutex::new(())),
             background_threads: Default::default(),
         };
         let backend_clone = store.backend.clone();
@@ -1593,7 +1792,7 @@ impl Store {
             let rx = trie_upd_rx;
             loop {
                 match rx.recv() {
-                    Ok(trie_update) => {
+                    Ok(TrieMessage::Update(trie_update)) => {
                         // FIXME: what should we do on error?
                         let _ = apply_trie_updates(
                             backend.as_ref(),
@@ -1602,6 +1801,10 @@ impl Store {
                             trie_update,
                         )
                         .inspect_err(|err| error!("apply_trie_updates failed: {err}"));
+                    }
+                    Ok(TrieMessage::Ping) => {
+                        // Rendezvous handshake only — sender just wanted to know
+                        // we were idle and back at recv(). No work to do.
                     }
                     Err(err) => {
                         debug!("Trie update sender disconnected: {err}");
@@ -1616,17 +1819,36 @@ impl Store {
         Ok(store)
     }
 
+    /// Opens (or creates) a store at `store_path` and seeds it from the
+    /// given genesis file, using the default [`StoreConfig`].
     pub async fn new_from_genesis(
         store_path: &Path,
         engine_type: EngineType,
         genesis_path: &str,
+    ) -> Result<Self, StoreError> {
+        Self::new_from_genesis_with_config(
+            store_path,
+            engine_type,
+            genesis_path,
+            StoreConfig::default(),
+        )
+        .await
+    }
+
+    /// Opens (or creates) a store at `store_path` from genesis, applying the
+    /// supplied [`StoreConfig`].
+    pub async fn new_from_genesis_with_config(
+        store_path: &Path,
+        engine_type: EngineType,
+        genesis_path: &str,
+        config: StoreConfig,
     ) -> Result<Self, StoreError> {
         let file = std::fs::File::open(genesis_path)
             .map_err(|error| StoreError::Custom(format!("Failed to open genesis file: {error}")))?;
         let reader = std::io::BufReader::new(file);
         let genesis: Genesis = serde_json::from_reader(reader)
             .map_err(|e| StoreError::Custom(format!("Failed to deserialize genesis file: {e}")))?;
-        let mut store = Self::new(store_path, engine_type)?;
+        let mut store = Self::new_with_config(store_path, engine_type, config)?;
         store.add_initial_state(genesis).await?;
         Ok(store)
     }
@@ -2091,7 +2313,60 @@ impl Store {
         }
     }
 
+    /// Stores a block access list for a given block hash.
+    pub fn store_block_access_list(
+        &self,
+        block_hash: BlockHash,
+        bal: &BlockAccessList,
+    ) -> Result<(), StoreError> {
+        let key = block_hash.as_bytes().to_vec();
+        let mut value = vec![];
+        bal.encode(&mut value);
+        self.write(BLOCK_ACCESS_LISTS, key, value)
+    }
+
+    /// Returns the block access list for a given block hash, if stored.
+    pub fn get_block_access_list(
+        &self,
+        block_hash: BlockHash,
+    ) -> Result<Option<BlockAccessList>, StoreError> {
+        let key = block_hash.as_bytes().to_vec();
+        match self.read(BLOCK_ACCESS_LISTS, key)? {
+            Some(value) => {
+                let bal = BlockAccessList::decode(&value)
+                    .map_err(|e| StoreError::Custom(format!("Failed to decode BAL: {e}")))?;
+                Ok(Some(bal))
+            }
+            None => Ok(None),
+        }
+    }
+
     pub async fn add_initial_state(&mut self, genesis: Genesis) -> Result<(), StoreError> {
+        self.add_initial_state_inner(genesis, false).await
+    }
+
+    /// Like [`Store::add_initial_state`], but trusts a pre-existing datadir's
+    /// state instead of validating it against the provided genesis. If a genesis
+    /// header is already stored, it is kept as-is rather than recomputing the
+    /// genesis state root from `genesis.alloc` and rejecting on mismatch. The
+    /// chain config from the genesis file is still applied either way.
+    ///
+    /// Intended for booting a datadir produced out-of-band (e.g. by a state
+    /// generator that writes the state trie directly and emits a genesis file
+    /// with an empty `alloc`), where the operator vouches for the stored state
+    /// root. Has no effect on a fresh datadir: the genesis is built normally.
+    pub async fn add_initial_state_skip_validation(
+        &mut self,
+        genesis: Genesis,
+    ) -> Result<(), StoreError> {
+        self.add_initial_state_inner(genesis, true).await
+    }
+
+    async fn add_initial_state_inner(
+        &mut self,
+        genesis: Genesis,
+        skip_genesis_validation: bool,
+    ) -> Result<(), StoreError> {
         debug!("Storing initial state from genesis");
 
         // Obtain genesis block
@@ -2100,7 +2375,14 @@ impl Store {
 
         let genesis_hash = genesis_block.hash();
 
-        // Set chain config
+        let stored_genesis_header = self.load_block_header(genesis_block_number)?;
+
+        // Always set the chain config from the genesis file. The in-memory
+        // `chain_config` starts at `Default::default()` on every boot and is
+        // not reloaded from the datadir, so skipping this would leave the store
+        // with the wrong chainId and an empty fork schedule. Skip-validation
+        // only waives the genesis state-root/header check; the `config` section
+        // of the genesis file is still authoritative and must be applied.
         self.set_chain_config(&genesis.config).await?;
 
         // The cache can't be empty
@@ -2111,7 +2393,14 @@ impl Store {
             self.latest_block_header.update(latest_block_header);
         }
 
-        match self.load_block_header(genesis_block_number)? {
+        match stored_genesis_header {
+            Some(header) if skip_genesis_validation => {
+                info!(
+                    stored_genesis = %header.hash(),
+                    "Skipping genesis state validation; trusting the genesis header and state already stored in the datadir"
+                );
+                return Ok(());
+            }
             Some(header) if header.hash() == genesis_hash => {
                 info!("Received genesis file matching a previously stored one, nothing to do");
                 return Ok(());
@@ -2280,19 +2569,35 @@ impl Store {
         safe: Option<BlockNumber>,
         finalized: Option<BlockNumber>,
     ) -> Result<(), StoreError> {
+        // Serialize concurrent forkchoice updates. Without this, two callers
+        // could interleave their `latest_block_header` cache updates with each
+        // other's DB writes, leaving the cache inconsistent with the DB or
+        // letting a later caller's write reorder relative to the cache update
+        // order (see the TOCTOU discussion around canonical/latest drift).
+        let _guard = self.fcu_lock.lock().await;
+
         // Updates first the latest_block_header to avoid nonce inconsistencies #3927.
+        // Snapshot the previous header so we can roll the cache back if the DB
+        // write fails — otherwise the cache would point at a block the DB does
+        // not consider canonical.
+        let previous_head = self.latest_block_header.get();
         let new_head = self
             .load_block_header_by_hash(head_hash)?
             .ok_or_else(|| StoreError::MissingLatestBlockNumber)?;
         self.latest_block_header.update(new_head);
-        self.forkchoice_update_inner(
-            new_canonical_blocks,
-            head_number,
-            head_hash,
-            safe,
-            finalized,
-        )
-        .await?;
+        if let Err(err) = self
+            .forkchoice_update_inner(
+                new_canonical_blocks,
+                head_number,
+                head_hash,
+                safe,
+                finalized,
+            )
+            .await
+        {
+            self.latest_block_header.update((*previous_head).clone());
+            return Err(err);
+        }
 
         Ok(())
     }
@@ -2866,6 +3171,18 @@ struct TrieUpdate {
     is_batch: bool,
 }
 
+/// Messages handled by the trie-update background worker.
+///
+/// `Ping` is a no-op the worker handles between real updates. Because the
+/// worker channel is `sync_channel(0)` (rendezvous), a successful `Ping` send
+/// proves the worker has finished its previous iteration (Phase 1+2+3) and is
+/// blocked back at `recv()` — i.e. persistence is idle. See
+/// `Store::wait_for_persistence_idle`.
+enum TrieMessage {
+    Update(TrieUpdate),
+    Ping,
+}
+
 // NOTE: we don't receive `Store` here to avoid cyclic dependencies
 // with the other end of `fkv_ctl`
 fn apply_trie_updates(
@@ -3201,12 +3518,21 @@ fn snap_state_key(index: SnapStateIndex) -> Vec<u8> {
     (index as u8).encode_to_vec()
 }
 
+/// Builds a fixed-width RECEIPTS key: block_hash (32B) || index (8B BE).
+pub fn receipt_key(block_hash: &BlockHash, index: u64) -> Vec<u8> {
+    let mut key = Vec::with_capacity(40);
+    key.extend_from_slice(block_hash.as_bytes());
+    key.extend_from_slice(&index.to_be_bytes());
+    key
+}
+
 fn encode_code(code: &Code) -> Vec<u8> {
-    let mut buf = Vec::with_capacity(
-        6 + code.bytecode.len() + std::mem::size_of_val(code.jump_targets.as_slice()),
-    );
-    code.bytecode.encode(&mut buf);
-    code.jump_targets.encode(&mut buf);
+    let mut buf =
+        Vec::with_capacity(6 + code.len() + std::mem::size_of_val::<[u32]>(&code.jump_targets));
+    code.code().encode(&mut buf);
+    // `Arc<[u32]>` (the in-memory share) has no `RLPEncode` impl; encode through an
+    // owned `Vec` on this cold DB-write path (code is persisted once per hash).
+    code.jump_targets.to_vec().encode(&mut buf);
     buf
 }
 
@@ -3267,9 +3593,37 @@ fn init_metadata_file(parent_path: &Path) -> Result<(), StoreError> {
     Ok(())
 }
 
-fn dir_is_empty(path: &Path) -> Result<bool, StoreError> {
-    let is_empty = std::fs::read_dir(path)?.next().is_none();
-    Ok(is_empty)
+/// Returns `true` if `path` contains a *legacy* database — one written before
+/// the metadata file existed, so it has no `metadata.json` to identify it.
+/// Detected by RocksDB's own marker files, as opposed to unrelated files that
+/// merely share the datadir. Only meaningful once metadata has been confirmed
+/// absent; otherwise prefer `has_valid_db`, which keys off the metadata file.
+///
+/// Previously the caller treated *any* non-empty directory as such a legacy
+/// database, which made startup fail when unrelated files lived alongside the DB
+/// — e.g. EthDocker writes the JWT secret into the datadir (issue #5680). We
+/// instead look for RocksDB's marker files, so a datadir that only contains such
+/// unrelated files is correctly treated as fresh.
+fn dir_contains_legacy_db(path: &Path) -> Result<bool, StoreError> {
+    // `CURRENT` has a fixed name and is written by every RocksDB instance, so
+    // check for it directly instead of scanning a datadir that may hold many
+    // unrelated files.
+    if path.join("CURRENT").is_file() {
+        return Ok(true);
+    }
+    // The manifest has a numeric suffix (`MANIFEST-<n>`), so it can only be
+    // found by scanning. Restrict to plain files: a directory that happens to
+    // share the name is not a database marker.
+    for entry in std::fs::read_dir(path)? {
+        let entry = entry?;
+        if !entry.file_type()?.is_file() {
+            continue;
+        }
+        if entry.file_name().to_string_lossy().starts_with("MANIFEST-") {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 /// Checks whether a valid (or migratable) database exists at the given path
@@ -3303,7 +3657,9 @@ pub fn read_chain_id_from_db(path: &Path) -> Option<u64> {
     }
     #[cfg(feature = "rocksdb")]
     {
-        let backend = match RocksDBBackend::open(path) {
+        // The cache size is irrelevant for this one-shot chain-id read (the LRU
+        // is sized as a ceiling, not pre-allocated), so we use the default.
+        let backend = match RocksDBBackend::open(path, DEFAULT_ROCKSDB_BLOCK_CACHE_SIZE_BYTES) {
             Ok(backend) => backend,
             Err(e) => {
                 warn!("Failed to open RocksDB at {path:?} to read chain ID: {e}");
@@ -3350,5 +3706,170 @@ pub fn read_chain_id_from_db(path: &Path) -> Option<u64> {
     {
         let _ = path;
         None
+    }
+}
+
+#[cfg(test)]
+mod merge_tests {
+    use super::*;
+
+    fn h256(b: u8) -> H256 {
+        H256::from_low_u64_be(b as u64)
+    }
+
+    fn op(bn: BlockNumber, bh: H256, idx: Index) -> Vec<u8> {
+        encode_tx_location_operand(bn, bh, idx)
+    }
+
+    fn decode(v: &[u8]) -> Vec<(BlockNumber, BlockHash, Index)> {
+        <Vec<(BlockNumber, BlockHash, Index)>>::decode(v).unwrap()
+    }
+
+    #[test]
+    fn single_operand_on_empty_base() {
+        let out = tx_locations_merge(None, vec![op(100, h256(0x10), 0)]).unwrap();
+        assert_eq!(decode(&out), vec![(100, h256(0x10), 0)]);
+    }
+
+    #[test]
+    fn operand_appended_to_existing_base() {
+        let base = vec![(100u64, h256(0x10), 0u64)].encode_to_vec();
+        let out = tx_locations_merge(Some(&base), vec![op(101, h256(0x11), 5)]).unwrap();
+        let mut got = decode(&out);
+        got.sort();
+        let mut want = vec![(100, h256(0x10), 0), (101, h256(0x11), 5)];
+        want.sort();
+        assert_eq!(got, want);
+    }
+
+    #[test]
+    fn multiple_operands_combined() {
+        let out = tx_locations_merge(
+            None,
+            vec![
+                op(100, h256(0x10), 0),
+                op(100, h256(0x11), 1),
+                op(101, h256(0x12), 2),
+            ],
+        )
+        .unwrap();
+        assert_eq!(decode(&out).len(), 3);
+    }
+
+    #[test]
+    fn same_block_hash_is_deduped() {
+        // Two operands with the same block_hash: the later one replaces the earlier.
+        let out =
+            tx_locations_merge(None, vec![op(100, h256(0x10), 0), op(100, h256(0x10), 7)]).unwrap();
+        assert_eq!(decode(&out), vec![(100, h256(0x10), 7)]);
+    }
+
+    #[test]
+    fn malformed_operand_aborts_merge() {
+        // Fail loud: a malformed operand must abort the merge (return None), not
+        // silently drop it and commit a partial result.
+        let out = tx_locations_merge(None, vec![vec![0xff, 0xff], op(100, h256(0x10), 0)]);
+        assert!(out.is_none(), "merge must abort on a malformed operand");
+    }
+
+    #[test]
+    fn malformed_base_value_aborts_merge() {
+        let out = tx_locations_merge(Some(&[0xff, 0xff]), vec![op(100, h256(0x10), 0)]);
+        assert!(out.is_none(), "merge must abort on a corrupt base value");
+    }
+
+    /// Regression for the associative-merge format bug: a PartialMerge result
+    /// must be re-mergeable as an operand. RocksDB folds operands together
+    /// without a base value during compaction, then feeds that result back into
+    /// a later merge. If the operand format differed from the output format,
+    /// the re-fed result would fail to decode and entries would be dropped
+    /// (observed as 1664 silent drops during a compaction pass on mainnet).
+    #[test]
+    fn partial_merge_result_is_a_valid_operand() {
+        // Step 1: PartialMerge — combine operands with NO base value.
+        let partial =
+            tx_locations_merge(None, vec![op(100, h256(0x10), 0), op(101, h256(0x11), 1)]).unwrap();
+
+        // Step 2: the partial result is now itself an operand in a later merge,
+        // on top of an existing base value. This is the path that used to drop
+        // entries.
+        let base = vec![(99u64, h256(0x09), 9u64)].encode_to_vec();
+        let out = tx_locations_merge(Some(&base), vec![partial]).unwrap();
+
+        let mut got = decode(&out);
+        got.sort();
+        let mut want = vec![
+            (99, h256(0x09), 9),
+            (100, h256(0x10), 0),
+            (101, h256(0x11), 1),
+        ];
+        want.sort();
+        assert_eq!(
+            got, want,
+            "no entries may be lost when re-merging a partial result"
+        );
+    }
+
+    /// Operand and stored-value encodings must be byte-identical types, so a
+    /// freshly-encoded operand round-trips through the value decoder.
+    #[test]
+    fn operand_encoding_matches_value_encoding() {
+        let operand = op(100, h256(0x10), 3);
+        // Decoding the operand as the stored Vec type must succeed.
+        assert_eq!(decode(&operand), vec![(100, h256(0x10), 3)]);
+    }
+
+    /// Chained PartialMerges (operand-only folds applied repeatedly) stay valid.
+    #[test]
+    fn chained_partial_merges() {
+        let p1 = tx_locations_merge(None, vec![op(1, h256(0x01), 0)]).unwrap();
+        let p2 = tx_locations_merge(None, vec![p1, op(2, h256(0x02), 0)]).unwrap();
+        let p3 = tx_locations_merge(None, vec![p2, op(3, h256(0x03), 0)]).unwrap();
+        let out = tx_locations_merge(None, vec![p3]).unwrap();
+        assert_eq!(decode(&out).len(), 3);
+    }
+}
+
+#[cfg(test)]
+mod datadir_tests {
+    use super::*;
+    use std::fs;
+
+    #[test]
+    fn empty_dir_has_no_existing_db() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(!dir_contains_legacy_db(dir.path()).unwrap());
+    }
+
+    #[test]
+    fn dir_with_only_unrelated_files_has_no_existing_db() {
+        // Regression for #5680: a JWT secret (or any unrelated file) in the
+        // datadir must not be mistaken for an existing database.
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(dir.path().join("jwt.hex"), "0xdeadbeef").unwrap();
+        fs::write(dir.path().join("LOG"), "noise").unwrap();
+        assert!(!dir_contains_legacy_db(dir.path()).unwrap());
+    }
+
+    #[test]
+    fn dir_with_rocksdb_markers_has_existing_db() {
+        // A `CURRENT` file (and, separately, a `MANIFEST-*` file) marks a real DB.
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(dir.path().join("CURRENT"), "MANIFEST-000001\n").unwrap();
+        assert!(dir_contains_legacy_db(dir.path()).unwrap());
+
+        let dir2 = tempfile::tempdir().unwrap();
+        fs::write(dir2.path().join("MANIFEST-000007"), "x").unwrap();
+        assert!(dir_contains_legacy_db(dir2.path()).unwrap());
+    }
+
+    #[test]
+    fn dir_with_marker_named_subdirectories_has_no_existing_db() {
+        // A *directory* named like a marker file must not be mistaken for a DB;
+        // RocksDB only ever writes these as plain files.
+        let dir = tempfile::tempdir().unwrap();
+        fs::create_dir(dir.path().join("CURRENT")).unwrap();
+        fs::create_dir(dir.path().join("MANIFEST-000001")).unwrap();
+        assert!(!dir_contains_legacy_db(dir.path()).unwrap());
     }
 }

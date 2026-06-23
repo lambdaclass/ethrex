@@ -6,13 +6,14 @@ use crate::rkyv_utils::H256Wrapper;
 use crate::serde_utils;
 use crate::types::{Block, Code, CodeMetadata};
 use crate::{
-    constants::EMPTY_KECCACK_HASH,
+    constants::EMPTY_KECCAK_HASH,
     types::{AccountState, AccountUpdate, BlockHeader, ChainConfig},
     utils::keccak,
 };
 use ethereum_types::{Address, H256, U256};
 use ethrex_crypto::{Crypto, NativeCrypto};
 use ethrex_rlp::error::RLPDecodeError;
+use ethrex_rlp::structs::{Decoder, Encoder};
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
 use ethrex_trie::{EMPTY_TRIE_HASH, Nibbles, Node, NodeRef, Trie, TrieError};
 use rkyv::with::{Identity, MapKV};
@@ -124,63 +125,107 @@ impl TryFrom<ExecutionWitness> for RpcExecutionWitness {
         for node in value.storage_trie_roots.values() {
             node.encode_subtrie(&mut nodes)?;
         }
+        // Canonical witness ordering (EIP-8025, geth `ExtWitness`): state nodes
+        // and codes sorted lexicographically and deduplicated (identical
+        // storage subtries would otherwise emit identical nodes twice); headers
+        // ascending by block number and deduplicated (the same ancestor header
+        // can be referenced by more than one block).
+        nodes.sort();
+        nodes.dedup();
+        let mut codes = value.codes;
+        codes.sort();
+        codes.dedup();
+        let mut headers = value.block_headers_bytes;
+        headers.sort_by_cached_key(|bytes| {
+            // Undecodable headers sort last; consumers reject them on decode anyway.
+            BlockHeader::decode(bytes)
+                .map(|header| header.number)
+                .unwrap_or(u64::MAX)
+        });
+        // Identical headers share a block number, so they are now adjacent.
+        headers.dedup();
         Ok(Self {
             state: nodes.into_iter().map(Bytes::from).collect(),
             keys: Vec::new(),
-            codes: value.codes.into_iter().map(Bytes::from).collect(),
-            headers: value
-                .block_headers_bytes
-                .into_iter()
-                .map(Bytes::from)
-                .collect(),
+            codes: codes.into_iter().map(Bytes::from).collect(),
+            headers: headers.into_iter().map(Bytes::from).collect(),
         })
+    }
+}
+
+/// Geth's `ExtWitness` wire shape, returned by
+/// `engine_newPayloadWithWitness*`: an RLP list of
+/// `(headers, codes, state, keys)`, with headers ascending by block number
+/// and code/state byte lists sorted lexicographically. Geth currently emits
+/// empty `keys`, but the trailing field is part of the RLP shape.
+/// Reference:
+/// https://github.com/ethereum/go-ethereum/blob/4daaaadfc4706b0a49d4dfde3559de7be968c28a/core/stateless/encoding.go#L30-L52
+#[derive(Debug, Clone)]
+pub struct ExtWitness {
+    pub headers: Vec<BlockHeader>,
+    pub codes: Vec<Bytes>,
+    pub state: Vec<Bytes>,
+    pub keys: Vec<Bytes>,
+}
+
+impl RLPEncode for ExtWitness {
+    fn encode(&self, buf: &mut dyn bytes::BufMut) {
+        Encoder::new(buf)
+            .encode_field(&self.headers)
+            .encode_field(&self.codes)
+            .encode_field(&self.state)
+            .encode_field(&self.keys)
+            .finish();
+    }
+}
+
+impl RLPDecode for ExtWitness {
+    fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
+        let decoder = Decoder::new(rlp)?;
+        let (headers, decoder) = decoder.decode_field("headers")?;
+        let (codes, decoder) = decoder.decode_field("codes")?;
+        let (state, decoder) = decoder.decode_field("state")?;
+        let (keys, decoder) = decoder.decode_field("keys")?;
+        let remaining = decoder.finish()?;
+        Ok((
+            ExtWitness {
+                headers,
+                codes,
+                state,
+                keys,
+            },
+            remaining,
+        ))
     }
 }
 
 impl RpcExecutionWitness {
     /// Convert an RPC execution witness into the internal [`ExecutionWitness`]
     /// format by rebuilding trie structures from the flat node list.
+    /// `decoded_headers` is reused (typically from [`decode_witness_headers`])
+    /// to avoid a second RLP decode.
     pub fn into_execution_witness(
         self,
         chain_config: ChainConfig,
         first_block_number: u64,
+        decoded_headers: &[BlockHeader],
     ) -> Result<ExecutionWitness, GuestProgramStateError> {
-        if first_block_number == 0 {
-            return Err(GuestProgramStateError::Custom(
-                "first_block_number must be > 0 (need parent header)".to_string(),
-            ));
-        }
-
-        let mut initial_state_root = None;
-
-        for h in &self.headers {
-            let header = BlockHeader::decode(h)?;
-            if header.number == first_block_number - 1 {
-                initial_state_root = Some(header.state_root);
-                break;
-            }
-        }
-
-        let initial_state_root = initial_state_root.ok_or_else(|| {
-            GuestProgramStateError::Custom(format!(
-                "header for block {} not found",
-                first_block_number - 1
-            ))
-        })?;
-
+        let initial_state_root = find_parent_state_root(decoded_headers, first_block_number)?;
+        // Drop the `0x80` Null-node sentinel some `debug_executionWitness` producers emit.
+        // Undecodable/unused nodes are dropped per EELS
+        // `test_validation_state_extra_unused_trie_node`; missing needed nodes surface
+        // later as `RootNotFound` from `get_embedded_root`.
         let nodes: BTreeMap<H256, Node> = self
             .state
             .into_iter()
             .filter_map(|b| {
                 if b == Bytes::from_static(&[0x80]) {
-                    // other implementations of debug_executionWitness allow for a `Null` node,
-                    // which would fail to decode in ours
                     return None;
                 }
-                let hash = keccak(&b);
-                Some(Node::decode(&b).map(|node| (hash, node)))
+                let node = Node::decode(&b).ok()?;
+                Some((keccak(&b), node))
             })
-            .collect::<Result<_, RLPDecodeError>>()?;
+            .collect();
 
         // get state trie root and embed the rest of the trie into it
         let state_trie_root = if let NodeRef::Node(state_trie_root, _) =
@@ -229,6 +274,58 @@ impl RpcExecutionWitness {
             storage_trie_roots,
         })
     }
+}
+
+/// RLP-decode the raw header byte slices into a `Vec<BlockHeader>`.
+pub fn decode_witness_headers<B: AsRef<[u8]>>(
+    headers_bytes: &[B],
+) -> Result<Vec<BlockHeader>, GuestProgramStateError> {
+    headers_bytes
+        .iter()
+        .map(|b| BlockHeader::decode(b.as_ref()).map_err(GuestProgramStateError::from))
+        .collect()
+}
+
+/// Locate the parent block's state root from a slice of decoded headers.
+/// Returns an error if `first_block_number == 0` (no parent possible) or if the
+/// parent header is not in the slice.
+fn find_parent_state_root(
+    headers: &[BlockHeader],
+    first_block_number: u64,
+) -> Result<H256, GuestProgramStateError> {
+    let parent_number = first_block_number
+        .checked_sub(1)
+        .ok_or(GuestProgramStateError::Custom(
+            "first_block_number must be > 0 (need parent header)".to_string(),
+        ))?;
+    headers
+        .iter()
+        .find(|h| h.number == parent_number)
+        .map(|h| h.state_root)
+        .ok_or_else(|| {
+            GuestProgramStateError::Custom(format!("header for block {parent_number} not found"))
+        })
+}
+
+/// Check that `headers[1..]` link via `parent_hash == keccak(RLP(prev))` AND
+/// `number == prev.number + 1`, in input order. The first header is
+/// intentionally unanchored here; the parent end is bound by the post-execution
+/// state-root check in `execute_blocks`.
+///
+/// Call before any sort/dedup, since reordering hides violations.
+pub fn validate_witness_headers_chain(
+    headers: &[BlockHeader],
+    crypto: &dyn Crypto,
+) -> Result<(), GuestProgramStateError> {
+    for pair in headers.windows(2) {
+        let (prev, next) = (&pair[0], &pair[1]);
+        if prev.number.checked_add(1) != Some(next.number)
+            || next.parent_hash != prev.compute_block_hash(crypto)
+        {
+            return Err(GuestProgramStateError::NoncontiguousBlockHeaders);
+        }
+    }
+    Ok(())
 }
 
 /// Recursively walks an embedded state trie node and collects
@@ -308,8 +405,10 @@ pub enum GuestProgramStateError {
     NoBlockHeaders,
     #[error("Parent block header of block {0} was not found")]
     MissingParentHeaderOf(u64),
-    #[error("Non-contiguous block headers (there's a gap in the block headers list)")]
+    #[error("Non-contiguous block headers")]
     NoncontiguousBlockHeaders,
+    #[error("Bytecode for code hash {0} was not found in witness")]
+    MissingBytecode(H256),
     #[error("Trie error: {0}")]
     Trie(#[from] TrieError),
     #[error("RLP Decode: {0}")]
@@ -589,24 +688,18 @@ impl GuestProgramState {
     }
 
     /// Retrieves the account code for a specific account.
-    /// Returns an Err if the code is not found.
+    ///
+    /// A missing code hash is always an error: ethrex's own witness producers
+    /// include every byte of code the VM reads, and EIP-8025 stateless
+    /// validation requires the same.
     pub fn get_account_code(&self, code_hash: H256) -> Result<Code, GuestProgramStateError> {
-        if code_hash == *EMPTY_KECCACK_HASH {
+        if code_hash == *EMPTY_KECCAK_HASH {
             return Ok(Code::default());
         }
-        match self.codes_hashed.get(&code_hash) {
-            Some(code) => Ok(code.clone()),
-            None => {
-                // We do this because what usually happens is that the Witness doesn't have the code we asked for but it is because it isn't relevant for that particular case.
-                // In client implementations there are differences and it's natural for some clients to access more/less information in some edge cases.
-                // Sidenote: logger doesn't work inside SP1, that's why we use println!
-                println!(
-                    "Missing bytecode for hash {} in witness. Defaulting to empty code.", // If there's a state root mismatch and this prints we have to see if it's the cause or not.
-                    hex::encode(code_hash)
-                );
-                Ok(Code::default())
-            }
-        }
+        self.codes_hashed
+            .get(&code_hash)
+            .cloned()
+            .ok_or(GuestProgramStateError::MissingBytecode(code_hash))
     }
 
     /// Retrieves code metadata (length) for a specific code hash.
@@ -615,24 +708,15 @@ impl GuestProgramState {
         &self,
         code_hash: H256,
     ) -> Result<CodeMetadata, GuestProgramStateError> {
-        use crate::constants::EMPTY_KECCACK_HASH;
-
-        if code_hash == *EMPTY_KECCACK_HASH {
+        if code_hash == *EMPTY_KECCAK_HASH {
             return Ok(CodeMetadata { length: 0 });
         }
-        match self.codes_hashed.get(&code_hash) {
-            Some(code) => Ok(CodeMetadata {
-                length: code.bytecode.len() as u64,
-            }),
-            None => {
-                // Same as get_account_code - default to empty for missing bytecode
-                println!(
-                    "Missing bytecode for hash {} in witness. Defaulting to empty code metadata.",
-                    hex::encode(code_hash)
-                );
-                Ok(CodeMetadata { length: 0 })
-            }
-        }
+        self.codes_hashed
+            .get(&code_hash)
+            .map(|code| CodeMetadata {
+                length: code.len() as u64,
+            })
+            .ok_or(GuestProgramStateError::MissingBytecode(code_hash))
     }
 
     /// When executing multiple blocks in the L2 it happens that the headers in block_headers correspond to the same block headers that we have in the blocks array. The main goal is to hash these only once and set them in both places.

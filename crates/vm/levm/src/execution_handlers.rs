@@ -1,7 +1,7 @@
 use crate::{
     constants::*,
     errors::{ContextResult, ExceptionalHalt, InternalError, TxResult, VMError},
-    gas_cost::{CODE_DEPOSIT_COST, CODE_DEPOSIT_REGULAR_COST_PER_WORD, COST_PER_STATE_BYTE},
+    gas_cost::{CODE_DEPOSIT_COST, CODE_DEPOSIT_REGULAR_COST_PER_WORD},
     utils::create_eth_transfer_log,
     vm::VM,
 };
@@ -131,6 +131,12 @@ impl<'a> VM<'a> {
         let new_account = self.get_account_mut(new_contract_address)?;
 
         if new_account.create_would_collide() {
+            // Per EIP-684: a tx-level CREATE collision burns the
+            // full forwarded execution gas as `regular_gas_used`. Zero `gas_remaining`
+            // so `raw_consumed = gas_limit` for the downstream regular-gas formula in
+            // `default_hook::refund_sender`; otherwise the post-intrinsic leftover
+            // leaks back to the sender and never reaches the regular dimension.
+            self.current_call_frame.gas_remaining = 0;
             return Ok(Some(ContextResult {
                 result: TxResult::Revert(ExceptionalHalt::AddressAlreadyOccupied.into()),
                 gas_used: self.env.gas_limit,
@@ -184,7 +190,7 @@ impl<'a> VM<'a> {
                 .checked_mul(CODE_DEPOSIT_REGULAR_COST_PER_WORD)
                 .ok_or(InternalError::Overflow)?;
             let state = code_length
-                .checked_mul(COST_PER_STATE_BYTE)
+                .checked_mul(self.cost_per_state_byte)
                 .ok_or(InternalError::Overflow)?;
 
             // Regular gas (keccak hash cost) before state gas

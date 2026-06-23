@@ -8,8 +8,8 @@ use crate::{
     gas_cost::{
         self, ACCESS_LIST_ADDRESS_COST, ACCESS_LIST_STORAGE_KEY_COST, BLOB_GAS_PER_BLOB,
         COLD_ADDRESS_ACCESS_COST, CREATE_BASE_COST, REGULAR_GAS_CREATE, STANDARD_TOKEN_COST,
-        STATE_GAS_AUTH_TOTAL, STATE_GAS_NEW_ACCOUNT, TOTAL_COST_FLOOR_PER_TOKEN,
-        WARM_ADDRESS_ACCESS_COST,
+        STATE_BYTES_PER_AUTH_TOTAL, STATE_BYTES_PER_NEW_ACCOUNT, WARM_ADDRESS_ACCESS_COST,
+        cost_per_state_byte, floor_tokens_in_access_list, total_cost_floor_per_token,
     },
     vm::{Substate, VM},
 };
@@ -82,6 +82,7 @@ pub fn restore_cache_state(
             current_account.info = account.info;
             current_account.status = account.status;
             current_account.has_storage = account.has_storage;
+            current_account.exists = account.exists;
         }
     }
 
@@ -97,6 +98,15 @@ pub fn restore_cache_state(
         for (key, value) in storage {
             account.storage.insert(key, value);
         }
+    }
+
+    // Evict codes the reverted frame(s) deployed: a stale by-hash cache entry
+    // would serve a later read of the same hash (from a pre-existing account)
+    // without hitting the store, hiding the read from execution-witness
+    // recording (EIP-8025). Only hashes that were NOT cached before the frame
+    // are tracked, so committed or store-loaded codes are never evicted.
+    for code_hash in callframe_backup.inserted_code_hashes {
+        db.codes.remove(&code_hash);
     }
 
     // Restore BAL recorder to checkpoint (but keep touched_addresses per EIP-7928)
@@ -115,9 +125,11 @@ pub fn get_base_fee_per_blob_gas(
     evm_config: &EVMConfig,
 ) -> Result<U256, VMError> {
     let base_fee_update_fraction = evm_config.blob_schedule.base_fee_update_fraction;
+    let excess_blob_gas = block_excess_blob_gas.unwrap_or_default();
+
     fake_exponential(
         MIN_BASE_FEE_PER_BLOB_GAS.into(),
-        block_excess_blob_gas.unwrap_or_default().into(),
+        excess_blob_gas.into(),
         base_fee_update_fraction,
     )
     .map_err(|err| VMError::Internal(InternalError::FakeExponentialError(err)))
@@ -148,8 +160,7 @@ pub fn get_max_blob_gas_price(
 /// Calculate the actual blob gas cost.
 pub fn calculate_blob_gas_cost(
     tx_blob_hashes: &[H256],
-    block_excess_blob_gas: Option<u64>,
-    evm_config: &EVMConfig,
+    base_blob_fee_per_gas: U256,
 ) -> Result<U256, VMError> {
     let blobhash_amount: u64 = tx_blob_hashes
         .len()
@@ -160,11 +171,9 @@ pub fn calculate_blob_gas_cost(
         .checked_mul(BLOB_GAS_PER_BLOB)
         .unwrap_or_default();
 
-    let base_fee_per_blob_gas = get_base_fee_per_blob_gas(block_excess_blob_gas, evm_config)?;
-
     let blob_gas_used: U256 = blob_gas_used.into();
     let blob_fee: U256 = blob_gas_used
-        .checked_mul(base_fee_per_blob_gas)
+        .checked_mul(base_blob_fee_per_gas)
         .ok_or(InternalError::Overflow)?;
 
     Ok(blob_fee)
@@ -177,7 +186,7 @@ pub fn word_to_address(word: U256) -> Address {
 
 // ================== EIP-7702 related functions =====================
 
-pub fn code_has_delegation(code: &Bytes) -> Result<bool, VMError> {
+pub fn code_has_delegation(code: &[u8]) -> Result<bool, VMError> {
     if code.len() == EIP7702_DELEGATED_CODE_LEN {
         let first_3_bytes = &code.get(..3).ok_or(InternalError::Slicing)?;
         return Ok(*first_3_bytes == SET_CODE_DELEGATION_BYTES);
@@ -187,7 +196,7 @@ pub fn code_has_delegation(code: &Bytes) -> Result<bool, VMError> {
 
 /// Gets the address inside the bytecode if it has been
 /// delegated as the EIP7702 determines.
-pub fn get_authorized_address_from_code(code: &Bytes) -> Result<Address, VMError> {
+pub fn get_authorized_address_from_code(code: &[u8]) -> Result<Address, VMError> {
     if code_has_delegation(code)? {
         let address_bytes = &code
             .get(SET_CODE_DELEGATION_BYTES.len()..)
@@ -251,30 +260,59 @@ pub fn eip7702_get_code(
     accrued_substate: &mut Substate,
     address: Address,
 ) -> Result<(bool, u64, Address, Code), VMError> {
-    // Address is the delgated address
-    let bytecode = db.get_account_code(address)?;
-
-    // If the Address doesn't have a delegation code
-    // return false meaning that is not a delegation
-    // return the same address given
-    // return the bytecode of the given address
-    if !code_has_delegation(&bytecode.bytecode)? {
-        return Ok((false, 0, address, bytecode.clone()));
-    }
-
-    // Here the address has a delegation code
-    // The delegation code has the authorized address
-    let auth_address = get_authorized_address_from_code(&bytecode.bytecode)?;
-
-    let access_cost = if accrued_substate.add_accessed_address(auth_address) {
-        COLD_ADDRESS_ACCESS_COST
-    } else {
-        WARM_ADDRESS_ACCESS_COST
+    let (bytecode, delegation) = eip7702_peek_delegation(db, accrued_substate, address)?;
+    let Some((auth_address, access_cost)) = delegation else {
+        return Ok((false, 0, address, bytecode));
     };
 
+    accrued_substate.add_accessed_address(auth_address);
     let authorized_bytecode = db.get_account_code(auth_address)?.clone();
 
     Ok((true, access_cost, auth_address, authorized_bytecode))
+}
+
+/// First half of [`eip7702_get_code`]: read `address`'s code and detect a
+/// delegation designation WITHOUT touching the delegate account.
+///
+/// Returns `address`'s code and, when delegated, the delegate address with
+/// its warm/cold access cost (computed from the current substate, not
+/// recorded). CALL-family opcodes use this to gas-check the delegation
+/// access cost before reading the delegate (EELS order); reading it earlier
+/// would leak the delegate account into execution witnesses on OOG.
+pub fn eip7702_peek_delegation(
+    db: &mut GeneralizedDatabase,
+    substate: &Substate,
+    address: Address,
+) -> Result<(Code, Option<(Address, u64)>), VMError> {
+    let bytecode = db.get_account_code(address)?.clone();
+    if !code_has_delegation(bytecode.code())? {
+        return Ok((bytecode, None));
+    }
+    let auth_address = get_authorized_address_from_code(bytecode.code())?;
+    let access_cost = if substate.is_address_accessed(&auth_address) {
+        WARM_ADDRESS_ACCESS_COST
+    } else {
+        COLD_ADDRESS_ACCESS_COST
+    };
+    Ok((bytecode, Some((auth_address, access_cost))))
+}
+
+/// Precomputed intrinsic-gas components for a transaction.
+///
+/// Computed once per tx in the prepare-execution hook and reused by
+/// [`VM::validate_min_gas_limit`](crate::hooks::default_hook::validate_min_gas_limit)
+/// and [`VM::add_intrinsic_gas`]. Previously the full calldata / access-list /
+/// auth-list walk ran 2-3x per tx (once in each function, plus the pre-Amsterdam
+/// floor's own `tx_calldata`).
+#[derive(Clone, Copy, Debug)]
+pub struct IntrinsicGas {
+    /// Regular (EIP-8037) intrinsic-gas arm.
+    pub regular: u64,
+    /// State (EIP-8037, Amsterdam+) intrinsic-gas arm; always 0 pre-Amsterdam.
+    pub state: u64,
+    /// `gas_cost::tx_calldata` over `current_call_frame.calldata`. Reused by the
+    /// pre-Amsterdam floor check (same byte string, same point in execution).
+    pub calldata_cost: u64,
 }
 
 impl<'a> VM<'a> {
@@ -314,8 +352,9 @@ impl<'a> VM<'a> {
 
             // 5. Verify the code of authority is either empty or already delegated.
             // Check this BEFORE recording to BAL so we can release the borrow on authority_code.
-            let empty_or_delegated = authority_code.bytecode.is_empty()
-                || code_has_delegation(&authority_code.bytecode)?;
+            let authority_code_is_empty = authority_code.is_empty();
+            let empty_or_delegated =
+                authority_code_is_empty || code_has_delegation(authority_code.code())?;
 
             // Record authority as touched for BAL per EIP-7928, even if validation fails later.
             // This ensures authority appears in BAL with empty change set when:
@@ -337,29 +376,63 @@ impl<'a> VM<'a> {
             }
 
             // 7. Refund if authority exists in the trie.
-            // EIP-8037 (Amsterdam+): return STATE_BYTES_PER_NEW_ACCOUNT * COST_PER_STATE_BYTE
+            // EIP-8037 (Amsterdam+): return STATE_BYTES_PER_NEW_ACCOUNT * cost_per_state_byte
             // to the state gas reservoir (the new-account portion of the auth state charge).
             // Pre-Amsterdam: add REFUND_AUTH_PER_EXISTING_ACCOUNT (12500) to global refund counter.
             // NOTE: Uses `exists` (account_exists in EELS / Exist in geth), NOT `!is_empty()`.
             // An account can exist in the trie but be empty (e.g., has non-empty storage root).
             if authority_exists {
                 if self.env.config.fork >= Fork::Amsterdam {
-                    let state_refund = STATE_GAS_NEW_ACCOUNT;
+                    // EIP-7702: refund
+                    // `STATE_BYTES_PER_NEW_ACCOUNT * cpsb` for each existing authority via
+                    // two independent channels:
+                    //   1. `state_gas_reservoir += refund` — sender gets the gas back via
+                    //      receipt refund at tx finalize.
+                    //   2. `state_refund += refund` — block-level state-gas accounting
+                    //      subtracts this at refund_sender (mirrors EELS
+                    //      `MessageCallOutput.state_refund`).
+                    // `state_gas_used` is NOT decremented here: the refund goes through
+                    // `state_refund` (tx-level channel) so block-level accounting subtracts it.
+                    let refund = self.state_gas_new_account;
                     self.state_gas_reservoir = self
                         .state_gas_reservoir
-                        .checked_add(state_refund)
+                        .checked_add(refund)
                         .ok_or(InternalError::Overflow)?;
-                    // Track as intrinsic state gas adjustment (matches EELS intrinsic_state_gas -= refund).
-                    // Do NOT reduce state_gas_used here — that would inflate regular_gas in block accounting.
-                    self.intrinsic_state_gas_refund = self
-                        .intrinsic_state_gas_refund
-                        .checked_add(state_refund)
+                    self.state_refund = self
+                        .state_refund
+                        .checked_add(refund)
                         .ok_or(InternalError::Overflow)?;
                 } else {
                     refunded_gas = refunded_gas
                         .checked_add(REFUND_AUTH_PER_EXISTING_ACCOUNT)
                         .ok_or(InternalError::Overflow)?;
                 }
+            }
+
+            // EIP-7702: refill the
+            // `STATE_BYTES_PER_AUTH_BASE * cpsb` portion of intrinsic state gas
+            // when no new delegation indicator bytes are written. That covers
+            // two cases:
+            //   1. Authority's code slot already holds a delegation indicator
+            //      (overwrite or clear in place — PR #2836).
+            //   2. The auth is a clear (`auth.address == 0x00`) against an
+            //      authority with no prior code — also writes zero bytes
+            //      (PR #2848).
+            // Step 5 already restricts non-empty pre-state code to a valid
+            // delegation indicator, so checking `!authority_code_is_empty` is
+            // equivalent to EELS's `code_hash != EMPTY_CODE_HASH`.
+            let writes_no_new_indicator =
+                !authority_code_is_empty || auth_tuple.address == Address::zero();
+            if self.env.config.fork >= Fork::Amsterdam && writes_no_new_indicator {
+                let refund = self.state_gas_auth_base;
+                self.state_gas_reservoir = self
+                    .state_gas_reservoir
+                    .checked_add(refund)
+                    .ok_or(InternalError::Overflow)?;
+                self.state_refund = self
+                    .state_refund
+                    .checked_add(refund)
+                    .ok_or(InternalError::Overflow)?;
             }
 
             // 8. Set the code of authority to be 0xef0100 || address. This is a delegation designation.
@@ -395,10 +468,11 @@ impl<'a> VM<'a> {
         Ok(())
     }
 
-    pub fn add_intrinsic_gas(&mut self) -> Result<(), VMError> {
+    pub fn add_intrinsic_gas(&mut self, intrinsic: &IntrinsicGas) -> Result<(), VMError> {
         // Intrinsic gas is the gas consumed by the transaction before the execution of the opcodes. Section 6.2 in the Yellow Paper.
 
-        let (regular_gas, state_gas) = self.get_intrinsic_gas()?;
+        let regular_gas = intrinsic.regular;
+        let state_gas = intrinsic.state;
 
         let total_gas = regular_gas.checked_add(state_gas).ok_or(OutOfGas)?;
 
@@ -406,31 +480,56 @@ impl<'a> VM<'a> {
             .increase_consumed_gas(total_gas)
             .map_err(|_| TxValidationError::IntrinsicGasTooLow)?;
 
+        // state_gas_used is i64; intrinsic state gas is bounded by tx gas limit (< i64::MAX).
         self.state_gas_used = self
             .state_gas_used
-            .checked_add(state_gas)
+            .checked_add(i64::try_from(state_gas).map_err(|_| InternalError::Overflow)?)
             .ok_or(InternalError::Overflow)?;
+        // Remember the intrinsic split so we can leave it in state_gas_used on top-level
+        // error (matches EELS `tx_env.intrinsic_state_gas`, which is kept separate from
+        // `tx_output.state_gas_used` and never refunded).
+        debug_assert_eq!(self.intrinsic_state_gas, 0, "intrinsic_state_gas set twice");
+        self.intrinsic_state_gas = state_gas;
 
         // EIP-8037 (Amsterdam+): compute state gas reservoir from excess gas_limit.
         // execution_gas = what remains after all intrinsic gas; regular_gas_budget = how much
         // regular execution gas is allowed (capped at TX_MAX_GAS_LIMIT_AMSTERDAM); the difference becomes
         // the reservoir for drawing state gas without consuming regular gas_remaining.
         if self.env.config.fork >= Fork::Amsterdam {
-            let gas_limit = self.tx.gas_limit();
-            let execution_gas = gas_limit.saturating_sub(total_gas);
-            let regular_gas_budget = TX_MAX_GAS_LIMIT_AMSTERDAM.saturating_sub(regular_gas);
-            let gas_left = regular_gas_budget.min(execution_gas);
-            let reservoir = execution_gas.saturating_sub(gas_left);
-            if reservoir > 0 {
-                // Pre-consume reservoir from gas_remaining so GAS opcode returns <= TX_MAX_GAS_LIMIT_AMSTERDAM
-                let reservoir_i64 =
-                    i64::try_from(reservoir).map_err(|_| InternalError::Overflow)?;
-                self.current_call_frame.gas_remaining = self
-                    .current_call_frame
-                    .gas_remaining
-                    .checked_sub(reservoir_i64)
-                    .ok_or(InternalError::Overflow)?;
-                self.state_gas_reservoir = reservoir;
+            if self.env.is_system_call {
+                // EIP-8037: system
+                // transactions get a dedicated state-gas reservoir of
+                // `state_gas_storage_set * SYSTEM_MAX_SSTORES_PER_CALL` ON TOP of
+                // the full SYS_CALL_GAS_LIMIT regular budget — so SSTORE-heavy
+                // system contracts (EIP-2935, EIP-4788) cannot OOG on state-gas
+                // growth alone. Skip the regular reservoir computation so we don't
+                // pre-consume `gas_remaining`; EELS sets `intrinsic_regular_gas=0`
+                // and `gas=SYSTEM_TRANSACTION_GAS` for the message
+                // (amsterdam/fork.py::process_unchecked_system_transaction).
+                let sys_reservoir = self
+                    .state_gas_storage_set
+                    .saturating_mul(SYSTEM_MAX_SSTORES_PER_CALL);
+                self.state_gas_reservoir = sys_reservoir;
+                self.state_gas_reservoir_initial = sys_reservoir;
+            } else {
+                let gas_limit = self.tx.gas_limit();
+                let execution_gas = gas_limit.saturating_sub(total_gas);
+                let regular_gas_budget = TX_MAX_GAS_LIMIT_AMSTERDAM.saturating_sub(regular_gas);
+                let gas_left = regular_gas_budget.min(execution_gas);
+                let reservoir = execution_gas.saturating_sub(gas_left);
+                if reservoir > 0 {
+                    // Pre-consume reservoir from gas_remaining so GAS opcode returns <= TX_MAX_GAS_LIMIT_AMSTERDAM
+                    let reservoir_i64 =
+                        i64::try_from(reservoir).map_err(|_| InternalError::Overflow)?;
+                    self.current_call_frame.gas_remaining = self
+                        .current_call_frame
+                        .gas_remaining
+                        .checked_sub(reservoir_i64)
+                        .ok_or(InternalError::Overflow)?;
+                    self.state_gas_reservoir = reservoir;
+                }
+                // Capture initial reservoir for block-dimensional regular gas computation.
+                self.state_gas_reservoir_initial = reservoir;
             }
         }
 
@@ -441,7 +540,7 @@ impl<'a> VM<'a> {
     /// Returns `(regular_gas, state_gas)` intrinsic gas for the transaction.
     /// For Amsterdam+, state_gas is the EIP-8037 state portion.
     /// For pre-Amsterdam, state_gas is always 0.
-    pub fn get_intrinsic_gas(&self) -> Result<(u64, u64), VMError> {
+    pub fn get_intrinsic_gas(&self) -> Result<IntrinsicGas, VMError> {
         // Intrinsic Gas = Calldata cost + Create cost + Base cost + Access list cost
         let mut regular_gas: u64 = 0;
         let mut state_gas: u64 = 0;
@@ -464,7 +563,7 @@ impl<'a> VM<'a> {
                     .checked_add(REGULAR_GAS_CREATE)
                     .ok_or(OutOfGas)?;
                 state_gas = state_gas
-                    .checked_add(STATE_GAS_NEW_ACCOUNT)
+                    .checked_add(self.state_gas_new_account)
                     .ok_or(OutOfGas)?;
             } else {
                 // https://eips.ethereum.org/EIPS/eip-2#specification
@@ -499,6 +598,20 @@ impl<'a> VM<'a> {
             }
         }
 
+        // EIP-7981 (Amsterdam+): access-list data bytes also contribute to the regular arm.
+        // access_list_cost += floor_tokens_in_access_list * total_cost_floor_per_token
+        // = access_list_bytes * STANDARD_TOKEN_COST * total_cost_floor_per_token
+        // Effective: +1280 per address, +2048 per storage key.
+        if fork >= Fork::Amsterdam {
+            let al_floor_tokens = floor_tokens_in_access_list(self.tx.access_list());
+            let al_data_cost = al_floor_tokens
+                .checked_mul(total_cost_floor_per_token(fork))
+                .ok_or(InternalError::Overflow)?;
+            access_lists_cost = access_lists_cost
+                .checked_add(al_data_cost)
+                .ok_or(InternalError::Overflow)?;
+        }
+
         regular_gas = regular_gas.checked_add(access_lists_cost).ok_or(OutOfGas)?;
 
         // Authorization List Cost
@@ -513,12 +626,13 @@ impl<'a> VM<'a> {
         };
 
         if fork >= Fork::Amsterdam {
-            // EIP-8037: per-auth regular cost is PER_AUTH_BASE_COST, state is 135 * COST_PER_STATE_BYTE
+            // EIP-8037: per-auth regular cost is PER_AUTH_BASE_COST, state is STATE_BYTES_PER_AUTH_TOTAL * cost_per_state_byte
             let regular_auth_cost = PER_AUTH_BASE_COST
                 .checked_mul(amount_of_auth_tuples)
                 .ok_or(InternalError::Overflow)?;
             regular_gas = regular_gas.checked_add(regular_auth_cost).ok_or(OutOfGas)?;
-            let state_auth_cost = STATE_GAS_AUTH_TOTAL
+            let state_auth_cost = self
+                .state_gas_auth_total
                 .checked_mul(amount_of_auth_tuples)
                 .ok_or(InternalError::Overflow)?;
             state_gas = state_gas.checked_add(state_auth_cost).ok_or(OutOfGas)?;
@@ -531,27 +645,55 @@ impl<'a> VM<'a> {
                 .ok_or(OutOfGas)?;
         }
 
-        Ok((regular_gas, state_gas))
+        Ok(IntrinsicGas {
+            regular: regular_gas,
+            state: state_gas,
+            calldata_cost,
+        })
     }
 
     /// Calculates the minimum gas to be consumed in the transaction.
     pub fn get_min_gas_used(&self) -> Result<u64, VMError> {
+        let fork = self.env.config.fork;
+
         // If the transaction is a CREATE transaction, the calldata is emptied and the bytecode is assigned.
         let calldata = if self.is_create()? {
-            &self.current_call_frame.bytecode.bytecode
+            self.current_call_frame.bytecode.code()
         } else {
-            &self.current_call_frame.calldata
+            self.current_call_frame.calldata.as_ref()
         };
 
-        // tokens_in_calldata = nonzero_bytes_in_calldata * 4 + zero_bytes_in_calldata
-        // tx_calldata = nonzero_bytes_in_calldata * 16 + zero_bytes_in_calldata * 4
-        // this is actually tokens_in_calldata * STANDARD_TOKEN_COST
-        // see it in https://eips.ethereum.org/EIPS/eip-7623
-        let tokens_in_calldata: u64 = gas_cost::tx_calldata(calldata)? / STANDARD_TOKEN_COST;
+        // EIP-7976 floor tokens: for the floor arm, all calldata bytes count unweighted.
+        // floor_tokens_in_calldata = (zero_bytes + nonzero_bytes) * STANDARD_TOKEN_COST
+        // Pre-Amsterdam uses the weighted EIP-7623 formula: (nonzero * 16 + zero * 4) / 4
+        let mut tokens_in_calldata: u64 = if fork >= Fork::Amsterdam {
+            // EIP-7976: floor tokens = total_bytes * STANDARD_TOKEN_COST (unweighted).
+            let total_bytes: u64 = calldata
+                .len()
+                .try_into()
+                .map_err(|_| InternalError::TypeConversion)?;
+            total_bytes
+                .checked_mul(STANDARD_TOKEN_COST)
+                .ok_or(InternalError::Overflow)?
+        } else {
+            // Pre-Amsterdam: weighted EIP-7623 token count.
+            gas_cost::tx_calldata(calldata)? / STANDARD_TOKEN_COST
+        };
 
-        // min_gas_used = TX_BASE_COST + TOTAL_COST_FLOOR_PER_TOKEN * tokens_in_calldata
+        // EIP-7981 (Amsterdam+): access-list data bytes fold into the floor-token count.
+        // floor_tokens_in_access_list = access_list_bytes * STANDARD_TOKEN_COST
+        // where access_list_bytes = 20 * address_count + 32 * storage_key_count.
+        if fork >= Fork::Amsterdam {
+            let al_floor_tokens = floor_tokens_in_access_list(self.tx.access_list());
+            tokens_in_calldata = tokens_in_calldata
+                .checked_add(al_floor_tokens)
+                .ok_or(InternalError::Overflow)?;
+        }
+
+        // min_gas_used = TX_BASE_COST + total_cost_floor_per_token(fork) * tokens
+        // EIP-7976 (Amsterdam+) raises TOTAL_COST_FLOOR_PER_TOKEN from 10 to 16.
         let mut min_gas_used: u64 = tokens_in_calldata
-            .checked_mul(TOTAL_COST_FLOOR_PER_TOKEN)
+            .checked_mul(total_cost_floor_per_token(fork))
             .ok_or(InternalError::Overflow)?;
 
         min_gas_used = min_gas_used
@@ -588,6 +730,163 @@ impl<'a> VM<'a> {
             }
         }
     }
+}
+
+/// Compute `(regular, state)` intrinsic gas for a transaction without needing
+/// a full VM instance. Mirrors `VM::get_intrinsic_gas` but operates on the raw
+/// transaction, fork, and block gas limit (for cpsb derivation). Pre-Amsterdam
+/// returns `(regular, 0)`.
+///
+/// Used by the block executor to perform the EIP-8037 (PR #2703) per-tx 2D
+/// inclusion check before the tx runs.
+pub fn intrinsic_gas_dimensions(
+    tx: &Transaction,
+    fork: Fork,
+    block_gas_limit: u64,
+) -> Result<(u64, u64), VMError> {
+    let mut regular_gas: u64 = 0;
+    let mut state_gas: u64 = 0;
+
+    let (state_gas_new_account, state_gas_auth_total) = if fork >= Fork::Amsterdam {
+        let cpsb = cost_per_state_byte(block_gas_limit);
+        (
+            STATE_BYTES_PER_NEW_ACCOUNT
+                .checked_mul(cpsb)
+                .ok_or(InternalError::Overflow)?,
+            STATE_BYTES_PER_AUTH_TOTAL
+                .checked_mul(cpsb)
+                .ok_or(InternalError::Overflow)?,
+        )
+    } else {
+        (0, 0)
+    };
+
+    // Calldata cost (EIP-2028 weighted)
+    let calldata_cost = gas_cost::tx_calldata(tx.data())?;
+    regular_gas = regular_gas.checked_add(calldata_cost).ok_or(OutOfGas)?;
+
+    // Base cost
+    regular_gas = regular_gas.checked_add(TX_BASE_COST).ok_or(OutOfGas)?;
+
+    let is_create = matches!(tx.to(), TxKind::Create);
+    if is_create {
+        if fork >= Fork::Amsterdam {
+            regular_gas = regular_gas
+                .checked_add(REGULAR_GAS_CREATE)
+                .ok_or(OutOfGas)?;
+            state_gas = state_gas
+                .checked_add(state_gas_new_account)
+                .ok_or(OutOfGas)?;
+        } else {
+            regular_gas = regular_gas.checked_add(CREATE_BASE_COST).ok_or(OutOfGas)?;
+        }
+
+        // EIP-3860 init code words (Shanghai+)
+        if fork >= Fork::Shanghai {
+            let words = tx.data().len().div_ceil(WORD_SIZE);
+            let double_words: u64 = words
+                .checked_mul(2)
+                .ok_or(OutOfGas)?
+                .try_into()
+                .map_err(|_| InternalError::TypeConversion)?;
+            regular_gas = regular_gas.checked_add(double_words).ok_or(OutOfGas)?;
+        }
+    }
+
+    // Access list cost
+    let mut access_lists_cost: u64 = 0;
+    for (_, keys) in tx.access_list() {
+        access_lists_cost = access_lists_cost
+            .checked_add(ACCESS_LIST_ADDRESS_COST)
+            .ok_or(OutOfGas)?;
+        for _ in keys {
+            access_lists_cost = access_lists_cost
+                .checked_add(ACCESS_LIST_STORAGE_KEY_COST)
+                .ok_or(OutOfGas)?;
+        }
+    }
+
+    // EIP-7981 (Amsterdam+): access-list data bytes fold into regular gas
+    if fork >= Fork::Amsterdam {
+        let al_floor_tokens = floor_tokens_in_access_list(tx.access_list());
+        let al_data_cost = al_floor_tokens
+            .checked_mul(total_cost_floor_per_token(fork))
+            .ok_or(InternalError::Overflow)?;
+        access_lists_cost = access_lists_cost
+            .checked_add(al_data_cost)
+            .ok_or(InternalError::Overflow)?;
+    }
+    regular_gas = regular_gas.checked_add(access_lists_cost).ok_or(OutOfGas)?;
+
+    // Authorization list cost
+    let amount_of_auth_tuples: u64 = match tx.authorization_list() {
+        None => 0,
+        Some(list) => list
+            .len()
+            .try_into()
+            .map_err(|_| InternalError::TypeConversion)?,
+    };
+
+    if fork >= Fork::Amsterdam {
+        let regular_auth_cost = PER_AUTH_BASE_COST
+            .checked_mul(amount_of_auth_tuples)
+            .ok_or(InternalError::Overflow)?;
+        regular_gas = regular_gas.checked_add(regular_auth_cost).ok_or(OutOfGas)?;
+        let state_auth_cost = state_gas_auth_total
+            .checked_mul(amount_of_auth_tuples)
+            .ok_or(InternalError::Overflow)?;
+        state_gas = state_gas.checked_add(state_auth_cost).ok_or(OutOfGas)?;
+    } else {
+        let auth_cost = PER_EMPTY_ACCOUNT_COST
+            .checked_mul(amount_of_auth_tuples)
+            .ok_or(InternalError::Overflow)?;
+        regular_gas = regular_gas.checked_add(auth_cost).ok_or(OutOfGas)?;
+    }
+
+    Ok((regular_gas, state_gas))
+}
+
+/// Standalone EIP-7623/7976/7981 floor gas for a transaction. Mirrors
+/// [`VM::get_min_gas_used`] but operates on the raw transaction + fork, so it
+/// can be called by mempool admission / the payload builder without needing a
+/// VM instance. Returns `TX_BASE_COST + floor_rate * total_floor_tokens`.
+///
+/// Amsterdam+ uses the unweighted EIP-7976 floor (16 gas/token = 64 gas/byte)
+/// and folds EIP-7981 access-list data bytes into the token count. Pre-
+/// Amsterdam uses the weighted EIP-7623 formula.
+///
+/// A mismatch between this and `VM::get_min_gas_used` would cause mempool
+/// admission to drift from VM rejection; keep the two in sync. The
+/// `test_intrinsic_parity_*` suite also guards this.
+pub fn intrinsic_gas_floor(tx: &Transaction, fork: Fork) -> Result<u64, VMError> {
+    // EIP-7976: floor tokens count ALL calldata bytes unweighted. For CREATE
+    // txs the calldata is the init code. Mirrors `get_min_gas_used`.
+    let calldata = tx.data();
+
+    let mut tokens_in_calldata: u64 = if fork >= Fork::Amsterdam {
+        let total_bytes: u64 = calldata
+            .len()
+            .try_into()
+            .map_err(|_| InternalError::TypeConversion)?;
+        total_bytes
+            .checked_mul(STANDARD_TOKEN_COST)
+            .ok_or(InternalError::Overflow)?
+    } else {
+        gas_cost::tx_calldata(calldata)? / STANDARD_TOKEN_COST
+    };
+
+    if fork >= Fork::Amsterdam {
+        let al_floor_tokens = floor_tokens_in_access_list(tx.access_list());
+        tokens_in_calldata = tokens_in_calldata
+            .checked_add(al_floor_tokens)
+            .ok_or(InternalError::Overflow)?;
+    }
+
+    tokens_in_calldata
+        .checked_mul(total_cost_floor_per_token(fork))
+        .ok_or(InternalError::Overflow)?
+        .checked_add(TX_BASE_COST)
+        .ok_or(InternalError::Overflow.into())
 }
 
 /// Converts Account to LevmAccount
