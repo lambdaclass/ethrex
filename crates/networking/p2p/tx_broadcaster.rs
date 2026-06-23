@@ -44,6 +44,7 @@ pub trait TxBroadcasterProtocol: Send + Sync {
     fn broadcast_txs(&self) -> Result<(), ActorError>;
     fn add_txs(&self, tx_hashes: Vec<H256>, peer_id: H256) -> Result<(), ActorError>;
     fn prune_txs(&self) -> Result<(), ActorError>;
+    fn remove_peer(&self, peer_id: H256) -> Result<(), ActorError>;
 }
 
 #[derive(Debug, Clone, Default)]
@@ -79,6 +80,17 @@ impl PeerMask {
         let bit = (idx as usize) % 64;
         self.bits[word] |= 1u64 << bit;
     }
+
+    #[inline]
+    // Clear bit `idx`. Used when a peer's index is freed so a future peer that reuses the
+    // index does not inherit a stale "already-sent" bit (which would suppress a real broadcast).
+    fn clear(&mut self, idx: u32) {
+        let word = (idx as usize) / 64;
+        if word < self.bits.len() {
+            let bit = (idx as usize) % 64;
+            self.bits[word] &= !(1u64 << bit);
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -106,6 +118,9 @@ pub struct TxBroadcaster {
     peer_indexer: HashMap<H256, u32>,
     // Next index to assign to a new peer
     next_peer_idx: u32,
+    // Indices freed by disconnected peers, reused before allocating new ones. Without this,
+    // next_peer_idx (and therefore every PeerMask's width) grows unbounded with peer churn.
+    free_indices: Vec<u32>,
     tx_broadcasting_time_interval: u64,
 }
 
@@ -152,6 +167,7 @@ impl TxBroadcaster {
             known_txs: HashMap::new(),
             peer_indexer: HashMap::new(),
             next_peer_idx: 0,
+            free_indices: Vec::new(),
             tx_broadcasting_time_interval,
         };
 
@@ -215,6 +231,27 @@ impl TxBroadcaster {
         let _ = self.blockchain.mempool.prune_alternates(prune_window);
     }
 
+    #[send_handler]
+    async fn handle_remove_peer(
+        &mut self,
+        msg: tx_broadcaster_protocol::RemovePeer,
+        _ctx: &Context<Self>,
+    ) {
+        self.do_remove_peer(msg.peer_id);
+    }
+
+    // Remove a disconnected peer: drop its index mapping, clear its bit from every known_txs
+    // record (so a future peer reusing the index isn't treated as already-notified), and return
+    // the index to the free-list — bounding peer_indexer and every PeerMask's width to live peers.
+    fn do_remove_peer(&mut self, peer_id: H256) {
+        if let Some(idx) = self.peer_indexer.remove(&peer_id) {
+            for record in self.known_txs.values_mut() {
+                record.peers.clear(idx);
+            }
+            self.free_indices.push(idx);
+        }
+    }
+
     // Get or assign a unique index to the peer_id
     #[inline]
     fn peer_index(&mut self, peer_id: H256) -> u32 {
@@ -224,9 +261,13 @@ impl TxBroadcaster {
             // We are assigning indexes sequentially, so next_peer_idx is always the next available one.
             // self.peer_indexer.len() could be used instead of next_peer_idx but avoided here if we ever
             // remove entries from peer_indexer in the future.
-            let idx = self.next_peer_idx;
-            // In practice we won't exceed u32::MAX (~4.29 Billion) peers.
-            self.next_peer_idx += 1;
+            // Reuse a freed index if available, otherwise allocate the next one.
+            let idx = self.free_indices.pop().unwrap_or_else(|| {
+                let idx = self.next_peer_idx;
+                // In practice we won't exceed u32::MAX (~4.29 Billion) peers.
+                self.next_peer_idx += 1;
+                idx
+            });
             self.peer_indexer.insert(peer_id, idx);
             idx
         }

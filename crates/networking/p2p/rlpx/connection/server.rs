@@ -442,6 +442,14 @@ impl PeerConnectionServer {
                 {
                     debug!("Failed to remove peer from table: {e}");
                 }
+                // Free the peer's tx-broadcaster index (and clear its bit across known txs) so
+                // the broadcaster's per-peer index map / PeerMask widths stay bounded to live peers.
+                if let Err(e) = established_state
+                    .tx_broadcaster
+                    .remove_peer(established_state.node.node_id())
+                {
+                    debug!("Failed to remove peer from tx broadcaster: {e}");
+                }
                 established_state.teardown().await;
             }
             _ => {
