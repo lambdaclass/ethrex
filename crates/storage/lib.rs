@@ -72,6 +72,7 @@ pub mod migrations;
 pub mod rlp;
 pub mod store;
 pub mod trie;
+pub mod trie_key;
 pub mod utils;
 
 pub use layering::apply_prefix;
@@ -79,6 +80,7 @@ pub use store::{
     AccountUpdatesList, DEFAULT_ROCKSDB_BLOCK_CACHE_SIZE_BYTES, EngineType, Store, StoreConfig,
     UpdateBatch, has_valid_db, hash_address, hash_key, read_chain_id_from_db,
 };
+pub use trie_key::TrieKey;
 
 /// Store Schema Version, must be updated on any breaking change.
 ///

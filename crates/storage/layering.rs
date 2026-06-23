@@ -284,7 +284,7 @@ impl TrieWrapper {
         db: Box<dyn TrieDB>,
         prefix: Option<H256>,
     ) -> Self {
-        let prefix_nibbles = prefix.map(|p| Nibbles::from_bytes(p.as_bytes()).append_new(17));
+        let prefix_nibbles = prefix.map(|p| crate::trie_key::TrieKey::storage_prefix(p));
         Self {
             state_root,
             inner,
@@ -294,16 +294,14 @@ impl TrieWrapper {
     }
 }
 
-/// Prepends an account address prefix (with an invalid nibble `17` as separator) to a
-/// trie path, distinguishing storage trie entries from state trie entries in the flat
-/// key-value namespace. Returns the path unchanged if `prefix` is `None` (state trie).
+/// Prepends an account address prefix to a trie path, distinguishing storage trie
+/// entries from state trie entries in the flat key-value namespace.
+/// Returns the path unchanged if `prefix` is `None` (state trie).
+///
+/// Delegates to [`TrieKey::with_prefix`] — this function is kept for backward
+/// compatibility with call sites that work with raw `Nibbles`.
 pub fn apply_prefix(prefix: Option<H256>, path: Nibbles) -> Nibbles {
-    match prefix {
-        Some(prefix) => Nibbles::from_bytes(prefix.as_bytes())
-            .append_new(17)
-            .concat(&path),
-        None => path,
-    }
+    crate::trie_key::TrieKey::with_prefix(prefix, path).into_nibbles()
 }
 
 impl TrieDB for TrieWrapper {
