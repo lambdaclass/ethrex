@@ -1883,7 +1883,7 @@ mod synthesize_tests {
         let expected_hash = keccak(&bytecode);
         assert_eq!(item.code_hash, Some(expected_hash));
         assert!(item.code.is_some());
-        assert_eq!(item.code.as_ref().unwrap().bytecode, bytecode);
+        assert_eq!(item.code.as_ref().unwrap().code(), &bytecode[..]);
         assert!(item.added_storage.is_empty());
     }
 
@@ -1924,7 +1924,7 @@ mod synthesize_tests {
         let item = result.get(&addr(8)).expect("expected entry");
         let expected_hash = keccak(&last);
         assert_eq!(item.code_hash, Some(expected_hash));
-        assert_eq!(item.code.as_ref().unwrap().bytecode, last);
+        assert_eq!(item.code.as_ref().unwrap().code(), &last[..]);
     }
 
     /// When a slot has multiple StorageChanges, the last post_value wins.
@@ -2002,7 +2002,7 @@ mod synthesize_tests {
         let expected_hash = keccak(&bytecode);
         assert_eq!(item.code_hash, Some(expected_hash));
         assert!(item.code.is_some());
-        assert_eq!(item.code.as_ref().unwrap().bytecode, bytecode);
+        assert_eq!(item.code.as_ref().unwrap().code(), &bytecode[..]);
         let key = H256::from_uint(&U256::zero());
         assert_eq!(item.added_storage.get(&key), Some(&U256::from(7)));
     }

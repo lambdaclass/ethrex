@@ -2,14 +2,16 @@ use bytes::Bytes;
 use ethrex_blockchain::error::ChainError;
 use ethrex_blockchain::payload::PayloadBuildResult;
 use ethrex_common::types::block_access_list::BlockAccessList;
-use ethrex_common::types::block_execution_witness::{ExecutionWitness, RpcExecutionWitness};
+use ethrex_common::types::block_execution_witness::{
+    ExecutionWitness, ExtWitness, RpcExecutionWitness,
+};
 use ethrex_common::types::payload::PayloadBundle;
 use ethrex_common::types::requests::{EncodedRequests, compute_requests_hash};
 use ethrex_common::types::{Block, BlockBody, BlockHash, BlockHeader, BlockNumber, Fork};
 use ethrex_common::{H256, U256};
 use ethrex_crypto::NativeCrypto;
 use ethrex_p2p::sync::SyncMode;
-use ethrex_rlp::{decode::RLPDecode, error::RLPDecodeError, structs::Encoder};
+use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode, error::RLPDecodeError};
 use serde_json::Value;
 use tokio::sync::oneshot;
 use tracing::{debug, error, info, warn};
@@ -1344,13 +1346,9 @@ fn encode_witness_for_engine_rpc(witness: ExecutionWitness) -> Result<Bytes, Rpc
 /// Encodes the witness in geth's opaque `engine_newPayloadWithWitness*` shape.
 ///
 /// Format: geth returns `rlp.EncodeToBytes(proofs)` from `newPayload`, and
-/// `stateless.Witness::EncodeRLP` delegates to `ExtWitness`.
-/// `ExtWitness` is an RLP list of `(headers, codes, state, keys)`, with
-/// headers ordered by block number and code/state byte lists sorted
-/// lexicographically. Geth currently emits empty keys, but the trailing field
-/// is part of the RLP shape.
-/// Reference:
-/// https://github.com/ethereum/go-ethereum/blob/4daaaadfc4706b0a49d4dfde3559de7be968c28a/core/stateless/encoding.go#L30-L52
+/// `stateless.Witness::EncodeRLP` delegates to [`ExtWitness`] — see its docs
+/// for the shape and geth references.
+/// Additional references:
 /// https://github.com/ethereum/go-ethereum/blob/4daaaadfc4706b0a49d4dfde3559de7be968c28a/core/stateless/encoding.go#L92-L98
 /// https://github.com/ethereum/go-ethereum/blob/4daaaadfc4706b0a49d4dfde3559de7be968c28a/eth/catalyst/api.go#L915-L920
 fn encode_rpc_witness_for_engine_rpc(rpc_witness: RpcExecutionWitness) -> Result<Bytes, RpcErr> {
@@ -1367,14 +1365,13 @@ fn encode_rpc_witness_for_engine_rpc(rpc_witness: RpcExecutionWitness) -> Result
     state.sort_by(|a, b| a.as_ref().cmp(b.as_ref()));
     let mut keys = rpc_witness.keys;
     keys.sort_by(|a, b| a.as_ref().cmp(b.as_ref()));
-    let mut encoded = Vec::new();
-    Encoder::new(&mut encoded)
-        .encode_field(&headers)
-        .encode_field(&codes)
-        .encode_field(&state)
-        .encode_field(&keys)
-        .finish();
-    Ok(Bytes::from(encoded))
+    let ext_witness = ExtWitness {
+        headers,
+        codes,
+        state,
+        keys,
+    };
+    Ok(Bytes::from(ext_witness.encode_to_vec()))
 }
 
 fn parse_get_payload_request(params: &Option<Vec<Value>>) -> Result<u64, RpcErr> {

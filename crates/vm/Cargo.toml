@@ -5,11 +5,13 @@ edition.workspace = true
 authors.workspace = true
 documentation.workspace = true
 license.workspace = true
+description = "EVM execution backend and database abstraction for the ethrex Ethereum execution client"
+repository.workspace = true
 
 [dependencies]
 ethrex-common = { workspace = true, default-features = false }
 ethrex-crypto.workspace = true
-ethrex-levm = { path = "./levm", default-features = false }
+ethrex-levm = { path = "./levm", version = "17.0.0", default-features = false }
 ethrex-rlp.workspace = true
 
 derive_more = { version = "1.0.0", features = ["full"] }

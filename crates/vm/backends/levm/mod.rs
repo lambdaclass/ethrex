@@ -1565,16 +1565,14 @@ impl LEVM {
                     match actual {
                         Some(a) => {
                             let actual_code = if let Some(c) = codes.get(&a.info.code_hash) {
-                                c.bytecode.clone()
+                                c.code_bytes()
                             } else {
-                                store
-                                    .get_account_code(a.info.code_hash)
-                                    .map_err(|e| {
-                                        BalValidationError::Database(format!(
-                                            "DB error reading account code for {addr:?}: {e}"
-                                        ))
-                                    })?
-                                    .bytecode
+                                let c = store.get_account_code(a.info.code_hash).map_err(|e| {
+                                    BalValidationError::Database(format!(
+                                        "DB error reading account code for {addr:?}: {e}"
+                                    ))
+                                })?;
+                                c.code_bytes()
                             };
                             if actual_code != *expected_code {
                                 return Err(BalValidationError::Mismatch(format!(
@@ -1599,17 +1597,15 @@ impl LEVM {
                                     })?
                             };
                             let pre_code = if let Some(c) = codes.get(&code_hash) {
-                                c.bytecode.clone()
+                                c.code_bytes()
                             } else {
-                                store
-                                    .get_account_code(code_hash)
-                                    .map_err(|e| {
-                                        BalValidationError::Database(format!(
-                                            "DB error reading account code for hash \
+                                let c = store.get_account_code(code_hash).map_err(|e| {
+                                    BalValidationError::Database(format!(
+                                        "DB error reading account code for hash \
                                              {code_hash:?}: {e}"
-                                        ))
-                                    })?
-                                    .bytecode
+                                    ))
+                                })?;
+                                c.code_bytes()
                             };
                             if *expected_code != pre_code {
                                 return Err(BalValidationError::Mismatch(format!(
@@ -2706,10 +2702,11 @@ pub fn generic_system_contract_levm(
         ..Default::default()
     };
 
-    // Invariant relied upon below: with a zero gas price a system call charges no
-    // gas to the SYSTEM_ADDRESS sender and pays no fee to the coinbase, so the only
-    // state change left to undo afterwards is the sender's nonce bump. If this ever
-    // becomes non-zero, the post-call cleanup must be revisited.
+    // Invariant: with a zero gas price (and `is_system_call` making the hook
+    // skip the sender path entirely) a system call leaves no SYSTEM_ADDRESS
+    // state behind — no nonce bump, no balance change, not even a read. If
+    // this ever becomes non-zero, the hook's system-call branches must be
+    // revisited.
     debug_assert!(
         env.gas_price.is_zero() && env.base_fee_per_gas.is_zero(),
         "system calls must run with a zero gas price"
@@ -2723,7 +2720,7 @@ pub fn generic_system_contract_levm(
     if PRAGUE_SYSTEM_CONTRACTS
         .iter()
         .any(|contract| contract.address == contract_address)
-        && db.get_account_code(contract_address)?.bytecode.is_empty()
+        && db.get_account_code(contract_address)?.is_empty()
     {
         return Err(EvmError::SystemContractCallFailed(format!(
             "System contract: {contract_address} has no code after deployment"
@@ -2750,15 +2747,7 @@ pub fn generic_system_contract_levm(
         recorder.exit_system_call();
     }
 
-    let report = result?;
-
-    // Undo the sender nonce bump: it's the only state change a system call leaves
-    // behind given that the gas price is set to zero.
-    if let Some(account) = db.current_accounts_state.get_mut(&system_address) {
-        account.info.nonce = account.info.nonce.saturating_sub(1);
-    }
-
-    Ok(report)
+    result
 }
 
 #[allow(unreachable_code)]
@@ -3253,7 +3242,7 @@ mod bal_tests {
         assert_eq!(updates.len(), 1);
         let u = &updates[0];
         assert_eq!(u.info.as_ref().unwrap().code_hash, expected_hash);
-        assert_eq!(u.code.as_ref().unwrap().bytecode, code);
+        assert_eq!(u.code.as_ref().unwrap().code(), &code[..]);
     }
 }
 
@@ -3311,7 +3300,7 @@ mod system_call_coinbase_tests {
         }
         fn get_code_metadata(&self, code_hash: H256) -> Result<CodeMetadata, DatabaseError> {
             let length = if code_hash == self.history_code.hash {
-                self.history_code.bytecode.len() as u64
+                self.history_code.len() as u64
             } else {
                 0
             };
