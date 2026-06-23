@@ -175,13 +175,7 @@ pub trait Crypto: Send + Sync + core::fmt::Debug {
     /// Used by EIP-8025 sender hints.
     #[cfg(feature = "secp256k1")]
     fn verify_signature(&self, sig: &[u8; 65], msg: &[u8; 32], public_key: &[u8; 65]) -> bool {
-        // EIP-2: reject high-s.
-        const SECP256K1_N_HALF: [u8; 32] =
-            hex_literal::hex!("7fffffffffffffffffffffffffffffff5d576e7357a4501ddfe92f46681b20a0");
-        if sig[32..64] > SECP256K1_N_HALF[..] {
-            return false;
-        }
-        if sig[64] > 1 {
+        if !signature_preflight_ok(sig) {
             return false;
         }
         let Ok(recovery_id) = secp256k1::ecdsa::RecoveryId::try_from(sig[64] as i32) else {
@@ -193,7 +187,7 @@ pub trait Crypto: Send + Sync + core::fmt::Debug {
             return false;
         };
         let message = secp256k1::Message::from_digest(*msg);
-        let Ok(expected_pk) = secp256k1::PublicKey::from_slice(public_key.as_slice()) else {
+        let Ok(expected_pk) = secp256k1::PublicKey::from_slice(public_key) else {
             return false;
         };
         // Recover with `v` and compare; plain verify accepts either candidate.
@@ -218,13 +212,7 @@ pub trait Crypto: Send + Sync + core::fmt::Debug {
             },
         };
 
-        // EIP-2: reject high-s.
-        const SECP256K1_N_HALF: [u8; 32] =
-            hex_literal::hex!("7fffffffffffffffffffffffffffffff5d576e7357a4501ddfe92f46681b20a0");
-        if sig[32..64] > SECP256K1_N_HALF[..] {
-            return false;
-        }
-        if sig[64] > 1 {
+        if !signature_preflight_ok(sig) {
             return false;
         }
 
@@ -794,6 +782,16 @@ pub trait Crypto: Send + Sync + core::fmt::Debug {
         let point = G2Projective::map_to_curve(&fp2_elem).clear_h();
         serialize_bls12_g2(&G2Affine::from(point))
     }
+}
+
+// ── verify_signature helpers ───────────────────────────────────────────────
+
+/// EIP-2 low-s and canonical recovery-byte preflight for `verify_signature`.
+/// Returns true iff `s <= n/2` and `v ∈ {0, 1}`.
+fn signature_preflight_ok(sig: &[u8; 65]) -> bool {
+    const SECP256K1_N_HALF: [u8; 32] =
+        hex_literal::hex!("7fffffffffffffffffffffffffffffff5d576e7357a4501ddfe92f46681b20a0");
+    sig[32..64] <= SECP256K1_N_HALF[..] && sig[64] <= 1
 }
 
 // ── Modexp helper ──────────────────────────────────────────────────────────

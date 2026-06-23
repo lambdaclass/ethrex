@@ -1305,6 +1305,25 @@ impl Transaction {
         crypto.recover_signer(&sig, &msg)
     }
 
+    /// Verify an EIP-8025 sender hint `public_key` against this transaction's
+    /// signature and return the derived sender address.
+    ///
+    /// `public_key` must be a 65-byte uncompressed SEC1 encoding with the
+    /// canonical `0x04` prefix; hybrid (`0x06`/`0x07`) prefixes are rejected
+    /// here because the two backends of [`Crypto::verify_signature`] disagree
+    /// on them. On verification success the per-tx sender cache is populated
+    /// so later [`Transaction::sender`] calls are free.
+    ///
+    /// `PrivilegedL2Transaction` carries no signature; the function returns
+    /// `tx.from` without inspecting `public_key`. Privileged transactions are
+    /// not part of any L1 EIP-8025 flow today.
+    ///
+    /// # Errors
+    /// - [`CryptoError::InvalidSignature`] if the prefix is not `0x04`, the
+    ///   signature is malformed, or `verify_signature` rejects it.
+    /// - [`CryptoError::VerificationFailed`] if a prior [`Transaction::sender`]
+    ///   call cached a different address than the hint derives (the hint
+    ///   contradicts the recovered signer).
     #[cfg(feature = "eip-8025")]
     pub fn compute_sender_with_hint(
         &self,
@@ -1331,9 +1350,7 @@ impl Transaction {
         // Cache only after verification; any prior `sender()` result must agree.
         let cached = self.sender_cache().get_or_init(|| sender);
         if *cached != sender {
-            return Err(CryptoError::Other(
-                "Inconsistent sender recovered".to_string(),
-            ));
+            return Err(CryptoError::VerificationFailed);
         }
         Ok(sender)
     }

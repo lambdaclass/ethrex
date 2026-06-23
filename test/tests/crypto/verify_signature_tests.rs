@@ -2,9 +2,10 @@
 //!
 //! These exercise the native (`secp256k1`) backend, which is what the default
 //! build and the SP1 guest compile. The `k256` backend variant of
-//! `verify_signature` (which carries the R'.x-vs-r field-byte comparison fix) is
-//! only compiled with `--no-default-features` on `ethrex-crypto`, so it is not
-//! reachable from this crate's secp256k1 build and is not covered here.
+//! `verify_signature` (which compares `R'.x` to `r` as field bytes to reject
+//! the rare nonce-aliasing case `x = r + n`) is only compiled with
+//! `--no-default-features` on `ethrex-crypto`, so it is not reachable from
+//! this crate's secp256k1 build and is not covered here.
 
 use ethereum_types::U256;
 use ethrex_crypto::{Crypto, NativeCrypto};

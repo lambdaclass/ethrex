@@ -584,8 +584,7 @@ fn validate_eip8025_amsterdam_execution(
     for (public_key, tx) in public_keys.iter().zip(block.body.transactions.iter()) {
         // SSZ fixes the length at 65; the 0x04 prefix and curve checks happen in
         // compute_sender_with_hint.
-        let pk_slice: &[u8] = public_key;
-        let Ok(pk_bytes) = <[u8; 65]>::try_from(pk_slice) else {
+        let Ok(pk_bytes) = <[u8; 65]>::try_from(&public_key[..]) else {
             return Err(ExecutionError::Internal(
                 "Stateless input public key is not 65 bytes".to_string(),
             ));
