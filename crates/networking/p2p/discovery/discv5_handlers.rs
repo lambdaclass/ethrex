@@ -81,7 +81,7 @@ impl DiscoveryServer {
         let ordinary = match decrypt_key {
             Some(key) => match Ordinary::decode(&packet, &key) {
                 Ok(ordinary) => {
-                    if let Some(session_ip) = discv5.session_ips.get(&src_id)
+                    if let Some((session_ip, _)) = discv5.session_ips.get(&src_id)
                         && addr.ip() != *session_ip
                     {
                         trace!(
@@ -253,7 +253,9 @@ impl DiscoveryServer {
 
         self.peer_table.set_session_info(src_id, session.clone())?;
         let discv5 = self.discv5.as_mut().expect("discv5 state must exist");
-        discv5.session_ips.insert(src_id, addr.ip());
+        discv5
+            .session_ips
+            .insert(src_id, (addr.ip(), std::time::Instant::now()));
 
         let mut encrypted = packet.encrypted_message.clone();
         decrypt_message(&session.inbound_key, &packet, &mut encrypted)?;
