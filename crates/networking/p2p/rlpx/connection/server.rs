@@ -152,13 +152,17 @@ impl PeerConnection {
         context: P2PContext,
         peer_addr: SocketAddr,
         stream: TcpStream,
+        admission_permit: tokio::sync::OwnedSemaphorePermit,
     ) -> PeerConnection {
         let state = ConnectionState::Receiver(Receiver {
             context,
             peer_addr,
             stream: Arc::new(stream),
         });
-        let connection = PeerConnectionServer { state };
+        let connection = PeerConnectionServer {
+            state,
+            _admission_permit: Some(admission_permit),
+        };
         Self {
             handle: connection.start(),
         }
@@ -169,7 +173,11 @@ impl PeerConnection {
             context,
             node: node.clone(),
         });
-        let connection = PeerConnectionServer { state };
+        // Outbound dials are not admission-capped (we initiate them); inbound is the attack surface.
+        let connection = PeerConnectionServer {
+            state,
+            _admission_permit: None,
+        };
         Self {
             handle: connection.start(),
         }
@@ -333,6 +341,10 @@ pub enum ConnectionState {
 #[derive(Debug)]
 pub struct PeerConnectionServer {
     state: ConnectionState,
+    /// Inbound-admission permit (Some for inbound connections, None for outbound dials we
+    /// initiate). Held for the actor's lifetime and released when the actor is dropped, so the
+    /// inbound connection count stays bounded. See `P2PContext::inbound_admission`.
+    _admission_permit: Option<tokio::sync::OwnedSemaphorePermit>,
 }
 
 #[actor(protocol = PeerConnectionServerProtocol)]
