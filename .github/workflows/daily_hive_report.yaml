@@ -9,6 +9,7 @@ on:
     paths:
       - .github/workflows/daily_hive_report.yaml
       - .github/scripts/publish_hive.sh
+      - tooling/hive_report/**
 
 permissions:
   contents: read
