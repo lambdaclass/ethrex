@@ -1,0 +1,36 @@
+{
+  "config": {
+    "chainId": 3151908,
+    "homesteadBlock": 0,
+    "eip150Block": 0,
+    "eip155Block": 0,
+    "eip158Block": 0,
+    "byzantiumBlock": 0,
+    "constantinopleBlock": 0,
+    "petersburgBlock": 0,
+    "istanbulBlock": 0,
+    "berlinBlock": 0,
+    "londonBlock": 0,
+    "terminalTotalDifficulty": 0,
+    "terminalTotalDifficultyPassed": true,
+    "shanghaiTime": 0,
+    "cancunTime": 0,
+    "depositContractAddress": "0x00000000219ab540356cbb839cbe05303d7705fa",
+    "blobSchedule": {
+      "cancun": {
+        "target": 3,
+        "max": 6,
+        "baseFeeUpdateFraction": 3338477
+      }
+    },
+    "ethash": {}
+  },
+  "nonce": "0x0",
+  "timestamp": "0x0",
+  "extraData": "0x",
+  "gasLimit": "0x17d7840",
+  "difficulty": "0x10000",
+  "mixHash": "0x0000000000000000000000000000000000000000000000000000000000000000",
+  "coinbase": "0x0000000000000000000000000000000000000000",
+  "alloc": {}
+}
