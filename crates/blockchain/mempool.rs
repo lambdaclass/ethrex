@@ -727,6 +727,38 @@ impl Mempool {
         let Some(tx_in_pool) = self.contains_sender_nonce(sender, nonce, tx.hash())? else {
             return Ok(None);
         };
+
+        // Reject EIP-4844 replacements that carry fewer blobs than the in-pool tx.
+        // A smaller sidecar costs the network less to gossip, so allowing a shrink
+        // would let an attacker cycle "replace N-blob tx with 1-blob tx" cheaply
+        // even when the fee bump is satisfied. A non-blob tx replacing a blob tx
+        // is a degenerate shrink (0 blobs vs the in-pool N) and is rejected the
+        // same way.
+        //
+        // TODO: When PR #6601 lands (type-discriminant check for RBF), the
+        // cross-type case becomes unreachable here — keep the same-type shrink
+        // check and drop the cross-type arm.
+        match (tx_in_pool.transaction(), tx) {
+            (Transaction::EIP4844Transaction(old_tx), Transaction::EIP4844Transaction(new_tx)) => {
+                let old_count = old_tx.blob_versioned_hashes.len();
+                let new_count = new_tx.blob_versioned_hashes.len();
+                if new_count < old_count {
+                    return Err(MempoolError::ReplacementShrinksBlobs {
+                        old_count,
+                        new_count,
+                    });
+                }
+            }
+            (Transaction::EIP4844Transaction(old_tx), _) => {
+                // Non-blob trying to replace a blob tx: a degenerate shrink to 0.
+                return Err(MempoolError::ReplacementShrinksBlobs {
+                    old_count: old_tx.blob_versioned_hashes.len(),
+                    new_count: 0,
+                });
+            }
+            _ => {}
+        }
+
         let is_a_replacement_tx = {
             // EIP-1559 values
             let old_tx_max_fee_per_gas = tx_in_pool.max_fee_per_gas().unwrap_or_default();
@@ -864,4 +896,168 @@ pub fn transaction_intrinsic_gas(
         .ok_or(MempoolError::TxGasOverflowError)?;
 
     Ok(gas)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ethrex_common::types::{EIP4844Transaction, MempoolTransaction, Transaction};
+
+    /// Mempool capacity used by the test fixture. The exact value is not
+    /// significant for these tests; we just need room for two transactions.
+    const TEST_MEMPOOL_CAPACITY: usize = 16;
+
+    /// Multiplier used by tests that bump every fee field by 100%
+    /// (i.e. double the value of the in-pool transaction).
+    const DOUBLED_FEE_MULTIPLIER: u64 = 2;
+
+    fn make_blob_tx(
+        nonce: u64,
+        max_priority_fee_per_gas: u64,
+        max_fee_per_gas: u64,
+        max_fee_per_blob_gas: U256,
+        blob_count: usize,
+    ) -> Transaction {
+        Transaction::EIP4844Transaction(EIP4844Transaction {
+            nonce,
+            max_priority_fee_per_gas,
+            max_fee_per_gas,
+            max_fee_per_blob_gas,
+            blob_versioned_hashes: (0..blob_count)
+                .map(|i| H256::from_low_u64_be(i as u64 + 1))
+                .collect(),
+            ..Default::default()
+        })
+    }
+
+    fn insert_tx(mempool: &Mempool, sender: Address, tx: Transaction) {
+        let hash = tx.hash();
+        let mempool_tx = MempoolTransaction::new(tx, sender);
+        mempool
+            .add_transaction(hash, sender, mempool_tx)
+            .expect("failed to seed mempool");
+    }
+
+    #[test]
+    fn rejects_replacement_with_fewer_blobs_even_with_doubled_fees() {
+        let mempool = Mempool::new(TEST_MEMPOOL_CAPACITY);
+        let sender = Address::from_low_u64_be(1);
+        let nonce = 0u64;
+
+        let base_priority_fee = 1u64;
+        let base_max_fee = 10u64;
+        let base_blob_fee = U256::from(5u64);
+
+        let old = make_blob_tx(nonce, base_priority_fee, base_max_fee, base_blob_fee, 6);
+        insert_tx(&mempool, sender, old);
+
+        let new = make_blob_tx(
+            nonce,
+            base_priority_fee * DOUBLED_FEE_MULTIPLIER,
+            base_max_fee * DOUBLED_FEE_MULTIPLIER,
+            base_blob_fee * U256::from(DOUBLED_FEE_MULTIPLIER),
+            5,
+        );
+
+        match mempool.find_tx_to_replace(sender, nonce, &new) {
+            Err(MempoolError::ReplacementShrinksBlobs {
+                old_count,
+                new_count,
+            }) => {
+                assert_eq!(old_count, 6);
+                assert_eq!(new_count, 5);
+            }
+            other => panic!("expected ReplacementShrinksBlobs, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn accepts_replacement_with_same_blob_count_and_doubled_fees() {
+        let mempool = Mempool::new(TEST_MEMPOOL_CAPACITY);
+        let sender = Address::from_low_u64_be(2);
+        let nonce = 0u64;
+
+        let base_priority_fee = 1u64;
+        let base_max_fee = 10u64;
+        let base_blob_fee = U256::from(5u64);
+
+        let old = make_blob_tx(nonce, base_priority_fee, base_max_fee, base_blob_fee, 3);
+        let old_hash = old.hash();
+        insert_tx(&mempool, sender, old);
+
+        let new = make_blob_tx(
+            nonce,
+            base_priority_fee * DOUBLED_FEE_MULTIPLIER,
+            base_max_fee * DOUBLED_FEE_MULTIPLIER,
+            base_blob_fee * U256::from(DOUBLED_FEE_MULTIPLIER),
+            3,
+        );
+
+        let result = mempool
+            .find_tx_to_replace(sender, nonce, &new)
+            .expect("same-count replacement with doubled fees should be accepted");
+        assert_eq!(result, Some(old_hash));
+    }
+
+    #[test]
+    fn accepts_replacement_with_more_blobs_and_doubled_fees() {
+        let mempool = Mempool::new(TEST_MEMPOOL_CAPACITY);
+        let sender = Address::from_low_u64_be(3);
+        let nonce = 0u64;
+
+        let base_priority_fee = 1u64;
+        let base_max_fee = 10u64;
+        let base_blob_fee = U256::from(5u64);
+
+        let old = make_blob_tx(nonce, base_priority_fee, base_max_fee, base_blob_fee, 1);
+        let old_hash = old.hash();
+        insert_tx(&mempool, sender, old);
+
+        let new = make_blob_tx(
+            nonce,
+            base_priority_fee * DOUBLED_FEE_MULTIPLIER,
+            base_max_fee * DOUBLED_FEE_MULTIPLIER,
+            base_blob_fee * U256::from(DOUBLED_FEE_MULTIPLIER),
+            6,
+        );
+
+        let result = mempool
+            .find_tx_to_replace(sender, nonce, &new)
+            .expect("growing-blob replacement with doubled fees should be accepted");
+        assert_eq!(result, Some(old_hash));
+    }
+
+    #[test]
+    fn rejects_non_blob_replacement_of_blob_tx() {
+        // Cross-type: a non-blob tx (EIP-1559) trying to replace an EIP-4844 tx
+        // at the same (sender, nonce). Treated as a degenerate shrink to 0
+        // blobs and rejected. Belt-and-suspenders for the cross-type case
+        // until PR #6601's type-discriminant check lands.
+        use ethrex_common::types::EIP1559Transaction;
+
+        let mempool = Mempool::new(TEST_MEMPOOL_CAPACITY);
+        let sender = Address::from_low_u64_be(4);
+        let nonce = 0u64;
+
+        let old = make_blob_tx(nonce, 1, 10, U256::from(5u64), 3);
+        insert_tx(&mempool, sender, old);
+
+        let new = Transaction::EIP1559Transaction(EIP1559Transaction {
+            nonce,
+            max_priority_fee_per_gas: 1_000_000,
+            max_fee_per_gas: 1_000_000,
+            ..Default::default()
+        });
+
+        let err = mempool
+            .find_tx_to_replace(sender, nonce, &new)
+            .expect_err("non-blob replacement of blob tx must be rejected");
+        assert!(matches!(
+            err,
+            MempoolError::ReplacementShrinksBlobs {
+                old_count: 3,
+                new_count: 0
+            }
+        ));
+    }
 }
