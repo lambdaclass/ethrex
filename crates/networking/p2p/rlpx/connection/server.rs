@@ -93,6 +93,10 @@ const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
 /// If a peer fails to answer this many consecutive pings, consider it dead and drop it.
 /// Catches application-dead-but-TCP-alive peers that would otherwise never be removed.
 const MAX_MISSED_PONGS: u8 = 3;
+/// Capacity of the per-connection bounded outbound queue. The writer task drains this into
+/// the socket; if a peer can't keep up the queue fills and the peer is dropped, so outbound
+/// buffering per connection is bounded to this many messages instead of growing unbounded.
+const OUTBOUND_QUEUE_CAP: usize = 1024;
 /// How often to flush buffered transaction hash requests into a single
 /// batched GetPooledTransactions message.
 const TX_REQUEST_BATCH_INTERVAL: Duration = Duration::from_millis(50);
@@ -236,9 +240,11 @@ pub struct Receiver {
 #[derive(Debug)]
 pub struct Established {
     pub(crate) signer: SecretKey,
-    // Sending part of the TcpStream to connect with the remote peer
-    // The receiving part is owned by the stream listen loop task
-    pub(crate) sink: SplitSink<Framed<TcpStream, RLPxCodec>, Message>,
+    // Bounded outbound queue to the per-connection writer task (which owns the socket sink).
+    // A bounded queue + dropping the peer on overflow keeps per-connection outbound buffering
+    // bounded instead of letting the actor mailbox grow when a peer can't keep up. The receiving
+    // part of the TcpStream is owned by the stream listen loop task. See `spawn_outbound_writer`.
+    pub(crate) outbound_tx: tokio::sync::mpsc::Sender<Message>,
     pub(crate) node: Node,
     pub(crate) storage: Store,
     pub(crate) blockchain: Arc<Blockchain>,
@@ -311,13 +317,8 @@ impl Established {
             }
             retry_on_alternates(&self.blockchain, &self.peer_table, &pending_hashes).await;
         }
-        // Closing the sink. It may fail if it is already closed (eg. the other side already closed it)
-        // Just logging a debug line if that's the case.
-        let _ = self
-            .sink
-            .close()
-            .await
-            .inspect_err(|err| debug!("Could not close the socket: {err}"));
+        // The socket sink is owned by the per-connection writer task (`spawn_outbound_writer`),
+        // which closes it when this `Established` is dropped (its `outbound_tx` is the only sender).
     }
 }
 
@@ -705,7 +706,8 @@ impl PeerConnectionServer {
                 | PeerConnectionError::InvalidMessageLength
                 | PeerConnectionError::StateError(_)
                 | PeerConnectionError::InvalidRecoveryId
-                | PeerConnectionError::OutboundSendTimeout => {
+                | PeerConnectionError::OutboundSendTimeout
+                | PeerConnectionError::OutboundQueueFull => {
                     trace!(peer=%established_state.node, error=e.to_string(), "Peer connection error");
                     ctx.stop();
                 }
@@ -1157,13 +1159,41 @@ pub(crate) async fn send(
         use ethrex_metrics::p2p::METRICS_P2P;
         METRICS_P2P.inc_outgoing_message(message.metric_label());
     }
-    // Bound the flush so a wedged peer cannot block the actor's serial drain forever.
-    // On timeout we return an error; `process_cast_error` then stops the actor, which
-    // drops its (unbounded) mailbox and reclaims the accumulated memory.
-    match tokio::time::timeout(OUTBOUND_SEND_TIMEOUT, state.sink.send(message)).await {
-        Ok(result) => result,
-        Err(_elapsed) => Err(PeerConnectionError::OutboundSendTimeout),
-    }
+    // Hand off to the per-connection writer task via a BOUNDED queue (non-blocking). This
+    // decouples the actor's serial drain from the network write, so a slow/wedged peer can
+    // never back up the (unbounded) actor mailbox. If the bounded queue is full the peer
+    // can't keep up: surface OutboundQueueFull so `process_cast_error` drops it.
+    state
+        .outbound_tx
+        .try_send(message)
+        .map_err(|err| match err {
+            tokio::sync::mpsc::error::TrySendError::Full(_) => {
+                PeerConnectionError::OutboundQueueFull
+            }
+            tokio::sync::mpsc::error::TrySendError::Closed(_) => PeerConnectionError::Disconnected,
+        })
+}
+
+/// Spawns the per-connection writer task that owns the `sink` and drains a bounded outbound
+/// queue into it. Keeping the network write off the actor thread means the actor's mailbox is
+/// never gated on a slow peer; the only outbound buffer is this bounded channel (capacity
+/// `OUTBOUND_QUEUE_CAP`). The task exits — closing the socket — when the connection is dropped
+/// (all senders gone), when a send errors, or when a single send exceeds `OUTBOUND_SEND_TIMEOUT`
+/// (a wedged peer). Once it exits, further `send()`s observe a closed queue and the peer is dropped.
+pub(crate) fn spawn_outbound_writer(
+    mut sink: SplitSink<Framed<TcpStream, RLPxCodec>, Message>,
+) -> tokio::sync::mpsc::Sender<Message> {
+    let (tx, mut rx) = tokio::sync::mpsc::channel::<Message>(OUTBOUND_QUEUE_CAP);
+    tokio::spawn(async move {
+        while let Some(message) = rx.recv().await {
+            match tokio::time::timeout(OUTBOUND_SEND_TIMEOUT, sink.send(message)).await {
+                Ok(Ok(())) => {}
+                Ok(Err(_)) | Err(_) => break,
+            }
+        }
+        let _ = sink.close().await;
+    });
+    tx
 }
 
 /// Reads from the frame until a frame is available.
