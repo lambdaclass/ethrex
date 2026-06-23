@@ -171,11 +171,13 @@ pub async fn migrate_with_preimages(
     store.create_cf(MIGRATION_TEMP)?;
 
     // Step 4: Collect phase - write all (tree_key, value) pairs to temp CF.
-    let (account_count, storage_count, skipped, total_inserts) =
+    let (account_count, storage_count, skipped_accounts, skipped_slots, total_inserts) =
         collect_phase(&preimages, &code_map, snapshot_path, &store)?;
 
-    if skipped > 0 {
-        warn!("{skipped} entries skipped due to missing preimages");
+    if skipped_accounts > 0 || skipped_slots > 0 {
+        warn!(
+            "{skipped_accounts} accounts + {skipped_slots} storage slots skipped due to missing preimages"
+        );
     }
     info!(
         "Collection complete: {account_count} accounts, {storage_count} storage slots, {total_inserts} entries written"
@@ -290,13 +292,13 @@ fn build_phase(store: &Store, total_entries: u64) -> eyre::Result<[u8; 32]> {
 /// Collect phase: reads the snapshot file and writes all `(tree_key, value)` pairs
 /// to the MIGRATION_TEMP column family. No trie insertions are performed here.
 ///
-/// Returns `(account_count, storage_count, skipped, total_inserts)`.
+/// Returns `(account_count, storage_count, skipped_accounts, skipped_slots, total_inserts)`.
 fn collect_phase(
     preimages: &Preimages,
     code_map: &FxHashMap<[u8; 32], Vec<u8>>,
     snapshot_path: &str,
     store: &Store,
-) -> eyre::Result<(u64, u64, u64, u64)> {
+) -> eyre::Result<(u64, u64, u64, u64, u64)> {
     info!("Collect phase: streaming snapshot file: {snapshot_path}");
     let file =
         File::open(snapshot_path).map_err(|e| eyre::eyre!("Failed to open snapshot file: {e}"))?;
@@ -308,7 +310,8 @@ fn collect_phase(
 
     let mut account_count = 0u64;
     let mut storage_count = 0u64;
-    let mut skipped = 0u64;
+    let mut skipped_accounts = 0u64;
+    let mut skipped_slots = 0u64;
     let mut total_inserts = 0u64;
     let mut bytes_read = 0u64;
     let started = std::time::Instant::now();
@@ -465,17 +468,21 @@ fn collect_phase(
                         }
                         account_count += 1;
                     } else {
-                        if skipped < 10 {
+                        if skipped_accounts < 10 {
                             warn!(
                                 "Skipped account with keccak {}, has_preimage={}",
                                 hex::encode(keccak_addr),
                                 preimages.get_addr(keccak_addr).is_some()
                             );
                         }
-                        skipped += 1;
+                        skipped_accounts += 1;
                     }
                 }
-                RawEntry::Storage { .. } => {
+                RawEntry::Storage {
+                    keccak_addr,
+                    keccak_slot,
+                    ..
+                } => {
                     if let Some(ProcessedEntry::Storage {
                         tree_key,
                         value_bytes,
@@ -483,6 +490,23 @@ fn collect_phase(
                     {
                         inserts.push((tree_key.to_vec(), value_bytes.to_vec()));
                         storage_count += 1;
+                    } else {
+                        // A `None` here is either a missing preimage (a real coverage gap,
+                        // the storage analogue of a skipped account) or a legitimately
+                        // zero-valued slot (intentionally not stored). Only the former is a
+                        // skip; re-check the preimages so zero-value slots aren't counted.
+                        let has_addr = preimages.get_addr(keccak_addr).is_some();
+                        let has_slot = preimages.get_slot(keccak_slot).is_some();
+                        if !has_addr || !has_slot {
+                            if skipped_slots < 10 {
+                                warn!(
+                                    "Skipped storage slot (addr-keccak {}, slot-keccak {}): has_addr_preimage={has_addr}, has_slot_preimage={has_slot}",
+                                    hex::encode(keccak_addr),
+                                    hex::encode(keccak_slot),
+                                );
+                            }
+                            skipped_slots += 1;
+                        }
                     }
                 }
             }
@@ -512,7 +536,7 @@ fn collect_phase(
                 "?".to_string()
             };
             info!(
-                "{pct}% ({} MB / {} MB) | {account_count} accounts, {storage_count} storage | {mb_per_sec} MB/s | ETA {eta}",
+                "{pct}% ({} MB / {} MB) | {account_count} accounts, {storage_count} storage | {skipped_accounts} acc + {skipped_slots} slot skipped | {mb_per_sec} MB/s | ETA {eta}",
                 bytes_read / 1024 / 1024,
                 file_size / 1024 / 1024,
             );
@@ -520,7 +544,7 @@ fn collect_phase(
         }
     }
 
-    Ok((account_count, storage_count, skipped, total_inserts))
+    Ok((account_count, storage_count, skipped_accounts, skipped_slots, total_inserts))
 }
 
 /// Raw entry read from the snapshot dump (before parallel processing).
