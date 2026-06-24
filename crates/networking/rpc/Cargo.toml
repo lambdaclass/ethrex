@@ -5,6 +5,8 @@ edition.workspace = true
 authors.workspace = true
 documentation.workspace = true
 license.workspace = true
+description = "JSON-RPC and Engine API server for the ethrex Ethereum execution client"
+repository.workspace = true
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
@@ -69,3 +71,6 @@ redundant_clone = "warn"
 [features]
 jemalloc_profiling = ["dep:jemalloc_pprof"]
 eip-8025 = ["ethrex-blockchain/eip-8025", "ethrex-common/eip-8025"]
+# Exposes the `test_utils` module (test scaffolding) to other crates' test
+# builds. Off by default so it is excluded from the published library.
+test-utils = []

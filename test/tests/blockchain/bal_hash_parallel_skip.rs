@@ -28,6 +28,7 @@ use ethrex_common::{
         block_access_list::BlockAccessList,
     },
 };
+use ethrex_crypto::NativeCrypto;
 use ethrex_storage::{EngineType, Store};
 
 fn workspace_root() -> PathBuf {
@@ -84,7 +85,7 @@ async fn parallel_path_rejects_invalid_block_access_list_hash() {
         "BAL should be non-empty (4788 system call)"
     );
 
-    let canonical_hash = bal.compute_hash();
+    let canonical_hash = bal.compute_hash(&NativeCrypto);
     let forged = H256([0xde; 32]);
     assert_ne!(canonical_hash, forged);
 
