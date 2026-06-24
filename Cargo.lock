@@ -4472,6 +4472,7 @@ dependencies = [
  "rustc-hash 2.1.2",
  "secp256k1",
  "serde_json",
+ "tempfile",
  "tokio",
  "tokio-util",
 ]

@@ -592,6 +592,7 @@ pub async fn init_l1(
 
     let store_config = StoreConfig {
         rocksdb_block_cache_size: opts.rocksdb_block_cache_size,
+        ..StoreConfig::default()
     };
     let store_result = if opts.skip_genesis_validation {
         init_store_skip_validation_with_config(&datadir, genesis, store_config).await
@@ -862,7 +863,13 @@ pub async fn regenerate_head_state(
     store: &Store,
     blockchain: &Arc<Blockchain>,
 ) -> eyre::Result<()> {
+    // Precondition: the store was opened via `add_initial_state`/`load_initial_state`,
+    // which clamp `LatestBlockNumber` to `min(flushed_upto, latest)`. Every current
+    // caller does this, so all blocks up to `head_block_number` are on disk and this
+    // regeneration never walks into a buffered-and-lost block. A future caller that
+    // skips that clamp would break this assumption.
     let head_block_number = store.get_latest_block_number().await?;
+    debug!("regenerate_head_state head clamped to durable block {head_block_number}");
 
     let Some(last_header) = store.get_block_header(head_block_number)? else {
         unreachable!("Database is empty, genesis block should be present");
