@@ -5,7 +5,7 @@
 //! changes, storage-slot changes, deployed contracts, event topics, and the
 //! gas pre-charge) from borrowed state. They take immutable references and
 //! return owned results so they can be called from the opcode handlers without
-//! a `&mut VM` borrow. The handlers themselves live in this module (Phase 3).
+//! a `&mut VM` borrow. The handlers live in this module.
 
 use ethrex_common::constants::EMPTY_KECCAK_HASH;
 use ethrex_common::types::{Code, FrameMode, Log};
