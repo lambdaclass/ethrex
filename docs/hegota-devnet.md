@@ -12,7 +12,7 @@ hegota-devnet = eip-8141-devnet (EIP-8141 + devnet fixes)
 ```
 
 **Not yet included:**
-- **FOCIL (EIP-7805)** — the `focil` branch merge is pending conflict review (`payload.rs` is the high-severity overlap); to be merged via the dedicated integration step.
+- **FOCIL (EIP-7805)** — **deferred.** The EIP-8141 + FOCIL integration is non-trivial and depends on documentation that is not yet public; it will be merged in a later dedicated step (the `focil` branch's main overlap with frame-tx is `payload.rs`).
 - **EIP-8288** (PQ sig + STARK aggregation) — deferred (upstream-blocked: no Lean leanSTARK/leanSPHINCS tooling; `AGGREGATED_VK`/hash TBD).
 
 All included EIPs activate together under the existing single `Fork::Hegota` / `hegota_time`.
