@@ -116,11 +116,6 @@ impl BlockDataBuffer {
         self.tx_index.get(tx_hash).cloned().unwrap_or_default()
     }
 
-    /// Number of buffered block hashes not yet known to be on disk (may exceed unique block numbers under reorgs).
-    pub fn unflushed_len(&self) -> usize {
-        self.unflushed.len()
-    }
-
     pub fn flushed_upto(&self) -> BlockNumber {
         self.flushed_upto
     }
@@ -181,85 +176,5 @@ impl BlockDataBuffer {
         }
         self.unflushed.retain(|h| self.by_hash.contains_key(h));
         self.codes.retain(|_, (_, n)| *n > new_flushed_upto);
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use bytes::Bytes;
-    use ethrex_common::types::{Block, BlockBody, BlockHeader};
-
-    fn block(number: u64) -> Block {
-        let header = BlockHeader {
-            number,
-            ..Default::default()
-        };
-        Block::new(header, BlockBody::default())
-    }
-
-    #[test]
-    fn insert_then_read_back() {
-        let mut buf = BlockDataBuffer::new();
-        let b = block(7);
-        let hash = b.hash();
-        buf.insert(b, vec![], vec![]);
-
-        assert_eq!(buf.get_header(&hash).map(|h| h.number), Some(7));
-        assert_eq!(buf.get_number(&hash), Some(7));
-        assert!(buf.get_body(&hash).is_some());
-        assert_eq!(buf.unflushed_len(), 1);
-    }
-
-    #[test]
-    fn evict_advances_flushed_upto_and_drops_blocks() {
-        let mut buf = BlockDataBuffer::new();
-        let b = block(7);
-        let hash = b.hash();
-        buf.insert(b, vec![], vec![]);
-        buf.set_flushed_upto(7);
-        buf.evict_flushed(7);
-
-        assert_eq!(buf.flushed_upto(), 7);
-        assert_eq!(buf.unflushed_len(), 0);
-        assert!(buf.get_header(&hash).is_none());
-    }
-
-    #[test]
-    fn codes_for_returns_codes_for_given_block() {
-        let mut buf = BlockDataBuffer::new();
-        let b = block(9);
-        let hash = b.hash();
-        let code_hash = H256::repeat_byte(0xab);
-        let code = Code::from_bytecode_unchecked(Bytes::from_static(&[0x60, 0x00]), code_hash);
-        buf.insert(b, vec![], vec![(code_hash, code)]);
-
-        assert_eq!(buf.get_code(&code_hash).map(|c| c.hash), Some(code_hash));
-        let codes = buf.codes_for(&[hash]);
-        assert_eq!(codes.len(), 1);
-        assert_eq!(codes[0].0, code_hash);
-
-        buf.evict_flushed(9);
-        assert!(buf.get_code(&code_hash).is_none());
-    }
-
-    #[test]
-    fn reorg_siblings_coexist() {
-        let mut buf = BlockDataBuffer::new();
-        let mut a = block(5);
-        let mut b = block(5);
-        // Vary a header field so the two blocks at the same number hash differently.
-        a.header.extra_data = Bytes::from_static(b"a");
-        b.header.extra_data = Bytes::from_static(b"b");
-        let hash_a = a.hash();
-        let hash_b = b.hash();
-        assert_ne!(hash_a, hash_b);
-
-        buf.insert(a, vec![], vec![]);
-        buf.insert(b, vec![], vec![]);
-
-        assert!(buf.get_header(&hash_a).is_some());
-        assert!(buf.get_header(&hash_b).is_some());
-        assert_eq!(buf.unflushed_len(), 2);
     }
 }

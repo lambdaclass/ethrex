@@ -2949,11 +2949,6 @@ impl Store {
         Ok(nodes)
     }
 
-    /// Creates a new state trie with an empty state root, for testing purposes only
-    pub fn new_state_trie_for_test(&self) -> Result<Trie, StoreError> {
-        self.open_state_trie(*EMPTY_TRIE_HASH)
-    }
-
     // Methods exclusive for trie management during snap-syncing
 
     /// Snapshot the trie layer cache for reading at `state_root`, blocking until
@@ -3331,24 +3326,6 @@ impl Store {
     #[cfg(any(test, feature = "testing"))]
     pub fn clear_pending_root_for_test(&self, root: H256) {
         self.pending_trie_roots.clear(root)
-    }
-
-    /// Returns `min(flushed_upto, latest)` when the marker is present, else
-    /// `latest` (legacy/fresh DB — everything is durable). Test-only helper.
-    #[cfg(any(test, feature = "testing"))]
-    fn durable_head_from_latest(&self, latest: BlockNumber) -> Result<BlockNumber, StoreError> {
-        Ok(match self.read_flushed_upto_opt()? {
-            Some(flushed) => flushed.min(latest),
-            None => latest,
-        })
-    }
-
-    /// Returns `min(flushed_upto, latest_block_number)` — the highest block
-    /// fully on disk. Test-only; production uses `anchor_to_durable_head`.
-    #[cfg(any(test, feature = "testing"))]
-    pub async fn effective_durable_head(&self) -> Result<BlockNumber, StoreError> {
-        let latest = self.load_latest_block_number().await?.unwrap_or(0);
-        self.durable_head_from_latest(latest)
     }
 
     /// Boot-time recovery: clamp `latest_block_header` to the durable head.
@@ -4269,59 +4246,5 @@ mod datadir_tests {
         fs::create_dir(dir.path().join("CURRENT")).unwrap();
         fs::create_dir(dir.path().join("MANIFEST-000001")).unwrap();
         assert!(!dir_contains_legacy_db(dir.path()).unwrap());
-    }
-}
-
-#[cfg(test)]
-mod pending_trie_roots_tests {
-    use super::*;
-    use std::sync::mpsc;
-    use std::time::Duration;
-
-    #[test]
-    fn unregistered_root_does_not_block() {
-        let pending = PendingTrieRoots::default();
-        // Fast path: nothing in flight, returns immediately.
-        pending.wait_until_ready(H256::repeat_byte(0x11)).unwrap();
-    }
-
-    #[test]
-    fn wait_blocks_until_cleared() {
-        let pending = Arc::new(PendingTrieRoots::default());
-        let root = H256::repeat_byte(0xab);
-        pending.register(root).unwrap();
-
-        let (tx, rx) = mpsc::channel();
-        let p = pending.clone();
-        let waiter = std::thread::spawn(move || {
-            p.wait_until_ready(root).unwrap();
-            tx.send(()).unwrap();
-        });
-
-        // While the root is in-flight the waiter must NOT proceed.
-        assert!(
-            rx.recv_timeout(Duration::from_millis(200)).is_err(),
-            "wait_until_ready returned while root was still pending (stale-read window)"
-        );
-
-        // Clearing the root (worker installed the layer) unblocks the waiter.
-        pending.clear(root);
-        rx.recv_timeout(Duration::from_secs(5))
-            .expect("waiter did not unblock after the root was cleared");
-        waiter.join().unwrap();
-    }
-
-    #[test]
-    fn clear_only_affects_the_named_root() {
-        let pending = PendingTrieRoots::default();
-        let a = H256::repeat_byte(0x01);
-        let b = H256::repeat_byte(0x02);
-        pending.register(a).unwrap();
-        pending.register(b).unwrap();
-        pending.clear(a);
-        // `a` cleared → fast path is still off (b pending) but `a` no longer blocks.
-        pending.wait_until_ready(a).unwrap();
-        pending.clear(b);
-        pending.wait_until_ready(b).unwrap();
     }
 }

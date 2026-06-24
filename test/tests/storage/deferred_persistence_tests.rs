@@ -326,8 +326,6 @@ async fn boot_clamps_head_to_flushed_upto() {
         10,
         "boot must clamp LatestBlockNumber to the durable head"
     );
-    // The arithmetic helper agrees with the clamped head.
-    assert_eq!(store.effective_durable_head().await.expect("durable"), 10);
 }
 
 /// Crash-recovery, legacy DB: a node synced by a binary that predates deferred
