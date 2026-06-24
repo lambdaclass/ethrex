@@ -29,9 +29,8 @@ impl OpcodeHandler for OpAddHandler {
     fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
         vm.current_call_frame.increase_consumed_gas(gas_cost::ADD)?;
 
-        let [lhs, rhs] = *vm.current_call_frame.stack.pop()?;
-        let (res, _) = lhs.overflowing_add(rhs);
-        vm.current_call_frame.stack.push(res)?;
+        let (lhs, rhs) = vm.current_call_frame.stack.pop1_and_top_mut()?;
+        *rhs = lhs.overflowing_add(*rhs).0;
 
         Ok(OpcodeResult::Continue)
     }
@@ -44,9 +43,8 @@ impl OpcodeHandler for OpSubHandler {
     fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
         vm.current_call_frame.increase_consumed_gas(gas_cost::SUB)?;
 
-        let [lhs, rhs] = *vm.current_call_frame.stack.pop()?;
-        let (res, _) = lhs.overflowing_sub(rhs);
-        vm.current_call_frame.stack.push(res)?;
+        let (lhs, rhs) = vm.current_call_frame.stack.pop1_and_top_mut()?;
+        *rhs = lhs.overflowing_sub(*rhs).0;
 
         Ok(OpcodeResult::Continue)
     }
@@ -59,9 +57,8 @@ impl OpcodeHandler for OpMulHandler {
     fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
         vm.current_call_frame.increase_consumed_gas(gas_cost::MUL)?;
 
-        let [lhs, rhs] = *vm.current_call_frame.stack.pop()?;
-        let (res, _) = lhs.overflowing_mul(rhs);
-        vm.current_call_frame.stack.push(res)?;
+        let (lhs, rhs) = vm.current_call_frame.stack.pop1_and_top_mut()?;
+        *rhs = lhs.overflowing_mul(*rhs).0;
 
         Ok(OpcodeResult::Continue)
     }
@@ -74,11 +71,8 @@ impl OpcodeHandler for OpDivHandler {
     fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
         vm.current_call_frame.increase_consumed_gas(gas_cost::DIV)?;
 
-        let [lhs, rhs] = *vm.current_call_frame.stack.pop()?;
-        match lhs.checked_div(rhs) {
-            Some(res) => vm.current_call_frame.stack.push(res)?,
-            None => vm.current_call_frame.stack.push_zero()?,
-        }
+        let (lhs, rhs) = vm.current_call_frame.stack.pop1_and_top_mut()?;
+        *rhs = lhs.checked_div(*rhs).unwrap_or(U256::zero());
 
         Ok(OpcodeResult::Continue)
     }
@@ -92,7 +86,9 @@ impl OpcodeHandler for OpSDivHandler {
         vm.current_call_frame
             .increase_consumed_gas(gas_cost::SDIV)?;
 
-        let [mut lhs, mut rhs] = *vm.current_call_frame.stack.pop()?;
+        let (top, slot) = vm.current_call_frame.stack.pop1_and_top_mut()?;
+        let mut lhs = top;
+        let mut rhs = *slot;
 
         let mut sign = false;
         if lhs.bit(255) {
@@ -104,39 +100,35 @@ impl OpcodeHandler for OpSDivHandler {
             sign = !sign;
         }
 
-        match lhs.checked_div(rhs) {
+        *slot = match lhs.checked_div(rhs) {
             Some(mut res) => {
                 if sign {
                     res = U256::zero().overflowing_sub(res).0;
                 }
-
-                vm.current_call_frame.stack.push(res)?
+                res
             }
-            None => vm.current_call_frame.stack.push_zero()?,
-        }
+            None => U256::zero(),
+        };
 
         Ok(OpcodeResult::Continue)
     }
 }
 
-/// Implementation for the `DIV` opcode.
+/// Implementation for the `MOD` opcode.
 pub struct OpModHandler;
 impl OpcodeHandler for OpModHandler {
     #[inline(always)]
     fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
         vm.current_call_frame.increase_consumed_gas(gas_cost::MOD)?;
 
-        let [lhs, rhs] = *vm.current_call_frame.stack.pop()?;
-        match lhs.checked_rem(rhs) {
-            Some(res) => vm.current_call_frame.stack.push(res)?,
-            None => vm.current_call_frame.stack.push_zero()?,
-        }
+        let (lhs, rhs) = vm.current_call_frame.stack.pop1_and_top_mut()?;
+        *rhs = lhs.checked_rem(*rhs).unwrap_or(U256::zero());
 
         Ok(OpcodeResult::Continue)
     }
 }
 
-/// Implementation for the `SDIV` opcode.
+/// Implementation for the `SMOD` opcode.
 pub struct OpSModHandler;
 impl OpcodeHandler for OpSModHandler {
     #[inline(always)]
@@ -144,7 +136,9 @@ impl OpcodeHandler for OpSModHandler {
         vm.current_call_frame
             .increase_consumed_gas(gas_cost::SMOD)?;
 
-        let [mut lhs, mut rhs] = *vm.current_call_frame.stack.pop()?;
+        let (top, slot) = vm.current_call_frame.stack.pop1_and_top_mut()?;
+        let mut lhs = top;
+        let mut rhs = *slot;
 
         let sign = lhs.bit(255);
         if sign {
@@ -154,16 +148,15 @@ impl OpcodeHandler for OpSModHandler {
             (rhs, _) = (!rhs).overflowing_add(U256::one());
         }
 
-        match lhs.checked_rem(rhs) {
+        *slot = match lhs.checked_rem(rhs) {
             Some(mut res) => {
                 if sign {
                     (res, _) = (!res).overflowing_add(U256::one());
                 }
-
-                vm.current_call_frame.stack.push(res)?
+                res
             }
-            None => vm.current_call_frame.stack.push_zero()?,
-        }
+            None => U256::zero(),
+        };
 
         Ok(OpcodeResult::Continue)
     }
@@ -243,25 +236,24 @@ impl OpcodeHandler for OpSignExtendHandler {
         vm.current_call_frame
             .increase_consumed_gas(gas_cost::SIGNEXTEND)?;
 
-        let [index, mut value] = *vm.current_call_frame.stack.pop()?;
-        vm.current_call_frame
-            .stack
-            .push(match usize::try_from(index) {
-                #[expect(
-                    clippy::arithmetic_side_effects,
-                    reason = "x < 32 guard prevents overflow"
-                )]
-                Ok(x) if x < 32 => {
-                    if value.bit(8 * x + 7) {
-                        value |= U256::MAX << (8 * (x + 1));
-                    } else if x != 31 {
-                        value &= (U256::one() << (8 * (x + 1))) - 1;
-                    }
-
-                    value
+        let (index, slot) = vm.current_call_frame.stack.pop1_and_top_mut()?;
+        let mut value = *slot;
+        *slot = match usize::try_from(index) {
+            #[expect(
+                clippy::arithmetic_side_effects,
+                reason = "x < 32 guard prevents overflow"
+            )]
+            Ok(x) if x < 32 => {
+                if value.bit(8 * x + 7) {
+                    value |= U256::MAX << (8 * (x + 1));
+                } else if x != 31 {
+                    value &= (U256::one() << (8 * (x + 1))) - 1;
                 }
-                _ => value,
-            })?;
+
+                value
+            }
+            _ => value,
+        };
 
         Ok(OpcodeResult::Continue)
     }
@@ -274,10 +266,9 @@ impl OpcodeHandler for OpClzHandler {
     fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
         vm.current_call_frame.increase_consumed_gas(gas_cost::CLZ)?;
 
-        let value = vm.current_call_frame.stack.pop1()?;
-        vm.current_call_frame
-            .stack
-            .push(value.leading_zeros().into())?;
+        let slot = vm.current_call_frame.stack.top_mut()?;
+        let lz = slot.leading_zeros();
+        *slot = lz.into();
 
         Ok(OpcodeResult::Continue)
     }
