@@ -1855,6 +1855,45 @@ impl RLPDecode for FrameSignature {
     }
 }
 
+/// EIP-8272 recent-root reference: a declared `(source_id, slot, root)` tuple.
+/// RLP: `[source_id, slot, root]`. `root` is opaque to consensus; applications
+/// bind its meaning. `slot` is a beacon slot number (`< 2**64`).
+#[derive(Clone, Debug, PartialEq, Eq, Default, RSerialize, RDeserialize, Archive)]
+pub struct RecentRootReference {
+    #[rkyv(with=crate::rkyv_utils::H256Wrapper)]
+    pub source_id: H256,
+    pub slot: u64,
+    #[rkyv(with=crate::rkyv_utils::H256Wrapper)]
+    pub root: H256,
+}
+
+impl RLPEncode for RecentRootReference {
+    fn encode(&self, buf: &mut dyn bytes::BufMut) {
+        Encoder::new(buf)
+            .encode_field(&self.source_id)
+            .encode_field(&self.slot)
+            .encode_field(&self.root)
+            .finish();
+    }
+}
+
+impl RLPDecode for RecentRootReference {
+    fn decode_unfinished(rlp: &[u8]) -> Result<(RecentRootReference, &[u8]), RLPDecodeError> {
+        let decoder = Decoder::new(rlp)?;
+        let (source_id, decoder) = decoder.decode_field("source_id")?;
+        let (slot, decoder) = decoder.decode_field("slot")?;
+        let (root, decoder) = decoder.decode_field("root")?;
+        Ok((
+            RecentRootReference {
+                source_id,
+                slot,
+                root,
+            },
+            decoder.finish()?,
+        ))
+    }
+}
+
 /// EIP-8141 Frame Transaction
 /// A transaction whose validity and gas payment are defined abstractly via frames.
 /// No ECDSA signature — sender is explicit. Authentication happens via APPROVE opcode.
@@ -1881,6 +1920,9 @@ pub struct FrameTransaction {
     pub max_fee_per_blob_gas: U256,
     #[rkyv(with=rkyv::with::Map<crate::rkyv_utils::H256Wrapper>)]
     pub blob_versioned_hashes: Vec<H256>,
+    /// EIP-8272: declared recent-root references (0..=`FRAME_TX_MAX_RECENT_ROOT_REFERENCES`).
+    /// Appended as the last RLP envelope field.
+    pub recent_root_references: Vec<RecentRootReference>,
     #[rkyv(with=rkyv::with::Skip)]
     pub inner_hash: OnceCell<H256>,
     #[rkyv(with=rkyv::with::Skip)]
@@ -1897,6 +1939,8 @@ pub const FRAME_TX_ENTRY_POINT_U64: u64 = 0xaa;
 pub const FRAME_TX_MAX_FRAMES: usize = 64;
 /// EIP-8250: maximum number of nonce keys per frame transaction.
 pub const FRAME_TX_MAX_NONCE_KEYS: usize = 16;
+/// EIP-8272: maximum number of recent-root references per frame transaction.
+pub const FRAME_TX_MAX_RECENT_ROOT_REFERENCES: usize = 16;
 /// EIP-8141 signature schemes (spec commit fe0940cae2).
 pub const FRAME_SIG_SCHEME_SECP256K1: u8 = 0;
 pub const FRAME_SIG_SCHEME_P256: u8 = 1;
@@ -1942,6 +1986,20 @@ pub fn frame_tx_nonce_manager() -> Address {
     Address::from_low_u64_be(FRAME_TX_NONCE_MANAGER_U64)
 }
 
+/// EIP-8272 RECENT_ROOT_ADDRESS predeploy address (0x…8272).
+pub const FRAME_TX_RECENT_ROOT_U64: u64 = 0x8272;
+
+/// Returns the RECENT_ROOT_ADDRESS `Address` (0x…8272) per EIP-8272.
+pub fn frame_tx_recent_root() -> Address {
+    Address::from_low_u64_be(FRAME_TX_RECENT_ROOT_U64)
+}
+
+/// EIP-8272 intrinsic gas constants. Duplicated here because ethrex-common
+/// cannot depend on levm's `gas_cost`; values mirror
+/// `RECENT_ROOT_REFERENCE_ADDRESS_GAS` (= ACCESS_LIST_ADDRESS_COST) and
+/// `RECENT_ROOT_REFERENCE_GAS` (= ACCESS_LIST_STORAGE_KEY_COST + 2*30 + 7*6).
+pub const FRAME_TX_RECENT_ROOT_REFERENCE_ADDRESS_GAS: u64 = 2400;
+pub const FRAME_TX_RECENT_ROOT_REFERENCE_GAS: u64 = 1900 + 2 * 30 + 7 * 6;
 impl FrameTransaction {
     /// Canonical signature hash (EIP-8141, spec commit fe0940cae2): the raw
     /// `signature` bytes of every signature with empty `msg` are elided (a
@@ -1978,6 +2036,7 @@ impl FrameTransaction {
             .encode_field(&self.max_fee_per_gas)
             .encode_field(&self.max_fee_per_blob_gas)
             .encode_field(&self.blob_versioned_hashes)
+            .encode_field(&self.recent_root_references)
             .finish();
         keccak(&buf)
     }
@@ -2023,11 +2082,21 @@ impl FrameTransaction {
         for byte in &sigs_buf {
             calldata_gas = calldata_gas.saturating_add(if *byte == 0 { 4 } else { 16 });
         }
+        // EIP-8272: recent-root reference intrinsic gas (0 when there are none).
+        let recent_root_gas = if self.recent_root_references.is_empty() {
+            0
+        } else {
+            FRAME_TX_RECENT_ROOT_REFERENCE_ADDRESS_GAS.saturating_add(
+                (self.recent_root_references.len() as u64)
+                    .saturating_mul(FRAME_TX_RECENT_ROOT_REFERENCE_GAS),
+            )
+        };
         FRAME_TX_INTRINSIC_COST
             .saturating_add((self.frames.len() as u64).saturating_mul(FRAME_TX_PER_FRAME_COST))
             .saturating_add(calldata_gas)
             .saturating_add(self.signature_verification_cost())
             .saturating_add(self.frames.iter().map(|f| f.gas_limit).sum::<u64>())
+            .saturating_add(recent_root_gas)
     }
 
     /// The expiry deadline (8-byte big-endian) of this transaction's expiry
@@ -2060,6 +2129,14 @@ impl FrameTransaction {
         }
         if self.nonce_seq == u64::MAX {
             return Err("nonce_seq must be < 2**64 - 1".to_string());
+        }
+        // EIP-8272: at most FRAME_TX_MAX_RECENT_ROOT_REFERENCES references.
+        // (3-tuple shape, 32-byte source_id/root, and slot < 2**64 are enforced
+        // by the RecentRootReference type / RLP decoding.)
+        if self.recent_root_references.len() > FRAME_TX_MAX_RECENT_ROOT_REFERENCES {
+            return Err(format!(
+                "recent_root_references count must be <= {FRAME_TX_MAX_RECENT_ROOT_REFERENCES}"
+            ));
         }
         if self.frames.is_empty() || self.frames.len() > FRAME_TX_MAX_FRAMES {
             return Err(format!(
@@ -2430,6 +2507,7 @@ impl RLPEncode for FrameTransaction {
             .encode_field(&self.max_fee_per_gas)
             .encode_field(&self.max_fee_per_blob_gas)
             .encode_field(&self.blob_versioned_hashes)
+            .encode_field(&self.recent_root_references)
             .finish();
     }
 }
@@ -2448,6 +2526,7 @@ impl RLPDecode for FrameTransaction {
         let (max_fee_per_gas, decoder) = decoder.decode_field("max_fee_per_gas")?;
         let (max_fee_per_blob_gas, decoder) = decoder.decode_field("max_fee_per_blob_gas")?;
         let (blob_versioned_hashes, decoder) = decoder.decode_field("blob_versioned_hashes")?;
+        let (recent_root_references, decoder) = decoder.decode_field("recent_root_references")?;
         let tx = FrameTransaction {
             chain_id,
             nonce_keys,
@@ -2459,6 +2538,7 @@ impl RLPDecode for FrameTransaction {
             max_fee_per_gas,
             max_fee_per_blob_gas,
             blob_versioned_hashes,
+            recent_root_references,
             inner_hash: OnceCell::new(),
             cached_canonical: OnceCell::new(),
         };
@@ -4832,6 +4912,7 @@ mod tests {
             max_fee_per_gas: 30_000_000_000,
             max_fee_per_blob_gas: U256::zero(),
             blob_versioned_hashes: vec![],
+            recent_root_references: vec![],
             inner_hash: OnceCell::new(),
             cached_canonical: OnceCell::new(),
         }
@@ -5101,6 +5182,30 @@ mod tests {
         assert_eq!(tx.nonce_keys_hash(), crate::utils::keccak(&buf));
     }
 
+    #[test]
+    fn recent_root_references_round_trip_and_validation() {
+        let mut tx = make_test_frame_tx();
+        tx.recent_root_references = vec![RecentRootReference {
+            source_id: H256::repeat_byte(0x11),
+            slot: 7,
+            root: H256::repeat_byte(0x22),
+        }];
+        let mut buf = Vec::new();
+        tx.encode(&mut buf);
+        let (decoded, rest) = FrameTransaction::decode_unfinished(&buf).unwrap();
+        assert!(rest.is_empty());
+        assert_eq!(decoded.recent_root_references, tx.recent_root_references);
+        // more than FRAME_TX_MAX_RECENT_ROOT_REFERENCES (16) is rejected.
+        tx.recent_root_references = (0..17u64)
+            .map(|i| RecentRootReference {
+                source_id: H256::zero(),
+                slot: i,
+                root: H256::zero(),
+            })
+            .collect();
+        assert!(tx.validate_static_constraints().is_err());
+    }
+
     fn make_frame_tx_with_gas_limits(limits: Vec<u64>) -> FrameTransaction {
         let frames = limits
             .into_iter()
@@ -5124,6 +5229,7 @@ mod tests {
             max_fee_per_gas: 30_000_000_000,
             max_fee_per_blob_gas: U256::zero(),
             blob_versioned_hashes: vec![],
+            recent_root_references: vec![],
             inner_hash: OnceCell::new(),
             cached_canonical: OnceCell::new(),
         }
@@ -5216,6 +5322,7 @@ mod tests {
             max_fee_per_gas: 30_000_000_000,
             max_fee_per_blob_gas: U256::zero(),
             blob_versioned_hashes: vec![],
+            recent_root_references: vec![],
             inner_hash: OnceCell::new(),
             cached_canonical: OnceCell::new(),
         };
@@ -5568,6 +5675,7 @@ mod tests {
             max_fee_per_gas: 0x6fc23ac00,
             max_fee_per_blob_gas: U256::zero(),
             blob_versioned_hashes: vec![],
+            recent_root_references: vec![],
             inner_hash: OnceCell::new(),
             cached_canonical: OnceCell::new(),
         };
