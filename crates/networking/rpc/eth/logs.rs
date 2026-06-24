@@ -12,6 +12,7 @@ use crate::{
 };
 use ethereum_types::{Bloom, BloomInput};
 use ethrex_common::{H160, H256};
+use ethrex_crypto::NativeCrypto;
 use ethrex_storage::Store;
 use serde::Deserialize;
 use serde_json::Value;
@@ -184,7 +185,7 @@ pub(crate) async fn fetch_logs_with_filter(
 
         // Transactions share indices with their receipts; pair them by index.
         for (tx_index, tx) in block_body.transactions.iter().enumerate() {
-            let tx_hash = tx.hash();
+            let tx_hash = tx.hash(&NativeCrypto);
             let receipt = receipts.get(tx_index).ok_or(RpcErr::Internal(format!(
                 "Missing receipt for block {block_num} tx {tx_index}"
             )))?;
