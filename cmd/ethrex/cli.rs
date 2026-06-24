@@ -1133,10 +1133,10 @@ pub async fn import_blocks_bench(
                     })?;
             }
 
-            // Wait for the trie-update worker's Phase 2 (disk write of bottom-most
-            // diff layer) and Phase 3 (in-memory layer removal) for the block just
-            // applied to drain. Keeps the next block's per-block timer from
-            // absorbing the previous block's background persistence cost.
+            // Wait for the persist worker to drain the block just applied: its
+            // trie diff-layer build, the disk flush and the in-memory eviction.
+            // Keeps the next block's per-block timer from absorbing the previous
+            // block's background persistence cost.
             store.wait_for_persistence_idle().await?;
         }
 

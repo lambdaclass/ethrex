@@ -99,30 +99,29 @@ pub struct StoreConfig {
     ///
     /// Ignored when the engine type is in-memory.
     pub rocksdb_block_cache_size: usize,
-    /// Maximum number of unflushed blocks the in-memory block buffer holds
-    /// before applying synchronous backpressure.
+    /// Bound on the single persist worker's channel: the number of staged
+    /// (acked) live messages whose asynchronous flush may still be in flight.
     ///
-    /// On the live `newPayload` path block data is inserted into the buffer and
-    /// flushed to disk by a background worker. While the buffer holds fewer than
-    /// this many unflushed blocks the worker acks the insert immediately and
-    /// flushes asynchronously (the fast, pipelined path: the flush of one block
-    /// overlaps execution of the next). Once it reaches this many unflushed
-    /// blocks — which only happens when the flusher falls behind or a disk write
-    /// fails — the worker flushes synchronously before acking, so the newPayload
-    /// thread blocks until the flush completes and any persistence error is
-    /// propagated back to the caller, instead of the buffer growing without
-    /// bound while the node keeps reporting `VALID`.
+    /// On the live `newPayload` path `apply_updates` sends one block per message
+    /// and the worker acks right after staging the block data, then flushes to
+    /// disk asynchronously (the fast, pipelined path: the flush of one block
+    /// overlaps execution of the next). The channel is a bounded
+    /// `sync_channel(cap)`, so once `cap` acked-but-unflushed messages are queued
+    /// the next send blocks until the worker drains one — that is the
+    /// backpressure that throttles `newPayload` if the worker falls behind,
+    /// keeping the in-memory buffer from growing without bound.
     ///
-    /// Clamped to `max(1)` at construction time. The default (2) keeps at most a
-    /// couple of blocks resident under backlog.
-    pub block_flush_backpressure_cap: usize,
+    /// Clamped to `max(1)` at construction time (a `0` capacity would make the
+    /// channel a rendezvous one). The default (2) keeps at most a couple of
+    /// blocks in flight under backlog.
+    pub persist_channel_capacity: usize,
 }
 
 impl Default for StoreConfig {
     fn default() -> Self {
         Self {
             rocksdb_block_cache_size: DEFAULT_ROCKSDB_BLOCK_CACHE_SIZE_BYTES,
-            block_flush_backpressure_cap: BLOCK_FLUSH_BACKPRESSURE_CAP,
+            persist_channel_capacity: DEFAULT_PERSIST_CHANNEL_CAPACITY,
         }
     }
 }
@@ -226,19 +225,18 @@ pub struct Store {
     trie_cache: Arc<RwLock<Arc<TrieLayerCache>>>,
     /// Channel for controlling the FlatKeyValue generator background task.
     flatkeyvalue_control_tx: std::sync::mpsc::SyncSender<FKVGeneratorControlMessage>,
-    /// Channel for sending trie updates (and idle pings) to the background worker.
-    trie_update_worker_tx: std::sync::mpsc::SyncSender<TrieMessage>,
     /// In-memory overlay of block data not yet flushed to disk.
     block_data_buffer: Arc<RwLock<Arc<BlockDataBuffer>>>,
     /// Channel to the single persist worker. `apply_updates` sends
     /// `PersistMessage::Block` here; that worker is the only mutator of
-    /// `block_data_buffer` and the sole builder of live-path trie diff-layers in
+    /// `block_data_buffer` and the sole builder of trie diff-layers in
     /// production (the `#[cfg(test)]` helpers also swap the buffer directly, on a
-    /// single thread).
+    /// single thread). `wait_for_persistence_idle` sends `PersistMessage::Ping`
+    /// here to drain the worker.
     persist_tx: std::sync::mpsc::SyncSender<PersistMessage>,
-    /// Roots whose trie diff-layer is being built by the trie worker but not yet
-    /// installed in `trie_cache`. The trie-open chokepoints block on these so a
-    /// just-added block's state is never read as stale before its layer lands.
+    /// Roots whose trie diff-layer is being built by the persist worker but not
+    /// yet installed in `trie_cache`. The trie-open chokepoints block on these so
+    /// a just-added block's state is never read as stale before its layer lands.
     pending_trie_roots: Arc<PendingTrieRoots>,
     /// Cached latest canonical block header.
     ///
@@ -438,27 +436,36 @@ pub fn tx_locations_merge(
 }
 
 impl Store {
-    /// Block until the trie-update background worker has drained every prior
-    /// message and is waiting for new work — i.e. Phase 2 (disk write of the
-    /// bottom-most diff layer) and Phase 3 (in-memory layer removal) for all
-    /// previously-applied updates have completed.
+    /// Block until the single persist worker has drained every prior message and
+    /// is waiting for new work — i.e. staging, the trie diff-layer build, the
+    /// disk flush (advancing `flushed_upto`) and eviction for all
+    /// previously-sent `Block` messages have completed.
     ///
-    /// Implementation: the worker channel is `sync_channel(0)`, so a send only
-    /// returns once the worker calls `recv()` on the next loop iteration.
-    /// `TrieMessage::Ping` carries no work, so the send completing is itself
-    /// the idle signal.
+    /// Implementation: the persist channel is a *buffered* `sync_channel(cap)`
+    /// (cap ≥ 1), so a bare send can return while prior messages are still
+    /// queued — it would not prove the worker drained. Instead this sends an
+    /// ack-based `PersistMessage::Ping(ack_tx)` and blocks on `ack_rx`. The
+    /// worker is single-threaded and FIFO, so it only handles the `Ping` after
+    /// every earlier `Block` message is fully processed; receiving the ack is
+    /// therefore the idle signal.
     ///
-    /// Caller's responsibility: hold off other senders to `trie_update_worker_tx`
-    /// while this is in flight. Under concurrent producers the rendezvous
-    /// guarantee degrades to "the prior message has been drained", not
-    /// "persistence is idle going forward" — a racing `Update` from another
-    /// thread can be in-flight by the time this returns.
+    /// Caller's responsibility: hold off other senders to `persist_tx` while this
+    /// is in flight. Under concurrent producers the guarantee degrades to "every
+    /// message enqueued before the Ping has been drained", not "persistence is
+    /// idle going forward" — a racing `Block` from another thread can be in-flight
+    /// by the time this returns.
     pub async fn wait_for_persistence_idle(&self) -> Result<(), StoreError> {
-        let tx = self.trie_update_worker_tx.clone();
-        tokio::task::spawn_blocking(move || tx.send(TrieMessage::Ping))
-            .await
-            .map_err(|e| StoreError::Custom(format!("wait_for_persistence_idle join: {e}")))?
-            .map_err(|e| StoreError::Custom(format!("wait_for_persistence_idle send: {e}")))
+        let tx = self.persist_tx.clone();
+        tokio::task::spawn_blocking(move || {
+            let (ack_tx, ack_rx) = sync_channel::<()>(1);
+            tx.send(PersistMessage::Ping(ack_tx))
+                .map_err(|e| StoreError::Custom(format!("wait_for_persistence_idle send: {e}")))?;
+            ack_rx
+                .recv()
+                .map_err(|e| StoreError::Custom(format!("wait_for_persistence_idle ack: {e}")))
+        })
+        .await
+        .map_err(|e| StoreError::Custom(format!("wait_for_persistence_idle join: {e}")))?
     }
 
     /// Add a block in a single transaction.
@@ -1620,7 +1627,8 @@ impl Store {
 
     /// Compute `(parent_state_root, last_state_root)` for a batch's trie update:
     /// the state root of the first block's parent and the last block's own state
-    /// root. Shared by the live and synchronous `apply_updates` paths.
+    /// root. Used by `apply_updates` for both the live and full-sync paths (which
+    /// share the single persist worker).
     fn batch_state_roots(&self, update_batch: &UpdateBatch) -> Result<(H256, H256), StoreError> {
         let parent_state_root = self
             .get_block_header_by_hash(
@@ -1792,7 +1800,7 @@ impl Store {
                         backend,
                         db_path,
                         DB_COMMIT_THRESHOLD,
-                        config.block_flush_backpressure_cap,
+                        config.persist_channel_capacity,
                     );
                 }
                 Some(_) => {
@@ -1814,7 +1822,7 @@ impl Store {
                     backend,
                     db_path,
                     DB_COMMIT_THRESHOLD,
-                    config.block_flush_backpressure_cap,
+                    config.persist_channel_capacity,
                 )
             }
             EngineType::InMemory => {
@@ -1823,7 +1831,7 @@ impl Store {
                     backend,
                     db_path,
                     IN_MEMORY_COMMIT_THRESHOLD,
-                    config.block_flush_backpressure_cap,
+                    config.persist_channel_capacity,
                 )
             }
         }
@@ -1833,16 +1841,15 @@ impl Store {
         backend: Arc<dyn StorageBackend>,
         db_path: PathBuf,
         commit_threshold: usize,
-        block_flush_cap: usize,
+        persist_channel_capacity: usize,
     ) -> Result<Self, StoreError> {
         debug!("Initializing Store with {commit_threshold} in-memory diff-layers");
         let (fkv_tx, fkv_rx) = std::sync::mpsc::sync_channel(0);
-        let (trie_upd_tx, trie_upd_rx) = std::sync::mpsc::sync_channel(0);
-        // `flush_cap` bounds the persist worker channel: the number of staged
+        // `persist_cap` bounds the persist worker channel: the number of staged
         // (acked) live messages whose async flush may still be in flight. Clamped
         // to `max(1)` so a zero value never produces a rendezvous channel.
-        let flush_cap = block_flush_cap.max(1);
-        let (persist_tx, persist_rx) = std::sync::mpsc::sync_channel(flush_cap);
+        let persist_cap = persist_channel_capacity.max(1);
+        let (persist_tx, persist_rx) = std::sync::mpsc::sync_channel(persist_cap);
 
         let (last_written, initial_flushed_upto) = {
             let tx = backend.begin_read()?;
@@ -1871,7 +1878,6 @@ impl Store {
             latest_block_header: Default::default(),
             trie_cache: Arc::new(RwLock::new(Arc::new(TrieLayerCache::new(commit_threshold)))),
             flatkeyvalue_control_tx: fkv_tx,
-            trie_update_worker_tx: trie_upd_tx,
             block_data_buffer: Arc::new(RwLock::new(Arc::new(initial_buffer))),
             persist_tx,
             pending_trie_roots: Arc::new(PendingTrieRoots::default()),
@@ -1899,56 +1905,6 @@ impl Store {
 
             let _ = flatkeyvalue_generator(&backend_clone, &last_computed_fkv, &rx)
                 .inspect_err(|err| error!("Error while generating FlatKeyValue: {err}"));
-        }));
-        let backend = store.backend.clone();
-        let flatkeyvalue_control_tx = store.flatkeyvalue_control_tx.clone();
-        let trie_cache = store.trie_cache.clone();
-        let trie_pending_roots = store.pending_trie_roots.clone();
-        /*
-            When a block is executed, the write of the bottom-most diff layer to disk is done in the background through this thread.
-            This is to improve block execution times, since it's not necessary when executing the next block to have this layer flushed to disk.
-
-            This background thread receives messages through a channel to apply new trie updates and does three things:
-
-            - First, it updates the top-most in-memory diff layer and notifies the process that sent the message (i.e. the
-            block production thread) so it can continue with block execution (block execution cannot proceed without the
-            diff layers updated, otherwise it would see wrong state when reading from the trie). This section is done in an RCU manner:
-            a shared pointer with the trie is kept behind a lock. This thread first acquires the lock, then copies the pointer and drops the lock;
-            afterwards it makes a deep copy of the trie layer and mutates it, then takes the lock again, replaces the pointer with the updated copy,
-            then drops the lock again.
-
-            - Second, it performs the logic of persisting the bottom-most diff layer to disk. This is the part of the logic that block execution does not
-            need to proceed. What does need to be aware of this section is the process in charge of generating the snapshot (a.k.a. FlatKeyValue).
-            Because of this, this section first sends a message to pause the FlatKeyValue generation, then persists the diff layer to disk, then notifies
-            again for FlatKeyValue generation to continue.
-
-            - Third, it removes the (no longer needed) bottom-most diff layer from the trie layers in the same way as the first step.
-        */
-        background_threads.push(std::thread::spawn(move || {
-            let rx = trie_upd_rx;
-            loop {
-                match rx.recv() {
-                    Ok(TrieMessage::Update(trie_update)) => {
-                        // FIXME: what should we do on error?
-                        let _ = apply_trie_updates(
-                            backend.as_ref(),
-                            &flatkeyvalue_control_tx,
-                            &trie_cache,
-                            &trie_pending_roots,
-                            trie_update,
-                        )
-                        .inspect_err(|err| error!("apply_trie_updates failed: {err}"));
-                    }
-                    Ok(TrieMessage::Ping) => {
-                        // Rendezvous handshake only — sender just wanted to know
-                        // we were idle and back at recv(). No work to do.
-                    }
-                    Err(err) => {
-                        debug!("Trie update sender disconnected: {err}");
-                        return;
-                    }
-                }
-            }
         }));
         // The single persist worker. For each `Block` message it stages the block
         // data into the buffer (sole swapper of `block_data_buffer`), builds and
@@ -2041,8 +1997,12 @@ impl Store {
                             last_flush_result = flushed;
                         }
                     }
-                    Ok(PersistMessage::Ping) => {
-                        // Rendezvous handshake only — no work to do.
+                    Ok(PersistMessage::Ping(ack)) => {
+                        // Idle handshake for `wait_for_persistence_idle`. Because
+                        // the worker is FIFO and single-threaded, reaching this arm
+                        // means every earlier `Block` message was fully processed
+                        // (staged + built + flushed + evicted). Acking proves idle.
+                        let _ = ack.send(());
                     }
                     Err(_) => return,
                 }
@@ -3473,8 +3433,9 @@ impl Store {
     }
 
     /// Mark a state root as in-flight (build pending) without doing a build.
-    /// For testing only — simulates the window where the trie worker has not yet
-    /// installed the layer, so reads at this root must block in `gated_snapshot`.
+    /// For testing only — simulates the window where the persist worker has not
+    /// yet installed the layer, so reads at this root must block in
+    /// `gated_snapshot`.
     #[cfg(any(test, feature = "testing"))]
     pub fn register_pending_root_for_test(&self, root: H256) -> Result<(), StoreError> {
         self.pending_trie_roots.register(root)
@@ -3586,7 +3547,7 @@ fn decode_flushed_upto(bytes: &[u8]) -> Result<BlockNumber, StoreError> {
 }
 
 /// Apply `f` to a clone of the current block-data buffer and atomically swap the
-/// result back in (RCU). In production the single block-flush worker is the only
+/// result back in (RCU). In production the single persist worker is the only
 /// caller, so there is exactly one swapper and no lost-update race; the
 /// `#[cfg(test)]` helpers also drive this on a single thread.
 fn mutate_block_buffer(
@@ -3599,10 +3560,10 @@ fn mutate_block_buffer(
     Ok(())
 }
 
-/// Default for [`StoreConfig::block_flush_backpressure_cap`]: the maximum number
-/// of unflushed blocks the buffer holds before the worker switches from the fast
-/// asynchronous flush to synchronous, error-propagating backpressure.
-const BLOCK_FLUSH_BACKPRESSURE_CAP: usize = 2;
+/// Default for [`StoreConfig::persist_channel_capacity`]: the number of staged
+/// (acked) live messages whose async flush may still be in flight before a send
+/// on the bounded persist channel blocks (the backpressure on `newPayload`).
+const DEFAULT_PERSIST_CHANNEL_CAPACITY: usize = 2;
 
 /// One unit of work for the single persist worker: stage a block (or a whole
 /// batch) into the in-memory buffer, install its aggregate trie diff-layer, then
@@ -3629,20 +3590,23 @@ struct BlockPersist {
 }
 
 /// Messages handled by the single persist background worker, which subsumes the
-/// trie-layer build and the block-data flush for the live path.
+/// trie-layer build and the block-data flush for both the live and full-sync
+/// paths.
 ///
-/// `Ping` is a no-op handled between real messages; because the worker channel is
-/// rendezvous-like, a successful `Ping` send proves the worker has drained its
-/// previous message and is back at `recv()`.
+/// `Ping(ack)` is the idle handshake for [`Store::wait_for_persistence_idle`].
+/// The persist channel is buffered, so a bare send proves nothing about prior
+/// work; instead the worker acks on the carried sender. Because the worker is
+/// FIFO and single-threaded, it only handles the `Ping` once every earlier
+/// `Block` message is fully processed, so receiving the ack proves the worker is
+/// idle.
 enum PersistMessage {
     Block(BlockPersist),
-    #[allow(dead_code)]
-    Ping,
+    Ping(std::sync::mpsc::SyncSender<()>),
 }
 
 /// Drain all unflushed blocks from the buffer to the backend in one write tx,
-/// advance `flushed_upto`, then evict. Mirrors the trie worker's phase-2/3
-/// gap-safety: blocks stay in the buffer until the commit succeeds.
+/// advance `flushed_upto`, then evict. Gap-safe: blocks stay in the buffer until
+/// the commit succeeds (eviction only happens after).
 fn flush_block_data(
     backend: &dyn StorageBackend,
     buffer: &Arc<RwLock<Arc<BlockDataBuffer>>>,
@@ -3705,7 +3669,7 @@ fn flush_block_data(
 
 type TrieNodesUpdate = Vec<(Nibbles, Vec<u8>)>;
 
-/// Tracks state roots whose trie diff-layer is being built by the trie worker
+/// Tracks state roots whose trie diff-layer is being built by the persist worker
 /// but is not yet installed in `trie_cache`. On the live path `apply_updates`
 /// registers the new block's root here *before* returning (so it's pending
 /// before the head can advance to it), and the worker clears it *after* swapping
@@ -3760,88 +3724,7 @@ impl PendingTrieRoots {
     }
 }
 
-struct TrieUpdate {
-    /// Synchronous completion signal for the batch (full-sync) path, which waits
-    /// for the layer before proceeding. The live path passes `None` and instead
-    /// relies on the worker clearing `pending_trie_roots` after the swap.
-    result_sender: Option<std::sync::mpsc::SyncSender<Result<(), StoreError>>>,
-    parent_state_root: H256,
-    child_state_root: H256,
-    account_updates: TrieNodesUpdate,
-    storage_updates: Vec<(H256, TrieNodesUpdate)>,
-    is_batch: bool,
-}
-
-/// Messages handled by the trie-update background worker.
-///
-/// `Ping` is a no-op the worker handles between real updates. Because the
-/// worker channel is `sync_channel(0)` (rendezvous), a successful `Ping` send
-/// proves the worker has finished its previous iteration (Phase 1+2+3) and is
-/// blocked back at `recv()` — i.e. persistence is idle. See
-/// `Store::wait_for_persistence_idle`.
-enum TrieMessage {
-    // Nothing sends `Update` anymore — both the live and the batch paths now go
-    // through the single persist worker (`PersistMessage`). The trie worker is
-    // kept only so `wait_for_persistence_idle` can `Ping` it; this variant and
-    // its handling are retired in the next task.
-    #[allow(dead_code)]
-    Update(TrieUpdate),
-    Ping,
-}
-
-// NOTE: we don't receive `Store` here to avoid cyclic dependencies
-// with the other end of `fkv_ctl`
-fn apply_trie_updates(
-    backend: &dyn StorageBackend,
-    fkv_ctl: &SyncSender<FKVGeneratorControlMessage>,
-    trie_cache: &Arc<RwLock<Arc<TrieLayerCache>>>,
-    pending_roots: &PendingTrieRoots,
-    trie_update: TrieUpdate,
-) -> Result<(), StoreError> {
-    let TrieUpdate {
-        result_sender,
-        parent_state_root,
-        child_state_root,
-        account_updates,
-        storage_updates,
-        is_batch,
-    } = trie_update;
-
-    // Phase 1: build + RCU-swap the new diff-layer, then clear the pending root.
-    match apply_trie_phase1(
-        trie_cache,
-        pending_roots,
-        parent_state_root,
-        child_state_root,
-        account_updates,
-        storage_updates,
-    ) {
-        Ok(()) => {
-            // Layer installed: unblock the synchronous (batch) waiter if present.
-            if let Some(sender) = &result_sender {
-                let _ = sender.send(Ok(()));
-            }
-        }
-        Err(e) => {
-            // The swap failed (only on lock poisoning). `apply_trie_phase1` already
-            // cleared the pending root so gated readers don't deadlock; route the
-            // error to the batch waiter if present, else propagate.
-            error!("trie phase-1 build failed: {e}");
-            match result_sender {
-                Some(sender) => {
-                    let _ = sender.send(Err(e));
-                    return Ok(());
-                }
-                None => return Err(e),
-            }
-        }
-    }
-
-    // Phases 2-3: commit the bottom diff-layer to disk (FKV pause/resume) + evict.
-    commit_trie_if_due(backend, trie_cache, fkv_ctl, parent_state_root, is_batch)
-}
-
-/// Phase 1 of a trie update (shared by the trie worker and the persist worker):
+/// Phase 1 of a trie update (run by the persist worker):
 /// build the new diff-layer from the account/storage updates, RCU-swap it into
 /// `trie_cache`, then clear the in-flight `pending_roots` entry for
 /// `child_state_root`.
@@ -3884,7 +3767,7 @@ fn apply_trie_phase1(
     build
 }
 
-/// Phases 2-3 of a trie update (shared by the trie worker and the persist worker):
+/// Phases 2-3 of a trie update (run by the persist worker):
 /// when the diff-layer chain rooted at `parent_state_root` is deep enough to
 /// commit, persist the bottom layer to disk in one transaction (pausing/resuming
 /// the FlatKeyValue generator around the write) and then RCU-evict that layer.

@@ -178,6 +178,40 @@ async fn live_path_single_worker_persists_and_advances_marker() {
     poll_flushed_upto_reaches(&store, 5).await;
 }
 
+/// `wait_for_persistence_idle` must block until the persist worker has fully
+/// drained, including the *asynchronous* flush the live path acks before. After
+/// it returns, the durable `flushed_upto` marker must already be at the last
+/// block with NO polling: the ack-based `Ping` proves the worker handled (and
+/// flushed) every prior `Block` message because it is FIFO and single-threaded.
+///
+/// Without the ack (a bare buffered send), this would race the flush and read a
+/// stale marker. Reading `flushed_upto` exactly once right after the await is the
+/// regression guard.
+#[tokio::test]
+async fn wait_for_persistence_idle_blocks_until_flush_durable() {
+    let store = Store::new("", EngineType::InMemory).expect("store");
+
+    const N: BlockNumber = 5;
+    let mut parent = H256::zero();
+    for n in 1..=N {
+        let (block, batch) = minimal_batch(n, parent);
+        parent = block.hash();
+        store.store_block_updates(batch).expect("store");
+    }
+
+    store
+        .wait_for_persistence_idle()
+        .await
+        .expect("wait_for_persistence_idle");
+
+    // No poll: the Ping ack already proves every block's flush completed.
+    assert_eq!(
+        store.read_flushed_upto().expect("flushed_upto"),
+        N,
+        "wait_for_persistence_idle returned before the last block's flush was durable"
+    );
+}
+
 #[tokio::test]
 async fn reads_hit_buffer_then_fall_through_to_disk() {
     let store = Store::new("", EngineType::InMemory).expect("store");
@@ -439,11 +473,11 @@ async fn batch_path_advances_flushed_upto() {
 
 // ── configurable backpressure cap ─────────────────────────────────────────────
 
-/// The `StoreConfig` default must keep the production-tuned cap of 2.
+/// The `StoreConfig` default must keep the production-tuned capacity of 2.
 #[test]
-fn store_config_default_backpressure_cap_is_two() {
+fn store_config_default_persist_channel_capacity_is_two() {
     assert_eq!(
-        ethrex_storage::StoreConfig::default().block_flush_backpressure_cap,
+        ethrex_storage::StoreConfig::default().persist_channel_capacity,
         2
     );
 }
@@ -459,7 +493,7 @@ async fn small_cap_pipeline_persists_all_blocks() {
         "",
         EngineType::InMemory,
         StoreConfig {
-            block_flush_backpressure_cap: 1,
+            persist_channel_capacity: 1,
             ..StoreConfig::default()
         },
     )
