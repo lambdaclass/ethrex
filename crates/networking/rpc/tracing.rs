@@ -4,12 +4,15 @@ use ethrex_common::H256;
 use ethrex_common::{
     serde_utils,
     tracing::{CallTraceFrame, PrestateResult, StructLoggerEmit, StructLoggerResult},
+    types::Block,
 };
 use ethrex_vm::tracing::OpcodeTracerConfig;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::{rpc::RpcHandler, types::block_identifier::BlockIdentifier, utils::RpcErr};
+use crate::{
+    rpc::RpcApiContext, rpc::RpcHandler, types::block_identifier::BlockIdentifier, utils::RpcErr,
+};
 
 /// Default max amount of blocks to re-excute if it is not given
 const DEFAULT_REEXEC: u32 = 128;
@@ -23,6 +26,11 @@ pub struct TraceTransactionRequest {
 
 pub struct TraceBlockByNumberRequest {
     block: BlockIdentifier,
+    trace_config: TraceConfig,
+}
+
+pub struct TraceBlockByHashRequest {
+    block_hash: H256,
     trace_config: TraceConfig,
 }
 
@@ -213,6 +221,119 @@ impl RpcHandler for TraceTransactionRequest {
     }
 }
 
+/// Shared block tracing logic used by both `debug_traceBlockByNumber` and
+/// `debug_traceBlockByHash`.
+async fn trace_block(
+    block: Block,
+    trace_config: &TraceConfig,
+    context: &RpcApiContext,
+) -> Result<Value, RpcErr> {
+    let reexec = trace_config.reexec.unwrap_or(DEFAULT_REEXEC);
+    let timeout = trace_config.timeout.unwrap_or(DEFAULT_TIMEOUT);
+    match trace_config.tracer {
+        TracerType::CallTracer => {
+            let config = if let Some(value) = &trace_config.tracer_config {
+                serde_json::from_value(value.clone())?
+            } else {
+                CallTracerConfig::default()
+            };
+            let call_traces = context
+                .blockchain
+                .trace_block_calls(
+                    block,
+                    reexec,
+                    timeout,
+                    config.only_top_call,
+                    config.with_log,
+                )
+                .await
+                .map_err(|err| RpcErr::Internal(err.to_string()))?;
+            // Unwrap each CallTrace (Vec<CallTraceFrame>) to a single
+            // CallTraceFrame to match geth's callTracer response format.
+            let block_trace: BlockTrace<CallTraceFrame> = call_traces
+                .into_iter()
+                .map(|(hash, trace)| {
+                    let frame = trace
+                        .into_iter()
+                        .next()
+                        .ok_or_else(|| RpcErr::Internal("Empty call trace".to_string()))?;
+                    Ok((hash, frame).into())
+                })
+                .collect::<Result<_, RpcErr>>()?;
+            Ok(serde_json::to_value(block_trace)?)
+        }
+        TracerType::PrestateTracer => {
+            let config: PrestateTracerConfig = if let Some(value) = &trace_config.tracer_config {
+                serde_json::from_value(value.clone())?
+            } else {
+                PrestateTracerConfig::default()
+            };
+            config.validate()?;
+            let prestate_traces = context
+                .blockchain
+                .trace_block_prestate(
+                    block,
+                    reexec,
+                    timeout,
+                    config.diff_mode,
+                    config.include_empty,
+                )
+                .await
+                .map_err(|err| RpcErr::Internal(err.to_string()))?;
+            // Each trace result is already the correct variant (Prestate or Diff)
+            // based on the diff_mode flag, so we serialize directly.
+            let block_trace: Vec<serde_json::Value> = prestate_traces
+                .into_iter()
+                .map(|(hash, result)| {
+                    let trace_value = match result {
+                        PrestateResult::Prestate(trace) => serde_json::to_value(trace)?,
+                        PrestateResult::Diff(diff) => serde_json::to_value(diff)?,
+                    };
+                    serde_json::to_value(BlockTraceComponent {
+                        tx_hash: hash,
+                        result: trace_value,
+                    })
+                })
+                .collect::<Result<_, serde_json::Error>>()?;
+            Ok(serde_json::to_value(block_trace)?)
+        }
+        TracerType::OpcodeTracer => {
+            let cfg: OpcodeTracerConfig = trace_config
+                .tracer_config
+                .as_ref()
+                .map(|v| serde_json::from_value(v.clone()))
+                .transpose()?
+                .unwrap_or_default();
+            let emit = StructLoggerEmit {
+                mem_size: cfg.enable_memory,
+                return_data: cfg.enable_return_data,
+                refund: false,
+            };
+            let opcode_traces = context
+                .blockchain
+                .trace_block_opcodes(block, reexec, timeout, cfg)
+                .await
+                .map_err(|err| RpcErr::Internal(err.to_string()))?;
+            // Wrap each result with StructLoggerResult so it serializes in the
+            // geth-RPC shape expected by `debug_traceBlock*` consumers.
+            let block_trace: Vec<serde_json::Value> = opcode_traces
+                .into_iter()
+                .map(|(hash, result)| {
+                    let wrapped = serde_json::to_value(StructLoggerResult {
+                        result: &result,
+                        emit,
+                    })?;
+                    serde_json::to_value(BlockTraceComponent {
+                        tx_hash: hash,
+                        result: wrapped,
+                    })
+                })
+                .collect::<Result<_, serde_json::Error>>()?;
+            Ok(serde_json::to_value(block_trace)?)
+        }
+    }
+}
+
 impl RpcHandler for TraceBlockByNumberRequest {
     fn parse(params: &Option<Vec<serde_json::Value>>) -> Result<Self, RpcErr> {
         let params = params
@@ -243,118 +364,232 @@ impl RpcHandler for TraceBlockByNumberRequest {
             .block
             .resolve_block_number(&context.storage)
             .await?
-            .ok_or(RpcErr::Internal("Block not Found".to_string()))?;
+            .ok_or(RpcErr::BadParams("Block not Found".to_string()))?;
         let block = context
             .storage
             .get_block_by_number(block_number)
             .await?
-            .ok_or(RpcErr::Internal("Block not Found".to_string()))?;
-        let reexec = self.trace_config.reexec.unwrap_or(DEFAULT_REEXEC);
-        let timeout = self.trace_config.timeout.unwrap_or(DEFAULT_TIMEOUT);
-        match self.trace_config.tracer {
-            TracerType::CallTracer => {
-                // Parse tracer config now that we know the type
-                let config = if let Some(value) = &self.trace_config.tracer_config {
-                    serde_json::from_value(value.clone())?
-                } else {
-                    CallTracerConfig::default()
-                };
-                let call_traces = context
-                    .blockchain
-                    .trace_block_calls(
-                        block,
-                        reexec,
-                        timeout,
-                        config.only_top_call,
-                        config.with_log,
-                    )
-                    .await
-                    .map_err(|err| RpcErr::Internal(err.to_string()))?;
-                // Unwrap each CallTrace (Vec<CallTraceFrame>) to a single
-                // CallTraceFrame to match geth's callTracer response format.
-                let block_trace: BlockTrace<CallTraceFrame> = call_traces
-                    .into_iter()
-                    .map(|(hash, trace)| {
-                        let frame = trace
-                            .into_iter()
-                            .next()
-                            .ok_or_else(|| RpcErr::Internal("Empty call trace".to_string()))?;
-                        Ok((hash, frame).into())
-                    })
-                    .collect::<Result<_, RpcErr>>()?;
-                Ok(serde_json::to_value(block_trace)?)
-            }
-            TracerType::PrestateTracer => {
-                let config: PrestateTracerConfig =
-                    if let Some(value) = &self.trace_config.tracer_config {
-                        serde_json::from_value(value.clone())?
-                    } else {
-                        PrestateTracerConfig::default()
-                    };
-                config.validate()?;
-                let prestate_traces = context
-                    .blockchain
-                    .trace_block_prestate(
-                        block,
-                        reexec,
-                        timeout,
-                        config.diff_mode,
-                        config.include_empty,
-                    )
-                    .await
-                    .map_err(|err| RpcErr::Internal(err.to_string()))?;
-                // Each trace result is already the correct variant (Prestate or Diff)
-                // based on the diff_mode flag, so we serialize directly.
-                let block_trace: Vec<serde_json::Value> = prestate_traces
-                    .into_iter()
-                    .map(|(hash, result)| {
-                        let trace_value = match result {
-                            PrestateResult::Prestate(trace) => serde_json::to_value(trace)?,
-                            PrestateResult::Diff(diff) => serde_json::to_value(diff)?,
-                        };
-                        serde_json::to_value(BlockTraceComponent {
-                            tx_hash: hash,
-                            result: trace_value,
-                        })
-                    })
-                    .collect::<Result<_, serde_json::Error>>()?;
-                Ok(serde_json::to_value(block_trace)?)
-            }
-            TracerType::OpcodeTracer => {
-                let cfg: OpcodeTracerConfig = self
-                    .trace_config
-                    .tracer_config
-                    .as_ref()
-                    .map(|v| serde_json::from_value(v.clone()))
-                    .transpose()?
-                    .unwrap_or_default();
-                let emit = StructLoggerEmit {
-                    mem_size: cfg.enable_memory,
-                    return_data: cfg.enable_return_data,
-                    refund: false,
-                };
-                let opcode_traces = context
-                    .blockchain
-                    .trace_block_opcodes(block, reexec, timeout, cfg)
-                    .await
-                    .map_err(|err| RpcErr::Internal(err.to_string()))?;
-                // Wrap each result with StructLoggerResult so it serializes in the
-                // geth-RPC shape expected by `debug_traceBlockByNumber` consumers.
-                let block_trace: Vec<serde_json::Value> = opcode_traces
-                    .into_iter()
-                    .map(|(hash, result)| {
-                        let wrapped = serde_json::to_value(StructLoggerResult {
-                            result: &result,
-                            emit,
-                        })?;
-                        serde_json::to_value(BlockTraceComponent {
-                            tx_hash: hash,
-                            result: wrapped,
-                        })
-                    })
-                    .collect::<Result<_, serde_json::Error>>()?;
-                Ok(serde_json::to_value(block_trace)?)
-            }
-        }
+            .ok_or(RpcErr::BadParams("Block not Found".to_string()))?;
+        trace_block(block, &self.trace_config, &context).await
+    }
+}
+
+impl RpcHandler for TraceBlockByHashRequest {
+    fn parse(params: &Option<Vec<serde_json::Value>>) -> Result<Self, RpcErr> {
+        let params = params
+            .as_ref()
+            .ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
+        if params.len() != 1 && params.len() != 2 {
+            return Err(RpcErr::BadParams("Expected 1 or 2 params".to_owned()));
+        };
+        let trace_config = if params.len() == 2 {
+            serde_json::from_value(params[1].clone())?
+        } else {
+            TraceConfig::default()
+        };
+
+        Ok(TraceBlockByHashRequest {
+            block_hash: serde_json::from_value(params[0].clone())?,
+            trace_config,
+        })
+    }
+
+    async fn handle(
+        &self,
+        context: crate::rpc::RpcApiContext,
+    ) -> Result<serde_json::Value, crate::utils::RpcErr> {
+        let block = context
+            .storage
+            .get_block_by_hash(self.block_hash)
+            .await?
+            .ok_or(RpcErr::BadParams("Block not Found".to_string()))?;
+        trace_block(block, &self.trace_config, &context).await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::rpc::RpcHandler;
+    use serde_json::json;
+
+    // --- TraceTransactionRequest parse tests ---
+
+    #[test]
+    fn parse_trace_tx_with_hash_only() {
+        let params = Some(vec![json!(
+            "0x0000000000000000000000000000000000000000000000000000000000000001"
+        )]);
+        let req = TraceTransactionRequest::parse(&params).unwrap();
+        assert_eq!(req.tx_hash, H256::from_low_u64_be(1));
+    }
+
+    #[test]
+    fn parse_trace_tx_with_config() {
+        let params = Some(vec![
+            json!("0x0000000000000000000000000000000000000000000000000000000000000001"),
+            json!({"tracer": "callTracer", "tracerConfig": {"onlyTopCall": true}}),
+        ]);
+        let req = TraceTransactionRequest::parse(&params).unwrap();
+        assert_eq!(req.tx_hash, H256::from_low_u64_be(1));
+        assert!(matches!(req.trace_config.tracer, TracerType::CallTracer));
+    }
+
+    #[test]
+    fn parse_trace_tx_no_params() {
+        let result = TraceTransactionRequest::parse(&None);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn parse_trace_tx_too_many_params() {
+        let params = Some(vec![json!("0x01"), json!({}), json!("extra")]);
+        let result = TraceTransactionRequest::parse(&params);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn parse_trace_tx_default_tracer_is_call_tracer() {
+        let params = Some(vec![json!(
+            "0x0000000000000000000000000000000000000000000000000000000000000001"
+        )]);
+        let req = TraceTransactionRequest::parse(&params).unwrap();
+        assert!(matches!(req.trace_config.tracer, TracerType::CallTracer));
+    }
+
+    // --- TraceBlockByNumberRequest parse tests ---
+
+    #[test]
+    fn parse_trace_block_by_number_latest() {
+        let params = Some(vec![json!("latest")]);
+        let req = TraceBlockByNumberRequest::parse(&params).unwrap();
+        assert!(matches!(
+            req.block,
+            BlockIdentifier::Tag(crate::types::block_identifier::BlockTag::Latest)
+        ));
+    }
+
+    #[test]
+    fn parse_trace_block_by_number_hex() {
+        let params = Some(vec![json!("0xa")]);
+        let req = TraceBlockByNumberRequest::parse(&params).unwrap();
+        assert!(matches!(req.block, BlockIdentifier::Number(10)));
+    }
+
+    #[test]
+    fn parse_trace_block_by_number_with_config() {
+        let params = Some(vec![json!("0x1"), json!({"tracer": "prestateTracer"})]);
+        let req = TraceBlockByNumberRequest::parse(&params).unwrap();
+        assert!(matches!(
+            req.trace_config.tracer,
+            TracerType::PrestateTracer
+        ));
+    }
+
+    #[test]
+    fn parse_trace_block_by_number_no_params() {
+        let result = TraceBlockByNumberRequest::parse(&None);
+        assert!(result.is_err());
+    }
+
+    // --- TraceBlockByHashRequest parse tests ---
+
+    #[test]
+    fn parse_trace_block_by_hash_with_hash_only() {
+        let params = Some(vec![json!(
+            "0x0000000000000000000000000000000000000000000000000000000000000abc"
+        )]);
+        let req = TraceBlockByHashRequest::parse(&params).unwrap();
+        assert_eq!(req.block_hash, H256::from_low_u64_be(0xabc));
+    }
+
+    #[test]
+    fn parse_trace_block_by_hash_with_config() {
+        let params = Some(vec![
+            json!("0x0000000000000000000000000000000000000000000000000000000000000abc"),
+            json!({"tracer": "opcodeTracer"}),
+        ]);
+        let req = TraceBlockByHashRequest::parse(&params).unwrap();
+        assert_eq!(req.block_hash, H256::from_low_u64_be(0xabc));
+        assert!(matches!(req.trace_config.tracer, TracerType::OpcodeTracer));
+    }
+
+    #[test]
+    fn parse_trace_block_by_hash_no_params() {
+        let result = TraceBlockByHashRequest::parse(&None);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn parse_trace_block_by_hash_too_many_params() {
+        let params = Some(vec![json!("0x01"), json!({}), json!("extra")]);
+        let result = TraceBlockByHashRequest::parse(&params);
+        assert!(result.is_err());
+    }
+
+    // --- TracerType deserialization tests ---
+
+    #[test]
+    fn deserialize_tracer_type_call_tracer() {
+        let t: TracerType = serde_json::from_value(json!("callTracer")).unwrap();
+        assert!(matches!(t, TracerType::CallTracer));
+    }
+
+    #[test]
+    fn deserialize_tracer_type_prestate_tracer() {
+        let t: TracerType = serde_json::from_value(json!("prestateTracer")).unwrap();
+        assert!(matches!(t, TracerType::PrestateTracer));
+    }
+
+    #[test]
+    fn deserialize_tracer_type_opcode_tracer() {
+        let t: TracerType = serde_json::from_value(json!("opcodeTracer")).unwrap();
+        assert!(matches!(t, TracerType::OpcodeTracer));
+    }
+
+    #[test]
+    fn deserialize_tracer_type_unknown_fails() {
+        let result = serde_json::from_value::<TracerType>(json!("unknownTracer"));
+        assert!(result.is_err());
+    }
+
+    // --- TraceConfig deserialization tests ---
+
+    #[test]
+    fn deserialize_trace_config_defaults() {
+        let cfg: TraceConfig = serde_json::from_value(json!({})).unwrap();
+        assert!(matches!(cfg.tracer, TracerType::CallTracer));
+        assert!(cfg.tracer_config.is_none());
+        assert!(cfg.timeout.is_none());
+        assert!(cfg.reexec.is_none());
+    }
+
+    #[test]
+    fn deserialize_trace_config_with_timeout() {
+        let cfg: TraceConfig = serde_json::from_value(json!({"timeout": "10s"})).unwrap();
+        assert_eq!(cfg.timeout, Some(Duration::from_secs(10)));
+    }
+
+    #[test]
+    fn deserialize_trace_config_with_reexec() {
+        let cfg: TraceConfig = serde_json::from_value(json!({"reexec": 256})).unwrap();
+        assert_eq!(cfg.reexec, Some(256));
+    }
+
+    // --- PrestateTracerConfig validation tests ---
+
+    #[test]
+    fn prestate_config_default_is_valid() {
+        let cfg = PrestateTracerConfig::default();
+        assert!(cfg.validate().is_ok());
+    }
+
+    #[test]
+    fn prestate_config_diff_mode_and_include_empty_is_invalid() {
+        let cfg = PrestateTracerConfig {
+            diff_mode: true,
+            include_empty: true,
+        };
+        assert!(cfg.validate().is_err());
     }
 }
