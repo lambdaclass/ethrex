@@ -72,6 +72,11 @@ pub const SIGPARAM: u64 = 2;
 /// EIP-7906 TXTRACE. Provisional value (EIP marks gas cost TBD; 100 matches the EIP's own example, ~warm access).
 pub const TXTRACE: u64 = 100;
 
+/// EIP-7906 TXDIFF (spec PR #11830). Provisional value (the EIP marks the gas
+/// cost TBD). A keyed before/after lookup may touch a cold account/slot, so this
+/// is priced as a cold SLOAD (2100) rather than the flat warm TXTRACE cost.
+pub const TXDIFF: u64 = SLOAD_COLD_DYNAMIC;
+
 pub fn framedatacopy(
     new_memory_size: usize,
     current_memory_size: usize,

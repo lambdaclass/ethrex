@@ -548,7 +548,8 @@ pub fn execute_default_code(
         // ETH transfer to an EOA work (spec §EOA support / Example 1).
         // Consumes no execution gas (the frame's value transfer is handled by
         // the caller's deferred transfer).
-        FrameMode::Sender | FrameMode::Default => Ok((true, 0, Vec::new())),
+        // EIP-7906: POST_TX default-code is handled like SENDER/DEFAULT.
+        FrameMode::Sender | FrameMode::Default | FrameMode::PostTx => Ok((true, 0, Vec::new())),
     }
 }
 
