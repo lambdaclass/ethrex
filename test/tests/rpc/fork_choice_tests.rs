@@ -11,8 +11,12 @@ use ethrex_common::{
     types::{Block, BlockHeader, DEFAULT_BUILDER_GAS_CEIL, ELASTICITY_MULTIPLIER},
 };
 use ethrex_rpc::engine::fork_choice::ForkChoiceUpdatedV3;
+use ethrex_rpc::engine::payload::GetPayloadV5Request;
+use ethrex_rpc::rpc::RpcApiContext;
 use ethrex_rpc::rpc::RpcHandler;
 use ethrex_rpc::test_utils::default_context_with_storage;
+use ethrex_rpc::types::payload::ExecutionPayloadResponse;
+use ethrex_rpc::utils::RpcErr;
 use ethrex_rpc::utils::RpcRequest;
 use ethrex_storage::{EngineType, Store};
 
@@ -50,6 +54,64 @@ async fn new_block(store: &Store, parent: &BlockHeader) -> Block {
     let blockchain = Blockchain::default_with_store(store.clone());
     let block = create_payload(&args, store, Bytes::new()).unwrap();
     blockchain.build_payload(block).unwrap().payload
+}
+
+async fn context_with_built_payload_at(timestamp: u64, payload_id: u64) -> RpcApiContext {
+    let mut storage = test_store().await;
+    let mut chain_config = storage.get_chain_config();
+    chain_config.osaka_time = Some(0);
+    chain_config.amsterdam_time = Some(10);
+    storage.set_chain_config(&chain_config).await.unwrap();
+
+    let genesis_header = storage.get_block_header(0).unwrap().unwrap();
+    let args = BuildPayloadArgs {
+        parent: genesis_header.hash(),
+        timestamp,
+        fee_recipient: H160::random(),
+        random: H256::random(),
+        withdrawals: Some(Vec::new()),
+        beacon_root: Some(H256::random()),
+        slot_number: None,
+        version: 1,
+        elasticity_multiplier: ELASTICITY_MULTIPLIER,
+        gas_ceil: DEFAULT_BUILDER_GAS_CEIL,
+    };
+    let payload = create_payload(&args, &storage, Bytes::new()).unwrap();
+    let context = default_context_with_storage(storage).await;
+    context
+        .blockchain
+        .clone()
+        .initiate_payload_build(payload, payload_id)
+        .await;
+
+    context
+}
+
+#[tokio::test]
+async fn get_payload_v5_accepts_osaka_payload_before_amsterdam() {
+    let payload_id = 1;
+    let context = context_with_built_payload_at(9, payload_id).await;
+
+    let response = GetPayloadV5Request { payload_id }
+        .handle(context)
+        .await
+        .unwrap();
+    let response: ExecutionPayloadResponse = serde_json::from_value(response).unwrap();
+
+    assert_eq!(response.execution_payload.timestamp, 9);
+}
+
+#[tokio::test]
+async fn get_payload_v5_rejects_amsterdam_payload() {
+    let payload_id = 1;
+    let context = context_with_built_payload_at(10, payload_id).await;
+
+    let err = GetPayloadV5Request { payload_id }
+        .handle(context)
+        .await
+        .unwrap_err();
+
+    assert!(matches!(err, RpcErr::UnsupportedFork(_)));
 }
 
 // Regression test for execution-apis PR #786: when engine_forkchoiceUpdatedV3
@@ -124,4 +186,54 @@ async fn test_fcu_v3_finalized_ancestor_returns_valid_with_null_payload_id() {
         "payloadId must be null when head is a finalized ancestor; got {:?}",
         response["payloadId"]
     );
+}
+
+// At the Amsterdam activation timestamp, engine_forkchoiceUpdatedV3 must reject
+// otherwise-valid V3 payload attributes with UnsupportedFork; payload building
+// from that timestamp onward requires engine_forkchoiceUpdatedV4.
+#[tokio::test]
+async fn forkchoice_updated_v3_rejects_amsterdam_payload_attributes() {
+    let mut store = test_store().await;
+    let mut chain_config = store.get_chain_config();
+    let amsterdam_time = 24;
+    chain_config.amsterdam_time = Some(amsterdam_time);
+    store.set_chain_config(&chain_config).await.unwrap();
+
+    let genesis_header = store.get_block_header(0).unwrap().unwrap();
+    let genesis_hash = genesis_header.hash();
+    let block = new_block(&store, &genesis_header).await;
+    let block_hash = block.hash();
+    Blockchain::default_with_store(store.clone())
+        .add_block(block)
+        .unwrap();
+
+    let body = format!(
+        r#"{{
+            "jsonrpc": "2.0",
+            "method": "engine_forkchoiceUpdatedV3",
+            "params": [
+                {{
+                    "headBlockHash": "{block_hash:#x}",
+                    "safeBlockHash": "{genesis_hash:#x}",
+                    "finalizedBlockHash": "{genesis_hash:#x}"
+                }},
+                {{
+                    "timestamp": "{amsterdam_time:#x}",
+                    "prevRandao": "0x0000000000000000000000000000000000000000000000000000000000000001",
+                    "suggestedFeeRecipient": "0x0000000000000000000000000000000000000000",
+                    "withdrawals": [],
+                    "parentBeaconBlockRoot": "0x0000000000000000000000000000000000000000000000000000000000000002"
+                }}
+            ],
+            "id": 1
+        }}"#
+    );
+    let request: RpcRequest = serde_json::from_str(&body).expect("valid FCU request");
+    let context = default_context_with_storage(store).await;
+
+    let err = ForkChoiceUpdatedV3::call(&request, context)
+        .await
+        .unwrap_err();
+
+    assert!(matches!(err, ethrex_rpc::utils::RpcErr::UnsupportedFork(_)));
 }

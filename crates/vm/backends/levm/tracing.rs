@@ -1,4 +1,4 @@
-use ethrex_common::constants::EMPTY_KECCACK_HASH;
+use ethrex_common::constants::EMPTY_KECCAK_HASH;
 use ethrex_common::tracing::{PrePostState, PrestateAccountState, PrestateResult, PrestateTrace};
 use ethrex_common::types::{Block, GenericTransaction, Transaction};
 use ethrex_common::{
@@ -276,7 +276,7 @@ fn build_account_output(
     account: &LevmAccount,
     db: &GeneralizedDatabase,
 ) -> Result<PrestateAccountState, EvmError> {
-    let has_code = account.info.code_hash != *EMPTY_KECCACK_HASH;
+    let has_code = account.info.code_hash != *EMPTY_KECCAK_HASH;
     let code = if has_code {
         get_preloaded_code(db, &account.info.code_hash)?
     } else {
@@ -307,7 +307,7 @@ fn build_account_output(
 fn get_preloaded_code(db: &GeneralizedDatabase, hash: &H256) -> Result<bytes::Bytes, EvmError> {
     db.codes
         .get(hash)
-        .map(|c| c.bytecode.clone())
+        .map(|c| c.code_bytes())
         .ok_or_else(|| EvmError::Custom(format!("missing preloaded code for {hash:?}")))
 }
 
@@ -333,7 +333,7 @@ fn build_post_output(
         modified = true;
     }
     if pre_account.info.code_hash != post_account.info.code_hash {
-        if post_account.info.code_hash != *EMPTY_KECCACK_HASH {
+        if post_account.info.code_hash != *EMPTY_KECCAK_HASH {
             state.code_hash = post_account.info.code_hash;
             state.code = get_preloaded_code(db, &post_account.info.code_hash)?;
         }
@@ -440,7 +440,7 @@ fn preload_touched_codes(
                 .unwrap_or_default();
             [post.info.code_hash, pre_hash]
         })
-        .filter(|h| *h != *EMPTY_KECCACK_HASH)
+        .filter(|h| *h != *EMPTY_KECCAK_HASH)
         .collect();
 
     for hash in hashes {

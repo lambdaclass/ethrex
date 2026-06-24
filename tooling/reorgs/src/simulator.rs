@@ -307,7 +307,7 @@ impl Node {
             .execution_payload
             .block_access_list
             .as_ref()
-            .map(|bal| bal.compute_hash());
+            .map(|bal| bal.compute_hash(&ethrex_common::NativeCrypto));
         let block = payload_response
             .execution_payload
             .into_block(
@@ -355,11 +355,19 @@ impl Node {
         //     .collect();
         let commitments = vec![];
         let parent_beacon_block_root = head.header.parent_beacon_block_root.unwrap();
-        let _payload_status = self
-            .engine_client
-            .engine_new_payload_v4(execution_payload, commitments, parent_beacon_block_root)
-            .await
-            .unwrap();
+        // Amsterdam+ payloads carry a Block Access List and MUST use newPayloadV5;
+        // earlier forks use V4, which rejects the BAL field.
+        let _payload_status = if execution_payload.block_access_list.is_some() {
+            self.engine_client
+                .engine_new_payload_v5(execution_payload, commitments, parent_beacon_block_root)
+                .await
+                .unwrap()
+        } else {
+            self.engine_client
+                .engine_new_payload_v4(execution_payload, commitments, parent_beacon_block_root)
+                .await
+                .unwrap()
+        };
     }
 
     pub async fn send_eth_transfer(&self, signer: &Signer, recipient: H160, amount: u64) {
