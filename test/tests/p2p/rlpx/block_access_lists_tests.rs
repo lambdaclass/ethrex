@@ -1,5 +1,6 @@
 use ethereum_types::Address;
 use ethrex_common::types::block_access_list::{AccountChanges, BalanceChange, BlockAccessList};
+use ethrex_crypto::NativeCrypto;
 use ethrex_p2p::rlpx::{
     eth::block_access_lists::{BlockAccessLists, OptionalBal},
     message::RLPxMessage,
@@ -79,22 +80,22 @@ fn matches_commitment_guards_stale_and_empty_bals() {
     let real = BlockAccessList::from_accounts(vec![
         AccountChanges::new(addr(1)).with_balance_changes(vec![BalanceChange::new(0, 100.into())]),
     ]);
-    let commitment = real.compute_hash();
+    let commitment = real.compute_hash(&NativeCrypto);
 
     // The real BAL matches its own commitment.
-    assert!(real.matches_commitment(Some(commitment)));
+    assert!(real.matches_commitment(Some(commitment), &NativeCrypto));
 
     // An empty BAL does NOT match a non-empty commitment (the 8501 bug).
     let empty = BlockAccessList::from_accounts(vec![]);
-    assert!(!empty.matches_commitment(Some(commitment)));
+    assert!(!empty.matches_commitment(Some(commitment), &NativeCrypto));
 
     // A different (stale) BAL does NOT match.
     let stale = BlockAccessList::from_accounts(vec![AccountChanges::new(addr(2))]);
-    assert!(!stale.matches_commitment(Some(commitment)));
+    assert!(!stale.matches_commitment(Some(commitment), &NativeCrypto));
 
     // A missing header commitment never matches.
-    assert!(!real.matches_commitment(None));
+    assert!(!real.matches_commitment(None, &NativeCrypto));
 
     // An empty BAL matches the empty-BAL commitment (genuinely-empty block → 0xc0).
-    assert!(empty.matches_commitment(Some(empty.compute_hash())));
+    assert!(empty.matches_commitment(Some(empty.compute_hash(&NativeCrypto)), &NativeCrypto));
 }
