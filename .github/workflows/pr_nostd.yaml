@@ -38,3 +38,15 @@ jobs:
         run: |
           cargo check -p ethrex-rlp -p ethrex-crypto --no-default-features --target riscv64imac-unknown-none-elf
           cargo check -p ethrex-crypto --no-default-features --features kzg-rs --target riscv64imac-unknown-none-elf
+
+  k256-backend-test:
+    name: ethrex-crypto k256 backend test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Setup Rust Environment
+        uses: ./.github/actions/setup-rust
+
+      - name: Test ethrex-crypto without secp256k1
+        run: cargo test -p ethrex-crypto --no-default-features --features std,kzg-rs
