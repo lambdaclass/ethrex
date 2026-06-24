@@ -2127,6 +2127,14 @@ impl FrameTransaction {
         if self.nonce_keys.windows(2).any(|w| w[0] >= w[1]) {
             return Err("nonce_keys must be strictly increasing".to_string());
         }
+        // EIP-8250: key 0 is the legacy linear (account) nonce domain and is valid
+        // only as the sole key. A list mixing key 0 with non-zero keys would make a
+        // single tx both increment the account nonce AND write NONCE_MANAGER slots,
+        // which `consume_nonce_set` never produces. (Keys are strictly increasing,
+        // so a present 0 is always first.)
+        if self.nonce_keys.len() > 1 && self.nonce_keys[0].is_zero() {
+            return Err("nonce key 0 is only valid as the sole nonce key".to_string());
+        }
         if self.nonce_seq == u64::MAX {
             return Err("nonce_seq must be < 2**64 - 1".to_string());
         }
@@ -5163,6 +5171,9 @@ mod tests {
         tx.nonce_keys = (0..17).map(U256::from).collect(); // > 16
         assert!(tx.validate_static_constraints().is_err());
         tx.nonce_keys = vec![U256::from(1u64), U256::from(1u64)]; // not strictly increasing
+        assert!(tx.validate_static_constraints().is_err());
+        // key 0 mixed with a non-zero key is rejected (key 0 must be the sole key)
+        tx.nonce_keys = vec![U256::zero(), U256::from(5u64)];
         assert!(tx.validate_static_constraints().is_err());
         // valid keys but nonce_seq == 2**64-1 is rejected
         tx.nonce_keys = vec![U256::zero()];

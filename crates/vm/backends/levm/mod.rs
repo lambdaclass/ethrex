@@ -2782,17 +2782,30 @@ impl LEVM {
         if current.code() == NONCE_MANAGER_RUNTIME_BYTECODE.as_slice() {
             return Ok(());
         }
+        // EIP-8250 activation (spec's 3-case rule). Case 1 (account absent): create
+        // with nonce 1. Case 2 (exists with empty code + empty storage): set the code,
+        // nonce = max(existing_nonce, 1), preserve balance, leave storage empty. Case 3
+        // (pre-existing code/storage) is undefined by the spec — the address is chosen
+        // so it cannot occur — so it is not special-cased; the idempotent guard above
+        // already returns early when our code is already installed. Balance is preserved
+        // because only code_hash and nonce are written; storage is never added here.
+        let existing_nonce = db
+            .get_account(NONCE_MANAGER_PREDEPLOY.address)
+            .map_err(EvmError::from)?
+            .info
+            .nonce;
+        let new_nonce = existing_nonce.max(PREDEPLOY_NONCE);
         let code = Code::from_bytecode(Bytes::from_static(&NONCE_MANAGER_RUNTIME_BYTECODE), crypto);
         let code_hash = code.hash;
         if let Some(recorder) = db.bal_recorder_mut() {
             recorder.record_code_change(NONCE_MANAGER_PREDEPLOY.address, code.code_bytes());
-            recorder.record_nonce_change(NONCE_MANAGER_PREDEPLOY.address, PREDEPLOY_NONCE);
+            recorder.record_nonce_change(NONCE_MANAGER_PREDEPLOY.address, new_nonce);
         }
         let acc = db
             .get_account_mut(NONCE_MANAGER_PREDEPLOY.address)
             .map_err(EvmError::from)?;
         acc.info.code_hash = code_hash;
-        acc.info.nonce = PREDEPLOY_NONCE;
+        acc.info.nonce = new_nonce;
         db.codes.entry(code_hash).or_insert(code);
         Ok(())
     }
