@@ -1548,7 +1548,7 @@ impl<'a> VM<'a> {
                 // `tx_level_backup` too. Outside a batch, the finished frame's
                 // backup never reaches the outer call frame, so absorb it
                 // directly into `tx_level_backup` here; otherwise an invalid-tx
-                // exit could not roll back this committed frame's state (B3).
+                // exit could not roll back this committed frame's state.
                 if result.0 {
                     if in_atomic_batch {
                         self.merge_call_frame_backup_with_parent(

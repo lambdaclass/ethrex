@@ -1,7 +1,7 @@
 //! EIP-8141: Frame Transactions
 //!
 //! Shared test harness for frame-transaction execution plus regression tests
-//! for the per-tx state-rollback invariant (finding B3):
+//! for the per-tx state-rollback invariant:
 //!
 //!   `VM::execute()` returning `Err` => `db.current_accounts_state` is
 //!   unchanged from before the tx, exactly like non-frame txs.
@@ -258,18 +258,18 @@ fn verify_frame(target: Address) -> Frame {
 }
 
 /// Assert that no seeded account's info (balance/nonce/code) or storage in
-/// `db.current_accounts_state` differs from its seeded value. This is THE B3
+/// `db.current_accounts_state` differs from its seeded value. This is THE rollback
 /// invariant: after an invalid tx the shared cache must show no residue.
 ///
 /// The sender (`FUNDED_SENDER`) is ALWAYS verified, even when the caller does
 /// not list it in `accounts`: `run_frame_tx` auto-seeds it, and a leaked sender
 /// nonce/balance on the invalid-tx path (e.g. an APPROVE nonce bump that was not
-/// rolled back) is exactly the kind of residue B3 must prevent. When the caller
+/// rolled back) is exactly the kind of residue this invariant must prevent. When the caller
 /// passes the sender explicitly, those values are used; otherwise the auto-seed
 /// defaults (`AUTO_SEED_SENDER_BALANCE`, nonce 0) are checked.
 ///
 /// Slot 0 of each seeded account is checked explicitly because the harness
-/// bytecodes write slot 0; a leftover `1` there is the B3 regression signature.
+/// bytecodes write slot 0; a leftover `1` there is the rollback regression signature.
 fn assert_db_cache_unchanged(db: &GeneralizedDatabase, accounts: &[SeededAccount]) {
     // Always include the auto-seeded sender so a leaked sender balance/nonce is
     // caught, mirroring `run_frame_tx`'s auto-seed.
@@ -301,7 +301,7 @@ fn assert_db_cache_unchanged(db: &GeneralizedDatabase, accounts: &[SeededAccount
         // Every storage slot present in the cache for this account must be its
         // seeded value (the seeded accounts start with empty storage, so any
         // non-zero value is residue). Slot 0 is the one the harness bytecodes
-        // touch, so a residual `1` here is the B3 regression signature.
+        // touch, so a residual `1` here is the rollback regression signature.
         for (slot, value) in current.storage.iter() {
             assert!(
                 value.is_zero(),
@@ -311,7 +311,7 @@ fn assert_db_cache_unchanged(db: &GeneralizedDatabase, accounts: &[SeededAccount
     }
 }
 
-// ==================== B3: invalid-tx rollback ====================
+// ==================== Invalid-tx rollback ====================
 
 #[test]
 fn invalid_frame_tx_leaves_db_cache_clean() {
@@ -346,7 +346,7 @@ fn invalid_frame_tx_leaves_db_cache_clean() {
     assert_db_cache_unchanged(&db, &accounts);
 }
 
-// ==================== B4: reverting SENDER frame must not leak value ====================
+// ==================== Reverting SENDER frame must not leak value ====================
 
 #[test]
 fn reverting_sender_frame_returns_value() {
@@ -421,7 +421,7 @@ fn reverting_sender_frame_returns_value() {
     );
 }
 
-// ==================== B2: payer charged at effective price (no burn) ====================
+// ==================== Payer charged at effective price (no burn) ====================
 
 #[test]
 fn payer_pays_effective_price_no_burn() {
@@ -483,7 +483,7 @@ fn payer_pays_effective_price_no_burn() {
     );
 }
 
-// ==================== B6: FRAMEPARAM stack operand order ====================
+// ==================== FRAMEPARAM stack operand order ====================
 
 /// FRAMEPARAM(param=0x01, frameIndex=0) → gas_limit of frame[0], then SSTORE at slot 0.
 /// Bytecode: PUSH1 0x01 (param), PUSH1 0x00 (frameIndex — top), FRAMEPARAM (0xB3),
@@ -557,7 +557,7 @@ fn frameparam_reads_frame_index_from_stack_top() {
     );
 }
 
-// ==================== B7: APPROVE scope-0 bypass ====================
+// ==================== APPROVE scope-0 bypass ====================
 
 #[test]
 fn approve_halts_when_frame_scope_is_none() {
@@ -593,7 +593,7 @@ fn approve_halts_when_frame_scope_is_none() {
     assert_db_cache_unchanged(&db, &accounts);
 }
 
-// ==================== B8: batched VERIFY revert invalidates tx ====================
+// ==================== Batched VERIFY revert invalidates tx ====================
 
 #[test]
 fn batched_verify_revert_invalidates_tx() {
@@ -700,7 +700,7 @@ fn payment_approval_may_precede_execution_approval() {
     );
 }
 
-// ==================== B9: SENDER/DEFAULT default code returns success ====================
+// ==================== SENDER/DEFAULT default code returns success ====================
 
 #[test]
 fn sender_frame_transfers_value_to_eoa() {
@@ -859,13 +859,13 @@ fn frame_tx_happy_path_sstore_and_log() {
         "SSTORE did not write 0x2a to slot 0 of worker"
     );
 
-    // 3. The LOG0 appears in the aggregated report.logs (B5: logs collected).
+    // 3. The LOG0 appears in the aggregated report.logs (logs collected).
     assert!(
         report.logs.iter().any(|l| l.address == worker),
         "log from worker missing from aggregated report.logs"
     );
 
-    // 4. Per-frame isolation (B5): frame_results[1] is success and carries the log;
+    // 4. Per-frame isolation: frame_results[1] is success and carries the log;
     //    frame_results[0] (the VERIFY/approve frame) has no logs.
     let frame_results = report
         .frame_results
@@ -1567,7 +1567,7 @@ mod frame_tx_7702_delegation_tests {
 // (migrated from crates/vm/levm/src/vm.rs)
 
 mod validation_observer_tests {
-    //! EIP-8141 mempool validation-prefix simulation harness tests (Phase 2).
+    //! EIP-8141 mempool validation-prefix simulation harness tests.
     //!
     //! These drive the real frame-execution machinery via
     //! [`VM::run_frame_validation_prefix`] over signature-less frame
@@ -2049,7 +2049,7 @@ mod validation_observer_tests {
 // (migrated from crates/vm/backends/levm/mod.rs)
 
 mod frame_validation_prefix_tests {
-    //! EIP-8141 mempool validation-prefix backend assertions (Phase 2). These
+    //! EIP-8141 mempool validation-prefix backend assertions. These
     //! exercise [`LEVM::simulate_frame_validation_prefix`] over signature-less
     //! frame transactions (an empty signature list trivially validates), where
     //! the prefix establishes a payer through real APPROVE code (not the
