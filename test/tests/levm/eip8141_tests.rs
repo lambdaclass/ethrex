@@ -120,7 +120,7 @@ fn frame_tx_env(tx: &FrameTransaction) -> Environment {
         // payer balances MUST use `run_frame_tx_with_fees`, which derives the
         // effective price min(base+priority, max_fee) like production.
         gas_price: U256::from(tx.max_fee_per_gas),
-        tx_nonce: tx.nonce,
+        tx_nonce: tx.nonce_seq,
         ..Default::default()
     }
 }
@@ -131,7 +131,8 @@ fn frame_tx_env(tx: &FrameTransaction) -> Environment {
 fn frame_tx_with_frames(frames: Vec<Frame>) -> FrameTransaction {
     FrameTransaction {
         chain_id: HARNESS_CHAIN_ID,
-        nonce: 0,
+        nonce_keys: vec![U256::zero()],
+        nonce_seq: 0,
         sender: FUNDED_SENDER,
         frames,
         signatures: Vec::new(),
@@ -139,6 +140,7 @@ fn frame_tx_with_frames(frames: Vec<Frame>) -> FrameTransaction {
         max_fee_per_gas: HARNESS_BASE_FEE + 1_000,
         max_fee_per_blob_gas: U256::zero(),
         blob_versioned_hashes: Vec::new(),
+        recent_root_references: Vec::new(),
         inner_hash: Default::default(),
         cached_canonical: Default::default(),
     }
@@ -157,7 +159,7 @@ fn run_frame_tx(
 ) -> (Result<ExecutionReport, VMError>, GeneralizedDatabase) {
     let mut seeded: Vec<SeededAccount> = accounts.to_vec();
     if !seeded.iter().any(|(addr, ..)| *addr == tx.sender) {
-        seeded.push((tx.sender, AUTO_SEED_SENDER_BALANCE, tx.nonce, Bytes::new()));
+        seeded.push((tx.sender, AUTO_SEED_SENDER_BALANCE, tx.nonce_seq, Bytes::new()));
     }
 
     let mut db = seeded_db(&seeded);
@@ -192,7 +194,7 @@ fn run_frame_tx_with_fees(
 ) -> (Result<ExecutionReport, VMError>, GeneralizedDatabase) {
     let mut seeded: Vec<SeededAccount> = accounts.to_vec();
     if !seeded.iter().any(|(addr, ..)| *addr == tx.sender) {
-        seeded.push((tx.sender, AUTO_SEED_SENDER_BALANCE, tx.nonce, Bytes::new()));
+        seeded.push((tx.sender, AUTO_SEED_SENDER_BALANCE, tx.nonce_seq, Bytes::new()));
     }
 
     let mut db = seeded_db(&seeded);
@@ -1001,6 +1003,7 @@ mod frame_tx_opcode_handler_tests {
             tx,
             approve_called_in_current_frame: false,
             total_gas_limit: 0,
+            legacy_sender_nonce: 0,
         }
     }
 
@@ -1086,6 +1089,7 @@ mod frame_tx_opcode_handler_tests {
             tx: FrameTransaction::default(),
             approve_called_in_current_frame: false,
             total_gas_limit: 0,
+            legacy_sender_nonce: 0,
         };
         let result = load_tx_param(&ctx, 0x0B).unwrap();
         assert_eq!(result, U256::zero());
@@ -1704,7 +1708,8 @@ mod validation_observer_tests {
     fn frame_tx_for_obs(sender: Address, frames: Vec<Frame>) -> Transaction {
         Transaction::FrameTransaction(FrameTransaction {
             chain_id: 0,
-            nonce: 0,
+            nonce_keys: vec![U256::zero()],
+            nonce_seq: 0,
             sender,
             frames,
             signatures: Vec::new(),
@@ -2177,7 +2182,8 @@ mod frame_validation_prefix_tests {
     fn frame_tx_prefix(sender: Address, frames: Vec<Frame>) -> Transaction {
         Transaction::FrameTransaction(FrameTransaction {
             chain_id: 0,
-            nonce: 0,
+            nonce_keys: vec![U256::zero()],
+            nonce_seq: 0,
             sender,
             frames,
             signatures: Vec::new(),

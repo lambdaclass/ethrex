@@ -79,6 +79,8 @@ pub const RECENT_ROOT_REFERENCE_ADDRESS_GAS: u64 = ACCESS_LIST_ADDRESS_COST;
 /// names the keccak constants KECCAK25_STATIC / KECCAK25_DYNAMIC_BASE).
 pub const RECENT_ROOT_REFERENCE_GAS: u64 =
     ACCESS_LIST_STORAGE_KEY_COST + 2 * KECCAK25_STATIC + 7 * KECCAK25_DYNAMIC_BASE;
+/// EIP-7906 TXTRACE. Provisional value (EIP marks gas cost TBD; 100 matches the EIP's own example, ~warm access).
+pub const TXTRACE: u64 = 100;
 
 pub fn framedatacopy(
     new_memory_size: usize,

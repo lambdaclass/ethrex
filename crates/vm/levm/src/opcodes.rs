@@ -3,7 +3,7 @@ use crate::{
     opcode_handlers::{
         OpInvalidHandler, OpStopHandler, OpcodeHandler, arithmetic::*, bitwise_comparison::*,
         block::*, dup::*, environment::*, exchange::*, frame_tx::*, keccak::*, logging::*, push::*,
-        stack_memory_storage_flow::*, system::*,
+        stack_memory_storage_flow::*, system::*, tx_trace::*,
     },
     vm::VM,
 };
@@ -182,6 +182,10 @@ pub enum Opcode {
     // EIP-8272 (spec Constants table says 0xB4, which collides with SIGPARAM;
     // ethrex uses the next free byte 0xB5 — see docs/eip-8272.md).
     RECENTROOTREFLOAD = 0xB5,
+    // EIP-7906 — renumbered from 0xB5/0xB6 to 0xB6/0xB7 on hegota-devnet so that
+    // EIP-8272's RECENTROOTREFLOAD owns 0xB5 (see docs/hegota-devnet.md).
+    TXTRACE = 0xB6,
+    EVENTDATACOPY = 0xB7,
     // EIP-8024
     DUPN = 0xE6,
     SWAPN = 0xE7,
@@ -344,6 +348,8 @@ impl From<u8> for Opcode {
             table[0xB3] = Opcode::FRAMEPARAM;
             table[0xB4] = Opcode::SIGPARAM;
             table[0xB5] = Opcode::RECENTROOTREFLOAD;
+            table[0xB6] = Opcode::TXTRACE;
+            table[0xB7] = Opcode::EVENTDATACOPY;
             table[0x51] = Opcode::MLOAD;
             table[0x52] = Opcode::MSTORE;
             table[0x53] = Opcode::MSTORE8;
@@ -671,6 +677,10 @@ impl<'a> VM<'a> {
         opcode_table[Opcode::RECENTROOTREFLOAD as usize] =
             OpCodeFn::new::<OpRecentRootRefLoadHandler>();
 
+        // EIP-7906 transaction-trace opcodes (Hegota)
+        opcode_table[Opcode::TXTRACE as usize] = OpCodeFn::new::<OpTxTraceHandler>();
+        opcode_table[Opcode::EVENTDATACOPY as usize] = OpCodeFn::new::<OpEventDataCopyHandler>();
+
         opcode_table
     }
 }
@@ -693,7 +703,7 @@ mod tests {
         // 0xEF is never assigned in any table -> it holds the invalid handler.
         for fork in [Fork::Osaka, Fork::Amsterdam] {
             let table = VM::build_opcode_table(fork);
-            for byte in [0xAAusize, 0xB0, 0xB1, 0xB2, 0xB3, 0xB4, 0xB5] {
+            for byte in [0xAAusize, 0xB0, 0xB1, 0xB2, 0xB3, 0xB4, 0xB5, 0xB6, 0xB7] {
                 assert!(
                     same_handler(table[byte], table[0xEF]),
                     "frame opcode {byte:#x} must be invalid at {fork:?}"
