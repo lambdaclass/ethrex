@@ -506,7 +506,7 @@ impl GeneralizedDatabase {
                         }
                     };
 
-                    code.bytecode.len() as u64
+                    code.len() as u64
                 };
 
                 let metadata = CodeMetadata {
@@ -938,18 +938,27 @@ impl<'a> VM<'a> {
                 .current_accounts_state
                 .get(&address)
                 .and_then(|account| self.db.codes.get(&account.info.code_hash))
-                .map(|c| c.bytecode.clone())
+                .map(|c| c.code_bytes())
                 .unwrap_or_default();
             let has_code = !current_code_bytes.is_empty();
             recorder.capture_initial_code_presence(address, has_code);
             recorder.set_initial_code(address, current_code_bytes);
-            recorder.record_code_change(address, new_bytecode.bytecode.clone());
+            recorder.record_code_change(address, new_bytecode.code_bytes());
         }
 
         let acc = self.get_account_mut(address)?;
         let code_hash = new_bytecode.hash;
         acc.info.code_hash = new_bytecode.hash;
-        self.db.codes.entry(code_hash).or_insert(new_bytecode);
+        if let Entry::Vacant(entry) = self.db.codes.entry(code_hash) {
+            entry.insert(new_bytecode);
+            // Track the insertion so a frame revert evicts it: a stale entry
+            // would serve a later read of the same hash from the cache,
+            // hiding the store read from execution-witness recording.
+            self.current_call_frame
+                .call_frame_backup
+                .inserted_code_hashes
+                .push(code_hash);
+        }
         Ok(())
     }
 
