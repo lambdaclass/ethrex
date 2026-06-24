@@ -457,12 +457,12 @@ impl Store {
     pub async fn wait_for_persistence_idle(&self) -> Result<(), StoreError> {
         let tx = self.persist_tx.clone();
         tokio::task::spawn_blocking(move || {
-            let (ack_tx, ack_rx) = sync_channel::<()>(1);
+            let (ack_tx, ack_rx) = sync_channel::<Result<(), StoreError>>(1);
             tx.send(PersistMessage::Ping(ack_tx))
                 .map_err(|e| StoreError::Custom(format!("wait_for_persistence_idle send: {e}")))?;
             ack_rx
                 .recv()
-                .map_err(|e| StoreError::Custom(format!("wait_for_persistence_idle ack: {e}")))
+                .map_err(|e| StoreError::Custom(format!("wait_for_persistence_idle ack: {e}")))?
         })
         .await
         .map_err(|e| StoreError::Custom(format!("wait_for_persistence_idle join: {e}")))?
@@ -1990,9 +1990,12 @@ impl Store {
                             });
                         // BATCH (wait_for_flush == true): ack only now — the caller
                         // blocks until durable + layer built, bounding in-flight
-                        // batches to ~1. LIVE: stash for the next message's ack.
+                        // batches to ~1. Fold in any prior live-path flush error so
+                        // a live→batch transition does not silently discard it.
+                        // LIVE: stash for the next message's ack.
                         if bp.wait_for_flush {
-                            let _ = bp.ack.send(flushed);
+                            let prior = std::mem::replace(&mut last_flush_result, Ok(()));
+                            let _ = bp.ack.send(prior.and(flushed));
                         } else {
                             last_flush_result = flushed;
                         }
@@ -2001,8 +2004,10 @@ impl Store {
                         // Idle handshake for `wait_for_persistence_idle`. Because
                         // the worker is FIFO and single-threaded, reaching this arm
                         // means every earlier `Block` message was fully processed
-                        // (staged + built + flushed + evicted). Acking proves idle.
-                        let _ = ack.send(());
+                        // (staged + built + flushed + evicted). Drain the pending
+                        // flush result so a live-path flush failure is not silently
+                        // swallowed — the ack carries it to the caller.
+                        let _ = ack.send(std::mem::replace(&mut last_flush_result, Ok(())));
                     }
                     Err(_) => return,
                 }
@@ -3601,7 +3606,7 @@ struct BlockPersist {
 /// idle.
 enum PersistMessage {
     Block(BlockPersist),
-    Ping(std::sync::mpsc::SyncSender<()>),
+    Ping(std::sync::mpsc::SyncSender<Result<(), StoreError>>),
 }
 
 /// Drain all unflushed blocks from the buffer to the backend in one write tx,
