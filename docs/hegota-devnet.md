@@ -51,5 +51,3 @@ EIP-8250 / EIP-8272 → `eips.ethereum.org` master at implementation time (pin t
 
 - EIP-8272 TXPARAM `0x0D → 0x0F` fix PR (drafted; from `lambdaclass/EIPs`).
 - EIP-8250/8141 TXPARAM `0x0B` conflict (raise for an authoritative registry).
-
-> Full plan + per-EIP integration maps: `openspec/changes/hegota-fork-eips/` (`proposal.md`, `design.md`, `tasks.md`).
