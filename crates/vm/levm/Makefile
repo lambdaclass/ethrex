@@ -74,7 +74,7 @@ compile-contracts:
 	cd ../../../ && \
 	cargo run --package revm_comparison \
 	--bin compile \
-	--manifest-path crates/vm/levm/bench/revm_comparison/Cargo.toml
+	--manifest-path tooling/revm_comparison/Cargo.toml
 
 revm-comparison: compile-contracts ## 📊 Run benchmarks of fibonacci and factorial for both REVM and LEVM
 	$(MAKE) build-revm-comparison
@@ -107,7 +107,7 @@ revm-comparison-ci: compile-contracts
 	$(call run_benchmark_ci,ERC20Mint,REPETITIONS_SLOW,BENCH_MINT_ITERATIONS)
 
 render-benches:
-	python3 ./bench/revm_comparison/create_bench_page.py > report.html
+	python3 ../../../tooling/revm_comparison/create_bench_page.py > report.html
 
 flamegraph-levm-benchmark:
 	$(MAKE) flamegraph-levm-bench-generic name=Fibonacci repetitions=$(REPETITIONS) iterations=$(BENCH_FIB_ITERATIONS)
@@ -125,14 +125,19 @@ flamegraph-levm-bench-generic:
 	mkdir -p flamegraph_levm_benchmark
 	cargo flamegraph --root --package revm_comparison --bin benchmark --output flamegraph_levm_benchmark/flamegraph_levm_$(name).svg -- levm $(name) $(repetitions) $(iterations)
 
+# Absolute target dir so the benchmark binary lands in this crate's target/,
+# provided make is run from or with -C crates/vm/levm (the cd inside the recipe
+# is harmless since $(CURDIR) is expanded before it).
+LEVM_TARGET_DIR := $(CURDIR)/target
+
 build-revm-comparison:
-	cd bench/revm_comparison && \
-		CARGO_TARGET_DIR=../../target \
+	cd ../../../tooling/revm_comparison && \
+		CARGO_TARGET_DIR=$(LEVM_TARGET_DIR) \
 		cargo build --release --bin benchmark
 
 build-revm-comparison-debuginfo:
-	cd bench/revm_comparison && \
-		CARGO_PROFILE_RELEASE_DEBUG=1 CARGO_TARGET_DIR=../../target \
+	cd ../../../tooling/revm_comparison && \
+		CARGO_PROFILE_RELEASE_DEBUG=1 CARGO_TARGET_DIR=$(LEVM_TARGET_DIR) \
 		cargo build --release --bin benchmark
 
 ###### Build Client with LEVM ######
