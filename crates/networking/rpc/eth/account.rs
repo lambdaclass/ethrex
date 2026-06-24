@@ -99,7 +99,7 @@ impl RpcHandler for GetCodeRequest {
             .storage
             .get_code_by_account_address(block_number, self.address)
             .await?
-            .map(|c| c.bytecode)
+            .map(|c| c.code_bytes())
             .unwrap_or_default();
 
         serde_json::to_value(format!("0x{code:x}"))
@@ -163,28 +163,28 @@ impl RpcHandler for GetTransactionCountRequest {
             self.address, self.block
         );
 
-        // If the tag is Pending, we need to get the nonce from the mempool
-        let pending_nonce = if self.block == BlockTag::Pending {
-            context.blockchain.mempool.get_nonce(&self.address)?
-        } else {
-            None
+        // Resolve the canonical nonce for the requested block first. For the
+        // `Pending` tag this resolves to the latest block.
+        let Some(block_number) = self.block.resolve_block_number(&context.storage).await? else {
+            return serde_json::to_value("0x0")
+                .map_err(|error| RpcErr::Internal(error.to_string()));
         };
+        let account_nonce = context
+            .storage
+            .get_nonce_by_account_address(block_number, self.address)
+            .await?
+            .unwrap_or_default();
 
-        let nonce = match pending_nonce {
-            Some(nonce) => nonce,
-            None => {
-                let Some(block_number) = self.block.resolve_block_number(&context.storage).await?
-                else {
-                    return serde_json::to_value("0x0")
-                        .map_err(|error| RpcErr::Internal(error.to_string()));
-                };
-
-                context
-                    .storage
-                    .get_nonce_by_account_address(block_number, self.address)
-                    .await?
-                    .unwrap_or_default()
+        // For `Pending`, the mempool may advance the nonce past the on-chain
+        // value, but it must never report a value below it. Stale txs left in
+        // the pool can otherwise yield a pending nonce lower than `latest`.
+        let nonce = if self.block == BlockTag::Pending {
+            match context.blockchain.mempool.get_nonce(&self.address)? {
+                Some(mempool_nonce) => mempool_nonce.max(account_nonce),
+                None => account_nonce,
             }
+        } else {
+            account_nonce
         };
 
         serde_json::to_value(format!("0x{nonce:x}"))
@@ -290,5 +290,92 @@ mod tests {
         assert_eq!(request.address, expected_address);
         assert_eq!(request.storage_slot, H256::from_uint(&U256::from(1u64)));
         assert_eq!(request.block, BlockTag::Latest);
+    }
+
+    /// Builds an in-memory store whose genesis pre-sets `address`'s nonce, and a
+    /// context over it. Mirrors `setup_store` but lets the test fix the on-chain
+    /// nonce without executing blocks.
+    async fn context_with_account_nonce(address: Address, nonce: u64) -> RpcApiContext {
+        use crate::test_utils::{TEST_GENESIS, default_context_with_storage};
+        use ethrex_common::types::{Genesis, GenesisAccount};
+        use ethrex_storage::{EngineType, Store};
+
+        let mut genesis: Genesis = serde_json::from_str(TEST_GENESIS).unwrap();
+        genesis.alloc.insert(
+            address,
+            GenesisAccount {
+                code: Default::default(),
+                storage: Default::default(),
+                balance: U256::from(10u64).pow(U256::from(20u64)),
+                nonce,
+            },
+        );
+        let mut store = Store::new("", EngineType::InMemory).unwrap();
+        store.add_initial_state(genesis).await.unwrap();
+        default_context_with_storage(store).await
+    }
+
+    fn nonce_request(address: Address, tag: BlockTag) -> GetTransactionCountRequest {
+        use crate::types::block_identifier::BlockIdentifier;
+        GetTransactionCountRequest {
+            address,
+            block: BlockIdentifierOrHash::Identifier(BlockIdentifier::Tag(tag)),
+        }
+    }
+
+    fn stale_mempool_tx(address: Address, nonce: u64, context: &RpcApiContext) {
+        use ethrex_common::types::{LegacyTransaction, MempoolTransaction, Transaction, TxKind};
+        let tx = Transaction::LegacyTransaction(LegacyTransaction {
+            nonce,
+            gas: 21000,
+            to: TxKind::Create,
+            ..Default::default()
+        });
+        context
+            .blockchain
+            .mempool
+            .add_transaction(
+                H256::random(),
+                address,
+                MempoolTransaction::new(tx, address),
+            )
+            .unwrap();
+    }
+
+    /// Regression: a stale tx left in the pool with a nonce below the account's
+    /// on-chain nonce must not make `pending` report a value lower than `latest`.
+    #[tokio::test]
+    async fn pending_nonce_is_clamped_to_latest() {
+        let address = Address::from_low_u64_be(0xabcd);
+        let context = context_with_account_nonce(address, 0x59).await;
+        stale_mempool_tx(address, 0x50, &context);
+
+        let latest = nonce_request(address, BlockTag::Latest)
+            .handle(context.clone())
+            .await
+            .unwrap();
+        let pending = nonce_request(address, BlockTag::Pending)
+            .handle(context.clone())
+            .await
+            .unwrap();
+
+        assert_eq!(latest, json!("0x59"));
+        assert_eq!(pending, json!("0x59"));
+    }
+
+    /// A pending tx above the on-chain nonce still advances `pending`.
+    #[tokio::test]
+    async fn pending_nonce_advances_past_latest() {
+        let address = Address::from_low_u64_be(0xabcd);
+        let context = context_with_account_nonce(address, 0x59).await;
+        // Highest pending nonce is 0x59, so the next usable nonce is 0x5a.
+        stale_mempool_tx(address, 0x59, &context);
+
+        let pending = nonce_request(address, BlockTag::Pending)
+            .handle(context.clone())
+            .await
+            .unwrap();
+
+        assert_eq!(pending, json!("0x5a"));
     }
 }

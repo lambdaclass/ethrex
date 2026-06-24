@@ -17,7 +17,7 @@ use ethrex_crypto::keccak::keccak_hash;
 use ethrex_crypto::{Crypto, NativeCrypto};
 use ethrex_rlp::constants::RLP_NULL;
 use ethrex_rlp::encode::RLPEncode;
-use rustc_hash::FxHashSet;
+use rustc_hash::{FxHashMap, FxHashSet};
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 
@@ -27,7 +27,7 @@ pub use self::nibbles::Nibbles;
 pub use self::threadpool::ThreadPool;
 pub use self::verify_range::verify_range;
 pub use self::{
-    node::{Node, NodeRef},
+    node::{Node, NodeRef, OnceLock},
     node_hash::NodeHash,
 };
 
@@ -368,6 +368,81 @@ impl Trie {
 
         let root = get_embedded_node(all_nodes, root_rlp)?;
         Ok(root.into())
+    }
+
+    /// Gets node with embedded references to child nodes, all in just one `Node`.
+    ///
+    /// Note that this method caches the hash of each node, so it assumes the provided `all_nodes` are well-formed.
+    pub fn get_embedded_root_committed(
+        all_nodes: &FxHashMap<H256, Node>,
+        root_hash: H256,
+        crypto: &dyn Crypto,
+    ) -> Result<NodeRef, TrieError> {
+        // If the root hash is of the empty trie then we can get away by setting the NodeRef to default
+        if root_hash == *EMPTY_TRIE_HASH {
+            return Ok(NodeRef::default());
+        }
+
+        let root_rlp = all_nodes.get(&root_hash).ok_or_else(|| {
+            TrieError::InconsistentTree(Box::new(InconsistentTreeError::RootNotFound(root_hash)))
+        })?;
+
+        /// Creates an embedded node reference with its hash slot pre-seeded.
+        ///
+        /// The caller must guarantee that `hash` is the hash of the referenced
+        /// node, for example because the node was just resolved by looking that
+        /// hash up. Seeding lets later hash computations over the subtree reuse
+        /// the known value instead of re-encoding and re-hashing it.
+        fn node_with_hash(node: Node, hash: NodeHash) -> NodeRef {
+            NodeRef::Node(Arc::new(node), OnceLock::from(hash))
+        }
+
+        fn get_embedded_node_committed(
+            all_nodes: &FxHashMap<H256, Node>,
+            cur_node: &Node,
+            crypto: &dyn Crypto,
+        ) -> Result<Node, TrieError> {
+            Ok(match cur_node.clone() {
+                Node::Branch(mut node) => {
+                    for choice in &mut node.choices {
+                        let NodeRef::Hash(hash) = *choice else {
+                            continue;
+                        };
+
+                        if hash.is_valid() {
+                            *choice = match all_nodes.get(&hash.finalize(crypto)) {
+                                Some(node) => node_with_hash(
+                                    get_embedded_node_committed(all_nodes, node, crypto)?,
+                                    hash,
+                                ),
+                                None => hash.into(),
+                            };
+                        }
+                    }
+
+                    (*node).into()
+                }
+                Node::Extension(mut node) => {
+                    let NodeRef::Hash(hash) = node.child else {
+                        return Ok(node.into());
+                    };
+
+                    node.child = match all_nodes.get(&hash.finalize(crypto)) {
+                        Some(node) => node_with_hash(
+                            get_embedded_node_committed(all_nodes, node, crypto)?,
+                            hash,
+                        ),
+                        None => hash.into(),
+                    };
+
+                    node.into()
+                }
+                Node::Leaf(node) => node.into(),
+            })
+        }
+
+        let root = get_embedded_node_committed(all_nodes, root_rlp, crypto)?;
+        Ok(node_with_hash(root, NodeHash::Hashed(root_hash)))
     }
 
     /// Builds a trie from a set of nodes with an empty InMemoryTrieDB as a backend because the nodes are embedded in the root.

@@ -16,7 +16,7 @@ Examples:
 
 The version must be updated to `X.Y.Z` in the release branch. There are multiple `Cargo.toml` and `Cargo.lock` files that need to be updated.
 
-First, we need to update the version of the workspace package. You can find it in the `Cargo.toml` file in the root directory, under the `[workspace.package]` section.
+First, we need to update the version of the workspace package. You can find it in the `Cargo.toml` file in the root directory, under the `[workspace.package]` section. This is also the version the library crates are published under on crates.io when the release is finalized, so it must be a clean semver version (the `-rc.W` suffix lives only on the git tag).
 
 Then, we need to update five more `Cargo.toml` files that are not part of the workspace but fulfill the role of packages in the monorepo. These are located in the following paths:
 
@@ -76,6 +76,19 @@ A changelog will be generated based on commit names (using conventional commits)
 
 ## 4th - Test & Publish Release
 
+### Testing checklist
+
+Before publishing the release, run through the following checks using the pre-release binaries:
+
+- [ ] Upgrade `ethrex-ethdocker-mainnet`
+- [ ] Upgrade `ethrex-mainnet-1`
+- [ ] Upgrade `ethrex-minimum-mainnet`
+- [ ] Launch multisync on `ethrex-multisync-main`
+- [ ] Upgrade a local L2 created with the previous version and run the integration tests
+- [ ] Run the L2 integration tests with a SP1 prover on the GPU server (`l2-gpu`)
+
+### Publish
+
 Once the pre-release is created and you want to publish the release, go to the [release page](https://github.com/lambdaclass/ethrex/releases) and follow the next steps:
 
 1. Click on the edit button of the last pre-release created
@@ -90,7 +103,32 @@ Once the pre-release is created and you want to publish the release, go to the [
 
     ![edit title](../img/publish_release_step_3.png)
 
-4. Set the release as the latest release (you will need to uncheck the pre-release first). And finally, click on `Update release`
+4. Customize the release notes.
+
+    The auto-generated changelog lists every commit, but it doesn't tell operators what actually matters in this release. Above the auto-generated changelog, add a hand-written summary using [GitHub alerts](https://docs.github.com/en/get-started/writing-on-github/getting-started-with-writing-and-formatting-on-github/basic-writing-and-formatting-syntax#alerts). Pick boxes by what the operator needs to decide, in this order:
+
+    - `> [!IMPORTANT]` — **only** when the release carries critical security or correctness fixes. One line stating that upgrading is strongly recommended for all operators.
+    - `> [!WARNING]` — **only** when the upgrade can't be cleanly undone or carries a breaking change the operator must account for: a database schema migration you can't roll back from, a required resync, removed or renamed CLI flags / config options, changed defaults, breaking RPC/API changes, or new minimum requirements (disk, dependency, consensus-client version). State what changes and what the operator must do.
+    - `> [!NOTE]` — **always**. A **What's new** list of the highlights (new features, important fixes), plus a line saying whether a resync is needed (if not already covered above).
+
+    Keep the space after `>` (`> [!NOTE]`, not `>[!NOTE]`) and leave a blank line between boxes so each renders separately. Drop the `[!IMPORTANT]` / `[!WARNING]` boxes when they don't apply — a routine release needs only the `[!NOTE]`.
+
+    ```markdown
+    > [!IMPORTANT]
+    > This release contains critical fixes. Upgrading is strongly recommended for all operators.
+
+    > [!WARNING]
+    > This release changes the database schema; once you upgrade you can't roll back to a previous version. The migration runs automatically.
+
+    > [!NOTE]
+    > **What's new**
+    > - <highlight>
+    > - <highlight>
+    >
+    > No resync is needed.
+    ```
+
+5. Set the release as the latest release (you will need to uncheck the pre-release first). And finally, click on `Update release`
 
     ![set latest release](../img/publish_release_step_4.png)
 
@@ -98,6 +136,25 @@ Once done, the CI will publish new tags for the already compiled docker images:
 
 - `ghcr.io/lambdaclass/ethrex:X.Y.Z`, `ghcr.io/lambdaclass/ethrex:latest`
 - `ghcr.io/lambdaclass/ethrex:X.Y.Z-l2`, `ghcr.io/lambdaclass/ethrex:l2`
+
+Promoting the pre-release to a full release also publishes ethrex's library crates to crates.io — see the next section.
+
+### Publishing to crates.io
+
+Promoting the pre-release to a full release (the `released` event from the step above) triggers the `publish.yml` workflow, which runs `cargo publish` for ethrex's publishable library crates in dependency order, at the workspace version `X.Y.Z`.
+
+> [!NOTE]
+> Only the **final** release publishes to crates.io. Pre-release (`vX.Y.Z-rc.W`) tags do **not**: the `released` event does not fire for pre-releases, and crates.io versions are immutable, so a release candidate must never claim the version before it has been tested.
+
+The crates are published at the `[workspace.package].version` bumped in step 2; the `-rc.W` suffix lives only on the git tag and never reaches crates.io.
+
+This requires a one-time organizational setup before the first release that publishes:
+
+- A `CRATES_IO_TOKEN` repository secret with publish rights for the crates.
+- A `crates-release-prod` GitHub environment (the workflow runs inside it).
+- crates.io ownership of the crate names (the first publish under the token claims them).
+
+The workflow is idempotent: a crate version already on crates.io is skipped, so re-running after a partial failure is safe. To validate without publishing, run it manually from the Actions tab (the `workflow_dispatch` trigger) with the dry-run input checked — it lists each crate's package contents instead of publishing.
 
 ## 5th - Update Homebrew
 
@@ -155,7 +212,7 @@ If hotfixes are needed before the final release, commit them to `release/vX.Y.Z`
 
 ### Failure on "latest release" workflow
 
-If the CI fails when setting a release as latest (step 4), Docker tags `latest` and `l2` may not be updated. To manually push those changes, follow these steps:
+If the CI fails when setting a release as latest (step 5), Docker tags `latest` and `l2` may not be updated. To manually push those changes, follow these steps:
 
 - Create a new Github Personal Access Token (PAT) from the [settings](https://github.com/settings/tokens/new).
 - Check `write:packages` permission (this will auto-check `repo` permissions too), give a name and a short expiration time.
@@ -188,3 +245,7 @@ docker push ghcr.io/lambdaclass/ethrex:l2
 ```
 
 - Delete the PAT for security ([here](https://github.com/settings/tokens))
+
+### Failure on the crates.io publish workflow
+
+If `publish.yml` fails partway through, fix the cause and re-run the workflow. Crates already published at the release version are skipped (the run tolerates an "already exists" error), so it resumes from the first crate that has not been published yet. Because crates are published in dependency order, a metadata or ordering error in one crate blocks the crates that depend on it, while the ones published before it stay published (crates.io versions cannot be unpublished or overwritten — a fix requires a new version).
