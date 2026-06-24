@@ -2060,6 +2060,10 @@ impl Store {
                         });
                         if let Err(e) = staged {
                             // Stage failure is terminal for this message.
+                            // Clear the pending root so gated readers are not
+                            // blocked forever (apply_trie_phase1, which normally
+                            // does this, is skipped when we continue here).
+                            persist_pending_roots.clear(bp.child_state_root);
                             let _ = bp.ack.send(Err(e));
                             continue;
                         }
