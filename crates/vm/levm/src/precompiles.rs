@@ -249,9 +249,11 @@ pub const PRECOMPILES: [Precompile; 18] = [
 ];
 
 pub fn precompiles_for_fork(fork: Fork) -> impl Iterator<Item = Precompile> {
-    PRECOMPILES
-        .into_iter()
-        .filter(move |precompile| precompile.active_since_fork <= fork)
+    PRECOMPILES.into_iter().filter(move |precompile| {
+        precompile.active_since_fork <= fork
+            // EIP-8200: modexp is EVMified at Osaka
+            && !(fork >= Fork::Osaka && precompile.address == MODEXP.address)
+    })
 }
 
 pub fn is_precompile(address: &Address, fork: Fork, vm_type: VMType) -> bool {
