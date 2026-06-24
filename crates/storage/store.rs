@@ -1642,11 +1642,11 @@ impl Store {
         Ok((parent_state_root, last_state_root))
     }
 
+    /// Single path for both live (`batch_mode == false`) and full-sync
+    /// (`batch_mode == true`) updates. Both hand the whole unit (block data +
+    /// one aggregate trie diff) to the SINGLE persist worker and wait for its ack;
+    /// `wait_for_flush` (= `batch_mode`) selects when the worker acks.
     fn apply_updates(&self, update_batch: UpdateBatch) -> Result<(), StoreError> {
-        if update_batch.batch_mode {
-            return self.apply_updates_synchronous(update_batch);
-        }
-
         let (parent_state_root, last_state_root) = self.batch_state_roots(&update_batch)?;
 
         let UpdateBatch {
@@ -1655,7 +1655,7 @@ impl Store {
             blocks,
             receipts,
             code_updates,
-            ..
+            batch_mode,
         } = update_batch;
 
         // 1. Register the new block's state root as in-flight BEFORE handing the
@@ -1669,6 +1669,7 @@ impl Store {
         // 2. Pair the block(s) with their receipts. The live newPayload path is a
         //    single block; keep that fast path (no HashMap) and wrap it as a
         //    1-element Vec so the persist worker handles live and batch uniformly.
+        //    Full sync sends many blocks; the `else` branch joins receipts by hash.
         let blocks_with_receipts: Vec<(Block, Vec<Receipt>)> = if blocks.len() == 1 {
             let block = blocks.into_iter().next().expect("len == 1");
             let hash = block.hash();
@@ -1691,15 +1692,21 @@ impl Store {
         };
 
         // 3. Hand the whole unit (block data + trie diff) to the SINGLE persist
-        //    worker and wait for its ack. With `wait_for_flush: false` the worker
-        //    acks right after staging the block data (the fast, pipelined path),
-        //    so this returns before the trie layer build and disk flush complete.
-        //    The ack carries the PRIOR message's flush result, so a persistence
-        //    error surfaces here on the next call (the node stops reporting VALID).
-        //    The send is bounded by the worker channel — that is the backpressure
-        //    that throttles newPayload. The trie build then runs on the worker; the
-        //    read barrier (`gated_snapshot`) keeps any reader of this root
-        //    consistent until the layer lands.
+        //    worker and wait for its ack. `wait_for_flush == batch_mode`:
+        //    - LIVE (false): the worker acks right after staging the block data
+        //      (the fast, pipelined path), so this returns before the trie layer
+        //      build and disk flush complete. The ack carries the PRIOR message's
+        //      flush result, so a persistence error surfaces here on the next call
+        //      (the node then stops reporting VALID). The send is bounded by the
+        //      worker channel — that is the backpressure that throttles newPayload.
+        //      The trie build runs on the worker; the read barrier
+        //      (`gated_snapshot`) keeps any reader of this root consistent until
+        //      the layer lands.
+        //    - BATCH (true): the worker stages all N blocks, builds the single
+        //      aggregate trie layer, flushes every staged block in ONE tx
+        //      (advancing `flushed_upto` to the max block number — the marker fix),
+        //      commits the bottom trie layer when `BATCH_COMMIT_THRESHOLD`-deep,
+        //      then acks. Blocking on that ack bounds in-flight batches to ~1.
         let (ack_tx, ack_rx) = sync_channel(1);
         self.persist_tx
             .send(PersistMessage::Block(BlockPersist {
@@ -1709,97 +1716,13 @@ impl Store {
                 child_state_root: last_state_root,
                 account_updates,
                 storage_updates,
-                wait_for_flush: false,
+                wait_for_flush: batch_mode,
                 ack: ack_tx,
             }))
             .map_err(|e| StoreError::Custom(format!("failed to send block persist: {e}")))?;
         ack_rx
             .recv()
             .map_err(|e| StoreError::Custom(format!("block persist ack failed: {e}")))??;
-
-        Ok(())
-    }
-
-    /// Synchronous (batch-mode) implementation of `apply_updates`.
-    ///
-    /// Used when `batch_mode = true` (full sync). Writes block data directly to
-    /// the backend in the caller's thread — no buffer, no background worker.
-    fn apply_updates_synchronous(&self, update_batch: UpdateBatch) -> Result<(), StoreError> {
-        let db = self.backend.clone();
-        let (parent_state_root, last_state_root) = self.batch_state_roots(&update_batch)?;
-        let trie_upd_worker_tx = self.trie_update_worker_tx.clone();
-
-        let UpdateBatch {
-            account_updates,
-            storage_updates,
-            ..
-        } = update_batch;
-
-        // Capacity one ensures sender just notifies and goes on
-        let (notify_tx, notify_rx) = sync_channel(1);
-        let wait_for_new_layer = notify_rx;
-        // Batch/full-sync waits synchronously for the layer (no concurrent reader
-        // races a bulk import), so it passes a `result_sender` and does not use
-        // the pending-root read barrier.
-        let trie_update = TrieUpdate {
-            parent_state_root,
-            account_updates,
-            storage_updates,
-            result_sender: Some(notify_tx),
-            child_state_root: last_state_root,
-            is_batch: true,
-        };
-        trie_upd_worker_tx
-            .send(TrieMessage::Update(trie_update))
-            .map_err(|e| {
-                StoreError::Custom(format!("failed to read new trie layer notification: {e}"))
-            })?;
-        let mut tx = db.begin_write()?;
-
-        for block in update_batch.blocks {
-            let block_number = block.header.number;
-            let block_hash = block.hash();
-            let hash_key = block_hash.encode_to_vec();
-
-            let header_value_rlp = BlockHeaderRLP::from(block.header.clone());
-            tx.put(HEADERS, &hash_key, header_value_rlp.bytes())?;
-
-            let body_value = BlockBodyRLP::from_bytes(block.body.encode_to_vec());
-            tx.put(BODIES, &hash_key, body_value.bytes())?;
-
-            tx.put(BLOCK_NUMBERS, &hash_key, &block_number.to_le_bytes())?;
-
-            for (index, transaction) in block.body.transactions.iter().enumerate() {
-                tx.merge(
-                    TRANSACTION_LOCATIONS,
-                    transaction.hash().as_bytes(),
-                    &encode_tx_location_operand(block_number, block_hash, index as u64),
-                )?;
-            }
-        }
-
-        for (block_hash, receipts) in update_batch.receipts {
-            for (index, receipt) in receipts.into_iter().enumerate() {
-                let key = receipt_key(&block_hash, index as u64);
-                let value = receipt.encode_to_vec();
-                tx.put(RECEIPTS_V2, &key, &value)?;
-            }
-        }
-
-        for (code_hash, code) in update_batch.code_updates {
-            let buf = encode_code(&code);
-            let metadata_buf = (code.len() as u64).to_be_bytes();
-            tx.put(ACCOUNT_CODES, code_hash.as_ref(), &buf)?;
-            tx.put(ACCOUNT_CODE_METADATA, code_hash.as_ref(), &metadata_buf)?;
-        }
-
-        // Wait for an updated top layer so every caller afterwards sees a consistent view.
-        // Specifically, the next block produced MUST see this upper layer.
-        wait_for_new_layer
-            .recv()
-            .map_err(|e| StoreError::Custom(format!("recv failed: {e}")))??;
-        // After top-level is added, we can make the rest of the changes visible.
-        tx.commit()?;
 
         Ok(())
     }
@@ -3857,6 +3780,11 @@ struct TrieUpdate {
 /// blocked back at `recv()` — i.e. persistence is idle. See
 /// `Store::wait_for_persistence_idle`.
 enum TrieMessage {
+    // Nothing sends `Update` anymore — both the live and the batch paths now go
+    // through the single persist worker (`PersistMessage`). The trie worker is
+    // kept only so `wait_for_persistence_idle` can `Ping` it; this variant and
+    // its handling are retired in the next task.
+    #[allow(dead_code)]
     Update(TrieUpdate),
     Ping,
 }

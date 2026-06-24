@@ -368,6 +368,75 @@ async fn boot_on_legacy_db_without_marker_keeps_head() {
     );
 }
 
+/// Regression: the batch (full-sync) path must advance the durable `flushed_upto`
+/// marker, exactly like the live path. The pre-Task-3 `apply_updates_synchronous`
+/// wrote block data directly but never called `write_flushed_upto`, so after a
+/// live → full-sync → restart sequence the marker lagged and the boot clamp
+/// silently rewound the head.
+///
+/// RED (pre-fix): `apply_updates_synchronous` runs for `batch_mode: true` and never
+/// touches the marker, so `read_flushed_upto()` stays 0 and this FAILS.
+/// GREEN (post-fix): the batch path routes through the single persist worker, whose
+/// `flush_block_data` drains all staged blocks in one tx and writes the max block
+/// number as the marker, so `read_flushed_upto()` reaches 3.
+#[cfg(feature = "rocksdb")]
+#[tokio::test]
+async fn batch_path_advances_flushed_upto() {
+    use ethrex_common::types::Genesis;
+
+    const GENESIS_KURTOSIS: &str = include_str!("../../../fixtures/genesis/kurtosis.json");
+    let genesis: Genesis =
+        serde_json::from_str(GENESIS_KURTOSIS).expect("deserialize kurtosis.json");
+    let genesis_block = genesis.get_block();
+    let genesis_hash = genesis_block.hash();
+
+    let dir = tempfile::tempdir().expect("tmp");
+    let path = dir.path().to_str().unwrap();
+
+    let mut store = Store::new(path, EngineType::RocksDB).expect("store");
+    store.add_initial_state(genesis).await.expect("genesis");
+
+    // Build a single batch_mode=true UpdateBatch carrying blocks 1..=3 (the
+    // full-sync shape: many blocks, one aggregate trie diff, one fsync). The
+    // first block's parent is genesis so `batch_state_roots` resolves a parent
+    // state root.
+    const N: BlockNumber = 3;
+    let mut parent_hash = genesis_hash;
+    let mut blocks = Vec::new();
+    let mut receipts = Vec::new();
+    for n in 1..=N {
+        let header = BlockHeader {
+            number: n,
+            parent_hash,
+            ..Default::default()
+        };
+        let block = Block::new(header, BlockBody::default());
+        parent_hash = block.hash();
+        receipts.push((block.hash(), vec![]));
+        blocks.push(block);
+    }
+    let batch = UpdateBatch {
+        account_updates: vec![],
+        storage_updates: vec![],
+        receipts,
+        blocks,
+        code_updates: vec![],
+        batch_mode: true,
+    };
+
+    store
+        .store_block_updates(batch)
+        .expect("store_block_updates");
+
+    // The batch path blocks on the worker ack until durable, so the marker is
+    // already at the last block number when the call returns (no polling needed).
+    assert_eq!(
+        store.read_flushed_upto().expect("flushed_upto"),
+        N,
+        "batch path must advance flushed_upto to the last block number"
+    );
+}
+
 // ── configurable backpressure cap ─────────────────────────────────────────────
 
 /// The `StoreConfig` default must keep the production-tuned cap of 2.
