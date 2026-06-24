@@ -5,6 +5,8 @@ edition.workspace = true
 authors.workspace = true
 documentation.workspace = true
 license.workspace = true
+description = "Ethereum Merkle Patricia Trie for the ethrex Ethereum execution client"
+repository.workspace = true
 
 [dependencies]
 ethrex-crypto.workspace = true
@@ -23,6 +25,7 @@ rkyv.workspace = true
 
 [features]
 default = []
+eip-8025 = []
 
 [lib]
 path = "./trie.rs"
