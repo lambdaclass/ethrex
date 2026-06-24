@@ -90,30 +90,15 @@ pub const DEFAULT_ROCKSDB_BLOCK_CACHE_SIZE_BYTES: usize = 12 * 1024 * 1024 * 102
 /// don't need to override anything should keep calling [`Store::new`] directly.
 #[derive(Debug, Clone, Copy)]
 pub struct StoreConfig {
-    /// Total size in bytes of the RocksDB shared block cache. With
-    /// `cache_index_and_filter_blocks` enabled (the ethrex default), this cache
-    /// stores data blocks AND the per-SST index + bloom-filter blocks, so it is
-    /// the effective ceiling on RocksDB's resident memory. Lowering it below
-    /// the filter + working-set size degrades block-import performance —
-    /// see the `--rocksdb.block-cache-size` CLI flag for guidance.
-    ///
-    /// Ignored when the engine type is in-memory.
+    /// Size in bytes of the RocksDB shared block cache. With
+    /// `cache_index_and_filter_blocks` enabled (the ethrex default), this is
+    /// the effective ceiling on RocksDB's resident memory. Ignored for
+    /// in-memory backends.
     pub rocksdb_block_cache_size: usize,
-    /// Bound on the single persist worker's channel: the number of staged
-    /// (acked) live messages whose asynchronous flush may still be in flight.
-    ///
-    /// On the live `newPayload` path `apply_updates` sends one block per message
-    /// and the worker acks right after staging the block data, then flushes to
-    /// disk asynchronously (the fast, pipelined path: the flush of one block
-    /// overlaps execution of the next). The channel is a bounded
-    /// `sync_channel(cap)`, so once `cap` acked-but-unflushed messages are queued
-    /// the next send blocks until the worker drains one — that is the
-    /// backpressure that throttles `newPayload` if the worker falls behind,
-    /// keeping the in-memory buffer from growing without bound.
-    ///
-    /// Clamped to `max(1)` at construction time (a `0` capacity would make the
-    /// channel a rendezvous one). The default (2) keeps at most a couple of
-    /// blocks in flight under backlog.
+    /// Bound on the persist worker's channel: number of staged (acked) live
+    /// messages whose flush may still be in flight. Once full, the next send
+    /// blocks — that is the backpressure that throttles `newPayload`.
+    /// Clamped to `max(1)` at construction (0 would make a rendezvous channel).
     pub persist_channel_capacity: usize,
 }
 
@@ -183,36 +168,9 @@ impl CodeCache {
 
 /// Main storage interface for the ethrex client.
 ///
-/// The `Store` provides a high-level API for all blockchain data operations:
-/// - Block storage and retrieval
-/// - State trie management
-/// - Account and storage queries
-/// - Transaction indexing
-///
-/// # Thread Safety
-///
-/// `Store` is `Clone` and thread-safe. All clones share the same underlying
-/// database connection and caches via `Arc`.
-///
-/// # Caching
-///
-/// The store maintains several caches for performance:
-/// - **Trie Layer Cache**: Recent trie nodes for fast state access
-/// - **Code Cache**: LRU cache for contract bytecode (64MB default)
-/// - **Latest Block Cache**: Cached latest block header for RPC
-///
-/// # Example
-///
-/// ```ignore
-/// let store = Store::new("./data", EngineType::RocksDB)?;
-///
-/// // Add a block
-/// store.add_block(block).await?;
-///
-/// // Query account balance
-/// let info = store.get_account_info(block_number, address)?;
-/// let balance = info.map(|a| a.balance).unwrap_or_default();
-/// ```
+/// `Store` is `Clone` and thread-safe; all clones share the same backend and
+/// caches via `Arc`. Reads consult an in-memory block-data buffer before disk
+/// so not-yet-flushed blocks are always visible.
 #[derive(Debug, Clone)]
 pub struct Store {
     /// Path to the database directory.
@@ -227,24 +185,16 @@ pub struct Store {
     flatkeyvalue_control_tx: std::sync::mpsc::SyncSender<FKVGeneratorControlMessage>,
     /// In-memory overlay of block data not yet flushed to disk.
     block_data_buffer: Arc<RwLock<Arc<BlockDataBuffer>>>,
-    /// Channel to the single persist worker. `apply_updates` sends
-    /// `PersistMessage::Block` here; that worker is the only mutator of
-    /// `block_data_buffer` and the sole builder of trie diff-layers in
-    /// production (the `#[cfg(test)]` helpers also swap the buffer directly, on a
-    /// single thread). `wait_for_persistence_idle` sends `PersistMessage::Ping`
-    /// here to drain the worker.
+    /// Channel to the single persist worker (`apply_updates` → `PersistMessage::Block`,
+    /// `wait_for_persistence_idle` → `PersistMessage::Ping`). The worker is the
+    /// sole mutator of `block_data_buffer` in production.
     persist_tx: std::sync::mpsc::SyncSender<PersistMessage>,
-    /// Roots whose trie diff-layer is being built by the persist worker but not
-    /// yet installed in `trie_cache`. The trie-open chokepoints block on these so
-    /// a just-added block's state is never read as stale before its layer lands.
+    /// Roots whose trie diff-layer is being built but not yet installed in
+    /// `trie_cache`. Trie opens block on these so a just-added block's state is
+    /// never read as stale before its layer lands.
     pending_trie_roots: Arc<PendingTrieRoots>,
-    /// Cached latest canonical block header.
-    ///
-    /// Wrapped in Arc for cheap reads with infrequent writes.
-    /// May be slightly out of date, which is acceptable for:
-    /// - Caching frequently requested headers
-    /// - RPC "latest" block queries (small delay acceptable)
-    /// - Sync operations (must be idempotent anyway)
+    /// Cached latest canonical block header. May be slightly stale, which is
+    /// acceptable for RPC "latest" queries and sync operations.
     latest_block_header: LatestBlockHeaderCache,
     /// Last computed FlatKeyValue for incremental updates.
     last_computed_flatkeyvalue: Arc<RwLock<Vec<u8>>>,
@@ -357,37 +307,21 @@ pub(crate) fn encode_tx_location_operand(
 
 /// Merge function for the `TRANSACTION_LOCATIONS` column family.
 ///
-/// The CF is keyed by tx hash and stores `Vec<(BlockNumber, BlockHash, Index)>` —
-/// one entry per block the tx appears in (multiple only on reorgs). Both the
-/// stored value and every merge operand are encoded as this same `Vec` type.
-/// Writers call `merge_cf` with a single-element `Vec` operand per tx; RocksDB
-/// invokes this function on `get_cf` and during compaction to fold the base
-/// value plus pending operands into one `Vec`. Within the fold, a later entry
-/// replaces any earlier entry with the same `block_hash`, preserving the dedupe
-/// semantics of the previous composite-key schema.
+/// The CF stores `Vec<(BlockNumber, BlockHash, Index)>` keyed by tx hash.
+/// Both stored values and operands use this same `Vec` encoding — this
+/// associativity requirement is mandatory: RocksDB folds operands together
+/// during compaction without a base value (PartialMerge), then feeds that
+/// result back into a later merge. A differing format would silently drop
+/// entries. See `encode_tx_location_operand`.
 ///
-/// Associativity: because input operands and the output are the same `Vec`
-/// format, PartialMerge (operand-only folding) produces a valid operand that
-/// can be re-merged later. This is essential for correctness — see
-/// `encode_tx_location_operand`.
+/// Within the fold, a later entry with the same `block_hash` replaces an
+/// earlier one (reorg dedupe). On decode failure the merge returns `None`
+/// so RocksDB surfaces a corruption error rather than silently dropping
+/// locations.
 ///
-/// Used by:
-/// - The RocksDB backend, via `set_merge_operator_associative`.
-/// - The InMemory backend, which dispatches by table name and applies this
-///   inline at `merge()` call time.
-///
-/// Why merge instead of read-modify-write: a per-tx `get_cf` on the write path
-/// is expensive (~5–20 ms/block on mainnet, dominated by the per-tx point
-/// lookup, not fully fixable by a bloom filter). With merge, the write path is
-/// a pure `merge_cf` append (no read), and consolidation is deferred to
-/// compaction or the next read. As a bonus the merge is atomic at the RocksDB
-/// level — no serialized-writer assumption is needed at the application layer.
-///
-/// Failure mode: any RLP decode error (base value or operand) returns `None`,
-/// which makes RocksDB treat the merge as failed and surface a corruption error
-/// on the affected key rather than silently dropping locations. We prefer
-/// failing loud — a corrupt operand signals real DB damage, and a silently
-/// half-populated `Vec` committed at the next compaction would be undetectable.
+/// Merge instead of read-modify-write avoids the ~5–20 ms/block per-tx point
+/// lookup on the write path; consolidation is deferred to compaction or the
+/// next read.
 pub fn tx_locations_merge(
     existing: Option<&[u8]>,
     operands: impl IntoIterator<Item = impl AsRef<[u8]>>,
@@ -436,24 +370,16 @@ pub fn tx_locations_merge(
 }
 
 impl Store {
-    /// Block until the single persist worker has drained every prior message and
-    /// is waiting for new work — i.e. staging, the trie diff-layer build, the
-    /// disk flush (advancing `flushed_upto`) and eviction for all
-    /// previously-sent `Block` messages have completed.
+    /// Block until the persist worker has fully processed all previously-sent
+    /// `Block` messages (staged, trie-layer built, flushed, evicted).
     ///
-    /// Implementation: the persist channel is a *buffered* `sync_channel(cap)`
-    /// (cap ≥ 1), so a bare send can return while prior messages are still
-    /// queued — it would not prove the worker drained. Instead this sends an
-    /// ack-based `PersistMessage::Ping(ack_tx)` and blocks on `ack_rx`. The
-    /// worker is single-threaded and FIFO, so it only handles the `Ping` after
-    /// every earlier `Block` message is fully processed; receiving the ack is
-    /// therefore the idle signal.
+    /// Uses an ack-based `Ping` rather than a bare send because the channel is
+    /// buffered — a bare send proves nothing about prior message completion. The
+    /// worker is FIFO, so it handles the `Ping` only after every earlier `Block`
+    /// is done.
     ///
-    /// Caller's responsibility: hold off other senders to `persist_tx` while this
-    /// is in flight. Under concurrent producers the guarantee degrades to "every
-    /// message enqueued before the Ping has been drained", not "persistence is
-    /// idle going forward" — a racing `Block` from another thread can be in-flight
-    /// by the time this returns.
+    /// Concurrent-producer caveat: if another thread sends a `Block` after the
+    /// `Ping` is enqueued, that block may not be flushed by the time this returns.
     pub async fn wait_for_persistence_idle(&self) -> Result<(), StoreError> {
         let tx = self.persist_tx.clone();
         tokio::task::spawn_blocking(move || {
@@ -1666,18 +1592,13 @@ impl Store {
             batch_mode,
         } = update_batch;
 
-        // 1. Register the new block's state root as in-flight BEFORE handing the
-        //    work to the persist worker (so the worker's `clear` always finds it)
-        //    and BEFORE this returns (so the head can't advance to it un-gated).
-        //    From now on, any reader opening a trie at this root blocks in
-        //    `gated_snapshot` until the worker installs the layer, rather than
-        //    snapshotting a cache without it and reading stale on-disk state.
+        // Register before handing off to the worker and before this returns, so
+        // any reader opening this root blocks in `gated_snapshot` until the
+        // layer is installed rather than snapshotting a stale cache.
         self.pending_trie_roots.register(last_state_root)?;
 
-        // 2. Pair the block(s) with their receipts. The live newPayload path is a
-        //    single block; keep that fast path (no HashMap) and wrap it as a
-        //    1-element Vec so the persist worker handles live and batch uniformly.
-        //    Full sync sends many blocks; the `else` branch joins receipts by hash.
+        // Pair blocks with receipts. Single-block fast path avoids a HashMap
+        // allocation; full-sync batch joins by hash.
         let blocks_with_receipts: Vec<(Block, Vec<Receipt>)> = if blocks.len() == 1 {
             let block = blocks.into_iter().next().expect("len == 1");
             let hash = block.hash();
@@ -1699,22 +1620,11 @@ impl Store {
                 .collect()
         };
 
-        // 3. Hand the whole unit (block data + trie diff) to the SINGLE persist
-        //    worker and wait for its ack. `wait_for_flush == batch_mode`:
-        //    - LIVE (false): the worker acks right after staging the block data
-        //      (the fast, pipelined path), so this returns before the trie layer
-        //      build and disk flush complete. The ack carries the PRIOR message's
-        //      flush result, so a persistence error surfaces here on the next call
-        //      (the node then stops reporting VALID). The send is bounded by the
-        //      worker channel — that is the backpressure that throttles newPayload.
-        //      The trie build runs on the worker; the read barrier
-        //      (`gated_snapshot`) keeps any reader of this root consistent until
-        //      the layer lands.
-        //    - BATCH (true): the worker stages all N blocks, builds the single
-        //      aggregate trie layer, flushes every staged block in ONE tx
-        //      (advancing `flushed_upto` to the max block number — the marker fix),
-        //      commits the bottom trie layer when `BATCH_COMMIT_THRESHOLD`-deep,
-        //      then acks. Blocking on that ack bounds in-flight batches to ~1.
+        // Send to the persist worker and wait for its ack.
+        // LIVE (wait_for_flush=false): worker acks after staging; the ack carries
+        //   the PRIOR flush result so a disk error surfaces on the next call.
+        // BATCH (wait_for_flush=true): worker acks after flush, bounding
+        //   in-flight batches to ~1.
         let (ack_tx, ack_rx) = sync_channel(1);
         self.persist_tx
             .send(PersistMessage::Block(BlockPersist {
@@ -1845,10 +1755,7 @@ impl Store {
     ) -> Result<Self, StoreError> {
         debug!("Initializing Store with {commit_threshold} in-memory diff-layers");
         let (fkv_tx, fkv_rx) = std::sync::mpsc::sync_channel(0);
-        // `persist_cap` bounds the persist worker channel: the number of staged
-        // (acked) live messages whose async flush may still be in flight. Clamped
-        // to `max(1)` so a zero value never produces a rendezvous channel.
-        let persist_cap = persist_channel_capacity.max(1);
+        let persist_cap = persist_channel_capacity.max(1); // clamp: 0 would be a rendezvous channel
         let (persist_tx, persist_rx) = std::sync::mpsc::sync_channel(persist_cap);
 
         let (last_written, initial_flushed_upto) = {
@@ -1906,13 +1813,8 @@ impl Store {
             let _ = flatkeyvalue_generator(&backend_clone, &last_computed_fkv, &rx)
                 .inspect_err(|err| error!("Error while generating FlatKeyValue: {err}"));
         }));
-        // The single persist worker. For each `Block` message it stages the block
-        // data into the buffer (sole swapper of `block_data_buffer`), builds and
-        // installs the aggregate trie diff-layer, then flushes the block data and
-        // (when due) commits the bottom trie layer to disk — one DB transaction per
-        // message, preserving both batch's single fsync (N blocks → 1 commit) and
-        // the live per-block flush. All of this runs on this one thread, so there
-        // is exactly one swapper of the buffer and gap safety holds.
+        // The single persist worker: sole swapper of `block_data_buffer`, sole
+        // builder of trie diff-layers. One DB transaction per `Block` message.
         let persist_backend = store.backend.clone();
         let persist_buffer = store.block_data_buffer.clone();
         let persist_trie_cache = store.trie_cache.clone();
@@ -1920,17 +1822,14 @@ impl Store {
         let persist_fkv_ctl = store.flatkeyvalue_control_tx.clone();
         background_threads.push(std::thread::spawn(move || {
             let rx = persist_rx;
-            // Holds the previous message's flush result. The live path acks after
-            // staging, so a disk-write failure is reported on the NEXT message's
-            // ack (the node then stops reporting VALID). `StoreError` is not
-            // `Clone`, so the live branch consumes this via `mem::replace`.
+            // Carries the prior flush result: the live path acks after staging,
+            // so a disk failure surfaces on the next message's ack.
             let mut last_flush_result: Result<(), StoreError> = Ok(());
             loop {
                 match rx.recv() {
                     Ok(PersistMessage::Block(bp)) => {
-                        // 1. Stage all block data (sole swapper of the buffer).
-                        //    `codes` are batch-level → attributed to the first block
-                        //    (first-wins, matching `BlockDataBuffer::insert`).
+                        // Stage block data (sole swapper of the buffer; codes
+                        // are batch-level and attributed to the first block).
                         let staged = mutate_block_buffer(&persist_buffer, move |b| {
                             let mut codes = Some(bp.codes);
                             for (block, receipts) in bp.blocks {
@@ -1946,18 +1845,13 @@ impl Store {
                             let _ = bp.ack.send(Err(e));
                             continue;
                         }
-                        // LIVE (wait_for_flush == false): ack now — block data is
-                        // readable and `apply_updates` returns fast. The ack carries
-                        // the PRIOR message's flush result.
+                        // LIVE: ack after staging; carries prior flush result.
                         if !bp.wait_for_flush {
                             let _ = bp
                                 .ack
                                 .send(std::mem::replace(&mut last_flush_result, Ok(())));
                         }
-                        // 2. Build + install the (one aggregate) trie layer, then
-                        //    clear the gate. A phase-1 failure is logged; the live
-                        //    caller has already been acked, and the batch caller is
-                        //    handled by `last_flush_result` below.
+                        // Build + install the trie layer; clear the read gate.
                         if let Err(err) = apply_trie_phase1(
                             &persist_trie_cache,
                             &persist_pending_roots,
@@ -1974,9 +1868,7 @@ impl Store {
                             }
                             continue;
                         }
-                        // 3. Flush THIS message's block data in one tx + (when
-                        //    commit-threshold-deep) commit the bottom trie layer;
-                        //    advance flushed_upto; evict.
+                        // Flush block data + commit bottom trie layer when due.
                         let flushed = flush_block_data(persist_backend.as_ref(), &persist_buffer)
                             .inspect_err(|err| error!("flush_block_data failed: {err}"))
                             .and_then(|_| {
@@ -1988,11 +1880,8 @@ impl Store {
                                     bp.wait_for_flush,
                                 )
                             });
-                        // BATCH (wait_for_flush == true): ack only now — the caller
-                        // blocks until durable + layer built, bounding in-flight
-                        // batches to ~1. Fold in any prior live-path flush error so
-                        // a live→batch transition does not silently discard it.
-                        // LIVE: stash for the next message's ack.
+                        // BATCH: ack after flush (bounds in-flight batches to ~1),
+                        // folding in any prior live-path error. LIVE: stash result.
                         if bp.wait_for_flush {
                             let prior = std::mem::replace(&mut last_flush_result, Ok(()));
                             let _ = bp.ack.send(prior.and(flushed));
@@ -2001,12 +1890,9 @@ impl Store {
                         }
                     }
                     Ok(PersistMessage::Ping(ack)) => {
-                        // Idle handshake for `wait_for_persistence_idle`. Because
-                        // the worker is FIFO and single-threaded, reaching this arm
-                        // means every earlier `Block` message was fully processed
-                        // (staged + built + flushed + evicted). Drain the pending
-                        // flush result so a live-path flush failure is not silently
-                        // swallowed — the ack carries it to the caller.
+                        // Idle handshake: reached only after all earlier Block
+                        // messages are fully processed. Carry the pending flush
+                        // result so a live-path failure is not silently dropped.
                         let _ = ack.send(std::mem::replace(&mut last_flush_result, Ok(())));
                     }
                     Err(_) => return,
@@ -3354,22 +3240,16 @@ impl Store {
         &last_written[0..64] > account_nibbles.as_ref()
     }
 
-    /// Returns the block number up to which block bodies have been durably flushed.
-    ///
-    /// Returns `0` when no marker has been written yet. Callers that must
-    /// distinguish "marker absent" (a legacy DB written by a binary that
-    /// predates deferred persistence, where everything is durable) from
-    /// "marker present and equal to 0" must use [`read_flushed_upto_opt`].
-    ///
-    /// [`read_flushed_upto_opt`]: Self::read_flushed_upto_opt
+    /// Returns the highest block number durably flushed to disk, or `0` when
+    /// the marker is absent. Use [`Self::read_flushed_upto_opt`] when you need
+    /// to distinguish "absent marker" (legacy DB, everything is durable) from
+    /// "marker present and equal to 0".
     pub fn read_flushed_upto(&self) -> Result<BlockNumber, StoreError> {
         Ok(self.read_flushed_upto_opt()?.unwrap_or(0))
     }
 
-    /// Reads the `flushed_upto` marker, returning `None` when it has never been
-    /// written. A missing marker means the DB predates deferred persistence (or
-    /// is brand new): there is no buffered-and-unflushed window to recover from,
-    /// so the durable head is the full `LatestBlockNumber` rather than `0`.
+    /// Returns `None` when the marker has never been written — a legacy or fresh
+    /// DB where everything is durable and the head must not be clamped to 0.
     fn read_flushed_upto_opt(&self) -> Result<Option<BlockNumber>, StoreError> {
         let tx = self.backend.begin_read()?;
         match tx.get(MISC_VALUES, FLUSHED_UPTO_KEY)? {
@@ -3453,13 +3333,8 @@ impl Store {
         self.pending_trie_roots.clear(root)
     }
 
-    /// Compute the durable head from an already-known `latest` block number:
-    /// when the `flushed_upto` marker is present, the durable head is
-    /// `min(flushed_upto, latest)`; when it is absent (legacy DB / fresh DB,
-    /// nothing was ever buffered) the full `latest` is durable.
-    ///
-    /// Test-only: production boot/export use the same logic inlined in
-    /// `anchor_to_durable_head` (which also needs the marker-present flag to seed).
+    /// Returns `min(flushed_upto, latest)` when the marker is present, else
+    /// `latest` (legacy/fresh DB — everything is durable). Test-only helper.
     #[cfg(any(test, feature = "testing"))]
     fn durable_head_from_latest(&self, latest: BlockNumber) -> Result<BlockNumber, StoreError> {
         Ok(match self.read_flushed_upto_opt()? {
@@ -3468,36 +3343,22 @@ impl Store {
         })
     }
 
-    /// The highest block whose data is durably on disk (test-only convenience;
-    /// production clamps via `anchor_to_durable_head`).
-    ///
-    /// After a crash, `LatestBlockNumber` can be ahead of `flushed_upto` because
-    /// FCU writes the head synchronously while block bodies are buffered.  This
-    /// returns `min(flushed_upto, latest_block_number)` so boot resumes from the
-    /// last block that is fully recoverable.  The CL re-sends skipped blocks via
-    /// `newPayload`.
+    /// Returns `min(flushed_upto, latest_block_number)` — the highest block
+    /// fully on disk. Test-only; production uses `anchor_to_durable_head`.
     #[cfg(any(test, feature = "testing"))]
     pub async fn effective_durable_head(&self) -> Result<BlockNumber, StoreError> {
         let latest = self.load_latest_block_number().await?.unwrap_or(0);
         self.durable_head_from_latest(latest)
     }
 
-    /// Boot-time recovery: set `latest_block_header` to the durable head and
-    /// re-anchor the persisted `LatestBlockNumber` to it.
+    /// Boot-time recovery: clamp `latest_block_header` to the durable head.
     ///
-    /// `latest` is the unclamped `LatestBlockNumber` read from `CHAIN_DATA`.  The
-    /// durable head is `min(flushed_upto, latest)` when the marker is present
-    /// (block data past `flushed_upto` was buffered and may be missing after a
-    /// crash; the CL re-sends skipped blocks via `newPayload`), or the full
-    /// `latest` when the marker is absent — a DB written by a pre-deferred
-    /// -persistence binary has everything on disk and must NOT be rewound to 0.
-    ///
-    /// On that first boot the marker is seeded to the durable head so a later
-    /// crash (once this binary starts buffering blocks) clamps against the
-    /// recorded head rather than against an absent (→ `0`) marker.
-    ///
-    /// The persisted `CHAIN_DATA` head is only rewritten when the head actually
-    /// moved, so a clean boot (and the offline export path) does not touch it.
+    /// Durable head = `min(flushed_upto, latest)` when the marker is present
+    /// (buffered blocks past `flushed_upto` may be lost after a crash; the CL
+    /// re-sends them via `newPayload`). When the marker is absent the DB
+    /// predates deferred persistence and everything is on disk — use `latest`
+    /// as-is, never rewind to 0. On first boot the marker is seeded so a later
+    /// crash clamps against it rather than an absent (→ 0) marker.
     async fn anchor_to_durable_head(&self, latest: BlockNumber) -> Result<(), StoreError> {
         let marker = self.read_flushed_upto_opt()?;
         let head = match marker {
@@ -3551,10 +3412,8 @@ fn decode_flushed_upto(bytes: &[u8]) -> Result<BlockNumber, StoreError> {
     Ok(BlockNumber::from_le_bytes(arr))
 }
 
-/// Apply `f` to a clone of the current block-data buffer and atomically swap the
-/// result back in (RCU). In production the single persist worker is the only
-/// caller, so there is exactly one swapper and no lost-update race; the
-/// `#[cfg(test)]` helpers also drive this on a single thread.
+/// RCU-swap the block-data buffer. The persist worker is the sole caller in
+/// production (no lost-update race); test helpers also call this on one thread.
 fn mutate_block_buffer(
     buffer: &Arc<RwLock<Arc<BlockDataBuffer>>>,
     f: impl FnOnce(&mut BlockDataBuffer),
@@ -3565,24 +3424,13 @@ fn mutate_block_buffer(
     Ok(())
 }
 
-/// Default for [`StoreConfig::persist_channel_capacity`]: the number of staged
-/// (acked) live messages whose async flush may still be in flight before a send
-/// on the bounded persist channel blocks (the backpressure on `newPayload`).
+/// Default for [`StoreConfig::persist_channel_capacity`].
 const DEFAULT_PERSIST_CHANNEL_CAPACITY: usize = 2;
 
-/// One unit of work for the single persist worker: stage a block (or a whole
-/// batch) into the in-memory buffer, install its aggregate trie diff-layer, then
-/// flush the block data and (when due) commit the bottom trie layer to disk.
-///
-/// `blocks` is a `Vec` so one message carries either a single live block or an
-/// entire full-sync batch. `codes` are batch-level and attributed to the first
-/// block (first-wins, matching `BlockDataBuffer::insert`). `wait_for_flush`
-/// selects when the worker acks: the live path (`false`) acks right after staging
-/// — block data is readable and `apply_updates` returns fast — and the ack
-/// carries the PRIOR message's flush result so a disk-write failure surfaces on
-/// the next `apply_updates`. The batch path (`true`) acks only after this
-/// message's flush, so the caller blocks until durable (bounding in-flight
-/// batches to ~1).
+/// One unit of work for the persist worker: stage block(s), build the trie
+/// diff-layer, flush to disk. `wait_for_flush` selects the ack point: `false`
+/// (live) acks after staging carrying the prior flush result; `true` (batch)
+/// acks after flush.
 struct BlockPersist {
     blocks: Vec<(Block, Vec<Receipt>)>,
     codes: Vec<(H256, Code)>,
@@ -3594,24 +3442,16 @@ struct BlockPersist {
     ack: std::sync::mpsc::SyncSender<Result<(), StoreError>>,
 }
 
-/// Messages handled by the single persist background worker, which subsumes the
-/// trie-layer build and the block-data flush for both the live and full-sync
-/// paths.
-///
-/// `Ping(ack)` is the idle handshake for [`Store::wait_for_persistence_idle`].
-/// The persist channel is buffered, so a bare send proves nothing about prior
-/// work; instead the worker acks on the carried sender. Because the worker is
-/// FIFO and single-threaded, it only handles the `Ping` once every earlier
-/// `Block` message is fully processed, so receiving the ack proves the worker is
-/// idle.
+/// Messages for the persist worker. `Ping(ack)` is the idle handshake for
+/// [`Store::wait_for_persistence_idle`]: the FIFO worker handles it only after
+/// all earlier `Block` messages are fully processed.
 enum PersistMessage {
     Block(BlockPersist),
     Ping(std::sync::mpsc::SyncSender<Result<(), StoreError>>),
 }
 
-/// Drain all unflushed blocks from the buffer to the backend in one write tx,
-/// advance `flushed_upto`, then evict. Gap-safe: blocks stay in the buffer until
-/// the commit succeeds (eviction only happens after).
+/// Write all unflushed blocks to disk in one tx, advance `flushed_upto`, then
+/// evict. Eviction is gap-safe: blocks stay buffered until the commit succeeds.
 fn flush_block_data(
     backend: &dyn StorageBackend,
     buffer: &Arc<RwLock<Arc<BlockDataBuffer>>>,
@@ -3674,13 +3514,11 @@ fn flush_block_data(
 
 type TrieNodesUpdate = Vec<(Nibbles, Vec<u8>)>;
 
-/// Tracks state roots whose trie diff-layer is being built by the persist worker
-/// but is not yet installed in `trie_cache`. On the live path `apply_updates`
-/// registers the new block's root here *before* returning (so it's pending
-/// before the head can advance to it), and the worker clears it *after* swapping
-/// the layer in. A reader opening a trie at a still-pending root must block until
-/// it clears, otherwise it would snapshot a cache missing the layer and fall
-/// through to stale on-disk state.
+/// Tracks state roots whose trie diff-layer is in-flight (building but not yet
+/// installed in `trie_cache`). `apply_updates` registers a root *before*
+/// returning; the worker clears it *after* swapping the layer in. This ordering
+/// is mandatory: a reader opening a trie at a pending root blocks until the
+/// layer is installed, preventing stale on-disk reads.
 #[derive(Debug, Default)]
 struct PendingTrieRoots {
     /// Fast-path: when zero, nothing is in flight and readers skip the lock.
@@ -3729,14 +3567,9 @@ impl PendingTrieRoots {
     }
 }
 
-/// Phase 1 of a trie update (run by the persist worker):
-/// build the new diff-layer from the account/storage updates, RCU-swap it into
-/// `trie_cache`, then clear the in-flight `pending_roots` entry for
-/// `child_state_root`.
-///
-/// The swap MUST happen before clearing the pending root, so a reader woken by
-/// `clear` sees the layer (no stale read). On a swap failure (lock poisoning) the
-/// pending root is still cleared so gated readers error rather than deadlock.
+/// Build the trie diff-layer, RCU-swap it into `trie_cache`, then clear the
+/// pending root. Swap MUST precede the clear so a woken reader sees the layer.
+/// On swap failure the root is still cleared so gated readers error, not deadlock.
 fn apply_trie_phase1(
     trie_cache: &Arc<RwLock<Arc<TrieLayerCache>>>,
     pending_roots: &PendingTrieRoots,
@@ -3772,13 +3605,9 @@ fn apply_trie_phase1(
     build
 }
 
-/// Phases 2-3 of a trie update (run by the persist worker):
-/// when the diff-layer chain rooted at `parent_state_root` is deep enough to
-/// commit, persist the bottom layer to disk in one transaction (pausing/resuming
-/// the FlatKeyValue generator around the write) and then RCU-evict that layer.
-///
-/// `is_batch` selects the aggressive `BATCH_COMMIT_THRESHOLD` (full sync) instead
-/// of the cache's default per-block threshold. No-ops when nothing is committable.
+/// When the diff-layer chain is deep enough, flush the bottom layer to disk and
+/// RCU-evict it. `is_batch` selects `BATCH_COMMIT_THRESHOLD` (full sync) over
+/// the default per-block threshold. No-ops when nothing is committable.
 fn commit_trie_if_due(
     backend: &dyn StorageBackend,
     trie_cache: &Arc<RwLock<Arc<TrieLayerCache>>>,

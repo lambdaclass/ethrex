@@ -18,11 +18,10 @@ pub struct BufferedBlock {
 /// In-memory overlay for not-yet-flushed block data. Consulted before disk by
 /// every read of headers/bodies/numbers/receipts/codes/tx-locations.
 ///
-/// Updated by RCU swap behind `Arc<RwLock<Arc<BlockDataBuffer>>>` in `Store`,
-/// mirroring `TrieLayerCache`: a reader clones the inner `Arc` under a brief
-/// read lock and works on the snapshot lock-free, while the single writer
-/// mutates a clone and swaps the `Arc` in. Both critical sections are O(1)
-/// pointer operations, so contention between readers and the writer is minimal.
+/// Held behind `Arc<RwLock<Arc<BlockDataBuffer>>>` in `Store`. Readers clone
+/// the inner `Arc` under a brief read lock and then work lock-free; the single
+/// writer mutates a clone and RCU-swaps the `Arc` in. Both critical sections
+/// are O(1) pointer operations.
 #[derive(Debug, Clone)]
 pub struct BlockDataBuffer {
     by_hash: FxHashMap<BlockHash, Arc<BufferedBlock>>,
