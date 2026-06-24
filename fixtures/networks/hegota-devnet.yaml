@@ -9,19 +9,11 @@
 # Cargo feature). Launch:
 #   make localnet ENCLAVE=hegota KURTOSIS_CONFIG_FILE=fixtures/networks/hegota-devnet.yaml
 #
-# This matrix mirrors the live srv8 (ethrex-mainnet-8) `eip8141` devnet so that
-# hegota-devnet is a faithful upgrade of it: chain id 3151908 (kurtosis default),
-# 3x ethrex EL + Lighthouse v8.0.0-rc.1 CL, 6s slots, dora. srv8 currently runs
-# ethrex d189bee9 (EIP-8141 only, Hegotá already active, ~939k blocks); the
-# eventual deployment swaps the EL binary to the hegota-devnet build
-# (8141+8250+8272+7906). All four EIPs are EL-internal and gated on Fork::Hegota,
-# so no consensus-side change is needed and stock Lighthouse keeps driving.
-#
-# Use THIS config for a fresh test enclave (de-risk the multi-EIP build before
-# touching srv8). The in-place srv8 upgrade is the state-preserving EL-swap
-# procedure in ~/Personal/plans/eip8141-devnet-align-and-upgrade.md
-# (kurtosis service update --image + --files re-mount + docker cp datadir
-# backup/restore; build/tag the image under a unique immutable tag).
+# Matrix: 3x ethrex EL + Lighthouse v8.0.0-rc.1 CL (3 validator pairs), chain id
+# 3151908 (kurtosis default), 6s slots, dora explorer. The frame-tx EIPs are all
+# EL-internal and gated on Fork::Hegota (scheduled below via heze_fork_epoch), so
+# no consensus-side change is needed and stock Lighthouse drives the chain over
+# the Engine API.
 participants:
   - el_type: ethrex
     el_image: ethrex:local
