@@ -56,7 +56,8 @@ async fn buffered_header_is_readable_before_flush() {
     store.buffer_block_for_test(&block);
     assert_eq!(
         store
-            .block_data_buffer_get_header_for_test(hash)
+            .get_block_header_by_hash(hash)
+            .expect("hdr")
             .map(|h| h.number),
         Some(9)
     );
@@ -113,9 +114,7 @@ async fn sequential_live_updates_no_lost_inserts() {
 
         // 1. Every block inserted so far must be readable (buffer or disk).
         for (bn, bh) in &hashes {
-            let hdr = store
-                .block_data_buffer_get_header_for_test(*bh)
-                .or_else(|| store.get_block_header_by_hash(*bh).expect("db"));
+            let hdr = store.get_block_header_by_hash(*bh).expect("db");
             assert_eq!(
                 hdr.map(|h| h.number),
                 Some(*bn),
@@ -291,27 +290,63 @@ async fn boot_clamps_head_to_flushed_upto() {
             .await
             .expect("genesis");
 
-        // Build a canonical header at block 10 (the durable head) and persist it.
-        let header = BlockHeader {
-            number: 10,
-            parent_hash: genesis_hash,
-            ..Default::default()
-        };
-        let block = Block::new(header, BlockBody::default());
-        let block_hash = block.hash();
-        store.add_block(block).await.expect("add block 10");
-        // Make 10 canonical and set LatestBlockNumber = 10.
+        // Block 10 durable: buffer it, then flush via the REAL flush path (advances
+        // flushed_upto to 10), then real FCU makes it canonical head.
+        let b10 = Block::new(
+            BlockHeader {
+                number: 10,
+                parent_hash: genesis_hash,
+                ..Default::default()
+            },
+            BlockBody::default(),
+        );
+        let hash10 = b10.hash();
+        store.buffer_block_for_test(&b10);
+        store.flush_block_data_for_test().expect("flush 10");
         store
-            .forkchoice_update(vec![(10, block_hash)], 10, block_hash, None, None)
+            .forkchoice_update(vec![(10, hash10)], 10, hash10, None, None)
             .await
-            .expect("fcu to 10");
+            .expect("fcu 10");
+        assert_eq!(
+            store.read_flushed_upto().expect("marker"),
+            10,
+            "block 10 durable"
+        );
 
-        // Simulate the flusher having durably persisted up to block 10.
-        store.write_flushed_upto_for_test(10).expect("marker");
-        // Simulate FCU having advanced LatestBlockNumber to 12 while the headers and
-        // bodies for 11 and 12 were buffered and never reached disk (no header at 12).
-        store.set_latest_block_number_for_test(12).expect("latest");
-    } // drop = "crash"
+        // Blocks 11 and 12: buffered, NEVER flushed -> lost on the crash. Real FCU
+        // advances LatestBlockNumber to 12 (it reads the head from the buffer, exactly
+        // as production FCU does while 11/12 are buffered-and-unflushed).
+        let b11 = Block::new(
+            BlockHeader {
+                number: 11,
+                parent_hash: hash10,
+                ..Default::default()
+            },
+            BlockBody::default(),
+        );
+        let hash11 = b11.hash();
+        let b12 = Block::new(
+            BlockHeader {
+                number: 12,
+                parent_hash: hash11,
+                ..Default::default()
+            },
+            BlockBody::default(),
+        );
+        let hash12 = b12.hash();
+        store.buffer_block_for_test(&b11);
+        store.buffer_block_for_test(&b12);
+        store
+            .forkchoice_update(vec![(11, hash11), (12, hash12)], 12, hash12, None, None)
+            .await
+            .expect("fcu 12");
+        // Precondition: head advanced past the durable marker; 11/12 only in the buffer.
+        assert_eq!(
+            store.read_flushed_upto().expect("marker"),
+            10,
+            "11/12 unflushed"
+        );
+    } // drop = "crash": buffered 11/12 are lost
 
     // Reopen and run the REAL node boot entry. This must NOT brick: the clamp inside
     // add_initial_state_inner rewinds the head to the durable block 10.
@@ -513,9 +548,7 @@ async fn small_cap_pipeline_persists_all_blocks() {
 
     // Every block must be readable (buffer or disk).
     for (bn, bh) in &hashes {
-        let hdr = store
-            .block_data_buffer_get_header_for_test(*bh)
-            .or_else(|| store.get_block_header_by_hash(*bh).expect("db"));
+        let hdr = store.get_block_header_by_hash(*bh).expect("db");
         assert_eq!(
             hdr.map(|h| h.number),
             Some(*bn),
@@ -557,7 +590,7 @@ async fn forkchoice_update_succeeds_with_buffered_head() {
 
     // Confirm the block is in the buffer but NOT on disk.
     assert!(
-        store.block_data_buffer_get_header_for_test(hash).is_some(),
+        store.get_block_header_by_hash(hash).expect("hdr").is_some(),
         "block must be in the buffer before calling forkchoice_update"
     );
     // load_block_header_by_hash (disk-only) must return None to prove

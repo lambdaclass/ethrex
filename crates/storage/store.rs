@@ -3270,16 +3270,6 @@ impl Store {
         flush_block_data(self.backend.as_ref(), &self.block_data_buffer)
     }
 
-    /// Read a block header from the in-memory buffer (not disk).
-    /// For testing only — used to verify buffered data before a flush.
-    #[cfg(any(test, feature = "testing"))]
-    pub fn block_data_buffer_get_header_for_test(&self, hash: BlockHash) -> Option<BlockHeader> {
-        self.block_data_buffer
-            .read()
-            .expect("block_data_buffer read lock poisoned")
-            .get_header(&hash)
-    }
-
     /// Insert a block plus associated codes into the in-memory buffer without
     /// writing to disk.  For testing only — proves the buffer overlay resolves
     /// code that has not been persisted yet.
@@ -3289,27 +3279,6 @@ impl Store {
             b.insert(block.clone(), vec![], codes)
         })
         .expect("block_data_buffer lock poisoned");
-    }
-
-    /// Write `flushed_upto` directly for crash-recovery tests.
-    ///
-    /// For testing only — simulates the flusher having reached a given block.
-    #[cfg(any(test, feature = "testing"))]
-    pub fn write_flushed_upto_for_test(&self, n: BlockNumber) -> Result<(), StoreError> {
-        let mut tx = self.backend.begin_write()?;
-        write_flushed_upto(&mut *tx, n)?;
-        tx.commit()
-    }
-
-    /// Overwrite `LatestBlockNumber` in `CHAIN_DATA` directly for crash-recovery tests.
-    ///
-    /// For testing only — simulates FCU having advanced the head past `flushed_upto`.
-    #[cfg(any(test, feature = "testing"))]
-    pub fn set_latest_block_number_for_test(&self, n: BlockNumber) -> Result<(), StoreError> {
-        let mut tx = self.backend.begin_write()?;
-        let key = chain_data_key(ChainDataIndex::LatestBlockNumber);
-        tx.put(CHAIN_DATA, &key, &n.to_le_bytes())?;
-        tx.commit()
     }
 
     /// Mark a state root as in-flight (build pending) without doing a build.
