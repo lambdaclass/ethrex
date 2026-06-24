@@ -2183,9 +2183,17 @@ impl FrameTransaction {
         // bound below rejects tx-level totals that don't fit in signed i64.
         let mut total_frame_gas: u128 = 0;
         let mut expiry_frame_count: usize = 0;
+        // EIP-7906: POST_TX (mode 3) frames must form a contiguous trailing suffix —
+        // once any frame is POST_TX, every later frame must be POST_TX too.
+        let post_tx = FrameMode::PostTx as u8;
+        if let Some(first) = self.frames.iter().position(|f| f.mode == post_tx)
+            && self.frames[first..].iter().any(|f| f.mode != post_tx)
+        {
+            return Err("POST_TX frames must form a contiguous trailing suffix".to_string());
+        }
         for (i, frame) in self.frames.iter().enumerate() {
-            // Reject reserved execution modes (3-255)
-            if frame.mode >= 3 {
+            // Reject reserved execution modes (4-255); POST_TX (3) is admitted (EIP-7906).
+            if frame.mode >= 4 {
                 return Err(format!("Frame {i}: reserved execution mode {}", frame.mode));
             }
             // Reserved flag bits 3-7 must be zero
