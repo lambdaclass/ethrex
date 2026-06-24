@@ -363,7 +363,7 @@ fn new_payload_request_amsterdam_to_block(
         excess_blob_gas: Some(payload.excess_blob_gas),
         parent_beacon_block_root: Some(H256::from_slice(&req.parent_beacon_block_root)),
         requests_hash: Some(requests_hash),
-        block_access_list_hash: Some(block_access_list.compute_hash()),
+        block_access_list_hash: Some(block_access_list.compute_hash(crypto)),
         slot_number: Some(payload.slot_number),
         ..Default::default()
     };
