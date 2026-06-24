@@ -608,6 +608,7 @@ impl Store {
         to: BlockNumber,
     ) -> Result<Vec<Option<BlockBody>>, StoreError> {
         // TODO: Implement read bulk
+        let buffer = self.buffer()?;
         let backend = self.backend.clone();
         tokio::task::spawn_blocking(move || {
             let numbers: Vec<BlockNumber> = (from..=to).collect();
@@ -623,6 +624,12 @@ impl Store {
                     block_bodies.push(None);
                     continue;
                 };
+                // Consult the in-memory buffer first so a not-yet-flushed body
+                // is not reported as missing (mirrors get_block_bodies_by_hash).
+                if let Some(body) = buffer.get_body(&hash) {
+                    block_bodies.push(Some(body));
+                    continue;
+                }
                 let hash_key = hash.encode_to_vec();
                 let block_body_opt = txn
                     .get(BODIES, &hash_key)?

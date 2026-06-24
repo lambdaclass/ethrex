@@ -619,3 +619,33 @@ fn open_state_trie_blocks_on_pending_root() {
         .expect("open_state_trie did not unblock after the layer was installed");
     handle.join().unwrap();
 }
+
+#[tokio::test]
+async fn get_block_bodies_range_is_buffer_aware() {
+    let store = Store::new("", EngineType::InMemory).expect("store");
+    // canonical-but-buffered block at number 1
+    let b1 = Block::new(
+        BlockHeader {
+            number: 1,
+            ..Default::default()
+        },
+        BlockBody::default(),
+    );
+    let h1 = b1.hash();
+    store.buffer_block_for_test(&b1);
+    store
+        .forkchoice_update(vec![(1, h1)], 1, h1, None, None)
+        .await
+        .expect("fcu");
+    assert_eq!(
+        store.read_flushed_upto().expect("marker"),
+        0,
+        "must be unflushed"
+    );
+    let bodies = store.get_block_bodies(1, 1).await.expect("range");
+    assert_eq!(bodies.len(), 1);
+    assert!(
+        bodies[0].is_some(),
+        "buffered canonical body must not read as None"
+    );
+}
