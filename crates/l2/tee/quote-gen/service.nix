@@ -37,9 +37,10 @@ let
 
     cargoDeps = rustPlatform.importCargoLock {
       lockFile = ./Cargo.lock;
-      outputHashes = {
-        "bls12_381-0.8.0" = "sha256-tpKF3wxog7eH1oDbpjoFjYibvH6u2kiR/H2Ysazqeok=";
-      };
+      # No git dependencies remain in this workspace's lockfile: the bls12_381
+      # fork moved to ethrex-guest-program (not built here), so there are no
+      # git-source crates needing an output hash.
+      outputHashes = { };
     };
 
     buildInputs = [ pkgs.openssl ];

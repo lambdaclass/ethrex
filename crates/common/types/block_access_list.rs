@@ -548,19 +548,23 @@ impl BlockAccessList {
     /// stale or regenerated-against-wrong-state BAL is never handed to peers as
     /// if it were authoritative; callers degrade to the `0x80` "unavailable"
     /// sentinel on a `false` here.
-    pub fn matches_commitment(&self, commitment: Option<H256>) -> bool {
-        commitment == Some(self.compute_hash())
+    pub fn matches_commitment(
+        &self,
+        commitment: Option<H256>,
+        crypto: &dyn ethrex_crypto::Crypto,
+    ) -> bool {
+        commitment == Some(self.compute_hash(crypto))
     }
 
     /// Computes the hash of the block access list (sorts accounts by address per EIP-7928).
     /// Use this when hashing a BAL constructed locally from execution.
-    pub fn compute_hash(&self) -> H256 {
+    pub fn compute_hash(&self, crypto: &dyn ethrex_crypto::Crypto) -> H256 {
         if self.inner.is_empty() {
             return *EMPTY_BLOCK_ACCESS_LIST_HASH;
         }
 
         let buf = self.encode_to_vec();
-        keccak(buf)
+        H256(crypto.keccak256(&buf))
     }
 
     /// Builds a validation index for fast per-tx BAL verification.
@@ -1879,7 +1883,7 @@ mod synthesize_tests {
         let expected_hash = keccak(&bytecode);
         assert_eq!(item.code_hash, Some(expected_hash));
         assert!(item.code.is_some());
-        assert_eq!(item.code.as_ref().unwrap().bytecode, bytecode);
+        assert_eq!(item.code.as_ref().unwrap().code(), &bytecode[..]);
         assert!(item.added_storage.is_empty());
     }
 
@@ -1920,7 +1924,7 @@ mod synthesize_tests {
         let item = result.get(&addr(8)).expect("expected entry");
         let expected_hash = keccak(&last);
         assert_eq!(item.code_hash, Some(expected_hash));
-        assert_eq!(item.code.as_ref().unwrap().bytecode, last);
+        assert_eq!(item.code.as_ref().unwrap().code(), &last[..]);
     }
 
     /// When a slot has multiple StorageChanges, the last post_value wins.
@@ -1998,7 +2002,7 @@ mod synthesize_tests {
         let expected_hash = keccak(&bytecode);
         assert_eq!(item.code_hash, Some(expected_hash));
         assert!(item.code.is_some());
-        assert_eq!(item.code.as_ref().unwrap().bytecode, bytecode);
+        assert_eq!(item.code.as_ref().unwrap().code(), &bytecode[..]);
         let key = H256::from_uint(&U256::zero());
         assert_eq!(item.added_storage.get(&key), Some(&U256::from(7)));
     }

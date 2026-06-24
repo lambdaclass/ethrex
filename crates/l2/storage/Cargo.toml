@@ -5,6 +5,8 @@ edition.workspace = true
 authors.workspace = true
 documentation.workspace = true
 license.workspace = true
+description = "Rollup batch and prover-input storage for the ethrex L2 Ethereum client"
+repository.workspace = true
 
 
 [dependencies]
