@@ -161,7 +161,7 @@ impl<Inner: VmDatabase + Clone> VmDatabase for OverlaidVmDatabase<Inner> {
     }
 
     fn get_account_code(&self, code_hash: H256) -> Result<Code, EvmError> {
-        if code_hash == *EMPTY_KECCACK_HASH {
+        if code_hash == *EMPTY_KECCAK_HASH {
             return Ok(Code::default());
         }
         // Synthetic-code lookup. The number of overrides per call is small (tens at
@@ -177,7 +177,7 @@ impl<Inner: VmDatabase + Clone> VmDatabase for OverlaidVmDatabase<Inner> {
     }
 
     fn get_code_metadata(&self, code_hash: H256) -> Result<CodeMetadata, EvmError> {
-        if code_hash == *EMPTY_KECCACK_HASH {
+        if code_hash == *EMPTY_KECCAK_HASH {
             return Ok(CodeMetadata { length: 0 });
         }
         for ov in self.overrides.values() {
@@ -185,7 +185,7 @@ impl<Inner: VmDatabase + Clone> VmDatabase for OverlaidVmDatabase<Inner> {
                 && *h == code_hash
             {
                 return Ok(CodeMetadata {
-                    length: code.bytecode.len() as u64,
+                    length: code.len() as u64,
                 });
             }
         }
