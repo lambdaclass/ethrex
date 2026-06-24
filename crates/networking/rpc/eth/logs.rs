@@ -256,9 +256,11 @@ pub(crate) async fn fetch_logs_with_filter(
 struct BloomFilterMatcher {
     /// One bloom per requested address; empty means no address constraint.
     addresses: Vec<Bloom>,
-    /// Per constrained topic position: `None` is a wildcard (no constraint),
-    /// `Some(blooms)` requires at least one of its alternatives to be present.
-    topic_positions: Vec<Option<Vec<Bloom>>>,
+    /// One entry per *constrained* topic position, each holding that position's
+    /// alternatives; at least one must be present. Wildcard positions impose no
+    /// constraint and are dropped (a no-op in the all-positions check), so the
+    /// position index is irrelevant — the header bloom is position-agnostic.
+    topic_positions: Vec<Vec<Bloom>>,
 }
 
 impl BloomFilterMatcher {
@@ -270,14 +272,14 @@ impl BloomFilterMatcher {
             .collect();
         let topic_positions = topics
             .iter()
-            .map(|topic_filter| match topic_filter {
-                // A wildcard position imposes no constraint.
+            .filter_map(|topic_filter| match topic_filter {
+                // A wildcard position imposes no constraint; drop it.
                 TopicFilter::Topic(None) => None,
                 TopicFilter::Topic(Some(topic)) => Some(vec![to_bloom(topic.as_bytes())]),
                 // An empty alternatives list, or one containing any `None`, is a
                 // wildcard for this position (the `None` means "any topic" —
                 // without it, `topics: [[null, T]]` would skip blocks matching
-                // via the wildcard and drop valid logs).
+                // via the wildcard and drop valid logs); drop it.
                 TopicFilter::Topics(sub_topics)
                     if sub_topics.is_empty() || sub_topics.iter().any(Option::is_none) =>
                 {
@@ -321,9 +323,10 @@ impl BloomFilterMatcher {
         {
             return false;
         }
-        self.topic_positions.iter().all(|position| match position {
-            None => true,
-            Some(blooms) => blooms.iter().any(|topic| block_bloom.contains_bloom(topic)),
+        self.topic_positions.iter().all(|alternatives| {
+            alternatives
+                .iter()
+                .any(|topic| block_bloom.contains_bloom(topic))
         })
     }
 }
