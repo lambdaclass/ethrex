@@ -230,11 +230,12 @@ pub struct Store {
     trie_update_worker_tx: std::sync::mpsc::SyncSender<TrieMessage>,
     /// In-memory overlay of block data not yet flushed to disk.
     block_data_buffer: Arc<RwLock<Arc<BlockDataBuffer>>>,
-    /// Channel to the block-flush worker. `apply_updates` sends
-    /// `BlockFlushMessage::Insert` here; that worker is the only mutator of
-    /// `block_data_buffer` in production (the `#[cfg(test)]` helpers also swap it
-    /// directly, on a single thread).
-    block_flush_tx: std::sync::mpsc::SyncSender<BlockFlushMessage>,
+    /// Channel to the single persist worker. `apply_updates` sends
+    /// `PersistMessage::Block` here; that worker is the only mutator of
+    /// `block_data_buffer` and the sole builder of live-path trie diff-layers in
+    /// production (the `#[cfg(test)]` helpers also swap the buffer directly, on a
+    /// single thread).
+    persist_tx: std::sync::mpsc::SyncSender<PersistMessage>,
     /// Roots whose trie diff-layer is being built by the trie worker but not yet
     /// installed in `trie_cache`. The trie-open chokepoints block on these so a
     /// just-added block's state is never read as stale before its layer lands.
@@ -1658,35 +1659,17 @@ impl Store {
         } = update_batch;
 
         // 1. Register the new block's state root as in-flight BEFORE handing the
-        //    build to the worker (so the worker's `clear` always finds it) and
-        //    BEFORE this returns (so the head can't advance to it un-gated). From
-        //    now on, any reader opening a trie at this root blocks in
+        //    work to the persist worker (so the worker's `clear` always finds it)
+        //    and BEFORE this returns (so the head can't advance to it un-gated).
+        //    From now on, any reader opening a trie at this root blocks in
         //    `gated_snapshot` until the worker installs the layer, rather than
         //    snapshotting a cache without it and reading stale on-disk state.
         self.pending_trie_roots.register(last_state_root)?;
 
-        // 2. Hand the trie diff to the worker and DO NOT wait for the build — it
-        //    runs in the background and clears the pending root once the layer is
-        //    installed (`result_sender: None`). The send is a rendezvous, so in
-        //    back-to-back processing it waits for the worker to be free (bounding
-        //    in-flight builds); in steady state the worker is idle and it doesn't
-        //    block.
-        self.trie_update_worker_tx
-            .send(TrieMessage::Update(TrieUpdate {
-                parent_state_root,
-                account_updates,
-                storage_updates,
-                result_sender: None,
-                child_state_root: last_state_root,
-                is_batch: false,
-            }))
-            .map_err(|e| StoreError::Custom(format!("failed to send trie update: {e}")))?;
-
-        // 3. Funnel block data to the SINGLE-WRITER flush worker; wait for the
-        //    in-memory insert ack. The send blocks if the worker is mid-flush and
-        //    the channel is full — that is the backpressure that throttles newPayload.
+        // 2. Pair the block(s) with their receipts. The live newPayload path is a
+        //    single block; keep that fast path (no HashMap) and wrap it as a
+        //    1-element Vec so the persist worker handles live and batch uniformly.
         let blocks_with_receipts: Vec<(Block, Vec<Receipt>)> = if blocks.len() == 1 {
-            // Live newPayload path: a single block. Pair directly without a map.
             let block = blocks.into_iter().next().expect("len == 1");
             let hash = block.hash();
             let r = receipts
@@ -1706,21 +1689,34 @@ impl Store {
                 })
                 .collect()
         };
+
+        // 3. Hand the whole unit (block data + trie diff) to the SINGLE persist
+        //    worker and wait for its ack. With `wait_for_flush: false` the worker
+        //    acks right after staging the block data (the fast, pipelined path),
+        //    so this returns before the trie layer build and disk flush complete.
+        //    The ack carries the PRIOR message's flush result, so a persistence
+        //    error surfaces here on the next call (the node stops reporting VALID).
+        //    The send is bounded by the worker channel — that is the backpressure
+        //    that throttles newPayload. The trie build then runs on the worker; the
+        //    read barrier (`gated_snapshot`) keeps any reader of this root
+        //    consistent until the layer lands.
         let (ack_tx, ack_rx) = sync_channel(1);
-        self.block_flush_tx
-            .send(BlockFlushMessage::Insert {
+        self.persist_tx
+            .send(PersistMessage::Block(BlockPersist {
                 blocks: blocks_with_receipts,
                 codes: code_updates,
+                parent_state_root,
+                child_state_root: last_state_root,
+                account_updates,
+                storage_updates,
+                wait_for_flush: false,
                 ack: ack_tx,
-            })
-            .map_err(|e| StoreError::Custom(format!("failed to send block data: {e}")))?;
+            }))
+            .map_err(|e| StoreError::Custom(format!("failed to send block persist: {e}")))?;
         ack_rx
             .recv()
-            .map_err(|e| StoreError::Custom(format!("block insert ack failed: {e}")))??;
+            .map_err(|e| StoreError::Custom(format!("block persist ack failed: {e}")))??;
 
-        // The trie layer build is intentionally NOT awaited here (see step 2):
-        // it completes in the background and the read barrier (`gated_snapshot`)
-        // keeps any reader of this root consistent in the meantime.
         Ok(())
     }
 
@@ -1919,11 +1915,11 @@ impl Store {
         debug!("Initializing Store with {commit_threshold} in-memory diff-layers");
         let (fkv_tx, fkv_rx) = std::sync::mpsc::sync_channel(0);
         let (trie_upd_tx, trie_upd_rx) = std::sync::mpsc::sync_channel(0);
-        // `flush_cap` doubles as the channel bound and the buffer's unflushed-block
-        // backpressure threshold (see the flush worker below). Clamped to `max(1)`
-        // so a zero value never produces a rendezvous channel.
+        // `flush_cap` bounds the persist worker channel: the number of staged
+        // (acked) live messages whose async flush may still be in flight. Clamped
+        // to `max(1)` so a zero value never produces a rendezvous channel.
         let flush_cap = block_flush_cap.max(1);
-        let (block_flush_tx, block_flush_rx) = std::sync::mpsc::sync_channel(flush_cap);
+        let (persist_tx, persist_rx) = std::sync::mpsc::sync_channel(flush_cap);
 
         let (last_written, initial_flushed_upto) = {
             let tx = backend.begin_read()?;
@@ -1954,7 +1950,7 @@ impl Store {
             flatkeyvalue_control_tx: fkv_tx,
             trie_update_worker_tx: trie_upd_tx,
             block_data_buffer: Arc::new(RwLock::new(Arc::new(initial_buffer))),
-            block_flush_tx,
+            persist_tx,
             pending_trie_roots: Arc::new(PendingTrieRoots::default()),
             last_computed_flatkeyvalue: Arc::new(RwLock::new(last_written)),
             account_code_cache: Arc::new(Mutex::new(CodeCache::default())),
@@ -2031,55 +2027,95 @@ impl Store {
                 }
             }
         }));
-        let flush_backend = store.backend.clone();
-        let flush_buffer = store.block_data_buffer.clone();
+        // The single persist worker. For each `Block` message it stages the block
+        // data into the buffer (sole swapper of `block_data_buffer`), builds and
+        // installs the aggregate trie diff-layer, then flushes the block data and
+        // (when due) commits the bottom trie layer to disk — one DB transaction per
+        // message, preserving both batch's single fsync (N blocks → 1 commit) and
+        // the live per-block flush. All of this runs on this one thread, so there
+        // is exactly one swapper of the buffer and gap safety holds.
+        let persist_backend = store.backend.clone();
+        let persist_buffer = store.block_data_buffer.clone();
+        let persist_trie_cache = store.trie_cache.clone();
+        let persist_pending_roots = store.pending_trie_roots.clone();
+        let persist_fkv_ctl = store.flatkeyvalue_control_tx.clone();
         background_threads.push(std::thread::spawn(move || {
-            let rx = block_flush_rx;
+            let rx = persist_rx;
+            // Holds the previous message's flush result. The live path acks after
+            // staging, so a disk-write failure is reported on the NEXT message's
+            // ack (the node then stops reporting VALID). `StoreError` is not
+            // `Clone`, so the live branch consumes this via `mem::replace`.
+            let mut last_flush_result: Result<(), StoreError> = Ok(());
             loop {
                 match rx.recv() {
-                    Ok(BlockFlushMessage::Insert { blocks, codes, ack }) => {
-                        // Phase 1: insert into the buffer (single-writer RCU swap).
-                        // Consume `blocks`/`codes` by value so the block (header +
-                        // body), receipts and codes are MOVED into the buffer, not
-                        // cloned — the worker drops them right after. `code_updates`
-                        // is batch-level: hand it to the first block (matching the
-                        // previous `or_insert` first-wins attribution); later blocks
-                        // in a multi-block batch get an empty vec.
-                        if let Err(e) = mutate_block_buffer(&flush_buffer, move |b| {
-                            let mut codes = Some(codes);
-                            for (block, receipts) in blocks {
+                    Ok(PersistMessage::Block(bp)) => {
+                        // 1. Stage all block data (sole swapper of the buffer).
+                        //    `codes` are batch-level → attributed to the first block
+                        //    (first-wins, matching `BlockDataBuffer::insert`).
+                        let staged = mutate_block_buffer(&persist_buffer, move |b| {
+                            let mut codes = Some(bp.codes);
+                            for (block, receipts) in bp.blocks {
                                 b.insert(block, receipts, codes.take().unwrap_or_default());
                             }
-                        }) {
-                            let _ = ack.send(Err(e));
+                        });
+                        if let Err(e) = staged {
+                            // Stage failure is terminal for this message.
+                            let _ = bp.ack.send(Err(e));
                             continue;
                         }
-
-                        // Backpressure + error surfacing. While the buffer holds
-                        // fewer than `flush_cap` unflushed blocks (the steady
-                        // state), ack the in-memory insert immediately and flush
-                        // asynchronously — the fast, pipelined path. Once it
-                        // reaches the cap, which only happens when the flusher has
-                        // fallen behind or a write is failing, flush synchronously
-                        // and ack with the flush result, so the newPayload thread
-                        // throttles and any persistence error reaches the caller
-                        // (the node stops reporting VALID) instead of the buffer
-                        // growing without bound. Either path runs on this one
-                        // thread, so there is a single swapper and gap safety holds.
-                        let over_cap = flush_buffer
-                            .read()
-                            .map(|b| b.unflushed_len() >= flush_cap)
-                            .unwrap_or(true);
-                        if over_cap {
-                            let _ = ack.send(
-                                flush_block_data(flush_backend.as_ref(), &flush_buffer)
-                                    .inspect_err(|err| error!("flush_block_data failed: {err}")),
-                            );
-                        } else {
-                            let _ = ack.send(Ok(()));
-                            let _ = flush_block_data(flush_backend.as_ref(), &flush_buffer)
-                                .inspect_err(|err| error!("flush_block_data failed: {err}"));
+                        // LIVE (wait_for_flush == false): ack now — block data is
+                        // readable and `apply_updates` returns fast. The ack carries
+                        // the PRIOR message's flush result.
+                        if !bp.wait_for_flush {
+                            let _ = bp
+                                .ack
+                                .send(std::mem::replace(&mut last_flush_result, Ok(())));
                         }
+                        // 2. Build + install the (one aggregate) trie layer, then
+                        //    clear the gate. A phase-1 failure is logged; the live
+                        //    caller has already been acked, and the batch caller is
+                        //    handled by `last_flush_result` below.
+                        if let Err(err) = apply_trie_phase1(
+                            &persist_trie_cache,
+                            &persist_pending_roots,
+                            bp.parent_state_root,
+                            bp.child_state_root,
+                            bp.account_updates,
+                            bp.storage_updates,
+                        ) {
+                            error!("persist worker trie phase-1 failed: {err}");
+                            if bp.wait_for_flush {
+                                let _ = bp.ack.send(Err(err));
+                            } else {
+                                last_flush_result = Err(err);
+                            }
+                            continue;
+                        }
+                        // 3. Flush THIS message's block data in one tx + (when
+                        //    commit-threshold-deep) commit the bottom trie layer;
+                        //    advance flushed_upto; evict.
+                        let flushed = flush_block_data(persist_backend.as_ref(), &persist_buffer)
+                            .inspect_err(|err| error!("flush_block_data failed: {err}"))
+                            .and_then(|_| {
+                                commit_trie_if_due(
+                                    persist_backend.as_ref(),
+                                    &persist_trie_cache,
+                                    &persist_fkv_ctl,
+                                    bp.parent_state_root,
+                                    bp.wait_for_flush,
+                                )
+                            });
+                        // BATCH (wait_for_flush == true): ack only now — the caller
+                        // blocks until durable + layer built, bounding in-flight
+                        // batches to ~1. LIVE: stash for the next message's ack.
+                        if bp.wait_for_flush {
+                            let _ = bp.ack.send(flushed);
+                        } else {
+                            last_flush_result = flushed;
+                        }
+                    }
+                    Ok(PersistMessage::Ping) => {
+                        // Rendezvous handshake only — no work to do.
                     }
                     Err(_) => return,
                 }
@@ -3641,18 +3677,40 @@ fn mutate_block_buffer(
 /// asynchronous flush to synchronous, error-propagating backpressure.
 const BLOCK_FLUSH_BACKPRESSURE_CAP: usize = 2;
 
-/// Messages handled by the block-flush background worker.
-enum BlockFlushMessage {
-    /// Insert block data into the buffer (single-writer RCU swap on the worker
-    /// thread), then flush+evict — all on one thread so there is exactly one
-    /// swapper of `block_data_buffer`. The `ack` is sent after the in-memory
-    /// insert on the fast path, or after the synchronous flush once the buffer
-    /// hits the backpressure cap (carrying the flush result either way).
-    Insert {
-        blocks: Vec<(Block, Vec<Receipt>)>,
-        codes: Vec<(H256, Code)>,
-        ack: std::sync::mpsc::SyncSender<Result<(), StoreError>>,
-    },
+/// One unit of work for the single persist worker: stage a block (or a whole
+/// batch) into the in-memory buffer, install its aggregate trie diff-layer, then
+/// flush the block data and (when due) commit the bottom trie layer to disk.
+///
+/// `blocks` is a `Vec` so one message carries either a single live block or an
+/// entire full-sync batch. `codes` are batch-level and attributed to the first
+/// block (first-wins, matching `BlockDataBuffer::insert`). `wait_for_flush`
+/// selects when the worker acks: the live path (`false`) acks right after staging
+/// — block data is readable and `apply_updates` returns fast — and the ack
+/// carries the PRIOR message's flush result so a disk-write failure surfaces on
+/// the next `apply_updates`. The batch path (`true`) acks only after this
+/// message's flush, so the caller blocks until durable (bounding in-flight
+/// batches to ~1).
+struct BlockPersist {
+    blocks: Vec<(Block, Vec<Receipt>)>,
+    codes: Vec<(H256, Code)>,
+    parent_state_root: H256,
+    child_state_root: H256,
+    account_updates: TrieNodesUpdate,
+    storage_updates: Vec<(H256, TrieNodesUpdate)>,
+    wait_for_flush: bool,
+    ack: std::sync::mpsc::SyncSender<Result<(), StoreError>>,
+}
+
+/// Messages handled by the single persist background worker, which subsumes the
+/// trie-layer build and the block-data flush for the live path.
+///
+/// `Ping` is a no-op handled between real messages; because the worker channel is
+/// rendezvous-like, a successful `Ping` send proves the worker has drained its
+/// previous message and is back at `recv()`.
+enum PersistMessage {
+    Block(BlockPersist),
+    #[allow(dead_code)]
+    Ping,
 }
 
 /// Drain all unflushed blocks from the buffer to the backend in one write tx,
@@ -3817,11 +3875,57 @@ fn apply_trie_updates(
         is_batch,
     } = trie_update;
 
-    // Phase 1: update the in-memory diff-layers only, then signal completion.
-    // Build the new layer and RCU-swap it into the cache. The swap MUST happen
-    // before clearing the pending root, so a reader woken by `clear` sees the
-    // layer (no stale read).
-    let phase1: Result<Arc<TrieLayerCache>, StoreError> = (|| {
+    // Phase 1: build + RCU-swap the new diff-layer, then clear the pending root.
+    match apply_trie_phase1(
+        trie_cache,
+        pending_roots,
+        parent_state_root,
+        child_state_root,
+        account_updates,
+        storage_updates,
+    ) {
+        Ok(()) => {
+            // Layer installed: unblock the synchronous (batch) waiter if present.
+            if let Some(sender) = &result_sender {
+                let _ = sender.send(Ok(()));
+            }
+        }
+        Err(e) => {
+            // The swap failed (only on lock poisoning). `apply_trie_phase1` already
+            // cleared the pending root so gated readers don't deadlock; route the
+            // error to the batch waiter if present, else propagate.
+            error!("trie phase-1 build failed: {e}");
+            match result_sender {
+                Some(sender) => {
+                    let _ = sender.send(Err(e));
+                    return Ok(());
+                }
+                None => return Err(e),
+            }
+        }
+    }
+
+    // Phases 2-3: commit the bottom diff-layer to disk (FKV pause/resume) + evict.
+    commit_trie_if_due(backend, trie_cache, fkv_ctl, parent_state_root, is_batch)
+}
+
+/// Phase 1 of a trie update (shared by the trie worker and the persist worker):
+/// build the new diff-layer from the account/storage updates, RCU-swap it into
+/// `trie_cache`, then clear the in-flight `pending_roots` entry for
+/// `child_state_root`.
+///
+/// The swap MUST happen before clearing the pending root, so a reader woken by
+/// `clear` sees the layer (no stale read). On a swap failure (lock poisoning) the
+/// pending root is still cleared so gated readers error rather than deadlock.
+fn apply_trie_phase1(
+    trie_cache: &Arc<RwLock<Arc<TrieLayerCache>>>,
+    pending_roots: &PendingTrieRoots,
+    parent_state_root: H256,
+    child_state_root: H256,
+    account_updates: TrieNodesUpdate,
+    storage_updates: Vec<(H256, TrieNodesUpdate)>,
+) -> Result<(), StoreError> {
+    let build: Result<(), StoreError> = (|| {
         let new_layer = storage_updates
             .into_iter()
             .flat_map(|(account_hash, nodes)| {
@@ -3837,38 +3941,35 @@ fn apply_trie_updates(
             .clone();
         let mut trie_mut = (*trie).clone();
         trie_mut.put_batch(parent_state_root, child_state_root, new_layer);
-        let trie = Arc::new(trie_mut);
-        *trie_cache.write().map_err(|_| StoreError::LockError)? = trie.clone();
-        Ok(trie)
+        *trie_cache.write().map_err(|_| StoreError::LockError)? = Arc::new(trie_mut);
+        Ok(())
     })();
+    // Always clear the pending root, whether or not the swap succeeded: on success
+    // readers see the installed layer; on failure (poisoning) the lock is poisoned
+    // so gated readers error rather than read stale, and we must not leave them
+    // blocked forever.
+    pending_roots.clear(child_state_root);
+    build
+}
 
-    let trie = match phase1 {
-        Ok(trie) => {
-            // Layer installed: unblock live readers gated on this root, and the
-            // synchronous (batch) waiter if present.
-            pending_roots.clear(child_state_root);
-            if let Some(sender) = &result_sender {
-                let _ = sender.send(Ok(()));
-            }
-            trie
-        }
-        Err(e) => {
-            // The swap failed (only on lock poisoning, which also poisons every
-            // subsequent `trie_cache.read()` so gated readers error rather than
-            // read stale). Clear the pending root so readers don't deadlock, and
-            // route the error to the batch waiter if present.
-            error!("trie phase-1 build failed: {e}");
-            pending_roots.clear(child_state_root);
-            match result_sender {
-                Some(sender) => {
-                    let _ = sender.send(Err(e));
-                    return Ok(());
-                }
-                None => return Err(e),
-            }
-        }
-    };
-
+/// Phases 2-3 of a trie update (shared by the trie worker and the persist worker):
+/// when the diff-layer chain rooted at `parent_state_root` is deep enough to
+/// commit, persist the bottom layer to disk in one transaction (pausing/resuming
+/// the FlatKeyValue generator around the write) and then RCU-evict that layer.
+///
+/// `is_batch` selects the aggressive `BATCH_COMMIT_THRESHOLD` (full sync) instead
+/// of the cache's default per-block threshold. No-ops when nothing is committable.
+fn commit_trie_if_due(
+    backend: &dyn StorageBackend,
+    trie_cache: &Arc<RwLock<Arc<TrieLayerCache>>>,
+    fkv_ctl: &SyncSender<FKVGeneratorControlMessage>,
+    parent_state_root: H256,
+    is_batch: bool,
+) -> Result<(), StoreError> {
+    let trie = trie_cache
+        .read()
+        .map_err(|_| StoreError::LockError)?
+        .clone();
     // Phase 2: update disk layer.
     let commitable = if is_batch {
         trie.get_commitable_with_threshold(parent_state_root, BATCH_COMMIT_THRESHOLD)

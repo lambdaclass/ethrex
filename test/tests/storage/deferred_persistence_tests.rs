@@ -132,11 +132,50 @@ async fn sequential_live_updates_no_lost_inserts() {
         prev_flushed = f;
     }
 
-    // flushed_upto must reach N (the worker flushes after each insert).
-    assert!(
-        prev_flushed >= N,
-        "flushed_upto={prev_flushed} expected >= {N}"
-    );
+    // flushed_upto must reach N. The live path acks after staging and flushes
+    // asynchronously, so the final block's flush may still be in flight the
+    // instant the loop ends — poll with a bounded timeout instead of racing it.
+    poll_flushed_upto_reaches(&store, N).await;
+}
+
+/// Poll `read_flushed_upto` until it reaches `target` (or fail after a bounded
+/// timeout). The live persist path acks after staging and flushes asynchronously,
+/// so the durable marker for the last block lands shortly after the call returns.
+async fn poll_flushed_upto_reaches(store: &Store, target: BlockNumber) {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    loop {
+        let flushed = store.read_flushed_upto().expect("flushed_upto");
+        if flushed >= target {
+            return;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "flushed_upto={flushed} expected >= {target} within the timeout"
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+    }
+}
+
+/// Live path routed through the single persist worker: several sequential
+/// `store_block_updates` (batch_mode: false) must each stage their block and
+/// the worker must flush them, advancing the durable `flushed_upto` marker to
+/// the full block count. Same invariant as `sequential_live_updates_no_lost_inserts`
+/// but a minimal smoke test that the unified persist worker stages + flushes.
+///
+/// The live path acks after staging and flushes asynchronously, so the final
+/// flush of the last block may not have landed the instant the last
+/// `store_block_updates` returns. Poll the durable marker with a bounded timeout
+/// (the flush is microseconds on InMemory) instead of reading once and racing it.
+#[tokio::test]
+async fn live_path_single_worker_persists_and_advances_marker() {
+    let store = Store::new("", EngineType::InMemory).expect("store");
+    let mut parent = H256::zero();
+    for n in 1..=5u64 {
+        let (block, batch) = minimal_batch(n, parent);
+        parent = block.hash();
+        store.store_block_updates(batch).expect("store");
+    }
+    poll_flushed_upto_reaches(&store, 5).await;
 }
 
 #[tokio::test]
@@ -383,9 +422,9 @@ async fn small_cap_pipeline_persists_all_blocks() {
         );
     }
 
-    // flushed_upto must have reached N.
-    let flushed = store.read_flushed_upto().expect("flushed_upto");
-    assert!(flushed >= N, "flushed_upto={flushed} expected >= {N}");
+    // flushed_upto must have reached N. As above, the last block's async flush
+    // may still be in flight when the loop ends — poll with a bounded timeout.
+    poll_flushed_upto_reaches(&store, N).await;
 }
 
 /// Regression: `forkchoice_update` must succeed when the head block is in the
