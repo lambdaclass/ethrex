@@ -34,7 +34,7 @@ impl RpcTransaction {
         transaction_index: Option<usize>,
     ) -> Result<Self, RpcErr> {
         let from = tx.sender(&NativeCrypto)?;
-        let hash = tx.hash();
+        let hash = tx.hash(&NativeCrypto);
         let transaction_index = transaction_index.map(|n| n as u64);
         Ok(RpcTransaction {
             tx,

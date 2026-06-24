@@ -5,6 +5,8 @@ edition.workspace = true
 authors.workspace = true
 documentation.workspace = true
 license.workspace = true
+description = "Native EVM implementation for the ethrex Ethereum execution client"
+repository.workspace = true
 
 [dependencies]
 ethrex-common = { workspace = true, default-features = false }

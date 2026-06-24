@@ -11,6 +11,7 @@ use ethrex_common::types::Fork;
 use ethrex_common::types::P2PTransaction;
 use ethrex_common::types::WrappedEIP4844Transaction;
 use ethrex_common::{H256, types::Transaction};
+use ethrex_crypto::NativeCrypto;
 use ethrex_rlp::{
     error::{RLPDecodeError, RLPEncodeError},
     structs::{Decoder, Encoder},
@@ -96,7 +97,7 @@ impl NewPooledTransactionHashes {
         for transaction in transactions {
             let transaction_type = transaction.tx_type();
             transaction_types.push(transaction_type as u8);
-            let transaction_hash = transaction.hash();
+            let transaction_hash = transaction.hash(&NativeCrypto);
             transaction_hashes.push(transaction_hash);
             // size is defined as the len of the canonical encoding of the transaction
             // as it would appear in a PooledTransactions response.

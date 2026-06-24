@@ -3,6 +3,7 @@ use ethrex_common::types::block_access_list::{
 };
 use ethrex_common::types::{Block, BlockBody, BlockHeader};
 use ethrex_common::{Address, H256, U256};
+use ethrex_crypto::NativeCrypto;
 use ethrex_rpc::engine::payload::{
     GetPayloadBodiesByHashV2Request, GetPayloadBodiesByRangeV2Request,
 };
@@ -36,7 +37,7 @@ fn header_committing_to(bal: &BlockAccessList) -> BlockHeader {
         excess_blob_gas: Some(0),
         parent_beacon_block_root: Some(H256::zero()),
         requests_hash: Some(H256::zero()),
-        block_access_list_hash: Some(bal.compute_hash()),
+        block_access_list_hash: Some(bal.compute_hash(&NativeCrypto)),
         ..Default::default()
     }
 }

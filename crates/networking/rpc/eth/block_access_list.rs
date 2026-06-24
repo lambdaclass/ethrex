@@ -1,4 +1,5 @@
 use ethrex_common::types::block_access_list::{AccountChanges, BlockAccessList};
+use ethrex_crypto::NativeCrypto;
 use serde_json::{Value, json};
 
 use crate::{RpcApiContext, RpcErr, RpcHandler, types::block_identifier::BlockIdentifierOrHash};
@@ -45,7 +46,7 @@ impl RpcHandler for BlockAccessListRequest {
         // entry (e.g. from a prior regeneration against state later pruned) must
         // not be served; fall through to regeneration instead.
         if let Some(bal) = context.storage.get_block_access_list(block_hash)?
-            && bal.matches_commitment(commitment)
+            && bal.matches_commitment(commitment, &NativeCrypto)
         {
             return Ok(bal_to_json(&bal));
         }
@@ -62,7 +63,7 @@ impl RpcHandler for BlockAccessListRequest {
 
         // Only serve a regenerated BAL that matches the header commitment; a
         // mismatch means it was re-executed against wrong/incomplete state.
-        match bal.filter(|bal| bal.matches_commitment(commitment)) {
+        match bal.filter(|bal| bal.matches_commitment(commitment, &NativeCrypto)) {
             Some(bal) => Ok(bal_to_json(&bal)),
             None => Ok(Value::Null),
         }

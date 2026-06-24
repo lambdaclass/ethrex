@@ -195,8 +195,6 @@ unsafe fn pack_nibble_pairs(nibbles: &[u8], output: *mut u8) {
 #[allow(unsafe_code)]
 #[inline]
 unsafe fn pack_nibble_pairs_x86_64(nibbles: &[u8], output: *mut u8) {
-    use std::arch::x86_64::*;
-
     let n = nibbles.len(); // always even
     let mut i = 0usize; // index into nibbles (steps of 32)
     let mut o = 0usize; // index into output (steps of 16)
@@ -207,6 +205,7 @@ unsafe fn pack_nibble_pairs_x86_64(nibbles: &[u8], output: *mut u8) {
     #[cfg(target_feature = "ssse3")]
     // SAFETY: SSSE3 enabled at compile time; pointer arithmetic stays within bounds.
     unsafe {
+        use std::arch::x86_64::*;
         // Multiplier: weight = [16, 1] repeated → multiply even nibble by 16, odd by 1
         let weights = _mm_set1_epi16(0x0110_u16 as i16); // bytes: [16, 1, 16, 1, ...]
         while i + 32 <= n {

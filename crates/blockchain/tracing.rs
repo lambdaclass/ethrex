@@ -8,6 +8,7 @@ use ethrex_common::{
     tracing::{CallTrace, OpcodeTraceResult, PrestateResult},
     types::Block,
 };
+use ethrex_crypto::NativeCrypto;
 use ethrex_storage::Store;
 use ethrex_vm::tracing::OpcodeTracerConfig;
 use ethrex_vm::{Evm, EvmError};
@@ -75,7 +76,7 @@ impl Blockchain {
             // We are cloning the `Arc`s here, not the structs themselves
             let block = block.clone();
             let vm = vm.clone();
-            let tx_hash = block.as_ref().body.transactions[index].hash();
+            let tx_hash = block.as_ref().body.transactions[index].hash(&NativeCrypto);
             let call_trace = timeout_trace_operation(timeout, move || {
                 vm.lock()
                     .map_err(|_| EvmError::Custom("Unexpected Runtime Error".to_string()))?
@@ -146,7 +147,7 @@ impl Blockchain {
         for index in 0..block.body.transactions.len() {
             let block = block.clone();
             let vm = vm.clone();
-            let tx_hash = block.as_ref().body.transactions[index].hash();
+            let tx_hash = block.as_ref().body.transactions[index].hash(&NativeCrypto);
             let result = timeout_trace_operation(timeout, move || {
                 vm.lock()
                     .map_err(|_| EvmError::Custom("Unexpected Runtime Error".to_string()))?
@@ -205,7 +206,7 @@ impl Blockchain {
         for index in 0..block.body.transactions.len() {
             let block = block.clone();
             let vm = vm.clone();
-            let tx_hash = block.as_ref().body.transactions[index].hash();
+            let tx_hash = block.as_ref().body.transactions[index].hash(&NativeCrypto);
             let cfg = cfg.clone();
             let result = timeout_trace_operation(timeout, move || {
                 vm.lock()

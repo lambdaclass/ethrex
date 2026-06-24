@@ -16,7 +16,7 @@ Examples:
 
 The version must be updated to `X.Y.Z` in the release branch. There are multiple `Cargo.toml` and `Cargo.lock` files that need to be updated.
 
-First, we need to update the version of the workspace package. You can find it in the `Cargo.toml` file in the root directory, under the `[workspace.package]` section.
+First, we need to update the version of the workspace package. You can find it in the `Cargo.toml` file in the root directory, under the `[workspace.package]` section. This is also the version the library crates are published under on crates.io when the release is finalized, so it must be a clean semver version (the `-rc.W` suffix lives only on the git tag).
 
 Then, we need to update five more `Cargo.toml` files that are not part of the workspace but fulfill the role of packages in the monorepo. These are located in the following paths:
 
@@ -137,6 +137,25 @@ Once done, the CI will publish new tags for the already compiled docker images:
 - `ghcr.io/lambdaclass/ethrex:X.Y.Z`, `ghcr.io/lambdaclass/ethrex:latest`
 - `ghcr.io/lambdaclass/ethrex:X.Y.Z-l2`, `ghcr.io/lambdaclass/ethrex:l2`
 
+Promoting the pre-release to a full release also publishes ethrex's library crates to crates.io — see the next section.
+
+### Publishing to crates.io
+
+Promoting the pre-release to a full release (the `released` event from the step above) triggers the `publish.yml` workflow, which runs `cargo publish` for ethrex's publishable library crates in dependency order, at the workspace version `X.Y.Z`.
+
+> [!NOTE]
+> Only the **final** release publishes to crates.io. Pre-release (`vX.Y.Z-rc.W`) tags do **not**: the `released` event does not fire for pre-releases, and crates.io versions are immutable, so a release candidate must never claim the version before it has been tested.
+
+The crates are published at the `[workspace.package].version` bumped in step 2; the `-rc.W` suffix lives only on the git tag and never reaches crates.io.
+
+This requires a one-time organizational setup before the first release that publishes:
+
+- A `CRATES_IO_TOKEN` repository secret with publish rights for the crates.
+- A `crates-release-prod` GitHub environment (the workflow runs inside it).
+- crates.io ownership of the crate names (the first publish under the token claims them).
+
+The workflow is idempotent: a crate version already on crates.io is skipped, so re-running after a partial failure is safe. To validate without publishing, run it manually from the Actions tab (the `workflow_dispatch` trigger) with the dry-run input checked — it lists each crate's package contents instead of publishing.
+
 ## 5th - Update Homebrew
 
 Disclaimer: We should automate this
@@ -226,3 +245,7 @@ docker push ghcr.io/lambdaclass/ethrex:l2
 ```
 
 - Delete the PAT for security ([here](https://github.com/settings/tokens))
+
+### Failure on the crates.io publish workflow
+
+If `publish.yml` fails partway through, fix the cause and re-run the workflow. Crates already published at the release version are skipped (the run tolerates an "already exists" error), so it resumes from the first crate that has not been published yet. Because crates are published in dependency order, a metadata or ordering error in one crate blocks the crates that depend on it, while the ones published before it stay published (crates.io versions cannot be unpublished or overwritten — a fix requires a new version).

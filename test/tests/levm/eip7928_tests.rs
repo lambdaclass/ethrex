@@ -10,6 +10,7 @@ use ethrex_common::types::block_access_list::{
     AccountChanges, BalanceChange, BlockAccessList, BlockAccessListRecorder, CodeChange,
     NonceChange, SlotChange, StorageChange,
 };
+use ethrex_crypto::NativeCrypto;
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
 
 // Test addresses (matching those in block_access_list.rs for RLP compatibility)
@@ -38,7 +39,7 @@ const CONTRACT_ADDR: H160 = H160([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
 fn test_empty_bal_hash() {
     // Empty BAL should have the well-known empty hash
     let bal = BlockAccessList::new();
-    let hash = bal.compute_hash();
+    let hash = bal.compute_hash(&NativeCrypto);
 
     // The empty BAL hash is keccak256(RLP([])) = 0x1dcc4de8dec75d7aab85b567b6ccd41ad312451b948a7413f0a142fd40d49347
     let expected = ethrex_common::H256::from_slice(
@@ -63,7 +64,10 @@ fn test_bal_hash_deterministic() {
     let bal1 = recorder1.build();
     let bal2 = recorder2.build();
 
-    assert_eq!(bal1.compute_hash(), bal2.compute_hash());
+    assert_eq!(
+        bal1.compute_hash(&NativeCrypto),
+        bal2.compute_hash(&NativeCrypto)
+    );
 }
 
 #[test]
@@ -82,7 +86,10 @@ fn test_bal_hash_changes_with_content() {
     let bal1 = recorder1.build();
     let bal2 = recorder2.build();
 
-    assert_ne!(bal1.compute_hash(), bal2.compute_hash());
+    assert_ne!(
+        bal1.compute_hash(&NativeCrypto),
+        bal2.compute_hash(&NativeCrypto)
+    );
 }
 
 #[test]
@@ -104,7 +111,10 @@ fn test_bal_hash_sorted_encoding() {
     let bal1 = recorder1.build();
     let bal2 = recorder2.build();
 
-    assert_eq!(bal1.compute_hash(), bal2.compute_hash());
+    assert_eq!(
+        bal1.compute_hash(&NativeCrypto),
+        bal2.compute_hash(&NativeCrypto)
+    );
 }
 
 // ==================== Net-Zero Storage Filtering Tests ====================
@@ -411,7 +421,10 @@ fn test_bal_rlp_roundtrip() {
     let decoded = BlockAccessList::decode(&encoded).expect("Failed to decode BAL");
 
     assert_eq!(original, decoded);
-    assert_eq!(original.compute_hash(), decoded.compute_hash());
+    assert_eq!(
+        original.compute_hash(&NativeCrypto),
+        decoded.compute_hash(&NativeCrypto)
+    );
 }
 
 #[test]

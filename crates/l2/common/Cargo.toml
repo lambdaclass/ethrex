@@ -5,6 +5,8 @@ edition.workspace = true
 authors.workspace = true
 documentation.workspace = true
 license.workspace = true
+description = "Shared L2 rollup types and helpers for the ethrex Ethereum client"
+repository.workspace = true
 
 [dependencies]
 ethereum-types.workspace = true
