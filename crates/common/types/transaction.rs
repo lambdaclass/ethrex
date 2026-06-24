@@ -1693,16 +1693,21 @@ pub enum FrameMode {
     Default = 0,
     Verify = 1,
     Sender = 2,
+    /// EIP-7906: `POST_TX` — a STATICCALL-executed trailing-suffix frame whose
+    /// revert reverts the whole tx body. Required context for TXTRACE /
+    /// EVENTDATACOPY / TXDIFF. (EIP-8288's deferred DEP_VERIFY moves to mode 4.)
+    PostTx = 3,
 }
 
 impl FrameMode {
     /// Convert from the lower 8 bits of the mode field.
-    /// Returns None for reserved values (3-255).
+    /// Returns None for reserved values (4-255).
     pub fn from_u8(val: u8) -> Option<Self> {
         match val {
             0 => Some(FrameMode::Default),
             1 => Some(FrameMode::Verify),
             2 => Some(FrameMode::Sender),
+            3 => Some(FrameMode::PostTx),
             _ => None,
         }
     }
@@ -1714,6 +1719,7 @@ impl From<FrameMode> for u8 {
             FrameMode::Default => 0,
             FrameMode::Verify => 1,
             FrameMode::Sender => 2,
+            FrameMode::PostTx => 3,
         }
     }
 }

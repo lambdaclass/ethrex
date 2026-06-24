@@ -1448,6 +1448,9 @@ impl<'a> VM<'a> {
                     }
                     (sender, false)
                 }
+                // EIP-7906: POST_TX runs as a STATICCALL with ENTRY_POINT as caller
+                // (like VERIFY, but it is a post-execution assertion, not auth).
+                FrameMode::PostTx => (entry_point, true),
             };
 
             // Set env.origin for this frame (ORIGIN opcode reads this)
@@ -2037,6 +2040,13 @@ impl<'a> VM<'a> {
                     // Structural rules exclude SENDER frames from the prefix.
                     return Err(VMError::Internal(InternalError::Custom(
                         "SENDER frame in validation prefix".to_string(),
+                    )));
+                }
+                FrameMode::PostTx => {
+                    // EIP-7906: POST_TX frames are a trailing execution-body suffix,
+                    // never part of the validation prefix.
+                    return Err(VMError::Internal(InternalError::Custom(
+                        "POST_TX frame in validation prefix".to_string(),
                     )));
                 }
             };
