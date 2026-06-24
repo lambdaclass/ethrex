@@ -192,6 +192,8 @@ impl Evm {
         // payload-build path; the block-import path is hooked in prepare_block.
         if fork >= Fork::Hegota && matches!(self.vm_type, VMType::L1) {
             LEVM::install_expiry_verifier_code(&mut self.db, self.crypto.as_ref())?;
+            // EIP-8250: the keyed-nonce manager predeploy.
+            LEVM::install_nonce_manager_code(&mut self.db, self.crypto.as_ref())?;
         }
 
         if block_header.parent_beacon_block_root.is_some() && fork >= Fork::Cancun {
