@@ -1,0 +1,60 @@
+# Hegotá devnet — frame-transaction EIPs on one ethrex binary.
+#
+# Scope (first bring-up): EIP-8141 (frame txs) + EIP-8250 (keyed nonces) +
+# EIP-8272 (recent roots) + EIP-7906 (tx assertions). NO `--features eip-8025`
+# and NO FOCIL this round (both deferred — see openspec/changes/hegota-fork-eips).
+#
+# Build the EL image from the `hegota-devnet` branch with `make build-image`
+# (default features; the frame-tx EIPs are runtime-gated on Fork::Hegota, not a
+# Cargo feature). Launch:
+#   make localnet ENCLAVE=hegota KURTOSIS_CONFIG_FILE=fixtures/networks/hegota-devnet.yaml
+#
+# All four EIPs are EL-internal, so no consensus-side changes are needed:
+# mainline Lighthouse drives the chain via the Engine API exactly as it does for
+# eip8141-devnet.yaml (this file is intentionally that same proven matrix).
+participants:
+  - el_type: ethrex
+    el_image: ethrex:local
+    el_extra_params: ["--syncmode", "full"]
+    cl_type: lighthouse
+    cl_image: sigp/lighthouse:v8.1.3
+    validator_count: 32
+    supernode: true
+  - el_type: ethrex
+    el_image: ethrex:local
+    el_extra_params: ["--syncmode", "full"]
+    cl_type: lighthouse
+    cl_image: sigp/lighthouse:v8.1.3
+    validator_count: 32
+  - el_type: ethrex
+    el_image: ethrex:local
+    el_extra_params: ["--syncmode", "full"]
+    cl_type: lighthouse
+    cl_image: sigp/lighthouse:v8.1.3
+    validator_count: 32
+
+network_params:
+  seconds_per_slot: 6
+  # Osaka/Fulu from genesis.
+  fulu_fork_epoch: 0
+  # Hegotá (heze) at epoch 1 enables ALL the frame-tx EIPs (8141/8250/8272/7906)
+  # — every one is gated on Fork::Hegota. The ethereum-genesis-generator emits
+  # `hezeTime`/`bogotaTime`, which ethrex parses into ChainConfig.hegota_time via
+  # its serde aliases. Frame transactions become valid from epoch 1; before that
+  # they are rejected with FrameTxPreFork.
+  gloas_fork_epoch: 0
+  heze_fork_epoch: 1
+
+additional_services:
+  - dora
+
+port_publisher:
+  el:
+    enabled: true
+    public_port_start: 32000
+  cl:
+    enabled: true
+    public_port_start: 33000
+  additional_services:
+    enabled: true
+    public_port_start: 34000
