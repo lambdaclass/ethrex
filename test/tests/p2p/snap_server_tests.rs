@@ -887,12 +887,12 @@ async fn account_range_clamps_response_bytes() -> Result<(), SnapError> {
     let bytes_used: u64 = res
         .accounts
         .iter()
-        .map(|unit| 32 + AccountStateSlimCodec(unit.account.clone()).length() as u64)
+        .map(|unit| 32 + AccountStateSlimCodec(unit.account).length() as u64)
         .sum();
     let max_account_bytes = res
         .accounts
         .first()
-        .map(|unit| 32 + AccountStateSlimCodec(unit.account.clone()).length() as u64)
+        .map(|unit| 32 + AccountStateSlimCodec(unit.account).length() as u64)
         .unwrap_or(0);
     assert!(
         bytes_used <= MAX_RESPONSE_BYTES + max_account_bytes,
