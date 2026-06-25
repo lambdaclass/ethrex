@@ -76,6 +76,27 @@ impl Stack {
         Ok(value)
     }
 
+    /// Mutable reference to the top item without changing depth (one underflow check,
+    /// no `offset` write). For stack-neutral unary ops (ISZERO, NOT, CLZ), replacing
+    /// `pop1` + `push` with `*top_mut() = f(*top)` avoids the read-modify-write of the
+    /// shared `offset`, which is the per-opcode serial dependency that pins dispatch IPC.
+    #[inline]
+    pub fn top_mut(&mut self) -> Result<&mut U256, ExceptionalHalt> {
+        self.values
+            .get_mut(self.offset)
+            .ok_or(ExceptionalHalt::StackUnderflow)
+    }
+
+    /// Pop the top value and return it together with a mutable reference to the new top.
+    /// For binary ops: `let (a, b) = pop1_and_top_mut()?; *b = f(a, *b)` writes the result
+    /// in place (one `offset` write instead of `pop::<2>` + `push`'s two), where `a` is the
+    /// original top and `*b` the original second operand.
+    #[inline]
+    pub fn pop1_and_top_mut(&mut self) -> Result<(U256, &mut U256), ExceptionalHalt> {
+        let a = self.pop1()?;
+        Ok((a, self.top_mut()?))
+    }
+
     /// Push a single U256 value to the stack, faster than the generic push.
     #[inline]
     pub fn push(&mut self, value: U256) -> Result<(), ExceptionalHalt> {
@@ -299,6 +320,12 @@ pub struct CallFrameBackup {
     /// BAL checkpoint for EIP-7928 - used to restore state changes on revert
     /// while preserving touched_addresses.
     pub bal_checkpoint: Option<BlockAccessListCheckpoint>,
+    /// Code hashes this frame inserted into the by-hash code cache
+    /// (`GeneralizedDatabase::codes`) for codes it deployed. Removed from the
+    /// cache on revert: a stale entry would make a later read of the same
+    /// hash (from a pre-existing account) hit the cache instead of the store,
+    /// hiding the read from execution-witness recording (EIP-8025).
+    pub inserted_code_hashes: Vec<H256>,
 }
 
 impl CallFrameBackup {
@@ -324,6 +351,7 @@ impl CallFrameBackup {
         self.original_accounts_info.clear();
         self.original_account_storage_slots.clear();
         self.bal_checkpoint = None;
+        self.inserted_code_hashes.clear();
     }
 
     /// Merges `other` into `self`, per-address. For slots present in both,
@@ -341,6 +369,7 @@ impl CallFrameBackup {
         }
         self.original_accounts_info
             .extend(other.original_accounts_info);
+        self.inserted_code_hashes.extend(other.inserted_code_hashes);
         // Don't extend bal_checkpoint - it's specific to each call frame
     }
 }
@@ -529,6 +558,13 @@ impl<'a> VM<'a> {
                 }
             }
         }
+
+        // Propagate code-cache insertions so a revert of the parent also
+        // evicts codes deployed by the (committed) child frame.
+        self.current_call_frame
+            .call_frame_backup
+            .inserted_code_hashes
+            .extend(child_call_frame_backup.inserted_code_hashes.iter().copied());
 
         Ok(())
     }

@@ -280,7 +280,11 @@ impl LEVM {
                 chain_id,
             )?;
 
-            tx_gas_breakdowns.push(TxGasBreakdown::from_report(tx_idx, tx.hash(), &report));
+            tx_gas_breakdowns.push(TxGasBreakdown::from_report(
+                tx_idx,
+                tx.hash(crypto),
+                &report,
+            ));
 
             // EIP-7778: gas_spent (POST-REFUND) for receipt cumulative_gas_used
             cumulative_gas_used += report.gas_spent;
@@ -685,7 +689,11 @@ impl LEVM {
                 chain_id,
             )?;
 
-            tx_gas_breakdowns.push(TxGasBreakdown::from_report(tx_idx, tx.hash(), &report));
+            tx_gas_breakdowns.push(TxGasBreakdown::from_report(
+                tx_idx,
+                tx.hash(crypto),
+                &report,
+            ));
 
             if queue_length.load(Ordering::Relaxed) == 0 && tx_since_last_flush > 5 {
                 LEVM::send_state_transitions_tx(&merkleizer, db, queue_length)?;
@@ -1309,7 +1317,11 @@ impl LEVM {
                 )?;
             }
 
-            tx_gas_breakdowns.push(TxGasBreakdown::from_report(*tx_idx, tx.hash(), report));
+            tx_gas_breakdowns.push(TxGasBreakdown::from_report(
+                *tx_idx,
+                tx.hash(crypto),
+                report,
+            ));
 
             let tx_state_gas = report.state_gas_used;
             let tx_regular_gas = report.gas_used.saturating_sub(tx_state_gas);
@@ -2690,10 +2702,11 @@ pub fn generic_system_contract_levm(
         ..Default::default()
     };
 
-    // Invariant relied upon below: with a zero gas price a system call charges no
-    // gas to the SYSTEM_ADDRESS sender and pays no fee to the coinbase, so the only
-    // state change left to undo afterwards is the sender's nonce bump. If this ever
-    // becomes non-zero, the post-call cleanup must be revisited.
+    // Invariant: with a zero gas price (and `is_system_call` making the hook
+    // skip the sender path entirely) a system call leaves no SYSTEM_ADDRESS
+    // state behind — no nonce bump, no balance change, not even a read. If
+    // this ever becomes non-zero, the hook's system-call branches must be
+    // revisited.
     debug_assert!(
         env.gas_price.is_zero() && env.base_fee_per_gas.is_zero(),
         "system calls must run with a zero gas price"
@@ -2734,15 +2747,7 @@ pub fn generic_system_contract_levm(
         recorder.exit_system_call();
     }
 
-    let report = result?;
-
-    // Undo the sender nonce bump: it's the only state change a system call leaves
-    // behind given that the gas price is set to zero.
-    if let Some(account) = db.current_accounts_state.get_mut(&system_address) {
-        account.info.nonce = account.info.nonce.saturating_sub(1);
-    }
-
-    Ok(report)
+    result
 }
 
 #[allow(unreachable_code)]

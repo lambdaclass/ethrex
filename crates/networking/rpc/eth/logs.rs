@@ -12,6 +12,7 @@ use crate::{
 };
 use ethereum_types::{Bloom, BloomInput};
 use ethrex_common::{H160, H256};
+use ethrex_crypto::NativeCrypto;
 use ethrex_storage::Store;
 use serde::Deserialize;
 use serde_json::Value;
@@ -180,16 +181,20 @@ pub(crate) async fn fetch_logs_with_filter(
             )))?;
         let block_hash = block_header.hash();
 
+        // Fetch all of the block's receipts in a single bulk read instead of a
+        // point lookup per transaction (each of which also re-resolved the
+        // canonical block hash). For mainnet blocks with hundreds of txs this
+        // is the dominant cost of eth_getLogs.
+        let receipts = storage.get_receipts_for_block(&block_hash).await?;
+
         let mut block_log_index = 0_u64;
 
-        // Since transactions share indices with their receipts,
-        // we'll use them to fetch their receipts, which have the actual logs.
+        // Transactions share indices with their receipts; pair them by index.
         for (tx_index, tx) in block_body.transactions.iter().enumerate() {
-            let tx_hash = tx.hash();
-            let receipt = storage
-                .get_receipt(block_num, tx_index as u64)
-                .await?
-                .ok_or(RpcErr::Internal("Could not get receipt".to_owned()))?;
+            let tx_hash = tx.hash(&NativeCrypto);
+            let receipt = receipts.get(tx_index).ok_or(RpcErr::Internal(format!(
+                "Missing receipt for block {block_num} tx {tx_index}"
+            )))?;
 
             if receipt.succeeded {
                 for log in &receipt.logs {

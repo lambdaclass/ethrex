@@ -486,7 +486,7 @@ impl Store {
         for (index, transaction) in block.body.transactions.iter().enumerate() {
             tx.merge(
                 TRANSACTION_LOCATIONS,
-                transaction.hash().as_bytes(),
+                transaction.hash(&NativeCrypto).as_bytes(),
                 &encode_tx_location_operand(block_number, block_hash, index as u64),
             )?;
         }
@@ -742,7 +742,10 @@ impl Store {
                         wtxn.delete(RECEIPTS_V2, &key)?;
                         counts.receipts += 1;
 
-                        tx_location_removals.entry(tx.hash()).or_default().push(*h);
+                        tx_location_removals
+                            .entry(tx.hash(&NativeCrypto))
+                            .or_default()
+                            .push(*h);
                         counts.tx_locations += 1;
                     }
                 }
@@ -4434,8 +4437,8 @@ mod pruning_index_tests {
             to: TxKind::Create,
             ..Default::default()
         });
-        let tx0_hash = tx0.hash();
-        let tx1_hash = tx1.hash();
+        let tx0_hash = tx0.hash(&NativeCrypto);
+        let tx1_hash = tx1.hash(&NativeCrypto);
         assert_ne!(tx0_hash, tx1_hash);
 
         let body = BlockBody {

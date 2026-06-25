@@ -11,7 +11,7 @@ use crate::types::{
     compute_receipts_root_and_logs_bloom, validate_block_header, validate_cancun_header_fields,
     validate_prague_header_fields, validate_pre_cancun_header_fields,
 };
-use ethrex_crypto::Crypto;
+use ethrex_crypto::{Crypto, NativeCrypto};
 use ethrex_rlp::encode::RLPEncode;
 
 /// Performs pre-execution validation of the block's header values in reference to the parent_header.
@@ -208,6 +208,7 @@ pub fn validate_block_access_list_hash(
     chain_config: &ChainConfig,
     computed_bal: &crate::types::block_access_list::BlockAccessList,
     transaction_count: usize,
+    crypto: &dyn Crypto,
 ) -> Result<(), InvalidBlockError> {
     use crate::constants::BAL_ITEM_COST;
 
@@ -264,7 +265,7 @@ pub fn validate_block_access_list_hash(
         });
     }
 
-    let computed_hash = computed_bal.compute_hash();
+    let computed_hash = computed_bal.compute_hash(crypto);
     let valid = header
         .block_access_list_hash
         .map(|expected_hash| expected_hash == computed_hash)
@@ -347,7 +348,7 @@ fn verify_transaction_max_gas_limit(block: &Block) -> Result<(), InvalidBlockErr
         if transaction.gas_limit() > POST_OSAKA_GAS_LIMIT_CAP {
             return Err(InvalidBlockError::InvalidTransaction(format!(
                 "Transaction gas limit exceeds maximum. Transaction hash: {}, transaction gas limit: {}",
-                transaction.hash(),
+                transaction.hash(&NativeCrypto),
                 transaction.gas_limit()
             )));
         }

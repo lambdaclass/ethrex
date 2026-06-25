@@ -477,6 +477,7 @@ impl Blockchain {
                 &chain_config,
                 bal,
                 block.body.transactions.len(),
+                &NativeCrypto,
             )?;
         }
 
@@ -551,32 +552,27 @@ impl Blockchain {
         vm.db.store = caching_store.clone();
 
         let cancelled = AtomicBool::new(false);
-        let bal_parallel_exec_enabled = self.options.bal_parallel_exec_enabled;
+        // Witness collection also forces sequential execution: parallel lanes
+        // re-read in-block-created state (e.g. a code deployed by an earlier
+        // tx) from the logged store, while sequential execution serves it from
+        // VM caches — recording accesses the canonical execution never makes.
+        let bal_parallel_exec_enabled = self.options.bal_parallel_exec_enabled && !collect_witness;
 
         // Synthesize BAL updates pre-scope so the merkleizer thread can start
         // trie work immediately, in parallel with execution.
         // `--no-bal-parallel-trie` opts out: leave `optimistic_updates = None` so
         // the merkleizer takes the streaming branch (fed by the EVM-side
         // `bal_to_account_updates` send over the channel below).
+        // Witness collection forces the streaming branch too: the sequential
+        // executor (see `bal_parallel_exec_enabled` below) streams per-tx
+        // updates over the channel, which only the streaming merkleizer
+        // consumes — the synthesized path would leave the receiver dropped.
         let optimistic_updates: Option<FxHashMap<Address, BalSynthesisItem>> =
-            if self.options.bal_parallel_trie_enabled {
+            if self.options.bal_parallel_trie_enabled && !collect_witness {
                 bal.map(synthesize_bal_updates)
             } else {
                 None
             };
-        let optimistic_witness: Option<Vec<AccountUpdate>> = if collect_witness {
-            optimistic_updates.as_ref().map(|m| {
-                m.iter()
-                    .map(|(addr, item)| AccountUpdate {
-                        address: *addr,
-                        added_storage: item.added_storage.clone(),
-                        ..Default::default()
-                    })
-                    .collect()
-            })
-        } else {
-            None
-        };
 
         // Synchronously warm all BAL storage slots before the executor thread starts.
         //
@@ -607,8 +603,14 @@ impl Blockchain {
         // Gated by `--no-bal-prefetch`: when the operator disables BAL-driven
         // prefetching, skip the synchronous storage warm too. The warmer thread
         // below already honors the same toggle.
+        // Witness collection records every read that reaches the store-backed
+        // logger beneath the shared cache. The warmer's speculative reads would
+        // be recorded as state accesses the canonical execution never makes,
+        // polluting the witness (e.g. `engine_newPayloadWithWitnessV5`), so
+        // warming is skipped entirely when a witness is being collected.
         #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
         if self.options.bal_prefetch_enabled
+            && !collect_witness
             && let Some(bal) = bal
         {
             let slots = LEVM::bal_storage_slots(bal);
@@ -625,53 +627,59 @@ impl Blockchain {
                 #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
                 let bal_prefetch_enabled = self.options.bal_prefetch_enabled;
                 #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
-                let warm_handle = std::thread::Builder::new()
-                    .name("block_executor_warmer".to_string())
-                    .spawn_scoped(s, move || {
-                        // Warming uses the same caching store, sharing cached state with execution.
-                        // Precompile cache lives inside CachingDatabase, shared automatically.
-                        let start = Instant::now();
-                        if let Some(bal) = bal {
-                            if bal_prefetch_enabled {
-                                // Amsterdam+: BAL-based precise prefetching (no tx re-execution).
-                                if let Err(e) =
-                                    LEVM::warm_block_from_bal(bal, caching_store, cancelled_ref)
-                                {
-                                    debug!("BAL warming failed (non-fatal): {e}");
+                let warm_handle = (!collect_witness)
+                    .then(|| {
+                        std::thread::Builder::new()
+                            .name("block_executor_warmer".to_string())
+                            .spawn_scoped(s, move || {
+                                // Warming uses the same caching store, sharing cached state with execution.
+                                // Precompile cache lives inside CachingDatabase, shared automatically.
+                                let start = Instant::now();
+                                if let Some(bal) = bal {
+                                    if bal_prefetch_enabled {
+                                        // Amsterdam+: BAL-based precise prefetching (no tx re-execution).
+                                        if let Err(e) = LEVM::warm_block_from_bal(
+                                            bal,
+                                            caching_store,
+                                            cancelled_ref,
+                                        ) {
+                                            debug!("BAL warming failed (non-fatal): {e}");
+                                        }
+                                    } else if !bal_parallel_exec_enabled {
+                                        // --no-bal-prefetch combined with --no-bal-parallel-exec:
+                                        // mirror the pre-Amsterdam setup where a parallel speculative
+                                        // warmer races ahead of the serial executor. With parallel
+                                        // exec still on, we skip warming instead — two parallel passes
+                                        // over the same txs would just fight for cores.
+                                        if let Err(e) = LEVM::warm_block(
+                                            block,
+                                            caching_store,
+                                            vm_type,
+                                            &NativeCrypto,
+                                            cancelled_ref,
+                                        ) {
+                                            debug!("Block warming failed (non-fatal): {e}");
+                                        }
+                                    }
+                                } else {
+                                    // Pre-Amsterdam / P2P sync: speculative tx re-execution
+                                    if let Err(e) = LEVM::warm_block(
+                                        block,
+                                        caching_store,
+                                        vm_type,
+                                        &NativeCrypto,
+                                        cancelled_ref,
+                                    ) {
+                                        debug!("Block warming failed (non-fatal): {e}");
+                                    }
                                 }
-                            } else if !bal_parallel_exec_enabled {
-                                // --no-bal-prefetch combined with --no-bal-parallel-exec:
-                                // mirror the pre-Amsterdam setup where a parallel speculative
-                                // warmer races ahead of the serial executor. With parallel
-                                // exec still on, we skip warming instead — two parallel passes
-                                // over the same txs would just fight for cores.
-                                if let Err(e) = LEVM::warm_block(
-                                    block,
-                                    caching_store,
-                                    vm_type,
-                                    &NativeCrypto,
-                                    cancelled_ref,
-                                ) {
-                                    debug!("Block warming failed (non-fatal): {e}");
-                                }
-                            }
-                        } else {
-                            // Pre-Amsterdam / P2P sync: speculative tx re-execution
-                            if let Err(e) = LEVM::warm_block(
-                                block,
-                                caching_store,
-                                vm_type,
-                                &NativeCrypto,
-                                cancelled_ref,
-                            ) {
-                                debug!("Block warming failed (non-fatal): {e}");
-                            }
-                        }
-                        start.elapsed()
+                                start.elapsed()
+                            })
+                            .map_err(|e| {
+                                ChainError::Custom(format!("Failed to spawn warmer thread: {e}"))
+                            })
                     })
-                    .map_err(|e| {
-                        ChainError::Custom(format!("Failed to spawn warmer thread: {e}"))
-                    })?;
+                    .transpose()?;
                 let max_queue_length_ref = &mut max_queue_length;
                 // Channel is needed whenever the merkleizer takes the streaming
                 // branch OR LEVM falls into the sequential path:
@@ -751,10 +759,14 @@ impl Blockchain {
                                 &chain_config,
                                 bal,
                                 block.body.transactions.len(),
+                                &NativeCrypto,
                             )?;
                         } else if let Some(header_bal) = bal
                             && chain_config.is_amsterdam_activated(block.header.timestamp)
-                            && !header_bal.matches_commitment(block.header.block_access_list_hash)
+                            && !header_bal.matches_commitment(
+                                block.header.block_access_list_hash,
+                                &NativeCrypto,
+                            )
                         {
                             return Err(InvalidBlockError::BlockAccessListHashMismatch.into());
                         }
@@ -817,9 +829,13 @@ impl Blockchain {
                 });
                 #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
                 let warmer_duration = warm_handle
-                    .join()
-                    .inspect_err(|e| warn!("Warming thread error: {e:?}"))
-                    .ok()
+                    .map(|handle| {
+                        handle
+                            .join()
+                            .inspect_err(|e| warn!("Warming thread error: {e:?}"))
+                            .ok()
+                            .unwrap_or(Duration::ZERO)
+                    })
                     .unwrap_or(Duration::ZERO);
                 #[cfg(any(not(feature = "rayon"), feature = "eip-8025"))]
                 let warmer_duration = Duration::ZERO;
@@ -829,8 +845,10 @@ impl Blockchain {
             merkleization_result?;
         let (execution_result, produced_bal, exec_end_instant) = execution_result?;
 
-        // Synthesized witness wins when BAL is present; streaming witness wins otherwise.
-        let accumulated_updates = optimistic_witness.or(streaming_witness);
+        // Witness collection forces the streaming merkleizer (synthesized
+        // updates are disabled above), so the streaming witness is the only
+        // possible source of accumulated updates.
+        let accumulated_updates = streaming_witness;
 
         let exec_merkle_end_instant = Instant::now();
 
@@ -1387,6 +1405,7 @@ impl Blockchain {
                 chain_config,
                 bal,
                 block.body.transactions.len(),
+                &NativeCrypto,
             )?;
         }
 
@@ -2615,7 +2634,7 @@ impl Blockchain {
             .zip(bals.iter())
             .filter_map(|(block, bal)| {
                 let bal = bal.as_ref()?;
-                bal.matches_commitment(block.header.block_access_list_hash)
+                bal.matches_commitment(block.header.block_access_list_hash, &NativeCrypto)
                     .then(|| (block.hash(), bal.clone()))
             })
             .collect();
@@ -2682,7 +2701,7 @@ impl Blockchain {
         let fork = self.current_fork().await?;
 
         let transaction = Transaction::EIP4844Transaction(transaction);
-        let hash = transaction.hash();
+        let hash = transaction.hash(&NativeCrypto);
         if self.mempool.contains_tx(hash)? {
             return Ok(hash);
         }
@@ -2742,7 +2761,7 @@ impl Blockchain {
                 limit: MAX_TX_SIZE,
             });
         }
-        let hash = transaction.hash();
+        let hash = transaction.hash(&NativeCrypto);
         if self.mempool.contains_tx(hash)? {
             return Ok(hash);
         }
@@ -2767,7 +2786,7 @@ impl Blockchain {
     /// Remove all transactions in the executed block from the pool (if we have them)
     pub fn remove_block_transactions_from_pool(&self, block: &Block) -> Result<(), StoreError> {
         for tx in &block.body.transactions {
-            self.mempool.remove_transaction(&tx.hash())?;
+            self.mempool.remove_transaction(&tx.hash(&NativeCrypto))?;
         }
         Ok(())
     }
@@ -2888,7 +2907,7 @@ impl Blockchain {
         {
             // https://eips.ethereum.org/EIPS/eip-7825
             return Err(MempoolError::TxMaxGasLimitExceededError(
-                tx.hash(),
+                tx.hash(&NativeCrypto),
                 tx.gas_limit(),
             ));
         }

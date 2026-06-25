@@ -673,8 +673,8 @@ mod pruning_tx_tests {
             to: TxKind::Create,
             ..Default::default()
         });
-        let tx0_hash = tx0.hash();
-        let tx1_hash = tx1.hash();
+        let tx0_hash = tx0.hash(&ethrex_crypto::NativeCrypto);
+        let tx1_hash = tx1.hash(&ethrex_crypto::NativeCrypto);
 
         let body = BlockBody {
             transactions: vec![tx0, tx1],
