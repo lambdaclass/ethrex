@@ -54,6 +54,7 @@ use ethrex_levm::db::gen_db::{
 #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
 use ethrex_levm::db::{Database, gen_db::CacheDB};
 use ethrex_levm::errors::{InternalError, TxValidationError};
+use ethrex_levm::memory::Memory;
 #[cfg(feature = "perf_opcode_timings")]
 use ethrex_levm::timings::{OPCODE_TIMINGS, PRECOMPILES_TIMINGS};
 use ethrex_levm::tracing::LevmCallTracer;
@@ -199,6 +200,17 @@ impl LEVM {
 
         Self::prepare_block(block, db, vm_type, crypto)?;
 
+        // Block-invariant EVM config + chain id + base blob fee, computed once and
+        // reused by every tx (mirrors `execute_block_pipeline`): avoids a per-tx
+        // chain-config copy, fork/blob-schedule recompute, and `fake_exponential` call.
+        let evm_config = EVMConfig::new_from_chain_config(&chain_config, &block.header);
+        let chain_id = chain_config.chain_id;
+        let base_blob_fee_per_gas =
+            get_base_fee_per_blob_gas(block.header.excess_blob_gas, &evm_config)?;
+        // Stack/memory buffer pools reused across txs (each tx draws one and reclaims it).
+        let mut shared_stack_pool = Vec::with_capacity(STACK_LIMIT);
+        let mut shared_memory_pool = Vec::with_capacity(1);
+
         let n_txs = block.body.transactions.len();
         let mut receipts = Vec::with_capacity(n_txs);
         let mut tx_gas_breakdowns: Vec<TxGasBreakdown> = Vec::with_capacity(n_txs);
@@ -253,9 +265,26 @@ impl LEVM {
                 }
             }
 
-            let report = Self::execute_tx(tx, tx_sender, &block.header, db, vm_type, crypto)?;
+            let report = Self::execute_tx_in_block(
+                tx,
+                tx_sender,
+                &block.header,
+                db,
+                vm_type,
+                base_blob_fee_per_gas,
+                &mut shared_stack_pool,
+                &mut shared_memory_pool,
+                false,
+                crypto,
+                evm_config,
+                chain_id,
+            )?;
 
-            tx_gas_breakdowns.push(TxGasBreakdown::from_report(tx_idx, tx.hash(), &report));
+            tx_gas_breakdowns.push(TxGasBreakdown::from_report(
+                tx_idx,
+                tx.hash(crypto),
+                &report,
+            ));
 
             // EIP-7778: gas_spent (POST-REFUND) for receipt cumulative_gas_used
             cumulative_gas_used += report.gas_spent;
@@ -373,6 +402,10 @@ impl LEVM {
     ) -> Result<(BlockExecutionResult, Option<BlockAccessList>), EvmError> {
         let chain_config = db.store.get_chain_config()?;
         let is_amsterdam = chain_config.is_amsterdam_activated(block.header.timestamp);
+        // Block-invariant EVM config + chain id, computed once and reused by every tx
+        // (avoids a per-tx chain-config dyn-dispatch copy + fork/blob-schedule recompute).
+        let evm_config = EVMConfig::new_from_chain_config(&chain_config, &block.header);
+        let chain_id = chain_config.chain_id;
 
         // EIP-7928 BlockAccessIndex invariant — see `execute_block` for rationale.
         debug_assert!(
@@ -583,7 +616,13 @@ impl LEVM {
 
         Self::prepare_block(block, db, vm_type, crypto)?;
 
+        // Compute base blob fee once for the entire block (block-invariant).
+        let base_blob_fee_per_gas =
+            get_base_fee_per_blob_gas(block.header.excess_blob_gas, &evm_config)?;
+
         let mut shared_stack_pool = Vec::with_capacity(STACK_LIMIT);
+        // Holds at most one root memory buffer at a time (each tx pops one and reclaims one).
+        let mut shared_memory_pool = Vec::with_capacity(1);
 
         let n_txs = block.body.transactions.len();
         let mut receipts = Vec::with_capacity(n_txs);
@@ -641,12 +680,20 @@ impl LEVM {
                 &block.header,
                 db,
                 vm_type,
+                base_blob_fee_per_gas,
                 &mut shared_stack_pool,
+                &mut shared_memory_pool,
                 false,
                 crypto,
+                evm_config,
+                chain_id,
             )?;
 
-            tx_gas_breakdowns.push(TxGasBreakdown::from_report(tx_idx, tx.hash(), &report));
+            tx_gas_breakdowns.push(TxGasBreakdown::from_report(
+                tx_idx,
+                tx.hash(crypto),
+                &report,
+            ));
 
             if queue_length.load(Ordering::Relaxed) == 0 && tx_since_last_flush > 5 {
                 LEVM::send_state_transitions_tx(&merkleizer, db, queue_length)?;
@@ -991,6 +1038,12 @@ impl LEVM {
         // invariant checkable rather than implicit.
         let chain_config = store.get_chain_config()?;
         let is_amsterdam = chain_config.is_amsterdam_activated(header.timestamp);
+        // Block-invariant EVM config + chain id, computed once and shared across the
+        // parallel workers (both are `Copy` + `Send`/`Sync`).
+        let evm_config = EVMConfig::new_from_chain_config(&chain_config, header);
+        let chain_id = chain_config.chain_id;
+        // Block-invariant base blob fee, computed once and shared across workers.
+        let base_blob_fee_per_gas = get_base_fee_per_blob_gas(header.excess_blob_gas, &evm_config)?;
         debug_assert!(
             is_amsterdam,
             "execute_block_parallel invoked on non-Amsterdam block"
@@ -1052,17 +1105,26 @@ impl LEVM {
         let arc_idx = Arc::new(validation_index.clone());
 
         // 2. Execute all txs in parallel (embarrassingly parallel, BAL-seeded).
-        //    BAL validation is deferred to after the gas limit check (step 3) so that
-        //    blocks exceeding gas limit produce GAS_USED_OVERFLOW before BAL mismatch.
+        //    BAL validation runs INSIDE the par_iter closure (parallel) but its
+        //    errors are deferred via Option<EvmError> so the post-par_iter
+        //    gas-limit check still takes priority (GAS_USED_OVERFLOW must beat
+        //    BAL mismatch on blocks exceeding the gas limit; the BAL is built
+        //    assuming rejected txs, so miner balance in the BAL won't match
+        //    execution that ran all txs).
+        //
+        //    The closure also precomputes the small (Vec<(Address, H256)>,
+        //    Vec<Address>) inputs needed to update the shared
+        //    `unread_storage_reads` / `unaccessed_pure_accounts` sets, so the
+        //    serial pass after par_iter is just hash-set ops; current_state
+        //    and codes never cross the rayon boundary.
         type TxExecResult = (
             usize,
             TxType,
             ExecutionReport,
-            FxHashMap<Address, LevmAccount>,
-            FxHashMap<H256, ethrex_common::types::Code>,
             FxHashSet<Address>,   // accessed_accounts tracker (coarse)
-            Vec<Address>,         // shadow recorder touched_addresses (EIP-7928 exact)
-            Vec<(Address, U256)>, // shadow recorder storage_reads (EIP-7928 exact)
+            Vec<(Address, H256)>, // reads_satisfied: (addr, slot) loaded during this tx
+            Vec<Address>,         // destroyed: accounts selfdestructed during this tx
+            Option<EvmError>,     // deferred BAL validation error
         );
 
         let exec_results: Result<Vec<TxExecResult>, EvmError> = (0..n_txs)
@@ -1082,6 +1144,8 @@ impl LEVM {
                 // Small capacity: parallel txs rarely nest >8 call frames, and
                 // over-allocating per-tx wastes memory across many rayon tasks.
                 let mut stack_pool = Vec::with_capacity(8);
+                // Holds at most one root memory buffer (popped + reclaimed per tx).
+                let mut memory_pool = Vec::with_capacity(1);
 
                 // Enable accessed_accounts tracker (coarse) for `unaccessed_pure_accounts`
                 // diagnostics. Safe to over-report: used only to REMOVE entries from a
@@ -1109,9 +1173,13 @@ impl LEVM {
                     header,
                     &mut tx_db,
                     vm_type,
+                    base_blob_fee_per_gas,
                     &mut stack_pool,
+                    &mut memory_pool,
                     false,
                     crypto,
+                    evm_config,
+                    chain_id,
                 )?;
 
                 let current_state = std::mem::take(&mut tx_db.current_accounts_state);
@@ -1122,37 +1190,120 @@ impl LEVM {
                     .take()
                     .map(|mut r| (r.take_touched_addresses(), r.take_storage_reads()))
                     .unwrap_or_default();
+
+                // Precompute the per-tx inputs the serial pass uses to update
+                // the shared unread_storage_reads set. Selfdestruct clears
+                // storage from the final state, so destroyed accounts
+                // satisfy ALL their BAL storage_reads regardless of which
+                // slots remain in `current_state`.
+                // Rough avg storage slots per touched account; over-allocation
+                // is cheap compared to 2-3 reallocations on the hot path.
+                let mut reads_satisfied: Vec<(Address, H256)> =
+                    Vec::with_capacity(current_state.len() * 4);
+                // `destroyed` stays empty on the typical block (selfdestruct
+                // is rare post-EIP-6780), so `Vec::new()` (no allocation) is
+                // optimal here.
+                let mut destroyed: Vec<Address> = Vec::new();
+                for (addr, acct) in &current_state {
+                    if matches!(
+                        acct.status,
+                        AccountStatus::Destroyed | AccountStatus::DestroyedModified
+                    ) {
+                        destroyed.push(*addr);
+                    } else {
+                        for key in acct.storage.keys() {
+                            reads_satisfied.push((*addr, *key));
+                        }
+                    }
+                }
+
+                // Run BAL validation inline. Errors are DEFERRED: stored in
+                // Option<EvmError> so the serial gas-limit check below still
+                // takes priority. Borrow current_state / codes during the
+                // validation closure, then drop them before returning so
+                // they don't cross the rayon boundary.
+                let deferred_bal_err: Option<EvmError> = (|| -> Result<(), EvmError> {
+                    let bal_idx = u32::try_from(tx_idx + 1).unwrap_or(u32::MAX);
+                    let seed_idx = u32::try_from(tx_idx).unwrap_or(u32::MAX);
+                    Self::validate_tx_execution(
+                        bal_idx,
+                        seed_idx,
+                        &current_state,
+                        &codes,
+                        bal,
+                        validation_index,
+                        &system_seed,
+                        &store,
+                    )
+                    .map_err(|e| {
+                        EvmError::Custom(format!("BAL validation failed for tx {tx_idx}: {e}"))
+                    })?;
+
+                    // EIP-7928 (Group B): missing-access detection via shadow recorder.
+                    for addr in &shadow_touched {
+                        if !validation_index.addr_to_idx.contains_key(addr) {
+                            return Err(EvmError::Custom(format!(
+                                "BAL validation failed for tx {tx_idx}: account {addr:?} was \
+                                 accessed during execution but is missing from BAL"
+                            )));
+                        }
+                    }
+                    for (addr, slot) in &shadow_reads {
+                        let Some(&bal_acct_idx) = validation_index.addr_to_idx.get(addr) else {
+                            // Already caught by the touched-address check above.
+                            continue;
+                        };
+                        let acct = &bal.accounts()[bal_acct_idx];
+                        let in_changes = acct
+                            .storage_changes
+                            .binary_search_by(|sc| sc.slot.cmp(slot))
+                            .is_ok();
+                        let in_reads = acct.storage_reads.contains(slot);
+                        if !in_changes && !in_reads {
+                            return Err(EvmError::Custom(format!(
+                                "BAL validation failed for tx {tx_idx}: storage slot {slot} of \
+                                 account {addr:?} was read during execution but is missing from \
+                                 BAL (no storage_changes or storage_reads entry)"
+                            )));
+                        }
+                    }
+                    Ok(())
+                })()
+                .err();
+
+                drop(current_state);
+                drop(codes);
+
                 Ok((
                     tx_idx,
                     tx.tx_type(),
                     report,
-                    current_state,
-                    codes,
                     tracked,
-                    shadow_touched,
-                    shadow_reads,
+                    reads_satisfied,
+                    destroyed,
+                    deferred_bal_err,
                 ))
             })
             .collect();
 
         let mut exec_results = exec_results?;
 
-        // Sort so gas accounting and validation happen in tx order.
-        exec_results.sort_unstable_by_key(|(idx, _, _, _, _, _, _, _)| *idx);
+        // `IndexedParallelIterator` (via `(0..n_txs).into_par_iter()`) preserves
+        // source-index order through `.map().collect()`, so `exec_results` is
+        // already sorted. The sort is kept as a defensive guard against a future
+        // refactor swapping in an unordered iterator; `sort_unstable_by_key` on
+        // an already-sorted slice is near-linear via pdqsort, so the cost is
+        // negligible.
+        exec_results.sort_unstable_by_key(|(idx, _, _, _, _, _, _)| *idx);
 
-        // 3. Gas limit check — must happen BEFORE BAL validation so that blocks
-        //    exceeding the gas limit produce GAS_USED_OVERFLOW instead of a BAL
-        //    mismatch error (the BAL is built assuming rejected txs, so the miner
-        //    balance in the BAL won't match execution that ran all txs).
-        //
-        //    EIP-8037 PR #2703: also enforce the per-tx 2D inclusion check
-        //    against running block totals. A tx whose worst-case regular or
-        //    state contribution exceeds the remaining budget at its inclusion
-        //    position invalidates the block with GAS_ALLOWANCE_EXCEEDED.
+        // 3. Gas limit check — must happen BEFORE BAL validation errors so that
+        //    blocks exceeding the gas limit produce GAS_USED_OVERFLOW instead of
+        //    a BAL mismatch error. EIP-8037 PR #2703: also enforce the per-tx
+        //    2D inclusion check against running block totals.
         let mut block_regular_gas_used = 0_u64;
         let mut block_state_gas_used = 0_u64;
         let mut tx_gas_breakdowns: Vec<TxGasBreakdown> = Vec::with_capacity(exec_results.len());
-        for (tx_idx, _, report, _, _, _, _, _) in &exec_results {
+        for (tx_idx, _, report, _, _, _, _) in &exec_results {
             let (tx, _) = txs_with_sender
                 .get(*tx_idx)
                 .ok_or_else(|| EvmError::Custom(format!("tx index {tx_idx} out of bounds")))?;
@@ -1166,7 +1317,11 @@ impl LEVM {
                 )?;
             }
 
-            tx_gas_breakdowns.push(TxGasBreakdown::from_report(*tx_idx, tx.hash(), report));
+            tx_gas_breakdowns.push(TxGasBreakdown::from_report(
+                *tx_idx,
+                tx.hash(crypto),
+                report,
+            ));
 
             let tx_state_gas = report.state_gas_used;
             let tx_regular_gas = report.gas_used.saturating_sub(tx_state_gas);
@@ -1183,48 +1338,25 @@ impl LEVM {
             )));
         }
 
-        // 4. Per-tx BAL validation — now safe to run after gas limit is confirmed OK.
-        //    Also mark off storage_reads that appear in per-tx execution state.
-        for (tx_idx, _, _, current_state, codes, tracked_accounts, shadow_touched, shadow_reads) in
-            &exec_results
-        {
-            let bal_idx = u32::try_from(*tx_idx + 1).unwrap_or(u32::MAX);
-            let seed_idx = u32::try_from(*tx_idx).unwrap_or(u32::MAX);
-            Self::validate_tx_execution(
-                bal_idx,
-                seed_idx,
-                current_state,
-                codes,
-                bal,
-                validation_index,
-                &system_seed,
-                &store,
-            )
-            .map_err(|e| EvmError::Custom(format!("BAL validation failed for tx {tx_idx}: {e}")))?;
+        // 4. Surface the first deferred BAL validation error (in tx order) now
+        //    that the gas-limit check has passed.
+        for (_, _, _, _, _, _, deferred) in &mut exec_results {
+            if let Some(err) = deferred.take() {
+                return Err(err);
+            }
+        }
 
-            // Mark storage_reads that were actually loaded during this tx.
-            // storage_reads slots are NOT in storage_changes (conflict check ensures this),
-            // so they're not seeded. If a slot appears in the per-tx state's storage,
-            // the tx genuinely read it via SLOAD.
-            // Special case: selfdestruct clears storage from the final state, so reads
-            // that happened before destruction are no longer visible. For destroyed
-            // accounts, mark ALL their BAL storage_reads as satisfied.
+        // 5. Apply per-tx reads_satisfied / destroyed / tracked to the shared
+        //    sets (cheap hash-set ops; preserves prior semantics).
+        for (_, _, _, tracked_accounts, reads_satisfied, destroyed, _) in &exec_results {
             if !unread_storage_reads.is_empty() {
-                for (addr, acct) in current_state {
-                    if matches!(
-                        acct.status,
-                        AccountStatus::Destroyed | AccountStatus::DestroyedModified
-                    ) {
-                        unread_storage_reads.retain(|&(a, _)| a != *addr);
-                    } else {
-                        for key in acct.storage.keys() {
-                            unread_storage_reads.remove(&(*addr, *key));
-                        }
-                    }
+                for addr in destroyed {
+                    unread_storage_reads.retain(|&(a, _)| a != *addr);
+                }
+                for pair in reads_satisfied {
+                    unread_storage_reads.remove(pair);
                 }
             }
-
-            // Mark pure-access accounts that were accessed during this tx.
             // The coinbase is always accessed during fee finalization (geth's
             // readerTracker records it), even when the miner fee is zero and
             // ethrex skips the load_account call.
@@ -1234,44 +1366,12 @@ impl LEVM {
                     unaccessed_pure_accounts.remove(addr);
                 }
             }
-
-            // EIP-7928 (Group B): missing-access detection using the shadow recorder.
-            // For each address the per-tx shadow recorder marked as touched, the header
-            // BAL must contain an entry for it. For each storage read, the header BAL
-            // must carry the slot either in storage_changes or storage_reads.
-            for addr in shadow_touched {
-                if !validation_index.addr_to_idx.contains_key(addr) {
-                    return Err(EvmError::Custom(format!(
-                        "BAL validation failed for tx {tx_idx}: account {addr:?} was \
-                         accessed during execution but is missing from BAL"
-                    )));
-                }
-            }
-            for (addr, slot) in shadow_reads {
-                let Some(&bal_acct_idx) = validation_index.addr_to_idx.get(addr) else {
-                    // Already caught by the touched-address check above.
-                    continue;
-                };
-                let acct = &bal.accounts()[bal_acct_idx];
-                let in_changes = acct
-                    .storage_changes
-                    .binary_search_by(|sc| sc.slot.cmp(slot))
-                    .is_ok();
-                let in_reads = acct.storage_reads.contains(slot);
-                if !in_changes && !in_reads {
-                    return Err(EvmError::Custom(format!(
-                        "BAL validation failed for tx {tx_idx}: storage slot {slot} of \
-                         account {addr:?} was read during execution but is missing from \
-                         BAL (no storage_changes or storage_reads entry)"
-                    )));
-                }
-            }
         }
 
-        // 5. Build receipts in tx order.
+        // 6. Build receipts in tx order.
         let mut receipts = Vec::with_capacity(n_txs);
         let mut cumulative_gas_used = 0_u64;
-        for (_, tx_type, report, _, _, _, _, _) in exec_results {
+        for (_, tx_type, report, _, _, _, _) in exec_results {
             cumulative_gas_used += report.gas_spent;
             let receipt = Receipt::new(
                 tx_type,
@@ -1465,16 +1565,14 @@ impl LEVM {
                     match actual {
                         Some(a) => {
                             let actual_code = if let Some(c) = codes.get(&a.info.code_hash) {
-                                c.bytecode.clone()
+                                c.code_bytes()
                             } else {
-                                store
-                                    .get_account_code(a.info.code_hash)
-                                    .map_err(|e| {
-                                        BalValidationError::Database(format!(
-                                            "DB error reading account code for {addr:?}: {e}"
-                                        ))
-                                    })?
-                                    .bytecode
+                                let c = store.get_account_code(a.info.code_hash).map_err(|e| {
+                                    BalValidationError::Database(format!(
+                                        "DB error reading account code for {addr:?}: {e}"
+                                    ))
+                                })?;
+                                c.code_bytes()
                             };
                             if actual_code != *expected_code {
                                 return Err(BalValidationError::Mismatch(format!(
@@ -1499,17 +1597,15 @@ impl LEVM {
                                     })?
                             };
                             let pre_code = if let Some(c) = codes.get(&code_hash) {
-                                c.bytecode.clone()
+                                c.code_bytes()
                             } else {
-                                store
-                                    .get_account_code(code_hash)
-                                    .map_err(|e| {
-                                        BalValidationError::Database(format!(
-                                            "DB error reading account code for hash \
+                                let c = store.get_account_code(code_hash).map_err(|e| {
+                                    BalValidationError::Database(format!(
+                                        "DB error reading account code for hash \
                                              {code_hash:?}: {e}"
-                                        ))
-                                    })?
-                                    .bytecode
+                                    ))
+                                })?;
+                                c.code_bytes()
                             };
                             if *expected_code != pre_code {
                                 return Err(BalValidationError::Mismatch(format!(
@@ -2044,13 +2140,27 @@ impl LEVM {
             sender_groups.entry(*sender).or_default().push(tx);
         }
 
-        // Parallel across sender groups, sequential within each group
+        // Block-invariant EVM config + chain id, computed once and shared (by copy)
+        // across the parallel warming workers.
+        let chain_config = store.get_chain_config()?;
+        let evm_config = EVMConfig::new_from_chain_config(&chain_config, &block.header);
+        let chain_id = chain_config.chain_id;
+        // Block-invariant base blob fee, computed once and shared across workers.
+        let base_blob_fee_per_gas =
+            get_base_fee_per_blob_gas(block.header.excess_blob_gas, &evm_config)?;
+
+        // Parallel across sender groups, sequential within each group. The stack pool is reused
+        // across all groups a worker handles (it is `Send`).
         sender_groups.into_par_iter().for_each_with(
             Vec::with_capacity(STACK_LIMIT),
             |stack_pool, (sender, txs)| {
                 if cancelled.load(Ordering::Relaxed) {
                     return;
                 }
+                // Memory holds an `Rc` (not `Send`), so its pool can't ride the `for_each_with`
+                // init; keep it local to this group's run, where it still amortizes the buffer
+                // alloc across the group's txs.
+                let mut memory_pool = Vec::with_capacity(1);
                 // Each sender group gets its own db instance for state propagation
                 let mut group_db = GeneralizedDatabase::new(store.clone());
                 // Execute transactions sequentially within sender group
@@ -2062,9 +2172,13 @@ impl LEVM {
                         &block.header,
                         &mut group_db,
                         vm_type,
+                        base_blob_fee_per_gas,
                         stack_pool,
+                        &mut memory_pool,
                         true,
                         crypto,
+                        evm_config,
+                        chain_id,
                     );
                 }
             },
@@ -2177,7 +2291,36 @@ impl LEVM {
         db: &GeneralizedDatabase,
         vm_type: VMType,
     ) -> Result<Environment, EvmError> {
+        // `chain_config` (a dyn-dispatch copy) and `EVMConfig`/fork/blob-schedule are
+        // block-invariant; in a block loop, compute them once and use
+        // `setup_env_with_config` instead. This single-tx entry point computes them here.
         let chain_config = db.store.get_chain_config()?;
+        let config = EVMConfig::new_from_chain_config(&chain_config, block_header);
+        let base_blob_fee_per_gas =
+            get_base_fee_per_blob_gas(block_header.excess_blob_gas, &config)?;
+        Self::setup_env_with_config(
+            tx,
+            tx_sender,
+            block_header,
+            config,
+            chain_config.chain_id,
+            vm_type,
+            base_blob_fee_per_gas,
+        )
+    }
+
+    /// Per-tx `Environment` builder that takes the block-invariant `EVMConfig` and
+    /// `chain_id` precomputed once per block, avoiding a per-tx `get_chain_config()`
+    /// dyn-dispatch `ChainConfig` copy + `fork`/blob-schedule recompute.
+    fn setup_env_with_config(
+        tx: &Transaction,
+        tx_sender: Address,
+        block_header: &BlockHeader,
+        config: EVMConfig,
+        chain_id: u64,
+        vm_type: VMType,
+        base_blob_fee_per_gas: U256,
+    ) -> Result<Environment, EvmError> {
         let gas_price: U256 = calculate_gas_price_for_tx(
             tx,
             block_header.base_fee_per_gas.unwrap_or_default(),
@@ -2185,7 +2328,6 @@ impl LEVM {
         )?;
 
         let block_excess_blob_gas = block_header.excess_blob_gas;
-        let config = EVMConfig::new_from_chain_config(&chain_config, block_header);
         let env = Environment {
             origin: tx_sender,
             gas_limit: tx.gas_limit(),
@@ -2198,9 +2340,9 @@ impl LEVM {
                 .slot_number
                 .map(U256::from)
                 .unwrap_or(U256::zero()),
-            chain_id: chain_config.chain_id.into(),
+            chain_id: chain_id.into(),
             base_fee_per_gas: block_header.base_fee_per_gas.unwrap_or_default().into(),
-            base_blob_fee_per_gas: get_base_fee_per_blob_gas(block_excess_blob_gas, &config)?,
+            base_blob_fee_per_gas,
             gas_price,
             block_excess_blob_gas,
             block_blob_gas_used: block_header.blob_gas_used,
@@ -2237,7 +2379,8 @@ impl LEVM {
         vm.execute().map_err(VMError::into)
     }
 
-    // Like execute_tx but allows reusing the stack pool
+    // Like execute_tx but allows reusing the stack pool. Takes the block-invariant
+    // `config`/`chain_id` precomputed once per block (see `setup_env_with_config`).
     #[allow(clippy::too_many_arguments)]
     fn execute_tx_in_block(
         // The transaction to execute.
@@ -2248,17 +2391,40 @@ impl LEVM {
         block_header: &BlockHeader,
         db: &mut GeneralizedDatabase,
         vm_type: VMType,
+        base_blob_fee_per_gas: U256,
         stack_pool: &mut Vec<Stack>,
+        memory_pool: &mut Vec<Memory>,
         disable_balance_check: bool,
         crypto: &dyn Crypto,
+        config: EVMConfig,
+        chain_id: u64,
     ) -> Result<ExecutionReport, EvmError> {
-        let mut env = Self::setup_env(tx, tx_sender, block_header, db, vm_type)?;
+        let mut env = Self::setup_env_with_config(
+            tx,
+            tx_sender,
+            block_header,
+            config,
+            chain_id,
+            vm_type,
+            base_blob_fee_per_gas,
+        )?;
         env.disable_balance_check = disable_balance_check;
-        let mut vm = VM::new(env, db, tx, LevmCallTracer::disabled(), vm_type, crypto)?;
-
-        std::mem::swap(&mut vm.stack_pool, stack_pool);
+        // Draw the root frame's stack and memory buffer from the shared pools (and adopt the
+        // stacks for sub-frames), then return them afterwards so the next tx reuses them instead
+        // of allocating + zeroing a fresh 32 KB stack and a fresh memory buffer per transaction.
+        let mut vm = VM::new_pooled(
+            env,
+            db,
+            tx,
+            LevmCallTracer::disabled(),
+            vm_type,
+            crypto,
+            stack_pool,
+            memory_pool,
+        )?;
         let result = vm.execute().map_err(VMError::into);
-        std::mem::swap(&mut vm.stack_pool, stack_pool);
+        // Runs on both success and error paths (execute borrowed `vm` mutably but left it intact).
+        vm.reclaim_into(stack_pool, memory_pool);
         result
     }
 
@@ -2282,7 +2448,8 @@ impl LEVM {
 
         adjust_disabled_base_fee(&mut env);
 
-        let mut vm = vm_from_generic(tx, env, db, vm_type, crypto)?;
+        let converted_tx = generic_tx_to_transaction(tx)?;
+        let mut vm = vm_from_generic(&converted_tx, env, db, vm_type, crypto)?;
 
         vm.execute()
             .map(|value| value.into())
@@ -2453,13 +2620,15 @@ impl LEVM {
 
         adjust_disabled_base_fee(&mut env);
 
-        let mut vm = vm_from_generic(&tx, env.clone(), db, vm_type, crypto)?;
+        let converted_tx = generic_tx_to_transaction(&tx)?;
+        let mut vm = vm_from_generic(&converted_tx, env.clone(), db, vm_type, crypto)?;
 
         vm.stateless_execute()?;
 
         // Execute the tx again, now with the created access list.
         tx.access_list = vm.substate.make_access_list();
-        let mut vm = vm_from_generic(&tx, env, db, vm_type, crypto)?;
+        let converted_tx = generic_tx_to_transaction(&tx)?;
+        let mut vm = vm_from_generic(&converted_tx, env, db, vm_type, crypto)?;
 
         let report = vm.stateless_execute()?;
 
@@ -2533,10 +2702,11 @@ pub fn generic_system_contract_levm(
         ..Default::default()
     };
 
-    // Invariant relied upon below: with a zero gas price a system call charges no
-    // gas to the SYSTEM_ADDRESS sender and pays no fee to the coinbase, so the only
-    // state change left to undo afterwards is the sender's nonce bump. If this ever
-    // becomes non-zero, the post-call cleanup must be revisited.
+    // Invariant: with a zero gas price (and `is_system_call` making the hook
+    // skip the sender path entirely) a system call leaves no SYSTEM_ADDRESS
+    // state behind — no nonce bump, no balance change, not even a read. If
+    // this ever becomes non-zero, the hook's system-call branches must be
+    // revisited.
     debug_assert!(
         env.gas_price.is_zero() && env.base_fee_per_gas.is_zero(),
         "system calls must run with a zero gas price"
@@ -2550,7 +2720,7 @@ pub fn generic_system_contract_levm(
     if PRAGUE_SYSTEM_CONTRACTS
         .iter()
         .any(|contract| contract.address == contract_address)
-        && db.get_account_code(contract_address)?.bytecode.is_empty()
+        && db.get_account_code(contract_address)?.is_empty()
     {
         return Err(EvmError::SystemContractCallFailed(format!(
             "System contract: {contract_address} has no code after deployment"
@@ -2577,15 +2747,7 @@ pub fn generic_system_contract_levm(
         recorder.exit_system_call();
     }
 
-    let report = result?;
-
-    // Undo the sender nonce bump: it's the only state change a system call leaves
-    // behind given that the gas price is set to zero.
-    if let Some(account) = db.current_accounts_state.get_mut(&system_address) {
-        account.info.nonce = account.info.nonce.saturating_sub(1);
-    }
-
-    Ok(report)
+    result
 }
 
 #[allow(unreachable_code)]
@@ -2761,14 +2923,12 @@ fn env_from_generic(
     })
 }
 
-fn vm_from_generic<'a>(
-    tx: &GenericTransaction,
-    env: Environment,
-    db: &'a mut GeneralizedDatabase,
-    vm_type: VMType,
-    crypto: &'a dyn Crypto,
-) -> Result<VM<'a>, VMError> {
-    let tx = match &tx.authorization_list {
+/// Converts a `GenericTransaction` (RPC/simulation input) into a concrete `Transaction`.
+///
+/// Split out from `vm_from_generic` so the caller owns the resulting `Transaction` for at least
+/// the VM's lifetime — `VM` now borrows its tx (`&'a Transaction`) instead of cloning it.
+fn generic_tx_to_transaction(tx: &GenericTransaction) -> Result<Transaction, VMError> {
+    Ok(match &tx.authorization_list {
         Some(authorization_list) => Transaction::EIP7702Transaction(EIP7702Transaction {
             to: match tx.to {
                 TxKind::Call(to) => to,
@@ -2800,10 +2960,18 @@ fn vm_from_generic<'a>(
                 .collect(),
             ..Default::default()
         }),
-    };
+    })
+}
 
+fn vm_from_generic<'a>(
+    tx: &'a Transaction,
+    env: Environment,
+    db: &'a mut GeneralizedDatabase,
+    vm_type: VMType,
+    crypto: &'a dyn Crypto,
+) -> Result<VM<'a>, VMError> {
     let vm_type = adjust_disabled_l2_fees(&env, vm_type);
-    VM::new(env, db, &tx, LevmCallTracer::disabled(), vm_type, crypto)
+    VM::new(env, db, tx, LevmCallTracer::disabled(), vm_type, crypto)
 }
 
 pub fn get_max_allowed_gas_limit(block_gas_limit: u64, fork: Fork) -> u64 {
@@ -3074,7 +3242,7 @@ mod bal_tests {
         assert_eq!(updates.len(), 1);
         let u = &updates[0];
         assert_eq!(u.info.as_ref().unwrap().code_hash, expected_hash);
-        assert_eq!(u.code.as_ref().unwrap().bytecode, code);
+        assert_eq!(u.code.as_ref().unwrap().code(), &code[..]);
     }
 }
 
@@ -3132,7 +3300,7 @@ mod system_call_coinbase_tests {
         }
         fn get_code_metadata(&self, code_hash: H256) -> Result<CodeMetadata, DatabaseError> {
             let length = if code_hash == self.history_code.hash {
-                self.history_code.bytecode.len() as u64
+                self.history_code.len() as u64
             } else {
                 0
             };

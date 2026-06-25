@@ -38,7 +38,7 @@ pub struct RocksDBBackend {
 }
 
 impl RocksDBBackend {
-    pub fn open(path: impl AsRef<Path>) -> Result<Self, StoreError> {
+    pub fn open(path: impl AsRef<Path>, block_cache_size: usize) -> Result<Self, StoreError> {
         // Rocksdb optimizations options
         let mut opts = Options::default();
         opts.create_if_missing(true);
@@ -84,9 +84,6 @@ impl RocksDBBackend {
             FULLSYNC_HEADERS,
         ];
 
-        // opts.enable_statistics();
-        // opts.set_stats_dump_period_sec(600);
-
         // Open all column families
         let existing_cfs = DBWithThreadMode::<MultiThreaded>::list_cf(&opts, path.as_ref())
             .unwrap_or_else(|_| vec!["default".to_string()]);
@@ -95,9 +92,29 @@ impl RocksDBBackend {
         all_cfs_to_open.extend(existing_cfs.iter().cloned());
         all_cfs_to_open.extend(TABLES.iter().map(|table| table.to_string()));
 
-        // Shared block cache for all column families: caches decompressed SST data
-        // blocks in userspace, reducing kernel I/O for hot data (trie nodes, accounts).
-        let block_cache = Cache::new_lru_cache(4 * 1024 * 1024 * 1024); // 4GB
+        // Shared block cache for all column families. With
+        // `cache_index_and_filter_blocks(true)` below, this cache holds both data blocks
+        // and the index/bloom-filter blocks needed to look them up, so its size is the
+        // effective ceiling on RocksDB's resident memory footprint. The caller chooses
+        // the size (see the `--rocksdb.block-cache-size` CLI flag); a value that is too
+        // small relative to the filter + working-set size will degrade block-import
+        // throughput (filter blocks displace data blocks, EVM reads spill to disk).
+        let block_cache = Cache::new_lru_cache(block_cache_size);
+
+        // Configures a CF's block-based table to keep its index and bloom-filter blocks
+        // inside the shared (bounded) block cache rather than pinning them per open file.
+        //
+        // With `max_open_files(-1)` every SST stays open, and RocksDB's default
+        // (`cache_index_and_filter_blocks = false`) pins each file's index + filter blocks
+        // in heap for the lifetime of the reader. On a large state DB this grows without
+        // bound with the number of SST files (on a 490 GB mainnet DB the pinned filters
+        // alone reached ~6 GB). Caching them instead bounds total table memory to the block
+        // cache size; pinning L0 keeps the hottest level resident to avoid a read-latency cliff.
+        let configure_block_cache = |block_opts: &mut BlockBasedOptions| {
+            block_opts.set_block_cache(&block_cache);
+            block_opts.set_cache_index_and_filter_blocks(true);
+            block_opts.set_pin_l0_filter_and_index_blocks_in_cache(true);
+        };
 
         let mut cf_descriptors = Vec::new();
         for cf_name in &all_cfs_to_open {
@@ -121,7 +138,7 @@ impl RocksDBBackend {
 
                     let mut block_opts = BlockBasedOptions::default();
                     block_opts.set_block_size(32 * 1024); // 32KB blocks
-                    block_opts.set_block_cache(&block_cache);
+                    configure_block_cache(&mut block_opts);
                     cf_opts.set_block_based_table_factory(&block_opts);
                 }
                 CANONICAL_BLOCK_HASHES | BLOCK_NUMBERS => {
@@ -132,7 +149,7 @@ impl RocksDBBackend {
                     let mut block_opts = BlockBasedOptions::default();
                     block_opts.set_block_size(16 * 1024); // 16KB
                     block_opts.set_bloom_filter(10.0, false);
-                    block_opts.set_block_cache(&block_cache);
+                    configure_block_cache(&mut block_opts);
                     cf_opts.set_block_based_table_factory(&block_opts);
                 }
                 TRANSACTION_LOCATIONS => {
@@ -160,7 +177,9 @@ impl RocksDBBackend {
                     // floor is unaffected — see PR #6737.)
                     let mut block_opts = BlockBasedOptions::default();
                     block_opts.set_block_size(16 * 1024); // 16KB
-                    block_opts.set_block_cache(&block_cache);
+                    // Bound this CF's index blocks in the shared cache too (no bloom
+                    // here, but index still grows with SST count if pinned in heap).
+                    configure_block_cache(&mut block_opts);
                     cf_opts.set_block_based_table_factory(&block_opts);
                 }
                 ACCOUNT_TRIE_NODES | STORAGE_TRIE_NODES => {
@@ -173,7 +192,7 @@ impl RocksDBBackend {
                     let mut block_opts = BlockBasedOptions::default();
                     block_opts.set_block_size(16 * 1024); // 16KB
                     block_opts.set_bloom_filter(10.0, false); // 10 bits per key
-                    block_opts.set_block_cache(&block_cache);
+                    configure_block_cache(&mut block_opts);
                     cf_opts.set_block_based_table_factory(&block_opts);
                 }
                 ACCOUNT_FLATKEYVALUE | STORAGE_FLATKEYVALUE => {
@@ -186,7 +205,7 @@ impl RocksDBBackend {
                     let mut block_opts = BlockBasedOptions::default();
                     block_opts.set_block_size(16 * 1024); // 16KB
                     block_opts.set_bloom_filter(10.0, false); // 10 bits per key
-                    block_opts.set_block_cache(&block_cache);
+                    configure_block_cache(&mut block_opts);
                     cf_opts.set_block_based_table_factory(&block_opts);
                 }
                 ACCOUNT_CODES => {
@@ -201,7 +220,7 @@ impl RocksDBBackend {
 
                     let mut block_opts = BlockBasedOptions::default();
                     block_opts.set_block_size(32 * 1024); // 32KB
-                    block_opts.set_block_cache(&block_cache);
+                    configure_block_cache(&mut block_opts);
                     cf_opts.set_block_based_table_factory(&block_opts);
                 }
                 RECEIPTS_V2 => {
@@ -211,7 +230,7 @@ impl RocksDBBackend {
 
                     let mut block_opts = BlockBasedOptions::default();
                     block_opts.set_block_size(32 * 1024); // 32KB
-                    block_opts.set_block_cache(&block_cache);
+                    configure_block_cache(&mut block_opts);
                     cf_opts.set_block_based_table_factory(&block_opts);
                 }
                 _ => {
@@ -222,7 +241,7 @@ impl RocksDBBackend {
 
                     let mut block_opts = BlockBasedOptions::default();
                     block_opts.set_block_size(16 * 1024);
-                    block_opts.set_block_cache(&block_cache);
+                    configure_block_cache(&mut block_opts);
                     cf_opts.set_block_based_table_factory(&block_opts);
                 }
             }
@@ -251,14 +270,13 @@ impl RocksDBBackend {
 
         for cf_name in &existing_cfs {
             if cf_name != "default" && !TABLES.contains(&cf_name.as_str()) {
-                warn!("Dropping obsolete column family: {}", cf_name);
                 let _ = self
                     .db
                     .drop_cf(cf_name)
-                    .inspect(|_| info!("Successfully dropped column family: {}", cf_name))
+                    .inspect(|_| info!("Dropped obsolete column family '{}'", cf_name))
                     .inspect_err(|e|
                         // Log error but don't fail — the database is still usable
-                        warn!("Failed to drop column family '{}': {}", cf_name, e));
+                        warn!("Failed to drop obsolete column family '{}': {}", cf_name, e));
             }
         }
     }
@@ -489,7 +507,11 @@ mod tests {
     #[test]
     fn merge_operator_survives_flush_and_compaction() {
         let dir = tempfile::tempdir().unwrap();
-        let backend = RocksDBBackend::open(dir.path()).unwrap();
+        let backend = RocksDBBackend::open(
+            dir.path(),
+            crate::store::DEFAULT_ROCKSDB_BLOCK_CACHE_SIZE_BYTES,
+        )
+        .unwrap();
         let cf = backend.db.cf_handle(TRANSACTION_LOCATIONS).unwrap();
 
         let tx_hash = H256::from_low_u64_be(0xabcd);
@@ -532,7 +554,11 @@ mod tests {
     #[test]
     fn merge_operator_dedupes_across_compaction() {
         let dir = tempfile::tempdir().unwrap();
-        let backend = RocksDBBackend::open(dir.path()).unwrap();
+        let backend = RocksDBBackend::open(
+            dir.path(),
+            crate::store::DEFAULT_ROCKSDB_BLOCK_CACHE_SIZE_BYTES,
+        )
+        .unwrap();
         let cf = backend.db.cf_handle(TRANSACTION_LOCATIONS).unwrap();
 
         let tx_hash = H256::from_low_u64_be(0x1234);

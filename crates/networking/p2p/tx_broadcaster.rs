@@ -7,6 +7,7 @@ use std::{
 use ethrex_blockchain::Blockchain;
 use ethrex_common::H256;
 use ethrex_common::types::{MempoolTransaction, Transaction};
+use ethrex_crypto::NativeCrypto;
 use ethrex_storage::error::StoreError;
 use rand::{seq::SliceRandom, thread_rng};
 use spawned_concurrency::{
@@ -15,7 +16,7 @@ use spawned_concurrency::{
     protocol,
     tasks::{Actor, ActorRef, ActorStart as _, Context, Handler, send_interval},
 };
-use tracing::{debug, error, info, trace};
+use tracing::{debug, error, trace};
 
 use crate::{
     peer_table::{PeerTable, PeerTableServerProtocol as _},
@@ -130,7 +131,7 @@ pub async fn send_tx_hashes(
                 NewPooledTransactionHashes::new(txs_to_send, blockchain)?,
             );
             connection.outgoing_message(hashes_message.clone()).await.unwrap_or_else(|err| {
-                error!(peer_id = %format!("{:#x}", peer_id), err = ?err, "Failed to send transactions hashes");
+                debug!(peer_id = %format!("{:#x}", peer_id), err = ?err, "Failed to send transaction hashes");
             });
         }
     }
@@ -144,7 +145,7 @@ impl TxBroadcaster {
         blockchain: Arc<Blockchain>,
         tx_broadcasting_time_interval: u64,
     ) -> Result<ActorRef<TxBroadcaster>, TxBroadcasterError> {
-        info!("Starting Transaction Broadcaster");
+        debug!("Starting transaction broadcaster");
 
         let state = TxBroadcaster {
             peer_table: kademlia,
@@ -181,8 +182,8 @@ impl TxBroadcaster {
     ) {
         trace!(received = "BroadcastTxs");
 
-        let _ = self.do_broadcast_txs().await.inspect_err(|_| {
-            error!("Failed to broadcast transactions");
+        let _ = self.do_broadcast_txs().await.inspect_err(|err| {
+            error!(err = ?err, "Failed to broadcast transactions");
         });
     }
 
@@ -285,7 +286,7 @@ impl TxBroadcaster {
             let txs_to_send = full_txs
                 .iter()
                 .filter(|tx| {
-                    let hash = tx.hash();
+                    let hash = tx.hash(&NativeCrypto);
                     !self
                         .known_txs
                         .get(&hash)
@@ -293,13 +294,19 @@ impl TxBroadcaster {
                 })
                 .cloned()
                 .collect::<Vec<Transaction>>();
-            self.do_add_txs(txs_to_send.iter().map(|tx| tx.hash()).collect(), peer_id);
+            self.do_add_txs(
+                txs_to_send
+                    .iter()
+                    .map(|tx| tx.hash(&NativeCrypto))
+                    .collect(),
+                peer_id,
+            );
             // If a peer is selected to receive the full transactions, we don't send the blob transactions, since they only require to send the hashes
             let txs_message = Message::Transactions(Transactions {
                 transactions: txs_to_send,
             });
             connection.outgoing_message(txs_message).await.unwrap_or_else(|err| {
-                error!(peer_id = %format!("{:#x}", peer_id), err = ?err, "Failed to send transactions");
+                debug!(peer_id = %format!("{:#x}", peer_id), err = ?err, "Failed to send transactions");
             });
             self.send_tx_hashes_internal(blob_txs.clone(), capabilities, &mut connection, peer_id)
                 .await?;
@@ -314,7 +321,10 @@ impl TxBroadcaster {
             )
             .await?;
         }
-        let broadcasted_hashes: Vec<H256> = txs_to_broadcast.iter().map(|tx| tx.hash()).collect();
+        let broadcasted_hashes: Vec<H256> = txs_to_broadcast
+            .iter()
+            .map(|tx| tx.hash(&NativeCrypto))
+            .collect();
         self.blockchain
             .mempool
             .remove_broadcasted_txs(&broadcasted_hashes)?;
@@ -332,7 +342,7 @@ impl TxBroadcaster {
         let txs_to_send = txs
             .iter()
             .filter(|tx| {
-                let hash = tx.hash();
+                let hash = tx.hash(&NativeCrypto);
                 !self
                     .known_txs
                     .get(&hash)
@@ -341,7 +351,13 @@ impl TxBroadcaster {
             })
             .cloned()
             .collect::<Vec<MempoolTransaction>>();
-        self.do_add_txs(txs_to_send.iter().map(|tx| tx.hash()).collect(), peer_id);
+        self.do_add_txs(
+            txs_to_send
+                .iter()
+                .map(|tx| tx.hash(&NativeCrypto))
+                .collect(),
+            peer_id,
+        );
         send_tx_hashes(
             txs_to_send,
             capabilities,

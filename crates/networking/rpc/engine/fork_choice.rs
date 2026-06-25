@@ -290,6 +290,16 @@ async fn handle_forkchoice(
                     context
                         .blockchain
                         .remove_block_transactions_from_pool(&block)?;
+                    // Reset blob sub-pool against on-chain nonces (head-block
+                    // pruning above misses stale blobs from non-head blocks).
+                    // Best-effort housekeeping: a state-read failure here must
+                    // not fail an otherwise-successful FCU, so log and continue
+                    // rather than propagating. The next FCU re-runs the sweep.
+                    if let Err(err) = context.blockchain.remove_stale_blob_txs(block.hash()) {
+                        warn!(
+                            "Failed to prune stale blob txs from mempool after fork choice: {err}"
+                        );
+                    }
                 }
                 Ok(None) => {
                     warn!(
@@ -339,7 +349,15 @@ async fn handle_forkchoice(
                 }
                 // TODO(#5564): handle arbitrary reorgs
                 InvalidForkChoice::StateNotReachable => {
-                    // Ignore the FCU
+                    // We can't reach the head's state from our DB (the nearest
+                    // link block has pruned or not-yet-executed state). Kick off
+                    // a sync toward the head instead of reporting SYNCING while
+                    // sitting idle, which wedges the node: the CL keeps resending
+                    // FCUs we keep ignoring and we never make progress.
+                    // sync_to_head is idempotent (only starts a cycle if the
+                    // syncer is inactive) and mode-agnostic, so this is safe for
+                    // both full and snap clients.
+                    syncer.sync_to_head(fork_choice_state.head_block_hash);
                     ForkChoiceResponse::from(PayloadStatus::syncing())
                 }
                 InvalidForkChoice::Disconnected(_, _) | InvalidForkChoice::ElementNotFound(_) => {
@@ -423,6 +441,11 @@ fn validate_attributes_v3(
     if attributes.parent_beacon_block_root.is_none() {
         return Err(RpcErr::InvalidPayloadAttributes(
             "Attribute parent_beacon_block_root is null".to_string(),
+        ));
+    }
+    if chain_config.is_amsterdam_activated(attributes.timestamp) {
+        return Err(RpcErr::UnsupportedFork(
+            "forkChoiceV3 used to build Amsterdam payload".to_string(),
         ));
     }
     if !chain_config.is_cancun_activated(attributes.timestamp) {
