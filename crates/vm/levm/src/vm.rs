@@ -1264,6 +1264,10 @@ impl<'a> VM<'a> {
         let mut batch_start_idx: usize = 0;
         let mut batch_logs_start: usize = 0;
         let mut batch_approval_snapshot: (bool, Option<Address>) = (false, None);
+        // EIP-8037: snapshot the shared `state_gas_used` at batch entry so a batch
+        // revert (which unrolls every in-batch frame's state) also drops the state
+        // gas those frames accumulated.
+        let mut state_gas_used_at_batch_entry: i64 = 0;
         let mut skip_until_batch_end: Option<usize> = None; // skip remaining frames in a failed batch
 
         // Execute frames sequentially
@@ -1334,6 +1338,7 @@ impl<'a> VM<'a> {
                 in_atomic_batch = true;
                 batch_start_idx = frame_idx;
                 batch_logs_start = all_logs.len();
+                state_gas_used_at_batch_entry = self.state_gas_used;
                 // Snapshot approvals at batch entry: a batch revert must also
                 // roll back approvals granted inside the batch (their balance
                 // and nonce effects are reverted with the substate).
@@ -1433,6 +1438,10 @@ impl<'a> VM<'a> {
                     }
                 };
             }
+
+            // EIP-8037: capture state gas before the frame runs so a reverted frame
+            // (which commits no state) can be rolled back to contribute zero state gas.
+            let state_gas_used_at_frame_entry = self.state_gas_used;
 
             let (frame_success, frame_gas_used, frame_logs) = if value_transfer_reverted {
                 self.substate.revert_backup();
@@ -1564,6 +1573,15 @@ impl<'a> VM<'a> {
                 result
             };
 
+            // EIP-8037: a failed frame's state changes were reverted above, so it
+            // creates no state and must contribute zero state gas. Roll the shared
+            // `state_gas_used` back to this frame's entry value (the cache/substate
+            // were already restored in the failure arms). Successful frames keep
+            // their accumulated state gas.
+            if !frame_success {
+                self.state_gas_used = state_gas_used_at_frame_entry;
+            }
+
             total_gas_used = total_gas_used
                 .checked_add(frame_gas_used)
                 .ok_or(VMError::Internal(InternalError::Overflow))?;
@@ -1589,6 +1607,9 @@ impl<'a> VM<'a> {
             if in_atomic_batch && !frame_success {
                 self.substate.revert_backup(); // revert batch-level snapshot
                 self.restore_cache_state()?;
+                // EIP-8037: the whole batch unrolled, so none of its frames created
+                // state — drop the state gas accumulated since batch entry.
+                self.state_gas_used = state_gas_used_at_batch_entry;
 
                 // Rewrite results for all frames in this batch (inclusive) as failed,
                 // charging each frame its full gas_limit per EIP-8141.
@@ -1755,14 +1776,28 @@ impl<'a> VM<'a> {
             TxResult::Success
         };
 
+        // EIP-8037: report the transaction's net state gas (same formula as the
+        // normal-tx path in default_hook). `total_gas_used` already includes the
+        // state gas — it spilled into each frame's gas_remaining, exactly as for any
+        // sub-TX_MAX_GAS_LIMIT transaction whose reservoir is 0 — so reporting
+        // `state_gas_used` here lets the block-level regular/state split
+        // (regular = gas_used - state_gas_used) attribute it to the state dimension
+        // instead of billing the whole amount as regular gas.
+        let state_refund_signed =
+            i64::try_from(self.state_refund).map_err(|_| InternalError::Overflow)?;
+        let state_gas_used = u64::try_from(
+            self.state_gas_used
+                .saturating_sub(state_refund_signed)
+                .max(0),
+        )
+        .map_err(|_| InternalError::Overflow)?;
+
         let report = ExecutionReport {
             result,
             gas_used: total_gas_used,
             gas_spent: total_gas_used,
             gas_refunded: gas_refund,
-            // Frame txs don't split gas into EIP-8037 dimensions yet: all frame
-            // gas is billed as regular gas at the block level.
-            state_gas_used: 0,
+            state_gas_used,
             output: Bytes::new(),
             logs: all_logs,
             payer_address: ctx.payer_address,
