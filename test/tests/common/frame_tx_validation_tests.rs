@@ -33,7 +33,8 @@ fn cancun_config() -> ChainConfig {
 fn frame_tx_with_blobs(n_blobs: usize) -> FrameTransaction {
     FrameTransaction {
         chain_id: 0,
-        nonce: 0,
+        nonce_keys: vec![U256::zero()],
+        nonce_seq: 0,
         sender: Default::default(),
         frames: vec![Frame {
             mode: FrameMode::Default as u8,
@@ -177,7 +178,8 @@ fn base_frame_tx_with_frames(frames: Vec<Frame>) -> FrameTransaction {
         sender: sender_addr(),
         frames,
         chain_id: 1,
-        nonce: 42,
+        nonce_keys: vec![U256::zero()],
+        nonce_seq: 42,
         max_priority_fee_per_gas: 1_000_000_000,
         max_fee_per_gas: 30_000_000_000,
         ..Default::default()

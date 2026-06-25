@@ -3054,6 +3054,20 @@ impl Blockchain {
             return Err(MempoolError::FrameTxPreFork);
         }
 
+        // EIP-8250: the public mempool admits only key-0 frame transactions
+        // (nonce_keys == [0]). Multi-key / non-zero-key admission needs the
+        // per-keyset pending/replacement tracking that is out of scope for the
+        // devnet; the spec permits this minimal policy. Non-zero-key frame txs
+        // can still be included by a block builder and are validated in full at
+        // block execution.
+        if let Transaction::FrameTransaction(frame_tx) = tx
+            && (frame_tx.nonce_keys.len() != 1 || !frame_tx.nonce_keys[0].is_zero())
+        {
+            return Err(MempoolError::InvalidFrameTransaction(
+                "only key-0 frame transactions are admitted to the public mempool".to_string(),
+            ));
+        }
+
         // EIP-8141 expiry (spec commit 0b197156): drop frame txs whose expiry
         // verifier deadline is already behind the current head timestamp.
         // Boundary: deadline == timestamp is still valid (the verifier only
@@ -4023,7 +4037,8 @@ mod p2p_serve_tests {
     fn make_frame_tx() -> FrameTransaction {
         FrameTransaction {
             chain_id: 1,
-            nonce: 7,
+            nonce_keys: vec![U256::zero()],
+            nonce_seq: 7,
             sender: Address::from_low_u64_be(0xABCD),
             frames: vec![Frame {
                 mode: FrameMode::Sender as u8,
