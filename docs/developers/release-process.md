@@ -68,11 +68,11 @@ After pushing the tag, a CI job will compile the binaries for different architec
 
 | name | L1 | L2 stack | Provers | CUDA support |
 | --- | --- | --- | --- | --- |
-| ethrex-linux-x86-64 | ✅ | ❌ | - | - |
+| ethrex-linux-x86_64 | ✅ | ❌ | - | - |
 | ethrex-linux-aarch64 | ✅ | ❌ | - | - |
 | ethrex-linux-macos-aarch64 | ✅ | ❌ | - | - |
-| ethrex-l2-linux-x86-64 | ✅ | ✅ | SP1 - RISC0 - Exec | ❌ |
-| ethrex-l2-linux-x86-64-gpu | ✅ | ✅ | SP1 - RISC0 - Exec | ✅ |
+| ethrex-l2-linux-x86_64 | ✅ | ✅ | SP1 - RISC0 - Exec | ❌ |
+| ethrex-l2-linux-x86_64-gpu | ✅ | ✅ | SP1 - RISC0 - Exec | ✅ |
 | ethrex-l2-linux-aarch64 | ✅ | ✅ | SP1 - Exec | ❌ |
 | ethrex-l2-linux-aarch64-gpu| ✅ | ✅ | SP1 - Exec | ✅ |
 | ethrex-l2-macos-aarch64 | ✅ | ✅ | Exec | ❌ |
