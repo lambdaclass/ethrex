@@ -219,7 +219,7 @@ Disclaimer: We should automate this
 Set the released version once, then the commands below are copy/paste:
 
 ```bash
-export V=3.0.0   # the released X.Y.Z (no `v` prefix)
+export V=X.Y.Z   # replace with the released version, no `v` prefix (e.g. 3.0.0)
 ```
 
 1. Commit a change in https://github.com/lambdaclass/homebrew-tap/ bumping the ethrex version (like [this one](https://github.com/lambdaclass/homebrew-tap/commit/d78a2772ad9c5412e7f84c6210bd85c970fcd0e6)). It needs two SHA-256 hashes:
