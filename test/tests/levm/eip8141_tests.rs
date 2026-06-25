@@ -904,6 +904,98 @@ fn frame_tx_happy_path_sstore_and_log() {
     );
 }
 
+// ==================== EIP-8037 state gas in frame txs ====================
+//
+// A frame tx must split gas into the EIP-8037 regular/state dimensions exactly
+// like every other transaction: a state-creating SSTORE bills its state portion
+// to the state dimension (reported via `state_gas_used`), and the block-level
+// regular dimension is `gas_used - state_gas_used`. A frame that reverts creates
+// no state and must report zero state gas.
+
+/// STATE_BYTES_PER_STORAGE_SET (64) * cost_per_state_byte (1530).
+const SSTORE_SET_STATE_GAS: u64 = 64 * 1530;
+
+#[test]
+fn frame_sstore_set_reports_eip8037_state_gas() {
+    // DEFAULT frame whose target creates slot 0 (0 -> 1): a state-creating SSTORE.
+    let writer = Address::from_low_u64_be(0xDA7A);
+    let accounts = [
+        (
+            FUNDED_SENDER,
+            AUTO_SEED_SENDER_BALANCE,
+            0u64,
+            Bytes::from(APPROVE_BOTH_CODE.to_vec()),
+        ),
+        // PUSH1 1; PUSH1 0; SSTORE; STOP
+        (writer, U256::zero(), 0u64, Bytes::from(vec![0x60, 0x01, 0x60, 0x00, 0x55, 0x00])),
+    ];
+    let tx = frame_tx_with_frames(vec![
+        verify_frame(FUNDED_SENDER),
+        Frame {
+            mode: u8::from(FrameMode::Default),
+            flags: 0x00,
+            target: Some(writer),
+            gas_limit: 2_000_000,
+            value: U256::zero(),
+            data: Bytes::new(),
+        },
+    ]);
+    let (result, _db) = run_frame_tx(&accounts, tx);
+    let report = result.expect("valid frame tx (payer approved)");
+    assert_eq!(
+        report.state_gas_used, SSTORE_SET_STATE_GAS,
+        "a frame SSTORE-set must report EIP-8037 state gas (not 0), got {}",
+        report.state_gas_used,
+    );
+    assert!(
+        report.gas_used > report.state_gas_used,
+        "total gas {} must exceed the state portion {}",
+        report.gas_used,
+        report.state_gas_used,
+    );
+}
+
+#[test]
+fn reverted_frame_reports_no_state_gas() {
+    // Same state-creating SSTORE, but the frame REVERTs — no state is committed,
+    // so the tx must report zero state gas. Frame 0 approves a payer, so the tx
+    // stays valid (a reverted DEFAULT frame does not invalidate it).
+    let writer = Address::from_low_u64_be(0xDA7B);
+    let accounts = [
+        (
+            FUNDED_SENDER,
+            AUTO_SEED_SENDER_BALANCE,
+            0u64,
+            Bytes::from(APPROVE_BOTH_CODE.to_vec()),
+        ),
+        // PUSH1 1; PUSH1 0; SSTORE; PUSH1 0; PUSH1 0; REVERT
+        (
+            writer,
+            U256::zero(),
+            0u64,
+            Bytes::from(vec![0x60, 0x01, 0x60, 0x00, 0x55, 0x60, 0x00, 0x60, 0x00, 0xfd]),
+        ),
+    ];
+    let tx = frame_tx_with_frames(vec![
+        verify_frame(FUNDED_SENDER),
+        Frame {
+            mode: u8::from(FrameMode::Default),
+            flags: 0x00,
+            target: Some(writer),
+            gas_limit: 2_000_000,
+            value: U256::zero(),
+            data: Bytes::new(),
+        },
+    ]);
+    let (result, _db) = run_frame_tx(&accounts, tx);
+    let report = result.expect("valid frame tx (reverted DEFAULT frame, payer approved)");
+    assert_eq!(
+        report.state_gas_used, 0,
+        "a reverted frame creates no state and must report zero state gas, got {}",
+        report.state_gas_used,
+    );
+}
+
 // ==================== EIP-2929 cross-frame warm/cold journal ====================
 //
 // Regression guard for the cross-frame access-list behavior documented in
