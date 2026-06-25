@@ -914,3 +914,179 @@ fn serialize_bls12_g2(point: &bls12_381::G2Affine) -> Result<[u8; 192], CryptoEr
     out[144..192].copy_from_slice(&raw[96..144]); // y_1
     Ok(out)
 }
+
+#[cfg(test)]
+mod tests {
+    //! Tests for `Crypto::verify_signature`. Exercise whichever backend
+    //! (native `secp256k1` or `k256`) is currently compiled. Signing always
+    //! uses `k256` so the same source covers both backends.
+
+    use super::Crypto;
+    use crate::NativeCrypto;
+    use ethereum_types::U256 as EthU256;
+    use hex_literal::hex;
+    use k256::{
+        AffinePoint, FieldBytes, ProjectivePoint, Scalar, U256,
+        ecdsa::SigningKey,
+        elliptic_curve::{PrimeField, ops::Reduce, point::DecompressPoint, sec1::ToEncodedPoint},
+    };
+
+    const SECP256K1_N: [u8; 32] =
+        hex!("fffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd0364141");
+
+    fn sign(sk: &[u8; 32], msg: &[u8; 32]) -> ([u8; 65], [u8; 65]) {
+        let signing_key = SigningKey::from_bytes(sk.into()).unwrap();
+        let (signature, recovery_id) = signing_key.sign_prehash_recoverable(msg).unwrap();
+
+        let mut sig = [0u8; 65];
+        sig[..64].copy_from_slice(&signature.to_bytes());
+        sig[64] = recovery_id.to_byte();
+
+        let pk_uncompressed = signing_key.verifying_key().to_encoded_point(false);
+        let pk: [u8; 65] = pk_uncompressed.as_bytes().try_into().unwrap();
+
+        (sig, pk)
+    }
+
+    fn test_key() -> [u8; 32] {
+        [7u8; 32]
+    }
+
+    #[test]
+    fn verify_signature_accepts_valid() {
+        let msg = [0x11u8; 32];
+        let (sig, pk) = sign(&test_key(), &msg);
+        assert!(NativeCrypto.verify_signature(&sig, &msg, &pk));
+    }
+
+    /// Flipping the recovery id must make verification fail. This is the
+    /// property that forces both backends to bind to `v` rather than
+    /// accept either parity candidate.
+    #[test]
+    fn verify_signature_binds_recovery_id() {
+        let msg = [0x11u8; 32];
+        let (mut sig, pk) = sign(&test_key(), &msg);
+        assert!(NativeCrypto.verify_signature(&sig, &msg, &pk));
+        sig[64] ^= 1;
+        assert!(!NativeCrypto.verify_signature(&sig, &msg, &pk));
+    }
+
+    #[test]
+    fn verify_signature_rejects_wrong_public_key() {
+        let msg = [0x11u8; 32];
+        let (sig, _) = sign(&test_key(), &msg);
+        let (_, other_pk) = sign(&[9u8; 32], &msg);
+        assert!(!NativeCrypto.verify_signature(&sig, &msg, &other_pk));
+    }
+
+    /// EIP-2: signatures with `s > n/2` must be rejected.
+    #[test]
+    fn verify_signature_rejects_high_s() {
+        let msg = [0x11u8; 32];
+        let (mut sig, pk) = sign(&test_key(), &msg);
+        let n = EthU256::from_big_endian(&SECP256K1_N);
+        let s = EthU256::from_big_endian(&sig[32..64]);
+        sig[32..64].copy_from_slice(&(n - s).to_big_endian());
+        assert!(!NativeCrypto.verify_signature(&sig, &msg, &pk));
+    }
+
+    /// The recovery byte must be 0 or 1.
+    #[test]
+    fn verify_signature_rejects_out_of_range_recovery_byte() {
+        let msg = [0x11u8; 32];
+        let (mut sig, pk) = sign(&test_key(), &msg);
+        sig[64] = 2;
+        assert!(!NativeCrypto.verify_signature(&sig, &msg, &pk));
+    }
+
+    /// Hand-construct a forgery where the nonce point's x coordinate equals
+    /// `r + n` (in Fp) — possible only when `r < p - n ≈ 2^128`. Both
+    /// backends must reject:
+    ///
+    /// - The k256 backend's byte comparison `R'.x.as_slice() != sig[..32]`
+    ///   catches the aliasing; a "simplification" to compare scalars mod n
+    ///   would silently accept this vector.
+    /// - The native backend recovers R from `x = r` exactly, yielding a
+    ///   different recovered key than the forged Q.
+    #[test]
+    fn verify_signature_rejects_x_plus_n_aliasing() {
+        // Add i (1..=200) to SECP256K1_N big-endian, no overflow since
+        // n + 200 < p. Whether x = r + n is on the curve is ~50% per r,
+        // so a small search suffices.
+        fn add_small(base: &[u8; 32], i: u16) -> [u8; 32] {
+            let mut out = *base;
+            let mut carry = i as u32;
+            for byte in out.iter_mut().rev() {
+                let sum = *byte as u32 + carry;
+                *byte = (sum & 0xff) as u8;
+                carry = sum >> 8;
+                if carry == 0 {
+                    break;
+                }
+            }
+            out
+        }
+
+        let (r_bytes, big_r) = (1..=200u16)
+            .find_map(|i| {
+                let mut r_bytes = [0u8; 32];
+                r_bytes[30..].copy_from_slice(&i.to_be_bytes());
+                let x_bytes = add_small(&SECP256K1_N, i);
+                let candidate: Option<AffinePoint> =
+                    AffinePoint::decompress(FieldBytes::from_slice(&x_bytes), 0u8.into()).into();
+                candidate.map(|p| (r_bytes, p))
+            })
+            .expect("expected a small r with x = r + n on the curve");
+
+        let r: Scalar = Scalar::from_repr(*FieldBytes::from_slice(&r_bytes))
+            .into_option()
+            .unwrap();
+
+        // Arbitrary low-s s and message hash z.
+        let mut s_bytes = [0u8; 32];
+        s_bytes[31] = 0x42;
+        let s: Scalar = Scalar::from_repr(*FieldBytes::from_slice(&s_bytes))
+            .into_option()
+            .unwrap();
+        let z_bytes = [0x99u8; 32];
+        let z = <Scalar as Reduce<U256>>::reduce_bytes(FieldBytes::from_slice(&z_bytes));
+
+        // Q = r⁻¹ · (s·R - z·G) makes R' = s⁻¹(z·G + r·Q) equal R exactly.
+        // A buggy verify that reduced R'.x mod n would see `(r+n) mod n = r`
+        // and accept; the byte-compare guard must reject.
+        let r_inv: Scalar = r.invert().into_option().unwrap();
+        let big_r_proj = ProjectivePoint::from(big_r);
+        let g = ProjectivePoint::GENERATOR;
+        let q = (big_r_proj * s - g * z) * r_inv;
+        let q_encoded = q.to_affine().to_encoded_point(false);
+        let pk_bytes: [u8; 65] = q_encoded.as_bytes().try_into().unwrap();
+
+        // Signature uses r (NOT r + n) and v = 0.
+        let mut sig = [0u8; 65];
+        sig[..32].copy_from_slice(&r_bytes);
+        sig[32..64].copy_from_slice(&s_bytes);
+        sig[64] = 0;
+
+        assert!(
+            !NativeCrypto.verify_signature(&sig, &z_bytes, &pk_bytes),
+            "verify_signature must reject the x = r + n forgery"
+        );
+    }
+
+    /// The k256 backend rejects hybrid (`0x06`/`0x07`) SEC1 prefixes via
+    /// `VerifyingKey::from_sec1_bytes`. Pins the divergence the
+    /// `Transaction::compute_sender_with_hint` `0x04` guard exists for; the
+    /// native backend instead accepts hybrid (see the sibling test under
+    /// `test/tests/crypto/`).
+    #[test]
+    #[cfg(not(feature = "secp256k1"))]
+    fn verify_signature_rejects_hybrid_encoded_key() {
+        let msg = [0x11u8; 32];
+        let (sig, mut pk) = sign(&test_key(), &msg);
+        assert!(NativeCrypto.verify_signature(&sig, &msg, &pk));
+
+        // Re-tag as hybrid matching Y's parity.
+        pk[0] = if pk[64] & 1 == 1 { 0x07 } else { 0x06 };
+        assert!(!NativeCrypto.verify_signature(&sig, &msg, &pk));
+    }
+}
