@@ -168,7 +168,7 @@ set -a; source cmd/.env; set +a
 
 > `--l1.timelock-address` is required for non-based deployments from **v9 onwards** (the committer targets the Timelock, not the OCP directly). Without it the sequencer exits during startup. Drop the flag only if `$VERSION_FROM` predates v9; check the per-release migration guide for the exact set of flags.
 
-> `--no-monitor` disables the terminal monitor UI. Keep it off for this test: the monitor renders a full-screen TUI that hides the startup logs, and it can deadlock node shutdown on an interactive terminal (see issue TODO_MONITOR). With `--no-monitor` the logs stream normally and `Ctrl-C` stops the node cleanly.
+> `--no-monitor` disables the terminal monitor UI. Keep it off for this test: the monitor renders a full-screen TUI that hides the startup logs, and it can deadlock node shutdown on an interactive terminal (see [#6911](https://github.com/lambdaclass/ethrex/issues/6911)). With `--no-monitor` the logs stream normally and `Ctrl-C` stops the node cleanly.
 
 ### 1.4 Start the prover (Terminal C)
 
