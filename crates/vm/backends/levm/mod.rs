@@ -2975,7 +2975,14 @@ fn vm_from_generic<'a>(
 }
 
 pub fn get_max_allowed_gas_limit(block_gas_limit: u64, fork: Fork) -> u64 {
-    if fork >= Fork::Osaka {
+    // EIP-7825 imposes a flat per-tx gas cap (POST_OSAKA_GAS_LIMIT_CAP) from
+    // Osaka through the BPO forks. Amsterdam supersedes it with the EIP-8037 2D
+    // gas model: tx.gas may exceed the flat cap (the excess funds the state-gas
+    // reservoir) and is instead bounded by block_gas_limit on the state
+    // dimension, so capping the estimateGas ceiling at the flat value would
+    // prevent convergence for state-heavy creations. Mirror the Osaka-only
+    // gating used at the other cap sites (block validation, default_hook).
+    if fork >= Fork::Osaka && fork < Fork::Amsterdam {
         POST_OSAKA_GAS_LIMIT_CAP
     } else {
         block_gas_limit
