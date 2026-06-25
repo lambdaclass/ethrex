@@ -5,13 +5,15 @@ edition.workspace = true
 authors.workspace = true
 documentation.workspace = true
 license.workspace = true
+description = "Client SDK for L2 deposits, withdrawals, and contract deployment on the ethrex client"
+repository.workspace = true
 
 [dependencies]
 ethrex-common.workspace = true
 ethrex-rpc.workspace = true
 ethrex-l2-common.workspace = true
 ethrex-l2-rpc.workspace = true
-ethrex-sdk-contract-utils = { path = "contract_utils" }
+ethrex-sdk-contract-utils = { path = "contract_utils", version = "18.0.0" }
 
 ethereum-types.workspace = true
 tokio.workspace = true
@@ -32,7 +34,7 @@ name = "ethrex_l2_sdk"
 path = "src/sdk.rs"
 
 [build-dependencies]
-ethrex-sdk-contract-utils = { path = "contract_utils" }
+ethrex-sdk-contract-utils = { path = "contract_utils", version = "18.0.0" }
 hex.workspace = true
 
 [lints.clippy]

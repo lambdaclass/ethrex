@@ -3,6 +3,7 @@ use std::sync::Arc;
 
 use ethrex_common::H256;
 use ethrex_common::types::{Block, BlockBody, BlockHash, BlockHeader, BlockNumber, Code, Receipt};
+use ethrex_crypto::NativeCrypto;
 use rustc_hash::{FxHashMap, FxHashSet};
 
 /// Block data held in memory after `newPayload` returns, before the background
@@ -65,7 +66,7 @@ impl BlockDataBuffer {
         }
         for (index, tx) in block.body.transactions.iter().enumerate() {
             self.tx_index
-                .entry(tx.hash())
+                .entry(tx.hash(&NativeCrypto))
                 .or_default()
                 .push((number, hash, index as u64));
         }
@@ -165,10 +166,10 @@ impl BlockDataBuffer {
                     }
                 }
                 for tx in b.body.transactions.iter() {
-                    if let Some(v) = self.tx_index.get_mut(&tx.hash()) {
+                    if let Some(v) = self.tx_index.get_mut(&tx.hash(&NativeCrypto)) {
                         v.retain(|(_, bh, _)| bh != h);
                         if v.is_empty() {
-                            self.tx_index.remove(&tx.hash());
+                            self.tx_index.remove(&tx.hash(&NativeCrypto));
                         }
                     }
                 }

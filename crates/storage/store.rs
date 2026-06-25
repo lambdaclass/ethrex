@@ -424,7 +424,7 @@ impl Store {
                 for (index, transaction) in block.body.transactions.iter().enumerate() {
                     tx.merge(
                         TRANSACTION_LOCATIONS,
-                        transaction.hash().as_bytes(),
+                        transaction.hash(&NativeCrypto).as_bytes(),
                         &encode_tx_location_operand(block_number, block_hash, index as u64),
                     )?;
                 }
@@ -3429,7 +3429,7 @@ fn flush_block_data(
         for (index, transaction) in b.body.transactions.iter().enumerate() {
             tx.merge(
                 TRANSACTION_LOCATIONS,
-                transaction.hash().as_bytes(),
+                transaction.hash(&NativeCrypto).as_bytes(),
                 &encode_tx_location_operand(b.number, hash, index as u64),
             )?;
         }
