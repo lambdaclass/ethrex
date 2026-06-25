@@ -4037,7 +4037,8 @@ mod p2p_serve_tests {
     fn make_frame_tx() -> FrameTransaction {
         FrameTransaction {
             chain_id: 1,
-            nonce: 7,
+            nonce_keys: vec![U256::zero()],
+            nonce_seq: 7,
             sender: Address::from_low_u64_be(0xABCD),
             frames: vec![Frame {
                 mode: FrameMode::Sender as u8,
