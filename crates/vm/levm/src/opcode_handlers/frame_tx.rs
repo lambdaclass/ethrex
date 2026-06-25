@@ -495,6 +495,46 @@ impl OpcodeHandler for OpSigParamHandler {
     }
 }
 
+/// RECENTROOTREFLOAD (0xB5, EIP-8272) -- read a field of a declared recent-root
+/// reference from the signed envelope. Stack: `[field, index]` with `field` on
+/// top (popped first), `index` second. `field` 0 => source_id, 1 => slot,
+/// 2 => root. Gas: 3. Reads only the envelope, never contract storage; allowed
+/// in any frame mode (incl. VERIFY). Exceptional-halt if
+/// `index >= len(recent_root_references)` or `field > 2`.
+pub struct OpRecentRootRefLoadHandler;
+impl OpcodeHandler for OpRecentRootRefLoadHandler {
+    #[inline(always)]
+    fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
+        let [field, index] = *vm.current_call_frame.stack.pop()?;
+
+        vm.current_call_frame
+            .increase_consumed_gas(gas_cost::RECENTROOTREFLOAD)?;
+
+        let ctx = vm
+            .frame_tx_context
+            .as_ref()
+            .ok_or(ExceptionalHalt::InvalidOpcode)?;
+
+        let index = u64::try_from(index).map_err(|_| ExceptionalHalt::InvalidOpcode)?;
+        let idx = index_to_usize(index)?;
+        let reference = ctx
+            .tx
+            .recent_root_references
+            .get(idx)
+            .ok_or(ExceptionalHalt::InvalidOpcode)?;
+
+        let field = u64::try_from(field).map_err(|_| ExceptionalHalt::InvalidOpcode)?;
+        let result = match field {
+            0 => U256::from_big_endian(reference.source_id.as_bytes()),
+            1 => U256::from(reference.slot),
+            2 => U256::from_big_endian(reference.root.as_bytes()),
+            _ => return Err(ExceptionalHalt::InvalidOpcode.into()),
+        };
+        vm.current_call_frame.stack.push(result)?;
+        Ok(OpcodeResult::Continue)
+    }
+}
+
 // -- Helper functions --
 
 pub fn load_tx_param(ctx: &crate::vm::FrameTxContext, param_id: u64) -> Result<U256, VMError> {
@@ -515,6 +555,8 @@ pub fn load_tx_param(ctx: &crate::vm::FrameTxContext, param_id: u64) -> Result<U
         0x09 => Ok(U256::from(ctx.tx.frames.len())),
         0x0A => Ok(U256::from(ctx.current_frame_index)),
         0x0B => Ok(U256::from(ctx.tx.signatures.len())),
+        // EIP-8272: count of recent-root references.
+        0x0F => Ok(U256::from(ctx.tx.recent_root_references.len())),
         _ => Err(ExceptionalHalt::InvalidOpcode.into()),
     }
 }
