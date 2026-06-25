@@ -120,3 +120,57 @@ pub const EXPIRY_VERIFIER_RUNTIME_BYTECODE: [u8; 26] = [
     0x60, 0x08, 0x36, 0x14, 0x60, 0x0a, 0x57, 0x5f, 0x5f, 0xfd, 0x5b, 0x5f, 0x35, 0x60, 0xc0, 0x1c,
     0x42, 0x11, 0x60, 0x16, 0x57, 0x00, 0x5b, 0x5f, 0x5f, 0xfd,
 ];
+
+/// EIP-8250 NONCE_MANAGER predeploy (address 0x…8250). Stores keyed-nonce
+/// sequence values for non-zero nonce keys, keyed by
+/// `keccak256(left_pad_32(sender) || uint256_to_bytes32(nonce_key))`. The
+/// protocol writes it during APPROVE; direct user calls revert.
+pub const NONCE_MANAGER_PREDEPLOY: SystemContract = SystemContract {
+    address: H160([
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x82, 0x50,
+    ]),
+    name: "NONCE_MANAGER",
+    active_since_fork: Hegota,
+};
+
+/// Runtime bytecode of the EIP-8250 NONCE_MANAGER: `PUSH1 0 PUSH1 0 REVERT` —
+/// non-callable by users; the contract exists only as a protocol-managed
+/// storage namespace.
+pub const NONCE_MANAGER_RUNTIME_BYTECODE: [u8; 5] = [0x60, 0x00, 0x60, 0x00, 0xfd];
+
+#[cfg(test)]
+mod expiry_verifier_tests {
+    use super::*;
+
+    #[test]
+    fn expiry_verifier_constants_match_spec() {
+        let expected: [u8; 26] = [
+            0x60, 0x08, 0x36, 0x14, 0x60, 0x0a, 0x57, 0x5f, 0x5f, 0xfd, 0x5b, 0x5f, 0x35, 0x60,
+            0xc0, 0x1c, 0x42, 0x11, 0x60, 0x16, 0x57, 0x00, 0x5b, 0x5f, 0x5f, 0xfd,
+        ];
+        assert_eq!(
+            EXPIRY_VERIFIER_RUNTIME_BYTECODE.as_slice(),
+            expected.as_slice()
+        );
+        assert_eq!(EXPIRY_VERIFIER_RUNTIME_BYTECODE.len(), 26);
+        assert_eq!(
+            EXPIRY_VERIFIER_PREDEPLOY.address,
+            H160::from_low_u64_be(0x8141)
+        );
+    }
+
+    #[test]
+    fn nonce_manager_constants_match_spec() {
+        assert_eq!(
+            NONCE_MANAGER_RUNTIME_BYTECODE.as_slice(),
+            [0x60, 0x00, 0x60, 0x00, 0xfd].as_slice()
+        );
+        assert_eq!(NONCE_MANAGER_RUNTIME_BYTECODE.len(), 5);
+        assert_eq!(
+            NONCE_MANAGER_PREDEPLOY.address,
+            H160::from_low_u64_be(0x8250)
+        );
+        assert_eq!(NONCE_MANAGER_PREDEPLOY.active_since_fork, Hegota);
+    }
+}

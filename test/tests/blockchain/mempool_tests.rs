@@ -534,7 +534,8 @@ fn minimal_valid_frame_tx() -> FrameTransaction {
     let sender = Address::from_low_u64_be(0xABCD);
     FrameTransaction {
         chain_id: 0, // matches ChainConfig::default().chain_id
-        nonce: 0,
+        nonce_keys: vec![U256::zero()],
+        nonce_seq: 0,
         sender,
         // A single `self_verify` frame: VERIFY mode, targets the sender, and
         // approves both execution and payment. This is the smallest frame
@@ -771,11 +772,18 @@ async fn mempool_rejects_frame_tx_from_unknown_sender_with_sentinel_nonce() {
     // separate payer), but its implied nonce is 0, so the u64::MAX sentinel can
     // never match and must be rejected — not skipped as it was before.
     let mut frame_tx = minimal_valid_frame_tx();
-    frame_tx.nonce = u64::MAX;
+    frame_tx.nonce_seq = u64::MAX;
 
     let tx = Transaction::FrameTransaction(frame_tx);
     let validation = blockchain.validate_transaction(&tx, tx.sender(&NativeCrypto).unwrap());
-    assert!(matches!(validation.await, Err(MempoolError::NonceTooLow)));
+    // Under EIP-8250 keyed nonces, the u64::MAX sentinel is now caught by static
+    // validation (nonce_seq < 2**64-1 → InvalidFrameTransaction) before the
+    // mempool NonceTooLow guard; either rejection satisfies the invariant that
+    // the sentinel can never be admitted.
+    assert!(matches!(
+        validation.await,
+        Err(MempoolError::NonceTooLow | MempoolError::InvalidFrameTransaction(_))
+    ));
 }
 
 #[tokio::test]
@@ -885,7 +893,8 @@ fn frame_tx_with_expiry(deadline: u64) -> FrameTransaction {
     data.copy_from_slice(&deadline.to_be_bytes());
     FrameTransaction {
         chain_id: 0,
-        nonce: 0,
+        nonce_keys: vec![U256::zero()],
+        nonce_seq: 0,
         sender,
         frames: vec![
             Frame {
@@ -1304,7 +1313,8 @@ fn funded_frame_tx(max_fee_per_gas: u64, max_priority_fee_per_gas: u64) -> Frame
     let sender = Address::from_low_u64_be(FRAME_TX_SELF_SENDER);
     FrameTransaction {
         chain_id: 0,
-        nonce: 0,
+        nonce_keys: vec![U256::zero()],
+        nonce_seq: 0,
         sender,
         frames: vec![Frame {
             mode: FrameMode::Verify as u8,
@@ -1481,7 +1491,8 @@ async fn mempool_enforces_noncanonical_paymaster_limit() {
     let phantom_sender = Address::from_low_u64_be(0xDEAD_BEEF);
     let phantom_frame_tx = FrameTransaction {
         chain_id: 0,
-        nonce: 99,
+        nonce_keys: vec![U256::zero()],
+        nonce_seq: 99,
         sender: phantom_sender,
         frames: vec![Frame {
             mode: FrameMode::Verify as u8,
@@ -1556,7 +1567,8 @@ async fn mempool_rejects_second_frame_tx_same_sender_new_nonce() {
     // Directly insert a frame tx at nonce=1 (bypasses simulation nonce check).
     let nonce1_frame_tx = FrameTransaction {
         chain_id: 0,
-        nonce: 1,
+        nonce_keys: vec![U256::zero()],
+        nonce_seq: 1,
         sender,
         frames: vec![Frame {
             mode: FrameMode::Verify as u8,
@@ -1798,7 +1810,8 @@ async fn mempool_fee_bump_rejected_leaves_original_intact() {
     let phantom_sender = Address::from_low_u64_be(0xCAFE_F00D);
     let phantom_frame_tx = FrameTransaction {
         chain_id: 0,
-        nonce: 7,
+        nonce_keys: vec![U256::zero()],
+        nonce_seq: 7,
         sender: phantom_sender,
         frames: vec![Frame {
             mode: FrameMode::Verify as u8,

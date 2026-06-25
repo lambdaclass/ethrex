@@ -521,6 +521,9 @@ pub struct FrameTxContext {
     /// every frame and signature, so it must not run per-opcode (TXPARAM 0x06,
     /// compute_tx_max_cost). Computed once at tx entry.
     pub total_gas_limit: u64,
+    /// EIP-8250: the sender's pre-state legacy (linear) account nonce, captured
+    /// at tx entry for TXPARAM index 0x0C (`load_tx_param` has no DB handle).
+    pub legacy_sender_nonce: u64,
 }
 
 impl FrameTxContext {
@@ -1333,6 +1336,75 @@ impl<'a> VM<'a> {
 
     /// Execute a frame transaction (EIP-8141).
     /// This bypasses the normal prepare/finalize hooks and orchestrates per-frame execution.
+    /// EIP-8250: the current sequence value for `(sender, nonce_key)`. Key 0 is
+    /// the account's linear account nonce; non-zero keys live in the
+    /// NONCE_MANAGER predeploy at slot
+    /// `keccak256(left_pad_32(sender) || uint256_to_bytes32(key))` (absent = 0).
+    fn current_nonce_seq(&mut self, sender: Address, key: U256) -> Result<u64, VMError> {
+        if key.is_zero() {
+            return Ok(self.db.get_account(sender)?.info.nonce);
+        }
+        let mut preimage = [0u8; 64];
+        preimage[12..32].copy_from_slice(sender.as_bytes());
+        preimage[32..64].copy_from_slice(&key.to_big_endian());
+        let slot = H256(ethrex_crypto::keccak::keccak_hash(preimage));
+        let nonce_manager = ethrex_common::types::frame_tx_nonce_manager();
+        // Ensure the NONCE_MANAGER account is cached before reading its storage.
+        let _ = self.db.get_account(nonce_manager)?;
+        let value = self.get_storage_value(nonce_manager, slot)?;
+        Ok(value.low_u64())
+    }
+
+    /// EIP-8250: consume every selected nonce key at payment approval. Key 0
+    /// increments the sender's linear account nonce; non-zero keys write
+    /// `nonce_seq + 1` to NONCE_MANAGER storage, charging
+    /// `KEYED_NONCE_FIRST_USE_GAS` the first time a key is used (slot 0 ->
+    /// nonzero). Validation already proved `current_nonce_seq == nonce_seq` for
+    /// each selected key.
+    ///
+    /// NOTE (Hegotá devnet): non-zero-key writes use the standard backed-up
+    /// storage path and so are reverted by an enclosing atomic batch's revert.
+    /// EIP-8250's strict "consumption MUST NOT be reverted by an atomic-batch
+    /// snapshot" durability is tracked for devnet/interop validation — see
+    /// `docs/eip-8250.md`. Key-0 consumption matches existing EIP-8141 behaviour.
+    pub(crate) fn consume_keyed_nonces(&mut self, sender: Address) -> Result<(), VMError> {
+        let (nonce_keys, next_seq) = match &self.tx {
+            Transaction::FrameTransaction(ft) => (
+                ft.nonce_keys.clone(),
+                ft.nonce_seq
+                    .checked_add(1)
+                    .ok_or(VMError::Internal(InternalError::Overflow))?,
+            ),
+            _ => return Ok(()),
+        };
+        let nonce_manager = ethrex_common::types::frame_tx_nonce_manager();
+        for key in &nonce_keys {
+            if key.is_zero() {
+                self.increment_account_nonce(sender)?;
+                continue;
+            }
+            let mut preimage = [0u8; 64];
+            preimage[12..32].copy_from_slice(sender.as_bytes());
+            preimage[32..64].copy_from_slice(&key.to_big_endian());
+            let slot = H256(ethrex_crypto::keccak::keccak_hash(preimage));
+            let _ = self.db.get_account(nonce_manager)?;
+            let current = self.get_storage_value(nonce_manager, slot)?;
+            if current.is_zero() {
+                self.current_call_frame
+                    .increase_consumed_gas(crate::gas_cost::KEYED_NONCE_FIRST_USE_GAS)?;
+            }
+            let slot_u256 = U256::from_big_endian(&slot.0);
+            self.update_account_storage(
+                nonce_manager,
+                slot,
+                slot_u256,
+                U256::from(next_seq),
+                current,
+            )?;
+        }
+        Ok(())
+    }
+
     fn execute_frame_tx(&mut self) -> Result<ExecutionReport, VMError> {
         use crate::errors::TxResult;
 
@@ -1366,13 +1438,18 @@ impl<'a> VM<'a> {
 
         // Check nonce matches
         let sender_info = self.db.get_account(sender)?.info.clone();
-        if sender_info.nonce != frame_tx.nonce {
-            return Err(VMError::TxValidation(
-                crate::errors::TxValidationError::NonceMismatch {
-                    expected: sender_info.nonce,
-                    actual: frame_tx.nonce,
-                },
-            ));
+        // EIP-8250 keyed-nonce validation: every selected key's current sequence
+        // must equal nonce_seq. Key 0 uses the sender's linear account nonce.
+        for key in &frame_tx.nonce_keys {
+            let current = self.current_nonce_seq(sender, *key)?;
+            if current != frame_tx.nonce_seq {
+                return Err(VMError::TxValidation(
+                    crate::errors::TxValidationError::NonceMismatch {
+                        expected: current,
+                        actual: frame_tx.nonce_seq,
+                    },
+                ));
+            }
         }
 
         // Check priority fee <= max fee
@@ -1422,6 +1499,7 @@ impl<'a> VM<'a> {
             tx: frame_tx.clone(),
             approve_called_in_current_frame: false,
             total_gas_limit,
+            legacy_sender_nonce: sender_info.nonce,
         });
 
         // EIP-8141 (spec commit fe0940cae2): every outer signature must validate
@@ -2165,13 +2243,18 @@ impl<'a> VM<'a> {
         }
 
         let sender_info = self.db.get_account(sender)?.info.clone();
-        if sender_info.nonce != frame_tx.nonce {
-            return Err(VMError::TxValidation(
-                crate::errors::TxValidationError::NonceMismatch {
-                    expected: sender_info.nonce,
-                    actual: frame_tx.nonce,
-                },
-            ));
+        // EIP-8250 keyed-nonce validation: every selected key's current sequence
+        // must equal nonce_seq. Key 0 uses the sender's linear account nonce.
+        for key in &frame_tx.nonce_keys {
+            let current = self.current_nonce_seq(sender, *key)?;
+            if current != frame_tx.nonce_seq {
+                return Err(VMError::TxValidation(
+                    crate::errors::TxValidationError::NonceMismatch {
+                        expected: current,
+                        actual: frame_tx.nonce_seq,
+                    },
+                ));
+            }
         }
 
         if frame_tx.max_priority_fee_per_gas > frame_tx.max_fee_per_gas {
@@ -2200,6 +2283,7 @@ impl<'a> VM<'a> {
             tx: frame_tx.clone(),
             approve_called_in_current_frame: false,
             total_gas_limit,
+            legacy_sender_nonce: sender_info.nonce,
         });
 
         if !validate_frame_signatures(
@@ -3327,5 +3411,61 @@ impl<'a> VM<'a> {
     }
     pub fn frame_state_gas_spilled(&self) -> u64 {
         self.current_call_frame.frame_state_gas_spilled
+    }
+}
+
+#[cfg(test)]
+mod atomic_batch_approval_rollback_tests {
+    use super::FrameTxContext;
+    use ethrex_common::Address;
+
+    fn minimal_ctx() -> FrameTxContext {
+        FrameTxContext {
+            sender_approved: false,
+            payer_address: None,
+            frame_results: Vec::new(),
+            current_frame_index: 0,
+            sig_hash: ethrex_common::H256::zero(),
+            tx: ethrex_common::types::FrameTransaction::default(),
+            approve_called_in_current_frame: false,
+            total_gas_limit: 0,
+            legacy_sender_nonce: 0,
+        }
+    }
+
+    #[test]
+    fn batch_revert_rolls_back_in_batch_approvals() {
+        let mut ctx = minimal_ctx();
+        // execute_frame_tx snapshots at batch entry...
+        let snapshot = ctx.approval_snapshot();
+        // ...an in-batch frame calls APPROVE(EXECUTION_AND_PAYMENT)...
+        ctx.sender_approved = true;
+        ctx.payer_address = Some(Address::from_low_u64_be(0xBEEF));
+        // ...a later in-batch frame fails and the batch reverts:
+        ctx.restore_approvals(snapshot);
+        assert!(
+            !ctx.sender_approved,
+            "in-batch sender approval must not survive batch revert"
+        );
+        assert!(
+            ctx.payer_address.is_none(),
+            "in-batch payer approval must not survive batch revert"
+        );
+    }
+
+    #[test]
+    fn pre_batch_approvals_survive_batch_revert() {
+        let mut ctx = minimal_ctx();
+        // Approval granted by a frame BEFORE the batch:
+        ctx.sender_approved = true;
+        ctx.payer_address = Some(Address::from_low_u64_be(0xA11CE));
+        let snapshot = ctx.approval_snapshot();
+        // In-batch frame does something; batch reverts:
+        ctx.restore_approvals(snapshot);
+        assert!(
+            ctx.sender_approved,
+            "pre-batch sender approval must survive"
+        );
+        assert_eq!(ctx.payer_address, Some(Address::from_low_u64_be(0xA11CE)));
     }
 }
