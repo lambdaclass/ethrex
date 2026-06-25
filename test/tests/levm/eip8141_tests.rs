@@ -1,7 +1,7 @@
 //! EIP-8141: Frame Transactions
 //!
 //! Shared test harness for frame-transaction execution plus regression tests
-//! for the per-tx state-rollback invariant (finding B3):
+//! for the per-tx state-rollback invariant:
 //!
 //!   `VM::execute()` returning `Err` => `db.current_accounts_state` is
 //!   unchanged from before the tx, exactly like non-frame txs.
@@ -120,7 +120,7 @@ fn frame_tx_env(tx: &FrameTransaction) -> Environment {
         // payer balances MUST use `run_frame_tx_with_fees`, which derives the
         // effective price min(base+priority, max_fee) like production.
         gas_price: U256::from(tx.max_fee_per_gas),
-        tx_nonce: tx.nonce,
+        tx_nonce: tx.nonce_seq,
         ..Default::default()
     }
 }
@@ -131,7 +131,8 @@ fn frame_tx_env(tx: &FrameTransaction) -> Environment {
 fn frame_tx_with_frames(frames: Vec<Frame>) -> FrameTransaction {
     FrameTransaction {
         chain_id: HARNESS_CHAIN_ID,
-        nonce: 0,
+        nonce_keys: vec![U256::zero()],
+        nonce_seq: 0,
         sender: FUNDED_SENDER,
         frames,
         signatures: Vec::new(),
@@ -157,7 +158,12 @@ fn run_frame_tx(
 ) -> (Result<ExecutionReport, VMError>, GeneralizedDatabase) {
     let mut seeded: Vec<SeededAccount> = accounts.to_vec();
     if !seeded.iter().any(|(addr, ..)| *addr == tx.sender) {
-        seeded.push((tx.sender, AUTO_SEED_SENDER_BALANCE, tx.nonce, Bytes::new()));
+        seeded.push((
+            tx.sender,
+            AUTO_SEED_SENDER_BALANCE,
+            tx.nonce_seq,
+            Bytes::new(),
+        ));
     }
 
     let mut db = seeded_db(&seeded);
@@ -192,7 +198,12 @@ fn run_frame_tx_with_fees(
 ) -> (Result<ExecutionReport, VMError>, GeneralizedDatabase) {
     let mut seeded: Vec<SeededAccount> = accounts.to_vec();
     if !seeded.iter().any(|(addr, ..)| *addr == tx.sender) {
-        seeded.push((tx.sender, AUTO_SEED_SENDER_BALANCE, tx.nonce, Bytes::new()));
+        seeded.push((
+            tx.sender,
+            AUTO_SEED_SENDER_BALANCE,
+            tx.nonce_seq,
+            Bytes::new(),
+        ));
     }
 
     let mut db = seeded_db(&seeded);
@@ -258,18 +269,18 @@ fn verify_frame(target: Address) -> Frame {
 }
 
 /// Assert that no seeded account's info (balance/nonce/code) or storage in
-/// `db.current_accounts_state` differs from its seeded value. This is THE B3
+/// `db.current_accounts_state` differs from its seeded value. This is THE rollback
 /// invariant: after an invalid tx the shared cache must show no residue.
 ///
 /// The sender (`FUNDED_SENDER`) is ALWAYS verified, even when the caller does
 /// not list it in `accounts`: `run_frame_tx` auto-seeds it, and a leaked sender
 /// nonce/balance on the invalid-tx path (e.g. an APPROVE nonce bump that was not
-/// rolled back) is exactly the kind of residue B3 must prevent. When the caller
+/// rolled back) is exactly the kind of residue this invariant must prevent. When the caller
 /// passes the sender explicitly, those values are used; otherwise the auto-seed
 /// defaults (`AUTO_SEED_SENDER_BALANCE`, nonce 0) are checked.
 ///
 /// Slot 0 of each seeded account is checked explicitly because the harness
-/// bytecodes write slot 0; a leftover `1` there is the B3 regression signature.
+/// bytecodes write slot 0; a leftover `1` there is the rollback regression signature.
 fn assert_db_cache_unchanged(db: &GeneralizedDatabase, accounts: &[SeededAccount]) {
     // Always include the auto-seeded sender so a leaked sender balance/nonce is
     // caught, mirroring `run_frame_tx`'s auto-seed.
@@ -301,7 +312,7 @@ fn assert_db_cache_unchanged(db: &GeneralizedDatabase, accounts: &[SeededAccount
         // Every storage slot present in the cache for this account must be its
         // seeded value (the seeded accounts start with empty storage, so any
         // non-zero value is residue). Slot 0 is the one the harness bytecodes
-        // touch, so a residual `1` here is the B3 regression signature.
+        // touch, so a residual `1` here is the rollback regression signature.
         for (slot, value) in current.storage.iter() {
             assert!(
                 value.is_zero(),
@@ -311,7 +322,7 @@ fn assert_db_cache_unchanged(db: &GeneralizedDatabase, accounts: &[SeededAccount
     }
 }
 
-// ==================== B3: invalid-tx rollback ====================
+// ==================== Invalid-tx rollback ====================
 
 #[test]
 fn invalid_frame_tx_leaves_db_cache_clean() {
@@ -346,7 +357,7 @@ fn invalid_frame_tx_leaves_db_cache_clean() {
     assert_db_cache_unchanged(&db, &accounts);
 }
 
-// ==================== B4: reverting SENDER frame must not leak value ====================
+// ==================== Reverting SENDER frame must not leak value ====================
 
 #[test]
 fn reverting_sender_frame_returns_value() {
@@ -421,7 +432,7 @@ fn reverting_sender_frame_returns_value() {
     );
 }
 
-// ==================== B2: payer charged at effective price (no burn) ====================
+// ==================== Payer charged at effective price (no burn) ====================
 
 #[test]
 fn payer_pays_effective_price_no_burn() {
@@ -483,7 +494,7 @@ fn payer_pays_effective_price_no_burn() {
     );
 }
 
-// ==================== B6: FRAMEPARAM stack operand order ====================
+// ==================== FRAMEPARAM stack operand order ====================
 
 /// FRAMEPARAM(param=0x01, frameIndex=0) → gas_limit of frame[0], then SSTORE at slot 0.
 /// Bytecode: PUSH1 0x01 (param), PUSH1 0x00 (frameIndex — top), FRAMEPARAM (0xB3),
@@ -557,7 +568,7 @@ fn frameparam_reads_frame_index_from_stack_top() {
     );
 }
 
-// ==================== B7: APPROVE scope-0 bypass ====================
+// ==================== APPROVE scope-0 bypass ====================
 
 #[test]
 fn approve_halts_when_frame_scope_is_none() {
@@ -593,7 +604,7 @@ fn approve_halts_when_frame_scope_is_none() {
     assert_db_cache_unchanged(&db, &accounts);
 }
 
-// ==================== B8: batched VERIFY revert invalidates tx ====================
+// ==================== Batched VERIFY revert invalidates tx ====================
 
 #[test]
 fn batched_verify_revert_invalidates_tx() {
@@ -700,7 +711,7 @@ fn payment_approval_may_precede_execution_approval() {
     );
 }
 
-// ==================== B9: SENDER/DEFAULT default code returns success ====================
+// ==================== SENDER/DEFAULT default code returns success ====================
 
 #[test]
 fn sender_frame_transfers_value_to_eoa() {
@@ -859,13 +870,13 @@ fn frame_tx_happy_path_sstore_and_log() {
         "SSTORE did not write 0x2a to slot 0 of worker"
     );
 
-    // 3. The LOG0 appears in the aggregated report.logs (B5: logs collected).
+    // 3. The LOG0 appears in the aggregated report.logs (logs collected).
     assert!(
         report.logs.iter().any(|l| l.address == worker),
         "log from worker missing from aggregated report.logs"
     );
 
-    // 4. Per-frame isolation (B5): frame_results[1] is success and carries the log;
+    // 4. Per-frame isolation: frame_results[1] is success and carries the log;
     //    frame_results[0] (the VERIFY/approve frame) has no logs.
     let frame_results = report
         .frame_results
@@ -889,6 +900,156 @@ fn frame_tx_happy_path_sstore_and_log() {
         nonce_of(&db, FUNDED_SENDER),
         1,
         "sender nonce must be 1 after APPROVE (scope 3 increments nonce once)"
+    );
+}
+
+// ==================== EIP-2929 cross-frame warm/cold journal ====================
+//
+// Regression guard for the cross-frame access-list behavior documented in
+// docs/eip-8141.md: a storage slot warmed in one frame is still warm in a
+// later frame of the same tx, and a reverted frame's accesses do NOT persist.
+// Observed via SLOAD gas (cold 2100 vs warm 100 — a pure read, so unaffected by
+// the EIP-8037 state-gas accounting). `frame_results[i].1` is frame i's gas.
+
+/// SLOAD-cold minus SLOAD-warm (gas_cost::SLOAD_COLD_DYNAMIC - SLOAD_WARM_DYNAMIC).
+const SLOAD_COLD_WARM_DELTA: u64 = 2100 - 100;
+
+/// `PUSH1 0; SLOAD; POP; STOP` — reads own slot 0, warming `(self, 0)`.
+const SLOAD_SLOT0_STOP: &[u8] = &[0x60, 0x00, 0x54, 0x50, 0x00];
+
+/// `PUSH1 0; SLOAD; POP;` then revert iff calldata is empty, else stop:
+/// `CALLDATASIZE; PUSH1 <stop>; JUMPI; PUSH1 0; PUSH1 0; REVERT; JUMPDEST; STOP`.
+/// Always SLOADs slot 0 first (warming `(self, 0)`), so the warming is in place
+/// whether the frame then reverts (empty calldata) or succeeds (non-empty).
+fn sload_then_conditional_revert() -> Vec<u8> {
+    // offsets: PUSH1 0 (0,1); SLOAD (2); POP (3); CALLDATASIZE (4);
+    //          PUSH1 d (5,6); JUMPI (7); PUSH1 0 (8,9); PUSH1 0 (10,11); REVERT (12);
+    //          JUMPDEST (13); STOP (14). JUMPI dest = 13 = 0x0d.
+    vec![
+        0x60, 0x00, // PUSH1 0
+        0x54, // SLOAD
+        0x50, // POP
+        0x36, // CALLDATASIZE
+        0x60, 0x0d, // PUSH1 13 (JUMPDEST offset)
+        0x57, // JUMPI -> if calldata non-empty, jump to STOP
+        0x60, 0x00, 0x60, 0x00, 0xfd, // PUSH1 0; PUSH1 0; REVERT (empty calldata path)
+        0x5b, // JUMPDEST (offset 13)
+        0x00, // STOP
+    ]
+}
+
+#[test]
+fn warm_slot_persists_across_frames() {
+    // Two DEFAULT frames to the same contract, both SLOAD slot 0. If the
+    // cross-frame access journal carries the warmed slot, frame 2's SLOAD is
+    // warm and costs SLOAD_COLD_WARM_DELTA less than frame 1's cold SLOAD.
+    let target = Address::from_low_u64_be(0xC0DE);
+    let accounts = [
+        (
+            FUNDED_SENDER,
+            AUTO_SEED_SENDER_BALANCE,
+            0u64,
+            Bytes::from(APPROVE_BOTH_CODE.to_vec()),
+        ),
+        (
+            target,
+            U256::zero(),
+            0u64,
+            Bytes::from(SLOAD_SLOT0_STOP.to_vec()),
+        ),
+    ];
+    let mk_default = || Frame {
+        mode: u8::from(FrameMode::Default),
+        flags: 0x00,
+        target: Some(target),
+        gas_limit: 100_000,
+        value: U256::zero(),
+        data: Bytes::new(),
+    };
+    let tx = frame_tx_with_frames(vec![
+        verify_frame(FUNDED_SENDER),
+        mk_default(),
+        mk_default(),
+    ]);
+    let (result, _db) = run_frame_tx(&accounts, tx);
+    let report = result.expect("valid frame tx (sender approves via APPROVE_BOTH)");
+    let fr = report.frame_results.expect("frame results present");
+    // fr[0] = VERIFY, fr[1] = first DEFAULT (cold SLOAD), fr[2] = second DEFAULT (warm SLOAD).
+    assert_eq!(fr[1].0, 1, "frame 1 must succeed");
+    assert_eq!(fr[2].0, 1, "frame 2 must succeed");
+    assert_eq!(
+        fr[1].1 - fr[2].1,
+        SLOAD_COLD_WARM_DELTA,
+        "slot warmed in frame 1 must be warm in frame 2 (gas delta = cold-warm): \
+         frame1={} frame2={}",
+        fr[1].1,
+        fr[2].1,
+    );
+}
+
+#[test]
+fn reverted_frame_warm_touches_do_not_persist() {
+    // Same contract in both txs (SLOAD slot 0, then revert iff calldata empty).
+    // Tx P: frame 1 SUCCEEDS (non-empty data) -> its warming of (target,0) persists
+    //       -> frame 2 SLOAD warm.
+    // Tx R: frame 1 REVERTS (empty data) -> its warming is rolled back
+    //       -> frame 2 SLOAD cold.
+    // Frame 2 is identical in both; its gas must be SLOAD_COLD_WARM_DELTA higher
+    // in Tx R, proving the reverted frame's access did not persist.
+    let target = Address::from_low_u64_be(0xC0DF);
+    let code = sload_then_conditional_revert();
+    let accounts = [
+        (
+            FUNDED_SENDER,
+            AUTO_SEED_SENDER_BALANCE,
+            0u64,
+            Bytes::from(APPROVE_BOTH_CODE.to_vec()),
+        ),
+        (target, U256::zero(), 0u64, Bytes::from(code)),
+    ];
+    let frame = |data: Bytes| Frame {
+        mode: u8::from(FrameMode::Default),
+        flags: 0x00,
+        target: Some(target),
+        gas_limit: 100_000,
+        value: U256::zero(),
+        data,
+    };
+
+    // Tx P: frame 1 succeeds (non-empty calldata), frame 2 succeeds.
+    let tx_p = frame_tx_with_frames(vec![
+        verify_frame(FUNDED_SENDER),
+        frame(Bytes::from(vec![1u8])),
+        frame(Bytes::from(vec![1u8])),
+    ]);
+    let report_p = run_frame_tx(&accounts, tx_p).0.expect("Tx P valid");
+    let fr_p = report_p.frame_results.expect("frame results present");
+    assert_eq!(fr_p[1].0, 1, "Tx P frame 1 must succeed");
+    assert_eq!(fr_p[2].0, 1, "Tx P frame 2 must succeed");
+
+    // Tx R: frame 1 reverts (empty calldata), frame 2 succeeds.
+    let tx_r = frame_tx_with_frames(vec![
+        verify_frame(FUNDED_SENDER),
+        frame(Bytes::new()),
+        frame(Bytes::from(vec![1u8])),
+    ]);
+    let report_r = run_frame_tx(&accounts, tx_r)
+        .0
+        .expect("Tx R valid (a reverted DEFAULT frame does not invalidate the tx)");
+    let fr_r = report_r.frame_results.expect("frame results present");
+    assert_eq!(fr_r[1].0, 0, "Tx R frame 1 must revert");
+    assert_eq!(fr_r[2].0, 1, "Tx R frame 2 must succeed");
+
+    // Frame 2 SLOAD is warm in Tx P (frame 1 warmed it and persisted) but cold in
+    // Tx R (frame 1's warming was rolled back on revert): the delta is exactly
+    // one cold-vs-warm SLOAD.
+    assert_eq!(
+        fr_r[2].1 - fr_p[2].1,
+        SLOAD_COLD_WARM_DELTA,
+        "a reverted frame's slot warming must NOT persist: \
+         frame2 gas Tx R (cold)={} vs Tx P (warm)={}",
+        fr_r[2].1,
+        fr_p[2].1,
     );
 }
 
@@ -1001,6 +1162,7 @@ mod frame_tx_opcode_handler_tests {
             tx,
             approve_called_in_current_frame: false,
             total_gas_limit: 0,
+            legacy_sender_nonce: 0,
         }
     }
 
@@ -1086,6 +1248,7 @@ mod frame_tx_opcode_handler_tests {
             tx: FrameTransaction::default(),
             approve_called_in_current_frame: false,
             total_gas_limit: 0,
+            legacy_sender_nonce: 0,
         };
         let result = load_tx_param(&ctx, 0x0B).unwrap();
         assert_eq!(result, U256::zero());
@@ -1567,7 +1730,7 @@ mod frame_tx_7702_delegation_tests {
 // (migrated from crates/vm/levm/src/vm.rs)
 
 mod validation_observer_tests {
-    //! EIP-8141 mempool validation-prefix simulation harness tests (Phase 2).
+    //! EIP-8141 mempool validation-prefix simulation harness tests.
     //!
     //! These drive the real frame-execution machinery via
     //! [`VM::run_frame_validation_prefix`] over signature-less frame
@@ -1704,7 +1867,8 @@ mod validation_observer_tests {
     fn frame_tx_for_obs(sender: Address, frames: Vec<Frame>) -> Transaction {
         Transaction::FrameTransaction(FrameTransaction {
             chain_id: 0,
-            nonce: 0,
+            nonce_keys: vec![U256::zero()],
+            nonce_seq: 0,
             sender,
             frames,
             signatures: Vec::new(),
@@ -2049,7 +2213,7 @@ mod validation_observer_tests {
 // (migrated from crates/vm/backends/levm/mod.rs)
 
 mod frame_validation_prefix_tests {
-    //! EIP-8141 mempool validation-prefix backend assertions (Phase 2). These
+    //! EIP-8141 mempool validation-prefix backend assertions. These
     //! exercise [`LEVM::simulate_frame_validation_prefix`] over signature-less
     //! frame transactions (an empty signature list trivially validates), where
     //! the prefix establishes a payer through real APPROVE code (not the
@@ -2177,7 +2341,8 @@ mod frame_validation_prefix_tests {
     fn frame_tx_prefix(sender: Address, frames: Vec<Frame>) -> Transaction {
         Transaction::FrameTransaction(FrameTransaction {
             chain_id: 0,
-            nonce: 0,
+            nonce_keys: vec![U256::zero()],
+            nonce_seq: 0,
             sender,
             frames,
             signatures: Vec::new(),
