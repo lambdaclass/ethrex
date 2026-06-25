@@ -416,10 +416,15 @@ impl SyncError {
             | SyncError::RocksDBError(_)
             | SyncError::BytecodeFileError
             | SyncError::NoLatestCanonical
-            | SyncError::PeerTableError(_)
             | SyncError::MissingFullsyncBatch
             | SyncError::Snap(_)
             | SyncError::FileSystem(_) => false,
+            // A timed-out actor request is transient (mailbox pressure or a
+            // slow handler — requests use spawned-concurrency's 5s default
+            // timeout); a stopped actor means p2p is shutting down and must
+            // stay fatal.
+            SyncError::PeerTableError(ActorError::RequestTimeout) => true,
+            SyncError::PeerTableError(ActorError::ActorStopped) => false,
             SyncError::Chain(_)
             | SyncError::Store(_)
             | SyncError::Send(_)
