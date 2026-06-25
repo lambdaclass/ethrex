@@ -1085,6 +1085,12 @@ impl<'a> VM<'a> {
             });
         }
 
+        // A pending top-frame NEW_ACCOUNT charge means the recipient was an EIP-161-empty
+        // account receiving value. If the recipient is a precompile that then exceptionally
+        // halts/reverts, the account is never materialized, so the charge is rolled back in
+        // the precompile branch below (mirrors EELS `refill_frame_state_gas`).
+        let top_frame_new_account_charged = self.pending_top_frame_state_gas > 0;
+
         // EIP-2780 top-frame new-account state charge (deferred from prepare_execution):
         // charged from the state-gas reservoir at the top of the frame, mirroring EELS
         // `process_message`. If it cannot be covered the tx reverts (consuming all gas),
@@ -1115,22 +1121,21 @@ impl<'a> VM<'a> {
             self.env.config.fork,
             self.vm_type,
         ) {
-            // EIP-8037 invariant: precompiles never touch state gas. `execute_precompile`
-            // is a free function that only mutates `gas_remaining`; it has no access to
-            // `state_gas_used` / `state_gas_reservoir` / `state_gas_spill`. This is what makes
-            // it safe to omit any state-gas refill on a precompile revert (no
-            // `refill_frame_state_gas` needed here). The assert below guards the invariant.
-            // Not `#[cfg(debug_assertions)]`-gated: `debug_assert_eq!` still type-checks its
-            // operands in release, so gating the binding alone breaks the release build.
+            // `execute_precompile` itself never touches state gas (it only mutates
+            // `gas_remaining`; it has no access to `state_gas_used` / `state_gas_reservoir` /
+            // `state_gas_spill`) — the assert below guards that. The EIP-2780 top-frame
+            // NEW_ACCOUNT charge applied above, however, IS frame state gas, and on an
+            // exceptional halt/revert it must be rolled back (see below). `self` is borrowed
+            // by field rather than via `&mut self.current_call_frame` so the refund call,
+            // which needs `&mut self`, can run after `execute_precompile`.
             let state_gas_used_before_precompile = self.state_gas_used;
-
-            let call_frame = &mut self.current_call_frame;
-
-            let mut gas_remaining = call_frame.gas_remaining as u64;
+            let code_address = self.current_call_frame.code_address;
+            let precompile_gas_limit = self.current_call_frame.gas_limit;
+            let mut gas_remaining = self.current_call_frame.gas_remaining as u64;
             let result = Self::execute_precompile(
-                call_frame.code_address,
-                &call_frame.calldata,
-                call_frame.gas_limit,
+                code_address,
+                &self.current_call_frame.calldata,
+                precompile_gas_limit,
                 &mut gas_remaining,
                 self.env.config.fork,
                 self.db.store.precompile_cache(),
@@ -1147,17 +1152,21 @@ impl<'a> VM<'a> {
             // top-level precompile exceptional halt, `handle_precompile_result` already
             // sets `ContextResult.gas_used = gas_limit`, but `gas_remaining` retains the
             // untouched forwarded amount — under Amsterdam that would make the block
-            // report only the intrinsic portion. Zero it here so the block matches the
-            // `gas_used = gas_limit` contract from `handle_precompile_result`. Pre-Amsterdam
-            // reads `ctx_result.gas_used` directly and is unaffected by this path either way.
+            // report only the intrinsic portion. Zero it so the block matches the
+            // `gas_used = gas_limit` contract from `handle_precompile_result`, and roll
+            // back the top-frame NEW_ACCOUNT charge (the recipient is never materialized
+            // on halt) so the burned gas counts entirely as regular gas, matching EELS
+            // `refill_frame_state_gas`. Pre-Amsterdam reads `ctx_result.gas_used` directly
+            // and is unaffected by this path either way.
             if self.env.config.fork >= Fork::Amsterdam
                 && let Ok(ctx) = &result
                 && !ctx.is_success()
             {
                 gas_remaining = 0;
+                self.refund_new_account_state_gas(top_frame_new_account_charged)?;
             }
 
-            call_frame.gas_remaining = gas_remaining as i64;
+            self.current_call_frame.gas_remaining = gas_remaining as i64;
 
             return result;
         }
