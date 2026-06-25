@@ -154,6 +154,7 @@ set -a; source cmd/.env; set +a
   --datadir dev_ethrex_l2 \
   --l1.bridge-address "$ETHREX_WATCHER_BRIDGE_ADDRESS" \
   --l1.on-chain-proposer-address "$ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS" \
+  --l1.timelock-address "$ETHREX_TIMELOCK_ADDRESS" \
   --eth.rpc-url http://localhost:8545 \
   --block-producer.coinbase-address 0x0007a881CD95B1484fca47615B64803dad620C8d \
   --block-producer.base-fee-vault-address 0x000c0d6b7c4516a5b274c51ea331a9410fe69127 \
@@ -161,10 +162,13 @@ set -a; source cmd/.env; set +a
   --block-producer.operator-fee-per-gas 1000000000 \
   --committer.l1-private-key 0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924 \
   --proof-coordinator.l1-private-key 0x39725efee3fb28614de3bacaffe4cc4bd8c436257e2c8bb887c4b5c4be45e76d \
-  --proof-coordinator.addr 127.0.0.1
+  --proof-coordinator.addr 127.0.0.1 \
+  --no-monitor
 ```
 
-> If the release you are testing requires `--l1.timelock-address`, add `--l1.timelock-address "$ETHREX_TIMELOCK_ADDRESS"`. From v9 onwards this is required for non-based deployments; check the per-release migration guide for the exact set of flags.
+> `--l1.timelock-address` is required for non-based deployments from **v9 onwards** (the committer targets the Timelock, not the OCP directly). Without it the sequencer exits during startup. Drop the flag only if `$VERSION_FROM` predates v9; check the per-release migration guide for the exact set of flags.
+
+> `--no-monitor` disables the terminal monitor UI. Keep it off for this test: the monitor renders a full-screen TUI that hides the startup logs, and it can deadlock node shutdown on an interactive terminal (see issue TODO_MONITOR). With `--no-monitor` the logs stream normally and `Ctrl-C` stops the node cleanly.
 
 ### 1.4 Start the prover (Terminal C)
 
@@ -198,6 +202,12 @@ The safe shutdown sequence is:
 3. Only then kill the sequencer and the prover.
 
 L1 (Terminal A) stays up. L1 and L2 datadirs stay intact — the upgrade has to land on the same contracts and the same chain state.
+
+> If you run the steps below from a fresh terminal, source the deployer env first so the address variables are set (otherwise `rex call` fails with `invalid value '' for '<TO>'`):
+>
+> ```bash
+> set -a; source "$WORK/ethrex-$VERSION_FROM/cmd/.env"; set +a
+> ```
 
 ### 2.1 Stop the committer
 
