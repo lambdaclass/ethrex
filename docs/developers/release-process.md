@@ -91,7 +91,10 @@ Before publishing the release, run through the following checks using the pre-re
 
 - [ ] Upgrade `ethrex-ethdocker-mainnet`
 - [ ] Upgrade `ethrex-mainnet-1`
-- [ ] Upgrade `ethrex-minimum-mainnet`
+- [ ] Upgrade `ethrex-prysm`
+- [ ] Upgrade `ethrex-lodestar`
+- [ ] Upgrade `ethrex-teku`
+- [ ] Upgrade `ethrex-grandine`
 - [ ] Launch multisync on `ethrex-multisync-main`
 - [ ] Upgrade a local L2 created with the previous version and run the integration tests
 - [ ] Run the L2 integration tests with a SP1 prover on the GPU server (`l2-gpu`)
@@ -114,9 +117,11 @@ nano .env
 
 <!-- TODO: document the upgrade procedure for this host -->
 
-#### `ethrex-minimum-mainnet`
+#### `ethrex-prysm`, `ethrex-lodestar`, `ethrex-teku`, `ethrex-grandine`
 
-<!-- TODO: document the upgrade procedure for this host -->
+These are ethrex mainnet nodes paired with different consensus clients (Prysm, Lodestar, Teku, Grandine); the ethrex (EL) upgrade procedure is the same across them.
+
+<!-- TODO: document the upgrade procedure for these hosts -->
 
 #### `ethrex-multisync-main`
 
