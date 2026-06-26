@@ -121,10 +121,12 @@ pub const EXPIRY_VERIFIER_RUNTIME_BYTECODE: [u8; 26] = [
     0x42, 0x11, 0x60, 0x16, 0x57, 0x00, 0x5b, 0x5f, 0x5f, 0xfd,
 ];
 
-/// EIP-8272 RECENT_ROOT_ADDRESS predeploy (0x…8272). Stores recent verified
-/// roots keyed by (source_id, slot). The spec leaves RECENT_ROOT_CODE TBD;
-/// ethrex handles the 64-byte write natively (see docs/eip-8272.md), so the
-/// account exists with empty code from Hegota activation.
+/// EIP-8272 RECENT_ROOT_ADDRESS predeploy (0x…8272). Intended to store recent
+/// verified roots keyed by (source_id, slot); the spec leaves RECENT_ROOT_CODE
+/// TBD and ethrex plans to handle the 64-byte write natively (see docs/eip-8272.md).
+/// NOTE: this address is declared here but is NOT yet installed at the Hegota
+/// boundary (unlike EXPIRY_VERIFIER / NONCE_MANAGER), so the account does not yet
+/// exist on-chain. Installation lands together with the reference-validity check.
 pub const RECENT_ROOT_ADDRESS: SystemContract = SystemContract {
     address: H160([
         0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
