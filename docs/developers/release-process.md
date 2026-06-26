@@ -328,6 +328,18 @@ Once done, the CI will publish new tags for the already compiled docker images:
 - `ghcr.io/lambdaclass/ethrex:X.Y.Z`, `ghcr.io/lambdaclass/ethrex:latest`
 - `ghcr.io/lambdaclass/ethrex:X.Y.Z-l2`, `ghcr.io/lambdaclass/ethrex:l2`
 
+> [!WARNING]
+> This retag can **silently skip and still report success**: the job is gated on the release already being "latest" when the edit event fires, and a skipped job is not a failed run (see [#6918](https://github.com/lambdaclass/ethrex/issues/6918)). **Verify the tags actually moved** before considering the release done — compare digests (substitute the previous release version):
+>
+> ```bash
+> for t in latest X.Y.Z <previous version>; do
+>   printf '%-12s ' "$t"; docker buildx imagetools inspect ghcr.io/lambdaclass/ethrex:$t --format '{{.Manifest.Digest}}'
+> done
+> # `latest` must equal `X.Y.Z` and must differ from the previous release's digest.
+> ```
+>
+> If they didn't move (or `X.Y.Z` doesn't exist), re-promote manually — see [Failure on "latest release" workflow](#failure-on-latest-release-workflow).
+
 Promoting the pre-release to a full release also publishes ethrex's library crates to crates.io — see the next section.
 
 ### Publishing to crates.io
@@ -408,29 +420,27 @@ If the CI fails when setting a release as latest (step 5), Docker tags `latest` 
 - Save the token securely.
 - Click on `Configure SSO` button and authorize LambdaClass organization.
 - Log in to Github Container Registry: `docker login ghcr.io`. Put your Github's username and use the token as your password.
-- Pull RC images:
+- Retag the RC images to the release tags. Use `docker buildx imagetools create`, which copies the full multi-arch index **server-side** (no pull needed). Do **not** use `docker pull --platform … && docker tag && docker push` — that flattens the tags to a single architecture and drops arm64. This mirrors what the `tag_latest.yaml` retag job does (including the `performance` tags):
 
 ```bash
-docker pull --platform linux/amd64 ghcr.io/lambdaclass/ethrex:X.Y.Z-rc.W
-docker pull --platform linux/amd64 ghcr.io/lambdaclass/ethrex:X.Y.Z-rc.W-l2
+docker buildx imagetools create \
+  -t ghcr.io/lambdaclass/ethrex:X.Y.Z \
+  -t ghcr.io/lambdaclass/ethrex:latest \
+  -t ghcr.io/lambdaclass/ethrex:performance \
+  ghcr.io/lambdaclass/ethrex:X.Y.Z-rc.W
+docker buildx imagetools create \
+  -t ghcr.io/lambdaclass/ethrex:X.Y.Z-l2 \
+  -t ghcr.io/lambdaclass/ethrex:l2 \
+  -t ghcr.io/lambdaclass/ethrex:performance-l2 \
+  ghcr.io/lambdaclass/ethrex:X.Y.Z-rc.W-l2
 ```
 
-- Retag them:
+- Verify the tags moved (the `latest`/`X.Y.Z` digests should now match the RC index):
 
 ```bash
-docker tag ghcr.io/lambdaclass/ethrex:X.Y.Z-rc.W ghcr.io/lambdaclass/ethrex:X.Y.Z
-docker tag ghcr.io/lambdaclass/ethrex:X.Y.Z-rc.W-l2 ghcr.io/lambdaclass/ethrex:X.Y.Z-l2
-docker tag ghcr.io/lambdaclass/ethrex:X.Y.Z-rc.W ghcr.io/lambdaclass/ethrex:latest
-docker tag ghcr.io/lambdaclass/ethrex:X.Y.Z-rc.W-l2 ghcr.io/lambdaclass/ethrex:l2
-```
-
-- Push them:
-
-```bash
-docker push ghcr.io/lambdaclass/ethrex:X.Y.Z
-docker push ghcr.io/lambdaclass/ethrex:X.Y.Z-l2
-docker push ghcr.io/lambdaclass/ethrex:latest
-docker push ghcr.io/lambdaclass/ethrex:l2
+for t in X.Y.Z-rc.W X.Y.Z latest; do
+  printf '%-12s ' "$t"; docker buildx imagetools inspect ghcr.io/lambdaclass/ethrex:$t --format '{{.Manifest.Digest}}'
+done
 ```
 
 - Delete the PAT for security ([here](https://github.com/settings/tokens))
