@@ -93,11 +93,17 @@ impl RpcHandler for BlobsV1Request {
         let res: Vec<Option<BlobAndProofV1>> = blob_tuples
             .into_iter()
             .map(|b| {
-                b.map(|(blob, _, proofs)| BlobAndProofV1 {
-                    blob: *blob,
-                    // If blob bundle version is 0 then the proofs vec will have only one proof.
-                    // Look at `get_blob_tuple_by_index` for reference.
-                    proof: proofs[0],
+                b.and_then(|(blob, _, proofs)| {
+                    // getBlobsV1 serves the single EIP-4844 blob proof. A v0 bundle yields
+                    // exactly one proof here (see `get_blob_tuple_by_index`); a v1 (EIP-7594)
+                    // sidecar yields 128 cell proofs per blob and can now reach a pre-Osaka
+                    // mempool. Cell proofs can't be represented as a single blob proof, so
+                    // report the blob as unavailable (the CL re-fetches it from gossip)
+                    // rather than returning a cell proof in the blob-proof field.
+                    (proofs.len() == 1).then(|| BlobAndProofV1 {
+                        blob: *blob,
+                        proof: proofs[0],
+                    })
                 })
             })
             .collect();
