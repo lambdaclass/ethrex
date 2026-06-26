@@ -11,7 +11,7 @@ use ethrex_common::H256;
 use ethrex_storage::Store;
 use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, error, info, warn};
+use tracing::{error, info, warn};
 
 use crate::{
     peer_handler::PeerHandler,
@@ -218,8 +218,8 @@ impl SyncManager {
                 // forkchoiceUpdate calls `sync_to_head()`, which finds the syncer idle and
                 // re-spawns this task with the head populated.
                 if sync_head.is_zero() {
-                    debug!(
-                        "No forkchoice head yet; releasing the syncer until the next forkchoice update"
+                    info!(
+                        "No forkchoice head yet (e.g. after a node restart); waiting for the next forkchoice update to start syncing"
                     );
                     return;
                 }
