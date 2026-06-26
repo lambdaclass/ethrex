@@ -687,6 +687,13 @@ pub fn validate_frame_signatures(
                 let v = sig.signature[0];
                 let r = &sig.signature[1..33];
                 let s = &sig.signature[33..65];
+                // EIP-8141 defines verification as `signer == ecrecover(msg, v, r, s)`
+                // and does NOT mandate EIP-2 low-s, so a high-s frame signature is
+                // spec-valid and MUST be accepted here (this is the consensus
+                // block-execution path). Anti-malleability (low-s) is enforced as
+                // local mempool policy in `frame_signatures_are_low_s`, never at
+                // consensus — rejecting high-s here would diverge from a conformant
+                // client that accepts it.
                 let mut calldata = vec![0u8; 128];
                 calldata[..32].copy_from_slice(&msg);
                 calldata[63] = v;
@@ -739,6 +746,62 @@ pub fn validate_frame_signatures(
                     return false;
                 };
                 if result.len() != 32 || result[31] != 1 {
+                    return false;
+                }
+            }
+            _ => return false,
+        }
+    }
+    true
+}
+
+/// Local mempool anti-malleability policy (NOT consensus): returns `false` if any
+/// frame signature is high-s (`s > n/2`).
+///
+/// EIP-8141 verification is `signer == ecrecover(msg, v, r, s)` and does not
+/// mandate EIP-2 low-s, so a high-s signature is spec-valid and is accepted on the
+/// consensus block-execution path. But the raw signature bytes are committed to the
+/// transaction identity hash while being elided from the sig hash, so the malleated
+/// form `(v, r, s) -> (v^1, r, n-s)` (and the P256 `s -> n-s`) yields a second valid
+/// tx hash for the same logical transaction — a mempool dedup bypass. Admission
+/// rejects high-s so a malleated duplicate never occupies a pool slot; this gates
+/// only what this node admits/relays, never what it accepts in a block.
+///
+/// Signatures are assumed already structurally validated by
+/// [`validate_frame_signatures`]; malformed inputs conservatively return `false`.
+#[allow(
+    clippy::indexing_slicing,
+    reason = "signature length is checked before each fixed-offset slice"
+)]
+pub fn frame_signatures_are_low_s(signatures: &[ethrex_common::types::FrameSignature]) -> bool {
+    use ethrex_common::types::{FRAME_SIG_SCHEME_P256, FRAME_SIG_SCHEME_SECP256K1};
+    // secp256k1n/2 = 0x7fffffffffffffffffffffffffffffff5d576e7357a4501ddfe92f46681b20a0
+    const SECP256K1_N_HALF: [u8; 32] = [
+        0x7f, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+        0xff, 0x5d, 0x57, 0x6e, 0x73, 0x57, 0xa4, 0x50, 0x1d, 0xdf, 0xe9, 0x2f, 0x46, 0x68, 0x1b,
+        0x20, 0xa0,
+    ];
+    // P-256 (secp256r1) n/2 = 0x7fffffff800000007fffffffffffffffde737d56d38bcf4279dce5617e3192a8
+    const P256_N_HALF: [u8; 32] = [
+        0x7f, 0xff, 0xff, 0xff, 0x80, 0x00, 0x00, 0x00, 0x7f, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+        0xff, 0xde, 0x73, 0x7d, 0x56, 0xd3, 0x8b, 0xcf, 0x42, 0x79, 0xdc, 0xe5, 0x61, 0x7e, 0x31,
+        0x92, 0xa8,
+    ];
+    for sig in signatures {
+        match sig.scheme {
+            FRAME_SIG_SCHEME_SECP256K1 => {
+                if sig.signature.len() != 65 {
+                    return false;
+                }
+                if sig.signature[33..65] > SECP256K1_N_HALF[..] {
+                    return false;
+                }
+            }
+            FRAME_SIG_SCHEME_P256 => {
+                if sig.signature.len() != 128 {
+                    return false;
+                }
+                if sig.signature[32..64] > P256_N_HALF[..] {
                     return false;
                 }
             }
@@ -1283,6 +1346,24 @@ impl<'a> VM<'a> {
         if U256::from(frame_tx.max_fee_per_gas) < self.env.base_fee_per_gas {
             return Err(VMError::TxValidation(
                 crate::errors::TxValidationError::InsufficientMaxFeePerGas,
+            ));
+        }
+
+        // EIP-4844 INSUFFICIENT_MAX_FEE_PER_BLOB_GAS: a blob-carrying tx whose
+        // max_fee_per_blob_gas is below the block's base blob fee is invalid. The
+        // frame path is self-contained and never runs the default hook's
+        // validate_max_fee_per_blob_gas, so it is enforced here. APPROVE charges
+        // the blob fee at the base rate unconditionally, so without this a frame tx
+        // below the base blob fee would execute and silently overpay rather than be
+        // rejected — a divergence from a conformant client that rejects it.
+        if !frame_tx.blob_versioned_hashes.is_empty()
+            && frame_tx.max_fee_per_blob_gas < self.env.base_blob_fee_per_gas
+        {
+            return Err(VMError::TxValidation(
+                crate::errors::TxValidationError::InsufficientMaxFeePerBlobGas {
+                    base_fee_per_blob_gas: self.env.base_blob_fee_per_gas,
+                    tx_max_fee_per_blob_gas: frame_tx.max_fee_per_blob_gas,
+                },
             ));
         }
 
@@ -1877,11 +1958,40 @@ impl<'a> VM<'a> {
         // consensus receipts have no slot for end-of-tx logs, but the header and
         // receipt blooms are derived from these aggregate logs (receipt.rs,
         // payload.rs), so they must be recorded there.
+        //
+        // KNOWN SPEC GAP (cross-client interop): these tx-end burn logs are in the
+        // aggregate bloom but NOT in any per-frame consensus receipt, so a client
+        // that re-derives the type-0x06 logs_bloom purely from the canonical
+        // per-frame logs would compute a different bloom (part of the block hash).
+        // ethrex producer and validator agree (both execute over the live
+        // aggregate), so this is not an intra-client split; it only bites
+        // cross-client and only for this rare destroy-after-receiving-ETH case.
+        // EIP-7708 is silent on receipt placement and EIP-8141's frame receipt has
+        // no tx-level logs slot, so the canonical home is genuinely undefined; do
+        // not pin one (e.g. attribute to the last frame) unilaterally — confirm the
+        // bloom-derivation rule against another client / the devnet first.
         let logs_before = self.substate.current_logs().len();
         crate::hooks::default_hook::delete_self_destruct_accounts(self)?;
         let mut logs_after = self.substate.current_logs();
         if logs_after.len() > logs_before {
             all_logs.extend(logs_after.split_off(logs_before));
+        }
+
+        // Frame txs short-circuit the hook/finalize path, so the BackupHook never
+        // runs and `db.tx_backup` stays None on the success path. A block builder
+        // can execute a frame tx successfully and then reject it (e.g. the EIP-8037
+        // 2D-gas overflow post-check, or an L2 invalid cross-chain message), calling
+        // `undo_last_tx` — which needs the top-level backup to roll the committed
+        // state back; otherwise the excluded tx's mutations leak into later txs and
+        // the built block's state root diverges from re-execution. Populate it here
+        // exactly as `BackupHook::finalize_execution` would: `tx_level_backup` holds
+        // every committed frame's originals, and the outer call-frame backup now also
+        // holds the refund/coinbase/self-destruct originals. Gated on
+        // `preserve_top_level_backup` so it is set only when a hook reads it (L2);
+        // on L1 the field is never consulted.
+        if self.preserve_top_level_backup {
+            tx_level_backup.absorb(&self.current_call_frame.call_frame_backup);
+            self.db.tx_backup = Some(tx_level_backup);
         }
 
         // Derive top-level status from ALL frames: the transaction succeeded
@@ -3096,7 +3206,7 @@ mod atomic_batch_approval_rollback_tests {
 
 #[cfg(test)]
 mod frame_sig_validation_tests {
-    use super::validate_frame_signatures;
+    use super::{frame_signatures_are_low_s, validate_frame_signatures};
     use bytes::Bytes;
     use ethrex_common::types::Fork;
     use ethrex_common::{
@@ -3115,6 +3225,83 @@ mod frame_sig_validation_tests {
             msg: Bytes::new(),
             signature: Bytes::from(vec![0u8; sig_len]),
         }
+    }
+
+    // secp256k1 n/2 and P-256 n/2 (big-endian 32-byte), and each value + 1.
+    const SECP_N_HALF: [u8; 32] = [
+        0x7f, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+        0xff, 0x5d, 0x57, 0x6e, 0x73, 0x57, 0xa4, 0x50, 0x1d, 0xdf, 0xe9, 0x2f, 0x46, 0x68, 0x1b,
+        0x20, 0xa0,
+    ];
+    const SECP_N_HALF_PLUS_1: [u8; 32] = [
+        0x7f, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+        0xff, 0x5d, 0x57, 0x6e, 0x73, 0x57, 0xa4, 0x50, 0x1d, 0xdf, 0xe9, 0x2f, 0x46, 0x68, 0x1b,
+        0x20, 0xa1,
+    ];
+    const P256_N_HALF: [u8; 32] = [
+        0x7f, 0xff, 0xff, 0xff, 0x80, 0x00, 0x00, 0x00, 0x7f, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+        0xff, 0xde, 0x73, 0x7d, 0x56, 0xd3, 0x8b, 0xcf, 0x42, 0x79, 0xdc, 0xe5, 0x61, 0x7e, 0x31,
+        0x92, 0xa8,
+    ];
+    const P256_N_HALF_PLUS_1: [u8; 32] = [
+        0x7f, 0xff, 0xff, 0xff, 0x80, 0x00, 0x00, 0x00, 0x7f, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+        0xff, 0xde, 0x73, 0x7d, 0x56, 0xd3, 0x8b, 0xcf, 0x42, 0x79, 0xdc, 0xe5, 0x61, 0x7e, 0x31,
+        0x92, 0xa9,
+    ];
+
+    fn secp_sig_with_s(s: &[u8; 32]) -> FrameSignature {
+        // [v(1) | r(32) | s(32)]
+        let mut bytes = vec![0u8; 65];
+        bytes[33..65].copy_from_slice(s);
+        FrameSignature {
+            scheme: FRAME_SIG_SCHEME_SECP256K1,
+            signer: Address::from_low_u64_be(0xBEEF),
+            msg: Bytes::new(),
+            signature: Bytes::from(bytes),
+        }
+    }
+
+    fn p256_sig_with_s(s: &[u8; 32]) -> FrameSignature {
+        // [r(32) | s(32) | qx(32) | qy(32)]
+        let mut bytes = vec![0u8; 128];
+        bytes[32..64].copy_from_slice(s);
+        FrameSignature {
+            scheme: FRAME_SIG_SCHEME_P256,
+            signer: Address::from_low_u64_be(0xBEEF),
+            msg: Bytes::new(),
+            signature: Bytes::from(bytes),
+        }
+    }
+
+    #[test]
+    fn low_s_at_exactly_n_half_is_accepted() {
+        // s == n/2 is the largest canonical (low-s) value for both schemes.
+        assert!(frame_signatures_are_low_s(&[secp_sig_with_s(&SECP_N_HALF)]));
+        assert!(frame_signatures_are_low_s(&[p256_sig_with_s(&P256_N_HALF)]));
+    }
+
+    #[test]
+    fn high_s_above_n_half_is_rejected() {
+        assert!(!frame_signatures_are_low_s(&[secp_sig_with_s(
+            &SECP_N_HALF_PLUS_1
+        )]));
+        assert!(!frame_signatures_are_low_s(&[p256_sig_with_s(
+            &P256_N_HALF_PLUS_1
+        )]));
+    }
+
+    #[test]
+    fn empty_signature_list_is_low_s() {
+        assert!(frame_signatures_are_low_s(&[]));
+    }
+
+    #[test]
+    fn malformed_or_unknown_scheme_is_not_low_s() {
+        assert!(!frame_signatures_are_low_s(&[dummy_sig(
+            FRAME_SIG_SCHEME_SECP256K1,
+            10
+        )]));
+        assert!(!frame_signatures_are_low_s(&[dummy_sig(0xFF, 65)]));
     }
 
     #[test]
