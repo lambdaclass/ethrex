@@ -2861,6 +2861,26 @@ mod serde_impl {
         }
     }
 
+    /// JSON (RPC) representation of an EIP-8272 recent-root reference.
+    #[derive(Serialize, Deserialize, Debug, PartialEq, Clone)]
+    #[serde(rename_all = "camelCase")]
+    pub struct RecentRootReferenceEntry {
+        pub source_id: H256,
+        #[serde(with = "crate::serde_utils::u64::hex_str")]
+        pub slot: u64,
+        pub root: H256,
+    }
+
+    impl From<&RecentRootReference> for RecentRootReferenceEntry {
+        fn from(value: &RecentRootReference) -> RecentRootReferenceEntry {
+            RecentRootReferenceEntry {
+                source_id: value.source_id,
+                slot: value.slot,
+                root: value.root,
+            }
+        }
+    }
+
     fn serialize_u256_hex<S: serde::Serializer>(value: &U256, s: S) -> Result<S::Ok, S::Error> {
         s.serialize_str(&format!("{value:#x}"))
     }
@@ -3157,7 +3177,7 @@ mod serde_impl {
         where
             S: serde::Serializer,
         {
-            let mut s = serializer.serialize_struct("FrameTransaction", 10)?;
+            let mut s = serializer.serialize_struct("FrameTransaction", 11)?;
             s.serialize_field("type", &TxType::Frame)?;
             s.serialize_field("chainId", &format!("{:#x}", self.chain_id))?;
             s.serialize_field("nonce", &format!("{:#x}", self.nonce))?;
@@ -3181,6 +3201,14 @@ mod serde_impl {
             s.serialize_field("maxFeePerGas", &format!("{:#x}", self.max_fee_per_gas))?;
             s.serialize_field("maxFeePerBlobGas", &self.max_fee_per_blob_gas)?;
             s.serialize_field("blobVersionedHashes", &self.blob_versioned_hashes)?;
+            s.serialize_field(
+                "recentRootReferences",
+                &self
+                    .recent_root_references
+                    .iter()
+                    .map(RecentRootReferenceEntry::from)
+                    .collect::<Vec<_>>(),
+            )?;
             s.end()
         }
     }
@@ -5596,7 +5624,7 @@ mod tests {
         // GOLDEN_RLP: obtained from first run
         assert_eq!(
             rlp_hex,
-            "f8ab010794000000000000000000000000000000000000abcde8ca01038082520880821122dc0280940000000000000000000000000000000000001234829c408080f85cf85a8094000000000000000000000000000000000000abcd80b8410101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101843b9aca008506fc23ac0080c0"
+            "f8ac010794000000000000000000000000000000000000abcde8ca01038082520880821122dc0280940000000000000000000000000000000000001234829c408080f85cf85a8094000000000000000000000000000000000000abcd80b8410101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101843b9aca008506fc23ac0080c0c0"
         );
 
         // Round-trips losslessly.
@@ -5608,7 +5636,7 @@ mod tests {
         // GOLDEN_SIG_HASH: obtained from first run
         assert_eq!(
             format!("{:#x}", sig_hash),
-            "0x87d1a9ce8a1f242345bb20deab5e5111a41780814ea497fbd20700a60a2ecd8d",
+            "0x690fdb75fab91b673bdbdad241322a6f40f2464de65ceaadc40b102f3d2c5fae",
         );
 
         // Elision invariant: changing empty-msg signature bytes must NOT change sig_hash.
