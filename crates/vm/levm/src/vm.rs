@@ -1352,6 +1352,16 @@ impl<'a> VM<'a> {
         // Ensure the NONCE_MANAGER account is cached before reading its storage.
         let _ = self.db.get_account(nonce_manager)?;
         let value = self.get_storage_value(nonce_manager, slot)?;
+        // The keyed sequence is compared against the u64 `nonce_seq`, and a
+        // NONCE_MANAGER slot only ever holds a u64 (consumption writes
+        // `nonce_seq + 1`). A value with high bits set can only arise from crafted
+        // genesis/state, and `low_u64()` would silently drop those bits and could
+        // spuriously match a valid `nonce_seq`. Map any out-of-range value to
+        // u64::MAX, which can never equal a valid `nonce_seq` (static validation
+        // rejects `nonce_seq == u64::MAX`), guaranteeing a mismatch.
+        if value > U256::from(u64::MAX) {
+            return Ok(u64::MAX);
+        }
         Ok(value.low_u64())
     }
 
