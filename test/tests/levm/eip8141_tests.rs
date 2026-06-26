@@ -986,6 +986,50 @@ fn reverted_frame_reports_no_state_gas() {
 }
 
 #[test]
+fn frame_tx_below_base_blob_fee_is_rejected() {
+    // EIP-4844 INSUFFICIENT_MAX_FEE_PER_BLOB_GAS on the frame path: a blob-carrying
+    // frame tx whose max_fee_per_blob_gas is below the block base blob fee must be
+    // invalid. The check fires before any frame executes, so a lone SENDER frame is
+    // enough to reach it.
+    let mut tx = frame_tx_with_frames(vec![Frame {
+        mode: u8::from(FrameMode::Sender),
+        flags: 0x00,
+        target: None,
+        gas_limit: 100_000,
+        value: U256::zero(),
+        data: Bytes::new(),
+    }]);
+    tx.blob_versioned_hashes = vec![H256::repeat_byte(0x01)];
+    tx.max_fee_per_blob_gas = U256::zero();
+
+    let mut db = seeded_db(&[(FUNDED_SENDER, AUTO_SEED_SENDER_BALANCE, 0, Bytes::new())]);
+    let mut env = frame_tx_env(&tx);
+    // base blob fee strictly above the tx's max_fee_per_blob_gas (0).
+    env.base_blob_fee_per_gas = U256::from(1u64);
+    let transaction = Transaction::FrameTransaction(tx);
+
+    let mut vm = VM::new(
+        env,
+        &mut db,
+        &transaction,
+        LevmCallTracer::disabled(),
+        VMType::L1,
+        &NativeCrypto,
+    )
+    .expect("VM::new should succeed for a frame tx");
+    let result = vm.execute();
+    assert!(
+        matches!(
+            result,
+            Err(VMError::TxValidation(
+                ethrex_levm::errors::TxValidationError::InsufficientMaxFeePerBlobGas { .. }
+            ))
+        ),
+        "blob-carrying frame tx below base blob fee must be rejected, got {result:?}"
+    );
+}
+
+#[test]
 fn state_gas_reservoir_does_not_leak_across_frames() {
     // Frame A creates then clears a slot (0 -> 5 -> 0), which credits the EIP-8037
     // state-gas reservoir. Frame B then creates a fresh slot. Because frames are

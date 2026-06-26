@@ -3080,8 +3080,12 @@ impl Blockchain {
 
             // Interim policy: no sidecar transport exists for frame-tx blobs
             // yet, so a blob-carrying frame tx could never be included with data
-            // availability. Reject at admission (local policy; consensus still
-            // fully accounts for frame blobs if another builder includes one).
+            // availability. Reject at admission (local policy). Block IMPORT does
+            // account for frame blobs (verify_blob_gas_usage counts them), but the
+            // BUILD path does not yet add them to header.blob_gas_used — so this
+            // admission gate is also what keeps the builder from ever producing
+            // such a block. If this gate is lifted, the builder must route frame
+            // blobs through blob accounting first (see payload.rs apply_transaction).
             if !frame_tx.blob_versioned_hashes.is_empty() {
                 return Err(MempoolError::FrameTxBlobsUnsupported);
             }
@@ -3114,6 +3118,16 @@ impl Blockchain {
                 &NativeCrypto,
             ) {
                 return Err(MempoolError::InvalidFrameSignature);
+            }
+
+            // Local anti-malleability policy (NOT consensus): reject high-s
+            // signatures at admission. EIP-8141 accepts high-s at block execution
+            // (`signer == ecrecover`), but the raw signature bytes are committed to
+            // the tx identity hash while elided from the sig hash, so a malleated
+            // `(v,r,s) -> (v^1, r, n-s)` form would produce a second valid tx hash
+            // for the same logical tx and bypass pool dedup.
+            if !ethrex_vm::frame_signatures_are_low_s(&frame_tx.signatures) {
+                return Err(MempoolError::FrameTxMalleableSignature);
             }
 
             // EIP-8141 §Mempool: validate the prefix shape and structural rules.
