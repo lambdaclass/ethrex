@@ -150,7 +150,7 @@ jobs:
               || docker buildx imagetools inspect "$1" 2>/dev/null | awk '/^Digest:/{print $2; exit}'
           }
           status=0
-          for pair in "latest:${NEW_TAG}" "l2:${NEW_TAG}-l2"; do
+          for pair in "latest:${NEW_TAG}" "l2:${NEW_TAG}-l2" "performance:${NEW_TAG}" "performance-l2:${NEW_TAG}-l2"; do
             float="${pair%%:*}"
             pinned="${pair#*:}"
             fd="$(digest "${REGISTRY}/${IMAGE_NAME}:${float}")"
@@ -161,7 +161,7 @@ jobs:
               status=1
             fi
           done
-          [ "$status" -eq 0 ] && echo "Verified :latest -> :${NEW_TAG} and :l2 -> :${NEW_TAG}-l2"
+          [ "$status" -eq 0 ] && echo "Verified floating tags (latest, l2, performance) resolve to :${NEW_TAG}"
           exit "$status"
 
   assert-latest-promoted:

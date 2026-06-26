@@ -221,36 +221,26 @@ If the `latest` / `l2` Docker tags don't get updated after step 5 (the `Ethrex L
 - Set `rc_tag` to the tested release candidate (e.g. `v18.0.0-rc.1`) and `version` to the final version (e.g. `v18.0.0`).
 - Run it. The run retags `latest` / `l2` / `performance` / `X.Y.Z` from the RC image, publishes the apt package, and the `verify-latest` job confirms `:latest` resolves to `:X.Y.Z` (the run goes red if it doesn't).
 
-If the registry itself is the problem and you need to push tags by hand, fall back to a local retag:
+If the registry itself is unreachable through Actions and you must promote by hand, do it **server-side** so the multi-arch image index is preserved. (A `docker pull --platform linux/amd64 … && docker tag && docker push` collapses `:latest` to a single architecture, silently dropping arm64.)
 
 - Create a new Github Personal Access Token (PAT) from the [settings](https://github.com/settings/tokens/new).
 - Check `write:packages` permission (this will auto-check `repo` permissions too), give a name and a short expiration time.
 - Save the token securely.
 - Click on `Configure SSO` button and authorize LambdaClass organization.
 - Log in to Github Container Registry: `docker login ghcr.io`. Put your Github's username and use the token as your password.
-- Pull RC images:
+- Retag the RC images to the release tags (server-side, multi-arch index preserved — same operation the workflow performs):
 
 ```bash
-docker pull --platform linux/amd64 ghcr.io/lambdaclass/ethrex:X.Y.Z-rc.W
-docker pull --platform linux/amd64 ghcr.io/lambdaclass/ethrex:X.Y.Z-rc.W-l2
-```
-
-- Retag them:
-
-```bash
-docker tag ghcr.io/lambdaclass/ethrex:X.Y.Z-rc.W ghcr.io/lambdaclass/ethrex:X.Y.Z
-docker tag ghcr.io/lambdaclass/ethrex:X.Y.Z-rc.W-l2 ghcr.io/lambdaclass/ethrex:X.Y.Z-l2
-docker tag ghcr.io/lambdaclass/ethrex:X.Y.Z-rc.W ghcr.io/lambdaclass/ethrex:latest
-docker tag ghcr.io/lambdaclass/ethrex:X.Y.Z-rc.W-l2 ghcr.io/lambdaclass/ethrex:l2
-```
-
-- Push them:
-
-```bash
-docker push ghcr.io/lambdaclass/ethrex:X.Y.Z
-docker push ghcr.io/lambdaclass/ethrex:X.Y.Z-l2
-docker push ghcr.io/lambdaclass/ethrex:latest
-docker push ghcr.io/lambdaclass/ethrex:l2
+docker buildx imagetools create \
+  -t ghcr.io/lambdaclass/ethrex:X.Y.Z \
+  -t ghcr.io/lambdaclass/ethrex:latest \
+  -t ghcr.io/lambdaclass/ethrex:performance \
+  ghcr.io/lambdaclass/ethrex:X.Y.Z-rc.W
+docker buildx imagetools create \
+  -t ghcr.io/lambdaclass/ethrex:X.Y.Z-l2 \
+  -t ghcr.io/lambdaclass/ethrex:l2 \
+  -t ghcr.io/lambdaclass/ethrex:performance-l2 \
+  ghcr.io/lambdaclass/ethrex:X.Y.Z-rc.W-l2
 ```
 
 - Delete the PAT for security ([here](https://github.com/settings/tokens))
