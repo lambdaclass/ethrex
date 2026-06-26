@@ -2735,9 +2735,17 @@ pub fn generic_system_contract_levm(
     let config = EVMConfig::new_from_chain_config(&chain_config, block_header);
     let env = Environment {
         origin: system_address,
-        // EIPs 2935, 4788, 7002 and 7251 dictate that the system calls have a gas limit of 30 million and they do not use intrinsic gas.
-        // So we add the base cost that will be taken in the execution.
-        gas_limit: SYS_CALL_GAS_LIMIT + TX_BASE_COST,
+        // EIPs 2935, 4788, 7002 and 7251 dictate that the system calls have a gas
+        // limit of 30 million and they do not use intrinsic gas. EELS
+        // (process_unchecked_system_transaction) builds the message with
+        // intrinsic_regular_gas=0 and gas=SYSTEM_TRANSACTION_GAS, so the contract
+        // gets the full SYS_CALL_GAS_LIMIT. We match that by NOT padding the limit
+        // here and by zeroing the intrinsic for system calls in the default hook.
+        // (A previous `+ TX_BASE_COST` buffer assumed the flat 21000 Prague
+        // intrinsic; EIP-2780 lowered Amsterdam's intrinsic to 15000, so the buffer
+        // over-funded the frame by 6000 and let an OOG-by-1 system contract avoid
+        // running out of gas.)
+        gas_limit: SYS_CALL_GAS_LIMIT,
         block_number: block_header.number,
         coinbase: block_header.coinbase,
         timestamp: block_header.timestamp,
