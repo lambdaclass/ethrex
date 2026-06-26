@@ -379,6 +379,15 @@ fn posttx_revert_invalidates_whole_tx() {
 }
 
 #[test]
+fn approve_halts_inside_posttx_frame() {
+    // EIP-7906: APPROVE is forbidden in a POST_TX (read-only assertion) frame. It
+    // must exceptional-halt, reverting the POST_TX frame and invalidating the tx.
+    // PUSH1 2 (APPROVE_EXECUTION scope); PUSH1 0; PUSH1 0; APPROVE.
+    let code = vec![0x60, 0x02, 0x60, 0x00, 0x60, 0x00, APPROVE];
+    assert_invalid(run_posttx(vec![], vec![], code));
+}
+
+#[test]
 fn txtrace_halts_in_default_frame() {
     // TXTRACE in a DEFAULT (non-POST_TX) frame must halt. Frame 0 approves a
     // payer, so the tx stays valid; the DEFAULT frame reverting is the gating
