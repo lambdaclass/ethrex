@@ -193,6 +193,17 @@ impl OpcodeHandler for OpApproveHandler {
             .frames
             .get(ctx.current_frame_index)
             .ok_or(ExceptionalHalt::InvalidOpcode)?;
+
+        // EIP-7906: APPROVE is forbidden inside a POST_TX frame. A POST_TX frame
+        // runs as a read-only assertion (dispatched as a STATICCALL); the spec
+        // disallows all state manipulation there and explicitly forbids APPROVE.
+        // Gate on the POST_TX mode specifically rather than on `is_static`: VERIFY
+        // frames are also static, but APPROVE is precisely how they grant sender /
+        // payer approval, so they must keep working.
+        if current_frame.execution_mode() == FrameMode::PostTx {
+            return Err(ExceptionalHalt::InvalidOpcode.into());
+        }
+
         let frame_target = current_frame.target.unwrap_or(ctx.tx.sender);
         if vm.current_call_frame.to != frame_target {
             return Err(VMError::RevertOpcode);
