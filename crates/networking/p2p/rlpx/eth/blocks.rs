@@ -98,15 +98,28 @@ impl GetBlockHeaders {
         // According to the spec, we don't need to service non-canonical headers,
         // but geth does, and it helps in reorg scenarios, so we handle that case.
         let start_block = match self.startblock {
-            // Try to fetch the block number from the hash
-            // Otherwise keep the hash
-            HashOrNumber::Hash(block_hash) => {
-                if let Ok(Some(block_number)) = storage.get_block_number(block_hash).await {
+            // Only translate a hash to a block number when that hash is the
+            // canonical block at its height. Translating a non-canonical (or
+            // not-yet-canonical) hash to a number and then reading by number
+            // would return a DIFFERENT, canonical block at that height, so the
+            // response would not start at the requested hash and the requesting
+            // peer would reject the whole batch ("did not serve headers"). For
+            // those we keep the hash and serve it directly (walking parents for
+            // reverse requests in the loop below), which is exactly what a
+            // syncing peer asking for a fork/sync head needs.
+            HashOrNumber::Hash(block_hash) => match storage.get_block_number(block_hash).await {
+                Ok(Some(block_number))
+                    if storage
+                        .get_canonical_block_hash(block_number)
+                        .await
+                        .ok()
+                        .flatten()
+                        == Some(block_hash) =>
+                {
                     HashOrNumber::Number(block_number)
-                } else {
-                    self.startblock
                 }
-            }
+                _ => self.startblock,
+            },
             // Don't check if the block number is available
             // because if it it's not, the loop below will
             // break early and return an empty vec.
@@ -141,21 +154,31 @@ impl GetBlockHeaders {
                 trace!(block_ref=%current_block, "Block header not found");
                 break;
             };
+            // Compute the next block to fetch before moving `block_header`.
+            let next_block = match current_block {
+                // By hash we can only walk descending (NewToOld) with no skip, by
+                // following parent hashes. This lets us serve a non-canonical
+                // chain (e.g. a syncing peer's fork/sync head) that cannot be
+                // addressed by number. Ascending or skipping by hash isn't
+                // representable, so we stop after the single requested header.
+                HashOrNumber::Hash(_) => {
+                    if self.reverse && self.skip == 0 {
+                        Some(HashOrNumber::Hash(block_header.parent_hash))
+                    } else {
+                        None
+                    }
+                }
+                HashOrNumber::Number(number) => (number as i64 + block_skip)
+                    .try_into()
+                    .ok()
+                    .map(HashOrNumber::Number),
+            };
+
             headers.push(block_header);
 
-            // Update to next block to fetch
-            match current_block {
-                // We don't support fetching multiple headers by hash, unless it's
-                // part of the canonical chain, so we break here.
-                // TODO: we could support fetching by hash in descending order,
-                // by fetching the parent of each block.
-                HashOrNumber::Hash(_) => break,
-                HashOrNumber::Number(number) => {
-                    let Ok(new_number) = (number as i64 + block_skip).try_into() else {
-                        break;
-                    };
-                    current_block = HashOrNumber::Number(new_number)
-                }
+            match next_block {
+                Some(next) => current_block = next,
+                None => break,
             }
         }
         headers
