@@ -366,3 +366,91 @@ impl RLPxMessage for BlockBodies {
         Ok(Self::new(id, block_bodies))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ethrex_common::types::{Block, BlockBody};
+    use ethrex_storage::EngineType;
+
+    fn hdr(number: BlockNumber, parent: BlockHash, gas_limit: u64) -> BlockHeader {
+        BlockHeader {
+            number,
+            parent_hash: parent,
+            // vary a field so sibling headers at the same height hash differently
+            gas_limit,
+            ..Default::default()
+        }
+    }
+
+    fn blk(header: BlockHeader) -> Block {
+        Block {
+            header,
+            body: BlockBody::default(),
+        }
+    }
+
+    // A by-hash GetBlockHeaders request for a NON-canonical (but stored) block
+    // must return that exact block, not the canonical block at the same height.
+    // Regression for the sync stall where a syncing peer's request for its
+    // (non-canonical / not-yet-canonical) sync head was answered with the
+    // responder's canonical block at that height, so headers[0].hash() != the
+    // requested hash and the requester rejected the whole batch.
+    #[tokio::test]
+    async fn serves_non_canonical_block_by_hash() {
+        let store = Store::new("", EngineType::InMemory).expect("in-memory store");
+
+        let genesis = hdr(0, BlockHash::default(), 0);
+        let genesis_hash = genesis.hash();
+        let canon = hdr(1, genesis_hash, 1);
+        let canon_hash = canon.hash();
+        // sibling at height 1, distinct hash, left non-canonical
+        let orphan = hdr(1, genesis_hash, 2);
+        let orphan_hash = orphan.hash();
+        assert_ne!(canon_hash, orphan_hash);
+
+        store
+            .add_blocks(vec![blk(genesis), blk(canon), blk(orphan)])
+            .await
+            .expect("store blocks");
+        // canonical chain is 0 -> genesis, 1 -> canon; orphan stays non-canonical
+        store
+            .forkchoice_update(
+                vec![(0, genesis_hash), (1, canon_hash)],
+                1,
+                canon_hash,
+                None,
+                None,
+            )
+            .await
+            .expect("set canonical");
+
+        // preconditions: canonical@1 is `canon`, but `orphan` is stored by number too
+        assert_eq!(
+            store.get_canonical_block_hash(1).await.unwrap(),
+            Some(canon_hash)
+        );
+        assert_eq!(store.get_block_number(orphan_hash).await.unwrap(), Some(1));
+
+        // by-hash, NewToOld: must return the requested orphan, then walk to its parent
+        let headers = GetBlockHeaders::new(1, HashOrNumber::Hash(orphan_hash), 10, 0, true)
+            .fetch_headers(&store)
+            .await;
+        assert_eq!(
+            headers.first().map(|h| h.hash()),
+            Some(orphan_hash),
+            "by-hash request must serve the requested non-canonical block, not the canonical one"
+        );
+        assert_eq!(
+            headers.get(1).map(|h| h.hash()),
+            Some(genesis_hash),
+            "reverse by-hash walk must follow parent_hash"
+        );
+
+        // a canonical hash still resolves via the by-number path
+        let headers_canon = GetBlockHeaders::new(2, HashOrNumber::Hash(canon_hash), 10, 0, true)
+            .fetch_headers(&store)
+            .await;
+        assert_eq!(headers_canon.first().map(|h| h.hash()), Some(canon_hash));
+    }
+}
