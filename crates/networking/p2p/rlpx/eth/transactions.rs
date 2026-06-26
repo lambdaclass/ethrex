@@ -19,6 +19,13 @@ use ethrex_rlp::{
 use ethrex_storage::error::StoreError;
 use tracing::debug;
 
+/// Allowed skew between a peer's announced pooled-transaction size and the size we compute
+/// from the received transaction. The announced size is a soft hint that varies slightly
+/// between clients (e.g. geth's `Transaction.Size()` omits the v1 blob-sidecar wrapper
+/// version byte), so we tolerate a few bytes before treating it as a protocol violation.
+/// Matches go-ethereum's tx fetcher (`eth/fetcher/tx_fetcher.go`).
+const POOLED_TX_SIZE_TOLERANCE: usize = 8;
+
 // https://github.com/ethereum/devp2p/blob/master/caps/eth.md#transactions-0x02
 // Broadcast message
 #[derive(Debug, Clone)]
@@ -305,8 +312,14 @@ impl PooledTransactions {
             if tx.tx_type() as u8 != expected_type {
                 return Err(MempoolError::InvalidPooledTxType(expected_type));
             }
+            // The announced size is a soft hint, not an exact value. geth's
+            // `Transaction.Size()` under-counts a v1 (EIP-7594 cell-proof) blob sidecar by
+            // one byte — it omits the wrapper version byte — so a strict equality check
+            // would disconnect geth peers on every v1 blob-tx announcement. Match geth's tx
+            // fetcher, which tolerates up to 8 bytes of skew before treating it as a
+            // violation (go-ethereum eth/fetcher/tx_fetcher.go).
             let tx_size = tx.encode_canonical_to_vec().len();
-            if tx_size != expected_size {
+            if tx_size.abs_diff(expected_size) > POOLED_TX_SIZE_TOLERANCE {
                 return Err(MempoolError::InvalidPooledTxSize);
             }
         }
