@@ -1743,12 +1743,29 @@ impl<'a> VM<'a> {
 
         self.increase_account_balance(payer, refund_amount)?;
 
-        // Pay coinbase
+        // Pay coinbase. Mirror `pay_coinbase` on the normal-tx path so a frame
+        // transaction has the same coinbase BlockAccessList / witness footprint:
+        // EIP-7928 requires the coinbase to appear in the BAL for any user tx even
+        // when the priority fee is zero, and EELS reads the coinbase account
+        // unconditionally during fee transfer (so EIP-8025 witnesses record its
+        // trie path even at zero fee). A frame tx is always a user tx (non-zero
+        // effective gas price), unlike a system call.
         let priority_fee = effective_gas_price.saturating_sub(self.env.base_fee_per_gas);
         let coinbase_fee = priority_fee
             .checked_mul(U256::from(total_gas_used))
             .ok_or(VMError::Internal(InternalError::Overflow))?;
-        self.increase_account_balance(self.env.coinbase, coinbase_fee)?;
+        if !effective_gas_price.is_zero()
+            && let Some(recorder) = self.db.bal_recorder.as_mut()
+        {
+            recorder.record_touched_address(self.env.coinbase);
+        }
+        if coinbase_fee.is_zero() {
+            // Zero priority fee: still read the coinbase so its witness/BAL trie
+            // path (incl. an exclusion proof if absent) is recorded.
+            self.db.get_account(self.env.coinbase)?;
+        } else {
+            self.increase_account_balance(self.env.coinbase, coinbase_fee)?;
+        }
 
         // EIP-8141: finalize self-destructs at tx end, mirroring the default
         // finalize hook ordering (refund -> coinbase -> delete). SELFDESTRUCT is
