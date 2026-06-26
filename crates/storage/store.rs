@@ -3,13 +3,13 @@ use crate::backend::rocksdb::RocksDBBackend;
 use crate::{
     STORE_METADATA_FILENAME, STORE_SCHEMA_VERSION,
     api::{
-        StorageBackend, StorageReadView,
+        StorageBackend, StorageReadView, StorageWriteBatch,
         tables::{
             ACCOUNT_CODE_METADATA, ACCOUNT_CODES, ACCOUNT_FLATKEYVALUE, ACCOUNT_TRIE_NODES,
-            BLOCK_ACCESS_LISTS, BLOCK_NUMBERS, BODIES, CANONICAL_BLOCK_HASHES, CHAIN_DATA,
-            EXECUTION_WITNESSES, FULLSYNC_HEADERS, HEADERS, INVALID_CHAINS, MISC_VALUES,
-            PENDING_BLOCKS, RECEIPTS_V2, SNAP_STATE, STORAGE_FLATKEYVALUE, STORAGE_TRIE_NODES,
-            TRANSACTION_LOCATIONS,
+            BLOCK_ACCESS_LISTS, BLOCK_HASHES_BY_NUMBER, BLOCK_NUMBERS, BODIES,
+            CANONICAL_BLOCK_HASHES, CHAIN_DATA, EXECUTION_WITNESSES, FULLSYNC_HEADERS, HEADERS,
+            INVALID_CHAINS, MISC_VALUES, PENDING_BLOCKS, RECEIPTS_V2, SNAP_STATE,
+            STORAGE_FLATKEYVALUE, STORAGE_TRIE_NODES, TRANSACTION_LOCATIONS,
         },
     },
     apply_prefix,
@@ -18,7 +18,7 @@ use crate::{
     layering::{TrieLayerCache, TrieWrapper},
     rlp::{BlockBodyRLP, BlockHeaderRLP, BlockRLP},
     trie::{BackendTrieDB, BackendTrieDBLocked},
-    utils::{ChainDataIndex, SnapStateIndex},
+    utils::{ChainDataIndex, SnapStateIndex, block_hashes_by_number_key, chain_data_key},
 };
 
 use ethrex_common::{
@@ -233,6 +233,18 @@ pub struct Store {
     background_threads: Arc<ThreadList>,
 }
 
+/// Counts of rows deleted by one [`Store::prune_block_heights`] call,
+/// accumulated over the whole `[start, start + count)` range.
+/// Returned so callers (e.g., the pruner) can update Prometheus counters.
+#[derive(Default, Debug, Clone, Copy)]
+pub struct PruneHeightCounts {
+    pub bodies: u64,
+    pub receipts: u64,
+    pub tx_locations: u64,
+    pub orphan_headers: u64,
+    pub index_entries: u64,
+}
+
 #[derive(Debug, Default)]
 struct ThreadList {
     list: Vec<JoinHandle<()>>,
@@ -439,27 +451,8 @@ impl Store {
         tokio::task::spawn_blocking(move || {
             let mut tx = db.begin_write()?;
 
-            // TODO: Same logic in apply_updates
-            for block in blocks {
-                let block_number = block.header.number;
-                let block_hash = block.hash();
-                let hash_key = block_hash.encode_to_vec();
-
-                let header_value_rlp = BlockHeaderRLP::from(block.header.clone());
-                tx.put(HEADERS, &hash_key, header_value_rlp.bytes())?;
-
-                let body_value = BlockBodyRLP::from_bytes(block.body.encode_to_vec());
-                tx.put(BODIES, &hash_key, body_value.bytes())?;
-
-                tx.put(BLOCK_NUMBERS, &hash_key, &block_number.to_le_bytes())?;
-
-                for (index, transaction) in block.body.transactions.iter().enumerate() {
-                    tx.merge(
-                        TRANSACTION_LOCATIONS,
-                        transaction.hash(&NativeCrypto).as_bytes(),
-                        &encode_tx_location_operand(block_number, block_hash, index as u64),
-                    )?;
-                }
+            for block in &blocks {
+                Self::write_block_indices(&mut *tx, block)?;
             }
 
             tx.commit()
@@ -468,15 +461,60 @@ impl Store {
         .map_err(|e| StoreError::Custom(format!("Task panicked: {}", e)))?
     }
 
+    /// Stages all per-block writes (HEADERS / BODIES / BLOCK_NUMBERS /
+    /// BLOCK_HASHES_BY_NUMBER / TRANSACTION_LOCATIONS) into `tx`. Does not
+    /// commit — the caller controls the batch.
+    fn write_block_indices(
+        tx: &mut dyn StorageWriteBatch,
+        block: &Block,
+    ) -> Result<(), StoreError> {
+        let block_number = block.header.number;
+        let block_hash = block.hash();
+        let hash_key = block_hash.encode_to_vec();
+
+        let header_value_rlp = BlockHeaderRLP::from(block.header.clone());
+        tx.put(HEADERS, &hash_key, header_value_rlp.bytes())?;
+
+        let body_value = BlockBodyRLP::from_bytes(block.body.encode_to_vec());
+        tx.put(BODIES, &hash_key, body_value.bytes())?;
+
+        tx.put(BLOCK_NUMBERS, &hash_key, &block_number.to_le_bytes())?;
+
+        let index_key = block_hashes_by_number_key(block_number, block_hash);
+        tx.put(BLOCK_HASHES_BY_NUMBER, &index_key, &[])?;
+
+        for (index, transaction) in block.body.transactions.iter().enumerate() {
+            tx.merge(
+                TRANSACTION_LOCATIONS,
+                transaction.hash(&NativeCrypto).as_bytes(),
+                &encode_tx_location_operand(block_number, block_hash, index as u64),
+            )?;
+        }
+        Ok(())
+    }
+
     /// Add block header
     pub async fn add_block_header(
         &self,
         block_hash: BlockHash,
         block_header: BlockHeader,
     ) -> Result<(), StoreError> {
+        let backend = self.backend.clone();
+        let block_number = block_header.number;
         let hash_key = block_hash.encode_to_vec();
         let header_value = BlockHeaderRLP::from(block_header).into_vec();
-        self.write_async(HEADERS, hash_key, header_value).await
+
+        tokio::task::spawn_blocking(move || {
+            let mut txn = backend.begin_write()?;
+            txn.put(HEADERS, &hash_key, &header_value)?;
+
+            let index_key = block_hashes_by_number_key(block_number, block_hash);
+            txn.put(BLOCK_HASHES_BY_NUMBER, &index_key, &[])?;
+
+            txn.commit()
+        })
+        .await
+        .map_err(|e| StoreError::Custom(format!("Task panicked: {}", e)))?
     }
 
     /// Add a batch of block headers
@@ -496,6 +534,9 @@ impl Store {
 
             let number_key = block_number.to_le_bytes().to_vec();
             txn.put(BLOCK_NUMBERS, &hash_key, &number_key)?;
+
+            let index_key = block_hashes_by_number_key(block_number, block_hash);
+            txn.put(BLOCK_HASHES_BY_NUMBER, &index_key, &[])?;
         }
         txn.commit()?;
         Ok(())
@@ -513,7 +554,9 @@ impl Store {
         self.load_block_header(block_number)
     }
 
-    /// Add block body
+    /// Add block body. Does not touch `BLOCK_HASHES_BY_NUMBER` — that index
+    /// is keyed by `(block_number, block_hash)` and is populated when the
+    /// header is stored; callers must add the header first.
     pub async fn add_block_body(
         &self,
         block_hash: BlockHash,
@@ -554,7 +597,215 @@ impl Store {
             txn.delete(BODIES, &hash_key)?;
             txn.delete(HEADERS, &hash_key)?;
             txn.delete(BLOCK_NUMBERS, &hash_key)?;
+            txn.delete(
+                BLOCK_HASHES_BY_NUMBER,
+                &block_hashes_by_number_key(block_number, hash),
+            )?;
             txn.commit()
+        })
+        .await
+        .map_err(|e| StoreError::Custom(format!("Task panicked: {}", e)))?
+    }
+
+    /// Atomically prune a contiguous range `[start, start + count)` in one pass:
+    ///   - Delete bodies, receipts, transaction_locations for every hash where
+    ///     a body was actually on disk. Unlike a naive implementation, we
+    ///     don't emit BODIES tombstones for absent bodies — on snap-synced
+    ///     nodes that would generate millions of pointless tombstones for the
+    ///     pre-pivot range and starve RocksDB compaction.
+    ///   - For non-canonical hashes only: also delete headers and block_numbers.
+    ///   - Drop the `BLOCK_HASHES_BY_NUMBER` slice for `[start, end)` via a
+    ///     single `DeleteRange` (the CF is keyed `block_number_BE || hash`).
+    ///   - Advance `EarliestBlockNumber` to `start + count` (skipped if
+    ///     another writer already advanced it past that).
+    ///
+    /// The gather phase fans out across rayon threads (one read txn per
+    /// height). All writes land in a single `WriteBatch`; the pass is
+    /// all-or-nothing.
+    ///
+    /// Caller invariant: `start + count - 1 <= finalized`, and forkchoice
+    /// must not write at heights `<= finalized`. Otherwise a new index entry
+    /// could land in the range between gather and commit and survive the
+    /// pass — readers tolerate the stray (they gate on
+    /// `EarliestBlockNumber`) but disk usage leaks.
+    pub async fn prune_block_heights(
+        &self,
+        start: BlockNumber,
+        count: usize,
+    ) -> Result<PruneHeightCounts, StoreError> {
+        if count == 0 {
+            return Ok(PruneHeightCounts::default());
+        }
+        let backend = self.backend.clone();
+        tokio::task::spawn_blocking(move || -> Result<PruneHeightCounts, StoreError> {
+            use rayon::prelude::*;
+
+            struct HeightDeletions {
+                hashes: Vec<BlockHash>,
+                canonical_hash: Option<BlockHash>,
+                bodies_to_purge: Vec<(BlockHash, BlockBody)>,
+            }
+
+            let end = start + count as u64;
+            let heights: Vec<BlockNumber> = (start..end).collect();
+
+            // --- Gather phase: one read txn per height, parallelised. ---
+            let gathered: Vec<HeightDeletions> = heights
+                .par_iter()
+                .map(|&n| -> Result<HeightDeletions, StoreError> {
+                    let prefix = n.to_be_bytes();
+                    let rtxn = backend.begin_read()?;
+
+                    let iter = rtxn.prefix_iterator(BLOCK_HASHES_BY_NUMBER, &prefix)?;
+                    let mut hashes = Vec::new();
+                    for item in iter {
+                        let (key, _) = item?;
+                        if key.len() != 40 {
+                            continue;
+                        }
+                        if key[0..8] != prefix {
+                            break;
+                        }
+                        hashes.push(H256::from_slice(&key[8..40]));
+                    }
+
+                    // CANONICAL_BLOCK_HASHES is keyed by LE, not BE.
+                    let canonical_hash =
+                        match rtxn.get(CANONICAL_BLOCK_HASHES, n.to_le_bytes().as_slice())? {
+                            Some(b) => Some(H256::decode(b.as_slice()).map_err(StoreError::from)?),
+                            None => None,
+                        };
+
+                    let mut bodies = Vec::with_capacity(hashes.len());
+                    for h in &hashes {
+                        if let Some(body_bytes) = rtxn.get(BODIES, h.encode_to_vec().as_slice())? {
+                            let body = BlockBodyRLP::from_bytes(body_bytes)
+                                .to()
+                                .map_err(StoreError::from)?;
+                            bodies.push((*h, body));
+                        }
+                    }
+
+                    Ok(HeightDeletions {
+                        hashes,
+                        canonical_hash,
+                        bodies_to_purge: bodies,
+                    })
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+
+            // --- Write phase: single batch, single commit. ---
+            let mut wtxn = backend.begin_write()?;
+            let mut counts = PruneHeightCounts::default();
+            // TRANSACTION_LOCATIONS is keyed by tx_hash with a `Vec` of
+            // (block_number, block_hash, index) locations. Accumulate the
+            // per-tx block_hashes to remove across the whole batch so a tx
+            // appearing in several pruned blocks is read-modified-written
+            // exactly once below (reads don't observe batch-pending writes).
+            let mut tx_location_removals: HashMap<H256, Vec<BlockHash>> = HashMap::new();
+
+            for hd in &gathered {
+                // The index entries themselves are dropped via DeleteRange
+                // below; the counter just reflects how many we saw.
+                counts.index_entries += hd.hashes.len() as u64;
+
+                // Orphan header / block_number deletes (per-hash, not range).
+                for h in &hd.hashes {
+                    if hd.canonical_hash.as_ref() != Some(h) {
+                        let hash_key = h.encode_to_vec();
+                        wtxn.delete(HEADERS, &hash_key)?;
+                        wtxn.delete(BLOCK_NUMBERS, &hash_key)?;
+                        counts.orphan_headers += 1;
+                    }
+                }
+
+                // Body-derived deletes — only for hashes whose body was on
+                // disk. Hashes without a body contribute nothing, and emitting
+                // a BODIES tombstone for them would be pure write amp.
+                for (h, body) in &hd.bodies_to_purge {
+                    let hash_key = h.encode_to_vec();
+                    wtxn.delete(BODIES, &hash_key)?;
+                    counts.bodies += 1;
+
+                    for (i, tx) in body.transactions.iter().enumerate() {
+                        let key = receipt_key(h, i as u64);
+                        wtxn.delete(RECEIPTS_V2, &key)?;
+                        counts.receipts += 1;
+
+                        tx_location_removals
+                            .entry(tx.hash(&NativeCrypto))
+                            .or_default()
+                            .push(*h);
+                        counts.tx_locations += 1;
+                    }
+                }
+            }
+
+            // Trim TRANSACTION_LOCATIONS for the pruned blocks' transactions.
+            // Each tx_hash's location Vec is read once, entries pointing at a
+            // pruned block are dropped, and the remainder is re-put (or the
+            // key deleted outright if no locations survive).
+            //
+            // Known race: this read-modify-write is not serialized against
+            // block imports, which append locations via `merge`. A merge for
+            // one of these tx hashes committed between the read below and
+            // this batch's commit is overwritten by the re-put. Reaching
+            // that window requires a tx whose only prior inclusions are
+            // orphans old enough to be pruned getting re-included mid-pass.
+            if !tx_location_removals.is_empty() {
+                let rtxn = backend.begin_read()?;
+                for (tx_hash, removed_block_hashes) in &tx_location_removals {
+                    let Some(bytes) = rtxn.get(TRANSACTION_LOCATIONS, tx_hash.as_bytes())? else {
+                        continue;
+                    };
+                    let locations = <Vec<(BlockNumber, BlockHash, Index)>>::decode(&bytes)?;
+                    let remaining: Vec<(BlockNumber, BlockHash, Index)> = locations
+                        .into_iter()
+                        .filter(|(_, block_hash, _)| !removed_block_hashes.contains(block_hash))
+                        .collect();
+                    if remaining.is_empty() {
+                        wtxn.delete(TRANSACTION_LOCATIONS, tx_hash.as_bytes())?;
+                    } else {
+                        wtxn.put(
+                            TRANSACTION_LOCATIONS,
+                            tx_hash.as_bytes(),
+                            &remaining.encode_to_vec(),
+                        )?;
+                    }
+                }
+            }
+
+            // Single range tombstone covering every BLOCK_HASHES_BY_NUMBER
+            // entry whose key starts with a block_number in `[start, end)`.
+            // Keys are 40 bytes (8 BE number + 32 hash); BE prefix ordering
+            // makes `start.to_be_bytes()..end.to_be_bytes()` the correct
+            // range — one tombstone replaces what would otherwise be
+            // ~`count` point tombstones.
+            let range_start = start.to_be_bytes();
+            let range_end = end.to_be_bytes();
+            wtxn.delete_range(BLOCK_HASHES_BY_NUMBER, &range_start, &range_end)?;
+
+            // Advance EarliestBlockNumber — unless another writer (snap-sync
+            // completion setting it to the pivot) moved it past `end` while
+            // this pass ran. A blind put would regress the pointer and force
+            // a long re-sweep of bodyless heights.
+            let earliest_key = chain_data_key(ChainDataIndex::EarliestBlockNumber);
+            let stored_earliest = backend
+                .begin_read()?
+                .get(CHAIN_DATA, &earliest_key)?
+                .map(|bytes| -> Result<u64, StoreError> {
+                    let array: [u8; 8] = bytes
+                        .try_into()
+                        .map_err(|_| StoreError::Custom("Invalid BlockNumber bytes".to_string()))?;
+                    Ok(u64::from_le_bytes(array))
+                })
+                .transpose()?;
+            if stored_earliest.is_none_or(|current| end > current) {
+                wtxn.put(CHAIN_DATA, &earliest_key, &end.to_le_bytes())?;
+            }
+            wtxn.commit()?;
+
+            Ok(counts)
         })
         .await
         .map_err(|e| StoreError::Custom(format!("Task panicked: {}", e)))?
@@ -1054,6 +1305,119 @@ impl Store {
         .map_err(|e| StoreError::Custom(format!("Task panicked: {}", e)))?
     }
 
+    /// Returns every known block hash at a given block number — canonical
+    /// and non-canonical. Result is unordered. Hashes may correspond to
+    /// header-only entries (no body).
+    ///
+    /// Currently only used by tests; `prune_block_heights` enumerates hashes
+    /// inline so it can share the same read transaction with its other
+    /// lookups.
+    #[cfg(test)]
+    pub(crate) async fn get_block_hashes_at_number(
+        &self,
+        block_number: BlockNumber,
+    ) -> Result<Vec<BlockHash>, StoreError> {
+        let backend = self.backend.clone();
+        tokio::task::spawn_blocking(move || -> Result<Vec<BlockHash>, StoreError> {
+            let prefix = block_number.to_be_bytes();
+            let txn = backend.begin_read()?;
+            let iter = txn.prefix_iterator(BLOCK_HASHES_BY_NUMBER, &prefix)?;
+            let mut out = Vec::new();
+            for item in iter {
+                let (key, _value) = item?;
+                if key.len() != 40 {
+                    continue;
+                }
+                // Confirm the prefix still matches (defensive check in case the
+                // backend prefix_iterator overshoots).
+                if key[0..8] != prefix {
+                    break;
+                }
+                let hash = H256::from_slice(&key[8..40]);
+                out.push(hash);
+            }
+            Ok(out)
+        })
+        .await
+        .map_err(|e| StoreError::Custom(format!("Task panicked: {}", e)))?
+    }
+
+    /// Returns the highest canonical block number whose header timestamp is
+    /// ≤ `target_ts`, searching within `[EarliestBlockNumber, end_inclusive]`.
+    /// Returns `None` if `target_ts` is below the timestamp of the starting
+    /// block in range. Returns `None` if `end_inclusive < EarliestBlockNumber`.
+    ///
+    /// Used by the pruner to translate a wall-clock retention window into a
+    /// block-number cutoff. The search is monotonic (timestamps are
+    /// increasing along canonical chain) so a standard binary search works.
+    pub async fn find_canonical_block_by_timestamp(
+        &self,
+        target_ts: u64,
+        end_inclusive: BlockNumber,
+    ) -> Result<Option<BlockNumber>, StoreError> {
+        let earliest = self.get_earliest_block_number().await?;
+        if end_inclusive < earliest {
+            return Ok(None);
+        }
+
+        let backend = self.backend.clone();
+        tokio::task::spawn_blocking(move || -> Result<Option<BlockNumber>, StoreError> {
+            let read_header_ts = |n: u64| -> Result<Option<u64>, StoreError> {
+                let txn = backend.begin_read()?;
+                let hash_bytes =
+                    match txn.get(CANONICAL_BLOCK_HASHES, n.to_le_bytes().as_slice())? {
+                        Some(b) => b,
+                        None => return Ok(None),
+                    };
+                let hash = H256::decode(hash_bytes.as_slice()).map_err(StoreError::from)?;
+                let header_bytes = match txn.get(HEADERS, hash.encode_to_vec().as_slice())? {
+                    Some(b) => b,
+                    None => return Ok(None),
+                };
+                let header = BlockHeaderRLP::from_bytes(header_bytes)
+                    .to()
+                    .map_err(StoreError::from)?;
+                Ok(Some(header.timestamp))
+            };
+
+            // Find largest n in [lo, hi] s.t. header_ts(n) <= target_ts.
+            let mut lo = earliest;
+            let mut hi = end_inclusive;
+            let mut result: Option<u64> = None;
+
+            while lo <= hi {
+                let mid = lo + (hi - lo) / 2;
+                match read_header_ts(mid)? {
+                    Some(ts) if ts <= target_ts => {
+                        result = Some(mid);
+                        if mid == u64::MAX {
+                            break;
+                        }
+                        lo = mid + 1;
+                    }
+                    Some(_) => {
+                        if mid == 0 {
+                            break;
+                        }
+                        hi = mid - 1;
+                    }
+                    None => {
+                        // Missing header for this number — treat as "above target"
+                        // so we shrink upper bound.
+                        if mid == 0 {
+                            break;
+                        }
+                        hi = mid - 1;
+                    }
+                }
+            }
+
+            Ok(result)
+        })
+        .await
+        .map_err(|e| StoreError::Custom(format!("Task panicked: {}", e)))?
+    }
+
     /// Stores the chain configuration values, should only be called once after reading the genesis file
     /// Ignores previously stored values if present
     pub async fn set_chain_config(&mut self, chain_config: &ChainConfig) -> Result<(), StoreError> {
@@ -1065,11 +1429,26 @@ impl Store {
         self.write_async(CHAIN_DATA, key, value).await
     }
 
-    /// Update earliest block number
+    /// Advance the earliest block number. No-regress: a value lower than the
+    /// currently stored one is ignored.
+    ///
+    /// `EarliestBlockNumber` is a monotonic high-water mark — first the
+    /// snap-sync pivot, then the history pruner's advancing floor — and
+    /// readers gate on it (RPC returns null below it). A blind lower write
+    /// would falsely claim already-pruned / pre-pivot heights are present.
+    /// `prune_block_heights` enforces the same invariant inside its atomic
+    /// write batch; this guards the other writers (snap-sync completion and
+    /// genesis init).
     pub async fn update_earliest_block_number(
         &self,
         block_number: BlockNumber,
     ) -> Result<(), StoreError> {
+        match self.get_earliest_block_number().await {
+            Ok(current) if block_number < current => return Ok(()),
+            Ok(_) => {}
+            Err(StoreError::MissingEarliestBlockNumber) => {}
+            Err(e) => return Err(e),
+        }
         let key = chain_data_key(ChainDataIndex::EarliestBlockNumber);
         let value = block_number.to_le_bytes().to_vec();
         self.write_async(CHAIN_DATA, key, value).await
@@ -1103,6 +1482,57 @@ impl Store {
             .transpose()
     }
 
+    /// Test-only helper: directly set `FinalizedBlockNumber`. Production code
+    /// must go through `forkchoice_update`, which atomically updates canonical
+    /// state alongside the finalized pointer.
+    #[cfg(test)]
+    pub async fn set_finalized_block_number_for_test(
+        &self,
+        block_number: BlockNumber,
+    ) -> Result<(), StoreError> {
+        let key = chain_data_key(ChainDataIndex::FinalizedBlockNumber);
+        let value = block_number.to_le_bytes().to_vec();
+        self.write_async(CHAIN_DATA, key, value).await
+    }
+
+    /// Test-only helper: directly write a canonical-hash mapping at `number`.
+    /// Production code must go through `forkchoice_update`.
+    #[cfg(test)]
+    pub async fn set_canonical_block_for_test(
+        &self,
+        number: BlockNumber,
+        hash: BlockHash,
+    ) -> Result<(), StoreError> {
+        self.write_async(
+            CANONICAL_BLOCK_HASHES,
+            number.to_le_bytes().to_vec(),
+            hash.encode_to_vec(),
+        )
+        .await
+    }
+
+    /// Test-only helper: point the in-memory latest-block-header cache at the
+    /// canonical block at `number`, so `get_latest_block_number` reports it.
+    /// Loads the real stored header (rather than synthesizing one) so its hash
+    /// matches the block on disk — `get_canonical_block_hash_sync` serves the
+    /// head from this cache. Production code updates it via `forkchoice_update`
+    /// / `add_initial_state`. Requires the canonical mapping and header for
+    /// `number` to already be stored.
+    #[cfg(test)]
+    pub async fn set_latest_block_number_for_test(
+        &self,
+        number: BlockNumber,
+    ) -> Result<(), StoreError> {
+        let hash = self
+            .get_canonical_block_hash_sync(number)?
+            .ok_or_else(|| StoreError::Custom(format!("no canonical hash at {number}")))?;
+        let header = self
+            .get_block_header_by_hash(hash)?
+            .ok_or_else(|| StoreError::Custom(format!("no header for block {number}")))?;
+        self.latest_block_header.update(header);
+        Ok(())
+    }
+
     /// Obtain safe block number
     pub async fn get_safe_block_number(&self) -> Result<Option<BlockNumber>, StoreError> {
         let key = chain_data_key(ChainDataIndex::SafeBlockNumber);
@@ -1120,6 +1550,46 @@ impl Store {
     /// Obtain latest block number
     pub async fn get_latest_block_number(&self) -> Result<BlockNumber, StoreError> {
         Ok(self.latest_block_header.get().number)
+    }
+
+    /// Block number of the highest canonical block whose state trie is
+    /// persisted to disk.
+    ///
+    /// On restart, `regenerate_head_state` re-executes every block *above*
+    /// this point from its body, so the history pruner must never delete a
+    /// body at or above it — doing so bricks the node on the next boot with
+    /// "Block N not found".
+    ///
+    /// Found by walking back from the head via [`Self::has_state_root`], the
+    /// same way `regenerate_head_state` locates the on-disk state. The walk
+    /// length equals the unpersisted window: ~`DB_COMMIT_THRESHOLD` blocks
+    /// when live-following, but up to `BATCH_COMMIT_THRESHOLD × EXECUTE_BATCH_SIZE`
+    /// during bulk/batch sync — which is exactly why a fixed head-distance
+    /// floor is unsafe and this is queried instead.
+    pub async fn get_latest_persisted_state_block(&self) -> Result<BlockNumber, StoreError> {
+        let head = self.get_latest_block_number().await?;
+        let store = self.clone();
+        tokio::task::spawn_blocking(move || -> Result<BlockNumber, StoreError> {
+            let Some(mut header) = store.get_block_header(head)? else {
+                return Ok(0);
+            };
+            while !store.has_state_root(header.state_root)? {
+                if header.number == 0 {
+                    return Ok(0);
+                }
+                let parent_number = header.number - 1;
+                let Some(parent) = store.get_block_header(parent_number)? else {
+                    // A missing header below the head implies a corrupt/partial
+                    // DB. Treat this height as the floor so we never prune above
+                    // a block whose persisted-state status we can't determine.
+                    return Ok(parent_number);
+                };
+                header = parent;
+            }
+            Ok(header.number)
+        })
+        .await
+        .map_err(|e| StoreError::Custom(format!("Task panicked: {}", e)))?
     }
 
     /// Update pending block number
@@ -1576,26 +2046,8 @@ impl Store {
             })?;
         let mut tx = db.begin_write()?;
 
-        for block in update_batch.blocks {
-            let block_number = block.header.number;
-            let block_hash = block.hash();
-            let hash_key = block_hash.encode_to_vec();
-
-            let header_value_rlp = BlockHeaderRLP::from(block.header.clone());
-            tx.put(HEADERS, &hash_key, header_value_rlp.bytes())?;
-
-            let body_value = BlockBodyRLP::from_bytes(block.body.encode_to_vec());
-            tx.put(BODIES, &hash_key, body_value.bytes())?;
-
-            tx.put(BLOCK_NUMBERS, &hash_key, &block_number.to_le_bytes())?;
-
-            for (index, transaction) in block.body.transactions.iter().enumerate() {
-                tx.merge(
-                    TRANSACTION_LOCATIONS,
-                    transaction.hash(&NativeCrypto).as_bytes(),
-                    &encode_tx_location_operand(block_number, block_hash, index as u64),
-                )?;
-            }
+        for block in &update_batch.blocks {
+            Self::write_block_indices(&mut *tx, block)?;
         }
 
         for (block_hash, receipts) in update_batch.receipts {
@@ -3510,10 +3962,6 @@ pub fn hash_key_fixed(key: &H256) -> [u8; 32] {
     keccak_hash(key.to_fixed_bytes())
 }
 
-fn chain_data_key(index: ChainDataIndex) -> Vec<u8> {
-    (index as u8).encode_to_vec()
-}
-
 fn snap_state_key(index: SnapStateIndex) -> Vec<u8> {
     (index as u8).encode_to_vec()
 }
@@ -3706,6 +4154,441 @@ pub fn read_chain_id_from_db(path: &Path) -> Option<u64> {
     {
         let _ = path;
         None
+    }
+}
+
+#[cfg(test)]
+mod pruning_index_tests {
+    use super::*;
+    use crate::EngineType;
+    use ethrex_common::types::{Block, BlockBody, BlockHeader};
+
+    fn dummy_header(number: u64, parent: ethrex_common::H256) -> BlockHeader {
+        BlockHeader {
+            number,
+            parent_hash: parent,
+            ..BlockHeader::default()
+        }
+    }
+
+    fn dummy_block(number: u64, parent: ethrex_common::H256) -> Block {
+        Block {
+            header: dummy_header(number, parent),
+            body: BlockBody::default(),
+        }
+    }
+
+    #[tokio::test]
+    async fn add_block_writes_block_hashes_by_number_index() {
+        let store = Store::new("", EngineType::InMemory).unwrap();
+        let block = dummy_block(7, ethrex_common::H256::zero());
+        let hash = block.hash();
+        store.add_block(block).await.unwrap();
+
+        let mut key = Vec::with_capacity(40);
+        key.extend_from_slice(&7u64.to_be_bytes());
+        key.extend_from_slice(hash.as_bytes());
+
+        let found = store.read_async(BLOCK_HASHES_BY_NUMBER, key).await.unwrap();
+        assert!(
+            found.is_some(),
+            "index entry missing for (block_number=7, hash={:?})",
+            hash
+        );
+    }
+
+    #[tokio::test]
+    async fn store_block_updates_writes_index() {
+        let store = Store::new("", EngineType::InMemory).unwrap();
+        let block = dummy_block(11, ethrex_common::H256::zero());
+        let hash = block.hash();
+        let updates = UpdateBatch {
+            blocks: vec![block],
+            receipts: vec![(hash, vec![])],
+            account_updates: vec![],
+            storage_updates: vec![],
+            code_updates: vec![],
+            batch_mode: false,
+        };
+        store.store_block_updates(updates).unwrap();
+
+        let mut key = Vec::with_capacity(40);
+        key.extend_from_slice(&11u64.to_be_bytes());
+        key.extend_from_slice(hash.as_bytes());
+
+        let found = store.read_async(BLOCK_HASHES_BY_NUMBER, key).await.unwrap();
+        assert!(
+            found.is_some(),
+            "index entry missing for (block_number=11, hash={:?})",
+            hash
+        );
+    }
+
+    #[tokio::test]
+    async fn add_block_headers_writes_index() {
+        let store = Store::new("", EngineType::InMemory).unwrap();
+        let h1 = dummy_header(42, ethrex_common::H256::zero());
+        let h1_hash = h1.hash();
+        let h2 = dummy_header(43, h1_hash);
+        let h2_hash = h2.hash();
+
+        store.add_block_headers(vec![h1, h2]).await.unwrap();
+
+        let mut k1 = Vec::with_capacity(40);
+        k1.extend_from_slice(&42u64.to_be_bytes());
+        k1.extend_from_slice(h1_hash.as_bytes());
+        let mut k2 = Vec::with_capacity(40);
+        k2.extend_from_slice(&43u64.to_be_bytes());
+        k2.extend_from_slice(h2_hash.as_bytes());
+
+        let v1 = store.read_async(BLOCK_HASHES_BY_NUMBER, k1).await.unwrap();
+        let v2 = store.read_async(BLOCK_HASHES_BY_NUMBER, k2).await.unwrap();
+        assert!(v1.is_some(), "index missing for height 42");
+        assert!(v2.is_some(), "index missing for height 43");
+    }
+
+    #[tokio::test]
+    async fn add_block_header_writes_index() {
+        let store = Store::new("", EngineType::InMemory).unwrap();
+        let h = dummy_header(99, ethrex_common::H256::zero());
+        let hash = h.hash();
+        store.add_block_header(hash, h).await.unwrap();
+
+        let mut k = Vec::with_capacity(40);
+        k.extend_from_slice(&99u64.to_be_bytes());
+        k.extend_from_slice(hash.as_bytes());
+
+        let v = store.read_async(BLOCK_HASHES_BY_NUMBER, k).await.unwrap();
+        assert!(v.is_some(), "index missing for height 99");
+    }
+
+    #[tokio::test]
+    async fn get_block_hashes_at_number_returns_all() {
+        let store = Store::new("", EngineType::InMemory).unwrap();
+
+        // Two distinct headers at the same height (canonical + orphan).
+        let h1 = dummy_header(5, ethrex_common::H256::zero());
+        let mut h2 = dummy_header(5, ethrex_common::H256::zero());
+        // Perturb to ensure distinct hashes.
+        h2.gas_limit = 1;
+        let hash1 = h1.hash();
+        let hash2 = h2.hash();
+        assert_ne!(hash1, hash2);
+
+        store
+            .add_block_headers(vec![h1.clone(), h2.clone()])
+            .await
+            .unwrap();
+
+        let mut hashes = store.get_block_hashes_at_number(5).await.unwrap();
+        hashes.sort();
+        let mut expected = vec![hash1, hash2];
+        expected.sort();
+        assert_eq!(hashes, expected);
+
+        let none = store.get_block_hashes_at_number(6).await.unwrap();
+        assert!(none.is_empty());
+    }
+
+    #[tokio::test]
+    async fn find_canonical_block_by_timestamp_works() {
+        use ethrex_common::types::{Block, BlockBody};
+        let store = Store::new("", EngineType::InMemory).unwrap();
+
+        // Build a small canonical chain with monotonic timestamps.
+        let mut parent = ethrex_common::H256::zero();
+        for n in 0..10u64 {
+            let mut h = dummy_header(n, parent);
+            h.timestamp = 1_000 + n * 100; // 1000, 1100, 1200, ..., 1900
+            let hash = h.hash();
+            let block = Block {
+                header: h,
+                body: BlockBody::default(),
+            };
+            store.add_block(block).await.unwrap();
+            // Write canonical mapping directly via write_async.
+            store
+                .write_async(
+                    CANONICAL_BLOCK_HASHES,
+                    n.to_le_bytes().to_vec(),
+                    hash.encode_to_vec(),
+                )
+                .await
+                .unwrap();
+            parent = hash;
+        }
+        store.update_earliest_block_number(0).await.unwrap();
+
+        // Exact match (ts=1500 -> block 5 with ts=1500)
+        let r = store
+            .find_canonical_block_by_timestamp(1_500, 9)
+            .await
+            .unwrap();
+        assert_eq!(r, Some(5));
+
+        // Between two timestamps -> latest one with ts <= target
+        let r = store
+            .find_canonical_block_by_timestamp(1_550, 9)
+            .await
+            .unwrap();
+        assert_eq!(r, Some(5));
+
+        // Below earliest known timestamp -> None
+        let r = store
+            .find_canonical_block_by_timestamp(500, 9)
+            .await
+            .unwrap();
+        assert_eq!(r, None);
+
+        // Above latest -> highest in range
+        let r = store
+            .find_canonical_block_by_timestamp(5_000, 9)
+            .await
+            .unwrap();
+        assert_eq!(r, Some(9));
+    }
+
+    #[tokio::test]
+    async fn prune_block_height_canonical_only() {
+        let store = Store::new("", EngineType::InMemory).unwrap();
+        let block = dummy_block(3, ethrex_common::H256::zero());
+        let hash = block.hash();
+        store.add_block(block).await.unwrap();
+        // Set canonical mapping via write_async (matches T6 test pattern).
+        store
+            .write_async(
+                CANONICAL_BLOCK_HASHES,
+                3u64.to_le_bytes().to_vec(),
+                hash.encode_to_vec(),
+            )
+            .await
+            .unwrap();
+        store.update_earliest_block_number(0).await.unwrap();
+
+        store.prune_block_heights(3, 1).await.unwrap();
+
+        // Header preserved (canonical), body gone.
+        assert!(store.get_block_header(3).unwrap().is_some());
+        assert!(store.get_block_body(3).await.unwrap().is_none());
+        // Canonical mapping preserved.
+        assert_eq!(store.get_canonical_block_hash(3).await.unwrap(), Some(hash));
+        // BLOCK_NUMBERS for canonical preserved.
+        let backend_read = store
+            .read_async(BLOCK_NUMBERS, hash.encode_to_vec())
+            .await
+            .unwrap();
+        assert!(
+            backend_read.is_some(),
+            "block_numbers[canonical_hash] should be preserved"
+        );
+        // Index entry gone.
+        let mut k = Vec::with_capacity(40);
+        k.extend_from_slice(&3u64.to_be_bytes());
+        k.extend_from_slice(hash.as_bytes());
+        let idx = store.read_async(BLOCK_HASHES_BY_NUMBER, k).await.unwrap();
+        assert!(idx.is_none());
+        // Earliest advanced.
+        assert_eq!(store.get_earliest_block_number().await.unwrap(), 4);
+    }
+
+    #[tokio::test]
+    async fn prune_block_height_with_orphan() {
+        let store = Store::new("", EngineType::InMemory).unwrap();
+
+        let mut canonical = dummy_header(7, ethrex_common::H256::zero());
+        canonical.timestamp = 100;
+        let canonical_hash = canonical.hash();
+
+        let mut orphan = dummy_header(7, ethrex_common::H256::zero());
+        orphan.timestamp = 101; // distinct hash
+        let orphan_hash = orphan.hash();
+        assert_ne!(canonical_hash, orphan_hash);
+
+        store
+            .add_block_headers(vec![canonical.clone(), orphan.clone()])
+            .await
+            .unwrap();
+        store
+            .add_block_body(canonical_hash, BlockBody::default())
+            .await
+            .unwrap();
+        store
+            .add_block_body(orphan_hash, BlockBody::default())
+            .await
+            .unwrap();
+        store
+            .write_async(
+                CANONICAL_BLOCK_HASHES,
+                7u64.to_le_bytes().to_vec(),
+                canonical_hash.encode_to_vec(),
+            )
+            .await
+            .unwrap();
+        store.update_earliest_block_number(0).await.unwrap();
+
+        store.prune_block_heights(7, 1).await.unwrap();
+
+        // Canonical: header kept, body gone, block_numbers preserved.
+        assert!(store.get_block_header(7).unwrap().is_some());
+        assert!(store.get_block_body(7).await.unwrap().is_none());
+        let canon_bn = store
+            .read_async(BLOCK_NUMBERS, canonical_hash.encode_to_vec())
+            .await
+            .unwrap();
+        assert!(canon_bn.is_some(), "canonical block_numbers preserved");
+
+        // Orphan: header gone, body gone, block_numbers gone.
+        let oh = store
+            .read_async(HEADERS, orphan_hash.encode_to_vec())
+            .await
+            .unwrap();
+        assert!(oh.is_none(), "orphan header should be deleted");
+        let ob = store
+            .read_async(BODIES, orphan_hash.encode_to_vec())
+            .await
+            .unwrap();
+        assert!(ob.is_none(), "orphan body should be deleted");
+        let obn = store
+            .read_async(BLOCK_NUMBERS, orphan_hash.encode_to_vec())
+            .await
+            .unwrap();
+        assert!(obn.is_none(), "orphan block_numbers should be deleted");
+
+        // No index entries at height 7.
+        let hashes_at_7 = store.get_block_hashes_at_number(7).await.unwrap();
+        assert!(
+            hashes_at_7.is_empty(),
+            "all index entries at height 7 should be deleted"
+        );
+
+        // Earliest advanced.
+        assert_eq!(store.get_earliest_block_number().await.unwrap(), 8);
+    }
+
+    #[tokio::test]
+    async fn prune_block_height_with_transactions_clears_receipts_and_locations() {
+        use ethrex_common::types::{LegacyTransaction, Receipt, Transaction, TxKind, TxType};
+
+        let store = Store::new("", EngineType::InMemory).unwrap();
+
+        // Two minimal legacy txs with distinct nonces -> distinct tx hashes.
+        let tx0 = Transaction::LegacyTransaction(LegacyTransaction {
+            nonce: 0,
+            to: TxKind::Create,
+            ..Default::default()
+        });
+        let tx1 = Transaction::LegacyTransaction(LegacyTransaction {
+            nonce: 1,
+            to: TxKind::Create,
+            ..Default::default()
+        });
+        let tx0_hash = tx0.hash(&NativeCrypto);
+        let tx1_hash = tx1.hash(&NativeCrypto);
+        assert_ne!(tx0_hash, tx1_hash);
+
+        let body = BlockBody {
+            transactions: vec![tx0, tx1],
+            ..BlockBody::default()
+        };
+        let header = dummy_header(42, ethrex_common::H256::zero());
+        let block = Block { header, body };
+        let hash = block.hash();
+
+        store.add_block(block).await.unwrap();
+        // Seed two receipts at (hash, 0) and (hash, 1).
+        store
+            .add_receipts(
+                hash,
+                vec![
+                    Receipt::new(TxType::Legacy, true, 0, vec![]),
+                    Receipt::new(TxType::Legacy, true, 0, vec![]),
+                ],
+            )
+            .await
+            .unwrap();
+        // Mark canonical.
+        store
+            .write_async(
+                CANONICAL_BLOCK_HASHES,
+                42u64.to_le_bytes().to_vec(),
+                hash.encode_to_vec(),
+            )
+            .await
+            .unwrap();
+        store.update_earliest_block_number(0).await.unwrap();
+
+        // Pre-condition: receipts and tx_locations exist.
+        let receipt_key_0 = receipt_key(&hash, 0);
+        let receipt_key_1 = receipt_key(&hash, 1);
+        assert!(
+            store
+                .read_async(RECEIPTS_V2, receipt_key_0.clone())
+                .await
+                .unwrap()
+                .is_some()
+        );
+        assert!(
+            store
+                .read_async(RECEIPTS_V2, receipt_key_1.clone())
+                .await
+                .unwrap()
+                .is_some()
+        );
+
+        // v3 schema: TRANSACTION_LOCATIONS is keyed by tx_hash alone, with a
+        // Vec value. Each tx here appears only in block 42, so pruning that
+        // block leaves an empty Vec and the key is deleted outright.
+        let loc_key_0 = tx0_hash.as_bytes().to_vec();
+        let loc_key_1 = tx1_hash.as_bytes().to_vec();
+        assert!(
+            store
+                .read_async(TRANSACTION_LOCATIONS, loc_key_0.clone())
+                .await
+                .unwrap()
+                .is_some()
+        );
+        assert!(
+            store
+                .read_async(TRANSACTION_LOCATIONS, loc_key_1.clone())
+                .await
+                .unwrap()
+                .is_some()
+        );
+
+        // Prune.
+        store.prune_block_heights(42, 1).await.unwrap();
+
+        // Post-condition: receipts gone, tx_locations gone.
+        assert!(
+            store
+                .read_async(RECEIPTS_V2, receipt_key_0)
+                .await
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            store
+                .read_async(RECEIPTS_V2, receipt_key_1)
+                .await
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            store
+                .read_async(TRANSACTION_LOCATIONS, loc_key_0)
+                .await
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            store
+                .read_async(TRANSACTION_LOCATIONS, loc_key_1)
+                .await
+                .unwrap()
+                .is_none()
+        );
+        // Header preserved (canonical).
+        assert!(store.get_block_header(42).unwrap().is_some());
     }
 }
 

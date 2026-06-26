@@ -69,12 +69,14 @@ pub mod backend;
 pub mod error;
 mod layering;
 pub mod migrations;
+pub mod pruner;
 pub mod rlp;
 pub mod store;
 pub mod trie;
 pub mod utils;
 
 pub use layering::apply_prefix;
+pub use pruner::HistoryPruner;
 pub use store::{
     AccountUpdatesList, DEFAULT_ROCKSDB_BLOCK_CACHE_SIZE_BYTES, EngineType, Store, StoreConfig,
     UpdateBatch, has_valid_db, hash_address, hash_key, read_chain_id_from_db,
@@ -85,7 +87,7 @@ pub use store::{
 /// When bumping this version, add a corresponding migration function to
 /// `migrations::MIGRATIONS`. The migration framework will automatically
 /// upgrade existing databases instead of requiring a full resync.
-pub const STORE_SCHEMA_VERSION: u64 = 3;
+pub const STORE_SCHEMA_VERSION: u64 = 4;
 
 /// Name of the file storing the metadata about the database.
 ///

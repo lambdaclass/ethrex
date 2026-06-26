@@ -140,6 +140,26 @@ impl StorageReadView for InMemoryReadTx {
         };
         Ok(Box::new(iter))
     }
+
+    fn full_scan(
+        &self,
+        table: &str,
+    ) -> Result<Box<dyn Iterator<Item = PrefixResult> + '_>, StoreError> {
+        let table_data = self.snapshot.get(table).cloned().unwrap_or_default();
+
+        let mut entries: Vec<(Vec<u8>, Vec<u8>)> = table_data.into_iter().collect();
+        entries.sort_unstable_by(|(left, _), (right, _)| left.cmp(right));
+
+        let results: Vec<PrefixResult> = entries
+            .into_iter()
+            .map(|(k, v)| Ok((k.into_boxed_slice(), v.into_boxed_slice())))
+            .collect();
+
+        let iter = InMemoryPrefixIter {
+            results: results.into_iter(),
+        };
+        Ok(Box::new(iter))
+    }
 }
 
 pub struct InMemoryWriteTx {
@@ -177,6 +197,25 @@ impl StorageWriteBatch for InMemoryWriteTx {
         let db_mut = Arc::make_mut(&mut *db);
         if let Some(table_ref) = db_mut.get_mut(table) {
             table_ref.remove(key);
+        }
+        Ok(())
+    }
+
+    fn delete_range(
+        &mut self,
+        table: &'static str,
+        start: &[u8],
+        end: &[u8],
+    ) -> Result<(), StoreError> {
+        let mut db = self
+            .backend
+            .write()
+            .map_err(|_| StoreError::Custom("Failed to acquire write lock".to_string()))?;
+
+        let db_mut = Arc::make_mut(&mut *db);
+        if let Some(table_ref) = db_mut.get_mut(table) {
+            // FxHashMap has no native range — iterate and filter.
+            table_ref.retain(|k, _| !(k.as_slice() >= start && k.as_slice() < end));
         }
         Ok(())
     }

@@ -642,3 +642,102 @@ fn get_transaction_data(rpc_req_params: &Option<Vec<Value>>) -> Result<Vec<u8>, 
         .ok_or(RpcErr::BadParams("Params are note 0x prefixed".to_owned()))?;
     hex::decode(str_data).map_err(|error| RpcErr::BadParams(error.to_string()))
 }
+
+#[cfg(test)]
+mod pruning_tx_tests {
+    use super::*;
+    use crate::test_utils::{default_context_with_storage, setup_store};
+    use ethrex_common::types::{
+        Block, BlockBody, BlockHeader, LegacyTransaction, Receipt, Transaction, TxKind, TxType,
+    };
+
+    /// Seed a block at `block_number` with two legacy transactions and matching
+    /// receipts, make it canonical, then prune the height.
+    /// Returns (block_hash, tx0_hash, tx1_hash).
+    async fn setup_pruned_tx_block(
+        block_number: u64,
+    ) -> (
+        ethrex_storage::Store,
+        ethrex_common::H256,
+        ethrex_common::H256,
+    ) {
+        let storage = setup_store().await;
+
+        let tx0 = Transaction::LegacyTransaction(LegacyTransaction {
+            nonce: block_number * 2,
+            to: TxKind::Create,
+            ..Default::default()
+        });
+        let tx1 = Transaction::LegacyTransaction(LegacyTransaction {
+            nonce: block_number * 2 + 1,
+            to: TxKind::Create,
+            ..Default::default()
+        });
+        let tx0_hash = tx0.hash(&ethrex_crypto::NativeCrypto);
+        let tx1_hash = tx1.hash(&ethrex_crypto::NativeCrypto);
+
+        let body = BlockBody {
+            transactions: vec![tx0, tx1],
+            ..BlockBody::default()
+        };
+        let header = BlockHeader {
+            number: block_number,
+            ..Default::default()
+        };
+        let block = Block::new(header, body);
+        let block_hash = block.hash();
+
+        storage.add_block(block).await.unwrap();
+        storage
+            .add_receipts(
+                block_hash,
+                vec![
+                    Receipt::new(TxType::Legacy, true, 21000, vec![]),
+                    Receipt::new(TxType::Legacy, true, 42000, vec![]),
+                ],
+            )
+            .await
+            .unwrap();
+        // Make canonical via forkchoice_update (the public production API).
+        storage
+            .forkchoice_update(vec![], block_number, block_hash, None, None)
+            .await
+            .unwrap();
+
+        storage.prune_block_heights(block_number, 1).await.unwrap();
+
+        (storage, tx0_hash, tx1_hash)
+    }
+
+    #[tokio::test]
+    async fn get_transaction_by_hash_returns_null_for_pruned_tx() {
+        let (storage, tx0_hash, _) = setup_pruned_tx_block(3).await;
+
+        let req = GetTransactionByHashRequest {
+            transaction_hash: tx0_hash,
+        };
+        let context = default_context_with_storage(storage).await;
+        let result = req.handle(context).await.unwrap();
+        assert_eq!(
+            result,
+            serde_json::Value::Null,
+            "expected null for tx in pruned block"
+        );
+    }
+
+    #[tokio::test]
+    async fn get_transaction_receipt_returns_null_for_pruned_tx() {
+        let (storage, _, tx1_hash) = setup_pruned_tx_block(5).await;
+
+        let req = GetTransactionReceiptRequest {
+            transaction_hash: tx1_hash,
+        };
+        let context = default_context_with_storage(storage).await;
+        let result = req.handle(context).await.unwrap();
+        assert_eq!(
+            result,
+            serde_json::Value::Null,
+            "expected null for receipt of tx in pruned block"
+        );
+    }
+}

@@ -3,17 +3,168 @@ use std::path::Path;
 use std::time::{Duration, Instant};
 
 use ethrex_common::H256;
-use ethrex_common::types::{BlockHash, BlockNumber, Index};
+use ethrex_common::types::{BlockHash, BlockHeader, BlockNumber, Index};
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_rlp::encode::RLPEncode;
 
-use crate::api::tables::{RECEIPTS, RECEIPTS_V2, TRANSACTION_LOCATIONS};
+use crate::api::tables::{
+    BLOCK_HASHES_BY_NUMBER, BODIES, CANONICAL_BLOCK_HASHES, CHAIN_DATA, HEADERS, RECEIPTS,
+    RECEIPTS_V2, TRANSACTION_LOCATIONS,
+};
 use crate::api::{StorageBackend, StorageWriteBatch};
 use crate::error::StoreError;
 use crate::store::receipt_key;
+use crate::utils::{ChainDataIndex, block_hashes_by_number_key, chain_data_key};
 use crate::{STORE_METADATA_FILENAME, STORE_SCHEMA_VERSION};
 
 use super::store::StoreMetadata;
+
+const BACKFILL_BATCH_SIZE: usize = 10_000;
+
+/// Backfill `BLOCK_HASHES_BY_NUMBER` from every entry in `HEADERS`,
+/// streaming reads against batched writes so heap stays bounded by
+/// `BACKFILL_BATCH_SIZE`.
+///
+/// Uses [`StorageReadView::full_scan`] not `prefix_iterator(_, &[])` —
+/// prefix iteration on a CF with a prefix extractor can silently terminate
+/// early on RocksDB.
+///
+/// Idempotent: re-running rewrites the same keys.
+pub(crate) fn migrate_3_to_4(backend: &dyn StorageBackend) -> Result<(), StoreError> {
+    migrate_3_to_4_with_batch_size(backend, BACKFILL_BATCH_SIZE)
+}
+
+/// Same as [`migrate_3_to_4`] but with a configurable batch size, so tests
+/// can exercise the flush-boundary path without 10,001 headers.
+fn migrate_3_to_4_with_batch_size(
+    backend: &dyn StorageBackend,
+    batch_size: usize,
+) -> Result<(), StoreError> {
+    let rtxn = backend.begin_read()?;
+    let iter = rtxn.full_scan(HEADERS)?;
+
+    let mut bw = backend.begin_write()?;
+    let mut written: usize = 0;
+
+    for item in iter {
+        let (hash_key, header_bytes) = item?;
+        // The HEADERS key is `block_hash.encode_to_vec()` — RLP-encoded H256,
+        // which is `0xa0` + 32 raw hash bytes. Slicing out the raw bytes
+        // avoids 20M+ Keccak256 recomputations during the mainnet migration.
+        if hash_key.len() != 33 {
+            return Err(StoreError::Custom(format!(
+                "backfill: unexpected HEADERS key length {} (expected 33)",
+                hash_key.len()
+            )));
+        }
+        let hash = H256::from_slice(&hash_key[1..33]);
+        let header = BlockHeader::decode(&header_bytes)
+            .map_err(|e| StoreError::Custom(format!("backfill decode: {e}")))?;
+
+        let index_key = block_hashes_by_number_key(header.number, hash);
+        bw.put(BLOCK_HASHES_BY_NUMBER, &index_key, &[])?;
+        written += 1;
+
+        if written >= batch_size {
+            bw.commit()?;
+            bw = backend.begin_write()?;
+            written = 0;
+        }
+    }
+
+    // Final flush of any tail entries. Also handles the 0-header case
+    // (commits an empty batch, which is a harmless no-op on both backends).
+    bw.commit()?;
+
+    fix_earliest_block_number(backend)?;
+
+    Ok(())
+}
+
+/// Restores the invariant "`EarliestBlockNumber` = start of the contiguous
+/// body suffix" on snap-synced DBs, where it was never corrected and sits
+/// at `0` despite a body gap below the pivot.
+///
+/// The genesis body can't be used to tell full-sync and snap-sync nodes
+/// apart: `add_initial_state` stores the full genesis block on every
+/// datadir, so block 0 has a body even on snap-synced nodes. Instead,
+/// binary-search `[1, latest]` for the lowest block with a body — within
+/// that range bodies form a contiguous suffix, starting at the pivot on
+/// snap-synced nodes and at 1 on full-sync nodes — and only rewrite
+/// `EarliestBlockNumber` when the suffix doesn't connect back to genesis.
+/// Idempotent.
+fn fix_earliest_block_number(backend: &dyn StorageBackend) -> Result<(), StoreError> {
+    let txn = backend.begin_read()?;
+
+    let body_exists = |n: u64| -> Result<bool, StoreError> {
+        let hash_bytes = match txn.get(CANONICAL_BLOCK_HASHES, &n.to_le_bytes())? {
+            Some(b) => b,
+            None => return Ok(false),
+        };
+        let hash = H256::decode(hash_bytes.as_slice()).map_err(StoreError::from)?;
+        Ok(txn.get(BODIES, &hash.encode_to_vec())?.is_some())
+    };
+
+    let latest_bytes = match txn.get(
+        CHAIN_DATA,
+        &chain_data_key(ChainDataIndex::LatestBlockNumber),
+    )? {
+        Some(b) => b,
+        // Uninitialized node — nothing to fix.
+        None => return Ok(()),
+    };
+    let latest_array: [u8; 8] = latest_bytes
+        .try_into()
+        .map_err(|_| StoreError::Custom("invalid LatestBlockNumber bytes".into()))?;
+    let latest = u64::from_le_bytes(latest_array);
+
+    // Genesis-only DB — nothing to fix.
+    if latest == 0 {
+        return Ok(());
+    }
+
+    let mut lo = 1u64;
+    let mut hi = latest;
+    let mut floor: Option<u64> = None;
+    while lo <= hi {
+        let mid = lo + (hi - lo) / 2;
+        if body_exists(mid)? {
+            floor = Some(mid);
+            if mid == 1 {
+                break;
+            }
+            hi = mid - 1;
+        } else {
+            if mid == u64::MAX {
+                break;
+            }
+            lo = mid + 1;
+        }
+    }
+
+    drop(txn);
+
+    match floor {
+        // Bodies reach back to block 1: contiguous with genesis, so the node
+        // is fully synced and the legacy EarliestBlockNumber (0) is already
+        // right.
+        Some(1) => Ok(()),
+        Some(n) => {
+            let mut wtxn = backend.begin_write()?;
+            wtxn.put(
+                CHAIN_DATA,
+                &chain_data_key(ChainDataIndex::EarliestBlockNumber),
+                &n.to_le_bytes(),
+            )?;
+            wtxn.commit()?;
+            Ok(())
+        }
+        // No bodies above genesis (e.g. snap sync still in flight at
+        // migration time) — leave the pointer alone; snap-sync completion
+        // writes the pivot itself.
+        None => Ok(()),
+    }
+}
 
 /// A migration function that upgrades the database schema by one version.
 ///
@@ -27,10 +178,11 @@ pub type MigrationFn = fn(backend: &dyn StorageBackend) -> Result<(), StoreError
 /// For example:
 /// - `MIGRATIONS[0]` upgrades v1 → v2
 /// - `MIGRATIONS[1]` upgrades v2 → v3
+/// - `MIGRATIONS[2]` upgrades v3 → v4
 ///
 /// **Invariant**: `MIGRATIONS.len() == (STORE_SCHEMA_VERSION - 1) as usize`
 /// (empty when `STORE_SCHEMA_VERSION == 1`, one entry when it's 2, etc.)
-pub const MIGRATIONS: &[MigrationFn] = &[migrate_1_to_2, migrate_2_to_3];
+pub const MIGRATIONS: &[MigrationFn] = &[migrate_1_to_2, migrate_2_to_3, migrate_3_to_4];
 
 // Compile-time check: the number of migration functions must match the number
 // of version gaps (i.e. STORE_SCHEMA_VERSION - 1).
@@ -326,6 +478,344 @@ fn flush_tx_location_group(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn migrate_3_to_4_backfills_block_hashes_index() {
+        use crate::api::tables::{BLOCK_HASHES_BY_NUMBER, HEADERS};
+        use crate::rlp::BlockHeaderRLP;
+        use ethrex_common::types::BlockHeader;
+        use ethrex_rlp::encode::RLPEncode;
+
+        let backend = crate::backend::in_memory::InMemoryBackend::open().unwrap();
+
+        // Populate HEADERS with several entries representing a "v2 state".
+        // Each header has a distinct `number` so their hashes differ.
+        let headers: Vec<BlockHeader> = (10u64..14)
+            .map(|n| BlockHeader {
+                number: n,
+                ..BlockHeader::default()
+            })
+            .collect();
+
+        {
+            let mut txn = backend.begin_write().unwrap();
+            for h in &headers {
+                let hash = h.hash();
+                let hash_key = hash.encode_to_vec();
+                let header_rlp = BlockHeaderRLP::from(h.clone()).into_vec();
+                txn.put(HEADERS, &hash_key, &header_rlp).unwrap();
+            }
+            txn.commit().unwrap();
+        }
+
+        // Run the migration
+        super::migrate_3_to_4(&backend).unwrap();
+
+        // Assert index entries exist for every header
+        let txn = backend.begin_read().unwrap();
+        for h in &headers {
+            let hash = h.hash();
+            let mut key = Vec::with_capacity(40);
+            key.extend_from_slice(&h.number.to_be_bytes());
+            key.extend_from_slice(hash.as_bytes());
+            let found = txn.get(BLOCK_HASHES_BY_NUMBER, &key).unwrap();
+            assert!(
+                found.is_some(),
+                "index missing for block {} hash {:?}",
+                h.number,
+                hash
+            );
+        }
+    }
+
+    #[test]
+    fn migrate_3_to_4_empty_headers_is_noop() {
+        // 0-header v2 DB (e.g. a fresh genesis with no blocks yet): the
+        // migration must succeed without writing anything.
+        use crate::api::tables::BLOCK_HASHES_BY_NUMBER;
+
+        let backend = crate::backend::in_memory::InMemoryBackend::open().unwrap();
+        super::migrate_3_to_4(&backend).unwrap();
+
+        let txn = backend.begin_read().unwrap();
+        let count = txn.full_scan(BLOCK_HASHES_BY_NUMBER).unwrap().count();
+        assert_eq!(
+            count, 0,
+            "no index entries should exist after empty backfill"
+        );
+    }
+
+    #[test]
+    fn migrate_3_to_4_exercises_batch_boundary() {
+        // Force the mid-loop flush + final flush paths by using a tiny
+        // batch size and a count that straddles a boundary
+        // (batch_size + 1 = 11 entries with batch_size = 10).
+        use crate::api::tables::{BLOCK_HASHES_BY_NUMBER, HEADERS};
+        use crate::rlp::BlockHeaderRLP;
+        use ethrex_common::types::BlockHeader;
+        use ethrex_rlp::encode::RLPEncode;
+
+        let backend = crate::backend::in_memory::InMemoryBackend::open().unwrap();
+
+        let headers: Vec<BlockHeader> = (100u64..111)
+            .map(|n| BlockHeader {
+                number: n,
+                ..BlockHeader::default()
+            })
+            .collect();
+        assert_eq!(headers.len(), 11);
+
+        {
+            let mut txn = backend.begin_write().unwrap();
+            for h in &headers {
+                let hash = h.hash();
+                let hash_key = hash.encode_to_vec();
+                let header_rlp = BlockHeaderRLP::from(h.clone()).into_vec();
+                txn.put(HEADERS, &hash_key, &header_rlp).unwrap();
+            }
+            txn.commit().unwrap();
+        }
+
+        super::migrate_3_to_4_with_batch_size(&backend, 10).unwrap();
+
+        let txn = backend.begin_read().unwrap();
+        for h in &headers {
+            let hash = h.hash();
+            let mut key = Vec::with_capacity(40);
+            key.extend_from_slice(&h.number.to_be_bytes());
+            key.extend_from_slice(hash.as_bytes());
+            assert!(
+                txn.get(BLOCK_HASHES_BY_NUMBER, &key).unwrap().is_some(),
+                "index missing for block {} after batched backfill",
+                h.number
+            );
+        }
+        let total = txn.full_scan(BLOCK_HASHES_BY_NUMBER).unwrap().count();
+        assert_eq!(total, headers.len());
+    }
+
+    #[test]
+    fn migrate_3_to_4_is_idempotent() {
+        // Re-running after a crash must not error. The final state must be
+        // identical to a single-run state.
+        use crate::api::tables::{BLOCK_HASHES_BY_NUMBER, HEADERS};
+        use crate::rlp::BlockHeaderRLP;
+        use ethrex_common::types::BlockHeader;
+        use ethrex_rlp::encode::RLPEncode;
+
+        let backend = crate::backend::in_memory::InMemoryBackend::open().unwrap();
+
+        let headers: Vec<BlockHeader> = (1u64..6)
+            .map(|n| BlockHeader {
+                number: n,
+                ..BlockHeader::default()
+            })
+            .collect();
+
+        {
+            let mut txn = backend.begin_write().unwrap();
+            for h in &headers {
+                let hash = h.hash();
+                txn.put(
+                    HEADERS,
+                    &hash.encode_to_vec(),
+                    &BlockHeaderRLP::from(h.clone()).into_vec(),
+                )
+                .unwrap();
+            }
+            txn.commit().unwrap();
+        }
+
+        super::migrate_3_to_4(&backend).unwrap();
+        // Second invocation should overwrite the same keys without error.
+        super::migrate_3_to_4(&backend).unwrap();
+
+        let txn = backend.begin_read().unwrap();
+        let total = txn.full_scan(BLOCK_HASHES_BY_NUMBER).unwrap().count();
+        assert_eq!(total, headers.len(), "idempotent re-run must not duplicate");
+    }
+
+    #[test]
+    fn migrate_3_to_4_fixes_earliest_block_number_on_snap_synced_state() {
+        use crate::api::tables::{BODIES, CANONICAL_BLOCK_HASHES, CHAIN_DATA, HEADERS};
+        use crate::rlp::{BlockBodyRLP, BlockHeaderRLP};
+        use crate::utils::{ChainDataIndex, chain_data_key};
+        use ethrex_common::types::{BlockBody, BlockHeader};
+        use ethrex_rlp::encode::RLPEncode;
+
+        let backend = crate::backend::in_memory::InMemoryBackend::open().unwrap();
+
+        // Build a simulated snap-synced state:
+        //  - Canonical hashes 0..=10 all set.
+        //  - Headers stored for all 10 (so the index backfill picks them up).
+        //  - Bodies stored for 0 (the genesis body, which `add_initial_state`
+        //    writes on EVERY datadir, snap-synced or not) and 5..=10
+        //    (simulates pivot = 5).
+        //  - EarliestBlockNumber NOT written (legacy default).
+        //  - LatestBlockNumber = 10 (read by the migration's binary search upper bound).
+        let headers: Vec<BlockHeader> = (0u64..=10)
+            .map(|n| BlockHeader {
+                number: n,
+                ..BlockHeader::default()
+            })
+            .collect();
+        {
+            let mut txn = backend.begin_write().unwrap();
+            for h in &headers {
+                let hash = h.hash();
+                let hash_key = hash.encode_to_vec();
+                let header_rlp = BlockHeaderRLP::from(h.clone()).into_vec();
+                txn.put(HEADERS, &hash_key, &header_rlp).unwrap();
+                txn.put(CANONICAL_BLOCK_HASHES, &h.number.to_le_bytes(), &hash_key)
+                    .unwrap();
+                if h.number >= 5 || h.number == 0 {
+                    let body_rlp = BlockBodyRLP::from_bytes(BlockBody::default().encode_to_vec());
+                    txn.put(BODIES, &hash_key, body_rlp.bytes()).unwrap();
+                }
+            }
+            // LatestBlockNumber = 10
+            txn.put(
+                CHAIN_DATA,
+                &chain_data_key(ChainDataIndex::LatestBlockNumber),
+                &10u64.to_le_bytes(),
+            )
+            .unwrap();
+            txn.commit().unwrap();
+        }
+
+        super::migrate_3_to_4(&backend).unwrap();
+
+        // EarliestBlockNumber should now be 5 (lowest block with a body).
+        let txn = backend.begin_read().unwrap();
+        let earliest_bytes = txn
+            .get(
+                CHAIN_DATA,
+                &chain_data_key(ChainDataIndex::EarliestBlockNumber),
+            )
+            .unwrap()
+            .expect("earliest must be written");
+        let earliest_array: [u8; 8] = earliest_bytes.try_into().unwrap();
+        let earliest = u64::from_le_bytes(earliest_array);
+        assert_eq!(
+            earliest, 5,
+            "migration should set EarliestBlockNumber to pivot"
+        );
+    }
+
+    #[test]
+    fn migrate_3_to_4_leaves_earliest_unset_when_only_genesis_body() {
+        // Snap sync still in flight at migration time: headers and canonical
+        // hashes exist, but the only body on disk is the genesis one written
+        // at init. The migration must not touch EarliestBlockNumber —
+        // snap-sync completion writes the pivot itself.
+        use crate::api::tables::{BODIES, CANONICAL_BLOCK_HASHES, CHAIN_DATA, HEADERS};
+        use crate::rlp::{BlockBodyRLP, BlockHeaderRLP};
+        use crate::utils::{ChainDataIndex, chain_data_key};
+        use ethrex_common::types::{BlockBody, BlockHeader};
+        use ethrex_rlp::encode::RLPEncode;
+
+        let backend = crate::backend::in_memory::InMemoryBackend::open().unwrap();
+
+        let headers: Vec<BlockHeader> = (0u64..=10)
+            .map(|n| BlockHeader {
+                number: n,
+                ..BlockHeader::default()
+            })
+            .collect();
+        {
+            let mut txn = backend.begin_write().unwrap();
+            for h in &headers {
+                let hash = h.hash();
+                let hash_key = hash.encode_to_vec();
+                let header_rlp = BlockHeaderRLP::from(h.clone()).into_vec();
+                txn.put(HEADERS, &hash_key, &header_rlp).unwrap();
+                txn.put(CANONICAL_BLOCK_HASHES, &h.number.to_le_bytes(), &hash_key)
+                    .unwrap();
+                if h.number == 0 {
+                    let body_rlp = BlockBodyRLP::from_bytes(BlockBody::default().encode_to_vec());
+                    txn.put(BODIES, &hash_key, body_rlp.bytes()).unwrap();
+                }
+            }
+            txn.put(
+                CHAIN_DATA,
+                &chain_data_key(ChainDataIndex::LatestBlockNumber),
+                &10u64.to_le_bytes(),
+            )
+            .unwrap();
+            txn.commit().unwrap();
+        }
+
+        super::migrate_3_to_4(&backend).unwrap();
+
+        let txn = backend.begin_read().unwrap();
+        let earliest_bytes = txn
+            .get(
+                CHAIN_DATA,
+                &chain_data_key(ChainDataIndex::EarliestBlockNumber),
+            )
+            .unwrap();
+        assert!(
+            earliest_bytes.is_none(),
+            "EarliestBlockNumber must stay unset when no bodies exist above genesis"
+        );
+    }
+
+    #[test]
+    fn migrate_3_to_4_preserves_earliest_block_number_on_full_synced_state() {
+        use crate::api::tables::{BODIES, CANONICAL_BLOCK_HASHES, CHAIN_DATA, HEADERS};
+        use crate::rlp::{BlockBodyRLP, BlockHeaderRLP};
+        use crate::utils::{ChainDataIndex, chain_data_key};
+        use ethrex_common::types::{BlockBody, BlockHeader};
+        use ethrex_rlp::encode::RLPEncode;
+
+        let backend = crate::backend::in_memory::InMemoryBackend::open().unwrap();
+
+        // Full-sync state: bodies present for ALL blocks 0..=5.
+        let headers: Vec<BlockHeader> = (0u64..=5)
+            .map(|n| BlockHeader {
+                number: n,
+                ..BlockHeader::default()
+            })
+            .collect();
+        {
+            let mut txn = backend.begin_write().unwrap();
+            for h in &headers {
+                let hash = h.hash();
+                let hash_key = hash.encode_to_vec();
+                let header_rlp = BlockHeaderRLP::from(h.clone()).into_vec();
+                txn.put(HEADERS, &hash_key, &header_rlp).unwrap();
+                txn.put(CANONICAL_BLOCK_HASHES, &h.number.to_le_bytes(), &hash_key)
+                    .unwrap();
+                let body_rlp = BlockBodyRLP::from_bytes(BlockBody::default().encode_to_vec());
+                txn.put(BODIES, &hash_key, body_rlp.bytes()).unwrap();
+            }
+            txn.put(
+                CHAIN_DATA,
+                &chain_data_key(ChainDataIndex::LatestBlockNumber),
+                &5u64.to_le_bytes(),
+            )
+            .unwrap();
+            txn.commit().unwrap();
+        }
+
+        super::migrate_3_to_4(&backend).unwrap();
+
+        // EarliestBlockNumber should be 0 (genesis body present → no fix).
+        let txn = backend.begin_read().unwrap();
+        let earliest_bytes = txn
+            .get(
+                CHAIN_DATA,
+                &chain_data_key(ChainDataIndex::EarliestBlockNumber),
+            )
+            .unwrap();
+        // It's acceptable for the migration to either leave it unset (legacy default)
+        // or write 0 explicitly. Both mean "earliest=0".
+        let earliest = match earliest_bytes {
+            Some(b) => u64::from_le_bytes(b.try_into().unwrap()),
+            None => 0,
+        };
+        assert_eq!(earliest, 0);
+    }
 
     #[test]
     fn migrations_length_matches_schema_version() {
