@@ -132,7 +132,10 @@ Once the pre-release is created and you want to publish the release, go to the [
 
     ![set latest release](../img/publish_release_step_4.png)
 
-Once done, the CI will publish new tags for the already compiled docker images:
+> [!IMPORTANT]
+> Do the tag rename (`vX.Y.Z-rc.W` → `vX.Y.Z`) **and** unchecking *pre-release* in a **single** `Update release` edit. The automatic promotion fires on that one edit because it both renames the tag and clears the pre-release flag; splitting it across two saves means neither edit carries both signals and the `latest` tag is not moved. If that happens, use the manual recovery in [Troubleshooting](#failure-on-latest-release-workflow).
+
+Once done, the `Ethrex Latest Release` workflow (triggered by that edit) will publish new tags for the already compiled docker images:
 
 - `ghcr.io/lambdaclass/ethrex:X.Y.Z`, `ghcr.io/lambdaclass/ethrex:latest`
 - `ghcr.io/lambdaclass/ethrex:X.Y.Z-l2`, `ghcr.io/lambdaclass/ethrex:l2`
@@ -212,7 +215,13 @@ If hotfixes are needed before the final release, commit them to `release/vX.Y.Z`
 
 ### Failure on "latest release" workflow
 
-If the CI fails when setting a release as latest (step 5), Docker tags `latest` and `l2` may not be updated. To manually push those changes, follow these steps:
+If the `latest` / `l2` Docker tags don't get updated after step 5 (the `Ethrex Latest Release` run skipped the retag, or its `assert-latest-promoted` job failed), recover with the workflow's manual path — no local Docker or PAT needed:
+
+- Go to **Actions → Ethrex Latest Release → Run workflow**.
+- Set `rc_tag` to the tested release candidate (e.g. `v18.0.0-rc.1`) and `version` to the final version (e.g. `v18.0.0`).
+- Run it. The run retags `latest` / `l2` / `performance` / `X.Y.Z` from the RC image, publishes the apt package, and the `verify-latest` job confirms `:latest` resolves to `:X.Y.Z` (the run goes red if it doesn't).
+
+If the registry itself is the problem and you need to push tags by hand, fall back to a local retag:
 
 - Create a new Github Personal Access Token (PAT) from the [settings](https://github.com/settings/tokens/new).
 - Check `write:packages` permission (this will auto-check `repo` permissions too), give a name and a short expiration time.

@@ -1,52 +1,96 @@
 name: Ethrex Latest Release
 
+# Promotes a tested release candidate to the user-facing Docker tags
+# (latest / l2 / performance / X.Y.Z) and triggers the apt publish.
+#
+# The promotion decision is made purely from the triggering event payload
+# (or the manual inputs) -- it never reads GitHub's /releases/latest endpoint,
+# which excludes prereleases, sorts by created_at, and lags a just-saved edit.
+# That race previously made the retag job skip silently while the run stayed
+# green (e.g. v18.0.0 left :latest pointing at v17.0.0).
+#
+# Paths:
+#   - release: edited   -> a single edit that renames the RC tag to vX.Y.Z and
+#                          unchecks "pre-release" promotes automatically.
+#   - workflow_dispatch -> deterministic manual recovery: supply rc_tag + version.
+#   - release: released -> tripwire that asserts :latest actually moved to the
+#                          released version, failing loudly if it did not.
 on:
   workflow_dispatch:
+    inputs:
+      rc_tag:
+        description: "Source RC image tag to promote, e.g. v18.0.0-rc.1 (the tested release candidate)"
+        required: true
+        type: string
+      version:
+        description: "Final version tag to publish, e.g. v18.0.0"
+        required: true
+        type: string
   release:
     types:
       - edited
+      - released
 
 permissions:
   contents: read
-  packages: write
+  packages: read
 
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
 
 jobs:
-  get_latest_release:
-    name: "Get latest release tag"
+  resolve:
+    name: "Resolve promotion tags"
     runs-on: ubuntu-latest
+    # Run on a manual dispatch, or on an edit that promotes an RC to a full
+    # release (the tag was renamed AND the release is no longer a pre-release).
+    # A notes-only edit, or an edit while still a pre-release, is skipped.
+    if: ${{ github.event_name == 'workflow_dispatch' || (github.event_name == 'release' && github.event.action == 'edited' && github.event.changes.tag_name.from != '' && github.event.release.prerelease == false) }}
     outputs:
-      latest_tag: ${{ steps.get_latest_release.outputs.latest_tag }}
-
+      prev_tag: ${{ steps.tags.outputs.prev_tag }}
+      new_tag: ${{ steps.tags.outputs.new_tag }}
     steps:
-      - name: Get latest release tag from GH API
-        id: get_latest_release
+      - name: Determine source (RC) and target (version) tags
+        id: tags
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_RC_TAG: ${{ inputs.rc_tag }}
+          INPUT_VERSION: ${{ inputs.version }}
+          EDIT_FROM: ${{ github.event.changes.tag_name.from }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
         run: |
-          tag=$(curl -s https://api.github.com/repos/${{ env.IMAGE_NAME }}/releases/latest | jq -r .tag_name)
-          echo "Latest release tag: $tag"
-          echo "latest_tag=$tag" >> $GITHUB_OUTPUT
+          set -euo pipefail
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            PREV="$INPUT_RC_TAG"
+            NEW="$INPUT_VERSION"
+          else
+            PREV="$EDIT_FROM"
+            NEW="$RELEASE_TAG"
+          fi
+          # Strip a single leading 'v' (v18.0.0-rc.1 -> 18.0.0-rc.1).
+          PREV="${PREV#v}"
+          NEW="${NEW#v}"
+          if [ -z "$PREV" ] || [ -z "$NEW" ]; then
+            echo "::error::Could not determine promotion tags (prev='$PREV' new='$NEW')."
+            exit 1
+          fi
+          echo "prev_tag=$PREV" >> "$GITHUB_OUTPUT"
+          echo "new_tag=$NEW" >> "$GITHUB_OUTPUT"
+          echo "Promoting $PREV -> $NEW (+ latest / l2 / performance)"
 
   retag_docker_images:
     name: "Tag latest Docker images"
     runs-on: ubuntu-latest
-    needs: [get_latest_release]
-    if: ${{ needs.get_latest_release.outputs.latest_tag == github.event.release.tag_name && github.event.changes.tag_name.from }}
-
-    # Sets the permissions granted to the `GITHUB_TOKEN` for the actions in this job.
+    needs: [resolve]
     permissions:
       contents: read
       packages: write
       id-token: write
-
+    env:
+      PREV_TAG: ${{ needs.resolve.outputs.prev_tag }}
+      NEW_TAG: ${{ needs.resolve.outputs.new_tag }}
     steps:
-      - name: Set tags
-        run: |
-          echo "PREV_TAG=$(echo ${{ github.event.changes.tag_name.from }} | tr -d v)" >> $GITHUB_ENV
-          echo "NEW_TAG=$(echo ${{ github.event.release.tag_name }} | tr -d v)" >> $GITHUB_ENV
-
       - name: Login to Docker registry
         uses: docker/login-action@v4
         with:
@@ -56,16 +100,17 @@ jobs:
 
       - name: Retag Docker images
         run: |
+          set -euo pipefail
           docker buildx imagetools create \
-            -t ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.NEW_TAG }} \
-            -t ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest \
-            -t ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:performance \
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.PREV_TAG }}
+            -t "${REGISTRY}/${IMAGE_NAME}:${NEW_TAG}" \
+            -t "${REGISTRY}/${IMAGE_NAME}:latest" \
+            -t "${REGISTRY}/${IMAGE_NAME}:performance" \
+            "${REGISTRY}/${IMAGE_NAME}:${PREV_TAG}"
           docker buildx imagetools create \
-            -t ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.NEW_TAG }}-l2 \
-            -t ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:l2 \
-            -t ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:performance-l2 \
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.PREV_TAG }}-l2
+            -t "${REGISTRY}/${IMAGE_NAME}:${NEW_TAG}-l2" \
+            -t "${REGISTRY}/${IMAGE_NAME}:l2" \
+            -t "${REGISTRY}/${IMAGE_NAME}:performance-l2" \
+            "${REGISTRY}/${IMAGE_NAME}:${PREV_TAG}-l2"
 
   publish-apt:
     needs: [retag_docker_images]
@@ -77,3 +122,87 @@ jobs:
       APT_GPG_PRIVATE_KEY: ${{ secrets.APT_GPG_PRIVATE_KEY }}
       APT_GPG_PASSPHRASE: ${{ secrets.APT_GPG_PASSPHRASE }}
       APT_SSH_COMMIT_KEY: ${{ secrets.APT_SSH_COMMIT_KEY }}
+
+  verify-latest:
+    name: "Verify latest tag promotion"
+    runs-on: ubuntu-latest
+    needs: [resolve, retag_docker_images]
+    permissions:
+      contents: read
+      packages: read
+    env:
+      NEW_TAG: ${{ needs.resolve.outputs.new_tag }}
+    steps:
+      - name: Login to Docker registry
+        uses: docker/login-action@v4
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Assert floating tags resolve to the promoted version
+        run: |
+          set -euo pipefail
+          # Index (manifest-list) digest of a tag. Falls back to the text output's
+          # "Digest:" line on older buildx that lacks the .Manifest.Digest template.
+          digest() {
+            docker buildx imagetools inspect "$1" --format '{{.Manifest.Digest}}' 2>/dev/null \
+              || docker buildx imagetools inspect "$1" 2>/dev/null | awk '/^Digest:/{print $2; exit}'
+          }
+          status=0
+          for pair in "latest:${NEW_TAG}" "l2:${NEW_TAG}-l2"; do
+            float="${pair%%:*}"
+            pinned="${pair#*:}"
+            fd="$(digest "${REGISTRY}/${IMAGE_NAME}:${float}")"
+            pd="$(digest "${REGISTRY}/${IMAGE_NAME}:${pinned}")"
+            echo "${float}=${fd:-<none>}  ${pinned}=${pd:-<none>}"
+            if [ -z "$pd" ] || [ "$fd" != "$pd" ]; then
+              echo "::error::':${float}' (${fd:-<none>}) does not match ':${pinned}' (${pd:-<none>})"
+              status=1
+            fi
+          done
+          [ "$status" -eq 0 ] && echo "Verified :latest -> :${NEW_TAG} and :l2 -> :${NEW_TAG}-l2"
+          exit "$status"
+
+  assert-latest-promoted:
+    name: "Assert release was promoted to latest"
+    runs-on: ubuntu-latest
+    # Tripwire: a release promoted to a full release MUST end up on :latest. The
+    # 'edited' run (or a manual dispatch) does the retag concurrently, so poll
+    # until :latest catches up. A persistent mismatch means the automatic retag
+    # never fired (e.g. a multi-step promotion) -- fail loudly with the fix.
+    if: ${{ github.event_name == 'release' && github.event.action == 'released' }}
+    permissions:
+      contents: read
+      packages: read
+    env:
+      RELEASE_TAG: ${{ github.event.release.tag_name }}
+    steps:
+      - name: Login to Docker registry
+        uses: docker/login-action@v4
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Wait for :latest to match the released version
+        run: |
+          set -euo pipefail
+          VERSION="${RELEASE_TAG#v}"
+          digest() {
+            docker buildx imagetools inspect "$1" --format '{{.Manifest.Digest}}' 2>/dev/null \
+              || docker buildx imagetools inspect "$1" 2>/dev/null | awk '/^Digest:/{print $2; exit}' \
+              || true
+          }
+          for i in $(seq 1 10); do
+            target="$(digest "${REGISTRY}/${IMAGE_NAME}:${VERSION}")"
+            current="$(digest "${REGISTRY}/${IMAGE_NAME}:latest")"
+            echo "attempt ${i}: latest=${current:-<none>}  ${VERSION}=${target:-<none>}"
+            if [ -n "$target" ] && [ "$current" = "$target" ]; then
+              echo "Confirmed :latest -> :${VERSION}"
+              exit 0
+            fi
+            sleep 30
+          done
+          echo "::error::':latest' did not move to ':${VERSION}' after promotion. This usually means the release was promoted in multiple edits, so the automatic retag never fired. Re-run 'Ethrex Latest Release' via 'Run workflow' with rc_tag (the tested RC, e.g. v${VERSION}-rc.1) and version (v${VERSION})."
+          exit 1
