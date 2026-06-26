@@ -113,11 +113,16 @@ jobs:
             "${REGISTRY}/${IMAGE_NAME}:${PREV_TAG}-l2"
 
   publish-apt:
-    needs: [retag_docker_images]
+    needs: [resolve, retag_docker_images]
     uses: lambdaclass/ethrex-apt/.github/workflows/publish-apt.yml@main
     permissions:
       contents: write
       actions: write
+    # Pass the exact version being promoted so the apt repo doesn't re-resolve
+    # it from GitHub's "latest release" lookup, which lags a just-promoted
+    # release and could publish the previous version.
+    with:
+      tag: ${{ needs.resolve.outputs.new_tag }}
     secrets:
       APT_GPG_PRIVATE_KEY: ${{ secrets.APT_GPG_PRIVATE_KEY }}
       APT_GPG_PASSPHRASE: ${{ secrets.APT_GPG_PASSPHRASE }}
