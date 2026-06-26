@@ -2088,6 +2088,13 @@ impl FrameTransaction {
                     frame.mode, frame.value
                 ));
             }
+            // Intentional stricter-than-spec bound. EIP-8141 allows
+            // gas_limit and cumulative frame gas up to 2**64-1; ethrex caps both
+            // at i64::MAX (2**63-1) so the state-gas dimension (tracked as i64) can
+            // never overflow downstream. This is documented as a known divergence
+            // in docs/eip-8141.md. It is effectively unreachable: any gas_limit
+            // >= 2**63 dwarfs every real block gas limit and is rejected by the
+            // gas-limit-vs-block-limit check regardless.
             if frame.gas_limit > i64::MAX as u64 {
                 return Err(format!(
                     "Frame {i}: gas_limit {} exceeds 2**63-1",
