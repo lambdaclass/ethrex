@@ -1377,6 +1377,21 @@ impl<'a> VM<'a> {
             ));
         }
 
+        // EIP-8272: the recent-root reference-validity check — slot-range bound
+        // (1 <= current_slot - slot <= 8191) plus the RECENT_ROOT_ADDRESS storage
+        // assertion that the declared (source_id, slot, root) is a committed root —
+        // is not yet implemented. Until it is, a declared reference cannot be
+        // verified and RECENTROOTREFLOAD must not serve unverified roots to frame
+        // code (a soundness hole: an assertion/privacy proof would treat forged
+        // bytes as a committed root). Reject any reference-carrying frame tx so the
+        // unsound primitive is never exposed; the feature stays off until the
+        // validity check lands here (before the frame loop). See docs/eip-8272.md.
+        if !frame_tx.recent_root_references.is_empty() {
+            return Err(VMError::TxValidation(
+                crate::errors::TxValidationError::InvalidFrameTransaction,
+            ));
+        }
+
         // Initialize FrameTxContext
         let sig_hash = frame_tx.compute_sig_hash();
         let total_gas_limit = frame_tx.total_gas_limit();
