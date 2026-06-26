@@ -32,7 +32,17 @@ impl Hook for DefaultHook {
         // EELS never reads the SYSTEM_ADDRESS account, so skip the whole
         // sender path to keep the read out of execution witnesses (EIP-8025).
         if vm.env.is_system_call {
-            let intrinsic = vm.get_intrinsic_gas()?;
+            // EELS `process_unchecked_system_transaction` builds the message with
+            // intrinsic_regular_gas=0 and intrinsic_state_gas=0: a system call gets
+            // the full SYS_CALL_GAS_LIMIT with no intrinsic deducted. We still call
+            // `add_intrinsic_gas` (with a zeroed intrinsic) so the Amsterdam state-gas
+            // reservoir is set up, but charge no intrinsic — otherwise the frame
+            // budget would fall below SYS_CALL_GAS_LIMIT and diverge from EELS (a
+            // system contract engineered to consume exactly SYS_CALL_GAS_LIMIT+1
+            // would then fail to run out of gas).
+            let mut intrinsic = vm.get_intrinsic_gas()?;
+            intrinsic.regular = 0;
+            intrinsic.state = 0;
             vm.add_intrinsic_gas(&intrinsic)?;
             transfer_value(vm)?;
             set_bytecode_and_code_address(vm)?;
