@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-ae0fb792.js";
+            window.path_to_searchindex_js = "searchindex-249c4fe5.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-7e7556e2.js"></script>
@@ -11336,7 +11336,11 @@ git push origin &lt;release_version&gt;
 <p><img src="img/publish_release_step_4.png" alt="set latest release"></p>
 </li>
 </ol>
-<p>Once done, the CI will publish new tags for the already compiled docker images:</p>
+<blockquote class="blockquote-tag blockquote-tag-important">
+<p class="blockquote-tag-title"><svg viewbox="0 0 16 16" width="18" height="18"><path d="M0 1.75C0 .784.784 0 1.75 0h12.5C15.216 0 16 .784 16 1.75v9.5A1.75 1.75 0 0 1 14.25 13H8.06l-2.573 2.573A1.458 1.458 0 0 1 3 14.543V13H1.75A1.75 1.75 0 0 1 0 11.25Zm1.75-.25a.25.25 0 0 0-.25.25v9.5c0 .138.112.25.25.25h2a.75.75 0 0 1 .75.75v2.19l2.72-2.72a.749.749 0 0 1 .53-.22h6.5a.25.25 0 0 0 .25-.25v-9.5a.25.25 0 0 0-.25-.25Zm7 2.25v2.5a.75.75 0 0 1-1.5 0v-2.5a.75.75 0 0 1 1.5 0ZM9 9a1 1 0 1 1-2 0 1 1 0 0 1 2 0Z"></path></svg>Important</p>
+<p>Do the tag rename (<code>vX.Y.Z-rc.W</code> → <code>vX.Y.Z</code>) <strong>and</strong> unchecking <em>pre-release</em> in a <strong>single</strong> <code>Update release</code> edit. The automatic promotion fires on that one edit because it both renames the tag and clears the pre-release flag; splitting it across two saves means neither edit carries both signals and the <code>latest</code> tag is not moved. If that happens, use the manual recovery in <a href="#failure-on-latest-release-workflow">Troubleshooting</a>.</p>
+</blockquote>
+<p>Once done, the <code>Ethrex Latest Release</code> workflow (triggered by that edit) will publish new tags for the already compiled docker images:</p>
 <ul>
 <li><code>ghcr.io/lambdaclass/ethrex:X.Y.Z</code>, <code>ghcr.io/lambdaclass/ethrex:latest</code></li>
 <li><code>ghcr.io/lambdaclass/ethrex:X.Y.Z-l2</code>, <code>ghcr.io/lambdaclass/ethrex:l2</code></li>
@@ -11415,33 +11419,31 @@ xattr -dr com.apple.quarantine ethrex
 <p>If hotfixes are needed before the final release, commit them to <code>release/vX.Y.Z</code>, push, and create a new pre-release tag. The final tag <code>vX.Y.Z</code> should always point to the exact commit you will merge via PR.</p>
 <h2 id="troubleshooting-5"><a class="header" href="#troubleshooting-5">Troubleshooting</a></h2>
 <h3 id="failure-on-latest-release-workflow"><a class="header" href="#failure-on-latest-release-workflow">Failure on “latest release” workflow</a></h3>
-<p>If the CI fails when setting a release as latest (step 5), Docker tags <code>latest</code> and <code>l2</code> may not be updated. To manually push those changes, follow these steps:</p>
+<p>If the <code>latest</code> / <code>l2</code> Docker tags don’t get updated after step 5 (the <code>Ethrex Latest Release</code> run skipped the retag, or its <code>assert-latest-promoted</code> job failed), recover with the workflow’s manual path — no local Docker or PAT needed:</p>
+<ul>
+<li>Go to <strong>Actions → Ethrex Latest Release → Run workflow</strong>.</li>
+<li>Set <code>rc_tag</code> to the tested release candidate (e.g. <code>v18.0.0-rc.1</code>) and <code>version</code> to the final version (e.g. <code>v18.0.0</code>).</li>
+<li>Run it. The run retags <code>latest</code> / <code>l2</code> / <code>performance</code> / <code>X.Y.Z</code> from the RC image, publishes the apt package, and the <code>verify-latest</code> job confirms <code>:latest</code> resolves to <code>:X.Y.Z</code> (the run goes red if it doesn’t).</li>
+</ul>
+<p>If the registry itself is unreachable through Actions and you must promote by hand, do it <strong>server-side</strong> so the multi-arch image index is preserved. (A <code>docker pull --platform linux/amd64 … &amp;&amp; docker tag &amp;&amp; docker push</code> collapses <code>:latest</code> to a single architecture, silently dropping arm64.)</p>
 <ul>
 <li>Create a new Github Personal Access Token (PAT) from the <a href="https://github.com/settings/tokens/new">settings</a>.</li>
 <li>Check <code>write:packages</code> permission (this will auto-check <code>repo</code> permissions too), give a name and a short expiration time.</li>
 <li>Save the token securely.</li>
 <li>Click on <code>Configure SSO</code> button and authorize LambdaClass organization.</li>
 <li>Log in to Github Container Registry: <code>docker login ghcr.io</code>. Put your Github’s username and use the token as your password.</li>
-<li>Pull RC images:</li>
+<li>Retag the RC images to the release tags (server-side, multi-arch index preserved — same operation the workflow performs):</li>
 </ul>
-<pre><code class="language-bash">docker pull --platform linux/amd64 ghcr.io/lambdaclass/ethrex:X.Y.Z-rc.W
-docker pull --platform linux/amd64 ghcr.io/lambdaclass/ethrex:X.Y.Z-rc.W-l2
-</code></pre>
-<ul>
-<li>Retag them:</li>
-</ul>
-<pre><code class="language-bash">docker tag ghcr.io/lambdaclass/ethrex:X.Y.Z-rc.W ghcr.io/lambdaclass/ethrex:X.Y.Z
-docker tag ghcr.io/lambdaclass/ethrex:X.Y.Z-rc.W-l2 ghcr.io/lambdaclass/ethrex:X.Y.Z-l2
-docker tag ghcr.io/lambdaclass/ethrex:X.Y.Z-rc.W ghcr.io/lambdaclass/ethrex:latest
-docker tag ghcr.io/lambdaclass/ethrex:X.Y.Z-rc.W-l2 ghcr.io/lambdaclass/ethrex:l2
-</code></pre>
-<ul>
-<li>Push them:</li>
-</ul>
-<pre><code class="language-bash">docker push ghcr.io/lambdaclass/ethrex:X.Y.Z
-docker push ghcr.io/lambdaclass/ethrex:X.Y.Z-l2
-docker push ghcr.io/lambdaclass/ethrex:latest
-docker push ghcr.io/lambdaclass/ethrex:l2
+<pre><code class="language-bash">docker buildx imagetools create \
+  -t ghcr.io/lambdaclass/ethrex:X.Y.Z \
+  -t ghcr.io/lambdaclass/ethrex:latest \
+  -t ghcr.io/lambdaclass/ethrex:performance \
+  ghcr.io/lambdaclass/ethrex:X.Y.Z-rc.W
+docker buildx imagetools create \
+  -t ghcr.io/lambdaclass/ethrex:X.Y.Z-l2 \
+  -t ghcr.io/lambdaclass/ethrex:l2 \
+  -t ghcr.io/lambdaclass/ethrex:performance-l2 \
+  ghcr.io/lambdaclass/ethrex:X.Y.Z-rc.W-l2
 </code></pre>
 <ul>
 <li>Delete the PAT for security (<a href="https://github.com/settings/tokens">here</a>)</li>
