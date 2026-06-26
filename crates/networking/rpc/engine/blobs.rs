@@ -238,6 +238,26 @@ mod tests {
         (bundle, hashes)
     }
 
+    fn sample_v0_bundle(count: usize) -> (BlobsBundle, Vec<H256>) {
+        let blobs = vec![[1u8; BYTES_PER_BLOB]; count];
+        let commitments: Vec<Commitment> = (0..count).map(|i| [i as u8; 48]).collect();
+        // v0 (EIP-4844): exactly one blob proof per blob.
+        let proofs: Vec<Proof> = vec![[2u8; 48]; count];
+
+        let hashes = commitments
+            .iter()
+            .map(kzg_commitment_to_versioned_hash)
+            .collect();
+
+        let bundle = BlobsBundle {
+            blobs,
+            commitments,
+            proofs,
+            version: 0,
+        };
+        (bundle, hashes)
+    }
+
     fn blob_and_proof(bundle: &BlobsBundle, index: usize) -> BlobAndProofV2 {
         let start = index * CELLS_PER_EXT_BLOB;
         let end = start + CELLS_PER_EXT_BLOB;
@@ -330,9 +350,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn blobs_v1_returns_full_before_osaka() {
+    async fn blobs_v1_returns_v0_proof_before_osaka() {
         let context = context_with_chain_config(false).await;
-        let (bundle, hashes) = sample_bundle(1);
+        let (bundle, hashes) = sample_v0_bundle(1);
         context
             .blockchain
             .mempool
@@ -349,6 +369,28 @@ mod tests {
             proof: bundle.proofs[0],
         })])
         .unwrap();
+        assert_eq!(result, expected);
+    }
+
+    #[tokio::test]
+    async fn blobs_v1_returns_null_for_v1_sidecar_before_osaka() {
+        // A v1 (cell-proof) sidecar can reach a pre-Osaka mempool, but getBlobsV1 can only
+        // serve a single EIP-4844 blob proof, so it must report the blob as unavailable
+        // rather than returning a cell proof in the blob-proof field.
+        let context = context_with_chain_config(false).await;
+        let (bundle, hashes) = sample_bundle(1);
+        context
+            .blockchain
+            .mempool
+            .add_blobs_bundle(H256::from_low_u64_be(1), bundle)
+            .unwrap();
+
+        let request = BlobsV1Request {
+            blob_versioned_hashes: hashes,
+        };
+
+        let result = request.handle(context).await.unwrap();
+        let expected = serde_json::to_value(vec![None::<BlobAndProofV1>]).unwrap();
         assert_eq!(result, expected);
     }
 
