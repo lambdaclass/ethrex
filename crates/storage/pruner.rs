@@ -10,31 +10,35 @@ use ethrex_metrics::pruning::METRICS_PRUNING;
 
 const PRUNE_INTERVAL_SECS: u64 = 12;
 const PRUNE_PASS_TIMEOUT_MS: u64 = 2_000;
-// Sized for post-pivot heights: a single pass deletes ~600K keys
-// (~4096 bodies + receipts + tx_locations for tx-heavy chains). Larger
-// batches outrun RocksDB compaction and trigger write stalls; smaller
-// ones can fall behind block sync. 4096 is the largest value we've seen
-// stay healthy on BSC mainnet.
+// Heights deleted per pass. The key count scales with tx density: at ~70
+// tx/block (Ethereum mainnet) a full pass deletes ~600K keys (4096 × (1 body +
+// receipts + tx_locations)); on denser chains like BSC (~200 tx/block) it's
+// ~1.6M. Larger batches outrun RocksDB compaction and trigger write stalls;
+// smaller ones can fall behind block sync. 4096 is the largest value we've
+// seen stay healthy on BSC mainnet.
 const PRUNE_BATCH_SIZE: usize = 4_096;
 // Heights per `prune_block_heights` call within a pass. Each call holds the
-// decoded bodies for its whole chunk in memory during the gather phase, so
-// this bounds peak heap (4096 at once would reach hundreds of MB to GBs on
-// large-block chains) and gives the pass deadline a chunk boundary to fire
-// at.
+// decoded bodies for its whole chunk in memory from the gather phase until the
+// write batch commits, so this bounds peak heap (4096 at once would reach
+// hundreds of MB to GBs on large-block chains) and gives the pass deadline a
+// chunk boundary to fire at.
 const PRUNE_CHUNK_SIZE: usize = 256;
 // Used as the prune floor when no `FinalizedBlockNumber` is set (chains
 // without engine-API finality, or a node before its first FCU). Covers
 // reorg depths far beyond mainnet norms while letting the pruner do
 // useful work.
 const SAFETY_DISTANCE: u64 = 256;
-// Heights near the head the pruner must never touch. The state DB persists
-// ~128 blocks (`DB_COMMIT_THRESHOLD`) behind the head and holds the rest in
-// in-memory diff layers; on restart the node re-executes every block from the
-// last persisted state root up to the head (`regenerate_head_state`), which
-// needs their bodies. Pruning a body inside that window bricks the node on the
-// next boot ("Block N not found"), and pruning the head's own body stalls
-// block production. 256 covers the 128-block window with margin (and matches
-// the reorg-safety distance used when finality is unavailable).
+// A near-head margin the pruner always keeps: enough to avoid pruning the
+// head's own body (which would stall block production) and to cover reorg
+// depth when finality is unavailable (matches `SAFETY_DISTANCE`).
+//
+// This is NOT what protects the state-regeneration window. On restart the node
+// re-executes every block from the last *persisted* state root up to the head
+// (`regenerate_head_state`), and that window can be far larger than 256 during
+// bulk/batch sync — up to `BATCH_COMMIT_THRESHOLD × EXECUTE_BATCH_SIZE` blocks,
+// where `EXECUTE_BATCH_SIZE` is operator-configurable. `tick` caps the prune
+// target at the actual persisted height (`Store::get_latest_persisted_state_block`)
+// for that; `KEEP_RECENT` is only the additional near-head margin layered on top.
 const KEEP_RECENT: u64 = 256;
 
 pub struct HistoryPruner {
@@ -44,6 +48,12 @@ pub struct HistoryPruner {
     /// [`KEEP_RECENT`]; only tests override it (to exercise the floor without
     /// building 256-block chains).
     keep_recent: u64,
+    /// Test-only override for the persisted-state floor (see [`Self::tick`]).
+    /// `None` in production, where the floor is read from the store. Synthetic
+    /// test chains have no persisted trie state, so the production query would
+    /// return 0 and block all pruning; tests set this to isolate the
+    /// retention/finality logic (or to a specific value to exercise the floor).
+    persisted_floor_override: Option<u64>,
 }
 
 impl HistoryPruner {
@@ -52,6 +62,7 @@ impl HistoryPruner {
             store,
             retention,
             keep_recent: KEEP_RECENT,
+            persisted_floor_override: None,
         }
     }
 
@@ -111,9 +122,24 @@ impl HistoryPruner {
             None => return Ok(0),
         };
 
-        // Cap by the head floor regardless of how far finality or the
-        // retention window reach.
-        let target = finalized.min(retention_block).min(prune_ceiling);
+        // Never prune at or above the last block whose state trie is persisted
+        // to disk: on restart `regenerate_head_state` re-executes every block
+        // above that point from its body. The unpersisted window is
+        // ~DB_COMMIT_THRESHOLD blocks when live-following, but up to
+        // BATCH_COMMIT_THRESHOLD × EXECUTE_BATCH_SIZE (thousands) during bulk
+        // sync — so the fixed `KEEP_RECENT` margin is not sufficient on its own
+        // and we cap at the actual persisted height.
+        let persisted = match self.persisted_floor_override {
+            Some(p) => p,
+            None => self.store.get_latest_persisted_state_block().await?,
+        };
+
+        // Cap by every floor: finality, the retention window, the near-head
+        // margin, and the persisted-state boundary.
+        let target = finalized
+            .min(retention_block)
+            .min(prune_ceiling)
+            .min(persisted);
         if earliest > target {
             return Ok(0);
         }
@@ -210,6 +236,11 @@ mod tests {
             store,
             retention: Duration::from_secs(secs),
             keep_recent,
+            // Synthetic test chains have no persisted trie state, so the
+            // production persisted-floor query would return 0 and block all
+            // pruning. Disable it here; the floor has its own test below
+            // (`tick_keeps_unpersisted_state_window`).
+            persisted_floor_override: Some(u64::MAX),
         }
     }
 
@@ -373,6 +404,61 @@ mod tests {
         }
         // The head window (16..=20, incl. the head) keeps its bodies.
         for n in 16..=20 {
+            assert!(store.get_block_body(n).await.unwrap().is_some(), "body {n}");
+        }
+    }
+
+    /// Regression for the batch-sync brick: the pruner must never delete a
+    /// body that `regenerate_head_state` re-executes on restart, i.e. nothing
+    /// at or above the last *persisted* state block. During bulk/batch sync
+    /// the persisted state can lag the head by thousands of blocks — far
+    /// beyond `keep_recent` — so the persisted-state floor, not `keep_recent`,
+    /// is what bounds the target.
+    #[tokio::test]
+    async fn tick_keeps_unpersisted_state_window() {
+        let store = Store::new("", EngineType::InMemory).unwrap();
+        store.update_earliest_block_number(0).await.unwrap();
+
+        // Chain 0..=20, all timestamps well below the cutoff so retention,
+        // finality, and the head margin would all otherwise reach the head.
+        let mut parent = ethrex_common::H256::zero();
+        for n in 0..=20u64 {
+            let h = header_with_ts(n, n * 100, parent);
+            let hash = h.hash();
+            store
+                .add_block(Block {
+                    header: h,
+                    body: BlockBody::default(),
+                })
+                .await
+                .unwrap();
+            store.set_canonical_block_for_test(n, hash).await.unwrap();
+            parent = hash;
+        }
+        store.set_finalized_block_number_for_test(20).await.unwrap();
+        store.set_latest_block_number_for_test(20).await.unwrap();
+
+        // keep_recent = 0 (near-head margin disabled) and retention=1s makes
+        // every block "old", so finalized/retention/prune_ceiling all reach 20.
+        // But persisted state only reaches block 8 (simulating a large
+        // unpersisted bulk-sync window). The pruner must stop at 8.
+        let pruner = HistoryPruner {
+            store: store.clone(),
+            retention: Duration::from_secs(1),
+            keep_recent: 0,
+            persisted_floor_override: Some(8),
+        };
+        let pruned = pruner.tick(10_000).await.unwrap();
+
+        assert_eq!(pruned, 9, "should prune heights 0..=8 only");
+        assert_eq!(store.get_earliest_block_number().await.unwrap(), 9);
+
+        for n in 0..=8 {
+            assert!(store.get_block_body(n).await.unwrap().is_none(), "body {n}");
+        }
+        // The unpersisted window (9..=20) keeps its bodies — regeneration needs
+        // them on the next boot.
+        for n in 9..=20 {
             assert!(store.get_block_body(n).await.unwrap().is_some(), "body {n}");
         }
     }

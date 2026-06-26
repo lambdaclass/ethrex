@@ -100,9 +100,15 @@ pub trait StorageWriteBatch: Send {
     /// Removes a key-value pair from the specified table.
     fn delete(&mut self, table: &'static str, key: &[u8]) -> Result<(), StoreError>;
 
-    /// Removes every key in `[start, end)` from the specified table. On
-    /// RocksDB this is a single range tombstone, dramatically cheaper than
-    /// issuing N point deletes for a large contiguous range.
+    /// Removes every key in `[start, end)` from the specified table, compared
+    /// **lexicographically** (`start` inclusive, `end` exclusive). On RocksDB
+    /// this is a single range tombstone, dramatically cheaper than issuing N
+    /// point deletes for a large contiguous range.
+    ///
+    /// Precondition: the table's keys must be encoded so lexicographic order
+    /// matches the intended range order (e.g. big-endian numbers). A
+    /// little-endian-keyed CF (such as `CANONICAL_BLOCK_HASHES`) would delete
+    /// the wrong set of keys.
     fn delete_range(
         &mut self,
         table: &'static str,

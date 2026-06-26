@@ -59,7 +59,9 @@ impl MetricsPruning {
             .expect("Failed to create ethrex_pruning_receipts_deleted_total"),
             tx_locations_deleted: register_int_counter!(
                 "ethrex_pruning_tx_locations_deleted_total",
-                "Total transaction_locations rows deleted"
+                "Total (transaction, pruned-block) location entries removed. Counts removals, \
+                 not deleted CF rows: a tx in N pruned blocks counts N times, and a row whose \
+                 location list still has surviving entries is rewritten (trimmed), not deleted"
             )
             .expect("Failed to create ethrex_pruning_tx_locations_deleted_total"),
             orphan_headers_deleted: register_int_counter!(

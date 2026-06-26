@@ -451,7 +451,7 @@ mod pruning_rpc_tests {
             .forkchoice_update(vec![], block_number, hash, None, None)
             .await
             .unwrap();
-        storage.prune_block_height(block_number).await.unwrap();
+        storage.prune_block_heights(block_number, 1).await.unwrap();
         hash
     }
 

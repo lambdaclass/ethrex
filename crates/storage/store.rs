@@ -607,16 +607,6 @@ impl Store {
         .map_err(|e| StoreError::Custom(format!("Task panicked: {}", e)))?
     }
 
-    /// Atomically prune a single block height `n`. Thin wrapper around
-    /// [`Self::prune_block_heights`] kept for callers/tests that operate one
-    /// height at a time.
-    pub async fn prune_block_height(
-        &self,
-        n: BlockNumber,
-    ) -> Result<PruneHeightCounts, StoreError> {
-        self.prune_block_heights(n, 1).await
-    }
-
     /// Atomically prune a contiguous range `[start, start + count)` in one pass:
     ///   - Delete bodies, receipts, transaction_locations for every hash where
     ///     a body was actually on disk. Unlike a naive implementation, we
@@ -1319,7 +1309,7 @@ impl Store {
     /// and non-canonical. Result is unordered. Hashes may correspond to
     /// header-only entries (no body).
     ///
-    /// Currently only used by tests; `prune_block_height` enumerates hashes
+    /// Currently only used by tests; `prune_block_heights` enumerates hashes
     /// inline so it can share the same read transaction with its other
     /// lookups.
     #[cfg(test)]
@@ -1439,11 +1429,26 @@ impl Store {
         self.write_async(CHAIN_DATA, key, value).await
     }
 
-    /// Update earliest block number
+    /// Advance the earliest block number. No-regress: a value lower than the
+    /// currently stored one is ignored.
+    ///
+    /// `EarliestBlockNumber` is a monotonic high-water mark — first the
+    /// snap-sync pivot, then the history pruner's advancing floor — and
+    /// readers gate on it (RPC returns null below it). A blind lower write
+    /// would falsely claim already-pruned / pre-pivot heights are present.
+    /// `prune_block_heights` enforces the same invariant inside its atomic
+    /// write batch; this guards the other writers (snap-sync completion and
+    /// genesis init).
     pub async fn update_earliest_block_number(
         &self,
         block_number: BlockNumber,
     ) -> Result<(), StoreError> {
+        match self.get_earliest_block_number().await {
+            Ok(current) if block_number < current => return Ok(()),
+            Ok(_) => {}
+            Err(StoreError::MissingEarliestBlockNumber) => {}
+            Err(e) => return Err(e),
+        }
         let key = chain_data_key(ChainDataIndex::EarliestBlockNumber);
         let value = block_number.to_le_bytes().to_vec();
         self.write_async(CHAIN_DATA, key, value).await
@@ -1545,6 +1550,46 @@ impl Store {
     /// Obtain latest block number
     pub async fn get_latest_block_number(&self) -> Result<BlockNumber, StoreError> {
         Ok(self.latest_block_header.get().number)
+    }
+
+    /// Block number of the highest canonical block whose state trie is
+    /// persisted to disk.
+    ///
+    /// On restart, `regenerate_head_state` re-executes every block *above*
+    /// this point from its body, so the history pruner must never delete a
+    /// body at or above it — doing so bricks the node on the next boot with
+    /// "Block N not found".
+    ///
+    /// Found by walking back from the head via [`Self::has_state_root`], the
+    /// same way `regenerate_head_state` locates the on-disk state. The walk
+    /// length equals the unpersisted window: ~`DB_COMMIT_THRESHOLD` blocks
+    /// when live-following, but up to `BATCH_COMMIT_THRESHOLD × EXECUTE_BATCH_SIZE`
+    /// during bulk/batch sync — which is exactly why a fixed head-distance
+    /// floor is unsafe and this is queried instead.
+    pub async fn get_latest_persisted_state_block(&self) -> Result<BlockNumber, StoreError> {
+        let head = self.get_latest_block_number().await?;
+        let store = self.clone();
+        tokio::task::spawn_blocking(move || -> Result<BlockNumber, StoreError> {
+            let Some(mut header) = store.get_block_header(head)? else {
+                return Ok(0);
+            };
+            while !store.has_state_root(header.state_root)? {
+                if header.number == 0 {
+                    return Ok(0);
+                }
+                let parent_number = header.number - 1;
+                let Some(parent) = store.get_block_header(parent_number)? else {
+                    // A missing header below the head implies a corrupt/partial
+                    // DB. Treat this height as the floor so we never prune above
+                    // a block whose persisted-state status we can't determine.
+                    return Ok(parent_number);
+                };
+                header = parent;
+            }
+            Ok(header.number)
+        })
+        .await
+        .map_err(|e| StoreError::Custom(format!("Task panicked: {}", e)))?
     }
 
     /// Update pending block number
@@ -4320,7 +4365,7 @@ mod pruning_index_tests {
             .unwrap();
         store.update_earliest_block_number(0).await.unwrap();
 
-        store.prune_block_height(3).await.unwrap();
+        store.prune_block_heights(3, 1).await.unwrap();
 
         // Header preserved (canonical), body gone.
         assert!(store.get_block_header(3).unwrap().is_some());
@@ -4381,7 +4426,7 @@ mod pruning_index_tests {
             .unwrap();
         store.update_earliest_block_number(0).await.unwrap();
 
-        store.prune_block_height(7).await.unwrap();
+        store.prune_block_heights(7, 1).await.unwrap();
 
         // Canonical: header kept, body gone, block_numbers preserved.
         assert!(store.get_block_header(7).unwrap().is_some());
@@ -4511,7 +4556,7 @@ mod pruning_index_tests {
         );
 
         // Prune.
-        store.prune_block_height(42).await.unwrap();
+        store.prune_block_heights(42, 1).await.unwrap();
 
         // Post-condition: receipts gone, tx_locations gone.
         assert!(

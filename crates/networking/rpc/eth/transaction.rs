@@ -704,7 +704,7 @@ mod pruning_tx_tests {
             .await
             .unwrap();
 
-        storage.prune_block_height(block_number).await.unwrap();
+        storage.prune_block_heights(block_number, 1).await.unwrap();
 
         (storage, tx0_hash, tx1_hash)
     }

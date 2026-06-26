@@ -345,7 +345,7 @@ mod pruning_log_tests {
 
         // Prune blocks 0–2 and move the earliest pointer to 3.
         for n in 0..=2u64 {
-            storage.prune_block_height(n).await.unwrap();
+            storage.prune_block_heights(n, 1).await.unwrap();
         }
         storage.update_earliest_block_number(3).await.unwrap();
         assert_eq!(storage.get_earliest_block_number().await.unwrap(), 3);
