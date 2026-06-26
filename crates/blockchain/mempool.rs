@@ -8,21 +8,15 @@ use std::{
 
 use rustc_hash::{FxHashMap, FxHashSet};
 
-use crate::{
-    constants::{
-        TX_ACCESS_LIST_ADDRESS_GAS, TX_ACCESS_LIST_STORAGE_KEY_GAS, TX_CREATE_GAS_COST,
-        TX_DATA_NON_ZERO_GAS, TX_DATA_NON_ZERO_GAS_EIP2028, TX_DATA_ZERO_GAS_COST, TX_GAS_COST,
-        TX_INIT_CODE_WORD_GAS_COST,
-    },
-    error::MempoolError,
-};
+use crate::error::MempoolError;
 use ethrex_common::{
     Address, H160, H256, U256,
     types::{
-        BlobTuple, BlobsBundle, BlockHeader, ChainConfig, MempoolTransaction, Transaction, TxType,
-        kzg_commitment_to_versioned_hash,
+        BlobTuple, BlobsBundle, BlockHeader, ChainConfig, Fork, MempoolTransaction, Transaction,
+        TxType, kzg_commitment_to_versioned_hash,
     },
 };
+use ethrex_crypto::NativeCrypto;
 use ethrex_storage::error::StoreError;
 use ethrex_vm::{intrinsic_gas_dimensions, intrinsic_gas_floor};
 use tracing::warn;
@@ -724,7 +718,8 @@ impl Mempool {
         nonce: u64,
         tx: &Transaction,
     ) -> Result<Option<H256>, MempoolError> {
-        let Some(tx_in_pool) = self.contains_sender_nonce(sender, nonce, tx.hash())? else {
+        let Some(tx_in_pool) = self.contains_sender_nonce(sender, nonce, tx.hash(&NativeCrypto))?
+        else {
             return Ok(None);
         };
         let is_a_replacement_tx = {
@@ -761,7 +756,7 @@ impl Mempool {
             return Err(MempoolError::UnderpricedReplacement);
         }
 
-        Ok(Some(tx_in_pool.hash()))
+        Ok(Some(tx_in_pool.hash(&NativeCrypto)))
     }
 }
 
@@ -786,82 +781,31 @@ pub fn transaction_intrinsic_gas(
     header: &BlockHeader,
     config: &ChainConfig,
 ) -> Result<u64, MempoolError> {
-    // Amsterdam (EIP-8037): the VM splits intrinsic into (regular, state) and uses
-    // `REGULAR_GAS_CREATE = 9000` + `STATE_BYTES_PER_NEW_ACCOUNT * cpsb` for CREATE
-    // instead of the legacy `TX_CREATE_GAS_COST = 53000`. Mempool admission must
-    // match VM charge or we spuriously reject (or admit) transactions.
-    //
-    // The VM enforces `gas_limit >= max(intrinsic_regular + intrinsic_state,
-    // floor)` via two separate checks in `validate_gas_allowance` +
-    // `validate_min_gas_limit`. Apply the same max here so we don't admit
-    // txs whose calldata floor exceeds the weighted intrinsic — those would
-    // pass mempool and then fail at block inclusion, polluting the pool.
-    if config.is_amsterdam_activated(header.timestamp) {
-        let fork = config.fork(header.timestamp);
-        let (regular, state) = intrinsic_gas_dimensions(tx, fork, header.gas_limit)
-            .map_err(|_| MempoolError::TxGasOverflowError)?;
-        let intrinsic = regular
-            .checked_add(state)
-            .ok_or(MempoolError::TxGasOverflowError)?;
-        let floor = intrinsic_gas_floor(tx, fork).map_err(|_| MempoolError::TxGasOverflowError)?;
-        // Block-level gas = max(regular_dim, state_dim); regular_dim itself is
-        // `max(tx_regular, calldata_floor)` per EIP-7778. Use the same max so
-        // admission mirrors the VM's effective minimum.
-        return Ok(intrinsic.max(floor));
-    }
-
-    let is_contract_creation = tx.is_contract_creation();
-
-    let mut gas = if is_contract_creation {
-        TX_CREATE_GAS_COST
+    // Mempool admission must charge the same intrinsic gas LEVM enforces at
+    // execution, or we admit txs the VM later rejects (pool pollution, wasted
+    // payload-builder cycles). Reuse the VM's two helpers directly rather than
+    // re-deriving the cost here:
+    //   - `intrinsic_gas_dimensions` → (regular, state) including the EIP-7702
+    //     per-authorization-tuple cost and EIP-7981 access-list data bytes;
+    //   - `intrinsic_gas_floor` → the EIP-7623/7976 calldata floor.
+    // The VM requires `gas_limit >= max(intrinsic_regular + intrinsic_state,
+    // floor)` (two separate checks in `validate_gas_allowance` +
+    // `validate_min_gas_limit`); mirror that max here. This is fork-general,
+    // so it covers Prague (auth-list cost + calldata floor) as well as
+    // Amsterdam, and keeps mempool admission in lockstep with the VM.
+    let fork = config.fork(header.timestamp);
+    let (regular, state) = intrinsic_gas_dimensions(tx, fork, header.gas_limit)
+        .map_err(|e| MempoolError::IntrinsicGasError(e.to_string()))?;
+    let intrinsic = regular
+        .checked_add(state)
+        .ok_or(MempoolError::TxGasOverflowError)?;
+    // The EIP-7623 calldata floor only exists from Prague onward; the VM gates
+    // it the same way (`fork >= Fork::Prague` in the default hook). Applying it
+    // pre-Prague would spuriously raise the admission threshold.
+    let calldata_floor = if fork >= Fork::Prague {
+        intrinsic_gas_floor(tx, fork).map_err(|e| MempoolError::IntrinsicGasError(e.to_string()))?
     } else {
-        TX_GAS_COST
+        0
     };
-
-    let data_len = tx.data().len() as u64;
-
-    if data_len > 0 {
-        let non_zero_gas_cost = if config.is_istanbul_activated(header.number) {
-            TX_DATA_NON_ZERO_GAS_EIP2028
-        } else {
-            TX_DATA_NON_ZERO_GAS
-        };
-
-        let non_zero_count = tx.data().iter().filter(|&&x| x != 0u8).count() as u64;
-
-        gas = gas
-            .checked_add(non_zero_count * non_zero_gas_cost)
-            .ok_or(MempoolError::TxGasOverflowError)?;
-
-        let zero_count = data_len - non_zero_count;
-
-        gas = gas
-            .checked_add(zero_count * TX_DATA_ZERO_GAS_COST)
-            .ok_or(MempoolError::TxGasOverflowError)?;
-
-        if is_contract_creation && config.is_shanghai_activated(header.timestamp) {
-            // Len in 32 bytes sized words
-            let len_in_words = data_len.saturating_add(31) / 32;
-
-            gas = gas
-                .checked_add(len_in_words * TX_INIT_CODE_WORD_GAS_COST)
-                .ok_or(MempoolError::TxGasOverflowError)?;
-        }
-    }
-
-    let storage_keys_count: u64 = tx
-        .access_list()
-        .iter()
-        .map(|(_, keys)| keys.len() as u64)
-        .sum();
-
-    gas = gas
-        .checked_add(tx.access_list().len() as u64 * TX_ACCESS_LIST_ADDRESS_GAS)
-        .ok_or(MempoolError::TxGasOverflowError)?;
-
-    gas = gas
-        .checked_add(storage_keys_count * TX_ACCESS_LIST_STORAGE_KEY_GAS)
-        .ok_or(MempoolError::TxGasOverflowError)?;
-
-    Ok(gas)
+    Ok(intrinsic.max(calldata_floor))
 }

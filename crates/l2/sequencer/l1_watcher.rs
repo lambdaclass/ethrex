@@ -3,6 +3,7 @@ use crate::sequencer::errors::L1WatcherError;
 use crate::{EthConfig, L1WatcherConfig, SequencerConfig};
 use ethereum_types::{Address, H256, U256};
 use ethrex_blockchain::{Blockchain, BlockchainType};
+use ethrex_common::NativeCrypto;
 use ethrex_common::types::{Log, PrivilegedL2Transaction, Transaction, TxKind};
 use ethrex_common::utils::keccak;
 use ethrex_l2_common::messages::{
@@ -442,7 +443,7 @@ impl L1Watcher {
 
             if self
                 .privileged_transaction_already_processed(
-                    tx.hash(),
+                    tx.hash(&NativeCrypto),
                     &pending_privileged_transactions,
                 )
                 .await?
@@ -526,7 +527,7 @@ impl L1Watcher {
 
             if self
                 .store
-                .get_transaction_by_hash(privileged_tx.hash())
+                .get_transaction_by_hash(privileged_tx.hash(&NativeCrypto))
                 .await
                 .map_err(L1WatcherError::FailedAccessingStore)?
                 .is_some()
