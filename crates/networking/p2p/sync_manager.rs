@@ -9,10 +9,7 @@ use std::{
 use ethrex_blockchain::Blockchain;
 use ethrex_common::H256;
 use ethrex_storage::Store;
-use tokio::{
-    sync::Mutex,
-    time::{Duration, sleep},
-};
+use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
 
@@ -203,7 +200,6 @@ impl SyncManager {
             let Ok(mut syncer) = syncer.try_lock() else {
                 return;
             };
-            let mut waiting_for_fcu_logged = false;
             loop {
                 let sync_head = {
                     // Read latest fcu head without holding the lock for longer than needed
@@ -213,20 +209,19 @@ impl SyncManager {
                     };
                     *sync_head
                 };
-                // Edge case: If we are resuming a sync process after a node restart, wait until the next fcu to start
+                // No forkchoice head yet (e.g. right after a node restart, before the
+                // first forkchoiceUpdate). Return and release the syncer lock instead
+                // of spinning here while holding it: while this task is alive `is_active()`
+                // stays true, so every `sync_to_head()` becomes a silent no-op and the
+                // node never re-arms once a head finally arrives (a single dropped fcu-head
+                // update in `set_head` would then wedge it indefinitely). The next
+                // forkchoiceUpdate calls `sync_to_head()`, which finds the syncer idle and
+                // re-spawns this task with the head populated.
                 if sync_head.is_zero() {
-                    if waiting_for_fcu_logged {
-                        debug!(
-                            "Still waiting for a forkchoice update from the consensus client to resume sync"
-                        );
-                    } else {
-                        info!(
-                            "Resuming sync after node restart, waiting for a forkchoice update from the consensus client"
-                        );
-                        waiting_for_fcu_logged = true;
-                    }
-                    sleep(Duration::from_secs(5)).await;
-                    continue;
+                    debug!(
+                        "No forkchoice head yet; releasing the syncer until the next forkchoice update"
+                    );
+                    return;
                 }
                 // Start the sync cycle
                 syncer.start_sync(sync_head, store.clone()).await;
