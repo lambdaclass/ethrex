@@ -684,6 +684,22 @@ pub fn validate_frame_signatures(
                 let v = sig.signature[0];
                 let r = &sig.signature[1..33];
                 let s = &sig.signature[33..65];
+                // EIP-2 low-s: reject high-s (s > secp256k1n/2). The `ecrecover`
+                // precompile does NOT enforce this, but the full signature bytes
+                // are committed to the transaction's identity hash, so accepting
+                // high-s would let `(v,r,s) -> (v^1, r, n-s)` produce a second
+                // valid hash for the same signer (mempool dedup bypass). Mirrors
+                // the normal-tx shield in crypto/provider.rs::recover_signer.
+                // NOTE: the P256 scheme below is not yet low-s gated (follow-up).
+                // secp256k1n/2 = 0x7fffffffffffffffffffffffffffffff5d576e7357a4501ddfe92f46681b20a0
+                const SECP256K1_N_HALF: [u8; 32] = [
+                    0x7f, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+                    0xff, 0xff, 0xff, 0x5d, 0x57, 0x6e, 0x73, 0x57, 0xa4, 0x50, 0x1d, 0xdf, 0xe9,
+                    0x2f, 0x46, 0x68, 0x1b, 0x20, 0xa0,
+                ];
+                if s > &SECP256K1_N_HALF[..] {
+                    return false;
+                }
                 let mut calldata = vec![0u8; 128];
                 calldata[..32].copy_from_slice(&msg);
                 calldata[63] = v;
