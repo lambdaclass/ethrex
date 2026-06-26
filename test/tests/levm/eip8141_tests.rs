@@ -985,6 +985,56 @@ fn reverted_frame_reports_no_state_gas() {
     );
 }
 
+#[test]
+fn state_gas_reservoir_does_not_leak_across_frames() {
+    // Frame A creates then clears a slot (0 -> 5 -> 0), which credits the EIP-8037
+    // state-gas reservoir. Frame B then creates a fresh slot. Because frames are
+    // gas-isolated, A's reservoir credit must NOT subsidize B's state charge: B's
+    // gas_used must include the full state-set cost (the charge spills to
+    // gas_remaining), not be silently drawn from A's leftover credit. Without the
+    // per-frame reservoir reset, B's gas_used would be ~SSTORE_SET_STATE_GAS lower.
+    let a = Address::from_low_u64_be(0xAA01);
+    let b = Address::from_low_u64_be(0xBB01);
+    let mk = |target| Frame {
+        mode: u8::from(FrameMode::Default),
+        flags: 0x00,
+        target: Some(target),
+        gas_limit: 2_000_000,
+        value: U256::zero(),
+        data: Bytes::new(),
+    };
+    let accounts = [
+        (
+            FUNDED_SENDER,
+            AUTO_SEED_SENDER_BALANCE,
+            0u64,
+            Bytes::from(APPROVE_BOTH_CODE.to_vec()),
+        ),
+        // A: SSTORE 5@5 (0->5); SSTORE 0@5 (5->0) -> credits the reservoir; STOP
+        (
+            a,
+            U256::zero(),
+            0u64,
+            Bytes::from(vec![
+                0x60, 0x05, 0x60, 0x05, 0x55, 0x60, 0x00, 0x60, 0x05, 0x55, 0x00,
+            ]),
+        ),
+        // B: SSTORE 1@6 (0->1) -> a fresh state-creating set; STOP
+        (b, U256::zero(), 0u64, Bytes::from(vec![0x60, 0x01, 0x60, 0x06, 0x55, 0x00])),
+    ];
+    let tx = frame_tx_with_frames(vec![verify_frame(FUNDED_SENDER), mk(a), mk(b)]);
+    let (result, _db) = run_frame_tx(&accounts, tx);
+    let report = result.expect("valid frame tx (payer approved)");
+    let fr = report.frame_results.expect("frame results present");
+    // fr[0] = VERIFY, fr[1] = A (set+clear), fr[2] = B (fresh set).
+    assert!(
+        fr[2].1 > SSTORE_SET_STATE_GAS,
+        "frame B gas_used ({}) must include the full state-set cost — frame A's \
+         reservoir credit must not subsidize it",
+        fr[2].1,
+    );
+}
+
 // ==================== frame_tx opcode handler unit tests ====================
 // (migrated from crates/vm/levm/src/opcode_handlers/frame_tx.rs)
 

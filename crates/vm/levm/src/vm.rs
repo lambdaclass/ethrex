@@ -1439,9 +1439,16 @@ impl<'a> VM<'a> {
                 };
             }
 
-            // EIP-8037: capture state gas before the frame runs so a reverted frame
-            // (which commits no state) can be rolled back to contribute zero state gas.
+            // EIP-8037: capture state-gas accounting before the frame runs so a
+            // reverted frame (which commits no state) can be rolled back to
+            // contribute zero state gas. The reservoir/spill are captured too:
+            // each frame is gas-isolated, so an inline state-gas refund (e.g. an
+            // SSTORE 0->N->0 clear, which credits the reservoir) inside one frame
+            // must NOT carry over to a later frame's charges — the reservoir is
+            // reset to this entry value after the frame completes.
             let state_gas_used_at_frame_entry = self.state_gas_used;
+            let state_gas_reservoir_at_frame_entry = self.state_gas_reservoir;
+            let state_gas_spill_at_frame_entry = self.state_gas_spill;
 
             let (frame_success, frame_gas_used, frame_logs) = if value_transfer_reverted {
                 self.substate.revert_backup();
@@ -1581,6 +1588,16 @@ impl<'a> VM<'a> {
             if !frame_success {
                 self.state_gas_used = state_gas_used_at_frame_entry;
             }
+            // EIP-8037: frames are gas-isolated, so the state-gas reservoir/spill
+            // must not leak across the frame boundary. A reservoir credit from an
+            // inline refund inside this frame (or a reverted frame's inflated
+            // reservoir) would otherwise subsidize the next frame's state charges
+            // (drawn before any spill to gas_remaining). Reset both to this frame's
+            // entry value unconditionally — a successful frame already folded its
+            // inline refund into `state_gas_used`, so the leftover reservoir credit
+            // is spent and must be dropped.
+            self.state_gas_reservoir = state_gas_reservoir_at_frame_entry;
+            self.state_gas_spill = state_gas_spill_at_frame_entry;
 
             total_gas_used = total_gas_used
                 .checked_add(frame_gas_used)
