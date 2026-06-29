@@ -12,6 +12,7 @@ use ethrex_common::{
         GenesisAccount, Transaction, TxKind,
     },
 };
+use ethrex_crypto::NativeCrypto;
 use ethrex_l2_rpc::signer::{LocalSigner, Signable, Signer};
 use ethrex_rpc::rpc::map_http_requests;
 use ethrex_rpc::test_utils::default_context_with_storage;
@@ -155,7 +156,7 @@ async fn setup_single_transfer_block() -> TestEnv {
     let recipient = Address::from_low_u64_be(0xAA);
     let value = U256::from(1_000_000_000_000_000_000u64);
     let tx = create_transfer_tx(chain_id, 0, recipient, value, &signer).await;
-    let tx_hash = tx.hash();
+    let tx_hash = tx.hash(&NativeCrypto);
     let block = build_and_execute_block(&store, &blockchain, &genesis_header, vec![tx]).await;
     TestEnv {
         store,
