@@ -947,7 +947,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-common"
-version = "16.0.0"
+version = "18.0.0"
 dependencies = [
  "bytes",
  "crc32fast",
@@ -978,15 +978,13 @@ dependencies = [
 
 [[package]]
 name = "ethrex-crypto"
-version = "16.0.0"
+version = "18.0.0"
 dependencies = [
  "ark-bn254",
  "ark-ec",
  "ark-ff",
- "bls12_381",
  "c-kzg",
  "ethereum-types",
- "ff",
  "hex-literal",
  "k256",
  "malachite",
@@ -1000,8 +998,9 @@ dependencies = [
 
 [[package]]
 name = "ethrex-guest-program"
-version = "16.0.0"
+version = "18.0.0"
 dependencies = [
+ "bls12_381",
  "bytes",
  "ethereum-types",
  "ethrex-common",
@@ -1009,6 +1008,7 @@ dependencies = [
  "ethrex-l2-common",
  "ethrex-rlp",
  "ethrex-vm",
+ "ff",
  "hex",
  "k256",
  "libssz",
@@ -1024,7 +1024,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-guest-risc0"
-version = "16.0.0"
+version = "18.0.0"
 dependencies = [
  "c-kzg",
  "ethrex-common",
@@ -1038,7 +1038,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-l2-common"
-version = "16.0.0"
+version = "18.0.0"
 dependencies = [
  "bytes",
  "ethereum-types",
@@ -1056,7 +1056,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-levm"
-version = "16.0.0"
+version = "18.0.0"
 dependencies = [
  "bytes",
  "derive_more 1.0.0",
@@ -1072,7 +1072,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-rlp"
-version = "16.0.0"
+version = "18.0.0"
 dependencies = [
  "bytes",
  "ethereum-types",
@@ -1081,7 +1081,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-trie"
-version = "16.0.0"
+version = "18.0.0"
 dependencies = [
  "anyhow",
  "bytes",
@@ -1099,7 +1099,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-vm"
-version = "16.0.0"
+version = "18.0.0"
 dependencies = [
  "bytes",
  "derive_more 1.0.0",
