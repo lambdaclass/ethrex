@@ -104,22 +104,14 @@ Host prerequisites: `solc` **0.8.31 exactly** (the FeeToken pragmas are pinned),
 
 7. **Run the integration test** against the running testnet, from the source checkout cloned in step 1.
 
-    The test harness loads contract addresses from `cmd/.env` in the checkout. The deployer normally writes this file, but the release binary targets a baked-in CI path and fails to (see step 3), so recreate it from the deploy output — it needs the proposer/bridge **and** the verifier/DAO entries (a missing verifier address such as `ETHREX_DEPLOYER_TDX_CONTRACT_VERIFIER` makes the test fail). Backends you didn't deploy keep their sentinel/zero defaults:
+    The test reads the deployed contract addresses from `cmd/.env` in the checkout — only `ETHREX_WATCHER_BRIDGE_ADDRESS` and `ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS` (the verifier/DAO `ETHREX_DEPLOYER_*` values are deploy-time *inputs*, not read by the test). The deployer normally writes this file, but the release binary targets a baked-in CI path and fails to (see step 3), so create it from the addresses in `deploy.log`:
 
     ```bash
     cd ~/ethrex_${TAG}_src
 
     cat > cmd/.env <<'EOF'
-    ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS=<PROPOSER_FROM_DEPLOY>
     ETHREX_WATCHER_BRIDGE_ADDRESS=<BRIDGE_FROM_DEPLOY>
-    ETHREX_DEPLOYER_SP1_CONTRACT_VERIFIER=<SP1_VERIFIER_FROM_DEPLOY>
-    ETHREX_DEPLOYER_PICO_CONTRACT_VERIFIER=0x00000000000000000000000000000000000000aa
-    ETHREX_DEPLOYER_RISC0_CONTRACT_VERIFIER=0x00000000000000000000000000000000000000aa
-    ETHREX_DEPLOYER_ALIGNED_AGGREGATOR_ADDRESS=0x00000000000000000000000000000000000000aa
-    ETHREX_DEPLOYER_TDX_CONTRACT_VERIFIER=<TDX_VERIFIER_FROM_DEPLOY>
-    ENCLAVE_ID_DAO=0x0000000000000000000000000000000000000000
-    FMSPC_TCB_DAO=0x0000000000000000000000000000000000000000
-    PCK_DAO=0x0000000000000000000000000000000000000000
+    ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS=<PROPOSER_FROM_DEPLOY>
     EOF
 
     INTEGRATION_TEST_L1_RPC=http://localhost:8545 \

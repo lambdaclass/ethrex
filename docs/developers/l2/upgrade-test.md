@@ -419,9 +419,10 @@ set -a; source cmd/.env; set +a
   --proof-coordinator.addr 127.0.0.1
 ```
 
-Note two things:
+Note:
 - `--network` points at the **pinned `$VERSION_FROM` genesis** (Step 0.1). Never point this at `$VERSION_TO`'s genesis file, even if the L2 system contracts changed; those changes must be applied through Step 3.3, not by re-genesis.
 - `--datadir` points back at the L2 store created under `$VERSION_FROM`.
+- `--l1.timelock-address` is required from ethrex v9.0.0 onwards (same as Step 1.3); drop it only if `$VERSION_FROM` predates v9.0.0.
 
 ### 4.2 Restart the prover (Terminal C)
 

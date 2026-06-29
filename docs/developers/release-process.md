@@ -26,10 +26,11 @@ Then, we need to update five more `Cargo.toml` files that are not part of the wo
 - `crates/guest-program/bin/openvm/Cargo.toml`
 - `crates/l2/tee/quote-gen/Cargo.toml`
 
-We also need to bump the **internal crate dependency version pins**. ethrex's library crates declare their workspace-internal dependencies with an explicit `version = "X.Y.Z"` (required for publishing to crates.io). These live in the root `Cargo.toml` under `[workspace.dependencies]`, plus a few crates that pin a sibling directly (`crates/vm/Cargo.toml`, `crates/blockchain/Cargo.toml`, `crates/l2/sdk/Cargo.toml`). Bump every one of them to the new version, then confirm none were missed (substitute the previous release version):
+We also need to bump the **internal crate dependency version pins**. ethrex's library crates declare their workspace-internal dependencies with an explicit `version = "X.Y.Z"` (required for publishing to crates.io). These live in the root `Cargo.toml` under `[workspace.dependencies]`, plus a few crates that pin a sibling directly (`crates/vm/Cargo.toml`, `crates/blockchain/Cargo.toml`, `crates/l2/sdk/Cargo.toml`). Bump every one of them to the new version, then confirm none were missed — set `PREV` to the version you are bumping **from**:
 
 ```bash
-grep -rn '"<previous version>"' --include=Cargo.toml .   # must return nothing
+PREV=X.Y.Z   # the previous release version
+grep -rn "\"$PREV\"" --include=Cargo.toml .   # must return nothing
 ```
 
 > [!WARNING]
@@ -128,6 +129,7 @@ These are ethrex mainnet nodes paired with different consensus clients (Prysm, L
 ```bash
 ssh admin@ethrex-multisync-main
 cd ethrex/tooling/sync/
+tmux kill-session -t sync 2>/dev/null || true   # drop a leftover sync session from a previous RC
 tmux new-session -d -s sync "make multisync-loop-auto MULTISYNC_BRANCH=release/vX.Y.Z 2>&1"
 ```
 
