@@ -598,14 +598,7 @@ impl RpcHandler for SendRawTransactionRequest {
         let transaction = SendRawTransactionRequest::decode_canonical(&data)
             .map_err(|error| RpcErr::BadParams(error.to_string()))?;
 
-        // Reject L2-only transaction types (0x7e PrivilegedL2, 0x7d FeeToken) at
-        // L1 admission. Both are `is_l2_only()` and unknown to other L1 clients;
-        // the block-import path rejects them via that guard (#6752), and this
-        // closes the matching mempool-ingress divergence.
-        if matches!(
-            transaction,
-            SendRawTransactionRequest::PrivilegedL2(_) | SendRawTransactionRequest::FeeToken(_)
-        ) {
+        if matches!(transaction, SendRawTransactionRequest::PrivilegedL2(_)) {
             return Err(RpcErr::BadParams("Invalid transaction type".to_string()));
         }
 
