@@ -131,6 +131,8 @@ cd ethrex/tooling/sync/
 tmux new-session -d -s sync "make multisync-loop-auto MULTISYNC_BRANCH=release/vX.Y.Z 2>&1"
 ```
 
+Check progress later with `tmux attach -t sync` (detach with `Ctrl-b` then `d`).
+
 #### Local L2 upgrade + integration tests
 
 See [Upgrade test](l2/upgrade-test.md) for the full procedure.

@@ -166,7 +166,7 @@ set -a; source cmd/.env; set +a
   --no-monitor
 ```
 
-> `--l1.timelock-address` is required for non-based deployments from **v9 onwards** (the committer targets the Timelock, not the OCP directly). Without it the sequencer exits during startup. Drop the flag only if `$VERSION_FROM` predates v9; check the per-release migration guide for the exact set of flags.
+> `--l1.timelock-address` is required for non-based deployments from ethrex **v9.0.0** onwards (the committer targets the Timelock, not the OCP directly). Without it the sequencer exits during startup. Drop the flag only if `$VERSION_FROM` predates v9.0.0; check the per-release migration guide for the exact set of flags.
 
 > `--no-monitor` disables the terminal monitor UI. Keep it off for this test: the monitor renders a full-screen TUI that hides the startup logs, and it can deadlock node shutdown on an interactive terminal (see [#6911](https://github.com/lambdaclass/ethrex/issues/6911)). With `--no-monitor` the logs stream normally and `Ctrl-C` stops the node cleanly.
 
@@ -203,7 +203,7 @@ The safe shutdown sequence is:
 
 L1 (Terminal A) stays up. L1 and L2 datadirs stay intact — the upgrade has to land on the same contracts and the same chain state.
 
-> If you run the steps below from a fresh terminal, source the deployer env first so the address variables are set (otherwise `rex call` fails with `invalid value '' for '<TO>'`):
+> If you run the steps below from a fresh terminal, first re-export the [placeholders](#placeholders) (`WORK`, `VERSION_FROM`, …) and source the deployer env so the address variables are set (otherwise `rex call` fails with `invalid value '' for '<TO>'`):
 >
 > ```bash
 > set -a; source "$WORK/ethrex-$VERSION_FROM/cmd/.env"; set +a

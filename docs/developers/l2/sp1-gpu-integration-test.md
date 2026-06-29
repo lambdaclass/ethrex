@@ -131,3 +131,12 @@ Host prerequisites: `solc` **0.8.31 exactly** (the FeeToken pragmas are pinned),
     ```
 
     Pass criterion: `test result: ok. 1 passed; 0 failed`, plus the final `Total L2 ETH == Bridge locked ETH on L1` reconciliation line. Expect a multi-hour run on the GPU backend (proving dominates the wall-clock). See [integration tests § "taking too long"](integration-tests.md#i-think-my-tests-are-taking-too-long-how-can-i-debug-this) if it appears to stall.
+
+8. **Clean up** — the L1, sequencer, and prover were started with `nohup` and keep running; stop them (and the prover's GPU container) when you're done:
+
+    ```bash
+    pkill -f 'ethrex-l2 l2 prover'        # prover first
+    pkill -f 'ethrex-l2 l2 --no-monitor'  # sequencer
+    pkill -f 'ethrex --network l1.json'   # L1
+    docker rm -f "$(docker ps -q --filter ancestor=public.ecr.aws/succinct-labs/moongate)" 2>/dev/null || true
+    ```
