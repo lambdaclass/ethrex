@@ -135,7 +135,12 @@ impl Blockchain {
             vm.rerun_block(block_for_exec.as_ref(), None)
         })
         .await?;
-        Ok(block.body.transactions.iter().map(|tx| tx.hash()).collect())
+        Ok(block
+            .body
+            .transactions
+            .iter()
+            .map(|tx| tx.hash(&NativeCrypto))
+            .collect())
     }
 
     /// Outputs the prestate trace for the given transaction.
