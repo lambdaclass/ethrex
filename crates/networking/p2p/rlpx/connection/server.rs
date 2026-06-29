@@ -254,6 +254,9 @@ pub struct Established {
     // bounded instead of letting the actor mailbox grow when a peer can't keep up. The receiving
     // part of the TcpStream is owned by the stream listen loop task. See `spawn_outbound_writer`.
     pub(crate) outbound_tx: tokio::sync::mpsc::Sender<Message>,
+    /// Set by the writer task when it exits because a single send exceeded `OUTBOUND_SEND_TIMEOUT`
+    /// (a wedged peer), so `send` can surface `OutboundSendTimeout` once the bounded queue closes.
+    pub(crate) outbound_writer_timed_out: std::sync::Arc<std::sync::atomic::AtomicBool>,
     pub(crate) node: Node,
     pub(crate) storage: Store,
     pub(crate) blockchain: Arc<Blockchain>,
@@ -564,6 +567,9 @@ impl PeerConnectionServer {
             // as dead and drop it instead of pinging a corpse (and keeping its actor) forever.
             if established_state.missed_pongs >= MAX_MISSED_PONGS {
                 debug!(peer=%established_state.node, missed=MAX_MISSED_PONGS, "Peer missed max pongs, dropping");
+                // Attribute the drop as `PingTimeout` so an unresponsive-peer drop is
+                // distinguishable from a generic `NetworkError` in `ethrex_p2p_disconnections`.
+                established_state.disconnect_reason = Some(DisconnectReason::PingTimeout);
                 ctx.stop();
                 return;
             }
@@ -1184,15 +1190,34 @@ pub(crate) async fn send(
     // decouples the actor's serial drain from the network write, so a slow/wedged peer can
     // never back up the (unbounded) actor mailbox. If the bounded queue is full the peer
     // can't keep up: surface OutboundQueueFull so `process_cast_error` drops it.
-    state
-        .outbound_tx
-        .try_send(message)
-        .map_err(|err| match err {
-            tokio::sync::mpsc::error::TrySendError::Full(_) => {
-                PeerConnectionError::OutboundQueueFull
+    match state.outbound_tx.try_send(message) {
+        Ok(()) => Ok(()),
+        Err(tokio::sync::mpsc::error::TrySendError::Full(_)) => {
+            // The peer can't drain our outbound fast enough. Attribute the drop as `UselessPeer`
+            // so it is distinguishable from a generic `NetworkError` in `ethrex_p2p_disconnections`
+            // (a spike here flags slow peers or our own over-sending, rather than hiding it).
+            state
+                .disconnect_reason
+                .get_or_insert(DisconnectReason::UselessPeer);
+            Err(PeerConnectionError::OutboundQueueFull)
+        }
+        Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => {
+            // The writer task is gone. If it exited because a single send exceeded
+            // `OUTBOUND_SEND_TIMEOUT`, the peer was wedged: surface `OutboundSendTimeout` and
+            // attribute it likewise; otherwise the socket simply closed (`Disconnected`).
+            if state
+                .outbound_writer_timed_out
+                .load(std::sync::atomic::Ordering::Acquire)
+            {
+                state
+                    .disconnect_reason
+                    .get_or_insert(DisconnectReason::UselessPeer);
+                Err(PeerConnectionError::OutboundSendTimeout)
+            } else {
+                Err(PeerConnectionError::Disconnected)
             }
-            tokio::sync::mpsc::error::TrySendError::Closed(_) => PeerConnectionError::Disconnected,
-        })
+        }
+    }
 }
 
 /// Spawns the per-connection writer task that owns the `sink` and drains a bounded outbound
@@ -1203,18 +1228,32 @@ pub(crate) async fn send(
 /// (a wedged peer). Once it exits, further `send()`s observe a closed queue and the peer is dropped.
 pub(crate) fn spawn_outbound_writer(
     mut sink: SplitSink<Framed<TcpStream, RLPxCodec>, Message>,
-) -> tokio::sync::mpsc::Sender<Message> {
+) -> (
+    tokio::sync::mpsc::Sender<Message>,
+    std::sync::Arc<std::sync::atomic::AtomicBool>,
+) {
     let (tx, mut rx) = tokio::sync::mpsc::channel::<Message>(OUTBOUND_QUEUE_CAP);
+    // Set when the writer exits because a single send exceeded `OUTBOUND_SEND_TIMEOUT` (a wedged
+    // peer), so `send` can surface `OutboundSendTimeout` instead of a generic `Disconnected` once
+    // the bounded queue closes.
+    let timed_out = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let writer_timed_out = timed_out.clone();
     tokio::spawn(async move {
         while let Some(message) = rx.recv().await {
             match tokio::time::timeout(OUTBOUND_SEND_TIMEOUT, sink.send(message)).await {
                 Ok(Ok(())) => {}
-                Ok(Err(_)) | Err(_) => break,
+                // Send error: the socket is gone; let the closed queue surface as `Disconnected`.
+                Ok(Err(_)) => break,
+                // The send itself timed out: the peer is wedged. Flag it so the drop is attributed.
+                Err(_) => {
+                    writer_timed_out.store(true, std::sync::atomic::Ordering::Release);
+                    break;
+                }
             }
         }
         let _ = sink.close().await;
     });
-    tx
+    (tx, timed_out)
 }
 
 /// Reads from the frame until a frame is available.

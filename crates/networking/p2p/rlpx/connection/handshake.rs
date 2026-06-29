@@ -125,11 +125,13 @@ pub(crate) async fn perform(
     let (sink, stream) = framed.split();
     // Move the socket sink into a dedicated writer task; the actor keeps only a bounded
     // sender, so it never blocks on a slow peer's network write (see `spawn_outbound_writer`).
-    let outbound_tx = crate::rlpx::connection::server::spawn_outbound_writer(sink);
+    let (outbound_tx, outbound_writer_timed_out) =
+        crate::rlpx::connection::server::spawn_outbound_writer(sink);
     Ok((
         Established {
             signer: context.signer,
             outbound_tx,
+            outbound_writer_timed_out,
             node,
             storage: context.storage.clone(),
             blockchain: context.blockchain.clone(),

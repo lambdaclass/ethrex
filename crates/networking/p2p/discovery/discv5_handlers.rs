@@ -6,7 +6,7 @@ use crate::{
             NodesMessage, Ordinary, Packet, PacketTrait as _, PingMessage, PongMessage,
             TalkResMessage, WhoAreYou, decrypt_message,
         },
-        server::{Discv5Message, Discv5State, update_local_ip},
+        server::{Discv5Message, Discv5State, SessionSource, update_local_ip},
         session::{
             build_challenge_data, create_id_signature, derive_session_keys, verify_id_signature,
         },
@@ -81,7 +81,8 @@ impl DiscoveryServer {
         let ordinary = match decrypt_key {
             Some(key) => match Ordinary::decode(&packet, &key) {
                 Ok(ordinary) => {
-                    if let Some((session_ip, _)) = discv5.session_ips.get(&src_id)
+                    if let Some(SessionSource { ip: session_ip, .. }) =
+                        discv5.session_ips.get(&src_id)
                         && addr.ip() != *session_ip
                     {
                         trace!(
@@ -253,9 +254,13 @@ impl DiscoveryServer {
 
         self.peer_table.set_session_info(src_id, session.clone())?;
         let discv5 = self.discv5.as_mut().expect("discv5 state must exist");
-        discv5
-            .session_ips
-            .insert(src_id, (addr.ip(), std::time::Instant::now()));
+        discv5.session_ips.insert(
+            src_id,
+            SessionSource {
+                ip: addr.ip(),
+                established_at: std::time::Instant::now(),
+            },
+        );
 
         let mut encrypted = packet.encrypted_message.clone();
         decrypt_message(&session.inbound_key, &packet, &mut encrypted)?;

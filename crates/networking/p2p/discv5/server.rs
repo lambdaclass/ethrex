@@ -27,6 +27,14 @@ const MESSAGE_CACHE_TIMEOUT: Duration = Duration::from_secs(2);
 /// per discv5 handshake and (absent this) was never removed for nodes we don't keep as peers.
 const SESSION_TTL: Duration = Duration::from_secs(3600);
 
+/// Source IP a discv5 session was established from, paired with when it was recorded so stale
+/// entries can be evicted (see `SESSION_TTL`).
+#[derive(Debug, Clone)]
+pub struct SessionSource {
+    pub ip: IpAddr,
+    pub established_at: Instant,
+}
+
 /// Discv5-specific state held within the unified DiscoveryServer.
 #[derive(Debug)]
 pub struct Discv5State {
@@ -45,7 +53,7 @@ pub struct Discv5State {
     pub whoareyou_global_window_start: Instant,
     /// Tracks the source IP that each session was established from, with the insertion time
     /// so stale entries can be evicted (see `SESSION_TTL`).
-    pub session_ips: FxHashMap<H256, (IpAddr, Instant)>,
+    pub session_ips: FxHashMap<H256, SessionSource>,
     /// Collects recipient_addr IPs from PONGs for external IP detection via majority voting.
     pub ip_votes: FxHashMap<IpAddr, FxHashSet<H256>>,
     /// When the current IP voting period started. None if no votes received yet.
@@ -112,7 +120,7 @@ impl Discv5State {
 
         let before_sessions = self.session_ips.len();
         self.session_ips
-            .retain(|_node_id, (_ip, inserted_at)| now.duration_since(*inserted_at) < SESSION_TTL);
+            .retain(|_node_id, source| now.duration_since(source.established_at) < SESSION_TTL);
         let removed_sessions = before_sessions - self.session_ips.len();
 
         let total_removed = removed_messages + removed_challenges + removed_sessions;
