@@ -639,7 +639,10 @@ impl Blockchain {
                 head_tx.tx.gas_limit()
             };
             if context.remaining_gas < tx_gas_reservation {
-                debug!("Skipping transaction: {}, no gas left", head_tx.tx.hash());
+                debug!(
+                    "Skipping transaction: {}, no gas left",
+                    head_tx.tx.hash(&NativeCrypto)
+                );
                 // We don't have enough gas left for the transaction, so we skip all txs from this account
                 txs.pop();
                 continue;
@@ -660,7 +663,7 @@ impl Blockchain {
             context.payload_size = potential_rlp_block_size;
 
             // TODO: maybe fetch hash too when filtering mempool so we don't have to compute it here (we can do this in the same refactor as adding timestamp)
-            let tx_hash = head_tx.tx.hash();
+            let tx_hash = head_tx.tx.hash(&NativeCrypto);
 
             // Check whether the tx is replay-protected
             if head_tx.tx.protected() && !chain_config.is_eip155_activated(context.block_number()) {
@@ -732,7 +735,7 @@ impl Blockchain {
         head: HeadTransaction,
         context: &mut PayloadBuildContext,
     ) -> Result<(), ChainError> {
-        let tx_hash = head.tx.hash();
+        let tx_hash = head.tx.hash(&NativeCrypto);
 
         // EIP-8037 (Amsterdam+, PR #2703): per-tx 2D inclusion check against
         // running block totals. Run BEFORE we touch the BAL recorder so a
@@ -818,7 +821,7 @@ impl Blockchain {
         context: &mut PayloadBuildContext,
     ) -> Result<Receipt, ChainError> {
         // Fetch blobs bundle
-        let tx_hash = head.tx.hash();
+        let tx_hash = head.tx.hash(&NativeCrypto);
         let max_blob_number_per_block = self.effective_max_blobs(context);
         let Some(blobs_bundle) = self.mempool.get_blobs_bundle(tx_hash)? else {
             // No blob tx should enter the mempool without its blobs bundle so this is an internal error
@@ -892,8 +895,9 @@ impl Blockchain {
         context.account_updates = account_updates;
 
         // Set BAL hash in block header (EIP-7928)
-        context.payload.header.block_access_list_hash =
-            block_access_list.as_ref().map(|bal| bal.compute_hash());
+        context.payload.header.block_access_list_hash = block_access_list
+            .as_ref()
+            .map(|bal| bal.compute_hash(&NativeCrypto));
         context.block_access_list = block_access_list;
 
         let mut logs = vec![];

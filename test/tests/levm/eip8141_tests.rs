@@ -915,7 +915,12 @@ fn frame_sstore_set_reports_eip8037_state_gas() {
             Bytes::from(APPROVE_BOTH_CODE.to_vec()),
         ),
         // PUSH1 1; PUSH1 0; SSTORE; STOP
-        (writer, U256::zero(), 0u64, Bytes::from(vec![0x60, 0x01, 0x60, 0x00, 0x55, 0x00])),
+        (
+            writer,
+            U256::zero(),
+            0u64,
+            Bytes::from(vec![0x60, 0x01, 0x60, 0x00, 0x55, 0x00]),
+        ),
     ];
     let tx = frame_tx_with_frames(vec![
         verify_frame(FUNDED_SENDER),
@@ -962,7 +967,9 @@ fn reverted_frame_reports_no_state_gas() {
             writer,
             U256::zero(),
             0u64,
-            Bytes::from(vec![0x60, 0x01, 0x60, 0x00, 0x55, 0x60, 0x00, 0x60, 0x00, 0xfd]),
+            Bytes::from(vec![
+                0x60, 0x01, 0x60, 0x00, 0x55, 0x60, 0x00, 0x60, 0x00, 0xfd,
+            ]),
         ),
     ];
     let tx = frame_tx_with_frames(vec![
@@ -1064,7 +1071,12 @@ fn state_gas_reservoir_does_not_leak_across_frames() {
             ]),
         ),
         // B: SSTORE 1@6 (0->1) -> a fresh state-creating set; STOP
-        (b, U256::zero(), 0u64, Bytes::from(vec![0x60, 0x01, 0x60, 0x06, 0x55, 0x00])),
+        (
+            b,
+            U256::zero(),
+            0u64,
+            Bytes::from(vec![0x60, 0x01, 0x60, 0x06, 0x55, 0x00]),
+        ),
     ];
     let tx = frame_tx_with_frames(vec![verify_frame(FUNDED_SENDER), mk(a), mk(b)]);
     let (result, _db) = run_frame_tx(&accounts, tx);

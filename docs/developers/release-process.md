@@ -16,7 +16,7 @@ Examples:
 
 The version must be updated to `X.Y.Z` in the release branch. There are multiple `Cargo.toml` and `Cargo.lock` files that need to be updated.
 
-First, we need to update the version of the workspace package. You can find it in the `Cargo.toml` file in the root directory, under the `[workspace.package]` section.
+First, we need to update the version of the workspace package. You can find it in the `Cargo.toml` file in the root directory, under the `[workspace.package]` section. This is also the version the library crates are published under on crates.io when the release is finalized, so it must be a clean semver version (the `-rc.W` suffix lives only on the git tag).
 
 Then, we need to update five more `Cargo.toml` files that are not part of the workspace but fulfill the role of packages in the monorepo. These are located in the following paths:
 
@@ -132,10 +132,32 @@ Once the pre-release is created and you want to publish the release, go to the [
 
     ![set latest release](../img/publish_release_step_4.png)
 
-Once done, the CI will publish new tags for the already compiled docker images:
+> [!IMPORTANT]
+> Do the tag rename (`vX.Y.Z-rc.W` → `vX.Y.Z`) **and** unchecking *pre-release* in a **single** `Update release` edit. The automatic promotion fires on that one edit because it both renames the tag and clears the pre-release flag; splitting it across two saves means neither edit carries both signals and the `latest` tag is not moved. If that happens, use the manual recovery in [Troubleshooting](#failure-on-latest-release-workflow).
+
+Once done, the `Ethrex Latest Release` workflow (triggered by that edit) will publish new tags for the already compiled docker images:
 
 - `ghcr.io/lambdaclass/ethrex:X.Y.Z`, `ghcr.io/lambdaclass/ethrex:latest`
 - `ghcr.io/lambdaclass/ethrex:X.Y.Z-l2`, `ghcr.io/lambdaclass/ethrex:l2`
+
+Promoting the pre-release to a full release also publishes ethrex's library crates to crates.io — see the next section.
+
+### Publishing to crates.io
+
+Promoting the pre-release to a full release (the `released` event from the step above) triggers the `publish.yml` workflow, which runs `cargo publish` for ethrex's publishable library crates in dependency order, at the workspace version `X.Y.Z`.
+
+> [!NOTE]
+> Only the **final** release publishes to crates.io. Pre-release (`vX.Y.Z-rc.W`) tags do **not**: the `released` event does not fire for pre-releases, and crates.io versions are immutable, so a release candidate must never claim the version before it has been tested.
+
+The crates are published at the `[workspace.package].version` bumped in step 2; the `-rc.W` suffix lives only on the git tag and never reaches crates.io.
+
+This requires a one-time organizational setup before the first release that publishes:
+
+- A `CRATES_IO_TOKEN` repository secret with publish rights for the crates.
+- A `crates-release-prod` GitHub environment (the workflow runs inside it).
+- crates.io ownership of the crate names (the first publish under the token claims them).
+
+The workflow is idempotent: a crate version already on crates.io is skipped, so re-running after a partial failure is safe. To validate without publishing, run it manually from the Actions tab (the `workflow_dispatch` trigger) with the dry-run input checked — it lists each crate's package contents instead of publishing.
 
 ## 5th - Update Homebrew
 
@@ -193,36 +215,36 @@ If hotfixes are needed before the final release, commit them to `release/vX.Y.Z`
 
 ### Failure on "latest release" workflow
 
-If the CI fails when setting a release as latest (step 5), Docker tags `latest` and `l2` may not be updated. To manually push those changes, follow these steps:
+If the `latest` / `l2` Docker tags don't get updated after step 5 (the `Ethrex Latest Release` run skipped the retag, or its `assert-latest-promoted` job failed), recover with the workflow's manual path — no local Docker or PAT needed:
+
+- Go to **Actions → Ethrex Latest Release → Run workflow**.
+- Set `rc_tag` to the tested release candidate (e.g. `v18.0.0-rc.1`) and `version` to the final version (e.g. `v18.0.0`).
+- Run it. The run retags `latest` / `l2` / `performance` / `X.Y.Z` from the RC image, publishes the apt package, and the `verify-latest` job confirms `:latest` resolves to `:X.Y.Z` (the run goes red if it doesn't).
+
+If the registry itself is unreachable through Actions and you must promote by hand, do it **server-side** so the multi-arch image index is preserved. (A `docker pull --platform linux/amd64 … && docker tag && docker push` collapses `:latest` to a single architecture, silently dropping arm64.)
 
 - Create a new Github Personal Access Token (PAT) from the [settings](https://github.com/settings/tokens/new).
 - Check `write:packages` permission (this will auto-check `repo` permissions too), give a name and a short expiration time.
 - Save the token securely.
 - Click on `Configure SSO` button and authorize LambdaClass organization.
 - Log in to Github Container Registry: `docker login ghcr.io`. Put your Github's username and use the token as your password.
-- Pull RC images:
+- Retag the RC images to the release tags (server-side, multi-arch index preserved — same operation the workflow performs):
 
 ```bash
-docker pull --platform linux/amd64 ghcr.io/lambdaclass/ethrex:X.Y.Z-rc.W
-docker pull --platform linux/amd64 ghcr.io/lambdaclass/ethrex:X.Y.Z-rc.W-l2
-```
-
-- Retag them:
-
-```bash
-docker tag ghcr.io/lambdaclass/ethrex:X.Y.Z-rc.W ghcr.io/lambdaclass/ethrex:X.Y.Z
-docker tag ghcr.io/lambdaclass/ethrex:X.Y.Z-rc.W-l2 ghcr.io/lambdaclass/ethrex:X.Y.Z-l2
-docker tag ghcr.io/lambdaclass/ethrex:X.Y.Z-rc.W ghcr.io/lambdaclass/ethrex:latest
-docker tag ghcr.io/lambdaclass/ethrex:X.Y.Z-rc.W-l2 ghcr.io/lambdaclass/ethrex:l2
-```
-
-- Push them:
-
-```bash
-docker push ghcr.io/lambdaclass/ethrex:X.Y.Z
-docker push ghcr.io/lambdaclass/ethrex:X.Y.Z-l2
-docker push ghcr.io/lambdaclass/ethrex:latest
-docker push ghcr.io/lambdaclass/ethrex:l2
+docker buildx imagetools create \
+  -t ghcr.io/lambdaclass/ethrex:X.Y.Z \
+  -t ghcr.io/lambdaclass/ethrex:latest \
+  -t ghcr.io/lambdaclass/ethrex:performance \
+  ghcr.io/lambdaclass/ethrex:X.Y.Z-rc.W
+docker buildx imagetools create \
+  -t ghcr.io/lambdaclass/ethrex:X.Y.Z-l2 \
+  -t ghcr.io/lambdaclass/ethrex:l2 \
+  -t ghcr.io/lambdaclass/ethrex:performance-l2 \
+  ghcr.io/lambdaclass/ethrex:X.Y.Z-rc.W-l2
 ```
 
 - Delete the PAT for security ([here](https://github.com/settings/tokens))
+
+### Failure on the crates.io publish workflow
+
+If `publish.yml` fails partway through, fix the cause and re-run the workflow. Crates already published at the release version are skipped (the run tolerates an "already exists" error), so it resumes from the first crate that has not been published yet. Because crates are published in dependency order, a metadata or ordering error in one crate blocks the crates that depend on it, while the ones published before it stay published (crates.io versions cannot be unpublished or overwritten — a fix requires a new version).

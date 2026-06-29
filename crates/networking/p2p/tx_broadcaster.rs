@@ -7,6 +7,7 @@ use std::{
 use ethrex_blockchain::Blockchain;
 use ethrex_common::H256;
 use ethrex_common::types::{MempoolTransaction, Transaction};
+use ethrex_crypto::NativeCrypto;
 use ethrex_storage::error::StoreError;
 use rand::{seq::SliceRandom, thread_rng};
 use spawned_concurrency::{
@@ -295,7 +296,7 @@ impl TxBroadcaster {
             let txs_to_send = full_txs
                 .iter()
                 .filter(|tx| {
-                    let hash = tx.hash();
+                    let hash = tx.hash(&NativeCrypto);
                     !self
                         .known_txs
                         .get(&hash)
@@ -303,7 +304,13 @@ impl TxBroadcaster {
                 })
                 .cloned()
                 .collect::<Vec<Transaction>>();
-            self.do_add_txs(txs_to_send.iter().map(|tx| tx.hash()).collect(), peer_id);
+            self.do_add_txs(
+                txs_to_send
+                    .iter()
+                    .map(|tx| tx.hash(&NativeCrypto))
+                    .collect(),
+                peer_id,
+            );
             // If a peer is selected to receive the full transactions, we don't send the announce-only transactions (blob/frame), since they only require to send the hashes
             let txs_message = Message::Transactions(Transactions {
                 transactions: txs_to_send,
@@ -329,7 +336,10 @@ impl TxBroadcaster {
             )
             .await?;
         }
-        let broadcasted_hashes: Vec<H256> = txs_to_broadcast.iter().map(|tx| tx.hash()).collect();
+        let broadcasted_hashes: Vec<H256> = txs_to_broadcast
+            .iter()
+            .map(|tx| tx.hash(&NativeCrypto))
+            .collect();
         self.blockchain
             .mempool
             .remove_broadcasted_txs(&broadcasted_hashes)?;
@@ -347,7 +357,7 @@ impl TxBroadcaster {
         let txs_to_send = txs
             .iter()
             .filter(|tx| {
-                let hash = tx.hash();
+                let hash = tx.hash(&NativeCrypto);
                 !self
                     .known_txs
                     .get(&hash)
@@ -356,7 +366,13 @@ impl TxBroadcaster {
             })
             .cloned()
             .collect::<Vec<MempoolTransaction>>();
-        self.do_add_txs(txs_to_send.iter().map(|tx| tx.hash()).collect(), peer_id);
+        self.do_add_txs(
+            txs_to_send
+                .iter()
+                .map(|tx| tx.hash(&NativeCrypto))
+                .collect(),
+            peer_id,
+        );
         send_tx_hashes(
             txs_to_send,
             capabilities,

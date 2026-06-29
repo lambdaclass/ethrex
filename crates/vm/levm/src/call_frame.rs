@@ -76,6 +76,27 @@ impl Stack {
         Ok(value)
     }
 
+    /// Mutable reference to the top item without changing depth (one underflow check,
+    /// no `offset` write). For stack-neutral unary ops (ISZERO, NOT, CLZ), replacing
+    /// `pop1` + `push` with `*top_mut() = f(*top)` avoids the read-modify-write of the
+    /// shared `offset`, which is the per-opcode serial dependency that pins dispatch IPC.
+    #[inline]
+    pub fn top_mut(&mut self) -> Result<&mut U256, ExceptionalHalt> {
+        self.values
+            .get_mut(self.offset)
+            .ok_or(ExceptionalHalt::StackUnderflow)
+    }
+
+    /// Pop the top value and return it together with a mutable reference to the new top.
+    /// For binary ops: `let (a, b) = pop1_and_top_mut()?; *b = f(a, *b)` writes the result
+    /// in place (one `offset` write instead of `pop::<2>` + `push`'s two), where `a` is the
+    /// original top and `*b` the original second operand.
+    #[inline]
+    pub fn pop1_and_top_mut(&mut self) -> Result<(U256, &mut U256), ExceptionalHalt> {
+        let a = self.pop1()?;
+        Ok((a, self.top_mut()?))
+    }
+
     /// Push a single U256 value to the stack, faster than the generic push.
     #[inline]
     pub fn push(&mut self, value: U256) -> Result<(), ExceptionalHalt> {

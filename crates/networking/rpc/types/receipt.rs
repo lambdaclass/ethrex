@@ -211,7 +211,7 @@ impl RpcReceiptTxInfo {
     ) -> Result<Self, RpcErr> {
         let nonce = transaction.nonce();
         let from = transaction.sender(&NativeCrypto)?;
-        let transaction_hash = transaction.hash();
+        let transaction_hash = transaction.hash(&NativeCrypto);
         let effective_gas_price =
             u64::try_from(transaction.effective_gas_price(base_fee_per_gas).ok_or(
                 RpcErr::Internal("Could not get effective gas price from tx".into()),
