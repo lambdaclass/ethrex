@@ -54,7 +54,7 @@ use ::tracing::{debug, error, info, instrument, warn};
 use constants::{AMSTERDAM_MAX_INITCODE_SIZE, MAX_INITCODE_SIZE, POST_OSAKA_GAS_LIMIT_CAP};
 use error::MempoolError;
 use error::{ChainError, InvalidBlockError};
-use ethrex_common::constants::{EMPTY_KECCACK_HASH, EMPTY_TRIE_HASH, MIN_BASE_FEE_PER_BLOB_GAS};
+use ethrex_common::constants::{EMPTY_KECCAK_HASH, EMPTY_TRIE_HASH, MIN_BASE_FEE_PER_BLOB_GAS};
 
 use crossbeam::channel::{self as cb, TryRecvError, select};
 // Re-export stateless validation functions for backwards compatibility
@@ -2968,7 +2968,7 @@ impl Blockchain {
             // length matches do we fetch + verify the prefix. This avoids
             // pulling potentially large contract bytecode on every contract
             // sender that hits admission.
-            if sender_acc_info.code_hash != *EMPTY_KECCACK_HASH {
+            if sender_acc_info.code_hash != *EMPTY_KECCAK_HASH {
                 let metadata_len = self
                     .storage
                     .get_code_metadata(sender_acc_info.code_hash)?
@@ -2988,7 +2988,7 @@ impl Blockchain {
                                 sender_acc_info.code_hash
                             ))
                         })?;
-                    is_eip7702_delegation(code.bytecode.as_ref())
+                    is_eip7702_delegation(code.code())
                 } else {
                     false
                 };
