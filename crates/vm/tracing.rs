@@ -1,4 +1,5 @@
 use crate::backends::levm::LEVM;
+use ethrex_common::H256;
 use ethrex_common::tracing::{CallTrace, OpcodeTraceResult, PrestateResult};
 use ethrex_common::types::{Block, BlockHeader, GenericTransaction};
 pub use ethrex_levm::tracing::OpcodeTracerConfig;
@@ -145,6 +146,53 @@ impl Evm {
             self.vm_type,
             self.crypto.as_ref(),
         )
+    }
+
+    /// Traces every transaction in `block` with the callTracer. Assumes `self`'s state is
+    /// the block's parent state. Runs the whole block in a single pass, reusing the
+    /// block-invariant EVM config across transactions.
+    pub fn trace_block_calls(
+        &mut self,
+        block: &Block,
+        only_top_call: bool,
+        with_log: bool,
+    ) -> Result<Vec<(H256, CallTrace)>, EvmError> {
+        LEVM::trace_block_calls(
+            &mut self.db,
+            block,
+            only_top_call,
+            with_log,
+            self.vm_type,
+            self.crypto.as_ref(),
+        )
+    }
+
+    /// Traces every transaction in `block` with the prestateTracer. See
+    /// [`Self::trace_block_calls`].
+    pub fn trace_block_prestate(
+        &mut self,
+        block: &Block,
+        diff_mode: bool,
+        include_empty: bool,
+    ) -> Result<Vec<(H256, PrestateResult)>, EvmError> {
+        LEVM::trace_block_prestate(
+            &mut self.db,
+            block,
+            diff_mode,
+            include_empty,
+            self.vm_type,
+            self.crypto.as_ref(),
+        )
+    }
+
+    /// Traces every transaction in `block` with the opcode (EIP-3155) tracer. See
+    /// [`Self::trace_block_calls`].
+    pub fn trace_block_opcodes(
+        &mut self,
+        block: &Block,
+        cfg: OpcodeTracerConfig,
+    ) -> Result<Vec<(H256, OpcodeTraceResult)>, EvmError> {
+        LEVM::trace_block_opcodes(&mut self.db, block, cfg, self.vm_type, self.crypto.as_ref())
     }
 
     /// Reruns the given block, saving the changes on the state, doesn't output any results or receipts.

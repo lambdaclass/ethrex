@@ -9,9 +9,10 @@ use ethrex_common::{
 use ethrex_crypto::Crypto;
 use ethrex_levm::account::{AccountStatus, LevmAccount};
 use ethrex_levm::db::gen_db::CacheDB;
+use ethrex_levm::utils::get_base_fee_per_blob_gas;
 use ethrex_levm::vm::VMType;
 use ethrex_levm::{
-    Environment,
+    EVMConfig, Environment,
     db::gen_db::GeneralizedDatabase,
     tracing::{LevmCallTracer, LevmOpcodeTracer, OpcodeTracerConfig},
     vm::VM,
@@ -261,6 +262,121 @@ impl LEVM {
         // We only return the top call because a transaction only has one call with subcalls
         Ok(vec![callframe])
     }
+
+    /// Traces every transaction in `block` with the callTracer, oldest to newest.
+    /// `db` must already hold the block's parent state; this runs the block's system calls
+    /// (beacon root, etc.) and then each transaction in order, accumulating state. The
+    /// block-invariant `EVMConfig`/`chain_id`/blob fee are computed once and reused per tx
+    /// (the single-tx entry points recompute them each call). Returns `(tx_hash, trace)`.
+    pub fn trace_block_calls(
+        db: &mut GeneralizedDatabase,
+        block: &Block,
+        only_top_call: bool,
+        with_log: bool,
+        vm_type: VMType,
+        crypto: &dyn Crypto,
+    ) -> Result<Vec<(H256, CallTrace)>, EvmError> {
+        Self::rerun_block(db, block, Some(0), vm_type, crypto)?;
+        let (config, chain_id, base_blob_fee) = block_trace_env_config(db, &block.header)?;
+        let mut traces = Vec::with_capacity(block.body.transactions.len());
+        for (tx, sender) in block
+            .body
+            .get_transactions_with_sender(crypto)
+            .map_err(|e| EvmError::Transaction(e.to_string()))?
+        {
+            let env = Self::setup_env_with_config(
+                tx,
+                sender,
+                &block.header,
+                config,
+                chain_id,
+                vm_type,
+                base_blob_fee,
+            )?;
+            let trace =
+                Self::run_call_trace(db, env, tx, only_top_call, with_log, vm_type, crypto)?;
+            traces.push((tx.hash(), trace));
+        }
+        Ok(traces)
+    }
+
+    /// Traces every transaction in `block` with the prestateTracer. See
+    /// [`Self::trace_block_calls`] for the state/config-reuse semantics.
+    pub fn trace_block_prestate(
+        db: &mut GeneralizedDatabase,
+        block: &Block,
+        diff_mode: bool,
+        include_empty: bool,
+        vm_type: VMType,
+        crypto: &dyn Crypto,
+    ) -> Result<Vec<(H256, PrestateResult)>, EvmError> {
+        Self::rerun_block(db, block, Some(0), vm_type, crypto)?;
+        let (config, chain_id, base_blob_fee) = block_trace_env_config(db, &block.header)?;
+        let mut traces = Vec::with_capacity(block.body.transactions.len());
+        for (tx, sender) in block
+            .body
+            .get_transactions_with_sender(crypto)
+            .map_err(|e| EvmError::Transaction(e.to_string()))?
+        {
+            let env = Self::setup_env_with_config(
+                tx,
+                sender,
+                &block.header,
+                config,
+                chain_id,
+                vm_type,
+                base_blob_fee,
+            )?;
+            let trace =
+                Self::run_prestate_trace(db, env, tx, diff_mode, include_empty, vm_type, crypto)?;
+            traces.push((tx.hash(), trace));
+        }
+        Ok(traces)
+    }
+
+    /// Traces every transaction in `block` with the opcode (EIP-3155) tracer. See
+    /// [`Self::trace_block_calls`] for the state/config-reuse semantics.
+    pub fn trace_block_opcodes(
+        db: &mut GeneralizedDatabase,
+        block: &Block,
+        cfg: OpcodeTracerConfig,
+        vm_type: VMType,
+        crypto: &dyn Crypto,
+    ) -> Result<Vec<(H256, OpcodeTraceResult)>, EvmError> {
+        Self::rerun_block(db, block, Some(0), vm_type, crypto)?;
+        let (config, chain_id, base_blob_fee) = block_trace_env_config(db, &block.header)?;
+        let mut traces = Vec::with_capacity(block.body.transactions.len());
+        for (tx, sender) in block
+            .body
+            .get_transactions_with_sender(crypto)
+            .map_err(|e| EvmError::Transaction(e.to_string()))?
+        {
+            let env = Self::setup_env_with_config(
+                tx,
+                sender,
+                &block.header,
+                config,
+                chain_id,
+                vm_type,
+                base_blob_fee,
+            )?;
+            let trace = Self::run_opcode_trace(db, env, tx, cfg.clone(), vm_type, crypto)?;
+            traces.push((tx.hash(), trace));
+        }
+        Ok(traces)
+    }
+}
+
+/// Computes the block-invariant `(EVMConfig, chain_id, base_blob_fee)` once so a
+/// whole-block trace can reuse them across transactions instead of recomputing per tx.
+fn block_trace_env_config(
+    db: &GeneralizedDatabase,
+    header: &BlockHeader,
+) -> Result<(EVMConfig, u64, U256), EvmError> {
+    let chain_config = db.store.get_chain_config()?;
+    let config = EVMConfig::new_from_chain_config(&chain_config, header);
+    let base_blob_fee = get_base_fee_per_blob_gas(header.excess_blob_gas, &config)?;
+    Ok((config, chain_config.chain_id, base_blob_fee))
 }
 
 /// Builds the call-style [`Environment`] and concrete [`Transaction`] for tracing a
