@@ -226,6 +226,9 @@ pub struct Established {
     // The receiving part is owned by the stream listen loop task
     pub(crate) sink: SplitSink<Framed<TcpStream, RLPxCodec>, Message>,
     pub(crate) node: Node,
+    // Whether the remote peer initiated this connection (we acted as Receiver).
+    // `false` when we initiated it (we acted as Initiator).
+    pub(crate) is_inbound: bool,
     pub(crate) storage: Store,
     pub(crate) blockchain: Arc<Blockchain>,
     pub(crate) capabilities: Vec<Capability>,
@@ -771,6 +774,7 @@ where
         state.node.clone(),
         connection.clone(),
         state.capabilities.clone(),
+        state.is_inbound,
     )?;
 
     trace!(peer=%state.node, "Peer connection initialized.");
