@@ -64,13 +64,8 @@ pub const MAX_WITNESSES: u64 = 128;
 // We use one constant for in-memory and another for on-disk backends.
 // This is due to tests requiring state older than 128 blocks.
 // TODO: unify these
-#[allow(unused)]
-const DB_COMMIT_THRESHOLD: usize = 128;
+pub const DB_COMMIT_THRESHOLD: usize = 128;
 const IN_MEMORY_COMMIT_THRESHOLD: usize = 10000;
-
-/// Commit threshold for batch (full sync) mode. Each batch layer holds ~1024
-/// blocks of trie diffs (~1 GB), so we flush aggressively to bound memory.
-const BATCH_COMMIT_THRESHOLD: usize = 4;
 
 /// Default size in bytes of the RocksDB shared block cache: 12 GiB.
 ///
@@ -243,6 +238,13 @@ pub struct Store {
     /// update and the DB write transaction remain mutually ordered.
     fcu_lock: Arc<tokio::sync::Mutex<()>>,
 
+    /// Canonical safe-commit state root, computed after each forkchoice update.
+    ///
+    /// Shared with the [`TrieLayerCache`] so that the Store can update the cell without
+    /// replacing the cache Arc. `H256::zero()` means "no safe commit point yet".
+    /// Cloning `Store` shares this cell across all clones, which is required and correct.
+    safe_commit_root: Arc<RwLock<H256>>,
+
     background_threads: Arc<ThreadList>,
 }
 
@@ -293,10 +295,6 @@ pub struct UpdateBatch {
     pub receipts: Vec<(H256, Vec<Receipt>)>,
     /// Contract code updates (code hash -> bytecode).
     pub code_updates: Vec<(H256, Code)>,
-    /// Whether this batch comes from full sync (batch execution mode).
-    /// When true, uses `BATCH_COMMIT_THRESHOLD` (aggressive) instead of
-    /// `DB_COMMIT_THRESHOLD` to bound memory during bulk block import.
-    pub batch_mode: bool,
 }
 
 /// Storage trie updates grouped by account address hash.
@@ -1563,8 +1561,6 @@ impl Store {
             .state_root;
         let trie_upd_worker_tx = self.trie_update_worker_tx.clone();
 
-        let is_batch = update_batch.batch_mode;
-
         let UpdateBatch {
             account_updates,
             storage_updates,
@@ -1580,7 +1576,6 @@ impl Store {
             storage_updates,
             result_sender: notify_tx,
             child_state_root: last_state_root,
-            is_batch,
         };
         trie_upd_worker_tx
             .send(TrieMessage::Update(trie_update))
@@ -1745,18 +1740,23 @@ impl Store {
             }
         };
         let mut background_threads = Vec::new();
+        let safe_commit_root = Arc::new(RwLock::new(H256::zero()));
         let mut store = Self {
             db_path,
             backend,
             chain_config: Default::default(),
             latest_block_header: Default::default(),
-            trie_cache: Arc::new(RwLock::new(Arc::new(TrieLayerCache::new(commit_threshold)))),
+            trie_cache: Arc::new(RwLock::new(Arc::new(TrieLayerCache::new_with_safe_commit(
+                commit_threshold,
+                safe_commit_root.clone(),
+            )))),
             flatkeyvalue_control_tx: fkv_tx,
             trie_update_worker_tx: trie_upd_tx,
             last_computed_flatkeyvalue: Arc::new(RwLock::new(last_written)),
             account_code_cache: Arc::new(Mutex::new(CodeCache::default())),
             code_metadata_cache: Arc::new(Mutex::new(rustc_hash::FxHashMap::default())),
             fcu_lock: Arc::new(tokio::sync::Mutex::new(())),
+            safe_commit_root,
             background_threads: Default::default(),
         };
         let backend_clone = store.backend.clone();
@@ -1782,24 +1782,11 @@ impl Store {
         let flatkeyvalue_control_tx = store.flatkeyvalue_control_tx.clone();
         let trie_cache = store.trie_cache.clone();
         /*
-            When a block is executed, the write of the bottom-most diff layer to disk is done in the background through this thread.
-            This is to improve block execution times, since it's not necessary when executing the next block to have this layer flushed to disk.
-
-            This background thread receives messages through a channel to apply new trie updates and does three things:
-
-            - First, it updates the top-most in-memory diff layer and notifies the process that sent the message (i.e. the
-            block production thread) so it can continue with block execution (block execution cannot proceed without the
-            diff layers updated, otherwise it would see wrong state when reading from the trie). This section is done in an RCU manner:
-            a shared pointer with the trie is kept behind a lock. This thread first acquires the lock, then copies the pointer and drops the lock;
-            afterwards it makes a deep copy of the trie layer and mutates it, then takes the lock again, replaces the pointer with the updated copy,
-            then drops the lock again.
-
-            - Second, it performs the logic of persisting the bottom-most diff layer to disk. This is the part of the logic that block execution does not
-            need to proceed. What does need to be aware of this section is the process in charge of generating the snapshot (a.k.a. FlatKeyValue).
-            Because of this, this section first sends a message to pause the FlatKeyValue generation, then persists the diff layer to disk, then notifies
-            again for FlatKeyValue generation to continue.
-
-            - Third, it removes the (no longer needed) bottom-most diff layer from the trie layers in the same way as the first step.
+            Background trie-update worker. Off the block-execution path so the next block need
+            not wait for a disk flush. Per message it (1) RCU-installs the new top in-memory diff
+            layer and notifies the sender so execution can proceed, (2) flushes the safe-commit
+            layer to disk (pausing FlatKeyValue generation around the write), and (3) prunes the
+            now-committed bottom layers via the same RCU swap.
         */
         background_threads.push(std::thread::spawn(move || {
             let rx = trie_upd_rx;
@@ -2754,7 +2741,60 @@ impl Store {
             return Err(err);
         }
 
+        // Refresh the canonical safe-commit root now that the canonical tables reflect the new
+        // head. `None` (chain shorter than the threshold, e.g. genesis init at head 0) leaves the
+        // cell unchanged so genesis-on-disk is never gated away.
+        // No `latest_block_header` rollback on error here (unlike the `inner` failure above): the
+        // only error is a poisoned safe-commit `RwLock`, which is an unrecoverable process state.
+        if let Some(root) = self.compute_safe_commit_root(head_number)? {
+            self.set_safe_commit_root(root)?;
+        }
+
         Ok(())
+    }
+
+    /// Updates the dedicated safe-commit-root cell with the given state root.
+    ///
+    /// This is a plain synchronous function; it touches only the dedicated cell
+    /// and is disjoint from the trie-cache Arc (no cache clone or replacement).
+    /// Crate-private: only `forkchoice_update` (post-canonicalization) may set it,
+    /// preserving the invariant that the cell only ever holds a canonical state root.
+    pub(crate) fn set_safe_commit_root(&self, root: H256) -> Result<(), StoreError> {
+        let mut guard = self
+            .safe_commit_root
+            .write()
+            .map_err(|_| StoreError::LockError)?;
+        *guard = root;
+        Ok(())
+    }
+
+    /// Computes the canonical safe-commit state root: the state root of the canonical block
+    /// `commit_threshold` layers below `head`.
+    ///
+    /// Returns `Ok(None)` when the chain is shorter than the threshold (underflow), or when the
+    /// target block is not yet canonical / its header is absent. Synchronous getters only; no
+    /// await and no lock guard held across one. The threshold is read from the trie cache to
+    /// avoid duplicating the IN_MEMORY/DB selection that `from_backend` already made.
+    /// Crate-private: only `forkchoice_update` consumes it.
+    pub(crate) fn compute_safe_commit_root(
+        &self,
+        head: BlockNumber,
+    ) -> Result<Option<H256>, StoreError> {
+        let commit_threshold = self
+            .trie_cache
+            .read()
+            .map_err(|_| StoreError::LockError)?
+            .commit_threshold;
+        let Some(target) = head.checked_sub(commit_threshold as u64) else {
+            return Ok(None);
+        };
+        let Some(hash) = self.get_canonical_block_hash_sync(target)? else {
+            return Ok(None);
+        };
+        let Some(header) = self.get_block_header_by_hash(hash)? else {
+            return Ok(None);
+        };
+        Ok(Some(header.state_root))
     }
 
     /// Obtain the storage trie for the given block
@@ -3421,7 +3461,6 @@ struct TrieUpdate {
     child_state_root: H256,
     account_updates: TrieNodesUpdate,
     storage_updates: Vec<(H256, TrieNodesUpdate)>,
-    is_batch: bool,
 }
 
 /// Messages handled by the trie-update background worker.
@@ -3450,7 +3489,6 @@ fn apply_trie_updates(
         child_state_root,
         account_updates,
         storage_updates,
-        is_batch,
     } = trie_update;
 
     // Phase 1: update the in-memory diff-layers only, then notify block production.
@@ -3478,11 +3516,7 @@ fn apply_trie_updates(
         .map_err(|_| StoreError::LockError)?;
 
     // Phase 2: update disk layer.
-    let commitable = if is_batch {
-        trie.get_commitable_with_threshold(parent_state_root, BATCH_COMMIT_THRESHOLD)
-    } else {
-        trie.get_commitable(parent_state_root)
-    };
+    let commitable = trie.get_commitable(parent_state_root);
     let Some(root) = commitable else {
         // Nothing to commit to disk, move on.
         return Ok(());
@@ -4119,7 +4153,7 @@ mod datadir_tests {
     #[test]
     fn dir_with_marker_named_subdirectories_has_no_existing_db() {
         // A *directory* named like a marker file must not be mistaken for a DB;
-        // RocksDB only ever writes these as plain files.
+        // RocksDB only ever visits these as plain files.
         let dir = tempfile::tempdir().unwrap();
         fs::create_dir(dir.path().join("CURRENT")).unwrap();
         fs::create_dir(dir.path().join("MANIFEST-000001")).unwrap();

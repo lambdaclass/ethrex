@@ -1997,7 +1997,6 @@ impl Blockchain {
             receipts: vec![(block.hash(), execution_result.receipts)],
             blocks: vec![block],
             code_updates: account_updates_list.code_updates,
-            batch_mode: false,
         };
 
         self.storage
@@ -2639,7 +2638,6 @@ impl Blockchain {
             blocks,
             receipts: all_receipts,
             code_updates,
-            batch_mode: true,
         };
 
         self.storage
