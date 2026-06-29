@@ -1,14 +1,10 @@
-use std::{
-    sync::{Arc, Mutex},
-    time::Duration,
-};
+use std::time::Duration;
 
 use ethrex_common::{
     H256,
     tracing::{CallTrace, OpcodeTraceResult, PrestateResult},
     types::{Block, GenericTransaction},
 };
-use ethrex_crypto::NativeCrypto;
 use ethrex_storage::Store;
 use ethrex_vm::tracing::OpcodeTracerConfig;
 use ethrex_vm::{Evm, EvmError};
@@ -49,9 +45,11 @@ impl Blockchain {
         .await
     }
 
-    /// Outputs the call trace for each transaction in the block along with the transaction's hash
-    /// May need to re-execute blocks in order to rebuild the transaction's prestate, up to the amount given by `reexec`
-    /// Returns transaction call traces from oldest to newest
+    /// Outputs the call trace for each transaction in the block along with the transaction's hash.
+    /// The whole block is traced in a single blocking pass (system calls then every tx in order),
+    /// so `timeout` bounds the entire block trace rather than each transaction.
+    /// May need to re-execute blocks in order to rebuild the block's prestate, up to the amount given by `reexec`.
+    /// Returns transaction call traces from oldest to newest.
     pub async fn trace_block_calls(
         &self,
         // We receive the block instead of its hash/number to support multiple potential endpoints
@@ -65,27 +63,10 @@ impl Blockchain {
         let mut vm = self
             .rebuild_parent_state(block.header.parent_hash, reexec)
             .await?;
-        // Run anything necessary before executing the block's transactions (system calls, etc)
-        vm.rerun_block(&block, Some(0))?;
-        // Trace each transaction
-        // We need to do this in order to pass ownership of block & evm to a blocking process without cloning
-        let vm = Arc::new(Mutex::new(vm));
-        let block = Arc::new(block);
-        let mut call_traces = vec![];
-        for index in 0..block.body.transactions.len() {
-            // We are cloning the `Arc`s here, not the structs themselves
-            let block = block.clone();
-            let vm = vm.clone();
-            let tx_hash = block.as_ref().body.transactions[index].hash(&NativeCrypto);
-            let call_trace = timeout_trace_operation(timeout, move || {
-                vm.lock()
-                    .map_err(|_| EvmError::Custom("Unexpected Runtime Error".to_string()))?
-                    .trace_tx_calls(block.as_ref(), index, only_top_call, with_log)
-            })
-            .await?;
-            call_traces.push((tx_hash, call_trace));
-        }
-        Ok(call_traces)
+        timeout_trace_operation(timeout, move || {
+            vm.trace_block_calls(&block, only_top_call, with_log)
+        })
+        .await
     }
 
     /// Outputs the prestate trace for the given transaction.
@@ -124,6 +105,7 @@ impl Blockchain {
     /// Outputs the prestate trace for each transaction in the block along with the transaction's hash.
     /// If `diff_mode` is true, returns both pre and post state per tx; otherwise returns only pre state.
     /// `include_empty` keeps default-state entries in pre (only valid when `diff_mode` is false).
+    /// The whole block is traced in a single blocking pass, so `timeout` bounds the entire trace.
     /// May need to re-execute blocks in order to rebuild the block's prestate, up to the amount given by `reexec`.
     /// Returns prestate traces from oldest to newest transaction.
     pub async fn trace_block_prestate(
@@ -137,26 +119,10 @@ impl Blockchain {
         let mut vm = self
             .rebuild_parent_state(block.header.parent_hash, reexec)
             .await?;
-        // Run system calls but stop before tx 0
-        vm.rerun_block(&block, Some(0))?;
-        // Trace each transaction sequentially — state accumulates between calls
-        // We need to do this in order to pass ownership of block & evm to a blocking process without cloning
-        let vm = Arc::new(Mutex::new(vm));
-        let block = Arc::new(block);
-        let mut traces = vec![];
-        for index in 0..block.body.transactions.len() {
-            let block = block.clone();
-            let vm = vm.clone();
-            let tx_hash = block.as_ref().body.transactions[index].hash(&NativeCrypto);
-            let result = timeout_trace_operation(timeout, move || {
-                vm.lock()
-                    .map_err(|_| EvmError::Custom("Unexpected Runtime Error".to_string()))?
-                    .trace_tx_prestate(block.as_ref(), index, diff_mode, include_empty)
-            })
-            .await?;
-            traces.push((tx_hash, result));
-        }
-        Ok(traces)
+        timeout_trace_operation(timeout, move || {
+            vm.trace_block_prestate(&block, diff_mode, include_empty)
+        })
+        .await
     }
 
     /// Outputs the per-opcode (EIP-3155) trace for the given transaction.
@@ -186,6 +152,7 @@ impl Blockchain {
 
     /// Outputs the opcode (EIP-3155) trace for each transaction in the block along with
     /// the transaction's hash.
+    /// The whole block is traced in a single blocking pass, so `timeout` bounds the entire trace.
     /// May need to re-execute blocks in order to rebuild the block's prestate, up to the amount
     /// given by `reexec`.
     /// Returns traces from oldest to newest transaction.
@@ -199,24 +166,7 @@ impl Blockchain {
         let mut vm = self
             .rebuild_parent_state(block.header.parent_hash, reexec)
             .await?;
-        vm.rerun_block(&block, Some(0))?;
-        let vm = Arc::new(Mutex::new(vm));
-        let block = Arc::new(block);
-        let mut traces = vec![];
-        for index in 0..block.body.transactions.len() {
-            let block = block.clone();
-            let vm = vm.clone();
-            let tx_hash = block.as_ref().body.transactions[index].hash(&NativeCrypto);
-            let cfg = cfg.clone();
-            let result = timeout_trace_operation(timeout, move || {
-                vm.lock()
-                    .map_err(|_| EvmError::Custom("Unexpected Runtime Error".to_string()))?
-                    .trace_tx_opcodes(block.as_ref(), index, cfg)
-            })
-            .await?;
-            traces.push((tx_hash, result));
-        }
-        Ok(traces)
+        timeout_trace_operation(timeout, move || vm.trace_block_opcodes(&block, cfg)).await
     }
 
     /// Traces a synthetic `eth_call`-shaped request (`debug_traceCall`) with the callTracer.
