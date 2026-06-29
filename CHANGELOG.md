@@ -12,6 +12,10 @@
 
 ## Perf
 
+### 2026-06-24
+
+- Optimize trie building in snap sync insertion: parallelize state trie build across 16 nibble ranges, eliminate redundant code-hash iteration, and reuse buffers (~700M alloc reduction on mainnet) [#6410](https://github.com/lambdaclass/ethrex/pull/6410)
+
 ### 2026-06-18
 
 - In-place top-slot mutation for unary/binary opcodes and `MLOAD`: mutate the top stack slot directly instead of pop-then-push, removing the serial read-modify-write of the stack offset on offset-chain-bound ops. ~2.16x on an ISZERO loop and ~1.63x on `MLOAD` (IPC 2.41 -> 3.45 on a 33M-op loop) [#6865](https://github.com/lambdaclass/ethrex/pull/6865)
