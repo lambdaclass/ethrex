@@ -220,10 +220,10 @@ impl Blockchain {
     }
 
     /// Traces a synthetic `eth_call`-shaped request (`debug_traceCall`) with the callTracer.
-    /// The call runs against `block`'s state: if `tx_index` is `Some(i)` the state is rebuilt
-    /// up to (but excluding) the block's transaction `i`; if `None` the whole block (including
-    /// withdrawals) is executed first, matching geth's "on top of the block" default.
-    /// May need to re-execute ancestor blocks to rebuild state, up to the amount given by `reexec`.
+    /// The call runs against `block`'s state: `None` uses the block's committed post-state
+    /// (geth's "on top of the block" default), while `Some(i)` rebuilds the state up to (but
+    /// excluding) the block's transaction `i`. See [`Self::build_call_trace_vm`] for the
+    /// state-sourcing and `reexec` details.
     #[allow(clippy::too_many_arguments)]
     pub async fn trace_call_calls(
         &self,
@@ -235,10 +235,7 @@ impl Blockchain {
         only_top_call: bool,
         with_log: bool,
     ) -> Result<CallTrace, ChainError> {
-        let mut vm = self
-            .rebuild_parent_state(block.header.parent_hash, reexec)
-            .await?;
-        vm.rerun_block(&block, tx_index)?;
+        let mut vm = self.build_call_trace_vm(&block, tx_index, reexec).await?;
         let header = block.header;
         timeout_trace_operation(timeout, move || {
             vm.trace_call_calls(&header, &transaction, only_top_call, with_log)
@@ -259,10 +256,7 @@ impl Blockchain {
         diff_mode: bool,
         include_empty: bool,
     ) -> Result<PrestateResult, ChainError> {
-        let mut vm = self
-            .rebuild_parent_state(block.header.parent_hash, reexec)
-            .await?;
-        vm.rerun_block(&block, tx_index)?;
+        let mut vm = self.build_call_trace_vm(&block, tx_index, reexec).await?;
         let header = block.header;
         timeout_trace_operation(timeout, move || {
             vm.trace_call_prestate(&header, &transaction, diff_mode, include_empty)
@@ -282,15 +276,37 @@ impl Blockchain {
         timeout: Duration,
         cfg: OpcodeTracerConfig,
     ) -> Result<OpcodeTraceResult, ChainError> {
-        let mut vm = self
-            .rebuild_parent_state(block.header.parent_hash, reexec)
-            .await?;
-        vm.rerun_block(&block, tx_index)?;
+        let mut vm = self.build_call_trace_vm(&block, tx_index, reexec).await?;
         let header = block.header;
         timeout_trace_operation(timeout, move || {
             vm.trace_call_opcodes(&header, &transaction, cfg)
         })
         .await
+    }
+
+    /// Builds the [`Evm`] a `debug_traceCall` runs against.
+    ///
+    /// For `tx_index == None` (geth's "on top of the block" default) the block's already
+    /// committed post-state is read directly when present, skipping a full block
+    /// re-execution. This is the common path (e.g. tracing a call on `latest`) and matches
+    /// what `eth_call` does. When a specific `tx_index` is requested, or the block's state
+    /// isn't stored (archive/pruned gap), the parent state is rebuilt and the block re-run
+    /// up to `tx_index` (processing withdrawals only when the whole block runs).
+    async fn build_call_trace_vm(
+        &self,
+        block: &Block,
+        tx_index: Option<usize>,
+        reexec: u32,
+    ) -> Result<Evm, ChainError> {
+        if tx_index.is_none() && self.storage.has_state_root(block.header.state_root)? {
+            let vm_db = StoreVmDatabase::new(self.storage.clone(), block.header.clone())?;
+            return Ok(self.new_evm(vm_db)?);
+        }
+        let mut vm = self
+            .rebuild_parent_state(block.header.parent_hash, reexec)
+            .await?;
+        vm.rerun_block(block, tx_index)?;
+        Ok(vm)
     }
 
     /// Rebuild the parent state for a block given its parent hash, returning an `Evm` instance with all changes cached
