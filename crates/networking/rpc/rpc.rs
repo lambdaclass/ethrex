@@ -2,6 +2,7 @@ use crate::authentication::authenticate;
 use crate::debug::chain_config::ChainConfigRequest;
 use crate::debug::execution_witness::ExecutionWitnessRequest;
 use crate::debug::execution_witness_by_hash::ExecutionWitnessByBlockHashRequest;
+use crate::debug::get_bad_blocks::GetBadBlocksRequest;
 use crate::engine::blobs::{BlobsV2Request, BlobsV3Request};
 use crate::engine::client_version::GetClientVersionV1Request;
 use crate::engine::payload::{
@@ -1154,8 +1155,9 @@ pub async fn map_eth_requests(req: &RpcRequest, context: RpcApiContext) -> Resul
 ///
 /// Handles debugging and introspection methods:
 /// - Raw data: `debug_getRawHeader`, `debug_getRawBlock`, `debug_getRawTransaction`, `debug_getRawReceipts`
-/// - Execution witness: `debug_executionWitness` (for stateless validation)
+/// - Execution witness: `debug_executionWitness`, `debug_executionWitnessByBlockHash`
 /// - Tracing: `debug_traceTransaction`, `debug_traceBlockByNumber`
+/// - Chain info: `debug_chainConfig`, `debug_getBlockAccessList`, `debug_getBadBlocks`
 pub async fn map_debug_requests(req: &RpcRequest, context: RpcApiContext) -> Result<Value, RpcErr> {
     match req.method.as_str() {
         "debug_getRawHeader" => GetRawHeaderRequest::call(req, context).await,
@@ -1169,6 +1171,7 @@ pub async fn map_debug_requests(req: &RpcRequest, context: RpcApiContext) -> Res
         "debug_chainConfig" => ChainConfigRequest::call(req, context).await,
         "debug_traceTransaction" => TraceTransactionRequest::call(req, context).await,
         "debug_traceBlockByNumber" => TraceBlockByNumberRequest::call(req, context).await,
+        "debug_getBadBlocks" => GetBadBlocksRequest::call(req, context).await,
         unknown_debug_method => Err(RpcErr::MethodNotFound(unknown_debug_method.to_owned())),
     }
 }
