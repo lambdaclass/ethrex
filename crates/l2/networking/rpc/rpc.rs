@@ -14,6 +14,7 @@ use axum::{Json, Router, http::StatusCode, routing::post};
 use bytes::Bytes;
 use ethrex_blockchain::Blockchain;
 use ethrex_common::types::Transaction;
+use ethrex_crypto::NativeCrypto;
 use ethrex_p2p::peer_handler::PeerHandler;
 use ethrex_p2p::sync_manager::SyncManager;
 use ethrex_p2p::types::Node;
@@ -270,7 +271,7 @@ pub async fn map_eth_requests(req: &RpcRequest, context: RpcApiContext) -> Resul
             if let SendRawTransactionRequest::EIP4844(wrapped_blob_tx) = tx {
                 debug!(
                     "EIP-4844 transaction are not supported in the L2: {:#x}",
-                    Transaction::EIP4844Transaction(wrapped_blob_tx.tx).hash()
+                    Transaction::EIP4844Transaction(wrapped_blob_tx.tx).hash(&NativeCrypto)
                 );
                 return Err(RpcErr::InvalidEthrexL2Message(
                     "EIP-4844 transactions are not supported in the L2".to_string(),

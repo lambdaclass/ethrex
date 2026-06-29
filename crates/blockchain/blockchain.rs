@@ -479,6 +479,7 @@ impl Blockchain {
                 &chain_config,
                 bal,
                 block.body.transactions.len(),
+                &NativeCrypto,
             )?;
         }
 
@@ -760,10 +761,14 @@ impl Blockchain {
                                 &chain_config,
                                 bal,
                                 block.body.transactions.len(),
+                                &NativeCrypto,
                             )?;
                         } else if let Some(header_bal) = bal
                             && chain_config.is_amsterdam_activated(block.header.timestamp)
-                            && !header_bal.matches_commitment(block.header.block_access_list_hash)
+                            && !header_bal.matches_commitment(
+                                block.header.block_access_list_hash,
+                                &NativeCrypto,
+                            )
                         {
                             return Err(InvalidBlockError::BlockAccessListHashMismatch.into());
                         }
@@ -1402,6 +1407,7 @@ impl Blockchain {
                 chain_config,
                 bal,
                 block.body.transactions.len(),
+                &NativeCrypto,
             )?;
         }
 
@@ -2630,7 +2636,7 @@ impl Blockchain {
             .zip(bals.iter())
             .filter_map(|(block, bal)| {
                 let bal = bal.as_ref()?;
-                bal.matches_commitment(block.header.block_access_list_hash)
+                bal.matches_commitment(block.header.block_access_list_hash, &NativeCrypto)
                     .then(|| (block.hash(), bal.clone()))
             })
             .collect();
@@ -2697,7 +2703,7 @@ impl Blockchain {
         let fork = self.current_fork().await?;
 
         let transaction = Transaction::EIP4844Transaction(transaction);
-        let hash = transaction.hash();
+        let hash = transaction.hash(&NativeCrypto);
         if self.mempool.contains_tx(hash)? {
             return Ok(hash);
         }
@@ -2763,7 +2769,7 @@ impl Blockchain {
                 limit: MAX_TX_SIZE,
             });
         }
-        let hash = transaction.hash();
+        let hash = transaction.hash(&NativeCrypto);
         if self.mempool.contains_tx(hash)? {
             return Ok(hash);
         }
@@ -2804,7 +2810,7 @@ impl Blockchain {
     /// Remove all transactions in the executed block from the pool (if we have them)
     pub fn remove_block_transactions_from_pool(&self, block: &Block) -> Result<(), StoreError> {
         for tx in &block.body.transactions {
-            self.mempool.remove_transaction(&tx.hash())?;
+            self.mempool.remove_transaction(&tx.hash(&NativeCrypto))?;
         }
         Ok(())
     }
@@ -3080,8 +3086,12 @@ impl Blockchain {
 
             // Interim policy: no sidecar transport exists for frame-tx blobs
             // yet, so a blob-carrying frame tx could never be included with data
-            // availability. Reject at admission (local policy; consensus still
-            // fully accounts for frame blobs if another builder includes one).
+            // availability. Reject at admission (local policy). Block IMPORT does
+            // account for frame blobs (verify_blob_gas_usage counts them), but the
+            // BUILD path does not yet add them to header.blob_gas_used — so this
+            // admission gate is also what keeps the builder from ever producing
+            // such a block. If this gate is lifted, the builder must route frame
+            // blobs through blob accounting first (see payload.rs apply_transaction).
             if !frame_tx.blob_versioned_hashes.is_empty() {
                 return Err(MempoolError::FrameTxBlobsUnsupported);
             }
@@ -3114,6 +3124,16 @@ impl Blockchain {
                 &NativeCrypto,
             ) {
                 return Err(MempoolError::InvalidFrameSignature);
+            }
+
+            // Local anti-malleability policy (NOT consensus): reject high-s
+            // signatures at admission. EIP-8141 accepts high-s at block execution
+            // (`signer == ecrecover`), but the raw signature bytes are committed to
+            // the tx identity hash while elided from the sig hash, so a malleated
+            // `(v,r,s) -> (v^1, r, n-s)` form would produce a second valid tx hash
+            // for the same logical tx and bypass pool dedup.
+            if !ethrex_vm::frame_signatures_are_low_s(&frame_tx.signatures) {
+                return Err(MempoolError::FrameTxMalleableSignature);
             }
 
             // EIP-8141 §Mempool: validate the prefix shape and structural rules.
@@ -3162,7 +3182,7 @@ impl Blockchain {
         {
             // https://eips.ethereum.org/EIPS/eip-7825
             return Err(MempoolError::TxMaxGasLimitExceededError(
-                tx.hash(),
+                tx.hash(&NativeCrypto),
                 tx.gas_limit(),
             ));
         }
@@ -3175,6 +3195,21 @@ impl Blockchain {
         // Check priority fee is less or equal than gas fee gap
         if tx.max_priority_fee().unwrap_or(0) > tx.max_fee_per_gas().unwrap_or(0) {
             return Err(MempoolError::TxTipAboveFeeCapError);
+        }
+
+        // EIP-7702 type-4 structural validation, mirroring LEVM's
+        // `validate_type_4_tx` and ordered before the gas checks so the returned
+        // error names the structural fault, not a downstream gas symptom. Reject
+        // at admission so invalid type-4 txs never enter the pool.
+        if let Transaction::EIP7702Transaction(eip7702) = tx {
+            // Type-4 txs only exist from Prague onward.
+            if !config.is_prague_activated(header.timestamp) {
+                return Err(MempoolError::Eip7702TxPreFork);
+            }
+            // An empty authorization_list makes the tx invalid.
+            if eip7702.authorization_list.is_empty() {
+                return Err(MempoolError::EmptyAuthorizationList);
+            }
         }
 
         // Check that the gas limit covers the gas needs for transaction metadata.

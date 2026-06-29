@@ -1,7 +1,7 @@
 //! EIP-8141: Frame Transactions
 //!
 //! Shared test harness for frame-transaction execution plus regression tests
-//! for the per-tx state-rollback invariant (finding B3):
+//! for the per-tx state-rollback invariant:
 //!
 //!   `VM::execute()` returning `Err` => `db.current_accounts_state` is
 //!   unchanged from before the tx, exactly like non-frame txs.
@@ -258,18 +258,18 @@ fn verify_frame(target: Address) -> Frame {
 }
 
 /// Assert that no seeded account's info (balance/nonce/code) or storage in
-/// `db.current_accounts_state` differs from its seeded value. This is THE B3
+/// `db.current_accounts_state` differs from its seeded value. This is THE rollback
 /// invariant: after an invalid tx the shared cache must show no residue.
 ///
 /// The sender (`FUNDED_SENDER`) is ALWAYS verified, even when the caller does
 /// not list it in `accounts`: `run_frame_tx` auto-seeds it, and a leaked sender
 /// nonce/balance on the invalid-tx path (e.g. an APPROVE nonce bump that was not
-/// rolled back) is exactly the kind of residue B3 must prevent. When the caller
+/// rolled back) is exactly the kind of residue this invariant must prevent. When the caller
 /// passes the sender explicitly, those values are used; otherwise the auto-seed
 /// defaults (`AUTO_SEED_SENDER_BALANCE`, nonce 0) are checked.
 ///
 /// Slot 0 of each seeded account is checked explicitly because the harness
-/// bytecodes write slot 0; a leftover `1` there is the B3 regression signature.
+/// bytecodes write slot 0; a leftover `1` there is the rollback regression signature.
 fn assert_db_cache_unchanged(db: &GeneralizedDatabase, accounts: &[SeededAccount]) {
     // Always include the auto-seeded sender so a leaked sender balance/nonce is
     // caught, mirroring `run_frame_tx`'s auto-seed.
@@ -301,7 +301,7 @@ fn assert_db_cache_unchanged(db: &GeneralizedDatabase, accounts: &[SeededAccount
         // Every storage slot present in the cache for this account must be its
         // seeded value (the seeded accounts start with empty storage, so any
         // non-zero value is residue). Slot 0 is the one the harness bytecodes
-        // touch, so a residual `1` here is the B3 regression signature.
+        // touch, so a residual `1` here is the rollback regression signature.
         for (slot, value) in current.storage.iter() {
             assert!(
                 value.is_zero(),
@@ -311,7 +311,7 @@ fn assert_db_cache_unchanged(db: &GeneralizedDatabase, accounts: &[SeededAccount
     }
 }
 
-// ==================== B3: invalid-tx rollback ====================
+// ==================== Invalid-tx rollback ====================
 
 #[test]
 fn invalid_frame_tx_leaves_db_cache_clean() {
@@ -346,7 +346,7 @@ fn invalid_frame_tx_leaves_db_cache_clean() {
     assert_db_cache_unchanged(&db, &accounts);
 }
 
-// ==================== B4: reverting SENDER frame must not leak value ====================
+// ==================== Reverting SENDER frame must not leak value ====================
 
 #[test]
 fn reverting_sender_frame_returns_value() {
@@ -421,7 +421,7 @@ fn reverting_sender_frame_returns_value() {
     );
 }
 
-// ==================== B2: payer charged at effective price (no burn) ====================
+// ==================== Payer charged at effective price (no burn) ====================
 
 #[test]
 fn payer_pays_effective_price_no_burn() {
@@ -483,7 +483,7 @@ fn payer_pays_effective_price_no_burn() {
     );
 }
 
-// ==================== B6: FRAMEPARAM stack operand order ====================
+// ==================== FRAMEPARAM stack operand order ====================
 
 /// FRAMEPARAM(param=0x01, frameIndex=0) → gas_limit of frame[0], then SSTORE at slot 0.
 /// Bytecode: PUSH1 0x01 (param), PUSH1 0x00 (frameIndex — top), FRAMEPARAM (0xB3),
@@ -557,7 +557,7 @@ fn frameparam_reads_frame_index_from_stack_top() {
     );
 }
 
-// ==================== B7: APPROVE scope-0 bypass ====================
+// ==================== APPROVE scope-0 bypass ====================
 
 #[test]
 fn approve_halts_when_frame_scope_is_none() {
@@ -593,7 +593,7 @@ fn approve_halts_when_frame_scope_is_none() {
     assert_db_cache_unchanged(&db, &accounts);
 }
 
-// ==================== B8: batched VERIFY revert invalidates tx ====================
+// ==================== Batched VERIFY revert invalidates tx ====================
 
 #[test]
 fn batched_verify_revert_invalidates_tx() {
@@ -700,7 +700,7 @@ fn payment_approval_may_precede_execution_approval() {
     );
 }
 
-// ==================== B9: SENDER/DEFAULT default code returns success ====================
+// ==================== SENDER/DEFAULT default code returns success ====================
 
 #[test]
 fn sender_frame_transfers_value_to_eoa() {
@@ -859,13 +859,13 @@ fn frame_tx_happy_path_sstore_and_log() {
         "SSTORE did not write 0x2a to slot 0 of worker"
     );
 
-    // 3. The LOG0 appears in the aggregated report.logs (B5: logs collected).
+    // 3. The LOG0 appears in the aggregated report.logs (logs collected).
     assert!(
         report.logs.iter().any(|l| l.address == worker),
         "log from worker missing from aggregated report.logs"
     );
 
-    // 4. Per-frame isolation (B5): frame_results[1] is success and carries the log;
+    // 4. Per-frame isolation: frame_results[1] is success and carries the log;
     //    frame_results[0] (the VERIFY/approve frame) has no logs.
     let frame_results = report
         .frame_results
@@ -889,6 +889,205 @@ fn frame_tx_happy_path_sstore_and_log() {
         nonce_of(&db, FUNDED_SENDER),
         1,
         "sender nonce must be 1 after APPROVE (scope 3 increments nonce once)"
+    );
+}
+
+// ==================== EIP-8037 state gas in frame txs ====================
+//
+// A frame tx must split gas into the EIP-8037 regular/state dimensions exactly
+// like every other transaction: a state-creating SSTORE bills its state portion
+// to the state dimension (reported via `state_gas_used`), and the block-level
+// regular dimension is `gas_used - state_gas_used`. A frame that reverts creates
+// no state and must report zero state gas.
+
+/// STATE_BYTES_PER_STORAGE_SET (64) * cost_per_state_byte (1530).
+const SSTORE_SET_STATE_GAS: u64 = 64 * 1530;
+
+#[test]
+fn frame_sstore_set_reports_eip8037_state_gas() {
+    // DEFAULT frame whose target creates slot 0 (0 -> 1): a state-creating SSTORE.
+    let writer = Address::from_low_u64_be(0xDA7A);
+    let accounts = [
+        (
+            FUNDED_SENDER,
+            AUTO_SEED_SENDER_BALANCE,
+            0u64,
+            Bytes::from(APPROVE_BOTH_CODE.to_vec()),
+        ),
+        // PUSH1 1; PUSH1 0; SSTORE; STOP
+        (
+            writer,
+            U256::zero(),
+            0u64,
+            Bytes::from(vec![0x60, 0x01, 0x60, 0x00, 0x55, 0x00]),
+        ),
+    ];
+    let tx = frame_tx_with_frames(vec![
+        verify_frame(FUNDED_SENDER),
+        Frame {
+            mode: u8::from(FrameMode::Default),
+            flags: 0x00,
+            target: Some(writer),
+            gas_limit: 2_000_000,
+            value: U256::zero(),
+            data: Bytes::new(),
+        },
+    ]);
+    let (result, _db) = run_frame_tx(&accounts, tx);
+    let report = result.expect("valid frame tx (payer approved)");
+    assert_eq!(
+        report.state_gas_used, SSTORE_SET_STATE_GAS,
+        "a frame SSTORE-set must report EIP-8037 state gas (not 0), got {}",
+        report.state_gas_used,
+    );
+    // The total already includes the state gas; the regular dimension is the rest.
+    assert!(
+        report.gas_used > report.state_gas_used,
+        "total gas {} must exceed the state portion {}",
+        report.gas_used,
+        report.state_gas_used,
+    );
+}
+
+#[test]
+fn reverted_frame_reports_no_state_gas() {
+    // Same state-creating SSTORE, but the frame REVERTs — no state is committed,
+    // so the tx must report zero state gas. Frame 0 approves a payer, so the tx
+    // stays valid (a reverted DEFAULT frame does not invalidate it).
+    let writer = Address::from_low_u64_be(0xDA7B);
+    let accounts = [
+        (
+            FUNDED_SENDER,
+            AUTO_SEED_SENDER_BALANCE,
+            0u64,
+            Bytes::from(APPROVE_BOTH_CODE.to_vec()),
+        ),
+        // PUSH1 1; PUSH1 0; SSTORE; PUSH1 0; PUSH1 0; REVERT
+        (
+            writer,
+            U256::zero(),
+            0u64,
+            Bytes::from(vec![
+                0x60, 0x01, 0x60, 0x00, 0x55, 0x60, 0x00, 0x60, 0x00, 0xfd,
+            ]),
+        ),
+    ];
+    let tx = frame_tx_with_frames(vec![
+        verify_frame(FUNDED_SENDER),
+        Frame {
+            mode: u8::from(FrameMode::Default),
+            flags: 0x00,
+            target: Some(writer),
+            gas_limit: 2_000_000,
+            value: U256::zero(),
+            data: Bytes::new(),
+        },
+    ]);
+    let (result, _db) = run_frame_tx(&accounts, tx);
+    let report = result.expect("valid frame tx (reverted DEFAULT frame, payer approved)");
+    assert_eq!(
+        report.state_gas_used, 0,
+        "a reverted frame creates no state and must report zero state gas, got {}",
+        report.state_gas_used,
+    );
+}
+
+#[test]
+fn frame_tx_below_base_blob_fee_is_rejected() {
+    // EIP-4844 INSUFFICIENT_MAX_FEE_PER_BLOB_GAS on the frame path: a blob-carrying
+    // frame tx whose max_fee_per_blob_gas is below the block base blob fee must be
+    // invalid. The check fires before any frame executes, so a lone SENDER frame is
+    // enough to reach it.
+    let mut tx = frame_tx_with_frames(vec![Frame {
+        mode: u8::from(FrameMode::Sender),
+        flags: 0x00,
+        target: None,
+        gas_limit: 100_000,
+        value: U256::zero(),
+        data: Bytes::new(),
+    }]);
+    tx.blob_versioned_hashes = vec![H256::repeat_byte(0x01)];
+    tx.max_fee_per_blob_gas = U256::zero();
+
+    let mut db = seeded_db(&[(FUNDED_SENDER, AUTO_SEED_SENDER_BALANCE, 0, Bytes::new())]);
+    let mut env = frame_tx_env(&tx);
+    // base blob fee strictly above the tx's max_fee_per_blob_gas (0).
+    env.base_blob_fee_per_gas = U256::from(1u64);
+    let transaction = Transaction::FrameTransaction(tx);
+
+    let mut vm = VM::new(
+        env,
+        &mut db,
+        &transaction,
+        LevmCallTracer::disabled(),
+        VMType::L1,
+        &NativeCrypto,
+    )
+    .expect("VM::new should succeed for a frame tx");
+    let result = vm.execute();
+    assert!(
+        matches!(
+            result,
+            Err(VMError::TxValidation(
+                ethrex_levm::errors::TxValidationError::InsufficientMaxFeePerBlobGas { .. }
+            ))
+        ),
+        "blob-carrying frame tx below base blob fee must be rejected, got {result:?}"
+    );
+}
+
+#[test]
+fn state_gas_reservoir_does_not_leak_across_frames() {
+    // Frame A creates then clears a slot (0 -> 5 -> 0), which credits the EIP-8037
+    // state-gas reservoir. Frame B then creates a fresh slot. Because frames are
+    // gas-isolated, A's reservoir credit must NOT subsidize B's state charge: B's
+    // gas_used must include the full state-set cost (the charge spills to
+    // gas_remaining), not be silently drawn from A's leftover credit. Without the
+    // per-frame reservoir reset, B's gas_used would be ~SSTORE_SET_STATE_GAS lower.
+    let a = Address::from_low_u64_be(0xAA01);
+    let b = Address::from_low_u64_be(0xBB01);
+    let mk = |target| Frame {
+        mode: u8::from(FrameMode::Default),
+        flags: 0x00,
+        target: Some(target),
+        gas_limit: 2_000_000,
+        value: U256::zero(),
+        data: Bytes::new(),
+    };
+    let accounts = [
+        (
+            FUNDED_SENDER,
+            AUTO_SEED_SENDER_BALANCE,
+            0u64,
+            Bytes::from(APPROVE_BOTH_CODE.to_vec()),
+        ),
+        // A: SSTORE 5@5 (0->5); SSTORE 0@5 (5->0) -> credits the reservoir; STOP
+        (
+            a,
+            U256::zero(),
+            0u64,
+            Bytes::from(vec![
+                0x60, 0x05, 0x60, 0x05, 0x55, 0x60, 0x00, 0x60, 0x05, 0x55, 0x00,
+            ]),
+        ),
+        // B: SSTORE 1@6 (0->1) -> a fresh state-creating set; STOP
+        (
+            b,
+            U256::zero(),
+            0u64,
+            Bytes::from(vec![0x60, 0x01, 0x60, 0x06, 0x55, 0x00]),
+        ),
+    ];
+    let tx = frame_tx_with_frames(vec![verify_frame(FUNDED_SENDER), mk(a), mk(b)]);
+    let (result, _db) = run_frame_tx(&accounts, tx);
+    let report = result.expect("valid frame tx (payer approved)");
+    let fr = report.frame_results.expect("frame results present");
+    // fr[0] = VERIFY, fr[1] = A (set+clear), fr[2] = B (fresh set).
+    assert!(
+        fr[2].1 > SSTORE_SET_STATE_GAS,
+        "frame B gas_used ({}) must include the full state-set cost — frame A's \
+         reservoir credit must not subsidize it",
+        fr[2].1,
     );
 }
 
@@ -1567,7 +1766,7 @@ mod frame_tx_7702_delegation_tests {
 // (migrated from crates/vm/levm/src/vm.rs)
 
 mod validation_observer_tests {
-    //! EIP-8141 mempool validation-prefix simulation harness tests (Phase 2).
+    //! EIP-8141 mempool validation-prefix simulation harness tests.
     //!
     //! These drive the real frame-execution machinery via
     //! [`VM::run_frame_validation_prefix`] over signature-less frame
@@ -2049,7 +2248,7 @@ mod validation_observer_tests {
 // (migrated from crates/vm/backends/levm/mod.rs)
 
 mod frame_validation_prefix_tests {
-    //! EIP-8141 mempool validation-prefix backend assertions (Phase 2). These
+    //! EIP-8141 mempool validation-prefix backend assertions. These
     //! exercise [`LEVM::simulate_frame_validation_prefix`] over signature-less
     //! frame transactions (an empty signature list trivially validates), where
     //! the prefix establishes a payer through real APPROVE code (not the

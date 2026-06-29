@@ -4,7 +4,7 @@ mod leaf;
 
 use std::sync::Arc;
 #[cfg(not(all(feature = "eip-8025", target_arch = "riscv64")))]
-use std::sync::OnceLock;
+pub use std::sync::OnceLock;
 
 /// `OnceLock` replacement for zkVM guest gated on `eip-8025` feature
 ///

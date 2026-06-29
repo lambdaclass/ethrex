@@ -89,9 +89,11 @@ pub enum MempoolError {
         "Transaction gas limit exceeds maximum. Transaction hash: {0}, transaction gas limit: {1}"
     )]
     TxMaxGasLimitExceededError(H256, u64),
-    #[error("Transaction priority fee above gas fee")]
-    TxGasOverflowError,
     #[error("Transaction intrinsic gas overflow")]
+    TxGasOverflowError,
+    #[error("Could not compute transaction intrinsic gas: {0}")]
+    IntrinsicGasError(String),
+    #[error("Transaction priority fee above gas fee")]
     TxTipAboveFeeCapError,
     #[error("Transaction intrinsic gas cost above gas limit")]
     TxIntrinsicGasCostAboveLimitError,
@@ -127,6 +129,8 @@ pub enum MempoolError {
     InvalidFrameTransaction(String),
     #[error("Invalid frame transaction signature")]
     InvalidFrameSignature,
+    #[error("Frame transaction signature is malleable (high-s)")]
+    FrameTxMalleableSignature,
     #[error("Frame transaction blobs are not yet supported")]
     FrameTxBlobsUnsupported,
     #[error("Frame transaction signature verification cost exceeds MAX_VERIFY_GAS")]
@@ -147,6 +151,10 @@ pub enum MempoolError {
         "Non-canonical paymaster already sponsors the maximum number of pending frame transactions"
     )]
     FrameTxNonCanonicalPaymasterLimit,
+    #[error("EIP-7702 transaction has an empty authorization list")]
+    EmptyAuthorizationList,
+    #[error("EIP-7702 (type-4) transaction is not valid before Prague")]
+    Eip7702TxPreFork,
 }
 
 impl From<FrameValidationError> for MempoolError {

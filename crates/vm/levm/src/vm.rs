@@ -684,6 +684,13 @@ pub fn validate_frame_signatures(
                 let v = sig.signature[0];
                 let r = &sig.signature[1..33];
                 let s = &sig.signature[33..65];
+                // EIP-8141 defines verification as `signer == ecrecover(msg, v, r, s)`
+                // and does NOT mandate EIP-2 low-s, so a high-s frame signature is
+                // spec-valid and MUST be accepted here (this is the consensus
+                // block-execution path). Anti-malleability (low-s) is enforced as
+                // local mempool policy in `frame_signatures_are_low_s`, never at
+                // consensus — rejecting high-s here would diverge from a conformant
+                // client that accepts it.
                 let mut calldata = vec![0u8; 128];
                 calldata[..32].copy_from_slice(&msg);
                 calldata[63] = v;
@@ -736,6 +743,62 @@ pub fn validate_frame_signatures(
                     return false;
                 };
                 if result.len() != 32 || result[31] != 1 {
+                    return false;
+                }
+            }
+            _ => return false,
+        }
+    }
+    true
+}
+
+/// Local mempool anti-malleability policy (NOT consensus): returns `false` if any
+/// frame signature is high-s (`s > n/2`).
+///
+/// EIP-8141 verification is `signer == ecrecover(msg, v, r, s)` and does not
+/// mandate EIP-2 low-s, so a high-s signature is spec-valid and is accepted on the
+/// consensus block-execution path. But the raw signature bytes are committed to the
+/// transaction identity hash while being elided from the sig hash, so the malleated
+/// form `(v, r, s) -> (v^1, r, n-s)` (and the P256 `s -> n-s`) yields a second valid
+/// tx hash for the same logical transaction — a mempool dedup bypass. Admission
+/// rejects high-s so a malleated duplicate never occupies a pool slot; this gates
+/// only what this node admits/relays, never what it accepts in a block.
+///
+/// Signatures are assumed already structurally validated by
+/// [`validate_frame_signatures`]; malformed inputs conservatively return `false`.
+#[allow(
+    clippy::indexing_slicing,
+    reason = "signature length is checked before each fixed-offset slice"
+)]
+pub fn frame_signatures_are_low_s(signatures: &[ethrex_common::types::FrameSignature]) -> bool {
+    use ethrex_common::types::{FRAME_SIG_SCHEME_P256, FRAME_SIG_SCHEME_SECP256K1};
+    // secp256k1n/2 = 0x7fffffffffffffffffffffffffffffff5d576e7357a4501ddfe92f46681b20a0
+    const SECP256K1_N_HALF: [u8; 32] = [
+        0x7f, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+        0xff, 0x5d, 0x57, 0x6e, 0x73, 0x57, 0xa4, 0x50, 0x1d, 0xdf, 0xe9, 0x2f, 0x46, 0x68, 0x1b,
+        0x20, 0xa0,
+    ];
+    // P-256 (secp256r1) n/2 = 0x7fffffff800000007fffffffffffffffde737d56d38bcf4279dce5617e3192a8
+    const P256_N_HALF: [u8; 32] = [
+        0x7f, 0xff, 0xff, 0xff, 0x80, 0x00, 0x00, 0x00, 0x7f, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+        0xff, 0xde, 0x73, 0x7d, 0x56, 0xd3, 0x8b, 0xcf, 0x42, 0x79, 0xdc, 0xe5, 0x61, 0x7e, 0x31,
+        0x92, 0xa8,
+    ];
+    for sig in signatures {
+        match sig.scheme {
+            FRAME_SIG_SCHEME_SECP256K1 => {
+                if sig.signature.len() != 65 {
+                    return false;
+                }
+                if sig.signature[33..65] > SECP256K1_N_HALF[..] {
+                    return false;
+                }
+            }
+            FRAME_SIG_SCHEME_P256 => {
+                if sig.signature.len() != 128 {
+                    return false;
+                }
+                if sig.signature[32..64] > P256_N_HALF[..] {
                     return false;
                 }
             }
@@ -1209,6 +1272,24 @@ impl<'a> VM<'a> {
             ));
         }
 
+        // EIP-4844 INSUFFICIENT_MAX_FEE_PER_BLOB_GAS: a blob-carrying tx whose
+        // max_fee_per_blob_gas is below the block's base blob fee is invalid. The
+        // frame path is self-contained and never runs the default hook's
+        // validate_max_fee_per_blob_gas, so it is enforced here. APPROVE charges
+        // the blob fee at the base rate unconditionally, so without this a frame tx
+        // below the base blob fee would execute and silently overpay rather than be
+        // rejected — a divergence from a conformant client that rejects it.
+        if !frame_tx.blob_versioned_hashes.is_empty()
+            && frame_tx.max_fee_per_blob_gas < self.env.base_blob_fee_per_gas
+        {
+            return Err(VMError::TxValidation(
+                crate::errors::TxValidationError::InsufficientMaxFeePerBlobGas {
+                    base_fee_per_blob_gas: self.env.base_blob_fee_per_gas,
+                    tx_max_fee_per_blob_gas: frame_tx.max_fee_per_blob_gas,
+                },
+            ));
+        }
+
         // Initialize FrameTxContext
         let sig_hash = frame_tx.compute_sig_hash();
         let total_gas_limit = frame_tx.total_gas_limit();
@@ -1264,6 +1345,10 @@ impl<'a> VM<'a> {
         let mut batch_start_idx: usize = 0;
         let mut batch_logs_start: usize = 0;
         let mut batch_approval_snapshot: (bool, Option<Address>) = (false, None);
+        // EIP-8037: snapshot the shared `state_gas_used` at batch entry so a batch
+        // revert (which unrolls every in-batch frame's state) also drops the state
+        // gas those frames accumulated.
+        let mut state_gas_used_at_batch_entry: i64 = 0;
         let mut skip_until_batch_end: Option<usize> = None; // skip remaining frames in a failed batch
 
         // Execute frames sequentially
@@ -1334,6 +1419,7 @@ impl<'a> VM<'a> {
                 in_atomic_batch = true;
                 batch_start_idx = frame_idx;
                 batch_logs_start = all_logs.len();
+                state_gas_used_at_batch_entry = self.state_gas_used;
                 // Snapshot approvals at batch entry: a batch revert must also
                 // roll back approvals granted inside the batch (their balance
                 // and nonce effects are reverted with the substate).
@@ -1436,6 +1522,17 @@ impl<'a> VM<'a> {
                     }
                 };
             }
+
+            // EIP-8037: capture state-gas accounting before the frame runs so a
+            // reverted frame (which commits no state) can be rolled back to
+            // contribute zero state gas. The reservoir/spill are captured too:
+            // each frame is gas-isolated, so an inline state-gas refund (e.g. an
+            // SSTORE 0->N->0 clear, which credits the reservoir) inside one frame
+            // must NOT carry over to a later frame's charges — the reservoir is
+            // reset to this entry value after the frame completes.
+            let state_gas_used_at_frame_entry = self.state_gas_used;
+            let state_gas_reservoir_at_frame_entry = self.state_gas_reservoir;
+            let state_gas_spill_at_frame_entry = self.state_gas_spill;
 
             let (frame_success, frame_gas_used, frame_logs) = if value_transfer_reverted {
                 self.substate.revert_backup();
@@ -1551,7 +1648,7 @@ impl<'a> VM<'a> {
                 // `tx_level_backup` too. Outside a batch, the finished frame's
                 // backup never reaches the outer call frame, so absorb it
                 // directly into `tx_level_backup` here; otherwise an invalid-tx
-                // exit could not roll back this committed frame's state (B3).
+                // exit could not roll back this committed frame's state.
                 if result.0 {
                     if in_atomic_batch {
                         self.merge_call_frame_backup_with_parent(
@@ -1566,6 +1663,25 @@ impl<'a> VM<'a> {
 
                 result
             };
+
+            // EIP-8037: a failed frame's state changes were reverted above, so it
+            // creates no state and must contribute zero state gas. Roll the shared
+            // `state_gas_used` back to this frame's entry value (the cache/substate
+            // were already restored in the failure arms). Successful frames keep
+            // their accumulated state gas.
+            if !frame_success {
+                self.state_gas_used = state_gas_used_at_frame_entry;
+            }
+            // EIP-8037: frames are gas-isolated, so the state-gas reservoir/spill
+            // must not leak across the frame boundary. A reservoir credit from an
+            // inline refund inside this frame (or a reverted frame's inflated
+            // reservoir) would otherwise subsidize the next frame's state charges
+            // (drawn before any spill to gas_remaining). Reset both to this frame's
+            // entry value unconditionally — a successful frame already folded its
+            // inline refund into `state_gas_used`, so the leftover reservoir credit
+            // is spent and must be dropped.
+            self.state_gas_reservoir = state_gas_reservoir_at_frame_entry;
+            self.state_gas_spill = state_gas_spill_at_frame_entry;
 
             total_gas_used = total_gas_used
                 .checked_add(frame_gas_used)
@@ -1592,6 +1708,9 @@ impl<'a> VM<'a> {
             if in_atomic_batch && !frame_success {
                 self.substate.revert_backup(); // revert batch-level snapshot
                 self.restore_cache_state()?;
+                // EIP-8037: the whole batch unrolled, so none of its frames created
+                // state — drop the state gas accumulated since batch entry.
+                self.state_gas_used = state_gas_used_at_batch_entry;
 
                 // Rewrite results for all frames in this batch (inclusive) as failed,
                 // charging each frame its full gas_limit per EIP-8141.
@@ -1725,12 +1844,29 @@ impl<'a> VM<'a> {
 
         self.increase_account_balance(payer, refund_amount)?;
 
-        // Pay coinbase
+        // Pay coinbase. Mirror `pay_coinbase` on the normal-tx path so a frame
+        // transaction has the same coinbase BlockAccessList / witness footprint:
+        // EIP-7928 requires the coinbase to appear in the BAL for any user tx even
+        // when the priority fee is zero, and EELS reads the coinbase account
+        // unconditionally during fee transfer (so EIP-8025 witnesses record its
+        // trie path even at zero fee). A frame tx is always a user tx (non-zero
+        // effective gas price), unlike a system call.
         let priority_fee = effective_gas_price.saturating_sub(self.env.base_fee_per_gas);
         let coinbase_fee = priority_fee
             .checked_mul(U256::from(total_gas_used))
             .ok_or(VMError::Internal(InternalError::Overflow))?;
-        self.increase_account_balance(self.env.coinbase, coinbase_fee)?;
+        if !effective_gas_price.is_zero()
+            && let Some(recorder) = self.db.bal_recorder.as_mut()
+        {
+            recorder.record_touched_address(self.env.coinbase);
+        }
+        if coinbase_fee.is_zero() {
+            // Zero priority fee: still read the coinbase so its witness/BAL trie
+            // path (incl. an exclusion proof if absent) is recorded.
+            self.db.get_account(self.env.coinbase)?;
+        } else {
+            self.increase_account_balance(self.env.coinbase, coinbase_fee)?;
+        }
 
         // EIP-8141: finalize self-destructs at tx end, mirroring the default
         // finalize hook ordering (refund -> coinbase -> delete). SELFDESTRUCT is
@@ -1744,11 +1880,40 @@ impl<'a> VM<'a> {
         // consensus receipts have no slot for end-of-tx logs, but the header and
         // receipt blooms are derived from these aggregate logs (receipt.rs,
         // payload.rs), so they must be recorded there.
+        //
+        // KNOWN SPEC GAP (cross-client interop): these tx-end burn logs are in the
+        // aggregate bloom but NOT in any per-frame consensus receipt, so a client
+        // that re-derives the type-0x06 logs_bloom purely from the canonical
+        // per-frame logs would compute a different bloom (part of the block hash).
+        // ethrex producer and validator agree (both execute over the live
+        // aggregate), so this is not an intra-client split; it only bites
+        // cross-client and only for this rare destroy-after-receiving-ETH case.
+        // EIP-7708 is silent on receipt placement and EIP-8141's frame receipt has
+        // no tx-level logs slot, so the canonical home is genuinely undefined; do
+        // not pin one (e.g. attribute to the last frame) unilaterally — confirm the
+        // bloom-derivation rule against another client / the devnet first.
         let logs_before = self.substate.current_logs().len();
         crate::hooks::default_hook::delete_self_destruct_accounts(self)?;
         let mut logs_after = self.substate.current_logs();
         if logs_after.len() > logs_before {
             all_logs.extend(logs_after.split_off(logs_before));
+        }
+
+        // Frame txs short-circuit the hook/finalize path, so the BackupHook never
+        // runs and `db.tx_backup` stays None on the success path. A block builder
+        // can execute a frame tx successfully and then reject it (e.g. the EIP-8037
+        // 2D-gas overflow post-check, or an L2 invalid cross-chain message), calling
+        // `undo_last_tx` — which needs the top-level backup to roll the committed
+        // state back; otherwise the excluded tx's mutations leak into later txs and
+        // the built block's state root diverges from re-execution. Populate it here
+        // exactly as `BackupHook::finalize_execution` would: `tx_level_backup` holds
+        // every committed frame's originals, and the outer call-frame backup now also
+        // holds the refund/coinbase/self-destruct originals. Gated on
+        // `preserve_top_level_backup` so it is set only when a hook reads it (L2);
+        // on L1 the field is never consulted.
+        if self.preserve_top_level_backup {
+            tx_level_backup.absorb(&self.current_call_frame.call_frame_backup);
+            self.db.tx_backup = Some(tx_level_backup);
         }
 
         // Derive top-level status from ALL frames: the transaction succeeded
@@ -1775,14 +1940,28 @@ impl<'a> VM<'a> {
             TxResult::Success
         };
 
+        // EIP-8037: report the transaction's net state gas (same formula as the
+        // normal-tx path in default_hook). `total_gas_used` already includes the
+        // state gas — it spilled into each frame's gas_remaining, exactly as for any
+        // sub-TX_MAX_GAS_LIMIT transaction whose reservoir is 0 — so reporting
+        // `state_gas_used` here lets the block-level regular/state split
+        // (regular = gas_used - state_gas_used) attribute it to the state dimension
+        // instead of billing the whole amount as regular gas.
+        let state_refund_signed =
+            i64::try_from(self.state_refund).map_err(|_| InternalError::Overflow)?;
+        let state_gas_used = u64::try_from(
+            self.state_gas_used
+                .saturating_sub(state_refund_signed)
+                .max(0),
+        )
+        .map_err(|_| InternalError::Overflow)?;
+
         let report = ExecutionReport {
             result,
             gas_used: total_gas_used,
             gas_spent: total_gas_used,
             gas_refunded: gas_refund,
-            // Frame txs don't split gas into EIP-8037 dimensions yet: all frame
-            // gas is billed as regular gas at the block level.
-            state_gas_used: 0,
+            state_gas_used,
             output: Bytes::new(),
             logs: all_logs,
             payer_address: ctx.payer_address,
@@ -2942,7 +3121,7 @@ mod atomic_batch_approval_rollback_tests {
 
 #[cfg(test)]
 mod frame_sig_validation_tests {
-    use super::validate_frame_signatures;
+    use super::{frame_signatures_are_low_s, validate_frame_signatures};
     use bytes::Bytes;
     use ethrex_common::types::Fork;
     use ethrex_common::{
@@ -2961,6 +3140,83 @@ mod frame_sig_validation_tests {
             msg: Bytes::new(),
             signature: Bytes::from(vec![0u8; sig_len]),
         }
+    }
+
+    // secp256k1 n/2 and P-256 n/2 (big-endian 32-byte), and each value + 1.
+    const SECP_N_HALF: [u8; 32] = [
+        0x7f, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+        0xff, 0x5d, 0x57, 0x6e, 0x73, 0x57, 0xa4, 0x50, 0x1d, 0xdf, 0xe9, 0x2f, 0x46, 0x68, 0x1b,
+        0x20, 0xa0,
+    ];
+    const SECP_N_HALF_PLUS_1: [u8; 32] = [
+        0x7f, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+        0xff, 0x5d, 0x57, 0x6e, 0x73, 0x57, 0xa4, 0x50, 0x1d, 0xdf, 0xe9, 0x2f, 0x46, 0x68, 0x1b,
+        0x20, 0xa1,
+    ];
+    const P256_N_HALF: [u8; 32] = [
+        0x7f, 0xff, 0xff, 0xff, 0x80, 0x00, 0x00, 0x00, 0x7f, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+        0xff, 0xde, 0x73, 0x7d, 0x56, 0xd3, 0x8b, 0xcf, 0x42, 0x79, 0xdc, 0xe5, 0x61, 0x7e, 0x31,
+        0x92, 0xa8,
+    ];
+    const P256_N_HALF_PLUS_1: [u8; 32] = [
+        0x7f, 0xff, 0xff, 0xff, 0x80, 0x00, 0x00, 0x00, 0x7f, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+        0xff, 0xde, 0x73, 0x7d, 0x56, 0xd3, 0x8b, 0xcf, 0x42, 0x79, 0xdc, 0xe5, 0x61, 0x7e, 0x31,
+        0x92, 0xa9,
+    ];
+
+    fn secp_sig_with_s(s: &[u8; 32]) -> FrameSignature {
+        // [v(1) | r(32) | s(32)]
+        let mut bytes = vec![0u8; 65];
+        bytes[33..65].copy_from_slice(s);
+        FrameSignature {
+            scheme: FRAME_SIG_SCHEME_SECP256K1,
+            signer: Address::from_low_u64_be(0xBEEF),
+            msg: Bytes::new(),
+            signature: Bytes::from(bytes),
+        }
+    }
+
+    fn p256_sig_with_s(s: &[u8; 32]) -> FrameSignature {
+        // [r(32) | s(32) | qx(32) | qy(32)]
+        let mut bytes = vec![0u8; 128];
+        bytes[32..64].copy_from_slice(s);
+        FrameSignature {
+            scheme: FRAME_SIG_SCHEME_P256,
+            signer: Address::from_low_u64_be(0xBEEF),
+            msg: Bytes::new(),
+            signature: Bytes::from(bytes),
+        }
+    }
+
+    #[test]
+    fn low_s_at_exactly_n_half_is_accepted() {
+        // s == n/2 is the largest canonical (low-s) value for both schemes.
+        assert!(frame_signatures_are_low_s(&[secp_sig_with_s(&SECP_N_HALF)]));
+        assert!(frame_signatures_are_low_s(&[p256_sig_with_s(&P256_N_HALF)]));
+    }
+
+    #[test]
+    fn high_s_above_n_half_is_rejected() {
+        assert!(!frame_signatures_are_low_s(&[secp_sig_with_s(
+            &SECP_N_HALF_PLUS_1
+        )]));
+        assert!(!frame_signatures_are_low_s(&[p256_sig_with_s(
+            &P256_N_HALF_PLUS_1
+        )]));
+    }
+
+    #[test]
+    fn empty_signature_list_is_low_s() {
+        assert!(frame_signatures_are_low_s(&[]));
+    }
+
+    #[test]
+    fn malformed_or_unknown_scheme_is_not_low_s() {
+        assert!(!frame_signatures_are_low_s(&[dummy_sig(
+            FRAME_SIG_SCHEME_SECP256K1,
+            10
+        )]));
+        assert!(!frame_signatures_are_low_s(&[dummy_sig(0xFF, 65)]));
     }
 
     #[test]
