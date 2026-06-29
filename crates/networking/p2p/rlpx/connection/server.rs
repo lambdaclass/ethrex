@@ -44,6 +44,7 @@ use ethrex_common::H256;
 #[cfg(feature = "l2")]
 use ethrex_common::types::Transaction;
 use ethrex_common::types::{MempoolTransaction, P2PTransaction, Receipt};
+use ethrex_crypto::NativeCrypto;
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_storage::{Store, error::StoreError};
 use ethrex_trie::TrieError;
@@ -280,14 +281,14 @@ impl Established {
                 .mempool
                 .clear_in_flight_txs(&requested_hashes)
             {
-                warn!(error = %e, "clear_in_flight_txs failed during teardown");
+                warn!(error = %e, "Failed to clear in-flight transaction tracking during peer teardown");
             }
             retry_on_alternates(&self.blockchain, &self.peer_table, &requested_hashes).await;
         }
         // Also clear hashes that were buffered but not yet sent.
         for (_announced, pending_hashes) in self.pending_tx_requests.drain(..) {
             if let Err(e) = self.blockchain.mempool.clear_in_flight_txs(&pending_hashes) {
-                warn!(error = %e, "clear_in_flight_txs failed during teardown");
+                warn!(error = %e, "Failed to clear in-flight transaction tracking during peer teardown");
             }
             retry_on_alternates(&self.blockchain, &self.peer_table, &pending_hashes).await;
         }
@@ -463,7 +464,7 @@ impl PeerConnectionServer {
                 "Received outgoing request",
             );
             let Some(sender) = Arc::<oneshot::Sender<Message>>::into_inner(msg.sender) else {
-                warn!("Could not obtain sender channel: Arc has multiple references");
+                debug!("Could not obtain sender channel: Arc has multiple references");
                 return;
             };
             let result = handle_outgoing_request(established_state, msg.message, sender).await;
@@ -545,7 +546,7 @@ impl PeerConnectionServer {
                     // Clear in-flight before retry so the alternate's reserve_unknown_hashes
                     // doesn't race against still-in-flight state and silently no-op.
                     if let Err(e) = state.blockchain.mempool.clear_in_flight_txs(&hashes) {
-                        warn!(error = %e, "clear_in_flight_txs failed while sweeping stale requests");
+                        warn!(error = %e, "Failed to clear in-flight transaction tracking while sweeping stale requests");
                     }
                     retry_on_alternates(&state.blockchain, &state.peer_table, &hashes).await;
                 }
@@ -680,7 +681,7 @@ impl PeerConnectionServer {
                         error!(
                             peer=%established_state.node,
                             error=%e,
-                            "Error handling cast message",
+                            "Inconsistent trie while serving peer request; local state may be corrupted",
                         );
                     } else {
                         // If we're not synced, we expect to have inconsistent trie errors
@@ -838,7 +839,7 @@ async fn send_all_pooled_tx_hashes(
         state
             .tx_broadcaster
             .add_txs(
-                txs.iter().map(|tx| tx.hash()).collect(),
+                txs.iter().map(|tx| tx.hash(&NativeCrypto)).collect(),
                 state.node.node_id(),
             )
             .map_err(|e| PeerConnectionError::BroadcastError(e.to_string()))?;
@@ -1078,11 +1079,11 @@ where
             if negotiated_eth_version == 0 {
                 return Err(PeerConnectionError::NoMatchingCapabilities);
             }
-            debug!("Negotatied eth version: eth/{}", negotiated_eth_version);
+            debug!("Negotiated eth version: eth/{}", negotiated_eth_version);
             state.negotiated_eth_capability = Some(Capability::eth(negotiated_eth_version));
 
             if negotiated_snap_version != 0 {
-                debug!("Negotatied snap version: snap/{}", negotiated_snap_version);
+                debug!("Negotiated snap version: snap/{}", negotiated_snap_version);
                 state.negotiated_snap_capability = Some(Capability::snap(negotiated_snap_version));
             }
 
@@ -1169,7 +1170,7 @@ async fn handle_incoming_message(
             | Message::GetTrieNodes(_)
     );
     if is_data_request && !check_serve_request_rate(state) {
-        warn!(
+        debug!(
             peer = %state.node,
             window_requests = state.serve_requests_in_window,
             "Disconnecting peer: exceeded incoming request rate limit",
@@ -1234,7 +1235,11 @@ async fn handle_incoming_message(
                 state.received_txs_from_peer = true;
             }
             if state.blockchain.is_synced() {
-                let tx_hashes: Vec<_> = txs.transactions.iter().map(|tx| tx.hash()).collect();
+                let tx_hashes: Vec<_> = txs
+                    .transactions
+                    .iter()
+                    .map(|tx| tx.hash(&NativeCrypto))
+                    .collect();
 
                 // Offload pool insertion to a background task so we don't block
                 // the ConnectionServer (validation + signature recovery are expensive).
@@ -1293,13 +1298,36 @@ async fn handle_incoming_message(
             let mut block_access_lists =
                 Vec::with_capacity(block_hashes.len().min(BLOCK_ACCESS_LIST_LIMIT));
             for hash in &block_hashes {
-                match state.storage.get_block_access_list(*hash) {
-                    Ok(bal) => block_access_lists.push(bal),
+                // EIP-8159: only serve a BAL that matches the block header's
+                // commitment. A stored BAL that doesn't hash to the header's
+                // `block_access_list_hash` (e.g. a stale/empty entry from a prior
+                // regeneration) must be reported as unavailable (`0x80`) rather
+                // than served as a wrong BAL, which receiving peers would reject.
+                let bal = match state.storage.get_block_access_list(*hash) {
+                    Ok(Some(bal)) => {
+                        let commitment = match state.storage.get_block_header_by_hash(*hash) {
+                            Ok(Some(header)) => header.block_access_list_hash,
+                            Ok(None) => None,
+                            Err(err) => {
+                                // Don't serve an unverified BAL: degrade to 0x80
+                                // (unavailable), but log so an operator can tell a
+                                // committed BAL was refused due to a DB error.
+                                warn!(
+                                    "Failed to read header for BAL commitment check (hash {hash:#x}): {err}; reporting BAL unavailable"
+                                );
+                                None
+                            }
+                        };
+                        bal.matches_commitment(commitment, &NativeCrypto)
+                            .then_some(bal)
+                    }
+                    Ok(None) => None,
                     Err(err) => {
                         error!("Error accessing DB while building BAL response for peer: {err}");
-                        block_access_lists.push(None);
+                        None
                     }
-                }
+                };
+                block_access_lists.push(bal);
                 if block_access_lists.len() >= BLOCK_ACCESS_LIST_LIMIT {
                     break;
                 }
@@ -1387,10 +1415,10 @@ async fn handle_incoming_message(
             );
             // We will only validate the incoming update, we may decide to store and use this information in the future
             if let Err(err) = update.validate() {
-                warn!(
+                debug!(
                     peer=%state.node,
                     reason=%err,
-                    "disconnected from peer",
+                    "Disconnecting peer: invalid block range update",
                 );
                 send_disconnect_message(state, Some(DisconnectReason::SubprotocolError)).await;
                 return Err(PeerConnectionError::DisconnectSent(
@@ -1419,7 +1447,7 @@ async fn handle_incoming_message(
             if state.txs_sent_to_peer + batch_size > LEECH_TX_SENT_THRESHOLD
                 && !state.received_txs_from_peer
             {
-                warn!(
+                debug!(
                     peer = %state.node,
                     txs_sent = state.txs_sent_to_peer,
                     "Disconnecting peer: leech detected (sent many txs but received none)",
@@ -1454,9 +1482,9 @@ async fn handle_incoming_message(
                             .validate_blob_commitment_hashes(&itx.tx.blob_versioned_hashes)
                             .is_err())
                 {
-                    warn!(
+                    debug!(
                         peer=%state.node,
-                        "disconnected from peer. Reason: Invalid/Missing Blobs",
+                        "Disconnecting peer: invalid or missing blobs",
                     );
                     if let Some((_announced, requested_hashes, _)) = &removed_request {
                         retry_on_alternates(&state.blockchain, &state.peer_table, requested_hashes)
@@ -1472,10 +1500,10 @@ async fn handle_incoming_message(
                 if let Some((announced, requested_hashes, _)) = &removed_request {
                     let fork = state.blockchain.current_fork().await?;
                     if let Err(error) = msg.validate_requested(announced, fork) {
-                        warn!(
+                        debug!(
                             peer=%state.node,
                             reason=%error,
-                            "disconnected from peer",
+                            "Disconnecting peer: invalid pooled transactions response",
                         );
                         retry_on_alternates(&state.blockchain, &state.peer_table, requested_hashes)
                             .await;
@@ -1496,10 +1524,10 @@ async fn handle_incoming_message(
                         error,
                         ethrex_blockchain::error::MempoolError::BlobsBundleError(_)
                     ) {
-                        warn!(
+                        debug!(
                             peer=%state.node,
                             reason=%error,
-                            "disconnected from peer",
+                            "Disconnecting peer: invalid pooled transactions response",
                         );
                         if let Some((_announced, requested_hashes, _)) = &removed_request {
                             retry_on_alternates(
@@ -1685,7 +1713,7 @@ async fn flush_pending_tx_requests(state: &mut Established) -> Result<(), PeerCo
             let unsent = &all_hashes[offset..];
             if !unsent.is_empty() {
                 if let Err(clear_err) = state.blockchain.mempool.clear_in_flight_txs(unsent) {
-                    warn!(error = %clear_err, "clear_in_flight_txs failed after send error");
+                    warn!(error = %clear_err, "Failed to clear in-flight transaction tracking after send error");
                 }
                 retry_on_alternates(&state.blockchain, &state.peer_table, unsent).await;
             }
@@ -1767,7 +1795,7 @@ async fn retry_on_alternates(
         let announcement =
             NewPooledTransactionHashes::from_raw(types.into(), sizes, hash_list.clone());
         if let Err(e) = conn.enqueue_tx_requests(announcement, hash_list) {
-            warn!(error = %e, "failed to enqueue tx requests on alternate peer");
+            debug!(error = %e, "Failed to enqueue tx requests on alternate peer");
         }
     }
 }
