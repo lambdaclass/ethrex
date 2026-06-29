@@ -192,8 +192,14 @@ impl Evm {
         // payload-build path; the block-import path is hooked in prepare_block.
         if fork >= Fork::Hegota && matches!(self.vm_type, VMType::L1) {
             LEVM::install_expiry_verifier_code(&mut self.db, self.crypto.as_ref())?;
-            // EIP-8250: the keyed-nonce manager predeploy.
-            LEVM::install_nonce_manager_code(&mut self.db, self.crypto.as_ref())?;
+            // EIP-8250: the keyed-nonce manager predeploy. Gated on the
+            // (possibly decoupled) post-Hegota activation so an already-Hegota
+            // chain can install it at a scheduled future block rather than
+            // re-defining the activated Hegota state transition. Defaults to
+            // Hegota when `post_hegota_time` is unset (fresh/canonical chains).
+            if chain_config.is_post_hegota_activated(block_header.timestamp) {
+                LEVM::install_nonce_manager_code(&mut self.db, self.crypto.as_ref())?;
+            }
         }
 
         if block_header.parent_beacon_block_root.is_some() && fork >= Fork::Cancun {

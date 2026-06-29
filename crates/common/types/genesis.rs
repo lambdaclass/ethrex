@@ -282,6 +282,18 @@ pub struct ChainConfig {
     )]
     pub hegota_time: Option<u64>,
 
+    /// Activation time for predeploys/state added to the Hegota feature set
+    /// AFTER a chain has already activated Hegota (currently the EIP-8250
+    /// NONCE_MANAGER). Decoupling this from `hegota_time` lets an already-Hegota
+    /// chain adopt the new predeploys in-place at a scheduled future block
+    /// instead of re-defining the (already activated) Hegota state transition,
+    /// which would diverge from the historical headers. When `None`, this falls
+    /// back to `hegota_time`, so a fresh chain installs everything at Hegota as
+    /// the spec intends — only set `postHegotaTime` when upgrading an existing
+    /// Hegota chain.
+    #[serde(default)]
+    pub post_hegota_time: Option<u64>,
+
     /// Amount of total difficulty reached by the network that triggers the consensus upgrade.
     #[serde(default, with = "crate::serde_utils::u128::hex_str_opt")]
     pub terminal_total_difficulty: Option<u128>,
@@ -380,6 +392,17 @@ impl From<Fork> for &str {
 impl ChainConfig {
     pub fn is_hegota_activated(&self, block_timestamp: u64) -> bool {
         self.hegota_time.is_some_and(|time| time <= block_timestamp)
+    }
+
+    /// Whether the post-Hegota predeploy set (EIP-8250 NONCE_MANAGER) is active.
+    /// Falls back to Hegota activation when `post_hegota_time` is unset, so fresh
+    /// chains install it at Hegota (canonical); an upgrading chain sets
+    /// `post_hegota_time` to a future block to install it there instead.
+    pub fn is_post_hegota_activated(&self, block_timestamp: u64) -> bool {
+        match self.post_hegota_time {
+            Some(time) => time <= block_timestamp,
+            None => self.is_hegota_activated(block_timestamp),
+        }
     }
 
     pub fn is_amsterdam_activated(&self, block_timestamp: u64) -> bool {
@@ -1297,6 +1320,30 @@ mod tests {
         config.hegota_time = None;
         assert!(!config.is_hegota_activated(0));
         assert!(!config.is_hegota_activated(u64::MAX));
+    }
+
+    #[test]
+    fn test_post_hegota_activation_decoupling() {
+        // Fresh chain: post_hegota_time unset → tracks Hegota exactly (the new
+        // predeploys install at Hegota, the canonical/spec behavior).
+        let mut config = ChainConfig {
+            chain_id: 1,
+            hegota_time: Some(1000),
+            post_hegota_time: None,
+            ..Default::default()
+        };
+        assert!(!config.is_post_hegota_activated(999));
+        assert!(config.is_post_hegota_activated(1000));
+
+        // Upgrade chain: post_hegota_time set to a block AFTER Hegota → the new
+        // predeploys activate there, not at Hegota. This lets an already-Hegota
+        // chain adopt them in-place without re-defining the Hegota transition.
+        config.post_hegota_time = Some(5000);
+        assert!(config.is_hegota_activated(1000)); // Hegota already active
+        assert!(!config.is_post_hegota_activated(1000)); // but post-Hegota not yet
+        assert!(!config.is_post_hegota_activated(4999));
+        assert!(config.is_post_hegota_activated(5000));
+        assert!(config.is_post_hegota_activated(5001));
 
         // get_fork returns Hegota when both Amsterdam and Hegota are active.
         let mut config = ChainConfig {
