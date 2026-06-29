@@ -117,6 +117,11 @@ enum FKVGeneratorControlMessage {
 // 64mb
 const CODE_CACHE_MAX_SIZE: u64 = 64 * 1024 * 1024;
 
+// A cache size of 256 is sufficient for RPC reads of recent blocks.
+// Initial synchronization or requests spanning hundreds of canonical
+// blocks will thrash the cache.
+const BLOCK_HASH_CACHE_SIZE: usize = 256;
+
 #[derive(Debug)]
 struct CodeCache {
     inner_cache: LruCache<H256, Code, FxBuildHasher>,
@@ -221,6 +226,12 @@ pub struct Store {
     /// those changes already affect the code hash stored in the account, and only
     /// may result in this cache having useless data.
     account_code_cache: Arc<Mutex<CodeCache>>,
+
+    /// Cache for block hashes, keyed by block number.
+    /// Stores up to 256 recently accessed entries to speed up block hash lookups.
+    /// Helps avoid repeated backend reads for frequently requested block hashes.
+    /// Uses `FxBuildHasher` for consistency with the other store caches.
+    block_hash_cache: Arc<Mutex<LruCache<BlockNumber, BlockHash, FxBuildHasher>>>,
 
     /// Cache for code metadata (code length), keyed by the bytecode hash.
     /// Uses FxHashMap for efficient lookups, much smaller than code cache.
@@ -557,7 +568,18 @@ impl Store {
             txn.commit()
         })
         .await
-        .map_err(|e| StoreError::Custom(format!("Task panicked: {}", e)))?
+        .map_err(|e| StoreError::Custom(format!("Task panicked: {}", e)))??;
+
+        // Evict the removed block from the cache so a hit can't serve a hash for
+        // a block that no longer exists. Best-effort: readers fall back to the DB.
+        match self.block_hash_cache.lock() {
+            Ok(mut cache) => {
+                cache.pop(&block_number);
+            }
+            Err(_) => tracing::warn!("block_hash_cache lock poisoned; skipping cache eviction"),
+        }
+
+        Ok(())
     }
 
     /// Obtain canonical block bodies in from..=to
@@ -1029,8 +1051,8 @@ impl Store {
         self.get_block_by_hash(block_hash).await
     }
 
-    // Get the canonical block hash for a given block number.
-    pub async fn get_canonical_block_hash(
+    /// Resolve a canonical block hash from cache
+    fn cached_canonical_block_hash(
         &self,
         block_number: BlockNumber,
     ) -> Result<Option<BlockHash>, StoreError> {
@@ -1038,6 +1060,22 @@ impl Store {
         if last.number == block_number {
             return Ok(Some(last.hash()));
         }
+        let mut cache = self
+            .block_hash_cache
+            .lock()
+            .map_err(|_| StoreError::LockError)?;
+        Ok(cache.get(&block_number).copied())
+    }
+
+    // Get the canonical block hash for a given block number.
+    pub async fn get_canonical_block_hash(
+        &self,
+        block_number: BlockNumber,
+    ) -> Result<Option<BlockHash>, StoreError> {
+        if let Some(hash) = self.cached_canonical_block_hash(block_number)? {
+            return Ok(Some(hash));
+        }
+        // Cache miss: read from database
         let backend = self.backend.clone();
         tokio::task::spawn_blocking(move || {
             backend
@@ -1161,6 +1199,15 @@ impl Store {
     ) -> Result<(), StoreError> {
         let latest = self.load_latest_block_number().await?.unwrap_or(0);
         let db = self.backend.clone();
+        let block_hash_cache = self.block_hash_cache.clone();
+
+        // Collect blocks to cache for updating after DB write
+        let blocks_to_cache: Vec<(BlockNumber, BlockHash)> = new_canonical_blocks
+            .iter()
+            .copied()
+            .chain(std::iter::once((head_number, head_hash)))
+            .collect();
+
         tokio::task::spawn_blocking(move || {
             let mut txn = db.begin_write()?;
 
@@ -1199,7 +1246,33 @@ impl Store {
                 txn.put(CHAIN_DATA, &finalized_key, &finalized.to_le_bytes())?;
             }
 
-            txn.commit()
+            txn.commit()?;
+
+            // Update block hash cache with new canonical blocks. This is
+            // best-effort: the DB write above is already committed, so a
+            // poisoned lock must not fail the fork-choice update. Readers fall
+            // back to the DB on a cache miss, so a skipped update is harmless,
+            // but we log it since a poisoned lock signals a panic elsewhere.
+            match block_hash_cache.lock() {
+                Ok(mut cache) => {
+                    // Evict reorged-out blocks before inserting the new canonical
+                    // set so a cache hit can never return a stale fork's hash. A
+                    // reorg deletes (head_number + 1)..=latest from the DB above;
+                    // iterate that range directly to avoid allocating on deep
+                    // rewinds (empty in the common, no-reorg case).
+                    for block_number in (head_number + 1)..=latest {
+                        cache.pop(&block_number);
+                    }
+                    for (block_number, block_hash) in blocks_to_cache {
+                        cache.put(block_number, block_hash);
+                    }
+                }
+                Err(_) => {
+                    tracing::warn!("block_hash_cache lock poisoned; skipping cache update")
+                }
+            }
+
+            Ok(())
         })
         .await
         .map_err(|e| StoreError::Custom(format!("Task panicked: {}", e)))?
@@ -1332,10 +1405,11 @@ impl Store {
         &self,
         block_number: BlockNumber,
     ) -> Result<Option<BlockHash>, StoreError> {
-        let last = self.latest_block_header.get();
-        if last.number == block_number {
-            return Ok(Some(last.hash()));
+        if let Some(hash) = self.cached_canonical_block_hash(block_number)? {
+            return Ok(Some(hash));
         }
+
+        // Cache miss: read from database
         let txn = self.backend.begin_read()?;
         txn.get(
             CANONICAL_BLOCK_HASHES,
@@ -1742,6 +1816,11 @@ impl Store {
             trie_update_worker_tx: trie_upd_tx,
             last_computed_flatkeyvalue: Arc::new(RwLock::new(last_written)),
             account_code_cache: Arc::new(Mutex::new(CodeCache::default())),
+            block_hash_cache: Arc::new(Mutex::new(LruCache::with_hasher(
+                std::num::NonZeroUsize::new(BLOCK_HASH_CACHE_SIZE)
+                    .expect("BLOCK_HASH_CACHE_SIZE must be non-zero"),
+                FxBuildHasher,
+            ))),
             code_metadata_cache: Arc::new(Mutex::new(rustc_hash::FxHashMap::default())),
             fcu_lock: Arc::new(tokio::sync::Mutex::new(())),
             background_threads: Default::default(),
@@ -3706,6 +3785,178 @@ pub fn read_chain_id_from_db(path: &Path) -> Option<u64> {
     {
         let _ = path;
         None
+    }
+}
+
+#[cfg(test)]
+mod block_hash_cache_tests {
+    use super::*;
+    use ethrex_common::types::{Block, BlockBody, BlockHeader};
+
+    /// Minimal canonical-chain block: only the fields the storage layer reads
+    /// here (number, parent linkage) are set; the rest default. `forkchoice_update`
+    /// looks the head header up by hash, so every block must be `add_block`ed first.
+    fn chain_block(number: BlockNumber, parent_hash: BlockHash) -> Block {
+        Block {
+            header: BlockHeader {
+                number,
+                parent_hash,
+                ..Default::default()
+            },
+            body: BlockBody::default(),
+        }
+    }
+
+    /// Build a canonical chain of `len` blocks (numbers 0..len) where each block
+    /// points at its predecessor, persist every block, and return their hashes
+    /// indexed by block number.
+    async fn add_chain(store: &Store, len: u64) -> Vec<BlockHash> {
+        let mut hashes = Vec::with_capacity(len as usize);
+        let mut parent = BlockHash::zero();
+        for number in 0..len {
+            let block = chain_block(number, parent);
+            let hash = block.hash();
+            store.add_block(block).await.unwrap();
+            hashes.push(hash);
+            parent = hash;
+        }
+        hashes
+    }
+
+    /// A reorg must evict the canonical entries it deletes from the block-hash
+    /// cache. Without eviction, `get_canonical_block_hash_sync` would return a
+    /// hash from the abandoned fork because it checks the cache before the DB.
+    #[tokio::test]
+    async fn reorg_evicts_stale_cached_block_hashes() {
+        let store = Store::new("", EngineType::InMemory).unwrap();
+
+        // Chain of blocks 0..=3, made canonical up to head 3. This populates the
+        // cache with the hashes for blocks 1, 2 and 3.
+        let hashes = add_chain(&store, 4).await;
+        let canonical: Vec<(BlockNumber, BlockHash)> =
+            (1..=3).map(|n| (n, hashes[n as usize])).collect();
+        store
+            .forkchoice_update(canonical, 3, hashes[3], None, None)
+            .await
+            .unwrap();
+
+        // Block 2 is below the head, so the `latest_block_header` short-circuit
+        // does not apply: this lookup must come from the cache (or DB) and match.
+        assert_eq!(
+            store.get_canonical_block_hash_sync(2).unwrap(),
+            Some(hashes[2]),
+            "block 2 should resolve to its canonical hash before the reorg"
+        );
+
+        // Reorg: rewind the head to block 1 along a competing fork. This deletes
+        // the canonical entries for blocks 2 and 3 from the DB.
+        let new_head = chain_block(1, hashes[0]);
+        let new_head_hash = new_head.hash();
+        store.add_block(new_head).await.unwrap();
+        store
+            .forkchoice_update(vec![(1, new_head_hash)], 1, new_head_hash, None, None)
+            .await
+            .unwrap();
+
+        // The DB no longer has a canonical entry for block 2 and head is now 1,
+        // so the only way to get the old hash back would be a stale cache hit.
+        assert_eq!(
+            store.get_canonical_block_hash_sync(2).unwrap(),
+            None,
+            "reorged-out block 2 must not be served from a stale cache entry"
+        );
+        assert_eq!(
+            store.get_canonical_block_hash_sync(3).unwrap(),
+            None,
+            "reorged-out block 3 must not be served from a stale cache entry"
+        );
+    }
+
+    /// The async `get_canonical_block_hash` and the sync variant must agree and
+    /// both go through the cache, so a reorg is reflected on both paths.
+    #[tokio::test]
+    async fn async_and_sync_canonical_lookups_agree_across_reorg() {
+        let store = Store::new("", EngineType::InMemory).unwrap();
+
+        let hashes = add_chain(&store, 4).await;
+        let canonical: Vec<(BlockNumber, BlockHash)> =
+            (1..=3).map(|n| (n, hashes[n as usize])).collect();
+        store
+            .forkchoice_update(canonical, 3, hashes[3], None, None)
+            .await
+            .unwrap();
+
+        // Both paths resolve block 2 (below the head) to its canonical hash.
+        assert_eq!(
+            store.get_canonical_block_hash(2).await.unwrap(),
+            Some(hashes[2]),
+            "async lookup should resolve block 2 before the reorg"
+        );
+        assert_eq!(
+            store.get_canonical_block_hash(2).await.unwrap(),
+            store.get_canonical_block_hash_sync(2).unwrap(),
+            "async and sync lookups must agree before the reorg"
+        );
+
+        // Reorg the head back to block 1, dropping blocks 2 and 3.
+        let new_head = chain_block(1, hashes[0]);
+        let new_head_hash = new_head.hash();
+        store.add_block(new_head).await.unwrap();
+        store
+            .forkchoice_update(vec![(1, new_head_hash)], 1, new_head_hash, None, None)
+            .await
+            .unwrap();
+
+        // The async path must also see the eviction, not a stale cache hit.
+        assert_eq!(
+            store.get_canonical_block_hash(2).await.unwrap(),
+            None,
+            "async lookup must not serve a reorged-out block from the cache"
+        );
+        assert_eq!(
+            store.get_canonical_block_hash(2).await.unwrap(),
+            store.get_canonical_block_hash_sync(2).unwrap(),
+            "async and sync lookups must agree after the reorg"
+        );
+
+        // Prove the async path actually reads the cache (not just the DB): seed a
+        // cache entry for a block that has no DB row. A pure-DB lookup would miss;
+        // a cache-aware one returns the seeded hash.
+        let cache_only = H256::from_low_u64_be(0xCAFE);
+        store.block_hash_cache.lock().unwrap().put(2, cache_only);
+        assert_eq!(
+            store.get_canonical_block_hash(2).await.unwrap(),
+            Some(cache_only),
+            "async lookup must read the block-hash cache, not only the DB"
+        );
+    }
+
+    /// `remove_block` deletes a canonical entry directly and must evict it from
+    /// the cache too, so a later lookup doesn't resolve a removed block.
+    #[tokio::test]
+    async fn remove_block_evicts_cached_hash() {
+        let store = Store::new("", EngineType::InMemory).unwrap();
+
+        let hashes = add_chain(&store, 4).await;
+        let canonical: Vec<(BlockNumber, BlockHash)> =
+            (1..=3).map(|n| (n, hashes[n as usize])).collect();
+        store
+            .forkchoice_update(canonical, 3, hashes[3], None, None)
+            .await
+            .unwrap();
+
+        // Warm the cache for block 2, then remove it.
+        assert_eq!(
+            store.get_canonical_block_hash_sync(2).unwrap(),
+            Some(hashes[2])
+        );
+        store.remove_block(2).await.unwrap();
+
+        assert_eq!(
+            store.get_canonical_block_hash_sync(2).unwrap(),
+            None,
+            "removed block 2 must not be served from a stale cache entry"
+        );
     }
 }
 
