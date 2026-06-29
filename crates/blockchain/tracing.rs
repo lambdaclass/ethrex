@@ -6,7 +6,7 @@ use std::{
 use ethrex_common::{
     H256,
     tracing::{CallTrace, OpcodeTraceResult, PrestateResult},
-    types::Block,
+    types::{Block, GenericTransaction},
 };
 use ethrex_storage::Store;
 use ethrex_vm::tracing::OpcodeTracerConfig;
@@ -216,6 +216,80 @@ impl Blockchain {
             traces.push((tx_hash, result));
         }
         Ok(traces)
+    }
+
+    /// Traces a synthetic `eth_call`-shaped request (`debug_traceCall`) with the callTracer.
+    /// The call runs against `block`'s state: if `tx_index` is `Some(i)` the state is rebuilt
+    /// up to (but excluding) the block's transaction `i`; if `None` the whole block (including
+    /// withdrawals) is executed first, matching geth's "on top of the block" default.
+    /// May need to re-execute ancestor blocks to rebuild state, up to the amount given by `reexec`.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn trace_call_calls(
+        &self,
+        block: Block,
+        tx_index: Option<usize>,
+        transaction: GenericTransaction,
+        reexec: u32,
+        timeout: Duration,
+        only_top_call: bool,
+        with_log: bool,
+    ) -> Result<CallTrace, ChainError> {
+        let mut vm = self
+            .rebuild_parent_state(block.header.parent_hash, reexec)
+            .await?;
+        vm.rerun_block(&block, tx_index)?;
+        let header = block.header;
+        timeout_trace_operation(timeout, move || {
+            vm.trace_call_calls(&header, &transaction, only_top_call, with_log)
+        })
+        .await
+    }
+
+    /// Traces a synthetic `eth_call`-shaped request (`debug_traceCall`) with the prestateTracer.
+    /// See [`Self::trace_call_calls`] for the `tx_index`/`reexec` state-rebuild semantics.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn trace_call_prestate(
+        &self,
+        block: Block,
+        tx_index: Option<usize>,
+        transaction: GenericTransaction,
+        reexec: u32,
+        timeout: Duration,
+        diff_mode: bool,
+        include_empty: bool,
+    ) -> Result<PrestateResult, ChainError> {
+        let mut vm = self
+            .rebuild_parent_state(block.header.parent_hash, reexec)
+            .await?;
+        vm.rerun_block(&block, tx_index)?;
+        let header = block.header;
+        timeout_trace_operation(timeout, move || {
+            vm.trace_call_prestate(&header, &transaction, diff_mode, include_empty)
+        })
+        .await
+    }
+
+    /// Traces a synthetic `eth_call`-shaped request (`debug_traceCall`) with the opcode
+    /// (EIP-3155) tracer. See [`Self::trace_call_calls`] for the `tx_index`/`reexec`
+    /// state-rebuild semantics.
+    pub async fn trace_call_opcodes(
+        &self,
+        block: Block,
+        tx_index: Option<usize>,
+        transaction: GenericTransaction,
+        reexec: u32,
+        timeout: Duration,
+        cfg: OpcodeTracerConfig,
+    ) -> Result<OpcodeTraceResult, ChainError> {
+        let mut vm = self
+            .rebuild_parent_state(block.header.parent_hash, reexec)
+            .await?;
+        vm.rerun_block(&block, tx_index)?;
+        let header = block.header;
+        timeout_trace_operation(timeout, move || {
+            vm.trace_call_opcodes(&header, &transaction, cfg)
+        })
+        .await
     }
 
     /// Rebuild the parent state for a block given its parent hash, returning an `Evm` instance with all changes cached
