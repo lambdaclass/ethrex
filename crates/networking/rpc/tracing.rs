@@ -429,6 +429,17 @@ impl RpcHandler for TraceCallRequest {
         // `None` traces on top of the full block (geth's default); `Some(i)` runs the
         // call against the state just before the block's transaction `i`.
         let tx_index = self.trace_config.tx_index.map(|i| i as usize);
+        // Match geth: `txIndex` must be < tx count, the sole exception being index 0 on
+        // an empty block. Reject otherwise so we don't silently trace against a bogus
+        // state (all txs applied but withdrawals skipped).
+        if let Some(i) = tx_index {
+            let tx_count = block.body.transactions.len();
+            if i >= tx_count && !(i == 0 && tx_count == 0) {
+                return Err(RpcErr::BadParams(format!(
+                    "txIndex {i} out of range for block with {tx_count} transactions"
+                )));
+            }
+        }
         let reexec = self.trace_config.base.reexec.unwrap_or(DEFAULT_REEXEC);
         let timeout = self.trace_config.base.timeout.unwrap_or(DEFAULT_TIMEOUT);
         match self.trace_config.base.tracer {
