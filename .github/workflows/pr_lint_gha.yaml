@@ -58,8 +58,9 @@ jobs:
             fi
             echo "ok  $1 -> $got"
           }
-          check "rc tag"        tag    v18.0.0-rc.1 ""     "stable|18.0.0"
-          check "final tag"     tag    v18.0.0      ""     "stable|18.0.0"
-          check "alpha pre-tag" tag    v0.0.2-alpha ""     "stable|0.0.2"
+          check "rc.1 tag"      tag    v18.0.0-rc.1 ""     "rc.1|18.0.0"
+          check "rc.2 tag"      tag    v18.0.0-rc.2 ""     "rc.2|18.0.0"
+          check "alpha pre-tag" tag    v0.0.2-alpha ""     "alpha|0.0.2"
+          check "final tag"     tag    v18.0.0      ""     "release|18.0.0"
           check "main push"     branch main         ""     "main|dev-deadbeef"
           check "PR build"      branch main         feat/x "feat/x|dev-deadbeef"
