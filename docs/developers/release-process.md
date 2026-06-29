@@ -151,11 +151,13 @@ Once the pre-release is created and you want to publish the release, go to the [
 
     ![edit tag](../img/publish_release_step_2.png)
 
-    Before finalizing, verify the tag points at the exact commit you tested (the release candidate):
+    The tag is created on the remote only once you click *Update release* (step 5) — so verify it **after** saving (an earlier `ls-remote` returns nothing for `vX.Y.Z` and falsely "matches" two empty results). The two SHAs must be identical:
 
     ```bash
-    git ls-remote origin refs/tags/vX.Y.Z refs/tags/vX.Y.Z-rc.W   # the two SHAs must match
+    git ls-remote origin refs/tags/vX.Y.Z refs/tags/vX.Y.Z-rc.W   # run after Update release; SHAs must match
     ```
+
+    If they don't match, move the tag to the tested commit before relying on any published artifacts: `git tag -f vX.Y.Z <rc-commit> && git push origin vX.Y.Z --force`.
 
     > [!WARNING]
     > The crates.io publish workflow reads `publish.yml` from `main` but checks out the **tag's commit**. If the tag points at the wrong commit (e.g. an unbumped `main`), the workflow republishes the *previous* version's crates — each is "already published", so the run goes **green while publishing nothing new**. The final `vX.Y.Z` tag must point at the same commit as the tested `vX.Y.Z-rc.W` (the release branch HEAD you will merge via PR).
