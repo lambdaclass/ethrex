@@ -18,3 +18,4 @@ mod opcode_tracer_tests;
 mod precompile_tests;
 mod prestate_tracer_tests;
 mod stack_tests;
+mod trace_call_tests;
