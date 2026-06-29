@@ -92,21 +92,9 @@ runs:
         REF_NAME: ${{ github.ref_name }}
         HEAD_REF: ${{ github.head_ref }}
         SHA: ${{ github.sha }}
-      run: |
-        # Feeds the binary's client-version channel (VERGEN_GIT_BRANCH) and the
-        # image's org.opencontainers.image.version label. Promotion retags the
-        # tested RC image, so both are baked at RC-build time -- use a clean,
-        # release-appropriate identity instead of the RC git tag, which otherwise
-        # surfaces on the promoted :latest as e.g. ethrex/v18.0.0-v18.0.0-rc.1-<sha>.
-        if [ "$REF_TYPE" = "tag" ]; then
-          channel="stable"
-          version="${REF_NAME#v}"; version="${version%%-*}"
-        else
-          channel="${HEAD_REF:-$REF_NAME}"
-          version="dev-${SHA}"
-        fi
-        echo "channel=$channel" >> "$GITHUB_OUTPUT"
-        echo "version=$version" >> "$GITHUB_OUTPUT"
+      # Derives the channel + version (see image-meta.sh for the why);
+      # unit-tested across ref types in .github/workflows/pr_lint_gha.yaml.
+      run: bash "$GITHUB_ACTION_PATH/image-meta.sh"
 
     - name: Login to DockerHub (for rate limiting)
       if: inputs.dockerhub_username != '' && inputs.dockerhub_password != ''
