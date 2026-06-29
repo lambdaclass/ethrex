@@ -619,8 +619,8 @@ impl Blockchain {
             }
         }
 
-        let (execution_result, merkleization_result, warmer_duration) =
-            std::thread::scope(|s| -> Result<_, ChainError> {
+        let (execution_result, merkleization_result, warmer_duration) = std::thread::scope(
+            |s| -> Result<_, ChainError> {
                 #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
                 let vm_type = vm.vm_type;
                 let cancelled_ref = &cancelled;
@@ -792,22 +792,33 @@ impl Blockchain {
                     .name("block_executor_merkleizer".to_string())
                     .spawn_scoped(s, move || -> MerkleResult {
                         let merkle_start_instant = Instant::now();
-                        let (account_updates_list, streaming_witness) =
-                            if let Some(prepared) = optimistic_updates {
+                        // Merkleizer behavior MUST match the channel-creation decision above:
+                        // a channel is created (and execution streams per-tx updates into it via
+                        // `send_state_transitions_tx`) in every case except `bal=Some &&
+                        // parallel_exec`. So the optimistic synthesized-updates path is valid ONLY
+                        // when no channel exists (`rx_for_merkle` is None); whenever a channel was
+                        // created we must consume it. Taking the optimistic path while a channel is
+                        // live drops `rx` mid-execution and races execution's later sends (the
+                        // post-requests send especially), surfacing as "sending on a closed channel".
+                        let (account_updates_list, streaming_witness) = match rx_for_merkle {
+                            None => {
+                                let prepared = optimistic_updates.expect(
+                                    "optimistic updates are present when the streaming channel is absent",
+                                );
                                 let list = self.handle_merkleization_bal_from_updates(
                                     prepared,
                                     parent_header_ref,
                                 )?;
                                 (list, None)
-                            } else {
-                                self.handle_merkleization(
-                                    rx_for_merkle.expect("rx is Some on non-BAL path"),
-                                    parent_header_ref,
-                                    queue_length_ref,
-                                    max_queue_length_ref,
-                                    collect_witness,
-                                )?
-                            };
+                            }
+                            Some(rx) => self.handle_merkleization(
+                                rx,
+                                parent_header_ref,
+                                queue_length_ref,
+                                max_queue_length_ref,
+                                collect_witness,
+                            )?,
+                        };
                         let merkle_end_instant = Instant::now();
                         Ok((
                             account_updates_list,
@@ -840,7 +851,8 @@ impl Blockchain {
                 #[cfg(any(not(feature = "rayon"), feature = "eip-8025"))]
                 let warmer_duration = Duration::ZERO;
                 Ok((execution_result, merkleization_result, warmer_duration))
-            })?;
+            },
+        )?;
         let (account_updates_list, streaming_witness, merkle_start_instant, merkle_end_instant) =
             merkleization_result?;
         let (execution_result, produced_bal, exec_end_instant) = execution_result?;
@@ -2795,7 +2807,7 @@ impl Blockchain {
     /// Per-block pruning only covers the head block, so stale blob txs from
     /// non-head canonical blocks leak in and are never evicted (value/nonce
     /// eviction pins low nonces). Resetting against on-chain nonces clears them.
-    pub fn remove_stale_blob_txs(&self, head_hash: BlockHash) -> Result<(), StoreError> {
+    pub async fn remove_stale_blob_txs(&self, head_hash: BlockHash) -> Result<(), StoreError> {
         let blob_txs = self.mempool.blob_txs()?;
         if blob_txs.is_empty() {
             return Ok(());
@@ -2938,7 +2950,7 @@ impl Blockchain {
         }
 
         // Check that the gas limit covers the gas needs for transaction metadata.
-        if tx.gas_limit() < mempool::transaction_intrinsic_gas(tx, &header, &config)? {
+        if tx.gas_limit() < mempool::transaction_intrinsic_gas(tx, sender, &header, &config)? {
             return Err(MempoolError::TxIntrinsicGasCostAboveLimitError);
         }
 
