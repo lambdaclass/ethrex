@@ -1117,19 +1117,3 @@ pub fn create_eth_transfer_log(from: Address, to: Address, value: U256) -> Log {
         data: Bytes::from(data.to_vec()),
     }
 }
-
-/// Creates EIP-7708 Burn log (LOG2) for ETH burns.
-/// Emitted from SYSTEM_ADDRESS when ETH is burned (e.g. via SELFDESTRUCT).
-#[inline]
-pub fn create_burn_log(address: Address, amount: U256) -> Log {
-    let mut address_topic = [0u8; 32];
-    address_topic[12..].copy_from_slice(address.as_bytes());
-
-    let data = amount.to_big_endian();
-
-    Log {
-        address: SYSTEM_ADDRESS,
-        topics: vec![BURN_EVENT_TOPIC, H256::from(address_topic)],
-        data: Bytes::from(data.to_vec()),
-    }
-}

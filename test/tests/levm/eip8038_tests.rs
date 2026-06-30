@@ -13,12 +13,12 @@
 //! EIP-8038 SSTORE table, with `Fork::Osaka` controls proving pre-Amsterdam
 //! accounting is byte-identical.
 //!
-//! Expected values follow the EELS Amsterdam reference
+//! Expected values follow the EELS Amsterdam reference at the fixture tag
+//! `tests-glamsterdam-devnet@v6.1.0`
 //! (ethereum/execution-specs `amsterdam/vm/instructions/storage.py::sstore`):
-//! a warm first change costs `COLD_STORAGE_WRITE - COLD_STORAGE_ACCESS`
-//! (= 13000 - 3000 = 10000), and a restore-to-original refunds
-//! `COLD_STORAGE_WRITE - COLD_STORAGE_ACCESS - WARM_ACCESS` (= 9900), so the
-//! warm-access baseline is folded into the surcharge rather than added on top.
+//! the first change to a slot charges the access cost (cold XOR warm) plus a
+//! flat `STORAGE_WRITE` (= 10000) surcharge, and a restore-to-original refunds
+//! the full `STORAGE_WRITE` (= 10000) charged on that first change.
 
 use bytes::Bytes;
 use ethrex_common::{
@@ -636,7 +636,7 @@ fn test_sstore_dirty_write_again_osaka_control() {
     assert_eq!(refund, 0, "dirty write to a new value yields no refund");
 }
 
-// ----- Cross-check: (x, 0, x) clear-then-restore -> net refund 9900 ---------
+// ----- Cross-check: (x, 0, x) clear-then-restore -> net refund 10000 --------
 
 #[test]
 fn test_sstore_clear_then_restore_amsterdam() {

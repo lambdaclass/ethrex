@@ -121,8 +121,6 @@ fn check_gas_limit(
 /// sync with the aggregation loop in [`execute_block_parallel`].
 pub fn check_2d_gas_allowance(
     tx: &Transaction,
-    _sender: Address,
-    _fork: Fork,
     block_gas_used_regular: u64,
     block_gas_used_state: u64,
     block_gas_limit: u64,
@@ -244,8 +242,6 @@ impl LEVM {
             if is_amsterdam {
                 check_2d_gas_allowance(
                     tx,
-                    tx_sender,
-                    Fork::Amsterdam,
                     block_regular_gas_used,
                     block_state_gas_used,
                     block.header.gas_limit,
@@ -654,8 +650,6 @@ impl LEVM {
             if is_amsterdam {
                 check_2d_gas_allowance(
                     tx,
-                    tx_sender,
-                    Fork::Amsterdam,
                     block_regular_gas_used,
                     block_state_gas_used,
                     block.header.gas_limit,
@@ -1306,14 +1300,12 @@ impl LEVM {
         let mut block_state_gas_used = 0_u64;
         let mut tx_gas_breakdowns: Vec<TxGasBreakdown> = Vec::with_capacity(exec_results.len());
         for (tx_idx, _, report, _, _, _, _) in &exec_results {
-            let (tx, tx_sender) = txs_with_sender
+            let (tx, _tx_sender) = txs_with_sender
                 .get(*tx_idx)
                 .ok_or_else(|| EvmError::Custom(format!("tx index {tx_idx} out of bounds")))?;
             if is_amsterdam {
                 check_2d_gas_allowance(
                     tx,
-                    *tx_sender,
-                    Fork::Amsterdam,
                     block_regular_gas_used,
                     block_state_gas_used,
                     header.gas_limit,
