@@ -1,0 +1,180 @@
+use std::collections::VecDeque;
+use std::sync::Arc;
+
+use ethrex_common::H256;
+use ethrex_common::types::{Block, BlockBody, BlockHash, BlockHeader, BlockNumber, Code, Receipt};
+use rustc_hash::{FxHashMap, FxHashSet};
+
+/// Block data held in memory after `newPayload` returns, before the background
+/// flusher writes it to RocksDB. One per block hash (holds reorg siblings).
+#[derive(Debug, Clone)]
+pub struct BufferedBlock {
+    pub header: BlockHeader,
+    pub body: BlockBody,
+    pub number: BlockNumber,
+    pub receipts: Vec<Receipt>,
+}
+
+/// In-memory overlay for not-yet-flushed block data. Consulted before disk by
+/// every read of headers/bodies/numbers/receipts/codes/tx-locations.
+///
+/// Held behind `Arc<RwLock<Arc<BlockDataBuffer>>>` in `Store`. Readers clone
+/// the inner `Arc` under a brief read lock and then work lock-free; the single
+/// writer mutates a clone and RCU-swaps the `Arc` in. Both critical sections
+/// are O(1) pointer operations.
+#[derive(Debug, Clone)]
+pub struct BlockDataBuffer {
+    by_hash: FxHashMap<BlockHash, Arc<BufferedBlock>>,
+    by_number: FxHashMap<BlockNumber, Vec<BlockHash>>,
+    tx_index: FxHashMap<H256, Vec<(BlockNumber, BlockHash, u64)>>,
+    /// Content-addressed code introduced by buffered blocks, with the block
+    /// number that introduced it (for eviction).
+    codes: FxHashMap<H256, (Code, BlockNumber)>,
+    /// Hashes not yet known to be on disk, oldest first.
+    unflushed: VecDeque<BlockHash>,
+    /// Highest block number whose data is durably on disk.
+    flushed_upto: BlockNumber,
+}
+
+impl Default for BlockDataBuffer {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl BlockDataBuffer {
+    pub fn new() -> Self {
+        Self {
+            by_hash: FxHashMap::default(),
+            by_number: FxHashMap::default(),
+            tx_index: FxHashMap::default(),
+            codes: FxHashMap::default(),
+            unflushed: VecDeque::new(),
+            flushed_upto: 0,
+        }
+    }
+
+    /// Takes ownership of `block` and moves its header/body into the buffer (the
+    /// caller hands ownership over the flush channel and drops it right after, so
+    /// cloning would be pure waste).
+    pub fn insert(&mut self, block: Block, receipts: Vec<Receipt>, codes: Vec<(H256, Code)>) {
+        let hash = block.hash();
+        let number = block.header.number;
+        if self.by_hash.contains_key(&hash) {
+            return; // duplicate guard
+        }
+        for (index, tx) in block.body.transactions.iter().enumerate() {
+            self.tx_index
+                .entry(tx.hash())
+                .or_default()
+                .push((number, hash, index as u64));
+        }
+        for (code_hash, code) in codes {
+            self.codes.entry(code_hash).or_insert((code, number));
+        }
+        self.by_number.entry(number).or_default().push(hash);
+        let Block { header, body } = block;
+        self.by_hash.insert(
+            hash,
+            Arc::new(BufferedBlock {
+                header,
+                body,
+                number,
+                receipts,
+            }),
+        );
+        self.unflushed.push_back(hash);
+    }
+
+    pub fn get_header(&self, hash: &BlockHash) -> Option<BlockHeader> {
+        self.by_hash.get(hash).map(|b| b.header.clone())
+    }
+
+    pub fn get_body(&self, hash: &BlockHash) -> Option<BlockBody> {
+        self.by_hash.get(hash).map(|b| b.body.clone())
+    }
+
+    pub fn get_number(&self, hash: &BlockHash) -> Option<BlockNumber> {
+        self.by_hash.get(hash).map(|b| b.number)
+    }
+
+    pub fn get_receipt(&self, hash: &BlockHash, index: u64) -> Option<Receipt> {
+        self.by_hash
+            .get(hash)
+            .and_then(|b| b.receipts.get(index as usize).cloned())
+    }
+
+    pub fn get_receipts(&self, hash: &BlockHash) -> Option<Vec<Receipt>> {
+        self.by_hash.get(hash).map(|b| b.receipts.clone())
+    }
+
+    pub fn get_code(&self, code_hash: &H256) -> Option<Code> {
+        self.codes.get(code_hash).map(|(c, _)| c.clone())
+    }
+
+    pub fn get_tx_locations(&self, tx_hash: &H256) -> Vec<(BlockNumber, BlockHash, u64)> {
+        self.tx_index.get(tx_hash).cloned().unwrap_or_default()
+    }
+
+    pub fn flushed_upto(&self) -> BlockNumber {
+        self.flushed_upto
+    }
+
+    pub fn set_flushed_upto(&mut self, n: BlockNumber) {
+        self.flushed_upto = self.flushed_upto.max(n);
+    }
+
+    /// All unflushed blocks, ascending by number (deterministic flush order).
+    pub fn flushable(&self) -> Vec<Arc<BufferedBlock>> {
+        let mut out: Vec<Arc<BufferedBlock>> = self
+            .unflushed
+            .iter()
+            .filter_map(|h| self.by_hash.get(h).cloned())
+            .collect();
+        out.sort_by_key(|b| b.number);
+        out
+    }
+
+    /// Codes introduced by the given block hashes (for the flush write tx).
+    pub fn codes_for(&self, hashes: &[BlockHash]) -> Vec<(H256, Code)> {
+        let numbers: FxHashSet<BlockNumber> =
+            hashes.iter().filter_map(|h| self.get_number(h)).collect();
+        self.codes
+            .iter()
+            .filter(|(_, (_, n))| numbers.contains(n))
+            .map(|(h, (c, _))| (*h, c.clone()))
+            .collect()
+    }
+
+    /// Drop all buffered data for blocks with number <= `new_flushed_upto` and
+    /// advance the durable marker. Called only after the disk write committed.
+    pub fn evict_flushed(&mut self, new_flushed_upto: BlockNumber) {
+        self.set_flushed_upto(new_flushed_upto);
+        let drop_hashes: Vec<BlockHash> = self
+            .by_hash
+            .iter()
+            .filter(|(_, b)| b.number <= new_flushed_upto)
+            .map(|(h, _)| *h)
+            .collect();
+        for h in &drop_hashes {
+            if let Some(b) = self.by_hash.remove(h) {
+                if let Some(v) = self.by_number.get_mut(&b.number) {
+                    v.retain(|x| x != h);
+                    if v.is_empty() {
+                        self.by_number.remove(&b.number);
+                    }
+                }
+                for tx in b.body.transactions.iter() {
+                    if let Some(v) = self.tx_index.get_mut(&tx.hash()) {
+                        v.retain(|(_, bh, _)| bh != h);
+                        if v.is_empty() {
+                            self.tx_index.remove(&tx.hash());
+                        }
+                    }
+                }
+            }
+        }
+        self.unflushed.retain(|h| self.by_hash.contains_key(h));
+        self.codes.retain(|_, (_, n)| *n > new_flushed_upto);
+    }
+}

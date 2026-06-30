@@ -53,7 +53,7 @@ impl StoreVmDatabase {
             return Err(EvmError::DB("state root missing".to_string()));
         }
         let read_session = store
-            .begin_storage_read_session()
+            .begin_storage_read_session(block_header.state_root)
             .map_err(|e| EvmError::DB(e.to_string()))?;
         Ok(StoreVmDatabase {
             store,
@@ -78,7 +78,7 @@ impl StoreVmDatabase {
             return Err(EvmError::DB("state root missing".to_string()));
         }
         let read_session = store
-            .begin_storage_read_session()
+            .begin_storage_read_session(block_header.state_root)
             .map_err(|e| EvmError::DB(e.to_string()))?;
         Ok(StoreVmDatabase {
             store,
@@ -88,6 +88,24 @@ impl StoreVmDatabase {
             state_root: block_header.state_root,
             read_session,
         })
+    }
+
+    /// Build a `StoreVmDatabase` for a given `store` without checking that the
+    /// state root exists.  For testing only — the test may not have a real
+    /// state but still needs to exercise the code-read path.
+    #[cfg(any(test, feature = "testing"))]
+    pub fn new_for_test(store: Store) -> Self {
+        let read_session = store
+            .begin_storage_read_session(H256::zero())
+            .expect("failed to open test read session");
+        StoreVmDatabase {
+            store,
+            block_hash: H256::zero(),
+            block_hash_cache: Arc::new(Mutex::new(BTreeMap::new())),
+            account_state_cache: Arc::new(RwLock::new(FxHashMap::default())),
+            state_root: H256::zero(),
+            read_session,
+        }
     }
 
     fn get_cached_account_state_entry(
