@@ -13,9 +13,9 @@ use crate::engine_rest::error::ProblemJson;
 /// Axum extractor that reads an SSZ-encoded request body into `T`.
 ///
 /// Errors map to RFC 7807 responses:
-/// - missing or wrong Content-Type → 415
-/// - body exceeds the configured DefaultBodyLimit → 413
-/// - SSZ decode failure → 400
+/// - missing or wrong Content-Type → 415 unsupported-media-type
+/// - body exceeds the configured DefaultBodyLimit → 413 request-too-large
+/// - SSZ decode failure → 400 ssz-decode-error
 pub struct Ssz<T>(pub T);
 
 impl<T, S> FromRequest<S> for Ssz<T>
@@ -49,7 +49,7 @@ where
             Ok(b) => b,
             Err(err) => {
                 if is_length_limit_error(&err) {
-                    return Err(ProblemJson::payload_too_large(
+                    return Err(ProblemJson::request_too_large(
                         "request body exceeds configured limit",
                     ));
                 }
@@ -61,16 +61,17 @@ where
 
         T::from_ssz_bytes(&bytes)
             .map(Ssz)
-            .map_err(|err| ProblemJson::bad_request(&format!("SSZ decode failed: {err}")))
+            .map_err(|err| ProblemJson::ssz_decode_error(&format!("SSZ decode failed: {err}")))
     }
 }
 
 /// Decode an SSZ-encoded byte slice into `T`, mapping decode failures to
-/// `ProblemJson::bad_request(...)`. Use when the target type isn't statically
-/// known at the extractor level (i.e., it depends on a path parameter).
+/// `ProblemJson::ssz_decode_error(...)`. Use when the target type isn't
+/// statically known at the extractor level (i.e., it depends on a path/header
+/// parameter).
 pub fn decode_ssz<T: libssz::SszDecode>(bytes: &[u8]) -> Result<T, ProblemJson> {
     T::from_ssz_bytes(bytes)
-        .map_err(|err| ProblemJson::bad_request(&format!("SSZ decode failed: {err}")))
+        .map_err(|err| ProblemJson::ssz_decode_error(&format!("SSZ decode failed: {err}")))
 }
 
 /// Walk the error source chain to detect a `LengthLimitError`.

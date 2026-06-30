@@ -1,4 +1,5 @@
-//! POST /{fork}/forkchoice — forkchoice update + optional payload build.
+//! POST /forkchoice — forkchoice update + optional payload build. The fork is
+//! selected by the `Eth-Execution-Version` request header.
 
 use axum::RequestExt;
 use axum::extract::State;
@@ -15,7 +16,7 @@ use crate::engine::fork_choice::{
 };
 use crate::engine_rest::error::ProblemJson;
 use crate::engine_rest::extractors::{decode_ssz, is_length_limit_error};
-use crate::engine_rest::fork_path::ForkPath;
+use crate::engine_rest::fork_header::ExecutionVersion;
 use crate::engine_rest::handlers::helpers::check_content_type;
 use crate::engine_rest::responses::SszBody;
 use crate::engine_rest::types::common::{
@@ -40,7 +41,7 @@ enum AttrsInternal {
 }
 
 pub async fn forkchoice_update(
-    ForkPath(fork): ForkPath,
+    ExecutionVersion(fork): ExecutionVersion,
     State(ctx): State<RpcApiContext>,
     req: axum::extract::Request,
 ) -> Response {
@@ -54,7 +55,7 @@ pub async fn forkchoice_update(
         Ok(b) => b,
         Err(e) => {
             if is_length_limit_error(&e) {
-                return ProblemJson::payload_too_large("request body exceeds configured limit")
+                return ProblemJson::request_too_large("request body exceeds configured limit")
                     .into_response();
             }
             return ProblemJson::bad_request(&format!("failed to read body: {e}")).into_response();
@@ -118,9 +119,9 @@ pub async fn forkchoice_update(
                 .map(|a| AttrsInternal::V4(amsterdam_to_v4(a)));
             run_forkchoice(update.state, attrs, ctx, 4).await
         }
-        // Unreachable: ForkPath's parse_fork_segment rejects all non-spec forks
-        // with 400 before the handler runs.
-        _ => unreachable!("ForkPath extractor restricts to the 6 spec forks"),
+        // Unreachable: the ExecutionVersion header extractor rejects all
+        // non-spec forks with 400 before the handler runs.
+        _ => unreachable!("ExecutionVersion extractor restricts to the 6 spec forks"),
     }
 }
 
@@ -183,9 +184,9 @@ fn amsterdam_to_v4(
     a: crate::engine_rest::types::amsterdam::PayloadAttributes,
 ) -> PayloadAttributesV4 {
     // `slot_number` is forwarded into the built block header (it is RLP-encoded
-    // into the header and thus part of the block hash). `target_gas_limit` is
-    // decoded for #793 spec compliance but ignored — ethrex's payload builder
-    // has no gas-limit-targeting support yet.
+    // into the header and thus part of the block hash). `target_gas_limit` is the
+    // CL-supplied target the payload builder uses as the gas-limit ceiling
+    // (execution-apis #793/#796; mirrors the JSON-RPC forkchoiceUpdatedV4 path).
     PayloadAttributesV4 {
         timestamp: a.timestamp,
         prev_randao: H256::from(a.prev_randao),
@@ -193,6 +194,7 @@ fn amsterdam_to_v4(
         withdrawals: Some(withdrawals_from_ssz(&a.withdrawals)),
         parent_beacon_block_root: Some(H256::from(a.parent_beacon_block_root)),
         slot_number: a.slot_number,
+        target_gas_limit: a.target_gas_limit,
     }
 }
 
@@ -207,16 +209,16 @@ fn amsterdam_to_v4(
 fn rpc_err_to_problem(err: RpcErr) -> ProblemJson {
     match err {
         RpcErr::InvalidForkChoiceState(msg) => {
-            ProblemJson::unprocessable_entity(&format!("invalid forkchoice state: {msg}"))
+            ProblemJson::invalid_forkchoice(&format!("invalid forkchoice state: {msg}"))
         }
         RpcErr::InvalidPayloadAttributes(msg) => {
-            ProblemJson::unprocessable_entity(&format!("invalid payload attributes: {msg}"))
+            ProblemJson::invalid_attributes(&format!("invalid payload attributes: {msg}"))
         }
         RpcErr::TooDeepReorg(msg) => {
-            ProblemJson::conflict(&format!("reorg deeper than allowed: {msg}"))
+            ProblemJson::reorg_too_deep(&format!("reorg deeper than allowed: {msg}"))
         }
         RpcErr::UnsupportedFork(msg) => {
-            ProblemJson::bad_request(&format!("unsupported fork: {msg}"))
+            ProblemJson::unsupported_fork(&format!("unsupported fork: {msg}"))
         }
         RpcErr::BadParams(msg) | RpcErr::WrongParam(msg) | RpcErr::MissingParam(msg) => {
             ProblemJson::bad_request(&msg)

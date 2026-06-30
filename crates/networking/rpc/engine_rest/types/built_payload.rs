@@ -1,4 +1,4 @@
-//! SSZ `BuiltPayload` containers for `GET /{fork}/payloads/{id}` (replaces
+//! SSZ `BuiltPayload` containers for `GET /payloads/{id}` (replaces
 //! `engine_getPayload`). Per-fork shapes mirror `engine_getPayloadV1..V6` and the
 //! consensoor CL. Field order per refactor.md: `payload`, `block_value`,
 //! `blobs_bundle`, `execution_requests`, `should_override_builder`.

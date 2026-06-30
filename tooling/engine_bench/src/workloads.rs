@@ -222,7 +222,7 @@ async fn run_newpayload_ssz(
     token: &str,
     ctx: &WorkloadContext,
 ) -> Result<IterationRecord> {
-    let url = format!("{url_base}/engine/v2/{}/payloads", ctx.fork.path());
+    let url = format!("{url_base}/engine/v1/payloads");
     let (body, t0) = match ctx.fork {
         ForkArg::Paris => {
             let envelope =
@@ -260,7 +260,15 @@ async fn run_newpayload_ssz(
             (envelope.to_ssz(), t0)
         }
     };
-    let resp = rest_ssz::call(client, Method::POST, &url, token, body).await?;
+    let resp = rest_ssz::call(
+        client,
+        Method::POST,
+        &url,
+        token,
+        Some(ctx.fork.path()),
+        body,
+    )
+    .await?;
     let wall_time_us = t0.elapsed().as_micros();
     Ok(IterationRecord {
         fork: ctx.fork,
@@ -313,13 +321,17 @@ async fn run_getpayload_ssz(
     token: &str,
     ctx: &WorkloadContext,
 ) -> Result<IterationRecord> {
-    let url = format!(
-        "{url_base}/engine/v2/{}/payloads/{}",
-        ctx.fork.path(),
-        ctx.payload_id
-    );
+    let url = format!("{url_base}/engine/v1/payloads/{}", ctx.payload_id);
     let t0 = Instant::now();
-    let resp = rest_ssz::call(client, Method::GET, &url, token, vec![]).await?;
+    let resp = rest_ssz::call(
+        client,
+        Method::GET,
+        &url,
+        token,
+        Some(ctx.fork.path()),
+        vec![],
+    )
+    .await?;
     let wall_time_us = t0.elapsed().as_micros();
     Ok(IterationRecord {
         fork: ctx.fork,
@@ -377,10 +389,11 @@ async fn run_blobs_ssz(
     let req: VersionedHashList = hashes_arr
         .try_into()
         .expect("blob hashes capped at MAX_BLOBS_REQUEST in setup");
-    let url = format!("{url_base}/engine/v2/blobs/v{}", ctx.blobs_version);
+    let url = format!("{url_base}/engine/v1/blobs/v{}", ctx.blobs_version);
     let t0 = Instant::now();
     let body = req.to_ssz();
-    let resp = rest_ssz::call(client, Method::POST, &url, token, body).await?;
+    // Blob endpoints are unscoped — no Eth-Execution-Version header.
+    let resp = rest_ssz::call(client, Method::POST, &url, token, None, body).await?;
     let wall_time_us = t0.elapsed().as_micros();
     // 204 = all-or-nothing miss (v2): zero hits by definition.
     // `BlobsV2Response` and `BlobsV3Response` are the same SSZ type.
@@ -456,13 +469,19 @@ async fn run_bodies_ssz(
         BodiesResponseAmsterdam, BodiesResponseParis, BodiesResponseShanghai,
     };
     let url = format!(
-        "{url_base}/engine/v2/{}/bodies?from={}&count={}",
-        ctx.fork.path(),
-        ctx.bodies_from,
-        ctx.bodies_count
+        "{url_base}/engine/v1/bodies?from={}&count={}",
+        ctx.bodies_from, ctx.bodies_count
     );
     let t0 = Instant::now();
-    let resp = rest_ssz::call(client, Method::GET, &url, token, vec![]).await?;
+    let resp = rest_ssz::call(
+        client,
+        Method::GET,
+        &url,
+        token,
+        Some(ctx.fork.path()),
+        vec![],
+    )
+    .await?;
     let wall_time_us = t0.elapsed().as_micros();
     let hits = if resp.status == 200 {
         match ctx.fork {

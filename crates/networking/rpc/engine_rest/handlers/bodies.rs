@@ -1,4 +1,5 @@
-//! /{fork}/bodies/* — body retrieval by hash and by range.
+//! /bodies/* — body retrieval by hash and by range. The fork is selected by
+//! the `Eth-Execution-Version` request header.
 
 use std::sync::Arc;
 
@@ -12,7 +13,7 @@ use serde::Deserialize;
 
 use crate::engine_rest::error::ProblemJson;
 use crate::engine_rest::extractors::Ssz;
-use crate::engine_rest::fork_path::ForkPath;
+use crate::engine_rest::fork_header::ExecutionVersion;
 use crate::engine_rest::handlers::capabilities::BODIES_MAX_COUNT;
 use crate::engine_rest::responses::SszBody;
 use crate::engine_rest::types::bodies::{
@@ -26,13 +27,13 @@ use crate::rpc::RpcApiContext;
 // ── Handlers ──────────────────────────────────────────────────────────────────
 
 pub async fn bodies_by_hash(
-    ForkPath(fork): ForkPath,
+    ExecutionVersion(fork): ExecutionVersion,
     State(ctx): State<RpcApiContext>,
     Ssz(req): Ssz<BodiesByHashRequest>,
 ) -> Response {
     let hashes = &req.block_hashes;
     if hashes.len() > BODIES_MAX_COUNT as usize {
-        return ProblemJson::payload_too_large(&format!(
+        return ProblemJson::request_too_large(&format!(
             "request exceeds BODIES_MAX_COUNT ({BODIES_MAX_COUNT})"
         ))
         .into_response();
@@ -56,7 +57,7 @@ pub struct BodiesRangeParams {
 }
 
 pub async fn bodies_by_range(
-    ForkPath(fork): ForkPath,
+    ExecutionVersion(fork): ExecutionVersion,
     State(ctx): State<RpcApiContext>,
     Query(params): Query<BodiesRangeParams>,
 ) -> Response {
@@ -71,7 +72,7 @@ pub async fn bodies_by_range(
         None => return ProblemJson::bad_request("missing count query parameter").into_response(),
     };
     if count > BODIES_MAX_COUNT as u64 {
-        return ProblemJson::payload_too_large(&format!(
+        return ProblemJson::request_too_large(&format!(
             "count exceeds BODIES_MAX_COUNT ({BODIES_MAX_COUNT})"
         ))
         .into_response();
@@ -210,8 +211,9 @@ async fn build_bodies_response(
                 Err(_) => bodies_overflow().into_response(),
             }
         }
-        // Unreachable: ForkPath restricts to the 6 spec forks before the handler runs.
-        _ => unreachable!("ForkPath restricts to spec forks"),
+        // Unreachable: the ExecutionVersion header extractor restricts to the 6
+        // spec forks before the handler runs.
+        _ => unreachable!("ExecutionVersion extractor restricts to spec forks"),
     }
 }
 

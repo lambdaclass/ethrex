@@ -609,13 +609,23 @@ pub async fn start_api(
     // a CL using only the REST/SSZ transport doesn't continuously trip the
     // "No messages from the consensus layer" warning (mirrors authrpc_handler for
     // the JSON-RPC path).
+    //
+    // The reset MUST fire only for *authenticated* requests. The REST router
+    // applies JWT auth internally and rejects missing/invalid tokens with 401, so
+    // this layer (which wraps the router) runs the handler first and resets the
+    // timer only when the response is not 401. Resetting before auth would let any
+    // local process that can reach the auth port keep the watchdog quiet with
+    // unauthenticated or forged requests.
     let engine_rest_router =
         crate::engine_rest::router(service_context.clone()).layer(axum::middleware::from_fn(
             move |req: axum::extract::Request, next: axum::middleware::Next| {
                 let timer = rest_timer_sender.clone();
                 async move {
-                    let _ = timer.send(());
-                    next.run(req).await
+                    let response = next.run(req).await;
+                    if response.status() != StatusCode::UNAUTHORIZED {
+                        let _ = timer.send(());
+                    }
+                    response
                 }
             },
         ));
@@ -623,9 +633,10 @@ pub async fn start_api(
     let authrpc_router = Router::new()
         .route("/", post(authrpc_handler))
         .with_state(service_context.clone())
-        // Engine REST/SSZ (#793) is scoped under /engine/v2/... per refactor.md;
-        // the CL calls /engine/v2/{fork}/payloads, /engine/v2/capabilities, etc.
-        .nest("/engine/v2", engine_rest_router)
+        // Engine REST/SSZ (#793) is scoped under /engine/v1/... per refactor.md;
+        // the CL calls /engine/v1/payloads (fork in the Eth-Execution-Version
+        // header), /engine/v1/capabilities, etc.
+        .nest("/engine/v1", engine_rest_router)
         // Bump the body limit for the engine API to 256MB
         // This is needed to receive payloads bigger than the default limit of 2MB
         .layer(DefaultBodyLimit::max(256 * 1024 * 1024));

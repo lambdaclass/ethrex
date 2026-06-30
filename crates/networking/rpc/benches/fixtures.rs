@@ -296,7 +296,7 @@ pub fn amsterdam_payload_json(
 
 // ── newPayload fixtures (SSZ side) ───────────────────────────────────────────
 
-/// `POST /engine/v2/paris/payloads` body.
+/// `POST /engine/v1/payloads` body (Eth-Execution-Version: paris).
 #[allow(dead_code)]
 pub fn paris_newpayload_ssz(seed: u64, tx_count: usize) -> SszParisEnvelope {
     let f = build_raw_fields(seed, tx_count);
@@ -305,7 +305,7 @@ pub fn paris_newpayload_ssz(seed: u64, tx_count: usize) -> SszParisEnvelope {
     }
 }
 
-/// `POST /engine/v2/shanghai/payloads` body.
+/// `POST /engine/v1/payloads` body (Eth-Execution-Version: shanghai).
 #[allow(dead_code)]
 pub fn shanghai_newpayload_ssz(seed: u64, tx_count: usize) -> SszShanghaiEnvelope {
     let f = build_raw_fields(seed, tx_count);
@@ -314,7 +314,7 @@ pub fn shanghai_newpayload_ssz(seed: u64, tx_count: usize) -> SszShanghaiEnvelop
     }
 }
 
-/// `POST /engine/v2/cancun/payloads` body.
+/// `POST /engine/v1/payloads` body (Eth-Execution-Version: cancun).
 #[allow(dead_code)]
 pub fn cancun_newpayload_ssz(seed: u64, tx_count: usize) -> SszCancunEnvelope {
     let f = build_raw_fields(seed, tx_count);
@@ -324,7 +324,7 @@ pub fn cancun_newpayload_ssz(seed: u64, tx_count: usize) -> SszCancunEnvelope {
     }
 }
 
-/// `POST /engine/v2/prague/payloads` and `/osaka/payloads` body (same shape;
+/// `POST /engine/v1/payloads` body for Eth-Execution-Version prague and osaka (same shape;
 /// Osaka re-exports the Prague envelope).
 #[allow(dead_code)]
 pub fn prague_newpayload_ssz(seed: u64, tx_count: usize) -> SszPragueEnvelope {
@@ -336,7 +336,7 @@ pub fn prague_newpayload_ssz(seed: u64, tx_count: usize) -> SszPragueEnvelope {
     }
 }
 
-/// `POST /engine/v2/amsterdam/payloads` body. The BAL rides as the same RLP
+/// `POST /engine/v1/payloads` body (Eth-Execution-Version: amsterdam). The BAL rides as the same RLP
 /// bytes the JSON hex field carries.
 #[allow(dead_code)]
 pub fn amsterdam_newpayload_ssz(
@@ -706,7 +706,7 @@ pub fn getpayload_response_json_paris(seed: u64, tx_count: usize) -> JsonExecuti
     payload_json(seed, tx_count, PayloadEra::Paris)
 }
 
-/// SSZ-side `GET /paris/payloads/{id}` response.
+/// SSZ-side `GET /engine/v1/payloads/{id}` response (Eth-Execution-Version: paris).
 #[allow(dead_code)]
 pub fn getpayload_response_ssz_paris(seed: u64, tx_count: usize) -> BuiltPayloadParis {
     let f = build_raw_fields(seed, tx_count);
@@ -730,7 +730,7 @@ pub fn getpayload_response_json_shanghai(seed: u64, tx_count: usize) -> Executio
     }
 }
 
-/// SSZ-side `GET /shanghai/payloads/{id}` response.
+/// SSZ-side `GET /engine/v1/payloads/{id}` response (Eth-Execution-Version: shanghai).
 #[allow(dead_code)]
 pub fn getpayload_response_ssz_shanghai(seed: u64, tx_count: usize) -> BuiltPayloadShanghai {
     let f = build_raw_fields(seed, tx_count);
@@ -757,7 +757,7 @@ pub fn getpayload_response_json_cancun(
     }
 }
 
-/// SSZ-side `GET /cancun/payloads/{id}` response.
+/// SSZ-side `GET /engine/v1/payloads/{id}` response (Eth-Execution-Version: cancun).
 #[allow(dead_code)]
 pub fn getpayload_response_ssz_cancun(
     seed: u64,
@@ -790,7 +790,7 @@ pub fn getpayload_response_json_prague(
     }
 }
 
-/// SSZ-side `GET /prague/payloads/{id}` response.
+/// SSZ-side `GET /engine/v1/payloads/{id}` response (Eth-Execution-Version: prague).
 #[allow(dead_code)]
 pub fn getpayload_response_ssz_prague(
     seed: u64,
@@ -829,7 +829,7 @@ pub fn getpayload_response_json_osaka(
     }
 }
 
-/// SSZ-side `GET /osaka/payloads/{id}` response.
+/// SSZ-side `GET /engine/v1/payloads/{id}` response (Eth-Execution-Version: osaka).
 #[allow(dead_code)]
 pub fn getpayload_response_ssz_osaka(
     seed: u64,
@@ -877,7 +877,7 @@ pub fn getpayload_response_json_amsterdam(
     }
 }
 
-/// SSZ-side `GET /amsterdam/payloads/{id}` response.
+/// SSZ-side `GET /engine/v1/payloads/{id}` response (Eth-Execution-Version: amsterdam).
 #[allow(dead_code)]
 pub fn getpayload_response_ssz_amsterdam(
     seed: u64,
@@ -928,7 +928,7 @@ pub fn bodies_range_json(
         .collect()
 }
 
-/// SSZ-side `GET /paris/bodies` response.
+/// SSZ-side `GET /engine/v1/bodies` response (Eth-Execution-Version: paris).
 #[allow(dead_code)]
 pub fn bodies_range_ssz_paris(
     seed: u64,
@@ -1001,7 +1001,7 @@ pub fn bodies_range_json_amsterdam(
         .collect()
 }
 
-/// SSZ-side Amsterdam bodies response (`GET /amsterdam/bodies`).
+/// SSZ-side Amsterdam bodies response (`GET /engine/v1/bodies`, Eth-Execution-Version: amsterdam).
 #[allow(dead_code)]
 pub fn bodies_range_ssz_amsterdam(
     seed: u64,

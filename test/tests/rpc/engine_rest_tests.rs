@@ -44,9 +44,12 @@ mod problem_json_tests {
 
         let body_bytes = response.into_body().collect().await.unwrap().to_bytes();
         let v: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
-        assert_eq!(v["type"], "about:blank");
-        assert_eq!(v["title"], "Not Implemented");
-        assert_eq!(v["status"], 501);
+        assert_eq!(v["type"], "/engine-api/errors/not-implemented");
+        // Per the latest spec (execution-apis #793) the body carries only `type`
+        // and `detail`; `title`/`status` are no longer emitted (the status code
+        // travels in the HTTP status line).
+        assert!(v.get("title").is_none());
+        assert!(v.get("status").is_none());
         assert_eq!(
             v["detail"],
             "Endpoint registered but handler pending sub-project 2/3"
@@ -63,23 +66,24 @@ mod problem_json_tests {
     #[tokio::test]
     async fn problem_json_omits_optional_fields_when_none() {
         let problem = ProblemJson {
-            typ: "about:blank".into(),
-            title: "Test".into(),
+            typ: "/engine-api/errors/invalid-request".into(),
             status: 400,
             detail: None,
-            instance: None,
         };
         let response = problem.into_response();
         let body_bytes = response.into_body().collect().await.unwrap().to_bytes();
         let s = String::from_utf8(body_bytes.to_vec()).unwrap();
+        assert!(s.contains("type"));
+        // `detail` is omitted when None; `status`/`title`/`instance` are never
+        // serialized in the spec error shape.
         assert!(!s.contains("detail"));
-        assert!(!s.contains("instance"));
+        assert!(!s.contains("status"));
     }
 }
 
-mod fork_path_tests {
+mod fork_header_tests {
     use ethrex_common::types::Fork;
-    use ethrex_rpc::engine_rest::fork_path::parse_fork_segment;
+    use ethrex_rpc::engine_rest::fork_header::parse_fork_segment;
 
     #[test]
     fn parse_supported_forks() {
@@ -109,26 +113,55 @@ mod fork_path_tests {
     async fn extractor_rejects_unknown_fork_with_400() {
         use axum::Router;
         use axum::routing::post;
-        use ethrex_rpc::engine_rest::fork_path::ForkPath;
+        use ethrex_rpc::engine_rest::fork_header::ExecutionVersion;
         use http_body_util::BodyExt;
         use tower::ServiceExt;
 
-        async fn handler(ForkPath(_fork): ForkPath) -> &'static str {
+        async fn handler(ExecutionVersion(_fork): ExecutionVersion) -> &'static str {
             "ok"
         }
 
-        let app: Router<()> = Router::new().route("/{fork}/payloads", post(handler));
+        let app: Router<()> = Router::new().route("/payloads", post(handler));
 
+        // A fork value not in the engine REST table → 400 unsupported-fork.
         let request = axum::http::Request::builder()
             .method("POST")
-            .uri("/frontier/payloads")
+            .uri("/payloads")
+            .header("eth-execution-version", "frontier")
             .body(axum::body::Body::empty())
             .unwrap();
         let resp = app.oneshot(request).await.unwrap();
         assert_eq!(resp.status(), axum::http::StatusCode::BAD_REQUEST);
         let body = resp.into_body().collect().await.unwrap().to_bytes();
         let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
-        assert_eq!(v["status"], 400);
+        assert_eq!(v["type"], "/engine-api/errors/unsupported-fork");
+    }
+
+    #[tokio::test]
+    async fn extractor_rejects_missing_fork_header_with_400() {
+        use axum::Router;
+        use axum::routing::post;
+        use ethrex_rpc::engine_rest::fork_header::ExecutionVersion;
+        use http_body_util::BodyExt;
+        use tower::ServiceExt;
+
+        async fn handler(ExecutionVersion(_fork): ExecutionVersion) -> &'static str {
+            "ok"
+        }
+
+        let app: Router<()> = Router::new().route("/payloads", post(handler));
+
+        // No Eth-Execution-Version header on a fork-scoped endpoint → 400.
+        let request = axum::http::Request::builder()
+            .method("POST")
+            .uri("/payloads")
+            .body(axum::body::Body::empty())
+            .unwrap();
+        let resp = app.oneshot(request).await.unwrap();
+        assert_eq!(resp.status(), axum::http::StatusCode::BAD_REQUEST);
+        let body = resp.into_body().collect().await.unwrap().to_bytes();
+        let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(v["type"], "/engine-api/errors/unsupported-fork");
     }
 }
 
@@ -435,7 +468,8 @@ mod router_tests {
         let token = make_jwt(&secret);
         let req = axum::http::Request::builder()
             .method("POST")
-            .uri("/cancun/payloads")
+            .uri("/payloads")
+            .header("eth-execution-version", "cancun")
             .header("authorization", format!("Bearer {token}"))
             .body(axum::body::Body::empty())
             .unwrap();
@@ -449,7 +483,7 @@ mod router_tests {
         for (method, uri) in [
             ("GET", "/identity"),
             ("GET", "/capabilities"),
-            ("POST", "/cancun/payloads"),
+            ("POST", "/payloads"),
             ("POST", "/blobs/v1"),
         ] {
             let app = app.clone();
@@ -1468,7 +1502,7 @@ mod submit_payload_tests {
     }
 
     /// On the test genesis Osaka is active from timestamp 0, so a Cancun-shaped
-    /// payload (timestamp 0 → Osaka era) submitted to `/cancun/payloads` is
+    /// payload (timestamp 0 → Osaka era) submitted with Eth-Execution-Version: cancun is
     /// misrouted. The fork-boundary check (mirroring JSON-RPC NewPayloadV3
     /// `validate_fork(Cancun)`) rejects it with 400 instead of letting it fall
     /// through to an INVALID block-hash mismatch.
@@ -1485,7 +1519,8 @@ mod submit_payload_tests {
         let body = env.to_ssz();
         let req = axum::http::Request::builder()
             .method("POST")
-            .uri("/cancun/payloads")
+            .uri("/payloads")
+            .header("eth-execution-version", "cancun")
             .header("authorization", format!("Bearer {token}"))
             .header("content-type", "application/octet-stream")
             .body(axum::body::Body::from(body))
@@ -1509,7 +1544,8 @@ mod submit_payload_tests {
 
         let req = axum::http::Request::builder()
             .method("POST")
-            .uri("/cancun/payloads")
+            .uri("/payloads")
+            .header("eth-execution-version", "cancun")
             .header("authorization", format!("Bearer {token}"))
             .header("content-type", "application/octet-stream")
             .body(axum::body::Body::from(vec![0xFFu8; 10])) // not a valid envelope
@@ -1543,7 +1579,8 @@ mod get_payload_tests {
 
         let req = axum::http::Request::builder()
             .method("GET")
-            .uri("/cancun/payloads/0x0102030405060708")
+            .uri("/payloads/0x0102030405060708")
+            .header("eth-execution-version", "cancun")
             .header("authorization", format!("Bearer {token}"))
             .body(axum::body::Body::empty())
             .unwrap();
@@ -1551,7 +1588,7 @@ mod get_payload_tests {
         assert_eq!(resp.status(), 404);
         let body = resp.into_body().collect().await.unwrap().to_bytes();
         let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
-        assert_eq!(v["status"], 404);
+        assert_eq!(v["type"], "/engine-api/errors/unknown-payload");
     }
 
     #[tokio::test]
@@ -1565,7 +1602,8 @@ mod get_payload_tests {
 
         let req = axum::http::Request::builder()
             .method("GET")
-            .uri("/cancun/payloads/not-hex")
+            .uri("/payloads/not-hex")
+            .header("eth-execution-version", "cancun")
             .header("authorization", format!("Bearer {token}"))
             .body(axum::body::Body::empty())
             .unwrap();
@@ -1608,7 +1646,8 @@ mod forkchoice_handler_tests {
         let body = update.to_ssz();
         let req = axum::http::Request::builder()
             .method("POST")
-            .uri("/cancun/forkchoice")
+            .uri("/forkchoice")
+            .header("eth-execution-version", "cancun")
             .header("authorization", format!("Bearer {token}"))
             .header("content-type", "application/octet-stream")
             .body(axum::body::Body::from(body))
@@ -1636,7 +1675,8 @@ mod forkchoice_handler_tests {
 
         let req = axum::http::Request::builder()
             .method("POST")
-            .uri("/cancun/forkchoice")
+            .uri("/forkchoice")
+            .header("eth-execution-version", "cancun")
             .header("authorization", format!("Bearer {token}"))
             .header("content-type", "application/octet-stream")
             .body(axum::body::Body::from(vec![0xFFu8; 10]))
@@ -1733,7 +1773,8 @@ mod forkchoice_handler_tests {
         let body = update.to_ssz();
         let req = axum::http::Request::builder()
             .method("POST")
-            .uri("/cancun/forkchoice")
+            .uri("/forkchoice")
+            .header("eth-execution-version", "cancun")
             .header("authorization", format!("Bearer {token}"))
             .header("content-type", "application/octet-stream")
             .body(axum::body::Body::from(body))
@@ -1795,7 +1836,7 @@ mod end_to_end_tests {
             .unwrap()
             .unwrap();
 
-        // POST /cancun/forkchoice with payload_attributes.
+        // POST /forkchoice (Eth-Execution-Version: cancun) with payload_attributes.
         let update = CancunForkchoiceUpdate {
             state: ForkchoiceState {
                 head_block_hash: head_hash.0,
@@ -1813,7 +1854,8 @@ mod end_to_end_tests {
         let body = update.to_ssz();
         let req = axum::http::Request::builder()
             .method("POST")
-            .uri("/cancun/forkchoice")
+            .uri("/forkchoice")
+            .header("eth-execution-version", "cancun")
             .header("authorization", format!("Bearer {token}"))
             .header("content-type", "application/octet-stream")
             .body(axum::body::Body::from(body))
@@ -1826,10 +1868,12 @@ mod end_to_end_tests {
             .payload_id()
             .expect("payload_id should be Some when attrs provided");
 
-        // GET /cancun/payloads/{id} — verify the SSZ BuiltPayload decodes.
+        // GET /payloads/{id} (Eth-Execution-Version: cancun) — verify the SSZ
+        // BuiltPayload decodes.
         let req = axum::http::Request::builder()
             .method("GET")
-            .uri(format!("/cancun/payloads/{}", payload_id.to_hex_string()))
+            .uri(format!("/payloads/{}", payload_id.to_hex_string()))
+            .header("eth-execution-version", "cancun")
             .header("authorization", format!("Bearer {token}"))
             .body(axum::body::Body::empty())
             .unwrap();
@@ -1983,7 +2027,8 @@ mod bodies_by_hash_tests {
 
         let req = axum::http::Request::builder()
             .method("POST")
-            .uri("/cancun/bodies/hash")
+            .uri("/bodies/hash")
+            .header("eth-execution-version", "cancun")
             .header("authorization", format!("Bearer {token}"))
             .header("content-type", "application/octet-stream")
             .body(axum::body::Body::from(body))
@@ -2017,7 +2062,8 @@ mod bodies_by_hash_tests {
 
         let req = axum::http::Request::builder()
             .method("POST")
-            .uri("/cancun/bodies/hash")
+            .uri("/bodies/hash")
+            .header("eth-execution-version", "cancun")
             .header("authorization", format!("Bearer {token}"))
             // NO content-type
             .body(axum::body::Body::from(body))
@@ -2042,7 +2088,8 @@ mod bodies_by_hash_tests {
 
         let req = axum::http::Request::builder()
             .method("POST")
-            .uri("/frontier/bodies/hash")
+            .uri("/bodies/hash")
+            .header("eth-execution-version", "frontier")
             .header("authorization", format!("Bearer {token}"))
             .header("content-type", "application/octet-stream")
             .body(axum::body::Body::from(body))
@@ -2074,7 +2121,8 @@ mod bodies_by_range_tests {
 
         let req = axum::http::Request::builder()
             .method("GET")
-            .uri("/cancun/bodies?from=1&count=3")
+            .uri("/bodies?from=1&count=3")
+            .header("eth-execution-version", "cancun")
             .header("authorization", format!("Bearer {token}"))
             .body(axum::body::Body::empty())
             .unwrap();
@@ -2097,7 +2145,8 @@ mod bodies_by_range_tests {
 
         let req = axum::http::Request::builder()
             .method("GET")
-            .uri("/cancun/bodies") // no from/count
+            .uri("/bodies") // no from/count
+            .header("eth-execution-version", "cancun")
             .header("authorization", format!("Bearer {token}"))
             .body(axum::body::Body::empty())
             .unwrap();
@@ -2116,7 +2165,8 @@ mod bodies_by_range_tests {
 
         let req = axum::http::Request::builder()
             .method("GET")
-            .uri("/cancun/bodies?from=1&count=0")
+            .uri("/bodies?from=1&count=0")
+            .header("eth-execution-version", "cancun")
             .header("authorization", format!("Bearer {token}"))
             .body(axum::body::Body::empty())
             .unwrap();
@@ -2135,7 +2185,8 @@ mod bodies_by_range_tests {
 
         let req = axum::http::Request::builder()
             .method("GET")
-            .uri("/cancun/bodies?from=1&count=129")
+            .uri("/bodies?from=1&count=129")
+            .header("eth-execution-version", "cancun")
             .header("authorization", format!("Bearer {token}"))
             .body(axum::body::Body::empty())
             .unwrap();
@@ -2484,14 +2535,17 @@ mod sp3_smoke_tests {
         let app = router(ctx);
         let token = auth_token(&secret).await;
 
+        // Fork-scoped endpoints select the fork via Eth-Execution-Version; the
+        // unscoped ones (identity, capabilities, blobs) ignore it, so sending the
+        // header on every request is harmless and keeps the loop uniform.
         let checks: &[(&str, &str)] = &[
             ("GET", "/identity"),
             ("GET", "/capabilities"),
-            ("POST", "/cancun/payloads"),
-            ("GET", "/cancun/payloads/0x0102030405060708"),
-            ("POST", "/cancun/forkchoice"),
-            ("POST", "/cancun/bodies/hash"),
-            ("GET", "/cancun/bodies?from=1&count=1"),
+            ("POST", "/payloads"),
+            ("GET", "/payloads/0x0102030405060708"),
+            ("POST", "/forkchoice"),
+            ("POST", "/bodies/hash"),
+            ("GET", "/bodies?from=1&count=1"),
             ("POST", "/blobs/v1"),
             ("POST", "/blobs/v2"),
             ("POST", "/blobs/v3"),
@@ -2503,6 +2557,7 @@ mod sp3_smoke_tests {
             let req = axum::http::Request::builder()
                 .method(method)
                 .uri(uri)
+                .header("eth-execution-version", "cancun")
                 .header("authorization", format!("Bearer {token}"))
                 .header("content-type", "application/octet-stream")
                 .body(axum::body::Body::empty())

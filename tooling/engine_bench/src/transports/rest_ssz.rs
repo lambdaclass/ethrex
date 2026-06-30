@@ -1,4 +1,5 @@
-//! REST/SSZ transport — per-endpoint URL with SSZ body.
+//! REST/SSZ transport — `/engine/v1` URLs with an SSZ body. The fork for
+//! fork-scoped endpoints travels in the `Eth-Execution-Version` header.
 
 use eyre::{Context, Result};
 use reqwest::{Client, Method};
@@ -18,12 +19,18 @@ pub async fn call(
     method: Method,
     url: &str,
     token: &str,
+    // `Eth-Execution-Version` fork value for fork-scoped endpoints (payloads,
+    // forkchoice, bodies). `None` for unscoped endpoints (blobs).
+    fork: Option<&str>,
     body: Vec<u8>,
 ) -> Result<SszResponse> {
     let bytes_sent = body.len();
     let mut req = client
         .request(method.clone(), url)
         .header("authorization", format!("Bearer {token}"));
+    if let Some(fork) = fork {
+        req = req.header("eth-execution-version", fork);
+    }
     if !body.is_empty() {
         req = req
             .header("content-type", "application/octet-stream")

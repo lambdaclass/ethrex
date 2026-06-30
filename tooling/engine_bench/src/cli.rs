@@ -122,7 +122,8 @@ impl ForkArg {
         ForkArg::Amsterdam,
     ];
 
-    /// URL path segment for the REST/SSZ API (also used as the display name).
+    /// `Eth-Execution-Version` header value for the REST/SSZ API (also used as
+    /// the display name).
     pub fn path(self) -> &'static str {
         match self {
             ForkArg::Paris => "paris",

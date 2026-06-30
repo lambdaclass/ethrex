@@ -1,7 +1,7 @@
 //! GET /capabilities — advertises supported forks, fork-scoped and unscoped
 //! endpoints, independently-versioned blob revisions, and per-resource limits.
 //!
-//! Spec (execution-apis #793, `refactor.md § GET /engine/v2/capabilities`):
+//! Spec (execution-apis #793, `refactor.md § GET /engine/v1/capabilities`):
 //! replaces `engine_exchangeCapabilities`. JSON shape:
 //! ```json
 //! {

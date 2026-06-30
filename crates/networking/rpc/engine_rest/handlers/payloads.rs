@@ -1,4 +1,5 @@
-//! Real handlers for `POST /{fork}/payloads` and `GET /{fork}/payloads/{id}`.
+//! Real handlers for `POST /payloads` and `GET /payloads/{id}`. The fork is
+//! selected by the `Eth-Execution-Version` request header.
 
 use std::str::FromStr;
 
@@ -18,7 +19,7 @@ use crate::engine::payload::{
 };
 use crate::engine_rest::error::ProblemJson;
 use crate::engine_rest::extractors::{decode_ssz, is_length_limit_error};
-use crate::engine_rest::fork_path::{ForkPath, parse_fork_segment};
+use crate::engine_rest::fork_header::ExecutionVersion;
 use crate::engine_rest::handlers::helpers::check_content_type;
 use crate::engine_rest::responses::SszBody;
 use crate::engine_rest::types::blobs::BYTES_PER_BLOB;
@@ -37,7 +38,7 @@ use crate::types::payload::PayloadValidationStatus;
 // ── submit_payload ────────────────────────────────────────────────────────────
 
 pub async fn submit_payload(
-    ForkPath(fork): ForkPath,
+    ExecutionVersion(fork): ExecutionVersion,
     State(ctx): State<RpcApiContext>,
     req: Request,
 ) -> Response {
@@ -50,7 +51,7 @@ pub async fn submit_payload(
         Ok(b) => b,
         Err(e) => {
             if is_length_limit_error(&e) {
-                return ProblemJson::payload_too_large("request body exceeds configured limit")
+                return ProblemJson::request_too_large("request body exceeds configured limit")
                     .into_response();
             }
             return ProblemJson::bad_request(&format!("failed to read body: {e}")).into_response();
@@ -68,9 +69,9 @@ pub async fn submit_payload(
         Fork::Amsterdam => {
             decode_and_submit::<amsterdam::ExecutionPayloadEnvelope>(body, ctx).await
         }
-        // Unreachable: ForkPath's parse_fork_segment rejects all non-spec forks
-        // with 400 before the handler runs.
-        _ => unreachable!("ForkPath extractor restricts to the 6 spec forks"),
+        // Unreachable: the ExecutionVersion header extractor rejects all
+        // non-spec forks with 400 before the handler runs.
+        _ => unreachable!("ExecutionVersion extractor restricts to the 6 spec forks"),
     }
 }
 
@@ -141,8 +142,8 @@ where
         EngineCall::V5 { .. } => !chain_config.is_amsterdam_activated(ts),
     };
     if misrouted {
-        return ProblemJson::bad_request(&format!(
-            "unsupported fork for this endpoint: {:?}",
+        return ProblemJson::unsupported_fork(&format!(
+            "Eth-Execution-Version does not match the payload's fork: {:?}",
             chain_config.get_fork(ts)
         ))
         .into_response();
@@ -212,14 +213,12 @@ where
 // ── get_payload ───────────────────────────────────────────────────────────────
 
 pub async fn get_payload(
-    Path((fork_str, id_str)): Path<(String, String)>,
+    ExecutionVersion(fork): ExecutionVersion,
+    Path(id_str): Path<String>,
     State(ctx): State<RpcApiContext>,
 ) -> Response {
-    // 1. Validate fork segment.
-    let fork = match parse_fork_segment(&fork_str) {
-        Ok(f) => f,
-        Err(problem) => return problem.into_response(),
-    };
+    // 1. The fork comes from the Eth-Execution-Version header (validated by the
+    //    ExecutionVersion extractor); it selects the BuiltPayload SSZ schema.
 
     // 2. Parse payload id (0x-prefixed hex, 8 bytes).
     let id = match PayloadId::from_str(&id_str) {
@@ -233,7 +232,7 @@ pub async fn get_payload(
     let result = match ctx.blockchain.get_payload(id.as_u64()).await {
         Ok(r) => r,
         Err(ChainError::UnknownPayload) => {
-            return ProblemJson::not_found("unknown payloadId").into_response();
+            return ProblemJson::unknown_payload("unknown payloadId").into_response();
         }
         Err(err) => {
             return ProblemJson::internal(&format!("get_payload failed: {err}")).into_response();
@@ -260,8 +259,8 @@ pub async fn get_payload(
         _ => false,
     };
     if !fork_ok {
-        return ProblemJson::bad_request(&format!(
-            "built payload fork {:?} does not match requested endpoint fork {fork:?}",
+        return ProblemJson::unsupported_fork(&format!(
+            "built payload fork {:?} does not match Eth-Execution-Version {fork:?}",
             cc.get_fork(built_ts)
         ))
         .into_response();

@@ -28,7 +28,7 @@ use crate::rpc::RpcApiContext;
 /// Map the requested versioned hashes to `H256`, rejecting over-cap requests.
 fn request_hashes(versioned_hashes: &[[u8; 32]]) -> Result<Vec<H256>, ProblemJson> {
     if versioned_hashes.len() > BLOBS_MAX_COUNT as usize {
-        return Err(ProblemJson::payload_too_large(&format!(
+        return Err(ProblemJson::request_too_large(&format!(
             "request exceeds BLOBS_MAX_COUNT ({BLOBS_MAX_COUNT})"
         )));
     }

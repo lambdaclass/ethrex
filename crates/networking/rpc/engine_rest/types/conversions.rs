@@ -49,8 +49,7 @@ pub trait IntoEngineCall {
 
 fn base_fee_to_u64(ssz: [u8; 32]) -> Result<u64, ProblemJson> {
     let u256 = U256::from_little_endian(&ssz);
-    u64::try_from(u256)
-        .map_err(|_| ProblemJson::unprocessable_entity("base_fee_per_gas exceeds u64::MAX"))
+    u64::try_from(u256).map_err(|_| ProblemJson::invalid_body("base_fee_per_gas exceeds u64::MAX"))
 }
 
 // ── Helper: SSZ Bytes20 → Address ─────────────────────────────────────────────
@@ -170,7 +169,7 @@ impl IntoEngineCall for paris::ExecutionPayloadEnvelope {
         let json = paris_payload_to_json(self.execution_payload)?;
         let block = json
             .to_block(None, None, None)
-            .map_err(|e| ProblemJson::unprocessable_entity(&e.to_string()))?;
+            .map_err(|e| ProblemJson::invalid_body(&e.to_string()))?;
         Ok(DecodedNewPayload {
             block,
             expected_block_hash,
@@ -214,7 +213,7 @@ impl IntoEngineCall for shanghai::ExecutionPayloadEnvelope {
         let json = shanghai_payload_to_json(self.execution_payload)?;
         let block = json
             .to_block(None, None, None)
-            .map_err(|e| ProblemJson::unprocessable_entity(&e.to_string()))?;
+            .map_err(|e| ProblemJson::invalid_body(&e.to_string()))?;
         Ok(DecodedNewPayload {
             block,
             expected_block_hash,
@@ -259,7 +258,7 @@ impl IntoEngineCall for cancun::ExecutionPayloadEnvelope {
         let json = cancun_payload_to_json(self.execution_payload)?;
         let block = json
             .to_block(Some(pbbr), None, None)
-            .map_err(|e| ProblemJson::unprocessable_entity(&e.to_string()))?;
+            .map_err(|e| ProblemJson::invalid_body(&e.to_string()))?;
         Ok(DecodedNewPayload {
             block,
             expected_block_hash,
@@ -310,7 +309,7 @@ impl IntoEngineCall for prague::ExecutionPayloadEnvelope {
         let json = prague_payload_to_json(self.execution_payload)?;
         let block = json
             .to_block(Some(pbbr), Some(requests_hash), None)
-            .map_err(|e| ProblemJson::unprocessable_entity(&e.to_string()))?;
+            .map_err(|e| ProblemJson::invalid_body(&e.to_string()))?;
         Ok(DecodedNewPayload {
             block,
             expected_block_hash,
@@ -376,7 +375,7 @@ impl IntoEngineCall for amsterdam::ExecutionPayloadEnvelope {
             amsterdam_payload_to_json(self.execution_payload)?;
         let block = json
             .to_block(Some(pbbr), Some(requests_hash), raw_bal_hash)
-            .map_err(|e| ProblemJson::unprocessable_entity(&e.to_string()))?;
+            .map_err(|e| ProblemJson::invalid_body(&e.to_string()))?;
         Ok(DecodedNewPayload {
             block,
             expected_block_hash,

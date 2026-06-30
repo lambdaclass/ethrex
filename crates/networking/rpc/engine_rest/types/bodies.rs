@@ -1,6 +1,6 @@
 //! SSZ wire types for the engine REST bodies endpoints (execution-apis #793).
 //!
-//! Request (`POST /{fork}/bodies/hash`) is a bare `List[Hash32, MAX_BODIES_REQUEST]`.
+//! Request (`POST /bodies/hash`) is a bare `List[Hash32, MAX_BODIES_REQUEST]`.
 //! Response is a bare `List[BodyEntry, MAX_BODIES_REQUEST]` — NOT wrapped in a
 //! named container — where `BodyEntry { available: Boolean, body: ExecutionPayloadBody }`.
 //! When `available == false` the `body` is zero-valued (every list empty) and CLs
@@ -15,14 +15,14 @@ use super::common::{
 };
 use super::shanghai::Withdrawal;
 
-/// Spec cap on hashes per `/{fork}/bodies/hash` request and on entries in any
+/// Spec cap on hashes per `/bodies/hash` request and on entries in any
 /// bodies response (`MAX_BODIES_REQUEST = 2**5`); matches the consensoor CL.
 pub const MAX_BODIES_PER_REQUEST: usize = 32;
 
 /// Inner block-hash list wrapped by `BodiesByHashRequest`.
 pub type BlockHashList = SszList<[u8; 32], MAX_BODIES_PER_REQUEST>;
 
-/// `POST /{fork}/bodies/hash` request. Per execution-apis #793 the request is a
+/// `POST /bodies/hash` request. Per execution-apis #793 the request is a
 /// single-field SSZ **container** wrapping the list, NOT a bare top-level list.
 #[derive(Debug, Clone, PartialEq, Eq, SszEncode, SszDecode, HashTreeRoot)]
 pub struct BodiesByHashRequest {
@@ -152,7 +152,7 @@ impl BodyEntryAmsterdam {
 
 // ── Response containers (single-field, per execution-apis #793) ───────────────
 //
-// Shared by both `POST /{fork}/bodies/hash` and `GET /{fork}/bodies` (range).
+// Shared by both `POST /bodies/hash` and `GET /bodies` (range).
 
 /// Paris bodies response: `{ entries: List[BodyEntryParis, N] }`.
 #[derive(Debug, Clone, PartialEq, Eq, SszEncode, SszDecode, HashTreeRoot)]
