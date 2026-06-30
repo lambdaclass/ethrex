@@ -12,6 +12,10 @@
 
 ## Perf
 
+### 2026-06-29
+
+- Thread `Arc<BlockAccessList>` through the block pipeline to avoid an O(BAL-size) deep clone of the Block Access List (and its validation index) per block on the parallel execution path [#6829](https://github.com/lambdaclass/ethrex/pull/6829)
+
 ### 2026-06-18
 
 - In-place top-slot mutation for unary/binary opcodes and `MLOAD`: mutate the top stack slot directly instead of pop-then-push, removing the serial read-modify-write of the stack offset on offset-chain-bound ops. ~2.16x on an ISZERO loop and ~1.63x on `MLOAD` (IPC 2.41 -> 3.45 on a 33M-op loop) [#6865](https://github.com/lambdaclass/ethrex/pull/6865)
