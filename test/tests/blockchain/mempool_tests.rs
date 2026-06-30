@@ -578,6 +578,7 @@ fn blob_txs_are_not_evicted_by_regular_tx_flood() {
                 blob_hash,
                 blob_sender,
                 MempoolTransaction::new(blob_tx, blob_sender),
+                usize::MAX,
             )
             .expect("Failed to add blob transaction");
         blob_hashes.push(blob_hash);
@@ -598,7 +599,12 @@ fn blob_txs_are_not_evicted_by_regular_tx_flood() {
             H256::random()
         };
         mempool
-            .add_transaction(hash, sender, MempoolTransaction::new(tx, sender))
+            .add_transaction(
+                hash,
+                sender,
+                MempoolTransaction::new(tx, sender),
+                usize::MAX,
+            )
             .expect("Failed to add regular transaction");
     }
 
@@ -643,7 +649,12 @@ fn add_blob_tx(mempool: &Mempool, nonce: u64, blob_fee: u64) -> H256 {
     let sender = H160::random();
     mempool.add_blobs_bundle(hash, bundle).unwrap();
     mempool
-        .add_transaction(hash, sender, MempoolTransaction::new(tx, sender))
+        .add_transaction(
+            hash,
+            sender,
+            MempoolTransaction::new(tx, sender),
+            usize::MAX,
+        )
         .expect("Failed to add blob transaction");
     hash
 }
@@ -666,7 +677,12 @@ fn add_blob_tx_with_sender(mempool: &Mempool, sender: Address, nonce: u64) -> H2
     let hash = H256::random();
     mempool.add_blobs_bundle(hash, bundle).unwrap();
     mempool
-        .add_transaction(hash, sender, MempoolTransaction::new(tx, sender))
+        .add_transaction(
+            hash,
+            sender,
+            MempoolTransaction::new(tx, sender),
+            usize::MAX,
+        )
         .expect("Failed to add blob transaction");
     hash
 }
@@ -687,7 +703,12 @@ fn blob_txs_lists_only_blob_txs_with_sender_and_nonce() {
     });
     let plain_hash = plain.hash(&NativeCrypto);
     mempool
-        .add_transaction(plain_hash, sender, MempoolTransaction::new(plain, sender))
+        .add_transaction(
+            plain_hash,
+            sender,
+            MempoolTransaction::new(plain, sender),
+            usize::MAX,
+        )
         .unwrap();
 
     let mut got = mempool.blob_txs().unwrap();
