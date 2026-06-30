@@ -10,13 +10,14 @@ AMSTERDAM_FIXTURES_FILE := .fixtures_url_amsterdam
 AMSTERDAM_ARTIFACT := amsterdam-tests.tar.gz
 AMSTERDAM_URL := $(shell cat $(AMSTERDAM_FIXTURES_FILE))
 
-# EIP-7805 (FOCIL) engine fixtures. The tarball nests them under the same
-# fixtures/blockchain_tests_engine/for_amsterdam/ prefix as the bal release,
-# so they overlay into the existing for_amsterdam/ tree.
+# EIP-7805 (FOCIL) engine fixtures. As of tests-focil@v0.1.0 the tarball nests
+# them under fixtures/blockchain_tests_engine/for_bogota/bogota/eip7805_focil.
+# The datatest harness walks vectors/eest/ recursively, so they're discovered
+# wherever they land in the tree.
 FOCIL_FIXTURES_FILE := .fixtures_url_focil
 FOCIL_ARTIFACT := focil-tests.tar.gz
 FOCIL_URL := $(shell cat $(FOCIL_FIXTURES_FILE))
-FOCIL_VECTORS_DIR := $(SPECTEST_VECTORS_DIR)/for_amsterdam/bogota/eip7805_focil
+FOCIL_VECTORS_DIR := $(SPECTEST_VECTORS_DIR)/for_bogota/bogota/eip7805_focil
 
 VECTORS_TARGETS := $(SPECTEST_VECTORS_DIR)
 
@@ -41,7 +42,7 @@ $(FOCIL_ARTIFACT): $(FOCIL_FIXTURES_FILE)
 	curl -L -o $(FOCIL_ARTIFACT) $(FOCIL_URL)
 
 $(FOCIL_VECTORS_DIR): $(FOCIL_ARTIFACT) $(SPECTEST_VECTORS_DIR)
-	tar -xzf $(FOCIL_ARTIFACT) --strip-components=2 -C $(SPECTEST_VECTORS_DIR) fixtures/blockchain_tests_engine/for_amsterdam/bogota/eip7805_focil
+	tar -xzf $(FOCIL_ARTIFACT) --strip-components=2 -C $(SPECTEST_VECTORS_DIR) fixtures/blockchain_tests_engine/for_bogota/bogota/eip7805_focil
 
 focil-vectors: $(FOCIL_VECTORS_DIR) ## 📥 Overlay EIP-7805 FOCIL engine fixtures onto vectors/eest
 
