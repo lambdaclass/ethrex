@@ -54,12 +54,15 @@ Host prerequisites: `solc` **0.8.31 exactly** (the FeeToken pragmas are pinned),
       --private-keys-file-path private_keys_l1.txt \
       --genesis-l1-path l1.json --genesis-l2-path l2.json \
       --sp1-vk-path contracts/ethrex-riscv32im-succinct-zkvm-vk-bn254 \
-      --inclusion-max-wait 86400 > deploy.log 2>&1
+      --inclusion-max-wait 86400 \
+      --env-file-path ~/ethrex_${TAG}_src/cmd/.env > deploy.log 2>&1
     grep -E "(Timelock|OnChainProposer|CommonBridge|SP1Verifier) deployed" deploy.log
     ```
 
     > [!WARNING]
-    > `--sp1-vk-path` must point at the verification key **inside `contracts/`** (`contracts/ethrex-riscv32im-succinct-zkvm-vk-bn254`), not the similarly named `guests/sp1/...` file from `ethrex-guests.tar.gz`. The wrong file registers a VK the binary's embedded ELF never produces, and `lastVerifiedBatch` stays stuck at `0` while `lastCommittedBatch` climbs. `--inclusion-max-wait 86400` avoids a privileged-transaction deadlock when the test bursts ~300 transactions. The deploy fails at the very end writing `.env` to a CI-baked path — that's harmless; take the addresses from `deploy.log`.
+    > `--sp1-vk-path` must point at the verification key **inside `contracts/`** (`contracts/ethrex-riscv32im-succinct-zkvm-vk-bn254`), not the similarly named `guests/sp1/...` file from `ethrex-guests.tar.gz`. The wrong file registers a VK the binary's embedded ELF never produces, and `lastVerifiedBatch` stays stuck at `0` while `lastCommittedBatch` climbs. `--inclusion-max-wait 86400` avoids a privileged-transaction deadlock when the test bursts ~300 transactions.
+
+    `--env-file-path` writes the deployed addresses to the source checkout's `cmd/.env` (where the test in step 7 reads them) instead of the default baked-in path, which would otherwise be unwriteable and abort the deploy. The same addresses are also printed to `deploy.log` for the sequencer command in step 4.
 
 4. **Start the L2 sequencer** (substitute the addresses from `deploy.log`):
 
@@ -104,15 +107,10 @@ Host prerequisites: `solc` **0.8.31 exactly** (the FeeToken pragmas are pinned),
 
 7. **Run the integration test** against the running testnet, from the source checkout cloned in step 1.
 
-    The test reads the deployed contract addresses from `cmd/.env` in the checkout — only `ETHREX_WATCHER_BRIDGE_ADDRESS` and `ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS` (the verifier/DAO `ETHREX_DEPLOYER_*` values are deploy-time *inputs*, not read by the test). The deployer normally writes this file, but the release binary targets a baked-in CI path and fails to (see step 3), so create it from the addresses in `deploy.log`:
+    The test reads the deployed contract addresses from `cmd/.env` in the checkout (`ETHREX_WATCHER_BRIDGE_ADDRESS` and `ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS`) — already written there by the deploy's `--env-file-path` in step 3, so no manual setup is needed:
 
     ```bash
     cd ~/ethrex_${TAG}_src
-
-    cat > cmd/.env <<'EOF'
-    ETHREX_WATCHER_BRIDGE_ADDRESS=<BRIDGE_FROM_DEPLOY>
-    ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS=<PROPOSER_FROM_DEPLOY>
-    EOF
 
     INTEGRATION_TEST_L1_RPC=http://localhost:8545 \
     INTEGRATION_TEST_L2_RPC=http://localhost:1729 \
