@@ -295,7 +295,7 @@ async fn handle_forkchoice(
                     // Best-effort housekeeping: a state-read failure here must
                     // not fail an otherwise-successful FCU, so log and continue
                     // rather than propagating. The next FCU re-runs the sweep.
-                    if let Err(err) = context.blockchain.remove_stale_blob_txs(block.hash()) {
+                    if let Err(err) = context.blockchain.remove_stale_blob_txs(block.hash()).await {
                         warn!(
                             "Failed to prune stale blob txs from mempool after fork choice: {err}"
                         );

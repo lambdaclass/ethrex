@@ -822,6 +822,7 @@ pub struct PendingTxFilter {
 
 pub fn transaction_intrinsic_gas(
     tx: &Transaction,
+    sender: Address,
     header: &BlockHeader,
     config: &ChainConfig,
 ) -> Result<u64, MempoolError> {
@@ -830,7 +831,9 @@ pub fn transaction_intrinsic_gas(
     // payload-builder cycles). Reuse the VM's two helpers directly rather than
     // re-deriving the cost here:
     //   - `intrinsic_gas_dimensions` → (regular, state) including the EIP-7702
-    //     per-authorization-tuple cost and EIP-7981 access-list data bytes;
+    //     per-authorization-tuple cost, EIP-7981 access-list data bytes, and
+    //     the Amsterdam EIP-2780/8037/8038 weighted state gas (CREATE base +
+    //     per-new-account state bytes), which is why it needs `sender`;
     //   - `intrinsic_gas_floor` → the EIP-7623/7976 calldata floor.
     // The VM requires `gas_limit >= max(intrinsic_regular + intrinsic_state,
     // floor)` (two separate checks in `validate_gas_allowance` +
@@ -838,7 +841,7 @@ pub fn transaction_intrinsic_gas(
     // so it covers Prague (auth-list cost + calldata floor) as well as
     // Amsterdam, and keeps mempool admission in lockstep with the VM.
     let fork = config.fork(header.timestamp);
-    let (regular, state) = intrinsic_gas_dimensions(tx, fork, header.gas_limit)
+    let (regular, state) = intrinsic_gas_dimensions(tx, sender, fork, header.gas_limit)
         .map_err(|e| MempoolError::IntrinsicGasError(e.to_string()))?;
     let intrinsic = regular
         .checked_add(state)
