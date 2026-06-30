@@ -119,7 +119,7 @@ Host prerequisites: `solc` **0.8.31 exactly** (the FeeToken pragmas are pinned),
     ETHREX_DEPLOYER_PRIVATE_KEYS_FILE_PATH=~/ethrex_$TAG/private_keys_l1.txt \
     INTEGRATION_TEST_PRIVATE_KEYS_FILE_PATH=~/ethrex_$TAG/private_keys_l1.txt \
     INTEGRATION_TEST_BRIDGE_OWNER_PRIVATE_KEY=0x941e103320615d394a55708be13e45994c7d93b932b064dbcb2b511fe3254e2e \
-    cargo test -p ethrex-test l2:: --release --features l2 -- --nocapture --test-threads=1
+    cargo test -p ethrex-test l2::integration_tests --release --features l2 -- --nocapture --test-threads=1
     ```
 
     Pass criterion: `test result: ok. 1 passed; 0 failed`, plus the final `Total L2 ETH == Bridge locked ETH on L1` reconciliation line. Expect a multi-hour run on the GPU backend (proving dominates the wall-clock). See [integration tests § "taking too long"](integration-tests.md#i-think-my-tests-are-taking-too-long-how-can-i-debug-this) if it appears to stall.
