@@ -20,6 +20,10 @@
 
 - Precompute the `eth_getLogs` filter's address/topic blooms once instead of re-deriving them per block, removing redundant hashing from the header-bloom prefilter on wide-range queries [#6895](https://github.com/lambdaclass/ethrex/pull/6895)
 
+### 2026-06-30
+
+- Lower the RocksDB data-block size from 16KB to 4KB on the execution-read-path column families (`ACCOUNT_TRIE_NODES`/`STORAGE_TRIE_NODES`, `ACCOUNT_FLATKEYVALUE`/`STORAGE_FLATKEYVALUE`). These CFs serve exact-key point lookups, so a page-sized block cuts per-get read+search amplification vs the prior scan-tuned 16KB. ~+18% Mgas/s and ~-36% disk read on a cold, larger-than-RAM bloated-state benchmark [#6940](https://github.com/lambdaclass/ethrex/pull/6940)
+
 ### 2026-06-29
 
 - Thread `Arc<BlockAccessList>` through the block pipeline to avoid an O(BAL-size) deep clone of the Block Access List (and its validation index) per block on the parallel execution path [#6829](https://github.com/lambdaclass/ethrex/pull/6829)
