@@ -6,7 +6,7 @@ use crate::initializers::{
 };
 use crate::l2::{L2Options, SequencerOptions};
 use crate::utils::{
-    NodeConfigFile, get_client_version, get_client_version_string, init_datadir,
+    NodeConfigFile, get_channel, get_client_version, get_client_version_string, init_datadir,
     read_jwtsecret_file, store_node_config_file,
 };
 use ethrex_blockchain::{Blockchain, BlockchainType, L2Config};
@@ -120,7 +120,7 @@ fn init_metrics(opts: &L1Options, network: &str, tracker: TaskTracker) {
     ethrex_metrics::node::MetricsNode::init(
         env!("CARGO_PKG_VERSION"),
         env!("VERGEN_GIT_SHA"),
-        env!("VERGEN_GIT_BRANCH"),
+        &get_channel(),
         env!("VERGEN_RUSTC_SEMVER"),
         env!("VERGEN_RUSTC_HOST_TRIPLE"),
         network,

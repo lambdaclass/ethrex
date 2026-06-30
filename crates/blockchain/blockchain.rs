@@ -54,7 +54,7 @@ use ::tracing::{debug, error, info, instrument, warn};
 use constants::{AMSTERDAM_MAX_INITCODE_SIZE, MAX_INITCODE_SIZE, POST_OSAKA_GAS_LIMIT_CAP};
 use error::MempoolError;
 use error::{ChainError, InvalidBlockError};
-use ethrex_common::constants::{EMPTY_TRIE_HASH, MIN_BASE_FEE_PER_BLOB_GAS};
+use ethrex_common::constants::{EMPTY_KECCAK_HASH, EMPTY_TRIE_HASH, MIN_BASE_FEE_PER_BLOB_GAS};
 
 use crossbeam::channel::{self as cb, TryRecvError, select};
 // Re-export stateless validation functions for backwards compatibility
@@ -71,6 +71,7 @@ use ethrex_common::types::{
     BlockNumber, ChainConfig, Code, Receipt, Transaction, WrappedEIP4844Transaction,
     synthesize_bal_updates, validate_block_body,
 };
+use ethrex_common::types::{EIP7702_DELEGATED_CODE_LEN, is_eip7702_delegation};
 use ethrex_common::types::{ELASTICITY_MULTIPLIER, P2PTransaction};
 use ethrex_common::types::{Fork, MempoolTransaction};
 use ethrex_common::utils::keccak;
@@ -814,6 +815,17 @@ impl Blockchain {
                                     prepared,
                                     parent_header_ref,
                                 )?;
+                                // The merkleizer builds the trie from the BAL-synthesized
+                                // updates and ignores the streaming channel. But sequential
+                                // execution (`!bal_parallel_exec_enabled`) still streams per-tx
+                                // updates over `rx_for_merkle`; if we drop the receiver before
+                                // the executor's last send, that send fails with "sending on a
+                                // closed channel", racing the real validation error. Drain the
+                                // channel (the updates are redundant here — the BAL path is
+                                // authoritative) so the executor always completes cleanly.
+                                if let Some(rx) = rx_for_merkle {
+                                    for _ in rx {}
+                                }
                                 (list, None)
                             } else {
                                 self.handle_merkleization(
@@ -2976,6 +2988,45 @@ impl Blockchain {
         let sender_acc_nonce = if let Some(sender_acc_info) = &maybe_sender_acc_info {
             if nonce < sender_acc_info.nonce || nonce == u64::MAX {
                 return Err(MempoolError::NonceTooLow);
+            }
+
+            // EIP-3607: reject txs from senders with deployed code, unless
+            // the code is an EIP-7702 delegation designation (the account is
+            // still an EOA in spirit, just pointing at delegate code).
+            //
+            // Length-based fast path: any code whose length isn't exactly
+            // `EIP7702_DELEGATED_CODE_LEN` (23) cannot be a delegation, so
+            // we reject without loading the bytecode. Only when the metadata
+            // length matches do we fetch + verify the prefix. This avoids
+            // pulling potentially large contract bytecode on every contract
+            // sender that hits admission.
+            if sender_acc_info.code_hash != *EMPTY_KECCAK_HASH {
+                let metadata_len = self
+                    .storage
+                    .get_code_metadata(sender_acc_info.code_hash)?
+                    .map(|m| m.length);
+                let is_delegation = if metadata_len == Some(EIP7702_DELEGATED_CODE_LEN as u64) {
+                    // Metadata says the code is delegation-shaped; if the
+                    // bytecode is then missing from the store, the DB is
+                    // inconsistent — surface that as `StoreError` instead of
+                    // silently treating the sender as a contract (which would
+                    // wrongly reject a valid 7702-delegated EOA).
+                    let code = self
+                        .storage
+                        .get_account_code(sender_acc_info.code_hash)?
+                        .ok_or_else(|| {
+                            StoreError::Custom(format!(
+                                "code missing for hash {:?} despite present metadata",
+                                sender_acc_info.code_hash
+                            ))
+                        })?;
+                    is_eip7702_delegation(code.code())
+                } else {
+                    false
+                };
+                if !is_delegation {
+                    return Err(MempoolError::SenderIsContract);
+                }
             }
 
             let tx_cost = tx

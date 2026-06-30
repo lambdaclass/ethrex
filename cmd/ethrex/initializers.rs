@@ -1,8 +1,9 @@
 use crate::{
     cli::{LogColor, Options},
     utils::{
-        display_chain_initialization, get_client_version, get_client_version_string, init_datadir,
-        is_memory_datadir, parse_socket_addr, read_jwtsecret_file, read_node_config_file,
+        display_chain_initialization, get_channel, get_client_version, get_client_version_string,
+        init_datadir, is_memory_datadir, parse_socket_addr, read_jwtsecret_file,
+        read_node_config_file,
     },
 };
 use ethrex_blockchain::{Blockchain, BlockchainOptions, BlockchainType};
@@ -84,7 +85,7 @@ pub fn init_tracing(
             std::fs::create_dir_all(log_dir).expect("Failed to create log directory");
         }
 
-        let branch = env!("VERGEN_GIT_BRANCH").replace('/', "-");
+        let branch = get_channel().replace('/', "-");
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
@@ -123,7 +124,7 @@ pub fn init_metrics(opts: &Options, network: &Network, tracker: TaskTracker) {
     ethrex_metrics::node::MetricsNode::init(
         env!("CARGO_PKG_VERSION"),
         env!("VERGEN_GIT_SHA"),
-        env!("VERGEN_GIT_BRANCH"),
+        &get_channel(),
         env!("VERGEN_RUSTC_SEMVER"),
         env!("VERGEN_RUSTC_HOST_TRIPLE"),
         &network.to_string(),
