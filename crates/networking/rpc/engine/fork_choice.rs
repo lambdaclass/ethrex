@@ -21,6 +21,96 @@ use crate::{
     utils::RpcRequest,
 };
 
+/// Parse a `custodyColumns` RPC param (16-byte big-endian hex string or null/absent).
+///
+/// Spec: `DATA|null` where DATA is a 0x-prefixed 16-byte hex string.
+/// Returns `Ok(None)` for JSON null or absent param.
+/// Returns `Err(RpcErr::BadParams)` when the string is present but not exactly 16 bytes.
+pub(crate) fn parse_custody_columns(value: &Value) -> Result<Option<u128>, RpcErr> {
+    if value.is_null() {
+        return Ok(None);
+    }
+    let hex_str = value
+        .as_str()
+        .ok_or_else(|| RpcErr::BadParams("custodyColumns must be a hex string or null".into()))?;
+    let stripped = hex_str.strip_prefix("0x").unwrap_or(hex_str);
+    let bytes = hex::decode(stripped)
+        .map_err(|_| RpcErr::BadParams("custodyColumns: invalid hex".into()))?;
+    if bytes.len() != 16 {
+        return Err(RpcErr::BadParams(format!(
+            "custodyColumns must be 16 bytes, got {}",
+            bytes.len()
+        )));
+    }
+    let mut arr = [0u8; 16];
+    arr.copy_from_slice(&bytes);
+    Ok(Some(u128::from_be_bytes(arr)))
+}
+
+/// Apply a custody column update received via `engine_forkchoiceUpdatedV4`.
+///
+/// Lock discipline: each mempool accessor takes its own short-lived guard;
+/// no guard is held across the set+prune sequence.
+///
+/// Broadcast wiring note: direct p2p broadcast of updated availability is not
+/// reachable from `RpcApiContext` (the context exposes a `PeerHandler` but not
+/// a channel to push availability advertisements). The set and prune steps are
+/// applied immediately; the p2p layer will pick up the updated `custody_columns`
+/// value on its next announce/flush cycle via `mempool.get_custody_columns()`.
+pub(crate) fn apply_custody_update(context: &RpcApiContext, custody_columns: Option<u128>) {
+    let Some(new) = custody_columns else {
+        // null / absent param — no custody change.
+        return;
+    };
+
+    let mempool = &context.blockchain.mempool;
+
+    // Read previous value with a short guard, then drop it before any further
+    // mempool access (RwLock is not reentrant on std).
+    let prev = match mempool.get_custody_columns() {
+        Ok(v) => v,
+        Err(e) => {
+            warn!("apply_custody_update: failed to read custody_columns: {e}");
+            return;
+        }
+    };
+
+    if prev == new {
+        // Identical — no-op.
+        return;
+    }
+
+    let expanded = new & !prev; // bits added
+    let contracted = prev & !new; // bits removed
+
+    // Update the custody set; the p2p layer reads it on its next announce/flush
+    // cycle. Column-level cell pruning on contraction is intentionally NOT done
+    // here: retaining the extra cells is harmless and keeps them available to
+    // serving peers (so no availability-fault window), and the periodic mempool
+    // sweep still drops all cells for txs that leave the pool. See PLAN follow-ups
+    // for column-level pruning + broadcast-before-prune ordering.
+    if let Err(e) = mempool.set_custody_columns(new) {
+        warn!("apply_custody_update: failed to set custody_columns: {e}");
+        return;
+    }
+
+    if expanded != 0 {
+        // set_custody_columns bumped the mempool custody generation; the p2p
+        // sweep re-samples already-pending blob txs for the new delta columns
+        // (EIP MUST). Inert while sampling is off.
+        debug!(
+            expanded_mask = %format!("{expanded:#034x}"),
+            "custody columns expanded; pending blob txs will be re-sampled for new columns",
+        );
+    }
+    if contracted != 0 {
+        debug!(
+            contracted_mask = %format!("{contracted:#034x}"),
+            "custody columns contracted; extra cells retained (column-level pruning deferred)",
+        );
+    }
+}
+
 #[derive(Debug)]
 pub struct ForkChoiceUpdatedV1 {
     pub fork_choice_state: ForkChoiceState,
@@ -134,15 +224,25 @@ impl RpcHandler for ForkChoiceUpdatedV3 {
 pub struct ForkChoiceUpdatedV4 {
     pub fork_choice_state: ForkChoiceState,
     pub payload_attributes: Option<PayloadAttributesV4>,
+    /// Optional custody column bitmask from the 3rd Engine API parameter.
+    /// `None` means the param was absent or null; `Some(mask)` triggers a
+    /// custody column update in the mempool.
+    pub custody_columns: Option<u128>,
 }
 
 impl From<ForkChoiceUpdatedV4> for RpcRequest {
     fn from(val: ForkChoiceUpdatedV4) -> Self {
+        let custody_hex = val
+            .custody_columns
+            .map(|m| format!("0x{}", hex::encode(m.to_be_bytes())))
+            .map(Value::String)
+            .unwrap_or(Value::Null);
         RpcRequest {
             method: "engine_forkchoiceUpdatedV4".to_string(),
             params: Some(vec![
                 serde_json::json!(val.fork_choice_state),
                 serde_json::json!(val.payload_attributes),
+                custody_hex,
             ]),
             ..Default::default()
         }
@@ -151,16 +251,18 @@ impl From<ForkChoiceUpdatedV4> for RpcRequest {
 
 impl RpcHandler for ForkChoiceUpdatedV4 {
     fn parse(params: &Option<Vec<Value>>) -> Result<Self, RpcErr> {
-        let (fork_choice_state, payload_attributes) = parse_v4(params)?;
+        let (fork_choice_state, payload_attributes, custody_columns) = parse_v4(params)?;
         Ok(ForkChoiceUpdatedV4 {
             fork_choice_state,
             payload_attributes,
+            custody_columns,
         })
     }
 
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
         let (head_block_opt, mut response) =
             handle_forkchoice(&self.fork_choice_state, context.clone(), 4).await?;
+        apply_custody_update(&context, self.custody_columns);
         if let (Some(head_block), Some(attributes)) = (head_block_opt, &self.payload_attributes) {
             validate_attributes_v4(attributes, &head_block, &context)?;
             let payload_id = build_payload_v4(attributes, context, &self.fork_choice_state).await?;
@@ -508,31 +610,39 @@ async fn build_payload(
     Ok(payload_id)
 }
 
-fn parse_v4(
+pub(crate) fn parse_v4(
     params: &Option<Vec<Value>>,
-) -> Result<(ForkChoiceState, Option<PayloadAttributesV4>), RpcErr> {
+) -> Result<(ForkChoiceState, Option<PayloadAttributesV4>, Option<u128>), RpcErr> {
     let params = params
         .as_ref()
         .ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
 
-    if params.len() != 2 && params.len() != 1 {
-        return Err(RpcErr::BadParams("Expected 2 or 1 params".to_owned()));
+    if params.len() > 3 || params.is_empty() {
+        return Err(RpcErr::BadParams("Expected 1, 2, or 3 params".to_owned()));
     }
 
     let forkchoice_state: ForkChoiceState = serde_json::from_value(params[0].clone())?;
-    let mut payload_attributes: Option<PayloadAttributesV4> = None;
-    if params.len() == 2 {
-        // execution-apis#796: V4 attributes are validated strictly. A present but
-        // malformed object (e.g. missing the required targetGasLimit) is rejected
-        // rather than silently ignored; an absent/null object yields no attributes.
-        payload_attributes = serde_json::from_value::<Option<PayloadAttributesV4>>(
-            params[1].clone(),
-        )
-        .map_err(|error| {
-            RpcErr::InvalidPayloadAttributes(format!("invalid V4 payload attributes: {error}"))
-        })?;
-    }
-    Ok((forkchoice_state, payload_attributes))
+
+    // execution-apis#796: V4 attributes are validated strictly. A present but
+    // malformed object (e.g. missing the required targetGasLimit) is rejected
+    // rather than silently ignored; an absent/null object yields no attributes.
+    let payload_attributes = if params.len() >= 2 {
+        serde_json::from_value::<Option<PayloadAttributesV4>>(params[1].clone()).map_err(
+            |error| {
+                RpcErr::InvalidPayloadAttributes(format!("invalid V4 payload attributes: {error}"))
+            },
+        )?
+    } else {
+        None
+    };
+
+    let custody_columns = if params.len() == 3 {
+        parse_custody_columns(&params[2])?
+    } else {
+        None
+    };
+
+    Ok((forkchoice_state, payload_attributes, custody_columns))
 }
 
 fn validate_attributes_v4(
@@ -620,6 +730,9 @@ mod tests {
     use super::{validate_attributes_v2, validate_attributes_v2_pre_shanghai};
     use crate::types::fork_choice::PayloadAttributesV3;
     use ethrex_common::types::{BlockHeader, Withdrawal};
+
+    // NOTE: the custodyColumns / parse_v4 / apply_custody_update (eth/72,
+    // EIP-8070) tests were moved to test/tests/rpc/fork_choice_tests.rs.
 
     #[test]
     fn forkchoice_updated_v2_returns_invalid_payload_attributes_when_withdrawals_missing() {

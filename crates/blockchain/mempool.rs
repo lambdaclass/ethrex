@@ -12,14 +12,71 @@ use crate::error::MempoolError;
 use ethrex_common::{
     Address, H160, H256, U256,
     types::{
-        BlobTuple, BlobsBundle, BlockHeader, ChainConfig, Fork, MempoolTransaction, Transaction,
-        TxType, kzg_commitment_to_versioned_hash,
+        BYTES_PER_CELL, BlobTuple, BlobsBundle, BlockHeader, CELLS_PER_EXT_BLOB, ChainConfig, Fork,
+        MempoolTransaction, Transaction, TxType, kzg_commitment_to_versioned_hash,
     },
 };
 use ethrex_crypto::NativeCrypto;
 use ethrex_storage::error::StoreError;
 use ethrex_vm::{intrinsic_gas_dimensions, intrinsic_gas_floor};
 use tracing::warn;
+
+// ────────────────────────────────────────────────────────────────────
+// EIP-8070 / PeerDAS sampling constants
+// ────────────────────────────────────────────────────────────────────
+
+/// Probability (in percent) that a node acts as a *provider* for a given
+/// blob transaction hash in the current epoch.
+pub const PROVIDER_PROBABILITY_PCT: u64 = 15;
+
+/// Number of extra columns a *sampler* fetches beyond its custody columns.
+pub const C_EXTRA: u32 = 1;
+
+/// Minimum number of distinct peers that must have announced a blob tx
+/// (via NewPooledTransactionHashes72) before the sampler starts requesting
+/// cells from them.
+pub const MIN_PROVIDERS_BEFORE_SAMPLING: usize = 2;
+
+// ────────────────────────────────────────────────────────────────────
+// TxCells — per-tx cell storage
+// ────────────────────────────────────────────────────────────────────
+
+/// Stored cells for a single blob transaction.
+///
+/// `mask`: bitmask of column indices for which we have received and verified
+/// cells (bit i = column i is available).
+/// `cells`: one slot per blob in the tx; each slot is a `Vec` indexed by
+/// popcount-position within `mask` (i.e. position 0 = lowest set bit).
+/// An inner element of `None` means the cell is expected but not yet
+/// verified.
+#[derive(Debug, Clone, Default)]
+pub struct TxCells {
+    /// Number of blobs in the tx (from the sidecar commitment count).
+    pub blob_count: usize,
+    /// Cell bytes keyed by `blob_idx * CELLS_PER_EXT_BLOB + column`.
+    /// Proofs are not stored here; they live in the sidecar `BlobsBundle`
+    /// (`blobs_bundle_pool`) and are used to verify cells at ingest time.
+    pub cells: FxHashMap<usize, Box<[u8; BYTES_PER_CELL]>>,
+}
+
+impl TxCells {
+    /// Bitmask of columns held for EVERY blob of the tx (a column is "available"
+    /// only when its cell is present for all blobs).
+    pub fn mask(&self) -> u128 {
+        if self.blob_count == 0 {
+            return 0;
+        }
+        let mut mask = 0u128;
+        for col in 0..CELLS_PER_EXT_BLOB {
+            if (0..self.blob_count)
+                .all(|b| self.cells.contains_key(&(b * CELLS_PER_EXT_BLOB + col)))
+            {
+                mask |= 1u128 << col;
+            }
+        }
+        mask
+    }
+}
 
 /// Maximum number of alternate announcers tracked per hash. Bounds the memory
 /// used by the alternates map and prevents pathological peers from filling it.
@@ -85,6 +142,19 @@ struct MempoolInner {
     max_blob_mempool_size: usize,
     // Max number of transactions to let the mempool order queue grow before pruning it
     mempool_prune_threshold: usize,
+
+    // ── EIP-8070 / PeerDAS fields ────────────────────────────────────
+    /// Bitmask of column indices this node is custodying (set via Engine API
+    /// FCU v4 `custodyColumns`; defaults to 0 when sampling is disabled).
+    custody_columns: u128,
+    /// Verified cells for blob transactions that are in the pool.
+    cells: FxHashMap<H256, TxCells>,
+    /// For each blob tx hash, the set of peer IDs that have announced it
+    /// via NewPooledTransactionHashes72 (sampler role tracking).
+    provider_announcers: FxHashMap<H256, FxHashSet<H256>>,
+    /// Last announced cell_mask per peer (peer_id -> mask).
+    /// Used to check which peers can serve a given column set.
+    peer_cell_availability: FxHashMap<H256, u128>,
 }
 
 impl MempoolInner {
@@ -109,6 +179,9 @@ impl MempoolInner {
         };
         if matches!(tx.tx_type(), TxType::EIP4844) {
             self.remove_blob_bundle(hash);
+            // EIP-8070: prune cell data and provider tracking for this tx.
+            self.cells.remove(hash);
+            self.provider_announcers.remove(hash);
         }
 
         self.txs_by_sender_nonce.remove(&(tx.sender(), tx.nonce()));
@@ -231,7 +304,7 @@ impl MempoolInner {
     }
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct Mempool {
     inner: RwLock<MempoolInner>,
     /// Signaled on transaction and blobs bundle insertions so payload
@@ -242,6 +315,24 @@ pub struct Mempool {
     /// snapshotted the mempool, so it can decide whether a stale build is safe
     /// to return.
     tx_seq: AtomicU64,
+    /// When true, the EIP-8070 sampler/provider state machine is active.
+    /// When false (default), the node always acts as provider (p=1.0).
+    pub blob_sampling_enabled: bool,
+    /// When true, this node always acts as provider (p=1.0) for every blob tx
+    /// regardless of the pseudo-random role decision. Block builders SHOULD
+    /// enable this (EIP-8070 N8) to ensure full blob availability. Enabled via
+    /// `--blob-eager-provider` CLI flag.
+    pub eager_provider: bool,
+    /// Monotonic counter bumped whenever `custody_columns` changes value (via
+    /// the Engine API FCU v4). The p2p sweep compares it against its last-seen
+    /// value to re-sample pending blob txs for newly-custodied columns.
+    custody_generation: AtomicU64,
+}
+
+impl Default for Mempool {
+    fn default() -> Self {
+        Self::new(0)
+    }
 }
 
 impl Mempool {
@@ -250,6 +341,17 @@ impl Mempool {
             inner: RwLock::new(MempoolInner::new(max_mempool_size)),
             tx_added: tokio::sync::Notify::new(),
             tx_seq: AtomicU64::new(0),
+            blob_sampling_enabled: false,
+            eager_provider: false,
+            custody_generation: AtomicU64::new(0),
+        }
+    }
+
+    /// Create a mempool with blob sampling enabled.
+    pub fn new_with_sampling(max_mempool_size: usize) -> Self {
+        Mempool {
+            blob_sampling_enabled: true,
+            ..Self::new(max_mempool_size)
         }
     }
 
@@ -260,6 +362,16 @@ impl Mempool {
             inner.max_blob_mempool_size = max_blob_mempool_size;
         }
         self
+    }
+
+    /// Create a mempool with blob sampling enabled and eager-provider mode on.
+    /// Block builders should use this so they always act as providers (EIP-8070 N8).
+    pub fn new_with_eager_provider(max_mempool_size: usize) -> Self {
+        Mempool {
+            blob_sampling_enabled: true,
+            eager_provider: true,
+            ..Self::new(max_mempool_size)
+        }
     }
 
     pub(crate) fn tx_added(&self) -> &tokio::sync::Notify {
@@ -400,6 +512,118 @@ impl Mempool {
     /// Get a blobs bundle to the pool given its blob transaction hash
     pub fn get_blobs_bundle(&self, tx_hash: H256) -> Result<Option<BlobsBundle>, StoreError> {
         Ok(self.read()?.blobs_bundle_pool.get(&tx_hash).cloned())
+    }
+
+    /// Reconstruct a full BlobsBundle (with blobs) for an elided eth/72 tx.
+    ///
+    /// Returns `Ok(None)` when:
+    /// - the tx has no stored bundle, or
+    /// - fewer than 64 columns are held for any blob (insufficient data to recover).
+    ///
+    /// On success the returned bundle has `blobs` populated and carries the
+    /// original `commitments`, `proofs`, and `version` from the stored elided entry.
+    #[cfg(feature = "c-kzg")]
+    pub fn reconstruct_blobs_bundle(
+        &self,
+        tx_hash: H256,
+    ) -> Result<Option<BlobsBundle>, StoreError> {
+        use ethrex_crypto::kzg::{
+            BYTES_PER_CELL as KZG_BYTES_PER_CELL, cells_to_blob, recover_cells_and_kzg_proofs,
+        };
+
+        let inner = self.read()?;
+
+        let elided = match inner.blobs_bundle_pool.get(&tx_hash) {
+            Some(b) => b.clone(),
+            None => return Ok(None),
+        };
+
+        let blob_count = elided.commitments.len();
+        if blob_count == 0 {
+            return Ok(None);
+        }
+
+        let tx_cells = match inner.cells.get(&tx_hash) {
+            Some(tc) => tc,
+            None => return Ok(None),
+        };
+
+        let mask = tx_cells.mask();
+        // Need at least 64 columns (any 64 suffice for Reed-Solomon recovery).
+        if mask.count_ones() < 64 {
+            return Ok(None);
+        }
+
+        // Data columns 0..63 carry the blob verbatim (see `cells_to_blob`); when
+        // they are all held we concatenate directly, otherwise we Reed-Solomon
+        // recover from any >=64 columns.
+        let data_cols_mask = (1u128 << (CELLS_PER_EXT_BLOB / 2)) - 1;
+        let data_cols_present = mask & data_cols_mask == data_cols_mask;
+
+        let mut blobs = Vec::with_capacity(blob_count);
+
+        for blob_idx in 0..blob_count {
+            let blob = if data_cols_present {
+                // Fast path: data columns 0..63 are present; concatenate directly.
+                let mut all_cell_bytes = [[0u8; KZG_BYTES_PER_CELL]; CELLS_PER_EXT_BLOB];
+                for (col, slot) in all_cell_bytes
+                    .iter_mut()
+                    .enumerate()
+                    .take(CELLS_PER_EXT_BLOB / 2)
+                {
+                    if let Some(cell) = tx_cells.cells.get(&(blob_idx * CELLS_PER_EXT_BLOB + col)) {
+                        *slot = **cell;
+                    }
+                }
+                cells_to_blob(&all_cell_bytes)
+            } else {
+                // Recovery path: <128 columns but ≥64; call c-kzg recovery.
+                let mut indices: Vec<u64> = Vec::with_capacity(mask.count_ones() as usize);
+                let mut cell_bytes: Vec<[u8; KZG_BYTES_PER_CELL]> =
+                    Vec::with_capacity(mask.count_ones() as usize);
+                for col in 0..CELLS_PER_EXT_BLOB {
+                    if (mask >> col) & 1 == 1
+                        && let Some(cell) =
+                            tx_cells.cells.get(&(blob_idx * CELLS_PER_EXT_BLOB + col))
+                    {
+                        indices.push(col as u64);
+                        cell_bytes.push(**cell);
+                    }
+                }
+                // If we can't get ≥64 cells for this specific blob, skip the tx.
+                if indices.len() < 64 {
+                    return Ok(None);
+                }
+                let (recovered, _proofs) = recover_cells_and_kzg_proofs(&indices, &cell_bytes)
+                    .map_err(|e| {
+                        warn!("cell recovery failed for blob tx {tx_hash}: {e}");
+                        StoreError::Custom(format!("cell recovery failed for tx {tx_hash}: {e}"))
+                    })?;
+                // recovered has 128 entries; data columns are 0..63.
+                let mut all_cell_bytes = [[0u8; KZG_BYTES_PER_CELL]; CELLS_PER_EXT_BLOB];
+                for (i, bytes) in recovered.iter().enumerate() {
+                    all_cell_bytes[i] = *bytes;
+                }
+                cells_to_blob(&all_cell_bytes)
+            };
+            blobs.push(blob);
+        }
+
+        Ok(Some(BlobsBundle {
+            blobs,
+            commitments: elided.commitments,
+            proofs: elided.proofs,
+            version: elided.version,
+        }))
+    }
+
+    /// Reconstruct a full BlobsBundle for an elided eth/72 tx (no-c-kzg stub).
+    #[cfg(not(feature = "c-kzg"))]
+    pub fn reconstruct_blobs_bundle(
+        &self,
+        _tx_hash: H256,
+    ) -> Result<Option<BlobsBundle>, StoreError> {
+        Ok(None)
     }
 
     /// Remove a transaction from the pool
@@ -676,6 +900,41 @@ impl Mempool {
         Ok(res)
     }
 
+    /// Return a cell for a specific `(tx_hash, blob_idx, column)` triple, or `None`
+    /// if not available locally.
+    pub fn get_cell(
+        &self,
+        tx_hash: H256,
+        blob_idx: usize,
+        col: usize,
+    ) -> Option<Box<[u8; BYTES_PER_CELL]>> {
+        let Ok(inner) = self.read() else {
+            return None;
+        };
+        inner
+            .cells
+            .get(&tx_hash)
+            .and_then(|tc| tc.cells.get(&(blob_idx * CELLS_PER_EXT_BLOB + col)))
+            .cloned()
+    }
+
+    /// Look up the `(tx_hash, blob_index)` pair for a versioned blob hash.
+    ///
+    /// Returns `Ok(None)` when the versioned hash is not present in the pool.
+    /// The blob index is the position of the commitment inside its transaction's
+    /// sidecar (0-based), matching `BlobsBundle.blobs[blob_idx]`.
+    pub fn get_tx_and_blob_idx_by_versioned_hash(
+        &self,
+        versioned_hash: H256,
+    ) -> Result<Option<(H256, usize)>, StoreError> {
+        let inner = self.read()?;
+        Ok(inner
+            .blobs_bundle_by_versioned_hash
+            .get(&versioned_hash)
+            .and_then(|m| m.iter().next())
+            .map(|(tx_hash, blob_idx)| (*tx_hash, *blob_idx)))
+    }
+
     /// Returns the status of the mempool, which is the number of transactions currently in
     /// the pool. Until we add "queue" transactions.
     pub fn status(&self) -> Result<u64, MempoolError> {
@@ -710,6 +969,204 @@ impl Mempool {
     pub fn contains_tx(&self, tx_hash: H256) -> Result<bool, MempoolError> {
         let contains = self.read()?.transaction_pool.contains_key(&tx_hash);
         Ok(contains)
+    }
+
+    // ── EIP-8070 / PeerDAS accessors ─────────────────────────────────
+
+    /// Set the custody column bitmask for this node. Bumps the custody
+    /// generation when the value actually changes so the p2p sweep re-samples
+    /// pending blob txs for the new columns.
+    pub fn set_custody_columns(&self, mask: u128) -> Result<(), StoreError> {
+        let mut inner = self.write()?;
+        if inner.custody_columns != mask {
+            inner.custody_columns = mask;
+            drop(inner);
+            self.custody_generation.fetch_add(1, Ordering::Relaxed);
+        }
+        Ok(())
+    }
+
+    /// Get the custody column bitmask for this node.
+    pub fn get_custody_columns(&self) -> Result<u128, StoreError> {
+        Ok(self.read()?.custody_columns)
+    }
+
+    /// Current custody generation (bumped on each custody-set change). Lock-free.
+    pub fn custody_generation(&self) -> u64 {
+        self.custody_generation.load(Ordering::Relaxed)
+    }
+
+    /// For every pending blob tx, the custody columns we do NOT yet hold cells
+    /// for. Used by the p2p sweep to re-sample after a custody expansion.
+    /// Only returns entries with a non-empty missing mask.
+    pub fn blob_txs_missing_custody(&self) -> Result<Vec<(H256, u128)>, StoreError> {
+        let inner = self.read()?;
+        let custody = inner.custody_columns;
+        if custody == 0 {
+            return Ok(Vec::new());
+        }
+        let mut out = Vec::new();
+        for tx_hash in inner.blobs_bundle_pool.keys() {
+            let have = inner.cells.get(tx_hash).map(|tc| tc.mask()).unwrap_or(0);
+            let missing = custody & !have;
+            if missing != 0 {
+                out.push((*tx_hash, missing));
+            }
+        }
+        Ok(out)
+    }
+
+    /// Record that `peer_id` has announced `tx_hash` via NewPooledTransactionHashes72.
+    /// Returns the number of distinct announcers seen so far for this hash.
+    pub fn record_provider_announcement(
+        &self,
+        tx_hash: H256,
+        peer_id: H256,
+    ) -> Result<usize, StoreError> {
+        let mut inner = self.write()?;
+        let entry = inner.provider_announcers.entry(tx_hash).or_default();
+        entry.insert(peer_id);
+        Ok(entry.len())
+    }
+
+    /// Record the cell mask advertised by a peer in a NewPooledTransactionHashes72 message.
+    pub fn record_peer_cell_availability(
+        &self,
+        peer_id: H256,
+        mask: u128,
+    ) -> Result<(), StoreError> {
+        self.write()?.peer_cell_availability.insert(peer_id, mask);
+        Ok(())
+    }
+
+    /// Store verified cells for a blob transaction.
+    ///
+    /// `blob_count` is the number of blobs in the tx (sidecar commitment count).
+    /// `cells` is a list of `(blob_index, column_index, cell_bytes)` triples; the
+    /// caller MUST have verified them against the sidecar proofs first.
+    pub fn store_cells(
+        &self,
+        tx_hash: H256,
+        blob_count: usize,
+        cells: Vec<(usize, usize, Box<[u8; BYTES_PER_CELL]>)>,
+    ) -> Result<(), StoreError> {
+        let mut inner = self.write()?;
+        let entry = inner.cells.entry(tx_hash).or_default();
+        entry.blob_count = entry.blob_count.max(blob_count);
+        for (blob_idx, col, cell_bytes) in cells {
+            if col < CELLS_PER_EXT_BLOB {
+                entry
+                    .cells
+                    .entry(blob_idx * CELLS_PER_EXT_BLOB + col)
+                    .or_insert(cell_bytes);
+            }
+        }
+        Ok(())
+    }
+
+    /// Return the bitmask of columns for which we have verified cells for `tx_hash`.
+    pub fn get_cells_mask(&self, tx_hash: H256) -> Result<u128, StoreError> {
+        Ok(self
+            .read()?
+            .cells
+            .get(&tx_hash)
+            .map(|tc| tc.mask())
+            .unwrap_or(0))
+    }
+
+    /// Return the set of columns available for `tx_hash` when building outbound
+    /// announcements or serving GetCells requests.
+    ///
+    /// Returns `u128::MAX` when the stored `BlobsBundle` for this hash contains
+    /// non-empty blobs (full payload — all 128 columns are derivable on demand).
+    /// Otherwise returns the columns for which verified cells are already held
+    /// (`TxCells::mask()`). Returns `0` when the hash is unknown.
+    ///
+    /// This is used by D2 (outbound cell_mask = real availability) and
+    /// GetCells::handle (serve cells from full bundle when TxCells absent).
+    pub fn available_cell_mask(&self, tx_hash: H256) -> u128 {
+        let Ok(inner) = self.read() else {
+            return 0;
+        };
+        // Full payload: all 128 columns are derivable via cells_for_columns.
+        if inner
+            .blobs_bundle_pool
+            .get(&tx_hash)
+            .is_some_and(|b| !b.blobs.is_empty())
+        {
+            return u128::MAX;
+        }
+        // Sampled cells only.
+        inner.cells.get(&tx_hash).map(|tc| tc.mask()).unwrap_or(0)
+    }
+
+    /// Return the bitmask of custody columns for which we are still missing cells.
+    pub fn missing_custody_columns(&self, tx_hash: H256) -> Result<u128, StoreError> {
+        let inner = self.read()?;
+        let custody = inner.custody_columns;
+        let have = inner.cells.get(&tx_hash).map(|tc| tc.mask()).unwrap_or(0);
+        Ok(custody & !have)
+    }
+
+    /// Drop cells entries whose tx is no longer in the pool.
+    pub fn prune_cells(&self) -> Result<(), StoreError> {
+        let mut inner = self.write()?;
+        let MempoolInner {
+            cells,
+            transaction_pool,
+            ..
+        } = &mut *inner;
+        cells.retain(|hash, _| transaction_pool.contains_key(hash));
+        Ok(())
+    }
+
+    /// Number of distinct peers that have announced provider availability for `tx_hash`.
+    pub fn provider_announcer_count(&self, tx_hash: H256) -> Result<usize, StoreError> {
+        Ok(self
+            .read()?
+            .provider_announcers
+            .get(&tx_hash)
+            .map(|s| s.len())
+            .unwrap_or(0))
+    }
+
+    /// Forget a peer's last-advertised cell availability (called on disconnect).
+    pub fn clear_peer_cell_availability(&self, peer_id: H256) -> Result<(), StoreError> {
+        self.write()?.peer_cell_availability.remove(&peer_id);
+        Ok(())
+    }
+
+    /// Return the cell availability mask last advertised by `peer_id`, if any.
+    pub fn peer_cell_mask(&self, peer_id: H256) -> Result<Option<u128>, StoreError> {
+        Ok(self.read()?.peer_cell_availability.get(&peer_id).copied())
+    }
+
+    /// Retrieve cells for `tx_hash` matching `column_mask`, packed blob-major:
+    /// `[blob0_colA, blob0_colB, ..., blob1_colA, ...]` over the columns we hold
+    /// within `column_mask` (ascending). Used to build a `Cells` response.
+    pub fn get_tx_cells_for_mask(
+        &self,
+        tx_hash: H256,
+        column_mask: u128,
+    ) -> Vec<[u8; BYTES_PER_CELL]> {
+        let Ok(inner) = self.read() else {
+            return Vec::new();
+        };
+        let Some(tc) = inner.cells.get(&tx_hash) else {
+            return Vec::new();
+        };
+        let have = tc.mask() & column_mask;
+        let mut result = Vec::with_capacity((have.count_ones() as usize) * tc.blob_count);
+        for blob_idx in 0..tc.blob_count {
+            for col in 0..CELLS_PER_EXT_BLOB {
+                if (have >> col) & 1 == 1
+                    && let Some(cell) = tc.cells.get(&(blob_idx * CELLS_PER_EXT_BLOB + col))
+                {
+                    result.push(**cell);
+                }
+            }
+        }
+        result
     }
 
     pub fn find_tx_to_replace(

@@ -23,7 +23,10 @@ use crate::{
     rlpx::{
         Message,
         connection::server::PeerConnection,
-        eth::transactions::{NewPooledTransactionHashes, Transactions},
+        eth::{
+            eth72::transactions::NewPooledTransactionHashes72,
+            transactions::{NewPooledTransactionHashes, Transactions},
+        },
         p2p::{Capability, SUPPORTED_ETH_CAPABILITIES},
     },
 };
@@ -117,23 +120,33 @@ pub async fn send_tx_hashes(
     peer_id: H256,
     blockchain: &Arc<Blockchain>,
 ) -> Result<(), TxBroadcasterError> {
-    if SUPPORTED_ETH_CAPABILITIES
+    if !SUPPORTED_ETH_CAPABILITIES
         .iter()
         .any(|cap| capabilities.contains(cap))
     {
-        for tx_chunk in txs.chunks(NEW_POOLED_TRANSACTION_HASHES_SOFT_LIMIT) {
-            let tx_count = tx_chunk.len();
-            let mut txs_to_send = Vec::with_capacity(tx_count);
-            for tx in tx_chunk {
-                txs_to_send.push((**tx).clone());
-            }
-            let hashes_message = Message::NewPooledTransactionHashes(
-                NewPooledTransactionHashes::new(txs_to_send, blockchain)?,
-            );
-            connection.outgoing_message(hashes_message.clone()).await.unwrap_or_else(|err| {
-                debug!(peer_id = %format!("{:#x}", peer_id), err = ?err, "Failed to send transaction hashes");
-            });
+        return Ok(());
+    }
+    let peer_supports_eth72 = capabilities.contains(&Capability::eth(72));
+    for tx_chunk in txs.chunks(NEW_POOLED_TRANSACTION_HASHES_SOFT_LIMIT) {
+        let tx_count = tx_chunk.len();
+        let mut txs_to_send = Vec::with_capacity(tx_count);
+        for tx in tx_chunk {
+            txs_to_send.push((**tx).clone());
         }
+        let hashes_message = if peer_supports_eth72 {
+            Message::NewPooledTransactionHashes72(NewPooledTransactionHashes72::new(
+                txs_to_send,
+                blockchain,
+            )?)
+        } else {
+            Message::NewPooledTransactionHashes(NewPooledTransactionHashes::new(
+                txs_to_send,
+                blockchain,
+            )?)
+        };
+        connection.outgoing_message(hashes_message.clone()).await.unwrap_or_else(|err| {
+            debug!(peer_id = %format!("{:#x}", peer_id), err = ?err, "Failed to send transaction hashes");
+        });
     }
     Ok(())
 }

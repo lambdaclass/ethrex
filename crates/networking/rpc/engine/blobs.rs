@@ -1,7 +1,10 @@
+use std::time::Duration;
+
+use bytes::Bytes;
 use ethrex_common::{
     H256,
     serde_utils::{self},
-    types::{Blob, Proof},
+    types::{BYTES_PER_CELL, Blob, CELLS_PER_EXT_BLOB, Proof},
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -13,7 +16,7 @@ use crate::{
 };
 
 // -> https://github.com/ethereum/execution-apis/blob/d41fdf10fabbb73c4d126fb41809785d830acace/src/engine/cancun.md?plain=1#L186
-const GET_BLOBS_V1_REQUEST_MAX_SIZE: usize = 128;
+pub(crate) const GET_BLOBS_V1_REQUEST_MAX_SIZE: usize = 128;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct BlobsV1Request {
@@ -206,6 +209,256 @@ async fn get_blobs_and_proof(
     Ok(res)
 }
 
+// ── engine_getBlobsV4 ────────────────────────────────────────────────────────
+
+/// Per-blob response for `engine_getBlobsV4`.
+///
+/// Both `blob_cells` and `proofs` are **sparse, fixed-length** matrices of
+/// length `CELLS_PER_EXT_BLOB` (128), indexed by absolute column index. The
+/// entry at index `i` is non-null only when bit `i` of `indices_bitarray` is
+/// set **and** the cell is available locally; every other index is `null`.
+/// Cell and proof are always both-null or both-present at a given index, so a
+/// caller can verify each cell against its positionally-aligned proof.
+///
+/// This matches the EIP-8070 "partial matrix ... with nil entries for missing
+/// cells" wording and the execution-spec-tests `getBlobsV4` validator
+/// (execution-specs PR #2948), which requires length-128 matrices with `null`
+/// at every non-requested index.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BlobCellsAndProofsV1 {
+    /// Sparse length-128 column matrix: hex-encoded cell (2048 bytes) at
+    /// requested+held indices, `null` everywhere else.
+    #[serde(with = "opt_bytes_vec")]
+    pub blob_cells: Vec<Option<Bytes>>,
+    /// Sparse length-128 KZG cell proofs (48 bytes each), positionally aligned
+    /// with `blob_cells`: `null` at every index where `blob_cells` is `null`.
+    #[serde(with = "opt_proofs_vec")]
+    pub proofs: Vec<Option<Proof>>,
+}
+
+/// Serde helper: serialize `Vec<Option<Bytes>>` as an array of hex strings or null.
+mod opt_bytes_vec {
+    use bytes::Bytes;
+    use serde::Serializer;
+
+    pub fn serialize<S>(value: &Vec<Option<Bytes>>, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        use serde::ser::SerializeSeq;
+        let mut seq = serializer.serialize_seq(Some(value.len()))?;
+        for item in value {
+            match item {
+                Some(b) => seq.serialize_element(&format!("0x{b:x}"))?,
+                None => seq.serialize_element(&serde_json::Value::Null)?,
+            }
+        }
+        seq.end()
+    }
+}
+
+/// Serde helper: serialize `Vec<Option<Proof>>` as an array of hex strings or null.
+mod opt_proofs_vec {
+    use ethrex_common::types::Proof;
+    use serde::Serializer;
+
+    pub fn serialize<S>(value: &Vec<Option<Proof>>, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        use serde::ser::SerializeSeq;
+        let mut seq = serializer.serialize_seq(Some(value.len()))?;
+        for item in value {
+            match item {
+                Some(p) => seq.serialize_element(&format!("0x{}", hex::encode(p)))?,
+                None => seq.serialize_element(&serde_json::Value::Null)?,
+            }
+        }
+        seq.end()
+    }
+}
+
+/// Request body for `engine_getBlobsV4`.
+pub struct BlobsV4Request {
+    /// Versioned blob hashes to look up.
+    pub(crate) versioned_blob_hashes: Vec<H256>,
+    /// Bitmask of column indices to return (bit i set ⇒ return column i).
+    /// Encoded as a 16-byte big-endian hex string on the wire.
+    pub(crate) indices_bitarray: u128,
+}
+
+impl RpcHandler for BlobsV4Request {
+    fn parse(params: &Option<Vec<Value>>) -> Result<Self, RpcErr> {
+        let params = params
+            .as_ref()
+            .ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
+        if params.len() != 2 {
+            return Err(RpcErr::BadParams("Expected 2 params".to_owned()));
+        }
+        let versioned_blob_hashes: Vec<H256> = serde_json::from_value(params[0].clone())?;
+        let indices_bitarray = parse_indices_bitarray(&params[1])?;
+        Ok(BlobsV4Request {
+            versioned_blob_hashes,
+            indices_bitarray,
+        })
+    }
+
+    async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
+        debug!("Received new engine request: getBlobsV4");
+
+        // Spec (execution-apis amsterdam.md, getBlobsV4 §5): clients MUST support at
+        // least 128 hashes, so exactly MAX must be accepted; reject only above it.
+        if self.versioned_blob_hashes.len() > GET_BLOBS_V1_REQUEST_MAX_SIZE {
+            return Err(RpcErr::TooLargeRequest);
+        }
+
+        // getBlobsV4 (EIP-8070) is an Amsterdam Engine API method. Per amsterdam.md
+        // getBlobsV4 §6, its contract is to return `null` (not a bespoke -38005)
+        // while syncing or otherwise unable to serve, mirroring getBlobsV3. Before
+        // our canonical tip is at Amsterdam — including while the local head is still
+        // pre-fork during sync — return `null` for every requested hash.
+        let head_ts = context
+            .storage
+            .get_block_header(context.storage.get_latest_block_number().await?)?
+            .map(|h| h.timestamp)
+            .unwrap_or(0);
+        if !context
+            .storage
+            .get_chain_config()
+            .is_amsterdam_activated(head_ts)
+        {
+            let nulls: Vec<Option<BlobCellsAndProofsV1>> = (0..self.versioned_blob_hashes.len())
+                .map(|_| None)
+                .collect();
+            return serde_json::to_value(nulls).map_err(|e| RpcErr::Internal(e.to_string()));
+        }
+
+        let mask = self.indices_bitarray;
+        let hashes = self.versioned_blob_hashes.clone();
+        let mempool = &context.blockchain.mempool;
+
+        // Wrap the per-hash resolution in a 500 ms timeout; return whatever
+        // is ready on elapse rather than erroring.
+        let result = tokio::time::timeout(Duration::from_millis(500), async {
+            let mut responses: Vec<Option<BlobCellsAndProofsV1>> = Vec::with_capacity(hashes.len());
+
+            for versioned_hash in &hashes {
+                // Resolve: versioned_hash → (tx_hash, blob_index).
+                let lookup = mempool
+                    .get_tx_and_blob_idx_by_versioned_hash(*versioned_hash)
+                    .map_err(|e| RpcErr::Internal(e.to_string()))?;
+
+                let Some((tx_hash, blob_idx)) = lookup else {
+                    responses.push(None);
+                    continue;
+                };
+
+                let bundle = mempool
+                    .get_blobs_bundle(tx_hash)
+                    .map_err(|e| RpcErr::Internal(e.to_string()))?;
+
+                let Some(bundle) = bundle else {
+                    responses.push(None);
+                    continue;
+                };
+
+                // Cell proofs only exist in the cell-proof wrapper (version != 0,
+                // Osaka). A version-0 bundle cannot supply per-cell proofs, so
+                // return null rather than fabricating a zero proof.
+                if bundle.version == 0 {
+                    responses.push(None);
+                    continue;
+                }
+
+                // Sparse length-128 matrices indexed by absolute column index:
+                // null at every non-requested or unheld column. Cell and proof
+                // are kept in lock-step (both Some or both None) so the caller can
+                // verify each cell against its positionally-aligned proof.
+                let mut cells: Vec<Option<Bytes>> = Vec::with_capacity(CELLS_PER_EXT_BLOB);
+                let mut proofs: Vec<Option<Proof>> = Vec::with_capacity(CELLS_PER_EXT_BLOB);
+
+                // Optionally compute all cells from the bundle blob (when the blob is present).
+                #[cfg(feature = "c-kzg")]
+                let computed_cells: Option<Vec<[u8; BYTES_PER_CELL]>> = bundle
+                    .blobs
+                    .get(blob_idx)
+                    .and_then(|b| ethrex_common::crypto::kzg::compute_cells(b).ok());
+                #[cfg(not(feature = "c-kzg"))]
+                let computed_cells: Option<Vec<[u8; BYTES_PER_CELL]>> = None;
+
+                for col in 0..CELLS_PER_EXT_BLOB {
+                    // Non-requested column: null cell + null proof.
+                    if (mask >> col) & 1 == 0 {
+                        cells.push(None);
+                        proofs.push(None);
+                        continue;
+                    }
+                    // Cell: prefer stored (verified), then computed from full blob, else null.
+                    let cell_opt = if let Some(cell) = mempool.get_cell(tx_hash, blob_idx, col) {
+                        Some(Bytes::copy_from_slice(cell.as_ref()))
+                    } else if let Some(ref all) = computed_cells {
+                        all.get(col).map(|c| Bytes::copy_from_slice(c.as_ref()))
+                    } else {
+                        None
+                    };
+                    // Only emit a cell when we also have its sidecar proof; a cell
+                    // without a verifiable proof is useless to the caller, so emit
+                    // null for both rather than pairing a cell with no proof (or a
+                    // proof with no cell).
+                    let proof_idx = blob_idx * CELLS_PER_EXT_BLOB + col;
+                    match (cell_opt, bundle.proofs.get(proof_idx)) {
+                        (Some(cell), Some(&proof)) => {
+                            cells.push(Some(cell));
+                            proofs.push(Some(proof));
+                        }
+                        _ => {
+                            cells.push(None);
+                            proofs.push(None);
+                        }
+                    }
+                }
+
+                responses.push(Some(BlobCellsAndProofsV1 {
+                    blob_cells: cells,
+                    proofs,
+                }));
+            }
+
+            Ok::<_, RpcErr>(responses)
+        })
+        .await;
+
+        let responses = match result {
+            Ok(Ok(r)) => r,
+            Ok(Err(e)) => return Err(e),
+            // Timeout: return nulls for all hashes rather than erroring.
+            Err(_elapsed) => (0..hashes.len()).map(|_| None).collect(),
+        };
+
+        serde_json::to_value(responses).map_err(|e| RpcErr::Internal(e.to_string()))
+    }
+}
+
+/// Parse the 16-byte big-endian hex `indices_bitarray` param.
+pub(crate) fn parse_indices_bitarray(value: &Value) -> Result<u128, RpcErr> {
+    let hex_str = value
+        .as_str()
+        .ok_or_else(|| RpcErr::BadParams("indices_bitarray must be a hex string".into()))?;
+    let stripped = hex_str.strip_prefix("0x").unwrap_or(hex_str);
+    let bytes = hex::decode(stripped)
+        .map_err(|_| RpcErr::BadParams("indices_bitarray: invalid hex".into()))?;
+    if bytes.len() != 16 {
+        return Err(RpcErr::BadParams(format!(
+            "indices_bitarray must be 16 bytes, got {}",
+            bytes.len()
+        )));
+    }
+    let mut arr = [0u8; 16];
+    arr.copy_from_slice(&bytes);
+    Ok(u128::from_be_bytes(arr))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -267,13 +520,17 @@ mod tests {
         }
     }
 
-    fn chain_config(osaka_active: bool) -> ChainConfig {
+    // `active` gates the blob-serving forks used by these tests: Osaka (getBlobsV3)
+    // and Amsterdam (getBlobsV4). Both share the same activation here so the V3 and
+    // V4 positive/negative paths can be driven by a single flag.
+    fn chain_config(active: bool) -> ChainConfig {
         ChainConfig {
             chain_id: 1,
             shanghai_time: Some(0),
             cancun_time: Some(0),
             prague_time: Some(0),
-            osaka_time: osaka_active.then_some(0),
+            osaka_time: active.then_some(0),
+            amsterdam_time: active.then_some(0),
             deposit_contract_address: Address::zero(),
             ..Default::default()
         }
@@ -451,4 +708,7 @@ mod tests {
         let result = request.handle(context).await;
         assert!(!matches!(result, Err(RpcErr::TooLargeRequest)));
     }
+
+    // NOTE: the BlobsV4 (eth/72 / EIP-8070) unit tests were moved to
+    // test/tests/rpc/eth72_engine_tests.rs.
 }

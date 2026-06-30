@@ -390,3 +390,131 @@ async fn forkchoice_updated_v3_rejects_amsterdam_payload_attributes() {
 
     assert!(matches!(err, ethrex_rpc::utils::RpcErr::UnsupportedFork(_)));
 }
+
+// ── eth/72 (EIP-8070) custodyColumns: parse_v4 / parse_custody_columns /
+// apply_custody_update ───────────────────────────────────────────────────────
+//
+// Moved from crates/networking/rpc/engine/fork_choice.rs. These exercise the
+// crate-private parse/apply internals through `test_utils` feature-gated shims.
+use ethrex_rpc::test_utils::{apply_custody_update, parse_custody_columns, parse_v4};
+use serde_json::json;
+
+fn minimal_fcs_json() -> serde_json::Value {
+    json!({
+        "headBlockHash": H256::zero(),
+        "safeBlockHash": H256::zero(),
+        "finalizedBlockHash": H256::zero(),
+    })
+}
+
+#[test]
+fn parse_v4_custody_absent() {
+    // 1 param — no custodyColumns
+    let params = Some(vec![minimal_fcs_json()]);
+    let (_, _, cc) = parse_v4(&params).unwrap();
+    assert_eq!(cc, None);
+}
+
+#[test]
+fn parse_v4_custody_null() {
+    // 3 params, third is JSON null
+    let params = Some(vec![minimal_fcs_json(), json!(null), json!(null)]);
+    let (_, _, cc) = parse_v4(&params).unwrap();
+    assert_eq!(cc, None);
+}
+
+#[test]
+fn parse_v4_custody_valid_16_bytes() {
+    // 0x00000000000000000000000000000001 => u128 = 1
+    let params = Some(vec![
+        minimal_fcs_json(),
+        json!(null),
+        json!("0x00000000000000000000000000000001"),
+    ]);
+    let (_, _, cc) = parse_v4(&params).unwrap();
+    assert_eq!(cc, Some(1u128));
+}
+
+#[test]
+fn parse_v4_custody_wrong_length_rejected() {
+    // Only 8 bytes — must reject
+    let params = Some(vec![
+        minimal_fcs_json(),
+        json!(null),
+        json!("0x0000000000000001"),
+    ]);
+    let err = parse_v4(&params).unwrap_err();
+    assert!(matches!(err, RpcErr::BadParams(_)));
+}
+
+#[test]
+fn parse_custody_columns_null_returns_none() {
+    assert_eq!(parse_custody_columns(&json!(null)).unwrap(), None);
+}
+
+#[test]
+fn parse_custody_columns_16_byte_roundtrip() {
+    let mask: u128 = 0xDEAD_BEEF_1234_5678_9ABC_DEF0_1234_5678;
+    let hex = format!("0x{}", hex::encode(mask.to_be_bytes()));
+    let result = parse_custody_columns(&json!(hex)).unwrap();
+    assert_eq!(result, Some(mask));
+}
+
+#[test]
+fn parse_custody_columns_wrong_length() {
+    let err = parse_custody_columns(&json!("0xdeadbeef")).unwrap_err();
+    assert!(matches!(err, RpcErr::BadParams(_)));
+}
+
+async fn fresh_context() -> RpcApiContext {
+    let storage = Store::new("test", EngineType::InMemory).expect("store");
+    default_context_with_storage(storage).await
+}
+
+#[tokio::test]
+async fn apply_custody_update_null_is_noop() {
+    let ctx = fresh_context().await;
+    ctx.blockchain.mempool.set_custody_columns(0xFF).unwrap();
+    apply_custody_update(&ctx, None);
+    assert_eq!(ctx.blockchain.mempool.get_custody_columns().unwrap(), 0xFF);
+}
+
+#[tokio::test]
+async fn apply_custody_update_identical_is_noop() {
+    let ctx = fresh_context().await;
+    ctx.blockchain.mempool.set_custody_columns(0b1010).unwrap();
+    apply_custody_update(&ctx, Some(0b1010));
+    assert_eq!(
+        ctx.blockchain.mempool.get_custody_columns().unwrap(),
+        0b1010
+    );
+}
+
+#[tokio::test]
+async fn apply_custody_update_expansion_sets_columns() {
+    let ctx = fresh_context().await;
+    ctx.blockchain.mempool.set_custody_columns(0b0001).unwrap();
+    apply_custody_update(&ctx, Some(0b0011)); // add column 1
+    assert_eq!(
+        ctx.blockchain.mempool.get_custody_columns().unwrap(),
+        0b0011
+    );
+}
+
+#[tokio::test]
+async fn apply_custody_update_contraction_prunes_and_sets() {
+    let ctx = fresh_context().await;
+    ctx.blockchain.mempool.set_custody_columns(0b1111).unwrap();
+    // Store dummy cells for a fake tx so prune_cells has something to act on.
+    let tx_hash = H256::from_low_u64_be(42);
+    // (no tx in pool — cells will be pruned immediately by prune_cells)
+    ctx.blockchain
+        .mempool
+        .store_cells(tx_hash, 1, vec![])
+        .unwrap();
+    apply_custody_update(&ctx, Some(0b0011)); // remove columns 2,3
+    assert_eq!(
+        ctx.blockchain.mempool.get_custody_columns().unwrap(),
+        0b0011
+    );
+}

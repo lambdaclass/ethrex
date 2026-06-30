@@ -5,6 +5,7 @@ use crate::rlpx::l2::{
         self, L2Cast, L2ConnState, handle_based_capability_message, handle_l2_broadcast,
     },
 };
+use crate::utils::{node_id, public_key_from_signing_key};
 use crate::{
     backend,
     metrics::METRICS,
@@ -17,6 +18,11 @@ use crate::{
         eth::{
             block_access_lists::{BlockAccessLists, GetBlockAccessLists},
             blocks::{BlockBodies, BlockHeaders},
+            cells::GetCells,
+            eth72::{
+                status::StatusMessage72,
+                transactions::{NewPooledTransactionHashes72, PooledTransactions72},
+            },
             receipts::{
                 GetReceipts68, GetReceipts70, Receipts68, Receipts69, Receipts70,
                 SOFT_RESPONSE_LIMIT,
@@ -39,7 +45,10 @@ use crate::{
     tx_broadcaster::{TxBroadcaster, TxBroadcasterProtocol as _, send_tx_hashes},
     types::Node,
 };
-use ethrex_blockchain::Blockchain;
+use ethrex_blockchain::{
+    Blockchain,
+    sampling::{is_provider_role, pick_random_extra_column},
+};
 use ethrex_common::H256;
 #[cfg(feature = "l2")]
 use ethrex_common::types::Transaction;
@@ -234,9 +243,21 @@ pub struct Established {
     /// Maps request ID to (original announcement, actually requested hashes, request time).
     /// The announcement is kept for response validation; the hashes track in-flight state.
     pub(crate) requested_pooled_txs: HashMap<u64, (NewPooledTransactionHashes, Vec<H256>, Instant)>,
+    /// eth/72 variant of requested_pooled_txs.
+    pub(crate) requested_pooled_txs_72:
+        HashMap<u64, (NewPooledTransactionHashes72, Vec<H256>, Instant)>,
     /// Buffered transaction requests waiting to be flushed as a single batch.
     /// Accumulated between flush ticks (TX_REQUEST_BATCH_INTERVAL).
     pub(crate) pending_tx_requests: Vec<(NewPooledTransactionHashes, Vec<H256>)>,
+    /// eth/72 variant of pending_tx_requests.
+    pub(crate) pending_tx_requests_72: Vec<(NewPooledTransactionHashes72, Vec<H256>)>,
+    /// EIP-8070: buffered cell requests (tx_hashes, cell_mask) waiting to be
+    /// flushed as a single batched GetCells message.
+    pub(crate) pending_cell_requests: Vec<(Vec<H256>, u128)>,
+    /// EIP-8070: last custody generation this connection acted on. When the
+    /// mempool's custody generation advances (Engine API FCU v4 changed the
+    /// custody set), the sweep re-samples pending blob txs for the new columns.
+    pub(crate) last_custody_generation: u64,
     pub(crate) client_version: String,
     //// Send end of the channel used to broadcast messages
     //// to other connected peers, is ok to have it here,
@@ -285,12 +306,37 @@ impl Established {
             }
             retry_on_alternates(&self.blockchain, &self.peer_table, &requested_hashes).await;
         }
+        for (_, (_announced, requested_hashes, _)) in self.requested_pooled_txs_72.drain() {
+            if let Err(e) = self
+                .blockchain
+                .mempool
+                .clear_in_flight_txs(&requested_hashes)
+            {
+                warn!(error = %e, "clear_in_flight_txs failed during teardown");
+            }
+            retry_on_alternates(&self.blockchain, &self.peer_table, &requested_hashes).await;
+        }
         // Also clear hashes that were buffered but not yet sent.
         for (_announced, pending_hashes) in self.pending_tx_requests.drain(..) {
             if let Err(e) = self.blockchain.mempool.clear_in_flight_txs(&pending_hashes) {
                 warn!(error = %e, "Failed to clear in-flight transaction tracking during peer teardown");
             }
             retry_on_alternates(&self.blockchain, &self.peer_table, &pending_hashes).await;
+        }
+        for (_announced, pending_hashes) in self.pending_tx_requests_72.drain(..) {
+            if let Err(e) = self.blockchain.mempool.clear_in_flight_txs(&pending_hashes) {
+                warn!(error = %e, "clear_in_flight_txs failed during teardown");
+            }
+            retry_on_alternates(&self.blockchain, &self.peer_table, &pending_hashes).await;
+        }
+        // EIP-8070: forget this peer's advertised cell availability so the map
+        // does not grow unbounded across reconnects.
+        if let Err(e) = self
+            .blockchain
+            .mempool
+            .clear_peer_cell_availability(self.node.node_id())
+        {
+            warn!(error = %e, "clear_peer_cell_availability failed during teardown");
         }
         // Closing the sink. It may fail if it is already closed (eg. the other side already closed it)
         // Just logging a debug line if that's the case.
@@ -551,6 +597,64 @@ impl PeerConnectionServer {
                     retry_on_alternates(&state.blockchain, &state.peer_table, &hashes).await;
                 }
             }
+            // Sweep eth/72 in-flight requests.
+            let stale_ids_72: Vec<u64> = state
+                .requested_pooled_txs_72
+                .iter()
+                .filter(|(_, (_, _, ts))| now.duration_since(*ts) > INFLIGHT_TX_TIMEOUT)
+                .map(|(id, _)| *id)
+                .collect();
+            for id in stale_ids_72 {
+                if let Some((_announced, hashes, _)) = state.requested_pooled_txs_72.remove(&id) {
+                    if let Err(e) = state.blockchain.mempool.clear_in_flight_txs(&hashes) {
+                        warn!(error = %e, "clear_in_flight_txs failed while sweeping stale v72 requests");
+                    }
+                    retry_on_alternates(&state.blockchain, &state.peer_table, &hashes).await;
+                }
+            }
+            // EIP-8070: prune cell entries for txs that left the pool.
+            if let Err(e) = state.blockchain.mempool.prune_cells() {
+                warn!(error = %e, "prune_cells failed during sweep");
+            }
+            if let Err(e) = state
+                .blockchain
+                .mempool
+                .prune_alternates(INFLIGHT_TX_TIMEOUT)
+            {
+                warn!(error = %e, "prune_alternates failed during sweep");
+            }
+            // EIP-8070 (FU-1): when the custody set changed (Engine API FCU v4),
+            // re-sample pending blob txs for the newly-custodied columns this
+            // peer can serve. Inert unless sampling is enabled.
+            if state.blockchain.mempool.blob_sampling_enabled {
+                let generation = state.blockchain.mempool.custody_generation();
+                if generation != state.last_custody_generation {
+                    state.last_custody_generation = generation;
+                    // Unknown availability => assume the peer can serve any column
+                    // (matches the sampler-fetch default).
+                    let peer_available = state
+                        .blockchain
+                        .mempool
+                        .peer_cell_mask(state.node.node_id())
+                        .unwrap_or(None)
+                        .unwrap_or(u128::MAX);
+                    match state.blockchain.mempool.blob_txs_missing_custody() {
+                        Ok(missing_list) => {
+                            for (tx_hash, missing) in missing_list {
+                                let fetch_mask = missing & peer_available;
+                                if fetch_mask != 0 {
+                                    state
+                                        .pending_cell_requests
+                                        .push((vec![tx_hash], fetch_mask));
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            warn!(error = %e, "blob_txs_missing_custody failed during sweep")
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -562,7 +666,11 @@ impl PeerConnectionServer {
     ) {
         if let ConnectionState::Established(ref mut established_state) = self.state {
             let result = flush_pending_tx_requests(established_state).await;
+            let result72 = flush_pending_tx_requests_72(established_state).await;
+            let result_cells = flush_pending_cell_requests(established_state).await;
             Self::process_cast_error(&self.state, result, ctx);
+            Self::process_cast_error(&self.state, result72, ctx);
+            Self::process_cast_error(&self.state, result_cells, ctx);
         }
     }
 
@@ -727,6 +835,7 @@ where
         Some(cap) if cap == &Capability::eth(69) => EthCapVersion::V69,
         Some(cap) if cap == &Capability::eth(70) => EthCapVersion::V70,
         Some(cap) if cap == &Capability::eth(71) => EthCapVersion::V71,
+        Some(cap) if cap == &Capability::eth(72) => EthCapVersion::V72,
         _ => EthCapVersion::default(),
     };
     *eth_version
@@ -896,6 +1005,7 @@ where
             69 => Message::Status69(StatusMessage69::new(&state.storage).await?),
             70 => Message::Status70(StatusMessage70::new(&state.storage).await?),
             71 => Message::Status71(StatusMessage71::new(&state.storage).await?),
+            72 => Message::Status72(StatusMessage72::new(&state.storage).await?),
             ver => {
                 return Err(PeerConnectionError::HandshakeError(format!(
                     "Invalid eth version {ver}"
@@ -926,6 +1036,10 @@ where
             }
             Message::Status71(msg_data) => {
                 trace!(peer=%state.node, "Received Status(71)");
+                backend::validate_status(msg_data, &state.storage, &eth).await?
+            }
+            Message::Status72(msg_data) => {
+                trace!(peer=%state.node, "Received Status(72)");
                 backend::validate_status(msg_data, &state.storage, &eth).await?
             }
             Message::Disconnect(disconnect) => {
@@ -1012,14 +1126,22 @@ async fn exchange_hello_messages<S>(
 where
     S: Unpin + Stream<Item = Result<Message, PeerConnectionError>>,
 {
+    // eth/72 (EIP-8070) is only safe to negotiate when blob sampling is enabled:
+    // it always elides blob payloads in PooledTransactions, and a node that does
+    // not run the sampler/provider cell-fetch loop would receive blob txs it can
+    // never reconstruct. With sampling off we cap at eth/71 so default nodes keep
+    // full-blob propagation unchanged. The EIP's Backwards Compatibility section
+    // explicitly supports this gradual, version-gated rollout.
+    let offer_eth72 = state.blockchain.mempool.blob_sampling_enabled;
     // This allow is because in l2 we mut the capabilities
     // to include the l2 cap
     #[allow(unused_mut)]
-    let mut supported_capabilities: Vec<Capability> = [
-        &SUPPORTED_ETH_CAPABILITIES[..],
-        &SUPPORTED_SNAP_CAPABILITIES[..],
-    ]
-    .concat();
+    let mut supported_capabilities: Vec<Capability> = SUPPORTED_ETH_CAPABILITIES
+        .iter()
+        .filter(|cap| offer_eth72 || cap.version < 72)
+        .chain(SUPPORTED_SNAP_CAPABILITIES.iter())
+        .cloned()
+        .collect();
     #[cfg(feature = "l2")]
     if state.l2_state.is_supported() {
         supported_capabilities.push(crate::rlpx::l2::SUPPORTED_BASED_CAPABILITIES[0].clone());
@@ -1053,7 +1175,10 @@ where
             for cap in &hello_message.capabilities {
                 match cap.protocol() {
                     "eth" => {
+                        // Don't negotiate a version we didn't advertise: eth/72 is
+                        // only offered when blob sampling is enabled (see above).
                         if SUPPORTED_ETH_CAPABILITIES.contains(cap)
+                            && (offer_eth72 || cap.version < 72)
                             && cap.version > negotiated_eth_version
                         {
                             negotiated_eth_version = cap.version;
@@ -1221,6 +1346,11 @@ async fn handle_incoming_message(
             };
         }
         Message::Status71(msg_data) => {
+            if let Some(eth) = &state.negotiated_eth_capability {
+                backend::validate_status(msg_data, &state.storage, eth).await?
+            };
+        }
+        Message::Status72(msg_data) => {
             if let Some(eth) = &state.negotiated_eth_capability {
                 backend::validate_status(msg_data, &state.storage, eth).await?
             };
@@ -1440,6 +1570,149 @@ async fn handle_incoming_message(
                 }
             }
         }
+        // eth/72 (EIP-8070): provider/sampler split based on blob_sampling_enabled.
+        Message::NewPooledTransactionHashes72(announcement) if peer_supports_eth => {
+            if state.blockchain.is_synced() {
+                let peer_id = state.node.node_id();
+                // Record peer cell availability from the announced mask.
+                if let Some(mask) = announcement.cell_mask
+                    && let Err(e) = state
+                        .blockchain
+                        .mempool
+                        .record_peer_cell_availability(peer_id, mask)
+                {
+                    warn!(error = %e, "record_peer_cell_availability failed");
+                }
+
+                let hashes =
+                    announcement.get_transactions_to_request(&state.blockchain, peer_id)?;
+
+                if !hashes.is_empty() {
+                    if !state.blockchain.mempool.blob_sampling_enabled {
+                        // Sampling disabled: always provider — request everything.
+                        // Trim to the truly-requested subset so the flush does not
+                        // re-request hashes already in-flight from another peer.
+                        state
+                            .pending_tx_requests_72
+                            .push((announcement.filter_to(&hashes), hashes));
+                    } else {
+                        // Sampling enabled: decide per-hash whether we are provider or sampler.
+                        let epoch_seed = match state.storage.get_latest_block_number().await {
+                            Ok(n) => n / 32,
+                            Err(e) => {
+                                warn!(error = %e, "eth/72: head block unavailable; using epoch 0 for role split");
+                                0
+                            }
+                        };
+
+                        // Compute the local node id once per announcement (D1: per-node entropy).
+                        let local_pubkey = public_key_from_signing_key(&state.signer);
+                        let local_node_id = node_id(&local_pubkey);
+                        let eager = state.blockchain.mempool.eager_provider;
+
+                        let mut provider_hashes: Vec<H256> = Vec::new();
+                        let mut sampler_hashes: Vec<H256> = Vec::new();
+
+                        for &hash in &hashes {
+                            // Check if this is a blob tx (has a bit in cell_mask or
+                            // was in a type-3 announcement). We use cell_mask presence
+                            // as the signal — non-blob txs always go through provider flow.
+                            let is_blob = announcement.cell_mask.is_some()
+                                && announcement
+                                    .transaction_types
+                                    .iter()
+                                    .zip(announcement.transaction_hashes.iter())
+                                    .any(|(&ty, &h)| h == hash && ty == 3);
+
+                            // D4: provider path only when is_provider_role AND peer advertised
+                            // full availability (all-ones mask). Otherwise sampler path.
+                            let peer_is_full_provider = announcement.cell_mask == Some(u128::MAX);
+                            if !is_blob
+                                || (peer_is_full_provider
+                                    && is_provider_role(local_node_id, hash, epoch_seed, eager))
+                            {
+                                provider_hashes.push(hash);
+                            } else {
+                                sampler_hashes.push(hash);
+                            }
+                        }
+
+                        // Provider hashes: request full tx (and cells at u128::MAX).
+                        if !provider_hashes.is_empty() {
+                            let trimmed = announcement.filter_to(&provider_hashes);
+                            // For provider role, request cells with all-ones mask.
+                            let provider_ann = NewPooledTransactionHashes72::from_raw(
+                                trimmed.transaction_types.clone(),
+                                trimmed.transaction_sizes.clone(),
+                                trimmed.transaction_hashes,
+                                Some(u128::MAX),
+                            );
+                            state
+                                .pending_tx_requests_72
+                                .push((provider_ann, provider_hashes));
+                        }
+
+                        // Sampler hashes: record the announcing peer as a provider
+                        // ONLY if it signaled full availability (all-ones mask);
+                        // a partially-available peer is not a provider observation.
+                        // D6b: if recording this provider hits the threshold and we already
+                        // have the tx body, retrigger cell-fetch immediately rather than
+                        // waiting for the tx-body response path.
+                        if announcement.cell_mask == Some(u128::MAX) {
+                            let mempool = &state.blockchain.mempool;
+                            for &hash in &sampler_hashes {
+                                let count = match mempool
+                                    .record_provider_announcement(hash, peer_id)
+                                {
+                                    Ok(n) => n,
+                                    Err(e) => {
+                                        warn!(error = %e, "record_provider_announcement failed");
+                                        continue;
+                                    }
+                                };
+                                // D6b retrigger: threshold just reached and tx body already known.
+                                if count
+                                    == ethrex_blockchain::mempool::MIN_PROVIDERS_BEFORE_SAMPLING
+                                    && mempool.contains_tx(hash).unwrap_or(false)
+                                {
+                                    let custody = match mempool.get_custody_columns() {
+                                        Ok(c) => c,
+                                        Err(e) => {
+                                            warn!(error = %e, "get_custody_columns failed (D6b)");
+                                            continue;
+                                        }
+                                    };
+                                    // D6a: only add C_extra when this peer is a provider.
+                                    let mut target = custody;
+                                    if let Some(extra_col) = pick_random_extra_column(custody, hash)
+                                    {
+                                        target |= 1u128 << extra_col;
+                                    }
+                                    let fetch_mask = target & u128::MAX; // peer is full provider
+                                    if fetch_mask != 0 {
+                                        state.pending_cell_requests.push((vec![hash], fetch_mask));
+                                    }
+                                }
+                            }
+                        }
+                        if !sampler_hashes.is_empty() {
+                            // Request the tx body (no cells) from this peer.
+                            let trimmed = announcement.filter_to(&sampler_hashes);
+                            // No cell_mask for sampler tx-only request.
+                            let sampler_ann = NewPooledTransactionHashes72::from_raw(
+                                trimmed.transaction_types,
+                                trimmed.transaction_sizes,
+                                trimmed.transaction_hashes,
+                                None,
+                            );
+                            state
+                                .pending_tx_requests_72
+                                .push((sampler_ann, sampler_hashes));
+                        }
+                    }
+                }
+            }
+        }
         Message::GetPooledTransactions(msg) => {
             let response = msg.handle(&state.blockchain)?;
             let batch_size = response.pooled_transactions.len() as u64;
@@ -1457,7 +1730,18 @@ async fn handle_incoming_message(
                     DisconnectReason::UselessPeer,
                 ));
             }
-            send(state, Message::PooledTransactions(response)).await?;
+            // eth/72: respond with PooledTransactions72 (elided blob payload).
+            let is_eth72 = state
+                .negotiated_eth_capability
+                .as_ref()
+                .is_some_and(|cap| cap.version == 72);
+            if is_eth72 {
+                let response72 =
+                    PooledTransactions72::new(response.id, response.pooled_transactions);
+                send(state, Message::PooledTransactions72(response72)).await?;
+            } else {
+                send(state, Message::PooledTransactions(response)).await?;
+            }
             state.txs_sent_to_peer += batch_size;
         }
         Message::PooledTransactions(msg) if peer_supports_eth => {
@@ -1545,6 +1829,219 @@ async fn handle_incoming_message(
                     }
                     return Err(error.into());
                 }
+            }
+        }
+        // eth/72 (EIP-8070): PooledTransactions72 handler.
+        // Blob txs arrive with elided blobs — do NOT trigger the missing-blob disconnect.
+        Message::PooledTransactions72(msg) if peer_supports_eth => {
+            if !msg.pooled_transactions.is_empty() {
+                state.received_txs_from_peer = true;
+            }
+            let removed_request = state.requested_pooled_txs_72.remove(&msg.id);
+            if let Some((_, ref requested_hashes, _)) = removed_request {
+                state
+                    .blockchain
+                    .mempool
+                    .clear_in_flight_txs(requested_hashes)?;
+            }
+            if state.blockchain.is_synced() {
+                if let Some((announced, requested_hashes, _)) = &removed_request {
+                    let fork = state.blockchain.current_fork().await?;
+                    if let Err(error) = msg.validate_requested(announced, fork) {
+                        warn!(
+                            peer=%state.node,
+                            reason=%error,
+                            "disconnected from peer (eth/72 PooledTransactions72)",
+                        );
+                        retry_on_alternates(&state.blockchain, &state.peer_table, requested_hashes)
+                            .await;
+                        send_disconnect_message(state, Some(DisconnectReason::SubprotocolError))
+                            .await;
+                        return Err(PeerConnectionError::DisconnectSent(
+                            DisconnectReason::SubprotocolError,
+                        ));
+                    }
+                }
+                #[cfg(feature = "l2")]
+                let is_l2_mode = state.l2_state.is_supported();
+                #[cfg(not(feature = "l2"))]
+                let is_l2_mode = false;
+                if let Err(error) = msg.handle(&state.node, &state.blockchain, is_l2_mode).await {
+                    if matches!(
+                        error,
+                        ethrex_blockchain::error::MempoolError::BlobsBundleError(_)
+                    ) {
+                        warn!(
+                            peer=%state.node,
+                            reason=%error,
+                            "disconnected from peer (eth/72 blob error)",
+                        );
+                        if let Some((_announced, requested_hashes, _)) = &removed_request {
+                            retry_on_alternates(
+                                &state.blockchain,
+                                &state.peer_table,
+                                requested_hashes,
+                            )
+                            .await;
+                        }
+                        send_disconnect_message(state, Some(DisconnectReason::SubprotocolError))
+                            .await;
+                        return Err(PeerConnectionError::DisconnectSent(
+                            DisconnectReason::SubprotocolError,
+                        ));
+                    }
+                    return Err(error.into());
+                }
+                // EIP-8070 sampler: after tx validation, check if we have enough provider
+                // announcements to start fetching cells.
+                if state.blockchain.mempool.blob_sampling_enabled {
+                    let peer_id = state.node.node_id();
+                    let mempool = &state.blockchain.mempool;
+                    if let Some((announced, requested_hashes, _)) = &removed_request {
+                        // Only trigger cell fetch for sampler role (cell_mask is None in sampler tx requests).
+                        if announced.cell_mask.is_none() {
+                            for &tx_hash in requested_hashes.iter() {
+                                // Providers were recorded at announce time (provider-gated);
+                                // here we only read the distinct-provider count to decide
+                                // whether the 2-provider sampling threshold is met.
+                                let count = match mempool.provider_announcer_count(tx_hash) {
+                                    Ok(n) => n,
+                                    Err(e) => {
+                                        warn!(error = %e, "provider_announcer_count failed");
+                                        continue;
+                                    }
+                                };
+                                if count
+                                    >= ethrex_blockchain::mempool::MIN_PROVIDERS_BEFORE_SAMPLING
+                                {
+                                    // Compute target columns = custody | extra.
+                                    let custody = match mempool.get_custody_columns() {
+                                        Ok(c) => c,
+                                        Err(e) => {
+                                            warn!(error = %e, "get_custody_columns failed");
+                                            continue;
+                                        }
+                                    };
+                                    // D6a: C_extra is only added when the target peer
+                                    // is a provider (advertised full availability).
+                                    let peer_mask = mempool
+                                        .peer_cell_mask(peer_id)
+                                        .unwrap_or(None)
+                                        .unwrap_or(u128::MAX);
+                                    let mut target = custody;
+                                    if peer_mask == u128::MAX
+                                        && let Some(extra_col) =
+                                            pick_random_extra_column(custody, tx_hash)
+                                    {
+                                        target |= 1u128 << extra_col;
+                                    }
+                                    let fetch_mask = target & peer_mask;
+                                    if fetch_mask != 0 {
+                                        state
+                                            .pending_cell_requests
+                                            .push((vec![tx_hash], fetch_mask));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        // eth/72 (EIP-8070): GetCells handler — serve cells we hold.
+        Message::GetCells(req) if peer_supports_eth => {
+            let response = req.handle(&state.blockchain.mempool);
+            send(state, Message::Cells(response)).await?;
+        }
+        // eth/72 (EIP-8070): Cells ingest — verify received cells against the
+        // sidecar KZG proofs (carried in the elided PooledTransactions72), then
+        // store. Cells that fail verification, or lack a matching sidecar proof,
+        // cause a disconnect: accepting unverified cells would defeat DAS.
+        ref message @ Message::Cells(_) if peer_supports_eth => {
+            #[allow(unused_mut)]
+            let mut verify_failed = false;
+            #[cfg(feature = "c-kzg")]
+            if let Message::Cells(cells_msg) = message {
+                use ethrex_common::types::{BYTES_PER_CELL, CELLS_PER_EXT_BLOB, Commitment, Proof};
+                use ethrex_crypto::kzg::verify_cell_kzg_proof_batch_partial;
+                let mempool = &state.blockchain.mempool;
+                // Columns carried in this response (ascending order of set bits).
+                let cols: Vec<u64> = (0..CELLS_PER_EXT_BLOB as u64)
+                    .filter(|bit| (cells_msg.cell_mask >> bit) & 1 == 1)
+                    .collect();
+
+                'txs: for (tx_idx, tx_hash) in cells_msg.transaction_hashes.iter().enumerate() {
+                    let Some(bundle) = mempool.get_blobs_bundle(*tx_hash).unwrap_or(None) else {
+                        continue;
+                    };
+                    // Cells are packed blob-major: [blob0 over cols, blob1 over cols, ...].
+                    let tx_cells = cells_msg.cells.get(tx_idx).cloned().unwrap_or_default();
+                    let blob_count = bundle.commitments.len();
+
+                    let mut to_store: Vec<(usize, usize, Box<[u8; BYTES_PER_CELL]>)> = Vec::new();
+                    let mut v_commitments: Vec<Commitment> = Vec::new();
+                    let mut v_cols: Vec<u64> = Vec::new();
+                    let mut v_cells: Vec<[u8; BYTES_PER_CELL]> = Vec::new();
+                    let mut v_proofs: Vec<Proof> = Vec::new();
+
+                    for blob_idx in 0..blob_count {
+                        for (col_pos, &col) in cols.iter().enumerate() {
+                            let cell_pos = blob_idx * cols.len() + col_pos;
+                            let Some(&cell) = tx_cells.get(cell_pos) else {
+                                continue;
+                            };
+                            // Sidecar cell proof for (blob_idx, col).
+                            let proof_idx = blob_idx * CELLS_PER_EXT_BLOB + col as usize;
+                            match (
+                                bundle.proofs.get(proof_idx),
+                                bundle.commitments.get(blob_idx),
+                            ) {
+                                (Some(&proof), Some(&commitment)) => {
+                                    v_commitments.push(commitment);
+                                    v_cols.push(col);
+                                    v_cells.push(cell);
+                                    v_proofs.push(proof);
+                                    to_store.push((blob_idx, col as usize, Box::new(cell)));
+                                }
+                                // A received cell with no matching sidecar proof can't be trusted.
+                                _ => {
+                                    verify_failed = true;
+                                    break 'txs;
+                                }
+                            }
+                        }
+                    }
+
+                    if v_cells.is_empty() {
+                        continue;
+                    }
+                    match verify_cell_kzg_proof_batch_partial(
+                        &v_commitments,
+                        &v_cols,
+                        &v_cells,
+                        &v_proofs,
+                    ) {
+                        Ok(true) => {}
+                        Ok(false) | Err(_) => {
+                            verify_failed = true;
+                            break;
+                        }
+                    }
+                    if let Err(e) = mempool.store_cells(*tx_hash, blob_count, to_store) {
+                        warn!(error = %e, "store_cells failed");
+                    }
+                }
+            }
+            if verify_failed {
+                warn!(peer=%state.node, "disconnected: invalid cell KZG proofs");
+                if let Message::Cells(c) = message {
+                    let hashes = c.transaction_hashes.clone();
+                    retry_on_alternates(&state.blockchain, &state.peer_table, &hashes).await;
+                }
+                send_disconnect_message(state, Some(DisconnectReason::SubprotocolError)).await;
+                return Err(PeerConnectionError::DisconnectSent(
+                    DisconnectReason::SubprotocolError,
+                ));
             }
         }
         Message::GetStorageRanges(req) => {
@@ -1724,6 +2221,114 @@ async fn flush_pending_tx_requests(state: &mut Established) -> Result<(), PeerCo
             .insert(request_id, (announcement, chunk.to_vec(), Instant::now()));
     }
 
+    Ok(())
+}
+
+/// eth/72 variant of flush_pending_tx_requests.
+/// Sends GetPooledTransactions for v72 announcements and stores them in
+/// requested_pooled_txs_72 for validation when PooledTransactions72 arrives.
+///
+/// Per-announcement cell_mask tracking: each hash carries the mask from
+/// the announcement it came from. When hashes are chunked across multiple
+/// requests, each chunk's mask is the union of only the masks relevant to
+/// the hashes in that chunk (not a global OR across all announcements).
+async fn flush_pending_tx_requests_72(state: &mut Established) -> Result<(), PeerConnectionError> {
+    if state.pending_tx_requests_72.is_empty() {
+        return Ok(());
+    }
+
+    let pending = std::mem::take(&mut state.pending_tx_requests_72);
+
+    // Build flat lists while tracking the per-hash cell_mask.
+    let mut all_hashes: Vec<H256> = Vec::new();
+    let mut all_types: Vec<u8> = Vec::new();
+    let mut all_sizes: Vec<usize> = Vec::new();
+    // Per-position mask: Some(m) if this hash came from an announcement with
+    // cell_mask = Some(m), else None.
+    let mut all_masks: Vec<Option<u128>> = Vec::new();
+
+    for (announcement, _hashes) in &pending {
+        let mask = announcement.cell_mask;
+        for (i, hash) in announcement.transaction_hashes.iter().enumerate() {
+            all_hashes.push(*hash);
+            all_types.push(announcement.transaction_types[i]);
+            all_sizes.push(announcement.transaction_sizes[i]);
+            all_masks.push(mask);
+        }
+    }
+
+    const MAX_HASHES_PER_REQUEST: usize = 256;
+    for (i, chunk) in all_hashes.chunks(MAX_HASHES_PER_REQUEST).enumerate() {
+        let offset = i * MAX_HASHES_PER_REQUEST;
+        let chunk_len = chunk.len();
+        let chunk_types = &all_types[offset..offset + chunk_len];
+        let chunk_sizes = &all_sizes[offset..offset + chunk_len];
+        let chunk_masks = &all_masks[offset..offset + chunk_len];
+
+        // Compute the mask for this chunk only: OR of masks for hashes in this chunk.
+        let chunk_cell_mask: Option<u128> =
+            chunk_masks.iter().fold(None, |acc, m| match (acc, m) {
+                (None, None) => None,
+                (Some(a), None) => Some(a),
+                (None, Some(b)) => Some(*b),
+                (Some(a), Some(b)) => Some(a | b),
+            });
+
+        let announcement = NewPooledTransactionHashes72::from_raw(
+            chunk_types.to_vec().into(),
+            chunk_sizes.to_vec(),
+            chunk.to_vec(),
+            chunk_cell_mask,
+        );
+        let request = GetPooledTransactions::new(random(), chunk.to_vec());
+        let request_id = request.id;
+        if let Err(e) = send(state, Message::GetPooledTransactions(request)).await {
+            let unsent = &all_hashes[offset..];
+            if !unsent.is_empty() {
+                if let Err(clear_err) = state.blockchain.mempool.clear_in_flight_txs(unsent) {
+                    warn!(error = %clear_err, "clear_in_flight_txs failed after send error (v72)");
+                }
+                retry_on_alternates(&state.blockchain, &state.peer_table, unsent).await;
+            }
+            return Err(e);
+        }
+        state
+            .requested_pooled_txs_72
+            .insert(request_id, (announcement, chunk.to_vec(), Instant::now()));
+    }
+
+    Ok(())
+}
+
+/// EIP-8070: flush buffered cell requests as batched GetCells messages.
+/// Mirrors flush_pending_tx_requests_72 but sends GetCells instead of
+/// GetPooledTransactions.
+async fn flush_pending_cell_requests(state: &mut Established) -> Result<(), PeerConnectionError> {
+    if state.pending_cell_requests.is_empty() {
+        return Ok(());
+    }
+    let pending = std::mem::take(&mut state.pending_cell_requests);
+
+    // Merge all pending requests into a flat list of hashes with their masks.
+    let mut all_hashes: Vec<H256> = Vec::new();
+    let mut all_masks: Vec<u128> = Vec::new();
+    for (hashes, mask) in &pending {
+        for &h in hashes {
+            all_hashes.push(h);
+            all_masks.push(*mask);
+        }
+    }
+
+    const MAX_HASHES_PER_REQUEST: usize = 256;
+    for (i, chunk) in all_hashes.chunks(MAX_HASHES_PER_REQUEST).enumerate() {
+        let offset = i * MAX_HASHES_PER_REQUEST;
+        let chunk_len = chunk.len();
+        let chunk_masks = &all_masks[offset..offset + chunk_len];
+        // Merge masks for this chunk.
+        let merged_mask = chunk_masks.iter().fold(0u128, |acc, &m| acc | m);
+        let request = GetCells::new(random(), chunk.to_vec(), merged_mask);
+        send(state, Message::GetCells(request)).await?;
+    }
     Ok(())
 }
 

@@ -281,6 +281,11 @@ impl PayloadBuildContext {
         }
 
         let is_amsterdam = config.is_amsterdam_activated(payload.header.timestamp);
+        let blobs_bundle_version = if config.is_osaka_activated(payload.header.timestamp) {
+            1
+        } else {
+            0
+        };
         let payload_size = payload.length() as u64;
         Ok(PayloadBuildContext {
             remaining_gas: payload.header.gas_limit,
@@ -295,7 +300,10 @@ impl PayloadBuildContext {
             block_value: U256::zero(),
             base_fee_per_blob_gas,
             payload,
-            blobs_bundle: BlobsBundle::default(),
+            blobs_bundle: BlobsBundle {
+                version: blobs_bundle_version,
+                ..BlobsBundle::default()
+            },
             store: storage.clone(),
             vm,
             account_updates: Vec::new(),
@@ -621,7 +629,8 @@ impl Blockchain {
                 debug!("No more gas to run transactions");
                 break;
             };
-            if !blob_txs.is_empty() && context.blobs_bundle.blobs.len() >= max_blob_number_per_block
+            if !blob_txs.is_empty()
+                && context.blobs_bundle.commitments.len() >= max_blob_number_per_block
             {
                 debug!("No more blob gas to run blob transactions");
                 blob_txs.clear();
@@ -797,13 +806,38 @@ impl Blockchain {
         // Fetch blobs bundle
         let tx_hash = head.tx.hash(&NativeCrypto);
         let max_blob_number_per_block = self.effective_max_blobs(context);
-        let Some(blobs_bundle) = self.mempool.get_blobs_bundle(tx_hash)? else {
+        let Some(stored_bundle) = self.mempool.get_blobs_bundle(tx_hash)? else {
             // No blob tx should enter the mempool without its blobs bundle so this is an internal error
             return Err(
                 StoreError::Custom(format!("No blobs bundle found for blob tx {tx_hash}")).into(),
             );
         };
-        if context.blobs_bundle.blobs.len() + blobs_bundle.blobs.len() > max_blob_number_per_block {
+
+        // Resolve the bundle: if blobs are elided (eth/72 path), reconstruct them
+        // from the held cells. If reconstruction is impossible (< 64 columns held),
+        // drop the tx non-fatally so the builder continues with other transactions.
+        let blobs_bundle = if stored_bundle.blobs.is_empty() {
+            match self.mempool.reconstruct_blobs_bundle(tx_hash)? {
+                Some(full) => {
+                    // Cache the reconstructed bundle so future build ticks reuse it.
+                    self.mempool.add_blobs_bundle(tx_hash, full.clone())?;
+                    full
+                }
+                None => {
+                    // Not enough cells to reconstruct; skip this tx non-fatally.
+                    return Err(EvmError::Custom(format!(
+                        "insufficient cells to reconstruct blobs for tx {tx_hash}"
+                    ))
+                    .into());
+                }
+            }
+        } else {
+            stored_bundle
+        };
+
+        if context.blobs_bundle.commitments.len() + blobs_bundle.commitments.len()
+            > max_blob_number_per_block
+        {
             // This error will only be used for debug tracing
             return Err(EvmError::Custom("max data blobs reached".to_string()).into());
         };
@@ -812,7 +846,7 @@ impl Blockchain {
         // Update context with blob data
         let prev_blob_gas = context.payload.header.blob_gas_used.unwrap_or_default();
         context.payload.header.blob_gas_used =
-            Some(prev_blob_gas + (blobs_bundle.blobs.len() * GAS_PER_BLOB as usize) as u64);
+            Some(prev_blob_gas + (blobs_bundle.commitments.len() * GAS_PER_BLOB as usize) as u64);
         context.blobs_bundle += blobs_bundle;
         Ok(receipt)
     }
