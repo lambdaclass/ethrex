@@ -76,6 +76,27 @@ impl Stack {
         Ok(value)
     }
 
+    /// Mutable reference to the top item without changing depth (one underflow check,
+    /// no `offset` write). For stack-neutral unary ops (ISZERO, NOT, CLZ), replacing
+    /// `pop1` + `push` with `*top_mut() = f(*top)` avoids the read-modify-write of the
+    /// shared `offset`, which is the per-opcode serial dependency that pins dispatch IPC.
+    #[inline]
+    pub fn top_mut(&mut self) -> Result<&mut U256, ExceptionalHalt> {
+        self.values
+            .get_mut(self.offset)
+            .ok_or(ExceptionalHalt::StackUnderflow)
+    }
+
+    /// Pop the top value and return it together with a mutable reference to the new top.
+    /// For binary ops: `let (a, b) = pop1_and_top_mut()?; *b = f(a, *b)` writes the result
+    /// in place (one `offset` write instead of `pop::<2>` + `push`'s two), where `a` is the
+    /// original top and `*b` the original second operand.
+    #[inline]
+    pub fn pop1_and_top_mut(&mut self) -> Result<(U256, &mut U256), ExceptionalHalt> {
+        let a = self.pop1()?;
+        Ok((a, self.top_mut()?))
+    }
+
     /// Push a single U256 value to the stack, faster than the generic push.
     #[inline]
     pub fn push(&mut self, value: U256) -> Result<(), ExceptionalHalt> {
@@ -299,6 +320,12 @@ pub struct CallFrameBackup {
     /// BAL checkpoint for EIP-7928 - used to restore state changes on revert
     /// while preserving touched_addresses.
     pub bal_checkpoint: Option<BlockAccessListCheckpoint>,
+    /// Code hashes this frame inserted into the by-hash code cache
+    /// (`GeneralizedDatabase::codes`) for codes it deployed. Removed from the
+    /// cache on revert: a stale entry would make a later read of the same
+    /// hash (from a pre-existing account) hit the cache instead of the store,
+    /// hiding the read from execution-witness recording (EIP-8025).
+    pub inserted_code_hashes: Vec<H256>,
 }
 
 impl CallFrameBackup {
@@ -324,6 +351,7 @@ impl CallFrameBackup {
         self.original_accounts_info.clear();
         self.original_account_storage_slots.clear();
         self.bal_checkpoint = None;
+        self.inserted_code_hashes.clear();
     }
 
     /// Merges `other` into `self`, per-address. For slots present in both,
@@ -341,6 +369,7 @@ impl CallFrameBackup {
         }
         self.original_accounts_info
             .extend(other.original_accounts_info);
+        self.inserted_code_hashes.extend(other.inserted_code_hashes);
         // Don't extend bal_checkpoint - it's specific to each call frame
     }
 }
@@ -400,13 +429,13 @@ impl CallFrame {
 
     #[inline(always)]
     pub fn next_opcode(&self) -> u8 {
-        if self.pc < self.bytecode.bytecode.len() {
-            #[expect(unsafe_code, reason = "bounds checked above")]
-            unsafe {
-                *self.bytecode.bytecode.get_unchecked(self.pc)
-            }
-        } else {
-            0
+        // SAFETY: pc reaches at most bytecode_len + 32 (a PUSH32 at the last real
+        // byte advances 33 total: +1 in the dispatch loop, +32 in the handler).
+        // dispatch_buf() is bytecode_len + BYTECODE_PADDING (33) long, so the read
+        // is always in bounds.
+        #[expect(unsafe_code, reason = "pc bounded by padded bytecode len")]
+        unsafe {
+            *self.bytecode.dispatch_buf().get_unchecked(self.pc)
         }
     }
 
@@ -428,6 +457,16 @@ impl CallFrame {
         Ok(())
     }
 
+    /// EELS' `check_gas`: assert gas is available without consuming it.
+    #[inline(always)]
+    #[expect(clippy::as_conversions, reason = "remaining gas conversion")]
+    pub fn check_gas(&self, gas: u64) -> Result<(), ExceptionalHalt> {
+        if self.gas_remaining < 0 || (self.gas_remaining as u64) < gas {
+            return Err(ExceptionalHalt::OutOfGas);
+        }
+        Ok(())
+    }
+
     pub fn set_code(&mut self, code: Code) -> Result<(), VMError> {
         self.bytecode = code;
         Ok(())
@@ -438,6 +477,12 @@ impl<'a> VM<'a> {
     /// Adds current calframe to call_frames, sets current call frame to the passed callframe.
     #[inline(always)]
     pub fn add_callframe(&mut self, new_call_frame: CallFrame) {
+        // Reserve once on the first sub-call (p99 depth ~10, max 27): keeps the ~43% of txs that
+        // never make a call alloc-free (`call_frames` starts as `Vec::new()`), while avoiding the
+        // repeated reallocs a call-heavy tx would otherwise incur as depth grows.
+        if self.call_frames.is_empty() {
+            self.call_frames.reserve(8);
+        }
         self.call_frames.push(new_call_frame);
         #[allow(unsafe_code, reason = "just pushed, so the vec is not empty")]
         unsafe {
@@ -464,6 +509,19 @@ impl<'a> VM<'a> {
     /// Restores the cache state to the state before changes made during a callframe.
     pub fn restore_cache_state(&mut self) -> Result<(), VMError> {
         let callframe_backup = self.current_call_frame.call_frame_backup.clone();
+        restore_cache_state(self.db, callframe_backup)
+    }
+
+    /// Like [`Self::restore_cache_state`] but moves the current frame's backup out instead of
+    /// cloning it. Only sound when nothing reads `call_frame_backup` afterward: the inner-call
+    /// revert in `handle_return` (the frame is popped right after, so its backup is dead), and
+    /// the top-level / invalid-tx revert when no `BackupHook` is installed (normal L1 block
+    /// execution, gated on `VM::preserve_top_level_backup`).
+    ///
+    /// When a `BackupHook` IS present (L2 / stateless) the top-level paths must keep cloning,
+    /// because `BackupHook::finalize` reads the backup to build the tx-level undo snapshot.
+    pub fn restore_cache_state_consuming(&mut self) -> Result<(), VMError> {
+        let callframe_backup = std::mem::take(&mut self.current_call_frame.call_frame_backup);
         restore_cache_state(self.db, callframe_backup)
     }
 
@@ -501,16 +559,22 @@ impl<'a> VM<'a> {
             }
         }
 
+        // Propagate code-cache insertions so a revert of the parent also
+        // evicts codes deployed by the (committed) child frame.
+        self.current_call_frame
+            .call_frame_backup
+            .inserted_code_hashes
+            .extend(child_call_frame_backup.inserted_code_hashes.iter().copied());
+
         Ok(())
     }
 
     #[inline(always)]
-    pub fn advance_pc(&mut self, count: usize) -> Result<(), VMError> {
-        self.current_call_frame.pc = self
-            .current_call_frame
-            .pc
-            .checked_add(count)
-            .ok_or(InternalError::Overflow)?;
-        Ok(())
+    #[expect(
+        clippy::arithmetic_side_effects,
+        reason = "pc bounded by padded bytecode len"
+    )]
+    pub fn advance_pc(&mut self) {
+        self.current_call_frame.pc += 1;
     }
 }

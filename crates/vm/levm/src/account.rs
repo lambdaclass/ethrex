@@ -2,7 +2,7 @@ use ethrex_common::H256;
 use ethrex_common::constants::EMPTY_TRIE_HASH;
 use ethrex_common::types::{AccountState, GenesisAccount};
 use ethrex_common::utils::keccak;
-use ethrex_common::{U256, constants::EMPTY_KECCACK_HASH, types::AccountInfo};
+use ethrex_common::{U256, constants::EMPTY_KECCAK_HASH, types::AccountInfo};
 use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
 
@@ -107,7 +107,7 @@ impl LevmAccount {
     }
 
     pub fn has_code(&self) -> bool {
-        self.info.code_hash != *EMPTY_KECCACK_HASH
+        self.info.code_hash != *EMPTY_KECCAK_HASH
     }
 
     pub fn create_would_collide(&self) -> bool {
@@ -121,6 +121,37 @@ impl LevmAccount {
     /// Checks if the account is unmodified.
     pub fn is_unmodified(&self) -> bool {
         matches!(self.status, AccountStatus::Unmodified)
+    }
+
+    /// Clones the account's metadata (info + flags) but leaves `storage` empty.
+    ///
+    /// Used on the streaming-executor read-fault path (`load_account`): when the streaming
+    /// merkleizer drains `current_accounts_state`, a hot account re-faulted on the next tx would
+    /// otherwise deep-copy its entire accumulated storage map (hundreds–thousands of slots) just
+    /// so the tx can read the ~3 it touches. Cloning info/flags only and faulting those slots in
+    /// lazily avoids that copy. Correctness relies on `get_storage_value` resolving a `current`
+    /// miss against `initial_accounts_state` (the committed in-block baseline) before the
+    /// pre-block store, which keeps the diff invariant "every key in `current.storage` is also in
+    /// `initial.storage`" intact.
+    ///
+    /// Destructured (not `..`) so adding a field to `LevmAccount` fails to compile here until it
+    /// is explicitly carried — a missing flag would silently corrupt the state-transition diff.
+    #[inline]
+    pub fn clone_without_storage(&self) -> Self {
+        let Self {
+            info,
+            storage: _,
+            has_storage,
+            status,
+            exists,
+        } = self;
+        Self {
+            info: info.clone(),
+            storage: FxHashMap::default(),
+            has_storage: *has_storage,
+            status: status.clone(),
+            exists: *exists,
+        }
     }
 }
 

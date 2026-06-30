@@ -16,7 +16,7 @@
 
 use ethrex_common::{
     H256,
-    constants::{EMPTY_KECCACK_HASH, EMPTY_TRIE_HASH},
+    constants::{EMPTY_KECCAK_HASH, EMPTY_TRIE_HASH},
     types::{AccountState, BlockHeader, Code, block_access_list::BlockAccessList},
     utils::keccak,
 };
@@ -25,7 +25,7 @@ use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
 use ethrex_storage::{
     Store,
     api::tables::{ACCOUNT_CODE_METADATA, ACCOUNT_CODES, ACCOUNT_TRIE_NODES, STORAGE_TRIE_NODES},
-    apply_prefix, hash_address, hash_key,
+    apply_prefix, encode_code, hash_address, hash_key,
 };
 use ethrex_trie::EMPTY_TRIE_HASH as TRIE_EMPTY;
 
@@ -91,7 +91,7 @@ pub fn apply_bal(
         if let Some(last_cc) = account_changes.code_changes.last() {
             if last_cc.new_code.is_empty() {
                 // Delegation clear (EIP-7702) or code removal: set code_hash to empty.
-                account_state.code_hash = *EMPTY_KECCACK_HASH;
+                account_state.code_hash = *EMPTY_KECCAK_HASH;
             } else {
                 let code_hash = keccak(&last_cc.new_code);
                 let code = Code::from_bytecode_unchecked(last_cc.new_code.clone(), code_hash);
@@ -144,7 +144,7 @@ pub fn apply_bal(
         // Step 2g: destruction check (implicit-empty rule).
         let is_destroyed = account_state.balance.is_zero()
             && account_state.nonce == 0
-            && account_state.code_hash == *EMPTY_KECCACK_HASH
+            && account_state.code_hash == *EMPTY_KECCAK_HASH
             && (account_state.storage_root == *EMPTY_TRIE_HASH
                 || account_state.storage_root == *TRIE_EMPTY);
 
@@ -181,10 +181,8 @@ pub fn apply_bal(
 /// Write a `Code` entry to the store synchronously.
 fn store_code_sync(store: &Store, code: Code) -> Result<(), SyncError> {
     let hash_key_bytes = code.hash.0.to_vec();
-    let mut buf = Vec::new();
-    code.bytecode.encode(&mut buf);
-    code.jump_targets.encode(&mut buf);
-    let metadata = (code.bytecode.len() as u64).to_be_bytes().to_vec();
+    let buf = encode_code(&code);
+    let metadata = (code.len() as u64).to_be_bytes().to_vec();
 
     store.write(ACCOUNT_CODES, hash_key_bytes.clone(), buf)?;
     store.write(ACCOUNT_CODE_METADATA, hash_key_bytes, metadata)?;

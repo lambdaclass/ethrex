@@ -100,6 +100,15 @@ pub fn restore_cache_state(
         }
     }
 
+    // Evict codes the reverted frame(s) deployed: a stale by-hash cache entry
+    // would serve a later read of the same hash (from a pre-existing account)
+    // without hitting the store, hiding the read from execution-witness
+    // recording (EIP-8025). Only hashes that were NOT cached before the frame
+    // are tracked, so committed or store-loaded codes are never evicted.
+    for code_hash in callframe_backup.inserted_code_hashes {
+        db.codes.remove(&code_hash);
+    }
+
     // Restore BAL recorder to checkpoint (but keep touched_addresses per EIP-7928)
     if let Some(checkpoint) = callframe_backup.bal_checkpoint
         && let Some(recorder) = db.bal_recorder.as_mut()
@@ -116,9 +125,11 @@ pub fn get_base_fee_per_blob_gas(
     evm_config: &EVMConfig,
 ) -> Result<U256, VMError> {
     let base_fee_update_fraction = evm_config.blob_schedule.base_fee_update_fraction;
+    let excess_blob_gas = block_excess_blob_gas.unwrap_or_default();
+
     fake_exponential(
         MIN_BASE_FEE_PER_BLOB_GAS.into(),
-        block_excess_blob_gas.unwrap_or_default().into(),
+        excess_blob_gas.into(),
         base_fee_update_fraction,
     )
     .map_err(|err| VMError::Internal(InternalError::FakeExponentialError(err)))
@@ -149,8 +160,7 @@ pub fn get_max_blob_gas_price(
 /// Calculate the actual blob gas cost.
 pub fn calculate_blob_gas_cost(
     tx_blob_hashes: &[H256],
-    block_excess_blob_gas: Option<u64>,
-    evm_config: &EVMConfig,
+    base_blob_fee_per_gas: U256,
 ) -> Result<U256, VMError> {
     let blobhash_amount: u64 = tx_blob_hashes
         .len()
@@ -161,11 +171,9 @@ pub fn calculate_blob_gas_cost(
         .checked_mul(BLOB_GAS_PER_BLOB)
         .unwrap_or_default();
 
-    let base_fee_per_blob_gas = get_base_fee_per_blob_gas(block_excess_blob_gas, evm_config)?;
-
     let blob_gas_used: U256 = blob_gas_used.into();
     let blob_fee: U256 = blob_gas_used
-        .checked_mul(base_fee_per_blob_gas)
+        .checked_mul(base_blob_fee_per_gas)
         .ok_or(InternalError::Overflow)?;
 
     Ok(blob_fee)
@@ -178,7 +186,7 @@ pub fn word_to_address(word: U256) -> Address {
 
 // ================== EIP-7702 related functions =====================
 
-pub fn code_has_delegation(code: &Bytes) -> Result<bool, VMError> {
+pub fn code_has_delegation(code: &[u8]) -> Result<bool, VMError> {
     if code.len() == EIP7702_DELEGATED_CODE_LEN {
         let first_3_bytes = &code.get(..3).ok_or(InternalError::Slicing)?;
         return Ok(*first_3_bytes == SET_CODE_DELEGATION_BYTES);
@@ -188,7 +196,7 @@ pub fn code_has_delegation(code: &Bytes) -> Result<bool, VMError> {
 
 /// Gets the address inside the bytecode if it has been
 /// delegated as the EIP7702 determines.
-pub fn get_authorized_address_from_code(code: &Bytes) -> Result<Address, VMError> {
+pub fn get_authorized_address_from_code(code: &[u8]) -> Result<Address, VMError> {
     if code_has_delegation(code)? {
         let address_bytes = &code
             .get(SET_CODE_DELEGATION_BYTES.len()..)
@@ -252,30 +260,59 @@ pub fn eip7702_get_code(
     accrued_substate: &mut Substate,
     address: Address,
 ) -> Result<(bool, u64, Address, Code), VMError> {
-    // Address is the delgated address
-    let bytecode = db.get_account_code(address)?;
-
-    // If the Address doesn't have a delegation code
-    // return false meaning that is not a delegation
-    // return the same address given
-    // return the bytecode of the given address
-    if !code_has_delegation(&bytecode.bytecode)? {
-        return Ok((false, 0, address, bytecode.clone()));
-    }
-
-    // Here the address has a delegation code
-    // The delegation code has the authorized address
-    let auth_address = get_authorized_address_from_code(&bytecode.bytecode)?;
-
-    let access_cost = if accrued_substate.add_accessed_address(auth_address) {
-        COLD_ADDRESS_ACCESS_COST
-    } else {
-        WARM_ADDRESS_ACCESS_COST
+    let (bytecode, delegation) = eip7702_peek_delegation(db, accrued_substate, address)?;
+    let Some((auth_address, access_cost)) = delegation else {
+        return Ok((false, 0, address, bytecode));
     };
 
+    accrued_substate.add_accessed_address(auth_address);
     let authorized_bytecode = db.get_account_code(auth_address)?.clone();
 
     Ok((true, access_cost, auth_address, authorized_bytecode))
+}
+
+/// First half of [`eip7702_get_code`]: read `address`'s code and detect a
+/// delegation designation WITHOUT touching the delegate account.
+///
+/// Returns `address`'s code and, when delegated, the delegate address with
+/// its warm/cold access cost (computed from the current substate, not
+/// recorded). CALL-family opcodes use this to gas-check the delegation
+/// access cost before reading the delegate (EELS order); reading it earlier
+/// would leak the delegate account into execution witnesses on OOG.
+pub fn eip7702_peek_delegation(
+    db: &mut GeneralizedDatabase,
+    substate: &Substate,
+    address: Address,
+) -> Result<(Code, Option<(Address, u64)>), VMError> {
+    let bytecode = db.get_account_code(address)?.clone();
+    if !code_has_delegation(bytecode.code())? {
+        return Ok((bytecode, None));
+    }
+    let auth_address = get_authorized_address_from_code(bytecode.code())?;
+    let access_cost = if substate.is_address_accessed(&auth_address) {
+        WARM_ADDRESS_ACCESS_COST
+    } else {
+        COLD_ADDRESS_ACCESS_COST
+    };
+    Ok((bytecode, Some((auth_address, access_cost))))
+}
+
+/// Precomputed intrinsic-gas components for a transaction.
+///
+/// Computed once per tx in the prepare-execution hook and reused by
+/// [`VM::validate_min_gas_limit`](crate::hooks::default_hook::validate_min_gas_limit)
+/// and [`VM::add_intrinsic_gas`]. Previously the full calldata / access-list /
+/// auth-list walk ran 2-3x per tx (once in each function, plus the pre-Amsterdam
+/// floor's own `tx_calldata`).
+#[derive(Clone, Copy, Debug)]
+pub struct IntrinsicGas {
+    /// Regular (EIP-8037) intrinsic-gas arm.
+    pub regular: u64,
+    /// State (EIP-8037, Amsterdam+) intrinsic-gas arm; always 0 pre-Amsterdam.
+    pub state: u64,
+    /// `gas_cost::tx_calldata` over `current_call_frame.calldata`. Reused by the
+    /// pre-Amsterdam floor check (same byte string, same point in execution).
+    pub calldata_cost: u64,
 }
 
 impl<'a> VM<'a> {
@@ -315,9 +352,9 @@ impl<'a> VM<'a> {
 
             // 5. Verify the code of authority is either empty or already delegated.
             // Check this BEFORE recording to BAL so we can release the borrow on authority_code.
-            let authority_code_is_empty = authority_code.bytecode.is_empty();
+            let authority_code_is_empty = authority_code.is_empty();
             let empty_or_delegated =
-                authority_code_is_empty || code_has_delegation(&authority_code.bytecode)?;
+                authority_code_is_empty || code_has_delegation(authority_code.code())?;
 
             // Record authority as touched for BAL per EIP-7928, even if validation fails later.
             // This ensures authority appears in BAL with empty change set when:
@@ -431,10 +468,11 @@ impl<'a> VM<'a> {
         Ok(())
     }
 
-    pub fn add_intrinsic_gas(&mut self) -> Result<(), VMError> {
+    pub fn add_intrinsic_gas(&mut self, intrinsic: &IntrinsicGas) -> Result<(), VMError> {
         // Intrinsic gas is the gas consumed by the transaction before the execution of the opcodes. Section 6.2 in the Yellow Paper.
 
-        let (regular_gas, state_gas) = self.get_intrinsic_gas()?;
+        let regular_gas = intrinsic.regular;
+        let state_gas = intrinsic.state;
 
         let total_gas = regular_gas.checked_add(state_gas).ok_or(OutOfGas)?;
 
@@ -502,7 +540,7 @@ impl<'a> VM<'a> {
     /// Returns `(regular_gas, state_gas)` intrinsic gas for the transaction.
     /// For Amsterdam+, state_gas is the EIP-8037 state portion.
     /// For pre-Amsterdam, state_gas is always 0.
-    pub fn get_intrinsic_gas(&self) -> Result<(u64, u64), VMError> {
+    pub fn get_intrinsic_gas(&self) -> Result<IntrinsicGas, VMError> {
         // Intrinsic Gas = Calldata cost + Create cost + Base cost + Access list cost
         let mut regular_gas: u64 = 0;
         let mut state_gas: u64 = 0;
@@ -607,7 +645,11 @@ impl<'a> VM<'a> {
                 .ok_or(OutOfGas)?;
         }
 
-        Ok((regular_gas, state_gas))
+        Ok(IntrinsicGas {
+            regular: regular_gas,
+            state: state_gas,
+            calldata_cost,
+        })
     }
 
     /// Calculates the minimum gas to be consumed in the transaction.
@@ -616,9 +658,9 @@ impl<'a> VM<'a> {
 
         // If the transaction is a CREATE transaction, the calldata is emptied and the bytecode is assigned.
         let calldata = if self.is_create()? {
-            &self.current_call_frame.bytecode.bytecode
+            self.current_call_frame.bytecode.code()
         } else {
-            &self.current_call_frame.calldata
+            self.current_call_frame.calldata.as_ref()
         };
 
         // EIP-7976 floor tokens: for the floor arm, all calldata bytes count unweighted.

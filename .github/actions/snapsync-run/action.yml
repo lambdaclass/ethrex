@@ -50,8 +50,14 @@ runs:
         IMAGE_TAG: ${{ inputs.ethrex_tag }}
       run: |
         echo "Building ethrex with profile: ${BUILD_PROFILE}"
+        GIT_SHA=$(git rev-parse HEAD 2>/dev/null || echo unknown)
+        GIT_BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo unknown)
+        VERSION=$(git describe --tags --always --dirty 2>/dev/null || echo dev)
         docker build \
           --build-arg PROFILE="${BUILD_PROFILE}" \
+          --build-arg GIT_SHA="${GIT_SHA}" \
+          --build-arg GIT_BRANCH="${GIT_BRANCH}" \
+          --build-arg VERSION="${VERSION}" \
           -t ethrex-local:${IMAGE_TAG} \
           -f Dockerfile .
 

@@ -14,6 +14,7 @@ use ethrex_common::{
     constants::EMPTY_BLOCK_ACCESS_LIST_HASH,
     types::{BlockHeader, block_access_list::BlockAccessList},
 };
+use ethrex_crypto::NativeCrypto;
 use ethrex_storage::Store;
 use tracing::{debug, info, warn};
 
@@ -66,7 +67,7 @@ pub fn try_apply_bal_block(
     let expected_bal_hash = header
         .block_access_list_hash
         .unwrap_or(*EMPTY_BLOCK_ACCESS_LIST_HASH);
-    let actual_bal_hash = bal.compute_hash();
+    let actual_bal_hash = bal.compute_hash(&NativeCrypto);
     if actual_bal_hash != expected_bal_hash {
         return Err(ApplyBalError::BadHash {
             expected: expected_bal_hash,

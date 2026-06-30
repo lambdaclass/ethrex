@@ -8,7 +8,7 @@ use std::{
 use crate::utils::keccak;
 use bytes::Bytes;
 use ethereum_types::{Address, H256, U256};
-use ethrex_crypto::{Crypto, CryptoError};
+use ethrex_crypto::{Crypto, CryptoError, NativeCrypto};
 use lru::LruCache;
 pub use mempool::MempoolTransaction;
 
@@ -46,7 +46,10 @@ use ethrex_rlp::{
     structs::{Decoder, Encoder},
 };
 
+#[cfg(all(feature = "eip-8025", target_arch = "riscv64"))]
+use super::eip8025_cell::OnceCell;
 use crate::types::{AccessList, AuthorizationList, BlobsBundle};
+#[cfg(not(all(feature = "eip-8025", target_arch = "riscv64")))]
 use once_cell::sync::OnceCell;
 
 // The `#[serde(untagged)]` attribute allows the `Transaction` enum to be serialized without
@@ -1131,7 +1134,7 @@ impl Transaction {
         };
         sender_cache
             .get_or_try_init(|| {
-                let tx_hash = self.hash();
+                let tx_hash = self.hash(crypto);
                 // Fast path: check process-level signer cache
                 let mut cache = GLOBAL_SIGNER_CACHE
                     .lock()
@@ -1288,7 +1291,7 @@ impl Transaction {
                 (buf, sig)
             }
         };
-        let msg = keccak(&buf).to_fixed_bytes();
+        let msg = crypto.keccak256(&buf);
         crypto.recover_signer(&sig, &msg)
     }
 
@@ -1465,14 +1468,14 @@ impl Transaction {
         }
     }
 
-    fn compute_hash(&self) -> H256 {
+    fn compute_hash(&self, crypto: &dyn Crypto) -> H256 {
         if let Transaction::PrivilegedL2Transaction(tx) = self {
             return tx.get_privileged_hash().unwrap_or_default();
         }
-        crate::utils::keccak(self.encode_canonical_to_vec())
+        H256(crypto.keccak256(&self.encode_canonical_to_vec()))
     }
 
-    pub fn hash(&self) -> H256 {
+    pub fn hash(&self, crypto: &dyn Crypto) -> H256 {
         let inner_hash = match self {
             Transaction::LegacyTransaction(tx) => &tx.inner_hash,
             Transaction::EIP2930Transaction(tx) => &tx.inner_hash,
@@ -1483,7 +1486,7 @@ impl Transaction {
             Transaction::FeeTokenTransaction(tx) => &tx.inner_hash,
         };
 
-        *inner_hash.get_or_init(|| self.compute_hash())
+        *inner_hash.get_or_init(|| self.compute_hash(crypto))
     }
 
     pub fn gas_tip_cap(&self) -> U256 {
@@ -1527,11 +1530,11 @@ impl Transaction {
 
 fn derive_legacy_chain_id(v: U256) -> Option<u64> {
     let v = u64::try_from(v).ok()?;
-    if v == 27 || v == 28 {
-        None
-    } else {
-        Some((v - 35) / 2)
-    }
+    // EIP-155 encodes the chain id as `v = chain_id * 2 + 35` (or 36), so any
+    // replay-protected `v` is >= 35. Pre-EIP-155 txs use v=27/28, and malformed
+    // signatures (e.g. v=0 from an unsigned IL transaction) are < 35 too; none
+    // carry a chain id. Guard the subtraction to avoid an underflow panic.
+    if v < 35 { None } else { Some((v - 35) / 2) }
 }
 
 impl TxType {
@@ -1545,6 +1548,20 @@ impl TxType {
             0x7d => Some(Self::FeeToken),
             0x7e => Some(Self::Privileged),
             _ => None,
+        }
+    }
+
+    /// Transaction types that only exist on the L2 rollup and must never appear in
+    /// an L1 block (`FeeToken` 0x7d, `Privileged` 0x7e). Privileged transactions in
+    /// particular take their sender from an unsigned, caller-chosen `from` field.
+    ///
+    /// This match is intentionally exhaustive (no wildcard arm): adding a new
+    /// `TxType` variant will not compile until it is explicitly classified here,
+    /// so an L2-only type can never be silently accepted on L1 by omission.
+    pub fn is_l2_only(self) -> bool {
+        match self {
+            Self::Legacy | Self::EIP2930 | Self::EIP1559 | Self::EIP4844 | Self::EIP7702 => false,
+            Self::FeeToken | Self::Privileged => true,
         }
     }
 }
@@ -1766,22 +1783,22 @@ mod canonic_encoding {
         pub fn compute_hash(&self) -> H256 {
             match self {
                 P2PTransaction::LegacyTransaction(t) => {
-                    Transaction::LegacyTransaction(t.clone()).compute_hash()
+                    Transaction::LegacyTransaction(t.clone()).compute_hash(&NativeCrypto)
                 }
                 P2PTransaction::EIP2930Transaction(t) => {
-                    Transaction::EIP2930Transaction(t.clone()).compute_hash()
+                    Transaction::EIP2930Transaction(t.clone()).compute_hash(&NativeCrypto)
                 }
                 P2PTransaction::EIP1559Transaction(t) => {
-                    Transaction::EIP1559Transaction(t.clone()).compute_hash()
+                    Transaction::EIP1559Transaction(t.clone()).compute_hash(&NativeCrypto)
                 }
                 P2PTransaction::EIP4844TransactionWithBlobs(t) => {
-                    Transaction::EIP4844Transaction(t.tx.clone()).compute_hash()
+                    Transaction::EIP4844Transaction(t.tx.clone()).compute_hash(&NativeCrypto)
                 }
                 P2PTransaction::EIP7702Transaction(t) => {
-                    Transaction::EIP7702Transaction(t.clone()).compute_hash()
+                    Transaction::EIP7702Transaction(t.clone()).compute_hash(&NativeCrypto)
                 }
                 P2PTransaction::FeeTokenTransaction(t) => {
-                    Transaction::FeeTokenTransaction(t.clone()).compute_hash()
+                    Transaction::FeeTokenTransaction(t.clone()).compute_hash(&NativeCrypto)
                 }
             }
         }
@@ -3149,6 +3166,29 @@ mod tests {
     use std::str::FromStr;
 
     #[test]
+    fn legacy_chain_id_handles_out_of_range_v_without_underflow() {
+        // A legacy transaction decodes `v` as an arbitrary U256, so a malformed tx can
+        // carry any value. `derive_legacy_chain_id` must return None for the pre-EIP-155
+        // values (27/28) and any v < 35 rather than underflowing `v - 35`, which panics
+        // in debug and wraps to a bogus chain id in release. This is reachable on the
+        // block-import path (every tx's chain id is now checked pre-execution).
+        let legacy_chain_id = |v: u64| {
+            Transaction::LegacyTransaction(LegacyTransaction {
+                v: U256::from(v),
+                ..Default::default()
+            })
+            .chain_id()
+        };
+        for v in [0u64, 1, 26, 27, 28, 34] {
+            assert_eq!(legacy_chain_id(v), None, "v={v} must yield no chain id");
+        }
+        // EIP-155 values (v = chain_id * 2 + 35/36) still derive correctly.
+        assert_eq!(legacy_chain_id(35), Some(0));
+        assert_eq!(legacy_chain_id(36), Some(0));
+        assert_eq!(legacy_chain_id(37), Some(1));
+    }
+
+    #[test]
     fn test_compute_transactions_root() {
         let mut body = BlockBody::empty();
         let tx = LegacyTransaction {
@@ -3207,7 +3247,7 @@ mod tests {
 
         let expected_hash =
             hex!("a0762610d794acddd2dca15fb7c437ada3611c886f3bea675d53d8da8a6c41b2");
-        let hash = tx.compute_hash();
+        let hash = tx.compute_hash(&NativeCrypto);
         assert_eq!(hash, expected_hash.into());
     }
 
