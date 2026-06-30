@@ -71,7 +71,6 @@ use rayon::iter::{IntoParallelIterator, IntoParallelRefIterator, ParallelIterato
 #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::cmp::min;
-#[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
 use std::sync::Arc;
 #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
 use std::sync::atomic::AtomicBool;
@@ -397,7 +396,7 @@ impl LEVM {
         merkleizer: Option<Sender<Vec<AccountUpdate>>>,
         queue_length: &AtomicUsize,
         crypto: &dyn Crypto,
-        header_bal: Option<&BlockAccessList>,
+        header_bal: Option<Arc<BlockAccessList>>,
         bal_parallel_exec_enabled: bool,
     ) -> Result<(BlockExecutionResult, Option<BlockAccessList>), EvmError> {
         let chain_config = db.store.get_chain_config()?;
@@ -440,7 +439,7 @@ impl LEVM {
             // Note: size cap validation is deferred until after transaction processing
             // so that transaction-level errors (e.g. gas allowance exceeded) take
             // priority, matching the reference implementation's validation order.
-            validate_header_bal_indices(bal, block.body.transactions.len())
+            validate_header_bal_indices(&bal, block.body.transactions.len())
                 .map_err(|e| EvmError::Custom(e.to_string()))?;
 
             // Outer db has no BAL recorder: header BAL drives validation.
@@ -448,7 +447,7 @@ impl LEVM {
             Self::prepare_block(block, db, vm_type, crypto)?;
 
             // Build validation index once — shared across parallel execution and post-exec seeding.
-            let validation_index = bal.build_validation_index();
+            let validation_index = Arc::new(bal.build_validation_index());
 
             // Drain system call state and snapshot for per-tx db seeding
             LEVM::get_state_transitions_tx(db)?;
@@ -459,12 +458,12 @@ impl LEVM {
                 &transactions_with_sender,
                 db,
                 vm_type,
-                bal,
+                Arc::clone(&bal),
                 merkleizer.as_ref(),
                 queue_length,
                 system_seed,
                 crypto,
-                &validation_index,
+                Arc::clone(&validation_index),
             );
 
             // If parallel execution failed (e.g. BAL validation), still check system
@@ -484,7 +483,7 @@ impl LEVM {
                         u32::try_from(block.body.transactions.len()).unwrap_or(u32::MAX);
                     if Self::seed_db_from_bal(
                         db,
-                        bal,
+                        &bal,
                         last_tx_idx,
                         &validation_index.accounts_by_min_index,
                     )
@@ -507,7 +506,7 @@ impl LEVM {
             // Eager seed retained: lazy_bal cursor is per-tx only; outer DB has no cursor.
             Self::seed_db_from_bal(
                 db,
-                bal,
+                &bal,
                 last_tx_idx,
                 &validation_index.accounts_by_min_index,
             )?;
@@ -533,7 +532,7 @@ impl LEVM {
             let withdrawal_idx = u32::try_from(block.body.transactions.len())
                 .map(|n| n.saturating_add(1))
                 .unwrap_or(u32::MAX);
-            Self::validate_bal_withdrawal_index(db, bal, withdrawal_idx, &validation_index)?;
+            Self::validate_bal_withdrawal_index(db, &bal, withdrawal_idx, &validation_index)?;
 
             // Mark storage_reads that occurred during the withdrawal/request phase.
             if !unread_storage_reads.is_empty() {
@@ -584,7 +583,7 @@ impl LEVM {
 
             // EIP-7928 size cap: validated after execution so that transaction-level
             // errors (e.g. gas allowance exceeded) take priority.
-            validate_block_access_list_size(&block.header, &chain_config, bal)
+            validate_block_access_list_size(&block.header, &chain_config, &bal)
                 .map_err(|e| EvmError::Custom(e.to_string()))?;
 
             return Ok((
@@ -1013,12 +1012,12 @@ impl LEVM {
         txs_with_sender: &[(&Transaction, Address)],
         db: &mut GeneralizedDatabase,
         vm_type: VMType,
-        bal: &BlockAccessList,
+        bal: Arc<BlockAccessList>,
         merkleizer: Option<&Sender<Vec<AccountUpdate>>>,
         queue_length: &AtomicUsize,
         system_seed: Arc<CacheDB>,
         crypto: &dyn Crypto,
-        validation_index: &BalAddressIndex,
+        validation_index: Arc<BalAddressIndex>,
     ) -> Result<
         (
             Vec<Receipt>,
@@ -1053,7 +1052,7 @@ impl LEVM {
         // Skipped when the caller merkleizes optimistically from the input BAL; the
         // conversion is then redundant work (and does pre-state reads we don't need).
         if let Some(merkleizer) = merkleizer {
-            let account_updates = Self::bal_to_account_updates(bal, store.as_ref())?;
+            let account_updates = Self::bal_to_account_updates(&bal, store.as_ref())?;
             merkleizer
                 .send(account_updates)
                 .map_err(|e| EvmError::Custom(format!("merkleizer send failed: {e}")))?;
@@ -1100,9 +1099,9 @@ impl LEVM {
                 .is_some_and(|a| a.storage.contains_key(key))
         });
 
-        // Small capacity hint — per-tx DBs materialize only touched accounts via lazy_bal cursor.
-        let arc_bal = Arc::new(bal.clone());
-        let arc_idx = Arc::new(validation_index.clone());
+        // Already-owned Arcs from the caller; per-thread/per-tx uses below are pointer clones.
+        let arc_bal = bal;
+        let arc_idx = validation_index;
 
         // 2. Execute all txs in parallel (embarrassingly parallel, BAL-seeded).
         //    BAL validation runs INSIDE the par_iter closure (parallel) but its
@@ -1131,6 +1130,7 @@ impl LEVM {
             .into_par_iter()
             .map(|tx_idx| -> Result<_, EvmError> {
                 let (tx, sender) = &txs_with_sender[tx_idx];
+                // Small capacity hint — per-tx DBs materialize only touched accounts via lazy_bal cursor.
                 let mut tx_db = GeneralizedDatabase::new_with_shared_base_and_capacity(
                     store.clone(),
                     system_seed.clone(),
@@ -1230,8 +1230,8 @@ impl LEVM {
                         seed_idx,
                         &current_state,
                         &codes,
-                        bal,
-                        validation_index,
+                        &arc_bal,
+                        &arc_idx,
                         &system_seed,
                         &store,
                     )
@@ -1241,7 +1241,7 @@ impl LEVM {
 
                     // EIP-7928 (Group B): missing-access detection via shadow recorder.
                     for addr in &shadow_touched {
-                        if !validation_index.addr_to_idx.contains_key(addr) {
+                        if !arc_idx.addr_to_idx.contains_key(addr) {
                             return Err(EvmError::Custom(format!(
                                 "BAL validation failed for tx {tx_idx}: account {addr:?} was \
                                  accessed during execution but is missing from BAL"
@@ -1249,11 +1249,11 @@ impl LEVM {
                         }
                     }
                     for (addr, slot) in &shadow_reads {
-                        let Some(&bal_acct_idx) = validation_index.addr_to_idx.get(addr) else {
+                        let Some(&bal_acct_idx) = arc_idx.addr_to_idx.get(addr) else {
                             // Already caught by the touched-address check above.
                             continue;
                         };
-                        let acct = &bal.accounts()[bal_acct_idx];
+                        let acct = &arc_bal.accounts()[bal_acct_idx];
                         let in_changes = acct
                             .storage_changes
                             .binary_search_by(|sc| sc.slot.cmp(slot))
