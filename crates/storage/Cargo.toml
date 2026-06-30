@@ -32,6 +32,7 @@ lru.workspace = true
 [features]
 default = []
 rocksdb = ["dep:rocksdb"]
+testing = []
 
 [dev-dependencies]
 tempfile.workspace = true
