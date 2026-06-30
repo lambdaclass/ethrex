@@ -407,27 +407,14 @@ impl Store {
         tokio::task::spawn_blocking(move || {
             let mut tx = db.begin_write()?;
 
-            // TODO: Same logic in apply_updates
             for block in blocks {
-                let block_number = block.header.number;
-                let block_hash = block.hash();
-                let hash_key = block_hash.encode_to_vec();
-
-                let header_value_rlp = BlockHeaderRLP::from(block.header.clone());
-                tx.put(HEADERS, &hash_key, header_value_rlp.bytes())?;
-
-                let body_value = BlockBodyRLP::from_bytes(block.body.encode_to_vec());
-                tx.put(BODIES, &hash_key, body_value.bytes())?;
-
-                tx.put(BLOCK_NUMBERS, &hash_key, &block_number.to_le_bytes())?;
-
-                for (index, transaction) in block.body.transactions.iter().enumerate() {
-                    tx.merge(
-                        TRANSACTION_LOCATIONS,
-                        transaction.hash(&NativeCrypto).as_bytes(),
-                        &encode_tx_location_operand(block_number, block_hash, index as u64),
-                    )?;
-                }
+                write_block_data(
+                    tx.as_mut(),
+                    block.header.number,
+                    block.hash(),
+                    &block.header,
+                    &block.body,
+                )?;
             }
 
             tx.commit()
@@ -866,6 +853,12 @@ impl Store {
     /// RLP decoding and `Code` struct construction (no `jump_targets` deserialization).
     /// Note: The underlying `get()` still reads the value from RocksDB (including blob files).
     pub fn code_exists(&self, code_hash: H256) -> Result<bool, StoreError> {
+        // Code introduced by a not-yet-flushed block lives only in the buffer; check
+        // it first so a contract created in the current block is visible (matches
+        // get_account_code / get_code_metadata).
+        if self.buffer()?.get_code(&code_hash).is_some() {
+            return Ok(true);
+        }
         // Check cache first
         if self
             .account_code_cache
@@ -1846,6 +1839,13 @@ impl Store {
                             continue;
                         }
                         // LIVE: ack after staging; carries prior flush result.
+                        // NOTE: this acks block validity BEFORE apply_trie_phase1
+                        // installs the trie layer below. A phase-1 failure (only
+                        // reachable via lock poisoning, which is already fatal) is
+                        // therefore deferred to the next block's ack via
+                        // last_flush_result rather than attributed to this block;
+                        // the pending root is still cleared unconditionally, so
+                        // gated readers error rather than hang.
                         if !bp.wait_for_flush {
                             let _ = bp
                                 .ack
@@ -3424,6 +3424,39 @@ enum PersistMessage {
     Ping(std::sync::mpsc::SyncSender<Result<(), StoreError>>),
 }
 
+/// Write one block's header, body, number, and tx locations into an open batch.
+/// Shared by [`Store::add_blocks`] (sync import) and [`flush_block_data`]
+/// (deferred flush) so the on-disk encoding stays in lockstep. Receipts and codes
+/// are written by callers that need them (only `flush_block_data` does).
+fn write_block_data(
+    tx: &mut dyn StorageWriteBatch,
+    number: BlockNumber,
+    hash: BlockHash,
+    header: &BlockHeader,
+    body: &BlockBody,
+) -> Result<(), StoreError> {
+    let hash_key = hash.encode_to_vec();
+    tx.put(
+        HEADERS,
+        &hash_key,
+        BlockHeaderRLP::from(header.clone()).bytes(),
+    )?;
+    tx.put(
+        BODIES,
+        &hash_key,
+        BlockBodyRLP::from_bytes(body.encode_to_vec()).bytes(),
+    )?;
+    tx.put(BLOCK_NUMBERS, &hash_key, &number.to_le_bytes())?;
+    for (index, transaction) in body.transactions.iter().enumerate() {
+        tx.merge(
+            TRANSACTION_LOCATIONS,
+            transaction.hash(&NativeCrypto).as_bytes(),
+            &encode_tx_location_operand(number, hash, index as u64),
+        )?;
+    }
+    Ok(())
+}
+
 /// Write all unflushed blocks to disk in one tx, advance `flushed_upto`, then
 /// evict. Eviction is gap-safe: blocks stay buffered until the commit succeeds.
 fn flush_block_data(
@@ -3442,25 +3475,7 @@ fn flush_block_data(
     let mut tx = backend.begin_write()?;
     for b in &to_flush {
         let hash = b.header.hash();
-        let hash_key = hash.encode_to_vec();
-        tx.put(
-            HEADERS,
-            &hash_key,
-            BlockHeaderRLP::from(b.header.clone()).bytes(),
-        )?;
-        tx.put(
-            BODIES,
-            &hash_key,
-            BlockBodyRLP::from_bytes(b.body.encode_to_vec()).bytes(),
-        )?;
-        tx.put(BLOCK_NUMBERS, &hash_key, &b.number.to_le_bytes())?;
-        for (index, transaction) in b.body.transactions.iter().enumerate() {
-            tx.merge(
-                TRANSACTION_LOCATIONS,
-                transaction.hash(&NativeCrypto).as_bytes(),
-                &encode_tx_location_operand(b.number, hash, index as u64),
-            )?;
-        }
+        write_block_data(tx.as_mut(), b.number, hash, &b.header, &b.body)?;
         for (index, receipt) in b.receipts.iter().enumerate() {
             tx.put(
                 RECEIPTS_V2,
