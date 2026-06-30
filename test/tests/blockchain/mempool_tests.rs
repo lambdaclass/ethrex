@@ -1302,7 +1302,7 @@ async fn replacement_at_existing_nonce_bypasses_gap_admission() {
 
     // First, add a gapped tx while the pool has plenty of room.
     let original_tx = build_tx(chain_id, 5);
-    let original_hash = original_tx.hash();
+    let original_hash = original_tx.hash(&NativeCrypto);
     blockchain
         .mempool
         .add_transaction(

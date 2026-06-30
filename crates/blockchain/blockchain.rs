@@ -3009,8 +3009,8 @@ impl Blockchain {
         // already in the pool) bypass this rule since they are not gapped.
         //
         // Read occupancy once and reuse it for both the gate check and the
-        // error message — calling `is_heavily_occupied` + `occupancy_pct`
-        // takes the read lock twice, allowing TOCTOU drift where the reported
+        // error message — taking the read lock twice (a separate check plus a
+        // re-read for the message) would allow TOCTOU drift where the reported
         // occupancy differs from the value the gate fired on.
         let threshold = self.options.gap_admit_occupancy_threshold;
         if tx_to_replace_hash.is_none() && nonce != sender_acc_nonce && threshold < 100 {

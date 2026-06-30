@@ -657,26 +657,6 @@ impl Mempool {
         Ok(pct.min(100) as u8)
     }
 
-    /// Returns `true` when the transaction pool occupancy is at or above the
-    /// given threshold percentage (`0..=100`). A threshold of 100 disables
-    /// the check entirely (occupancy can never exceed 100%); a threshold of
-    /// 0 on an unlimited pool (`max_mempool_size == 0`) also returns
-    /// `false`, treating "no cap" as "never under pressure" so gapped
-    /// admission isn't blanket-rejected when capacity is unbounded.
-    pub fn is_heavily_occupied(&self, threshold_pct: u8) -> Result<bool, MempoolError> {
-        if threshold_pct >= 100 {
-            return Ok(false);
-        }
-        let inner = self.read()?;
-        if inner.max_mempool_size == 0 {
-            return Ok(false);
-        }
-        let pool_len = inner.transaction_pool.len();
-        let max = inner.max_mempool_size;
-        // `pool_len * 100 >= threshold_pct * max`, in integer arithmetic.
-        Ok(pool_len.saturating_mul(100) >= max.saturating_mul(threshold_pct as usize))
-    }
-
     /// Returns all transactions currently in the pool
     pub fn content(&self) -> Result<Vec<Transaction>, MempoolError> {
         let pooled_transactions = &self.read()?.transaction_pool;
@@ -898,37 +878,5 @@ mod tests {
         let mempool = Mempool::new(100);
         fill_mempool(&mempool, 100);
         assert_eq!(mempool.occupancy_pct().unwrap(), 100);
-    }
-
-    #[test]
-    fn is_heavily_occupied_on_unlimited_pool_is_false() {
-        // max_mempool_size == 0 means unlimited; pressure-gated rules must
-        // NOT fire under that configuration even when threshold_pct is 0.
-        let mempool = Mempool::new(0);
-        assert!(!mempool.is_heavily_occupied(0).unwrap());
-        assert!(!mempool.is_heavily_occupied(50).unwrap());
-        assert!(!mempool.is_heavily_occupied(99).unwrap());
-    }
-
-    #[test]
-    fn is_heavily_occupied_disabled_at_threshold_100() {
-        let mempool = Mempool::new(100);
-        fill_mempool(&mempool, 100);
-        // Threshold of 100 disables the check.
-        assert!(!mempool.is_heavily_occupied(100).unwrap());
-    }
-
-    #[test]
-    fn is_heavily_occupied_below_threshold() {
-        let mempool = Mempool::new(100);
-        fill_mempool(&mempool, 50);
-        assert!(!mempool.is_heavily_occupied(90).unwrap());
-    }
-
-    #[test]
-    fn is_heavily_occupied_at_or_above_threshold() {
-        let mempool = Mempool::new(100);
-        fill_mempool(&mempool, 91);
-        assert!(mempool.is_heavily_occupied(90).unwrap());
     }
 }
