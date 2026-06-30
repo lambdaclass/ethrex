@@ -522,7 +522,7 @@ impl Blockchain {
         block: &Block,
         parent_header: &BlockHeader,
         vm: &mut Evm,
-        bal: Option<&BlockAccessList>,
+        bal: Option<Arc<BlockAccessList>>,
         collect_witness: bool,
     ) -> Result<BlockExecutionPipelineResult, ChainError> {
         let start_instant = Instant::now();
@@ -569,7 +569,7 @@ impl Blockchain {
         // consumes — the synthesized path would leave the receiver dropped.
         let optimistic_updates: Option<FxHashMap<Address, BalSynthesisItem>> =
             if self.options.bal_parallel_trie_enabled && !collect_witness {
-                bal.map(synthesize_bal_updates)
+                bal.as_deref().map(synthesize_bal_updates)
             } else {
                 None
             };
@@ -611,13 +611,17 @@ impl Blockchain {
         #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
         if self.options.bal_prefetch_enabled
             && !collect_witness
-            && let Some(bal) = bal
+            && let Some(bal_ref) = bal.as_ref()
         {
-            let slots = LEVM::bal_storage_slots(bal);
+            let slots = LEVM::bal_storage_slots(bal_ref);
             if !slots.is_empty() {
                 let _ = caching_store.prefetch_storage(&slots);
             }
         }
+
+        // Each thread that captures `bal` needs its own Arc clone (cheap pointer bump).
+        #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+        let bal_warmer = bal.clone();
 
         let (execution_result, merkleization_result, warmer_duration) =
             std::thread::scope(|s| -> Result<_, ChainError> {
@@ -635,11 +639,11 @@ impl Blockchain {
                                 // Warming uses the same caching store, sharing cached state with execution.
                                 // Precompile cache lives inside CachingDatabase, shared automatically.
                                 let start = Instant::now();
-                                if let Some(bal) = bal {
+                                if let Some(bal) = bal_warmer {
                                     if bal_prefetch_enabled {
                                         // Amsterdam+: BAL-based precise prefetching (no tx re-execution).
                                         if let Err(e) = LEVM::warm_block_from_bal(
-                                            bal,
+                                            &bal,
                                             caching_store,
                                             cancelled_ref,
                                         ) {
@@ -701,6 +705,10 @@ impl Blockchain {
                 let execution_handle = std::thread::Builder::new()
                     .name("block_executor_execution".to_string())
                     .spawn_scoped(s, move || -> Result<_, ChainError> {
+                        // Cheap Arc pointer bump: `execute_block_pipeline` takes
+                        // ownership, but the header-commitment check below still needs
+                        // the input BAL on the parallel path (produced_bal == None).
+                        let header_bal = bal.clone();
                         let result = vm.execute_block_pipeline(
                             block,
                             tx,
@@ -761,7 +769,7 @@ impl Blockchain {
                                 block.body.transactions.len(),
                                 &NativeCrypto,
                             )?;
-                        } else if let Some(header_bal) = bal
+                        } else if let Some(header_bal) = header_bal.as_deref()
                             && chain_config.is_amsterdam_activated(block.header.timestamp)
                             && !header_bal.matches_commitment(
                                 block.header.block_access_list_hash,
@@ -2051,7 +2059,7 @@ impl Blockchain {
     pub fn add_block_pipeline(
         &self,
         block: Block,
-        bal: Option<&BlockAccessList>,
+        bal: Option<Arc<BlockAccessList>>,
     ) -> Result<(), ChainError> {
         let (_, _, result) = self.add_block_pipeline_inner(block, bal, false)?;
         result
@@ -2066,7 +2074,7 @@ impl Blockchain {
     pub fn add_block_pipeline_bal(
         &self,
         block: Block,
-        bal: Option<&BlockAccessList>,
+        bal: Option<Arc<BlockAccessList>>,
     ) -> Result<Option<BlockAccessList>, ChainError> {
         let (produced_bal, _, result) = self.add_block_pipeline_inner(block, bal, false)?;
         result?;
@@ -2078,7 +2086,7 @@ impl Blockchain {
     pub fn add_block_pipeline_with_witness(
         &self,
         block: Block,
-        bal: Option<&BlockAccessList>,
+        bal: Option<Arc<BlockAccessList>>,
     ) -> Result<ExecutionWitness, ChainError> {
         let (_, witness, result) = self.add_block_pipeline_inner(block, bal, true)?;
         result?;
@@ -2100,7 +2108,7 @@ impl Blockchain {
     fn add_block_pipeline_inner(
         &self,
         block: Block,
-        bal: Option<&BlockAccessList>,
+        bal: Option<Arc<BlockAccessList>>,
         force_witness: bool,
     ) -> Result<AddBlockPipelineInnerResult, ChainError> {
         // Validate if it can be the new head and find the parent
@@ -2143,6 +2151,9 @@ impl Blockchain {
             (vm, None)
         };
 
+        // Keep a copy of the input BAL Arc for the post-execution BAL store call below.
+        // `execute_block_pipeline` takes ownership; this clone is a cheap pointer bump.
+        let input_bal = bal.clone();
         let (
             res,
             account_updates_list,
@@ -2193,7 +2204,7 @@ impl Blockchain {
         // On the parallel Amsterdam validation path the BAL is supplied via the header
         // and `produced_bal` is None, so fall back to the validated incoming `bal`.
         // Pre-Amsterdam blocks have no BAL on either source, so nothing is stored.
-        if let Some(bal) = produced_bal.as_ref().or(bal)
+        if let Some(bal) = produced_bal.as_ref().or(input_bal.as_deref())
             && let Err(err) = self.storage.store_block_access_list(block_hash, bal)
         {
             warn!("Failed to store block access list for block {block_hash}: {err}");
@@ -2224,16 +2235,18 @@ impl Blockchain {
             );
         }
 
-        metrics!(if let Some(bal_ref) = produced_bal.as_ref().or(bal) {
-            let account_count = bal_ref.accounts().len() as u64;
-            let slot_count = bal_ref.item_count().saturating_sub(account_count);
-            let size_bytes = bal_ref.length() as f64;
-            METRICS_BAL.blocks_total.inc();
-            METRICS_BAL.size_bytes.set(size_bytes);
-            METRICS_BAL.size_bytes_histogram.observe(size_bytes);
-            METRICS_BAL.account_count.set(account_count as i64);
-            METRICS_BAL.slot_count.set(slot_count as i64);
-        });
+        metrics!(
+            if let Some(bal_ref) = produced_bal.as_ref().or(input_bal.as_deref()) {
+                let account_count = bal_ref.accounts().len() as u64;
+                let slot_count = bal_ref.item_count().saturating_sub(account_count);
+                let size_bytes = bal_ref.length() as f64;
+                METRICS_BAL.blocks_total.inc();
+                METRICS_BAL.size_bytes.set(size_bytes);
+                METRICS_BAL.size_bytes_histogram.observe(size_bytes);
+                METRICS_BAL.account_count.set(account_count as i64);
+                METRICS_BAL.slot_count.set(slot_count as i64);
+            }
+        );
 
         Ok((produced_bal, witness, result))
     }
