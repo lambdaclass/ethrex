@@ -7,4 +7,5 @@ mod logs_bloom_tests;
 mod mempool_tests;
 mod payload_tests;
 mod smoke_tests;
+mod storage_sharding_tests;
 mod wrong_chain_id_tests;

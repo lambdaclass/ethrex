@@ -1131,6 +1131,11 @@ impl Blockchain {
         parent_header: &BlockHeader,
     ) -> Result<AccountUpdatesList, StoreError> {
         const NUM_WORKERS: usize = 16;
+        // Accounts with at least this many storage slot updates are sharded
+        // across 16 workers inside `compute_sharded_storage_root` instead of
+        // being handled by Stage B. When hot_indices is empty the Stage B path
+        // is unchanged.
+        const STORAGE_SHARD_THRESHOLD: usize = 2048;
         let parent_state_root = parent_header.state_root;
 
         // Build code updates and work items with pre-hashed addresses from the
@@ -1150,6 +1155,20 @@ impl Blockchain {
 
         // === Stage B: Parallel per-account storage root computation ===
 
+        // Partition accounts: those with >= STORAGE_SHARD_THRESHOLD slots are
+        // handled after Stage B via `compute_sharded_storage_root` (hot_indices).
+        // The rest follow the normal Stage B greedy bin-packing path (normal_indices).
+        // When hot_indices is empty the behavior is byte-identical to the previous code.
+        let mut normal_indices: Vec<usize> = Vec::new();
+        let mut hot_indices: Vec<usize> = Vec::new();
+        for (i, (_, item)) in accounts.iter().enumerate() {
+            if item.added_storage.len() >= STORAGE_SHARD_THRESHOLD {
+                hot_indices.push(i);
+            } else {
+                normal_indices.push(i);
+            }
+        }
+
         // Sort by storage weight (descending) for greedy bin packing.
         // Every item with real Stage B work MUST have weight >= 1: the greedy
         // algorithm does `bin_weights[min] += weight`, so weight-0 items never
@@ -1157,10 +1176,10 @@ impl Blockchain {
         // piling ALL of them into a single worker.
         // Synthesis never sets `removed`/`removed_storage`, so weight is purely
         // based on storage slot count.
-        let mut work_indices: Vec<(usize, usize)> = accounts
+        let mut work_indices: Vec<(usize, usize)> = normal_indices
             .iter()
-            .enumerate()
-            .map(|(i, (_, item))| {
+            .map(|&i| {
+                let item = &accounts[i].1;
                 let weight = if !item.added_storage.is_empty() {
                     1.max(item.added_storage.len())
                 } else {
@@ -1268,6 +1287,39 @@ impl Blockchain {
             }
             Ok(())
         })?;
+
+        // === Stage B.5: Sharded storage root for hot accounts ===
+        // Each call to compute_sharded_storage_root already saturates 16 cores,
+        // so we process hot accounts sequentially. A parallel outer loop is a
+        // future option if multi-hot-account blocks appear.
+        // Skip the state-trie open entirely on the common path (no hot accounts).
+        if !hot_indices.is_empty() {
+            let state_trie = self.storage.open_state_trie(parent_state_root)?;
+            for idx in &hot_indices {
+                let idx = *idx;
+                let (hashed_address, item) = &accounts[idx];
+                let storage_root = match state_trie.get(hashed_address.as_bytes())? {
+                    Some(rlp) => AccountState::decode(&rlp)?.storage_root,
+                    None => *EMPTY_TRIE_HASH,
+                };
+                // Slots are sorted by hashed key inside compute_sharded_storage_root
+                // to match Stage B's insert order (cache locality + identical node set).
+                let hashed_storage: Vec<(H256, U256)> = item
+                    .added_storage
+                    .iter()
+                    .map(|(k, v)| (keccak(k), *v))
+                    .collect();
+                let (root_hash, nodes) = compute_sharded_storage_root(
+                    &self.storage,
+                    parent_state_root,
+                    *hashed_address,
+                    storage_root,
+                    &hashed_storage,
+                )?;
+                storage_roots[idx] = Some(root_hash);
+                storage_updates.push((*hashed_address, nodes));
+            }
+        }
 
         // === Stage C: State trie update via 16 shard workers ===
 
@@ -3695,4 +3747,178 @@ fn collect_trie(index: u8, mut trie: Trie) -> Result<(Box<BranchNode>, Vec<TrieN
         return Err(TrieError::InvalidInput);
     };
     Ok((root, nodes))
+}
+
+/// Serial reference computation of an account's storage root + node diff,
+/// identical to the per-account Stage B path. Used as a fallback for the
+/// degenerate sharding cases (see `compute_sharded_storage_root`) where the
+/// branchify/collapse reassembly, while producing the correct root, would emit
+/// a different (extra/stale, always unreachable) node set than the canonical
+/// serial path.
+fn serial_storage_root(
+    storage: &Store,
+    parent_state_root: H256,
+    hashed_address: H256,
+    storage_root: H256,
+    hashed_storage: &[(H256, U256)],
+) -> Result<(H256, Vec<TrieNode>), StoreError> {
+    let mut trie = storage.open_storage_trie(hashed_address, parent_state_root, storage_root)?;
+    for (hashed_key, value) in hashed_storage {
+        if value.is_zero() {
+            trie.remove(hashed_key.as_bytes())?;
+        } else {
+            trie.insert(hashed_key.as_bytes().to_vec(), value.encode_to_vec())?;
+        }
+    }
+    Ok(trie.collect_changes_since_last_hash(&NativeCrypto))
+}
+
+/// Compute the storage root for a single account by sharding its slots across
+/// 16 nibble-keyed workers. The returned `(H256, Vec<TrieNode>)` is
+/// drop-in compatible with `trie.collect_changes_since_last_hash`.
+///
+/// `hashed_storage` order does not matter (sharding and trie inserts are
+/// order-independent). All 16 shard threads spawn even for empty buckets: an
+/// empty thread opens the trie, performs no insertions, and returns
+/// `collect_trie(nibble, trie)` so the reassembled root has no holes.
+///
+/// Exposed (hidden) for the `ethrex-test` crate's equivalence tests; not part
+/// of the stable public API.
+///
+/// Load-bearing invariant: this relies on a **path-keyed** node DB, where a node
+/// is reachable only via its trie path. On inserts/updates and the degenerate
+/// fallbacks below the persisted node set is bit-identical to the serial path,
+/// but the parallel removal path may emit a few redundant nodes that are
+/// unreachable by path and therefore harmless (never read back, never GC'd).
+/// This is why the `occupied <= 1` fallback is sufficient and why we do *not*
+/// also fall back on the broader "removal collapses the trie post-bucketization"
+/// case. If the storage backend ever moves to a content-addressed / hash-keyed
+/// node DB, or grows reachability-based GC, the parallel-removal path could leak
+/// unreachable-but-persistent nodes and this assumption must be revisited.
+#[doc(hidden)]
+pub fn compute_sharded_storage_root(
+    storage: &Store,
+    parent_state_root: H256,
+    hashed_address: H256,
+    storage_root: H256,
+    hashed_storage: &[(H256, U256)],
+) -> Result<(H256, Vec<TrieNode>), StoreError> {
+    // Sort by hashed key, matching the serial Stage B path (the per-account
+    // worker). The storage root is content-addressed so order is irrelevant to
+    // correctness, but inserting in key order walks the node arena sequentially
+    // (cache locality) and keeps the persisted node set bit-identical to Stage B.
+    // Applies to both the sharded path below and the serial fallbacks: bucketing
+    // by first nibble preserves the sorted order within each bucket.
+    // Stable sort: production inputs (a map) have unique keys, but a stable order
+    // preserves last-write-wins for any duplicate keys, matching sequential apply.
+    let mut sorted = hashed_storage.to_vec();
+    sorted.sort_by(|a, b| a.0.cmp(&b.0));
+    let hashed_storage = sorted.as_slice();
+
+    // Split slots into 16 buckets by the first nibble of the hashed key.
+    let mut buckets: [Vec<(H256, U256)>; 16] = Default::default();
+    for &(key, value) in hashed_storage {
+        let nibble = (key.as_fixed_bytes()[0] >> 4) as usize;
+        buckets[nibble].push((key, value));
+    }
+
+    // A slot landing in the wrong nibble bucket would silently corrupt the
+    // reassembled root (consensus failure), so guard the invariant in debug.
+    #[cfg(debug_assertions)]
+    for (nibble, bucket) in buckets.iter().enumerate() {
+        for (key, _) in bucket {
+            debug_assert_eq!(
+                (key.as_fixed_bytes()[0] >> 4) as usize,
+                nibble,
+                "storage slot in wrong shard bucket"
+            );
+        }
+    }
+
+    // Degenerate case: with <=1 occupied bucket there is no parallelism to gain,
+    // and the branchify/collapse reassembly of a single subtree would emit an
+    // extra (unreachable) node vs the canonical serial diff. Compute serially so
+    // the persisted node set is bit-identical to the non-sharded path.
+    let occupied = buckets.iter().filter(|b| !b.is_empty()).count();
+    if occupied <= 1 {
+        return serial_storage_root(
+            storage,
+            parent_state_root,
+            hashed_address,
+            storage_root,
+            hashed_storage,
+        );
+    }
+
+    let mut root = BranchNode::default();
+    let mut nodes: Vec<TrieNode> = Vec::new();
+
+    // All 16 shard threads spawn even for empty buckets (same rationale as
+    // Stage C comment): each thread opens the storage trie and returns the
+    // existing subtree at its nibble so root reassembly has no holes.
+    std::thread::scope(|s| -> Result<(), StoreError> {
+        let handles: Vec<_> = buckets
+            .into_iter()
+            .enumerate()
+            .map(|(nibble, bucket)| {
+                std::thread::Builder::new()
+                    .name(format!("storage_shard_{nibble}"))
+                    .spawn_scoped(
+                        s,
+                        move || -> Result<(Box<BranchNode>, Vec<TrieNode>), StoreError> {
+                            let mut trie = storage.open_storage_trie(
+                                hashed_address,
+                                parent_state_root,
+                                storage_root,
+                            )?;
+                            for (hashed_key, value) in &bucket {
+                                if value.is_zero() {
+                                    trie.remove(hashed_key.as_bytes())?;
+                                } else {
+                                    trie.insert(
+                                        hashed_key.as_bytes().to_vec(),
+                                        value.encode_to_vec(),
+                                    )?;
+                                }
+                            }
+                            collect_trie(nibble as u8, trie)
+                                .map_err(|e| StoreError::Custom(format!("{e}")))
+                        },
+                    )
+                    .map_err(|e| StoreError::Custom(format!("spawn failed: {e}")))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+
+        for (i, handle) in handles.into_iter().enumerate() {
+            let (subroot, shard_nodes) = handle
+                .join()
+                .map_err(|_| StoreError::Custom("storage shard worker panicked".to_string()))??;
+            nodes.extend(shard_nodes);
+            root.choices[i] = subroot.choices[i].clone();
+        }
+        Ok(())
+    })?;
+
+    // Finalize: collapse single-child branch, commit, return root hash.
+    // prefix = Some(hashed_address) because this is a storage trie.
+    let Some(root_node) =
+        collapse_root_node(storage, parent_state_root, Some(hashed_address), root)?
+    else {
+        // The update emptied the storage trie. The sharded tombstone set differs
+        // from the canonical serial diff (deletions of now-unreachable nodes), so
+        // recompute serially for a bit-identical result. Rare (full storage clear).
+        return serial_storage_root(
+            storage,
+            parent_state_root,
+            hashed_address,
+            storage_root,
+            hashed_storage,
+        );
+    };
+
+    let mut root_ref = NodeRef::from(root_node);
+    let root_hash = root_ref.commit(Nibbles::default(), &mut nodes, &NativeCrypto);
+    let _ = DROP_SENDER.send(Box::new(root_ref));
+
+    Ok((root_hash.finalize(&NativeCrypto), nodes))
 }
