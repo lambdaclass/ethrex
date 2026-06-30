@@ -22,7 +22,6 @@ use crate::{
     utils::{ChainDataIndex, SnapStateIndex},
 };
 
-use bytes::Bytes;
 use ethrex_common::{
     Address, H256, U256,
     types::{
@@ -458,7 +457,7 @@ impl Store {
                 for (index, transaction) in block.body.transactions.iter().enumerate() {
                     tx.merge(
                         TRANSACTION_LOCATIONS,
-                        transaction.hash().as_bytes(),
+                        transaction.hash(&NativeCrypto).as_bytes(),
                         &encode_tx_location_operand(block_number, block_hash, index as u64),
                     )?;
                 }
@@ -845,15 +844,12 @@ impl Store {
         else {
             return Ok(None);
         };
-        let bytes = Bytes::from_owner(bytes);
         let (bytecode_slice, targets) = decode_bytes(&bytes)?;
-        let bytecode = bytes.slice_ref(bytecode_slice);
-
-        let code = Code {
-            hash: code_hash,
-            bytecode,
-            jump_targets: <Vec<u32>>::decode(targets)?.into(),
-        };
+        let code = Code::from_parts_unchecked(
+            code_hash,
+            bytecode_slice,
+            <Vec<u32>>::decode(targets)?.into(),
+        );
 
         // insert into cache and evict if needed
         self.account_code_cache
@@ -927,7 +923,7 @@ impl Store {
                 return Ok(None);
             };
             let metadata = CodeMetadata {
-                length: code.bytecode.len() as u64,
+                length: code.len() as u64,
             };
 
             // Write metadata for future use (async, fire and forget)
@@ -962,7 +958,7 @@ impl Store {
     pub async fn add_account_code(&self, code: Code) -> Result<(), StoreError> {
         let hash_key = code.hash.0.to_vec();
         let buf = encode_code(&code);
-        let metadata_buf = (code.bytecode.len() as u64).to_be_bytes();
+        let metadata_buf = (code.len() as u64).to_be_bytes();
 
         // Write both code and metadata atomically
         let backend = self.backend.clone();
@@ -1428,7 +1424,7 @@ impl Store {
 
         for (code_hash, code) in account_codes {
             let buf = encode_code(&code);
-            let metadata_buf = (code.bytecode.len() as u64).to_be_bytes().to_vec();
+            let metadata_buf = (code.len() as u64).to_be_bytes().to_vec();
             code_batch_items.push((code_hash.as_bytes().to_vec(), buf));
             metadata_batch_items.push((code_hash.as_bytes().to_vec(), metadata_buf));
         }
@@ -1642,7 +1638,7 @@ impl Store {
             for (index, transaction) in block.body.transactions.iter().enumerate() {
                 tx.merge(
                     TRANSACTION_LOCATIONS,
-                    transaction.hash().as_bytes(),
+                    transaction.hash(&NativeCrypto).as_bytes(),
                     &encode_tx_location_operand(block_number, block_hash, index as u64),
                 )?;
             }
@@ -1658,7 +1654,7 @@ impl Store {
 
         for (code_hash, code) in update_batch.code_updates {
             let buf = encode_code(&code);
-            let metadata_buf = (code.bytecode.len() as u64).to_be_bytes();
+            let metadata_buf = (code.len() as u64).to_be_bytes();
             tx.put(ACCOUNT_CODES, code_hash.as_ref(), &buf)?;
             tx.put(ACCOUNT_CODE_METADATA, code_hash.as_ref(), &metadata_buf)?;
         }
@@ -1695,12 +1691,16 @@ impl Store {
             let version = read_store_schema_version(&db_path)?;
 
             match version {
-                None if db_path.exists() && !dir_is_empty(&db_path)? => {
+                None if db_path.exists() && dir_contains_legacy_db(&db_path)? => {
                     // Pre-metadata DB — cannot migrate safely
                     return Err(StoreError::NotFoundDBVersion);
                 }
                 None => {
-                    // Fresh / empty directory — write initial metadata
+                    // No metadata and no recognizable database files. The directory
+                    // may still hold unrelated files (e.g. a JWT secret placed in the
+                    // datadir by tooling such as EthDocker, see issue #5680), so treat
+                    // this as a fresh datadir and write the initial metadata instead
+                    // of erroring out.
                     init_metadata_file(&db_path)?;
                 }
                 Some(v) if v < 1 => {
@@ -3687,10 +3687,9 @@ pub fn receipt_key(block_hash: &BlockHash, index: u64) -> Vec<u8> {
 }
 
 fn encode_code(code: &Code) -> Vec<u8> {
-    let mut buf = Vec::with_capacity(
-        6 + code.bytecode.len() + std::mem::size_of_val::<[u32]>(&code.jump_targets),
-    );
-    code.bytecode.encode(&mut buf);
+    let mut buf =
+        Vec::with_capacity(6 + code.len() + std::mem::size_of_val::<[u32]>(&code.jump_targets));
+    code.code().encode(&mut buf);
     // `Arc<[u32]>` (the in-memory share) has no `RLPEncode` impl; encode through an
     // owned `Vec` on this cold DB-write path (code is persisted once per hash).
     code.jump_targets.to_vec().encode(&mut buf);
@@ -3754,9 +3753,37 @@ fn init_metadata_file(parent_path: &Path) -> Result<(), StoreError> {
     Ok(())
 }
 
-fn dir_is_empty(path: &Path) -> Result<bool, StoreError> {
-    let is_empty = std::fs::read_dir(path)?.next().is_none();
-    Ok(is_empty)
+/// Returns `true` if `path` contains a *legacy* database — one written before
+/// the metadata file existed, so it has no `metadata.json` to identify it.
+/// Detected by RocksDB's own marker files, as opposed to unrelated files that
+/// merely share the datadir. Only meaningful once metadata has been confirmed
+/// absent; otherwise prefer `has_valid_db`, which keys off the metadata file.
+///
+/// Previously the caller treated *any* non-empty directory as such a legacy
+/// database, which made startup fail when unrelated files lived alongside the DB
+/// — e.g. EthDocker writes the JWT secret into the datadir (issue #5680). We
+/// instead look for RocksDB's marker files, so a datadir that only contains such
+/// unrelated files is correctly treated as fresh.
+fn dir_contains_legacy_db(path: &Path) -> Result<bool, StoreError> {
+    // `CURRENT` has a fixed name and is written by every RocksDB instance, so
+    // check for it directly instead of scanning a datadir that may hold many
+    // unrelated files.
+    if path.join("CURRENT").is_file() {
+        return Ok(true);
+    }
+    // The manifest has a numeric suffix (`MANIFEST-<n>`), so it can only be
+    // found by scanning. Restrict to plain files: a directory that happens to
+    // share the name is not a database marker.
+    for entry in std::fs::read_dir(path)? {
+        let entry = entry?;
+        if !entry.file_type()?.is_file() {
+            continue;
+        }
+        if entry.file_name().to_string_lossy().starts_with("MANIFEST-") {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 /// Checks whether a valid (or migratable) database exists at the given path
@@ -4329,5 +4356,49 @@ mod merge_tests {
         let p3 = tx_locations_merge(None, vec![p2, op(3, h256(0x03), 0)]).unwrap();
         let out = tx_locations_merge(None, vec![p3]).unwrap();
         assert_eq!(decode(&out).len(), 3);
+    }
+}
+
+#[cfg(test)]
+mod datadir_tests {
+    use super::*;
+    use std::fs;
+
+    #[test]
+    fn empty_dir_has_no_existing_db() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(!dir_contains_legacy_db(dir.path()).unwrap());
+    }
+
+    #[test]
+    fn dir_with_only_unrelated_files_has_no_existing_db() {
+        // Regression for #5680: a JWT secret (or any unrelated file) in the
+        // datadir must not be mistaken for an existing database.
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(dir.path().join("jwt.hex"), "0xdeadbeef").unwrap();
+        fs::write(dir.path().join("LOG"), "noise").unwrap();
+        assert!(!dir_contains_legacy_db(dir.path()).unwrap());
+    }
+
+    #[test]
+    fn dir_with_rocksdb_markers_has_existing_db() {
+        // A `CURRENT` file (and, separately, a `MANIFEST-*` file) marks a real DB.
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(dir.path().join("CURRENT"), "MANIFEST-000001\n").unwrap();
+        assert!(dir_contains_legacy_db(dir.path()).unwrap());
+
+        let dir2 = tempfile::tempdir().unwrap();
+        fs::write(dir2.path().join("MANIFEST-000007"), "x").unwrap();
+        assert!(dir_contains_legacy_db(dir2.path()).unwrap());
+    }
+
+    #[test]
+    fn dir_with_marker_named_subdirectories_has_no_existing_db() {
+        // A *directory* named like a marker file must not be mistaken for a DB;
+        // RocksDB only ever writes these as plain files.
+        let dir = tempfile::tempdir().unwrap();
+        fs::create_dir(dir.path().join("CURRENT")).unwrap();
+        fs::create_dir(dir.path().join("MANIFEST-000001")).unwrap();
+        assert!(!dir_contains_legacy_db(dir.path()).unwrap());
     }
 }

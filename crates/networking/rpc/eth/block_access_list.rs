@@ -1,4 +1,5 @@
 use ethrex_common::types::block_access_list::{AccountChanges, BlockAccessList};
+use ethrex_crypto::NativeCrypto;
 use serde_json::{Value, json};
 
 use crate::{RpcApiContext, RpcErr, RpcHandler, types::block_identifier::BlockIdentifierOrHash};
@@ -21,8 +22,14 @@ impl RpcHandler for BlockAccessListRequest {
 
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
         // Per execution-apis, unknown blocks map to the `notFound` schema (null).
-        let block_hash = match &self.block {
-            BlockIdentifierOrHash::Hash(h) => *h,
+        let (block_hash, commitment) = match &self.block {
+            BlockIdentifierOrHash::Hash(h) => {
+                let commitment = context
+                    .storage
+                    .get_block_header_by_hash(*h)?
+                    .and_then(|header| header.block_access_list_hash);
+                (*h, commitment)
+            }
             BlockIdentifierOrHash::Identifier(id) => {
                 let Some(block_number) = id.resolve_block_number(&context.storage).await? else {
                     return Ok(Value::Null);
@@ -30,13 +37,17 @@ impl RpcHandler for BlockAccessListRequest {
                 let Some(header) = context.storage.get_block_header(block_number)? else {
                     return Ok(Value::Null);
                 };
-                header.hash()
+                (header.hash(), header.block_access_list_hash)
             }
         };
 
-        // Fast path: serve from the BAL store populated at block import.
-        // Avoids re-executing the block when it's already known.
-        if let Some(bal) = context.storage.get_block_access_list(block_hash)? {
+        // Fast path: serve from the BAL store populated at block import, but only
+        // when it matches the header commitment (EIP-8159). A stale/empty stored
+        // entry (e.g. from a prior regeneration against state later pruned) must
+        // not be served; fall through to regeneration instead.
+        if let Some(bal) = context.storage.get_block_access_list(block_hash)?
+            && bal.matches_commitment(commitment, &NativeCrypto)
+        {
             return Ok(bal_to_json(&bal));
         }
 
@@ -50,7 +61,9 @@ impl RpcHandler for BlockAccessListRequest {
             .generate_bal_for_block(&block)
             .map_err(|e| RpcErr::Internal(format!("Failed to generate BAL: {e}")))?;
 
-        match bal {
+        // Only serve a regenerated BAL that matches the header commitment; a
+        // mismatch means it was re-executed against wrong/incomplete state.
+        match bal.filter(|bal| bal.matches_commitment(commitment, &NativeCrypto)) {
             Some(bal) => Ok(bal_to_json(&bal)),
             None => Ok(Value::Null),
         }
