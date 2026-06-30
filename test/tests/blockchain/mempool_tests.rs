@@ -1,9 +1,10 @@
+use std::collections::BTreeMap;
+
 use ethrex_blockchain::Blockchain;
 use ethrex_blockchain::constants::MAX_INITCODE_SIZE;
 use ethrex_blockchain::constants::{
     TX_ACCESS_LIST_ADDRESS_GAS, TX_ACCESS_LIST_STORAGE_KEY_GAS, TX_CREATE_GAS_COST,
-    TX_DATA_NON_ZERO_GAS, TX_DATA_NON_ZERO_GAS_EIP2028, TX_DATA_ZERO_GAS_COST, TX_GAS_COST,
-    TX_INIT_CODE_WORD_GAS_COST,
+    TX_DATA_NON_ZERO_GAS_EIP2028, TX_DATA_ZERO_GAS_COST, TX_GAS_COST, TX_INIT_CODE_WORD_GAS_COST,
 };
 use ethrex_blockchain::error::MempoolError;
 use ethrex_blockchain::mempool::{Mempool, transaction_intrinsic_gas};
@@ -11,8 +12,9 @@ use ethrex_crypto::NativeCrypto;
 use rustc_hash::FxHashMap;
 
 use ethrex_common::types::{
-    BYTES_PER_BLOB, BlobsBundle, BlockHeader, ChainConfig, EIP1559Transaction, EIP4844Transaction,
-    MempoolTransaction, Transaction, TxKind, kzg_commitment_to_versioned_hash,
+    AuthorizationTuple, BYTES_PER_BLOB, BlobsBundle, BlockHeader, ChainConfig, EIP1559Transaction,
+    EIP4844Transaction, EIP7702Transaction, Genesis, GenesisAccount, MempoolTransaction,
+    Transaction, TxKind, kzg_commitment_to_versioned_hash,
 };
 use ethrex_common::{Address, Bytes, H160, H256, U256};
 use ethrex_storage::error::StoreError;
@@ -149,28 +151,6 @@ fn amsterdam_create_intrinsic_matches_vm_dimensions() {
 }
 
 #[test]
-fn transaction_intrinsic_data_gas_pre_istanbul() {
-    let (config, header) = build_basic_config_and_header(false, false);
-
-    let tx = EIP1559Transaction {
-        nonce: 3,
-        max_priority_fee_per_gas: 0,
-        max_fee_per_gas: 0,
-        gas_limit: 100_000,
-        to: TxKind::Call(Address::from_low_u64_be(1)), // Normal tx
-        value: U256::zero(),                           // Value zero
-        data: Bytes::from(vec![0x0, 0x1, 0x1, 0x0, 0x1, 0x1]), // 6 bytes of data
-        access_list: Default::default(),               // No access list
-        ..Default::default()
-    };
-
-    let tx = Transaction::EIP1559Transaction(tx);
-    let expected_gas_cost = TX_GAS_COST + 2 * TX_DATA_ZERO_GAS_COST + 4 * TX_DATA_NON_ZERO_GAS;
-    let intrinsic_gas = transaction_intrinsic_gas(&tx, &header, &config).expect("Intrinsic gas");
-    assert_eq!(intrinsic_gas, expected_gas_cost);
-}
-
-#[test]
 fn transaction_intrinsic_data_gas_post_istanbul() {
     let (config, header) = build_basic_config_and_header(true, false);
 
@@ -213,7 +193,7 @@ fn transaction_create_intrinsic_gas_pre_shanghai() {
     };
 
     let tx = Transaction::EIP1559Transaction(tx);
-    let expected_gas_cost = TX_CREATE_GAS_COST + n_bytes * TX_DATA_NON_ZERO_GAS;
+    let expected_gas_cost = TX_CREATE_GAS_COST + n_bytes * TX_DATA_NON_ZERO_GAS_EIP2028;
     let intrinsic_gas = transaction_intrinsic_gas(&tx, &header, &config).expect("Intrinsic gas");
     assert_eq!(intrinsic_gas, expected_gas_cost);
 }
@@ -238,8 +218,9 @@ fn transaction_create_intrinsic_gas_post_shanghai() {
     };
 
     let tx = Transaction::EIP1559Transaction(tx);
-    let expected_gas_cost =
-        TX_CREATE_GAS_COST + n_bytes * TX_DATA_NON_ZERO_GAS + n_words * TX_INIT_CODE_WORD_GAS_COST;
+    let expected_gas_cost = TX_CREATE_GAS_COST
+        + n_bytes * TX_DATA_NON_ZERO_GAS_EIP2028
+        + n_words * TX_INIT_CODE_WORD_GAS_COST;
     let intrinsic_gas = transaction_intrinsic_gas(&tx, &header, &config).expect("Intrinsic gas");
     assert_eq!(intrinsic_gas, expected_gas_cost);
 }
@@ -446,8 +427,8 @@ fn test_filter_mempool_transactions() {
     let blob_tx_decoded = Transaction::decode_canonical(&hex::decode("03f88f0780843b9aca008506fc23ac00830186a09400000000000000000000000000000000000001008080c001e1a0010657f37554c781402a22917dee2f75def7ab966d7b770905398eba3c44401401a0840650aa8f74d2b07f40067dc33b715078d73422f01da17abdbd11e02bbdfda9a04b2260f6022bf53eadb337b3e59514936f7317d872defb891a708ee279bdca90").unwrap()).unwrap();
     let blob_tx_sender = blob_tx_decoded.sender(&NativeCrypto).unwrap();
     let blob_tx = MempoolTransaction::new(blob_tx_decoded, blob_tx_sender);
-    let plain_tx_hash = plain_tx.hash();
-    let blob_tx_hash = blob_tx.hash();
+    let plain_tx_hash = plain_tx.hash(&NativeCrypto);
+    let blob_tx_hash = blob_tx.hash(&NativeCrypto);
     let mempool = Mempool::new(MEMPOOL_MAX_SIZE_TEST);
     let filter = |tx: &Transaction| -> bool { matches!(tx, Transaction::EIP4844Transaction(_)) };
     mempool
@@ -690,7 +671,7 @@ fn blob_txs_lists_only_blob_txs_with_sender_and_nonce() {
         to: TxKind::Call(Address::from_low_u64_be(1)),
         ..Default::default()
     });
-    let plain_hash = plain.hash();
+    let plain_hash = plain.hash(&NativeCrypto);
     mempool
         .add_transaction(plain_hash, sender, MempoolTransaction::new(plain, sender))
         .unwrap();
@@ -908,4 +889,244 @@ mod alternates {
         mp.prune_alternates(Duration::from_millis(5)).unwrap();
         assert!(mp.pop_alternate(tx).unwrap().is_none());
     }
+}
+
+// Regression tests for the EF findings `eip7702-mempool-intrinsic-gas-gap` and
+// `mempool-calldata-floor-gas-gap` (issue #6889): on Prague (the active fork)
+// mempool admission must compute intrinsic gas the same way LEVM does at
+// execution, and must reject empty EIP-7702 authorization lists. Otherwise txs
+// that the VM will reject at inclusion are admitted, polluting the pool.
+
+/// Prague config (Amsterdam NOT active); `config.fork(timestamp)` resolves to
+/// Prague, so `intrinsic_gas_dimensions` exercises its pre-Amsterdam sub-path
+/// (flat EIP-7702 auth-list cost + EIP-7623 calldata floor).
+fn prague_config_and_header() -> (ChainConfig, BlockHeader) {
+    let config = ChainConfig {
+        istanbul_block: Some(0),
+        shanghai_time: Some(0),
+        cancun_time: Some(0),
+        prague_time: Some(0),
+        ..Default::default()
+    };
+    let header = BlockHeader {
+        number: 5,
+        timestamp: 5,
+        gas_limit: 100_000_000,
+        gas_used: 0,
+        ..Default::default()
+    };
+    (config, header)
+}
+
+/// EIP-7702: each authorization tuple costs `PER_EMPTY_ACCOUNT_COST` (25000) of
+/// intrinsic gas (LEVM charges it in `intrinsic_gas_dimensions`). Mempool
+/// admission must charge it too. Unfixed mempool omits the auth-list cost
+/// entirely on the pre-Amsterdam path.
+#[test]
+fn prague_eip7702_intrinsic_includes_auth_list_cost() {
+    use ethrex_levm::constants::PER_EMPTY_ACCOUNT_COST;
+
+    let (config, header) = prague_config_and_header();
+
+    let auth = AuthorizationTuple::default();
+    let tx = Transaction::EIP7702Transaction(EIP7702Transaction {
+        chain_id: 0,
+        nonce: 0,
+        max_priority_fee_per_gas: 0,
+        max_fee_per_gas: 0,
+        gas_limit: 1_000_000,
+        to: Address::from_low_u64_be(1),
+        value: U256::zero(),
+        data: Bytes::default(),
+        access_list: Default::default(),
+        authorization_list: vec![auth, auth], // 2 tuples
+        ..Default::default()
+    });
+
+    let expected = TX_GAS_COST + 2 * PER_EMPTY_ACCOUNT_COST; // 21000 + 50000
+    let got = transaction_intrinsic_gas(&tx, &header, &config).expect("intrinsic gas");
+    assert_eq!(
+        got, expected,
+        "Prague type-4 mempool intrinsic must include PER_EMPTY_ACCOUNT_COST per \
+         auth tuple (matches LEVM); unfixed mempool omits it"
+    );
+}
+
+/// EIP-7623: a tx whose calldata floor exceeds its execution intrinsic must be
+/// charged the floor. 1000 zero-bytes → legacy intrinsic 25000, floor 31000.
+/// Unfixed mempool returns the sub-floor 25000 and admits a tx the VM rejects.
+#[test]
+fn prague_intrinsic_applies_eip7623_calldata_floor() {
+    let (config, header) = prague_config_and_header();
+
+    let tx = Transaction::EIP1559Transaction(EIP1559Transaction {
+        nonce: 0,
+        max_priority_fee_per_gas: 0,
+        max_fee_per_gas: 0,
+        gas_limit: 1_000_000,
+        to: TxKind::Call(Address::from_low_u64_be(1)),
+        value: U256::zero(),
+        data: Bytes::from(vec![0u8; 1000]),
+        access_list: Default::default(),
+        ..Default::default()
+    });
+
+    // floor = TX_BASE_COST + 1000 tokens * 10 = 31000; legacy intrinsic = 25000.
+    let expected_floor = 31_000;
+    let got = transaction_intrinsic_gas(&tx, &header, &config).expect("intrinsic gas");
+    assert_eq!(
+        got, expected_floor,
+        "Prague mempool intrinsic must apply the EIP-7623 calldata floor (matches \
+         LEVM); unfixed mempool returns the sub-floor legacy value 25000"
+    );
+}
+
+/// EIP-7702: an empty `authorization_list` makes a type-4 tx invalid
+/// (`validate_type_4_tx` rejects it). Mempool admission must reject it too.
+/// Unfixed mempool admits it (sender is funded so the balance check passes).
+#[tokio::test]
+async fn validate_transaction_rejects_empty_auth_list() {
+    let sender = Address::from_low_u64_be(0x1234);
+    let mut alloc = BTreeMap::new();
+    alloc.insert(
+        sender,
+        GenesisAccount {
+            code: Bytes::new(),
+            storage: BTreeMap::new(),
+            balance: U256::from(10).pow(U256::from(20)), // 100 ETH
+            nonce: 0,
+        },
+    );
+    let genesis = Genesis {
+        config: ChainConfig {
+            chain_id: 1,
+            homestead_block: Some(0),
+            eip150_block: Some(0),
+            eip155_block: Some(0),
+            eip158_block: Some(0),
+            byzantium_block: Some(0),
+            constantinople_block: Some(0),
+            petersburg_block: Some(0),
+            istanbul_block: Some(0),
+            berlin_block: Some(0),
+            london_block: Some(0),
+            merge_netsplit_block: Some(0),
+            terminal_total_difficulty: Some(0),
+            terminal_total_difficulty_passed: true,
+            shanghai_time: Some(0),
+            cancun_time: Some(0),
+            prague_time: Some(0),
+            ..Default::default()
+        },
+        alloc,
+        gas_limit: 30_000_000,
+        base_fee_per_gas: Some(0),
+        ..Default::default()
+    };
+
+    let mut store = Store::new("", EngineType::InMemory).expect("open in-memory store");
+    store
+        .add_initial_state(genesis)
+        .await
+        .expect("initialize genesis");
+    let blockchain = Blockchain::default_with_store(store);
+
+    let tx = Transaction::EIP7702Transaction(EIP7702Transaction {
+        chain_id: 1,
+        nonce: 0,
+        max_priority_fee_per_gas: 0,
+        max_fee_per_gas: 0,
+        gas_limit: 100_000,
+        to: Address::from_low_u64_be(1),
+        value: U256::zero(),
+        data: Bytes::default(),
+        access_list: Default::default(),
+        authorization_list: vec![], // EMPTY — invalid per EIP-7702
+        ..Default::default()
+    });
+
+    let res = blockchain.validate_transaction(&tx, sender).await;
+    assert!(
+        matches!(res, Err(MempoolError::EmptyAuthorizationList)),
+        "type-4 tx with an empty authorization_list must be rejected at admission \
+         with EmptyAuthorizationList; unfixed mempool admits it (got {res:?})"
+    );
+}
+
+/// The empty-auth-list check must run before the intrinsic-gas check, so a
+/// type-4 tx that is both empty-auth and under-gassed reports the structural
+/// fault (`EmptyAuthorizationList`) rather than the downstream gas symptom —
+/// matching LEVM's `validate_type_4_tx` ordering.
+#[tokio::test]
+async fn validate_transaction_empty_auth_reported_before_intrinsic() {
+    let (config, header) = prague_config_and_header();
+    let store = setup_storage(config, header).await.expect("Storage setup");
+    let blockchain = Blockchain::default_with_store(store);
+
+    let tx = Transaction::EIP7702Transaction(EIP7702Transaction {
+        chain_id: 0,
+        nonce: 0,
+        max_priority_fee_per_gas: 0,
+        max_fee_per_gas: 0,
+        gas_limit: 1_000, // below the 21000 intrinsic
+        to: Address::from_low_u64_be(1),
+        value: U256::zero(),
+        data: Bytes::default(),
+        access_list: Default::default(),
+        authorization_list: vec![], // empty — the structural fault
+        ..Default::default()
+    });
+
+    let res = blockchain
+        .validate_transaction(&tx, Address::random())
+        .await;
+    assert!(
+        matches!(res, Err(MempoolError::EmptyAuthorizationList)),
+        "empty auth-list must be reported before the intrinsic-gas check (got {res:?})"
+    );
+}
+
+/// EIP-7702 (type-4) txs only exist from Prague onward; LEVM rejects them with
+/// `Type4TxPreFork` otherwise. Mempool admission must mirror that gate so a
+/// pre-Prague node does not pool a type-4 tx that execution will reject.
+#[tokio::test]
+async fn validate_transaction_rejects_pre_prague_eip7702() {
+    // Cancun active, Prague NOT active.
+    let config = ChainConfig {
+        istanbul_block: Some(0),
+        shanghai_time: Some(0),
+        cancun_time: Some(0),
+        ..Default::default()
+    };
+    let header = BlockHeader {
+        number: 5,
+        timestamp: 5,
+        gas_limit: 100_000_000,
+        gas_used: 0,
+        ..Default::default()
+    };
+    let store = setup_storage(config, header).await.expect("Storage setup");
+    let blockchain = Blockchain::default_with_store(store);
+
+    let tx = Transaction::EIP7702Transaction(EIP7702Transaction {
+        chain_id: 0,
+        nonce: 0,
+        max_priority_fee_per_gas: 0,
+        max_fee_per_gas: 0,
+        gas_limit: 100_000,
+        to: Address::from_low_u64_be(1),
+        value: U256::zero(),
+        data: Bytes::default(),
+        access_list: Default::default(),
+        authorization_list: vec![AuthorizationTuple::default()], // non-empty
+        ..Default::default()
+    });
+
+    let res = blockchain
+        .validate_transaction(&tx, Address::random())
+        .await;
+    assert!(
+        matches!(res, Err(MempoolError::Eip7702TxPreFork)),
+        "pre-Prague type-4 tx must be rejected with Eip7702TxPreFork (got {res:?})"
+    );
 }

@@ -220,7 +220,7 @@ async fn run_two_pass_parallel(test_key: &str, test: &TestUnit) -> Result<(), St
     let store1 = build_store_for_test(test).await;
     let blockchain1 = Blockchain::default_with_store_and_pool(store1.clone(), merkle_pool());
 
-    let mut bals: Vec<BlockAccessList> = Vec::with_capacity(test.blocks.len());
+    let mut bals: Vec<Arc<BlockAccessList>> = Vec::with_capacity(test.blocks.len());
 
     for block_fixture in test.blocks.iter() {
         // Skip fixtures that expect an exception — the normal run() already verified them.
@@ -243,7 +243,7 @@ async fn run_two_pass_parallel(test_key: &str, test: &TestUnit) -> Result<(), St
 
         // If execution produced no BAL (non-Amsterdam block in a transition test), skip pass 2.
         match produced_bal {
-            Some(bal) => bals.push(bal),
+            Some(bal) => bals.push(Arc::new(bal)),
             None => return Ok(()),
         }
     }
@@ -257,7 +257,7 @@ async fn run_two_pass_parallel(test_key: &str, test: &TestUnit) -> Result<(), St
         let hash = block.hash();
 
         blockchain2
-            .add_block_pipeline(block, Some(bal))
+            .add_block_pipeline(block, Some(Arc::clone(bal)))
             .map_err(|e| format!("Two-pass pass-2 (parallel) failed for test {test_key}: {e:?}"))?;
 
         apply_fork_choice(&store2, hash, hash, hash)
@@ -621,7 +621,12 @@ async fn run_stateless_from_fixture(
                 format!("witness header decode failed for {test_key} block {block_number}: {e}")
             })?;
         let execution_witness = rpc_witness
-            .into_execution_witness(*chain_config, block_number, &decoded_headers)
+            .into_execution_witness(
+                *chain_config,
+                block_number,
+                &decoded_headers,
+                &ethrex_crypto::NativeCrypto,
+            )
             .map_err(|e| {
                 format!("witness conversion failed for {test_key} block {block_number}: {e}")
             })?;
