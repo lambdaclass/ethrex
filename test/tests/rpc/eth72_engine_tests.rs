@@ -330,3 +330,153 @@ async fn fcu_v4_contraction_sets_reduced_custody() {
         "custody must contract to 0b0011"
     );
 }
+
+// ── engine_getBlobsV4 unit tests (moved from engine/blobs.rs) ─────────────────
+//
+// These were in-crate unit tests; they drive BlobsV4Request through the public
+// `handle()` path. The request is built via the `test_utils::blobs_v4_request`
+// shim (its fields are crate-private) and the bitarray-parse tests call the
+// `test_utils::parse_indices_bitarray` shim.
+use ethrex_common::types::{Commitment, Proof};
+use ethrex_rpc::test_utils::{
+    GET_BLOBS_V1_REQUEST_MAX_SIZE, blobs_v4_request, parse_indices_bitarray,
+};
+
+fn chain_config(active: bool) -> ChainConfig {
+    ChainConfig {
+        chain_id: 1,
+        shanghai_time: Some(0),
+        cancun_time: Some(0),
+        prague_time: Some(0),
+        osaka_time: active.then_some(0),
+        amsterdam_time: active.then_some(0),
+        deposit_contract_address: Address::zero(),
+        ..Default::default()
+    }
+}
+
+async fn context_with_chain_config(osaka_active: bool) -> RpcApiContext {
+    let mut storage =
+        Store::new("test-blobs", EngineType::InMemory).expect("Failed to create test store");
+    storage
+        .set_chain_config(&chain_config(osaka_active))
+        .await
+        .expect("Failed to set chain config");
+    default_context_with_storage(storage).await
+}
+
+#[tokio::test]
+async fn blobs_v4_accepts_exactly_max_size() {
+    // Spec §5: clients MUST support at least MAX hashes, so exactly MAX must not
+    // be rejected as too large (regression guard for the `>=` vs `>` off-by-one).
+    let context = context_with_chain_config(true).await;
+    let request = blobs_v4_request(vec![H256::zero(); GET_BLOBS_V1_REQUEST_MAX_SIZE], u128::MAX);
+    let result = request.handle(context).await;
+    assert!(!matches!(result, Err(RpcErr::TooLargeRequest)));
+}
+
+#[tokio::test]
+async fn blobs_v4_parse_wrong_bitarray_length_rejected() {
+    let err = parse_indices_bitarray(&serde_json::json!("0xdeadbeef")).unwrap_err();
+    assert!(matches!(err, RpcErr::BadParams(_)));
+}
+
+#[tokio::test]
+async fn blobs_v4_parse_valid_bitarray() {
+    let mask: u128 = 0x0000_0000_0000_0000_0000_0000_0000_0001;
+    let hex = format!("0x{}", hex::encode(mask.to_be_bytes()));
+    let parsed = parse_indices_bitarray(&serde_json::json!(hex)).unwrap();
+    assert_eq!(parsed, mask);
+}
+
+#[tokio::test]
+async fn blobs_v4_response_is_sparse_length_128() {
+    // EIP-8070 / execution-specs PR #2948: getBlobsV4 returns length-128
+    // matrices with the value at requested indices and null elsewhere.
+    let context = context_with_chain_config(true).await;
+    let (bundle, hashes) = sample_bundle(1);
+    let tx_hash = H256::from_low_u64_be(1);
+    context
+        .blockchain
+        .mempool
+        .add_blobs_bundle(tx_hash, bundle)
+        .unwrap();
+
+    // Request columns 0 and 5 only; store cells for both.
+    for col in [0usize, 5] {
+        let cell_bytes = Box::new([0xCDu8; BYTES_PER_CELL]);
+        context
+            .blockchain
+            .mempool
+            .store_cells(tx_hash, 1, vec![(0, col, cell_bytes)])
+            .unwrap();
+    }
+    let mask: u128 = (1 << 0) | (1 << 5);
+    let request = blobs_v4_request(vec![hashes[0]], mask);
+    let result = request.handle(context).await.unwrap();
+    let entry = &result.as_array().unwrap()[0];
+    let blob_cells = entry["blobCells"].as_array().unwrap();
+    let proofs = entry["proofs"].as_array().unwrap();
+    assert_eq!(blob_cells.len(), CELLS_PER_EXT_BLOB);
+    assert_eq!(proofs.len(), CELLS_PER_EXT_BLOB);
+    for i in 0..CELLS_PER_EXT_BLOB {
+        let requested = (mask >> i) & 1 == 1;
+        assert_eq!(!blob_cells[i].is_null(), requested, "cell {i}");
+        assert_eq!(!proofs[i].is_null(), requested, "proof {i}");
+    }
+}
+
+#[tokio::test]
+async fn blobs_v4_missing_stored_and_no_blob_returns_null_cell() {
+    let context = context_with_chain_config(true).await;
+    // Create a bundle with blobs elided (empty blobs vec) but valid commitments/proofs.
+    let commitments: Vec<Commitment> = vec![[0u8; 48]];
+    let proofs: Vec<Proof> = vec![[2u8; 48]; CELLS_PER_EXT_BLOB];
+    let hashes: Vec<H256> = commitments
+        .iter()
+        .map(kzg_commitment_to_versioned_hash)
+        .collect();
+    let bundle = BlobsBundle {
+        blobs: vec![], // elided
+        commitments,
+        proofs,
+        version: 1,
+    };
+    let tx_hash = H256::from_low_u64_be(77);
+    context
+        .blockchain
+        .mempool
+        .add_blobs_bundle(tx_hash, bundle)
+        .unwrap();
+
+    // No stored cells, blob is elided — expect null cell.
+    let request = blobs_v4_request(vec![hashes[0]], 1); // column 0 only
+    let result = request.handle(context).await.unwrap();
+    let arr = result.as_array().unwrap();
+    // The hash resolved, so we get Some(BlobCellsAndProofsV1) with a null cell.
+    let entry = &arr[0];
+    if !entry.is_null() {
+        let blob_cells = entry["blobCells"].as_array().unwrap();
+        assert!(blob_cells[0].is_null());
+    }
+    // else: blob_idx=0 is out of bounds for empty blobs slice → None entry, also acceptable.
+}
+
+fn sample_bundle(count: usize) -> (BlobsBundle, Vec<H256>) {
+    let blobs = vec![[1u8; BYTES_PER_BLOB]; count];
+    let commitments: Vec<Commitment> = (0..count).map(|i| [i as u8; 48]).collect();
+    let proofs: Vec<Proof> = vec![[2u8; 48]; count * CELLS_PER_EXT_BLOB];
+
+    let hashes = commitments
+        .iter()
+        .map(kzg_commitment_to_versioned_hash)
+        .collect();
+
+    let bundle = BlobsBundle {
+        blobs,
+        commitments,
+        proofs,
+        version: 1,
+    };
+    (bundle, hashes)
+}

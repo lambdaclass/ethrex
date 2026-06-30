@@ -180,3 +180,13 @@ fn pooled_transactions_72_elided_blob_round_trip() {
         "cell proofs must be preserved through elided round-trip"
     );
 }
+
+// Moved from crates/networking/p2p/rlpx/eth/eth72/transactions.rs. Exercises the
+// crate-private `bytes_to_cell_mask` via the `test_utils` feature-gated shim.
+#[test]
+fn bytes_to_cell_mask_rejects_wrong_length() {
+    use ethrex_p2p::test_utils::bytes_to_cell_mask;
+    assert_eq!(bytes_to_cell_mask(&Bytes::new()).unwrap(), None);
+    assert!(bytes_to_cell_mask(&Bytes::from(vec![0u8; 8])).is_err());
+    assert!(bytes_to_cell_mask(&Bytes::from(vec![0u8; 16])).is_ok());
+}

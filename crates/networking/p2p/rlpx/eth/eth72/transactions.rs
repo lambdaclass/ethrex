@@ -42,7 +42,7 @@ fn cell_mask_to_bytes(mask: Option<u128>) -> Bytes {
 /// - empty bytes → None
 /// - 16 bytes    → Some(u128)
 /// - other       → error
-fn bytes_to_cell_mask(b: &Bytes) -> Result<Option<u128>, RLPDecodeError> {
+pub(crate) fn bytes_to_cell_mask(b: &Bytes) -> Result<Option<u128>, RLPDecodeError> {
     if b.is_empty() {
         Ok(None)
     } else if b.len() == 16 {
@@ -433,18 +433,5 @@ impl RLPxMessage for PooledTransactions72 {
             decoder.decode_field("pooledTransactions")?;
 
         Ok(Self::new(id, pooled_transactions))
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    // bytes_to_cell_mask is private: keep this test inline.
-    #[test]
-    fn bytes_to_cell_mask_rejects_wrong_length() {
-        assert_eq!(bytes_to_cell_mask(&Bytes::new()).unwrap(), None);
-        assert!(bytes_to_cell_mask(&Bytes::from(vec![0u8; 8])).is_err());
-        assert!(bytes_to_cell_mask(&Bytes::from(vec![0u8; 16])).is_ok());
     }
 }

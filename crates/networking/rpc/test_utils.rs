@@ -448,3 +448,50 @@ pub async fn call_http(context: RpcApiContext, body: String) -> Value {
         .expect("handle_http_request should not return a status code error")
         .0
 }
+
+// ── eth/72 (EIP-8070) internal-fn shims ─────────────────────────────────────
+//
+// These re-expose crate-private parsing/handling internals to the integration
+// test crate WITHOUT widening the production public API: the whole `test_utils`
+// module is compiled only under `#[cfg(any(test, feature = "test-utils"))]`, so
+// these shims do not exist in a normal build.
+use crate::engine::blobs::BlobsV4Request;
+use crate::types::fork_choice::{ForkChoiceState, PayloadAttributesV4};
+use crate::utils::RpcErr;
+
+/// Max blob hashes per `engine_getBlobs*` request (mirror of the crate-private const).
+pub const GET_BLOBS_V1_REQUEST_MAX_SIZE: usize =
+    crate::engine::blobs::GET_BLOBS_V1_REQUEST_MAX_SIZE;
+
+/// Shim over the crate-private `engine::fork_choice::parse_v4`.
+pub fn parse_v4(
+    params: &Option<Vec<Value>>,
+) -> Result<(ForkChoiceState, Option<PayloadAttributesV4>, Option<u128>), RpcErr> {
+    crate::engine::fork_choice::parse_v4(params)
+}
+
+/// Shim over the crate-private `engine::fork_choice::parse_custody_columns`.
+pub fn parse_custody_columns(value: &Value) -> Result<Option<u128>, RpcErr> {
+    crate::engine::fork_choice::parse_custody_columns(value)
+}
+
+/// Shim over the crate-private `engine::fork_choice::apply_custody_update`.
+pub fn apply_custody_update(context: &RpcApiContext, custody_columns: Option<u128>) {
+    crate::engine::fork_choice::apply_custody_update(context, custody_columns)
+}
+
+/// Shim over the crate-private `engine::blobs::parse_indices_bitarray`.
+pub fn parse_indices_bitarray(value: &Value) -> Result<u128, RpcErr> {
+    crate::engine::blobs::parse_indices_bitarray(value)
+}
+
+/// Construct a `BlobsV4Request` from its parts (the struct fields are crate-private).
+pub fn blobs_v4_request(
+    versioned_blob_hashes: Vec<H256>,
+    indices_bitarray: u128,
+) -> BlobsV4Request {
+    BlobsV4Request {
+        versioned_blob_hashes,
+        indices_bitarray,
+    }
+}
