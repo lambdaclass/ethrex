@@ -697,6 +697,10 @@ impl Blockchain {
                 // and the merkleizer uses the synthesized optimistic map directly.
                 let (tx, rx_for_merkle) =
                     if optimistic_updates.is_some() && bal_parallel_exec_enabled {
+                        // Paired with the merkleizer's `rx_for_merkle.expect()` below:
+                        // this is the only arm allowed to skip the channel. If a future
+                        // refactor lets another branch reach here with `rx == None`, the
+                        // merkleizer would panic instead of silently dropping updates.
                         (None, None)
                     } else {
                         let (tx, rx) = channel();
