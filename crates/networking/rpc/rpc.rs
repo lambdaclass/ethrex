@@ -452,12 +452,12 @@ pub fn start_block_executor(blockchain: Arc<Blockchain>) -> UnboundedSender<Bloc
         .spawn(move || {
             while let Some((notify, block, bal, make_witness)) = block_receiver.blocking_recv() {
                 let result = (|| {
+                    let bal = bal.map(Arc::new);
                     if make_witness {
-                        let witness =
-                            blockchain.add_block_pipeline_with_witness(block, bal.as_ref())?;
+                        let witness = blockchain.add_block_pipeline_with_witness(block, bal)?;
                         Ok(Some(witness))
                     } else {
-                        blockchain.add_block_pipeline(block, bal.as_ref())?;
+                        blockchain.add_block_pipeline(block, bal)?;
                         Ok(None)
                     }
                 })();

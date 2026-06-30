@@ -307,7 +307,7 @@ impl Node {
             .execution_payload
             .block_access_list
             .as_ref()
-            .map(|bal| bal.compute_hash());
+            .map(|bal| bal.compute_hash(&ethrex_common::NativeCrypto));
         let block = payload_response
             .execution_payload
             .to_block(
