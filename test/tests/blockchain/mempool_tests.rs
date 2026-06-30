@@ -74,7 +74,8 @@ fn normal_transaction_intrinsic_gas() {
 
     let tx = Transaction::EIP1559Transaction(tx);
     let expected_gas_cost = TX_GAS_COST;
-    let intrinsic_gas = transaction_intrinsic_gas(&tx, &header, &config).expect("Intrinsic gas");
+    let intrinsic_gas = transaction_intrinsic_gas(&tx, Address::default(), &header, &config)
+        .expect("Intrinsic gas");
     assert_eq!(intrinsic_gas, expected_gas_cost);
 }
 
@@ -96,22 +97,25 @@ fn create_transaction_intrinsic_gas() {
 
     let tx = Transaction::EIP1559Transaction(tx);
     let expected_gas_cost = TX_CREATE_GAS_COST;
-    let intrinsic_gas = transaction_intrinsic_gas(&tx, &header, &config).expect("Intrinsic gas");
+    let intrinsic_gas = transaction_intrinsic_gas(&tx, Address::default(), &header, &config)
+        .expect("Intrinsic gas");
     assert_eq!(intrinsic_gas, expected_gas_cost);
 }
 
-/// EIP-8037 / bal-devnet-4: Amsterdam CREATE tx intrinsic must match the VM
-/// charge, not the legacy `TX_CREATE_GAS_COST = 53000`. The regular portion
-/// drops to `TX_GAS_COST + REGULAR_GAS_CREATE = 30000` and a state portion
-/// (`STATE_BYTES_PER_NEW_ACCOUNT * cpsb`) is folded in. Mempool admission
-/// must return the total so txs whose `gas_limit` is below the VM intrinsic
-/// are rejected before they enter the pool, and txs above it aren't
-/// spuriously rejected.
+/// EIP-2780 (PRELIMINARY EIPs#11645): Amsterdam CREATE tx intrinsic must match
+/// the VM charge, not the legacy `TX_CREATE_GAS_COST = 53000`. The regular
+/// portion is the resource-based decomposition
+/// `TX_BASE_COST_AMSTERDAM (12000) + CREATE_ACCESS_AMSTERDAM (11000) = 23000`
+/// (no value transfer here), plus a state portion
+/// (`STATE_BYTES_PER_NEW_ACCOUNT * cpsb`). Mempool admission must return the
+/// total so txs whose `gas_limit` is below the VM intrinsic are rejected before
+/// they enter the pool, and txs above it aren't spuriously rejected.
 #[test]
 fn amsterdam_create_intrinsic_matches_vm_dimensions() {
     use ethrex_levm::gas_cost::{
-        REGULAR_GAS_CREATE, STATE_BYTES_PER_NEW_ACCOUNT, cost_per_state_byte,
+        CREATE_ACCESS_AMSTERDAM, STATE_BYTES_PER_NEW_ACCOUNT, cost_per_state_byte,
     };
+    const TX_BASE_COST_AMSTERDAM: u64 = 12000;
 
     let (mut config, header) = build_basic_config_and_header(true, true);
     // Activate Amsterdam at genesis. Intermediate forks must also be active
@@ -136,13 +140,15 @@ fn amsterdam_create_intrinsic_matches_vm_dimensions() {
     });
 
     let cpsb = cost_per_state_byte(header.gas_limit);
-    let expected = TX_GAS_COST + REGULAR_GAS_CREATE + STATE_BYTES_PER_NEW_ACCOUNT * cpsb;
+    let expected =
+        TX_BASE_COST_AMSTERDAM + CREATE_ACCESS_AMSTERDAM + STATE_BYTES_PER_NEW_ACCOUNT * cpsb;
 
-    let intrinsic_gas = transaction_intrinsic_gas(&tx, &header, &config).expect("intrinsic gas");
+    let intrinsic_gas = transaction_intrinsic_gas(&tx, Address::default(), &header, &config)
+        .expect("intrinsic gas");
     assert_eq!(
         intrinsic_gas, expected,
-        "Amsterdam CREATE intrinsic must be TX_BASE + REGULAR_GAS_CREATE + \
-         STATE_BYTES_PER_NEW_ACCOUNT * cpsb, not the legacy 53000"
+        "Amsterdam CREATE intrinsic must be TX_BASE_COST_AMSTERDAM + \
+         CREATE_ACCESS_AMSTERDAM + STATE_BYTES_PER_NEW_ACCOUNT * cpsb, not the legacy 53000"
     );
     // Guard against regression to the legacy 53000 constant.
     assert_ne!(
@@ -170,7 +176,8 @@ fn transaction_intrinsic_data_gas_post_istanbul() {
     let tx = Transaction::EIP1559Transaction(tx);
     let expected_gas_cost =
         TX_GAS_COST + 2 * TX_DATA_ZERO_GAS_COST + 4 * TX_DATA_NON_ZERO_GAS_EIP2028;
-    let intrinsic_gas = transaction_intrinsic_gas(&tx, &header, &config).expect("Intrinsic gas");
+    let intrinsic_gas = transaction_intrinsic_gas(&tx, Address::default(), &header, &config)
+        .expect("Intrinsic gas");
     assert_eq!(intrinsic_gas, expected_gas_cost);
 }
 
@@ -195,7 +202,8 @@ fn transaction_create_intrinsic_gas_pre_shanghai() {
 
     let tx = Transaction::EIP1559Transaction(tx);
     let expected_gas_cost = TX_CREATE_GAS_COST + n_bytes * TX_DATA_NON_ZERO_GAS_EIP2028;
-    let intrinsic_gas = transaction_intrinsic_gas(&tx, &header, &config).expect("Intrinsic gas");
+    let intrinsic_gas = transaction_intrinsic_gas(&tx, Address::default(), &header, &config)
+        .expect("Intrinsic gas");
     assert_eq!(intrinsic_gas, expected_gas_cost);
 }
 
@@ -222,7 +230,8 @@ fn transaction_create_intrinsic_gas_post_shanghai() {
     let expected_gas_cost = TX_CREATE_GAS_COST
         + n_bytes * TX_DATA_NON_ZERO_GAS_EIP2028
         + n_words * TX_INIT_CODE_WORD_GAS_COST;
-    let intrinsic_gas = transaction_intrinsic_gas(&tx, &header, &config).expect("Intrinsic gas");
+    let intrinsic_gas = transaction_intrinsic_gas(&tx, Address::default(), &header, &config)
+        .expect("Intrinsic gas");
     assert_eq!(intrinsic_gas, expected_gas_cost);
 }
 
@@ -251,7 +260,8 @@ fn transaction_intrinsic_gas_access_list() {
     let tx = Transaction::EIP1559Transaction(tx);
     let expected_gas_cost =
         TX_GAS_COST + 3 * TX_ACCESS_LIST_ADDRESS_GAS + 15 * TX_ACCESS_LIST_STORAGE_KEY_GAS;
-    let intrinsic_gas = transaction_intrinsic_gas(&tx, &header, &config).expect("Intrinsic gas");
+    let intrinsic_gas = transaction_intrinsic_gas(&tx, Address::default(), &header, &config)
+        .expect("Intrinsic gas");
     assert_eq!(intrinsic_gas, expected_gas_cost);
 }
 
@@ -892,7 +902,6 @@ mod alternates {
     }
 }
 
-// Regression tests for the EF findings `eip7702-mempool-intrinsic-gas-gap` and
 // `mempool-calldata-floor-gas-gap` (issue #6889): on Prague (the active fork)
 // mempool admission must compute intrinsic gas the same way LEVM does at
 // execution, and must reject empty EIP-7702 authorization lists. Otherwise txs
@@ -945,7 +954,8 @@ fn prague_eip7702_intrinsic_includes_auth_list_cost() {
     });
 
     let expected = TX_GAS_COST + 2 * PER_EMPTY_ACCOUNT_COST; // 21000 + 50000
-    let got = transaction_intrinsic_gas(&tx, &header, &config).expect("intrinsic gas");
+    let got = transaction_intrinsic_gas(&tx, Address::default(), &header, &config)
+        .expect("intrinsic gas");
     assert_eq!(
         got, expected,
         "Prague type-4 mempool intrinsic must include PER_EMPTY_ACCOUNT_COST per \
@@ -974,7 +984,8 @@ fn prague_intrinsic_applies_eip7623_calldata_floor() {
 
     // floor = TX_BASE_COST + 1000 tokens * 10 = 31000; legacy intrinsic = 25000.
     let expected_floor = 31_000;
-    let got = transaction_intrinsic_gas(&tx, &header, &config).expect("intrinsic gas");
+    let got = transaction_intrinsic_gas(&tx, Address::default(), &header, &config)
+        .expect("intrinsic gas");
     assert_eq!(
         got, expected_floor,
         "Prague mempool intrinsic must apply the EIP-7623 calldata floor (matches \

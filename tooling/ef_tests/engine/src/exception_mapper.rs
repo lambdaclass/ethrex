@@ -133,7 +133,7 @@ const PATTERNS: &[Entry] = &[
     Entry { canonical: "BlockException.INVALID_BAL_HASH", kind: Kind::Re,
         text: r"BAL validation failed" },
     Entry { canonical: "BlockException.INVALID_BLOCK_ACCESS_LIST", kind: Kind::Re,
-        text: r"Block access list contains index \d+ exceeding max valid index \d+|Failed to RLP decode BAL|Block access list .+ not in strictly ascending order.*|BAL validation failed for (tx \d+|system_tx|withdrawal): .*|BAL validation failed: .*|absent from BAL|Block access list slot .+ is in both storage_changes and storage_reads.*|Invalid block hash" },
+        text: r"Block access list contains index \d+ exceeding max valid index \d+|Failed to RLP decode BAL|Block access list .+ not in strictly ascending order.*|BAL validation failed for (tx \d+|system_tx|withdrawal): .*|BAL validation failed: .*|absent from BAL|Block access list slot .+ is in both storage_changes and storage_reads.*|Block access list .+ has an empty change set|Invalid block hash" },
     Entry { canonical: "BlockException.INCORRECT_BLOCK_FORMAT", kind: Kind::Re,
         text: r"Block access list hash does not match the one in the header after executing|Block access list contains index \d+ exceeding max valid index \d+|Failed to RLP decode BAL|Block access list accounts not in strictly ascending order.*" },
 ];
