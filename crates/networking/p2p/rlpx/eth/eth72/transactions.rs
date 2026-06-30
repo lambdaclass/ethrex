@@ -8,6 +8,7 @@ use ethrex_blockchain::Blockchain;
 use ethrex_blockchain::error::MempoolError;
 use ethrex_common::types::{Fork, P2PTransaction, WrappedEIP4844Transaction};
 use ethrex_common::{H256, types::Transaction};
+use ethrex_crypto::NativeCrypto;
 use ethrex_rlp::{
     encode::RLPEncode,
     error::{RLPDecodeError, RLPEncodeError},
@@ -85,7 +86,7 @@ impl NewPooledTransactionHashes72 {
                 has_blob_tx = true;
             }
             transaction_types.push(tx_type as u8);
-            let transaction_hash = transaction.hash();
+            let transaction_hash = transaction.hash(&NativeCrypto);
             transaction_hashes.push(transaction_hash);
             let transaction_size = match transaction {
                 Transaction::EIP4844Transaction(eip4844_tx) => {

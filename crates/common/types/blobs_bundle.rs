@@ -203,10 +203,22 @@ impl BlobsBundle {
             return Err(BlobsBundleError::BlobBundleEmptyError);
         }
 
-        // The wrapper version is fork-specific: 0 (blob proofs) before Osaka, 1 (cell
-        // proofs, EIP-7594) on Osaka+. Any other value is invalid.
-        let expected_version = if fork >= Fork::Osaka { 1 } else { 0 };
-        if self.version != expected_version {
+        // Blob sidecar wrapper version: 0 = EIP-4844 blob proofs, 1 = EIP-7594 cell proofs.
+        // The sidecar is a mempool/propagation-only artifact (never included in a block) and
+        // both formats are cryptographically verifiable at any fork.
+        //
+        // Acceptance criteria:
+        //   - pre-Osaka: accept BOTH v0 and v1. Peers are migrating to cell proofs at
+        //     different times (e.g. post go-ethereum#35191 geth sends v1 even pre-Osaka,
+        //     while older peers still send v0), so rejecting either would needlessly
+        //     disconnect otherwise-valid peers.
+        //   - Osaka+: only v1 (cell proofs) is valid.
+        let version_ok = if fork >= Fork::Osaka {
+            self.version == 1
+        } else {
+            self.version <= 1
+        };
+        if !version_ok {
             return Err(BlobsBundleError::InvalidBlobVersionForFork);
         }
 
@@ -459,9 +471,12 @@ mod tests {
         ));
     }
 
+    // v1 (cell-proof) sidecars are accepted pre-Osaka (network is mid-migration to cell
+    // proofs; some peers send v1 even before Osaka), but v0 (blob-proof) sidecars are
+    // rejected on Osaka+.
     #[test]
     #[cfg(feature = "c-kzg")]
-    fn transaction_with_invalid_fork_should_fail() {
+    fn v1_sidecar_is_accepted_pre_osaka() {
         let blobs = vec!["Hello, world!".as_bytes(), "Goodbye, world!".as_bytes()]
             .into_iter()
             .map(|data| {
@@ -489,8 +504,44 @@ mod tests {
             ..Default::default()
         };
 
-        assert!(!matches!(
+        assert!(matches!(
             blobs_bundle.validate(&tx, crate::types::Fork::Prague),
+            Ok(())
+        ));
+    }
+
+    #[test]
+    #[cfg(feature = "c-kzg")]
+    fn v0_sidecar_is_rejected_on_osaka() {
+        let blobs = vec!["Hello, world!".as_bytes(), "Goodbye, world!".as_bytes()]
+            .into_iter()
+            .map(|data| {
+                crate::types::blobs_bundle::blob_from_bytes(data.into())
+                    .expect("Failed to create blob")
+            })
+            .collect();
+
+        let blobs_bundle = crate::types::BlobsBundle::create_from_blobs(&blobs, Some(0))
+            .expect("Failed to create blobs bundle");
+
+        let blob_versioned_hashes = blobs_bundle.generate_versioned_hashes();
+
+        let tx = crate::types::transaction::EIP4844Transaction {
+            nonce: 3,
+            max_priority_fee_per_gas: 0,
+            max_fee_per_gas: 0,
+            max_fee_per_blob_gas: 0.into(),
+            gas: 15_000_000,
+            to: crate::Address::from_low_u64_be(1), // Normal tx
+            value: crate::U256::zero(),             // Value zero
+            data: crate::Bytes::default(),          // No data
+            access_list: Default::default(),        // No access list
+            blob_versioned_hashes,
+            ..Default::default()
+        };
+
+        assert!(!matches!(
+            blobs_bundle.validate(&tx, crate::types::Fork::Osaka),
             Ok(())
         ));
     }
