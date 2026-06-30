@@ -822,3 +822,121 @@ async fn get_block_bodies_range_is_buffer_aware() {
         "buffered canonical body must not read as None"
     );
 }
+
+/// Crash-recovery, tip reorg inside the flush window: block `10a` is flushed
+/// (durable, `flushed_upto` = 10), then a sibling `10b` at the same height is
+/// buffered-but-unflushed and real FCU durably repoints `canonical[10]` to
+/// `10b`. After a crash, `canonical[10]` resolves to `10b`'s hash, whose header
+/// never reached disk — so `load_block_header(10)` is `None` even though the
+/// marker is 10.
+///
+/// Boot must not brick: `anchor_to_durable_head` walks the head down to block 9
+/// (the highest height whose canonical hash resolves on disk), re-anchors
+/// `LatestBlockNumber` to 9, and lowers the marker to 9. WITHOUT the walk-down,
+/// boot hits `MissingLatestBlockNumber` and bricks on every restart.
+#[cfg(feature = "rocksdb")]
+#[tokio::test]
+async fn boot_walks_past_reorged_unflushed_head() {
+    use ethrex_common::types::Genesis;
+
+    const GENESIS_KURTOSIS: &str = include_str!("../../../fixtures/genesis/kurtosis.json");
+    let genesis: Genesis =
+        serde_json::from_str(GENESIS_KURTOSIS).expect("deserialize kurtosis.json");
+    let genesis_block = genesis.get_block();
+    let genesis_hash = genesis_block.hash();
+
+    let dir = tempfile::tempdir().expect("tmp");
+    let path = dir.path().to_str().unwrap();
+
+    {
+        let mut store = Store::new(path, EngineType::RocksDB).expect("store");
+        store
+            .add_initial_state(genesis.clone())
+            .await
+            .expect("genesis");
+
+        // Block 9 durable: the fallback the walk-down must land on.
+        let b9 = Block::new(
+            BlockHeader {
+                number: 9,
+                parent_hash: genesis_hash,
+                ..Default::default()
+            },
+            BlockBody::default(),
+        );
+        let hash9 = b9.hash();
+        store.buffer_block_for_test(&b9);
+        store.flush_block_data_for_test().expect("flush 9");
+        store
+            .forkchoice_update(vec![(9, hash9)], 9, hash9, None, None)
+            .await
+            .expect("fcu 9");
+
+        // Block 10a durable: flushed and made canonical, advancing the marker to 10.
+        let b10a = Block::new(
+            BlockHeader {
+                number: 10,
+                parent_hash: hash9,
+                ..Default::default()
+            },
+            BlockBody::default(),
+        );
+        let hash10a = b10a.hash();
+        store.buffer_block_for_test(&b10a);
+        store.flush_block_data_for_test().expect("flush 10a");
+        store
+            .forkchoice_update(vec![(10, hash10a)], 10, hash10a, None, None)
+            .await
+            .expect("fcu 10a");
+        assert_eq!(
+            store.read_flushed_upto().expect("marker"),
+            10,
+            "block 10a durable"
+        );
+
+        // Reorg to sibling 10b at the SAME height (differ by timestamp so the hash
+        // differs): buffered, NEVER flushed. Real FCU durably repoints
+        // canonical[10] -> hash10b while 10b is only in the buffer.
+        let b10b = Block::new(
+            BlockHeader {
+                number: 10,
+                parent_hash: hash9,
+                timestamp: 1,
+                ..Default::default()
+            },
+            BlockBody::default(),
+        );
+        let hash10b = b10b.hash();
+        assert_ne!(hash10a, hash10b, "siblings must hash differently");
+        store.buffer_block_for_test(&b10b);
+        store
+            .forkchoice_update(vec![(10, hash10b)], 10, hash10b, None, None)
+            .await
+            .expect("fcu 10b");
+        // Precondition: marker still 10, canonical[10] now points at unflushed 10b.
+        assert_eq!(
+            store.read_flushed_upto().expect("marker"),
+            10,
+            "10b unflushed; marker stays at the height of flushed 10a"
+        );
+    } // drop = "crash": buffered 10b is lost, canonical[10] dangles
+
+    // Reopen and run the REAL node boot entry. Must NOT brick: the walk-down
+    // rewinds the head past the dangling canonical[10] to the durable block 9.
+    let mut store = Store::new(path, EngineType::RocksDB).expect("reopen");
+    store
+        .add_initial_state(genesis)
+        .await
+        .expect("boot must not brick: head walks down to durable block 9");
+
+    assert_eq!(
+        store.get_latest_block_number().await.expect("head"),
+        9,
+        "boot must re-anchor LatestBlockNumber to the highest resolvable head"
+    );
+    assert_eq!(
+        store.read_flushed_upto().expect("marker"),
+        9,
+        "marker must be lowered to the resolved durable head"
+    );
+}

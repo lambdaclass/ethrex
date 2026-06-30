@@ -3305,20 +3305,49 @@ impl Store {
     /// predates deferred persistence and everything is on disk — use `latest`
     /// as-is, never rewind to 0. On first boot the marker is seeded so a later
     /// crash clamps against it rather than an absent (→ 0) marker.
+    ///
+    /// The marker tracks the max flushed *block number*, not which hash is
+    /// canonical at that height. A tip reorg inside the flush window — `Na` at
+    /// height N is flushed (marker = N), then `newPayload(Nb)` buffers a sibling
+    /// and FCU durably repoints `canonical[N]` to the still-unflushed `Nb` — can
+    /// leave `canonical[head]` resolving to a header that never reached disk if
+    /// we crash before `Nb` flushes. So we walk `head` down to the highest height
+    /// whose canonical hash actually resolves on disk rather than bricking with
+    /// `MissingLatestBlockNumber`. A legacy DB (no marker) is exempt: everything
+    /// there is durable, so a missing header is real corruption and must surface.
     async fn anchor_to_durable_head(&self, latest: BlockNumber) -> Result<(), StoreError> {
         let marker = self.read_flushed_upto_opt()?;
-        let head = match marker {
+        let start = match marker {
             Some(flushed) => flushed.min(latest),
             None => latest,
         };
-        let latest_block_header = self
-            .load_block_header(head)?
-            .ok_or(StoreError::MissingLatestBlockNumber)?;
+
+        let mut head = start;
+        let latest_block_header = loop {
+            match self.load_block_header(head)? {
+                Some(header) => break header,
+                // Legacy/fresh DB: everything is supposed to be durable, so a
+                // missing header is real corruption — surface it, don't rewind.
+                None if marker.is_none() => return Err(StoreError::MissingLatestBlockNumber),
+                None if head == 0 => return Err(StoreError::MissingLatestBlockNumber),
+                None => {
+                    warn!(
+                        "durable head {head}: canonical hash has no on-disk header \
+                         (reorg inside flush window); rewinding"
+                    );
+                    head -= 1;
+                }
+            }
+        };
         self.latest_block_header.update(latest_block_header);
 
+        // Re-anchor the persisted head when we moved below `latest`, and (re)write
+        // the marker to the resolved head: an absent marker is seeded to the
+        // durable baseline, and a walked-down head lowers the marker so a later
+        // crash clamps against a hash known to resolve.
         let reanchor = head != latest;
-        let seed_marker = marker.is_none();
-        if reanchor || seed_marker {
+        let rewrite_marker = marker != Some(head);
+        if reanchor || rewrite_marker {
             let mut tx = self.backend.begin_write()?;
             if reanchor {
                 // Re-anchor the persisted head so `get_latest_block_number` and
@@ -3326,8 +3355,7 @@ impl Store {
                 let latest_key = chain_data_key(ChainDataIndex::LatestBlockNumber);
                 tx.put(CHAIN_DATA, &latest_key, &head.to_le_bytes())?;
             }
-            if seed_marker {
-                // First boot on a legacy/fresh DB: record the durable baseline.
+            if rewrite_marker {
                 write_flushed_upto(tx.as_mut(), head)?;
             }
             tx.commit()?;
