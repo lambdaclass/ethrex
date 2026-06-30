@@ -568,6 +568,9 @@ impl PeerTableServer {
         _ctx: &Context<Self>,
     ) {
         self.peers.swap_remove(&msg.node_id);
+        // Also drop the standalone discv5 session so it isn't retained after the peer leaves
+        // (the sessions map was previously insert-only and grew per handshake).
+        self.sessions.remove(&msg.node_id);
     }
 
     #[send_handler]
