@@ -3733,6 +3733,17 @@ fn serial_storage_root(
 ///
 /// Exposed (hidden) for the `ethrex-test` crate's equivalence tests; not part
 /// of the stable public API.
+///
+/// Load-bearing invariant: this relies on a **path-keyed** node DB, where a node
+/// is reachable only via its trie path. On inserts/updates and the degenerate
+/// fallbacks below the persisted node set is bit-identical to the serial path,
+/// but the parallel removal path may emit a few redundant nodes that are
+/// unreachable by path and therefore harmless (never read back, never GC'd).
+/// This is why the `occupied <= 1` fallback is sufficient and why we do *not*
+/// also fall back on the broader "removal collapses the trie post-bucketization"
+/// case. If the storage backend ever moves to a content-addressed / hash-keyed
+/// node DB, or grows reachability-based GC, the parallel-removal path could leak
+/// unreachable-but-persistent nodes and this assumption must be revisited.
 #[doc(hidden)]
 pub fn compute_sharded_storage_root(
     storage: &Store,
