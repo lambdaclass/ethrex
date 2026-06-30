@@ -123,11 +123,10 @@ impl FixturePayload {
     ///
     /// For FOCIL fixtures (`inclusionListTransactions` present) the IL is
     /// appended as the final argument and the call is routed to ethrex's
-    /// IL-aware handler. NOTE: EEST emits `newPayloadVersion: 5` for FOCIL, but
-    /// ethrex exposes the IL-bearing method as `engine_newPayloadV6` (V5 is the
-    /// non-IL Amsterdam method); we remap here. This bridges a version-number
-    /// divergence that should be reconciled against the final execution-apis
-    /// FOCIL spec.
+    /// IL-aware `engine_newPayloadV6` handler. As of tests-focil@v0.1.0 the
+    /// fixtures emit `newPayloadVersion: 6` directly (the V5→V6 bump landed in
+    /// execution-specs#3028), so forcing 6 here is idempotent; it stays as a
+    /// guard in case an IL-bearing fixture is ever tagged with a lower version.
     pub fn engine_call(&self) -> (u8, Vec<Value>) {
         match &self.inclusion_list_transactions {
             Some(il) => {
@@ -339,6 +338,10 @@ fn single_fork(s: &str) -> anyhow::Result<ethrex_common::types::Fork> {
         "BPO4" => Fork::BPO4,
         "BPO5" => Fork::BPO5,
         "Amsterdam" => Fork::Amsterdam,
+        // EIP-7805 (FOCIL) ships as the "Bogota" fork in execution-apis /
+        // execution-specs (tests-focil@v0.1.0+); ethrex names it "Hegota"
+        // internally (genesis already aliases bogotaTime → hegota_time).
+        "Bogota" | "Hegota" => Fork::Hegota,
         other => anyhow::bail!("Unknown network: {other}"),
     };
     Ok(f)
