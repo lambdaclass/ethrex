@@ -8,7 +8,6 @@ use crate::{
     vm::VM,
 };
 
-use bytes::Bytes;
 use ethrex_common::{
     Address, H256, U256,
     types::{Code, Fork},
@@ -28,6 +27,18 @@ impl Hook for DefaultHook {
     /// - It calculates and adds intrinsic gas to the 'gas used' of callframe and environment.
     ///   See 'docs' for more information about validations.
     fn prepare_execution(&mut self, vm: &mut VM<'_>) -> Result<(), VMError> {
+        // System calls (EELS `process_unchecked_system_transaction`) have no
+        // sender semantics: no validation, no nonce bump, no fee deduction.
+        // EELS never reads the SYSTEM_ADDRESS account, so skip the whole
+        // sender path to keep the read out of execution witnesses (EIP-8025).
+        if vm.env.is_system_call {
+            let intrinsic = vm.get_intrinsic_gas()?;
+            vm.add_intrinsic_gas(&intrinsic)?;
+            transfer_value(vm)?;
+            set_bytecode_and_code_address(vm)?;
+            return Ok(());
+        }
+
         let sender_address = vm.env.origin;
         let sender_info = vm.db.get_account(sender_address)?.info.clone();
 
@@ -46,7 +57,7 @@ impl Hook for DefaultHook {
             {
                 return Err(VMError::TxValidation(
                     TxValidationError::TxMaxGasLimitExceeded {
-                        tx_hash: vm.tx.hash(),
+                        tx_hash: vm.tx.hash(vm.crypto),
                         tx_gas_limit: vm.tx.gas_limit(),
                     },
                 ));
@@ -109,7 +120,7 @@ impl Hook for DefaultHook {
 
         // (9) SENDER_NOT_EOA
         let code = vm.db.get_code(sender_info.code_hash)?;
-        validate_sender(sender_address, &code.bytecode)?;
+        validate_sender(sender_address, code.code())?;
 
         // (10) GAS_ALLOWANCE_EXCEEDED
         validate_gas_allowance(vm)?;
@@ -142,6 +153,16 @@ impl Hook for DefaultHook {
         vm: &mut VM<'_>,
         ctx_result: &mut ContextResult,
     ) -> Result<(), VMError> {
+        // System calls (EELS `process_unchecked_system_transaction`) have no
+        // sender or fee semantics: there is nothing to undo, refund, or pay
+        // (the value and gas price are zero), so skip straight to the
+        // self-destruct cleanup. Callers ignore the gas accounting fields for
+        // system calls.
+        if vm.env.is_system_call {
+            delete_self_destruct_accounts(vm)?;
+            return Ok(());
+        }
+
         if !ctx_result.is_success() {
             undo_value_transfer(vm)?;
         }
@@ -343,6 +364,15 @@ pub fn pay_coinbase(vm: &mut VM<'_>, gas_to_pay: u64) -> Result<(), VMError> {
     // Only pay coinbase if there's actually a fee to pay.
     if !coinbase_fee.is_zero() {
         vm.increase_account_balance(vm.env.coinbase, coinbase_fee)?;
+    } else if !vm.env.is_system_call {
+        // The spec reads the coinbase account unconditionally during user-tx
+        // fee transfer (EELS `process_transaction` calls `get_account` before
+        // deciding whether to credit), but system contract calls never touch
+        // the coinbase. Keep the read observable for zero-fee user txs
+        // (including gas-price-zero txs on zero-base-fee chains) so execution
+        // witnesses (EIP-8025) record the coinbase trie path, including its
+        // exclusion proof when it doesn't exist.
+        vm.db.get_account(vm.env.coinbase)?;
     }
 
     Ok(())
@@ -603,7 +633,7 @@ pub fn validate_type_4_tx(vm: &mut VM<'_>) -> Result<(), VMError> {
     vm.eip7702_set_access_code()
 }
 
-pub fn validate_sender(sender_address: Address, code: &Bytes) -> Result<(), VMError> {
+pub fn validate_sender(sender_address: Address, code: &[u8]) -> Result<(), VMError> {
     if !code.is_empty() && !code_has_delegation(code)? {
         return Err(TxValidationError::SenderNotEOA(sender_address).into());
     }
@@ -673,11 +703,8 @@ pub fn deduct_caller(
     // Up front cost is the maximum amount of wei that a user is willing to pay for. Gaslimit * gasprice + value + blob_gas_cost
     let value = vm.current_call_frame.msg_value;
 
-    let blob_gas_cost = calculate_blob_gas_cost(
-        &vm.env.tx_blob_hashes,
-        vm.env.block_excess_blob_gas,
-        &vm.env.config,
-    )?;
+    let blob_gas_cost =
+        calculate_blob_gas_cost(&vm.env.tx_blob_hashes, vm.env.base_blob_fee_per_gas)?;
 
     // The real cost to deduct is calculated as effective_gas_price * gas_limit + value + blob_gas_cost
     let up_front_cost = gas_limit_price_product
