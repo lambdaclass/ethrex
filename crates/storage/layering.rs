@@ -1,4 +1,4 @@
-use ethrex_common::H256;
+use ethrex_common::{H256, types::BlockNumber};
 use fastbloom::AtomicBloomFilter;
 use rayon::prelude::*;
 use rustc_hash::{FxBuildHasher, FxHashMap};
@@ -14,6 +14,12 @@ struct TrieLayer {
     nodes: FxHashMap<Vec<u8>, Vec<u8>>,
     parent: H256,
     id: usize,
+    /// Number of the block whose post-state this layer represents. Used by the
+    /// journal write path so a commit can record the entry under the correct
+    /// block number (not the in-flight block whose insertion triggered the commit).
+    block_number: BlockNumber,
+    /// Hash of the block whose post-state this layer represents.
+    block_hash: H256,
 }
 
 /// In-memory cache of trie diff-layers, one per block (or per batch of blocks in full sync).
@@ -176,6 +182,8 @@ impl TrieLayerCache {
         &mut self,
         parent: H256,
         state_root: H256,
+        block_number: BlockNumber,
+        block_hash: H256,
         key_values: Vec<(Nibbles, Vec<u8>)>,
     ) {
         if parent == state_root && key_values.is_empty() {
@@ -207,6 +215,8 @@ impl TrieLayerCache {
             nodes,
             parent,
             id: self.last_id,
+            block_number,
+            block_hash,
         };
         self.layers.insert(state_root, Arc::new(entry));
     }
@@ -232,7 +242,8 @@ impl TrieLayerCache {
     }
 
     /// Removes the layer at `state_root` and all its ancestors from the cache, returning
-    /// their merged trie node diffs in oldest-first order (suitable for sequential disk write).
+    /// the committed block's identity plus the merged trie node diffs in oldest-first order
+    /// (suitable for sequential disk write).
     ///
     /// `state_root` must be a key in `self.layers` (as returned by
     /// [`get_commitable`](Self::get_commitable) /
@@ -241,7 +252,12 @@ impl TrieLayerCache {
     ///
     /// After removal, any orphaned layers (older than the committed ones) are pruned, and
     /// the bloom filter is rebuilt to remove stale entries.
-    pub fn commit(&mut self, state_root: H256) -> Option<Vec<(Vec<u8>, Vec<u8>)>> {
+    ///
+    /// `parent_state_root` in the returned [`CommitResult`] is the state we'd return to on
+    /// rollback (the committed block's pre-state). In normal operation only one layer is
+    /// removed; ancestors are evicted as orphans without contributing to the merged nodes
+    /// (caught by the `id` retain below).
+    pub fn commit(&mut self, state_root: H256) -> Option<CommitResult> {
         let mut layers_to_commit = vec![];
         let mut current_state_root = state_root;
         while let Some(layer) = self.layers.remove(&current_state_root) {
@@ -249,7 +265,29 @@ impl TrieLayerCache {
             current_state_root = layer.parent;
             layers_to_commit.push(layer);
         }
-        let top_layer_id = layers_to_commit.first()?.id;
+        // `layers_to_commit` is built by walking parent links from `state_root`,
+        // so `.first()` is the newest layer (the one at `state_root` itself).
+        //
+        // ATTRIBUTION NOTE: In normal block-by-block sync there is only one layer
+        // to commit, so attributing the journal entry to `state_root`'s block is
+        // correct. If a future caller triggers a multi-layer commit (e.g. by
+        // raising the threshold and then forcing a flush), `nodes_to_commit`
+        // below would merge diffs from several blocks while the journal entry
+        // would still be tagged with only the newest block's identity ; the
+        // rollback consumer (PR 2/3) would then be unable to reconstruct
+        // intermediate pre-images. Single-layer commits are an invariant of the
+        // current write path; revisit this if that ever changes.
+        debug_assert!(
+            layers_to_commit.len() == 1,
+            "multi-layer commit would corrupt journal attribution (see ATTRIBUTION NOTE above): \
+             got {} layers, expected 1",
+            layers_to_commit.len()
+        );
+        let top_layer = layers_to_commit.first()?;
+        let top_layer_id = top_layer.id;
+        let committed_block_number = top_layer.block_number;
+        let committed_block_hash = top_layer.block_hash;
+        let committed_parent_state_root = top_layer.parent;
         // older layers are useless
         self.layers.retain(|_, item| item.id > top_layer_id);
         self.rebuild_bloom(); // layers removed, rebuild global bloom filter.
@@ -258,8 +296,28 @@ impl TrieLayerCache {
             .rev()
             .flat_map(|layer| layer.nodes)
             .collect();
-        Some(nodes_to_commit)
+        Some(CommitResult {
+            block_number: committed_block_number,
+            block_hash: committed_block_hash,
+            parent_state_root: committed_parent_state_root,
+            nodes: nodes_to_commit,
+        })
     }
+}
+
+/// Output of [`TrieLayerCache::commit`]: the identity of the committed block plus the merged
+/// trie node updates to write to disk.
+///
+/// Intentionally not `Default`: an all-zero `CommitResult` would mean a journal entry
+/// keyed at block 0 with an empty diff, which is a silent foot-gun (e.g. via
+/// `unwrap_or_default()`). Callers must handle the `None` from
+/// [`TrieLayerCache::commit`] explicitly.
+#[derive(Debug)]
+pub struct CommitResult {
+    pub block_number: BlockNumber,
+    pub block_hash: H256,
+    pub parent_state_root: H256,
+    pub nodes: Vec<(Vec<u8>, Vec<u8>)>,
 }
 
 /// [`TrieDB`] adapter that checks in-memory diff-layers ([`TrieLayerCache`]) first,

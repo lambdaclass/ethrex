@@ -8,16 +8,17 @@ use crate::{
             ACCOUNT_CODE_METADATA, ACCOUNT_CODES, ACCOUNT_FLATKEYVALUE, ACCOUNT_TRIE_NODES,
             BLOCK_ACCESS_LISTS, BLOCK_NUMBERS, BODIES, CANONICAL_BLOCK_HASHES, CHAIN_DATA,
             EXECUTION_WITNESSES, FULLSYNC_HEADERS, HEADERS, INVALID_CHAINS, MISC_VALUES,
-            PENDING_BLOCKS, RECEIPTS_V2, SNAP_STATE, STORAGE_FLATKEYVALUE, STORAGE_TRIE_NODES,
-            TRANSACTION_LOCATIONS,
+            PENDING_BLOCKS, RECEIPTS_V2, SNAP_STATE, STATE_HISTORY, STORAGE_FLATKEYVALUE,
+            STORAGE_TRIE_NODES, TRANSACTION_LOCATIONS,
         },
     },
     apply_prefix,
     backend::in_memory::InMemoryBackend,
     error::StoreError,
-    layering::{TrieLayerCache, TrieWrapper},
+    journal::{FlatDiff, JournalEntry},
+    layering::{CommitResult, TrieLayerCache, TrieWrapper},
     rlp::{BlockBodyRLP, BlockHeaderRLP, BlockRLP},
-    trie::{BackendTrieDB, BackendTrieDBLocked},
+    trie::{BackendTrieDB, BackendTrieDBLocked, classify_trie_key},
     utils::{ChainDataIndex, SnapStateIndex},
 };
 
@@ -1151,6 +1152,15 @@ impl Store {
     /// Callers MUST hold `fcu_lock` (only `forkchoice_update` should invoke this).
     /// The read of `LatestBlockNumber` below happens outside the write
     /// transaction and would be a TOCTOU window without that serialization.
+    /// Applies a fork-choice update atomically: writes canonical hashes, latest/safe/
+    /// finalized numbers, and prunes the state-history journal up to the new finalized.
+    ///
+    /// **Concurrency:** This function must be called with exclusive access. In
+    /// production it is gated by `fcu_lock` from [`forkchoice_update`]. The
+    /// pre-finalized read used to decide journal pruning happens outside the write
+    /// transaction; without serialization, two concurrent callers could race on
+    /// `prev_finalized` and double-prune. Tests that call this directly must not
+    /// run concurrently with another FCU.
     async fn forkchoice_update_inner(
         &self,
         new_canonical_blocks: Vec<(BlockNumber, BlockHash)>,
@@ -1196,7 +1206,40 @@ impl Store {
 
             if let Some(finalized) = finalized {
                 let finalized_key = chain_data_key(ChainDataIndex::FinalizedBlockNumber);
+
+                // Read the previous finalized number from the same backend before we
+                // overwrite it. The journal can only be pruned when finality actually
+                // advances; a no-op or backwards FCU must not touch STATE_HISTORY.
+                // Pre-merge or fresh chains have no entry; treat as 0.
+                //
+                // A length mismatch is treated as a hard error rather than a silent
+                // fallback to 0: if a future schema change stores this field with a
+                // different width, the silent default would make `finalized > 0` true
+                // for every FCU and prune the entire journal. Bail out instead.
+                let prev_finalized = match db.begin_read()?.get(CHAIN_DATA, &finalized_key)? {
+                    Some(bytes) => {
+                        let arr: [u8; 8] = bytes.as_slice().try_into().map_err(|_| {
+                            StoreError::Custom(format!(
+                                "FinalizedBlockNumber has unexpected length {} (want 8)",
+                                bytes.len()
+                            ))
+                        })?;
+                        BlockNumber::from_le_bytes(arr)
+                    }
+                    None => 0,
+                };
+
                 txn.put(CHAIN_DATA, &finalized_key, &finalized.to_le_bytes())?;
+
+                // Prune every STATE_HISTORY entry at or below the new finalized number
+                // in the same atomic txn. `delete_range` is half-open `[start, end)`,
+                // so `end = finalized + 1`. STATE_HISTORY uses big-endian keys, so
+                // lexicographic byte order matches numeric order.
+                if finalized > prev_finalized {
+                    let start = 0u64.to_be_bytes();
+                    let end = finalized.saturating_add(1).to_be_bytes();
+                    txn.delete_range(STATE_HISTORY, &start, &end)?;
+                }
             }
 
             txn.commit()
@@ -1542,12 +1585,13 @@ impl Store {
             )?
             .map(|header| header.state_root)
             .unwrap_or_default();
-        let last_state_root = update_batch
+        let last_block = update_batch
             .blocks
             .last()
-            .ok_or(StoreError::UpdateBatchNoBlocks)?
-            .header
-            .state_root;
+            .ok_or(StoreError::UpdateBatchNoBlocks)?;
+        let last_state_root = last_block.header.state_root;
+        let last_block_number = last_block.header.number;
+        let last_block_hash = last_block.hash();
         let trie_upd_worker_tx = self.trie_update_worker_tx.clone();
 
         let is_batch = update_batch.batch_mode;
@@ -1568,6 +1612,8 @@ impl Store {
             result_sender: notify_tx,
             child_state_root: last_state_root,
             is_batch,
+            block_number: last_block_number,
+            block_hash: last_block_hash,
         };
         trie_upd_worker_tx
             .send(TrieMessage::Update(trie_update))
@@ -3169,6 +3215,14 @@ struct TrieUpdate {
     account_updates: TrieNodesUpdate,
     storage_updates: Vec<(H256, TrieNodesUpdate)>,
     is_batch: bool,
+    /// Number of the block whose layer this update represents.
+    /// For a non-batch update this is exactly the single block being committed;
+    /// for a batch update it is the last block in the batch (matching
+    /// `child_state_root`). Used by the journal write path; harmless for batch
+    /// updates since journal writes are skipped when `is_batch == true`.
+    block_number: BlockNumber,
+    /// Hash of the block whose layer this update represents (see `block_number`).
+    block_hash: H256,
 }
 
 /// Messages handled by the trie-update background worker.
@@ -3198,6 +3252,8 @@ fn apply_trie_updates(
         account_updates,
         storage_updates,
         is_batch,
+        block_number,
+        block_hash,
     } = trie_update;
 
     // Phase 1: update the in-memory diff-layers only, then notify block production.
@@ -3216,7 +3272,13 @@ fn apply_trie_updates(
         .map_err(|_| StoreError::LockError)?
         .clone();
     let mut trie_mut = (*trie).clone();
-    trie_mut.put_batch(parent_state_root, child_state_root, new_layer);
+    trie_mut.put_batch(
+        parent_state_root,
+        child_state_root,
+        block_number,
+        block_hash,
+        new_layer,
+    );
     let trie = Arc::new(trie_mut);
     *trie_cache.write().map_err(|_| StoreError::LockError)? = trie.clone();
     // Update finished, signal block processing.
@@ -3241,8 +3303,20 @@ fn apply_trie_updates(
     // RCU to remove the bottom layer: update step needs to happen after disk layer is updated.
     let mut trie_mut = (*trie).clone();
 
-    let last_written = backend
-        .begin_read()?
+    // Open the read view BEFORE the write batch so each `.get()` sees disk as it was
+    // before our writes. The journal records `(key, prev_value)` so a future rollback
+    // can apply diffs directly without reading state.
+    //
+    // NOTE: `StorageReadView` does not currently promise true snapshot isolation
+    // (see the trait docs in `api/mod.rs`). What makes the pre-image read safe here
+    // is the single-writer invariant: `apply_trie_updates` is only ever called from
+    // the trie-update worker thread, and `write_tx` is a buffered batch that does
+    // not become visible until `write_tx.commit()` at the end of the function. So
+    // every `.get()` below sees on-disk state as of the begin_read call. PR 2's
+    // overlay work will need to revisit this if other write paths to trie CFs are
+    // introduced.
+    let read_view = backend.begin_read()?;
+    let last_written = read_view
         .get(MISC_VALUES, "last_written".as_bytes())?
         .unwrap_or_default();
 
@@ -3251,13 +3325,48 @@ fn apply_trie_updates(
     // Before encoding, accounts have only the account address as their path, while storage keys have
     // the account address (32 bytes) + storage path (up to 32 bytes).
 
-    // Commit removes the bottom layer and returns it, this is the mutation step.
-    let nodes = trie_mut.commit(root).unwrap_or_default();
+    // Commit removes the bottom layer and returns the committed block's identity plus the
+    // merged k/v. In normal operation this is the block one commit-cadence behind the
+    // just-added block, NOT the just-added block.
+    //
+    // `root` was returned by `get_commitable` above, which found it by walking
+    // `trie.layers`. `trie_mut` is a `Clone` of `trie`, which preserves the layer
+    // map intact, so `commit(root)` should always return `Some` here. Surface a
+    // hard error if that invariant ever breaks rather than silently writing a
+    // bogus journal entry keyed at block 0.
+    let CommitResult {
+        block_number: committed_block_number,
+        block_hash: committed_block_hash,
+        parent_state_root: committed_parent_state_root,
+        nodes,
+    } = trie_mut.commit(root).ok_or_else(|| {
+        StoreError::Custom(format!(
+            "commit({root:?}) returned None; layer cache invariant violated"
+        ))
+    })?;
+
+    // Reverse-diff accumulators for the journal entry, one per CF. Populated only when
+    // `!is_batch`. Each entry stores the on-disk key as-is, so rollback can apply diffs
+    // directly without further interpretation. For full sync (`is_batch == true`),
+    // no journal entry is written: reorgs aren't supported during full sync, and
+    // journaling would slow it down by adding a read per write.
+    //
+    // PERF: each iteration does one synchronous `read_view.get(table, &key)`. For
+    // large state diffs this is O(N) extra reads on the per-block critical path.
+    // PR 4 can batch these via `multi_get_cf` if profiling shows it's significant.
+    let mut journal_account_trie: FlatDiff = Vec::new();
+    let mut journal_storage_trie: FlatDiff = Vec::new();
+    let mut journal_account_flat: FlatDiff = Vec::new();
+    let mut journal_storage_flat: FlatDiff = Vec::new();
+
     let mut result = Ok(());
     for (key, value) in nodes {
-        let is_leaf = key.len() == 65 || key.len() == 131;
-        let is_account = key.len() <= 65;
+        let (is_leaf, is_account) = classify_trie_key(key.len());
 
+        // Keys past the flat-KV generator's frontier aren't written to disk yet, so
+        // they must not be journaled either (a `Some(None)` entry recorded here
+        // would cause a rollback to delete a key that was never put). The `continue`
+        // jumps over both the write and the journal push below.
         if is_leaf && key > last_written {
             continue;
         }
@@ -3272,6 +3381,21 @@ fn apply_trie_updates(
         } else {
             &STORAGE_TRIE_NODES
         };
+
+        // Read pre-image from the read view opened before the write batch.
+        // Skipped for batch (full-sync) commits.
+        let prev_value = if !is_batch {
+            match read_view.get(table, &key) {
+                Ok(v) => Some(v),
+                Err(e) => {
+                    result = Err(e);
+                    break;
+                }
+            }
+        } else {
+            None
+        };
+
         if value.is_empty() {
             result = write_tx.delete(table, &key);
         } else {
@@ -3280,7 +3404,43 @@ fn apply_trie_updates(
         if result.is_err() {
             break;
         }
+
+        // Record the reverse-diff entry after the put/delete is staged, so a write
+        // error doesn't accumulate state we won't persist. Keys are stored as-is
+        // (storage CFs carry their nibble-encoded account-hash prefix); rollback
+        // applies them directly without interpretation.
+        if let Some(prev) = prev_value {
+            let bucket = match (is_leaf, is_account) {
+                (false, true) => &mut journal_account_trie,
+                (false, false) => &mut journal_storage_trie,
+                (true, true) => &mut journal_account_flat,
+                (true, false) => &mut journal_storage_flat,
+            };
+            bucket.push((key, prev));
+        }
     }
+
+    // Stage the journal entry into the same write batch as the trie/flat-KV overwrites.
+    // `put` is buffered until `commit`, so all CFs land atomically (or none do on commit
+    // failure). The entry is keyed and identified by the COMMITTED block (not the
+    // in-flight block whose insertion triggered this commit): the in-flight block's
+    // own commit happens later when the next block's insertion pushes it past the threshold.
+    if result.is_ok() && !is_batch {
+        let entry = JournalEntry {
+            block_hash: committed_block_hash,
+            parent_state_root: committed_parent_state_root,
+            account_trie_diff: journal_account_trie,
+            storage_trie_diff: journal_storage_trie,
+            account_flat_diff: journal_account_flat,
+            storage_flat_diff: journal_storage_flat,
+        };
+        result = write_tx.put(
+            STATE_HISTORY,
+            &committed_block_number.to_be_bytes(),
+            &entry.encode(),
+        );
+    }
+
     if result.is_ok() {
         result = write_tx.commit();
     }
@@ -3706,6 +3866,375 @@ pub fn read_chain_id_from_db(path: &Path) -> Option<u64> {
     {
         let _ = path;
         None
+    }
+}
+
+#[cfg(test)]
+mod state_history_tests {
+    use super::*;
+    use crate::api::tables::STATE_HISTORY;
+    use crate::backend::in_memory::InMemoryBackend;
+    use crate::journal::JournalEntry;
+    use ethrex_common::types::{BlockBody, BlockHeader};
+    use ethrex_trie::Nibbles;
+    use std::time::{Duration, Instant};
+
+    fn make_block(number: BlockNumber, parent_hash: H256, state_root: H256) -> Block {
+        let header = BlockHeader {
+            number,
+            parent_hash,
+            state_root,
+            ..Default::default()
+        };
+        Block::new(header, BlockBody::default())
+    }
+
+    /// Polls `STATE_HISTORY` for an entry at the given block number, up to `timeout`.
+    /// The trie worker commits to disk asynchronously after `store_block_updates`
+    /// returns, so a small wait window is required.
+    fn await_journal_entry(
+        backend: &Arc<dyn StorageBackend>,
+        block_number: BlockNumber,
+        timeout: Duration,
+    ) -> Option<Vec<u8>> {
+        let key = block_number.to_be_bytes();
+        let deadline = Instant::now() + timeout;
+        loop {
+            let read = backend.begin_read().ok()?;
+            if let Ok(Some(v)) = read.get(STATE_HISTORY, &key) {
+                return Some(v);
+            }
+            if Instant::now() >= deadline {
+                return None;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+
+    /// Asserts no STATE_HISTORY entry materializes for `block_number` within the
+    /// given window. Polls repeatedly; if an entry appears at any poll, fails
+    /// loudly. Absence at every poll over the full window counts as verified.
+    /// More robust than a single fixed sleep under CI load.
+    fn assert_no_journal_entry(backend: &Arc<dyn StorageBackend>, block_number: BlockNumber) {
+        let window = Duration::from_millis(500);
+        let key = block_number.to_be_bytes();
+        let deadline = Instant::now() + window;
+        loop {
+            let read = backend.begin_read().expect("read view");
+            let v = read.get(STATE_HISTORY, &key).expect("get");
+            assert!(
+                v.is_none(),
+                "expected no STATE_HISTORY entry for block {block_number}, got {v:?}"
+            );
+            if Instant::now() >= deadline {
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    }
+
+    /// With `commit_threshold = 1`, the first batch seeds the layer cache and the
+    /// second batch commits the first layer to disk. So pushing N batches produces
+    /// N-1 journal entries. We verify entries for block 1 and block 2 after pushing
+    /// 3 batches.
+    #[test]
+    fn journal_entry_written_per_block_in_regular_mode() {
+        let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::open().unwrap());
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::from_backend(backend.clone(), dir.path().to_path_buf(), 1).unwrap();
+
+        let state_root_1 = H256::repeat_byte(0x11);
+        let block1 = make_block(1, H256::zero(), state_root_1);
+        let block1_hash = block1.hash();
+        store
+            .store_block_updates(UpdateBatch {
+                account_updates: vec![(Nibbles::from_raw(&[0x00, 0x01], false), vec![0xab, 0xcd])],
+                storage_updates: vec![],
+                blocks: vec![block1],
+                receipts: vec![],
+                code_updates: vec![],
+                batch_mode: false,
+            })
+            .unwrap();
+
+        // Block 2 commits block 1's layer.
+        let state_root_2 = H256::repeat_byte(0x22);
+        let block2 = make_block(2, block1_hash, state_root_2);
+        let block2_hash = block2.hash();
+        store
+            .store_block_updates(UpdateBatch {
+                account_updates: vec![(Nibbles::from_raw(&[0x00, 0x02], false), vec![0xef, 0x11])],
+                storage_updates: vec![],
+                blocks: vec![block2],
+                receipts: vec![],
+                code_updates: vec![],
+                batch_mode: false,
+            })
+            .unwrap();
+
+        let bytes = await_journal_entry(&backend, 1, Duration::from_secs(2))
+            .expect("STATE_HISTORY entry for block 1 should appear after block 2 commits it");
+        let entry = JournalEntry::decode(&bytes).unwrap();
+        assert_eq!(entry.block_hash, block1_hash);
+        assert_eq!(entry.parent_state_root, H256::zero());
+        assert!(!entry.account_trie_diff.is_empty());
+        let (path, prev) = &entry.account_trie_diff[0];
+        assert_eq!(prev, &None, "first-time write means previous value is None");
+        assert!(path.len() < 65);
+
+        // Block 3 commits block 2's layer.
+        let state_root_3 = H256::repeat_byte(0x33);
+        let block3 = make_block(3, block2_hash, state_root_3);
+        store
+            .store_block_updates(UpdateBatch {
+                account_updates: vec![(Nibbles::from_raw(&[0x00, 0x03], false), vec![0x77])],
+                storage_updates: vec![],
+                blocks: vec![block3],
+                receipts: vec![],
+                code_updates: vec![],
+                batch_mode: false,
+            })
+            .unwrap();
+
+        let bytes = await_journal_entry(&backend, 2, Duration::from_secs(2))
+            .expect("STATE_HISTORY entry for block 2 should appear after block 3 commits it");
+        let entry = JournalEntry::decode(&bytes).unwrap();
+        assert_eq!(entry.block_hash, block2_hash);
+        assert_eq!(entry.parent_state_root, state_root_1);
+        assert!(!entry.account_trie_diff.is_empty());
+    }
+
+    /// `batch_mode = true` SHALL skip the journal entirely. To actually exercise the
+    /// gating we push enough batches to trigger a commit under
+    /// `BATCH_COMMIT_THRESHOLD = 4`, then verify no STATE_HISTORY entry materializes
+    /// despite the commit happening.
+    #[test]
+    fn journal_skipped_in_batch_mode() {
+        let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::open().unwrap());
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::from_backend(backend.clone(), dir.path().to_path_buf(), 1).unwrap();
+
+        let mut prev_hash = H256::zero();
+        for n in 1..=5u64 {
+            let state_root = H256::repeat_byte(0xa0 | (n as u8));
+            let block = make_block(n, prev_hash, state_root);
+            prev_hash = block.hash();
+            store
+                .store_block_updates(UpdateBatch {
+                    account_updates: vec![(
+                        Nibbles::from_raw(&[n as u8], false),
+                        vec![0xde, 0xad, n as u8],
+                    )],
+                    storage_updates: vec![],
+                    blocks: vec![block],
+                    receipts: vec![],
+                    code_updates: vec![],
+                    batch_mode: true,
+                })
+                .unwrap();
+        }
+
+        for n in 1..=5u64 {
+            assert_no_journal_entry(&backend, n);
+        }
+    }
+
+    /// Storage trie updates SHALL appear in `storage_trie_diff` (not
+    /// `account_trie_diff`), with their on-disk keys as written.
+    #[test]
+    fn journal_storage_updates_appear_in_storage_diff() {
+        let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::open().unwrap());
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::from_backend(backend.clone(), dir.path().to_path_buf(), 1).unwrap();
+
+        let account_hash_a = H256::repeat_byte(0xa0);
+        let account_hash_b = H256::repeat_byte(0xb0);
+
+        let state_root_1 = H256::repeat_byte(0x33);
+        let block1 = make_block(1, H256::zero(), state_root_1);
+        let block1_hash = block1.hash();
+        store
+            .store_block_updates(UpdateBatch {
+                account_updates: vec![],
+                storage_updates: vec![
+                    (
+                        account_hash_a,
+                        vec![(Nibbles::from_raw(&[0x05], false), vec![0x01])],
+                    ),
+                    (
+                        account_hash_b,
+                        vec![(Nibbles::from_raw(&[0x06], false), vec![0x02])],
+                    ),
+                ],
+                blocks: vec![block1],
+                receipts: vec![],
+                code_updates: vec![],
+                batch_mode: false,
+            })
+            .unwrap();
+
+        // Block 2 commits block 1's layer.
+        let state_root_2 = H256::repeat_byte(0x44);
+        let block2 = make_block(2, block1_hash, state_root_2);
+        store
+            .store_block_updates(UpdateBatch {
+                account_updates: vec![(Nibbles::from_raw(&[0xee], false), vec![0xff])],
+                storage_updates: vec![],
+                blocks: vec![block2],
+                receipts: vec![],
+                code_updates: vec![],
+                batch_mode: false,
+            })
+            .unwrap();
+
+        let bytes = await_journal_entry(&backend, 1, Duration::from_secs(2))
+            .expect("STATE_HISTORY entry for block 1");
+        let entry = JournalEntry::decode(&bytes).unwrap();
+        assert_eq!(entry.block_hash, block1_hash);
+        assert_eq!(
+            entry.storage_trie_diff.len(),
+            2,
+            "two distinct account hashes must produce two storage_trie entries"
+        );
+        for (_key, prev) in &entry.storage_trie_diff {
+            assert_eq!(prev, &None, "first-time storage write has None pre-image");
+        }
+        assert!(entry.account_trie_diff.is_empty());
+    }
+
+    fn seed_journal_entries(backend: &Arc<dyn StorageBackend>, block_numbers: &[BlockNumber]) {
+        let mut tx = backend.begin_write().unwrap();
+        for n in block_numbers {
+            let entry = JournalEntry {
+                block_hash: H256::repeat_byte(*n as u8),
+                parent_state_root: H256::zero(),
+                account_trie_diff: vec![(vec![*n as u8], None)],
+                storage_trie_diff: vec![],
+                account_flat_diff: vec![],
+                storage_flat_diff: vec![],
+            };
+            tx.put(STATE_HISTORY, &n.to_be_bytes(), &entry.encode())
+                .unwrap();
+        }
+        tx.commit().unwrap();
+    }
+
+    fn journal_entry_exists(backend: &Arc<dyn StorageBackend>, block_number: BlockNumber) -> bool {
+        backend
+            .begin_read()
+            .unwrap()
+            .get(STATE_HISTORY, &block_number.to_be_bytes())
+            .unwrap()
+            .is_some()
+    }
+
+    /// Finality advance SHALL prune every STATE_HISTORY entry at or below the
+    /// new finalized number, in the same atomic txn as the finalized-number update.
+    #[tokio::test]
+    async fn finality_advance_prunes_journal_below_boundary() {
+        let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::open().unwrap());
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::from_backend(backend.clone(), dir.path().to_path_buf(), 1).unwrap();
+
+        seed_journal_entries(&backend, &(1..=10).collect::<Vec<_>>());
+        for n in 1..=10 {
+            assert!(journal_entry_exists(&backend, n), "seed entry {n} present");
+        }
+
+        store
+            .forkchoice_update_inner(vec![], 100, H256::zero(), None, Some(5))
+            .await
+            .unwrap();
+
+        for n in 1..=5 {
+            assert!(
+                !journal_entry_exists(&backend, n),
+                "entry {n} should have been pruned (<= finalized)"
+            );
+        }
+        for n in 6..=10 {
+            assert!(
+                journal_entry_exists(&backend, n),
+                "entry {n} should remain (> finalized)"
+            );
+        }
+    }
+
+    /// Forkchoice updates that don't advance finalized SHALL NOT prune the journal.
+    #[tokio::test]
+    async fn finality_no_op_does_not_prune() {
+        let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::open().unwrap());
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::from_backend(backend.clone(), dir.path().to_path_buf(), 1).unwrap();
+
+        store
+            .forkchoice_update_inner(vec![], 100, H256::zero(), None, Some(5))
+            .await
+            .unwrap();
+
+        seed_journal_entries(&backend, &(6..=10).collect::<Vec<_>>());
+
+        // FCU re-asserting finalized = 5: must not prune anything.
+        store
+            .forkchoice_update_inner(vec![], 100, H256::zero(), None, Some(5))
+            .await
+            .unwrap();
+
+        for n in 6..=10 {
+            assert!(
+                journal_entry_exists(&backend, n),
+                "entry {n} should still exist after no-op finality update"
+            );
+        }
+
+        // FCU with finalized = None: also a no-op for pruning.
+        store
+            .forkchoice_update_inner(vec![], 100, H256::zero(), None, None)
+            .await
+            .unwrap();
+
+        for n in 6..=10 {
+            assert!(
+                journal_entry_exists(&backend, n),
+                "entry {n} should still exist when finalized is None"
+            );
+        }
+    }
+
+    /// A malformed (wrong-length) `FinalizedBlockNumber` value SHALL surface as a
+    /// hard error rather than a silent fallback to 0, which would over-prune the
+    /// journal on the next FCU.
+    #[tokio::test]
+    async fn malformed_finalized_returns_error_not_silent_zero() {
+        let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::open().unwrap());
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::from_backend(backend.clone(), dir.path().to_path_buf(), 1).unwrap();
+
+        // Plant a 4-byte (instead of 8-byte) FinalizedBlockNumber value.
+        let mut tx = backend.begin_write().unwrap();
+        let finalized_key = chain_data_key(ChainDataIndex::FinalizedBlockNumber);
+        tx.put(CHAIN_DATA, &finalized_key, &[0u8, 0, 0, 0]).unwrap();
+        tx.commit().unwrap();
+
+        seed_journal_entries(&backend, &(1..=5).collect::<Vec<_>>());
+
+        let err = store
+            .forkchoice_update_inner(vec![], 100, H256::zero(), None, Some(3))
+            .await
+            .expect_err("malformed finalized must surface as an error");
+        let msg = format!("{err}");
+        assert!(
+            msg.contains("FinalizedBlockNumber has unexpected length"),
+            "expected length-mismatch error, got: {msg}"
+        );
+
+        // Journal must not have been pruned.
+        for n in 1..=5 {
+            assert!(
+                journal_entry_exists(&backend, n),
+                "entry {n} must NOT be pruned when finalized read failed"
+            );
+        }
     }
 }
 
