@@ -1,12 +1,20 @@
-use ethrex_common::constants::EMPTY_KECCACK_HASH;
+use ethrex_common::constants::EMPTY_KECCAK_HASH;
 use ethrex_common::tracing::{PrePostState, PrestateAccountState, PrestateResult, PrestateTrace};
 use ethrex_common::types::{Block, Transaction};
-use ethrex_common::{Address, BigEndianHash, H256, U256, tracing::CallTrace, types::BlockHeader};
+use ethrex_common::{
+    Address, BigEndianHash, H256, U256,
+    tracing::{CallTrace, OpcodeTraceResult},
+    types::BlockHeader,
+};
 use ethrex_crypto::Crypto;
 use ethrex_levm::account::{AccountStatus, LevmAccount};
 use ethrex_levm::db::gen_db::CacheDB;
 use ethrex_levm::vm::VMType;
-use ethrex_levm::{db::gen_db::GeneralizedDatabase, tracing::LevmCallTracer, vm::VM};
+use ethrex_levm::{
+    db::gen_db::GeneralizedDatabase,
+    tracing::{LevmCallTracer, LevmOpcodeTracer, OpcodeTracerConfig},
+    vm::VM,
+};
 
 use crate::{EvmError, backends::levm::LEVM};
 
@@ -91,6 +99,30 @@ impl LEVM {
         }
     }
 
+    /// Run transaction with opcode (EIP-3155) tracer activated.
+    pub fn trace_tx_opcodes(
+        db: &mut GeneralizedDatabase,
+        block_header: &BlockHeader,
+        tx: &Transaction,
+        cfg: OpcodeTracerConfig,
+        vm_type: VMType,
+        crypto: &dyn Crypto,
+    ) -> Result<OpcodeTraceResult, EvmError> {
+        let env = Self::setup_env(
+            tx,
+            tx.sender(crypto).map_err(|error| {
+                EvmError::Transaction(format!("Couldn't recover addresses with error: {error}"))
+            })?,
+            block_header,
+            db,
+            vm_type,
+        )?;
+        let mut vm = VM::new(env, db, tx, LevmCallTracer::disabled(), vm_type, crypto)?;
+        vm.opcode_tracer = LevmOpcodeTracer::new(cfg);
+        vm.execute()?;
+        Ok(vm.opcode_tracer.take_result())
+    }
+
     /// Run transaction with callTracer activated.
     pub fn trace_tx_calls(
         db: &mut GeneralizedDatabase,
@@ -162,7 +194,7 @@ fn build_account_output(
     account: &LevmAccount,
     db: &GeneralizedDatabase,
 ) -> Result<PrestateAccountState, EvmError> {
-    let has_code = account.info.code_hash != *EMPTY_KECCACK_HASH;
+    let has_code = account.info.code_hash != *EMPTY_KECCAK_HASH;
     let code = if has_code {
         get_preloaded_code(db, &account.info.code_hash)?
     } else {
@@ -193,7 +225,7 @@ fn build_account_output(
 fn get_preloaded_code(db: &GeneralizedDatabase, hash: &H256) -> Result<bytes::Bytes, EvmError> {
     db.codes
         .get(hash)
-        .map(|c| c.bytecode.clone())
+        .map(|c| c.code_bytes())
         .ok_or_else(|| EvmError::Custom(format!("missing preloaded code for {hash:?}")))
 }
 
@@ -219,7 +251,7 @@ fn build_post_output(
         modified = true;
     }
     if pre_account.info.code_hash != post_account.info.code_hash {
-        if post_account.info.code_hash != *EMPTY_KECCACK_HASH {
+        if post_account.info.code_hash != *EMPTY_KECCAK_HASH {
             state.code_hash = post_account.info.code_hash;
             state.code = get_preloaded_code(db, &post_account.info.code_hash)?;
         }
@@ -326,7 +358,7 @@ fn preload_touched_codes(
                 .unwrap_or_default();
             [post.info.code_hash, pre_hash]
         })
-        .filter(|h| *h != *EMPTY_KECCACK_HASH)
+        .filter(|h| *h != *EMPTY_KECCAK_HASH)
         .collect();
 
     for hash in hashes {

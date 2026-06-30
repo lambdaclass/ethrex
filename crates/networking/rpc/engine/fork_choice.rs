@@ -221,7 +221,7 @@ async fn handle_forkchoice(
         version = %format!("v{}", version),
         head = %format!("{:#x}", fork_choice_state.head_block_hash),
         safe = %format!("{:#x}", fork_choice_state.safe_block_hash),
-        finalized = %format!("v{:#x}", fork_choice_state.finalized_block_hash),
+        finalized = %format!("{:#x}", fork_choice_state.finalized_block_hash),
         "New fork choice update",
     );
 
@@ -290,6 +290,16 @@ async fn handle_forkchoice(
                     context
                         .blockchain
                         .remove_block_transactions_from_pool(&block)?;
+                    // Reset blob sub-pool against on-chain nonces (head-block
+                    // pruning above misses stale blobs from non-head blocks).
+                    // Best-effort housekeeping: a state-read failure here must
+                    // not fail an otherwise-successful FCU, so log and continue
+                    // rather than propagating. The next FCU re-runs the sweep.
+                    if let Err(err) = context.blockchain.remove_stale_blob_txs(block.hash()).await {
+                        warn!(
+                            "Failed to prune stale blob txs from mempool after fork choice: {err}"
+                        );
+                    }
                 }
                 Ok(None) => {
                     warn!(
@@ -319,17 +329,14 @@ async fn handle_forkchoice(
         Err(forkchoice_error) => {
             let forkchoice_response = match forkchoice_error {
                 InvalidForkChoice::NewHeadAlreadyCanonical => {
-                    // The fork-choice was effectively accepted: head is canonical and
-                    // points to a known block. Treat it like the Ok(head) branch:
-                    //   - mark the node synced so eth_syncing reports `false`,
-                    //   - return the head header so the caller can build a payload
-                    //     when payloadAttributes is non-null (engine API spec).
+                    // execution-apis PR 786: when head references a VALID ancestor of
+                    // the latest known finalized block, return VALID + null payloadId
+                    // and MUST NOT begin a payload build process. We return `None` for
+                    // the head header so the V3/V4 dispatch short-circuits the
+                    // build_payload call.
                     context.blockchain.set_synced();
-                    let head_block = context
-                        .storage
-                        .get_block_header_by_hash(fork_choice_state.head_block_hash)?;
                     return Ok((
-                        head_block,
+                        None,
                         ForkChoiceResponse::from(PayloadStatus::valid_with_hash(
                             fork_choice_state.head_block_hash,
                         )),
@@ -342,7 +349,15 @@ async fn handle_forkchoice(
                 }
                 // TODO(#5564): handle arbitrary reorgs
                 InvalidForkChoice::StateNotReachable => {
-                    // Ignore the FCU
+                    // We can't reach the head's state from our DB (the nearest
+                    // link block has pruned or not-yet-executed state). Kick off
+                    // a sync toward the head instead of reporting SYNCING while
+                    // sitting idle, which wedges the node: the CL keeps resending
+                    // FCUs we keep ignoring and we never make progress.
+                    // sync_to_head is idempotent (only starts a cycle if the
+                    // syncer is inactive) and mode-agnostic, so this is safe for
+                    // both full and snap clients.
+                    syncer.sync_to_head(fork_choice_state.head_block_hash);
                     ForkChoiceResponse::from(PayloadStatus::syncing())
                 }
                 InvalidForkChoice::Disconnected(_, _) | InvalidForkChoice::ElementNotFound(_) => {
@@ -428,6 +443,11 @@ fn validate_attributes_v3(
             "Attribute parent_beacon_block_root is null".to_string(),
         ));
     }
+    if chain_config.is_amsterdam_activated(attributes.timestamp) {
+        return Err(RpcErr::UnsupportedFork(
+            "forkChoiceV3 used to build Amsterdam payload".to_string(),
+        ));
+    }
     if !chain_config.is_cancun_activated(attributes.timestamp) {
         return Err(RpcErr::UnsupportedFork(
             "forkChoiceV3 used to build pre-Cancun payload".to_string(),
@@ -502,14 +522,15 @@ fn parse_v4(
     let forkchoice_state: ForkChoiceState = serde_json::from_value(params[0].clone())?;
     let mut payload_attributes: Option<PayloadAttributesV4> = None;
     if params.len() == 2 {
-        payload_attributes =
-            match serde_json::from_value::<Option<PayloadAttributesV4>>(params[1].clone()) {
-                Ok(attributes) => attributes,
-                Err(error) => {
-                    warn!("Could not parse payload attributes {}", error);
-                    None
-                }
-            };
+        // execution-apis#796: V4 attributes are validated strictly. A present but
+        // malformed object (e.g. missing the required targetGasLimit) is rejected
+        // rather than silently ignored; an absent/null object yields no attributes.
+        payload_attributes = serde_json::from_value::<Option<PayloadAttributesV4>>(
+            params[1].clone(),
+        )
+        .map_err(|error| {
+            RpcErr::InvalidPayloadAttributes(format!("invalid V4 payload attributes: {error}"))
+        })?;
     }
     Ok((forkchoice_state, payload_attributes))
 }
@@ -536,6 +557,8 @@ fn validate_attributes_v4(
             "V4 payload attributes missing parent_beacon_block_root".to_string(),
         ));
     }
+    // execution-apis#796: target_gas_limit is required on V4 and enforced at
+    // deserialization (see `parse_v4`), so no presence check is needed here.
     validate_timestamp_v4(attributes, head_block)
 }
 
@@ -556,6 +579,8 @@ async fn build_payload_v4(
     context: RpcApiContext,
     fork_choice_state: &ForkChoiceState,
 ) -> Result<u64, RpcErr> {
+    // execution-apis#796: use the CL-supplied target gas limit (required on V4).
+    let gas_ceil = attributes.target_gas_limit;
     let args = BuildPayloadArgs {
         parent: fork_choice_state.head_block_hash,
         timestamp: attributes.timestamp,
@@ -566,7 +591,7 @@ async fn build_payload_v4(
         slot_number: Some(attributes.slot_number),
         version: 4,
         elasticity_multiplier: ELASTICITY_MULTIPLIER,
-        gas_ceil: context.gas_ceil,
+        gas_ceil,
     };
     let payload_id = args
         .id()
@@ -575,6 +600,7 @@ async fn build_payload_v4(
     info!(
         id = payload_id,
         slot = attributes.slot_number,
+        gas_ceil,
         "Fork choice updated V4 includes payload attributes. Creating a new payload"
     );
     let payload = match create_payload(&args, &context.storage, context.node_data.extra_data) {

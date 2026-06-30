@@ -53,6 +53,15 @@ impl<'a> VM<'a> {
                     return Err(error);
                 }
 
+                // EIP-8037 (Amsterdam+): roll back this frame's state gas in LIFO order
+                // BEFORE zeroing gas. Mirrors EELS `process_create_message`'s
+                // `refill_frame_state_gas` on the code-deposit ExceptionalHalt path.
+                // Must run before the `&mut self.current_call_frame` borrow below.
+                if self.env.config.fork >= Fork::Amsterdam {
+                    let entry = self.current_call_frame.state_gas_used_at_entry;
+                    self.refill_frame_state_gas(entry)?;
+                }
+
                 // Consume all gas because error was exceptional.
                 let callframe = &mut self.current_call_frame;
                 callframe.gas_remaining = 0;
@@ -98,6 +107,15 @@ impl<'a> VM<'a> {
             return Err(error);
         }
 
+        // EIP-8037 (Amsterdam+): roll back this frame's state gas in LIFO order BEFORE
+        // zeroing gas on exceptional halt. Covers both revert and exceptional-halt paths
+        // (mirrors EELS `process_message`'s `refill_frame_state_gas` on Revert/ExceptionalHalt).
+        // Must run before the `&mut self.current_call_frame` borrow below since refill needs `&mut self`.
+        if self.env.config.fork >= Fork::Amsterdam {
+            let entry = self.current_call_frame.state_gas_used_at_entry;
+            self.refill_frame_state_gas(entry)?;
+        }
+
         let callframe = &mut self.current_call_frame;
 
         // Unless error is caused by Revert Opcode, consume all gas left.
@@ -131,6 +149,27 @@ impl<'a> VM<'a> {
         let new_account = self.get_account_mut(new_contract_address)?;
 
         if new_account.create_would_collide() {
+            // EIP-8037: a collision returns before any opcode executes, so no execution
+            // state gas was charged via `increase_state_gas` (the only writer of
+            // `state_gas_spill` / `frame_state_gas_spilled`). Intrinsic state gas was added
+            // directly to `state_gas_used` in `add_intrinsic_gas` and never spills. There is
+            // therefore nothing for `refill_frame_state_gas` to roll back; the retained
+            // create-tx NEW_ACCOUNT refund in `finalize_execution` covers the account charge.
+            debug_assert_eq!(
+                self.state_gas_spill, 0,
+                "create collision must occur before any execution state gas spills"
+            );
+            debug_assert_eq!(
+                self.current_call_frame.frame_state_gas_spilled, 0,
+                "create collision must occur before any per-frame state gas spills"
+            );
+
+            // Per EIP-684: a tx-level CREATE collision burns the
+            // full forwarded execution gas as `regular_gas_used`. Zero `gas_remaining`
+            // so `raw_consumed = gas_limit` for the downstream regular-gas formula in
+            // `default_hook::refund_sender`; otherwise the post-intrinsic leftover
+            // leaks back to the sender and never reaches the regular dimension.
+            self.current_call_frame.gas_remaining = 0;
             return Ok(Some(ContextResult {
                 result: TxResult::Revert(ExceptionalHalt::AddressAlreadyOccupied.into()),
                 gas_used: self.env.gas_limit,
@@ -138,6 +177,16 @@ impl<'a> VM<'a> {
                 output: Bytes::new(),
             }));
         }
+
+        // EIP-8037 (#3002): capture whether the create-tx target is already alive
+        // (exists and non-empty) BEFORE balance/nonce mutation, mirroring EELS
+        // `target_alive = is_account_alive(message.current_target)` (set in
+        // `process_message_call` only for the non-colliding deployable path).
+        // A non-colliding alive target must have balance > 0 (collision rules forbid
+        // code/nonce/storage), so `!is_empty()` matches `is_account_alive` semantics.
+        // Used in `finalize_execution` to refund the unconditional new-account state
+        // gas on a successful create-tx whose target already existed.
+        self.created_target_alive = !new_account.is_empty();
 
         let value = self.current_call_frame.msg_value;
         self.increase_account_balance(new_contract_address, value)?;

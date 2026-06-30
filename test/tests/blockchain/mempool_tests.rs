@@ -2,8 +2,7 @@ use ethrex_blockchain::Blockchain;
 use ethrex_blockchain::constants::MAX_INITCODE_SIZE;
 use ethrex_blockchain::constants::{
     TX_ACCESS_LIST_ADDRESS_GAS, TX_ACCESS_LIST_STORAGE_KEY_GAS, TX_CREATE_GAS_COST,
-    TX_DATA_NON_ZERO_GAS, TX_DATA_NON_ZERO_GAS_EIP2028, TX_DATA_ZERO_GAS_COST, TX_GAS_COST,
-    TX_INIT_CODE_WORD_GAS_COST,
+    TX_DATA_NON_ZERO_GAS_EIP2028, TX_DATA_ZERO_GAS_COST, TX_GAS_COST, TX_INIT_CODE_WORD_GAS_COST,
 };
 use ethrex_blockchain::error::MempoolError;
 use ethrex_blockchain::mempool::{Mempool, transaction_intrinsic_gas};
@@ -11,12 +10,14 @@ use ethrex_crypto::NativeCrypto;
 use rustc_hash::FxHashMap;
 
 use ethrex_common::types::{
-    BYTES_PER_BLOB, BlobsBundle, BlockHeader, ChainConfig, EIP1559Transaction, EIP4844Transaction,
-    MempoolTransaction, Transaction, TxKind, kzg_commitment_to_versioned_hash,
+    AuthorizationTuple, BYTES_PER_BLOB, BlobsBundle, BlockHeader, ChainConfig, EIP1559Transaction,
+    EIP4844Transaction, EIP7702Transaction, Genesis, GenesisAccount, MempoolTransaction,
+    Transaction, TxKind, kzg_commitment_to_versioned_hash,
 };
 use ethrex_common::{Address, Bytes, H160, H256, U256};
 use ethrex_storage::error::StoreError;
 use ethrex_storage::{EngineType, Store};
+use std::collections::BTreeMap;
 
 const MEMPOOL_MAX_SIZE_TEST: usize = 10_000;
 
@@ -71,7 +72,8 @@ fn normal_transaction_intrinsic_gas() {
 
     let tx = Transaction::EIP1559Transaction(tx);
     let expected_gas_cost = TX_GAS_COST;
-    let intrinsic_gas = transaction_intrinsic_gas(&tx, &header, &config).expect("Intrinsic gas");
+    let intrinsic_gas = transaction_intrinsic_gas(&tx, Address::default(), &header, &config)
+        .expect("Intrinsic gas");
     assert_eq!(intrinsic_gas, expected_gas_cost);
 }
 
@@ -93,22 +95,25 @@ fn create_transaction_intrinsic_gas() {
 
     let tx = Transaction::EIP1559Transaction(tx);
     let expected_gas_cost = TX_CREATE_GAS_COST;
-    let intrinsic_gas = transaction_intrinsic_gas(&tx, &header, &config).expect("Intrinsic gas");
+    let intrinsic_gas = transaction_intrinsic_gas(&tx, Address::default(), &header, &config)
+        .expect("Intrinsic gas");
     assert_eq!(intrinsic_gas, expected_gas_cost);
 }
 
-/// EIP-8037 / bal-devnet-4: Amsterdam CREATE tx intrinsic must match the VM
-/// charge, not the legacy `TX_CREATE_GAS_COST = 53000`. The regular portion
-/// drops to `TX_GAS_COST + REGULAR_GAS_CREATE = 30000` and a state portion
-/// (`STATE_BYTES_PER_NEW_ACCOUNT * cpsb`) is folded in. Mempool admission
-/// must return the total so txs whose `gas_limit` is below the VM intrinsic
-/// are rejected before they enter the pool, and txs above it aren't
-/// spuriously rejected.
+/// EIP-2780 (PRELIMINARY EIPs#11645): Amsterdam CREATE tx intrinsic must match
+/// the VM charge, not the legacy `TX_CREATE_GAS_COST = 53000`. The regular
+/// portion is the resource-based decomposition
+/// `TX_BASE_COST_AMSTERDAM (12000) + CREATE_ACCESS_AMSTERDAM (11000) = 23000`
+/// (no value transfer here), plus a state portion
+/// (`STATE_BYTES_PER_NEW_ACCOUNT * cpsb`). Mempool admission must return the
+/// total so txs whose `gas_limit` is below the VM intrinsic are rejected before
+/// they enter the pool, and txs above it aren't spuriously rejected.
 #[test]
 fn amsterdam_create_intrinsic_matches_vm_dimensions() {
     use ethrex_levm::gas_cost::{
-        REGULAR_GAS_CREATE, STATE_BYTES_PER_NEW_ACCOUNT, cost_per_state_byte,
+        CREATE_ACCESS_AMSTERDAM, STATE_BYTES_PER_NEW_ACCOUNT, cost_per_state_byte,
     };
+    const TX_BASE_COST_AMSTERDAM: u64 = 12000;
 
     let (mut config, header) = build_basic_config_and_header(true, true);
     // Activate Amsterdam at genesis. Intermediate forks must also be active
@@ -133,41 +138,21 @@ fn amsterdam_create_intrinsic_matches_vm_dimensions() {
     });
 
     let cpsb = cost_per_state_byte(header.gas_limit);
-    let expected = TX_GAS_COST + REGULAR_GAS_CREATE + STATE_BYTES_PER_NEW_ACCOUNT * cpsb;
+    let expected =
+        TX_BASE_COST_AMSTERDAM + CREATE_ACCESS_AMSTERDAM + STATE_BYTES_PER_NEW_ACCOUNT * cpsb;
 
-    let intrinsic_gas = transaction_intrinsic_gas(&tx, &header, &config).expect("intrinsic gas");
+    let intrinsic_gas = transaction_intrinsic_gas(&tx, Address::default(), &header, &config)
+        .expect("intrinsic gas");
     assert_eq!(
         intrinsic_gas, expected,
-        "Amsterdam CREATE intrinsic must be TX_BASE + REGULAR_GAS_CREATE + \
-         STATE_BYTES_PER_NEW_ACCOUNT * cpsb, not the legacy 53000"
+        "Amsterdam CREATE intrinsic must be TX_BASE_COST_AMSTERDAM + \
+         CREATE_ACCESS_AMSTERDAM + STATE_BYTES_PER_NEW_ACCOUNT * cpsb, not the legacy 53000"
     );
     // Guard against regression to the legacy 53000 constant.
     assert_ne!(
         intrinsic_gas, TX_CREATE_GAS_COST,
         "Amsterdam CREATE must NOT use legacy TX_CREATE_GAS_COST"
     );
-}
-
-#[test]
-fn transaction_intrinsic_data_gas_pre_istanbul() {
-    let (config, header) = build_basic_config_and_header(false, false);
-
-    let tx = EIP1559Transaction {
-        nonce: 3,
-        max_priority_fee_per_gas: 0,
-        max_fee_per_gas: 0,
-        gas_limit: 100_000,
-        to: TxKind::Call(Address::from_low_u64_be(1)), // Normal tx
-        value: U256::zero(),                           // Value zero
-        data: Bytes::from(vec![0x0, 0x1, 0x1, 0x0, 0x1, 0x1]), // 6 bytes of data
-        access_list: Default::default(),               // No access list
-        ..Default::default()
-    };
-
-    let tx = Transaction::EIP1559Transaction(tx);
-    let expected_gas_cost = TX_GAS_COST + 2 * TX_DATA_ZERO_GAS_COST + 4 * TX_DATA_NON_ZERO_GAS;
-    let intrinsic_gas = transaction_intrinsic_gas(&tx, &header, &config).expect("Intrinsic gas");
-    assert_eq!(intrinsic_gas, expected_gas_cost);
 }
 
 #[test]
@@ -189,7 +174,8 @@ fn transaction_intrinsic_data_gas_post_istanbul() {
     let tx = Transaction::EIP1559Transaction(tx);
     let expected_gas_cost =
         TX_GAS_COST + 2 * TX_DATA_ZERO_GAS_COST + 4 * TX_DATA_NON_ZERO_GAS_EIP2028;
-    let intrinsic_gas = transaction_intrinsic_gas(&tx, &header, &config).expect("Intrinsic gas");
+    let intrinsic_gas = transaction_intrinsic_gas(&tx, Address::default(), &header, &config)
+        .expect("Intrinsic gas");
     assert_eq!(intrinsic_gas, expected_gas_cost);
 }
 
@@ -213,8 +199,9 @@ fn transaction_create_intrinsic_gas_pre_shanghai() {
     };
 
     let tx = Transaction::EIP1559Transaction(tx);
-    let expected_gas_cost = TX_CREATE_GAS_COST + n_bytes * TX_DATA_NON_ZERO_GAS;
-    let intrinsic_gas = transaction_intrinsic_gas(&tx, &header, &config).expect("Intrinsic gas");
+    let expected_gas_cost = TX_CREATE_GAS_COST + n_bytes * TX_DATA_NON_ZERO_GAS_EIP2028;
+    let intrinsic_gas = transaction_intrinsic_gas(&tx, Address::default(), &header, &config)
+        .expect("Intrinsic gas");
     assert_eq!(intrinsic_gas, expected_gas_cost);
 }
 
@@ -238,9 +225,11 @@ fn transaction_create_intrinsic_gas_post_shanghai() {
     };
 
     let tx = Transaction::EIP1559Transaction(tx);
-    let expected_gas_cost =
-        TX_CREATE_GAS_COST + n_bytes * TX_DATA_NON_ZERO_GAS + n_words * TX_INIT_CODE_WORD_GAS_COST;
-    let intrinsic_gas = transaction_intrinsic_gas(&tx, &header, &config).expect("Intrinsic gas");
+    let expected_gas_cost = TX_CREATE_GAS_COST
+        + n_bytes * TX_DATA_NON_ZERO_GAS_EIP2028
+        + n_words * TX_INIT_CODE_WORD_GAS_COST;
+    let intrinsic_gas = transaction_intrinsic_gas(&tx, Address::default(), &header, &config)
+        .expect("Intrinsic gas");
     assert_eq!(intrinsic_gas, expected_gas_cost);
 }
 
@@ -269,7 +258,8 @@ fn transaction_intrinsic_gas_access_list() {
     let tx = Transaction::EIP1559Transaction(tx);
     let expected_gas_cost =
         TX_GAS_COST + 3 * TX_ACCESS_LIST_ADDRESS_GAS + 15 * TX_ACCESS_LIST_STORAGE_KEY_GAS;
-    let intrinsic_gas = transaction_intrinsic_gas(&tx, &header, &config).expect("Intrinsic gas");
+    let intrinsic_gas = transaction_intrinsic_gas(&tx, Address::default(), &header, &config)
+        .expect("Intrinsic gas");
     assert_eq!(intrinsic_gas, expected_gas_cost);
 }
 
@@ -446,8 +436,8 @@ fn test_filter_mempool_transactions() {
     let blob_tx_decoded = Transaction::decode_canonical(&hex::decode("03f88f0780843b9aca008506fc23ac00830186a09400000000000000000000000000000000000001008080c001e1a0010657f37554c781402a22917dee2f75def7ab966d7b770905398eba3c44401401a0840650aa8f74d2b07f40067dc33b715078d73422f01da17abdbd11e02bbdfda9a04b2260f6022bf53eadb337b3e59514936f7317d872defb891a708ee279bdca90").unwrap()).unwrap();
     let blob_tx_sender = blob_tx_decoded.sender(&NativeCrypto).unwrap();
     let blob_tx = MempoolTransaction::new(blob_tx_decoded, blob_tx_sender);
-    let plain_tx_hash = plain_tx.hash();
-    let blob_tx_hash = blob_tx.hash();
+    let plain_tx_hash = plain_tx.hash(&NativeCrypto);
+    let blob_tx_hash = blob_tx.hash(&NativeCrypto);
     let mempool = Mempool::new(MEMPOOL_MAX_SIZE_TEST);
     let filter = |tx: &Transaction| -> bool { matches!(tx, Transaction::EIP4844Transaction(_)) };
     mempool
@@ -551,5 +541,607 @@ fn blobs_bundle_insert_and_remove() {
             .get_blobs_data_by_versioned_hashes(&[versioned_hash])
             .expect("should return empty"),
         vec![None]
+    );
+}
+
+#[test]
+fn blob_txs_are_not_evicted_by_regular_tx_flood() {
+    // Regression: blob txs live in a dedicated sub-pool, so a flood of regular
+    // txs that fills (and evicts from) the regular pool must not reduce the set
+    // of retained blob txs. Pre-fix, blob txs shared the regular FIFO and were
+    // flushed out by regular-tx pressure, starving block building of blobs.
+    let regular_cap = 4;
+    let mempool = Mempool::new(regular_cap);
+
+    // Insert more blob txs than the regular cap, so the blob set can only be
+    // fully retained if blobs are NOT bound by the regular cap (bundle inserted
+    // first, mirroring add_blob_transaction_to_pool).
+    let blob_count = regular_cap + 2;
+    let mut blob_hashes = Vec::new();
+    for i in 0..blob_count {
+        let bundle = BlobsBundle {
+            blobs: vec![[i as u8; BYTES_PER_BLOB]],
+            commitments: vec![[i as u8; 48]],
+            proofs: vec![[i as u8; 48]],
+            version: 0,
+        };
+        let blob_tx = Transaction::EIP4844Transaction(EIP4844Transaction {
+            gas: 21_000,
+            to: Address::from_low_u64_be(1),
+            ..Default::default()
+        });
+        let blob_hash = H256::random();
+        let blob_sender = H160::random();
+        mempool.add_blobs_bundle(blob_hash, bundle).unwrap();
+        mempool
+            .add_transaction(
+                blob_hash,
+                blob_sender,
+                MempoolTransaction::new(blob_tx, blob_sender),
+            )
+            .expect("Failed to add blob transaction");
+        blob_hashes.push(blob_hash);
+    }
+
+    // Flood with regular txs far beyond the regular cap, tracking the first one
+    // so we can confirm the flood actually triggered regular-tx eviction.
+    let first_regular_hash = H256::random();
+    for i in 0..(regular_cap * 10) {
+        let tx = Transaction::EIP1559Transaction(EIP1559Transaction {
+            to: TxKind::Call(Address::from_low_u64_be(2)),
+            ..Default::default()
+        });
+        let sender = H160::random();
+        let hash = if i == 0 {
+            first_regular_hash
+        } else {
+            H256::random()
+        };
+        mempool
+            .add_transaction(hash, sender, MempoolTransaction::new(tx, sender))
+            .expect("Failed to add regular transaction");
+    }
+
+    // The flood must have evicted regular txs (proving it exceeded the cap that
+    // pre-fix would also have flushed blobs).
+    assert!(
+        !mempool
+            .contains_tx(first_regular_hash)
+            .expect("contains_tx should succeed"),
+        "regular-tx flood did not evict regular txs; test is not exercising eviction"
+    );
+
+    // Despite the eviction, every blob tx must still be retained (100% blob
+    // retention vs a capped regular pool).
+    for blob_hash in blob_hashes {
+        assert!(
+            mempool
+                .contains_tx(blob_hash)
+                .expect("contains_tx should succeed"),
+            "blob tx {blob_hash:?} was evicted by a regular-tx flood"
+        );
+    }
+}
+
+// Inserts a 1-blob tx straight into the pool (bypassing validation) with the
+// given nonce and blob fee; returns its hash.
+fn add_blob_tx(mempool: &Mempool, nonce: u64, blob_fee: u64) -> H256 {
+    let bundle = BlobsBundle {
+        blobs: vec![[0u8; BYTES_PER_BLOB]],
+        commitments: vec![[0u8; 48]],
+        proofs: vec![[0u8; 48]],
+        version: 0,
+    };
+    let tx = Transaction::EIP4844Transaction(EIP4844Transaction {
+        nonce,
+        gas: 21_000,
+        max_fee_per_blob_gas: blob_fee.into(),
+        to: Address::from_low_u64_be(1),
+        ..Default::default()
+    });
+    let hash = H256::random();
+    let sender = H160::random();
+    mempool.add_blobs_bundle(hash, bundle).unwrap();
+    mempool
+        .add_transaction(hash, sender, MempoolTransaction::new(tx, sender))
+        .expect("Failed to add blob transaction");
+    hash
+}
+
+// Like `add_blob_tx` but with an explicit sender; returns its hash.
+fn add_blob_tx_with_sender(mempool: &Mempool, sender: Address, nonce: u64) -> H256 {
+    let bundle = BlobsBundle {
+        blobs: vec![[0u8; BYTES_PER_BLOB]],
+        commitments: vec![[0u8; 48]],
+        proofs: vec![[0u8; 48]],
+        version: 0,
+    };
+    let tx = Transaction::EIP4844Transaction(EIP4844Transaction {
+        nonce,
+        gas: 21_000,
+        max_fee_per_blob_gas: 1.into(),
+        to: Address::from_low_u64_be(1),
+        ..Default::default()
+    });
+    let hash = H256::random();
+    mempool.add_blobs_bundle(hash, bundle).unwrap();
+    mempool
+        .add_transaction(hash, sender, MempoolTransaction::new(tx, sender))
+        .expect("Failed to add blob transaction");
+    hash
+}
+
+#[test]
+fn blob_txs_lists_only_blob_txs_with_sender_and_nonce() {
+    let mempool = Mempool::new(MEMPOOL_MAX_SIZE_TEST);
+    let sender = H160::random();
+    let blob0 = add_blob_tx_with_sender(&mempool, sender, 0);
+    let blob1 = add_blob_tx_with_sender(&mempool, sender, 1);
+
+    // A regular tx must not appear in the blob listing.
+    let plain = Transaction::EIP1559Transaction(EIP1559Transaction {
+        nonce: 0,
+        gas_limit: 21_000,
+        to: TxKind::Call(Address::from_low_u64_be(1)),
+        ..Default::default()
+    });
+    let plain_hash = plain.hash(&NativeCrypto);
+    mempool
+        .add_transaction(plain_hash, sender, MempoolTransaction::new(plain, sender))
+        .unwrap();
+
+    let mut got = mempool.blob_txs().unwrap();
+    got.sort_by_key(|(_, _, nonce)| *nonce);
+    assert_eq!(got, vec![(blob0, sender, 0), (blob1, sender, 1)]);
+}
+
+#[test]
+fn blob_eviction_keeps_includable_low_nonce_tx() {
+    // When the blob sub-pool is over its cap, eviction must drop the least
+    // includable blob tx (highest nonce), not the earliest-inserted one. A FIFO
+    // would evict the first-added low-nonce tx (which is the includable one);
+    // the value/nonce-ordered policy keeps it.
+    let blob_cap = 4;
+    let mempool = Mempool::new(MEMPOOL_MAX_SIZE_TEST).with_max_blob_mempool_size(blob_cap);
+
+    // Insert FIRST (oldest): an includable low-nonce, high-fee blob tx.
+    let keep = add_blob_tx(&mempool, 0, 1000);
+
+    // Then flood the blob sub-pool past its cap with higher-nonce, low-fee txs.
+    for n in 0..(blob_cap as u64 + 4) {
+        add_blob_tx(&mempool, 100 + n, 1);
+    }
+
+    // FIFO would have evicted `keep` (oldest); the new policy must keep it.
+    assert!(
+        mempool
+            .contains_tx(keep)
+            .expect("contains_tx should succeed"),
+        "includable low-nonce blob tx was evicted in favor of high-nonce ones"
+    );
+}
+
+#[test]
+fn blob_eviction_offset_is_per_sender_not_cross_sender() {
+    // Regression: eviction ranks by nonce offset *within a sender*, not by raw
+    // cross-sender nonce. A high-throughput sender (e.g. a rollup sequencer)
+    // accumulates large on-wire nonces while staying perfectly includable; a
+    // raw cross-sender comparison would evict its txs first. The deepest-in-its-
+    // own-queue blob must be dropped instead.
+    let blob_cap = 4;
+    let mempool = Mempool::new(MEMPOOL_MAX_SIZE_TEST).with_max_blob_mempool_size(blob_cap);
+
+    // Sequencer: a single blob at a very high nonce (offset 0 from its own min).
+    let sequencer = H160::random();
+    let seq_tx = add_blob_tx_with_sender(&mempool, sequencer, 1_000_000);
+
+    // A backlogged sender with a deep, contiguous queue (offsets 0..=4).
+    let backlogged = H160::random();
+    let deep: Vec<H256> = (0..=4)
+        .map(|n| add_blob_tx_with_sender(&mempool, backlogged, n))
+        .collect();
+
+    // 6 blobs, cap 4 ⇒ 2 backlogged blobs evicted. The sequencer's high-nonce
+    // tx must survive: under the old cross-sender nonce key it had the globally
+    // highest nonce and would have been the first evicted.
+    assert!(
+        mempool.contains_tx(seq_tx).unwrap(),
+        "high-nonce sequencer blob was wrongly evicted by cross-sender nonce"
+    );
+    // Its lowest-offset (nonce 0) blob is the most includable and must stay.
+    assert!(
+        mempool.contains_tx(deep[0]).unwrap(),
+        "includable nonce-0 blob must stay"
+    );
+    let present_deep = deep
+        .iter()
+        .filter(|h| mempool.contains_tx(**h).unwrap())
+        .count();
+    assert_eq!(
+        present_deep, 3,
+        "two of the backlogged sender's blobs evicted"
+    );
+}
+
+mod alternates {
+    use super::*;
+    use ethrex_blockchain::mempool::MAX_ALTERNATES_PER_HASH;
+    use std::time::Duration;
+
+    fn h(n: u8) -> H256 {
+        let mut b = [0u8; 32];
+        b[31] = n;
+        H256::from(b)
+    }
+
+    /// Helper that reserves `hashes` with synthetic per-hash (type, size)
+    /// metadata. Tests that don't care about the metadata can use this.
+    fn reserve(mp: &Mempool, hashes: &[H256], announcer: H256) -> Vec<H256> {
+        let types = vec![0u8; hashes.len()];
+        let sizes = vec![0usize; hashes.len()];
+        mp.reserve_unknown_hashes(hashes, &types, &sizes, announcer)
+            .unwrap()
+    }
+
+    #[test]
+    fn primary_requester_is_not_an_alternate() {
+        let mp = Mempool::new(64);
+        let peer_a = h(1);
+        let tx = h(0xa);
+
+        // peer_a is the first announcer: it becomes the primary requester
+        // (returned in `unknown`), so no alternates entry should be created.
+        let unknown = reserve(&mp, &[tx], peer_a);
+        assert_eq!(unknown, vec![tx]);
+        assert!(mp.pop_alternate(tx).unwrap().is_none());
+    }
+
+    #[test]
+    fn second_announcer_recorded_as_alternate() {
+        let mp = Mempool::new(64);
+        let peer_a = h(1);
+        let peer_b = h(2);
+        let tx_a = h(0xa);
+        let tx_b = h(0xb);
+
+        let unknown = reserve(&mp, &[tx_a, tx_b], peer_a);
+        assert_eq!(unknown, vec![tx_a, tx_b]);
+
+        // peer_b sees the same hashes already in-flight from peer_a, so it
+        // should be filed as an alternate for each hash.
+        let unknown = reserve(&mp, &[tx_a, tx_b], peer_b);
+        assert!(unknown.is_empty());
+
+        let alt_a = mp.pop_alternate(tx_a).unwrap().expect("alt for tx_a");
+        let alt_b = mp.pop_alternate(tx_b).unwrap().expect("alt for tx_b");
+        assert_eq!(alt_a.peer_id, peer_b);
+        assert_eq!(alt_b.peer_id, peer_b);
+    }
+
+    #[test]
+    fn alternate_carries_per_hash_type_and_size() {
+        let mp = Mempool::new(64);
+        let primary = h(1);
+        let alt_peer = h(2);
+        let tx = h(0xa);
+
+        // primary announces with one (type, size); alt announces with another.
+        // The stored alternate must carry the alt peer's metadata, not the
+        // primary's, so a later retry validates the alt peer's response
+        // against the alt's own announcement.
+        mp.reserve_unknown_hashes(&[tx], &[0x03], &[42], primary)
+            .unwrap();
+        mp.reserve_unknown_hashes(&[tx], &[0x03], &[131072], alt_peer)
+            .unwrap();
+
+        let popped = mp.pop_alternate(tx).unwrap().expect("alt present");
+        assert_eq!(popped.peer_id, alt_peer);
+        assert_eq!(popped.tx_type, 0x03);
+        assert_eq!(popped.tx_size, 131072);
+    }
+
+    #[test]
+    fn pop_alternates_is_fifo_and_drains() {
+        let mp = Mempool::new(64);
+        let tx = h(0xab);
+        let primary = h(99);
+        let p1 = h(1);
+        let p2 = h(2);
+        let p3 = h(3);
+
+        reserve(&mp, &[tx], primary);
+        reserve(&mp, &[tx], p1);
+        reserve(&mp, &[tx], p2);
+        reserve(&mp, &[tx], p3);
+
+        assert_eq!(mp.pop_alternate(tx).unwrap().unwrap().peer_id, p1);
+        assert_eq!(mp.pop_alternate(tx).unwrap().unwrap().peer_id, p2);
+        assert_eq!(mp.pop_alternate(tx).unwrap().unwrap().peer_id, p3);
+        assert!(mp.pop_alternate(tx).unwrap().is_none());
+    }
+
+    #[test]
+    fn alternates_capped() {
+        let mp = Mempool::new(64);
+        let tx = h(0xcd);
+        let primary = h(0xff);
+        reserve(&mp, &[tx], primary);
+        for i in 0..(MAX_ALTERNATES_PER_HASH + 4) {
+            reserve(&mp, &[tx], h(i as u8 + 1));
+        }
+        let mut count = 0;
+        while mp.pop_alternate(tx).unwrap().is_some() {
+            count += 1;
+        }
+        assert_eq!(count, MAX_ALTERNATES_PER_HASH);
+    }
+
+    #[test]
+    fn duplicate_announcer_not_double_counted() {
+        let mp = Mempool::new(64);
+        let tx = h(0xef);
+        let primary = h(0xff);
+        let peer = h(42);
+        reserve(&mp, &[tx], primary);
+        reserve(&mp, &[tx], peer);
+        reserve(&mp, &[tx], peer);
+        reserve(&mp, &[tx], peer);
+        let popped = mp.pop_alternate(tx).unwrap().expect("alt present");
+        assert_eq!(popped.peer_id, peer);
+        assert!(mp.pop_alternate(tx).unwrap().is_none());
+    }
+
+    #[test]
+    fn prune_alternates_drops_stale_entries() {
+        let mp = Mempool::new(64);
+        let tx = h(0xaa);
+        reserve(&mp, &[tx], h(1));
+        reserve(&mp, &[tx], h(2));
+        // Sleep well past the TTL so a loaded CI scheduler that gives us a
+        // shorter-than-asked sleep still observes the entries as stale.
+        std::thread::sleep(Duration::from_millis(20));
+        mp.prune_alternates(Duration::from_millis(5)).unwrap();
+        assert!(mp.pop_alternate(tx).unwrap().is_none());
+    }
+}
+
+// `mempool-calldata-floor-gas-gap` (issue #6889): on Prague (the active fork)
+// mempool admission must compute intrinsic gas the same way LEVM does at
+// execution, and must reject empty EIP-7702 authorization lists. Otherwise txs
+// that the VM will reject at inclusion are admitted, polluting the pool.
+
+/// Prague config (Amsterdam NOT active); `config.fork(timestamp)` resolves to
+/// Prague, so `intrinsic_gas_dimensions` exercises its pre-Amsterdam sub-path
+/// (flat EIP-7702 auth-list cost + EIP-7623 calldata floor).
+fn prague_config_and_header() -> (ChainConfig, BlockHeader) {
+    let config = ChainConfig {
+        istanbul_block: Some(0),
+        shanghai_time: Some(0),
+        cancun_time: Some(0),
+        prague_time: Some(0),
+        ..Default::default()
+    };
+    let header = BlockHeader {
+        number: 5,
+        timestamp: 5,
+        gas_limit: 100_000_000,
+        gas_used: 0,
+        ..Default::default()
+    };
+    (config, header)
+}
+
+/// EIP-7702: each authorization tuple costs `PER_EMPTY_ACCOUNT_COST` (25000) of
+/// intrinsic gas (LEVM charges it in `intrinsic_gas_dimensions`). Mempool
+/// admission must charge it too. Unfixed mempool omits the auth-list cost
+/// entirely on the pre-Amsterdam path.
+#[test]
+fn prague_eip7702_intrinsic_includes_auth_list_cost() {
+    use ethrex_levm::constants::PER_EMPTY_ACCOUNT_COST;
+
+    let (config, header) = prague_config_and_header();
+
+    let auth = AuthorizationTuple::default();
+    let tx = Transaction::EIP7702Transaction(EIP7702Transaction {
+        chain_id: 0,
+        nonce: 0,
+        max_priority_fee_per_gas: 0,
+        max_fee_per_gas: 0,
+        gas_limit: 1_000_000,
+        to: Address::from_low_u64_be(1),
+        value: U256::zero(),
+        data: Bytes::default(),
+        access_list: Default::default(),
+        authorization_list: vec![auth, auth], // 2 tuples
+        ..Default::default()
+    });
+
+    let expected = TX_GAS_COST + 2 * PER_EMPTY_ACCOUNT_COST; // 21000 + 50000
+    let got = transaction_intrinsic_gas(&tx, Address::default(), &header, &config)
+        .expect("intrinsic gas");
+    assert_eq!(
+        got, expected,
+        "Prague type-4 mempool intrinsic must include PER_EMPTY_ACCOUNT_COST per \
+         auth tuple (matches LEVM); unfixed mempool omits it"
+    );
+}
+
+/// EIP-7623: a tx whose calldata floor exceeds its execution intrinsic must be
+/// charged the floor. 1000 zero-bytes → legacy intrinsic 25000, floor 31000.
+/// Unfixed mempool returns the sub-floor 25000 and admits a tx the VM rejects.
+#[test]
+fn prague_intrinsic_applies_eip7623_calldata_floor() {
+    let (config, header) = prague_config_and_header();
+
+    let tx = Transaction::EIP1559Transaction(EIP1559Transaction {
+        nonce: 0,
+        max_priority_fee_per_gas: 0,
+        max_fee_per_gas: 0,
+        gas_limit: 1_000_000,
+        to: TxKind::Call(Address::from_low_u64_be(1)),
+        value: U256::zero(),
+        data: Bytes::from(vec![0u8; 1000]),
+        access_list: Default::default(),
+        ..Default::default()
+    });
+
+    // floor = TX_BASE_COST + 1000 tokens * 10 = 31000; legacy intrinsic = 25000.
+    let expected_floor = 31_000;
+    let got = transaction_intrinsic_gas(&tx, Address::default(), &header, &config)
+        .expect("intrinsic gas");
+    assert_eq!(
+        got, expected_floor,
+        "Prague mempool intrinsic must apply the EIP-7623 calldata floor (matches \
+         LEVM); unfixed mempool returns the sub-floor legacy value 25000"
+    );
+}
+
+/// EIP-7702: an empty `authorization_list` makes a type-4 tx invalid
+/// (`validate_type_4_tx` rejects it). Mempool admission must reject it too.
+/// Unfixed mempool admits it (sender is funded so the balance check passes).
+#[tokio::test]
+async fn validate_transaction_rejects_empty_auth_list() {
+    let sender = Address::from_low_u64_be(0x1234);
+    let mut alloc = BTreeMap::new();
+    alloc.insert(
+        sender,
+        GenesisAccount {
+            code: Bytes::new(),
+            storage: BTreeMap::new(),
+            balance: U256::from(10).pow(U256::from(20)), // 100 ETH
+            nonce: 0,
+        },
+    );
+    let genesis = Genesis {
+        config: ChainConfig {
+            chain_id: 1,
+            homestead_block: Some(0),
+            eip150_block: Some(0),
+            eip155_block: Some(0),
+            eip158_block: Some(0),
+            byzantium_block: Some(0),
+            constantinople_block: Some(0),
+            petersburg_block: Some(0),
+            istanbul_block: Some(0),
+            berlin_block: Some(0),
+            london_block: Some(0),
+            merge_netsplit_block: Some(0),
+            terminal_total_difficulty: Some(0),
+            terminal_total_difficulty_passed: true,
+            shanghai_time: Some(0),
+            cancun_time: Some(0),
+            prague_time: Some(0),
+            ..Default::default()
+        },
+        alloc,
+        gas_limit: 30_000_000,
+        base_fee_per_gas: Some(0),
+        ..Default::default()
+    };
+
+    let mut store = Store::new("", EngineType::InMemory).expect("open in-memory store");
+    store
+        .add_initial_state(genesis)
+        .await
+        .expect("initialize genesis");
+    let blockchain = Blockchain::default_with_store(store);
+
+    let tx = Transaction::EIP7702Transaction(EIP7702Transaction {
+        chain_id: 1,
+        nonce: 0,
+        max_priority_fee_per_gas: 0,
+        max_fee_per_gas: 0,
+        gas_limit: 100_000,
+        to: Address::from_low_u64_be(1),
+        value: U256::zero(),
+        data: Bytes::default(),
+        access_list: Default::default(),
+        authorization_list: vec![], // EMPTY — invalid per EIP-7702
+        ..Default::default()
+    });
+
+    let res = blockchain.validate_transaction(&tx, sender).await;
+    assert!(
+        matches!(res, Err(MempoolError::EmptyAuthorizationList)),
+        "type-4 tx with an empty authorization_list must be rejected at admission \
+         with EmptyAuthorizationList; unfixed mempool admits it (got {res:?})"
+    );
+}
+
+/// The empty-auth-list check must run before the intrinsic-gas check, so a
+/// type-4 tx that is both empty-auth and under-gassed reports the structural
+/// fault (`EmptyAuthorizationList`) rather than the downstream gas symptom —
+/// matching LEVM's `validate_type_4_tx` ordering.
+#[tokio::test]
+async fn validate_transaction_empty_auth_reported_before_intrinsic() {
+    let (config, header) = prague_config_and_header();
+    let store = setup_storage(config, header).await.expect("Storage setup");
+    let blockchain = Blockchain::default_with_store(store);
+
+    let tx = Transaction::EIP7702Transaction(EIP7702Transaction {
+        chain_id: 0,
+        nonce: 0,
+        max_priority_fee_per_gas: 0,
+        max_fee_per_gas: 0,
+        gas_limit: 1_000, // below the 21000 intrinsic
+        to: Address::from_low_u64_be(1),
+        value: U256::zero(),
+        data: Bytes::default(),
+        access_list: Default::default(),
+        authorization_list: vec![], // empty — the structural fault
+        ..Default::default()
+    });
+
+    let res = blockchain
+        .validate_transaction(&tx, Address::random())
+        .await;
+    assert!(
+        matches!(res, Err(MempoolError::EmptyAuthorizationList)),
+        "empty auth-list must be reported before the intrinsic-gas check (got {res:?})"
+    );
+}
+
+/// EIP-7702 (type-4) txs only exist from Prague onward; LEVM rejects them with
+/// `Type4TxPreFork` otherwise. Mempool admission must mirror that gate so a
+/// pre-Prague node does not pool a type-4 tx that execution will reject.
+#[tokio::test]
+async fn validate_transaction_rejects_pre_prague_eip7702() {
+    // Cancun active, Prague NOT active.
+    let config = ChainConfig {
+        istanbul_block: Some(0),
+        shanghai_time: Some(0),
+        cancun_time: Some(0),
+        ..Default::default()
+    };
+    let header = BlockHeader {
+        number: 5,
+        timestamp: 5,
+        gas_limit: 100_000_000,
+        gas_used: 0,
+        ..Default::default()
+    };
+    let store = setup_storage(config, header).await.expect("Storage setup");
+    let blockchain = Blockchain::default_with_store(store);
+
+    let tx = Transaction::EIP7702Transaction(EIP7702Transaction {
+        chain_id: 0,
+        nonce: 0,
+        max_priority_fee_per_gas: 0,
+        max_fee_per_gas: 0,
+        gas_limit: 100_000,
+        to: Address::from_low_u64_be(1),
+        value: U256::zero(),
+        data: Bytes::default(),
+        access_list: Default::default(),
+        authorization_list: vec![AuthorizationTuple::default()], // non-empty
+        ..Default::default()
+    });
+
+    let res = blockchain
+        .validate_transaction(&tx, Address::random())
+        .await;
+    assert!(
+        matches!(res, Err(MempoolError::Eip7702TxPreFork)),
+        "pre-Prague type-4 tx must be rejected with Eip7702TxPreFork (got {res:?})"
     );
 }

@@ -15,7 +15,7 @@ use ethrex_common::{
     },
     types::{
         AccountUpdate, BlobsBundle, Block, BlockBody, BlockHash, BlockHeader, BlockNumber,
-        ChainConfig, Fork, MempoolTransaction, Receipt, Transaction, TxKind, TxType, Withdrawal,
+        ChainConfig, MempoolTransaction, Receipt, Transaction, TxKind, TxType, Withdrawal,
         block_access_list::BlockAccessList,
         bloom_from_logs, calc_excess_blob_gas, calculate_base_fee_per_blob_gas,
         calculate_base_fee_per_gas, compute_receipts_root, compute_transactions_root,
@@ -117,6 +117,18 @@ impl BuildPayloadArgs {
         if let Some(beacon_root) = self.beacon_root {
             hasher.update(beacon_root);
         }
+        // execution-apis#796 / glamsterdam-devnet-4: hash slot_number and
+        // gas_ceil so two FCUv4 calls that differ only in CL-supplied
+        // targetGasLimit (or in slot_number) do not collide on payload_id.
+        // Scoped to V4: for V1/V2/V3 gas_ceil is always the static
+        // --builder.gas-limit (no collision to disambiguate), so hashing it
+        // there would change those IDs without fixing anything.
+        if self.version >= 4 {
+            if let Some(slot_number) = self.slot_number {
+                hasher.update(slot_number.to_be_bytes());
+            }
+            hasher.update(self.gas_ceil.to_be_bytes());
+        }
         let res = &mut hasher.finalize()[..8];
         res[0] = self.version;
         Ok(u64::from_be_bytes(res.try_into().map_err(|_| {
@@ -194,7 +206,6 @@ pub fn create_payload(
 }
 
 pub fn calc_gas_limit(parent_gas_limit: u64, builder_gas_ceil: u64) -> u64 {
-    // TODO: check where we should get builder values from
     let delta = parent_gas_limit / GAS_LIMIT_BOUND_DIVISOR - 1;
     let mut limit = parent_gas_limit;
     let desired_limit = max(builder_gas_ceil, MIN_GAS_LIMIT);
@@ -413,6 +424,9 @@ impl Blockchain {
         const SECONDS_PER_SLOT: Duration = Duration::from_secs(12);
         // Attempt to rebuild the payload as many times within the given timeframe to maximize fee revenue
         // TODO(#4997): start with an empty block
+        // Snapshot the mempool sequence *before* the build so any tx that lands
+        // during the build is seen as newer than the current `res`.
+        let mut last_built_seq = self.mempool.tx_seq();
         let mut res = self.build_payload(payload.clone())?;
         while start.elapsed() < SECONDS_PER_SLOT && !cancel_token.is_cancelled() {
             // Wait for new transactions, cancellation, or slot deadline before rebuilding
@@ -425,6 +439,7 @@ impl Blockchain {
             }
             let payload = payload.clone();
             let self_clone = self.clone();
+            let seq_before = self.mempool.tx_seq();
             let building_task =
                 tokio::task::spawn_blocking(move || self_clone.build_payload(payload));
             // Cancel the current build process and return the previous payload if it is requested earlier
@@ -433,6 +448,7 @@ impl Blockchain {
             match cancel_token.run_until_cancelled(building_task).await {
                 Some(Ok(current_res)) => {
                     res = current_res?;
+                    last_built_seq = seq_before;
                 }
                 Some(Err(err)) => {
                     warn!(%err, "Payload-building task panicked");
@@ -440,6 +456,23 @@ impl Blockchain {
                 None => {}
             }
         }
+
+        // If a tx landed after the snapshot that produced `res`, do one final
+        // build before returning. Covers both races: (a) cancellation dropping
+        // an in-progress rebuild via `run_until_cancelled`, and (b) the slot-
+        // timeout `select!` arm winning over a simultaneous `tx_added`
+        // notification near the slot boundary.
+        if self.mempool.tx_seq() > last_built_seq {
+            let blockchain = self.clone();
+            match tokio::task::spawn_blocking(move || blockchain.build_payload(payload)).await {
+                Ok(Ok(final_res)) => res = final_res,
+                Ok(Err(err)) => {
+                    warn!(%err, "Final payload rebuild failed; returning previous result")
+                }
+                Err(err) => warn!(%err, "Final payload rebuild task panicked"),
+            }
+        }
+
         Ok(res)
     }
 
@@ -617,7 +650,10 @@ impl Blockchain {
                 head_tx.tx.gas_limit()
             };
             if context.remaining_gas < tx_gas_reservation {
-                debug!("Skipping transaction: {}, no gas left", head_tx.tx.hash());
+                debug!(
+                    "Skipping transaction: {}, no gas left",
+                    head_tx.tx.hash(&NativeCrypto)
+                );
                 // We don't have enough gas left for the transaction, so we skip all txs from this account
                 txs.pop();
                 continue;
@@ -638,7 +674,7 @@ impl Blockchain {
             context.payload_size = potential_rlp_block_size;
 
             // TODO: maybe fetch hash too when filtering mempool so we don't have to compute it here (we can do this in the same refactor as adding timestamp)
-            let tx_hash = head_tx.tx.hash();
+            let tx_hash = head_tx.tx.hash(&NativeCrypto);
 
             // Check whether the tx is replay-protected
             if head_tx.tx.protected() && !chain_config.is_eip155_activated(context.block_number()) {
@@ -673,7 +709,7 @@ impl Blockchain {
         head: HeadTransaction,
         context: &mut PayloadBuildContext,
     ) -> Result<(), ChainError> {
-        let tx_hash = head.tx.hash();
+        let tx_hash = head.tx.hash(&NativeCrypto);
 
         // EIP-8037 (Amsterdam+, PR #2703): per-tx 2D inclusion check against
         // running block totals. Run BEFORE we touch the BAL recorder so a
@@ -681,7 +717,6 @@ impl Blockchain {
         if context.is_amsterdam
             && let Err(e) = check_2d_gas_allowance(
                 &head.tx,
-                Fork::Amsterdam,
                 context.block_regular_gas_used,
                 context.block_state_gas_used,
                 context.payload.header.gas_limit,
@@ -759,7 +794,7 @@ impl Blockchain {
         context: &mut PayloadBuildContext,
     ) -> Result<Receipt, ChainError> {
         // Fetch blobs bundle
-        let tx_hash = head.tx.hash();
+        let tx_hash = head.tx.hash(&NativeCrypto);
         let max_blob_number_per_block = self.effective_max_blobs(context);
         let Some(blobs_bundle) = self.mempool.get_blobs_bundle(tx_hash)? else {
             // No blob tx should enter the mempool without its blobs bundle so this is an internal error
@@ -833,8 +868,9 @@ impl Blockchain {
         context.account_updates = account_updates;
 
         // Set BAL hash in block header (EIP-7928)
-        context.payload.header.block_access_list_hash =
-            block_access_list.as_ref().map(|bal| bal.compute_hash());
+        context.payload.header.block_access_list_hash = block_access_list
+            .as_ref()
+            .map(|bal| bal.compute_hash(&NativeCrypto));
         context.block_access_list = block_access_list;
 
         let mut logs = vec![];

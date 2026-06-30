@@ -58,57 +58,8 @@ rm -rf "${failed_logs_root}"
 mkdir -p "${failed_logs_root}"
 
 # Tests excluded from the failure count (substring match against test case
-# name). Two categories live here:
-#   1. Genuinely flaky hive-framework tests, not ethrex bugs.
-#   2. bal-devnet-6 fixture-vs-impl mismatch routed through hive's
-#      consume-engine simulator (mirrors the blockchain-runner skip list
-#      in tooling/ef_tests/blockchain/tests/all.rs SKIPPED_BASE).
+# name).
 KNOWN_EXCLUDED_TESTS=(
-  # (1) Flaky — hive-framework instability.
-  "Invalid Missing Ancestor Syncing ReOrg, Timestamp, EmptyTxs=False, CanonicalReOrg=False, Invalid P8"
-  "Invalid Missing Ancestor Syncing ReOrg, Timestamp, EmptyTxs=False, CanonicalReOrg=True, Invalid P8"
-  "Invalid Missing Ancestor Syncing ReOrg, Transaction Value, EmptyTxs=False, CanonicalReOrg=False, Invalid P9"
-  # (2) bal-devnet-6 known-failing fixtures (Amsterdam fork) routed through
-  # hive's `eels/consume-engine` simulator. Same root cause as the
-  # blockchain-runner SKIPPED_BASE: snobal-devnet-6 fixtures expect
-  # bal-devnet-6 spec semantics, but our impl runs ahead due to
-  # bal-devnet-7-prep `set_delegation` SELFDESTRUCT-style refund
-  # subtraction. Anchored on `[fork_Amsterdam` so any Prague/Osaka
-  # variants of the same EELS test functions still run. Re-enable once
-  # fixtures bump to snobal-devnet-7 or the bal-devnet-7-prep subtraction
-  # is reverted.
-  "test_auth_refund_block_gas_accounting[fork_Amsterdam"
-  "test_auth_refund_bypasses_one_fifth_cap[fork_Amsterdam"
-  "test_auth_state_gas_scales_with_cpsb[fork_Amsterdam"
-  "test_auth_with_calldata_and_access_list[fork_Amsterdam"
-  "test_auth_with_multiple_sstores[fork_Amsterdam"
-  "test_authorization_exact_state_gas_boundary[fork_Amsterdam"
-  "test_authorization_to_precompile_address[fork_Amsterdam"
-  "test_authorization_with_sstore[fork_Amsterdam"
-  "test_bal_7702_delegation_clear[fork_Amsterdam"
-  "test_bal_7702_delegation_create[fork_Amsterdam"
-  "test_bal_7702_delegation_update[fork_Amsterdam"
-  "test_bal_7702_double_auth_reset[fork_Amsterdam"
-  "test_bal_7702_double_auth_swap[fork_Amsterdam"
-  "test_bal_7702_null_address_delegation_no_code_change[fork_Amsterdam"
-  "test_bal_all_transaction_types[fork_Amsterdam"
-  "test_bal_selfdestruct_to_7702_delegation[fork_Amsterdam"
-  "test_bal_withdrawal_to_7702_delegation[fork_Amsterdam"
-  "test_duplicate_signer_authorizations[fork_Amsterdam"
-  "test_existing_account_auth_header_gas_used_uses_worst_case[fork_Amsterdam"
-  "test_existing_account_refund[fork_Amsterdam"
-  "test_existing_account_refund_enables_sstore[fork_Amsterdam"
-  "test_existing_auth_with_reverted_execution_preserves_intrinsic[fork_Amsterdam"
-  "test_many_authorizations_state_gas[fork_Amsterdam"
-  "test_mixed_auths_header_gas_used_uses_worst_case[fork_Amsterdam"
-  "test_mixed_new_and_existing_auths[fork_Amsterdam"
-  "test_mixed_valid_and_invalid_auths[fork_Amsterdam"
-  "test_multi_tx_block_auth_refund_and_sstore[fork_Amsterdam"
-  "test_multiple_refund_types_in_one_tx[fork_Amsterdam"
-  "test_simple_gas_accounting[fork_Amsterdam"
-  "test_sstore_state_gas_all_tx_types[fork_Amsterdam"
-  "test_transfer_with_all_tx_types[fork_Amsterdam"
-  "test_varying_calldata_costs[fork_Amsterdam"
 )
 
 # Build a jq filter that excludes the known-excluded tests.

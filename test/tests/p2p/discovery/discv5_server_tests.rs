@@ -24,6 +24,7 @@ async fn test_server(peer_table: Option<PeerTable>) -> DiscoveryServer {
     let local_node_record = NodeRecord::from_node(&local_node, 1, &signer).unwrap();
     let peer_table = peer_table.unwrap_or_else(|| {
         PeerTableServer::spawn(
+            local_node.node_id(),
             10,
             Store::new("", EngineType::InMemory).expect("Failed to create store"),
         )
@@ -175,13 +176,12 @@ async fn test_enr_update_request_on_pong() {
     let remote_node_id = remote_node.node_id();
 
     let peer_table = PeerTableServer::spawn(
+        local_node.node_id(),
         10,
         Store::new("", EngineType::InMemory).expect("Failed to create store"),
     );
 
-    peer_table
-        .new_contact_records(vec![remote_record], local_node.node_id())
-        .unwrap();
+    peer_table.new_contact_records(vec![remote_record]).unwrap();
 
     let session = Session {
         outbound_key: [0u8; 16],
@@ -313,6 +313,36 @@ async fn test_ip_voting_no_update_if_same_ip() {
     assert_eq!(server.local_node.ip, original_ip);
     assert!(discv5(&mut server).ip_votes.is_empty());
     assert!(discv5(&mut server).first_ip_vote_round_completed);
+}
+
+#[tokio::test]
+async fn test_handle_pong_same_ip_does_not_bump_enr_seq() {
+    let mut server = test_server(None).await;
+    let original_ip = server.local_node.ip;
+    let original_seq = server.local_node_record.seq;
+
+    let recipient_addr = SocketAddr::new(original_ip, 30303);
+    let make_pong = || PongMessage {
+        // No matching PING set up in peer_table; record_pong_received silently ignores it.
+        req_id: Bytes::from_static(b""),
+        enr_seq: 0,
+        recipient_addr,
+    };
+
+    for i in 1..=3u64 {
+        server
+            .discv5_handle_pong(make_pong(), H256::from_low_u64_be(i))
+            .await
+            .unwrap();
+    }
+
+    // Round must have actually completed; otherwise the guard at discv5_handle_pong
+    // is never evaluated and the assertions below would trivially pass.
+    assert!(discv5(&mut server).first_ip_vote_round_completed);
+    // Voting round reached threshold with the local IP as winner; the guard at
+    // discv5_handle_pong must skip update_local_ip and leave the ENR sequence intact.
+    assert_eq!(server.local_node.ip, original_ip);
+    assert_eq!(server.local_node_record.seq, original_seq);
 }
 
 #[tokio::test]

@@ -6,7 +6,11 @@ use ethrex_common::U256;
 use ethrex_common::types::Account;
 use ethrex_common::types::Code;
 use ethrex_common::types::CodeMetadata;
-use ethrex_common::types::block_access_list::{BlockAccessList, BlockAccessListRecorder};
+#[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+use ethrex_common::types::block_access_list::SlotChange;
+use ethrex_common::types::block_access_list::{
+    BalAddressIndex, BlockAccessList, BlockAccessListRecorder,
+};
 use ethrex_common::utils::ZERO_U256;
 
 use super::Database;
@@ -24,14 +28,190 @@ use std::collections::hash_map::Entry;
 
 pub type CacheDB = FxHashMap<Address, LevmAccount>;
 
+/// Per-tx BAL cursor for lazy on-read prefix materialization.
+/// `bal_index = tx_idx + 1`; cursor's effective max_idx is `bal_index - 1`,
+/// matching `seed_db_from_bal`'s `max_idx = tx_idx` semantics.
+#[derive(Clone)]
+pub struct LazyBalCursor {
+    pub bal: Arc<BlockAccessList>,
+    pub bal_index: u32,
+    pub index: Arc<BalAddressIndex>,
+}
+
+/// Apply balance, nonce, and code fields from BAL for a single account into `db`.
+///
+/// Returns `true` if any info field was applied; `false` if all field positions
+/// were 0 (no info changes for this account at indices <= max_idx).
+/// Does NOT touch `account.storage`.
+#[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+pub fn seed_one_address_info_from_bal(
+    db: &mut GeneralizedDatabase,
+    bal: &BlockAccessList,
+    acct_idx: usize,
+    max_idx: u32,
+) -> Result<bool, InternalError> {
+    use ethrex_common::types::AccountInfo;
+
+    let acct_changes = bal
+        .accounts()
+        .get(acct_idx)
+        .ok_or(InternalError::AccountNotFound)?;
+    let addr = acct_changes.address;
+
+    let balance_pos = acct_changes
+        .balance_changes
+        .partition_point(|c| c.block_access_index <= max_idx);
+    let nonce_pos = acct_changes
+        .nonce_changes
+        .partition_point(|c| c.block_access_index <= max_idx);
+    let code_pos = acct_changes
+        .code_changes
+        .partition_point(|c| c.block_access_index <= max_idx);
+
+    if balance_pos == 0 && nonce_pos == 0 && code_pos == 0 {
+        return Ok(false);
+    }
+
+    // Compute code update before borrowing acc (borrow checker: can't access
+    // db.codes while acc holds a mutable borrow of db).
+    let code_update = if code_pos > 0 {
+        let entry = acct_changes
+            .code_changes
+            .get(code_pos.saturating_sub(1))
+            .ok_or(InternalError::AccountNotFound)?;
+        Some(code_from_bal(&entry.new_code))
+    } else {
+        None
+    };
+
+    // When BAL covers all account info fields (balance + nonce + code), insert
+    // a default LevmAccount directly to skip the store/shared_base lookup.
+    // For partial coverage, load from store to fill missing fields.
+    //
+    // Invariant: `account.storage` is left empty here. Storage is materialized
+    // lazily through `get_storage_value` (which also consults the cursor).
+    // Callers must NOT assume `account.storage` is fully populated after this
+    // path — iterate-all-keys / bulk-read patterns will see an empty map.
+    let has_all_info = balance_pos > 0 && nonce_pos > 0 && code_pos > 0;
+    if has_all_info {
+        use ethrex_common::constants::EMPTY_KECCAK_HASH;
+        let balance = acct_changes
+            .balance_changes
+            .get(balance_pos.saturating_sub(1))
+            .ok_or(InternalError::AccountNotFound)?
+            .post_balance;
+        let nonce = acct_changes
+            .nonce_changes
+            .get(nonce_pos.saturating_sub(1))
+            .ok_or(InternalError::AccountNotFound)?
+            .post_nonce;
+        let code_hash = code_update
+            .as_ref()
+            .map(|(h, _)| *h)
+            .unwrap_or(*EMPTY_KECCAK_HASH);
+        let acc = db
+            .current_accounts_state
+            .entry(addr)
+            .or_insert_with(|| LevmAccount {
+                info: AccountInfo::default(),
+                storage: FxHashMap::default(),
+                has_storage: false,
+                status: AccountStatus::Modified,
+                exists: true,
+            });
+        acc.info.balance = balance;
+        acc.info.nonce = nonce;
+        acc.info.code_hash = code_hash;
+        acc.mark_modified();
+    } else {
+        db.get_account(addr)
+            .map_err(|e| InternalError::Custom(format!("seed_db_from_bal load: {e}")))?;
+        let acc = db
+            .get_account_mut(addr)
+            .map_err(|e| InternalError::Custom(format!("seed bal: {e}")))?;
+
+        if balance_pos > 0
+            && let Some(entry) = acct_changes
+                .balance_changes
+                .get(balance_pos.saturating_sub(1))
+        {
+            acc.info.balance = entry.post_balance;
+        }
+        if nonce_pos > 0
+            && let Some(entry) = acct_changes.nonce_changes.get(nonce_pos.saturating_sub(1))
+        {
+            acc.info.nonce = entry.post_nonce;
+        }
+        if let Some((hash, _)) = &code_update {
+            acc.info.code_hash = *hash;
+        }
+    }
+
+    // Insert code object after acc borrow is released.
+    if let Some((hash, Some(code_obj))) = code_update {
+        db.codes.entry(hash).or_insert(code_obj);
+    }
+
+    Ok(true)
+}
+
+/// Select the post-value of a single `SlotChange` up to `max_idx`.
+///
+/// Pure read; returns `Some(value)` if any `slot_changes` entry has
+/// `block_access_index <= max_idx`, `None` otherwise.
+#[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+pub fn post_value_at_or_before(sc: &SlotChange, max_idx: u32) -> Option<U256> {
+    let pos = sc
+        .slot_changes
+        .partition_point(|c| c.block_access_index <= max_idx);
+    sc.slot_changes
+        .get(pos.saturating_sub(1))
+        .filter(|_| pos > 0)
+        .map(|c| c.post_value)
+}
+
+/// Read the post-value of a single storage slot from the BAL up to `max_idx`.
+///
+/// O(1) slot resolution via the precomputed `slot_idx_by_account` map in
+/// `BalAddressIndex`. Pure read; does not touch `db`.
+#[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+pub fn seed_one_storage_slot_from_bal(
+    bal: &BlockAccessList,
+    index: &BalAddressIndex,
+    acct_idx: usize,
+    key: H256,
+    max_idx: u32,
+) -> Option<U256> {
+    let acct_changes = bal.accounts().get(acct_idx)?;
+    let slot_map = index.slot_idx_by_account.get(acct_idx)?;
+    let sc_idx = *slot_map.get(&key)?;
+    let sc = acct_changes.storage_changes.get(sc_idx)?;
+    post_value_at_or_before(sc, max_idx)
+}
+
+/// Compute code hash and optional `Code` object from raw bytecode in a BAL entry.
+#[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+pub fn code_from_bal(new_code: &bytes::Bytes) -> (H256, Option<Code>) {
+    use ethrex_common::constants::EMPTY_KECCAK_HASH;
+    if new_code.is_empty() {
+        (*EMPTY_KECCAK_HASH, None)
+    } else {
+        let code_obj = Code::from_bytecode(new_code.clone(), &ethrex_crypto::NativeCrypto);
+        let hash = code_obj.hash;
+        (hash, Some(code_obj))
+    }
+}
+
 #[derive(Clone)]
 pub struct GeneralizedDatabase {
     pub store: Arc<dyn Database>,
     pub current_accounts_state: CacheDB,
     pub initial_accounts_state: CacheDB,
-    /// Shared read-only base state (e.g. post-system-call snapshot for parallel groups).
-    /// Checked on load_account between initial_accounts_state and store lookups.
-    /// Accounts are cloned into initial_accounts_state on first access (lazy, per-account).
+    /// Shared read-only base state (pre-block snapshot of system-touched addresses for
+    /// parallel groups, captured from `initial_accounts_state` after `prepare_block`).
+    /// Checked on `load_account` AFTER the `lazy_bal` hook so the BAL overlay (which
+    /// includes system-call effects at idx 0) takes precedence for any address the BAL
+    /// covers. Accounts are cloned into `initial_accounts_state` on first access.
     pub shared_base: Option<Arc<CacheDB>>,
     pub codes: FxHashMap<H256, Code>,
     pub code_metadata: FxHashMap<H256, CodeMetadata>,
@@ -45,6 +225,9 @@ pub struct GeneralizedDatabase {
     /// Optional tracker for BAL validation: records addresses accessed via load_account.
     /// Enabled only during parallel execution to detect extraneous BAL pure-access entries.
     pub accessed_accounts: Option<FxHashSet<Address>>,
+    /// Optional BAL cursor for lazy per-read prefix materialization.
+    /// When set, account loads and storage reads consult the BAL before hitting the store.
+    pub lazy_bal: Option<LazyBalCursor>,
 }
 
 impl GeneralizedDatabase {
@@ -60,6 +243,7 @@ impl GeneralizedDatabase {
             bal_recorder: None,
             skip_initial_tracking: false,
             accessed_accounts: None,
+            lazy_bal: None,
         }
     }
 
@@ -92,6 +276,7 @@ impl GeneralizedDatabase {
             bal_recorder: None,
             skip_initial_tracking: true,
             accessed_accounts: None,
+            lazy_bal: None,
         }
     }
 
@@ -150,6 +335,7 @@ impl GeneralizedDatabase {
             bal_recorder: None,
             skip_initial_tracking: false,
             accessed_accounts: None,
+            lazy_bal: None,
         }
     }
 
@@ -160,29 +346,113 @@ impl GeneralizedDatabase {
         if let Some(tracker) = &mut self.accessed_accounts {
             tracker.insert(address);
         }
-        match self.current_accounts_state.entry(address) {
-            Entry::Occupied(entry) => Ok(entry.into_mut()),
-            Entry::Vacant(entry) => {
-                if let Some(account) = self.initial_accounts_state.get(&address) {
-                    return Ok(entry.insert(account.clone()));
+
+        if self.current_accounts_state.contains_key(&address) {
+            return self
+                .current_accounts_state
+                .get_mut(&address)
+                .ok_or(InternalError::AccountNotFound);
+        }
+
+        // Initial-state fast path.
+        //
+        // Clone info/flags only, NOT the storage map. The streaming executor drains
+        // `current_accounts_state` into `initial_accounts_state` every few txs, so a hot account
+        // (token contracts, etc.) is re-faulted here repeatedly with an ever-growing storage map
+        // it barely reads. The touched slots are faulted back in lazily by `get_storage_value`,
+        // which resolves a `current` miss against `initial` (the committed baseline) before the
+        // store — so this stays correct and the diff invariant holds. See `clone_without_storage`.
+        //
+        // Exception: destroyed-and-recreated accounts must be full-cloned. `get_storage_value`
+        // early-returns 0 for `DestroyedModified` *before* the `initial` fallback (an unwritten
+        // slot of a destroyed account must read 0, never the stale value in `initial`). With an
+        // info-only clone, a committed slot written after recreation — folded into `initial`
+        // wholesale by the per-flush drain-back — would also read 0, since the lazy fallback is
+        // never reached. Carrying the storage on the clone keeps those committed slots in
+        // `current`, where the `account.storage` hit precedes the early-return.
+        if let Some(account) = self.initial_accounts_state.get(&address) {
+            let clone = match account.status {
+                AccountStatus::Destroyed | AccountStatus::DestroyedModified => account.clone(),
+                _ => account.clone_without_storage(),
+            };
+            return Ok(self.current_accounts_state.entry(address).or_insert(clone));
+        }
+
+        // Lazy-BAL hook: if the cursor finds this address, materialize info from the BAL
+        // before consulting `shared_base` or the store.
+        //
+        // Ordering matters: `shared_base` holds the pre-block snapshot of system-touched
+        // addresses, but the canonical pre-state for tx N is the BAL prefix up to its
+        // `bal_index` (= system-call effects at idx 0 plus all prior txs). If `shared_base`
+        // were consulted first for an address it covers, the BAL overlay would be skipped
+        // and tx N would observe stale balance/nonce/code (consensus bug for system-touched
+        // predeploys mutated by a prior tx in the same block).
+        //
+        // We `.take()` the cursor out of `self.lazy_bal` before calling
+        // `seed_one_address_info_from_bal`. For partial-coverage accounts (e.g. balance-only
+        // change with no nonce/code) the helper calls `db.get_account(addr)` internally to
+        // load the base state before overlaying. If `self.lazy_bal` were still `Some(...)`
+        // at that point, `get_account` → `load_account` would re-enter this same block and
+        // recurse infinitely. Taking the cursor out breaks the cycle: the inner call sees
+        // `lazy_bal = None` and falls through to `shared_base`/store. We restore the cursor
+        // unconditionally afterward (even on error) so the outer caller still sees it.
+        #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+        {
+            let cursor_opt = self.lazy_bal.take();
+            let helper_result = if let Some(cursor) = cursor_opt.as_ref() {
+                debug_assert!(
+                    cursor.bal_index >= 1,
+                    "LazyBalCursor bal_index must be >= 1"
+                );
+                let max_idx = cursor.bal_index.saturating_sub(1);
+                if let Some(&acct_idx) = cursor.index.addr_to_idx.get(&address) {
+                    Some(
+                        seed_one_address_info_from_bal(self, &cursor.bal, acct_idx, max_idx)
+                            .map(|_| true),
+                    )
+                } else {
+                    None
                 }
-                // Check shared_base (read-only post-system-call snapshot) before hitting store.
-                if let Some(ref base) = self.shared_base
-                    && let Some(account) = base.get(&address)
-                {
-                    if !self.skip_initial_tracking {
-                        self.initial_accounts_state.insert(address, account.clone());
-                    }
-                    return Ok(entry.insert(account.clone()));
+            } else {
+                None
+            };
+            // Restore the cursor before propagating any error or returning.
+            self.lazy_bal = cursor_opt;
+            if let Some(result) = helper_result {
+                result.map_err(|e| InternalError::Custom(format!("lazy_bal seed: {e}")))?;
+                if self.current_accounts_state.contains_key(&address) {
+                    return self
+                        .current_accounts_state
+                        .get_mut(&address)
+                        .ok_or(InternalError::AccountNotFound);
                 }
-                let state = self.store.get_account_state(address)?;
-                let account = LevmAccount::from(state);
-                if !self.skip_initial_tracking {
-                    self.initial_accounts_state.insert(address, account.clone());
-                }
-                Ok(entry.insert(account))
             }
         }
+
+        // Check shared_base (read-only pre-block snapshot) before hitting store.
+        if let Some(ref base) = self.shared_base
+            && let Some(account) = base.get(&address)
+        {
+            let account = account.clone();
+            if !self.skip_initial_tracking {
+                self.initial_accounts_state.insert(address, account.clone());
+            }
+            return Ok(self
+                .current_accounts_state
+                .entry(address)
+                .or_insert(account));
+        }
+
+        // Store fallback.
+        let state = self.store.get_account_state(address)?;
+        let account = LevmAccount::from(state);
+        if !self.skip_initial_tracking {
+            self.initial_accounts_state.insert(address, account.clone());
+        }
+        Ok(self
+            .current_accounts_state
+            .entry(address)
+            .or_insert(account))
     }
 
     /// Gets reference of an account
@@ -236,7 +506,7 @@ impl GeneralizedDatabase {
                         }
                     };
 
-                    code.bytecode.len() as u64
+                    code.len() as u64
                 };
 
                 let metadata = CodeMetadata {
@@ -251,10 +521,10 @@ impl GeneralizedDatabase {
 
     /// Convenience method to get code length by address (optimized for EXTCODESIZE).
     pub fn get_code_length(&mut self, address: Address) -> Result<usize, InternalError> {
-        use ethrex_common::constants::EMPTY_KECCACK_HASH;
+        use ethrex_common::constants::EMPTY_KECCAK_HASH;
 
         let code_hash = self.get_account(address)?.info.code_hash;
-        if code_hash == *EMPTY_KECCACK_HASH {
+        if code_hash == *EMPTY_KECCAK_HASH {
             return Ok(0);
         }
         let metadata = self.get_code_metadata(code_hash)?;
@@ -305,7 +575,12 @@ impl GeneralizedDatabase {
     }
 
     pub fn get_state_transitions(&mut self) -> Result<Vec<AccountUpdate>, VMError> {
-        let mut account_updates: Vec<AccountUpdate> = vec![];
+        // Upper bound: `current_accounts_state` holds every *read* account, while the loop
+        // emits only *modified* ones, so on read-heavy blocks this over-reserves. Still a
+        // single non-reallocating alloc (never empty — the sender is always modified), which
+        // beats the repeated growth of starting from `vec![]`.
+        let mut account_updates: Vec<AccountUpdate> =
+            Vec::with_capacity(self.current_accounts_state.len());
         for (address, new_state_account) in self.current_accounts_state.iter() {
             if new_state_account.is_unmodified() {
                 // Skip processing account that we know wasn't mutably accessed during execution
@@ -410,7 +685,9 @@ impl GeneralizedDatabase {
     }
 
     pub fn get_state_transitions_tx(&mut self) -> Result<Vec<AccountUpdate>, VMError> {
-        let mut account_updates: Vec<AccountUpdate> = vec![];
+        // Exact upper bound: one update per modified account. Capture the length before draining.
+        let mut account_updates: Vec<AccountUpdate> =
+            Vec::with_capacity(self.current_accounts_state.len());
         for (address, new_state_account) in self.current_accounts_state.drain() {
             if new_state_account.is_unmodified() {
                 // Skip processing account that we know wasn't mutably accessed during execution
@@ -493,8 +770,34 @@ impl GeneralizedDatabase {
                 continue;
             }
 
-            self.initial_accounts_state
-                .insert(address, new_state_account);
+            // Fold this flush's committed state into the diff baseline. With the info-only clone
+            // in `load_account`, `new_state_account.storage` holds only the slots touched this
+            // batch, so we MERGE them into the existing baseline instead of replacing it: a plain
+            // replace would drop the committed values of slots written in an earlier batch but not
+            // re-touched here (the old full-storage clone preserved them implicitly, which is why
+            // a replace was correct before). On destroy the prior storage is invalid, so the
+            // drained account is authoritative and replaces it wholesale (old behavior).
+            match self.initial_accounts_state.get_mut(&address) {
+                Some(initial_account)
+                    if !matches!(
+                        new_state_account.status,
+                        AccountStatus::Destroyed | AccountStatus::DestroyedModified
+                    ) =>
+                {
+                    // Move each field out of the about-to-be-dropped drained account.
+                    initial_account.info = new_state_account.info;
+                    initial_account.status = new_state_account.status;
+                    initial_account.has_storage = new_state_account.has_storage;
+                    initial_account.exists = new_state_account.exists;
+                    // `extend` overwrites touched slots with their committed value and keeps
+                    // untouched baseline slots from earlier batches.
+                    initial_account.storage.extend(new_state_account.storage);
+                }
+                _ => {
+                    self.initial_accounts_state
+                        .insert(address, new_state_account);
+                }
+            }
 
             let account_update = AccountUpdate {
                 address,
@@ -635,18 +938,27 @@ impl<'a> VM<'a> {
                 .current_accounts_state
                 .get(&address)
                 .and_then(|account| self.db.codes.get(&account.info.code_hash))
-                .map(|c| c.bytecode.clone())
+                .map(|c| c.code_bytes())
                 .unwrap_or_default();
             let has_code = !current_code_bytes.is_empty();
             recorder.capture_initial_code_presence(address, has_code);
             recorder.set_initial_code(address, current_code_bytes);
-            recorder.record_code_change(address, new_bytecode.bytecode.clone());
+            recorder.record_code_change(address, new_bytecode.code_bytes());
         }
 
         let acc = self.get_account_mut(address)?;
         let code_hash = new_bytecode.hash;
         acc.info.code_hash = new_bytecode.hash;
-        self.db.codes.entry(code_hash).or_insert(new_bytecode);
+        if let Entry::Vacant(entry) = self.db.codes.entry(code_hash) {
+            entry.insert(new_bytecode);
+            // Track the insertion so a frame revert evicts it: a stale entry
+            // would serve a later read of the same hash from the cache,
+            // hiding the store read from execution-witness recording.
+            self.current_call_frame
+                .call_frame_backup
+                .inserted_code_hashes
+                .push(code_hash);
+        }
         Ok(())
     }
 
@@ -683,6 +995,7 @@ impl<'a> VM<'a> {
         key: H256,
     ) -> Result<(U256, U256, bool), InternalError> {
         let storage_slot_was_cold = self.substate.add_accessed_slot(address, key);
+        // SSTORE pre-image flows transitively through get_storage_value, which consults lazy_bal.
         let current_value = self.get_storage_value(address, key)?;
         let original_value = match self
             .storage_original_values
@@ -723,6 +1036,53 @@ impl<'a> VM<'a> {
         } else {
             // When requesting storage of an account we should've previously requested and cached the account
             return Err(InternalError::AccountNotFound);
+        }
+
+        // Lazy-BAL hook: copy result out BEFORE taking &mut on current_accounts_state
+        // so the immutable borrow of lazy_bal is released before the mutable reborrow.
+        #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+        let bal_hit: Option<U256> = self.db.lazy_bal.as_ref().and_then(|cursor| {
+            debug_assert!(
+                cursor.bal_index >= 1,
+                "LazyBalCursor bal_index must be >= 1"
+            );
+            let max_idx = cursor.bal_index.saturating_sub(1);
+            let &acct_idx = cursor.index.addr_to_idx.get(&address)?;
+            seed_one_storage_slot_from_bal(&cursor.bal, &cursor.index, acct_idx, key, max_idx)
+        });
+        #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+        if let Some(value) = bal_hit {
+            let account = self
+                .db
+                .current_accounts_state
+                .get_mut(&address)
+                .ok_or(InternalError::AccountNotFound)?;
+            account.storage.insert(key, value);
+            return Ok(value);
+        }
+
+        // Resolve against `initial_accounts_state` before the store. With the info-only clone in
+        // `load_account`, `current.storage` starts empty on a re-fault, but `initial` holds this
+        // slot's committed in-block value (from the per-flush drain-back) — whereas `self.store`
+        // only has the stale pre-block value (in-block writes go to the merkleizer, never back to
+        // the store). Reading `initial` first returns the committed value and keeps the slot in
+        // `initial` (the diff baseline), so the invariant "every key in `current.storage` is also
+        // in `initial.storage`" is preserved. `.copied()` releases the immutable borrow before
+        // the mutable one below.
+        if let Some(value) = self
+            .db
+            .initial_accounts_state
+            .get(&address)
+            .and_then(|account| account.storage.get(&key))
+            .copied()
+        {
+            let account = self
+                .db
+                .current_accounts_state
+                .get_mut(&address)
+                .ok_or(InternalError::AccountNotFound)?;
+            account.storage.insert(key, value);
+            return Ok(value);
         }
 
         let value = self.db.get_value_from_database(address, key)?;

@@ -75,6 +75,7 @@ pub mod gas_cost;
 pub mod hooks;
 pub mod memory;
 pub mod opcode_handlers;
+pub mod opcode_tracer;
 pub mod opcodes;
 pub mod precompiles;
 pub mod tracing;
