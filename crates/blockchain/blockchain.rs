@@ -807,6 +807,17 @@ impl Blockchain {
                                     prepared,
                                     parent_header_ref,
                                 )?;
+                                // The merkleizer builds the trie from the BAL-synthesized
+                                // updates and ignores the streaming channel. But sequential
+                                // execution (`!bal_parallel_exec_enabled`) still streams per-tx
+                                // updates over `rx_for_merkle`; if we drop the receiver before
+                                // the executor's last send, that send fails with "sending on a
+                                // closed channel", racing the real validation error. Drain the
+                                // channel (the updates are redundant here — the BAL path is
+                                // authoritative) so the executor always completes cleanly.
+                                if let Some(rx) = rx_for_merkle {
+                                    for _ in rx {}
+                                }
                                 (list, None)
                             } else {
                                 self.handle_merkleization(
