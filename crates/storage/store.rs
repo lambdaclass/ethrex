@@ -1893,6 +1893,21 @@ impl Store {
                             last_flush_result = flushed;
                         }
                     }
+                    Ok(PersistMessage::Commit(root)) => match persist_trie_cache.read() {
+                        Ok(guard) => {
+                            let trie = guard.clone();
+                            drop(guard);
+                            let _ = commit_to_disk(
+                                persist_backend.as_ref(),
+                                &persist_fkv_ctl,
+                                &persist_trie_cache,
+                                &trie,
+                                root,
+                            )
+                            .inspect_err(|err| error!("commit_to_disk failed: {err}"));
+                        }
+                        Err(_) => error!("trie cache lock poisoned during commit"),
+                    },
                     Ok(PersistMessage::Ping(ack)) => {
                         // Idle handshake: reached only after all earlier Block
                         // messages are fully processed. Carry the pending flush
@@ -2687,25 +2702,35 @@ impl Store {
         // No `latest_block_header` rollback on error here (unlike the `inner` failure above): the
         // only error is a poisoned safe-commit `RwLock`, which is an unrecoverable process state.
         if let Some(root) = self.compute_safe_commit_root(head_number)? {
-            self.set_safe_commit_root(root)?;
+            // Advancing the cell alone does not flush: the commit step (Phase 2) only runs
+            // while blocks execute, so an execute-all-then-one-forkchoice flow (e.g. block
+            // import) would accumulate every layer and never persist. When the safe-commit
+            // root advances, poke the worker to flush the now-committable backlog up to it.
+            if self.set_safe_commit_root(root)? {
+                let tx = self.persist_tx.clone();
+                let _ = tokio::task::spawn_blocking(move || tx.send(PersistMessage::Commit(root)))
+                    .await;
+            }
         }
 
         Ok(())
     }
 
-    /// Updates the dedicated safe-commit-root cell with the given state root.
+    /// Updates the dedicated safe-commit-root cell with the given state root,
+    /// returning `true` if the cell changed (so callers can skip a redundant flush).
     ///
     /// This is a plain synchronous function; it touches only the dedicated cell
     /// and is disjoint from the trie-cache Arc (no cache clone or replacement).
     /// Crate-private: only `forkchoice_update` (post-canonicalization) may set it,
     /// preserving the invariant that the cell only ever holds a canonical state root.
-    pub(crate) fn set_safe_commit_root(&self, root: H256) -> Result<(), StoreError> {
+    pub(crate) fn set_safe_commit_root(&self, root: H256) -> Result<bool, StoreError> {
         let mut guard = self
             .safe_commit_root
             .write()
             .map_err(|_| StoreError::LockError)?;
+        let changed = *guard != root;
         *guard = root;
-        Ok(())
+        Ok(changed)
     }
 
     /// Computes the canonical safe-commit state root: the state root of the canonical block
@@ -3478,6 +3503,12 @@ struct BlockPersist {
 /// all earlier `Block` messages are fully processed.
 enum PersistMessage {
     Block(BlockPersist),
+    /// Flush the committable layer backlog up to and including this state root, then
+    /// prune the flushed layers. Sent by `forkchoice_update` when the safe-commit root
+    /// advances: the commit step otherwise only runs while blocks execute, so an
+    /// execute-all-then-one-forkchoice flow (e.g. block import) would accumulate every
+    /// layer and never persist anything to disk.
+    Commit(H256),
     Ping(std::sync::mpsc::SyncSender<Result<(), StoreError>>),
 }
 
@@ -3664,18 +3695,36 @@ fn commit_trie_if_due(
         .read()
         .map_err(|_| StoreError::LockError)?
         .clone();
-    // Phase 2: update disk layer.
-    let commitable = trie.get_commitable(parent_state_root);
-    let Some(root) = commitable else {
+    // Phase 2 + 3: flush and prune the committable backlog.
+    let Some(root) = trie.get_commitable(parent_state_root) else {
         // Nothing to commit to disk, move on.
         return Ok(());
     };
+    commit_to_disk(backend, fkv_ctl, trie_cache, &trie, root)
+}
+
+/// Flush the layer at `root` and all older ancestors to disk, then prune them from the
+/// in-memory cache (Phases 2 and 3 of the persistence pipeline).
+///
+/// `trie` must be the current cache snapshot and `root` a committable layer (as returned
+/// by [`TrieLayerCache::get_commitable`]). A `root` that is not a layer commits nothing.
+///
+/// Reused by both the per-block path ([`commit_trie_if_due`]) and the forkchoice-driven
+/// flush ([`PersistMessage::Commit`]): without the latter, an execute-all-then-one-forkchoice
+/// flow (block import) would never persist, because the commit step only runs while blocks execute.
+fn commit_to_disk(
+    backend: &dyn StorageBackend,
+    fkv_ctl: &SyncSender<FKVGeneratorControlMessage>,
+    trie_cache: &Arc<RwLock<Arc<TrieLayerCache>>>,
+    trie: &Arc<TrieLayerCache>,
+    root: H256,
+) -> Result<(), StoreError> {
     // Stop the flat-key-value generator thread, as the underlying trie is about to change.
     // Ignore the error, if the channel is closed it means there is no worker to notify.
     let _ = fkv_ctl.send(FKVGeneratorControlMessage::Stop);
 
     // RCU to remove the bottom layer: update step needs to happen after disk layer is updated.
-    let mut trie_mut = (*trie).clone();
+    let mut trie_mut = (**trie).clone();
 
     let last_written = backend
         .begin_read()?
