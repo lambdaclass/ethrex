@@ -263,7 +263,7 @@ pub struct Options {
         value_delimiter = ',',
         value_parser = utils::parse_http_namespace,
         help = "Comma-separated JSON-RPC namespaces enabled over HTTP/WS.",
-        long_help = "Comma-separated list of JSON-RPC namespaces exposed on the public HTTP and WebSocket endpoints. Defaults to `eth,net,web3`. Enable `admin`, `debug` or `txpool` only when needed; the `engine` namespace is served on the authenticated RPC port and cannot be toggled here.",
+        long_help = "Comma-separated list of JSON-RPC namespaces exposed on the public HTTP and WebSocket endpoints. Defaults to `eth,net,web3`. Enable `admin`, `debug`, `txpool` or `testing` only when needed; the `engine` namespace is served on the authenticated RPC port and cannot be toggled here.",
         help_heading = "RPC options",
         env = "ETHREX_HTTP_API"
     )]
@@ -1325,6 +1325,15 @@ mod tests {
         assert_eq!(
             cli.opts.http_api,
             vec![RpcNamespace::Eth, RpcNamespace::Debug, RpcNamespace::Admin]
+        );
+    }
+
+    #[test]
+    fn http_api_parses_testing_namespace() {
+        let cli = CLI::parse_from(["ethrex", "--http.api", "eth,testing"]);
+        assert_eq!(
+            cli.opts.http_api,
+            vec![RpcNamespace::Eth, RpcNamespace::Testing]
         );
     }
 

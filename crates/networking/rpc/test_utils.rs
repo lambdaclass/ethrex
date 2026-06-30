@@ -311,6 +311,7 @@ pub fn all_namespaces_for_tests() -> HashSet<RpcNamespace> {
         RpcNamespace::Debug,
         RpcNamespace::Admin,
         RpcNamespace::Mempool,
+        RpcNamespace::Testing,
     ])
 }
 
