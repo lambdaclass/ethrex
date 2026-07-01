@@ -3043,9 +3043,15 @@ impl Blockchain {
             }
         };
 
+        // Compute the new tx's cost once and reuse for both the single-tx
+        // balance check and the cumulative-balance check below.
+        let tx_cost = tx
+            .cost_without_base_fee()
+            .ok_or(MempoolError::InvalidTxGasvalues)?;
+
         let maybe_sender_acc_info = self.storage.get_account_info(header_no, sender).await?;
 
-        if let Some(sender_acc_info) = maybe_sender_acc_info {
+        let sender_balance = if let Some(sender_acc_info) = maybe_sender_acc_info {
             if nonce < sender_acc_info.nonce || nonce == u64::MAX {
                 return Err(MempoolError::NonceTooLow);
             }
@@ -3089,21 +3095,42 @@ impl Blockchain {
                 }
             }
 
-            let tx_cost = tx
-                .cost_without_base_fee()
-                .ok_or(MempoolError::InvalidTxGasvalues)?;
-
             if tx_cost > sender_acc_info.balance {
                 return Err(MempoolError::NotEnoughBalance);
             }
+
+            sender_acc_info.balance
         } else {
             // An account that is not in the database cannot possibly have enough balance to cover the transaction cost
             return Err(MempoolError::NotEnoughBalance);
-        }
+        };
 
         // Check the nonce of pendings TXs in the mempool from the same sender
         // If it exists check if the new tx has higher fees
         let tx_to_replace_hash = self.mempool.find_tx_to_replace(sender, nonce, tx)?;
+
+        // Cumulative balance check across this sender's pending transactions.
+        // Without this, a sender at the per-sender slot cap can have only one
+        // of their N pending txs be fundable, with the other N-1 being
+        // guaranteed-fail spam wasting pool space.
+        //
+        // `sum_cost_for_sender` recomputes the sender total excluding the
+        // tx being replaced (instead of subtracting after the fact) so a
+        // `None`-cost or missing tx can't silently zero the total via
+        // `MAX - MAX = 0`. It also fails closed on any inconsistency so the
+        // gate can't be bypassed by an invariant violation.
+        let existing_cost = self
+            .mempool
+            .sum_cost_for_sender(sender, tx_to_replace_hash)?;
+        let total = existing_cost
+            .checked_add(tx_cost)
+            .ok_or(MempoolError::InvalidTxGasvalues)?;
+        if total > sender_balance {
+            return Err(MempoolError::InsufficientCumulativeBalance {
+                required: total,
+                available: sender_balance,
+            });
+        }
 
         if tx
             .chain_id()
