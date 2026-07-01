@@ -338,6 +338,7 @@ mod tests {
                 H256::random(),
                 address,
                 MempoolTransaction::new(tx, address),
+                usize::MAX,
             )
             .unwrap();
     }

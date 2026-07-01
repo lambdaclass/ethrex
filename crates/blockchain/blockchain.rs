@@ -246,6 +246,10 @@ pub struct BlockchainOptions {
     /// warmer thread and the executor. Set to false (via `--no-precompile-cache`) to
     /// disable the cache for benchmarking purposes.
     pub precompile_cache_enabled: bool,
+    /// Maximum number of pending transactions a single sender may hold in
+    /// the mempool. A replacement at an existing `(sender, nonce)` bypasses
+    /// this check.
+    pub max_pending_txs_per_account: usize,
     /// If true (default), Amsterdam+ validation runs transactions in parallel
     /// using the header BAL to seed per-tx databases. Set to false (via
     /// `--no-bal-parallel-exec`) to fall back to sequential execution.
@@ -270,12 +274,16 @@ impl Default for BlockchainOptions {
             max_blobs_per_block: None,
             precompute_witnesses: false,
             precompile_cache_enabled: true,
+            max_pending_txs_per_account: DEFAULT_MAX_PENDING_TXS_PER_ACCOUNT,
             bal_parallel_exec_enabled: true,
             bal_prefetch_enabled: true,
             bal_parallel_trie_enabled: true,
         }
     }
 }
+
+/// Default per-account pending-tx cap.
+pub const DEFAULT_MAX_PENDING_TXS_PER_ACCOUNT: usize = 16;
 
 #[derive(Debug, Clone)]
 pub struct BatchBlockProcessingFailure {
@@ -2828,8 +2836,12 @@ impl Blockchain {
         // Add blobs bundle before the transaction so that when add_transaction
         // notifies payload builders the blob data is already available.
         self.mempool.add_blobs_bundle(hash, blobs_bundle)?;
-        self.mempool
-            .add_transaction(hash, sender, MempoolTransaction::new(transaction, sender))?;
+        self.mempool.add_transaction(
+            hash,
+            sender,
+            MempoolTransaction::new(transaction, sender),
+            self.options.max_pending_txs_per_account,
+        )?;
         Ok(hash)
     }
 
@@ -2865,8 +2877,12 @@ impl Blockchain {
         }
 
         // Add transaction to storage
-        self.mempool
-            .add_transaction(hash, sender, MempoolTransaction::new(transaction, sender))?;
+        self.mempool.add_transaction(
+            hash,
+            sender,
+            MempoolTransaction::new(transaction, sender),
+            self.options.max_pending_txs_per_account,
+        )?;
 
         Ok(hash)
     }
@@ -3111,6 +3127,14 @@ impl Blockchain {
         {
             return Err(MempoolError::InvalidChainId(config.chain_id));
         }
+
+        // The per-account pending-tx cap is enforced atomically inside
+        // `Mempool::add_transaction` (under the same write lock as the
+        // insertion) so concurrent submissions can't both pass a stale
+        // count check and race past the limit. Replacement candidates
+        // bypass it implicitly: the caller removes the old tx before
+        // `add_transaction` runs, so the post-removal count is one
+        // below the cap and the new insertion stays within it.
 
         Ok(tx_to_replace_hash)
     }

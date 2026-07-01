@@ -143,6 +143,15 @@ impl MempoolInner {
         self.blobs_bundle_pool.len()
     }
 
+    /// Number of pending transactions held for `sender`. Lock-free: the caller
+    /// must already hold the appropriate guard. Shared by the public
+    /// `Mempool::count_for_sender` and the in-lock per-sender cap check.
+    fn count_for_sender(&self, sender: Address) -> usize {
+        self.txs_by_sender_nonce
+            .range((sender, 0)..=(sender, u64::MAX))
+            .count()
+    }
+
     /// Number of non-blob txs currently in the pool.
     fn regular_tx_count(&self) -> usize {
         // `saturating_sub`: a blob bundle is inserted before its tx (see
@@ -282,14 +291,31 @@ impl Mempool {
             .map_err(|error| StoreError::MempoolReadLock(error.to_string()))
     }
 
-    /// Add transaction to the pool without doing validity checks
+    /// Add transaction to the pool without doing validity checks.
+    ///
+    /// Enforces the per-sender pending-tx cap atomically: the count is
+    /// re-checked under the same write lock that performs the insertion.
+    /// Replacement candidates (same `(sender, nonce)`) must have already
+    /// been removed via `remove_transaction` so this counter reflects the
+    /// post-replacement state. Returns
+    /// [`MempoolError::MaxPendingTxsPerAccountExceeded`] if the cap would
+    /// be exceeded.
     pub fn add_transaction(
         &self,
         hash: H256,
         sender: Address,
         transaction: MempoolTransaction,
-    ) -> Result<(), StoreError> {
+        max_pending_txs_per_account: usize,
+    ) -> Result<(), MempoolError> {
         let mut inner = self.write()?;
+        let count = inner.count_for_sender(sender);
+        if count >= max_pending_txs_per_account {
+            return Err(MempoolError::MaxPendingTxsPerAccountExceeded {
+                sender,
+                count,
+                limit: max_pending_txs_per_account,
+            });
+        }
         let is_blob = matches!(transaction.tx_type(), TxType::EIP4844);
         // Prune the regular order queue if it has grown too much
         if inner.txs_order.len() > inner.mempool_prune_threshold {
@@ -712,6 +738,12 @@ impl Mempool {
         Ok(contains)
     }
 
+    /// Returns the number of pending transactions currently held in the
+    /// mempool for `sender`. Used by the per-sender slot cap at admission.
+    pub fn count_for_sender(&self, sender: Address) -> Result<usize, MempoolError> {
+        Ok(self.read()?.count_for_sender(sender))
+    }
+
     pub fn find_tx_to_replace(
         &self,
         sender: Address,
@@ -811,4 +843,125 @@ pub fn transaction_intrinsic_gas(
         0
     };
     Ok(intrinsic.max(calldata_floor))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ethrex_common::types::EIP1559Transaction;
+
+    fn build_tx(nonce: u64) -> Transaction {
+        Transaction::EIP1559Transaction(EIP1559Transaction {
+            nonce,
+            ..Default::default()
+        })
+    }
+
+    fn add_tx(pool: &Mempool, sender: Address, nonce: u64) -> H256 {
+        let tx = build_tx(nonce);
+        let mtx = MempoolTransaction::new(tx, sender);
+        let hash = mtx.hash(&NativeCrypto);
+        pool.add_transaction(hash, sender, mtx, usize::MAX).unwrap();
+        hash
+    }
+
+    #[test]
+    fn count_for_sender_empty_pool() {
+        let pool = Mempool::new(64);
+        let sender = Address::from_low_u64_be(1);
+        assert_eq!(pool.count_for_sender(sender).unwrap(), 0);
+    }
+
+    #[test]
+    fn count_for_sender_one_tx() {
+        let pool = Mempool::new(64);
+        let sender = Address::from_low_u64_be(1);
+        add_tx(&pool, sender, 0);
+        assert_eq!(pool.count_for_sender(sender).unwrap(), 1);
+    }
+
+    #[test]
+    fn count_for_sender_many_nonces() {
+        let pool = Mempool::new(64);
+        let sender = Address::from_low_u64_be(1);
+        for nonce in 0..5 {
+            add_tx(&pool, sender, nonce);
+        }
+        assert_eq!(pool.count_for_sender(sender).unwrap(), 5);
+    }
+
+    #[test]
+    fn count_for_sender_isolates_senders() {
+        let pool = Mempool::new(64);
+        let a = Address::from_low_u64_be(1);
+        let b = Address::from_low_u64_be(2);
+        add_tx(&pool, a, 0);
+        add_tx(&pool, a, 1);
+        add_tx(&pool, b, 0);
+        assert_eq!(pool.count_for_sender(a).unwrap(), 2);
+        assert_eq!(pool.count_for_sender(b).unwrap(), 1);
+    }
+
+    #[test]
+    fn count_for_sender_unknown_returns_zero() {
+        let pool = Mempool::new(64);
+        let a = Address::from_low_u64_be(1);
+        let b = Address::from_low_u64_be(2);
+        add_tx(&pool, a, 0);
+        assert_eq!(pool.count_for_sender(b).unwrap(), 0);
+    }
+
+    /// Adds a tx for `sender` at `nonce` with an explicit per-account cap.
+    fn add_tx_capped(
+        pool: &Mempool,
+        sender: Address,
+        nonce: u64,
+        cap: usize,
+    ) -> Result<H256, MempoolError> {
+        let mtx = MempoolTransaction::new(build_tx(nonce), sender);
+        let hash = mtx.hash(&NativeCrypto);
+        pool.add_transaction(hash, sender, mtx, cap).map(|()| hash)
+    }
+
+    #[test]
+    fn add_transaction_rejects_at_per_sender_cap() {
+        let pool = Mempool::new(64);
+        let sender = Address::from_low_u64_be(1);
+        let cap = 3;
+        // Fill exactly to the cap (nonces 0..3); all must succeed.
+        for nonce in 0..cap as u64 {
+            add_tx_capped(&pool, sender, nonce, cap).expect("under cap");
+        }
+        // The next distinct nonce exceeds the cap and must be rejected.
+        let err = add_tx_capped(&pool, sender, cap as u64, cap).unwrap_err();
+        assert!(
+            matches!(
+                err,
+                MempoolError::MaxPendingTxsPerAccountExceeded { count, limit, .. }
+                    if count == cap && limit == cap
+            ),
+            "expected MaxPendingTxsPerAccountExceeded(count=cap, limit=cap), got {err:?}"
+        );
+        assert_eq!(pool.count_for_sender(sender).unwrap(), cap);
+    }
+
+    #[test]
+    fn add_transaction_cap_frees_a_slot_after_removal() {
+        // Mirrors the replacement path: the caller removes the existing tx
+        // before re-adding, so a sender at the cap can still admit once a slot
+        // is freed (the bypass the cap check relies on).
+        let pool = Mempool::new(64);
+        let sender = Address::from_low_u64_be(1);
+        let cap = 3;
+        let mut hashes = Vec::new();
+        for nonce in 0..cap as u64 {
+            hashes.push(add_tx_capped(&pool, sender, nonce, cap).expect("under cap"));
+        }
+        // At the cap: a fresh nonce is rejected.
+        assert!(add_tx_capped(&pool, sender, 99, cap).is_err());
+        // Free a slot, then the same add succeeds.
+        pool.remove_transaction(&hashes[0]).unwrap();
+        add_tx_capped(&pool, sender, 99, cap).expect("slot freed");
+        assert_eq!(pool.count_for_sender(sender).unwrap(), cap);
+    }
 }

@@ -10,7 +10,7 @@ use std::{
 
 use clap::{ArgAction, Parser as ClapParser, Subcommand as ClapSubcommand};
 use ethrex_blockchain::{
-    BlockchainOptions, BlockchainType, L2Config,
+    BlockchainOptions, BlockchainType, DEFAULT_MAX_PENDING_TXS_PER_ACCOUNT, L2Config,
     error::{ChainError, InvalidBlockError},
 };
 use ethrex_common::types::{Block, DEFAULT_BUILDER_GAS_CEIL, Genesis, validate_block_body};
@@ -237,6 +237,15 @@ pub struct Options {
         env = "ETHREX_MEMPOOL_MAX_SIZE"
     )]
     pub mempool_max_size: usize,
+    #[arg(
+        help = "Maximum number of pending transactions a single sender may hold in the mempool. Replacements at an existing (sender, nonce) bypass this cap.",
+        long = "mempool.max-pending-txs-per-account",
+        default_value_t = DEFAULT_MAX_PENDING_TXS_PER_ACCOUNT,
+        value_name = "MAX_PENDING_TXS_PER_ACCOUNT",
+        help_heading = "Node options",
+        env = "ETHREX_MEMPOOL_MAX_PENDING_TXS_PER_ACCOUNT"
+    )]
+    pub mempool_max_pending_txs_per_account: usize,
     #[arg(
         long = "http.addr",
         default_value = "127.0.0.1",
@@ -519,6 +528,7 @@ impl Default for Options {
             dev: Default::default(),
             force: false,
             mempool_max_size: Default::default(),
+            mempool_max_pending_txs_per_account: DEFAULT_MAX_PENDING_TXS_PER_ACCOUNT,
             tx_broadcasting_time_interval: Default::default(),
             target_peers: Default::default(),
             lookup_interval: Default::default(),

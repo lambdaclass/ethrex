@@ -1,5 +1,5 @@
 use ethrex_common::{
-    H256,
+    Address, H256,
     types::{BlobsBundleError, BlockHash},
 };
 use ethrex_rlp::error::RLPDecodeError;
@@ -83,6 +83,14 @@ pub enum MempoolError {
     TxMaxInitCodeSizeError,
     #[error("Transaction encoded size ({actual} bytes) exceeds the {limit}-byte limit")]
     TxSizeExceeded { actual: usize, limit: usize },
+    #[error(
+        "Sender {sender:#x} has {count} pending transactions (per-account cap {limit}); rejecting new transaction"
+    )]
+    MaxPendingTxsPerAccountExceeded {
+        sender: Address,
+        count: usize,
+        limit: usize,
+    },
     #[error("Transaction sender is a contract account (EIP-3607)")]
     SenderIsContract,
     #[error("Transaction gas limit exceeded")]

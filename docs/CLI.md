@@ -111,6 +111,12 @@ Node options:
           [env: ETHREX_MEMPOOL_MAX_SIZE=]
           [default: 10000]
 
+      --mempool.max-pending-txs-per-account <MAX_PENDING_TXS_PER_ACCOUNT>
+          Maximum number of pending transactions a single sender may hold in the mempool. Replacements at an existing (sender, nonce) bypass this cap.
+
+          [env: ETHREX_MEMPOOL_MAX_PENDING_TXS_PER_ACCOUNT=]
+          [default: 16]
+
       --precompute-witnesses
           Once synced, computes execution witnesses upon receiving newPayload messages and stores them in local storage
           
