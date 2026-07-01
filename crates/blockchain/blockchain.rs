@@ -4179,68 +4179,6 @@ fn collect_trie(index: u8, mut trie: Trie) -> Result<(Box<BranchNode>, Vec<TrieN
     Ok((root, nodes))
 }
 
-#[cfg(test)]
-mod p2p_serve_tests {
-    use super::*;
-    use ethrex_common::types::{
-        FRAME_SIG_SCHEME_SECP256K1, Frame, FrameMode, FrameSignature, FrameTransaction,
-    };
-    use ethrex_storage::{EngineType, Store};
-
-    fn make_frame_tx() -> FrameTransaction {
-        FrameTransaction {
-            chain_id: 1,
-            nonce: 7,
-            sender: Address::from_low_u64_be(0xABCD),
-            frames: vec![Frame {
-                mode: FrameMode::Sender as u8,
-                flags: 0x00,
-                target: Some(Address::from_low_u64_be(0x1234)),
-                gas_limit: 100_000,
-                value: U256::zero(),
-                data: bytes::Bytes::from_static(b"call_data"),
-            }],
-            signatures: vec![FrameSignature {
-                scheme: FRAME_SIG_SCHEME_SECP256K1,
-                signer: Address::from_low_u64_be(0xABCD),
-                msg: bytes::Bytes::new(),
-                signature: bytes::Bytes::from(vec![0u8; 65]),
-            }],
-            max_priority_fee_per_gas: 1_000_000_000,
-            max_fee_per_gas: 30_000_000_000,
-            max_fee_per_blob_gas: U256::zero(),
-            blob_versioned_hashes: vec![],
-            ..Default::default()
-        }
-    }
-
-    // A pooled frame transaction (EIP-8141) must be served over P2P as a
-    // `P2PTransaction::FrameTransaction` instead of being rejected.
-    #[test]
-    fn get_p2p_transaction_by_hash_serves_frame_tx() {
-        let store = Store::new("", EngineType::InMemory).expect("failed to create in-memory store");
-        let blockchain = Blockchain::default_with_store(store);
-
-        let ftx = make_frame_tx();
-        let tx = Transaction::FrameTransaction(ftx);
-        let sender = Address::from_low_u64_be(0xABCD);
-        let hash = tx.hash();
-
-        // Insert directly into the mempool (bypassing validation) so we
-        // exercise only the P2P serve path.
-        blockchain
-            .mempool
-            .add_transaction(hash, sender, MempoolTransaction::new(tx, sender), None)
-            .expect("failed to add frame tx to mempool");
-
-        let served = blockchain
-            .get_p2p_transaction_by_hash(&hash)
-            .expect("frame tx should be served over P2P");
-        assert!(matches!(served, P2PTransaction::FrameTransaction(_)));
-        assert_eq!(served.compute_hash(), hash);
-    }
-}
-
 /// Serial reference computation of an account's storage root + node diff,
 /// identical to the per-account Stage B path. Used as a fallback for the
 /// degenerate sharding cases (see `compute_sharded_storage_root`) where the

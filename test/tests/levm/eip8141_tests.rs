@@ -2590,3 +2590,518 @@ mod frame_validation_prefix_tests {
         assert_eq!(outcome.accessed_paymaster, Some((sender, false)));
     }
 }
+
+// ==================== Relocated from crates/vm/levm/src/vm.rs ====================
+// Frame-batch, approval-rollback, and frame-signature unit tests (EIP-8141).
+// Exercise crate-public levm internals; kept here per the repo test-location rule.
+
+mod atomic_batch_end_tests {
+    use ethrex_common::types::Frame;
+    use ethrex_levm::vm::find_batch_end;
+
+    fn frame(flags: u8, mode: u8) -> Frame {
+        Frame {
+            mode,
+            flags,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn batch_end_is_first_unflagged_frame_any_mode() {
+        // [SENDER+flag, DEFAULT no-flag, SENDER no-flag]: the pre-8b61fdc4
+        // SENDER-only finder would skip past the DEFAULT terminator to index
+        // 2; the spec says the batch ends at index 1.
+        let frames = vec![frame(0x04, 2), frame(0x00, 0), frame(0x00, 2)];
+        assert_eq!(find_batch_end(&frames, 0), 1);
+    }
+
+    #[test]
+    fn batch_end_spans_consecutive_flagged_frames() {
+        let frames = vec![frame(0x04, 2), frame(0x04, 0), frame(0x00, 2)];
+        assert_eq!(find_batch_end(&frames, 0), 2);
+        assert_eq!(find_batch_end(&frames, 1), 2);
+    }
+
+    #[test]
+    fn failing_terminator_frame_is_its_own_end() {
+        // The failing frame is the unflagged terminator: nothing to skip.
+        let frames = vec![frame(0x04, 2), frame(0x00, 2)];
+        assert_eq!(find_batch_end(&frames, 1), 1);
+    }
+
+    #[test]
+    fn verify_frame_terminates_batch() {
+        // [DEFAULT+flag, VERIFY no-flag (scope bits only), SENDER no-flag]
+        let frames = vec![frame(0x04, 0), frame(0x01, 1), frame(0x00, 2)];
+        assert_eq!(find_batch_end(&frames, 0), 1);
+    }
+}
+
+mod atomic_batch_approval_rollback_tests {
+    use ethrex_common::Address;
+    use ethrex_levm::vm::FrameTxContext;
+
+    fn minimal_ctx() -> FrameTxContext {
+        FrameTxContext {
+            sender_approved: false,
+            payer_address: None,
+            frame_results: Vec::new(),
+            current_frame_index: 0,
+            sig_hash: ethrex_common::H256::zero(),
+            tx: ethrex_common::types::FrameTransaction::default(),
+            approve_called_in_current_frame: false,
+            total_gas_limit: 0,
+        }
+    }
+
+    #[test]
+    fn batch_revert_rolls_back_in_batch_approvals() {
+        let mut ctx = minimal_ctx();
+        // execute_frame_tx snapshots at batch entry...
+        let snapshot = ctx.approval_snapshot();
+        // ...an in-batch frame calls APPROVE(EXECUTION_AND_PAYMENT)...
+        ctx.sender_approved = true;
+        ctx.payer_address = Some(Address::from_low_u64_be(0xBEEF));
+        // ...a later in-batch frame fails and the batch reverts:
+        ctx.restore_approvals(snapshot);
+        assert!(
+            !ctx.sender_approved,
+            "in-batch sender approval must not survive batch revert"
+        );
+        assert!(
+            ctx.payer_address.is_none(),
+            "in-batch payer approval must not survive batch revert"
+        );
+    }
+
+    #[test]
+    fn pre_batch_approvals_survive_batch_revert() {
+        let mut ctx = minimal_ctx();
+        // Approval granted by a frame BEFORE the batch:
+        ctx.sender_approved = true;
+        ctx.payer_address = Some(Address::from_low_u64_be(0xA11CE));
+        let snapshot = ctx.approval_snapshot();
+        // In-batch frame does something; batch reverts:
+        ctx.restore_approvals(snapshot);
+        assert!(
+            ctx.sender_approved,
+            "pre-batch sender approval must survive"
+        );
+        assert_eq!(ctx.payer_address, Some(Address::from_low_u64_be(0xA11CE)));
+    }
+}
+
+mod frame_sig_validation_tests {
+    use bytes::Bytes;
+    use ethrex_common::types::Fork;
+    use ethrex_common::{
+        Address, H256,
+        types::{FRAME_SIG_SCHEME_P256, FRAME_SIG_SCHEME_SECP256K1, FrameSignature},
+    };
+    use ethrex_levm::vm::{frame_signatures_are_low_s, validate_frame_signatures};
+
+    fn hegota() -> Fork {
+        Fork::Hegota
+    }
+
+    fn dummy_sig(scheme: u8, sig_len: usize) -> FrameSignature {
+        FrameSignature {
+            scheme,
+            signer: Address::from_low_u64_be(0xBEEF),
+            msg: Bytes::new(),
+            signature: Bytes::from(vec![0u8; sig_len]),
+        }
+    }
+
+    // secp256k1 n/2 and P-256 n/2 (big-endian 32-byte), and each value + 1.
+    const SECP_N_HALF: [u8; 32] = [
+        0x7f, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+        0xff, 0x5d, 0x57, 0x6e, 0x73, 0x57, 0xa4, 0x50, 0x1d, 0xdf, 0xe9, 0x2f, 0x46, 0x68, 0x1b,
+        0x20, 0xa0,
+    ];
+    const SECP_N_HALF_PLUS_1: [u8; 32] = [
+        0x7f, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+        0xff, 0x5d, 0x57, 0x6e, 0x73, 0x57, 0xa4, 0x50, 0x1d, 0xdf, 0xe9, 0x2f, 0x46, 0x68, 0x1b,
+        0x20, 0xa1,
+    ];
+    const P256_N_HALF: [u8; 32] = [
+        0x7f, 0xff, 0xff, 0xff, 0x80, 0x00, 0x00, 0x00, 0x7f, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+        0xff, 0xde, 0x73, 0x7d, 0x56, 0xd3, 0x8b, 0xcf, 0x42, 0x79, 0xdc, 0xe5, 0x61, 0x7e, 0x31,
+        0x92, 0xa8,
+    ];
+    const P256_N_HALF_PLUS_1: [u8; 32] = [
+        0x7f, 0xff, 0xff, 0xff, 0x80, 0x00, 0x00, 0x00, 0x7f, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+        0xff, 0xde, 0x73, 0x7d, 0x56, 0xd3, 0x8b, 0xcf, 0x42, 0x79, 0xdc, 0xe5, 0x61, 0x7e, 0x31,
+        0x92, 0xa9,
+    ];
+
+    fn secp_sig_with_s(s: &[u8; 32]) -> FrameSignature {
+        // [v(1) | r(32) | s(32)]
+        let mut bytes = vec![0u8; 65];
+        bytes[33..65].copy_from_slice(s);
+        FrameSignature {
+            scheme: FRAME_SIG_SCHEME_SECP256K1,
+            signer: Address::from_low_u64_be(0xBEEF),
+            msg: Bytes::new(),
+            signature: Bytes::from(bytes),
+        }
+    }
+
+    fn p256_sig_with_s(s: &[u8; 32]) -> FrameSignature {
+        // [r(32) | s(32) | qx(32) | qy(32)]
+        let mut bytes = vec![0u8; 128];
+        bytes[32..64].copy_from_slice(s);
+        FrameSignature {
+            scheme: FRAME_SIG_SCHEME_P256,
+            signer: Address::from_low_u64_be(0xBEEF),
+            msg: Bytes::new(),
+            signature: Bytes::from(bytes),
+        }
+    }
+
+    #[test]
+    fn low_s_at_exactly_n_half_is_accepted() {
+        // s == n/2 is the largest canonical (low-s) value for both schemes.
+        assert!(frame_signatures_are_low_s(&[secp_sig_with_s(&SECP_N_HALF)]));
+        assert!(frame_signatures_are_low_s(&[p256_sig_with_s(&P256_N_HALF)]));
+    }
+
+    #[test]
+    fn high_s_above_n_half_is_rejected() {
+        assert!(!frame_signatures_are_low_s(&[secp_sig_with_s(
+            &SECP_N_HALF_PLUS_1
+        )]));
+        assert!(!frame_signatures_are_low_s(&[p256_sig_with_s(
+            &P256_N_HALF_PLUS_1
+        )]));
+    }
+
+    #[test]
+    fn empty_signature_list_is_low_s() {
+        assert!(frame_signatures_are_low_s(&[]));
+    }
+
+    #[test]
+    fn malformed_or_unknown_scheme_is_not_low_s() {
+        assert!(!frame_signatures_are_low_s(&[dummy_sig(
+            FRAME_SIG_SCHEME_SECP256K1,
+            10
+        )]));
+        assert!(!frame_signatures_are_low_s(&[dummy_sig(0xFF, 65)]));
+    }
+
+    #[test]
+    fn empty_list_is_valid() {
+        assert!(validate_frame_signatures(
+            &[],
+            H256::zero(),
+            hegota(),
+            &ethrex_crypto::NativeCrypto
+        ));
+    }
+
+    #[test]
+    fn scheme0_wrong_sig_length_is_invalid() {
+        let sig = dummy_sig(FRAME_SIG_SCHEME_SECP256K1, 10);
+        assert!(!validate_frame_signatures(
+            &[sig],
+            H256::zero(),
+            hegota(),
+            &ethrex_crypto::NativeCrypto
+        ));
+    }
+
+    #[test]
+    fn scheme1_wrong_sig_length_is_invalid() {
+        let sig = dummy_sig(FRAME_SIG_SCHEME_P256, 64);
+        assert!(!validate_frame_signatures(
+            &[sig],
+            H256::zero(),
+            hegota(),
+            &ethrex_crypto::NativeCrypto
+        ));
+    }
+
+    #[test]
+    fn unknown_scheme_is_invalid() {
+        let sig = dummy_sig(0xFF, 65);
+        assert!(!validate_frame_signatures(
+            &[sig],
+            H256::zero(),
+            hegota(),
+            &ethrex_crypto::NativeCrypto
+        ));
+    }
+
+    #[test]
+    fn explicit_zero_32byte_msg_is_invalid() {
+        let sig = FrameSignature {
+            scheme: FRAME_SIG_SCHEME_SECP256K1,
+            signer: Address::from_low_u64_be(0xBEEF),
+            msg: Bytes::from(vec![0u8; 32]),
+            signature: Bytes::from(vec![0u8; 65]),
+        };
+        assert!(!validate_frame_signatures(
+            &[sig],
+            H256::zero(),
+            hegota(),
+            &ethrex_crypto::NativeCrypto
+        ));
+    }
+
+    #[test]
+    fn msg_len_not_0_or_32_is_invalid() {
+        let sig = FrameSignature {
+            scheme: FRAME_SIG_SCHEME_SECP256K1,
+            signer: Address::from_low_u64_be(0xBEEF),
+            msg: Bytes::from(vec![0xAAu8; 16]),
+            signature: Bytes::from(vec![0u8; 65]),
+        };
+        assert!(!validate_frame_signatures(
+            &[sig],
+            H256::zero(),
+            hegota(),
+            &ethrex_crypto::NativeCrypto
+        ));
+    }
+
+    #[test]
+    #[expect(
+        clippy::indexing_slicing,
+        reason = "fixed-size buffers with well-known bounds in test code"
+    )]
+    fn secp256k1_positive_and_tampered() {
+        // Build a real secp256k1 signature vector using k256.
+        use k256::ecdsa::SigningKey;
+
+        let pk_hex = "4c0883a69102937d6231471b5dbb6204fe5129617082792ae468d01a3f362318";
+        let pk_bytes: Vec<u8> = (0..pk_hex.len())
+            .step_by(2)
+            .map(|i| u8::from_str_radix(&pk_hex[i..i + 2], 16).unwrap())
+            .collect();
+        let private_key: [u8; 32] = pk_bytes.try_into().unwrap();
+        let signing_key = SigningKey::from_bytes(&private_key.into()).unwrap();
+
+        let msg_hash: H256 = H256::from_low_u64_be(0xDEADBEEF_CAFEBABE);
+
+        let (raw_sig, recovery_id) = signing_key
+            .sign_prehash_recoverable(msg_hash.as_bytes())
+            .unwrap();
+
+        // Derive the expected signer address
+        let uncompressed = signing_key.verifying_key().to_encoded_point(false);
+        let pub_hash = ethrex_crypto::keccak::keccak_hash(&uncompressed.as_bytes()[1..]);
+        let expected_signer = Address::from_slice(&pub_hash[12..]);
+
+        // Build the outer signature: v || r || s  (65 bytes).
+        // EVM ecrecover expects v ∈ {27, 28}, so add 27 to the raw recovery id.
+        let mut sig_bytes = vec![0u8; 65];
+        sig_bytes[0] = 27 + recovery_id.to_byte();
+        sig_bytes[1..33].copy_from_slice(&raw_sig.to_bytes()[..32]); // r
+        sig_bytes[33..65].copy_from_slice(&raw_sig.to_bytes()[32..]); // s
+
+        let valid_sig = FrameSignature {
+            scheme: FRAME_SIG_SCHEME_SECP256K1,
+            signer: expected_signer,
+            msg: Bytes::new(), // empty → use sig_hash
+            signature: Bytes::from(sig_bytes.clone()),
+        };
+
+        // Positive: correct signer → valid
+        assert!(
+            validate_frame_signatures(
+                std::slice::from_ref(&valid_sig),
+                msg_hash,
+                hegota(),
+                &ethrex_crypto::NativeCrypto
+            ),
+            "valid secp256k1 signature should pass"
+        );
+
+        // Tampered signer: wrong address → invalid
+        let wrong_addr = Address::from_low_u64_be(0xDEAD);
+        let tampered = FrameSignature {
+            signer: wrong_addr,
+            ..valid_sig.clone()
+        };
+        assert!(
+            !validate_frame_signatures(
+                &[tampered],
+                msg_hash,
+                hegota(),
+                &ethrex_crypto::NativeCrypto
+            ),
+            "wrong signer should fail"
+        );
+
+        // Wrong hash: valid sig but different sig_hash → invalid
+        let other_hash = H256::from_low_u64_be(0x1234567890ABCDEFu64);
+        assert!(
+            !validate_frame_signatures(
+                &[valid_sig],
+                other_hash,
+                hegota(),
+                &ethrex_crypto::NativeCrypto
+            ),
+            "wrong sig_hash should fail"
+        );
+    }
+
+    #[test]
+    fn p256_wrong_signer_is_invalid() {
+        // Construct a syntactically-128-byte P256 sig with wrong signer address.
+        // The signer derivation check fires before the curve verification.
+        let sig = FrameSignature {
+            scheme: FRAME_SIG_SCHEME_P256,
+            signer: Address::from_low_u64_be(0xDEAD),
+            msg: Bytes::new(),
+            signature: Bytes::from(vec![0xAAu8; 128]),
+        };
+        // keccak(qx||qy)[12..] for all-0xAA will not equal 0xDEAD.
+        assert!(
+            !validate_frame_signatures(
+                &[sig],
+                H256::zero(),
+                hegota(),
+                &ethrex_crypto::NativeCrypto
+            ),
+            "mismatched P256 signer should fail"
+        );
+    }
+
+    #[test]
+    #[expect(
+        clippy::indexing_slicing,
+        reason = "fixed-size buffers with well-known bounds in test code"
+    )]
+    fn p256_positive_and_tampered() {
+        // Regression lock for the EIP-8141 P256 signature validation path
+        // (spec commit fe0940cae2). No external EEST reference vectors exist
+        // yet; these values exercise validate_frame_signatures end-to-end
+        // through P256VERIFY with a real p256-crate signature.
+        //
+        // Path used: live p256::ecdsa signing (p256 0.13.2 has `ecdsa` +
+        // `arithmetic` features enabled in levm's Cargo.toml).
+        use p256::ecdsa::SigningKey;
+        use p256::ecdsa::signature::hazmat::PrehashSigner;
+
+        // Fixed private key — deterministic, no randomness.
+        let pk_bytes: [u8; 32] = [
+            0xc9, 0x11, 0x0e, 0xa2, 0xf8, 0x7f, 0x3c, 0x06, 0x74, 0x1a, 0x4d, 0x35, 0x62, 0xb2,
+            0x11, 0x7d, 0x3e, 0x6a, 0x5c, 0x0b, 0x28, 0x0c, 0x3a, 0x0f, 0x56, 0x2e, 0x38, 0xa7,
+            0x21, 0xb0, 0x98, 0xc4,
+        ];
+        let signing_key = SigningKey::from_bytes(&pk_bytes.into()).unwrap();
+        let verifying_key = signing_key.verifying_key();
+        let encoded = verifying_key.to_encoded_point(false);
+        let encoded_bytes = encoded.as_bytes();
+        // Uncompressed point: 0x04 || qx (32B) || qy (32B)
+        let qx = &encoded_bytes[1..33];
+        let qy = &encoded_bytes[33..65];
+
+        // Fixed 32-byte non-zero digest (explicit msg path — sig_hash arg unused).
+        let digest: [u8; 32] = [
+            0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e,
+            0x0f, 0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1a, 0x1b, 0x1c,
+            0x1d, 0x1e, 0x1f, 0x20,
+        ];
+
+        // sign_prehash is deterministic for p256 with RFC-6979 nonce.
+        let raw_sig: p256::ecdsa::Signature = signing_key.sign_prehash(&digest).unwrap();
+        let sig_bytes_der = raw_sig.to_bytes(); // r || s (64 bytes, DER-unwrapped)
+        let r = &sig_bytes_der[..32];
+        let s = &sig_bytes_der[32..64];
+
+        // Derive signer: keccak256(qx || qy)[12..] — matches validate_frame_signatures.
+        let mut pk_concat = Vec::with_capacity(64);
+        pk_concat.extend_from_slice(qx);
+        pk_concat.extend_from_slice(qy);
+        let h = ethrex_crypto::keccak::keccak_hash(&pk_concat);
+        let signer = Address::from_slice(&h[12..]);
+
+        // Build the 128-byte signature: r || s || qx || qy.
+        let mut signature_blob = vec![0u8; 128];
+        signature_blob[..32].copy_from_slice(r);
+        signature_blob[32..64].copy_from_slice(s);
+        signature_blob[64..96].copy_from_slice(qx);
+        signature_blob[96..128].copy_from_slice(qy);
+
+        let valid_sig = FrameSignature {
+            scheme: FRAME_SIG_SCHEME_P256,
+            signer,
+            // Explicit 32-byte msg: sig_hash arg to validate_frame_signatures
+            // is irrelevant for this entry.
+            msg: Bytes::copy_from_slice(&digest),
+            signature: Bytes::from(signature_blob.clone()),
+        };
+
+        // Positive: real P256 signature → passes.
+        assert!(
+            validate_frame_signatures(
+                std::slice::from_ref(&valid_sig),
+                H256::zero(),
+                hegota(),
+                &ethrex_crypto::NativeCrypto
+            ),
+            "valid P256 signature must pass",
+        );
+
+        // Tampered r byte: flip one bit in r → curve verification fails.
+        let mut tampered_blob = signature_blob.clone();
+        tampered_blob[0] ^= 0x01;
+        let tampered_r = FrameSignature {
+            signature: Bytes::from(tampered_blob),
+            ..valid_sig.clone()
+        };
+        assert!(
+            !validate_frame_signatures(
+                &[tampered_r],
+                H256::zero(),
+                hegota(),
+                &ethrex_crypto::NativeCrypto
+            ),
+            "flipped r byte must fail curve verification",
+        );
+
+        // Wrong signer: signer-derivation check fires.
+        let wrong_signer = FrameSignature {
+            signer: Address::from_low_u64_be(0xDEAD),
+            ..valid_sig
+        };
+        assert!(
+            !validate_frame_signatures(
+                &[wrong_signer],
+                H256::zero(),
+                hegota(),
+                &ethrex_crypto::NativeCrypto
+            ),
+            "wrong signer must fail",
+        );
+    }
+}
+
+// ==================== Relocated from crates/vm/system_contracts.rs ====================
+mod expiry_verifier_tests {
+    use ethrex_common::H160;
+    use ethrex_vm::system_contracts::{
+        EXPIRY_VERIFIER_PREDEPLOY, EXPIRY_VERIFIER_RUNTIME_BYTECODE,
+    };
+
+    #[test]
+    fn expiry_verifier_constants_match_spec() {
+        let expected: [u8; 26] = [
+            0x60, 0x08, 0x36, 0x14, 0x60, 0x0a, 0x57, 0x5f, 0x5f, 0xfd, 0x5b, 0x5f, 0x35, 0x60,
+            0xc0, 0x1c, 0x42, 0x11, 0x60, 0x16, 0x57, 0x00, 0x5b, 0x5f, 0x5f, 0xfd,
+        ];
+        assert_eq!(
+            EXPIRY_VERIFIER_RUNTIME_BYTECODE.as_slice(),
+            expected.as_slice()
+        );
+        assert_eq!(EXPIRY_VERIFIER_RUNTIME_BYTECODE.len(), 26);
+        assert_eq!(
+            EXPIRY_VERIFIER_PREDEPLOY.address,
+            H160::from_low_u64_be(0x8141)
+        );
+    }
+}

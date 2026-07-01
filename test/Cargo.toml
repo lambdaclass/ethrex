@@ -41,6 +41,7 @@ proptest = "1.0.0"
 cita_trie = "4.0.0"
 hasher = "0.1.4"
 p256 = { version = "0.13.2", default-features = false, features = ["ecdsa", "arithmetic"] }
+k256.workspace = true
 tokio = { workspace = true, features = ["full", "test-util"] }
 aes-gcm = "0.10.3"
 lazy_static.workspace = true
