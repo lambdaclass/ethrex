@@ -4368,3 +4368,107 @@ mod datadir_tests {
         assert!(!dir_contains_legacy_db(dir.path()).unwrap());
     }
 }
+
+#[cfg(test)]
+mod shutdown_flush_tests {
+    use super::*;
+    use std::sync::mpsc::sync_channel;
+
+    // A short account-trie-node key: length != 65/131 (not a leaf) and <= 65
+    // (account trie), so `commit_trie_layers` routes it to ACCOUNT_TRIE_NODES.
+    fn node_key(tag: u8) -> Vec<u8> {
+        vec![tag, 0, 1, 2]
+    }
+
+    fn dropped_fkv_ctl() -> SyncSender<FKVGeneratorControlMessage> {
+        // Receiver dropped: the commit path's `let _ = fkv_ctl.send(..)` sends
+        // fail fast and are ignored, so no consumer thread is needed.
+        let (tx, rx) = sync_channel(0);
+        drop(rx);
+        tx
+    }
+
+    /// Regression for the shutdown flush anchoring: it must commit the canonical
+    /// head's layer chain, not the newest-inserted layer. A sidechain sibling
+    /// imported after the head (higher layer id) must NOT become the durable
+    /// state root.
+    #[test]
+    fn shutdown_commits_canonical_head_not_later_sidechain() {
+        // On-disk root0 -> A -> B (B = canonical head). B' is a sibling of B
+        // (also a child of A) inserted LAST, so it holds the highest layer id.
+        let root0 = H256::from_low_u64_be(0);
+        let root_a = H256::from_low_u64_be(0xAA);
+        let root_b = H256::from_low_u64_be(0xBB);
+        let root_b_prime = H256::from_low_u64_be(0xCC);
+
+        let key_a = node_key(0xA0);
+        let key_b = node_key(0xB0);
+        let key_b_prime = node_key(0xC0);
+
+        let mut cache = TrieLayerCache::new(128);
+        cache.put_batch(
+            root0,
+            root_a,
+            vec![(Nibbles::from_hex(key_a.clone()), vec![1])],
+        );
+        cache.put_batch(
+            root_a,
+            root_b,
+            vec![(Nibbles::from_hex(key_b.clone()), vec![2])],
+        );
+        cache.put_batch(
+            root_a,
+            root_b_prime,
+            vec![(Nibbles::from_hex(key_b_prime.clone()), vec![3])],
+        );
+
+        let trie_cache = Arc::new(RwLock::new(Arc::new(cache)));
+        let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::open().unwrap());
+        let fkv_tx = dropped_fkv_ctl();
+
+        commit_all_trie_layers(backend.as_ref(), &trie_cache, &fkv_tx, root_b).unwrap();
+
+        let read = backend.begin_read().unwrap();
+        // Canonical head chain (A + B) is durable...
+        assert_eq!(read.get(ACCOUNT_TRIE_NODES, &key_a).unwrap(), Some(vec![1]));
+        assert_eq!(read.get(ACCOUNT_TRIE_NODES, &key_b).unwrap(), Some(vec![2]));
+        // ...but the later-inserted sidechain layer must not be persisted.
+        assert_eq!(read.get(ACCOUNT_TRIE_NODES, &key_b_prime).unwrap(), None);
+
+        // Committed layers are evicted; the sidechain layer stays in memory
+        // (and is discarded on process exit).
+        let cache_after = trie_cache.read().unwrap().clone();
+        assert!(
+            cache_after
+                .get_commitable_with_threshold(root_b, 1)
+                .is_none(),
+            "committed head layer must be evicted"
+        );
+        assert!(
+            cache_after
+                .get_commitable_with_threshold(root_b_prime, 1)
+                .is_some(),
+            "uncommitted sidechain layer must remain in memory"
+        );
+    }
+
+    /// When the head root is already on disk (no live layer), the shutdown flush
+    /// is a no-op rather than an error.
+    #[test]
+    fn shutdown_commit_is_noop_when_head_already_on_disk() {
+        let trie_cache = Arc::new(RwLock::new(Arc::new(TrieLayerCache::new(128))));
+        let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::open().unwrap());
+        let fkv_tx = dropped_fkv_ctl();
+
+        commit_all_trie_layers(
+            backend.as_ref(),
+            &trie_cache,
+            &fkv_tx,
+            H256::from_low_u64_be(0x99),
+        )
+        .unwrap();
+
+        let read = backend.begin_read().unwrap();
+        assert_eq!(read.get(ACCOUNT_TRIE_NODES, &node_key(0xA0)).unwrap(), None);
+    }
+}
