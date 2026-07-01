@@ -1,7 +1,9 @@
 pub mod account_proof;
 pub mod block;
 pub mod block_identifier;
+pub mod block_override;
 pub mod fork_choice;
 pub mod payload;
 pub mod receipt;
+pub mod state_override;
 pub mod transaction;
