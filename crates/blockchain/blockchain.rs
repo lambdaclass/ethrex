@@ -2953,6 +2953,15 @@ impl Blockchain {
     ) -> Result<Option<H256>, MempoolError> {
         let nonce = tx.nonce();
 
+        // On an L1 node, reject L2-only transaction types (FeeToken 0x7d,
+        // PrivilegedL2 0x7e). They are valid only on L2; admitting them to an L1
+        // pool diverges from other L1 clients. The block-import path rejects them
+        // via the same `is_l2_only()` guard (#6752); this is the mempool-ingress
+        // side. Gated on L1 so the shared admission path still serves L2.
+        if matches!(self.options.r#type, BlockchainType::L1) && tx.tx_type().is_l2_only() {
+            return Err(MempoolError::L2OnlyTransactionType);
+        }
+
         if matches!(tx, &Transaction::PrivilegedL2Transaction(_)) {
             return Ok(None);
         }

@@ -11,8 +11,9 @@ use rustc_hash::FxHashMap;
 
 use ethrex_common::types::{
     AuthorizationTuple, BYTES_PER_BLOB, BlobsBundle, BlockHeader, ChainConfig, EIP1559Transaction,
-    EIP4844Transaction, EIP7702Transaction, Genesis, GenesisAccount, MempoolTransaction,
-    Transaction, TxKind, kzg_commitment_to_versioned_hash,
+    EIP4844Transaction, EIP7702Transaction, FeeTokenTransaction, Genesis, GenesisAccount,
+    MempoolTransaction, PrivilegedL2Transaction, Transaction, TxKind,
+    kzg_commitment_to_versioned_hash,
 };
 use ethrex_common::{Address, Bytes, H160, H256, U256};
 use ethrex_storage::error::StoreError;
@@ -1138,5 +1139,43 @@ async fn validate_transaction_rejects_pre_prague_eip7702() {
     assert!(
         matches!(res, Err(MempoolError::Eip7702TxPreFork)),
         "pre-Prague type-4 tx must be rejected with Eip7702TxPreFork (got {res:?})"
+    );
+}
+
+// `fee-token-l1-tx` (mempool-ingress side): an L1 node must reject L2-only tx
+// types (FeeToken 0x7d, PrivilegedL2 0x7e) at admission — they are valid only on
+// L2 and unknown to other L1 clients. `Blockchain::default_with_store` is an L1
+// node (`BlockchainType::L1`). The L2 acceptance path is covered by the L2
+// integration tests.
+
+#[tokio::test]
+async fn l1_validate_transaction_rejects_fee_token() {
+    let (config, header) = build_basic_config_and_header(false, false);
+    let store = setup_storage(config, header).await.expect("Storage setup");
+    let blockchain = Blockchain::default_with_store(store);
+
+    let tx = Transaction::FeeTokenTransaction(FeeTokenTransaction::default());
+    let res = blockchain
+        .validate_transaction(&tx, Address::random())
+        .await;
+    assert!(
+        matches!(res, Err(MempoolError::L2OnlyTransactionType)),
+        "an L1 node must reject FeeToken (0x7d) at admission (got {res:?})"
+    );
+}
+
+#[tokio::test]
+async fn l1_validate_transaction_rejects_privileged_l2() {
+    let (config, header) = build_basic_config_and_header(false, false);
+    let store = setup_storage(config, header).await.expect("Storage setup");
+    let blockchain = Blockchain::default_with_store(store);
+
+    let tx = Transaction::PrivilegedL2Transaction(PrivilegedL2Transaction::default());
+    let res = blockchain
+        .validate_transaction(&tx, Address::random())
+        .await;
+    assert!(
+        matches!(res, Err(MempoolError::L2OnlyTransactionType)),
+        "an L1 node must reject PrivilegedL2 (0x7e) at admission (got {res:?})"
     );
 }
