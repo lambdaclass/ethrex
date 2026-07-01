@@ -1021,7 +1021,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-blockchain"
-version = "17.0.0"
+version = "18.0.0"
 dependencies = [
  "bytes",
  "crossbeam",
@@ -1042,7 +1042,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-common"
-version = "17.0.0"
+version = "18.0.0"
 dependencies = [
  "bytes",
  "crc32fast",
@@ -1071,7 +1071,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-crypto"
-version = "17.0.0"
+version = "18.0.0"
 dependencies = [
  "ark-bn254",
  "ark-ec",
@@ -1092,7 +1092,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-guest-program"
-version = "17.0.0"
+version = "18.0.0"
 dependencies = [
  "bytes",
  "ethereum-types",
@@ -1110,7 +1110,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-l2-common"
-version = "17.0.0"
+version = "18.0.0"
 dependencies = [
  "bytes",
  "ethereum-types",
@@ -1128,7 +1128,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-levm"
-version = "17.0.0"
+version = "18.0.0"
 dependencies = [
  "bytes",
  "derive_more",
@@ -1145,7 +1145,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-metrics"
-version = "17.0.0"
+version = "18.0.0"
 dependencies = [
  "axum",
  "ethrex-common",
@@ -1160,7 +1160,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-p2p"
-version = "17.0.0"
+version = "18.0.0"
 dependencies = [
  "aes",
  "aes-gcm",
@@ -1201,7 +1201,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-rlp"
-version = "17.0.0"
+version = "18.0.0"
 dependencies = [
  "bytes",
  "ethereum-types",
@@ -1210,7 +1210,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-rpc"
-version = "17.0.0"
+version = "18.0.0"
 dependencies = [
  "axum",
  "axum-extra",
@@ -1249,7 +1249,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-storage"
-version = "17.0.0"
+version = "18.0.0"
 dependencies = [
  "anyhow",
  "bytes",
@@ -1270,7 +1270,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-trie"
-version = "17.0.0"
+version = "18.0.0"
 dependencies = [
  "anyhow",
  "bytes",
@@ -1288,7 +1288,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-vm"
-version = "17.0.0"
+version = "18.0.0"
 dependencies = [
  "bytes",
  "derive_more",
@@ -2822,7 +2822,7 @@ dependencies = [
 
 [[package]]
 name = "quote-gen"
-version = "17.0.0"
+version = "18.0.0"
 dependencies = [
  "configfs-tsm",
  "ethrex-blockchain",
