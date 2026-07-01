@@ -33,15 +33,18 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
+      # Pinned for reproducibility (build-std + json-target-spec are nightly-only);
+      # bump the date deliberately. dtolnay has no per-date ref, so pass it as input.
       - name: Install Rust nightly + rust-src
-        uses: dtolnay/rust-toolchain@nightly
+        uses: dtolnay/rust-toolchain@master
         with:
+          toolchain: nightly-2026-06-29
           components: rust-src
 
       - name: Check no_std crates against the zkVM standard target
         run: |
           TARGET=.github/targets/riscv64im_zicclsm-unknown-none-elf.json
-          cargo +nightly -Z json-target-spec -Z build-std=core,alloc check \
+          cargo +nightly-2026-06-29 -Z json-target-spec -Z build-std=core,alloc check \
             -p ethrex-rlp -p ethrex-crypto --no-default-features --target "$TARGET"
-          cargo +nightly -Z json-target-spec -Z build-std=core,alloc check \
+          cargo +nightly-2026-06-29 -Z json-target-spec -Z build-std=core,alloc check \
             -p ethrex-crypto --no-default-features --features kzg-rs --target "$TARGET"
