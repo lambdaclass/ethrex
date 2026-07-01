@@ -153,7 +153,7 @@ impl BlockProducer {
             timestamp: SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs(),
             fee_recipient: self.coinbase_address,
             random: H256::zero(),
-            withdrawals: Default::default(),
+            withdrawals: Some(Vec::new()),
             beacon_root: Some(head_beacon_block_root),
             slot_number: None,
             version,
