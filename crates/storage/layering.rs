@@ -329,7 +329,10 @@ impl TrieDB for TrieWrapper {
     }
 
     fn put_batch(&self, _key_values: Vec<(Nibbles, Vec<u8>)>) -> Result<(), TrieError> {
-        // TODO: Get rid of this.
-        unimplemented!("This function should not be called");
+        // TrieWrapper is a read-only view over the trie layer cache;
+        // writes should go through the underlying storage directly.
+        Err(TrieError::DbError(anyhow::anyhow!(
+            "TrieWrapper is read-only; put_batch should not be called"
+        )))
     }
 }
