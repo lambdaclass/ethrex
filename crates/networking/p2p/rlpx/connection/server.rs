@@ -258,6 +258,9 @@ pub struct Established {
     /// (a wedged peer), so `send` can surface `OutboundSendTimeout` once the bounded queue closes.
     pub(crate) outbound_writer_timed_out: std::sync::Arc<std::sync::atomic::AtomicBool>,
     pub(crate) node: Node,
+    // Whether the remote peer initiated this connection (we acted as Receiver).
+    // `false` when we initiated it (we acted as Initiator).
+    pub(crate) is_inbound: bool,
     pub(crate) storage: Store,
     pub(crate) blockchain: Arc<Blockchain>,
     pub(crate) capabilities: Vec<Capability>,
@@ -817,6 +820,7 @@ where
         state.node.clone(),
         connection.clone(),
         state.capabilities.clone(),
+        state.is_inbound,
     )?;
 
     trace!(peer=%state.node, "Peer connection initialized.");
