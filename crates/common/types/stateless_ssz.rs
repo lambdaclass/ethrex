@@ -257,20 +257,32 @@ impl NewPayloadRequest {
 
 /// MAX_WITNESS_NODES — max trie-node preimages in an execution witness.
 const MAX_WITNESS_NODES: usize = 1_048_576; // 2^20
-/// MAX_WITNESS_NODE_SIZE — max size of a single witness node.
-const MAX_WITNESS_NODE_SIZE: usize = 1_048_576; // 2^20
+/// MAX_BYTES_PER_WITNESS_NODE — max size of a single witness node.
+const MAX_BYTES_PER_WITNESS_NODE: usize = 1_048_576; // 2^20
 /// MAX_WITNESS_CODES — max contract code preimages in an execution witness.
 const MAX_WITNESS_CODES: usize = 65_536; // 2^16
-/// MAX_WITNESS_CODE_SIZE — max size of a single code preimage.
-const MAX_WITNESS_CODE_SIZE: usize = 1_048_576; // 2^20
+/// MAX_BYTES_PER_CODE — max size of a single code preimage (EIP-7954).
+const MAX_BYTES_PER_CODE: usize = 16_777_216; // 2^24
 /// MAX_WITNESS_HEADERS — max RLP-encoded block headers in witness (up to 256).
 const MAX_WITNESS_HEADERS: usize = 256;
-/// MAX_WITNESS_HEADER_SIZE — max size of a single RLP-encoded header.
-const MAX_WITNESS_HEADER_SIZE: usize = 1_048_576; // 2^20
+/// MAX_BYTES_PER_HEADER — max size of a single RLP-encoded header.
+const MAX_BYTES_PER_HEADER: usize = 1_024; // 2^10
 /// MAX_PUBLIC_KEYS — max recovered transaction public keys.
 const MAX_PUBLIC_KEYS: usize = 1_048_576; // 2^20
-/// MAX_BYTES_PER_PUBLIC_KEY.
-const MAX_BYTES_PER_PUBLIC_KEY: usize = 48;
+/// PUBLIC_KEY_BYTES — an uncompressed secp256k1 public key is 65 bytes.
+#[allow(dead_code)]
+const PUBLIC_KEY_BYTES: usize = 65;
+/// MAX_BLOCK_ACCESS_LIST_BYTES — EIP-7928 BAL byte cap.
+#[allow(dead_code)]
+const MAX_BLOCK_ACCESS_LIST_BYTES: usize = 16_777_216; // 2^24
+/// MAX_BLOB_SCHEDULES_PER_FORK — SSZ Optional[BlobSchedule] as List[T, 1].
+#[allow(dead_code)]
+const MAX_BLOB_SCHEDULES_PER_FORK: usize = 1;
+/// MAX_FORK_ACTIVATION_VALUES — SSZ Optional[uint64] as List[uint64, 1].
+#[allow(dead_code)]
+const MAX_FORK_ACTIVATION_VALUES: usize = 1;
+/// MAX_BYTES_PER_PUBLIC_KEY — transitional alias; replaced by PUBLIC_KEY_BYTES in Task 2.
+const MAX_BYTES_PER_PUBLIC_KEY: usize = PUBLIC_KEY_BYTES;
 
 // ── Stateless validation types ───────────────────────────────────
 //
@@ -297,9 +309,9 @@ pub struct SszChainConfig {
 /// - `headers`: RLP-encoded parent block headers (up to 256)
 #[derive(Debug, Clone, PartialEq, Eq, SszEncode, SszDecode, HashTreeRoot)]
 pub struct SszExecutionWitness {
-    pub state: SszList<SszList<u8, MAX_WITNESS_NODE_SIZE>, MAX_WITNESS_NODES>,
-    pub codes: SszList<SszList<u8, MAX_WITNESS_CODE_SIZE>, MAX_WITNESS_CODES>,
-    pub headers: SszList<SszList<u8, MAX_WITNESS_HEADER_SIZE>, MAX_WITNESS_HEADERS>,
+    pub state: SszList<SszList<u8, MAX_BYTES_PER_WITNESS_NODE>, MAX_WITNESS_NODES>,
+    pub codes: SszList<SszList<u8, MAX_BYTES_PER_CODE>, MAX_WITNESS_CODES>,
+    pub headers: SszList<SszList<u8, MAX_BYTES_PER_HEADER>, MAX_WITNESS_HEADERS>,
 }
 
 /// SSZ `StatelessInput` — the top-level input to `verify_stateless_new_payload`.
