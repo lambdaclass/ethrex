@@ -574,7 +574,7 @@ async fn set_sync_block(store: &Store) {
 pub async fn init_l1(
     opts: Options,
     log_filter_handler: Option<reload::Handle<EnvFilter, Registry>>,
-) -> eyre::Result<(PathBuf, CancellationToken, PeerTable, NodeRecord)> {
+) -> eyre::Result<(PathBuf, CancellationToken, PeerTable, NodeRecord, Store)> {
     let network = get_network(&opts);
     let datadir = crate::cli::compute_effective_datadir(&opts.datadir, &network, opts.dev);
 
@@ -714,6 +714,7 @@ pub async fn init_l1(
         cancel_token,
         peer_handler.peer_table,
         local_node_record,
+        store,
     ))
 }
 

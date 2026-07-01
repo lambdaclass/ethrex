@@ -128,6 +128,18 @@ impl TrieLayerCache {
         None
     }
 
+    /// State root of the most recently inserted layer (the one with the highest
+    /// id, i.e. the current head), or `None` if the cache is empty.
+    ///
+    /// Used by the shutdown flush to commit every remaining layer: committing
+    /// from the newest root removes it and all its ancestors in one pass.
+    pub fn newest_root(&self) -> Option<H256> {
+        self.layers
+            .iter()
+            .max_by_key(|(_, layer)| layer.id)
+            .map(|(root, _)| *root)
+    }
+
     /// Returns the state root from which to start a disk commit, using the cache's
     /// default `commit_threshold`.
     ///
