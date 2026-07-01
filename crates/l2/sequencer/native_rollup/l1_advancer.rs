@@ -302,19 +302,11 @@ pub fn build_ssz_stateless_input(
     let stateless_input = SszStatelessInput {
         new_payload_request,
         witness: ssz_witness,
-        chain_config: SszChainConfig {
-            chain_id: witness.chain_config.chain_id,
-            // TODO(Plan 02): populate active_fork from the L2 ChainConfig via the
-            // fork-id mapping (data-driven fork). Placeholder shape only for now.
-            active_fork: SszForkConfig {
-                fork: 0,
-                activation: SszForkActivation {
-                    block_number: SszList::new(),
-                    timestamp: SszList::new(),
-                },
-                blob_schedule: SszList::new(),
-            },
-        },
+        chain_config: ethrex_common::types::block_execution_witness::chain_config_to_ssz(
+            &witness.chain_config,
+            header.timestamp,
+        )
+        .map_err(|e| format!("active_fork encode: {e:?}"))?,
         public_keys: SszList::new(), // Empty for now
     };
 
@@ -518,12 +510,16 @@ mod tests {
         let original_hash = block.hash();
 
         // Build a minimal witness (empty, just enough for the SSZ encoding)
+        // chain_config must have Prague activated (Cancun+) — chain_config_to_ssz
+        // requires at least Cancun; Paris and earlier are not supported.
         let witness = ExecutionWitness {
             codes: vec![],
             block_headers_bytes: vec![],
             first_block_number: 1,
             chain_config: ethrex_common::types::ChainConfig {
                 chain_id: 1,
+                cancun_time: Some(0),
+                prague_time: Some(0),
                 ..Default::default()
             },
             state_trie_root: None,
