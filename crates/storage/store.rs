@@ -7,9 +7,9 @@ use crate::{
         tables::{
             ACCOUNT_CODE_METADATA, ACCOUNT_CODES, ACCOUNT_FLATKEYVALUE, ACCOUNT_TRIE_NODES,
             BLOCK_ACCESS_LISTS, BLOCK_NUMBERS, BODIES, CANONICAL_BLOCK_HASHES, CHAIN_DATA,
-            EXECUTION_WITNESSES, FULLSYNC_HEADERS, HEADERS, INVALID_CHAINS, MISC_VALUES,
-            PENDING_BLOCKS, RECEIPTS_V2, SNAP_STATE, STORAGE_FLATKEYVALUE, STORAGE_TRIE_NODES,
-            TRANSACTION_LOCATIONS,
+            EXECUTION_WITNESSES, FULLSYNC_HEADERS, HEADERS, INVALID_CHAINS, LOG_ADDRESS_INDEX,
+            MISC_VALUES, PENDING_BLOCKS, RECEIPTS_V2, SNAP_STATE, STORAGE_FLATKEYVALUE,
+            STORAGE_TRIE_NODES, TRANSACTION_LOCATIONS,
         },
     },
     apply_prefix,
@@ -118,6 +118,18 @@ enum FKVGeneratorControlMessage {
 
 // 64mb
 const CODE_CACHE_MAX_SIZE: u64 = 64 * 1024 * 1024;
+
+/// `MISC_VALUES` key holding the count of contiguous fully-indexed log-index
+/// sections (`u64` little-endian).
+const LOG_INDEX_SECTIONS_KEY: &[u8] = b"log_index_sections";
+
+/// `MISC_VALUES` key holding the first section the log index actually covers
+/// (`u64` little-endian) — the lowest section found to contain any logs. Absent
+/// until the indexer encounters data. A query whose range starts below this
+/// section's first block falls back to a full scan, so the index never claims
+/// coverage over blocks this node does not retain (e.g. below a snap-sync
+/// pivot), which would otherwise hide them as having no logs.
+const LOG_INDEX_START_KEY: &[u8] = b"log_index_start_section";
 
 /// Key used to persist the `flushed_upto` block number in `MISC_VALUES`.
 const FLUSHED_UPTO_KEY: &[u8] = b"bodies_flushed_upto";
@@ -1259,6 +1271,218 @@ impl Store {
         })
         .await
         .map_err(|e| StoreError::Custom(format!("Task panicked: {e}")))?
+    }
+
+    // Inverted log index (address -> blocks) — see `crate::log_index`.
+    //
+    // The index is populated off the block-import path by a background task
+    // (see `index_pending_log_sections`); it only finalizes sections buried
+    // beyond the reorg depth, so stored sections are immutable (append-only,
+    // no reorg invalidation).
+
+    /// Number of contiguous log-index sections (from section 0) that are fully
+    /// indexed. Blocks below `count * SECTION_SIZE` can be served from the index.
+    pub fn get_indexed_log_sections(&self) -> Result<u64, StoreError> {
+        Ok(self
+            .read(MISC_VALUES, LOG_INDEX_SECTIONS_KEY.to_vec())?
+            .and_then(|bytes| bytes.try_into().ok().map(u64::from_le_bytes))
+            .unwrap_or(0))
+    }
+
+    /// First section the index covers, or `None` if the indexer hasn't found any
+    /// logs yet. The index is exact only over `[start, indexed_sections)`.
+    fn get_log_index_start_section(&self) -> Result<Option<u64>, StoreError> {
+        Ok(self
+            .read(MISC_VALUES, LOG_INDEX_START_KEY.to_vec())?
+            .and_then(|bytes| bytes.try_into().ok().map(u64::from_le_bytes)))
+    }
+
+    /// Atomically persists a section's index entries and advances the
+    /// indexed-section counter in a single write transaction. Doing both in one
+    /// commit means a crash can't leave the counter pointing past data that was
+    /// never written (the two are in different column families).
+    fn commit_indexed_log_section(
+        &self,
+        section: u64,
+        entries: Vec<(Vec<u8>, Vec<u8>)>,
+        new_start: Option<u64>,
+    ) -> Result<(), StoreError> {
+        let backend = self.backend.clone();
+        let mut txn = backend.begin_write()?;
+        txn.put_batch(LOG_ADDRESS_INDEX, entries)?;
+        // The first section with data also records the index's covered start, in
+        // the same commit as its entries and the counter.
+        if let Some(start) = new_start {
+            txn.put(MISC_VALUES, LOG_INDEX_START_KEY, &start.to_le_bytes())?;
+        }
+        txn.put(
+            MISC_VALUES,
+            LOG_INDEX_SECTIONS_KEY,
+            &(section + 1).to_le_bytes(),
+        )?;
+        txn.commit()
+    }
+
+    /// Reads all of a block's receipts in one prefix scan (sync variant of
+    /// `get_receipts_for_block`, usable from the blocking indexer).
+    fn get_receipts_for_block_sync(
+        &self,
+        block_hash: &BlockHash,
+    ) -> Result<Vec<Receipt>, StoreError> {
+        let txn = self.backend.begin_read()?;
+        let prefix = block_hash.as_bytes();
+        let iter = txn.prefix_iterator(RECEIPTS_V2, prefix)?;
+        let mut receipts = Vec::new();
+        for result in iter {
+            let (k, v) = result?;
+            if !k.starts_with(prefix) {
+                break;
+            }
+            if k.len() != 40 {
+                continue;
+            }
+            receipts.push(Receipt::decode(v.as_ref())?);
+        }
+        Ok(receipts)
+    }
+
+    /// Indexes every section that is complete and buried at least
+    /// `confirmation_depth` blocks below the head, by reading each block's
+    /// receipts and recording, per log address, the in-section block offsets
+    /// where it appears. Returns how many new sections were indexed.
+    ///
+    /// Buried sections are immutable, so the index is append-only and never
+    /// needs invalidation. On first run after enabling the index this walks the
+    /// whole retained range (backfill); in steady state it indexes one section
+    /// at a time as the head advances. Must be run off the block-import path.
+    pub fn index_pending_log_sections(&self, confirmation_depth: u64) -> Result<u64, StoreError> {
+        use crate::log_index;
+        use std::collections::{HashMap, HashSet};
+
+        let latest = self.latest_block_header.get().number;
+        let mut section = self.get_indexed_log_sections()?;
+        let mut start = self.get_log_index_start_section()?;
+        let mut newly_indexed = 0;
+        loop {
+            let last_block = (section + 1) * log_index::SECTION_SIZE - 1;
+            // Stop before any section a reorg could still rewrite (saturating so
+            // a near-`u64::MAX` head can't wrap and skip the guard).
+            if last_block.saturating_add(confirmation_depth) > latest {
+                break;
+            }
+            let mut address_offsets: HashMap<Address, Vec<u16>> = HashMap::new();
+            let mut section_complete = true;
+            for block_number in section * log_index::SECTION_SIZE..=last_block {
+                // A buried block should always have a canonical hash. If one is
+                // missing (DB inconsistency), we can't build this section
+                // exactly, so we must NOT mark it indexed — leave it (and every
+                // later section) unindexed so queries fall back to scanning that
+                // range, keeping results correct. Defer rather than error so the
+                // indexer doesn't abort; we retry on the next poll.
+                let Some(block_hash) = self.get_canonical_block_hash_sync(block_number)? else {
+                    tracing::warn!(
+                        "log index: missing canonical hash for block {block_number}; \
+                         deferring section {section} (queries scan this range meanwhile)"
+                    );
+                    section_complete = false;
+                    break;
+                };
+                let receipts = self.get_receipts_for_block_sync(&block_hash)?;
+                let offset = log_index::offset_in_section(block_number);
+                // Each address contributes this block's offset at most once.
+                // Mirror the query path and only index logs from successful
+                // receipts (reverted txs carry no logs, so this is a no-op on
+                // EIP-658 networks, but keeps the index exact everywhere).
+                let mut seen = HashSet::new();
+                for receipt in &receipts {
+                    if !receipt.succeeded {
+                        continue;
+                    }
+                    for log in &receipt.logs {
+                        if seen.insert(log.address) {
+                            address_offsets.entry(log.address).or_default().push(offset);
+                        }
+                    }
+                }
+            }
+            if !section_complete {
+                break;
+            }
+            // The first section that carries any logs marks where the index's
+            // exact coverage begins; below it the node has no indexable data and
+            // queries must scan rather than trust an empty index result.
+            let new_start = if start.is_none() && !address_offsets.is_empty() {
+                start = Some(section);
+                Some(section)
+            } else {
+                None
+            };
+            let entries = log_index::build_section_entries(section, address_offsets);
+            self.commit_indexed_log_section(section, entries, new_start)?;
+            section += 1;
+            newly_indexed += 1;
+        }
+        Ok(newly_indexed)
+    }
+
+    /// Returns the candidate block numbers in `[from, to]` whose receipts may
+    /// contain a log from any of `addresses`, using the inverted log index, or
+    /// `None` if the index can't help (no address filter, or the range starts
+    /// beyond what's indexed) and the caller should scan.
+    ///
+    /// The indexed portion is exact (no false positives); any tail of the range
+    /// not yet indexed is returned in full so the caller still scans it. The
+    /// caller still exact-filters topics on every returned block.
+    pub fn get_candidate_blocks_by_address(
+        &self,
+        addresses: &[Address],
+        from: BlockNumber,
+        to: BlockNumber,
+    ) -> Result<Option<Vec<BlockNumber>>, StoreError> {
+        use crate::log_index;
+        use std::collections::BTreeSet;
+
+        // The address index can only narrow address-filtered queries.
+        if addresses.is_empty() {
+            return Ok(None);
+        }
+        // The index is exact only over `[indexed_from, indexed_until)`. Outside
+        // that window — nothing indexed yet, the range starts below the covered
+        // start (e.g. before this node's snap-sync pivot), or it starts at/past
+        // what's indexed — fall back to a full scan so we don't report retained-
+        // but-unindexed or unavailable blocks as having no logs.
+        let Some(start_section) = self.get_log_index_start_section()? else {
+            return Ok(None);
+        };
+        let indexed_from = start_section.saturating_mul(log_index::SECTION_SIZE);
+        let indexed_until = self
+            .get_indexed_log_sections()?
+            .saturating_mul(log_index::SECTION_SIZE);
+        if from < indexed_from || from >= indexed_until {
+            return Ok(None);
+        }
+
+        // Safe: the guard above already returned for `indexed_until == 0`, so
+        // here `indexed_until >= 1` and the subtraction can't underflow.
+        let indexed_to = to.min(indexed_until - 1);
+        let mut candidates = BTreeSet::new();
+        for section in log_index::section_of(from)..=log_index::section_of(indexed_to) {
+            for address in addresses {
+                if let Some(bytes) =
+                    self.read(LOG_ADDRESS_INDEX, log_index::index_key(address, section))?
+                {
+                    let offsets = log_index::decode_offsets(&bytes)?;
+                    candidates.extend(log_index::offsets_to_blocks(
+                        section, &offsets, from, indexed_to,
+                    ));
+                }
+            }
+        }
+        // Unindexed tail of the range: include every block so it gets scanned.
+        if to >= indexed_until {
+            candidates.extend(from.max(indexed_until)..=to);
+        }
+        Ok(Some(candidates.into_iter().collect()))
     }
 
     // Snap State methods
