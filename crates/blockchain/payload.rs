@@ -15,7 +15,7 @@ use ethrex_common::{
     },
     types::{
         AccountUpdate, BlobsBundle, Block, BlockBody, BlockHash, BlockHeader, BlockNumber,
-        ChainConfig, Fork, MempoolTransaction, Receipt, Transaction, TxKind, TxType, Withdrawal,
+        ChainConfig, MempoolTransaction, Receipt, Transaction, TxKind, TxType, Withdrawal,
         block_access_list::BlockAccessList,
         bloom_from_logs, calc_excess_blob_gas, calculate_base_fee_per_blob_gas,
         calculate_base_fee_per_gas, compute_receipts_root, compute_transactions_root,
@@ -117,6 +117,18 @@ impl BuildPayloadArgs {
         if let Some(beacon_root) = self.beacon_root {
             hasher.update(beacon_root);
         }
+        // execution-apis#796 / glamsterdam-devnet-4: hash slot_number and
+        // gas_ceil so two FCUv4 calls that differ only in CL-supplied
+        // targetGasLimit (or in slot_number) do not collide on payload_id.
+        // Scoped to V4: for V1/V2/V3 gas_ceil is always the static
+        // --builder.gas-limit (no collision to disambiguate), so hashing it
+        // there would change those IDs without fixing anything.
+        if self.version >= 4 {
+            if let Some(slot_number) = self.slot_number {
+                hasher.update(slot_number.to_be_bytes());
+            }
+            hasher.update(self.gas_ceil.to_be_bytes());
+        }
         let res = &mut hasher.finalize()[..8];
         res[0] = self.version;
         Ok(u64::from_be_bytes(res.try_into().map_err(|_| {
@@ -194,7 +206,6 @@ pub fn create_payload(
 }
 
 pub fn calc_gas_limit(parent_gas_limit: u64, builder_gas_ceil: u64) -> u64 {
-    // TODO: check where we should get builder values from
     let delta = parent_gas_limit / GAS_LIMIT_BOUND_DIVISOR - 1;
     let mut limit = parent_gas_limit;
     let desired_limit = max(builder_gas_ceil, MIN_GAS_LIMIT);
@@ -706,7 +717,6 @@ impl Blockchain {
         if context.is_amsterdam
             && let Err(e) = check_2d_gas_allowance(
                 &head.tx,
-                Fork::Amsterdam,
                 context.block_regular_gas_used,
                 context.block_state_gas_used,
                 context.payload.header.gas_limit,

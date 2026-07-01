@@ -83,15 +83,19 @@ pub enum MempoolError {
     TxMaxInitCodeSizeError,
     #[error("Transaction encoded size ({actual} bytes) exceeds the {limit}-byte limit")]
     TxSizeExceeded { actual: usize, limit: usize },
+    #[error("Transaction sender is a contract account (EIP-3607)")]
+    SenderIsContract,
     #[error("Transaction gas limit exceeded")]
     TxGasLimitExceededError,
     #[error(
         "Transaction gas limit exceeds maximum. Transaction hash: {0}, transaction gas limit: {1}"
     )]
     TxMaxGasLimitExceededError(H256, u64),
-    #[error("Transaction priority fee above gas fee")]
-    TxGasOverflowError,
     #[error("Transaction intrinsic gas overflow")]
+    TxGasOverflowError,
+    #[error("Could not compute transaction intrinsic gas: {0}")]
+    IntrinsicGasError(String),
+    #[error("Transaction priority fee above gas fee")]
     TxTipAboveFeeCapError,
     #[error("Transaction intrinsic gas cost above gas limit")]
     TxIntrinsicGasCostAboveLimitError,
@@ -119,6 +123,10 @@ pub enum MempoolError {
     InvalidTxSender(#[from] ethrex_crypto::CryptoError),
     #[error("Attempted to replace a pooled transaction with an underpriced transaction")]
     UnderpricedReplacement,
+    #[error("EIP-7702 transaction has an empty authorization list")]
+    EmptyAuthorizationList,
+    #[error("EIP-7702 (type-4) transaction is not valid before Prague")]
+    Eip7702TxPreFork,
 }
 
 #[derive(Debug)]
