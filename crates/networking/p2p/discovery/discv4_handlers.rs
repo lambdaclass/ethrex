@@ -378,6 +378,11 @@ impl DiscoveryServer {
             self.discv4_send_enr_request(&contact.node).await?;
         }
 
+        trace!(protocol = "discv4", observed_ip = %message.to.ip, "Recorded discv4 PONG IP vote");
+        if let Some(ip) = self.ip_predictor.record_ip_vote(message.to.ip, node_id) {
+            self.apply_predicted_ip(ip, "discv4");
+        }
+
         Ok(())
     }
 
