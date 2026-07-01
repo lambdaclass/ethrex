@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-249c4fe5.js";
+            window.path_to_searchindex_js = "searchindex-be68c4f0.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-7e7556e2.js"></script>
+        <script src="toc-7afa3adf.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -8956,6 +8956,7 @@ This eliminates code duplication and makes adding new database backends trivial.
 <li><a href="#assertoor-tests">Assertoor</a></li>
 <li><a href="#rust-tests">Rust Unit Tests</a></li>
 <li><a href="#load-tests">Load Tests</a></li>
+<li><a href="#rpc-load-tests">RPC Load Tests</a></li>
 </ul>
 <div style="break-before: page; page-break-before: always;"></div><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.4/dist/katex.min.css">
 <h1 id="ethereum-foundation-tests"><a class="header" href="#ethereum-foundation-tests">Ethereum foundation tests</a></h1>
@@ -9326,6 +9327,68 @@ make load-test-fibonacci
 # Tests a contract that makes heavy access to storage slots
 make load-test-io
 </code></pre>
+<div style="break-before: page; page-break-before: always;"></div><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.4/dist/katex.min.css">
+<h1 id="rpc-load-tests"><a class="header" href="#rpc-load-tests">RPC load tests</a></h1>
+<p>These tests benchmark <strong>read-side JSON-RPC endpoints</strong> (<code>eth_call</code>, <code>eth_getBlockByNumber</code>, <code>eth_getLogs</code>, …) under configurable request rates, and compare ethrex against other execution clients on identical hardware.</p>
+<blockquote>
+<p>This is distinct from the <a href="#load-tests">load tests</a> under <code>tooling/load_test</code>, which exercise the <strong>write path</strong> (submitting transactions, measuring gas/s). Use those for execution throughput; use this page for RPC serving performance.</p>
+</blockquote>
+<p>The harness lives in <code>tooling/rpc_bench</code> and drives <a href="https://github.com/tsenart/vegeta"><code>vegeta</code></a> (an HTTP load generator) with workloads sampled from the node under test. It has three pieces:</p>
+<ul>
+<li><code>gen_workload.py</code> — samples a validated workload from the node and writes <code>vegeta</code> target files.</li>
+<li><code>run_bench.sh</code> — runs a <code>vegeta</code> rate-sweep over those targets.</li>
+<li><code>summarize.py</code> — turns the <code>vegeta</code> reports into a latency table (single node or side-by-side).</li>
+</ul>
+<h2 id="methodology"><a class="header" href="#methodology">Methodology</a></h2>
+<p>Getting trustworthy, comparable numbers requires care:</p>
+<ul>
+<li><strong>Sample real, recent data.</strong> Pruned/snap nodes only retain bodies and receipts within a recent window. Sampling old/archive blocks produces “missing body”/“state unavailable” responses that are still HTTP 200, so a naive benchmark measures error fast-paths, not real work. <code>gen_workload.py</code> binary-searches the node’s retention floor and samples within it.</li>
+<li><strong>Validate every call.</strong> Each sampled call is issued once and kept only if it returns a real <code>result</code> (no JSON-RPC error), so the load test contains only genuinely-serviceable requests.</li>
+<li><strong>Same depth, each node at its own head.</strong> Run the generator against each client separately; the sampling parameters (range sizes, contracts, calldata) are fixed and <code>--window-blocks</code> pins the sampling depth, so the comparison is apples-to-apples even though the exact blocks differ per head.</li>
+<li><strong>One client at a time, same hardware.</strong> Benchmark each client by itself on the same machine — never several at once on one box, which distorts every client’s numbers. This removes hardware variance while avoiding co-tenancy contention.</li>
+</ul>
+<p>For meaningful results the node should be <strong>fully synced and settled</strong> (background compaction/state work quiesced, caches warm) before generating the workload.</p>
+<blockquote>
+<p>We evaluated Paradigm’s <a href="https://github.com/paradigmxyz/flood"><code>flood</code></a>, which also wraps <code>vegeta</code>. Its bundled workloads sample fixed archive-era block ranges, which a pruned/snap node can’t serve, so we drive <code>vegeta</code> directly with freshly-sampled, validated targets instead.</p>
+</blockquote>
+<h2 id="install"><a class="header" href="#install">Install</a></h2>
+<p>Only <code>vegeta</code> and Python 3 (standard library — no extra packages) are required:</p>
+<pre><code class="language-bash"># macOS
+brew install vegeta
+# Linux
+go install github.com/tsenart/vegeta/v12@latest
+</code></pre>
+<h2 id="running-a-benchmark"><a class="header" href="#running-a-benchmark">Running a benchmark</a></h2>
+<p>Point the tools at a synced, settled node:</p>
+<pre><code class="language-bash">cd tooling/rpc_bench
+
+# 1. Generate a validated workload (one directory of vegeta targets per method).
+python3 gen_workload.py --url http://localhost:8545 --out ./targets/ethrex
+
+#    --window-blocks N caps the sampling depth; use the same value for every
+#    client so the comparison is apples-to-apples, e.g. --window-blocks 44000.
+
+# 2. Run the rate-sweep (default rates: 10 100 500 1000 rps, 30s each).
+./run_bench.sh ./targets/ethrex ./results/ethrex
+
+# 3. Summarize: p50/p90/p99, success rate and throughput per method per rate.
+python3 summarize.py ./results/ethrex
+</code></pre>
+<h2 id="comparing-multiple-clients"><a class="header" href="#comparing-multiple-clients">Comparing multiple clients</a></h2>
+<p>Benchmark each client <strong>one at a time</strong> on the same machine, each synced to its own head, reusing the same <code>--window-blocks</code> depth. Then point <code>summarize.py</code> at all result directories for a side-by-side p50 comparison:</p>
+<pre><code class="language-bash"># Run these sequentially, not concurrently — only one client live at a time.
+python3 gen_workload.py --url http://localhost:8545 --out ./targets/ethrex     --window-blocks 44000
+./run_bench.sh ./targets/ethrex ./results/ethrex
+# ... stop ethrex, bring up geth on the same RPC port, repeat ...
+python3 gen_workload.py --url http://localhost:8545 --out ./targets/geth       --window-blocks 44000
+./run_bench.sh ./targets/geth ./results/geth
+
+python3 summarize.py ./results/ethrex ./results/geth
+</code></pre>
+<h2 id="output"><a class="header" href="#output">Output</a></h2>
+<p><code>run_bench.sh</code> writes one <code>vegeta report -type=json</code> per method/rate into the output directory as <code>&lt;method&gt;__&lt;rate&gt;.json</code>, each containing latency percentiles (p50/p90/p99), success rate, throughput and status-code counts. <code>summarize.py</code> reads these.</p>
+<h2 id="coverage"><a class="header" href="#coverage">Coverage</a></h2>
+<p>The generator covers the top read methods by mainnet traffic: <code>eth_call</code>, <code>eth_getBlockByNumber</code>, <code>eth_getBalance</code>, <code>eth_getCode</code>, <code>eth_getTransactionCount</code>, <code>eth_getTransactionByHash</code>, <code>eth_getTransactionReceipt</code>, and <code>eth_getLogs</code> at small/medium/large range sizes (100/1000/10000 blocks). <code>eth_chainId</code> and <code>eth_blockNumber</code> are cached/in-memory and are not included.</p>
 <div style="break-before: page; page-break-before: always;"></div><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.4/dist/katex.min.css">
 <h1 id="l2-developer-docs"><a class="header" href="#l2-developer-docs">L2 Developer Docs</a></h1>
 <p>Welcome to the ethrex L2 developer documentation!</p>
