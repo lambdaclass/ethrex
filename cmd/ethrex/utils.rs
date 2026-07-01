@@ -175,12 +175,24 @@ pub fn parse_hex(s: &str) -> eyre::Result<Bytes, FromHexError> {
     }
 }
 
+/// The release channel reported in the client version. The published release
+/// image sets `ETHREX_CHANNEL=stable` on its config at promotion time; otherwise
+/// this falls back to the value baked at build time — the git branch, or the RC
+/// suffix (e.g. `rc.1`) for release-tag builds. Promotion only stamps the env on
+/// the image config, so the tested binary itself is byte-for-byte unchanged.
+pub fn get_channel() -> String {
+    std::env::var("ETHREX_CHANNEL")
+        .ok()
+        .filter(|channel| !channel.is_empty())
+        .unwrap_or_else(|| env!("VERGEN_GIT_BRANCH").to_string())
+}
+
 /// Returns a detailed client version struct with git info.
 pub fn get_client_version() -> ethrex_rpc::ClientVersion {
     ethrex_rpc::ClientVersion::new(
         env!("CARGO_PKG_NAME").to_string(),
         env!("CARGO_PKG_VERSION").to_string(),
-        env!("VERGEN_GIT_BRANCH").to_string(),
+        get_channel(),
         env!("VERGEN_GIT_SHA").to_string(),
         env!("VERGEN_RUSTC_HOST_TRIPLE").to_string(),
         env!("VERGEN_RUSTC_SEMVER").to_string(),
