@@ -499,7 +499,7 @@ mod overlaid_db_tests {
                 .unwrap()
                 .get(&code_hash)
                 .map(|c| CodeMetadata {
-                    length: c.bytecode.len() as u64,
+                    length: c.len() as u64,
                 })
                 .ok_or_else(|| EvmError::DB(format!("no code for {code_hash:?}")))
         }
@@ -590,9 +590,9 @@ mod overlaid_db_tests {
         let state = wrapper.get_account_state(addr(4)).unwrap().unwrap();
         assert_eq!(state.code_hash, hash);
         let fetched = wrapper.get_account_code(hash).unwrap();
-        assert_eq!(fetched.bytecode, code.bytecode);
+        assert_eq!(fetched, code);
         let meta = wrapper.get_code_metadata(hash).unwrap();
-        assert_eq!(meta.length as usize, code.bytecode.len());
+        assert_eq!(meta.length as usize, code.len());
     }
 
     #[test]
