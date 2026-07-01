@@ -27,6 +27,15 @@ use crate::{
 /// - geth / nethermind / reth: no engine-API rejection; trust the CL's fork choice
 pub const REORG_DEPTH_LIMIT: u64 = 128;
 
+// Compile-time guard: committed trie layers must never exceed the reorg-depth limit.
+// If DB_COMMIT_THRESHOLD > REORG_DEPTH_LIMIT, a committed layer could be unreachable
+// after a reorg that the engine API still accepts, corrupting state.
+// ethrex-blockchain depends on ethrex-storage (one-way), so the assertion lives here.
+const _: () = assert!(
+    ethrex_storage::DB_COMMIT_THRESHOLD as u64 <= REORG_DEPTH_LIMIT,
+    "committed layers must not outrun reorg-depth protection"
+);
+
 /// Applies new fork choice data to the current blockchain. It performs validity checks:
 /// - The finalized, safe and head hashes must correspond to already saved blocks.
 /// - The saved blocks should be in the correct order (finalized <= safe <= head).
