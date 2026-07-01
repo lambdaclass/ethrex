@@ -112,6 +112,7 @@
     - [Assertoor tests](./developers/l1/testing/assertoor.md)
     - [Rust tests](./developers/l1/testing/rust.md)
     - [Load tests](./developers/l1/testing/load-tests.md)
+    - [RPC load tests](./developers/l1/testing/rpc-load-tests.md)
 - [L2](./developers/l2/introduction.md)
   - [Ethrex L2 as local development mode](./developers/l2/dev-mode.md)
   - [Integration tests](./developers/l2/integration-tests.md)
