@@ -13,7 +13,7 @@
 //! canonical BAL supplied (what the P2P-sync caller hands to the pipeline).
 //! Only `bal_parallel_exec_enabled` is flipped between the two imports.
 
-use std::{fs::File, io::BufReader, path::PathBuf};
+use std::{fs::File, io::BufReader, path::PathBuf, sync::Arc};
 
 use bytes::Bytes;
 use ethrex_blockchain::{
@@ -77,6 +77,7 @@ async fn build_valid_amsterdam_block(store: &Store) -> (Block, BlockAccessList) 
 async fn parallel_path_rejects_invalid_block_access_list_hash() {
     let build_store = setup_store().await;
     let (mut block, bal) = build_valid_amsterdam_block(&build_store).await;
+    let bal = Arc::new(bal);
 
     // The empty block still records a non-empty BAL via the EIP-4788 block-start
     // system call, so the fork-activation guard is not vacuous.
@@ -99,7 +100,7 @@ async fn parallel_path_rejects_invalid_block_access_list_hash() {
             ..Default::default()
         },
     );
-    let valid = bc_ok.add_block_pipeline_bal(block.clone(), Some(&bal));
+    let valid = bc_ok.add_block_pipeline_bal(block.clone(), Some(bal.clone()));
     assert!(
         valid.is_ok(),
         "parallel path must accept a block with a correct commitment, got: {valid:?}"
@@ -117,7 +118,7 @@ async fn parallel_path_rejects_invalid_block_access_list_hash() {
             ..Default::default()
         },
     );
-    let par = bc_par.add_block_pipeline_bal(block.clone(), Some(&bal));
+    let par = bc_par.add_block_pipeline_bal(block.clone(), Some(bal.clone()));
 
     // SEQUENTIAL: same block, same BAL, only the parallel flag flipped.
     let store_seq = setup_store().await;
@@ -128,7 +129,7 @@ async fn parallel_path_rejects_invalid_block_access_list_hash() {
             ..Default::default()
         },
     );
-    let seq = bc_seq.add_block_pipeline_bal(block.clone(), Some(&bal));
+    let seq = bc_seq.add_block_pipeline_bal(block.clone(), Some(bal.clone()));
 
     // Both paths must reject a forged commitment with the same error.
     assert!(

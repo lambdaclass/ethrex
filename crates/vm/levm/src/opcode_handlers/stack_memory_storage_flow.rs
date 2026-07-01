@@ -20,7 +20,7 @@
 use crate::{
     constants::WORD_SIZE_IN_BYTES_USIZE,
     errors::{ExceptionalHalt, InternalError, OpcodeResult, VMError},
-    gas_cost::{self, SSTORE_STIPEND},
+    gas_cost::{self, SSTORE_STIPEND, STORAGE_CLEAR_REFUND_AMSTERDAM},
     memory::calculate_memory_size,
     opcode_handlers::OpcodeHandler,
     opcodes::Opcode,
@@ -239,6 +239,7 @@ impl OpcodeHandler for OpSLoadHandler {
         vm.current_call_frame
             .increase_consumed_gas(gas_cost::sload(
                 vm.substate.add_accessed_slot(address, key),
+                vm.env.config.fork,
             )?)?;
 
         // Record to BAL AFTER gas check passes per EIP-7928
@@ -315,10 +316,19 @@ impl OpcodeHandler for OpSStoreHandler {
             && original_value.is_zero();
 
         if value != current_value {
-            // EIP-2929
-            const REMOVE_SLOT_COST: i64 = 4800;
-            const RESTORE_EMPTY_SLOT_COST: i64 = 19900;
-            const RESTORE_SLOT_COST: i64 = 2800;
+            // Net refund deltas accumulated across a tx's SSTOREs, matching EELS
+            // (execution-specs amsterdam/vm/instructions/storage.py::sstore): +clear-refund on a
+            // first-time clear, -clear-refund when that clear is reversed, and +STORAGE_WRITE when
+            // a slot is restored to its original value (access is charged separately). EIP-8037
+            // state gas is handled via the reservoir, not these regular deltas.
+            let (remove_slot_cost, restore_empty_slot_cost, restore_slot_cost): (i64, i64, i64) =
+                if fork >= Fork::Amsterdam {
+                    // Amsterdam: clear refund 12480; both restore deltas are the full STORAGE_WRITE.
+                    (STORAGE_CLEAR_REFUND_AMSTERDAM, 10000, 10000)
+                } else {
+                    // EIP-2929
+                    (4800, 19900, 2800)
+                };
 
             // The operations on `delta` cannot overflow.
             let mut delta = 0i64;
@@ -328,30 +338,22 @@ impl OpcodeHandler for OpSStoreHandler {
             )]
             if current_value == original_value {
                 if !original_value.is_zero() && value.is_zero() {
-                    delta += REMOVE_SLOT_COST;
+                    delta += remove_slot_cost;
                 }
             } else {
                 if !original_value.is_zero() {
                     if current_value.is_zero() {
-                        delta -= REMOVE_SLOT_COST;
+                        delta -= remove_slot_cost;
                     } else if value.is_zero() {
-                        delta += REMOVE_SLOT_COST;
+                        delta += remove_slot_cost;
                     }
                 }
 
                 if value == original_value {
                     if original_value.is_zero() {
-                        // EIP-8037 (Amsterdam+): restore_empty_slot_cost changes from 19900 to 2800
-                        // because the SSTORE creation cost changed from 20000 to 2900.
-                        // The state gas portion is refunded via the reservoir (clamp-and-spill),
-                        // NOT through the regular refund counter.
-                        if fork >= Fork::Amsterdam {
-                            delta += RESTORE_SLOT_COST; // 2800 instead of 19900
-                        } else {
-                            delta += RESTORE_EMPTY_SLOT_COST;
-                        }
+                        delta += restore_empty_slot_cost;
                     } else {
-                        delta += RESTORE_SLOT_COST;
+                        delta += restore_slot_cost;
                     }
                 }
             }
