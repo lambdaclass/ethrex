@@ -3,9 +3,10 @@ mod tracing;
 
 use super::{BlockExecutionResult, FrameValidationOutcome, TxGasBreakdown};
 use crate::system_contracts::{
-    BEACON_ROOTS_ADDRESS, CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS, EXPIRY_VERIFIER_PREDEPLOY,
-    EXPIRY_VERIFIER_RUNTIME_BYTECODE, HISTORY_STORAGE_ADDRESS, PRAGUE_SYSTEM_CONTRACTS,
-    SYSTEM_ADDRESS, WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS,
+    AMSTERDAM_REQUEST_PREDEPLOYS, BEACON_ROOTS_ADDRESS, BUILDER_DEPOSIT_CONTRACT_ADDRESS,
+    BUILDER_EXIT_CONTRACT_ADDRESS, CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS,
+    EXPIRY_VERIFIER_PREDEPLOY, EXPIRY_VERIFIER_RUNTIME_BYTECODE, HISTORY_STORAGE_ADDRESS,
+    PRAGUE_SYSTEM_CONTRACTS, SYSTEM_ADDRESS, WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS,
 };
 use crate::{EvmError, ExecutionResult};
 use bytes::Bytes;
@@ -42,8 +43,7 @@ use ethrex_levm::EVMConfig;
 use ethrex_levm::account::{AccountStatus, LevmAccount};
 use ethrex_levm::call_frame::Stack;
 use ethrex_levm::constants::{
-    POST_OSAKA_GAS_LIMIT_CAP, STACK_LIMIT, SYS_CALL_GAS_LIMIT, TX_BASE_COST,
-    TX_MAX_GAS_LIMIT_AMSTERDAM,
+    POST_OSAKA_GAS_LIMIT_CAP, STACK_LIMIT, SYS_CALL_GAS_LIMIT, TX_MAX_GAS_LIMIT_AMSTERDAM,
 };
 use ethrex_levm::db::gen_db::GeneralizedDatabase;
 #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
@@ -58,7 +58,6 @@ use ethrex_levm::memory::Memory;
 use ethrex_levm::timings::{OPCODE_TIMINGS, PRECOMPILES_TIMINGS};
 use ethrex_levm::tracing::LevmCallTracer;
 use ethrex_levm::utils::get_base_fee_per_blob_gas;
-use ethrex_levm::utils::intrinsic_gas_dimensions;
 use ethrex_levm::validation_observer::FrameSimViolation;
 use ethrex_levm::vm::VMType;
 use ethrex_levm::{
@@ -71,7 +70,6 @@ use rayon::iter::{IntoParallelIterator, IntoParallelRefIterator, ParallelIterato
 #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::cmp::min;
-#[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
 use std::sync::Arc;
 #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
 use std::sync::atomic::AtomicBool;
@@ -124,10 +122,14 @@ fn check_gas_limit(
 /// A tx is rejected (block invalid) if its worst-case contribution to either
 /// dimension exceeds the remaining budget at tx inclusion time:
 ///
-/// - regular dim: `min(TX_MAX_GAS_LIMIT, tx.gas - intrinsic.state) > block_gas_limit - block_regular_gas_used`
-/// - state dim:   `tx.gas - intrinsic.regular > block_gas_limit - block_state_gas_used`
+/// - regular dim: `min(TX_MAX_GAS_LIMIT, tx.gas) > block_gas_limit - block_regular_gas_used`
+/// - state dim:   `tx.gas > block_gas_limit - block_state_gas_used`
 ///
-/// Mirrors `src/ethereum/forks/amsterdam/fork.py:560-578` at eels_commit `524b446`.
+/// The full `tx.gas` is used in both dimensions (only the regular dimension is
+/// capped at `TX_MAX_GAS_LIMIT`); intrinsic underfunding is rejected separately
+/// in transaction validation, not here. Mirrors
+/// `src/ethereum/forks/amsterdam/fork.py` `check_transaction` at the
+/// `tests-glamsterdam-devnet@v6.1.0` spec.
 ///
 /// Note: `block_gas_used_regular` here equals EELS's `block_output.block_gas_used`
 /// because our `report.gas_used` already reflects `max(raw_regular, calldata_floor)`
@@ -135,25 +137,19 @@ fn check_gas_limit(
 /// sync with the aggregation loop in [`execute_block_parallel`].
 pub fn check_2d_gas_allowance(
     tx: &Transaction,
-    fork: Fork,
     block_gas_used_regular: u64,
     block_gas_used_state: u64,
     block_gas_limit: u64,
 ) -> Result<(), EvmError> {
-    let (intrinsic_regular, intrinsic_state) = intrinsic_gas_dimensions(tx, fork, block_gas_limit)
-        .map_err(|e| EvmError::Transaction(format!("intrinsic gas computation failed: {e}")))?;
-
     let tx_gas = tx.gas_limit();
     let regular_available = block_gas_limit.saturating_sub(block_gas_used_regular);
     let state_available = block_gas_limit.saturating_sub(block_gas_used_state);
 
-    // Regular dim: worst-case regular contribution = tx.gas - intrinsic.state,
-    // capped at TX_MAX_GAS_LIMIT. If tx.gas < intrinsic.state the tx is
-    // intrinsic-underfunded and will be rejected later; treat the subtraction
-    // as zero so the 2D check doesn't spuriously reject on saturation.
-    let regular_contrib = tx_gas
-        .saturating_sub(intrinsic_state)
-        .min(TX_MAX_GAS_LIMIT_AMSTERDAM);
+    // Regular dim: worst-case regular contribution = full tx.gas, capped at
+    // TX_MAX_GAS_LIMIT. The spec uses the full tx gas with no intrinsic
+    // subtraction; intrinsic underfunding is rejected separately in transaction
+    // validation, not by this inclusion check.
+    let regular_contrib = tx_gas.min(TX_MAX_GAS_LIMIT_AMSTERDAM);
     if regular_contrib > regular_available {
         return Err(EvmError::Transaction(format!(
             "Gas allowance exceeded: regular dim worst-case {regular_contrib} > \
@@ -162,8 +158,8 @@ pub fn check_2d_gas_allowance(
         )));
     }
 
-    // State dim: worst-case state contribution = tx.gas - intrinsic.regular.
-    let state_contrib = tx_gas.saturating_sub(intrinsic_regular);
+    // State dim: worst-case state contribution = full tx.gas.
+    let state_contrib = tx_gas;
     if state_contrib > state_available {
         return Err(EvmError::Transaction(format!(
             "Gas allowance exceeded: state dim worst-case {state_contrib} > \
@@ -262,7 +258,6 @@ impl LEVM {
             if is_amsterdam {
                 check_2d_gas_allowance(
                     tx,
-                    Fork::Amsterdam,
                     block_regular_gas_used,
                     block_state_gas_used,
                     block.header.gas_limit,
@@ -421,7 +416,7 @@ impl LEVM {
         merkleizer: Option<Sender<Vec<AccountUpdate>>>,
         queue_length: &AtomicUsize,
         crypto: &dyn Crypto,
-        header_bal: Option<&BlockAccessList>,
+        header_bal: Option<Arc<BlockAccessList>>,
         bal_parallel_exec_enabled: bool,
     ) -> Result<(BlockExecutionResult, Option<BlockAccessList>), EvmError> {
         let chain_config = db.store.get_chain_config()?;
@@ -464,7 +459,7 @@ impl LEVM {
             // Note: size cap validation is deferred until after transaction processing
             // so that transaction-level errors (e.g. gas allowance exceeded) take
             // priority, matching the reference implementation's validation order.
-            validate_header_bal_indices(bal, block.body.transactions.len())
+            validate_header_bal_indices(&bal, block.body.transactions.len())
                 .map_err(|e| EvmError::Custom(e.to_string()))?;
 
             // Outer db has no BAL recorder: header BAL drives validation.
@@ -472,7 +467,7 @@ impl LEVM {
             Self::prepare_block(block, db, vm_type, crypto)?;
 
             // Build validation index once — shared across parallel execution and post-exec seeding.
-            let validation_index = bal.build_validation_index();
+            let validation_index = Arc::new(bal.build_validation_index());
 
             // Drain system call state and snapshot for per-tx db seeding
             LEVM::get_state_transitions_tx(db)?;
@@ -483,12 +478,12 @@ impl LEVM {
                 &transactions_with_sender,
                 db,
                 vm_type,
-                bal,
+                Arc::clone(&bal),
                 merkleizer.as_ref(),
                 queue_length,
                 system_seed,
                 crypto,
-                &validation_index,
+                Arc::clone(&validation_index),
             );
 
             // If parallel execution failed (e.g. BAL validation), still check system
@@ -508,7 +503,7 @@ impl LEVM {
                         u32::try_from(block.body.transactions.len()).unwrap_or(u32::MAX);
                     if Self::seed_db_from_bal(
                         db,
-                        bal,
+                        &bal,
                         last_tx_idx,
                         &validation_index.accounts_by_min_index,
                     )
@@ -531,7 +526,7 @@ impl LEVM {
             // Eager seed retained: lazy_bal cursor is per-tx only; outer DB has no cursor.
             Self::seed_db_from_bal(
                 db,
-                bal,
+                &bal,
                 last_tx_idx,
                 &validation_index.accounts_by_min_index,
             )?;
@@ -557,7 +552,7 @@ impl LEVM {
             let withdrawal_idx = u32::try_from(block.body.transactions.len())
                 .map(|n| n.saturating_add(1))
                 .unwrap_or(u32::MAX);
-            Self::validate_bal_withdrawal_index(db, bal, withdrawal_idx, &validation_index)?;
+            Self::validate_bal_withdrawal_index(db, &bal, withdrawal_idx, &validation_index)?;
 
             // Mark storage_reads that occurred during the withdrawal/request phase.
             if !unread_storage_reads.is_empty() {
@@ -608,7 +603,7 @@ impl LEVM {
 
             // EIP-7928 size cap: validated after execution so that transaction-level
             // errors (e.g. gas allowance exceeded) take priority.
-            validate_block_access_list_size(&block.header, &chain_config, bal)
+            validate_block_access_list_size(&block.header, &chain_config, &bal)
                 .map_err(|e| EvmError::Custom(e.to_string()))?;
 
             return Ok((
@@ -677,7 +672,6 @@ impl LEVM {
             if is_amsterdam {
                 check_2d_gas_allowance(
                     tx,
-                    Fork::Amsterdam,
                     block_regular_gas_used,
                     block_state_gas_used,
                     block.header.gas_limit,
@@ -1043,12 +1037,12 @@ impl LEVM {
         txs_with_sender: &[(&Transaction, Address)],
         db: &mut GeneralizedDatabase,
         vm_type: VMType,
-        bal: &BlockAccessList,
+        bal: Arc<BlockAccessList>,
         merkleizer: Option<&Sender<Vec<AccountUpdate>>>,
         queue_length: &AtomicUsize,
         system_seed: Arc<CacheDB>,
         crypto: &dyn Crypto,
-        validation_index: &BalAddressIndex,
+        validation_index: Arc<BalAddressIndex>,
     ) -> Result<
         (
             Vec<Receipt>,
@@ -1083,7 +1077,7 @@ impl LEVM {
         // Skipped when the caller merkleizes optimistically from the input BAL; the
         // conversion is then redundant work (and does pre-state reads we don't need).
         if let Some(merkleizer) = merkleizer {
-            let account_updates = Self::bal_to_account_updates(bal, store.as_ref())?;
+            let account_updates = Self::bal_to_account_updates(&bal, store.as_ref())?;
             merkleizer
                 .send(account_updates)
                 .map_err(|e| EvmError::Custom(format!("merkleizer send failed: {e}")))?;
@@ -1130,9 +1124,9 @@ impl LEVM {
                 .is_some_and(|a| a.storage.contains_key(key))
         });
 
-        // Small capacity hint — per-tx DBs materialize only touched accounts via lazy_bal cursor.
-        let arc_bal = Arc::new(bal.clone());
-        let arc_idx = Arc::new(validation_index.clone());
+        // Already-owned Arcs from the caller; per-thread/per-tx uses below are pointer clones.
+        let arc_bal = bal;
+        let arc_idx = validation_index;
 
         // 2. Execute all txs in parallel (embarrassingly parallel, BAL-seeded).
         //    BAL validation runs INSIDE the par_iter closure (parallel) but its
@@ -1161,6 +1155,7 @@ impl LEVM {
             .into_par_iter()
             .map(|tx_idx| -> Result<_, EvmError> {
                 let (tx, sender) = &txs_with_sender[tx_idx];
+                // Small capacity hint — per-tx DBs materialize only touched accounts via lazy_bal cursor.
                 let mut tx_db = GeneralizedDatabase::new_with_shared_base_and_capacity(
                     store.clone(),
                     system_seed.clone(),
@@ -1260,8 +1255,8 @@ impl LEVM {
                         seed_idx,
                         &current_state,
                         &codes,
-                        bal,
-                        validation_index,
+                        &arc_bal,
+                        &arc_idx,
                         &system_seed,
                         &store,
                     )
@@ -1271,7 +1266,7 @@ impl LEVM {
 
                     // EIP-7928 (Group B): missing-access detection via shadow recorder.
                     for addr in &shadow_touched {
-                        if !validation_index.addr_to_idx.contains_key(addr) {
+                        if !arc_idx.addr_to_idx.contains_key(addr) {
                             return Err(EvmError::Custom(format!(
                                 "BAL validation failed for tx {tx_idx}: account {addr:?} was \
                                  accessed during execution but is missing from BAL"
@@ -1279,11 +1274,11 @@ impl LEVM {
                         }
                     }
                     for (addr, slot) in &shadow_reads {
-                        let Some(&bal_acct_idx) = validation_index.addr_to_idx.get(addr) else {
+                        let Some(&bal_acct_idx) = arc_idx.addr_to_idx.get(addr) else {
                             // Already caught by the touched-address check above.
                             continue;
                         };
-                        let acct = &bal.accounts()[bal_acct_idx];
+                        let acct = &arc_bal.accounts()[bal_acct_idx];
                         let in_changes = acct
                             .storage_changes
                             .binary_search_by(|sc| sc.slot.cmp(slot))
@@ -1334,13 +1329,12 @@ impl LEVM {
         let mut block_state_gas_used = 0_u64;
         let mut tx_gas_breakdowns: Vec<TxGasBreakdown> = Vec::with_capacity(exec_results.len());
         for (tx_idx, _, report, _, _, _, _) in &exec_results {
-            let (tx, _) = txs_with_sender
+            let (tx, _tx_sender) = txs_with_sender
                 .get(*tx_idx)
                 .ok_or_else(|| EvmError::Custom(format!("tx index {tx_idx} out of bounds")))?;
             if is_amsterdam {
                 check_2d_gas_allowance(
                     tx,
-                    Fork::Amsterdam,
                     block_regular_gas_used,
                     block_state_gas_used,
                     header.gas_limit,
@@ -2841,6 +2835,68 @@ impl LEVM {
         }
     }
 
+    pub(crate) fn read_builder_deposit_requests(
+        block_header: &BlockHeader,
+        db: &mut GeneralizedDatabase,
+        vm_type: VMType,
+        crypto: &dyn Crypto,
+    ) -> Result<ExecutionReport, EvmError> {
+        if let VMType::L2(_) = vm_type {
+            return Err(EvmError::InvalidEVM(
+                "read_builder_deposit_requests should not be called for L2 VM".to_string(),
+            ));
+        }
+
+        let report = generic_system_contract_levm(
+            block_header,
+            Bytes::new(),
+            db,
+            BUILDER_DEPOSIT_CONTRACT_ADDRESS.address,
+            SYSTEM_ADDRESS,
+            vm_type,
+            crypto,
+        )?;
+
+        match report.result {
+            TxResult::Success => Ok(report),
+            // EIP-8282 specifies that a failed system call invalidates the entire block.
+            TxResult::Revert(vm_error) => Err(EvmError::SystemContractCallFailed(format!(
+                "REVERT when reading builder deposit requests with error: {vm_error:?}. According to EIP-8282, the revert of this system call invalidates the block.",
+            ))),
+        }
+    }
+
+    pub(crate) fn dequeue_builder_exit_requests(
+        block_header: &BlockHeader,
+        db: &mut GeneralizedDatabase,
+        vm_type: VMType,
+        crypto: &dyn Crypto,
+    ) -> Result<ExecutionReport, EvmError> {
+        if let VMType::L2(_) = vm_type {
+            return Err(EvmError::InvalidEVM(
+                "dequeue_builder_exit_requests should not be called for L2 VM".to_string(),
+            ));
+        }
+
+        let report = generic_system_contract_levm(
+            block_header,
+            Bytes::new(),
+            db,
+            BUILDER_EXIT_CONTRACT_ADDRESS.address,
+            SYSTEM_ADDRESS,
+            vm_type,
+            crypto,
+        )?;
+
+        match report.result {
+            TxResult::Success => Ok(report),
+            // EIP-8282 specifies that a failed system call invalidates the entire block.
+            TxResult::Revert(vm_error) => Err(EvmError::SystemContractCallFailed(format!(
+                "REVERT when dequeuing builder exit requests with error: {vm_error:?}. According to EIP-8282, the revert of this system call invalidates the block.",
+            ))),
+        }
+    }
+
     pub fn create_access_list(
         mut tx: GenericTransaction,
         header: &BlockHeader,
@@ -2920,9 +2976,17 @@ pub fn generic_system_contract_levm(
     let config = EVMConfig::new_from_chain_config(&chain_config, block_header);
     let env = Environment {
         origin: system_address,
-        // EIPs 2935, 4788, 7002 and 7251 dictate that the system calls have a gas limit of 30 million and they do not use intrinsic gas.
-        // So we add the base cost that will be taken in the execution.
-        gas_limit: SYS_CALL_GAS_LIMIT + TX_BASE_COST,
+        // EIPs 2935, 4788, 7002 and 7251 dictate that the system calls have a gas
+        // limit of 30 million and they do not use intrinsic gas. EELS
+        // (process_unchecked_system_transaction) builds the message with
+        // intrinsic_regular_gas=0 and gas=SYSTEM_TRANSACTION_GAS, so the contract
+        // gets the full SYS_CALL_GAS_LIMIT. We match that by NOT padding the limit
+        // here and by zeroing the intrinsic for system calls in the default hook.
+        // (A previous `+ TX_BASE_COST` buffer assumed the flat 21000 Prague
+        // intrinsic; EIP-2780 lowered Amsterdam's intrinsic to 15000, so the buffer
+        // over-funded the frame by 6000 and let an OOG-by-1 system contract avoid
+        // running out of gas.)
+        gas_limit: SYS_CALL_GAS_LIMIT,
         block_number: block_header.number,
         coinbase: block_header.coinbase,
         timestamp: block_header.timestamp,
@@ -2956,8 +3020,13 @@ pub fn generic_system_contract_levm(
     // The error that should be returned for the relevant contracts is indicated in the following:
     // https://github.com/ethereum/EIPs/blob/master/EIPS/eip-7002.md#empty-code-failure
     // https://github.com/ethereum/EIPs/blob/master/EIPS/eip-7251.md#empty-code-failure
+    // EIP-8282 applies the same empty-code-failure rule to the builder deposit/exit predeploys.
+    // No extra fork guard is needed here: builder predeploy addresses only reach this function via
+    // extract_all_requests_levm, which gates them on fork >= Amsterdam, so a Prague/Osaka block
+    // never passes a builder address to this check.
     if PRAGUE_SYSTEM_CONTRACTS
         .iter()
+        .chain(AMSTERDAM_REQUEST_PREDEPLOYS.iter())
         .any(|contract| contract.address == contract_address)
         && db.get_account_code(contract_address)?.is_empty()
     {
@@ -3024,7 +3093,27 @@ pub fn extract_all_requests_levm(
     let withdrawals = Requests::from_withdrawals_data(withdrawals_data);
     let consolidation = Requests::from_consolidation_data(consolidation_data);
 
-    Ok(vec![deposits, withdrawals, consolidation])
+    let mut requests = vec![deposits, withdrawals, consolidation];
+
+    // EIP-8282 (Amsterdam): builder deposit (0x03) and builder exit (0x04) requests.
+    // Prague (18) < Amsterdam (25), so this needs a separate explicit gate; appending
+    // unconditionally after the Prague early-return above would emit these on Prague/Osaka blocks.
+    if fork >= Fork::Amsterdam {
+        // Grow to exactly 5 once, avoiding a realloc on each of the two pushes below.
+        requests.reserve_exact(2);
+        let builder_deposit_data: Vec<u8> =
+            LEVM::read_builder_deposit_requests(header, db, vm_type, crypto)?
+                .output
+                .into();
+        let builder_exit_data: Vec<u8> =
+            LEVM::dequeue_builder_exit_requests(header, db, vm_type, crypto)?
+                .output
+                .into();
+        requests.push(Requests::from_builder_deposit_data(builder_deposit_data));
+        requests.push(Requests::from_builder_exit_data(builder_exit_data));
+    }
+
+    Ok(requests)
 }
 
 /// Calculating gas_price according to EIP-1559 rules
@@ -3214,7 +3303,14 @@ fn vm_from_generic<'a>(
 }
 
 pub fn get_max_allowed_gas_limit(block_gas_limit: u64, fork: Fork) -> u64 {
-    if fork >= Fork::Osaka {
+    // EIP-7825 imposes a flat per-tx gas cap (POST_OSAKA_GAS_LIMIT_CAP) from
+    // Osaka through the BPO forks. Amsterdam supersedes it with the EIP-8037 2D
+    // gas model: tx.gas may exceed the flat cap (the excess funds the state-gas
+    // reservoir) and is instead bounded by block_gas_limit on the state
+    // dimension, so capping the estimateGas ceiling at the flat value would
+    // prevent convergence for state-heavy creations. Mirror the Osaka-only
+    // gating used at the other cap sites (block validation, default_hook).
+    if fork >= Fork::Osaka && fork < Fork::Amsterdam {
         POST_OSAKA_GAS_LIMIT_CAP
     } else {
         block_gas_limit

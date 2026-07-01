@@ -58,6 +58,7 @@ impl OpcodeHandler for OpBalanceHandler {
         vm.current_call_frame
             .increase_consumed_gas(gas_cost::balance(
                 vm.substate.add_accessed_address(address),
+                vm.env.config.fork,
             )?)?;
 
         // State access AFTER gas check passes
@@ -292,6 +293,7 @@ impl OpcodeHandler for OpExtCodeSizeHandler {
         vm.current_call_frame
             .increase_consumed_gas(gas_cost::extcodesize(
                 vm.substate.add_accessed_address(address),
+                vm.env.config.fork,
             )?)?;
 
         // EIP-8141 mempool validation-trace: EXTCODESIZE target must exist and
@@ -330,6 +332,7 @@ impl OpcodeHandler for OpExtCodeCopyHandler {
                 calculate_memory_size(dst_offset, len)?,
                 vm.current_call_frame.memory.len(),
                 vm.substate.add_accessed_address(address),
+                vm.env.config.fork,
             )?)?;
 
         // Record address touch for BAL (after gas check passes)
@@ -377,6 +380,7 @@ impl OpcodeHandler for OpExtCodeHashHandler {
         vm.current_call_frame
             .increase_consumed_gas(gas_cost::extcodehash(
                 vm.substate.add_accessed_address(address),
+                vm.env.config.fork,
             )?)?;
 
         // EIP-8141 mempool validation-trace: EXTCODEHASH target must exist and

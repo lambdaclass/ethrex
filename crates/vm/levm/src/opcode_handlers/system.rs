@@ -19,7 +19,7 @@ use crate::{
     memory::{self, calculate_memory_size},
     opcode_handlers::OpcodeHandler,
     precompiles,
-    utils::{address_to_word, create_burn_log, create_eth_transfer_log, word_to_address, *},
+    utils::{address_to_word, create_eth_transfer_log, word_to_address, *},
     vm::VM,
 };
 use bytes::Bytes;
@@ -49,7 +49,7 @@ impl OpcodeHandler for OpCallHandler {
         }
 
         let value_cost = if !value.is_zero() {
-            gas_cost::CALL_POSITIVE_VALUE
+            gas_cost::call_positive_value_cost(vm.env.config.fork)
         } else {
             0
         };
@@ -74,7 +74,8 @@ impl OpcodeHandler for OpCallHandler {
         // Detect a 7702 delegation without reading the delegate account: per
         // EELS the delegate access cost is gas-checked first, so an OOG must
         // not leak the delegate read into execution witnesses (EIP-8025).
-        let (callee_code, delegation) = eip7702_peek_delegation(vm.db, &vm.substate, callee)?;
+        let (callee_code, delegation) =
+            eip7702_peek_delegation(vm.db, &vm.substate, callee, vm.env.config.fork)?;
         let is_delegation_7702 = delegation.is_some();
         let (eip7702_gas_consumed, code_address) = match delegation {
             Some((auth_address, access_cost)) => (access_cost, auth_address),
@@ -214,6 +215,7 @@ impl OpcodeHandler for OpCallHandler {
             return_len,
             bytecode,
             is_delegation_7702,
+            needs_state_gas,
         )
     }
 }
@@ -236,7 +238,7 @@ impl OpcodeHandler for OpCallCodeHandler {
         let (return_len, return_offset) = size_offset_to_usize(return_len, return_offset)?;
 
         let value_cost = if !value.is_zero() {
-            gas_cost::CALLCODE_POSITIVE_VALUE
+            gas_cost::call_positive_value_cost(vm.env.config.fork)
         } else {
             0
         };
@@ -253,7 +255,8 @@ impl OpcodeHandler for OpCallCodeHandler {
         // Detect a 7702 delegation without reading the delegate account: per
         // EELS the delegate access cost is gas-checked first, so an OOG must
         // not leak the delegate read into execution witnesses (EIP-8025).
-        let (target_code, delegation) = eip7702_peek_delegation(vm.db, &vm.substate, address)?;
+        let (target_code, delegation) =
+            eip7702_peek_delegation(vm.db, &vm.substate, address, vm.env.config.fork)?;
         let is_delegation_7702 = delegation.is_some();
         let (eip7702_gas_consumed, code_address) = match delegation {
             Some((auth_address, access_cost)) => (access_cost, auth_address),
@@ -303,6 +306,7 @@ impl OpcodeHandler for OpCallCodeHandler {
             value,
             gas,
             gas_left,
+            vm.env.config.fork,
         )?;
         vm.current_call_frame.increase_consumed_gas(
             gas_cost
@@ -347,6 +351,7 @@ impl OpcodeHandler for OpCallCodeHandler {
             return_len,
             bytecode,
             is_delegation_7702,
+            false,
         )
     }
 }
@@ -374,7 +379,8 @@ impl OpcodeHandler for OpDelegateCallHandler {
         // Detect a 7702 delegation without reading the delegate account: per
         // EELS the delegate access cost is gas-checked first, so an OOG must
         // not leak the delegate read into execution witnesses (EIP-8025).
-        let (target_code, delegation) = eip7702_peek_delegation(vm.db, &vm.substate, address)?;
+        let (target_code, delegation) =
+            eip7702_peek_delegation(vm.db, &vm.substate, address, vm.env.config.fork)?;
         let is_delegation_7702 = delegation.is_some();
         let (eip7702_gas_consumed, code_address) = match delegation {
             Some((auth_address, access_cost)) => (access_cost, auth_address),
@@ -422,6 +428,7 @@ impl OpcodeHandler for OpDelegateCallHandler {
             address_was_cold,
             gas,
             gas_left,
+            vm.env.config.fork,
         )?;
         vm.current_call_frame.increase_consumed_gas(
             gas_cost
@@ -468,6 +475,7 @@ impl OpcodeHandler for OpDelegateCallHandler {
             return_len,
             bytecode,
             is_delegation_7702,
+            false,
         )
     }
 }
@@ -495,7 +503,8 @@ impl OpcodeHandler for OpStaticCallHandler {
         // Detect a 7702 delegation without reading the delegate account: per
         // EELS the delegate access cost is gas-checked first, so an OOG must
         // not leak the delegate read into execution witnesses (EIP-8025).
-        let (target_code, delegation) = eip7702_peek_delegation(vm.db, &vm.substate, address)?;
+        let (target_code, delegation) =
+            eip7702_peek_delegation(vm.db, &vm.substate, address, vm.env.config.fork)?;
         let is_delegation_7702 = delegation.is_some();
         let (eip7702_gas_consumed, code_address) = match delegation {
             Some((auth_address, access_cost)) => (access_cost, auth_address),
@@ -543,6 +552,7 @@ impl OpcodeHandler for OpStaticCallHandler {
             address_was_cold,
             gas,
             gas_left,
+            vm.env.config.fork,
         )?;
         vm.current_call_frame.increase_consumed_gas(
             gas_cost
@@ -587,6 +597,7 @@ impl OpcodeHandler for OpStaticCallHandler {
             return_len,
             bytecode,
             is_delegation_7702,
+            false,
         )
     }
 }
@@ -701,7 +712,8 @@ impl OpcodeHandler for OpSelfDestructHandler {
         // BEFORE the beneficiary/self state reads: an OOG here must not leak
         // those reads into execution witnesses (EIP-8025).
         if vm.env.config.fork >= Fork::Amsterdam {
-            let base_cost = gas_cost::selfdestruct_base(target_account_is_cold)?;
+            let base_cost =
+                gas_cost::selfdestruct_base(target_account_is_cold, vm.env.config.fork)?;
             // Phase 1: Check base cost is available (without charging)
             #[expect(clippy::as_conversions, reason = "base_cost fits in i64")]
             if vm.current_call_frame.gas_remaining < (base_cost as i64) {
@@ -771,32 +783,38 @@ impl OpcodeHandler for OpSelfDestructHandler {
 
         // [EIP-6780] - SELFDESTRUCT only in same transaction from CANCUN
         if vm.env.config.fork >= Fork::Cancun {
-            vm.transfer(to, beneficiary, balance)?;
+            // [EIP-8246] (Amsterdam+): a selfdestruct-to-self moves no ETH (balance is
+            // preserved at finalization). Skip the self-transfer so it doesn't fire
+            // spurious BAL balance events that overwrite the recorded initial balance.
+            // For `to != beneficiary` the transfer still runs (balance moves out).
+            if !(vm.env.config.fork >= Fork::Amsterdam && to == beneficiary) {
+                vm.transfer(to, beneficiary, balance)?;
+            }
 
             // Selfdestruct is executed in the same transaction as the contract was created
             if vm.substate.is_account_created(&to) {
-                // If target is the same as the contract calling, Ether will be burnt.
-                vm.get_account_mut(to)?.info.balance = U256::zero();
+                // [EIP-8246] (Amsterdam+): balance is NOT burned; nonce/code/storage are cleared
+                // at finalization while balance is preserved. Pre-Amsterdam (EIP-6780): Ether is
+                // burned when to == beneficiary.
+                if vm.env.config.fork < Fork::Amsterdam {
+                    vm.get_account_mut(to)?.info.balance = U256::zero();
 
-                // Record balance change to zero for destroyed account in BAL
-                if let Some(recorder) = vm.db.bal_recorder.as_mut() {
-                    recorder.record_balance_change(to, U256::zero());
+                    // Record balance change to zero for destroyed account in BAL
+                    if let Some(recorder) = vm.db.bal_recorder.as_mut() {
+                        recorder.record_balance_change(to, U256::zero());
+                    }
                 }
 
                 vm.substate.add_selfdestruct(to);
             }
 
-            // EIP-7708: Emit appropriate log for ETH movement
-            if vm.env.config.fork >= Fork::Amsterdam && !balance.is_zero() {
-                if to != beneficiary {
-                    let log = create_eth_transfer_log(to, beneficiary, balance);
-                    vm.substate.add_log(log);
-                } else if vm.substate.is_account_created(&to) {
-                    // Selfdestruct-to-self: only emit log when created in same tx (burns ETH)
-                    // Pre-existing contracts selfdestructing to self emit NO log
-                    let log = create_burn_log(to, balance);
-                    vm.substate.add_log(log);
-                }
+            // EIP-7708: Emit appropriate log for ETH movement (Amsterdam+ only).
+            // EIP-8246 (Amsterdam+): no burn log for same-tx selfdestruct-to-self; no ETH burned.
+            // Cancun/Prague (pre-Amsterdam): no EIP-7708 logs at all.
+            if vm.env.config.fork >= Fork::Amsterdam && !balance.is_zero() && to != beneficiary {
+                let log = create_eth_transfer_log(to, beneficiary, balance);
+                vm.substate.add_log(log);
+                // No burn log under EIP-8246: selfdestruct-to-self preserves balance.
             }
         } else {
             vm.increase_account_balance(beneficiary, balance)?;
@@ -964,6 +982,16 @@ impl<'a> VM<'a> {
                 .exit_early(gas_limit, Some("CreateAccExists".to_string()))?;
             return Ok(OpcodeResult::Continue);
         }
+        // EIP-8037 (#3002): capture whether the create target is already alive,
+        // AFTER the collision guard and BEFORE any nonce increment / state
+        // mutation, mirroring EELS `target_alive = is_account_alive(...)`.
+        // `create_would_collide()` already excluded any account with code, nonce,
+        // or storage, so a surviving non-empty target can differ only by
+        // balance > 0; hence `!is_empty()` is exactly `is_account_alive` for
+        // create targets (nonexistent or empty -> not alive). Used on the success
+        // path to refund the unconditionally-charged new-account state gas (no new
+        // account leaf created).
+        let target_alive = !self.get_account_mut(new_address)?.is_empty();
 
         // Create BAL checkpoint before entering create call for potential revert per EIP-7928
         let bal_checkpoint = self.db.bal_recorder.as_ref().map(|r| r.checkpoint());
@@ -997,6 +1025,9 @@ impl<'a> VM<'a> {
         // `vm.state_gas_used`, so the revert restore in `handle_return_create`
         // keeps the parent's pre-CREATE intrinsic without re-refunding it.
         new_call_frame.state_gas_used_at_entry = self.state_gas_used;
+        // EIP-8037 (#3002): thread the pre-mutation target-alive flag to the
+        // success arm of `handle_return_create`.
+        new_call_frame.target_alive = target_alive;
 
         self.add_callframe(new_call_frame);
 
@@ -1037,7 +1068,7 @@ impl<'a> VM<'a> {
         let memory_expansion_cost =
             memory::expansion_cost(new_memory_size, self.current_call_frame.memory.len())?;
         let access_gas_cost = if address_was_cold {
-            gas_cost::COLD_ADDRESS_ACCESS_COST
+            gas_cost::cold_account_access_cost(self.env.config.fork)
         } else {
             gas_cost::WARM_ADDRESS_ACCESS_COST
         };
@@ -1077,7 +1108,7 @@ impl<'a> VM<'a> {
         let mem_cost =
             memory::expansion_cost(new_memory_size, current_memory_size).unwrap_or(u64::MAX);
         let access_cost = if address_was_cold {
-            gas_cost::COLD_ADDRESS_ACCESS_COST
+            gas_cost::cold_account_access_cost(self.env.config.fork)
         } else {
             gas_cost::WARM_ADDRESS_ACCESS_COST
         };
@@ -1125,6 +1156,7 @@ impl<'a> VM<'a> {
         ret_size: usize,
         bytecode: Code,
         is_delegation_7702: bool,
+        new_account_charged: bool,
     ) -> Result<OpcodeResult, VMError> {
         // Clear callframe subreturn data
         self.current_call_frame.sub_return_data.clear();
@@ -1133,6 +1165,8 @@ impl<'a> VM<'a> {
         if should_transfer_value && !value.is_zero() {
             let sender_balance = self.db.get_account(msg_sender)?.info.balance;
             if sender_balance < value {
+                // EIP-8037: no account is created, refund the new-account state gas.
+                self.refund_new_account_state_gas(new_account_charged)?;
                 self.early_revert_message_call(gas_limit, "OutOfFund".to_string())?;
                 return Ok(OpcodeResult::Continue);
             }
@@ -1145,6 +1179,7 @@ impl<'a> VM<'a> {
             .checked_add(1)
             .ok_or(InternalError::Overflow)?;
         if new_depth > 1024 {
+            self.refund_new_account_state_gas(new_account_charged)?;
             self.early_revert_message_call(gas_limit, "MaxDepth".to_string())?;
             return Ok(OpcodeResult::Continue);
         }
@@ -1203,6 +1238,11 @@ impl<'a> VM<'a> {
                 TxResult::Revert(_) => FAIL,
             })?;
 
+            // EIP-8037: a failed precompile call transfers no value, so no account is
+            // created — refund the new-account state gas (EELS `generic_call`
+            // `credit_state_gas_refund(NEW_ACCOUNT)` on child error).
+            self.refund_new_account_state_gas(new_account_charged && !ctx_result.is_success())?;
+
             // Transfer value from caller to callee.
             if should_transfer_value && ctx_result.is_success() {
                 self.transfer(msg_sender, to, value)?;
@@ -1245,6 +1285,7 @@ impl<'a> VM<'a> {
             // Store BAL checkpoint in the call frame's backup for restoration on revert
             new_call_frame.call_frame_backup.bal_checkpoint = bal_checkpoint;
             new_call_frame.state_gas_used_at_entry = self.state_gas_used;
+            new_call_frame.new_account_state_gas_charged = new_account_charged;
 
             self.add_callframe(new_call_frame);
 
@@ -1327,9 +1368,10 @@ impl<'a> VM<'a> {
             ret_offset,
             ret_size,
             memory: old_callframe_memory,
-            state_gas_used_at_entry,
+            frame_state_gas_spilled: child_frame_state_gas_spilled,
             call_frame_backup,
             stack,
+            new_account_state_gas_charged,
             ..
         } = executed_call_frame;
 
@@ -1373,9 +1415,21 @@ impl<'a> VM<'a> {
                 // EIP-8037: on success, child's state_gas_used is already
                 // accumulated into the VM-level field (signed sum handles refunds).
                 // No pending flush needed — credits were applied inline.
+                // Propagate the child's per-frame spill to the parent so a later
+                // parent revert/halt refills it LIFO (EELS `incorporate_child_on_success`).
+                self.current_call_frame.frame_state_gas_spilled = self
+                    .current_call_frame
+                    .frame_state_gas_spilled
+                    .checked_add(child_frame_state_gas_spilled)
+                    .ok_or(InternalError::Overflow)?;
             }
             TxResult::Revert(_) => {
-                self.incorporate_child_state_gas_on_revert(state_gas_used_at_entry)?;
+                // EIP-8037: the child already self-refilled its execution state gas via
+                // `refill_frame_state_gas` in `handle_opcode_error`. The parent-charged
+                // new-account state gas (value transfer to an empty account) is separate
+                // and refunded here on child failure, mirroring EELS `generic_call`
+                // `credit_state_gas_refund(NEW_ACCOUNT)`.
+                self.refund_new_account_state_gas(new_account_state_gas_charged)?;
                 self.current_call_frame.stack.push(FAIL)?;
             }
         };
@@ -1400,7 +1454,8 @@ impl<'a> VM<'a> {
             to,
             call_frame_backup,
             memory: old_callframe_memory,
-            state_gas_used_at_entry,
+            frame_state_gas_spilled: child_frame_state_gas_spilled,
+            target_alive,
             stack,
             ..
         } = executed_call_frame;
@@ -1429,9 +1484,29 @@ impl<'a> VM<'a> {
                 // EIP-8037: on success, child's state_gas_used is already
                 // accumulated into the VM-level field (signed sum handles refunds).
                 // No pending flush needed — credits were applied inline.
+                // Propagate the child's per-frame spill to the parent so a later
+                // parent revert/halt refills it LIFO (EELS `incorporate_child_on_success`).
+                self.current_call_frame.frame_state_gas_spilled = self
+                    .current_call_frame
+                    .frame_state_gas_spilled
+                    .checked_add(child_frame_state_gas_spilled)
+                    .ok_or(InternalError::Overflow)?;
+                // EIP-8037 (#3002): the parent charged the new-account state gas
+                // unconditionally before the child ran. On success, if the target was
+                // already alive (existed and non-empty), no new account leaf is created,
+                // so refund the new-account portion — EELS `generic_create`:
+                //   if target_alive: credit_state_gas_refund(evm, StateGasCosts.NEW_ACCOUNT)
+                // LIFO via `credit_state_gas_refund` (drains the parent frame spill first,
+                // then the reservoir). Disjoint from the failure/collision refunds, which
+                // only fire on the Revert arm / early-return paths.
+                if self.env.config.fork >= Fork::Amsterdam && target_alive {
+                    self.credit_state_gas_refund(self.state_gas_new_account)?;
+                }
             }
             TxResult::Revert(err) => {
-                self.incorporate_child_state_gas_on_revert(state_gas_used_at_entry)?;
+                // EIP-8037: the child already self-refilled its state gas via
+                // `refill_frame_state_gas` in `handle_opcode_error`, so no parent-side
+                // state-gas reabsorption is needed here.
 
                 // EIP-8037: CREATE's account state gas was charged in the parent before
                 // the child frame began; no account was created, so refund it per EELS

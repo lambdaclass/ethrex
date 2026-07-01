@@ -614,6 +614,16 @@ pub struct VM<'a> {
     pub cost_per_state_byte: u64,
     /// EIP-8037: State gas for new account creation (STATE_BYTES_PER_NEW_ACCOUNT * cost_per_state_byte).
     pub state_gas_new_account: u64,
+    /// EIP-2780 top-frame new-account state gas pending for the top-level value
+    /// transfer to an empty recipient. Captured in `prepare_execution` (before the
+    /// value transfer, while the recipient is still empty) and charged at the start
+    /// of `run_execution` so an OOG reverts the tx (EELS charges it inside
+    /// `process_message`) instead of invalidating the block.
+    pub pending_top_frame_state_gas: u64,
+    /// EIP-2780 top-frame regular gas pending for a 7702-delegated recipient (the
+    /// extra COLD_ACCOUNT_ACCESS to resolve the delegation). Deferred to
+    /// `run_execution` for the same revert-not-invalidate reason as the state charge.
+    pub pending_top_frame_regular_gas: u64,
     /// EIP-8037: State gas for storage slot creation (STATE_BYTES_PER_STORAGE_SET * cost_per_state_byte).
     pub state_gas_storage_set: u64,
     /// EIP-8037: State gas for EIP-7702 auth total (STATE_BYTES_PER_AUTH_TOTAL * cost_per_state_byte).
@@ -637,6 +647,13 @@ pub struct VM<'a> {
     /// execution portion to the reservoir — block accounting then bills the intrinsic
     /// (matches EELS `tx_state_gas = intrinsic_state_gas + tx_output.state_gas_used`).
     pub intrinsic_state_gas: u64,
+    /// EIP-8037 (#3002): whether a top-level CREATE transaction targeted an
+    /// already-alive account (existed and non-empty) at tx start, captured in
+    /// `handle_create_transaction` before any state mutation. Mirrors EELS
+    /// `MessageCallOutput.created_target_alive`. Extends the create-tx
+    /// new-account refund in `finalize_execution` to also fire on success when
+    /// the target was alive (no new account leaf created). Default false.
+    pub created_target_alive: bool,
     /// The opcode table mapping opcodes to opcode handlers for fast lookup.
     /// A shared `&'static` reference to a per-fork table that is `const`-built once for the
     /// whole process (immutable), so each VM holds only a pointer instead of a 2 KB inline copy.
@@ -997,11 +1014,14 @@ impl<'a> VM<'a> {
             state_gas_spill: 0,
             cost_per_state_byte: cpsb,
             state_gas_new_account,
+            pending_top_frame_state_gas: 0,
+            pending_top_frame_regular_gas: 0,
             state_gas_storage_set,
             state_gas_auth_total,
             state_gas_auth_base,
             state_refund: 0,
             intrinsic_state_gas: 0,
+            created_target_alive: false,
             current_call_frame: CallFrame::new(
                 env.origin,
                 callee,
@@ -1091,22 +1111,54 @@ impl<'a> VM<'a> {
             .state_gas_spill
             .checked_add(spill)
             .ok_or(InternalError::Overflow)?;
+        // Per-frame spill: EELS charge_state_gas does `frame_state_gas_spilled += remainder`.
+        // LIFO refund source; propagated to parent on child success.
+        self.current_call_frame.frame_state_gas_spilled = self
+            .current_call_frame
+            .frame_state_gas_spilled
+            .checked_add(spill)
+            .ok_or(InternalError::Overflow)?;
         Ok(())
     }
 
-    /// EIP-8037: credit `amount` directly to the local frame's reservoir; `state_gas_used`
-    /// may go negative when the matching charge lives in an ancestor frame.
-    ///
-    /// Must only be called for Amsterdam+ forks.
+    /// EIP-8037 `credit_state_gas_refund`: refund `amount` LIFO, mirroring EELS. The portion
+    /// spilled past the reservoir into this frame's `gas_remaining` (`frame_state_gas_spilled`)
+    /// is returned to `gas_remaining` first; only the remainder flows to the shared reservoir.
+    /// `state_gas_used` drops by the full `amount` (may go negative when the matching charge lives
+    /// in an ancestor frame). Block accounting: both spill counters drop by the
+    /// `gas_remaining`-credited portion only, never the full `amount`. Amsterdam+ only.
+    #[expect(
+        clippy::arithmetic_side_effects,
+        reason = "subtractions proven safe by min()"
+    )]
     pub fn credit_state_gas_refund(&mut self, amount: u64) -> Result<(), VMError> {
         debug_assert!(
             self.env.config.fork >= Fork::Amsterdam,
             "credit_state_gas_refund called pre-Amsterdam"
         );
+        // LIFO: drain the frame's spill (gas borrowed from gas_remaining) first.
+        let from_gas_left = self.current_call_frame.frame_state_gas_spilled.min(amount);
+        // Return the spilled portion to gas_remaining (i64).
+        self.current_call_frame.gas_remaining = self
+            .current_call_frame
+            .gas_remaining
+            .checked_add(i64::try_from(from_gas_left).map_err(|_| InternalError::Overflow)?)
+            .ok_or(InternalError::Overflow)?;
+        // Safe: from_gas_left = min(spill, amount) <= frame_state_gas_spilled.
+        self.current_call_frame.frame_state_gas_spilled -= from_gas_left;
+        // Block accounting: the refilled spill is no longer regular gas.
+        self.state_gas_spill = self
+            .state_gas_spill
+            .checked_sub(from_gas_left)
+            .ok_or(InternalError::Underflow)?;
+        // The remainder of the refund flows into the shared reservoir.
+        // Safe: from_gas_left = min(spill, amount) <= amount.
+        let to_reservoir = amount - from_gas_left;
         self.state_gas_reservoir = self
             .state_gas_reservoir
-            .checked_add(amount)
+            .checked_add(to_reservoir)
             .ok_or(InternalError::Overflow)?;
+        // state_gas_used always drops by the full amount (may go negative).
         self.state_gas_used = self
             .state_gas_used
             .checked_sub(i64::try_from(amount).map_err(|_| InternalError::Overflow)?)
@@ -1114,35 +1166,89 @@ impl<'a> VM<'a> {
         Ok(())
     }
 
-    /// EIP-8037 `incorporate_child_on_error`: on child revert, restore the parent's
-    /// `state_gas_used` to its pre-child value and refund the child's net
-    /// `(state_gas_used + state_gas_left)` back into the parent's reservoir.
-    ///
-    /// In ethrex's shared-VM model the child holds the entire reservoir during its
-    /// execution, so `child.state_gas_left == self.state_gas_reservoir` (absolute,
-    /// not a delta against entry). `child.state_gas_used` can be negative when
-    /// inline refunds inside the child exceeded its gross charges.
-    pub fn incorporate_child_state_gas_on_revert(
-        &mut self,
-        state_gas_used_at_entry: i64,
-    ) -> Result<(), VMError> {
-        let child_state_gas_used = self
-            .state_gas_used
-            .checked_sub(state_gas_used_at_entry)
-            .ok_or(InternalError::Overflow)?;
-        let child_state_gas_left =
-            i64::try_from(self.state_gas_reservoir).map_err(|_| InternalError::Overflow)?;
-        self.state_gas_used = state_gas_used_at_entry;
-        let net_return = child_state_gas_used
-            .checked_add(child_state_gas_left)
-            .ok_or(InternalError::Overflow)?;
-        // net_return is always >= 0 by the spec invariant (reservoir conservation
-        // means a child cannot refund more than its ancestors charged); clamp
-        // defensively and cast — `as u64` is sound because of the `.max(0)`.
-        #[expect(clippy::as_conversions, reason = ".max(0) proves non-negativity")]
-        {
-            self.state_gas_reservoir = net_return.max(0) as u64;
+    /// Refund the EIP-8037 new-account state gas when `charged` is true. Used by the
+    /// CALL paths where a value-bearing call to an empty account charged the new-account
+    /// state gas but no account ends up created (insufficient balance, max depth, child
+    /// revert / failed precompile).
+    #[inline]
+    pub fn refund_new_account_state_gas(&mut self, charged: bool) -> Result<(), VMError> {
+        if charged {
+            self.credit_state_gas_refund(self.state_gas_new_account)?;
         }
+        Ok(())
+    }
+
+    /// EIP-8037 `refill_frame_state_gas`: roll back this frame's state gas in LIFO
+    /// order on revert or exceptional halt, mirroring EELS `refill_frame_state_gas`.
+    ///
+    /// `entry` is the value of `state_gas_used` when this frame began executing
+    /// (`current_call_frame.state_gas_used_at_entry`). The frame's net charge is
+    /// `frame_used = state_gas_used - entry`. Of that, `frame_state_gas_spilled` was
+    /// drawn from `gas_remaining` (spilled past the reservoir) and the remainder came
+    /// from the reservoir. LIFO refill returns the spilled portion to `gas_remaining`
+    /// first and the rest to the reservoir, restoring the exact pools the charges drew
+    /// from. `state_gas_used` is rolled back to `entry` and the per-frame spill counter
+    /// is cleared.
+    ///
+    /// Revert-vs-halt equivalence (load-bearing): on revert, the spilled gas returns to
+    /// `gas_remaining` (raising the sender refund / lowering raw_consumed) while
+    /// `state_gas_spill` drops by the same amount, so the regular dimension in
+    /// `refund_sender` (default_hook) drops by exactly the refilled spill. On exceptional
+    /// halt the caller subsequently sets `gas_remaining = 0` and burns it to the regular
+    /// dimension — but `state_gas_spill` was already decremented here, so the spilled gas
+    /// stays counted as regular. Both paths are correct.
+    ///
+    /// Must only be called for Amsterdam+ forks.
+    pub fn refill_frame_state_gas(&mut self, entry: i64) -> Result<(), VMError> {
+        debug_assert!(
+            self.env.config.fork >= Fork::Amsterdam,
+            "refill_frame_state_gas called pre-Amsterdam"
+        );
+        // The frame's net state-gas charge since it began executing. May be
+        // negative when the frame's inline refunds (e.g. an SSTORE clearing a
+        // slot an ancestor set) exceeded its own gross charges.
+        let frame_used = self
+            .state_gas_used
+            .checked_sub(entry)
+            .ok_or(InternalError::Underflow)?;
+        let spilled = self.current_call_frame.frame_state_gas_spilled;
+        // LIFO invariant: any remaining spill is undrained own-charge, so it
+        // implies frame_used >= 0. A net-negative frame_used only arises after
+        // credit_state_gas_refund has already drained all spill (spilled == 0).
+        debug_assert!(
+            frame_used >= 0 || spilled == 0,
+            "negative frame_used with positive spill violates LIFO invariant \
+             (frame_used={frame_used}, spilled={spilled})"
+        );
+        // LIFO: return the spilled portion (borrowed from gas_remaining) first.
+        self.current_call_frame.gas_remaining = self
+            .current_call_frame
+            .gas_remaining
+            .checked_add(i64::try_from(spilled).map_err(|_| InternalError::Overflow)?)
+            .ok_or(InternalError::Overflow)?;
+        // The remainder (drawn from the reservoir) flows back to the reservoir.
+        let to_reservoir = frame_used
+            .checked_sub(i64::try_from(spilled).map_err(|_| InternalError::Overflow)?)
+            .ok_or(InternalError::Overflow)?;
+        // `to_reservoir` is negative in the cross-ancestor refund case
+        // (frame_used < 0); clamp so the reservoir never goes negative.
+        let reservoir_signed =
+            i64::try_from(self.state_gas_reservoir).map_err(|_| InternalError::Overflow)?;
+        self.state_gas_reservoir = u64::try_from(
+            reservoir_signed
+                .checked_add(to_reservoir)
+                .ok_or(InternalError::Overflow)?
+                .max(0),
+        )
+        .map_err(|_| InternalError::Overflow)?;
+        // Roll back state_gas_used to the frame's entry baseline.
+        self.state_gas_used = entry;
+        // Block accounting: the refilled spill is no longer regular gas.
+        self.state_gas_spill = self
+            .state_gas_spill
+            .checked_sub(spilled)
+            .ok_or(InternalError::Underflow)?;
+        self.current_call_frame.frame_state_gas_spilled = 0;
         Ok(())
     }
 
@@ -1173,6 +1279,9 @@ impl<'a> VM<'a> {
         // The BAL checkpoint below is intentionally skipped: a codeless transfer cannot
         // fail past this point and has no inner calls, so there's nothing to roll back.
         if self.is_simple_transfer_fast_path() {
+            // EIP-8037: no `refill_frame_state_gas` needed here — a codeless transfer always
+            // succeeds, runs no opcodes, and charges no execution state gas, so the frame's
+            // `frame_state_gas_spilled` is 0 and `state_gas_used` equals its entry baseline.
             #[expect(clippy::as_conversions, reason = "gas_remaining is non-negative here")]
             let gas_used = self
                 .current_call_frame
@@ -1476,7 +1585,12 @@ impl<'a> VM<'a> {
             // billing the 7702 access cost for `resolved_target`, so we keep frame-entry
             // behavior consistent with tx-entry behavior.
             let (is_delegation_7702, _access_cost, code_address, bytecode) =
-                crate::utils::eip7702_get_code(self.db, &mut self.substate, target)?;
+                crate::utils::eip7702_get_code(
+                    self.db,
+                    &mut self.substate,
+                    target,
+                    self.env.config.fork,
+                )?;
 
             // Mirror default_hook::set_bytecode_and_code_address: when delegation was
             // followed, record the delegatee (code_address) as touched in BAL so EIP-7928
@@ -2139,7 +2253,12 @@ impl<'a> VM<'a> {
             self.env.origin = caller;
 
             let (is_delegation_7702, _access_cost, code_address, bytecode) =
-                crate::utils::eip7702_get_code(self.db, &mut self.substate, target)?;
+                crate::utils::eip7702_get_code(
+                    self.db,
+                    &mut self.substate,
+                    target,
+                    self.env.config.fork,
+                )?;
 
             self.substate.push_backup();
 
@@ -2280,6 +2399,9 @@ impl<'a> VM<'a> {
     fn is_simple_transfer_fast_path(&self) -> bool {
         !self.current_call_frame.is_create
             && self.current_call_frame.bytecode.is_empty()
+            // A pending EIP-2780 top-frame charge must be applied via run_execution.
+            && self.pending_top_frame_state_gas == 0
+            && self.pending_top_frame_regular_gas == 0
             // Privileged L2 txs can leave gas negative; let the slow path surface that as OOG.
             && self.current_call_frame.gas_remaining >= 0
             && self.tx.authorization_list().is_none()
@@ -2305,23 +2427,66 @@ impl<'a> VM<'a> {
             });
         }
 
+        // A pending top-frame NEW_ACCOUNT charge means the recipient was an EIP-161-empty
+        // account receiving value. If the recipient is a precompile that then exceptionally
+        // halts/reverts, the account is never materialized, so the charge is rolled back in
+        // the precompile branch below (mirrors EELS `refill_frame_state_gas`).
+        let top_frame_new_account_charged = self.pending_top_frame_state_gas > 0;
+
+        // EIP-2780 top-frame new-account state charge (deferred from prepare_execution):
+        // charged from the state-gas reservoir at the top of the frame, mirroring EELS
+        // `process_message`. If it cannot be covered the tx reverts (consuming all gas),
+        // rather than being rejected as an invalid transaction.
+        if self.pending_top_frame_state_gas > 0 || self.pending_top_frame_regular_gas > 0 {
+            let pending_state = std::mem::take(&mut self.pending_top_frame_state_gas);
+            let pending_regular = std::mem::take(&mut self.pending_top_frame_regular_gas);
+            // State charge first, then the 7702-delegation regular cold-access (EELS order).
+            let charged = (pending_state == 0 || self.increase_state_gas(pending_state).is_ok())
+                && (pending_regular == 0
+                    || self
+                        .current_call_frame
+                        .increase_consumed_gas(pending_regular)
+                        .is_ok());
+            if !charged {
+                return Ok(ContextResult {
+                    result: TxResult::Revert(ExceptionalHalt::OutOfGas.into()),
+                    gas_used: self.current_call_frame.gas_limit,
+                    gas_spent: self.current_call_frame.gas_limit,
+                    output: Bytes::new(),
+                });
+            }
+        }
+
         #[expect(clippy::as_conversions, reason = "remaining gas conversion")]
         if precompiles::is_precompile(
             &self.current_call_frame.to,
             self.env.config.fork,
             self.vm_type,
         ) {
-            let call_frame = &mut self.current_call_frame;
-
-            let mut gas_remaining = call_frame.gas_remaining as u64;
+            // `execute_precompile` itself never touches state gas (it only mutates
+            // `gas_remaining`; it has no access to `state_gas_used` / `state_gas_reservoir` /
+            // `state_gas_spill`) — the assert below guards that. The EIP-2780 top-frame
+            // NEW_ACCOUNT charge applied above, however, IS frame state gas, and on an
+            // exceptional halt/revert it must be rolled back (see below). `self` is borrowed
+            // by field rather than via `&mut self.current_call_frame` so the refund call,
+            // which needs `&mut self`, can run after `execute_precompile`.
+            let state_gas_used_before_precompile = self.state_gas_used;
+            let code_address = self.current_call_frame.code_address;
+            let precompile_gas_limit = self.current_call_frame.gas_limit;
+            let mut gas_remaining = self.current_call_frame.gas_remaining as u64;
             let result = Self::execute_precompile(
-                call_frame.code_address,
-                &call_frame.calldata,
-                call_frame.gas_limit,
+                code_address,
+                &self.current_call_frame.calldata,
+                precompile_gas_limit,
                 &mut gas_remaining,
                 self.env.config.fork,
                 self.db.store.precompile_cache(),
                 self.crypto,
+            );
+
+            debug_assert_eq!(
+                self.state_gas_used, state_gas_used_before_precompile,
+                "precompile execution must not mutate state_gas_used"
             );
 
             // EIP-8037 Amsterdam 2D accounting recomputes `block_gas_used` from
@@ -2329,17 +2494,21 @@ impl<'a> VM<'a> {
             // top-level precompile exceptional halt, `handle_precompile_result` already
             // sets `ContextResult.gas_used = gas_limit`, but `gas_remaining` retains the
             // untouched forwarded amount — under Amsterdam that would make the block
-            // report only the intrinsic portion. Zero it here so the block matches the
-            // `gas_used = gas_limit` contract from `handle_precompile_result`. Pre-Amsterdam
-            // reads `ctx_result.gas_used` directly and is unaffected by this path either way.
+            // report only the intrinsic portion. Zero it so the block matches the
+            // `gas_used = gas_limit` contract from `handle_precompile_result`, and roll
+            // back the top-frame NEW_ACCOUNT charge (the recipient is never materialized
+            // on halt) so the burned gas counts entirely as regular gas, matching EELS
+            // `refill_frame_state_gas`. Pre-Amsterdam reads `ctx_result.gas_used` directly
+            // and is unaffected by this path either way.
             if self.env.config.fork >= Fork::Amsterdam
                 && let Ok(ctx) = &result
                 && !ctx.is_success()
             {
                 gas_remaining = 0;
+                self.refund_new_account_state_gas(top_frame_new_account_charged)?;
             }
 
-            call_frame.gas_remaining = gas_remaining as i64;
+            self.current_call_frame.gas_remaining = gas_remaining as i64;
 
             return result;
         }
@@ -2617,7 +2786,12 @@ impl<'a> VM<'a> {
             return Ok(());
         }
         let (is_delegation_7702, _access_cost, _code_address, _bytecode) =
-            crate::utils::eip7702_get_code(self.db, &mut self.substate, target)?;
+            crate::utils::eip7702_get_code(
+                self.db,
+                &mut self.substate,
+                target,
+                self.env.config.fork,
+            )?;
         self.validation_check_call_target(target, is_delegation_7702)
     }
 
@@ -2756,50 +2930,41 @@ impl<'a> VM<'a> {
         &mut self,
         mut ctx_result: ContextResult,
     ) -> Result<ExecutionReport, VMError> {
-        // EIP-8037: On top-level tx failure (REVERT, ExceptionalHalt, or OOG),
-        // refund only the EXECUTION portion of state gas to the reservoir; the intrinsic
-        // stays in `state_gas_used` so block accounting bills it. EELS keeps these in
-        // separate fields (`tx_output.state_gas_used` vs `tx_env.intrinsic_state_gas`);
-        // ethrex lumps them so we split on the way out:
-        //   tx_output.state_gas_left += tx_output.state_gas_used
-        //   tx_output.state_gas_used  = 0
-        // becomes in lumped form (with intrinsic preserved):
-        //   reservoir   += signed(state_gas_used − intrinsic)   [clamped at 0]
-        //   state_gas_used = intrinsic
-        // Collision is handled separately in the hook.
-        if self.env.config.fork >= Fork::Amsterdam && !ctx_result.is_success() {
-            if !ctx_result.is_collision() {
-                let intrinsic_signed =
-                    i64::try_from(self.intrinsic_state_gas).map_err(|_| InternalError::Overflow)?;
-                let execution_state_gas_used = self.state_gas_used.saturating_sub(intrinsic_signed);
-                let reservoir_signed = i64::try_from(self.state_gas_reservoir)
-                    .map_err(|_| InternalError::Overflow)?
-                    .saturating_add(execution_state_gas_used);
-                self.state_gas_reservoir =
-                    u64::try_from(reservoir_signed.max(0)).map_err(|_| InternalError::Overflow)?;
-                self.state_gas_used = intrinsic_signed;
-            }
-
-            // EIP-8037: on ANY top-level CREATE-tx
-            // failure (revert / halt / OOG / collision), refund the intrinsic
-            // `STATE_BYTES_PER_NEW_ACCOUNT * cost_per_state_byte` charge to the reservoir.
-            // Also add to `state_refund` so block-level accounting subtracts it.
-            // EELS reference: fork.py::process_transaction:
-            //   if isinstance(tx.to, Bytes0):
-            //       new_account_refund = STATE_BYTES_PER_NEW_ACCOUNT * COST_PER_STATE_BYTE
-            //       tx_output.state_gas_left += new_account_refund
-            //       tx_output.state_refund   += new_account_refund
-            if self.is_create()? {
-                let new_account_refund = self.state_gas_new_account;
-                self.state_gas_reservoir = self
-                    .state_gas_reservoir
-                    .checked_add(new_account_refund)
-                    .ok_or(InternalError::Overflow)?;
-                self.state_refund = self
-                    .state_refund
-                    .checked_add(new_account_refund)
-                    .ok_or(InternalError::Overflow)?;
-            }
+        // EIP-8037: On top-level tx failure (REVERT, ExceptionalHalt, or OOG), the
+        // execution portion of state gas has already been refilled into the reservoir by
+        // the top-frame `refill_frame_state_gas` (seeded at the post-intrinsic baseline in
+        // `add_intrinsic_gas` and fired on revert/halt in `handle_opcode_error` /
+        // `handle_opcode_result`). The intrinsic portion stays in `state_gas_used` so block
+        // accounting bills it. No reservoir-move is performed here. Collision returns before
+        // any execution state gas is charged, so it has nothing to refill (see the create
+        // collision branch in `handle_create_transaction`).
+        //
+        // EIP-8037 (#3002): the create-tx NEW_ACCOUNT refund fires for every top-level
+        // CREATE-tx failure (revert / halt / OOG / collision), AND on success when the
+        // target was already alive (`created_target_alive`) — no new account leaf created.
+        // EELS reference: fork.py::process_transaction:
+        //   if isinstance(tx.to, Bytes0) and (
+        //       tx_output.error is not None or tx_output.created_target_alive
+        //   ):
+        //       new_account_refund = STATE_BYTES_PER_NEW_ACCOUNT * COST_PER_STATE_BYTE
+        //       tx_output.state_gas_left += new_account_refund
+        //       tx_output.state_refund   += new_account_refund
+        // The `created_target_alive` term only ever holds on the success path: on
+        // collision `handle_create_transaction` returns before setting it, so the
+        // collision refund still fires exactly once via `!is_success`.
+        if self.env.config.fork >= Fork::Amsterdam
+            && self.is_create()?
+            && (!ctx_result.is_success() || self.created_target_alive)
+        {
+            let new_account_refund = self.state_gas_new_account;
+            self.state_gas_reservoir = self
+                .state_gas_reservoir
+                .checked_add(new_account_refund)
+                .ok_or(InternalError::Overflow)?;
+            self.state_refund = self
+                .state_refund
+                .checked_add(new_account_refund)
+                .ok_or(InternalError::Overflow)?;
         }
 
         // See `prepare_execution`: per-hook `Rc::clone` avoids the `self.hooks.clone()` realloc.
@@ -3479,5 +3644,124 @@ mod frame_sig_validation_tests {
             ),
             "wrong signer must fail",
         );
+    }
+}
+
+// Test-support surface for the EIP-8037 state-gas reservoir/clamp-spill unit tests, which live
+// in the `ethrex-test` crate (`test/tests/levm/eip8037_reservoir_tests.rs`) per the repo's
+// test-location convention but must drive crate-private VM internals. Everything here is
+// `#[doc(hidden)]` and exposes only what those tests touch: a fixture-free VM harness plus a
+// handful of reservoir accessors. The harness builds the VM via struct literal to sidestep
+// `VM::new`'s DB reads (which would pull `ethrex-storage`/`ethrex-blockchain` into levm and form
+// a dependency cycle), keeping the two-pool arithmetic isolated.
+#[doc(hidden)]
+impl<'a> VM<'a> {
+    /// Gas budget seeded into the harness top frame; large enough that spills never run it OOG.
+    pub const STATE_GAS_HARNESS_FRAME_GAS: u64 = 1_000_000;
+
+    /// Builds a fixture-free VM on `fork` with a single top frame and the given starting
+    /// `state_gas_reservoir`. `db`/`tx`/`crypto` are borrowed for the VM's lifetime but never
+    /// read (the frame is built directly, so no account/storage/code loads occur).
+    pub fn new_state_gas_harness(
+        fork: Fork,
+        db: &'a mut GeneralizedDatabase,
+        tx: &'a Transaction,
+        crypto: &'a dyn Crypto,
+        state_gas_reservoir: u64,
+    ) -> VM<'a> {
+        let env = Environment {
+            config: crate::environment::EVMConfig::new(
+                fork,
+                crate::environment::EVMConfig::canonical_values(fork),
+            ),
+            gas_limit: Self::STATE_GAS_HARNESS_FRAME_GAS,
+            block_gas_limit: Self::STATE_GAS_HARNESS_FRAME_GAS,
+            ..Default::default()
+        };
+        let current_call_frame = CallFrame::new(
+            Address::default(),
+            Address::default(),
+            Address::default(),
+            Code::default(),
+            U256::zero(),
+            Bytes::new(),
+            false,
+            Self::STATE_GAS_HARNESS_FRAME_GAS,
+            0,
+            true,
+            false,
+            0,
+            0,
+            Stack::default(),
+            Memory::default(),
+        );
+        VM {
+            call_frames: Vec::new(),
+            current_call_frame,
+            env,
+            substate: Substate::default(),
+            db,
+            tx,
+            hooks: Vec::new(),
+            storage_original_values: FxHashMap::default(),
+            tracer: LevmCallTracer::disabled(),
+            opcode_tracer: LevmOpcodeTracer::disabled(),
+            debug_mode: DebugMode::disabled(),
+            stack_pool: Vec::new(),
+            vm_type: VMType::L1,
+            preserve_top_level_backup: false,
+            state_gas_used: 0,
+            state_gas_reservoir,
+            state_gas_reservoir_initial: state_gas_reservoir,
+            state_gas_spill: 0,
+            cost_per_state_byte: 0,
+            state_gas_new_account: 0,
+            pending_top_frame_state_gas: 0,
+            pending_top_frame_regular_gas: 0,
+            state_gas_storage_set: 0,
+            state_gas_auth_total: 0,
+            state_gas_auth_base: 0,
+            state_refund: 0,
+            intrinsic_state_gas: 0,
+            created_target_alive: false,
+            opcode_table: VM::build_opcode_table(fork),
+            crypto,
+            validation_observer: ValidationObserver::disabled(),
+            frame_tx_context: None,
+        }
+    }
+
+    pub fn state_gas_reservoir(&self) -> u64 {
+        self.state_gas_reservoir
+    }
+    pub fn state_gas_used(&self) -> i64 {
+        self.state_gas_used
+    }
+    pub fn state_gas_spill(&self) -> u64 {
+        self.state_gas_spill
+    }
+    pub fn state_gas_new_account(&self) -> u64 {
+        self.state_gas_new_account
+    }
+    pub fn set_state_gas_new_account(&mut self, v: u64) {
+        self.state_gas_new_account = v;
+    }
+    /// Seeds the post-intrinsic baseline (mirrors `add_intrinsic_gas`): both the VM-level
+    /// `state_gas_used` and the top frame's entry snapshot.
+    pub fn seed_state_gas_baseline(&mut self, used: i64) {
+        self.state_gas_used = used;
+        self.current_call_frame.state_gas_used_at_entry = used;
+    }
+    pub fn frame_state_gas_used_at_entry(&self) -> i64 {
+        self.current_call_frame.state_gas_used_at_entry
+    }
+    pub fn frame_gas_remaining(&self) -> i64 {
+        self.current_call_frame.gas_remaining
+    }
+    pub fn set_frame_gas_remaining(&mut self, v: i64) {
+        self.current_call_frame.gas_remaining = v;
+    }
+    pub fn frame_state_gas_spilled(&self) -> u64 {
+        self.current_call_frame.frame_state_gas_spilled
     }
 }

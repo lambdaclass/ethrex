@@ -311,6 +311,18 @@ pub struct CallFrame {
     /// EIP-8037: snapshot of VM.state_gas_used (signed) at child-frame entry.
     /// Used to restore parent's state_gas_used on child revert.
     pub state_gas_used_at_entry: i64,
+    /// EIP-8037: EELS per-frame `state_gas_spilled`; LIFO refund source;
+    /// propagated to parent on child success.
+    pub frame_state_gas_spilled: u64,
+    /// EIP-8037 (#3002): whether this CREATE/CREATE2 child's target address was
+    /// already alive (existed and non-empty) before the create mutated state.
+    /// Read in `handle_return_create` to refund the unconditional new-account
+    /// state gas on the success path (no new account leaf is created).
+    pub target_alive: bool,
+    /// EIP-8037: whether the parent charged new-account state gas for this CALL
+    /// (value transfer to an empty account). Refunded on child revert/error,
+    /// mirroring EELS `generic_call` `credit_state_gas_refund(NEW_ACCOUNT)`.
+    pub new_account_state_gas_charged: bool,
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, Default)]
@@ -449,6 +461,9 @@ impl CallFrame {
             pc: 0,
             sub_return_data: Bytes::default(),
             state_gas_used_at_entry: 0,
+            frame_state_gas_spilled: 0,
+            target_alive: false,
+            new_account_state_gas_charged: false,
         }
     }
 
