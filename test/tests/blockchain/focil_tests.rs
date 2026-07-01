@@ -26,6 +26,7 @@ use ethrex_common::{
     },
     validation::BlockValidationContext,
 };
+use ethrex_crypto::NativeCrypto;
 use ethrex_l2_rpc::signer::{LocalSigner, Signable, Signer};
 use ethrex_storage::{EngineType, Store};
 use secp256k1::SecretKey;
@@ -190,8 +191,14 @@ async fn locally_built_block_with_il_satisfies_on_import() {
         "block must include both IL txs (IL-first sequencing)"
     );
     // IL-first ordering: IL txs come first in the payload.
-    assert_eq!(block.body.transactions[0].hash(), il[0].hash());
-    assert_eq!(block.body.transactions[1].hash(), il[1].hash());
+    assert_eq!(
+        block.body.transactions[0].hash(&NativeCrypto),
+        il[0].hash(&NativeCrypto)
+    );
+    assert_eq!(
+        block.body.transactions[1].hash(&NativeCrypto),
+        il[1].hash(&NativeCrypto)
+    );
 
     // Import via the IL-aware pipeline. Should succeed (no IlUnsatisfied).
     let context = BlockValidationContext::with_inclusion_list(il);
@@ -240,7 +247,7 @@ async fn externally_built_block_omitting_il_tx_fails_on_import() {
 
     match err {
         ChainError::IlUnsatisfied { tx_hash } => {
-            assert_eq!(tx_hash, il_tx_dropped.hash());
+            assert_eq!(tx_hash, il_tx_dropped.hash(&NativeCrypto));
         }
         other => panic!("expected ChainError::IlUnsatisfied, got {other:?}"),
     }
@@ -287,11 +294,14 @@ async fn il_first_ordering_with_mempool_competition() {
     );
     // IL tx is sequenced FIRST regardless of mempool tip ordering.
     assert_eq!(
-        block.body.transactions[0].hash(),
-        il_tx.hash(),
+        block.body.transactions[0].hash(&NativeCrypto),
+        il_tx.hash(&NativeCrypto),
         "IL transaction must be first per Decision 5"
     );
-    assert_eq!(block.body.transactions[1].hash(), mempool_tx.hash());
+    assert_eq!(
+        block.body.transactions[1].hash(&NativeCrypto),
+        mempool_tx.hash(&NativeCrypto)
+    );
 
     // Sanity: importing this block via the IL-aware pipeline succeeds.
     let context = BlockValidationContext::with_inclusion_list(il);
@@ -447,7 +457,9 @@ async fn mixed_valid_and_invalid_omitted_il_is_unsatisfied() {
         .add_block_pipeline_with_il(block, None, &context)
         .expect_err("an appendable omitted IL tx must make the block unsatisfied");
     match err {
-        ChainError::IlUnsatisfied { tx_hash } => assert_eq!(tx_hash, appendable.hash()),
+        ChainError::IlUnsatisfied { tx_hash } => {
+            assert_eq!(tx_hash, appendable.hash(&NativeCrypto))
+        }
         other => panic!("expected ChainError::IlUnsatisfied, got {other:?}"),
     }
 }

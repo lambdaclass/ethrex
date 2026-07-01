@@ -64,9 +64,10 @@ async fn build_valid_amsterdam_block(store: &Store) -> (Block, BlockAccessList) 
         version: 1,
         elasticity_multiplier: ELASTICITY_MULTIPLIER,
         gas_ceil: DEFAULT_BUILDER_GAS_CEIL,
+        inclusion_list_transactions: None,
     };
     let payload = create_payload(&args, store, Bytes::new()).unwrap();
-    let result = bc.build_payload(payload).unwrap();
+    let result = bc.build_payload(payload, &[]).unwrap();
     let bal = result
         .block_access_list
         .expect("amsterdam block must produce a BAL");

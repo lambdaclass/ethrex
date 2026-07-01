@@ -646,7 +646,7 @@ impl RpcHandler for NewPayloadV6Request {
             let block_tx_hashes: std::collections::HashSet<H256> = stored_body
                 .transactions
                 .iter()
-                .map(|tx| tx.hash())
+                .map(|tx| tx.hash(&crypto))
                 .collect();
             let gas_left = stored_header
                 .gas_limit

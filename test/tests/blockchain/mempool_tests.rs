@@ -1155,7 +1155,7 @@ fn add_transaction_no_broadcast_keeps_tx_out_of_broadcast_pool() {
     ).unwrap()).unwrap();
     let public_sender = public_decoded.sender(&NativeCrypto).unwrap();
     let public_tx = MempoolTransaction::new(public_decoded, public_sender);
-    let public_hash = public_tx.hash();
+    let public_hash = public_tx.hash(&NativeCrypto);
 
     // Private tx — goes through `add_transaction_no_broadcast`, only
     // distinguishable from `public_tx` by sender (so the per-sender-nonce
@@ -1172,7 +1172,7 @@ fn add_transaction_no_broadcast_keeps_tx_out_of_broadcast_pool() {
     });
     // Using a synthetic sender so we don't need a signed tx for this test.
     let private_sender = Address::from_low_u64_be(0xCAFE);
-    let private_hash = private_decoded.hash();
+    let private_hash = private_decoded.hash(&NativeCrypto);
     let private_tx = MempoolTransaction::new(private_decoded, private_sender);
 
     mempool
@@ -1191,7 +1191,7 @@ fn add_transaction_no_broadcast_keeps_tx_out_of_broadcast_pool() {
         .get_txs_for_broadcast()
         .unwrap()
         .iter()
-        .map(|tx| tx.hash())
+        .map(|tx| tx.hash(&NativeCrypto))
         .collect();
     assert!(broadcast.contains(&public_hash));
     assert!(
@@ -1206,7 +1206,7 @@ fn add_transaction_no_broadcast_keeps_tx_out_of_broadcast_pool() {
         .get_txs_for_broadcast()
         .unwrap()
         .iter()
-        .map(|tx| tx.hash())
+        .map(|tx| tx.hash(&NativeCrypto))
         .collect();
     assert!(broadcast_after.is_empty());
 }

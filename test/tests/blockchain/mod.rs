@@ -3,6 +3,8 @@ mod batch_tests;
 mod eip7702_revert_authority_tests;
 mod eip7702_zero_transfer_tests;
 mod focil_tests;
+mod inclusion_list_builder_tests;
+mod inclusion_list_validator_tests;
 mod l1_tx_type_tests;
 mod logs_bloom_tests;
 mod mempool_tests;

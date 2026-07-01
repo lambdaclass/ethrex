@@ -681,14 +681,16 @@ fn parse_v5(
     let forkchoice_state: ForkChoiceState = serde_json::from_value(params[0].clone())?;
     let mut payload_attributes: Option<PayloadAttributesV5> = None;
     if params.len() == 2 {
-        payload_attributes =
-            match serde_json::from_value::<Option<PayloadAttributesV5>>(params[1].clone()) {
-                Ok(attributes) => attributes,
-                Err(error) => {
-                    warn!("Could not parse V5 payload attributes {}", error);
-                    None
-                }
-            };
+        // execution-apis#796: V5 attributes are validated strictly, mirroring
+        // parse_v4. A present but malformed object (e.g. missing the required
+        // targetGasLimit) is rejected rather than silently ignored; an
+        // absent/null object yields no attributes.
+        payload_attributes = serde_json::from_value::<Option<PayloadAttributesV5>>(
+            params[1].clone(),
+        )
+        .map_err(|error| {
+            RpcErr::InvalidPayloadAttributes(format!("invalid V5 payload attributes: {error}"))
+        })?;
     }
     Ok((forkchoice_state, payload_attributes))
 }
@@ -715,13 +717,9 @@ fn validate_attributes_v5(
             "V5 payload attributes missing parent_beacon_block_root".to_string(),
         ));
     }
-    // execution-apis#796: required field, same as V4. FOCIL (V5) runs on
-    // Amsterdam/Hegotá where the gas target is mandatory.
-    if attributes.target_gas_limit.is_none() {
-        return Err(RpcErr::InvalidPayloadAttributes(
-            "V5 payload attributes missing target_gas_limit".to_string(),
-        ));
-    }
+    // execution-apis#796: target_gas_limit is required on V5 (same as V4) and
+    // enforced at deserialization (see `parse_v5`), so no presence check is
+    // needed here. FOCIL (V5) runs on Hegotá where the gas target is mandatory.
     if attributes.timestamp <= head_block.timestamp {
         return Err(RpcErr::InvalidPayloadAttributes(
             "invalid timestamp".to_string(),
@@ -767,11 +765,8 @@ async fn build_payload_v5(
         }
     }
 
-    // validate_attributes_v5 guarantees target_gas_limit.is_some() before we
-    // reach this point (execution-apis#796), mirroring build_payload_v4.
-    let gas_ceil = attributes.target_gas_limit.ok_or_else(|| {
-        RpcErr::Internal("build_payload_v5 reached with no target_gas_limit".to_string())
-    })?;
+    // execution-apis#796: use the CL-supplied target gas limit (required on V5).
+    let gas_ceil = attributes.target_gas_limit;
 
     let args = BuildPayloadArgs {
         parent: fork_choice_state.head_block_hash,
@@ -914,7 +909,7 @@ mod tests {
             parent_beacon_block_root: Some(Default::default()),
             slot_number: 1,
             // execution-apis#796: V4 requires target_gas_limit under Amsterdam.
-            target_gas_limit: Some(60_000_000),
+            target_gas_limit: 60_000_000,
             ..Default::default()
         };
         let head_block = BlockHeader {
@@ -982,7 +977,7 @@ mod tests {
             parent_beacon_block_root: Some(Default::default()),
             slot_number: 1,
             inclusion_list_transactions: vec![],
-            target_gas_limit: Some(50_000_000),
+            target_gas_limit: 50_000_000,
             ..Default::default()
         };
         let head_block = BlockHeader {

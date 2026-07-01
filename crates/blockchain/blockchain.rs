@@ -2206,7 +2206,7 @@ impl Blockchain {
     pub fn add_block_pipeline_with_il(
         &self,
         block: Block,
-        bal: Option<&BlockAccessList>,
+        bal: Option<Arc<BlockAccessList>>,
         context: &ethrex_common::validation::BlockValidationContext,
     ) -> Result<(), ChainError> {
         use std::collections::HashSet;
@@ -2221,8 +2221,12 @@ impl Blockchain {
             .storage
             .get_block_header_by_hash(parent_hash)?
             .map(|h| h.state_root);
-        let block_tx_hashes: HashSet<H256> =
-            block.body.transactions.iter().map(|tx| tx.hash()).collect();
+        let block_tx_hashes: HashSet<H256> = block
+            .body
+            .transactions
+            .iter()
+            .map(|tx| tx.hash(&NativeCrypto))
+            .collect();
         let post_state_root = block.header.state_root;
         let gas_left = block.header.gas_limit.saturating_sub(block.header.gas_used);
         // Snapshot the header for the satisfaction check (intrinsic-gas fork +

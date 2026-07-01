@@ -776,7 +776,7 @@ impl Blockchain {
                 }
                 Err(err) => {
                     debug!(
-                        tx_hash = %format!("{:#x}", tx.hash()),
+                        tx_hash = %format!("{:#x}", tx.hash(&NativeCrypto)),
                         sender = %format!("{:#x}", sender),
                         nonce = tx.nonce(),
                         error = %err,
