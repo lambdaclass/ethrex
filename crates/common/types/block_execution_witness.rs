@@ -820,3 +820,172 @@ fn set_hash_or_validate(header: &BlockHeader, hash: H256) -> Result<(), GuestPro
     }
     Ok(())
 }
+
+#[cfg(feature = "experimental-devnet")]
+/// Map an ethrex `Fork` to its spec `PROTOCOL_FORKS` index (execution-specs 85fc20ca).
+fn fork_to_spec_index(fork: crate::types::genesis::Fork) -> Result<u64, GuestProgramStateError> {
+    use crate::types::genesis::Fork;
+    Ok(match fork {
+        Fork::Cancun => 16,
+        Fork::Prague => 17,
+        Fork::Osaka => 18,
+        Fork::BPO1 => 19,
+        Fork::BPO2 => 20,
+        Fork::BPO3 => 21,
+        Fork::BPO4 => 22,
+        Fork::BPO5 => 23,
+        Fork::Amsterdam => 24,
+        other => {
+            return Err(GuestProgramStateError::Custom(format!(
+                "fork {other:?} has no stateless spec fork index (native rollups run Cancun+)"
+            )));
+        }
+    })
+}
+
+#[cfg(feature = "experimental-devnet")]
+/// Encode an ethrex `ChainConfig` into the SSZ `SszChainConfig` (with `active_fork`).
+/// The active fork is resolved at `block_timestamp`; the native L2 activates its
+/// forks at genesis, so `activation.timestamp = [0]`.
+pub fn chain_config_to_ssz(
+    cfg: &ChainConfig,
+    block_timestamp: u64,
+) -> Result<crate::types::stateless_ssz::SszChainConfig, GuestProgramStateError> {
+    use crate::types::stateless_ssz::{
+        SszBlobSchedule, SszChainConfig, SszForkActivation, SszForkConfig, SszOptionalBlobSchedule,
+        SszOptionalForkActivationValue,
+    };
+
+    let fork = cfg.get_fork(block_timestamp);
+    let fork_index = fork_to_spec_index(fork)?;
+
+    let mut timestamp: SszOptionalForkActivationValue = SszOptionalForkActivationValue::new();
+    timestamp
+        .push(0u64)
+        .map_err(|e| GuestProgramStateError::Custom(format!("activation ts push: {e:?}")))?;
+
+    let mut blob_schedule: SszOptionalBlobSchedule = SszOptionalBlobSchedule::new();
+    if let Some(bs) = cfg.get_fork_blob_schedule(block_timestamp) {
+        blob_schedule
+            .push(SszBlobSchedule {
+                target: bs.target as u64,
+                max: bs.max as u64,
+                base_fee_update_fraction: bs.base_fee_update_fraction,
+            })
+            .map_err(|e| GuestProgramStateError::Custom(format!("blob_schedule push: {e:?}")))?;
+    }
+
+    Ok(SszChainConfig {
+        chain_id: cfg.chain_id,
+        active_fork: SszForkConfig {
+            fork: fork_index,
+            activation: SszForkActivation {
+                block_number: SszOptionalForkActivationValue::new(),
+                timestamp,
+            },
+            blob_schedule,
+        },
+    })
+}
+
+#[cfg(feature = "experimental-devnet")]
+/// Decode an `SszChainConfig` into an ethrex `ChainConfig`. Activates every fork
+/// up to and including the SSZ `active_fork` at timestamp 0 (native-L2 genesis
+/// activation). `blob_schedule` is left `Default` — L2 blocks carry no blobs, so
+/// it does not affect execution.
+pub fn ssz_chain_config_to_internal(
+    scc: &crate::types::stateless_ssz::SszChainConfig,
+) -> Result<ChainConfig, GuestProgramStateError> {
+    use crate::types::genesis::Fork;
+    let fork = match scc.active_fork.fork {
+        16 => Fork::Cancun,
+        17 => Fork::Prague,
+        18 => Fork::Osaka,
+        19 => Fork::BPO1,
+        20 => Fork::BPO2,
+        21 => Fork::BPO3,
+        22 => Fork::BPO4,
+        23 => Fork::BPO5,
+        24 => Fork::Amsterdam,
+        other => {
+            return Err(GuestProgramStateError::Custom(format!(
+                "unknown/unsupported spec fork index {other}"
+            )));
+        }
+    };
+    Ok(ChainConfig {
+        chain_id: scc.chain_id,
+        homestead_block: Some(0),
+        eip150_block: Some(0),
+        eip155_block: Some(0),
+        eip158_block: Some(0),
+        byzantium_block: Some(0),
+        constantinople_block: Some(0),
+        petersburg_block: Some(0),
+        istanbul_block: Some(0),
+        berlin_block: Some(0),
+        london_block: Some(0),
+        terminal_total_difficulty: Some(0),
+        terminal_total_difficulty_passed: true,
+        shanghai_time: (fork >= Fork::Shanghai).then_some(0),
+        cancun_time: (fork >= Fork::Cancun).then_some(0),
+        prague_time: (fork >= Fork::Prague).then_some(0),
+        osaka_time: (fork >= Fork::Osaka).then_some(0),
+        amsterdam_time: (fork >= Fork::Amsterdam).then_some(0),
+        ..Default::default()
+    })
+}
+
+#[cfg(test)]
+mod active_fork_tests {
+    use super::*;
+    use crate::types::genesis::{ChainConfig, Fork};
+
+    fn prague_l2_config() -> ChainConfig {
+        ChainConfig {
+            chain_id: 1,
+            homestead_block: Some(0),
+            eip150_block: Some(0),
+            eip155_block: Some(0),
+            eip158_block: Some(0),
+            byzantium_block: Some(0),
+            constantinople_block: Some(0),
+            petersburg_block: Some(0),
+            istanbul_block: Some(0),
+            berlin_block: Some(0),
+            london_block: Some(0),
+            terminal_total_difficulty: Some(0),
+            terminal_total_difficulty_passed: true,
+            shanghai_time: Some(0),
+            cancun_time: Some(0),
+            prague_time: Some(0),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn active_fork_round_trips_prague() {
+        let cfg = prague_l2_config();
+        let ssz = chain_config_to_ssz(&cfg, 0).expect("encode");
+        // Encodes the spec Prague index (17) at genesis activation.
+        assert_eq!(ssz.active_fork.fork, 17);
+        assert_eq!(ssz.chain_id, 1);
+        let back = ssz_chain_config_to_internal(&ssz).expect("decode");
+        // Fork rules reproduce: Prague active, Osaka/Amsterdam inactive.
+        assert_eq!(back.get_fork(0), Fork::Prague);
+        assert_eq!(back.chain_id, 1);
+        assert!(back.osaka_time.is_none());
+        assert!(back.amsterdam_time.is_none());
+    }
+
+    #[test]
+    fn active_fork_round_trips_amsterdam() {
+        let mut cfg = prague_l2_config();
+        cfg.osaka_time = Some(0);
+        cfg.amsterdam_time = Some(0);
+        let ssz = chain_config_to_ssz(&cfg, 0).expect("encode");
+        assert_eq!(ssz.active_fork.fork, 24); // spec Amsterdam index
+        let back = ssz_chain_config_to_internal(&ssz).expect("decode");
+        assert_eq!(back.get_fork(0), Fork::Amsterdam);
+    }
+}
