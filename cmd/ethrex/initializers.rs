@@ -251,7 +251,7 @@ pub async fn init_rpc_api(
     let syncer = SyncManager::new(
         peer_handler.clone(),
         syncmode,
-        cancel_token,
+        cancel_token.clone(),
         blockchain.clone(),
         store.clone(),
         datadir.to_path_buf(),
@@ -283,6 +283,7 @@ pub async fn init_rpc_api(
         opts.gas_limit,
         opts.extra_data.clone(),
         opts.http_api.iter().copied().collect(),
+        cancel_token,
     );
 
     tracker.spawn(rpc_api);

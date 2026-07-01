@@ -52,10 +52,9 @@ pub trait StorageBackend: Debug + Send + Sync {
     /// Creates a checkpoint of the current database state at the specified path.
     fn create_checkpoint(&self, path: &Path) -> Result<(), StoreError>;
 
-    /// Durably persists all buffered writes: flushes in-memory memtables to disk
-    /// and syncs the write-ahead log. Called on graceful shutdown so a subsequent
-    /// process start needs no WAL recovery. Defaults to a no-op for backends that
-    /// are already durable or purely in-memory.
+    /// Durably persists all buffered writes to disk, so a subsequent process
+    /// start needs no crash recovery. Called on graceful shutdown. Defaults to a
+    /// no-op for backends that are already durable or purely in-memory.
     fn flush(&self) -> Result<(), StoreError> {
         Ok(())
     }

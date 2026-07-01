@@ -406,10 +406,16 @@ impl Store {
     pub async fn shutdown(&self) -> Result<(), StoreError> {
         let tx = self.persist_tx.clone();
         let backend = self.backend.clone();
+        // Anchor the flush to the confirmed canonical head so we never durably
+        // persist a non-canonical sidechain root.
+        let head_state_root = self.latest_block_header.get().state_root;
         tokio::task::spawn_blocking(move || {
             let (ack_tx, ack_rx) = sync_channel::<Result<(), StoreError>>(1);
-            tx.send(PersistMessage::Shutdown(ack_tx))
-                .map_err(|e| StoreError::Custom(format!("shutdown send: {e}")))?;
+            tx.send(PersistMessage::Shutdown {
+                head_state_root,
+                ack: ack_tx,
+            })
+            .map_err(|e| StoreError::Custom(format!("shutdown send: {e}")))?;
             ack_rx
                 .recv()
                 .map_err(|e| StoreError::Custom(format!("shutdown ack: {e}")))??;
@@ -1922,17 +1928,23 @@ impl Store {
                         // result so a live-path failure is not silently dropped.
                         let _ = ack.send(std::mem::replace(&mut last_flush_result, Ok(())));
                     }
-                    Ok(PersistMessage::Shutdown(ack)) => {
+                    Ok(PersistMessage::Shutdown {
+                        head_state_root,
+                        ack,
+                    }) => {
                         // Graceful shutdown: drain (already guaranteed by FIFO) and
                         // force-persist the not-yet-flushed tail. Flush the block
-                        // buffer, then commit every remaining trie diff-layer so a
-                        // restart needs no block re-execution.
+                        // buffer, then commit the canonical head's trie diff-layer
+                        // chain so a restart needs no block re-execution. Committing
+                        // from the confirmed head (not the newest-inserted layer)
+                        // avoids durably persisting a non-canonical sidechain root.
                         let result = flush_block_data(persist_backend.as_ref(), &persist_buffer)
                             .and_then(|_| {
                                 commit_all_trie_layers(
                                     persist_backend.as_ref(),
                                     &persist_trie_cache,
                                     &persist_fkv_ctl,
+                                    head_state_root,
                                 )
                             });
                         let prior = std::mem::replace(&mut last_flush_result, Ok(()));
@@ -3469,9 +3481,12 @@ enum PersistMessage {
     Ping(std::sync::mpsc::SyncSender<Result<(), StoreError>>),
     /// Graceful-shutdown handshake. Handled only after every earlier `Block`
     /// (FIFO), so it both drains in-flight work and force-persists the tail:
-    /// flushes the block-data buffer and commits *all* remaining trie
-    /// diff-layers to disk. The worker acks and then exits.
-    Shutdown(std::sync::mpsc::SyncSender<Result<(), StoreError>>),
+    /// flushes the block-data buffer and commits the canonical head's trie
+    /// diff-layer chain (`head_state_root`) to disk. The worker acks and exits.
+    Shutdown {
+        head_state_root: H256,
+        ack: std::sync::mpsc::SyncSender<Result<(), StoreError>>,
+    },
 }
 
 /// Write one block's header, body, number, and tx locations into an open batch.
@@ -3671,25 +3686,32 @@ fn commit_trie_if_due(
     commit_trie_layers(backend, trie_cache, fkv_ctl, &trie, root)
 }
 
-/// Commits *every* remaining trie diff-layer to disk (graceful-shutdown path).
+/// Commits the canonical head's trie diff-layer chain to disk (graceful-shutdown
+/// path). `head_state_root` is the confirmed canonical head root, so committing
+/// from it persists exactly the canonical state and its ancestors; any
+/// later-inserted, not-yet-confirmed sidechain layers stay in memory and are
+/// discarded on exit rather than being durably written.
 ///
-/// Committing from the newest layer removes it and all its ancestors in one
-/// pass, draining the cache. Any orphaned reorg-sibling layers off the head
-/// chain are dropped without writing (only canonical state must be durable).
+/// No-ops if the head root is not in the cache (already flushed to disk).
 fn commit_all_trie_layers(
     backend: &dyn StorageBackend,
     trie_cache: &Arc<RwLock<Arc<TrieLayerCache>>>,
     fkv_ctl: &SyncSender<FKVGeneratorControlMessage>,
+    head_state_root: H256,
 ) -> Result<(), StoreError> {
     let trie = trie_cache
         .read()
         .map_err(|_| StoreError::LockError)?
         .clone();
-    let Some(root) = trie.newest_root() else {
-        // Cache empty — nothing buffered in memory.
+    // Threshold 1 returns the root itself iff it is a live layer; `None` means the
+    // head is already on disk, so there is nothing buffered to commit.
+    if trie
+        .get_commitable_with_threshold(head_state_root, 1)
+        .is_none()
+    {
         return Ok(());
-    };
-    commit_trie_layers(backend, trie_cache, fkv_ctl, &trie, root)
+    }
+    commit_trie_layers(backend, trie_cache, fkv_ctl, &trie, head_state_root)
 }
 
 /// Writes the layer at `root` and all of its ancestors to disk in one tx, then
