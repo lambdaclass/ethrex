@@ -192,9 +192,9 @@ impl ExecutionWitness {
     /// (`number == first_block_number - 1`) among the witness headers — same
     /// convention as `RpcExecutionWitness::into_execution_witness`.
     ///
-    /// The produced `ChainConfig` only carries `chain_id` from the SSZ input;
-    /// every prior fork is activated at timestamp/block 0, since stateless
-    /// validation always runs at the latest fork (Amsterdam).
+    /// The `ChainConfig` is derived from the SSZ `active_fork` via
+    /// `ssz_chain_config_to_internal` — every fork up to the active one is
+    /// activated at timestamp 0 (native-L2 genesis activation).
     pub fn from_ssz(
         input: &crate::types::stateless_ssz::SszStatelessInput,
     ) -> Result<Self, GuestProgramStateError> {
@@ -223,25 +223,7 @@ impl ExecutionWitness {
             codes: input.witness.codes_as_vecs(),
             block_headers_bytes: input.witness.headers_as_vecs(),
             first_block_number,
-            chain_config: ChainConfig {
-                chain_id: input.chain_config.chain_id,
-                homestead_block: Some(0),
-                eip150_block: Some(0),
-                eip155_block: Some(0),
-                eip158_block: Some(0),
-                byzantium_block: Some(0),
-                constantinople_block: Some(0),
-                petersburg_block: Some(0),
-                istanbul_block: Some(0),
-                berlin_block: Some(0),
-                london_block: Some(0),
-                terminal_total_difficulty: Some(0),
-                terminal_total_difficulty_passed: true,
-                shanghai_time: Some(0),
-                cancun_time: Some(0),
-                prague_time: Some(0),
-                ..Default::default()
-            },
+            chain_config: ssz_chain_config_to_internal(&input.chain_config)?,
             state_trie_root,
             storage_trie_roots,
         })
