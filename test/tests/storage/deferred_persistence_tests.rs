@@ -940,3 +940,181 @@ async fn boot_walks_past_reorged_unflushed_head() {
         "marker must be lowered to the resolved durable head"
     );
 }
+
+/// A short key that `commit_trie_layers` classifies as an account trie node:
+/// length is neither 65 nor 131 (so not a leaf) and is <= 65 (so account, not
+/// storage), routing it to ACCOUNT_TRIE_NODES.
+#[cfg(feature = "rocksdb")]
+fn account_trie_node_key(tag: u8) -> Vec<u8> {
+    vec![tag, 0, 1, 2]
+}
+
+/// A graceful `shutdown()` must flush block data that only lives in the buffer,
+/// so a block a crash would lose survives a restart.
+///
+/// Mirror of `boot_clamps_head_to_flushed_upto` (where a drop loses the buffered
+/// block): here `shutdown()` is called instead of dropping, and the block must
+/// be durable on reopen.
+#[cfg(feature = "rocksdb")]
+#[tokio::test]
+async fn shutdown_flushes_buffered_block_a_crash_would_lose() {
+    use ethrex_common::types::Genesis;
+
+    const GENESIS_KURTOSIS: &str = include_str!("../../../fixtures/genesis/kurtosis.json");
+    let genesis: Genesis =
+        serde_json::from_str(GENESIS_KURTOSIS).expect("deserialize kurtosis.json");
+    let genesis_hash = genesis.get_block().hash();
+
+    let dir = tempfile::tempdir().expect("tmp");
+    let path = dir.path().to_str().unwrap();
+
+    {
+        let mut store = Store::new(path, EngineType::RocksDB).expect("store");
+        store
+            .add_initial_state(genesis.clone())
+            .await
+            .expect("genesis");
+
+        // Block 10 is only buffered, never flushed via the per-block path.
+        let b10 = Block::new(
+            BlockHeader {
+                number: 10,
+                parent_hash: genesis_hash,
+                ..Default::default()
+            },
+            BlockBody::default(),
+        );
+        let hash10 = b10.hash();
+        store.buffer_block_for_test(&b10);
+        store
+            .forkchoice_update(vec![(10, hash10)], 10, hash10, None, None)
+            .await
+            .expect("fcu 10");
+        assert_eq!(
+            store.read_flushed_upto().expect("marker"),
+            0,
+            "precondition: block 10 is buffered, not yet flushed"
+        );
+
+        // Graceful shutdown must persist the buffered block (a crash would lose it).
+        store.shutdown().await.expect("shutdown flush");
+    }
+
+    let mut store = Store::new(path, EngineType::RocksDB).expect("reopen");
+    store
+        .add_initial_state(genesis)
+        .await
+        .expect("boot after clean shutdown");
+
+    assert_eq!(
+        store.read_flushed_upto().expect("marker"),
+        10,
+        "shutdown must have flushed the buffered block to disk"
+    );
+    assert_eq!(
+        store.get_latest_block_number().await.expect("head"),
+        10,
+        "head must stay at the durable block after a clean shutdown"
+    );
+}
+
+/// The shutdown trie flush must anchor to the confirmed canonical head, not the
+/// newest-inserted layer. A sidechain sibling imported after the head (higher
+/// layer id) must NOT become the durable state; the canonical chain must.
+///
+/// On-disk genesis -> A -> B (canonical head). B' is a sibling of B (also a child
+/// of A) stored LAST, so it holds the highest layer id. Committing from the head
+/// persists A + B and leaves B' unwritten.
+#[cfg(feature = "rocksdb")]
+#[tokio::test]
+async fn shutdown_commits_canonical_head_trie_not_sidechain() {
+    use ethrex_common::types::Genesis;
+    use ethrex_trie::Nibbles;
+
+    const GENESIS_KURTOSIS: &str = include_str!("../../../fixtures/genesis/kurtosis.json");
+    let genesis: Genesis =
+        serde_json::from_str(GENESIS_KURTOSIS).expect("deserialize kurtosis.json");
+    let genesis_hash = genesis.get_block().hash();
+
+    let root_a = H256::from_low_u64_be(0xA1);
+    let root_b = H256::from_low_u64_be(0xB2);
+    let root_b_prime = H256::from_low_u64_be(0xC3);
+
+    let key_a = account_trie_node_key(0xA0);
+    let key_b = account_trie_node_key(0xB0);
+    let key_b_prime = account_trie_node_key(0xC0);
+
+    // Build a single-block UpdateBatch with one account trie-node diff.
+    let make_batch = |number: BlockNumber, parent: H256, state_root: H256, key: Vec<u8>| {
+        let header = BlockHeader {
+            number,
+            parent_hash: parent,
+            state_root,
+            ..Default::default()
+        };
+        let block = Block::new(header, BlockBody::default());
+        let batch = UpdateBatch {
+            account_updates: vec![(Nibbles::from_hex(key), vec![0x42])],
+            storage_updates: vec![],
+            receipts: vec![(block.hash(), vec![])],
+            blocks: vec![block.clone()],
+            code_updates: vec![],
+            batch_mode: false,
+        };
+        (block, batch)
+    };
+
+    let dir = tempfile::tempdir().expect("tmp");
+    let path = dir.path().to_str().unwrap();
+
+    {
+        let mut store = Store::new(path, EngineType::RocksDB).expect("store");
+        store
+            .add_initial_state(genesis.clone())
+            .await
+            .expect("genesis");
+
+        let (block_a, batch_a) = make_batch(1, genesis_hash, root_a, key_a.clone());
+        store.store_block_updates(batch_a).expect("store A");
+        let hash_a = block_a.hash();
+
+        let (block_b, batch_b) = make_batch(2, hash_a, root_b, key_b.clone());
+        store.store_block_updates(batch_b).expect("store B");
+        let hash_b = block_b.hash();
+
+        // Sidechain sibling of B, stored LAST so it holds the highest layer id.
+        let (_block_b_prime, batch_b_prime) =
+            make_batch(2, hash_a, root_b_prime, key_b_prime.clone());
+        store.store_block_updates(batch_b_prime).expect("store B'");
+
+        // Make the A -> B chain canonical (head = B).
+        store
+            .forkchoice_update(vec![(1, hash_a), (2, hash_b)], 2, hash_b, None, None)
+            .await
+            .expect("fcu to B");
+
+        store.shutdown().await.expect("shutdown flush");
+    }
+
+    let store = Store::new(path, EngineType::RocksDB).expect("reopen");
+
+    // Canonical head chain (A + B) is durable...
+    assert_eq!(
+        store.get_trie_node_for_test(true, &key_a).expect("read A"),
+        Some(vec![0x42]),
+        "canonical ancestor A must be committed on shutdown"
+    );
+    assert_eq!(
+        store.get_trie_node_for_test(true, &key_b).expect("read B"),
+        Some(vec![0x42]),
+        "canonical head B must be committed on shutdown"
+    );
+    // ...but the later-inserted sidechain layer must not be persisted.
+    assert_eq!(
+        store
+            .get_trie_node_for_test(true, &key_b_prime)
+            .expect("read B'"),
+        None,
+        "non-canonical sidechain layer must not be durably committed"
+    );
+}

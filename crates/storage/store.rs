@@ -392,6 +392,41 @@ impl Store {
         .map_err(|e| StoreError::Custom(format!("wait_for_persistence_idle join: {e}")))?
     }
 
+    /// Flushes all in-memory state to disk for a clean shutdown.
+    ///
+    /// Sends a `Shutdown` handshake to the persist worker, which (being FIFO)
+    /// first drains every queued `Block`, then force-flushes the block-data
+    /// buffer and commits *all* remaining trie diff-layers to disk. Once the
+    /// worker acks, this syncs the backend (memtables + WAL) so the next process
+    /// start needs neither block re-execution nor WAL recovery.
+    ///
+    /// After this returns the persist worker has exited; the store must not be
+    /// used for further writes. Idempotent only in the sense that a second call
+    /// errors on the closed channel — call it exactly once, on shutdown.
+    pub async fn shutdown(&self) -> Result<(), StoreError> {
+        let tx = self.persist_tx.clone();
+        let backend = self.backend.clone();
+        // Anchor the flush to the confirmed canonical head so we never durably
+        // persist a non-canonical sidechain root.
+        let head_state_root = self.latest_block_header.get().state_root;
+        tokio::task::spawn_blocking(move || {
+            let (ack_tx, ack_rx) = sync_channel::<Result<(), StoreError>>(1);
+            tx.send(PersistMessage::Shutdown {
+                head_state_root,
+                ack: ack_tx,
+            })
+            .map_err(|e| StoreError::Custom(format!("shutdown send: {e}")))?;
+            ack_rx
+                .recv()
+                .map_err(|e| StoreError::Custom(format!("shutdown ack: {e}")))??;
+            // Worker has persisted everything to the WAL/memtables; make it durable
+            // and recovery-free.
+            backend.flush()
+        })
+        .await
+        .map_err(|e| StoreError::Custom(format!("shutdown join: {e}")))?
+    }
+
     /// Add a block in a single transaction.
     /// This will store -> BlockHeader, BlockBody, BlockTransactions, BlockNumber.
     pub async fn add_block(&self, block: Block) -> Result<(), StoreError> {
@@ -1893,6 +1928,30 @@ impl Store {
                         // result so a live-path failure is not silently dropped.
                         let _ = ack.send(std::mem::replace(&mut last_flush_result, Ok(())));
                     }
+                    Ok(PersistMessage::Shutdown {
+                        head_state_root,
+                        ack,
+                    }) => {
+                        // Graceful shutdown: drain (already guaranteed by FIFO) and
+                        // force-persist the not-yet-flushed tail. Flush the block
+                        // buffer, then commit the canonical head's trie diff-layer
+                        // chain so a restart needs no block re-execution. Committing
+                        // from the confirmed head (not the newest-inserted layer)
+                        // avoids durably persisting a non-canonical sidechain root.
+                        let result = flush_block_data(persist_backend.as_ref(), &persist_buffer)
+                            .and_then(|_| {
+                                commit_all_trie_layers(
+                                    persist_backend.as_ref(),
+                                    &persist_trie_cache,
+                                    &persist_fkv_ctl,
+                                    head_state_root,
+                                )
+                            });
+                        let prior = std::mem::replace(&mut last_flush_result, Ok(()));
+                        let _ = ack.send(prior.and(result));
+                        // No more work will follow a shutdown request.
+                        return;
+                    }
                     Err(_) => return,
                 }
             }
@@ -3268,6 +3327,23 @@ impl Store {
         flush_block_data(self.backend.as_ref(), &self.block_data_buffer)
     }
 
+    /// Read a raw trie node straight from the on-disk account/storage trie-node
+    /// table by its committed key. For testing only — lets a reopen assert which
+    /// trie diff-layers a shutdown flush committed to disk.
+    #[cfg(any(test, feature = "testing"))]
+    pub fn get_trie_node_for_test(
+        &self,
+        is_account: bool,
+        key: &[u8],
+    ) -> Result<Option<Vec<u8>>, StoreError> {
+        let table = if is_account {
+            ACCOUNT_TRIE_NODES
+        } else {
+            STORAGE_TRIE_NODES
+        };
+        self.backend.begin_read()?.get(table, key)
+    }
+
     /// Insert a block plus associated codes into the in-memory buffer without
     /// writing to disk.  For testing only — proves the buffer overlay resolves
     /// code that has not been persisted yet.
@@ -3420,6 +3496,14 @@ struct BlockPersist {
 enum PersistMessage {
     Block(BlockPersist),
     Ping(std::sync::mpsc::SyncSender<Result<(), StoreError>>),
+    /// Graceful-shutdown handshake. Handled only after every earlier `Block`
+    /// (FIFO), so it both drains in-flight work and force-persists the tail:
+    /// flushes the block-data buffer and commits the canonical head's trie
+    /// diff-layer chain (`head_state_root`) to disk. The worker acks and exits.
+    Shutdown {
+        head_state_root: H256,
+        ack: std::sync::mpsc::SyncSender<Result<(), StoreError>>,
+    },
 }
 
 /// Write one block's header, body, number, and tx locations into an open batch.
@@ -3616,12 +3700,55 @@ fn commit_trie_if_due(
         // Nothing to commit to disk, move on.
         return Ok(());
     };
+    commit_trie_layers(backend, trie_cache, fkv_ctl, &trie, root)
+}
+
+/// Commits the canonical head's trie diff-layer chain to disk (graceful-shutdown
+/// path). `head_state_root` is the confirmed canonical head root, so committing
+/// from it persists exactly the canonical state and its ancestors; any
+/// later-inserted, not-yet-confirmed sidechain layers stay in memory and are
+/// discarded on exit rather than being durably written.
+///
+/// No-ops if the head root is not in the cache (already flushed to disk).
+fn commit_all_trie_layers(
+    backend: &dyn StorageBackend,
+    trie_cache: &Arc<RwLock<Arc<TrieLayerCache>>>,
+    fkv_ctl: &SyncSender<FKVGeneratorControlMessage>,
+    head_state_root: H256,
+) -> Result<(), StoreError> {
+    let trie = trie_cache
+        .read()
+        .map_err(|_| StoreError::LockError)?
+        .clone();
+    // Threshold 1 returns the root itself iff it is a live layer; `None` means the
+    // head is already on disk, so there is nothing buffered to commit.
+    if trie
+        .get_commitable_with_threshold(head_state_root, 1)
+        .is_none()
+    {
+        return Ok(());
+    }
+    commit_trie_layers(backend, trie_cache, fkv_ctl, &trie, head_state_root)
+}
+
+/// Writes the layer at `root` and all of its ancestors to disk in one tx, then
+/// RCU-evicts them from the cache. Shared by the per-block "commit when due"
+/// path ([`commit_trie_if_due`]) and the "commit everything"
+/// shutdown path ([`commit_all_trie_layers`]). `trie` is the caller's snapshot
+/// of the cache; `root` must be one of its layer keys.
+fn commit_trie_layers(
+    backend: &dyn StorageBackend,
+    trie_cache: &Arc<RwLock<Arc<TrieLayerCache>>>,
+    fkv_ctl: &SyncSender<FKVGeneratorControlMessage>,
+    trie: &Arc<TrieLayerCache>,
+    root: H256,
+) -> Result<(), StoreError> {
     // Stop the flat-key-value generator thread, as the underlying trie is about to change.
     // Ignore the error, if the channel is closed it means there is no worker to notify.
     let _ = fkv_ctl.send(FKVGeneratorControlMessage::Stop);
 
     // RCU to remove the bottom layer: update step needs to happen after disk layer is updated.
-    let mut trie_mut = (*trie).clone();
+    let mut trie_mut = (**trie).clone();
 
     let last_written = backend
         .begin_read()?
