@@ -20,8 +20,8 @@ ethrex-crypto.workspace = true
 ethrex-rlp.workspace = true
 ethrex-trie.workspace = true
 ethrex-p2p = { workspace = true, features = ["test-utils"] }
-ethrex-blockchain.workspace = true
-ethrex-storage.workspace = true
+ethrex-blockchain = { workspace = true, features = ["testing"] }
+ethrex-storage = { workspace = true, features = ["testing"] }
 ethrex-levm.workspace = true
 ethrex-rpc.workspace = true
 
@@ -51,6 +51,7 @@ ethrex-sdk.workspace = true
 # Enable SQL for tests so we don't need `cargo test -p ethrex-test --features sql`.
 ethrex-storage-rollup = { workspace = true, features = ["sql"] }
 anyhow.workspace = true
+tempfile.workspace = true
 # L2 integration tests dependencies
 ethrex-l2.workspace = true
 ethrex-l2-rpc.workspace = true

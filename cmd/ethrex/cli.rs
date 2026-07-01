@@ -1030,14 +1030,15 @@ pub async fn import_blocks_bench(
         info!(path = %bal_path, "Loading BALs from file (parallel path)");
         use ethrex_common::types::block_access_list::BlockAccessList;
         use ethrex_rlp::decode::RLPDecode as _;
+        use std::sync::Arc;
         let data = std::fs::read(bal_path)
             .unwrap_or_else(|e| panic!("failed to read BAL file at {bal_path:?}: {e}"));
         let mut remaining = data.as_slice();
-        let mut bals = Vec::new();
+        let mut bals: Vec<Arc<BlockAccessList>> = Vec::new();
         while !remaining.is_empty() {
             let (bal, rest) = BlockAccessList::decode_unfinished(remaining)
                 .unwrap_or_else(|e| panic!("failed to decode BAL from {bal_path:?}: {e}"));
-            bals.push(bal);
+            bals.push(Arc::new(bal));
             remaining = rest;
         }
         let amsterdam_blocks = chains
@@ -1104,7 +1105,10 @@ pub async fn import_blocks_bench(
             // BALs are only produced for Amsterdam+ blocks, so use a separate counter
             // that only advances for blocks that have a BAL hash in the header.
             let bal = if block.header.block_access_list_hash.is_some() {
-                let b = preloaded_bals.as_ref().and_then(|bals| bals.get(bal_index));
+                let b = preloaded_bals
+                    .as_ref()
+                    .and_then(|bals| bals.get(bal_index))
+                    .cloned();
                 bal_index += 1;
                 b
             } else {
@@ -1133,10 +1137,10 @@ pub async fn import_blocks_bench(
                     })?;
             }
 
-            // Wait for the trie-update worker's Phase 2 (disk write of bottom-most
-            // diff layer) and Phase 3 (in-memory layer removal) for the block just
-            // applied to drain. Keeps the next block's per-block timer from
-            // absorbing the previous block's background persistence cost.
+            // Wait for the persist worker to drain the block just applied: its
+            // trie diff-layer build, the disk flush and the in-memory eviction.
+            // Keeps the next block's per-block timer from absorbing the previous
+            // block's background persistence cost.
             store.wait_for_persistence_idle().await?;
         }
 
