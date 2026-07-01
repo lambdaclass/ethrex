@@ -47,9 +47,9 @@ struct TraceConfig {
 /// Blockscout-style clients that rely on the no-tracer-specified → callTracer behaviour.
 #[derive(Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
-// The wire-format names (`callTracer`, `prestateTracer`, `opcodeTracer`) are
-// fixed by client convention; variants must keep the `Tracer` suffix to
-// serialize correctly via `rename_all = "camelCase"`.
+// The wire-format names (`callTracer`, `prestateTracer`, `opcodeTracer`,
+// `noopTracer`) are fixed by client convention; variants must keep the
+// `Tracer` suffix to serialize correctly via `rename_all = "camelCase"`.
 #[allow(clippy::enum_variant_names)]
 enum TracerType {
     #[default]
@@ -59,6 +59,14 @@ enum TracerType {
     /// `structLogger` wrapper shape (`{failed, gas, returnValue, structLogs}`).
     /// Selected via `"tracer": "opcodeTracer"`.
     OpcodeTracer,
+    /// No-op tracer: re-executes the transaction(s) through the EVM with no
+    /// tracer attached and returns empty JSON objects. The output shape matches
+    /// geth's `noopTracer` (`{}` per tx), but the mechanism differs — geth runs
+    /// an empty-hook tracer (paying per-opcode dispatch), whereas this skips
+    /// tracer hooks entirely, so it isolates raw execution cost rather than the
+    /// tracing-harness floor. Any `tracerConfig` is ignored. Selected via
+    /// `"tracer": "noopTracer"`.
+    NoopTracer,
 }
 
 #[derive(Deserialize, Default)]
@@ -209,6 +217,14 @@ impl RpcHandler for TraceTransactionRequest {
                     emit,
                 })?)
             }
+            TracerType::NoopTracer => {
+                context
+                    .blockchain
+                    .trace_transaction_noop(self.tx_hash, reexec, timeout)
+                    .await
+                    .map_err(|err| RpcErr::Internal(err.to_string()))?;
+                Ok(serde_json::json!({}))
+            }
         }
     }
 }
@@ -355,6 +371,93 @@ impl RpcHandler for TraceBlockByNumberRequest {
                     .collect::<Result<_, serde_json::Error>>()?;
                 Ok(serde_json::to_value(block_trace)?)
             }
+            TracerType::NoopTracer => {
+                let traces = context
+                    .blockchain
+                    .trace_block_noop(block, reexec, timeout)
+                    .await
+                    .map_err(|err| RpcErr::Internal(err.to_string()))?;
+                let block_trace: BlockTrace<serde_json::Value> = traces
+                    .into_iter()
+                    .map(|hash| (hash, serde_json::json!({})).into())
+                    .collect();
+                Ok(serde_json::to_value(block_trace)?)
+            }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn parse_trace_tx_with_hash_only() {
+        let params = Some(vec![json!(
+            "0x0000000000000000000000000000000000000000000000000000000000000001"
+        )]);
+        let req = TraceTransactionRequest::parse(&params).unwrap();
+        assert_eq!(req.tx_hash, H256::from_low_u64_be(1));
+        assert!(matches!(req.trace_config.tracer, TracerType::CallTracer));
+    }
+
+    #[test]
+    fn parse_trace_tx_with_config() {
+        let params = Some(vec![
+            json!("0x0000000000000000000000000000000000000000000000000000000000000001"),
+            json!({"tracer": "callTracer", "tracerConfig": {"onlyTopCall": true}}),
+        ]);
+        let req = TraceTransactionRequest::parse(&params).unwrap();
+        assert!(matches!(req.trace_config.tracer, TracerType::CallTracer));
+    }
+
+    #[test]
+    fn parse_trace_tx_no_params() {
+        assert!(TraceTransactionRequest::parse(&None).is_err());
+    }
+
+    #[test]
+    fn parse_trace_tx_too_many_params() {
+        let params = Some(vec![json!("0x01"), json!({}), json!("extra")]);
+        assert!(TraceTransactionRequest::parse(&params).is_err());
+    }
+
+    #[test]
+    fn parse_trace_tx_noop_tracer() {
+        let params = Some(vec![
+            json!("0x0000000000000000000000000000000000000000000000000000000000000001"),
+            json!({"tracer": "noopTracer"}),
+        ]);
+        let req = TraceTransactionRequest::parse(&params).unwrap();
+        assert!(matches!(req.trace_config.tracer, TracerType::NoopTracer));
+    }
+
+    #[test]
+    fn deserialize_tracer_type_noop() {
+        let t: TracerType = serde_json::from_value(json!("noopTracer")).unwrap();
+        assert!(matches!(t, TracerType::NoopTracer));
+    }
+
+    #[test]
+    fn deserialize_tracer_type_unknown_fails() {
+        assert!(serde_json::from_value::<TracerType>(json!("unknownTracer")).is_err());
+    }
+
+    #[test]
+    fn deserialize_trace_config_defaults() {
+        let cfg: TraceConfig = serde_json::from_value(json!({})).unwrap();
+        assert!(matches!(cfg.tracer, TracerType::CallTracer));
+        assert!(cfg.timeout.is_none());
+        assert!(cfg.reexec.is_none());
+    }
+
+    #[test]
+    fn prestate_config_diff_mode_and_include_empty_is_invalid() {
+        let cfg = PrestateTracerConfig {
+            diff_mode: true,
+            include_empty: true,
+        };
+        assert!(cfg.validate().is_err());
     }
 }

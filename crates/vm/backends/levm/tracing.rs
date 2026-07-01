@@ -123,6 +123,25 @@ impl LEVM {
         Ok(vm.opcode_tracer.take_result())
     }
 
+    /// Executes `tx` with tracing disabled and discards the result. Matches geth's
+    /// `noopTracer`: the transaction still runs (so execution errors surface and the
+    /// trace harness overhead is exercised), but nothing is recorded.
+    pub fn trace_tx_noop(
+        db: &mut GeneralizedDatabase,
+        block_header: &BlockHeader,
+        tx: &Transaction,
+        vm_type: VMType,
+        crypto: &dyn Crypto,
+    ) -> Result<(), EvmError> {
+        let sender = tx
+            .sender(crypto)
+            .map_err(|e| EvmError::Transaction(format!("Couldn't recover sender: {e}")))?;
+        let env = Self::setup_env(tx, sender, block_header, db, vm_type)?;
+        let mut vm = VM::new(env, db, tx, LevmCallTracer::disabled(), vm_type, crypto)?;
+        vm.execute()?;
+        Ok(())
+    }
+
     /// Run transaction with callTracer activated.
     pub fn trace_tx_calls(
         db: &mut GeneralizedDatabase,
