@@ -111,6 +111,12 @@ Node options:
           [env: ETHREX_MEMPOOL_MAX_SIZE=]
           [default: 10000]
 
+      --mempool.gap-admit-occupancy-threshold <PERCENTAGE>
+          Mempool occupancy percentage (0-100) at or above which incoming transactions with a nonce gap relative to the sender's on-chain nonce are rejected. Setting to 100 disables the check.
+
+          [env: ETHREX_MEMPOOL_GAP_ADMIT_OCCUPANCY_THRESHOLD=]
+          [default: 90]
+
       --precompute-witnesses
           Once synced, computes execution witnesses upon receiving newPayload messages and stores them in local storage
           
@@ -353,6 +359,12 @@ Node options:
 
           [env: ETHREX_MEMPOOL_MAX_SIZE=]
           [default: 10000]
+
+      --mempool.gap-admit-occupancy-threshold <PERCENTAGE>
+          Mempool occupancy percentage (0-100) at or above which incoming transactions with a nonce gap relative to the sender's on-chain nonce are rejected. Setting to 100 disables the check.
+
+          [env: ETHREX_MEMPOOL_GAP_ADMIT_OCCUPANCY_THRESHOLD=]
+          [default: 90]
 
 P2P options:
       --bootnodes <BOOTNODE_LIST>...
