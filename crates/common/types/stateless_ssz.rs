@@ -271,7 +271,6 @@ const MAX_BYTES_PER_HEADER: usize = 1_024; // 2^10
 /// MAX_PUBLIC_KEYS — max recovered transaction public keys.
 const MAX_PUBLIC_KEYS: usize = 1_048_576; // 2^20
 /// PUBLIC_KEY_BYTES — an uncompressed secp256k1 public key is 65 bytes.
-#[allow(dead_code)]
 const PUBLIC_KEY_BYTES: usize = 65;
 /// MAX_BLOCK_ACCESS_LIST_BYTES — EIP-7928 BAL byte cap.
 const MAX_BLOCK_ACCESS_LIST_BYTES: usize = 16_777_216; // 2^24
@@ -281,11 +280,6 @@ const MAX_BLOB_SCHEDULES_PER_FORK: usize = 1;
 /// MAX_FORK_ACTIVATION_VALUES — SSZ Optional[uint64] as List[uint64, 1].
 #[allow(dead_code)]
 const MAX_FORK_ACTIVATION_VALUES: usize = 1;
-// Transitional: `SszStatelessInput.public_keys` still uses this ByteList inner
-// cap. Kept at the original 48 so Task 1 does not change public_keys's
-// hash_tree_root. Task 3 removes this const and retypes public_keys to
-// `SszList<SszVector<u8, PUBLIC_KEY_BYTES>, MAX_PUBLIC_KEYS>` (ByteVector[65]).
-const MAX_BYTES_PER_PUBLIC_KEY: usize = 48;
 
 // ── Stateless validation types ───────────────────────────────────
 //
@@ -326,7 +320,7 @@ pub struct SszStatelessInput {
     pub new_payload_request: NewPayloadRequest,
     pub witness: SszExecutionWitness,
     pub chain_config: SszChainConfig,
-    pub public_keys: SszList<SszList<u8, MAX_BYTES_PER_PUBLIC_KEY>, MAX_PUBLIC_KEYS>,
+    pub public_keys: SszList<SszVector<u8, PUBLIC_KEY_BYTES>, MAX_PUBLIC_KEYS>,
 }
 
 /// SSZ `StatelessValidationResult` — the output of `verify_stateless_new_payload`.
@@ -564,6 +558,16 @@ mod tests {
         };
         round_trip(&payload);
         assert_eq!(payload.block_access_list.len(), 3);
+    }
+
+    #[test]
+    fn ssz_public_keys_are_65_byte_vectors_round_trip() {
+        let key: SszVector<u8, PUBLIC_KEY_BYTES> =
+            vec![0x04u8; 65].try_into().expect("pubkey length");
+        let mut keys: SszList<SszVector<u8, PUBLIC_KEY_BYTES>, MAX_PUBLIC_KEYS> = SszList::new();
+        keys.push(key).expect("one key fits");
+        round_trip(&keys);
+        assert_eq!(keys.get(0).unwrap().len(), 65);
     }
 
     #[test]
