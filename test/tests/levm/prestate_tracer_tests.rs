@@ -106,7 +106,10 @@ fn prestate_trace_includes_newly_accessed_storage_slots() {
         ),
     );
 
-    let test_db = TestDatabase { accounts };
+    let test_db = TestDatabase {
+        accounts,
+        ..Default::default()
+    };
     let mut db = GeneralizedDatabase::new(Arc::new(test_db));
 
     let header = default_header();
@@ -192,7 +195,10 @@ fn prestate_diff_mode_includes_newly_accessed_storage_slots() {
         ),
     );
 
-    let test_db = TestDatabase { accounts };
+    let test_db = TestDatabase {
+        accounts,
+        ..Default::default()
+    };
     let mut db = GeneralizedDatabase::new(Arc::new(test_db));
     let header = default_header();
 
@@ -269,7 +275,10 @@ fn prestate_trace_excludes_storage_slots_from_previous_txs() {
         ),
     );
 
-    let test_db = TestDatabase { accounts };
+    let test_db = TestDatabase {
+        accounts,
+        ..Default::default()
+    };
     let mut db = GeneralizedDatabase::new(Arc::new(test_db));
     let header = default_header();
 
@@ -374,7 +383,10 @@ fn prestate_diff_includes_created_account() {
         ),
     );
 
-    let test_db = TestDatabase { accounts };
+    let test_db = TestDatabase {
+        accounts,
+        ..Default::default()
+    };
     let mut db = GeneralizedDatabase::new(Arc::new(test_db));
     let header = default_header();
 
@@ -510,6 +522,7 @@ fn prestate_trace_includes_read_only_account() {
     {
         let test_db = TestDatabase {
             accounts: accounts.clone(),
+            ..Default::default()
         };
         let mut db = GeneralizedDatabase::new(Arc::new(test_db));
         let header = default_header();
@@ -547,7 +560,10 @@ fn prestate_trace_includes_read_only_account() {
 
     // ── diff mode: oracle is unmodified → absent from BOTH pre and post ───
     {
-        let test_db = TestDatabase { accounts };
+        let test_db = TestDatabase {
+            accounts,
+            ..Default::default()
+        };
         let mut db = GeneralizedDatabase::new(Arc::new(test_db));
         let header = default_header();
 
@@ -625,7 +641,10 @@ fn prestate_diff_post_excludes_unchanged_storage_for_newly_accessed_account() {
         ),
     );
 
-    let test_db = TestDatabase { accounts };
+    let test_db = TestDatabase {
+        accounts,
+        ..Default::default()
+    };
     let mut db = GeneralizedDatabase::new(Arc::new(test_db));
     let header = default_header();
 
@@ -699,7 +718,10 @@ fn prestate_trace_includes_zero_value_storage_in_non_diff_pre() {
         ),
     );
 
-    let test_db = TestDatabase { accounts };
+    let test_db = TestDatabase {
+        accounts,
+        ..Default::default()
+    };
     let mut db = GeneralizedDatabase::new(Arc::new(test_db));
     let header = default_header();
 
@@ -757,7 +779,10 @@ fn prestate_trace_includes_code_hash_for_contract_account() {
         ),
     );
 
-    let test_db = TestDatabase { accounts };
+    let test_db = TestDatabase {
+        accounts,
+        ..Default::default()
+    };
     let mut db = GeneralizedDatabase::new(Arc::new(test_db));
     let header = default_header();
 
@@ -813,6 +838,7 @@ fn prestate_trace_filters_empty_pre_account_unless_include_empty() {
     {
         let test_db = TestDatabase {
             accounts: accounts.clone(),
+            ..Default::default()
         };
         let mut db = GeneralizedDatabase::new(Arc::new(test_db));
         let header = default_header();
@@ -842,7 +868,10 @@ fn prestate_trace_filters_empty_pre_account_unless_include_empty() {
 
     // include_empty = true → empty_addr kept.
     {
-        let test_db = TestDatabase { accounts };
+        let test_db = TestDatabase {
+            accounts,
+            ..Default::default()
+        };
         let mut db = GeneralizedDatabase::new(Arc::new(test_db));
         let header = default_header();
 
@@ -902,7 +931,10 @@ fn prestate_diff_post_emits_only_changed_fields() {
         ),
     );
 
-    let test_db = TestDatabase { accounts };
+    let test_db = TestDatabase {
+        accounts,
+        ..Default::default()
+    };
     let mut db = GeneralizedDatabase::new(Arc::new(test_db));
     let header = default_header();
 
@@ -1036,7 +1068,10 @@ fn prestate_diff_post_emits_zero_balance_when_changed() {
         ),
     );
 
-    let test_db = TestDatabase { accounts };
+    let test_db = TestDatabase {
+        accounts,
+        ..Default::default()
+    };
     let mut db = GeneralizedDatabase::new(Arc::new(test_db));
     let header = default_header();
 
@@ -1103,7 +1138,10 @@ fn prestate_pre_storage_excludes_slots_not_present_in_post() {
         ),
     );
 
-    let test_db = TestDatabase { accounts };
+    let test_db = TestDatabase {
+        accounts,
+        ..Default::default()
+    };
     let mut db = GeneralizedDatabase::new(Arc::new(test_db));
     let header = default_header();
 
@@ -1189,7 +1227,10 @@ fn prestate_diff_post_omits_cleared_storage_slot() {
         ),
     );
 
-    let test_db = TestDatabase { accounts };
+    let test_db = TestDatabase {
+        accounts,
+        ..Default::default()
+    };
     let mut db = GeneralizedDatabase::new(Arc::new(test_db));
     let header = default_header();
 
@@ -1227,5 +1268,221 @@ fn prestate_diff_post_omits_cleared_storage_slot() {
     assert!(
         !post.storage.contains_key(&slot),
         "diff post must omit cleared slot — omission is the encoding of \"deleted\""
+    );
+}
+
+// ── EIP-7702 / EIP-6780 prestate seeding (issue #6580) ─────────────────────
+
+use ethrex_common::types::{AuthorizationTuple, ChainConfig, EIP7702Transaction};
+use ethrex_crypto::Crypto;
+use ethrex_rlp::encode::RLPEncode;
+use secp256k1::{Message as SecpMessage, PublicKey, SECP256K1, SecretKey};
+
+const EIP_7702_MAGIC: u8 = 0x05;
+
+fn one_eth() -> U256 {
+    U256::from(10u64).pow(U256::from(18))
+}
+
+/// A chain config with all fork times at genesis so EIP-7702 (Prague) is active.
+fn prague_config() -> ChainConfig {
+    ChainConfig {
+        shanghai_time: Some(0),
+        cancun_time: Some(0),
+        prague_time: Some(0),
+        ..ChainConfig::default()
+    }
+}
+
+fn address_of(sk: &SecretKey) -> Address {
+    let pk = PublicKey::from_secret_key(SECP256K1, sk);
+    let hash = NativeCrypto.keccak256(&pk.serialize_uncompressed()[1..]);
+    Address::from_slice(&hash[12..])
+}
+
+fn sign_authorization(
+    chain_id: u64,
+    delegate_to: Address,
+    nonce: u64,
+    sk: &SecretKey,
+) -> AuthorizationTuple {
+    let mut rlp_buf = Vec::new();
+    rlp_buf.push(EIP_7702_MAGIC);
+    (U256::from(chain_id), delegate_to, nonce).encode(&mut rlp_buf);
+    let hash = NativeCrypto.keccak256(&rlp_buf);
+    let (recovery_id, sig) = SECP256K1
+        .sign_ecdsa_recoverable(&SecpMessage::from_digest(hash), sk)
+        .serialize_compact();
+    AuthorizationTuple {
+        chain_id: U256::from(chain_id),
+        address: delegate_to,
+        nonce,
+        y_parity: U256::from(Into::<i32>::into(recovery_id) as u64),
+        r_signature: U256::from_big_endian(&sig[..32]),
+        s_signature: U256::from_big_endian(&sig[32..64]),
+    }
+}
+
+fn setcode_tx(
+    to: Address,
+    sender: Address,
+    nonce: u64,
+    authorization_list: Vec<AuthorizationTuple>,
+) -> Transaction {
+    Transaction::EIP7702Transaction(EIP7702Transaction {
+        chain_id: 1,
+        nonce,
+        max_priority_fee_per_gas: 1,
+        max_fee_per_gas: 10,
+        gas_limit: 200_000,
+        to,
+        value: U256::zero(),
+        data: Bytes::new(),
+        access_list: vec![],
+        authorization_list,
+        signature_y_parity: false,
+        signature_r: U256::one(),
+        signature_s: U256::one(),
+        inner_hash: OnceCell::new(),
+        sender_cache: {
+            let cell = OnceCell::new();
+            let _ = cell.set(sender);
+            cell
+        },
+        cached_canonical: OnceCell::new(),
+    })
+}
+
+/// Regression for #6580 (EIP-7702 SetCodeAuthorizations): an EIP-7702 authority must
+/// still appear in the prestate even when no opcode touches it during execution,
+/// captured at its pre-delegation state, mirroring geth's `OnTxStart` seeding.
+#[test]
+fn prestate_seeds_eip7702_authority() {
+    let authority_sk = SecretKey::from_slice(&[0x11; 32]).unwrap();
+    let authority = address_of(&authority_sk);
+    let sender = Address::from_low_u64_be(0x1000);
+    let target = Address::from_low_u64_be(0xDE1);
+
+    let mut accounts = FxHashMap::default();
+    accounts.insert(
+        authority,
+        Account::new(
+            U256::from(5u64) * one_eth(),
+            Code::default(),
+            7,
+            FxHashMap::default(),
+        ),
+    );
+    accounts.insert(
+        sender,
+        Account::new(
+            U256::from(100u64) * one_eth(),
+            Code::default(),
+            0,
+            FxHashMap::default(),
+        ),
+    );
+    accounts.insert(
+        target,
+        Account::new(
+            U256::zero(),
+            Code::from_bytecode(Bytes::from(vec![0x00]), &NativeCrypto),
+            0,
+            FxHashMap::default(),
+        ),
+    );
+
+    let test_db = TestDatabase {
+        accounts,
+        chain_config: prague_config(),
+    };
+    let mut db = GeneralizedDatabase::new(Arc::new(test_db));
+    let header = default_header();
+
+    // chain_id 1 != prague_config's chain_id (0, ChainConfig::default), so this
+    // authorization is never applied during execution; the authority is seeded
+    // only via the OnTxStart path, not by any opcode touching it.
+    let auth = sign_authorization(1, target, 7, &authority_sk);
+    let tx = setcode_tx(sender, sender, 0, vec![auth]);
+
+    let result = LEVM::trace_tx_prestate(
+        &mut db,
+        &header,
+        &tx,
+        false,
+        false,
+        VMType::L1,
+        &NativeCrypto,
+    )
+    .expect("trace should succeed");
+
+    let PrestateResult::Prestate(pre) = result else {
+        panic!("expected non-diff prestate");
+    };
+    let entry = pre
+        .get(&authority)
+        .expect("authority must be seeded into the prestate");
+    assert_eq!(entry.balance, Some(U256::from(5u64) * one_eth()));
+    assert_eq!(entry.nonce, 7);
+}
+
+/// Non-regression for #6580 (EIP-6780): a pre-existing contract that
+/// SELFDESTRUCTs is not deleted, so it stays in the diff post-state.
+#[test]
+fn prestate_6780_preexisting_selfdestruct_survives() {
+    let contract = Address::from_low_u64_be(0xC1);
+    let sender = Address::from_low_u64_be(0x1000);
+    let beneficiary = Address::from_low_u64_be(0xB1);
+
+    // PUSH20 <beneficiary>; SELFDESTRUCT
+    let mut code = vec![0x73];
+    code.extend_from_slice(beneficiary.as_bytes());
+    code.push(0xff);
+
+    let mut accounts = FxHashMap::default();
+    accounts.insert(
+        contract,
+        Account::new(
+            one_eth(),
+            Code::from_bytecode(Bytes::from(code), &NativeCrypto),
+            1,
+            FxHashMap::default(),
+        ),
+    );
+    accounts.insert(
+        sender,
+        Account::new(
+            U256::from(100u64) * one_eth(),
+            Code::default(),
+            0,
+            FxHashMap::default(),
+        ),
+    );
+
+    let test_db = TestDatabase {
+        accounts,
+        chain_config: prague_config(),
+    };
+    let mut db = GeneralizedDatabase::new(Arc::new(test_db));
+    let header = default_header();
+
+    let tx = call_contract_tx(contract, sender, H256::zero(), 0);
+    let result = LEVM::trace_tx_prestate(
+        &mut db,
+        &header,
+        &tx,
+        true,
+        false,
+        VMType::L1,
+        &NativeCrypto,
+    )
+    .expect("trace should succeed");
+
+    let PrestateResult::Diff(pp) = result else {
+        panic!("expected diff prestate");
+    };
+    assert!(
+        pp.post.contains_key(&contract),
+        "pre-existing self-destructed contract must remain in post-state (EIP-6780)"
     );
 }

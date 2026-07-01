@@ -9,6 +9,7 @@ use ethrex_common::{
 use ethrex_crypto::Crypto;
 use ethrex_levm::account::{AccountStatus, LevmAccount};
 use ethrex_levm::db::gen_db::CacheDB;
+use ethrex_levm::utils::eip7702_recover_address;
 use ethrex_levm::vm::VMType;
 use ethrex_levm::{
     db::gen_db::GeneralizedDatabase,
@@ -68,6 +69,12 @@ impl LEVM {
         vm_type: VMType,
         crypto: &dyn Crypto,
     ) -> Result<PrestateResult, EvmError> {
+        // geth's prestate tracer records every EIP-7702 authority in `OnTxStart`. In ethrex
+        // an authority that no opcode touches is absent from the state snapshot the tracer
+        // diffs, so it is missing from the prestate. Load each one here, before the snapshot,
+        // to capture its pre-delegation state.
+        seed_eip7702_authorities(db, tx, crypto)?;
+
         let pre_snapshot: CacheDB = db.current_accounts_state.clone();
 
         let sender = tx
@@ -289,6 +296,28 @@ fn pre_storage_value(
     db.initial_accounts_state
         .get(&addr)
         .and_then(|a| a.storage.get(slot).copied())
+}
+
+/// Loads every EIP-7702 authority recovered from the tx authorization list into the
+/// state cache the prestate snapshot is taken from. geth records these in its
+/// `OnTxStart` hook; in ethrex an authority that no opcode touches is absent from that
+/// snapshot, so without this it is missing from the prestate. Loading it here records
+/// its pre-delegation state, matching geth (go-ethereum
+/// `eth/tracers/native/prestate.go`).
+fn seed_eip7702_authorities(
+    db: &mut GeneralizedDatabase,
+    tx: &Transaction,
+    crypto: &dyn Crypto,
+) -> Result<(), EvmError> {
+    if let Some(auth_list) = tx.authorization_list() {
+        for auth in auth_list {
+            if let Some(authority) = eip7702_recover_address(auth, crypto)? {
+                let _ = db.get_account(authority)?;
+            }
+        }
+    }
+
+    Ok(())
 }
 
 /// Builds the pre-tx state map. Pre storage is restricted to slots accessed by THIS
