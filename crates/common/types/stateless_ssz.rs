@@ -281,8 +281,11 @@ const MAX_BLOB_SCHEDULES_PER_FORK: usize = 1;
 /// MAX_FORK_ACTIVATION_VALUES — SSZ Optional[uint64] as List[uint64, 1].
 #[allow(dead_code)]
 const MAX_FORK_ACTIVATION_VALUES: usize = 1;
-/// MAX_BYTES_PER_PUBLIC_KEY — transitional alias; replaced by PUBLIC_KEY_BYTES in Task 2.
-const MAX_BYTES_PER_PUBLIC_KEY: usize = PUBLIC_KEY_BYTES;
+// Transitional: `SszStatelessInput.public_keys` still uses this ByteList inner
+// cap. Kept at the original 48 so Task 1 does not change public_keys's
+// hash_tree_root. Task 3 removes this const and retypes public_keys to
+// `SszList<SszVector<u8, PUBLIC_KEY_BYTES>, MAX_PUBLIC_KEYS>` (ByteVector[65]).
+const MAX_BYTES_PER_PUBLIC_KEY: usize = 48;
 
 // ── Stateless validation types ───────────────────────────────────
 //
