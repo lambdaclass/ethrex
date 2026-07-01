@@ -304,6 +304,16 @@ pub fn build_ssz_stateless_input(
         witness: ssz_witness,
         chain_config: SszChainConfig {
             chain_id: witness.chain_config.chain_id,
+            // TODO(Plan 02): populate active_fork from the L2 ChainConfig via the
+            // fork-id mapping (data-driven fork). Placeholder shape only for now.
+            active_fork: SszForkConfig {
+                fork: 0,
+                activation: SszForkActivation {
+                    block_number: SszList::new(),
+                    timestamp: SszList::new(),
+                },
+                blob_schedule: SszList::new(),
+            },
         },
         public_keys: SszList::new(), // Empty for now
     };

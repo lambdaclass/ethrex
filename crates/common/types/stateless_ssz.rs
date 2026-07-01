@@ -275,27 +275,49 @@ const PUBLIC_KEY_BYTES: usize = 65;
 /// MAX_BLOCK_ACCESS_LIST_BYTES — EIP-7928 BAL byte cap.
 const MAX_BLOCK_ACCESS_LIST_BYTES: usize = 16_777_216; // 2^24
 /// MAX_BLOB_SCHEDULES_PER_FORK — SSZ Optional[BlobSchedule] as List[T, 1].
-#[allow(dead_code)]
 const MAX_BLOB_SCHEDULES_PER_FORK: usize = 1;
 /// MAX_FORK_ACTIVATION_VALUES — SSZ Optional[uint64] as List[uint64, 1].
-#[allow(dead_code)]
 const MAX_FORK_ACTIVATION_VALUES: usize = 1;
 
 // ── Stateless validation types ───────────────────────────────────
 //
-// Mirror the definitions in execution-specs (projects/zkevm branch):
-// https://github.com/ethereum/execution-specs/blob/fd53de118b211936761cd6ce04735d4437b3dbdb/src/ethereum/forks/amsterdam/stateless.py
+// Mirror the definitions in execution-specs (projects/zkevm branch) at the
+// commit EIP-8025 PR #11604 pins:
+// https://github.com/ethereum/execution-specs/blob/85fc20ca5937719a854472a87cb48d01ef1dffca/src/ethereum/forks/amsterdam/stateless_ssz.py
 
-/// SSZ `ChainConfig` container.
-///
-/// Only carries `chain_id`. Fork rules are implicit: the EXECUTE precompile
-/// and stateless validator always run at the latest fork (Amsterdam), so all
-/// prior forks are activated at timestamp 0 when this is converted to the
-/// internal `ChainConfig` in `ssz_witness_to_internal` (see
-/// `crates/blockchain/stateless.rs`).
+/// SSZ Optional[uint64] modelled as `List[uint64, 1]`.
+pub type SszOptionalForkActivationValue = SszList<u64, MAX_FORK_ACTIVATION_VALUES>;
+/// SSZ Optional[BlobSchedule] modelled as `List[SszBlobSchedule, 1]`.
+pub type SszOptionalBlobSchedule = SszList<SszBlobSchedule, MAX_BLOB_SCHEDULES_PER_FORK>;
+
+/// SSZ `BlobSchedule` — effective blob params for a fork.
+#[derive(Debug, Clone, PartialEq, Eq, SszEncode, SszDecode, HashTreeRoot)]
+pub struct SszBlobSchedule {
+    pub target: u64,
+    pub max: u64,
+    pub base_fee_update_fraction: u64,
+}
+
+/// SSZ `ForkActivation` — the (optional) block/timestamp a fork activates at.
+#[derive(Debug, Clone, PartialEq, Eq, SszEncode, SszDecode, HashTreeRoot)]
+pub struct SszForkActivation {
+    pub block_number: SszOptionalForkActivationValue,
+    pub timestamp: SszOptionalForkActivationValue,
+}
+
+/// SSZ `ForkConfig` — the active fork id, its activation, and blob schedule.
+#[derive(Debug, Clone, PartialEq, Eq, SszEncode, SszDecode, HashTreeRoot)]
+pub struct SszForkConfig {
+    pub fork: u64,
+    pub activation: SszForkActivation,
+    pub blob_schedule: SszOptionalBlobSchedule,
+}
+
+/// SSZ `ChainConfig` container. Variable-size (nests `active_fork`'s lists).
 #[derive(Debug, Clone, PartialEq, Eq, SszEncode, SszDecode, HashTreeRoot)]
 pub struct SszChainConfig {
     pub chain_id: u64,
+    pub active_fork: SszForkConfig,
 }
 
 /// SSZ `ExecutionWitness` container matching the execution-specs definition.
@@ -492,6 +514,38 @@ mod tests {
 
     // ── Stateless helpers ────────────────────────────────────────
 
+    fn sample_active_fork() -> SszForkConfig {
+        SszForkConfig {
+            fork: 25, // Amsterdam (spec ProtocolFork index)
+            activation: SszForkActivation {
+                block_number: SszList::new(),
+                timestamp: {
+                    let mut v = SszList::new();
+                    v.push(0u64).expect("one value fits");
+                    v
+                },
+            },
+            blob_schedule: SszList::new(),
+        }
+    }
+
+    #[test]
+    fn ssz_chain_config_with_active_fork_round_trip() {
+        round_trip(&SszChainConfig {
+            chain_id: 1,
+            active_fork: sample_active_fork(),
+        });
+        round_trip(&SszForkActivation {
+            block_number: SszList::new(),
+            timestamp: SszList::new(),
+        });
+        round_trip(&SszBlobSchedule {
+            target: 3,
+            max: 6,
+            base_fee_update_fraction: 3_338_477,
+        });
+    }
+
     fn list<T: SszEncode + SszDecode, const N: usize>(items: Vec<T>) -> SszList<T, N> {
         let mut list = SszList::new();
         for item in items {
@@ -509,9 +563,18 @@ mod tests {
 
     #[test]
     fn ssz_chain_config_round_trip() {
-        round_trip(&SszChainConfig { chain_id: 1 });
-        round_trip(&SszChainConfig { chain_id: 0 });
-        round_trip(&SszChainConfig { chain_id: u64::MAX });
+        round_trip(&SszChainConfig {
+            chain_id: 1,
+            active_fork: sample_active_fork(),
+        });
+        round_trip(&SszChainConfig {
+            chain_id: 0,
+            active_fork: sample_active_fork(),
+        });
+        round_trip(&SszChainConfig {
+            chain_id: u64::MAX,
+            active_fork: sample_active_fork(),
+        });
     }
 
     #[test]
@@ -575,14 +638,20 @@ mod tests {
         let result = SszStatelessValidationResult {
             new_payload_request_root: [0xab; 32],
             successful_validation: true,
-            chain_config: SszChainConfig { chain_id: 42 },
+            chain_config: SszChainConfig {
+                chain_id: 42,
+                active_fork: sample_active_fork(),
+            },
         };
         round_trip(&result);
 
         let result_false = SszStatelessValidationResult {
             new_payload_request_root: [0x00; 32],
             successful_validation: false,
-            chain_config: SszChainConfig { chain_id: 1 },
+            chain_config: SszChainConfig {
+                chain_id: 1,
+                active_fork: sample_active_fork(),
+            },
         };
         round_trip(&result_false);
     }
