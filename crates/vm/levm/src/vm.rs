@@ -1443,7 +1443,11 @@ impl<'a> VM<'a> {
         let entry_point = ethrex_common::types::frame_tx_entry_point();
 
         let mut all_logs: Vec<Log> = Vec::new();
-        let sum_frame_gas_limits: u64 = frame_tx.frames.iter().map(|f| f.gas_limit).sum();
+        let sum_frame_gas_limits: u64 = frame_tx
+            .frames
+            .iter()
+            .map(|f| f.gas_limit)
+            .fold(0u64, |acc, g| acc.saturating_add(g));
         let intrinsic_gas = total_gas_limit.saturating_sub(sum_frame_gas_limits);
         let mut total_gas_used: u64 = intrinsic_gas;
         let mut tx_invalid = false;

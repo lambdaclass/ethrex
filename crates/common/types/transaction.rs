@@ -1994,7 +1994,12 @@ impl FrameTransaction {
             .saturating_add((self.frames.len() as u64).saturating_mul(FRAME_TX_PER_FRAME_COST))
             .saturating_add(calldata_gas)
             .saturating_add(self.signature_verification_cost())
-            .saturating_add(self.frames.iter().map(|f| f.gas_limit).sum::<u64>())
+            .saturating_add(
+                self.frames
+                    .iter()
+                    .map(|f| f.gas_limit)
+                    .fold(0u64, |acc, g| acc.saturating_add(g)),
+            )
     }
 
     /// The expiry deadline (8-byte big-endian) of this transaction's expiry
