@@ -1122,8 +1122,8 @@ impl RLPDecode for FeeTokenTransaction {
 }
 
 impl Transaction {
-    pub fn sender(&self, crypto: &dyn Crypto) -> Result<Address, CryptoError> {
-        let sender_cache = match self {
+    fn sender_cache(&self) -> &OnceCell<Address> {
+        match self {
             Transaction::LegacyTransaction(tx) => &tx.sender_cache,
             Transaction::EIP2930Transaction(tx) => &tx.sender_cache,
             Transaction::EIP1559Transaction(tx) => &tx.sender_cache,
@@ -1131,8 +1131,11 @@ impl Transaction {
             Transaction::EIP7702Transaction(tx) => &tx.sender_cache,
             Transaction::PrivilegedL2Transaction(tx) => &tx.sender_cache,
             Transaction::FeeTokenTransaction(tx) => &tx.sender_cache,
-        };
-        sender_cache
+        }
+    }
+
+    pub fn sender(&self, crypto: &dyn Crypto) -> Result<Address, CryptoError> {
+        self.sender_cache()
             .get_or_try_init(|| {
                 let tx_hash = self.hash(crypto);
                 // Fast path: check process-level signer cache
@@ -1155,10 +1158,10 @@ impl Transaction {
             .copied()
     }
 
-    fn compute_sender(&self, crypto: &dyn Crypto) -> Result<Address, CryptoError> {
+    fn get_signature_message(&self, crypto: &dyn Crypto) -> Option<([u8; 65], [u8; 32])> {
         let (buf, sig) = match self {
             Transaction::LegacyTransaction(tx) => {
-                let v = u64::try_from(tx.v).map_err(|_| CryptoError::InvalidSignature)?;
+                let v = u64::try_from(tx.v).ok()?;
                 let signature_y_parity = match self.chain_id() {
                     Some(chain_id) => v.saturating_sub(35 + chain_id * 2) != 0,
                     None => v.saturating_sub(27) != 0,
@@ -1269,7 +1272,7 @@ impl Transaction {
                 sig[64] = tx.signature_y_parity as u8;
                 (buf, sig)
             }
-            Transaction::PrivilegedL2Transaction(tx) => return Ok(tx.from),
+            Transaction::PrivilegedL2Transaction(_) => return None,
             Transaction::FeeTokenTransaction(tx) => {
                 let mut buf = vec![self.tx_type() as u8];
                 Encoder::new(&mut buf)
@@ -1292,7 +1295,67 @@ impl Transaction {
             }
         };
         let msg = crypto.keccak256(&buf);
+        Some((sig, msg))
+    }
+
+    fn compute_sender(&self, crypto: &dyn Crypto) -> Result<Address, CryptoError> {
+        if let Transaction::PrivilegedL2Transaction(tx) = self {
+            return Ok(tx.from);
+        }
+        let (sig, msg) = self
+            .get_signature_message(crypto)
+            .ok_or(CryptoError::InvalidSignature)?;
         crypto.recover_signer(&sig, &msg)
+    }
+
+    /// Verify an EIP-8025 sender hint `public_key` against this transaction's
+    /// signature and return the derived sender address.
+    ///
+    /// `public_key` must be a 65-byte uncompressed SEC1 encoding with the
+    /// canonical `0x04` prefix; hybrid (`0x06`/`0x07`) prefixes are rejected
+    /// here because the two backends of [`Crypto::verify_signature`] disagree
+    /// on them. On verification success the per-tx sender cache is populated
+    /// so later [`Transaction::sender`] calls are free.
+    ///
+    /// `PrivilegedL2Transaction` carries no signature; the function returns
+    /// `tx.from` without inspecting `public_key`. Privileged transactions are
+    /// not part of any L1 EIP-8025 flow today.
+    ///
+    /// # Errors
+    /// - [`CryptoError::InvalidSignature`] if the prefix is not `0x04`, the
+    ///   signature is malformed, or `verify_signature` rejects it.
+    /// - [`CryptoError::VerificationFailed`] if a prior [`Transaction::sender`]
+    ///   call cached a different address than the hint derives (the hint
+    ///   contradicts the recovered signer).
+    #[cfg(feature = "eip-8025")]
+    pub fn compute_sender_with_hint(
+        &self,
+        public_key: &[u8; 65],
+        crypto: &dyn Crypto,
+    ) -> Result<Address, CryptoError> {
+        // There is no signature to verify.
+        if let Transaction::PrivilegedL2Transaction(tx) = self {
+            return Ok(tx.from);
+        }
+        // Require the canonical uncompressed SEC1 prefix (0x04). Without this the
+        // native secp256k1 backend also accepts hybrid (0x06/0x07) encodings that
+        // the k256 backend rejects, which would diverge across prover backends.
+        if public_key[0] != 0x04 {
+            return Err(CryptoError::InvalidSignature);
+        }
+        let (sig, msg) = self
+            .get_signature_message(crypto)
+            .ok_or(CryptoError::InvalidSignature)?;
+        if !crypto.verify_signature(&sig, &msg, public_key) {
+            return Err(CryptoError::InvalidSignature);
+        }
+        let sender = Address::from_slice(&crypto.keccak256(&public_key[1..])[12..]);
+        // Cache only after verification; any prior `sender()` result must agree.
+        let cached = self.sender_cache().get_or_init(|| sender);
+        if *cached != sender {
+            return Err(CryptoError::VerificationFailed);
+        }
+        Ok(sender)
     }
 
     pub fn gas_limit(&self) -> u64 {
