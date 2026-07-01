@@ -152,8 +152,7 @@ pub struct ConsolidationRequest {
 
 // ── ExecutionPayload ───────────────────────────────────────────────
 
-/// SSZ `ExecutionPayload` container matching `ExecutionPayloadElectra` from
-/// the consensus spec.
+/// SSZ container matching the `85fc20ca` `SszExecutionPayload` (Electra fields + EIP-7928 `block_access_list`; 18 fields).
 #[derive(Debug, Clone, PartialEq, Eq, SszEncode, SszDecode, HashTreeRoot)]
 pub struct ExecutionPayload {
     pub parent_hash: [u8; 32],
@@ -174,6 +173,8 @@ pub struct ExecutionPayload {
     pub withdrawals: SszList<Withdrawal, MAX_WITHDRAWALS_PER_PAYLOAD>,
     pub blob_gas_used: u64,
     pub excess_blob_gas: u64,
+    /// EIP-7928 block-level access list (full serialized BAL bytes).
+    pub block_access_list: SszList<u8, MAX_BLOCK_ACCESS_LIST_BYTES>,
 }
 
 // ── ExecutionRequests ──────────────────────────────────────────────
@@ -273,7 +274,6 @@ const MAX_PUBLIC_KEYS: usize = 1_048_576; // 2^20
 #[allow(dead_code)]
 const PUBLIC_KEY_BYTES: usize = 65;
 /// MAX_BLOCK_ACCESS_LIST_BYTES — EIP-7928 BAL byte cap.
-#[allow(dead_code)]
 const MAX_BLOCK_ACCESS_LIST_BYTES: usize = 16_777_216; // 2^24
 /// MAX_BLOB_SCHEDULES_PER_FORK — SSZ Optional[BlobSchedule] as List[T, 1].
 #[allow(dead_code)]
@@ -410,6 +410,7 @@ mod tests {
             .expect("withdrawals fit"),
             blob_gas_used: 0,
             excess_blob_gas: 0,
+            block_access_list: SszList::new(), // TODO(Plan 02): populate full BAL
         }
     }
 
@@ -537,6 +538,32 @@ mod tests {
             headers: SszList::new(),
         };
         round_trip(&witness);
+    }
+
+    #[test]
+    fn ssz_execution_payload_has_block_access_list_round_trip() {
+        let payload = ExecutionPayload {
+            parent_hash: [0x11; 32],
+            fee_recipient: Bytes20([0x22; 20]),
+            state_root: [0x33; 32],
+            receipts_root: [0x44; 32],
+            logs_bloom: vec![0u8; 256].try_into().expect("logs_bloom length"),
+            prev_randao: [0x55; 32],
+            block_number: 7,
+            gas_limit: 30_000_000,
+            gas_used: 21_000,
+            timestamp: 1_700_000_000,
+            extra_data: list(vec![0xde, 0xad]),
+            base_fee_per_gas: [0u8; 32],
+            block_hash: [0x66; 32],
+            transactions: SszList::new(),
+            withdrawals: SszList::new(),
+            blob_gas_used: 0,
+            excess_blob_gas: 0,
+            block_access_list: list(vec![0x01, 0x02, 0x03]),
+        };
+        round_trip(&payload);
+        assert_eq!(payload.block_access_list.len(), 3);
     }
 
     #[test]

@@ -272,6 +272,7 @@ pub fn build_ssz_stateless_input(
         withdrawals: ssz_withdrawals,
         blob_gas_used: header.blob_gas_used.unwrap_or(0),
         excess_blob_gas: header.excess_blob_gas.unwrap_or(0),
+        block_access_list: SszList::new(), // TODO(Plan 02): populate full BAL
     };
 
     // 2. Build SSZ NewPayloadRequest
