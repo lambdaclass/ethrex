@@ -34,8 +34,19 @@ const EXTRA_SKIPS: &[&str] = &[
     "Return50000",
     "static_Call1MB1024Calldepth",
 ];
+// The stateless run executes the zkevm@v0.4.1 bundle (`vectors_zkevm/`), the only published zkevm
+// test release. Its fixtures were filled against an older glamsterdam devnet but re-execute every
+// case under the Amsterdam fork, so they lag the v6.1.0 gas accounting this client now implements:
+// ~2790/2864 fail with stale gas ("Transaction execution unexpectedly failed"), the failures spread
+// pervasively across every fork and even through the eip8025 proof suite, so no clean passing
+// subset exists. There is no v6.1.0-aligned zkevm bundle to bump to, so the whole bundle is skipped
+// here until one is published. The skip matches the `fork_Amsterdam` parametrization present in
+// every test key of this Amsterdam-only bundle (the skip list is matched against the test key, i.e.
+// the `...::test_x[fork_Amsterdam-...]` id, not the file path). The current-fixture `test-levm` run,
+// the engine ef-tests, and the state ef-tests validate these EIPs against the live v6.1.0 fixtures.
+// Tracked in `docs/known_issues.md`.
 #[cfg(feature = "stateless")]
-const EXTRA_SKIPS: &[&str] = &[];
+const EXTRA_SKIPS: &[&str] = &["fork_Amsterdam"];
 #[cfg(not(any(feature = "sp1", feature = "stateless")))]
 const EXTRA_SKIPS: &[&str] = &[];
 

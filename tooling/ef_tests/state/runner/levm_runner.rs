@@ -337,6 +337,17 @@ fn exception_is_expected(
                 TransactionExpectedException::IntrinsicGasBelowFloorGasCost,
                 VMError::TxValidation(TxValidationError::IntrinsicGasBelowFloorGasCost)
             ) | (
+                // The spec raises a single InsufficientTransactionGasError for both the
+                // intrinsic-gas and calldata-floor insufficiency cases (amsterdam
+                // transactions.py: `Insufficient intrinsic gas` / `Insufficient calldata
+                // floor`), so the TooLow vs BelowFloor distinction is finer than the spec
+                // defines. Accept either spec-faithful rejection for the other's label.
+                TransactionExpectedException::IntrinsicGasTooLow,
+                VMError::TxValidation(TxValidationError::IntrinsicGasBelowFloorGasCost)
+            ) | (
+                TransactionExpectedException::IntrinsicGasBelowFloorGasCost,
+                VMError::TxValidation(TxValidationError::IntrinsicGasTooLow)
+            ) | (
                 TransactionExpectedException::InsufficientAccountFunds,
                 VMError::TxValidation(TxValidationError::InsufficientAccountFunds)
             ) | (

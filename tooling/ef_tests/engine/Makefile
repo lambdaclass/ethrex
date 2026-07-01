@@ -27,7 +27,7 @@ $(AMSTERDAM_ARTIFACT): $(AMSTERDAM_FIXTURES_FILE)
 $(SPECTEST_VECTORS_DIR)/for_amsterdam: $(AMSTERDAM_ARTIFACT) $(SPECTEST_VECTORS_DIR)
 	tar -xzf $(AMSTERDAM_ARTIFACT) --strip-components=2 -C $(SPECTEST_VECTORS_DIR) fixtures/blockchain_tests_engine/for_amsterdam
 
-amsterdam-vectors: $(SPECTEST_VECTORS_DIR)/for_amsterdam ## 📥 Overlay snobal-devnet-6 engine fixtures onto vectors/eest
+amsterdam-vectors: $(SPECTEST_VECTORS_DIR)/for_amsterdam ## 📥 Overlay glamsterdam-devnet-6 engine fixtures onto vectors/eest
 
 help: ## 📚 Show help for each Makefile target
 	@grep -E '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-30s\033[0m %s\n", $$1, $$2}'
