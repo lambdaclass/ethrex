@@ -892,6 +892,124 @@ fn frame_tx_happy_path_sstore_and_log() {
     );
 }
 
+// ============ Regression: per-frame log isolation across contract frames ============
+
+/// PUSH1 0x00 (size), PUSH1 0x00 (offset), LOG0, STOP — emits one empty LOG0 at
+/// the executing contract's own address, then halts successfully.
+const LOG0_CODE: &[u8] = &[
+    0x60, 0x00, // PUSH1 0x00 (size = 0)
+    0x60, 0x00, // PUSH1 0x00 (offset = 0)
+    0xA0, // LOG0
+    0x00, // STOP
+];
+
+/// Two SENDER frames, each targeting a *different* log-emitting contract, must
+/// each carry only their own log in `frame_receipts[i].logs`, and the aggregate
+/// `report.logs` must contain each log exactly once.
+///
+/// Regression for the double-commit bug (PR #6326, iovoid review): the CallFrame
+/// branch pushed a substate backup and let `run_execution` commit it (the inner
+/// frame is the initial call frame, so it commits via `handle_state_backup`), but
+/// then ALSO called `commit_backup` a second time and read `current_logs()` after
+/// that commit — pulling the first frame's already-merged log into the second
+/// frame's receipt and duplicating it in the aggregate (a receipts-root /
+/// logs-bloom divergence). With only one log-emitting frame the bug is invisible,
+/// so this test uses two.
+#[test]
+fn multiple_contract_frames_do_not_duplicate_logs() {
+    let worker_a = Address::from_low_u64_be(0xAAA0);
+    let worker_b = Address::from_low_u64_be(0xBBB0);
+
+    let tx = frame_tx_with_frames(vec![
+        // Frame 0: VERIFY on the funded sender — APPROVE_BOTH (emits no logs).
+        verify_frame(FUNDED_SENDER),
+        // Frame 1: SENDER to worker_a — emits LOG0 at worker_a.
+        Frame {
+            mode: u8::from(FrameMode::Sender),
+            flags: 0,
+            target: Some(worker_a),
+            gas_limit: 100_000,
+            value: U256::zero(),
+            data: Bytes::new(),
+        },
+        // Frame 2: SENDER to worker_b — emits LOG0 at worker_b.
+        Frame {
+            mode: u8::from(FrameMode::Sender),
+            flags: 0,
+            target: Some(worker_b),
+            gas_limit: 100_000,
+            value: U256::zero(),
+            data: Bytes::new(),
+        },
+    ]);
+
+    let accounts = [
+        (
+            FUNDED_SENDER,
+            AUTO_SEED_SENDER_BALANCE,
+            0,
+            Bytes::from(APPROVE_BOTH_CODE.to_vec()),
+        ),
+        (worker_a, U256::zero(), 0, Bytes::from(LOG0_CODE.to_vec())),
+        (worker_b, U256::zero(), 0, Bytes::from(LOG0_CODE.to_vec())),
+    ];
+
+    let (result, _db) = run_frame_tx(&accounts, tx);
+    let report = result.expect("multi-frame log tx must succeed");
+
+    assert!(
+        matches!(report.result, TxResult::Success),
+        "expected TxResult::Success, got {:?}",
+        report.result
+    );
+
+    let frame_results = report
+        .frame_results
+        .expect("frame tx report must carry per-frame results");
+
+    // Per-frame isolation: each SENDER frame carries exactly its own log.
+    assert_eq!(
+        frame_results[1].2.len(),
+        1,
+        "worker_a frame must carry exactly one log, got {:?}",
+        frame_results[1].2
+    );
+    assert!(
+        frame_results[1].2.iter().all(|l| l.address == worker_a),
+        "worker_a frame receipt must contain only worker_a's log"
+    );
+    assert_eq!(
+        frame_results[2].2.len(),
+        1,
+        "worker_b frame must carry exactly one log (the bug leaked worker_a's log \
+         in here), got {:?}",
+        frame_results[2].2
+    );
+    assert!(
+        frame_results[2].2.iter().all(|l| l.address == worker_b),
+        "worker_b frame receipt must contain only worker_b's log; worker_a's log leaked in"
+    );
+
+    // Aggregate: each worker's log appears exactly once.
+    assert_eq!(
+        report.logs.iter().filter(|l| l.address == worker_a).count(),
+        1,
+        "worker_a log must appear exactly once in report.logs (the bug duplicated it), got {:?}",
+        report.logs
+    );
+    assert_eq!(
+        report.logs.iter().filter(|l| l.address == worker_b).count(),
+        1,
+        "worker_b log must appear exactly once in report.logs"
+    );
+    assert_eq!(
+        report.logs.len(),
+        2,
+        "aggregate report.logs must contain exactly two logs, got {:?}",
+        report.logs
+    );
+}
+
 // ==================== EIP-8037 state gas in frame txs ====================
 //
 // A frame tx must split gas into the EIP-8037 regular/state dimensions exactly
@@ -1525,7 +1643,7 @@ mod frame_tx_7702_delegation_tests {
     use ethrex_common::constants::EMPTY_TRIE_HASH;
     use ethrex_common::{
         Address, H256, U256,
-        types::{Account, AccountState, ChainConfig, Code, CodeMetadata},
+        types::{Account, AccountState, ChainConfig, Code, CodeMetadata, Fork},
     };
     use ethrex_levm::constants::SET_CODE_DELEGATION_BYTES;
     use ethrex_levm::db::{Database, gen_db::GeneralizedDatabase};
@@ -1638,7 +1756,7 @@ mod frame_tx_7702_delegation_tests {
         let mut substate = Substate::default();
 
         let (is_delegation, _access_cost, code_address, code) =
-            eip7702_get_code(&mut db, &mut substate, delegator).unwrap();
+            eip7702_get_code(&mut db, &mut substate, delegator, Fork::Hegota).unwrap();
 
         assert!(
             is_delegation,
@@ -1678,7 +1796,7 @@ mod frame_tx_7702_delegation_tests {
         let mut substate = Substate::default();
 
         let (is_delegation, _access_cost, code_address, code) =
-            eip7702_get_code(&mut db, &mut substate, delegator).unwrap();
+            eip7702_get_code(&mut db, &mut substate, delegator, Fork::Hegota).unwrap();
 
         assert!(is_delegation, "delegation indicator must still be detected");
         assert_eq!(code_address, delegatee);
@@ -1709,7 +1827,7 @@ mod frame_tx_7702_delegation_tests {
         let mut substate = Substate::default();
 
         let (is_delegation, _access_cost, code_address, code) =
-            eip7702_get_code(&mut db, &mut substate, eoa_addr).unwrap();
+            eip7702_get_code(&mut db, &mut substate, eoa_addr, Fork::Hegota).unwrap();
 
         assert!(!is_delegation, "plain EOA has no delegation indicator");
         assert_eq!(
@@ -1740,7 +1858,7 @@ mod frame_tx_7702_delegation_tests {
         let mut substate = Substate::default();
 
         let (is_delegation, _access_cost, code_address, code) =
-            eip7702_get_code(&mut db, &mut substate, contract_addr).unwrap();
+            eip7702_get_code(&mut db, &mut substate, contract_addr, Fork::Hegota).unwrap();
 
         assert!(
             !is_delegation,

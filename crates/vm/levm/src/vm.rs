@@ -436,6 +436,13 @@ impl Substate {
         self.logs.clone()
     }
 
+    /// Number of logs in the current scope, without cloning them. Used to slice
+    /// out a single frame's logs after `run_execution` has already committed the
+    /// frame's backup up into this scope.
+    pub fn logs_len(&self) -> usize {
+        self.logs.len()
+    }
+
     /// Push a log record.
     pub fn add_log(&mut self, log: Log) {
         self.logs.push(log);
@@ -1603,6 +1610,13 @@ impl<'a> VM<'a> {
                 recorder.record_touched_address(code_address);
             }
 
+            // Log count of the scope this frame's backup will be committed into.
+            // The CallFrame branch below relies on `run_execution` having already
+            // committed the frame (merging its logs up into this scope), then
+            // slices `[substate_logs_before..]` to recover exactly this frame's
+            // logs without re-committing.
+            let substate_logs_before = self.substate.logs_len();
+
             // Push substate backup for per-frame state isolation
             self.substate.push_backup();
 
@@ -1731,20 +1745,31 @@ impl<'a> VM<'a> {
                         let success = ctx_result.is_success();
 
                         if success {
-                            // Snapshot this frame's own logs before commit_backup merges
-                            // them into the parent substate (required for correct
-                            // frame_receipts[i].logs — walking extract_logs() after commit
-                            // would pull in prior frames' logs).
-                            let this_frame_logs = self.substate.current_logs();
-                            self.substate.commit_backup();
+                            // The inner frame is the initial call frame (call_frames
+                            // was emptied above), so `run_execution` already ran
+                            // `handle_state_backup` and committed this frame's backup,
+                            // merging its logs up into the scope measured by
+                            // `substate_logs_before`. Recover exactly this frame's logs
+                            // by slicing off everything that predated it — do NOT commit
+                            // again (a second commit would collapse an extra backup
+                            // level, breaking atomic-batch rollback) and do NOT read
+                            // `current_logs()` wholesale (it now also holds prior frames'
+                            // logs, which would duplicate them into frame_receipts[i]).
+                            let mut merged_logs = self.substate.current_logs();
+                            let this_frame_logs = merged_logs.split_off(substate_logs_before);
                             (true, gas_used, this_frame_logs)
                         } else {
-                            self.substate.revert_backup();
-                            self.restore_cache_state()?;
+                            // A normal EVM revert reaches `handle_state_backup` inside
+                            // `run_execution`, which already reverted the backup and
+                            // restored the cache for this frame; repeating it here would
+                            // revert an extra level.
                             (false, gas_used, Vec::new())
                         }
                     }
                     Err(_e) => {
+                        // A `VMError` propagates out of `run_execution` before it reaches
+                        // `handle_state_backup`, so this frame's backup is still live and
+                        // must be reverted (and the cache restored) here.
                         self.substate.revert_backup();
                         self.restore_cache_state()?;
                         (false, frame.gas_limit, Vec::new())
@@ -2332,14 +2357,11 @@ impl<'a> VM<'a> {
                 let result = match frame_result {
                     Ok(ctx_result) => {
                         let gas_used = ctx_result.gas_used;
-                        if ctx_result.is_success() {
-                            self.substate.commit_backup();
-                            (true, gas_used)
-                        } else {
-                            self.substate.revert_backup();
-                            self.restore_cache_state()?;
-                            (false, gas_used)
-                        }
+                        // The inner frame is the initial call frame, so `run_execution`
+                        // already committed (success) or reverted + restored the cache
+                        // (revert) this frame's backup via `handle_state_backup`. Only a
+                        // `VMError` (the `Err` arm) leaves the backup live for us to undo.
+                        (ctx_result.is_success(), gas_used)
                     }
                     Err(_e) => {
                         self.substate.revert_backup();
