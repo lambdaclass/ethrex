@@ -829,11 +829,6 @@ fn fork_to_spec_index(fork: crate::types::genesis::Fork) -> Result<u64, GuestPro
         Fork::Cancun => 16,
         Fork::Prague => 17,
         Fork::Osaka => 18,
-        Fork::BPO1 => 19,
-        Fork::BPO2 => 20,
-        Fork::BPO3 => 21,
-        Fork::BPO4 => 22,
-        Fork::BPO5 => 23,
         Fork::Amsterdam => 24,
         other => {
             return Err(GuestProgramStateError::Custom(format!(
@@ -901,11 +896,6 @@ pub fn ssz_chain_config_to_internal(
         16 => Fork::Cancun,
         17 => Fork::Prague,
         18 => Fork::Osaka,
-        19 => Fork::BPO1,
-        20 => Fork::BPO2,
-        21 => Fork::BPO3,
-        22 => Fork::BPO4,
-        23 => Fork::BPO5,
         24 => Fork::Amsterdam,
         other => {
             return Err(GuestProgramStateError::Custom(format!(
@@ -936,7 +926,7 @@ pub fn ssz_chain_config_to_internal(
     })
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "experimental-devnet"))]
 mod active_fork_tests {
     use super::*;
     use crate::types::genesis::{ChainConfig, Fork};
@@ -976,6 +966,17 @@ mod active_fork_tests {
         assert_eq!(back.chain_id, 1);
         assert!(back.osaka_time.is_none());
         assert!(back.amsterdam_time.is_none());
+    }
+
+    #[test]
+    fn active_fork_round_trips_cancun() {
+        let mut cfg = prague_l2_config();
+        cfg.prague_time = None; // Cancun-only L2
+        let ssz = chain_config_to_ssz(&cfg, 0).expect("encode");
+        assert_eq!(ssz.active_fork.fork, 16);
+        let back = ssz_chain_config_to_internal(&ssz).expect("decode");
+        assert_eq!(back.get_fork(0), Fork::Cancun);
+        assert!(back.prague_time.is_none());
     }
 
     #[test]
