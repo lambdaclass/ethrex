@@ -85,8 +85,49 @@ use crate::{Blockchain, BlockchainType};
 use ethrex_common::types::BlockHeader;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, mpsc};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tracing::{info, warn};
+
+/// Cancellation token for one warming pass. `cancel()` stamps the signal time
+/// *before* raising the flag, so a pass that observes the flag always finds
+/// the timestamp; the pass then logs the drain latency between the signal and
+/// its actual exit — the measured interference window with real execution.
+struct CancelToken {
+    flag: AtomicBool,
+    cancelled_at: Mutex<Option<Instant>>,
+}
+
+impl CancelToken {
+    fn new() -> Self {
+        CancelToken {
+            flag: AtomicBool::new(false),
+            cancelled_at: Mutex::new(None),
+        }
+    }
+
+    fn cancel(&self) {
+        if let Ok(mut at) = self.cancelled_at.lock() {
+            at.get_or_insert_with(Instant::now);
+        }
+        self.flag.store(true, Ordering::Relaxed);
+    }
+
+    // Only read by `run_pass`, which is compiled out without the rayon
+    // feature (or with eip-8025); same pattern as `PrewarmRequest`.
+    #[cfg_attr(any(not(feature = "rayon"), feature = "eip-8025"), allow(dead_code))]
+    fn is_cancelled(&self) -> bool {
+        self.flag.load(Ordering::Relaxed)
+    }
+
+    /// Time elapsed since `cancel()` was signalled, if it was.
+    #[cfg_attr(any(not(feature = "rayon"), feature = "eip-8025"), allow(dead_code))]
+    fn drain_since_cancel(&self) -> Option<Duration> {
+        self.cancelled_at
+            .lock()
+            .ok()
+            .and_then(|at| at.map(|t| t.elapsed()))
+    }
+}
 
 // Fields are only read by `run_pass`, which is compiled out when the rayon
 // feature is disabled (or eip-8025 is active); avoid a dead-code warning in
@@ -94,16 +135,16 @@ use tracing::{info, warn};
 #[cfg_attr(any(not(feature = "rayon"), feature = "eip-8025"), allow(dead_code))]
 struct PrewarmRequest {
     parent_header: BlockHeader,
-    cancel: Arc<AtomicBool>,
+    cancel: Arc<CancelToken>,
     deadline_unix: u64,
 }
 
 pub struct PrewarmHandle {
     sender: mpsc::Sender<PrewarmRequest>,
-    /// Cancel flag of the most recently triggered pass. `trigger` replaces it,
-    /// `cancel_current` sets it. Both are called only from the single
-    /// block-executor thread, so replace/set cannot race.
-    current_cancel: Mutex<Arc<AtomicBool>>,
+    /// Cancel token of the most recently triggered pass. `trigger` replaces
+    /// it, `cancel_current` fires it. Both are called only from the single
+    /// block-executor thread, so replace/fire cannot race.
+    current_cancel: Mutex<Arc<CancelToken>>,
     /// hash -> gas_limit of the last pass's warm set, for the overlap metric.
     last_warmed: Arc<Mutex<Option<FxHashMap<H256, u64>>>>,
     slot_duration_secs: u64,
@@ -118,13 +159,13 @@ fn unix_now() -> u64 {
 
 impl PrewarmHandle {
     pub fn cancel_current(&self) {
-        if let Ok(flag) = self.current_cancel.lock() {
-            flag.store(true, Ordering::Relaxed);
+        if let Ok(token) = self.current_cancel.lock() {
+            token.cancel();
         }
     }
 
     pub fn trigger(&self, parent_header: BlockHeader) {
-        let cancel = Arc::new(AtomicBool::new(false));
+        let cancel = Arc::new(CancelToken::new());
         if let Ok(mut current) = self.current_cancel.lock() {
             *current = cancel.clone();
         }
@@ -218,7 +259,7 @@ impl MempoolPrewarmer {
                 .ok()?;
             Some(PrewarmHandle {
                 sender,
-                current_cancel: Mutex::new(Arc::new(AtomicBool::new(false))),
+                current_cancel: Mutex::new(Arc::new(CancelToken::new())),
                 last_warmed,
                 slot_duration_secs,
             })
@@ -241,11 +282,10 @@ fn run_pass(
     };
     use ethrex_levm::vm::VMType;
     use ethrex_vm::backends::CachingDatabase;
-    use ethrex_vm::backends::levm::LEVM;
-    use std::time::Instant;
+    use ethrex_vm::backends::levm::{LEVM, WarmProgress};
     use tracing::debug;
 
-    if req.cancel.load(Ordering::Relaxed) || unix_now() >= req.deadline_unix {
+    if req.cancel.is_cancelled() || unix_now() >= req.deadline_unix {
         debug!(
             "prewarm pass for child of block {} skipped: stale at start",
             req.parent_header.number
@@ -334,11 +374,12 @@ fn run_pass(
 
     let cancel = req.cancel.clone();
     let deadline = req.deadline_unix;
-    let should_stop = move || cancel.load(Ordering::Relaxed) || unix_now() >= deadline;
+    let should_stop = move || cancel.is_cancelled() || unix_now() >= deadline;
 
     // `warm_txs` takes borrowed transactions; bridge the owned warm set.
     let view: Vec<(&Transaction, Address)> = warm_set.iter().map(|(tx, s)| (tx, *s)).collect();
 
+    let progress = WarmProgress::default();
     let result = pool.install(|| {
         LEVM::warm_txs(
             &view,
@@ -347,24 +388,37 @@ fn run_pass(
             VMType::L1,
             &NativeCrypto,
             &should_stop,
+            Some(&progress),
         )
     });
 
-    let stop_reason = if req.cancel.load(Ordering::Relaxed) {
+    // Drain = cancel signal -> pass exit; sample immediately after the pool
+    // returns so the number measures the pass, not the logging below.
+    let drain_after_cancel = req.cancel.drain_since_cancel();
+    let stop_reason = if req.cancel.is_cancelled() {
         "cancelled"
     } else if unix_now() >= deadline {
         "deadline"
     } else {
         "completed"
     };
+    // Only meaningful when arrival-cancel actually stopped the pass: it is
+    // the window in which prewarm workers overlapped real execution.
+    let drain = match (stop_reason, drain_after_cancel) {
+        ("cancelled", Some(d)) => format!(", drain={d:?}"),
+        _ => String::new(),
+    };
     let total_gas: u64 = warm_set.iter().map(|(tx, _)| tx.gas_limit()).sum();
     info!(
-        "prewarm pass for block {}: {} txs, {} gas, {:?}, stop={}, err={}",
+        "prewarm pass for block {}: warmed {}/{} txs {}/{} gas, {:?}, stop={}{}, err={}",
         header.number,
+        progress.txs.load(Ordering::Relaxed),
         warm_set.len(),
+        progress.gas.load(Ordering::Relaxed),
         total_gas,
         start.elapsed(),
         stop_reason,
+        drain,
         result.is_err(),
     );
 }
