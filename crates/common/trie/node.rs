@@ -798,11 +798,14 @@ fn batch_commit_subtrie(
     const WINDOW: usize = 512;
     let mut arena: Vec<u8> = Vec::new();
     let mut ranges: Vec<(usize, usize)> = Vec::new();
-    for level in by_depth.iter().rev() {
-        for window in level.chunks(WINDOW) {
+    // Consume `by_depth` so each node's collected path is *moved* into `acc`
+    // rather than cloned — one `Nibbles` allocation per node, matching the
+    // scalar commit (the extra clone was the main source of run-to-run jitter).
+    for mut level in by_depth.into_iter().rev() {
+        for window in level.chunks_mut(WINDOW) {
             arena.clear();
             ranges.clear();
-            for (_, node_ref) in window {
+            for (_, node_ref) in window.iter() {
                 if let NodeRef::Node(node, _) = node_ref {
                     let start = arena.len();
                     node.encode(&mut arena);
@@ -817,22 +820,21 @@ fn batch_commit_subtrie(
                 .collect();
             let mut hashed = crypto.keccak256_batch(&batch_inputs).into_iter();
 
-            for ((node_path, node_ref), &(start, len)) in window.iter().zip(ranges.iter()) {
-                if let NodeRef::Node(node, hash) = node_ref {
-                    let encoding = &arena[start..start + len];
-                    let node_hash = if len >= 32 {
-                        NodeHash::from_slice(
-                            &hashed.next().expect("one hash per 32+ byte encoding"),
-                        )
-                    } else {
-                        NodeHash::from_slice(encoding)
-                    };
-                    let _ = hash.set(node_hash);
-                    if let Node::Leaf(leaf) = node.as_ref() {
-                        acc.push((node_path.concat(&leaf.partial), leaf.value.clone()));
-                    }
-                    acc.push((node_path.clone(), encoding.to_vec()));
+            for ((node_path, node_ref), &(start, len)) in window.iter_mut().zip(ranges.iter()) {
+                let NodeRef::Node(node, hash) = *node_ref else {
+                    continue;
+                };
+                let encoding = &arena[start..start + len];
+                let node_hash = if len >= 32 {
+                    NodeHash::from_slice(&hashed.next().expect("one hash per 32+ byte encoding"))
+                } else {
+                    NodeHash::from_slice(encoding)
+                };
+                let _ = hash.set(node_hash);
+                if let Node::Leaf(leaf) = node.as_ref() {
+                    acc.push((node_path.concat(&leaf.partial), leaf.value.clone()));
                 }
+                acc.push((std::mem::take(node_path), encoding.to_vec()));
             }
         }
     }
