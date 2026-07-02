@@ -258,6 +258,7 @@ pub struct ChainConfig {
     pub bpo4_time: Option<u64>,
     pub bpo5_time: Option<u64>,
     pub amsterdam_time: Option<u64>,
+    pub lstar_time: Option<u64>,
 
     /// Amount of total difficulty reached by the network that triggers the consensus upgrade.
     #[serde(default, with = "crate::serde_utils::u128::hex_str_opt")]
@@ -317,6 +318,7 @@ pub enum Fork {
     BPO4 = 23,
     BPO5 = 24,
     Amsterdam = 25,
+    LStar = 26,
 }
 
 impl From<Fork> for &str {
@@ -348,11 +350,16 @@ impl From<Fork> for &str {
             Fork::BPO4 => "BPO4",
             Fork::BPO5 => "BPO5",
             Fork::Amsterdam => "Amsterdam",
+            Fork::LStar => "LStar",
         }
     }
 }
 
 impl ChainConfig {
+    pub fn is_lstar_activated(&self, block_timestamp: u64) -> bool {
+        self.lstar_time.is_some_and(|time| time <= block_timestamp)
+    }
+
     pub fn is_amsterdam_activated(&self, block_timestamp: u64) -> bool {
         self.amsterdam_time
             .is_some_and(|time| time <= block_timestamp)
@@ -1141,6 +1148,24 @@ mod tests {
 
         let error_message = result.unwrap_err().to_string();
         assert!(error_message.contains("missing field `depositContractAddress`"),);
+    }
+
+    #[test]
+    fn lstar_fork_ordering_and_activation() {
+        // LStar is the highest fork and strictly greater than Amsterdam.
+        assert!(Fork::LStar > Fork::Amsterdam);
+        assert_eq!(<&str>::from(Fork::LStar), "LStar");
+
+        let mut cfg = ChainConfig {
+            lstar_time: Some(100),
+            ..Default::default()
+        };
+        assert!(!cfg.is_lstar_activated(99));
+        assert!(cfg.is_lstar_activated(100));
+        assert!(cfg.is_lstar_activated(101));
+
+        cfg.lstar_time = None;
+        assert!(!cfg.is_lstar_activated(u64::MAX));
     }
 
     #[test]
