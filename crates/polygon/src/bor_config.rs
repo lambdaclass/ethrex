@@ -121,6 +121,9 @@ pub struct BorConfig {
     pub chicago_block: Option<u64>,
     /// Giugliano fork block.
     pub giugliano_block: Option<u64>,
+    /// Valencia fork block (state-sync byte budget, TxDependency decode hardening).
+    #[serde(default)]
+    pub valencia_block: Option<u64>,
 }
 
 /// Override state sync records within a block range.
@@ -237,6 +240,10 @@ impl BorConfig {
         is_fork_active(self.giugliano_block, block_number)
     }
 
+    pub fn is_valencia_active(&self, block_number: BlockNumber) -> bool {
+        is_fork_active(self.valencia_block, block_number)
+    }
+
     /// Returns true if block_number is the start of a sprint.
     pub fn is_sprint_start(&self, block_number: BlockNumber) -> bool {
         if block_number == 0 {
@@ -309,7 +316,9 @@ impl BorConfig {
     /// Fork variant is numerically > all Ethereum EVM forks, so comparisons
     /// like `fork >= Fork::Prague` remain true for any Polygon fork.
     pub fn get_polygon_fork(&self, block_number: BlockNumber) -> Fork {
-        if self.is_giugliano_active(block_number) {
+        if self.is_valencia_active(block_number) {
+            Fork::Valencia
+        } else if self.is_giugliano_active(block_number) {
             Fork::Giugliano
         } else if self.is_lisovo_pro_active(block_number) {
             Fork::LisovoPro
@@ -515,6 +524,7 @@ mod tests {
             lisovo_pro_block: None,
             chicago_block: None,
             giugliano_block: None,
+            valencia_block: None,
             istanbul_block: None,
             berlin_block: None,
             london_block: None,
@@ -610,7 +620,8 @@ mod tests {
                 "dandeliBlock": 81424000,
                 "lisovoBlock": 83756500,
                 "lisovoProBlock": 83756500,
-                "giuglianoBlock": 90000000
+                "giuglianoBlock": 90000000,
+                "valenciaBlock": 95000000
             }"#,
         )
         .expect("valid config")
@@ -642,7 +653,14 @@ mod tests {
     fn test_get_polygon_fork_at_giugliano() {
         let config = mainnet_like_config();
         assert_eq!(config.get_polygon_fork(90_000_000), Fork::Giugliano);
-        assert_eq!(config.get_polygon_fork(100_000_000), Fork::Giugliano);
+        assert_eq!(config.get_polygon_fork(94_999_999), Fork::Giugliano);
+    }
+
+    #[test]
+    fn test_get_polygon_fork_at_valencia() {
+        let config = mainnet_like_config();
+        assert_eq!(config.get_polygon_fork(95_000_000), Fork::Valencia);
+        assert_eq!(config.get_polygon_fork(100_000_000), Fork::Valencia);
     }
 
     #[test]
@@ -665,6 +683,7 @@ mod tests {
         assert!(Fork::Jaipur > Fork::Prague);
         assert!(Fork::Delhi > Fork::Prague);
         assert!(Fork::Giugliano > Fork::Prague);
+        assert!(Fork::Valencia > Fork::Prague);
     }
 
     #[test]
@@ -680,6 +699,9 @@ mod tests {
 
         assert!(!config.is_giugliano_active(89_999_999));
         assert!(config.is_giugliano_active(90_000_000));
+
+        assert!(!config.is_valencia_active(94_999_999));
+        assert!(config.is_valencia_active(95_000_000));
     }
 
     #[test]
@@ -692,7 +714,7 @@ mod tests {
     #[test]
     fn test_fork_activation_very_large_block() {
         let config = mainnet_like_config();
-        assert!(config.is_giugliano_active(u64::MAX));
+        assert!(config.is_valencia_active(u64::MAX));
     }
 
     #[test]

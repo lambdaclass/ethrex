@@ -333,10 +333,11 @@ pub enum Fork {
     Lisovo = 109,
     LisovoPro = 110,
     Giugliano = 111,
+    Valencia = 112,
 }
 
 impl Fork {
-    /// Returns true if this is a Polygon PoS fork (Jaipur through Giugliano).
+    /// Returns true if this is a Polygon PoS fork (Jaipur through Valencia).
     pub fn is_polygon(&self) -> bool {
         *self >= Fork::Jaipur
     }
@@ -384,6 +385,7 @@ impl From<Fork> for &str {
             Fork::Lisovo => "Lisovo",
             Fork::LisovoPro => "LisovoPro",
             Fork::Giugliano => "Giugliano",
+            Fork::Valencia => "Valencia",
         }
     }
 }

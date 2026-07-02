@@ -20,6 +20,13 @@ pub const SYSTEM_ADDRESS: Address = H160([
 /// Maximum gas for Bor system calls, matching Bor's params.MaxTxGas (1 << 25).
 pub const MAX_SYSTEM_CALL_GAS: u64 = 1 << 25;
 
+/// Valencia: maximum cumulative state-sync record bytes per block (1 MiB).
+pub const MAX_STATE_SYNC_BYTES_PER_BLOCK: u64 = 1 << 20;
+
+/// Valencia: maximum expected size of a single state-sync record (30 KB).
+/// Mirrors Heimdall's `helper.MaxStateSyncSize`.
+pub const MAX_STATE_SYNC_RECORD_BYTES: u64 = 30_000;
+
 /// Compute the 4-byte Solidity function selector from a signature string.
 fn selector(sig: &str) -> [u8; 4] {
     let hash = keccak(sig.as_bytes());

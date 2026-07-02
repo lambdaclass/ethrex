@@ -88,7 +88,8 @@ pub fn polygon_mainnet_bor_config() -> BorConfig {
             "dandeliBlock": 81424000,
             "lisovoBlock": 83756500,
             "lisovoProBlock": 83756500,
-            "chicagoBlock": 87218600
+            "chicagoBlock": 87218600,
+            "valenciaBlock": 89531000
         }"#,
     )
     .expect("mainnet BorConfig JSON should be valid")
@@ -132,7 +133,8 @@ pub fn amoy_bor_config() -> BorConfig {
             "dandeliBlock": 31890000,
             "lisovoBlock": 33634700,
             "lisovoProBlock": 34062000,
-            "chicagoBlock": 38358000
+            "chicagoBlock": 38358000,
+            "valenciaBlock": 40776000
         }"#,
     )
     .expect("amoy BorConfig JSON should be valid")

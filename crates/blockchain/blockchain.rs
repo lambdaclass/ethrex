@@ -3624,8 +3624,9 @@ fn execute_polygon_system_calls(
     use ethrex_common::types::{Log, TxType};
     use ethrex_polygon::consensus::engine::encode_validator_bytes;
     use ethrex_polygon::system_calls::{
-        MAX_SYSTEM_CALL_GAS, STATE_RECEIVER_CONTRACT, SYSTEM_ADDRESS, VALIDATOR_CONTRACT,
-        encode_commit_span, encode_commit_state,
+        MAX_STATE_SYNC_BYTES_PER_BLOCK, MAX_STATE_SYNC_RECORD_BYTES, MAX_SYSTEM_CALL_GAS,
+        STATE_RECEIVER_CONTRACT, SYSTEM_ADDRESS, VALIDATOR_CONTRACT, encode_commit_span,
+        encode_commit_state,
     };
 
     let bor_config = ethrex_polygon::genesis::bor_config_for_chain(chain_config.chain_id)
@@ -3762,6 +3763,8 @@ fn execute_polygon_system_calls(
         let delay = bor_config.get_state_sync_delay(block_number);
         let sync_time = block.header.timestamp - delay;
         let chain_id_str = chain_config.chain_id.to_string();
+        let enforce_budget = bor_config.is_valencia_active(block_number);
+        let mut state_sync_bytes: u64 = 0;
 
         for event in state_sync_data.iter() {
             // RLP-encode the full EventRecord matching Bor's format:
@@ -3776,6 +3779,33 @@ fn execute_polygon_system_calls(
                 .encode_field(&0u64) // log_index
                 .encode_field(&chain_id_str)
                 .finish();
+
+            let record_size = event.data.len() as u64;
+
+            // Valencia: enforce per-block state-sync byte budget.
+            // The first record is always committed (prevents stall from a single large record).
+            if enforce_budget
+                && state_sync_bytes > 0
+                && state_sync_bytes + record_size > MAX_STATE_SYNC_BYTES_PER_BLOCK
+            {
+                debug!(
+                    block_number,
+                    committed_bytes = state_sync_bytes,
+                    remaining_events = state_sync_data.len(),
+                    "State-sync byte budget reached, deferring remaining records"
+                );
+                break;
+            }
+
+            if record_size > MAX_STATE_SYNC_RECORD_BYTES {
+                warn!(
+                    block_number,
+                    event_id = event.id,
+                    record_size,
+                    max = MAX_STATE_SYNC_RECORD_BYTES,
+                    "State-sync record exceeds per-record size cap"
+                );
+            }
 
             let calldata_bytes = bytes::Bytes::from(encode_commit_state(sync_time, &record_bytes));
 
@@ -3801,6 +3831,8 @@ fn execute_polygon_system_calls(
                     );
                 }
             }
+
+            state_sync_bytes += record_size;
         }
     }
 
