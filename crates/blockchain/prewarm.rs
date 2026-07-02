@@ -5,8 +5,10 @@
 //! the next block's state reads hit warm persistent caches (RocksDB block
 //! cache, code cache). Read-only and throwaway: speculative results are
 //! discarded; a wrong prediction costs wasted I/O, never incorrect state.
-//! The pass is cancelled the moment the next block arrives and never runs
-//! past the next slot boundary.
+//! The pass refreshes as new transactions arrive, covering most of the
+//! inter-block window (late-arriving txs dominate the next block's content);
+//! it is cancelled the moment the next block arrives and never runs past the
+//! next slot boundary.
 
 use ethrex_common::types::{Block, MempoolTransaction, Transaction};
 use ethrex_common::{Address, H256, U256};
@@ -49,6 +51,23 @@ pub fn select_warm_set(
         }
     }
     out
+}
+
+/// Drops txs already warmed this slot (by hash) from a fresh mempool
+/// snapshot, so delta passes only warm new arrivals. Nonce order within the
+/// surviving sender groups is preserved; senders left empty are removed.
+pub fn drop_already_warmed(
+    mut txs_by_sender: FxHashMap<Address, Vec<MempoolTransaction>>,
+    warmed: &FxHashMap<H256, u64>,
+) -> FxHashMap<Address, Vec<MempoolTransaction>> {
+    if warmed.is_empty() {
+        return txs_by_sender;
+    }
+    txs_by_sender.retain(|_, txs| {
+        txs.retain(|mtx| !warmed.contains_key(&mtx.transaction().hash(&NativeCrypto)));
+        !txs.is_empty()
+    });
+    txs_by_sender
 }
 
 /// How much of an arrived block the last warming pass covered. `warmed` maps
@@ -331,33 +350,15 @@ fn run_pass(
         ELASTICITY_MULTIPLIER,
     );
 
-    // Snapshot the mempool. blob_fee: None on purpose — blob txs are warmed
-    // like any other tx (the sidecar is not state), no fee gate needed.
+    // Mempool snapshot filter. blob_fee: None on purpose — blob txs are
+    // warmed like any other tx (the sidecar is not state), no fee gate needed.
     let filter = PendingTxFilter {
         base_fee,
         ..Default::default()
     };
-    let txs_by_sender = match blockchain.mempool.filter_transactions(&filter) {
-        Ok(txs_by_sender) => txs_by_sender,
-        Err(e) => {
-            warn!("prewarm pass skipped: mempool snapshot failed: {e}");
-            return;
-        }
-    };
+    // Budget per warming snapshot; delta snapshots each get fresh headroom
+    // (their size is naturally bounded by the slot's arrival rate).
     let gas_budget = opts.gas_budget_multiplier.saturating_mul(parent.gas_limit);
-    let warm_set = select_warm_set(txs_by_sender, base_fee, gas_budget);
-    if warm_set.is_empty() {
-        debug!("prewarm pass: empty warm set, skipping");
-        return;
-    }
-
-    let warmed_map: FxHashMap<H256, u64> = warm_set
-        .iter()
-        .map(|(tx, _)| (tx.hash(&NativeCrypto), tx.gas_limit()))
-        .collect();
-    if let Ok(mut w) = last_warmed.lock() {
-        *w = Some(warmed_map);
-    }
 
     // Synthetic child header: clone the parent and override what the warm
     // path reads (fork selection by timestamp, base fee, blob fee inputs).
@@ -401,31 +402,83 @@ fn run_pass(
     let deadline = req.deadline_unix;
     let should_stop = move || cancel.is_cancelled() || unix_now() >= deadline;
 
-    // `warm_txs` takes borrowed transactions; bridge the owned warm set.
-    let view: Vec<(&Transaction, Address)> = warm_set.iter().map(|(tx, s)| (tx, *s)).collect();
-
     let progress = WarmProgress::default();
-    let result = pool.install(|| {
-        LEVM::warm_txs(
-            &view,
-            &header,
-            caching,
-            VMType::L1,
-            &NativeCrypto,
-            &should_stop,
-            Some(&progress),
-        )
-    });
+    let mut warmed_union: FxHashMap<H256, u64> = FxHashMap::default();
+    let mut passes: u32 = 0;
+    let mut any_err = false;
+    // `None` forces the first snapshot regardless of the counter's value.
+    let mut last_seq: Option<u64> = None;
 
-    // Drain = cancel signal -> pass exit; sample immediately after the pool
-    // returns so the number measures the pass, not the logging below.
+    // Refreshing delta passes: warm the initial snapshot, then keep warming
+    // txs that arrive during the slot, until the next block arrives (cancel)
+    // or the slot boundary (deadline). This covers most of the inter-block
+    // window instead of one instant at its start; measured on mainnet, ~45%
+    // of block gas was in the mempool by arrival but landed after the old
+    // single early snapshot. All deltas share `caching`, so later passes get
+    // faster as the slot's state accumulates.
+    loop {
+        if should_stop() {
+            break;
+        }
+        let seq = blockchain.mempool.tx_seq();
+        if last_seq != Some(seq) {
+            last_seq = Some(seq);
+            let txs_by_sender = match blockchain.mempool.filter_transactions(&filter) {
+                Ok(txs_by_sender) => txs_by_sender,
+                Err(e) => {
+                    warn!("prewarm pass aborted: mempool snapshot failed: {e}");
+                    break;
+                }
+            };
+            let fresh = drop_already_warmed(txs_by_sender, &warmed_union);
+            let warm_set = select_warm_set(fresh, base_fee, gas_budget);
+            if !warm_set.is_empty() {
+                for (tx, _) in &warm_set {
+                    warmed_union.insert(tx.hash(&NativeCrypto), tx.gas_limit());
+                }
+                // Publish the union after every delta so the arrival metric
+                // always sees the full set warmed this slot.
+                if let Ok(mut w) = last_warmed.lock() {
+                    *w = Some(warmed_union.clone());
+                }
+                // `warm_txs` takes borrowed transactions; bridge the owned set.
+                let view: Vec<(&Transaction, Address)> =
+                    warm_set.iter().map(|(tx, s)| (tx, *s)).collect();
+                let result = pool.install(|| {
+                    LEVM::warm_txs(
+                        &view,
+                        &header,
+                        caching.clone(),
+                        VMType::L1,
+                        &NativeCrypto,
+                        &should_stop,
+                        Some(&progress),
+                    )
+                });
+                any_err |= result.is_err();
+                passes += 1;
+            }
+        }
+        // Arrival-poll cadence. Sleeping burns no CPU; the only cost is up to
+        // one interval of harmless lag on cancel (no work is in flight).
+        std::thread::sleep(Duration::from_millis(100));
+    }
+
+    if passes == 0 {
+        debug!("prewarm pass: nothing to warm this slot");
+        return;
+    }
+
+    // Drain = cancel signal -> pass exit; sample immediately after the loop
+    // exits so the number measures the pass, not the logging below.
     let drain_after_cancel = req.cancel.drain_since_cancel();
     let stop_reason = if req.cancel.is_cancelled() {
         "cancelled"
     } else if unix_now() >= deadline {
         "deadline"
     } else {
-        "completed"
+        // The refresh loop only exits early on a snapshot error (warned above).
+        "aborted"
     };
     // Only meaningful when arrival-cancel actually stopped the pass: it is
     // the window in which prewarm workers overlapped real execution.
@@ -433,18 +486,19 @@ fn run_pass(
         ("cancelled", Some(d)) => format!(", drain={d:?}"),
         _ => String::new(),
     };
-    let total_gas: u64 = warm_set.iter().map(|(tx, _)| tx.gas_limit()).sum();
+    let total_gas: u64 = warmed_union.values().sum();
     info!(
-        "prewarm pass for block {}: warmed {}/{} txs {}/{} gas, {:?}, stop={}{}, err={}",
+        "prewarm pass for block {}: warmed {}/{} txs {}/{} gas, passes={}, {:?}, stop={}{}, err={}",
         header.number,
         progress.txs.load(Ordering::Relaxed),
-        warm_set.len(),
+        warmed_union.len(),
         progress.gas.load(Ordering::Relaxed),
         total_gas,
+        passes,
         start.elapsed(),
         stop_reason,
         drain,
-        result.is_err(),
+        any_err,
     );
 }
 
@@ -471,6 +525,25 @@ mod tests {
             ..Default::default()
         });
         (sender, MempoolTransaction::new(tx, sender))
+    }
+
+    #[test]
+    fn drop_already_warmed_removes_by_hash_and_empty_senders() {
+        use ethrex_crypto::NativeCrypto;
+        let (a, tx_a0) = make_tx(0xaa, 0, 100, 50, 21_000);
+        let (_, tx_a1) = make_tx(0xaa, 1, 100, 50, 21_000);
+        let (b, tx_b0) = make_tx(0xbb, 0, 100, 50, 21_000);
+        let mut warmed = FxHashMap::default();
+        warmed.insert(tx_a0.transaction().hash(&NativeCrypto), 21_000u64);
+        warmed.insert(tx_b0.transaction().hash(&NativeCrypto), 21_000u64);
+        let mut map = FxHashMap::default();
+        map.insert(a, vec![tx_a0, tx_a1]);
+        map.insert(b, vec![tx_b0]);
+        let fresh = drop_already_warmed(map, &warmed);
+        // Sender b fully warmed -> removed; sender a keeps only nonce 1.
+        assert_eq!(fresh.len(), 1);
+        assert_eq!(fresh[&a].len(), 1);
+        assert_eq!(fresh[&a][0].transaction().nonce(), 1);
     }
 
     #[test]

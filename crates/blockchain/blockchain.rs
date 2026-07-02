@@ -237,7 +237,8 @@ pub struct MempoolPrewarmOptions {
     pub enabled: bool,
     /// Slot duration used to compute the warming deadline (next slot boundary).
     pub slot_duration_secs: u64,
-    /// Warm up to this multiple of the parent block's gas limit worth of mempool txs.
+    /// Warm up to this multiple of the parent block's gas limit worth of
+    /// mempool txs per warming snapshot (the initial pass and each delta).
     pub gas_budget_multiplier: u64,
     /// Threads in the prewarmer's dedicated rayon pool. 0 = half the available cores.
     pub num_threads: usize,
@@ -248,7 +249,7 @@ impl Default for MempoolPrewarmOptions {
         Self {
             enabled: false,
             slot_duration_secs: 12,
-            gas_budget_multiplier: 3,
+            gas_budget_multiplier: 6,
             num_threads: 0,
         }
     }
