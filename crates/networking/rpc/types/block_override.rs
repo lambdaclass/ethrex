@@ -15,11 +15,15 @@
 use ethrex_common::{
     Address, H256, U256,
     constants::MIN_BASE_FEE_PER_BLOB_GAS,
-    types::{BlockHeader, ChainConfig, fake_exponential},
+    types::{BlockHeader, ChainConfig, Withdrawal, fake_exponential},
 };
 use serde::{Deserialize, Deserializer, de::Error as DeError};
 
 /// JSON shape of geth's Block Override Set.
+///
+/// The aliases cover the `eth_simulateV1` spelling of the same fields
+/// (execution-apis `BlockOverrides`): `feeRecipient`, `prevRandao` and
+/// `blobBaseFee`.
 #[derive(Debug, Default, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BlockOverrideSet {
@@ -29,17 +33,26 @@ pub struct BlockOverrideSet {
     pub time: Option<u64>,
     #[serde(default, deserialize_with = "deser_u64_hex_opt")]
     pub gas_limit: Option<u64>,
-    #[serde(default)]
+    #[serde(default, alias = "feeRecipient")]
     pub coinbase: Option<Address>,
     /// Override for PREVRANDAO.
-    #[serde(default)]
+    #[serde(default, alias = "prevRandao")]
     pub random: Option<H256>,
     #[serde(default, deserialize_with = "deser_u64_hex_opt")]
     pub base_fee_per_gas: Option<u64>,
-    #[serde(default, deserialize_with = "deser_u256_hex_opt")]
+    #[serde(
+        default,
+        alias = "blobBaseFee",
+        deserialize_with = "deser_u256_hex_opt"
+    )]
     pub blob_base_fee_per_gas: Option<U256>,
     #[serde(default, deserialize_with = "deser_u256_hex_opt")]
     pub difficulty: Option<U256>,
+    /// `eth_simulateV1` only: withdrawals to apply in the simulated block
+    /// (balance credits + withdrawalsRoot). Ignored by the eth_call-family
+    /// paths, which have no block to attach withdrawals to.
+    #[serde(default)]
+    pub withdrawals: Option<Vec<Withdrawal>>,
 }
 
 impl BlockOverrideSet {
@@ -52,6 +65,24 @@ impl BlockOverrideSet {
             && self.base_fee_per_gas.is_none()
             && self.blob_base_fee_per_gas.is_none()
             && self.difficulty.is_none()
+            && self.withdrawals.is_none()
+    }
+
+    /// Resolve `blobBaseFeePerGas` into the `excess_blob_gas` that produces it
+    /// (ethrex derives BLOBBASEFEE from `excess_blob_gas`). `None` when the
+    /// override is not set.
+    pub fn resolved_excess_blob_gas(
+        &self,
+        chain_config: &ChainConfig,
+        timestamp: u64,
+    ) -> Option<u64> {
+        self.blob_base_fee_per_gas.map(|desired| {
+            let denom = chain_config
+                .get_fork_blob_schedule(timestamp)
+                .map(|s| s.base_fee_update_fraction)
+                .unwrap_or(0);
+            invert_blob_base_fee(desired, denom)
+        })
     }
 
     /// Produce a synthesized header by overlaying the set fields on top of
