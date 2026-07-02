@@ -103,5 +103,5 @@ experimental-devnet = [
     "dep:libssz",
     "dep:libssz-types",
     "dep:ethrex-guest-program",
-    "ethrex-guest-program/experimental-devnet",
+    "ethrex-guest-program/eip-8025",
 ]

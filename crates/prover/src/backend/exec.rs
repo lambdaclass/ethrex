@@ -27,7 +27,7 @@ impl ExecBackend {
         // L1 EIP-8025 `execution_program` takes raw bytes, not `ProgramInput`.
         // When `l2` is also on, the re-exported types are the L2 shape and the
         // standard `execution_program(input, crypto)` path applies instead.
-        #[cfg(all(feature = "experimental-devnet", not(feature = "l2")))]
+        #[cfg(all(feature = "eip-8025", not(feature = "l2")))]
         {
             use ethrex_common::types::ELASTICITY_MULTIPLIER;
             use ethrex_vm::Evm;
@@ -47,7 +47,7 @@ impl ExecBackend {
                 valid: true,
             })
         }
-        #[cfg(any(not(feature = "experimental-devnet"), feature = "l2"))]
+        #[cfg(any(not(feature = "eip-8025"), feature = "l2"))]
         {
             ethrex_guest_program::execution::execution_program(input, crypto)
                 .map_err(BackendError::execution)

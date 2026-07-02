@@ -34,7 +34,7 @@ impl ProgramInput {
 ///   `[ssz_len: u32 LE] [ssz_bytes] [rkyv_bytes]`
 ///
 /// Returns an error if rkyv serialization of the execution witness fails.
-#[cfg(feature = "experimental-devnet")]
+#[cfg(feature = "eip-8025")]
 pub fn encode_eip8025(
     new_payload_request: &ethrex_common::types::stateless_ssz::NewPayloadRequest,
     execution_witness: &ExecutionWitness,
@@ -58,7 +58,7 @@ pub fn encode_eip8025(
 ///
 /// The caller is responsible for converting the `NewPayloadRequest` into blocks
 /// and constructing a `ProgramInput`.
-#[cfg(feature = "experimental-devnet")]
+#[cfg(feature = "eip-8025")]
 pub fn decode_eip8025(
     bytes: &[u8],
 ) -> Result<
@@ -90,13 +90,13 @@ pub fn decode_eip8025(
     Ok((new_payload_request, execution_witness))
 }
 
-#[cfg(feature = "experimental-devnet")]
+#[cfg(feature = "eip-8025")]
 #[derive(Debug)]
 pub enum ProgramInputEncodeError {
     Rkyv(String),
 }
 
-#[cfg(feature = "experimental-devnet")]
+#[cfg(feature = "eip-8025")]
 impl core::fmt::Display for ProgramInputEncodeError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
@@ -105,7 +105,7 @@ impl core::fmt::Display for ProgramInputEncodeError {
     }
 }
 
-#[cfg(feature = "experimental-devnet")]
+#[cfg(feature = "eip-8025")]
 #[derive(Debug)]
 pub enum ProgramInputDecodeError {
     TooShort,
@@ -113,7 +113,7 @@ pub enum ProgramInputDecodeError {
     Rkyv(String),
 }
 
-#[cfg(feature = "experimental-devnet")]
+#[cfg(feature = "eip-8025")]
 impl core::fmt::Display for ProgramInputDecodeError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
