@@ -17,6 +17,7 @@ impl Evm {
         tx_index: usize,
         only_top_call: bool,
         with_log: bool,
+        log_index_base: u64,
     ) -> Result<CallTrace, EvmError> {
         let tx = block
             .body
@@ -32,6 +33,7 @@ impl Evm {
             tx,
             only_top_call,
             with_log,
+            log_index_base,
             self.vm_type,
             self.crypto.as_ref(),
         )
@@ -99,6 +101,7 @@ impl Evm {
         tx: &GenericTransaction,
         only_top_call: bool,
         with_log: bool,
+        log_index_base: u64,
     ) -> Result<CallTrace, EvmError> {
         LEVM::trace_call_calls(
             &mut self.db,
@@ -106,6 +109,7 @@ impl Evm {
             tx,
             only_top_call,
             with_log,
+            log_index_base,
             self.vm_type,
             self.crypto.as_ref(),
         )
