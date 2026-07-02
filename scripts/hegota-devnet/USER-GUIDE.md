@@ -12,14 +12,16 @@ A public devnet for testing the Hegotá frame-transaction EIP family on ethrex:
 | Field | Value |
 |-------|-------|
 | **Chain ID** | `3151908` (`0x301824`) |
-| **RPC URLs** | `http://rpc1.hegota.ethrex.xyz:32003` (also `rpc2:32010`, `rpc3:32017`) |
-| **Block Explorer (Dora)** | `http://dora.hegota.ethrex.xyz:32774` |
-| **Faucet** | `http://faucet.hegota.ethrex.xyz:8080` — 1 ETH per claim (rate-limited per IP) |
+| **RPC URLs** | `https://rpc1.hegota.ethrex.xyz` (also `rpc2` and `rpc3`) |
+| **Block Explorer (Dora)** | `https://dora.hegota.ethrex.xyz` |
+| **Faucet** | `https://faucet.hegota.ethrex.xyz` — 1 ETH per claim (rate-limited per IP) |
 | **Slot Time** | 6 seconds |
 | **Fork** | Hegotá (all four EIPs activate together at epoch 1) |
 | **Consensus** | 3× ethrex EL + 3× Lighthouse CL |
 
-> Endpoints are plain HTTP on explicit ports — include the port in every URL.
+> All endpoints serve HTTPS (Let's Encrypt); plain-HTTP requests redirect. The raw
+> HTTP ports (`:32003/:32010/:32017` RPC, `:32774` Dora, `:8080` faucet) remain open
+> for tools that need them.
 
 ### Predeploys
 
@@ -32,7 +34,7 @@ A public devnet for testing the Hegotá frame-transaction EIP family on ethrex:
 ## Connect MetaMask
 
 1. MetaMask → Settings → Networks → Add Network
-2. **RPC URL:** `http://rpc1.hegota.ethrex.xyz:32003` · **Chain ID:** `3151908` · **Symbol:** `ETH`
+2. **RPC URL:** `https://rpc1.hegota.ethrex.xyz` · **Chain ID:** `3151908` · **Symbol:** `ETH`
 
 > MetaMask can send regular EIP-1559 transactions on this network. Frame transactions
 > (type `0x06`) must be submitted programmatically — see the scripts below.
@@ -42,7 +44,7 @@ A public devnet for testing the Hegotá frame-transaction EIP family on ethrex:
 Open the faucet in a browser and paste your address, or:
 
 ```bash
-curl http://faucet.hegota.ethrex.xyz:8080/api/claim \
+curl https://faucet.hegota.ethrex.xyz/api/claim \
   -H "Content-Type: application/json" \
   -d '{"address": "0xYourAddress"}'
 ```
@@ -88,7 +90,7 @@ python3 -m venv .venv && .venv/bin/pip install "eth-hash[pycryptodome]" eth-keys
 
 # Self-verified transfer: frame[0] VERIFY(target=sender, scope 0x3) + frame[1] SENDER(transfer)
 .venv/bin/python3 frametx_submit.py \
-  http://rpc1.hegota.ethrex.xyz:32003 \
+  https://rpc1.hegota.ethrex.xyz \
   <YOUR_PRIVATE_KEY_HEX> \
   0xRecipientAddress \
   1000000000000000    # amount in wei
