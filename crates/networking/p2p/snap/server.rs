@@ -12,6 +12,16 @@ use super::constants::MAX_RESPONSE_BYTES;
 use super::error::SnapError;
 use super::proof_to_encodable;
 
+/// Minimum budget charged per lookup *attempt* in the snap serving handlers, independent of
+/// whether the lookup hit. The response-byte clamp only advances on a hit, so without this a
+/// miss/empty/overlong-path request costs nothing and the handler walks the entire
+/// peer-supplied list (`hashes` / `account_hashes` / `paths`) — O(N) DB/cache probes with a
+/// near-empty response, which the message-rate limiter (counting messages, not items) doesn't
+/// catch. Charging a per-attempt minimum bounds that walk against the same byte budget.
+/// Sized at a hash's wire length; with the 512 KiB response cap this bounds an all-miss walk
+/// to ~16K probes.
+const MIN_LOOKUP_COST: u64 = 32;
+
 // Request Processing
 
 pub async fn process_account_range_request(
@@ -99,6 +109,10 @@ pub async fn process_storage_ranges_request(
                 slots.push(account_slots);
             }
 
+            // Charge every account attempt (even a miss that returned no slots) so an
+            // all-miss `account_hashes` list trips the budget instead of opening the storage
+            // trie once per entry.
+            bytes_used += MIN_LOOKUP_COST;
             if bytes_used >= byte_budget {
                 break;
             }
@@ -125,9 +139,15 @@ pub async fn process_byte_codes_request(
         let mut codes = vec![];
         let mut bytes_used = 0;
         for code_hash in request.hashes {
-            if let Some(code) = store.get_account_code(code_hash)?.map(|c| c.code_bytes()) {
-                bytes_used += code.len() as u64;
-                codes.push(code);
+            match store.get_account_code(code_hash)? {
+                Some(code) => {
+                    let code = code.code_bytes();
+                    bytes_used += code.len() as u64;
+                    codes.push(code);
+                }
+                // A missed lookup still costs a probe; charge it so an all-miss request trips
+                // the budget instead of walking the entire `hashes` list.
+                None => bytes_used += MIN_LOOKUP_COST,
             }
             if bytes_used >= byte_budget {
                 break;
@@ -162,9 +182,14 @@ pub async fn process_trie_nodes_request(
                 paths.into_iter().map(|bytes| bytes.to_vec()).collect(),
                 byte_budget,
             )?;
+            let returned_bytes = trie_nodes
+                .iter()
+                .fold(0u64, |acc, nodes| acc + nodes.len() as u64);
             nodes.extend(trie_nodes.iter().map(|nodes| Bytes::copy_from_slice(nodes)));
-            byte_budget = byte_budget
-                .saturating_sub(trie_nodes.iter().fold(0, |acc, nodes| acc + nodes.len()) as u64);
+            // Charge at least a per-pathset probe cost so overlong/empty-result pathsets
+            // (e.g. a path > 32 bytes, which resolves to an empty node) still consume the
+            // budget instead of letting the loop run over every decoded pathset.
+            byte_budget = byte_budget.saturating_sub(returned_bytes.max(MIN_LOOKUP_COST));
             if byte_budget == 0 {
                 break;
             }

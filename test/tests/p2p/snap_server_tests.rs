@@ -1015,3 +1015,66 @@ async fn byte_codes_clamps_response_bytes() -> Result<(), SnapError> {
 // it requires a committed state trie readable through `get_trie_nodes`' `open_state_trie`
 // path, which the direct-write test fixtures don't populate. The clamp is mechanically
 // identical to the three handlers covered above.
+
+// Request-side amplification guard (distinct from the response-byte clamp above): the byte
+// budget must advance on every lookup *attempt*, not only on hits. Otherwise an all-miss (or
+// miss-heavy) request never trips the budget and the handler walks the entire peer-supplied
+// list — O(N) DB/cache probes with a near-empty response, which the message-rate limiter
+// doesn't catch. Each test puts a real hit *after* a miss, with a 1-byte budget: charging the
+// miss must exhaust the budget and stop the walk before the trailing hit is ever served.
+
+/// `GetByteCodes`: a missed code lookup must consume the budget. Pre-fix, misses cost nothing,
+/// so the trailing hit is served (and an all-miss request walks the whole `hashes` vector).
+#[tokio::test]
+async fn byte_codes_charges_missed_lookups() -> Result<(), SnapError> {
+    let store = Store::new("null", EngineType::InMemory).unwrap();
+    let code = Code::from_bytecode(Bytes::from_static(b"hit"), &NativeCrypto);
+    let hit_hash = code.hash;
+    store.add_account_code(code).await.unwrap();
+
+    let miss_hash = H256::from_low_u64_be(0xdead);
+    let request = GetByteCodes {
+        id: 0,
+        hashes: vec![miss_hash, hit_hash],
+        bytes: 1,
+    };
+    let res = process_byte_codes_request(request, store).await.unwrap();
+
+    assert!(
+        res.codes.is_empty(),
+        "a missed lookup must consume the budget and stop the walk before the trailing hit; \
+         got {} code(s) — misses are not being charged",
+        res.codes.len()
+    );
+    Ok(())
+}
+
+/// `GetStorageRanges`: a missed account (absent from state) must consume the budget. Pre-fix,
+/// a miss opens the trie, finds nothing, charges nothing, and continues — so an all-miss
+/// `account_hashes` list forces a trie open per entry unbounded.
+#[tokio::test]
+async fn storage_ranges_charges_missed_accounts() -> Result<(), SnapError> {
+    let account_hash = H256::from_low_u64_be(0xabcd);
+    let (store, root) = setup_large_storage_state(account_hash, 4)?;
+
+    let miss_account = H256::from_low_u64_be(0x1111);
+    let request = GetStorageRanges {
+        id: 0,
+        root_hash: root,
+        account_hashes: vec![miss_account, account_hash],
+        starting_hash: *HASH_MIN,
+        limit_hash: *HASH_MAX,
+        response_bytes: 1,
+    };
+    let res = process_storage_ranges_request(request, store)
+        .await
+        .unwrap();
+
+    assert!(
+        res.slots.is_empty(),
+        "a missed account must consume the budget and stop before the populated account is \
+         walked; got {} slot-set(s) — misses are not being charged",
+        res.slots.len()
+    );
+    Ok(())
+}
