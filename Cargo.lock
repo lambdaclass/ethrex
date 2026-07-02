@@ -3990,6 +3990,7 @@ dependencies = [
  "k256",
  "libssz",
  "libssz-merkle",
+ "libssz-types",
  "risc0-build",
  "rkyv",
  "serde",

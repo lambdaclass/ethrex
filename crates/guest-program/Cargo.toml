@@ -23,6 +23,7 @@ ethrex-l2-common = { path = "../l2/common", default-features = false }
 # EIP-8025 SSZ dependencies (optional)
 libssz = { workspace = true, optional = true }
 libssz-merkle = { workspace = true, optional = true }
+libssz-types = { workspace = true, optional = true }
 
 # zkVM crypto dependencies (pure Rust, compile for RISC-V targets)
 k256 = { workspace = true, optional = true }
@@ -61,7 +62,7 @@ zisk-build-elf = ["zisk"]
 openvm-build-elf = ["openvm"]
 
 l2 = []
-experimental-devnet = ["ethrex-common/experimental-devnet", "dep:libssz", "dep:libssz-merkle"]
+experimental-devnet = ["ethrex-common/experimental-devnet", "dep:libssz", "dep:libssz-merkle", "dep:libssz-types"]
 c-kzg = ["ethrex-vm/c-kzg", "ethrex-common/c-kzg"]
 secp256k1 = [
     "ethrex-common/secp256k1",

@@ -140,7 +140,7 @@ pub fn new_payload_request_to_block(
         withdrawals: Some(withdrawals.clone()),
     };
 
-    let header = BlockHeader {
+    let mut header = BlockHeader {
         parent_hash: H256::from_slice(&payload.parent_hash),
         ommers_hash: *DEFAULT_OMMERS_HASH,
         coinbase: Address::from_slice(&payload.fee_recipient.0),
@@ -164,6 +164,19 @@ pub fn new_payload_request_to_block(
         requests_hash: Some(requests_hash),
         ..Default::default()
     };
+
+    // EIP-7928: when the payload carries a Block Access List, derive the header
+    // commitment from it. ethrex encodes the BAL as RLP (the preimage of
+    // block_access_list_hash), so decode-then-compute_hash reproduces the exact
+    // hash the producer set — honoring the empty-BAL special case. An empty
+    // field means pre-Amsterdam: leave block_access_list_hash as None.
+    if !payload.block_access_list.is_empty() {
+        use ethrex_rlp::decode::RLPDecode;
+        let bal_bytes: Vec<u8> = payload.block_access_list.iter().copied().collect();
+        let bal = ethrex_common::types::block_access_list::BlockAccessList::decode(&bal_bytes)
+            .map_err(|e| format!("block_access_list decode: {e}"))?;
+        header.block_access_list_hash = Some(bal.compute_hash());
+    }
 
     Ok(Block::new(header, body))
 }
@@ -254,6 +267,76 @@ mod tests {
                 assert_eq!(msg, "failed to decode EIP-8025 input: input too short");
             }
             other => panic!("expected internal decode error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn reconstruction_derives_block_access_list_hash() {
+        use ethrex_common::types::block_access_list::{AccountChanges, BlockAccessList};
+        use ethrex_common::Address;
+        use ethrex_rlp::encode::RLPEncode;
+
+        let crypto = crate::crypto::NativeCrypto;
+
+        // Empty field → None (pre-Amsterdam, unchanged behavior).
+        let req_empty = build_minimal_new_payload_request(Vec::new());
+        let block = super::new_payload_request_to_block(&req_empty, &crypto)
+            .expect("reconstruct empty");
+        assert_eq!(block.header.block_access_list_hash, None);
+
+        // Non-empty field → Some(compute_hash(decoded)).
+        let bal =
+            BlockAccessList::from_accounts(vec![AccountChanges::new(Address::from([0x22u8; 20]))]);
+        let bytes = bal.encode_to_vec();
+        let req = build_minimal_new_payload_request(bytes);
+        let block = super::new_payload_request_to_block(&req, &crypto)
+            .expect("reconstruct with bal");
+        assert_eq!(block.header.block_access_list_hash, Some(bal.compute_hash()));
+    }
+
+    fn build_minimal_new_payload_request(
+        block_access_list_bytes: Vec<u8>,
+    ) -> ethrex_common::types::stateless_ssz::NewPayloadRequest {
+        use ethrex_common::types::stateless_ssz::{
+            Bytes20, ExecutionPayload, ExecutionRequests, NewPayloadRequest,
+        };
+        use libssz_types::SszList;
+
+        NewPayloadRequest {
+            execution_payload: ExecutionPayload {
+                parent_hash: [0u8; 32],
+                fee_recipient: Bytes20([0u8; 20]),
+                state_root: [0u8; 32],
+                receipts_root: [0u8; 32],
+                logs_bloom: vec![0u8; 256].try_into().expect("bloom"),
+                prev_randao: [0u8; 32],
+                block_number: 0,
+                gas_limit: 0,
+                gas_used: 0,
+                timestamp: 0,
+                extra_data: SszList::new(),
+                base_fee_per_gas: [0u8; 32],
+                block_hash: [0u8; 32],
+                transactions: SszList::new(),
+                withdrawals: SszList::new(),
+                blob_gas_used: 0,
+                excess_blob_gas: 0,
+                // Type inferred from ExecutionPayload field: SszList<u8, MAX_BLOCK_ACCESS_LIST_BYTES>.
+                block_access_list: {
+                    let mut l = SszList::new();
+                    for b in block_access_list_bytes {
+                        let _ = l.push(b);
+                    }
+                    l
+                },
+            },
+            versioned_hashes: SszList::new(),
+            parent_beacon_block_root: [0u8; 32],
+            execution_requests: ExecutionRequests {
+                deposits: SszList::new(),
+                withdrawals: SszList::new(),
+                consolidations: SszList::new(),
+            },
         }
     }
 }
