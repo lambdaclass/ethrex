@@ -314,14 +314,6 @@ impl StorageBackend for RocksDBBackend {
     fn begin_read(&self) -> Result<Arc<dyn StorageReadView>, StoreError> {
         Ok(Arc::new(RocksDBReadTx {
             db: self.db.clone(),
-            fill_cache: true,
-        }))
-    }
-
-    fn begin_read_no_cache_fill(&self) -> Result<Arc<dyn StorageReadView>, StoreError> {
-        Ok(Arc::new(RocksDBReadTx {
-            db: self.db.clone(),
-            fill_cache: false,
         }))
     }
 
@@ -364,10 +356,6 @@ impl StorageBackend for RocksDBBackend {
 /// Read-only view for RocksDB
 pub struct RocksDBReadTx {
     db: Arc<DBWithThreadMode<MultiThreaded>>,
-    /// When false, point reads skip block-cache population (speculative
-    /// readers; see `StorageBackend::begin_read_no_cache_fill`). Iterators
-    /// on this view are unaffected and keep the default fill behavior.
-    fill_cache: bool,
 }
 
 impl StorageReadView for RocksDBReadTx {
@@ -377,19 +365,9 @@ impl StorageReadView for RocksDBReadTx {
             .cf_handle(table)
             .ok_or_else(|| StoreError::Custom(format!("Table {} not found", table)))?;
 
-        // Keep the fill path exactly as before (no ReadOptions construction
-        // on the hot real-execution path); only no-fill views pay for it.
-        if self.fill_cache {
-            self.db
-                .get_cf(&cf, key)
-                .map_err(|e| StoreError::Custom(format!("Failed to get from {}: {}", table, e)))
-        } else {
-            let mut read_opts = rocksdb::ReadOptions::default();
-            read_opts.fill_cache(false);
-            self.db
-                .get_cf_opt(&cf, key, &read_opts)
-                .map_err(|e| StoreError::Custom(format!("Failed to get from {}: {}", table, e)))
-        }
+        self.db
+            .get_cf(&cf, key)
+            .map_err(|e| StoreError::Custom(format!("Failed to get from {}: {}", table, e)))
     }
 
     fn prefix_iterator(

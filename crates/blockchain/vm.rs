@@ -35,10 +35,6 @@ pub struct StoreVmDatabase {
     /// from the same account during execution.
     account_state_cache: Arc<RwLock<AccountStateCache>>,
     pub state_root: H256,
-    /// When false, state and storage reads skip RocksDB block-cache
-    /// population (speculative readers, e.g. mempool pre-warming), so
-    /// one-shot lookups don't evict entries hot for real execution.
-    cache_fill: bool,
 }
 
 impl StoreVmDatabase {
@@ -62,17 +58,7 @@ impl StoreVmDatabase {
             block_hash_cache: Arc::new(Mutex::new(BTreeMap::new())),
             account_state_cache: Arc::new(RwLock::new(FxHashMap::default())),
             state_root: block_header.state_root,
-            cache_fill: true,
         })
-    }
-
-    /// Like [`Self::new`], but state and storage reads skip RocksDB
-    /// block-cache population. For speculative readers (mempool pre-warming)
-    /// whose one-shot reads would otherwise evict hot entries.
-    pub fn new_speculative(store: Store, block_header: BlockHeader) -> Result<Self, EvmError> {
-        let mut db = Self::new(store, block_header)?;
-        db.cache_fill = false;
-        Ok(db)
     }
 
     pub fn new_with_block_hash_cache(
@@ -96,7 +82,6 @@ impl StoreVmDatabase {
             block_hash_cache: Arc::new(Mutex::new(block_hash_cache)),
             account_state_cache: Arc::new(RwLock::new(FxHashMap::default())),
             state_root: block_header.state_root,
-            cache_fill: true,
         })
     }
 
@@ -111,7 +96,6 @@ impl StoreVmDatabase {
             block_hash_cache: Arc::new(Mutex::new(BTreeMap::new())),
             account_state_cache: Arc::new(RwLock::new(FxHashMap::default())),
             state_root: H256::zero(),
-            cache_fill: true,
         }
     }
 
@@ -129,14 +113,10 @@ impl StoreVmDatabase {
             return Ok(entry);
         }
 
-        let loaded = if self.cache_fill {
-            self.store
-                .get_account_state_by_root(self.state_root, address)
-        } else {
-            self.store
-                .get_account_state_by_root_no_cache_fill(self.state_root, address)
-        }
-        .map_err(|e| EvmError::DB(e.to_string()))?;
+        let loaded = self
+            .store
+            .get_account_state_by_root(self.state_root, address)
+            .map_err(|e| EvmError::DB(e.to_string()))?;
         let cached = loaded.map(|state| AccountStateCacheEntry {
             state,
             hashed_address: H256::from(keccak_hash(address.to_fixed_bytes())),
@@ -172,22 +152,14 @@ impl VmDatabase for StoreVmDatabase {
         let Some(entry) = self.get_cached_account_state_entry(address)? else {
             return Ok(None);
         };
-        if self.cache_fill {
-            self.store.get_storage_at_root_with_known_storage_root(
+        self.store
+            .get_storage_at_root_with_known_storage_root(
                 self.state_root,
                 entry.hashed_address,
                 entry.state.storage_root,
                 key,
             )
-        } else {
-            self.store.get_storage_at_root_no_cache_fill(
-                self.state_root,
-                entry.hashed_address,
-                entry.state.storage_root,
-                key,
-            )
-        }
-        .map_err(|e| EvmError::DB(e.to_string()))
+            .map_err(|e| EvmError::DB(e.to_string()))
     }
 
     #[instrument(

@@ -36,15 +36,6 @@ pub trait StorageBackend: Debug + Send + Sync {
     /// Opens a new read view.
     fn begin_read(&self) -> Result<Arc<dyn StorageReadView>, StoreError>;
 
-    /// Like [`Self::begin_read`], but reads through this view avoid
-    /// populating the backend's block cache. Meant for speculative or
-    /// background readers (e.g. mempool pre-warming) whose one-shot reads
-    /// would otherwise evict entries hot for the real execution path.
-    /// Backends without such a concept fall back to a regular read view.
-    fn begin_read_no_cache_fill(&self) -> Result<Arc<dyn StorageReadView>, StoreError> {
-        self.begin_read()
-    }
-
     /// Creates a new write batch.
     fn begin_write(&self) -> Result<Box<dyn StorageWriteBatch + 'static>, StoreError>;
 
