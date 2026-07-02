@@ -70,8 +70,8 @@ dev: ## 🏃 Run the ethrex client in DEV_MODE with the InMemory Engine
 		--dev \
 		--datadir memory
 
-HOTPATH_FEATURES ?= hotpath
-dev-hotpath: ## 🔥 Run ethrex in DEV_MODE with the hotpath profiler (HOTPATH_FEATURES=hotpath,hotpath-alloc for allocations, add hotpath-cpu for CPU). Report prints on shutdown.
+HOTPATH_FEATURES ?= hotpath,hotpath-alloc,hotpath-cpu
+dev-hotpath: ## 🔥 Run ethrex in DEV_MODE with the hotpath profiler (all signals: timing+alloc+cpu). Narrow with HOTPATH_FEATURES=hotpath. Report prints on shutdown.
 	cargo run $(PROFILING_CFG) --release --features $(HOTPATH_FEATURES) -- \
 		--dev \
 		--datadir memory

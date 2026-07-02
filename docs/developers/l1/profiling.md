@@ -180,9 +180,9 @@ Run the node as usual. On graceful shutdown (`Ctrl+C` / `SIGTERM`), a `[hotpath]
 For a quick dev run there is a Makefile target that boots the node in dev mode with the in-memory engine and the profiler enabled:
 
 ```bash
-make dev-hotpath                                       # timing only
+make dev-hotpath                                     # all signals: timing + allocations + CPU (default)
+make dev-hotpath HOTPATH_FEATURES=hotpath            # timing only
 make dev-hotpath HOTPATH_FEATURES=hotpath,hotpath-alloc  # timing + allocations
-make dev-hotpath HOTPATH_FEATURES=hotpath,hotpath-cpu    # timing + CPU sampling
 ```
 
 ### Live TUI dashboard
