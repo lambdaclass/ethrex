@@ -83,65 +83,81 @@ fn rotl4(x: __m256i, n: u32) -> __m256i {
     }
 }
 
-/// keccak-f1600 over four interleaved states, one AVX2 register per state lane.
+#[cfg(all(target_arch = "x86_64", target_feature = "avx2"))]
+#[inline(always)]
+fn xor4(a: __m256i, b: __m256i) -> __m256i {
+    // SAFETY: +avx2 is enabled crate-wide (see cfg above).
+    unsafe { _mm256_xor_si256(a, b) }
+}
+
+/// `(!b) & c`, four lanes at once.
+#[cfg(all(target_arch = "x86_64", target_feature = "avx2"))]
+#[inline(always)]
+fn andn4(b: __m256i, c: __m256i) -> __m256i {
+    // SAFETY: +avx2 is enabled crate-wide (see cfg above).
+    unsafe { _mm256_andnot_si256(b, c) }
+}
+
+/// keccak-f1600 over four interleaved states.
+///
+/// The state stays in memory (25 contiguous `__m256i`) and each round streams
+/// through it, so only the θ column parities or one χ plane are live at a time
+/// (≈6 `ymm`). This avoids spilling the full 25+5-lane working set the naive
+/// SSA form forced through the 16 available registers.
 #[cfg(all(target_arch = "x86_64", target_feature = "avx2"))]
 fn keccakf4(a: &mut [Lane; 25]) {
-    // SAFETY: +avx2 is enabled for the whole crate (see cfg above).
+    let p = a.as_mut_ptr() as *mut __m256i;
+    // SAFETY: `a` is 25 contiguous `[u64; 4]` == 25 `__m256i`; all accesses use
+    // unaligned load/store and stay within `0..25`. +avx2 is enabled crate-wide.
     unsafe {
-        let mut s = [_mm256_setzero_si256(); 25];
-        for (dst, src) in s.iter_mut().zip(a.iter()) {
-            *dst = _mm256_loadu_si256(src.as_ptr() as *const __m256i);
-        }
+        let ld = |i: usize| _mm256_loadu_si256(p.add(i));
+        let st = |i: usize, v: __m256i| _mm256_storeu_si256(p.add(i), v);
 
         for &rc in RC.iter() {
-            // θ
-            let mut c = [_mm256_setzero_si256(); 5];
-            for x in 0..5 {
-                c[x] = _mm256_xor_si256(
-                    _mm256_xor_si256(
-                        _mm256_xor_si256(_mm256_xor_si256(s[x], s[x + 5]), s[x + 10]),
-                        s[x + 15],
-                    ),
-                    s[x + 20],
+            // θ: column parities, then fold D into every lane in place.
+            let mut bc = [_mm256_setzero_si256(); 5];
+            for (x, slot) in bc.iter_mut().enumerate() {
+                *slot = xor4(
+                    xor4(xor4(xor4(ld(x), ld(x + 5)), ld(x + 10)), ld(x + 15)),
+                    ld(x + 20),
                 );
             }
             for x in 0..5 {
-                let d = _mm256_xor_si256(c[(x + 4) % 5], rotl4(c[(x + 1) % 5], 1));
-                for y in 0..5 {
-                    s[x + 5 * y] = _mm256_xor_si256(s[x + 5 * y], d);
+                let d = xor4(bc[(x + 4) % 5], rotl4(bc[(x + 1) % 5], 1));
+                let mut i = x;
+                while i < 25 {
+                    st(i, xor4(ld(i), d));
+                    i += 5;
                 }
             }
 
-            // ρ and π
-            let mut last = s[1];
+            // ρ + π: rotate-and-permute the lanes along the fixed cycle.
+            let mut t = ld(1);
             for i in 0..24 {
                 let j = PI[i];
-                let tmp = s[j];
-                s[j] = rotl4(last, RHO[i]);
-                last = tmp;
+                let tmp = ld(j);
+                st(j, rotl4(t, RHO[i]));
+                t = tmp;
             }
 
-            // χ
-            for y in 0..5 {
-                let t = [
-                    s[5 * y],
-                    s[5 * y + 1],
-                    s[5 * y + 2],
-                    s[5 * y + 3],
-                    s[5 * y + 4],
-                ];
-                for x in 0..5 {
-                    s[5 * y + x] =
-                        _mm256_xor_si256(t[x], _mm256_andnot_si256(t[(x + 1) % 5], t[(x + 2) % 5]));
-                }
+            // χ: one plane (5 lanes) at a time.
+            let mut y = 0;
+            while y < 25 {
+                let a0 = ld(y);
+                let a1 = ld(y + 1);
+                let a2 = ld(y + 2);
+                let a3 = ld(y + 3);
+                let a4 = ld(y + 4);
+                st(y, xor4(a0, andn4(a1, a2)));
+                st(y + 1, xor4(a1, andn4(a2, a3)));
+                st(y + 2, xor4(a2, andn4(a3, a4)));
+                st(y + 3, xor4(a3, andn4(a4, a0)));
+                st(y + 4, xor4(a4, andn4(a0, a1)));
+                y += 5;
             }
 
             // ι
-            s[0] = _mm256_xor_si256(s[0], _mm256_set1_epi64x(rc as i64));
-        }
-
-        for (src, dst) in s.iter().zip(a.iter_mut()) {
-            _mm256_storeu_si256(dst.as_mut_ptr() as *mut __m256i, *src);
+            st(0, xor4(ld(0), _mm256_set1_epi64x(rc as i64)));
         }
     }
 }
