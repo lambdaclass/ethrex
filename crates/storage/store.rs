@@ -406,8 +406,9 @@ impl Store {
     pub async fn shutdown(&self) -> Result<(), StoreError> {
         let tx = self.persist_tx.clone();
         let backend = self.backend.clone();
-        // Anchor the flush to the confirmed canonical head so we never durably
-        // persist a non-canonical sidechain root.
+        // Anchor the flush to the latest canonical head so we never durably
+        // persist a non-canonical sidechain root. (Latest-canonical, not
+        // finalized: the tail past the last finalized block may still reorg.)
         let head_state_root = self.latest_block_header.get().state_root;
         tokio::task::spawn_blocking(move || {
             let (ack_tx, ack_rx) = sync_channel::<Result<(), StoreError>>(1);
@@ -1936,7 +1937,7 @@ impl Store {
                         // force-persist the not-yet-flushed tail. Flush the block
                         // buffer, then commit the canonical head's trie diff-layer
                         // chain so a restart needs no block re-execution. Committing
-                        // from the confirmed head (not the newest-inserted layer)
+                        // from the latest canonical head (not the newest-inserted layer)
                         // avoids durably persisting a non-canonical sidechain root.
                         let result = flush_block_data(persist_backend.as_ref(), &persist_buffer)
                             .and_then(|_| {
@@ -3704,9 +3705,9 @@ fn commit_trie_if_due(
 }
 
 /// Commits the canonical head's trie diff-layer chain to disk (graceful-shutdown
-/// path). `head_state_root` is the confirmed canonical head root, so committing
-/// from it persists exactly the canonical state and its ancestors; any
-/// later-inserted, not-yet-confirmed sidechain layers stay in memory and are
+/// path). `head_state_root` is the latest canonical head root (not necessarily
+/// finalized), so committing from it persists exactly the canonical state and
+/// its ancestors; any later-inserted sidechain layers stay in memory and are
 /// discarded on exit rather than being durably written.
 ///
 /// No-ops if the head root is not in the cache (already flushed to disk).
