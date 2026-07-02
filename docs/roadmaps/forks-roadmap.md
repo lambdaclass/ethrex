@@ -121,7 +121,16 @@ ethrex currently matches the **old** spec. When EELS merges:
 
 ### `eth_simulateV1` RPC
 
-Not implemented. Tracked at [#6212].
+Implemented (tracked at [#6212]): multi-block simulation with state/block
+overrides, `validation`, `traceTransfers` and `returnFullTransactions`, spec
+error codes (-38010..-38026). Engine in `crates/blockchain/simulate.rs`,
+handler in `crates/networking/rpc/eth/simulate.rs`. Known gaps, documented in
+the engine: Amsterdam EIP-8037 2D gas / EIP-7928 BAL headers are not modeled,
+`maxUsedGas` reports pre-refund gas rather than geth's in-flight peak, and
+`movePrecompileToAddress` is parsed but not yet enforced. The hive
+`rpc-compat` pin predates the `eth_simulateV1` test corpus, so CI does not
+exercise it yet; conformance is covered by ported `.io` scenarios in the RPC
+crate's tests.
 
 ---
 

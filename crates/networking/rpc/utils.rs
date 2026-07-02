@@ -73,6 +73,16 @@ pub enum RpcErr {
     InvalidPayload(String),
     #[error("Proof generation unavailable: {0}")]
     ProofGenerationUnavailable(String),
+    /// `eth_simulateV1` request-level failure. Carries its JSON-RPC code
+    /// verbatim: the method has its own spec error-code table
+    /// (-38010..-38026 plus the standard -32xxx ones), so the variant stays
+    /// code-agnostic instead of enumerating them.
+    #[error("{message}")]
+    EthSimulate {
+        code: i32,
+        message: String,
+        data: Option<String>,
+    },
 }
 
 impl From<RpcErr> for RpcErrorMetadata {
@@ -163,6 +173,15 @@ impl From<RpcErr> for RpcErrorMetadata {
                     data: None,
                     message: "Auth failed: Missing authentication header".to_string(),
                 },
+            },
+            RpcErr::EthSimulate {
+                code,
+                message,
+                data,
+            } => RpcErrorMetadata {
+                code,
+                data,
+                message,
             },
             RpcErr::InvalidForkChoiceState(data) => RpcErrorMetadata {
                 code: -38002,

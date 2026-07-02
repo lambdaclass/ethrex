@@ -47,6 +47,7 @@ pub mod error;
 pub mod fork_choice;
 pub mod mempool;
 pub mod payload;
+pub mod simulate;
 pub mod tracing;
 pub mod vm;
 
