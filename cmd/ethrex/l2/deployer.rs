@@ -42,7 +42,6 @@ use ethrex_config::networks::{
     LOCAL_DEVNET_GENESIS_CONTENTS, LOCAL_DEVNET_PRIVATE_KEYS, LOCAL_DEVNETL2_GENESIS_CONTENTS,
 };
 
-#[cfg(feature = "experimental-devnet")]
 use ethrex_common::types::GenesisAccount;
 
 #[derive(Parser)]
@@ -397,7 +396,6 @@ pub struct DeployerOptions {
         help = "If set, deploy NativeRollup.sol instead of the standard L2 contracts."
     )]
     pub native_rollups: bool,
-    #[cfg(feature = "experimental-devnet")]
     #[arg(
         long = "native-rollups.relayer-pk",
         value_name = "PRIVATE_KEY",
@@ -408,7 +406,6 @@ pub struct DeployerOptions {
         default_value = "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d"
     )]
     pub native_rollups_relayer_pk: SecretKey,
-    #[cfg(feature = "experimental-devnet")]
     #[arg(
         long = "native-rollups.advancer-address",
         value_name = "ADDRESS",
@@ -500,13 +497,11 @@ impl Default for DeployerOptions {
             deploy_router: false,
             initial_fee_token: None,
             native_rollups: false,
-            #[cfg(feature = "experimental-devnet")]
             native_rollups_relayer_pk: SecretKey::from_slice(
                 &hex::decode("59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d")
                     .expect("Valid hex"),
             )
             .expect("Valid key"),
-            #[cfg(feature = "experimental-devnet")]
             native_rollups_advancer_address: None,
         }
     }
@@ -603,14 +598,12 @@ const SP1_VERIFIER_BYTECODE: &[u8] = include_bytes!(concat!(
 ));
 
 /// Creation bytecode of the NativeRollup contract (for deployment to L1).
-#[cfg(feature = "experimental-devnet")]
 const NATIVE_ROLLUP_BYTECODE: &[u8] = include_bytes!(concat!(
     env!("OUT_DIR"),
     "/contracts/solc_out/NativeRollup.bytecode"
 ));
 
 /// Runtime bytecode of the L2Bridge contract (for L2 genesis predeploy).
-#[cfg(feature = "experimental-devnet")]
 const L2_BRIDGE_RUNTIME_BYTECODE: &[u8] = include_bytes!(concat!(
     env!("OUT_DIR"),
     "/contracts/solc_out/L2Bridge.bytecode"
@@ -1772,7 +1765,6 @@ fn write_contract_addresses_to_env(
 // Native Rollups Deployment
 // =============================================================================
 
-#[cfg(feature = "experimental-devnet")]
 pub async fn deploy_native_rollup_contracts(
     opts: DeployerOptions,
 ) -> Result<Address, DeployerError> {
@@ -1954,7 +1946,6 @@ pub async fn deploy_native_rollup_contracts(
 /// Returns the accounts that the deployer needs to inject: L2Bridge predeploy,
 /// relayer account, and prefunded test accounts. These are merged into the
 /// existing genesis (which already contains system contracts, chain config, etc.).
-#[cfg(feature = "experimental-devnet")]
 fn build_native_l2_alloc(
     relayer_address: Address,
 ) -> Result<std::collections::BTreeMap<Address, GenesisAccount>, DeployerError> {

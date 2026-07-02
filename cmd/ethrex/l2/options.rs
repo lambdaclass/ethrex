@@ -23,7 +23,6 @@ use std::{
 };
 use tracing::Level;
 
-#[cfg(feature = "experimental-devnet")]
 use ethrex_l2::NativeRollupConfig;
 
 use clap::ArgAction;
@@ -133,12 +132,10 @@ pub struct SequencerOptions {
         help = "Enable native rollup L2 mode."
     )]
     pub native_rollups: bool,
-    #[cfg(feature = "experimental-devnet")]
     #[command(flatten)]
     pub native_rollup_opts: NativeRollupOptions,
 }
 
-#[cfg(feature = "experimental-devnet")]
 #[derive(Parser, Debug)]
 pub struct NativeRollupOptions {
     #[arg(
@@ -191,7 +188,6 @@ pub struct NativeRollupOptions {
     pub advance_interval_ms: u64,
 }
 
-#[cfg(feature = "experimental-devnet")]
 impl Default for NativeRollupOptions {
     fn default() -> Self {
         Self {
@@ -1258,7 +1254,6 @@ impl Default for ProverClientOptions {
     }
 }
 
-#[cfg(feature = "experimental-devnet")]
 impl NativeRollupOptions {
     pub fn to_config(
         &self,

@@ -102,15 +102,8 @@ impl L2Command {
             println!("Initializing L2");
         }
         if l2_options.sequencer_opts.native_rollups {
-            #[cfg(feature = "experimental-devnet")]
-            {
-                l2::init_native_rollup_l2(l2_options, log_filter_handler).await?;
-                return Ok(());
-            }
-            #[cfg(not(feature = "experimental-devnet"))]
-            return Err(eyre::eyre!(
-                "--native-rollups requires the experimental-devnet feature flag"
-            ));
+            l2::init_native_rollup_l2(l2_options, log_filter_handler).await?;
+            return Ok(());
         }
         l2::init_l2(l2_options, log_filter_handler).await?;
         Ok(())
@@ -631,15 +624,8 @@ impl Command {
             }
             Command::Deploy { options } => {
                 if options.native_rollups {
-                    #[cfg(feature = "experimental-devnet")]
-                    {
-                        l2::deployer::deploy_native_rollup_contracts(options).await?;
-                        return Ok(());
-                    }
-                    #[cfg(not(feature = "experimental-devnet"))]
-                    return Err(eyre::eyre!(
-                        "--native-rollups requires the experimental-devnet feature flag"
-                    ));
+                    l2::deployer::deploy_native_rollup_contracts(options).await?;
+                    return Ok(());
                 }
                 deploy_l1_contracts(options).await?;
             }
