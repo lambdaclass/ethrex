@@ -53,12 +53,12 @@ pub const CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS: SystemContract = SystemContra
     active_since_fork: Prague,
 };
 
-// EIP-8282 builder deposit predeploy — Nick's-method address from sys-asm#43
-// (0x0000884d2AA32eAa155F59A2f24eFa73D9008282).
+// EIP-8282 builder deposit predeploy — Nick's-method address updated for
+// glamsterdam-devnet-7 (0x00006AE84ed173D4394de5E28F9ED56b28008282).
 pub const BUILDER_DEPOSIT_CONTRACT_ADDRESS: SystemContract = SystemContract {
     address: H160([
-        0x00, 0x00, 0x88, 0x4D, 0x2A, 0xA3, 0x2E, 0xAA, 0x15, 0x5F, 0x59, 0xA2, 0xF2, 0x4E, 0xFA,
-        0x73, 0xD9, 0x00, 0x82, 0x82,
+        0x00, 0x00, 0x6A, 0xE8, 0x4E, 0xD1, 0x73, 0xD4, 0x39, 0x4D, 0xE5, 0xE2, 0x8F, 0x9E, 0xD5,
+        0x6B, 0x28, 0x00, 0x82, 0x82,
     ]),
     name: "BUILDER_DEPOSIT_CONTRACT_ADDRESS",
     active_since_fork: Amsterdam,
