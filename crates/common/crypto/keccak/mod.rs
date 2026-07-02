@@ -51,7 +51,7 @@ mod imp {
         }
 
         #[inline]
-        pub fn update(&mut self, data: impl AsRef<[u8]>) -> Self {
+        pub fn update(&mut self, data: impl AsRef<[u8]>) -> &mut Self {
             let mut data = data.as_ref();
             unsafe {
                 // partial block
@@ -62,7 +62,7 @@ mod imp {
                         self.tail_buf[self.tail_len..self.tail_len + data.len()]
                             .copy_from_slice(data);
                         self.tail_len += data.len();
-                        return self.clone();
+                        return self;
                     }
 
                     // complete block
@@ -100,7 +100,7 @@ mod imp {
                     }
                 },
             }
-            self.clone()
+            self
         }
 
         #[inline]
@@ -161,12 +161,12 @@ mod imp {
         }
 
         #[inline]
-        pub fn update(&mut self, data: impl AsRef<[u8]>) -> Self {
+        pub fn update(&mut self, data: impl AsRef<[u8]>) -> &mut Self {
             let d = data.as_ref();
             if !d.is_empty() {
                 self.h.update(d);
             }
-            self.clone()
+            self
         }
 
         #[inline]
