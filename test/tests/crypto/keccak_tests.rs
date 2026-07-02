@@ -1,7 +1,63 @@
-use ethrex_crypto::keccak::{Keccak256, keccak_hash};
+use ethrex_crypto::keccak::{Keccak256, keccak256_batch, keccak_hash};
 use std::array;
 
 const BLOCK_SIZE: usize = 136;
+
+fn pseudo_bytes(len: usize, seed: u64) -> Vec<u8> {
+    let mut out = Vec::with_capacity(len);
+    let mut x = seed.wrapping_add(0x9e37_79b9_7f4a_7c15);
+    while out.len() < len {
+        x = x.wrapping_add(0x9e37_79b9_7f4a_7c15);
+        let mut z = x;
+        z = (z ^ (z >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+        z = (z ^ (z >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+        z ^= z >> 31;
+        out.extend_from_slice(&z.to_le_bytes());
+    }
+    out.truncate(len);
+    out
+}
+
+/// The batched kernel must agree with the scalar path for every input,
+/// including across block boundaries and with unequal lengths in one group of 4.
+#[test]
+fn keccak_batch_matches_scalar() {
+    // Lengths spanning empty, sub-block, block boundaries, and multi-block —
+    // deliberately not a multiple of 4 so the scalar remainder path runs too.
+    let lens = [
+        0usize, 1, 31, 32, 55, 135, 136, 137, 200, 271, 272, 273, 400, 1000, 1024,
+    ];
+    let inputs: Vec<Vec<u8>> = lens
+        .iter()
+        .enumerate()
+        .map(|(i, &len)| pseudo_bytes(len, i as u64))
+        .collect();
+    let refs: Vec<&[u8]> = inputs.iter().map(|v| v.as_slice()).collect();
+
+    let batched = keccak256_batch(&refs);
+    let expected: Vec<[u8; 32]> = refs.iter().map(|r| keccak_hash(r)).collect();
+
+    assert_eq!(batched.len(), expected.len());
+    for (i, (got, want)) in batched.iter().zip(&expected).enumerate() {
+        assert_eq!(got, want, "mismatch at input {i} (len {})", lens[i]);
+    }
+}
+
+#[test]
+fn keccak_batch_empty_input_list() {
+    assert!(keccak256_batch(&[]).is_empty());
+}
+
+#[test]
+fn keccak_batch_exact_group_of_four() {
+    // Same length across a full group of 4 (the common merkle/trie case).
+    let inputs: Vec<Vec<u8>> = (0..4).map(|i| pseudo_bytes(32, i)).collect();
+    let refs: Vec<&[u8]> = inputs.iter().map(|v| v.as_slice()).collect();
+    let batched = keccak256_batch(&refs);
+    for (r, h) in refs.iter().zip(&batched) {
+        assert_eq!(*h, keccak_hash(r));
+    }
+}
 
 #[test]
 fn keccak_empty() {

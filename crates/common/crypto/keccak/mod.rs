@@ -5,6 +5,9 @@ core::arch::global_asm!(include_str!("keccak1600-armv8-macho.s"), options(raw));
 #[cfg(target_arch = "x86_64")]
 core::arch::global_asm!(include_str!("keccak1600-x86_64.s"), options(att_syntax));
 
+mod batch;
+
+pub use batch::keccak256_batch;
 pub use imp::*;
 
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]

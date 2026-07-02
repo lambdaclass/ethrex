@@ -7,7 +7,7 @@
 //! future 4-way AVX2 / FEAT_SHA3 kernel is meant to beat (see issue #6947).
 
 use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
-use ethrex_crypto::keccak::{Keccak256, keccak_hash};
+use ethrex_crypto::keccak::{Keccak256, keccak256_batch, keccak_hash};
 
 /// Deterministic pseudo-random bytes (splitmix64) so runs are comparable.
 fn pseudo_bytes(len: usize, seed: u64) -> Vec<u8> {
@@ -85,5 +85,29 @@ fn bench_batch_baseline(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(benches, bench_one_shot, bench_stream, bench_batch_baseline);
+fn bench_batch_avx2(c: &mut Criterion) {
+    // 4-way batched keccak over the same workload as `batch_baseline`. Compare
+    // the two groups at matching sizes to read the SIMD speedup (#6947).
+    const N: usize = 1024;
+    let mut group = c.benchmark_group("keccak256/batch_avx2");
+    for size in [32usize, 64, 136] {
+        let inputs: Vec<Vec<u8>> = (0..N)
+            .map(|i| pseudo_bytes(size, (i as u64) << 8 | size as u64))
+            .collect();
+        let refs: Vec<&[u8]> = inputs.iter().map(|v| v.as_slice()).collect();
+        group.throughput(Throughput::Elements(N as u64));
+        group.bench_with_input(BenchmarkId::from_parameter(size), &refs, |b, refs| {
+            b.iter(|| keccak256_batch(black_box(refs)))
+        });
+    }
+    group.finish();
+}
+
+criterion_group!(
+    benches,
+    bench_one_shot,
+    bench_stream,
+    bench_batch_baseline,
+    bench_batch_avx2
+);
 criterion_main!(benches);
