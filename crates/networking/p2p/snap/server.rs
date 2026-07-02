@@ -142,7 +142,10 @@ pub async fn process_byte_codes_request(
             match store.get_account_code(code_hash)? {
                 Some(code) => {
                     let code = code.code_bytes();
-                    bytes_used += code.len() as u64;
+                    // Charge at least `MIN_LOOKUP_COST` even for a hit, so a long list of
+                    // duplicate hashes of a *tiny* code is bounded by probe count, not just by
+                    // response bytes.
+                    bytes_used += (code.len() as u64).max(MIN_LOOKUP_COST);
                     codes.push(code);
                 }
                 // A missed lookup still costs a probe; charge it so an all-miss request trips

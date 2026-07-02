@@ -1049,6 +1049,31 @@ async fn byte_codes_charges_missed_lookups() -> Result<(), SnapError> {
     Ok(())
 }
 
+/// `GetByteCodes`: duplicate hits of a *tiny* code must be bounded by probe count, not just by
+/// response bytes. Each hit is charged at least `MIN_LOOKUP_COST` (32 B), so a 3-byte code
+/// under a 64-byte budget serves at most 2 duplicates, not the whole list.
+#[tokio::test]
+async fn byte_codes_charges_min_cost_on_tiny_duplicate_hits() -> Result<(), SnapError> {
+    let store = Store::new("null", EngineType::InMemory).unwrap();
+    let code = Code::from_bytecode(Bytes::from_static(b"hit"), &NativeCrypto);
+    let hit_hash = code.hash;
+    store.add_account_code(code).await.unwrap();
+
+    let request = GetByteCodes {
+        id: 0,
+        hashes: vec![hit_hash; 10],
+        bytes: 64, // 64 / 32 = 2 lookups before the budget is exhausted
+    };
+    let res = process_byte_codes_request(request, store).await.unwrap();
+
+    assert!(
+        res.codes.len() < 10,
+        "duplicate tiny-code hits must be bounded by per-probe cost; got all {} back",
+        res.codes.len()
+    );
+    Ok(())
+}
+
 /// `GetStorageRanges`: a missed account (absent from state) must consume the budget. Pre-fix,
 /// a miss opens the trie, finds nothing, charges nothing, and continues — so an all-miss
 /// `account_hashes` list forces a trie open per entry unbounded.
