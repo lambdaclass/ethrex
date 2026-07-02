@@ -15,18 +15,18 @@ use ethrex_common::{
     Address, U256,
     constants::{DEFAULT_OMMERS_HASH, DEFAULT_REQUESTS_HASH, GAS_PER_BLOB},
     types::{
-        AccountInfo, AccountUpdate, Block, BlockBody, BlockHeader, ChainConfig,
-        EIP1559Transaction, EIP4844Transaction, EIP7702Transaction, ELASTICITY_MULTIPLIER, Fork,
-        GenericTransaction, LegacyTransaction, Log, Receipt, Transaction, TxKind, Withdrawal,
-        bloom_from_logs, calc_excess_blob_gas, calculate_base_fee_per_gas, compute_receipts_root,
+        AccountInfo, AccountUpdate, Block, BlockBody, BlockHeader, ChainConfig, EIP1559Transaction,
+        EIP4844Transaction, EIP7702Transaction, ELASTICITY_MULTIPLIER, Fork, GenericTransaction,
+        LegacyTransaction, Log, Receipt, Transaction, TxKind, Withdrawal, bloom_from_logs,
+        calc_excess_blob_gas, calculate_base_fee_per_gas, compute_receipts_root,
         compute_transactions_root, compute_withdrawals_root, requests::compute_requests_hash,
         tx_fields::AuthorizationTuple,
     },
 };
 use ethrex_crypto::NativeCrypto;
 use ethrex_vm::{
-    SimTxConfig, SimulationTxError, TRACE_TRANSFER_ADDRESS, TxResult, TxValidationError,
-    backends::levm::get_max_allowed_gas_limit,
+    PrecompileOverrides, SimTxConfig, SimulationTxError, TRACE_TRANSFER_ADDRESS, TxResult,
+    TxValidationError, VMType, backends::levm::get_max_allowed_gas_limit, is_precompile,
 };
 use thiserror::Error;
 
@@ -129,6 +129,10 @@ pub enum SimulationError {
     InvalidTx(TxValidationError),
     #[error("{0}")]
     InvalidParams(String),
+    /// Invalid `movePrecompileToAddress` usage (non-precompile source,
+    /// overridden destination, ...). Reported with code -32000, like geth.
+    #[error("{0}")]
+    PrecompileOverride(String),
     #[error("internal error: {0}")]
     Internal(String),
 }
@@ -444,6 +448,50 @@ fn build_sim_transaction(
     Ok((tx, sender, gas_capped))
 }
 
+/// Validate and collect the block's `movePrecompileToAddress` overrides,
+/// mirroring geth's `StateOverride.Apply` precompile handling: sources must be
+/// active precompiles, destinations must not themselves be overridden, a later
+/// override may not touch an address a precompile was moved to, and any
+/// override on a precompile address removes its precompile behavior. The map
+/// iterates in address order, so error precedence is deterministic and matches
+/// geth (which sorts explicitly).
+fn build_precompile_overrides(
+    state_overrides: &BTreeMap<Address, StateOverride>,
+    fork: Fork,
+    vm_type: VMType,
+) -> Result<Option<Arc<PrecompileOverrides>>, SimulationError> {
+    let mut overrides = PrecompileOverrides::default();
+    let mut moved_destinations: std::collections::BTreeSet<Address> = Default::default();
+    for (address, override_) in state_overrides {
+        if moved_destinations.contains(address) {
+            return Err(SimulationError::PrecompileOverride(format!(
+                "account {address:#x} has already been overridden by a precompile"
+            )));
+        }
+        let source_is_precompile = is_precompile(address, fork, vm_type);
+        if let Some(destination) = override_.move_precompile_to {
+            if !source_is_precompile {
+                return Err(SimulationError::PrecompileOverride(format!(
+                    "account {address:#x} is not a precompile"
+                )));
+            }
+            if state_overrides.contains_key(&destination) {
+                return Err(SimulationError::PrecompileOverride(format!(
+                    "account {destination:#x} is already overridden"
+                )));
+            }
+            // A second move to the same destination overwrites the first,
+            // like geth's map insert.
+            overrides.moved.insert(destination, *address);
+            moved_destinations.insert(destination);
+        }
+        if source_is_precompile {
+            overrides.removed.insert(*address);
+        }
+    }
+    Ok((!overrides.removed.is_empty() || !overrides.moved.is_empty()).then(|| Arc::new(overrides)))
+}
+
 impl Blockchain {
     /// Execute an `eth_simulateV1` request: simulate a chain of blocks on top
     /// of `request.base`, chaining state across blocks, without committing
@@ -456,9 +504,12 @@ impl Blockchain {
         let base_hash = base.hash();
         let chain_config = self.storage.get_chain_config();
         let is_l1 = matches!(self.options.r#type, BlockchainType::L1);
-        let sim_config = SimTxConfig {
-            validate: request.validation,
-            trace_transfers: request.trace_transfers,
+        // Only the VM flavor matters for the precompile set; the L2 fee
+        // config plays no role in `is_precompile`.
+        let vm_type = if is_l1 {
+            VMType::L1
+        } else {
+            VMType::L2(Default::default())
         };
 
         let blocks = sanitize_blocks(&base, request.blocks)?;
@@ -470,16 +521,32 @@ impl Blockchain {
         let mut results = Vec::with_capacity(blocks.len());
 
         for sanitized in blocks {
-            let mut header = make_sim_header(&parent, &sanitized, &chain_config, request.validation);
+            let mut header =
+                make_sim_header(&parent, &sanitized, &chain_config, request.validation);
             let fork = chain_config.fork(header.timestamp);
+
+            // Precompile moves are per-block scoped and validated before any
+            // state is touched.
+            let precompile_overrides =
+                build_precompile_overrides(&sanitized.spec.state_overrides, fork, vm_type)?;
+            let sim_config = SimTxConfig {
+                validate: request.validation,
+                trace_transfers: request.trace_transfers,
+                precompile_overrides,
+            };
 
             // State overrides are applied prior to execution of the block and
             // become part of the overlay (and thus the state root).
             if !sanitized.spec.state_overrides.is_empty() {
-                let pre_db =
-                    SimulationVmDatabase::new(store_db.clone(), Arc::new(overlay.clone()));
+                let pre_db = SimulationVmDatabase::new(store_db.clone(), Arc::new(overlay.clone()));
                 for (address, override_) in sanitized.spec.state_overrides.clone() {
-                    if override_.is_noop() {
+                    // Move-only overrides carry no account state: materializing
+                    // them would create empty accounts in the state root.
+                    let has_state_change = override_.balance.is_some()
+                        || override_.nonce.is_some()
+                        || override_.code.is_some()
+                        || !matches!(override_.storage_mode, StorageMode::None);
+                    if !has_state_change {
                         continue;
                     }
                     overlay.merge_update(state_override_to_update(address, override_, &pre_db)?);
@@ -534,8 +601,7 @@ impl Blockchain {
 
                 gas_used += report.gas_used;
                 budget_remaining = budget_remaining.saturating_sub(report.gas_used);
-                blob_gas_used +=
-                    (tx.blob_versioned_hashes().len() * GAS_PER_BLOB as usize) as u64;
+                blob_gas_used += (tx.blob_versioned_hashes().len() * GAS_PER_BLOB as usize) as u64;
 
                 // Trace-transfer logs go to the per-call results but must stay
                 // out of receipts, the logs bloom and request extraction.
@@ -617,9 +683,7 @@ impl Blockchain {
 
             // EIP-7685 request system calls (withdrawal/consolidation queues).
             if is_l1 && chain_config.is_prague_activated(header.timestamp) {
-                let requests = evm
-                    .extract_requests(&receipts, &header)
-                    .map_err(internal)?;
+                let requests = evm.extract_requests(&receipts, &header).map_err(internal)?;
                 let encoded: Vec<_> = requests.iter().map(|request| request.encode()).collect();
                 header.requests_hash = Some(compute_requests_hash(&encoded));
             }
@@ -694,10 +758,13 @@ mod tests {
     #[test]
     fn sanitize_defaults_number_and_timestamp() {
         let base = base_header(100, 1000);
-        let blocks = sanitize_blocks(&base, vec![spec_with(None, None), spec_with(None, None)])
-            .unwrap();
+        let blocks =
+            sanitize_blocks(&base, vec![spec_with(None, None), spec_with(None, None)]).unwrap();
         assert_eq!(
-            blocks.iter().map(|b| (b.number, b.timestamp)).collect::<Vec<_>>(),
+            blocks
+                .iter()
+                .map(|b| (b.number, b.timestamp))
+                .collect::<Vec<_>>(),
             vec![(101, 1012), (102, 1024)]
         );
     }
@@ -707,7 +774,10 @@ mod tests {
         let base = base_header(100, 1000);
         let blocks = sanitize_blocks(&base, vec![spec_with(Some(104), None)]).unwrap();
         assert_eq!(
-            blocks.iter().map(|b| (b.number, b.timestamp)).collect::<Vec<_>>(),
+            blocks
+                .iter()
+                .map(|b| (b.number, b.timestamp))
+                .collect::<Vec<_>>(),
             vec![(101, 1012), (102, 1024), (103, 1036), (104, 1048)]
         );
         assert!(blocks[0].spec.calls.is_empty());
@@ -722,7 +792,13 @@ mod tests {
         )
         .unwrap_err();
         assert!(
-            matches!(err, SimulationError::BlockNumberNotAscending { given: 105, prev: 110 }),
+            matches!(
+                err,
+                SimulationError::BlockNumberNotAscending {
+                    given: 105,
+                    prev: 110
+                }
+            ),
             "unexpected error: {err:?}"
         );
         // Equal numbers are rejected too (this is how "more blocks than fit
@@ -738,7 +814,10 @@ mod tests {
         .unwrap_err();
         assert!(matches!(
             err,
-            SimulationError::BlockNumberNotAscending { given: 102, prev: 102 }
+            SimulationError::BlockNumberNotAscending {
+                given: 102,
+                prev: 102
+            }
         ));
     }
 
@@ -752,7 +831,10 @@ mod tests {
         .unwrap_err();
         assert!(matches!(
             err,
-            SimulationError::TimestampNotAscending { given: 1100, prev: 1100 }
+            SimulationError::TimestampNotAscending {
+                given: 1100,
+                prev: 1100
+            }
         ));
     }
 
@@ -772,7 +854,10 @@ mod tests {
         let err = sanitize_blocks(&base, vec![spec_with(Some(103), Some(1020))]).unwrap_err();
         assert!(matches!(
             err,
-            SimulationError::TimestampNotAscending { given: 1020, prev: 1024 }
+            SimulationError::TimestampNotAscending {
+                given: 1020,
+                prev: 1024
+            }
         ));
     }
 
