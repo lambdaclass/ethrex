@@ -80,7 +80,6 @@ pub fn execution_program(
 }
 
 /// Transform an SSZ `NewPayloadRequest` into a `Block`.
-#[cfg(feature = "experimental-devnet")]
 pub fn new_payload_request_to_block(
     req: &ethrex_common::types::stateless_ssz::NewPayloadRequest,
     crypto: &dyn Crypto,

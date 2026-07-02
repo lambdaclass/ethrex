@@ -66,4 +66,5 @@ redundant_clone = "warn"
 
 [features]
 jemalloc_profiling = ["dep:jemalloc_pprof"]
-experimental-devnet = ["ethrex-blockchain/experimental-devnet", "ethrex-common/experimental-devnet"]
+experimental-devnet = []
+eip-8025 = ["ethrex-blockchain/eip-8025", "ethrex-common/eip-8025"]

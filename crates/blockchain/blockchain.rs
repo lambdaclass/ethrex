@@ -47,7 +47,6 @@ pub mod error;
 pub mod fork_choice;
 pub mod mempool;
 pub mod payload;
-#[cfg(feature = "experimental-devnet")]
 pub mod stateless;
 pub mod tracing;
 pub mod vm;
@@ -3109,15 +3108,10 @@ pub fn new_evm(blockchain_type: &BlockchainType, vm_db: StoreVmDatabase) -> Resu
 /// guest-program crate, the stateless verifier itself, witness generation,
 /// the prover backend) also rely on the constructor staying validator-less.
 ///
-/// No-op when `experimental-devnet` is disabled.
-#[allow(unused_variables)]
 fn attach_stateless_validator(evm: &mut Evm) {
-    #[cfg(feature = "experimental-devnet")]
-    {
-        evm.stateless_validator = Some(Arc::new(stateless::StatelessExecutor {
-            crypto: Arc::new(NativeCrypto),
-        }));
-    }
+    evm.stateless_validator = Some(Arc::new(stateless::StatelessExecutor {
+        crypto: Arc::new(NativeCrypto),
+    }));
 }
 
 /// Performs post-execution checks
