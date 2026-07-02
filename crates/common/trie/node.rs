@@ -530,16 +530,16 @@ impl Node {
 
     /// Recursively memoizes the hashes of all nodes of the subtrie that has
     /// `self` as root (post-order traversal)
+    /// Recursively memoizes the hashes of all descendant nodes of `self`.
+    ///
+    /// Nodes are hashed in level order, deepest first: every node at a given
+    /// depth is mutually independent (a node's hash depends only on its
+    /// children, which are strictly deeper), so a whole level is hashed in one
+    /// batched keccak call. This fills the 4-way SIMD lanes far better than
+    /// hashing a single branch's ≤16 children, and reuses `buf` as a single
+    /// encoding arena so there is no per-node allocation.
     pub fn memoize_hashes(&self, buf: &mut Vec<u8>, crypto: &dyn Crypto) {
-        match self {
-            Node::Branch(n) => {
-                for child in &n.choices {
-                    child.memoize_hashes(buf, crypto);
-                }
-            }
-            Node::Extension(n) => n.child.memoize_hashes(buf, crypto),
-            _ => {}
-        }
+        batch_memoize_subtrie(self, buf, crypto);
     }
 
     /// Recursively encodes all embedded nodes of the subtrie that has
@@ -565,6 +565,77 @@ impl Node {
 
         encoded.push(self.encode_to_vec());
         Ok(())
+    }
+}
+
+/// Group every unhashed descendant `NodeRef::Node` of `node` by depth
+/// (`node`'s direct children are depth 0). Subtrees whose root already carries a
+/// memoized hash are skipped entirely.
+fn collect_unhashed_by_depth<'a>(
+    node: &'a Node,
+    depth: usize,
+    by_depth: &mut Vec<Vec<&'a NodeRef>>,
+) {
+    let children: &[NodeRef] = match node {
+        Node::Branch(n) => &n.choices,
+        Node::Extension(n) => std::slice::from_ref(&n.child),
+        Node::Leaf(_) => return,
+    };
+    if by_depth.len() <= depth {
+        by_depth.resize_with(depth + 1, Vec::new);
+    }
+    for child in children {
+        if let NodeRef::Node(child_node, hash) = child
+            && hash.get().is_none()
+        {
+            by_depth[depth].push(child);
+            collect_unhashed_by_depth(child_node, depth + 1, by_depth);
+        }
+    }
+}
+
+/// Memoize the hashes of all descendants of `root` in level order, deepest
+/// first, batching each level through [`Crypto::keccak256_batch`].
+///
+/// Correctness relies on the depth ordering: when a level is encoded, every
+/// child hash it embeds was memoized by an earlier (deeper) level, so
+/// `BranchNode`/`ExtensionNode` encoding reads cached hashes and never triggers
+/// a fallback keccak. Encodings under 32 bytes inline exactly as
+/// [`NodeHash::from_encoded`] would.
+fn batch_memoize_subtrie(root: &Node, buf: &mut Vec<u8>, crypto: &dyn Crypto) {
+    let mut by_depth: Vec<Vec<&NodeRef>> = Vec::new();
+    collect_unhashed_by_depth(root, 0, &mut by_depth);
+
+    let mut ranges: Vec<(usize, usize)> = Vec::new();
+    for level in by_depth.iter().rev() {
+        buf.clear();
+        ranges.clear();
+        for &node_ref in level {
+            if let NodeRef::Node(node, _) = node_ref {
+                let start = buf.len();
+                node.encode(buf);
+                ranges.push((start, buf.len() - start));
+            }
+        }
+
+        // Hash the 32+ byte encodings as one batch; shorter ones inline.
+        let batch_inputs: Vec<&[u8]> = ranges
+            .iter()
+            .filter(|&&(_, len)| len >= 32)
+            .map(|&(start, len)| &buf[start..start + len])
+            .collect();
+        let mut hashed = crypto.keccak256_batch(&batch_inputs).into_iter();
+
+        for (&node_ref, &(start, len)) in level.iter().zip(ranges.iter()) {
+            if let NodeRef::Node(_, hash) = node_ref {
+                let node_hash = if len >= 32 {
+                    NodeHash::from_slice(&hashed.next().expect("one hash per 32+ byte encoding"))
+                } else {
+                    NodeHash::from_slice(&buf[start..start + len])
+                };
+                let _ = hash.set(node_hash);
+            }
+        }
     }
 }
 

@@ -187,6 +187,15 @@ pub trait Crypto: Send + Sync + core::fmt::Debug {
         crate::keccak::keccak_hash(input)
     }
 
+    /// Keccak-256 of each input, in order. Used to hash independent trie nodes
+    /// (one whole trie level) together. The default maps [`Crypto::keccak256`]
+    /// over the inputs, so accelerated providers (e.g. a zkVM keccak precompile)
+    /// are still used; `NativeCrypto` overrides this to run the 4-way AVX2
+    /// batched kernel.
+    fn keccak256_batch(&self, inputs: &[&[u8]]) -> Vec<[u8; 32]> {
+        inputs.iter().map(|i| self.keccak256(i)).collect()
+    }
+
     /// SHA-256 hash. Used by SHA2-256 precompile (0x02) and KZG point evaluation.
     fn sha256(&self, input: &[u8]) -> [u8; 32] {
         sha2::Sha256::digest(input).into()
