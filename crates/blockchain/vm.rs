@@ -972,7 +972,7 @@ mod overlaid_db_tests {
         let state = wrapper.get_account_state(addr(4)).unwrap().unwrap();
         assert_eq!(state.code_hash, hash);
         let fetched = wrapper.get_account_code(hash).unwrap();
-        assert_eq!(fetched.code_bytes(), code.code_bytes());
+        assert_eq!(fetched, code);
         let meta = wrapper.get_code_metadata(hash).unwrap();
         assert_eq!(meta.length as usize, code.len());
     }
