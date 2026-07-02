@@ -62,10 +62,12 @@ contract NativeRollup {
     // reordering L2Bridge storage silently breaks withdrawal proofs here.
     uint256 constant SENT_MESSAGES_SLOT = 3;
 
-    // SSZ `StatelessValidationResult` layout: 32B root + 1B bool + 8B chain_id LE.
-    uint256 constant RESULT_LEN = 41;
+    // SSZ `StatelessValidationResult`: root(32) + successful_validation(1, @32) +
+    // chain_config(variable → 4-byte offset @33). chain_config's first field is
+    // chain_id (uint64 LE), read at the dereferenced offset.
+    uint256 constant RESULT_FIXED_LEN = 37; // root(32) + bool(1) + chain_config offset(4)
     uint256 constant RESULT_SUCCESS_OFFSET = 32;
-    uint256 constant RESULT_CHAIN_ID_OFFSET = 33;
+    uint256 constant RESULT_CHAIN_CONFIG_OFFSET_POS = 33;
 
     // Byte offsets inside the SSZ `ExecutionPayload` fixed prefix.
     uint256 constant EP_PARENT_HASH_OFFSET = 0;
@@ -73,7 +75,7 @@ contract NativeRollup {
     uint256 constant EP_BLOCK_NUMBER_OFFSET = 404;
     uint256 constant EP_GAS_LIMIT_OFFSET = 412;
     uint256 constant EP_BLOCK_HASH_OFFSET = 472;
-    uint256 constant EP_FIXED_PREFIX_LEN = 528;
+    uint256 constant EP_FIXED_PREFIX_LEN = 532; // 528 fixed fields + block_access_list offset(4)
 
     // ===== Events =====
     event StateAdvanced(uint256 indexed newBlockNumber, bytes32 indexed newStateRoot);
@@ -177,10 +179,13 @@ contract NativeRollup {
         (bool success, bytes memory result) = EXECUTE_PRECOMPILE.staticcall(sszInput);
         require(success, "EXECUTE precompile failed");
 
-        require(result.length >= RESULT_LEN, "Invalid result length");
+        require(result.length >= RESULT_FIXED_LEN, "Invalid result length");
         require(uint8(result[RESULT_SUCCESS_OFFSET]) == 1, "L2 validation failed");
 
-        uint64 provenChainId = _decodeSszUint64LE(result, RESULT_CHAIN_ID_OFFSET);
+        // chain_config is variable-size (contains active_fork); it is offset-encoded.
+        // chain_id is its first field.
+        uint256 ccOffset = _decodeSszUint32LE(result, RESULT_CHAIN_CONFIG_OFFSET_POS);
+        uint64 provenChainId = _decodeSszUint64LE(result, ccOffset);
         require(provenChainId == chainId, "chain_id mismatch");
     }
 
@@ -352,6 +357,15 @@ contract NativeRollup {
         );
         uint256 value = MPTProof.decodeRlpUint(valueRLP);
         require(value == 1, "Withdrawal not found in L2Bridge storage");
+    }
+
+    /// @dev Decode an SSZ `uint32` (4 little-endian bytes) at `offset` into `data` (memory).
+    function _decodeSszUint32LE(bytes memory data, uint256 offset) internal pure returns (uint256) {
+        require(data.length >= offset + 4, "SSZ: u32 out of bounds");
+        return uint256(uint8(data[offset]))
+            | (uint256(uint8(data[offset + 1])) << 8)
+            | (uint256(uint8(data[offset + 2])) << 16)
+            | (uint256(uint8(data[offset + 3])) << 24);
     }
 
     /// @dev Decode an SSZ `uint64` (8 little-endian bytes) at `offset` into `data` (memory).
