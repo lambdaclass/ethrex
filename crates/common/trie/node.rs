@@ -267,11 +267,15 @@ impl NodeRef {
     /// Hash every dirty node of the subtrie rooted here and collect their
     /// `(path, encoding)` entries (plus leaf flat key/values) into `acc`.
     ///
-    /// Nodes are hashed in level order, deepest first, one
-    /// [`Crypto::keccak256_batch`] call per depth (see [`batch_commit_subtrie`]),
-    /// so the 4-way SIMD lanes fill across the whole level rather than a single
-    /// branch's children. A node whose hash is already memoized is clean and is
-    /// skipped entirely — the memoized `OnceLock` is the dirtiness marker.
+    /// Dirty nodes are hashed in level order, deepest first, batching each depth
+    /// through [`Crypto::keccak256_batch`] so the 4-way SIMD lanes fill across
+    /// the whole level (see [`batch_commit_subtrie`]). To keep that batching
+    /// cache-resident regardless of trie size, the work is bounded by
+    /// [`commit_dirty`]: subtrees larger than a cache-sized cap are split by
+    /// recursing into children first, so a huge trie is committed as many small
+    /// cache-resident batched subtries rather than one level-order sweep over
+    /// the whole heap. A node whose hash is already memoized is clean and is
+    /// skipped — the memoized `OnceLock` is the dirtiness marker.
     pub fn commit(
         &self,
         path: Nibbles,
@@ -283,10 +287,8 @@ impl NodeRef {
                 if let Some(hash) = hash.get() {
                     return *hash;
                 }
-                batch_commit_subtrie(self, path, acc, crypto);
-                *hash
-                    .get()
-                    .expect("batch_commit_subtrie hashes the root node")
+                commit_dirty(self, path, acc, crypto, BATCH_SUBTREE_CAP);
+                *hash.get().expect("commit_dirty hashes the root node")
             }
             NodeRef::Hash(hash) => *hash,
         }
@@ -671,6 +673,104 @@ fn collect_dirty_by_depth<'a>(
         Node::Leaf(_) => {}
     }
     by_depth[depth].push((path, node_ref));
+}
+
+/// Dirty subtrees with at most this many nodes are committed as one batched
+/// level-order sweep ([`batch_commit_subtrie`]); larger ones are split. The cap
+/// keeps each sweep's working set (the `by_depth` collection, the encoding
+/// arena, the batch buffers) cache-resident, so a large trie is committed as
+/// many small batched subtries instead of one heap-wide sweep whose cache
+/// misses would erode the SIMD win. Sized (empirically) above typical per-block
+/// / per-shard commits so those are batched whole and unaffected, while very
+/// large tries (e.g. a monolithic state-trie rebuild) are split to bound the
+/// working set.
+const BATCH_SUBTREE_CAP: usize = 16384;
+
+/// Commit the dirty subtrie rooted at `node_ref`, keeping each batched sweep
+/// cache-resident: if the subtree is small enough, batch it wholesale;
+/// otherwise recurse into its dirty children first (each a smaller subtree) and
+/// then hash `node_ref` itself as a single node.
+fn commit_dirty(
+    node_ref: &NodeRef,
+    path: Nibbles,
+    acc: &mut Vec<(Nibbles, Vec<u8>)>,
+    crypto: &dyn Crypto,
+    cap: usize,
+) {
+    let NodeRef::Node(node, hash) = node_ref else {
+        return;
+    };
+    if hash.get().is_some() {
+        return;
+    }
+    if dirty_subtree_within(node_ref, cap) {
+        batch_commit_subtrie(node_ref, path, acc, crypto);
+        return;
+    }
+
+    // Subtree too large to batch cache-resident: split it. A leaf is a size-1
+    // subtree so it is always batched above; only branches/extensions reach here.
+    match node.as_ref() {
+        Node::Branch(branch) => {
+            for (choice, child) in branch.choices.iter().enumerate() {
+                if matches!(child, NodeRef::Node(_, h) if h.get().is_none()) {
+                    commit_dirty(child, path.append_new(choice as u8), acc, crypto, cap);
+                }
+            }
+        }
+        Node::Extension(ext) => {
+            if matches!(&ext.child, NodeRef::Node(_, h) if h.get().is_none()) {
+                commit_dirty(&ext.child, path.concat(&ext.prefix), acc, crypto, cap);
+            }
+        }
+        Node::Leaf(_) => {}
+    }
+
+    // Children are now hashed; hash and emit this node (single, scalar).
+    let mut buf = Vec::new();
+    node.encode(&mut buf);
+    let node_hash = NodeHash::from_encoded(&buf, crypto);
+    let _ = hash.set(node_hash);
+    if let Node::Leaf(leaf) = node.as_ref() {
+        acc.push((path.concat(&leaf.partial), leaf.value.clone()));
+    }
+    acc.push((path, buf));
+}
+
+/// True if the dirty subtree rooted at `node_ref` has at most `cap` nodes.
+/// Walks at most `cap + 1` nodes (stops as soon as the budget is exceeded), so
+/// it is cheap even for very large subtrees.
+fn dirty_subtree_within(node_ref: &NodeRef, cap: usize) -> bool {
+    fn walk(node_ref: &NodeRef, budget: &mut usize) -> bool {
+        let NodeRef::Node(node, hash) = node_ref else {
+            return true;
+        };
+        if hash.get().is_some() {
+            return true;
+        }
+        if *budget == 0 {
+            return false;
+        }
+        *budget -= 1;
+        match node.as_ref() {
+            Node::Branch(branch) => {
+                for child in branch.choices.iter() {
+                    if !walk(child, budget) {
+                        return false;
+                    }
+                }
+            }
+            Node::Extension(ext) => {
+                if !walk(&ext.child, budget) {
+                    return false;
+                }
+            }
+            Node::Leaf(_) => {}
+        }
+        true
+    }
+    let mut budget = cap;
+    walk(node_ref, &mut budget)
 }
 
 /// Commit the subtrie rooted at `root_ref`: hash every dirty node in level
