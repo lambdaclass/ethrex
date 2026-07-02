@@ -423,6 +423,7 @@ pub async fn init_native_rollup_l2(
         perf_logs_enabled: true,
         max_blobs_per_block: None,
         precompute_witnesses: opts.node_opts.precompute_witnesses,
+        precompile_cache_enabled: true,
     };
 
     let blockchain = init_blockchain(store.clone(), blockchain_opts);
@@ -462,6 +463,7 @@ pub async fn init_native_rollup_l2(
         rollup_store,
         log_filter_handler,
         block_gas_limit,
+        None, // no websocket for the native rollup devnet RPC
     );
 
     let relayer_signer: ethrex_l2_rpc::signer::Signer =
