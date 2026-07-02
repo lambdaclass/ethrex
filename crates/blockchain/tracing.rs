@@ -38,11 +38,37 @@ impl Blockchain {
             .await?;
         // Run the block until the transaction we want to trace
         vm.rerun_block(&block, Some(tx_index))?;
+        // Block-absolute log index base: logs emitted by the preceding txs (geth's `logSize`).
+        let log_index_base = self.log_index_base(block_hash, tx_index, with_log).await?;
         // Trace the transaction
         timeout_trace_operation(timeout, move || {
-            vm.trace_tx_calls(&block, tx_index, only_top_call, with_log)
+            vm.trace_tx_calls(&block, tx_index, only_top_call, with_log, log_index_base)
         })
         .await
+    }
+
+    /// Number of logs emitted by the first `tx_count` txs of `block_hash` — the
+    /// block-absolute log index base for tracing the tx at that offset (geth's cumulative
+    /// `logSize`). Returns 0 when logs aren't collected or there is no preceding tx, so the
+    /// receipt lookup is skipped on the common `withLog: false` path.
+    async fn log_index_base(
+        &self,
+        block_hash: H256,
+        tx_count: usize,
+        with_log: bool,
+    ) -> Result<u64, ChainError> {
+        if !with_log || tx_count == 0 {
+            return Ok(0);
+        }
+        let receipts = self
+            .storage
+            .get_receipts_for_block_from_index(&block_hash, 0, Some(tx_count))
+            .await?;
+        let total = receipts
+            .iter()
+            .map(|r| u64::try_from(r.logs.len()).unwrap_or(u64::MAX))
+            .fold(0u64, u64::saturating_add);
+        Ok(total)
     }
 
     /// Outputs the call trace for each transaction in the block along with the transaction's hash.
@@ -186,9 +212,21 @@ impl Blockchain {
         with_log: bool,
     ) -> Result<CallTrace, ChainError> {
         let mut vm = self.build_call_trace_vm(&block, tx_index, reexec).await?;
+        // Log index base = logs from the txs the call runs on top of: those before
+        // `tx_index`, or the whole block when tracing on top of it (`None`).
+        let preceding_txs = tx_index.unwrap_or(block.body.transactions.len());
+        let log_index_base = self
+            .log_index_base(block.hash(), preceding_txs, with_log)
+            .await?;
         let header = block.header;
         timeout_trace_operation(timeout, move || {
-            vm.trace_call_calls(&header, &transaction, only_top_call, with_log)
+            vm.trace_call_calls(
+                &header,
+                &transaction,
+                only_top_call,
+                with_log,
+                log_index_base,
+            )
         })
         .await
     }

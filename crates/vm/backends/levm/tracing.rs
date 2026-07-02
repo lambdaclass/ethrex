@@ -3,7 +3,7 @@ use ethrex_common::tracing::{PrePostState, PrestateAccountState, PrestateResult,
 use ethrex_common::types::{Block, GenericTransaction, Transaction};
 use ethrex_common::{
     Address, BigEndianHash, H256, U256,
-    tracing::{CallTrace, OpcodeTraceResult},
+    tracing::{CallTrace, CallTraceFrame, OpcodeTraceResult},
     types::BlockHeader,
 };
 use ethrex_crypto::Crypto;
@@ -191,13 +191,17 @@ impl LEVM {
         Ok(vm.opcode_tracer.take_result())
     }
 
-    /// Run transaction with callTracer activated.
+    /// Run transaction with callTracer activated. `log_index_base` is the number of logs
+    /// emitted by preceding txs in the block, so `withLog` logs get geth's block-absolute
+    /// `index` (pass 0 when there is no preceding context or logs aren't collected).
+    #[allow(clippy::too_many_arguments)]
     pub fn trace_tx_calls(
         db: &mut GeneralizedDatabase,
         block_header: &BlockHeader,
         tx: &Transaction,
         only_top_call: bool,
         with_log: bool,
+        log_index_base: u64,
         vm_type: VMType,
         crypto: &dyn Crypto,
     ) -> Result<CallTrace, EvmError> {
@@ -210,16 +214,27 @@ impl LEVM {
             db,
             vm_type,
         )?;
-        Self::run_call_trace(db, env, tx, only_top_call, with_log, vm_type, crypto)
+        Self::run_call_trace(
+            db,
+            env,
+            tx,
+            only_top_call,
+            with_log,
+            log_index_base,
+            vm_type,
+            crypto,
+        )
     }
 
     /// `debug_traceCall` counterpart of [`Self::trace_tx_calls`].
+    #[allow(clippy::too_many_arguments)]
     pub fn trace_call_calls(
         db: &mut GeneralizedDatabase,
         block_header: &BlockHeader,
         tx: &GenericTransaction,
         only_top_call: bool,
         with_log: bool,
+        log_index_base: u64,
         vm_type: VMType,
         crypto: &dyn Crypto,
     ) -> Result<CallTrace, EvmError> {
@@ -230,6 +245,7 @@ impl LEVM {
             &converted,
             only_top_call,
             with_log,
+            log_index_base,
             vm_type,
             crypto,
         )
@@ -237,12 +253,14 @@ impl LEVM {
 
     /// Runs `tx` with the callTracer over a prepared `env`. Shared by the tx and call
     /// entry points.
+    #[allow(clippy::too_many_arguments)]
     fn run_call_trace(
         db: &mut GeneralizedDatabase,
         env: Environment,
         tx: &Transaction,
         only_top_call: bool,
         with_log: bool,
+        log_index_base: u64,
         vm_type: VMType,
         crypto: &dyn Crypto,
     ) -> Result<CallTrace, EvmError> {
@@ -250,7 +268,7 @@ impl LEVM {
             env,
             db,
             tx,
-            LevmCallTracer::new(only_top_call, with_log),
+            LevmCallTracer::new(only_top_call, with_log, log_index_base),
             vm_type,
             crypto,
         )?;
@@ -279,6 +297,9 @@ impl LEVM {
         Self::rerun_block(db, block, Some(0), vm_type, crypto)?;
         let (config, chain_id, base_blob_fee) = block_trace_env_config(db, &block.header)?;
         let mut traces = Vec::with_capacity(block.body.transactions.len());
+        // Running block-absolute log index: the whole block is traced from tx 0, so each
+        // tx's logs continue where the previous tx left off (geth's cumulative `logSize`).
+        let mut log_index_base = 0u64;
         for (tx, sender) in block
             .body
             .get_transactions_with_sender(crypto)
@@ -293,8 +314,17 @@ impl LEVM {
                 vm_type,
                 base_blob_fee,
             )?;
-            let trace =
-                Self::run_call_trace(db, env, tx, only_top_call, with_log, vm_type, crypto)?;
+            let trace = Self::run_call_trace(
+                db,
+                env,
+                tx,
+                only_top_call,
+                with_log,
+                log_index_base,
+                vm_type,
+                crypto,
+            )?;
+            log_index_base = log_index_base.saturating_add(trace.iter().map(count_call_logs).sum());
             traces.push((tx.hash(crypto), trace));
         }
         Ok(traces)
@@ -369,6 +399,15 @@ impl LEVM {
 
 /// Computes the block-invariant `(EVMConfig, chain_id, base_blob_fee)` once so a
 /// whole-block trace can reuse them across transactions instead of recomputing per tx.
+/// Recursively counts the logs captured in a call frame and all its subcalls — the
+/// number of `withLog` logs a traced tx contributes to the block-absolute log index.
+fn count_call_logs(frame: &CallTraceFrame) -> u64 {
+    let own = u64::try_from(frame.logs.len()).unwrap_or(u64::MAX);
+    frame.calls.iter().fold(own, |acc, subcall| {
+        acc.saturating_add(count_call_logs(subcall))
+    })
+}
+
 fn block_trace_env_config(
     db: &GeneralizedDatabase,
     header: &BlockHeader,
