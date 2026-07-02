@@ -74,7 +74,7 @@ fn block_to_ssz_to_block_preserves_hash() {
 
     // Block → SSZ
     let ssz_bytes =
-        build_ssz_stateless_input(&header, &body, &witness).expect("SSZ encoding failed");
+        build_ssz_stateless_input(&header, &body, &witness, None).expect("SSZ encoding failed");
 
     // SSZ → deserialize
     let input = SszStatelessInput::from_ssz_bytes(&ssz_bytes).expect("SSZ decoding failed");

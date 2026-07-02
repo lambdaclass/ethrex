@@ -519,6 +519,7 @@ mod devnet_tests {
 mod tests {
     use super::*;
     use ethrex_common::H256;
+    use ethrex_common::types::block_access_list::{AccountChanges, BlockAccessList};
     use ethrex_common::types::block_execution_witness::ExecutionWitness;
     use ethrex_common::types::{Block, BlockBody, BlockHeader};
     use ethrex_crypto::NativeCrypto;
@@ -696,6 +697,109 @@ mod tests {
         assert_eq!(
             original_hash, reconstructed_hash,
             "Block hash mismatch after SSZ round-trip!\n  original:      {original_hash:?}\n  reconstructed: {reconstructed_hash:?}"
+        );
+    }
+
+    /// Test that an Amsterdam block with a non-empty BAL round-trips correctly
+    /// through SSZ: the reconstructed block_access_list_hash matches the
+    /// original, so block.hash() is preserved end-to-end.
+    ///
+    /// This is the activation proof for Task 4 (feat/unify-stateless-validation-v2):
+    /// once native_l2.json carries amsterdamTime:0, every produced block lands
+    /// here and advance() can verify the hash.
+    #[test]
+    fn test_amsterdam_block_with_bal_roundtrip_preserves_hash() {
+        let crypto = Arc::new(NativeCrypto);
+
+        // Build a minimal BAL with one account entry.
+        let bal = BlockAccessList::from_accounts(vec![AccountChanges::new(
+            ethrex_common::Address::from([0xABu8; 20]),
+        )]);
+        let bal_hash = bal.compute_hash();
+
+        // Build an Amsterdam block header: same as the Prague test but with
+        // block_access_list_hash set to Some(bal_hash).
+        let header = BlockHeader {
+            parent_hash: H256::zero(),
+            ommers_hash: *ethrex_common::constants::DEFAULT_OMMERS_HASH,
+            coinbase: ethrex_common::Address::zero(),
+            state_root: H256::from_low_u64_be(0xabcd),
+            transactions_root: ethrex_common::types::compute_transactions_root(&[], &NativeCrypto),
+            receipts_root: ethrex_common::types::compute_receipts_root(&[], &NativeCrypto),
+            logs_bloom: Default::default(),
+            number: 2,
+            gas_limit: 30_000_000,
+            gas_used: 0,
+            timestamp: 2000,
+            base_fee_per_gas: Some(7),
+            prev_randao: H256::zero(),
+            extra_data: bytes::Bytes::new(),
+            withdrawals_root: Some(ethrex_common::types::compute_withdrawals_root(
+                &[],
+                &NativeCrypto,
+            )),
+            blob_gas_used: Some(0),
+            excess_blob_gas: Some(0),
+            parent_beacon_block_root: Some(H256::zero()),
+            requests_hash: Some(ethrex_common::types::requests::compute_requests_hash(&[])),
+            // Amsterdam field — set to the BAL hash we'll encode in the SSZ payload.
+            block_access_list_hash: Some(bal_hash),
+            ..Default::default()
+        };
+        let body = BlockBody {
+            transactions: vec![],
+            ommers: vec![],
+            withdrawals: Some(vec![]),
+        };
+        let block = Block::new(header.clone(), body.clone());
+        let original_hash = block.hash();
+
+        // The witness chain_config must have Amsterdam active so chain_config_to_ssz
+        // encodes it correctly.
+        let witness = ExecutionWitness {
+            codes: vec![],
+            block_headers_bytes: vec![],
+            first_block_number: 2,
+            chain_config: ethrex_common::types::ChainConfig {
+                chain_id: 1,
+                cancun_time: Some(0),
+                prague_time: Some(0),
+                amsterdam_time: Some(0),
+                ..Default::default()
+            },
+            state_trie_root: None,
+            storage_trie_roots: Default::default(),
+        };
+
+        // Block → SSZ with the real BAL passed through.
+        let ssz_bytes = build_ssz_stateless_input(&header, &body, &witness, Some(&bal))
+            .expect("SSZ encoding should succeed for Amsterdam block with BAL");
+
+        // SSZ → deserialize → reconstruct Block
+        use ethrex_common::types::stateless_ssz::SszStatelessInput;
+        use libssz::SszDecode;
+        let input = SszStatelessInput::from_ssz_bytes(&ssz_bytes)
+            .expect("SSZ deserialization should succeed");
+
+        let reconstructed_block = ethrex_guest_program::l1::new_payload_request_to_block(
+            &input.new_payload_request,
+            crypto.as_ref(),
+        )
+        .expect("Block reconstruction should succeed for Amsterdam block");
+
+        // The reconstructed header must carry the same block_access_list_hash.
+        assert_eq!(
+            reconstructed_block.header.block_access_list_hash,
+            Some(bal_hash),
+            "block_access_list_hash must be reconstructed from the SSZ BAL payload"
+        );
+
+        // The final check: full block hash must match end-to-end.
+        assert_eq!(
+            original_hash,
+            reconstructed_block.hash(),
+            "Amsterdam block hash mismatch after BAL SSZ round-trip!\n  original:      {original_hash:?}\n  reconstructed: {:?}",
+            reconstructed_block.hash()
         );
     }
 }

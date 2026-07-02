@@ -1142,4 +1142,24 @@ mod tests {
         let error_message = result.unwrap_err().to_string();
         assert!(error_message.contains("missing field `depositContractAddress`"),);
     }
+
+    #[test]
+    fn native_l2_genesis_activates_amsterdam() {
+        let file = File::open("../../fixtures/genesis/native_l2.json")
+            .expect("Failed to open native_l2.json");
+        let reader = BufReader::new(file);
+        let genesis: Genesis =
+            serde_json::from_reader(reader).expect("Failed to deserialize native_l2.json");
+        assert_eq!(
+            genesis.config.get_fork(0),
+            Fork::Amsterdam,
+            "native_l2.json genesis should activate Amsterdam at timestamp 0"
+        );
+        // Confirm blobSchedule falls back to bpo2 (no explicit amsterdam entry).
+        let bs = genesis
+            .config
+            .get_fork_blob_schedule(0)
+            .expect("Amsterdam implies bpo2 blob schedule");
+        assert_eq!(bs.max, 21, "Amsterdam should inherit bpo2 max=21");
+    }
 }
