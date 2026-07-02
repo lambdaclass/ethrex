@@ -1,4 +1,6 @@
-use std::array;
+#[cfg(not(feature = "std"))]
+use alloc::{string::ToString, vec::Vec};
+use core::array;
 
 // Contains RLP encoding and decoding implementations for Trie Nodes
 // This encoding is only used to store the nodes in the DB, it is not the encoding used for hash computation

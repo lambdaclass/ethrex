@@ -1,13 +1,24 @@
-use ethereum_types::H256;
 use ethrex_rlp::encode::RLPEncode;
 
-use crate::{Nibbles, Node, Trie, error::TrieError};
-use std::{
-    collections::BTreeMap,
-    sync::{Arc, Mutex},
-};
+use crate::{Nibbles, Node, error::TrieError};
+#[cfg(not(feature = "std"))]
+use alloc::vec::Vec;
+
+// InMemoryTrieDB (below) is host-only: it needs `Arc<Mutex>`, and the guest builds
+// its trie through its own `TrieDB` impl. The `TrieDB` trait itself stays no_std.
+#[cfg(feature = "std")]
+use crate::Trie;
+#[cfg(feature = "std")]
+use alloc::collections::BTreeMap;
+#[cfg(feature = "std")]
+use alloc::sync::Arc;
+#[cfg(feature = "std")]
+use ethereum_types::H256;
+#[cfg(feature = "std")]
+use std::sync::Mutex;
 
 // Nibbles -> encoded node
+#[cfg(feature = "std")]
 pub type NodeMap = Arc<Mutex<BTreeMap<Vec<u8>, Vec<u8>>>>;
 
 pub trait TrieDB: Send + Sync {
@@ -38,12 +49,14 @@ pub trait TrieDB: Send + Sync {
 
 // TODO: we should replace this with BackendTrieDB
 /// InMemory implementation for the TrieDB trait, with get and put operations.
+#[cfg(feature = "std")]
 #[derive(Default)]
 pub struct InMemoryTrieDB {
     inner: NodeMap,
     prefix: Option<Nibbles>,
 }
 
+#[cfg(feature = "std")]
 impl InMemoryTrieDB {
     pub const fn new(map: NodeMap) -> Self {
         Self {
@@ -101,6 +114,7 @@ impl InMemoryTrieDB {
     }
 }
 
+#[cfg(feature = "std")]
 impl TrieDB for InMemoryTrieDB {
     fn get(&self, key: Nibbles) -> Result<Option<Vec<u8>>, TrieError> {
         Ok(self

@@ -45,6 +45,8 @@ jobs:
         run: |
           TARGET=.github/targets/riscv64im_zicclsm-unknown-none-elf.json
           cargo +nightly-2026-06-29 -Z json-target-spec -Z build-std=core,alloc check \
-            -p ethrex-rlp -p ethrex-crypto --no-default-features --target "$TARGET"
+            -p ethrex-rlp -p ethrex-crypto -p ethrex-trie --no-default-features --target "$TARGET"
           cargo +nightly-2026-06-29 -Z json-target-spec -Z build-std=core,alloc check \
             -p ethrex-crypto --no-default-features --features kzg-rs --target "$TARGET"
+          cargo +nightly-2026-06-29 -Z json-target-spec -Z build-std=core,alloc check \
+            -p ethrex-trie --no-default-features --features eip-8025 --target "$TARGET"

@@ -1073,6 +1073,7 @@ dependencies = [
  "ethereum-types",
  "hex-literal",
  "k256",
+ "malachite",
  "num-bigint",
  "p256",
  "ripemd",
@@ -1169,11 +1170,12 @@ dependencies = [
  "ethereum-types",
  "ethrex-crypto",
  "ethrex-rlp",
- "lazy_static",
+ "hashbrown 0.15.5",
  "rayon",
  "rkyv",
  "rustc-hash 2.1.1",
  "serde",
+ "spin",
  "thiserror 2.0.18",
 ]
 
