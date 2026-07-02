@@ -74,9 +74,6 @@ use std::cmp::min;
 use std::sync::Arc;
 #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
 use std::sync::atomic::AtomicBool;
-// Only used by `WarmProgress`, which shares this gate.
-#[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
-use std::sync::atomic::AtomicU64;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc::Sender;
 
@@ -166,17 +163,6 @@ enum BalValidationError {
     Mismatch(String),
     #[error("{0}")]
     Database(String),
-}
-
-/// Progress counters for a warming pass: transactions actually executed (and
-/// their gas limits) before the pass completed or was stopped. Shared across
-/// the parallel warming workers; distinguishes "selected for warming" from
-/// "actually warmed" when a pass is cut off by cancellation or deadline.
-#[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
-#[derive(Debug, Default)]
-pub struct WarmProgress {
-    pub txs: AtomicU64,
-    pub gas: AtomicU64,
 }
 
 impl LEVM {
@@ -2143,7 +2129,6 @@ impl LEVM {
             vm_type,
             crypto,
             &|| cancelled.load(Ordering::Relaxed),
-            None,
         )?;
 
         let mut db = GeneralizedDatabase::new(store.clone());
@@ -2182,7 +2167,6 @@ impl LEVM {
         vm_type: VMType,
         crypto: &dyn Crypto,
         should_stop: &(dyn Fn() -> bool + Sync),
-        progress: Option<&WarmProgress>,
     ) -> Result<(), EvmError> {
         // Group transactions by sender for sequential execution within groups.
         // Transactions from the same sender are executed sequentially within their group
@@ -2236,12 +2220,6 @@ impl LEVM {
                         evm_config,
                         chain_id,
                     );
-                    // Warmed regardless of the execution result: a reverted
-                    // speculative tx still touched (and warmed) its state.
-                    if let Some(progress) = progress {
-                        progress.txs.fetch_add(1, Ordering::Relaxed);
-                        progress.gas.fetch_add(tx.gas_limit(), Ordering::Relaxed);
-                    }
                 }
             },
         );

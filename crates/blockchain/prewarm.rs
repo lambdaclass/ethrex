@@ -10,7 +10,7 @@
 //! it is cancelled the moment the next block arrives and never runs past the
 //! next slot boundary.
 
-use ethrex_common::types::{Block, MempoolTransaction, Transaction};
+use ethrex_common::types::{MempoolTransaction, Transaction};
 use ethrex_common::{Address, H256, U256};
 use ethrex_crypto::NativeCrypto;
 use rustc_hash::FxHashMap;
@@ -70,42 +70,6 @@ pub fn drop_already_warmed(
     txs_by_sender
 }
 
-/// How much of an arrived block the last warming pass covered. `warmed` maps
-/// warmed tx hash -> gas limit.
-#[derive(Debug)]
-pub struct OverlapStats {
-    pub matched_txs: usize,
-    pub block_txs: usize,
-    pub matched_gas: u64,
-    pub block_gas: u64,
-}
-
-pub fn compute_overlap(warmed: &FxHashMap<H256, u64>, block: &Block) -> OverlapStats {
-    compute_matches(&|hash| warmed.contains_key(hash), block)
-}
-
-/// Walks the block's transactions counting those matching `is_match` (by tx
-/// hash), by count and by gas limit. Shared core of the overlap metric
-/// (matched = selected by the last warming pass) and the seen metric
-/// (matched = currently in the mempool at arrival time).
-pub fn compute_matches(is_match: &dyn Fn(&H256) -> bool, block: &Block) -> OverlapStats {
-    let mut stats = OverlapStats {
-        matched_txs: 0,
-        block_txs: block.body.transactions.len(),
-        matched_gas: 0,
-        block_gas: 0,
-    };
-    for tx in &block.body.transactions {
-        let gas = tx.gas_limit();
-        stats.block_gas = stats.block_gas.saturating_add(gas);
-        if is_match(&tx.hash(&NativeCrypto)) {
-            stats.matched_txs += 1;
-            stats.matched_gas = stats.matched_gas.saturating_add(gas);
-        }
-    }
-    stats
-}
-
 #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
 use crate::MempoolPrewarmOptions;
 use crate::{Blockchain, BlockchainType};
@@ -115,65 +79,22 @@ use std::sync::{Arc, Mutex, mpsc};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tracing::{info, warn};
 
-/// Cancellation token for one warming pass. `cancel()` stamps the signal time
-/// *before* raising the flag, so a pass that observes the flag always finds
-/// the timestamp; the pass then logs the drain latency between the signal and
-/// its actual exit — the measured interference window with real execution.
-struct CancelToken {
-    flag: AtomicBool,
-    cancelled_at: Mutex<Option<Instant>>,
-}
-
-impl CancelToken {
-    fn new() -> Self {
-        CancelToken {
-            flag: AtomicBool::new(false),
-            cancelled_at: Mutex::new(None),
-        }
-    }
-
-    fn cancel(&self) {
-        if let Ok(mut at) = self.cancelled_at.lock() {
-            at.get_or_insert_with(Instant::now);
-        }
-        self.flag.store(true, Ordering::Relaxed);
-    }
-
-    // Only read by `run_pass`, which is compiled out without the rayon
-    // feature (or with eip-8025); same pattern as `PrewarmRequest`.
-    #[cfg_attr(any(not(feature = "rayon"), feature = "eip-8025"), allow(dead_code))]
-    fn is_cancelled(&self) -> bool {
-        self.flag.load(Ordering::Relaxed)
-    }
-
-    /// Time elapsed since `cancel()` was signalled, if it was.
-    #[cfg_attr(any(not(feature = "rayon"), feature = "eip-8025"), allow(dead_code))]
-    fn drain_since_cancel(&self) -> Option<Duration> {
-        self.cancelled_at
-            .lock()
-            .ok()
-            .and_then(|at| at.map(|t| t.elapsed()))
-    }
-}
-
 // Fields are only read by `run_pass`, which is compiled out when the rayon
 // feature is disabled (or eip-8025 is active); avoid a dead-code warning in
 // that configuration, where the fields are still written by `trigger`.
 #[cfg_attr(any(not(feature = "rayon"), feature = "eip-8025"), allow(dead_code))]
 struct PrewarmRequest {
     parent_header: BlockHeader,
-    cancel: Arc<CancelToken>,
+    cancel: Arc<AtomicBool>,
     deadline_unix: u64,
 }
 
 pub struct PrewarmHandle {
     sender: mpsc::Sender<PrewarmRequest>,
-    /// Cancel token of the most recently triggered pass. `trigger` replaces
+    /// Cancel flag of the most recently triggered pass. `trigger` replaces
     /// it, `cancel_current` fires it. Both are called only from the single
     /// block-executor thread, so replace/fire cannot race.
-    current_cancel: Mutex<Arc<CancelToken>>,
-    /// hash -> gas_limit of the last pass's warm set, for the overlap metric.
-    last_warmed: Arc<Mutex<Option<FxHashMap<H256, u64>>>>,
+    current_cancel: Mutex<Arc<AtomicBool>>,
     slot_duration_secs: u64,
 }
 
@@ -186,13 +107,13 @@ fn unix_now() -> u64 {
 
 impl PrewarmHandle {
     pub fn cancel_current(&self) {
-        if let Ok(token) = self.current_cancel.lock() {
-            token.cancel();
+        if let Ok(flag) = self.current_cancel.lock() {
+            flag.store(true, Ordering::Relaxed);
         }
     }
 
     pub fn trigger(&self, parent_header: BlockHeader) {
-        let cancel = Arc::new(CancelToken::new());
+        let cancel = Arc::new(AtomicBool::new(false));
         if let Ok(mut current) = self.current_cancel.lock() {
             *current = cancel.clone();
         }
@@ -203,51 +124,6 @@ impl PrewarmHandle {
             cancel,
             deadline_unix,
         });
-    }
-
-    /// Called on every newPayload arrival, before execution. Telemetry only.
-    ///
-    /// Runs before the block's txs are pruned from the mempool, so `seen`
-    /// measures point-in-time mempool membership at arrival — the upper bound
-    /// any warming pass could have covered had it snapshotted at the last
-    /// possible instant. `overlap` (vs the last pass's selected set) below
-    /// that bound is selection/timing loss; block gas above it was never in
-    /// our mempool at all (private order flow, propagation gaps).
-    pub fn log_block_arrival(&self, block: &Block, mempool: &crate::mempool::Mempool) {
-        // Propagation offset: how far into its slot the block reached us.
-        // Confirms the real margin the slot-boundary deadline leaves.
-        let offset_secs = unix_now().saturating_sub(block.header.timestamp);
-        let seen = compute_matches(&|hash| mempool.contains_tx(*hash).unwrap_or(false), block);
-        let overlap = self
-            .last_warmed
-            .lock()
-            .ok()
-            .and_then(|mut w| w.take())
-            .map(|warmed| compute_overlap(&warmed, block));
-        match overlap {
-            Some(s) => info!(
-                "prewarm arrival: block {} offset {}s, overlap {}/{} txs {}/{} gas, seen {}/{} txs {}/{} gas",
-                block.header.number,
-                offset_secs,
-                s.matched_txs,
-                s.block_txs,
-                s.matched_gas,
-                s.block_gas,
-                seen.matched_txs,
-                seen.block_txs,
-                seen.matched_gas,
-                seen.block_gas
-            ),
-            None => info!(
-                "prewarm arrival: block {} offset {}s, no warm set, seen {}/{} txs {}/{} gas",
-                block.header.number,
-                offset_secs,
-                seen.matched_txs,
-                seen.block_txs,
-                seen.matched_gas,
-                seen.block_gas
-            ),
-        }
     }
 }
 
@@ -286,8 +162,6 @@ impl MempoolPrewarmer {
                 .build()
                 .ok()?;
             let (sender, receiver) = mpsc::channel::<PrewarmRequest>();
-            let last_warmed: Arc<Mutex<Option<FxHashMap<H256, u64>>>> = Arc::new(Mutex::new(None));
-            let last_warmed_worker = last_warmed.clone();
             let slot_duration_secs = opts.slot_duration_secs;
             std::thread::Builder::new()
                 .name("mempool_prewarmer".to_string())
@@ -297,14 +171,13 @@ impl MempoolPrewarmer {
                         while let Ok(next) = receiver.try_recv() {
                             req = next;
                         }
-                        run_pass(&blockchain, &pool, req, &last_warmed_worker, &opts);
+                        run_pass(&blockchain, &pool, req, &opts);
                     }
                 })
                 .ok()?;
             Some(PrewarmHandle {
                 sender,
-                current_cancel: Mutex::new(Arc::new(CancelToken::new())),
-                last_warmed,
+                current_cancel: Mutex::new(Arc::new(AtomicBool::new(false))),
                 slot_duration_secs,
             })
         }
@@ -316,7 +189,6 @@ fn run_pass(
     blockchain: &Blockchain,
     pool: &rayon::ThreadPool,
     req: PrewarmRequest,
-    last_warmed: &Mutex<Option<FxHashMap<H256, u64>>>,
     opts: &MempoolPrewarmOptions,
 ) {
     use crate::mempool::PendingTxFilter;
@@ -326,10 +198,10 @@ fn run_pass(
     };
     use ethrex_levm::vm::VMType;
     use ethrex_vm::backends::CachingDatabase;
-    use ethrex_vm::backends::levm::{LEVM, WarmProgress};
+    use ethrex_vm::backends::levm::LEVM;
     use tracing::debug;
 
-    if req.cancel.is_cancelled() || unix_now() >= req.deadline_unix {
+    if req.cancel.load(Ordering::Relaxed) || unix_now() >= req.deadline_unix {
         debug!(
             "prewarm pass for child of block {} skipped: stale at start",
             req.parent_header.number
@@ -400,9 +272,8 @@ fn run_pass(
 
     let cancel = req.cancel.clone();
     let deadline = req.deadline_unix;
-    let should_stop = move || cancel.is_cancelled() || unix_now() >= deadline;
+    let should_stop = move || cancel.load(Ordering::Relaxed) || unix_now() >= deadline;
 
-    let progress = WarmProgress::default();
     let mut warmed_union: FxHashMap<H256, u64> = FxHashMap::default();
     let mut passes: u32 = 0;
     let mut any_err = false;
@@ -436,11 +307,6 @@ fn run_pass(
                 for (tx, _) in &warm_set {
                     warmed_union.insert(tx.hash(&NativeCrypto), tx.gas_limit());
                 }
-                // Publish the union after every delta so the arrival metric
-                // always sees the full set warmed this slot.
-                if let Ok(mut w) = last_warmed.lock() {
-                    *w = Some(warmed_union.clone());
-                }
                 // `warm_txs` takes borrowed transactions; bridge the owned set.
                 let view: Vec<(&Transaction, Address)> =
                     warm_set.iter().map(|(tx, s)| (tx, *s)).collect();
@@ -452,7 +318,6 @@ fn run_pass(
                         VMType::L1,
                         &NativeCrypto,
                         &should_stop,
-                        Some(&progress),
                     )
                 });
                 any_err |= result.is_err();
@@ -469,10 +334,7 @@ fn run_pass(
         return;
     }
 
-    // Drain = cancel signal -> pass exit; sample immediately after the loop
-    // exits so the number measures the pass, not the logging below.
-    let drain_after_cancel = req.cancel.drain_since_cancel();
-    let stop_reason = if req.cancel.is_cancelled() {
+    let stop_reason = if req.cancel.load(Ordering::Relaxed) {
         "cancelled"
     } else if unix_now() >= deadline {
         "deadline"
@@ -480,24 +342,15 @@ fn run_pass(
         // The refresh loop only exits early on a snapshot error (warned above).
         "aborted"
     };
-    // Only meaningful when arrival-cancel actually stopped the pass: it is
-    // the window in which prewarm workers overlapped real execution.
-    let drain = match (stop_reason, drain_after_cancel) {
-        ("cancelled", Some(d)) => format!(", drain={d:?}"),
-        _ => String::new(),
-    };
     let total_gas: u64 = warmed_union.values().sum();
     info!(
-        "prewarm pass for block {}: warmed {}/{} txs {}/{} gas, passes={}, {:?}, stop={}{}, err={}",
+        "prewarm pass for block {}: {} txs, {} gas, passes={}, {:?}, stop={}, err={}",
         header.number,
-        progress.txs.load(Ordering::Relaxed),
         warmed_union.len(),
-        progress.gas.load(Ordering::Relaxed),
         total_gas,
         passes,
         start.elapsed(),
         stop_reason,
-        drain,
         any_err,
     );
 }
@@ -586,52 +439,5 @@ mod tests {
         // Budget 40k: tx0 (30k) is under, tx1 crosses to 60k and is included, tx2 is not.
         let set = select_warm_set(map, Some(1), 40_000);
         assert_eq!(set.len(), 2);
-    }
-
-    #[test]
-    fn matches_counts_by_arbitrary_predicate() {
-        use ethrex_common::types::{Block, BlockBody, BlockHeader};
-        use ethrex_crypto::NativeCrypto;
-        let (_, m0) = make_tx(0xaa, 0, 100, 50, 21_000);
-        let (_, m1) = make_tx(0xbb, 0, 100, 50, 30_000);
-        let tx0 = m0.transaction().clone();
-        let tx1 = m1.transaction().clone();
-        let only = tx1.hash(&NativeCrypto);
-        let block = Block::new(
-            BlockHeader::default(),
-            BlockBody {
-                transactions: vec![tx0, tx1],
-                ommers: vec![],
-                withdrawals: None,
-            },
-        );
-        let s = compute_matches(&|h| *h == only, &block);
-        assert_eq!(s.matched_txs, 1);
-        assert_eq!(s.block_txs, 2);
-        assert_eq!(s.matched_gas, 30_000);
-        assert_eq!(s.block_gas, 51_000);
-    }
-
-    #[test]
-    fn overlap_counts_matched_txs_and_gas() {
-        use ethrex_common::types::{Block, BlockBody, BlockHeader};
-        use ethrex_crypto::NativeCrypto;
-        let (_, mtx) = make_tx(0xaa, 0, 100, 50, 21_000);
-        let tx = mtx.transaction().clone();
-        let mut warmed = FxHashMap::default();
-        warmed.insert(tx.hash(&NativeCrypto), tx.gas_limit());
-        let block = Block::new(
-            BlockHeader::default(),
-            BlockBody {
-                transactions: vec![tx],
-                ommers: vec![],
-                withdrawals: None,
-            },
-        );
-        let s = compute_overlap(&warmed, &block);
-        assert_eq!(s.matched_txs, 1);
-        assert_eq!(s.block_txs, 1);
-        assert_eq!(s.matched_gas, 21_000);
-        assert_eq!(s.block_gas, 21_000);
     }
 }
