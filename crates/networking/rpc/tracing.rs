@@ -486,6 +486,24 @@ impl RpcHandler for TraceCallRequest {
         }
         let reexec = self.trace_config.base.reexec.unwrap_or(DEFAULT_REEXEC);
         let timeout = self.trace_config.base.timeout.unwrap_or(DEFAULT_TIMEOUT);
+
+        // Fill the nonce from account state when the caller omits it, matching geth's
+        // `ToMessage` (`args.Nonce = db.GetNonce(from)`) and `eth_estimateGas`. Without this
+        // the VM's nonce check compares the account's real nonce against a default of 0 and
+        // rejects the call.
+        let transaction = match self.transaction.nonce {
+            Some(_) => self.transaction.clone(),
+            None => {
+                let nonce = context
+                    .storage
+                    .get_nonce_by_account_address(block_number, self.transaction.from)
+                    .await?;
+                let mut transaction = self.transaction.clone();
+                transaction.nonce = nonce;
+                transaction
+            }
+        };
+
         match self.trace_config.base.tracer {
             TracerType::CallTracer => {
                 // Parse tracer config now that we know the type
@@ -499,7 +517,7 @@ impl RpcHandler for TraceCallRequest {
                     .trace_call_calls(
                         block,
                         tx_index,
-                        self.transaction.clone(),
+                        transaction.clone(),
                         reexec,
                         timeout,
                         config.only_top_call,
@@ -527,7 +545,7 @@ impl RpcHandler for TraceCallRequest {
                     .trace_call_prestate(
                         block,
                         tx_index,
-                        self.transaction.clone(),
+                        transaction.clone(),
                         reexec,
                         timeout,
                         config.diff_mode,
@@ -556,14 +574,7 @@ impl RpcHandler for TraceCallRequest {
                 };
                 let result = context
                     .blockchain
-                    .trace_call_opcodes(
-                        block,
-                        tx_index,
-                        self.transaction.clone(),
-                        reexec,
-                        timeout,
-                        cfg,
-                    )
+                    .trace_call_opcodes(block, tx_index, transaction.clone(), reexec, timeout, cfg)
                     .await
                     .map_err(|err| RpcErr::Internal(err.to_string()))?;
                 // `debug_traceCall` returns the geth-RPC structLogger shape.
