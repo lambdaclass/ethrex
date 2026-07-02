@@ -246,10 +246,13 @@ pub struct BlockchainOptions {
     /// warmer thread and the executor. Set to false (via `--no-precompile-cache`) to
     /// disable the cache for benchmarking purposes.
     pub precompile_cache_enabled: bool,
-    /// Maximum number of pending transactions a single sender may hold in
-    /// the mempool. A replacement at an existing `(sender, nonce)` bypasses
-    /// this check.
-    pub max_pending_txs_per_account: usize,
+    /// Maximum number of *queued* (future/nonce-gapped) transactions a single
+    /// sender may hold in the mempool. Executable (contiguous-nonce) txs are NOT
+    /// capped — mirroring geth's `AccountQueue` (a hard cap on the future/queued
+    /// subpool only), so legitimate high-throughput single senders and the
+    /// devp2p `LargeTxRequest` conformance case are unaffected. Only nonce-gapped
+    /// parking spam is bounded.
+    pub max_queued_txs_per_account: usize,
     /// If true (default), Amsterdam+ validation runs transactions in parallel
     /// using the header BAL to seed per-tx databases. Set to false (via
     /// `--no-bal-parallel-exec`) to fall back to sequential execution.
@@ -274,7 +277,7 @@ impl Default for BlockchainOptions {
             max_blobs_per_block: None,
             precompute_witnesses: false,
             precompile_cache_enabled: true,
-            max_pending_txs_per_account: DEFAULT_MAX_PENDING_TXS_PER_ACCOUNT,
+            max_queued_txs_per_account: DEFAULT_MAX_QUEUED_TXS_PER_ACCOUNT,
             bal_parallel_exec_enabled: true,
             bal_prefetch_enabled: true,
             bal_parallel_trie_enabled: true,
@@ -282,8 +285,10 @@ impl Default for BlockchainOptions {
     }
 }
 
-/// Default per-account pending-tx cap.
-pub const DEFAULT_MAX_PENDING_TXS_PER_ACCOUNT: usize = 16;
+/// Default per-account *queued* (future-nonce) tx cap. Matches geth's
+/// `AccountQueue` default (64) — a hard cap on the future/queued subpool only;
+/// executable txs are uncapped.
+pub const DEFAULT_MAX_QUEUED_TXS_PER_ACCOUNT: usize = 64;
 
 #[derive(Debug, Clone)]
 pub struct BatchBlockProcessingFailure {
@@ -2836,12 +2841,8 @@ impl Blockchain {
         // Add blobs bundle before the transaction so that when add_transaction
         // notifies payload builders the blob data is already available.
         self.mempool.add_blobs_bundle(hash, blobs_bundle)?;
-        self.mempool.add_transaction(
-            hash,
-            sender,
-            MempoolTransaction::new(transaction, sender),
-            self.options.max_pending_txs_per_account,
-        )?;
+        self.mempool
+            .add_transaction(hash, sender, MempoolTransaction::new(transaction, sender))?;
         Ok(hash)
     }
 
@@ -2877,12 +2878,8 @@ impl Blockchain {
         }
 
         // Add transaction to storage
-        self.mempool.add_transaction(
-            hash,
-            sender,
-            MempoolTransaction::new(transaction, sender),
-            self.options.max_pending_txs_per_account,
-        )?;
+        self.mempool
+            .add_transaction(hash, sender, MempoolTransaction::new(transaction, sender))?;
 
         Ok(hash)
     }
@@ -3064,6 +3061,25 @@ impl Blockchain {
         if let Some(sender_acc_info) = maybe_sender_acc_info {
             if nonce < sender_acc_info.nonce || nonce == u64::MAX {
                 return Err(MempoolError::NonceTooLow);
+            }
+
+            // Per-account queued (future/nonce-gapped) cap, geth `AccountQueue`
+            // style: only *future* txs (a nonce gap relative to the sender's
+            // on-chain nonce + its contiguous pooled run) count against the cap.
+            // Executable/contiguous txs are never capped, so a legitimate
+            // high-throughput single sender (and the devp2p `LargeTxRequest`
+            // conformance case) is unaffected; only nonce-gap parking spam is
+            // bounded. Replacements (same `(sender, nonce)`) are handled below.
+            if let Some(queued) =
+                self.mempool
+                    .queued_count_if_future(sender, sender_acc_info.nonce, nonce)?
+                && queued >= self.options.max_queued_txs_per_account
+            {
+                return Err(MempoolError::MaxQueuedTxsPerAccountExceeded {
+                    sender,
+                    count: queued,
+                    limit: self.options.max_queued_txs_per_account,
+                });
             }
 
             // EIP-3607: reject txs from senders with deployed code, unless

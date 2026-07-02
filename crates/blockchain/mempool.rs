@@ -143,12 +143,37 @@ impl MempoolInner {
         self.blobs_bundle_pool.len()
     }
 
-    /// Number of pending transactions held for `sender`. Lock-free: the caller
-    /// must already hold the appropriate guard. Shared by the public
-    /// `Mempool::count_for_sender` and the in-lock per-sender cap check.
-    fn count_for_sender(&self, sender: Address) -> usize {
+    /// The first nonce for `sender` that is NOT contiguously present starting
+    /// from the on-chain `account_nonce` — i.e. the end of the executable run.
+    /// A tx whose nonce equals this value is executable (it extends the run); a
+    /// tx with a higher nonce is "future"/queued (there is a nonce gap below it).
+    /// Lock-free: caller must hold the guard.
+    fn next_executable_nonce(&self, sender: Address, account_nonce: u64) -> u64 {
+        let mut expected = account_nonce;
+        for (&(s, nonce), _) in self
+            .txs_by_sender_nonce
+            .range((sender, account_nonce)..=(sender, u64::MAX))
+        {
+            if s != sender || nonce != expected {
+                break;
+            }
+            expected += 1;
+        }
+        expected
+    }
+
+    /// True if a tx at `tx_nonce` from `sender` would be a future/queued tx
+    /// (nonce-gapped) rather than executable, given the on-chain `account_nonce`.
+    fn is_future(&self, sender: Address, account_nonce: u64, tx_nonce: u64) -> bool {
+        tx_nonce > self.next_executable_nonce(sender, account_nonce)
+    }
+
+    /// Count of `sender`'s pooled txs that are future/queued (beyond the
+    /// contiguous executable run from `account_nonce`).
+    fn queued_count_for_sender(&self, sender: Address, account_nonce: u64) -> usize {
+        let gap = self.next_executable_nonce(sender, account_nonce);
         self.txs_by_sender_nonce
-            .range((sender, 0)..=(sender, u64::MAX))
+            .range((sender, gap)..=(sender, u64::MAX))
             .count()
     }
 
@@ -293,29 +318,18 @@ impl Mempool {
 
     /// Add transaction to the pool without doing validity checks.
     ///
-    /// Enforces the per-sender pending-tx cap atomically: the count is
-    /// re-checked under the same write lock that performs the insertion.
-    /// Replacement candidates (same `(sender, nonce)`) must have already
-    /// been removed via `remove_transaction` so this counter reflects the
-    /// post-replacement state. Returns
-    /// [`MempoolError::MaxPendingTxsPerAccountExceeded`] if the cap would
-    /// be exceeded.
+    /// The per-account **queued** (future/nonce-gapped) cap is enforced upstream
+    /// in `Blockchain::validate_transaction`, which has the sender's on-chain
+    /// nonce needed to tell executable txs from future ones. Executable
+    /// (contiguous-nonce) txs are never capped here, so a single sender can hold
+    /// arbitrarily many executable txs (bounded only by the global mempool size).
     pub fn add_transaction(
         &self,
         hash: H256,
         sender: Address,
         transaction: MempoolTransaction,
-        max_pending_txs_per_account: usize,
     ) -> Result<(), MempoolError> {
         let mut inner = self.write()?;
-        let count = inner.count_for_sender(sender);
-        if count >= max_pending_txs_per_account {
-            return Err(MempoolError::MaxPendingTxsPerAccountExceeded {
-                sender,
-                count,
-                limit: max_pending_txs_per_account,
-            });
-        }
         let is_blob = matches!(transaction.tx_type(), TxType::EIP4844);
         // Prune the regular order queue if it has grown too much
         if inner.txs_order.len() > inner.mempool_prune_threshold {
@@ -738,10 +752,21 @@ impl Mempool {
         Ok(contains)
     }
 
-    /// Returns the number of pending transactions currently held in the
-    /// mempool for `sender`. Used by the per-sender slot cap at admission.
-    pub fn count_for_sender(&self, sender: Address) -> Result<usize, MempoolError> {
-        Ok(self.read()?.count_for_sender(sender))
+    /// For the per-account **queued** (future-nonce) cap: if a tx at `tx_nonce`
+    /// from `sender` would be a future/queued tx given the on-chain
+    /// `account_nonce`, returns `Some(current_queued_count)` for the caller to
+    /// compare against the cap. Returns `None` for executable (contiguous-nonce)
+    /// txs, which are never capped. Single read-lock.
+    pub fn queued_count_if_future(
+        &self,
+        sender: Address,
+        account_nonce: u64,
+        tx_nonce: u64,
+    ) -> Result<Option<usize>, MempoolError> {
+        let inner = self.read()?;
+        Ok(inner
+            .is_future(sender, account_nonce, tx_nonce)
+            .then(|| inner.queued_count_for_sender(sender, account_nonce)))
     }
 
     pub fn find_tx_to_replace(
@@ -861,107 +886,89 @@ mod tests {
         let tx = build_tx(nonce);
         let mtx = MempoolTransaction::new(tx, sender);
         let hash = mtx.hash(&NativeCrypto);
-        pool.add_transaction(hash, sender, mtx, usize::MAX).unwrap();
+        pool.add_transaction(hash, sender, mtx).unwrap();
         hash
     }
 
-    #[test]
-    fn count_for_sender_empty_pool() {
-        let pool = Mempool::new(64);
-        let sender = Address::from_low_u64_be(1);
-        assert_eq!(pool.count_for_sender(sender).unwrap(), 0);
-    }
+    // The per-account cap is on the QUEUED (future/nonce-gapped) subpool only,
+    // computed relative to the sender's on-chain nonce; executable (contiguous)
+    // txs are never capped. `queued_count_if_future` is the check the admission
+    // path (`validate_transaction`) uses: it returns `Some(queued_count)` for a
+    // future tx and `None` for an executable one.
 
     #[test]
-    fn count_for_sender_one_tx() {
+    fn contiguous_txs_are_executable_not_future() {
+        // Sender at on-chain nonce 0 with contiguous 0,1,2 pooled: the next
+        // contiguous nonce (3) — and any already-covered nonce — is executable.
         let pool = Mempool::new(64);
         let sender = Address::from_low_u64_be(1);
-        add_tx(&pool, sender, 0);
-        assert_eq!(pool.count_for_sender(sender).unwrap(), 1);
-    }
-
-    #[test]
-    fn count_for_sender_many_nonces() {
-        let pool = Mempool::new(64);
-        let sender = Address::from_low_u64_be(1);
-        for nonce in 0..5 {
+        for nonce in 0..3 {
             add_tx(&pool, sender, nonce);
         }
-        assert_eq!(pool.count_for_sender(sender).unwrap(), 5);
+        assert_eq!(pool.queued_count_if_future(sender, 0, 3).unwrap(), None);
+        assert_eq!(pool.queued_count_if_future(sender, 0, 2).unwrap(), None);
     }
 
     #[test]
-    fn count_for_sender_isolates_senders() {
+    fn executable_flood_is_never_capped() {
+        // A large contiguous run from the on-chain nonce (the `LargeTxRequest`
+        // shape) stays executable regardless of count → never future/capped.
+        let pool = Mempool::new(10_000);
+        let sender = Address::from_low_u64_be(1);
+        for nonce in 0..2000 {
+            add_tx(&pool, sender, nonce);
+        }
+        // Any nonce up to the contiguous end (2000) is executable.
+        assert_eq!(pool.queued_count_if_future(sender, 0, 1999).unwrap(), None);
+        assert_eq!(pool.queued_count_if_future(sender, 0, 2000).unwrap(), None);
+    }
+
+    #[test]
+    fn gapped_tx_is_future_and_counts_only_queued() {
+        // Pool {0,1,2} then a gapped 5. Executable run ends at 3, so only nonce
+        // 5 is queued. A new future tx (nonce 6) reports queued_count == 1.
+        let pool = Mempool::new(64);
+        let sender = Address::from_low_u64_be(1);
+        for nonce in 0..3 {
+            add_tx(&pool, sender, nonce);
+        }
+        add_tx(&pool, sender, 5);
+        assert_eq!(pool.queued_count_if_future(sender, 0, 6).unwrap(), Some(1));
+    }
+
+    #[test]
+    fn queued_count_grows_with_more_future_txs() {
+        let pool = Mempool::new(64);
+        let sender = Address::from_low_u64_be(1);
+        // On-chain nonce 0, no tx at nonce 0 → everything from 5 up is future.
+        for nonce in [5u64, 6, 7] {
+            add_tx(&pool, sender, nonce);
+        }
+        // The next future tx sees the 3 already-queued.
+        assert_eq!(pool.queued_count_if_future(sender, 0, 8).unwrap(), Some(3));
+    }
+
+    #[test]
+    fn future_count_is_relative_to_on_chain_nonce() {
+        // Pooled nonces below the on-chain nonce are stale (not queued): with
+        // on-chain nonce 3 and pool {0,1,2}, a fresh future tx sees 0 queued.
+        let pool = Mempool::new(64);
+        let sender = Address::from_low_u64_be(1);
+        for nonce in 0..3 {
+            add_tx(&pool, sender, nonce);
+        }
+        assert_eq!(pool.queued_count_if_future(sender, 3, 9).unwrap(), Some(0));
+    }
+
+    #[test]
+    fn queued_cap_isolates_senders() {
         let pool = Mempool::new(64);
         let a = Address::from_low_u64_be(1);
         let b = Address::from_low_u64_be(2);
-        add_tx(&pool, a, 0);
-        add_tx(&pool, a, 1);
-        add_tx(&pool, b, 0);
-        assert_eq!(pool.count_for_sender(a).unwrap(), 2);
-        assert_eq!(pool.count_for_sender(b).unwrap(), 1);
-    }
-
-    #[test]
-    fn count_for_sender_unknown_returns_zero() {
-        let pool = Mempool::new(64);
-        let a = Address::from_low_u64_be(1);
-        let b = Address::from_low_u64_be(2);
-        add_tx(&pool, a, 0);
-        assert_eq!(pool.count_for_sender(b).unwrap(), 0);
-    }
-
-    /// Adds a tx for `sender` at `nonce` with an explicit per-account cap.
-    fn add_tx_capped(
-        pool: &Mempool,
-        sender: Address,
-        nonce: u64,
-        cap: usize,
-    ) -> Result<H256, MempoolError> {
-        let mtx = MempoolTransaction::new(build_tx(nonce), sender);
-        let hash = mtx.hash(&NativeCrypto);
-        pool.add_transaction(hash, sender, mtx, cap).map(|()| hash)
-    }
-
-    #[test]
-    fn add_transaction_rejects_at_per_sender_cap() {
-        let pool = Mempool::new(64);
-        let sender = Address::from_low_u64_be(1);
-        let cap = 3;
-        // Fill exactly to the cap (nonces 0..3); all must succeed.
-        for nonce in 0..cap as u64 {
-            add_tx_capped(&pool, sender, nonce, cap).expect("under cap");
-        }
-        // The next distinct nonce exceeds the cap and must be rejected.
-        let err = add_tx_capped(&pool, sender, cap as u64, cap).unwrap_err();
-        assert!(
-            matches!(
-                err,
-                MempoolError::MaxPendingTxsPerAccountExceeded { count, limit, .. }
-                    if count == cap && limit == cap
-            ),
-            "expected MaxPendingTxsPerAccountExceeded(count=cap, limit=cap), got {err:?}"
-        );
-        assert_eq!(pool.count_for_sender(sender).unwrap(), cap);
-    }
-
-    #[test]
-    fn add_transaction_cap_frees_a_slot_after_removal() {
-        // Mirrors the replacement path: the caller removes the existing tx
-        // before re-adding, so a sender at the cap can still admit once a slot
-        // is freed (the bypass the cap check relies on).
-        let pool = Mempool::new(64);
-        let sender = Address::from_low_u64_be(1);
-        let cap = 3;
-        let mut hashes = Vec::new();
-        for nonce in 0..cap as u64 {
-            hashes.push(add_tx_capped(&pool, sender, nonce, cap).expect("under cap"));
-        }
-        // At the cap: a fresh nonce is rejected.
-        assert!(add_tx_capped(&pool, sender, 99, cap).is_err());
-        // Free a slot, then the same add succeeds.
-        pool.remove_transaction(&hashes[0]).unwrap();
-        add_tx_capped(&pool, sender, 99, cap).expect("slot freed");
-        assert_eq!(pool.count_for_sender(sender).unwrap(), cap);
+        add_tx(&pool, a, 5); // future for a
+        add_tx(&pool, a, 6); // future for a
+        // b's future tx is unaffected by a's queued txs.
+        assert_eq!(pool.queued_count_if_future(b, 0, 9).unwrap(), Some(0));
+        assert_eq!(pool.queued_count_if_future(a, 0, 9).unwrap(), Some(2));
     }
 }

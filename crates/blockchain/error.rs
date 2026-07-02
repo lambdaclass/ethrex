@@ -84,9 +84,9 @@ pub enum MempoolError {
     #[error("Transaction encoded size ({actual} bytes) exceeds the {limit}-byte limit")]
     TxSizeExceeded { actual: usize, limit: usize },
     #[error(
-        "Sender {sender:#x} has {count} pending transactions (per-account cap {limit}); rejecting new transaction"
+        "Sender {sender:#x} has {count} queued (future-nonce) transactions (per-account cap {limit}); rejecting new future transaction"
     )]
-    MaxPendingTxsPerAccountExceeded {
+    MaxQueuedTxsPerAccountExceeded {
         sender: Address,
         count: usize,
         limit: usize,
