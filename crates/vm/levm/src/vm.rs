@@ -1343,6 +1343,30 @@ impl<'a> VM<'a> {
         Ok(self.current_call_frame.is_create)
     }
 
+    /// The address an ETH-transfer log for `value` moving `from` → `to` should
+    /// be emitted from, or `None` when no log applies.
+    /// Amsterdam+ emits consensus EIP-7708 logs from SYSTEM_ADDRESS; the EIP
+    /// excludes self-transfers. Pre-Amsterdam, `eth_simulateV1` traceTransfers
+    /// emits informational logs from the TRACE_TRANSFER_ADDRESS sentinel;
+    /// self-transfers are included there (the tracer reports gross movements).
+    #[inline]
+    pub fn eth_transfer_log_address(
+        &self,
+        from: Address,
+        to: Address,
+        value: U256,
+    ) -> Option<Address> {
+        if value.is_zero() {
+            None
+        } else if self.env.config.fork >= Fork::Amsterdam {
+            (from != to).then_some(ethrex_common::constants::SYSTEM_ADDRESS)
+        } else if self.env.trace_eth_transfers {
+            Some(crate::constants::TRACE_TRANSFER_ADDRESS)
+        } else {
+            None
+        }
+    }
+
     /// Executes without making changes to the cache.
     pub fn stateless_execute(&mut self) -> Result<ExecutionReport, VMError> {
         // Add backup hook to restore state after execution. `add_hook` flips

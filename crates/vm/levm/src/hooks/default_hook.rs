@@ -111,7 +111,7 @@ impl Hook for DefaultHook {
             .map_err(|_| TxValidationError::NonceIsMax)?;
 
         // check for nonce mismatch
-        if sender_info.nonce != vm.env.tx_nonce {
+        if !vm.env.disable_nonce_check && sender_info.nonce != vm.env.tx_nonce {
             return Err(TxValidationError::NonceMismatch {
                 expected: sender_info.nonce,
                 actual: vm.env.tx_nonce,
@@ -133,8 +133,10 @@ impl Hook for DefaultHook {
         }
 
         // (9) SENDER_NOT_EOA
-        let code = vm.db.get_code(sender_info.code_hash)?;
-        validate_sender(sender_address, code.code())?;
+        if !vm.env.disable_eoa_check {
+            let code = vm.db.get_code(sender_info.code_hash)?;
+            validate_sender(sender_address, code.code())?;
+        }
 
         // (10) GAS_ALLOWANCE_EXCEEDED
         validate_gas_allowance(vm)?;
@@ -790,11 +792,12 @@ pub fn transfer_value(vm: &mut VM<'_>) -> Result<(), VMError> {
 
         vm.increase_account_balance(to, value)?;
 
-        // EIP-7708: Emit transfer log for nonzero-value transactions to DIFFERENT accounts
-        // Self-transfers (origin == to) should NOT emit a log per the EIP spec
+        // EIP-7708 / traceTransfers: emit transfer log for nonzero-value transactions.
+        // Self-transfers (origin == to) do NOT emit consensus logs per the EIP spec;
+        // trace mode includes them (see `eth_transfer_log_address`).
         let from = vm.env.origin;
-        if vm.env.config.fork >= Fork::Amsterdam && !value.is_zero() && from != to {
-            let log = create_eth_transfer_log(from, to, value);
+        if let Some(log_address) = vm.eth_transfer_log_address(from, to, value) {
+            let log = create_eth_transfer_log(log_address, from, to, value);
             vm.substate.add_log(log);
         }
     }
