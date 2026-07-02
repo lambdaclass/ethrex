@@ -21,7 +21,7 @@ strum = { version = "0.27.1", features = ["derive"] }
 rustc-hash.workspace = true
 rayon.workspace = true
 
-libssz = { workspace = true, optional = true }
+libssz = { workspace = true }
 
 [features]
 default = []
@@ -29,7 +29,8 @@ c-kzg = ["ethrex-common/c-kzg", "ethrex-crypto/c-kzg"]
 ethereum_foundation_tests = []
 debug = []
 openvm = ["ethrex-common/openvm"]
-experimental-devnet = ["ethrex-common/experimental-devnet", "dep:libssz"]
+experimental-devnet = []
+eip-8025 = ["ethrex-common/eip-8025"]
 perf_opcode_timings = []
 # zkVM feature stubs — implementations have moved to ethrex-crypto's NativeCrypto/ZkVMCrypto
 sp1 = []
