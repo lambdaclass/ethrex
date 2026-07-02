@@ -818,6 +818,83 @@ mod integration_tests {
         assert_eq!(error_code(err), -38014);
     }
 
+    /// A nonce-gapped call (explicit nonce above the account nonce) under
+    /// `validation: true` — the sender is funded and the fees cover the real
+    /// base fee, so the nonce check is the one that fires.
+    fn gapped_nonce_call(validation: bool) -> Value {
+        json!([{
+            "validation": validation,
+            "blockStateCalls": [{
+                "calls": [{
+                    "from": RICH,
+                    "to": FRESH_B,
+                    "nonce": "0x5",
+                    "gas": "0x5208",
+                    "maxFeePerGas": "0x77359400",
+                }],
+            }],
+        }, "latest"])
+    }
+
+    #[tokio::test]
+    async fn validation_enforces_nonce_too_high() {
+        // Unlike lax simulators, a gapped nonce must abort the request with
+        // -38011 under validation, matching geth.
+        let err = simulate(gapped_nonce_call(true)).await.unwrap_err();
+        assert_eq!(error_code(err), -38011);
+    }
+
+    #[tokio::test]
+    async fn validation_enforces_nonce_too_low() {
+        // Account nonce raised to 0xa via override; explicit nonce 0x1 is
+        // stale -> -38010 under validation.
+        let err = simulate(json!([{
+            "validation": true,
+            "blockStateCalls": [{
+                "stateOverrides": {RICH: {"nonce": "0xa"}},
+                "calls": [{
+                    "from": RICH,
+                    "to": FRESH_B,
+                    "nonce": "0x1",
+                    "gas": "0x5208",
+                    "maxFeePerGas": "0x77359400",
+                }],
+            }],
+        }, "latest"]))
+        .await
+        .unwrap_err();
+        assert_eq!(error_code(err), -38010);
+    }
+
+    #[tokio::test]
+    async fn validation_accepts_correct_nonce() {
+        // Same call with the right nonce sanity-checks that validation mode
+        // does not over-reject.
+        let result = simulate(json!([{
+            "validation": true,
+            "blockStateCalls": [{
+                "calls": [{
+                    "from": RICH,
+                    "to": FRESH_B,
+                    "nonce": "0x0",
+                    "gas": "0x5208",
+                    "maxFeePerGas": "0x77359400",
+                }],
+            }],
+        }, "latest"]))
+        .await
+        .unwrap();
+        assert_eq!(result[0]["calls"][0]["status"], json!("0x1"));
+    }
+
+    #[tokio::test]
+    async fn gapped_nonce_passes_without_validation() {
+        // `ethSimulate-transaction-too-high-nonce.io`: without validation the
+        // explicit gapped nonce is ignored, like eth_call.
+        let result = simulate(gapped_nonce_call(false)).await.unwrap();
+        assert_eq!(result[0]["calls"][0]["status"], json!("0x1"));
+    }
+
     #[tokio::test]
     async fn trace_transfers_emits_synthetic_log() {
         // `ethSimulate-eth-send-should-produce-logs.io`.
