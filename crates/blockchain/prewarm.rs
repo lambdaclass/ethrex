@@ -271,12 +271,15 @@ fn run_pass(
     ));
 
     // Publish the cache for handoff: `execute_block_pipeline` seeds the next
-    // block's execution with it when the parent hash matches. Published at
-    // slot start so even a cut-short pass hands over whatever it warmed;
-    // entries written by an in-flight delta after cancellation are still
-    // valid parent-state reads going into the same shared instance.
+    // block's execution with it when the parent hash AND fork match (the
+    // fork guards the fork-dependent precompile-cache layer across missed
+    // slots that span a fork activation). Published at slot start so even a
+    // cut-short pass hands over whatever it warmed; entries written by an
+    // in-flight delta after cancellation are still valid parent-state reads
+    // going into the same shared instance.
+    let warmed_fork = config.fork(header.timestamp);
     if let Ok(mut p) = blockchain.prewarmed.0.lock() {
-        *p = Some((parent.hash(), caching.clone()));
+        *p = Some((parent.hash(), warmed_fork, caching.clone()));
     }
 
     let cancel = req.cancel.clone();

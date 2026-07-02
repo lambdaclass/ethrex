@@ -238,15 +238,23 @@ pub struct Blockchain {
 
 /// Newtype around the prewarmer's cache-handoff slot so `Blockchain` can keep
 /// deriving `Debug` (`dyn LevmDatabase` has no `Debug` impl).
+///
+/// Alongside the parent hash, the slot carries the fork the prewarmer warmed
+/// under: the precompile cache maps `(address, calldata) -> (output, gas)`
+/// with no fork in the key, and precompile gas/outputs change at forks
+/// (e.g. EIP-7883). A missed slot across a fork activation would otherwise
+/// hand post-fork execution pre-fork entries and reject a valid block.
 #[derive(Default)]
-pub(crate) struct PrewarmedCache(
-    pub(crate) std::sync::Mutex<Option<(H256, Arc<dyn ethrex_vm::backends::LevmDatabase>)>>,
-);
+pub(crate) struct PrewarmedCache(pub(crate) std::sync::Mutex<Option<PrewarmedEntry>>);
+
+/// Contents of the handoff slot: the parent the cache was built on, the fork
+/// it was warmed under, and the cache itself.
+pub(crate) type PrewarmedEntry = (H256, Fork, Arc<dyn ethrex_vm::backends::LevmDatabase>);
 
 impl std::fmt::Debug for PrewarmedCache {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let state = match self.0.lock() {
-            Ok(slot) => slot.as_ref().map(|(parent, _)| *parent),
+            Ok(slot) => slot.as_ref().map(|(parent, fork, _)| (*parent, *fork)),
             Err(_) => None,
         };
         f.debug_tuple("PrewarmedCache").field(&state).finish()
@@ -611,7 +619,12 @@ impl Blockchain {
         let prewarmed = (!collect_witness)
             .then(|| self.prewarmed.0.lock().ok().and_then(|mut p| p.take()))
             .flatten()
-            .and_then(|(parent_hash, db)| (parent_hash == block.header.parent_hash).then_some(db));
+            .and_then(|(parent_hash, warmed_fork, db)| {
+                // Fork equality guards the precompile-cache layer: its entries
+                // are fork-dependent but not fork-keyed (see `PrewarmedCache`).
+                let block_fork = self.storage.get_chain_config().fork(block.header.timestamp);
+                (parent_hash == block.header.parent_hash && warmed_fork == block_fork).then_some(db)
+            });
         let caching_store: Arc<dyn ethrex_vm::backends::LevmDatabase> = match prewarmed {
             Some(db) => db,
             None => Arc::new(CachingDatabase::new(
