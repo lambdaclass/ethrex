@@ -2104,11 +2104,6 @@ impl LEVM {
 
     /// Pre-warms state by executing all transactions in parallel, grouped by sender.
     ///
-    /// Transactions from the same sender are executed sequentially within their group
-    /// to ensure correct nonce and balance propagation. Different sender groups run
-    /// in parallel. This approach (inspired by Nethermind's per-sender prewarmer)
-    /// improves warmup accuracy by avoiding nonce mismatches within sender groups.
-    ///
     /// The `store` parameter should be a `CachingDatabase`-wrapped store so that
     /// parallel workers can benefit from shared caching. The same cache should
     /// be used by the sequential execution phase.
@@ -2120,8 +2115,6 @@ impl LEVM {
         crypto: &dyn Crypto,
         cancelled: &AtomicBool,
     ) -> Result<(), EvmError> {
-        let mut db = GeneralizedDatabase::new(store.clone());
-
         let txs_with_sender = block
             .body
             .get_transactions_with_sender(crypto)
@@ -2129,55 +2122,16 @@ impl LEVM {
                 EvmError::Transaction(format!("Couldn't recover addresses with error: {error}"))
             })?;
 
-        // Group transactions by sender for sequential execution within groups
-        let mut sender_groups: FxHashMap<Address, Vec<&Transaction>> = FxHashMap::default();
-        for (tx, sender) in &txs_with_sender {
-            sender_groups.entry(*sender).or_default().push(tx);
-        }
+        Self::warm_txs(
+            &txs_with_sender,
+            &block.header,
+            store.clone(),
+            vm_type,
+            crypto,
+            &|| cancelled.load(Ordering::Relaxed),
+        )?;
 
-        // Block-invariant EVM config + chain id, computed once and shared (by copy)
-        // across the parallel warming workers.
-        let chain_config = store.get_chain_config()?;
-        let evm_config = EVMConfig::new_from_chain_config(&chain_config, &block.header);
-        let chain_id = chain_config.chain_id;
-        // Block-invariant base blob fee, computed once and shared across workers.
-        let base_blob_fee_per_gas =
-            get_base_fee_per_blob_gas(block.header.excess_blob_gas, &evm_config)?;
-
-        // Parallel across sender groups, sequential within each group. The stack pool is reused
-        // across all groups a worker handles (it is `Send`).
-        sender_groups.into_par_iter().for_each_with(
-            Vec::with_capacity(STACK_LIMIT),
-            |stack_pool, (sender, txs)| {
-                if cancelled.load(Ordering::Relaxed) {
-                    return;
-                }
-                // Memory holds an `Rc` (not `Send`), so its pool can't ride the `for_each_with`
-                // init; keep it local to this group's run, where it still amortizes the buffer
-                // alloc across the group's txs.
-                let mut memory_pool = Vec::with_capacity(1);
-                // Each sender group gets its own db instance for state propagation
-                let mut group_db = GeneralizedDatabase::new(store.clone());
-                // Execute transactions sequentially within sender group
-                // This ensures nonce and balance changes from tx[N] are visible to tx[N+1]
-                for tx in txs {
-                    let _ = Self::execute_tx_in_block(
-                        tx,
-                        sender,
-                        &block.header,
-                        &mut group_db,
-                        vm_type,
-                        base_blob_fee_per_gas,
-                        stack_pool,
-                        &mut memory_pool,
-                        true,
-                        crypto,
-                        evm_config,
-                        chain_id,
-                    );
-                }
-            },
-        );
+        let mut db = GeneralizedDatabase::new(store.clone());
 
         if cancelled.load(Ordering::Relaxed) {
             return Ok(());
@@ -2197,6 +2151,75 @@ impl LEVM {
                 ))
             })?;
         }
+        Ok(())
+    }
+
+    /// Speculatively executes an arbitrary transaction set against `header`'s
+    /// parent state to warm shared caches (used by the mempool prewarmer and
+    /// `warm_block`). Sequential within a sender group, parallel across groups.
+    /// `should_stop` is polled before each group; execution results are
+    /// discarded — only cache population matters.
+    #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+    pub fn warm_txs(
+        txs_with_sender: &[(&Transaction, Address)],
+        header: &BlockHeader,
+        store: Arc<dyn Database>,
+        vm_type: VMType,
+        crypto: &dyn Crypto,
+        should_stop: &(dyn Fn() -> bool + Sync),
+    ) -> Result<(), EvmError> {
+        // Group transactions by sender for sequential execution within groups.
+        // Transactions from the same sender are executed sequentially within their group
+        // to ensure correct nonce and balance propagation. Different sender groups run
+        // in parallel. This approach (inspired by Nethermind's per-sender prewarmer)
+        // improves warmup accuracy by avoiding nonce mismatches within sender groups.
+        let mut sender_groups: FxHashMap<Address, Vec<&Transaction>> = FxHashMap::default();
+        for (tx, sender) in txs_with_sender {
+            sender_groups.entry(*sender).or_default().push(tx);
+        }
+
+        // Block-invariant EVM config + chain id, computed once and shared (by copy)
+        // across the parallel warming workers.
+        let chain_config = store.get_chain_config()?;
+        let evm_config = EVMConfig::new_from_chain_config(&chain_config, header);
+        let chain_id = chain_config.chain_id;
+        // Block-invariant base blob fee, computed once and shared across workers.
+        let base_blob_fee_per_gas = get_base_fee_per_blob_gas(header.excess_blob_gas, &evm_config)?;
+
+        // Parallel across sender groups, sequential within each group. The stack pool is reused
+        // across all groups a worker handles (it is `Send`).
+        sender_groups.into_par_iter().for_each_with(
+            Vec::with_capacity(STACK_LIMIT),
+            |stack_pool, (sender, txs)| {
+                if should_stop() {
+                    return;
+                }
+                // Memory holds an `Rc` (not `Send`), so its pool can't ride the `for_each_with`
+                // init; keep it local to this group's run, where it still amortizes the buffer
+                // alloc across the group's txs.
+                let mut memory_pool = Vec::with_capacity(1);
+                // Each sender group gets its own db instance for state propagation
+                let mut group_db = GeneralizedDatabase::new(store.clone());
+                // Execute transactions sequentially within sender group
+                // This ensures nonce and balance changes from tx[N] are visible to tx[N+1]
+                for tx in txs {
+                    let _ = Self::execute_tx_in_block(
+                        tx,
+                        sender,
+                        header,
+                        &mut group_db,
+                        vm_type,
+                        base_blob_fee_per_gas,
+                        stack_pool,
+                        &mut memory_pool,
+                        true,
+                        crypto,
+                        evm_config,
+                        chain_id,
+                    );
+                }
+            },
+        );
         Ok(())
     }
 
