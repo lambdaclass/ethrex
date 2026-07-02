@@ -22,12 +22,15 @@
 //! See issue #6947. A vendored `KeccakP1600times4` asm kernel could replace
 //! `keccakf4` later without touching the driver.
 
-#[cfg(not(feature = "std"))]
-use alloc::vec::Vec;
-
 use super::keccak_hash;
 
 // ── Scalar fallback: no SIMD win over the asm scalar backend ─────────────────
+#[cfg(all(
+    not(feature = "std"),
+    not(all(target_arch = "x86_64", target_feature = "avx2"))
+))]
+use alloc::vec::Vec;
+
 #[cfg(not(all(target_arch = "x86_64", target_feature = "avx2")))]
 pub fn keccak256_batch(inputs: &[&[u8]]) -> Vec<[u8; 32]> {
     inputs.iter().map(|i| keccak_hash(i)).collect()
