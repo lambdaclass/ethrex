@@ -34,10 +34,10 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "../searchindex-be68c4f0.js";
+            window.path_to_searchindex_js = "../searchindex-00d454a5.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="../toc-7afa3adf.js"></script>
+        <script src="../toc-586b7da3.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -198,6 +198,14 @@
 <li><code>crates/guest-program/bin/openvm/Cargo.toml</code></li>
 <li><code>crates/l2/tee/quote-gen/Cargo.toml</code></li>
 </ul>
+<p>We also need to bump the <strong>internal crate dependency version pins</strong>. ethrex’s library crates declare their workspace-internal dependencies with an explicit <code>version = "X.Y.Z"</code> (required for publishing to crates.io). These live in the root <code>Cargo.toml</code> under <code>[workspace.dependencies]</code>, plus a few crates that pin a sibling directly (<code>crates/vm/Cargo.toml</code>, <code>crates/blockchain/Cargo.toml</code>, <code>crates/l2/sdk/Cargo.toml</code>). Bump every one of them to the new version, then confirm none were missed — set <code>PREV</code> to the version you are bumping <strong>from</strong>:</p>
+<pre><code class="language-bash">PREV=X.Y.Z   # the previous release version
+grep -rn "\"$PREV\"" --include=Cargo.toml .   # must return nothing
+</code></pre>
+<blockquote class="blockquote-tag blockquote-tag-warning">
+<p class="blockquote-tag-title"><svg viewbox="0 0 16 16" width="18" height="18"><path d="M6.457 1.047c.659-1.234 2.427-1.234 3.086 0l6.082 11.378A1.75 1.75 0 0 1 14.082 15H1.918a1.75 1.75 0 0 1-1.543-2.575Zm1.763.707a.25.25 0 0 0-.44 0L1.698 13.132a.25.25 0 0 0 .22.368h12.164a.25.25 0 0 0 .22-.368Zm.53 3.996v2.5a.75.75 0 0 1-1.5 0v-2.5a.75.75 0 0 1 1.5 0ZM9 11a1 1 0 1 1-2 0 1 1 0 0 1 2 0Z"></path></svg>Warning</p>
+<p>The version bump must cover <strong>both</strong> <code>[workspace.package].version</code> and these dependency pins. If you bump only the workspace version, the release-branch PR still merges cleanly, but the merged result declares every crate at the new version while requiring the <strong>previous</strong> version of its siblings — which breaks the entire workspace build (every <code>cargo</code> job fails to resolve).</p>
+</blockquote>
 <p>After updating the version in the <code>Cargo.toml</code> files, we need to update the <code>Cargo.lock</code> files to reflect the new versions. Run <code>make update-cargo-lock</code> from the root directory to update all the <code>Cargo.lock</code> files in the repository. You should see changes in at most the following paths:</p>
 <ul>
 <li>In the root directory</li>
@@ -228,11 +236,11 @@ git push origin &lt;release_version&gt;
 <tr><th>name</th><th>L1</th><th>L2 stack</th><th>Provers</th><th>CUDA support</th></tr>
 </thead>
 <tbody>
-<tr><td>ethrex-linux-x86-64</td><td>✅</td><td>❌</td><td>-</td><td>-</td></tr>
+<tr><td>ethrex-linux-x86_64</td><td>✅</td><td>❌</td><td>-</td><td>-</td></tr>
 <tr><td>ethrex-linux-aarch64</td><td>✅</td><td>❌</td><td>-</td><td>-</td></tr>
-<tr><td>ethrex-linux-macos-aarch64</td><td>✅</td><td>❌</td><td>-</td><td>-</td></tr>
-<tr><td>ethrex-l2-linux-x86-64</td><td>✅</td><td>✅</td><td>SP1 - RISC0 - Exec</td><td>❌</td></tr>
-<tr><td>ethrex-l2-linux-x86-64-gpu</td><td>✅</td><td>✅</td><td>SP1 - RISC0 - Exec</td><td>✅</td></tr>
+<tr><td>ethrex-macos-aarch64</td><td>✅</td><td>❌</td><td>-</td><td>-</td></tr>
+<tr><td>ethrex-l2-linux-x86_64</td><td>✅</td><td>✅</td><td>SP1 - RISC0 - Exec</td><td>❌</td></tr>
+<tr><td>ethrex-l2-linux-x86_64-gpu</td><td>✅</td><td>✅</td><td>SP1 - RISC0 - Exec</td><td>✅</td></tr>
 <tr><td>ethrex-l2-linux-aarch64</td><td>✅</td><td>✅</td><td>SP1 - Exec</td><td>❌</td></tr>
 <tr><td>ethrex-l2-linux-aarch64-gpu</td><td>✅</td><td>✅</td><td>SP1 - Exec</td><td>✅</td></tr>
 <tr><td>ethrex-l2-macos-aarch64</td><td>✅</td><td>✅</td><td>Exec</td><td>❌</td></tr>
@@ -251,11 +259,40 @@ git push origin &lt;release_version&gt;
 <ul>
 <li><input disabled="" type="checkbox"> Upgrade <code>ethrex-ethdocker-mainnet</code></li>
 <li><input disabled="" type="checkbox"> Upgrade <code>ethrex-mainnet-1</code></li>
-<li><input disabled="" type="checkbox"> Upgrade <code>ethrex-minimum-mainnet</code></li>
+<li><input disabled="" type="checkbox"> Upgrade <code>ethrex-prysm</code></li>
+<li><input disabled="" type="checkbox"> Upgrade <code>ethrex-lodestar</code></li>
+<li><input disabled="" type="checkbox"> Upgrade <code>ethrex-teku</code></li>
+<li><input disabled="" type="checkbox"> Upgrade <code>ethrex-grandine</code></li>
 <li><input disabled="" type="checkbox"> Launch multisync on <code>ethrex-multisync-main</code></li>
 <li><input disabled="" type="checkbox"> Upgrade a local L2 created with the previous version and run the integration tests</li>
 <li><input disabled="" type="checkbox"> Run the L2 integration tests with a SP1 prover on the GPU server (<code>l2-gpu</code>)</li>
 </ul>
+<p>The commands for each target follow. The host roster changes between releases — fill in the ones you run and leave the placeholders for the rest. Replace <code>vX.Y.Z-rc.W</code> / <code>release/vX.Y.Z</code> with the version under test.</p>
+<h4 id="ethrex-ethdocker-mainnet"><a class="header" href="#ethrex-ethdocker-mainnet"><code>ethrex-ethdocker-mainnet</code></a></h4>
+<pre><code class="language-bash">ssh admin@ethrex-ethdocker-mainnet
+cd eth-docker/
+# In .env, set the release tag on this line:
+#   ETHREX_SRC_BUILD_TARGET=vX.Y.Z-rc.W
+nano .env
+./ethd update
+./ethd up
+</code></pre>
+<h4 id="ethrex-mainnet-1"><a class="header" href="#ethrex-mainnet-1"><code>ethrex-mainnet-1</code></a></h4>
+<!-- TODO: document the upgrade procedure for this host -->
+<h4 id="ethrex-prysm-ethrex-lodestar-ethrex-teku-ethrex-grandine"><a class="header" href="#ethrex-prysm-ethrex-lodestar-ethrex-teku-ethrex-grandine"><code>ethrex-prysm</code>, <code>ethrex-lodestar</code>, <code>ethrex-teku</code>, <code>ethrex-grandine</code></a></h4>
+<p>These are ethrex mainnet nodes paired with different consensus clients (Prysm, Lodestar, Teku, Grandine); the ethrex (EL) upgrade procedure is the same across them.</p>
+<!-- TODO: document the upgrade procedure for these hosts -->
+<h4 id="ethrex-multisync-main"><a class="header" href="#ethrex-multisync-main"><code>ethrex-multisync-main</code></a></h4>
+<pre><code class="language-bash">ssh admin@ethrex-multisync-main
+cd ethrex/tooling/sync/
+tmux kill-session -t sync 2&gt;/dev/null || true   # drop a leftover sync session from a previous RC
+tmux new-session -d -s sync "make multisync-loop-auto MULTISYNC_BRANCH=release/vX.Y.Z 2&gt;&amp;1"
+</code></pre>
+<p>Check progress later with <code>tmux attach -t sync</code> (detach with <code>Ctrl-b</code> then <code>d</code>).</p>
+<h4 id="local-l2-upgrade--integration-tests"><a class="header" href="#local-l2-upgrade--integration-tests">Local L2 upgrade + integration tests</a></h4>
+<p>See <a href="l2/upgrade-test.html">Upgrade test</a> for the full procedure.</p>
+<h4 id="l2-integration-tests-with-a-sp1-prover-l2-gpu"><a class="header" href="#l2-integration-tests-with-a-sp1-prover-l2-gpu">L2 integration tests with a SP1 prover (<code>l2-gpu</code>)</a></h4>
+<p>See <a href="l2/sp1-gpu-integration-test.html">L2 integration tests with a SP1 GPU prover</a> for the full procedure.</p>
 <h3 id="publish"><a class="header" href="#publish">Publish</a></h3>
 <p>Once the pre-release is created and you want to publish the release, go to the <a href="https://github.com/lambdaclass/ethrex/releases">release page</a> and follow the next steps:</p>
 <ol>
@@ -264,8 +301,16 @@ git push origin &lt;release_version&gt;
 <p><img src="../img/publish_release_step_1.png" alt="edit button"></p>
 </li>
 <li>
-<p>Manually create the tag <code>vX.Y.Z</code></p>
+<p>Manually create the tag <code>vX.Y.Z</code>. <strong>Set the tag’s <em>Target</em> to the release branch (<code>release/vX.Y.Z</code>), not the default <code>main</code></strong> — otherwise the tag lands on <code>main</code>’s HEAD, which is not the version-bumped commit.</p>
 <p><img src="../img/publish_release_step_2.png" alt="edit tag"></p>
+<p>The tag is created on the remote only once you click <em>Update release</em> (step 5) — so verify it <strong>after</strong> saving (an earlier <code>ls-remote</code> returns nothing for <code>vX.Y.Z</code> and falsely “matches” two empty results). The two SHAs must be identical:</p>
+<pre><code class="language-bash">git ls-remote origin refs/tags/vX.Y.Z refs/tags/vX.Y.Z-rc.W   # run after Update release; SHAs must match
+</code></pre>
+<p>If they don’t match, move the tag to the tested commit before relying on any published artifacts: <code>git tag -f vX.Y.Z &lt;rc-commit&gt; &amp;&amp; git push origin vX.Y.Z --force</code>.</p>
+<blockquote class="blockquote-tag blockquote-tag-warning">
+<p class="blockquote-tag-title"><svg viewbox="0 0 16 16" width="18" height="18"><path d="M6.457 1.047c.659-1.234 2.427-1.234 3.086 0l6.082 11.378A1.75 1.75 0 0 1 14.082 15H1.918a1.75 1.75 0 0 1-1.543-2.575Zm1.763.707a.25.25 0 0 0-.44 0L1.698 13.132a.25.25 0 0 0 .22.368h12.164a.25.25 0 0 0 .22-.368Zm.53 3.996v2.5a.75.75 0 0 1-1.5 0v-2.5a.75.75 0 0 1 1.5 0ZM9 11a1 1 0 1 1-2 0 1 1 0 0 1 2 0Z"></path></svg>Warning</p>
+<p>The crates.io publish workflow reads <code>publish.yml</code> from <code>main</code> but checks out the <strong>tag’s commit</strong>. If the tag points at the wrong commit (e.g. an unbumped <code>main</code>), the workflow republishes the <em>previous</em> version’s crates — each is “already published”, so the run goes <strong>green while publishing nothing new</strong>. The final <code>vX.Y.Z</code> tag must point at the same commit as the tested <code>vX.Y.Z-rc.W</code> (the release branch HEAD you will merge via PR).</p>
+</blockquote>
 </li>
 <li>
 <p>Update the release title</p>
@@ -325,56 +370,46 @@ git push origin &lt;release_version&gt;
 <p>The workflow is idempotent: a crate version already on crates.io is skipped, so re-running after a partial failure is safe. To validate without publishing, run it manually from the Actions tab (the <code>workflow_dispatch</code> trigger) with the dry-run input checked — it lists each crate’s package contents instead of publishing.</p>
 <h2 id="5th---update-homebrew"><a class="header" href="#5th---update-homebrew">5th - Update Homebrew</a></h2>
 <p>Disclaimer: We should automate this</p>
+<p>Set the released version once, then the commands below are copy/paste:</p>
+<pre><code class="language-bash">export V=X.Y.Z   # replace with the released version, no `v` prefix (e.g. 3.0.0)
+</code></pre>
 <ol>
-<li>Commit a change in https://github.com/lambdaclass/homebrew-tap/ bumping the ethrex version (like <a href="https://github.com/lambdaclass/homebrew-tap/commit/d78a2772ad9c5412e7f84c6210bd85c970fcd0e6">this one</a>).
+<li>
+<p>Commit a change in https://github.com/lambdaclass/homebrew-tap/ bumping the ethrex version (like <a href="https://github.com/lambdaclass/homebrew-tap/commit/d78a2772ad9c5412e7f84c6210bd85c970fcd0e6">this one</a>). It needs two SHA-256 hashes:</p>
 <ul>
 <li>
-<p>The first SHA is the hash of the <code>.tar.gz</code> from the release. You can get it by downloading the <code>Source code (tar.gz)</code> from the ethrex release and running</p>
-<pre><code class="language-bash">shasum -a 256 ethrex-v3.0.0.tar.gz
+<p><strong>Source tarball hash</strong> (the <code>url</code> field) — download the GitHub source archive and hash it:</p>
+<pre><code class="language-bash">curl -L -o "ethrex-v$V.tar.gz" "https://github.com/lambdaclass/ethrex/archive/refs/tags/v$V.tar.gz"
+shasum -a 256 "ethrex-v$V.tar.gz"
 </code></pre>
 </li>
 <li>
-<p>For the second one:</p>
-<ul>
-<li>
-<p>First download the <code>ethrex-l2-macos-aarch64</code> binary from the ethrex release</p>
-</li>
-<li>
-<p>Give exec permissions to binary</p>
-<pre><code class="language-bash">chmod +x ethrex-l2-macos-aarch64
-</code></pre>
-</li>
-<li>
-<p>Create a dir <code>ethrex/3.0.0/bin</code> (replace the version as needed)</p>
-</li>
-<li>
-<p>Move (and rename) the binary to <code>ethrex/3.0.0/bin/ethrex</code> (the last <code>ethrex</code> is the binary)</p>
-</li>
-<li>
-<p>Remove quarantine flags (in this case, <code>ethrex</code> is the root dir mentioned before):</p>
-<pre><code class="language-bash">xattr -dr com.apple.metadata:kMDItemWhereFroms ethrex
+<p><strong>Bottle hash</strong> (the <code>bottle</code> section) — build the macOS bottle from the release binary. The <code>ethrex</code> directory is the bottle root:</p>
+<pre><code class="language-bash"># download the L2 macOS binary from the ethrex release
+gh release download "v$V" -R lambdaclass/ethrex -p ethrex-l2-macos-aarch64
+chmod +x ethrex-l2-macos-aarch64
+
+# lay it out as ethrex/&lt;version&gt;/bin/ethrex (last `ethrex` is the binary)
+mkdir -p "ethrex/$V/bin"
+mv ethrex-l2-macos-aarch64 "ethrex/$V/bin/ethrex"
+
+# strip quarantine flags (root dir is ./ethrex)
+xattr -dr com.apple.metadata:kMDItemWhereFroms ethrex
 xattr -dr com.apple.quarantine ethrex
+
+# tar and hash the bottle (root dir is ./ethrex)
+tar -czf "ethrex-$V.arm64_sonoma.bottle.tar.gz" ethrex
+shasum -a 256 "ethrex-$V.arm64_sonoma.bottle.tar.gz"
 </code></pre>
-</li>
-<li>
-<p>Tar the dir with the following name (again, <code>ethrex</code> is the root dir):</p>
-<pre><code class="language-bash">tar -czf ethrex-3.0.0.arm64_sonoma.bottle.tar.gz ethrex
-</code></pre>
-</li>
-<li>
-<p>Get the checksum:</p>
-<pre><code class="language-bash">shasum -a 256 ethrex-3.0.0.arm64_sonoma.bottle.tar.gz
-</code></pre>
-</li>
-<li>
-<p>Use this as the second hash (the one in the <code>bottle</code> section)</p>
 </li>
 </ul>
 </li>
-</ul>
+<li>
+<p>Push the commit.</p>
 </li>
-<li>Push the commit</li>
-<li>Create a new release with tag <code>v3.0.0</code>. <strong>IMPORTANT</strong>: attach the <code>ethrex-3.0.0.arm64_sonoma.bottle.tar.gz</code> to the release</li>
+<li>
+<p>Create a new release with tag <code>v$V</code> in homebrew-tap. <strong>IMPORTANT</strong>: attach the <code>ethrex-$V.arm64_sonoma.bottle.tar.gz</code> to the release.</p>
+</li>
 </ol>
 <h2 id="6th---merge-the-release-branch-via-pr"><a class="header" href="#6th---merge-the-release-branch-via-pr">6th - Merge the release branch via PR</a></h2>
 <p>Once the release is verified, <strong>merge the branch via PR</strong>.</p>

@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-be68c4f0.js";
+            window.path_to_searchindex_js = "searchindex-00d454a5.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-7afa3adf.js"></script>
+        <script src="toc-586b7da3.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -9548,6 +9548,467 @@ We set the flag <code>--no-monitor</code> to disable the built-in monitoring das
 Please report any issues you encounter while running the integration tests to help us improve this section.</p>
 </blockquote>
 <div style="break-before: page; page-break-before: always;"></div><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.4/dist/katex.min.css">
+<h1 id="upgrade-test"><a class="header" href="#upgrade-test">Upgrade test</a></h1>
+<p>This is a per-release acceptance test. The goal is to verify that:</p>
+<ol>
+<li>A node running the <strong>previous release</strong> (<code>&lt;VERSION_FROM&gt;</code>) can be cleanly stopped.</li>
+<li>The L1 contracts can be upgraded following the per-release migration guide.</li>
+<li>The <strong>new release</strong> (<code>&lt;VERSION_TO&gt;</code>) sequencer and prover resume operation against the upgraded contracts without re-deploying from scratch.</li>
+</ol>
+<p>The commands below are ready to copy-paste. The only thing you need to substitute is the version tags. Every other value (private keys, addresses, ports, fee parameters) is taken from the defaults in <code>crates/l2/Makefile</code>; feel free to override them, but the values below give you a working baseline.</p>
+<h2 id="placeholders"><a class="header" href="#placeholders">Placeholders</a></h2>
+<p>Replace these once at the top of your shell session:</p>
+<pre><code class="language-bash">export VERSION_FROM=&lt;previous release tag, e.g. v11.0.0&gt;
+export VERSION_TO=&lt;new release tag, e.g. v12.0.0-rc.2&gt;
+export ARCH=linux-x86_64       # or linux-aarch64, macos-aarch64
+export WORK=$HOME/upgrade-test  # workspace
+mkdir -p "$WORK"
+</code></pre>
+<h2 id="prerequisites-23"><a class="header" href="#prerequisites-23">Prerequisites</a></h2>
+<ul>
+<li><a href="https://github.com/lambdaclass/rex"><code>rex</code></a> on <code>$PATH</code> (used to call <code>upgradeToAndCall</code> and read contract state)</li>
+<li><code>curl</code>, <code>jq</code></li>
+<li><code>git</code> (to fetch genesis / fixture files for each version)</li>
+</ul>
+<h2 id="reference-docs-read-these-once"><a class="header" href="#reference-docs-read-these-once">Reference docs (read these once)</a></h2>
+<ul>
+<li><a href="#upgrade-the-contracts">Upgrade the contracts</a> — UUPS upgrade procedure.</li>
+<li><a href="#timelock-contract">Timelock</a> — routing upgrades that hit <code>onlyOwner</code> on the OnChainProposer or <code>onlySelf</code> on the Timelock itself.</li>
+<li><a href="#upgrades">Upgrades</a> — <strong>per-release migration steps</strong>. This is the only document that changes between releases; the rest of this guide is constant.</li>
+</ul>
+<h2 id="what-is-upgradable-and-what-is-not"><a class="header" href="#what-is-upgradable-and-what-is-not">What is upgradable and what is not</a></h2>
+<h3 id="l1-contracts-uups-proxies"><a class="header" href="#l1-contracts-uups-proxies">L1 contracts (UUPS proxies)</a></h3>
+<p>L1 contracts deployed behind a UUPS proxy can be upgraded in place. Their <code>_authorizeUpgrade</code> access control determines who can call <code>upgradeToAndCall</code>:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Contract</th><th><code>_authorizeUpgrade</code></th><th>Who upgrades it</th></tr>
+</thead>
+<tbody>
+<tr><td><code>OnChainProposer</code></td><td><code>onlyOwner</code></td><td>The Timelock (must be routed through <code>schedule + execute</code> or <code>emergencyExecute</code>). Direct calls revert with <code>OwnableUnauthorizedAccount</code>.</td></tr>
+<tr><td><code>CommonBridge</code></td><td><code>onlyOwner</code></td><td>The bridge owner directly (the address passed as <code>--bridge-owner</code> at deploy time).</td></tr>
+<tr><td><code>Router</code></td><td><code>onlyOwner</code></td><td>The router owner directly.</td></tr>
+<tr><td><code>Timelock</code></td><td><code>onlySelf</code></td><td>The Timelock itself — schedule + execute by Governance, or <code>emergencyExecute</code> by the Security Council. No EOA can call <code>upgradeToAndCall</code> directly.</td></tr>
+<tr><td><code>SequencerRegistry</code> (based only)</td><td><code>onlyOwner</code></td><td>The registry owner directly.</td></tr>
+</tbody>
+</table>
+</div>
+<h3 id="l2-system-contracts-transparent-proxies-upgraded-from-l1"><a class="header" href="#l2-system-contracts-transparent-proxies-upgraded-from-l1">L2 system contracts (transparent proxies, upgraded from L1)</a></h3>
+<p>L2 system contracts (<code>CommonBridgeL2</code> at <code>0x...ffff</code>, <code>Messenger</code> at <code>0x...fffe</code>, <code>FeeTokenRegistry</code>, <code>FeeTokenPricer</code>, …) are pre-deployed in the L2 genesis as <code>TransparentUpgradeableProxy</code> with proxy admin set to <code>0x000000000000000000000000000000000000f000</code>. They <strong>are</strong> upgradable, but only from L1, by calling <code>CommonBridge.upgradeL2Contract(l2Contract, newImplementation, gasLimit, data)</code>:</p>
+<pre><code class="language-solidity">function upgradeL2Contract(address l2Contract, address newImplementation, uint256 gasLimit, bytes calldata data) public onlyOwner;
+</code></pre>
+<p>The bridge owner triggers a privileged L1→L2 transaction targeting <code>0x...f000</code>, which acts as the proxy admin and forwards <code>upgradeToAndCall</code> to the L2 proxy. The new implementation contract has to be deployed on L2 first (the <code>newImplementation</code> argument is an L2 address). See <a href="#33-point-the-proxies-at-the-new-implementations">Step 3.3 — L2 system contracts</a>.</p>
+<blockquote>
+<p><strong>Important:</strong> because the L2 chain’s state was initialized from the <code>$VERSION_FROM</code> L2 genesis, you <strong>must not</strong> restart the new sequencer with a different genesis file. The proxies at <code>0x...ffff</code>, <code>0x...fffe</code>, … are already in state; switching to the <code>$VERSION_TO</code> genesis would produce a divergent chain. The whole point of upgrading L2 system contracts on-chain is to avoid re-genesis. See <a href="#01-save-the-version_from-l2-genesis">Step 0.1</a>.</p>
+</blockquote>
+<p>Check <code>docs/l2/deployment/upgrades.md</code> for which contracts each release actually changes — many releases only touch one of them.</p>
+<hr>
+<h2 id="step-0--workspace-setup"><a class="header" href="#step-0--workspace-setup">Step 0 — Workspace setup</a></h2>
+<p>Clone the source for both versions (you need the genesis file and the key fixtures from each). Then download the binaries.</p>
+<pre><code class="language-bash">cd "$WORK"
+git clone --branch "$VERSION_FROM" --depth 1 https://github.com/lambdaclass/ethrex.git "ethrex-$VERSION_FROM"
+git clone --branch "$VERSION_TO"   --depth 1 https://github.com/lambdaclass/ethrex.git "ethrex-$VERSION_TO"
+
+# Binaries
+curl -L "https://github.com/lambdaclass/ethrex/releases/download/$VERSION_FROM/ethrex-l2-$ARCH" -o "ethrex-$VERSION_FROM/ethrex"
+curl -L "https://github.com/lambdaclass/ethrex/releases/download/$VERSION_TO/ethrex-l2-$ARCH"   -o "ethrex-$VERSION_TO/ethrex"
+chmod +x "ethrex-$VERSION_FROM/ethrex" "ethrex-$VERSION_TO/ethrex"
+
+"ethrex-$VERSION_FROM/ethrex" --version
+"ethrex-$VERSION_TO/ethrex"   --version
+</code></pre>
+<blockquote>
+<p>Use the <code>ethrex-l2-*</code> asset (the plain <code>ethrex-*</code> asset is an L1-only build and does not have the <code>l2</code> subcommand).</p>
+</blockquote>
+<h3 id="01-save-the-version_from-l2-genesis"><a class="header" href="#01-save-the-version_from-l2-genesis">0.1 Save the <code>$VERSION_FROM</code> L2 genesis</a></h3>
+<p>The L2 chain is initialized <strong>once</strong>, from the genesis file shipped by <code>$VERSION_FROM</code>. The genesis embeds the runtime code of every L2 system contract at its fixed address (<code>0x...ffff</code>, <code>0x...fffe</code>, …). Once the chain is running, that state lives in the L2 datadir.</p>
+<p>If <code>$VERSION_TO</code> changes any L2 system contract, its <code>fixtures/genesis/l2.json</code> will be different from <code>$VERSION_FROM</code>’s. <strong>You must keep using the <code>$VERSION_FROM</code> genesis when starting the <code>$VERSION_TO</code> sequencer.</strong> Pointing <code>--network</code> at the <code>$VERSION_TO</code> genesis would either fail the consistency check on startup or diverge from the existing chain. Upgrading the L2 system contracts in-flight (Step 3.3) is what reconciles the live state with the new bytecode — re-genesis is not.</p>
+<p>Save it now so a future copy-paste of the Step 4 command can’t accidentally point at the wrong file:</p>
+<pre><code class="language-bash">cp "$WORK/ethrex-$VERSION_FROM/fixtures/genesis/l2.json" "$WORK/l2-genesis-pinned.json"
+</code></pre>
+<p>The L1 genesis can stay pinned to <code>$VERSION_FROM</code> as well — the L1 process is started once at Step 1.1 and is <strong>not</strong> restarted or upgraded for the duration of this test.</p>
+<hr>
+<h2 id="step-1--run-the-version_from-stack"><a class="header" href="#step-1--run-the-version_from-stack">Step 1 — Run the <code>$VERSION_FROM</code> stack</a></h2>
+<h3 id="11-start-l1-terminal-a"><a class="header" href="#11-start-l1-terminal-a">1.1 Start L1 (Terminal A)</a></h3>
+<pre><code class="language-bash">cd "$WORK/ethrex-$VERSION_FROM"
+./ethrex \
+  --network fixtures/genesis/l1.json \
+  --http.port 8545 \
+  --http.addr 0.0.0.0 \
+  --authrpc.port 8551 \
+  --dev \
+  --datadir dev_ethrex_l1
+</code></pre>
+<h3 id="12-deploy-l1-contracts-one-shot-in-terminal-b"><a class="header" href="#12-deploy-l1-contracts-one-shot-in-terminal-b">1.2 Deploy L1 contracts (one-shot, in Terminal B)</a></h3>
+<p>This populates <code>cmd/.env</code> with the contract addresses; the sequencer reads them from there.</p>
+<pre><code class="language-bash">cd "$WORK/ethrex-$VERSION_FROM"
+COMPILE_CONTRACTS=true ./ethrex l2 deploy \
+  --eth-rpc-url http://localhost:8545 \
+  --private-key 0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924 \
+  --on-chain-proposer-owner 0x4417092b70a3e5f10dc504d0947dd256b965fc62 \
+  --bridge-owner 0x4417092b70a3e5f10dc504d0947dd256b965fc62 \
+  --bridge-owner-pk 0x941e103320615d394a55708be13e45994c7d93b932b064dbcb2b511fe3254e2e \
+  --deposit-rich \
+  --private-keys-file-path fixtures/keys/private_keys_l1.txt \
+  --genesis-l1-path fixtures/genesis/l1.json \
+  --genesis-l2-path fixtures/genesis/l2.json \
+  --env-file-path cmd/.env
+</code></pre>
+<p>After this finishes, capture the addresses we’ll need later:</p>
+<pre><code class="language-bash">set -a; source "$WORK/ethrex-$VERSION_FROM/cmd/.env"; set +a
+echo "BRIDGE   = $ETHREX_WATCHER_BRIDGE_ADDRESS"
+echo "OCP      = $ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS"
+echo "TIMELOCK = $ETHREX_TIMELOCK_ADDRESS"
+</code></pre>
+<h3 id="13-start-the-sequencer-terminal-b"><a class="header" href="#13-start-the-sequencer-terminal-b">1.3 Start the sequencer (Terminal B)</a></h3>
+<pre><code class="language-bash">cd "$WORK/ethrex-$VERSION_FROM"
+set -a; source cmd/.env; set +a
+./ethrex l2 \
+  --watcher.block-delay 0 \
+  --network fixtures/genesis/l2.json \
+  --http.port 1729 \
+  --http.addr 0.0.0.0 \
+  --datadir dev_ethrex_l2 \
+  --l1.bridge-address "$ETHREX_WATCHER_BRIDGE_ADDRESS" \
+  --l1.on-chain-proposer-address "$ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS" \
+  --l1.timelock-address "$ETHREX_TIMELOCK_ADDRESS" \
+  --eth.rpc-url http://localhost:8545 \
+  --block-producer.coinbase-address 0x0007a881CD95B1484fca47615B64803dad620C8d \
+  --block-producer.base-fee-vault-address 0x000c0d6b7c4516a5b274c51ea331a9410fe69127 \
+  --block-producer.operator-fee-vault-address 0xd5d2a85751b6F158e5b9B8cD509206A865672362 \
+  --block-producer.operator-fee-per-gas 1000000000 \
+  --committer.l1-private-key 0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924 \
+  --proof-coordinator.l1-private-key 0x39725efee3fb28614de3bacaffe4cc4bd8c436257e2c8bb887c4b5c4be45e76d \
+  --proof-coordinator.addr 127.0.0.1 \
+  --no-monitor
+</code></pre>
+<blockquote>
+<p><code>--l1.timelock-address</code> is required for non-based deployments from ethrex <strong>v9.0.0</strong> onwards (the committer targets the Timelock, not the OCP directly). Without it the sequencer exits during startup. Drop the flag only if <code>$VERSION_FROM</code> predates v9.0.0; check the per-release migration guide for the exact set of flags.</p>
+</blockquote>
+<blockquote>
+<p><code>--no-monitor</code> disables the terminal monitor UI. Keep it off for this test: the monitor renders a full-screen TUI that hides the startup logs, and it can deadlock node shutdown on an interactive terminal (see <a href="https://github.com/lambdaclass/ethrex/issues/6911">#6911</a>). With <code>--no-monitor</code> the logs stream normally and <code>Ctrl-C</code> stops the node cleanly.</p>
+</blockquote>
+<h3 id="14-start-the-prover-terminal-c"><a class="header" href="#14-start-the-prover-terminal-c">1.4 Start the prover (Terminal C)</a></h3>
+<pre><code class="language-bash">cd "$WORK/ethrex-$VERSION_FROM"
+./ethrex l2 prover \
+  --proof-coordinators tcp://127.0.0.1:3900 \
+  --backend exec
+</code></pre>
+<h3 id="15-confirm-the-stack-is-healthy"><a class="header" href="#15-confirm-the-stack-is-healthy">1.5 Confirm the stack is healthy</a></h3>
+<p>In a fourth terminal, wait until at least one batch has been committed:</p>
+<pre><code class="language-bash">rex l2 batch-number --rpc-url http://localhost:1729
+</code></pre>
+<p>Re-run until it returns a value <code>&gt;= 1</code>. Then the <code>$VERSION_FROM</code> stack is working and we’re ready to upgrade.</p>
+<hr>
+<h2 id="step-2--drain-and-stop-the-version_from-sequencer-and-prover"><a class="header" href="#step-2--drain-and-stop-the-version_from-sequencer-and-prover">Step 2 — Drain and stop the <code>$VERSION_FROM</code> sequencer and prover</a></h2>
+<p>Do <strong>not</strong> kill the sequencer first. Each committed batch is tagged with the sequencer’s git commit hash, and the OCP looks the verification key up by that hash. If you stop the prover while there are still committed-but-unverified batches, the new prover (<code>$VERSION_TO</code>) will not be able to prove them — its commit hash is different.</p>
+<p>The safe shutdown sequence is:</p>
+<ol>
+<li>Tell the committer to stop accepting new batches (admin RPC).</li>
+<li>Wait until every batch already committed has been verified (<code>lastCommittedBatch == lastVerifiedBatch</code> on the OCP).</li>
+<li>Only then kill the sequencer and the prover.</li>
+</ol>
+<p>L1 (Terminal A) stays up. L1 and L2 datadirs stay intact — the upgrade has to land on the same contracts and the same chain state.</p>
+<blockquote>
+<p>If you run the steps below from a fresh terminal, first re-export the <a href="#placeholders">placeholders</a> (<code>WORK</code>, <code>VERSION_FROM</code>, …) and source the deployer env so the address variables are set (otherwise <code>rex call</code> fails with <code>invalid value '' for '&lt;TO&gt;'</code>):</p>
+<pre><code class="language-bash">set -a; source "$WORK/ethrex-$VERSION_FROM/cmd/.env"; set +a
+</code></pre>
+</blockquote>
+<h3 id="21-stop-the-committer"><a class="header" href="#21-stop-the-committer">2.1 Stop the committer</a></h3>
+<p>The admin server listens on <code>127.0.0.1:5555</code> by default; see <a href="#admin-api">Admin API</a> for the full surface.</p>
+<pre><code class="language-bash">curl -sf -X GET http://localhost:5555/committer/stop
+</code></pre>
+<p>No new batches will be committed from this point on. Already-committed batches will still get proved and verified by the running prover.</p>
+<h3 id="22-wait-until-all-committed-batches-are-verified"><a class="header" href="#22-wait-until-all-committed-batches-are-verified">2.2 Wait until all committed batches are verified</a></h3>
+<pre><code class="language-bash">while :; do
+  COMMITTED=$(rex call "$ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS" 'lastCommittedBatch()' --rpc-url http://localhost:8545)
+  VERIFIED=$(rex call  "$ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS" 'lastVerifiedBatch()'  --rpc-url http://localhost:8545)
+  echo "committed=$COMMITTED verified=$VERIFIED"
+  [ "$COMMITTED" = "$VERIFIED" ] &amp;&amp; break
+  sleep 5
+done
+</code></pre>
+<p>When the loop exits, the prover has caught up.</p>
+<h3 id="23-kill-the-sequencer-and-the-prover"><a class="header" href="#23-kill-the-sequencer-and-the-prover">2.3 Kill the sequencer and the prover</a></h3>
+<p>In Terminal B (sequencer) and Terminal C (prover), send <code>Ctrl-C</code>. Or from another shell:</p>
+<pre><code class="language-bash">pkill -INT -f 'ethrex l2 --watcher' || true   # sequencer
+pkill -INT -f 'ethrex l2 prover'    || true   # prover
+sleep 2
+sudo ss -tlnp | grep -E ':(1729|3900|5555)\b' || echo "L2 ports clean"
+</code></pre>
+<hr>
+<h2 id="step-3--upgrade"><a class="header" href="#step-3--upgrade">Step 3 — Upgrade</a></h2>
+<h3 id="31-per-release-migration"><a class="header" href="#31-per-release-migration">3.1 Per-release migration</a></h3>
+<p>Open <a href="#upgrades"><code>docs/l2/deployment/upgrades.md</code></a> and follow the section that matches <code>$VERSION_FROM</code> → <code>$VERSION_TO</code>. That section will tell you exactly which of the following sub-steps apply.</p>
+<p>Typical contents (varies per release):</p>
+<ul>
+<li>A <strong>database migration</strong> to run against the L2 store (SQL <code>ALTER TABLE</code>, table rename, …).</li>
+<li>A list of <strong>contracts that need a new implementation</strong>.</li>
+<li><strong>Post-upgrade calls</strong> (e.g. v9 → v10 requires <code>setL2GasLimit</code> before unpausing the bridge).</li>
+</ul>
+<h3 id="32-deploy-the-new-implementations"><a class="header" href="#32-deploy-the-new-implementations">3.2 Deploy the new implementations</a></h3>
+<h4 id="sanity-check--diff-the-contract-sources"><a class="header" href="#sanity-check--diff-the-contract-sources">Sanity check — diff the contract sources</a></h4>
+<p>The migration guide can lag behind the code. Before you trust it, diff the contract sources between the two checkouts. Any file that shows up here and is <em>not</em> listed in <code>docs/l2/deployment/upgrades.md</code> for this version bump is a gap to flag (and to upgrade by hand for this test):</p>
+<pre><code class="language-bash">diff -qr \
+  "$WORK/ethrex-$VERSION_FROM/crates/l2/contracts/src" \
+  "$WORK/ethrex-$VERSION_TO/crates/l2/contracts/src"
+</code></pre>
+<p>Group what comes out:</p>
+<ul>
+<li>Changes under <code>l1/</code> (e.g. <code>OnChainProposer.sol</code>, <code>CommonBridge.sol</code>, <code>Timelock.sol</code>, <code>Router.sol</code>) → L1 UUPS upgrade (Step 3.3, first three blocks).</li>
+<li>Changes under <code>l2/</code> (e.g. <code>CommonBridgeL2.sol</code>, <code>Messenger.sol</code>, <code>FeeTokenRegistry.sol</code>, …) → L2 transparent-proxy upgrade (Step 3.3, last block).</li>
+<li>Changes under <code>interfaces/</code> only → no on-chain action needed, but the binary’s ABI changed; smoke-test the affected call paths.</li>
+<li>Changes under <code>based/</code>, <code>example/</code> → only relevant if you’re testing the based deployment or examples; ignore otherwise.</li>
+</ul>
+<p>If <code>diff</code> prints nothing, no contract upgrades are required for this release and you can skip the rest of Step 3.2 and Step 3.3.</p>
+<h4 id="build-and-deploy"><a class="header" href="#build-and-deploy">Build and deploy</a></h4>
+<p>Use the <code>$VERSION_TO</code> source tree to build and deploy the new implementation bytecode. Only deploy the contracts the migration guide (or the diff above) tells you to.</p>
+<pre><code class="language-bash">cd "$WORK/ethrex-$VERSION_TO"
+# Compile the contracts into local bytecode files (writes to target/.../solc_out/).
+COMPILE_CONTRACTS=true ./ethrex l2 deploy --help &gt;/dev/null  # touches the build script
+# The compiled bytecode is embedded in the binary; to get standalone .bytecode files use forge/solc on
+# the contract sources under crates/l2/contracts/src/l1/ — see the build script in cmd/ethrex/build_l2.rs.
+</code></pre>
+<p>For each upgradable contract listed in the migration guide:</p>
+<pre><code class="language-bash"># 1. Deploy the new implementation. Use the deployer's private key; this is just a code deployment.
+rex deploy &lt;NEW_IMPL_BYTECODE&gt; 0 0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924 \
+  --rpc-url http://localhost:8545
+# rex prints the new implementation address — note it.
+</code></pre>
+<h3 id="33-point-the-proxies-at-the-new-implementations"><a class="header" href="#33-point-the-proxies-at-the-new-implementations">3.3 Point the proxies at the new implementations</a></h3>
+<p>The call depends on the contract’s <code>_authorizeUpgrade</code>. See the table at the top.</p>
+<p><strong>CommonBridge (<code>onlyOwner</code>, direct):</strong></p>
+<pre><code class="language-bash">rex send "$ETHREX_WATCHER_BRIDGE_ADDRESS" \
+  'upgradeToAndCall(address,bytes)' &lt;NEW_BRIDGE_IMPL_ADDR&gt; 0x \
+  --private-key 0x941e103320615d394a55708be13e45994c7d93b932b064dbcb2b511fe3254e2e \
+  --rpc-url http://localhost:8545
+</code></pre>
+<p><strong>OnChainProposer (<code>onlyOwner</code> → Timelock):</strong> wrap the call in a Timelock <code>emergencyExecute</code> (fastest path; bypasses the delay). The Security Council key is the <code>--on-chain-proposer-owner</code> private key.</p>
+<pre><code class="language-bash">UPGRADE_CALLDATA=$(rex encode 'upgradeToAndCall(address,bytes)' &lt;NEW_OCP_IMPL_ADDR&gt; 0x)
+rex send "$ETHREX_TIMELOCK_ADDRESS" \
+  'emergencyExecute(address,uint256,bytes)' "$ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS" 0 "$UPGRADE_CALLDATA" \
+  --private-key &lt;SECURITY_COUNCIL_PK&gt; \
+  --rpc-url http://localhost:8545
+</code></pre>
+<p>Production paths use <code>schedule(...)</code> then <code>execute(...)</code> after <code>minDelay</code>; the <code>emergencyExecute</code> path above is appropriate for this test because we want to keep it fast.</p>
+<p><strong>Timelock itself (<code>onlySelf</code>):</strong> same pattern as OCP, but with <code>target</code> = the Timelock proxy.</p>
+<pre><code class="language-bash">UPGRADE_CALLDATA=$(rex encode 'upgradeToAndCall(address,bytes)' &lt;NEW_TIMELOCK_IMPL_ADDR&gt; 0x)
+rex send "$ETHREX_TIMELOCK_ADDRESS" \
+  'emergencyExecute(address,uint256,bytes)' "$ETHREX_TIMELOCK_ADDRESS" 0 "$UPGRADE_CALLDATA" \
+  --private-key &lt;SECURITY_COUNCIL_PK&gt; \
+  --rpc-url http://localhost:8545
+</code></pre>
+<p><strong>L2 system contracts (transparent proxies, admin = <code>0x...f000</code>):</strong> the implementation has to be deployed on <strong>L2</strong>, then the L1 <code>CommonBridge.upgradeL2Contract</code> sends a privileged tx that hits the proxy admin and forwards <code>upgradeToAndCall</code> to the proxy.</p>
+<pre><code class="language-bash"># 1. Deploy the new implementation on L2 (note: L2 RPC, L2 chain id, L2 funds).
+#    The deployer must be funded on L2 — easiest is to deposit from L1 with rex first.
+rex deploy &lt;NEW_L2_IMPL_BYTECODE&gt; 0 &lt;L2_DEPLOYER_PK&gt; --rpc-url http://localhost:1729
+# rex prints the new L2 implementation address — note it.
+
+# 2. From L1, ask the CommonBridge to upgrade the L2 proxy. Bridge owner key required.
+#    &lt;L2_CONTRACT_ADDR&gt; is the L2 proxy address (e.g. 0xffff for CommonBridgeL2, 0xfffe for Messenger).
+#    &lt;DATA&gt; is the calldata to run on the new implementation as initialization (use 0x if none).
+rex send "$ETHREX_WATCHER_BRIDGE_ADDRESS" \
+  'upgradeL2Contract(address,address,uint256,bytes)' \
+  &lt;L2_CONTRACT_ADDR&gt; &lt;NEW_L2_IMPL_ADDR&gt; 1000000 &lt;DATA&gt; \
+  --private-key 0x941e103320615d394a55708be13e45994c7d93b932b064dbcb2b511fe3254e2e \
+  --rpc-url http://localhost:8545
+</code></pre>
+<p>Wait until the privileged tx is consumed on L2 (look for a normal block production cycle to pass). To confirm the upgrade landed, read the ERC-1967 implementation slot of the L2 proxy:</p>
+<pre><code class="language-bash">curl -s http://localhost:1729 -H 'Content-Type: application/json' -d '{
+  "jsonrpc":"2.0","id":1,"method":"eth_getStorageAt",
+  "params":["&lt;L2_CONTRACT_ADDR&gt;","0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc","latest"]
+}' | jq -r .result
+</code></pre>
+<p>The lower 20 bytes must equal <code>&lt;NEW_L2_IMPL_ADDR&gt;</code>.</p>
+<h3 id="34-verify-the-proxys-implementation-slot-changed"><a class="header" href="#34-verify-the-proxys-implementation-slot-changed">3.4 Verify the proxy’s implementation slot changed</a></h3>
+<p>For each proxy you upgraded:</p>
+<pre><code class="language-bash">curl -s http://localhost:8545 -H 'Content-Type: application/json' -d '{
+  "jsonrpc":"2.0","id":1,"method":"eth_getStorageAt",
+  "params":["&lt;PROXY_ADDRESS&gt;","0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc","latest"]
+}' | jq -r .result
+</code></pre>
+<p>The lower 20 bytes must equal the new implementation address.</p>
+<h3 id="35-post-upgrade-calls"><a class="header" href="#35-post-upgrade-calls">3.5 Post-upgrade calls</a></h3>
+<p>Apply any <code>setX</code> / <code>unpause</code> / <code>acceptOwnership</code> steps the migration guide lists. For example, v9 → v10:</p>
+<pre><code class="language-bash">rex send "$ETHREX_WATCHER_BRIDGE_ADDRESS" 'setL2GasLimit(uint256)' &lt;NEW_GAS_LIMIT&gt; \
+  --private-key 0x941e103320615d394a55708be13e45994c7d93b932b064dbcb2b511fe3254e2e \
+  --rpc-url http://localhost:8545
+</code></pre>
+<hr>
+<h2 id="step-4--run-the-version_to-stack"><a class="header" href="#step-4--run-the-version_to-stack">Step 4 — Run the <code>$VERSION_TO</code> stack</a></h2>
+<p>The L1, the L1 datadir, and the L2 datadir are all reused. The only thing that changes is the binary.</p>
+<h3 id="41-restart-the-sequencer-with-the-new-binary-terminal-b"><a class="header" href="#41-restart-the-sequencer-with-the-new-binary-terminal-b">4.1 Restart the sequencer with the new binary (Terminal B)</a></h3>
+<pre><code class="language-bash">cd "$WORK/ethrex-$VERSION_TO"
+# Copy the addresses produced by the v$VERSION_FROM deployer.
+cp "$WORK/ethrex-$VERSION_FROM/cmd/.env" cmd/.env
+set -a; source cmd/.env; set +a
+./ethrex l2 \
+  --watcher.block-delay 0 \
+  --network "$WORK/l2-genesis-pinned.json" \
+  --http.port 1729 \
+  --http.addr 0.0.0.0 \
+  --datadir "$WORK/ethrex-$VERSION_FROM/dev_ethrex_l2" \
+  --l1.bridge-address "$ETHREX_WATCHER_BRIDGE_ADDRESS" \
+  --l1.on-chain-proposer-address "$ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS" \
+  --l1.timelock-address "$ETHREX_TIMELOCK_ADDRESS" \
+  --eth.rpc-url http://localhost:8545 \
+  --block-producer.coinbase-address 0x0007a881CD95B1484fca47615B64803dad620C8d \
+  --block-producer.base-fee-vault-address 0x000c0d6b7c4516a5b274c51ea331a9410fe69127 \
+  --block-producer.operator-fee-vault-address 0xd5d2a85751b6F158e5b9B8cD509206A865672362 \
+  --block-producer.operator-fee-per-gas 1000000000 \
+  --committer.l1-private-key 0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924 \
+  --proof-coordinator.l1-private-key 0x39725efee3fb28614de3bacaffe4cc4bd8c436257e2c8bb887c4b5c4be45e76d \
+  --proof-coordinator.addr 127.0.0.1
+</code></pre>
+<p>Note:</p>
+<ul>
+<li><code>--network</code> points at the <strong>pinned <code>$VERSION_FROM</code> genesis</strong> (Step 0.1). Never point this at <code>$VERSION_TO</code>’s genesis file, even if the L2 system contracts changed; those changes must be applied through Step 3.3, not by re-genesis.</li>
+<li><code>--datadir</code> points back at the L2 store created under <code>$VERSION_FROM</code>.</li>
+<li><code>--l1.timelock-address</code> is required from ethrex v9.0.0 onwards (same as Step 1.3); drop it only if <code>$VERSION_FROM</code> predates v9.0.0.</li>
+</ul>
+<h3 id="42-restart-the-prover-terminal-c"><a class="header" href="#42-restart-the-prover-terminal-c">4.2 Restart the prover (Terminal C)</a></h3>
+<pre><code class="language-bash">cd "$WORK/ethrex-$VERSION_TO"
+./ethrex l2 prover --proof-coordinators tcp://127.0.0.1:3900 --backend exec
+</code></pre>
+<hr>
+<h2 id="step-5--acceptance-check-run-the-integration-tests-against-the-upgraded-l2"><a class="header" href="#step-5--acceptance-check-run-the-integration-tests-against-the-upgraded-l2">Step 5 — Acceptance check: run the integration tests against the upgraded L2</a></h2>
+<p>The simplest and strongest acceptance check is the standard L2 integration test suite (see <a href="#running-integration-tests">Integration tests</a>), pointed at the <strong>already-running</strong> <code>$VERSION_TO</code> sequencer + prover from Step 4. The suite covers deposits, withdrawals, batch commit/verify, gas pricing and several other surfaces, so a green run subsumes the per-check list we used to have here.</p>
+<p>Run it from the <code>$VERSION_TO</code> source tree so the tests match the binary you just upgraded to:</p>
+<pre><code class="language-bash">cd "$WORK/ethrex-$VERSION_TO"
+cp "$WORK/ethrex-$VERSION_FROM/cmd/.env" cmd/.env   # contract addresses from the v$VERSION_FROM deploy
+cd crates/l2
+make test
+</code></pre>
+<p><code>make test</code> calls <code>cargo test -p ethrex-test l2_integration_test --features l2 -- --nocapture</code>. It assumes the dev node and prover are already up on the default ports (<code>L2 RPC 1729</code>, <code>proof coordinator 3900</code>), which is exactly the state Step 4 leaves you in.</p>
+<p>See <a href="#i-think-my-tests-are-taking-too-long-how-can-i-debug-this">Integration tests › I think my tests are taking too long, how can I debug this?</a> for what to do if it stalls.</p>
+<p>If the suite goes green, the upgrade is successful.</p>
+<p>If it fails, capture:</p>
+<ul>
+<li>the migration step you stopped at,</li>
+<li>the proxy implementation slot read (Step 3.4),</li>
+<li>the first 100 lines of the sequencer log after the Step 4 restart,</li>
+<li>the failing test name from the <code>make test</code> output.</li>
+</ul>
+<div style="break-before: page; page-break-before: always;"></div><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.4/dist/katex.min.css">
+<h1 id="l2-integration-tests-with-a-sp1-gpu-prover"><a class="header" href="#l2-integration-tests-with-a-sp1-gpu-prover">L2 integration tests with a SP1 GPU prover</a></h1>
+<p>This validates a release’s SP1 <strong>GPU</strong> proving path end to end: bring up an L1 + L2 testnet from the <strong>release binaries</strong> with the SP1 GPU prover, then run the integration test against it. Run it on a host with an NVIDIA GPU (<code>l2-gpu</code>). It is one of the checks in the <a href="#testing-checklist">release testing checklist</a>.</p>
+<blockquote class="blockquote-tag blockquote-tag-note">
+<p class="blockquote-tag-title"><svg viewbox="0 0 16 16" width="18" height="18"><path d="M0 8a8 8 0 1 1 16 0A8 8 0 0 1 0 8Zm8-6.5a6.5 6.5 0 1 0 0 13 6.5 6.5 0 0 0 0-13ZM6.5 7.75A.75.75 0 0 1 7.25 7h1a.75.75 0 0 1 .75.75v2.75h.25a.75.75 0 0 1 0 1.5h-2a.75.75 0 0 1 0-1.5h.25v-2h-.25a.75.75 0 0 1-.75-.75ZM8 6a1 1 0 1 1 0-2 1 1 0 0 1 0 2Z"></path></svg>Note</p>
+<p>The standard <a href="#running-integration-tests">integration tests</a> run the prover in <code>exec</code> mode (no real proofs). This variant swaps in the SP1 GPU backend so the release’s proving path is actually exercised. GPU/driver setup (CUDA, <code>nvidia-container-toolkit</code>, the <code>docker</code> group) is covered in <a href="#gpu-mode">Prover § GPU mode</a> and <a href="#run-an-ethrex-l2-sp1-prover">Run an ethrex L2 SP1 prover</a>; the SP1 wrap step runs in a <code>moongate</code> Docker container, so <code>docker run --gpus all</code> must work.</p>
+</blockquote>
+<p>Host prerequisites: <code>solc</code> <strong>0.8.31 exactly</strong> (the FeeToken pragmas are pinned), <code>foundry</code> (<code>cast</code>/<code>forge</code>) on <code>PATH</code>, and the Rust toolchain from <code>rust-toolchain.toml</code>.</p>
+<ol>
+<li>
+<p><strong>Download the release artifacts</strong> (note: asset names use <code>x86_64</code>, with an underscore):</p>
+<pre><code class="language-bash">export TAG=vX.Y.Z-rc.W
+mkdir -p ~/ethrex_$TAG &amp;&amp; cd ~/ethrex_$TAG
+BASE=https://github.com/lambdaclass/ethrex/releases/download/$TAG
+curl -sSL -o ethrex                  "$BASE/ethrex-linux-x86_64"        &amp;
+curl -sSL -o ethrex-l2               "$BASE/ethrex-l2-linux-x86_64-gpu" &amp;
+curl -sSL -o ethrex-contracts.tar.gz "$BASE/ethrex-contracts.tar.gz"    &amp;
+curl -sSL -o ethrex-guests.tar.gz    "$BASE/ethrex-guests.tar.gz"       &amp;
+wait
+chmod +x ethrex ethrex-l2
+mkdir -p contracts &amp;&amp; tar xzf ethrex-contracts.tar.gz -C contracts
+</code></pre>
+<p>Genesis files and rich-account keys aren’t published as assets — get them from a source checkout at the same tag (the test in step 7 reuses this checkout):</p>
+<pre><code class="language-bash">git clone --depth 1 --branch $TAG https://github.com/lambdaclass/ethrex.git ~/ethrex_${TAG}_src
+cp ~/ethrex_${TAG}_src/fixtures/genesis/l1.json          l1.json
+cp ~/ethrex_${TAG}_src/fixtures/genesis/l2.json          l2.json
+cp ~/ethrex_${TAG}_src/fixtures/keys/private_keys_l1.txt private_keys_l1.txt
+</code></pre>
+</li>
+<li>
+<p><strong>Start L1</strong> (dev mode auto-mines):</p>
+<pre><code class="language-bash">nohup ./ethrex --network l1.json \
+  --http.addr 0.0.0.0 --http.port 8545 \
+  --authrpc.addr 0.0.0.0 --authrpc.port 8551 \
+  --dev --datadir dev_ethrex_l1 &gt; l1.log 2&gt;&amp;1 &amp;
+</code></pre>
+</li>
+<li>
+<p><strong>Deploy the L1 contracts with SP1 enabled</strong> (<code>solc</code>/<code>forge</code> must be on <code>PATH</code>):</p>
+<pre><code class="language-bash">COMPILE_CONTRACTS=true ./ethrex-l2 l2 deploy \
+  --eth-rpc-url http://localhost:8545 \
+  --private-key 0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924 \
+  --sp1 true \
+  --on-chain-proposer-owner 0x4417092b70a3e5f10dc504d0947dd256b965fc62 \
+  --bridge-owner            0x4417092b70a3e5f10dc504d0947dd256b965fc62 \
+  --bridge-owner-pk         0x941e103320615d394a55708be13e45994c7d93b932b064dbcb2b511fe3254e2e \
+  --deposit-rich \
+  --private-keys-file-path private_keys_l1.txt \
+  --genesis-l1-path l1.json --genesis-l2-path l2.json \
+  --sp1-vk-path contracts/ethrex-riscv32im-succinct-zkvm-vk-bn254 \
+  --inclusion-max-wait 86400 \
+  --env-file-path ~/ethrex_${TAG}_src/cmd/.env &gt; deploy.log 2&gt;&amp;1
+grep -E "(Timelock|OnChainProposer|CommonBridge|SP1Verifier) deployed" deploy.log
+</code></pre>
+<blockquote class="blockquote-tag blockquote-tag-warning">
+<p class="blockquote-tag-title"><svg viewbox="0 0 16 16" width="18" height="18"><path d="M6.457 1.047c.659-1.234 2.427-1.234 3.086 0l6.082 11.378A1.75 1.75 0 0 1 14.082 15H1.918a1.75 1.75 0 0 1-1.543-2.575Zm1.763.707a.25.25 0 0 0-.44 0L1.698 13.132a.25.25 0 0 0 .22.368h12.164a.25.25 0 0 0 .22-.368Zm.53 3.996v2.5a.75.75 0 0 1-1.5 0v-2.5a.75.75 0 0 1 1.5 0ZM9 11a1 1 0 1 1-2 0 1 1 0 0 1 2 0Z"></path></svg>Warning</p>
+<p><code>--sp1-vk-path</code> must point at the verification key <strong>inside <code>contracts/</code></strong> (<code>contracts/ethrex-riscv32im-succinct-zkvm-vk-bn254</code>), not the similarly named <code>guests/sp1/...</code> file from <code>ethrex-guests.tar.gz</code>. The wrong file registers a VK the binary’s embedded ELF never produces, and <code>lastVerifiedBatch</code> stays stuck at <code>0</code> while <code>lastCommittedBatch</code> climbs. <code>--inclusion-max-wait 86400</code> avoids a privileged-transaction deadlock when the test bursts ~300 transactions.</p>
+</blockquote>
+<p><code>--env-file-path</code> writes the deployed addresses to the source checkout’s <code>cmd/.env</code> (where the test in step 7 reads them) instead of the default baked-in path, which would otherwise be unwriteable and abort the deploy. The same addresses are also printed to <code>deploy.log</code> for the sequencer command in step 4.</p>
+</li>
+<li>
+<p><strong>Start the L2 sequencer</strong> (substitute the addresses from <code>deploy.log</code>):</p>
+<pre><code class="language-bash">nohup ./ethrex-l2 l2 --no-monitor \
+  --watcher.block-delay 0 --network l2.json \
+  --http.addr 0.0.0.0 --http.port 1729 --metrics --metrics.port 3702 \
+  --datadir dev_ethrex_l2 \
+  --l1.bridge-address            &lt;BRIDGE_FROM_DEPLOY&gt; \
+  --l1.on-chain-proposer-address &lt;PROPOSER_FROM_DEPLOY&gt; \
+  --l1.timelock-address          &lt;TIMELOCK_FROM_DEPLOY&gt; \
+  --eth.rpc-url http://localhost:8545 \
+  --osaka-activation-time 1761677592 \
+  --block-producer.coinbase-address           0x0007a881CD95B1484fca47615B64803dad620C8d \
+  --block-producer.base-fee-vault-address     0x000c0d6b7c4516a5b274c51ea331a9410fe69127 \
+  --block-producer.operator-fee-vault-address 0xd5d2a85751b6F158e5b9B8cD509206A865672362 \
+  --block-producer.operator-fee-per-gas 1000000000 \
+  --committer.l1-private-key         0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924 \
+  --proof-coordinator.l1-private-key 0x39725efee3fb28614de3bacaffe4cc4bd8c436257e2c8bb887c4b5c4be45e76d \
+  --proof-coordinator.addr 127.0.0.1 \
+  --log.color never &gt; l2.log 2&gt;&amp;1 &amp;
+</code></pre>
+<p><code>--no-monitor</code> is mandatory when running headless — otherwise the binary starts the monitor TUI and emits no logs.</p>
+</li>
+<li>
+<p><strong>Start the SP1 GPU prover</strong> (first run pulls the <code>moongate</code> container and loads ~15 GB into VRAM):</p>
+<pre><code class="language-bash">nohup ./ethrex-l2 l2 prover --backend sp1 \
+  --proof-coordinators tcp://127.0.0.1:3900 --log.level info &gt; prover.log 2&gt;&amp;1 &amp;
+</code></pre>
+</li>
+<li>
+<p><strong>Sanity check</strong> (after ~3 min both should be non-zero and climbing):</p>
+<pre><code class="language-bash">PROP=&lt;PROPOSER_FROM_DEPLOY&gt;
+cast call $PROP 'lastCommittedBatch()(uint256)' --rpc-url http://localhost:8545
+cast call $PROP 'lastVerifiedBatch()(uint256)'  --rpc-url http://localhost:8545
+</code></pre>
+<p>If <code>lastVerifiedBatch</code> stays at <code>0</code> while <code>lastCommittedBatch</code> climbs, you picked the wrong <code>--sp1-vk-path</code> (see the warning above).</p>
+</li>
+<li>
+<p><strong>Run the integration test</strong> against the running testnet, from the source checkout cloned in step 1.</p>
+<p>The test reads the deployed contract addresses from <code>cmd/.env</code> in the checkout (<code>ETHREX_WATCHER_BRIDGE_ADDRESS</code> and <code>ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS</code>) — already written there by the deploy’s <code>--env-file-path</code> in step 3, so no manual setup is needed:</p>
+<pre><code class="language-bash">cd ~/ethrex_${TAG}_src
+
+INTEGRATION_TEST_L1_RPC=http://localhost:8545 \
+INTEGRATION_TEST_L2_RPC=http://localhost:1729 \
+ETHREX_DEPLOYER_PRIVATE_KEYS_FILE_PATH=~/ethrex_$TAG/private_keys_l1.txt \
+INTEGRATION_TEST_PRIVATE_KEYS_FILE_PATH=~/ethrex_$TAG/private_keys_l1.txt \
+INTEGRATION_TEST_BRIDGE_OWNER_PRIVATE_KEY=0x941e103320615d394a55708be13e45994c7d93b932b064dbcb2b511fe3254e2e \
+cargo test -p ethrex-test l2::integration_tests --release --features l2 -- --nocapture --test-threads=1
+</code></pre>
+<p>Pass criterion: <code>test result: ok. 1 passed; 0 failed</code>, plus the final <code>Total L2 ETH == Bridge locked ETH on L1</code> reconciliation line. Expect a multi-hour run on the GPU backend (proving dominates the wall-clock). See <a href="#i-think-my-tests-are-taking-too-long-how-can-i-debug-this">integration tests § “taking too long”</a> if it appears to stall.</p>
+</li>
+<li>
+<p><strong>Clean up</strong> — the L1, sequencer, and prover were started with <code>nohup</code> and keep running; stop them (and the prover’s GPU container) when you’re done:</p>
+<pre><code class="language-bash">pkill -f 'ethrex-l2 l2 prover'        # prover first
+pkill -f 'ethrex-l2 l2 --no-monitor'  # sequencer
+pkill -f 'ethrex --network l1.json'   # L1
+docker rm -f "$(docker ps -q --filter ancestor=public.ecr.aws/succinct-labs/moongate)" 2&gt;/dev/null || true
+</code></pre>
+</li>
+</ol>
+<div style="break-before: page; page-break-before: always;"></div><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.4/dist/katex.min.css">
 <h1 id="running-the-prover"><a class="header" href="#running-the-prover">Running the Prover</a></h1>
 <p>This guide provides instructions for setting up and running the Ethrex L2 prover for development and testing purposes.</p>
 <h2 id="dependencies"><a class="header" href="#dependencies">Dependencies</a></h2>
@@ -11298,6 +11759,14 @@ Prover client options:
 <li><code>crates/guest-program/bin/openvm/Cargo.toml</code></li>
 <li><code>crates/l2/tee/quote-gen/Cargo.toml</code></li>
 </ul>
+<p>We also need to bump the <strong>internal crate dependency version pins</strong>. ethrex’s library crates declare their workspace-internal dependencies with an explicit <code>version = "X.Y.Z"</code> (required for publishing to crates.io). These live in the root <code>Cargo.toml</code> under <code>[workspace.dependencies]</code>, plus a few crates that pin a sibling directly (<code>crates/vm/Cargo.toml</code>, <code>crates/blockchain/Cargo.toml</code>, <code>crates/l2/sdk/Cargo.toml</code>). Bump every one of them to the new version, then confirm none were missed — set <code>PREV</code> to the version you are bumping <strong>from</strong>:</p>
+<pre><code class="language-bash">PREV=X.Y.Z   # the previous release version
+grep -rn "\"$PREV\"" --include=Cargo.toml .   # must return nothing
+</code></pre>
+<blockquote class="blockquote-tag blockquote-tag-warning">
+<p class="blockquote-tag-title"><svg viewbox="0 0 16 16" width="18" height="18"><path d="M6.457 1.047c.659-1.234 2.427-1.234 3.086 0l6.082 11.378A1.75 1.75 0 0 1 14.082 15H1.918a1.75 1.75 0 0 1-1.543-2.575Zm1.763.707a.25.25 0 0 0-.44 0L1.698 13.132a.25.25 0 0 0 .22.368h12.164a.25.25 0 0 0 .22-.368Zm.53 3.996v2.5a.75.75 0 0 1-1.5 0v-2.5a.75.75 0 0 1 1.5 0ZM9 11a1 1 0 1 1-2 0 1 1 0 0 1 2 0Z"></path></svg>Warning</p>
+<p>The version bump must cover <strong>both</strong> <code>[workspace.package].version</code> and these dependency pins. If you bump only the workspace version, the release-branch PR still merges cleanly, but the merged result declares every crate at the new version while requiring the <strong>previous</strong> version of its siblings — which breaks the entire workspace build (every <code>cargo</code> job fails to resolve).</p>
+</blockquote>
 <p>After updating the version in the <code>Cargo.toml</code> files, we need to update the <code>Cargo.lock</code> files to reflect the new versions. Run <code>make update-cargo-lock</code> from the root directory to update all the <code>Cargo.lock</code> files in the repository. You should see changes in at most the following paths:</p>
 <ul>
 <li>In the root directory</li>
@@ -11328,11 +11797,11 @@ git push origin &lt;release_version&gt;
 <tr><th>name</th><th>L1</th><th>L2 stack</th><th>Provers</th><th>CUDA support</th></tr>
 </thead>
 <tbody>
-<tr><td>ethrex-linux-x86-64</td><td>✅</td><td>❌</td><td>-</td><td>-</td></tr>
+<tr><td>ethrex-linux-x86_64</td><td>✅</td><td>❌</td><td>-</td><td>-</td></tr>
 <tr><td>ethrex-linux-aarch64</td><td>✅</td><td>❌</td><td>-</td><td>-</td></tr>
-<tr><td>ethrex-linux-macos-aarch64</td><td>✅</td><td>❌</td><td>-</td><td>-</td></tr>
-<tr><td>ethrex-l2-linux-x86-64</td><td>✅</td><td>✅</td><td>SP1 - RISC0 - Exec</td><td>❌</td></tr>
-<tr><td>ethrex-l2-linux-x86-64-gpu</td><td>✅</td><td>✅</td><td>SP1 - RISC0 - Exec</td><td>✅</td></tr>
+<tr><td>ethrex-macos-aarch64</td><td>✅</td><td>❌</td><td>-</td><td>-</td></tr>
+<tr><td>ethrex-l2-linux-x86_64</td><td>✅</td><td>✅</td><td>SP1 - RISC0 - Exec</td><td>❌</td></tr>
+<tr><td>ethrex-l2-linux-x86_64-gpu</td><td>✅</td><td>✅</td><td>SP1 - RISC0 - Exec</td><td>✅</td></tr>
 <tr><td>ethrex-l2-linux-aarch64</td><td>✅</td><td>✅</td><td>SP1 - Exec</td><td>❌</td></tr>
 <tr><td>ethrex-l2-linux-aarch64-gpu</td><td>✅</td><td>✅</td><td>SP1 - Exec</td><td>✅</td></tr>
 <tr><td>ethrex-l2-macos-aarch64</td><td>✅</td><td>✅</td><td>Exec</td><td>❌</td></tr>
@@ -11351,11 +11820,40 @@ git push origin &lt;release_version&gt;
 <ul>
 <li><input disabled="" type="checkbox"> Upgrade <code>ethrex-ethdocker-mainnet</code></li>
 <li><input disabled="" type="checkbox"> Upgrade <code>ethrex-mainnet-1</code></li>
-<li><input disabled="" type="checkbox"> Upgrade <code>ethrex-minimum-mainnet</code></li>
+<li><input disabled="" type="checkbox"> Upgrade <code>ethrex-prysm</code></li>
+<li><input disabled="" type="checkbox"> Upgrade <code>ethrex-lodestar</code></li>
+<li><input disabled="" type="checkbox"> Upgrade <code>ethrex-teku</code></li>
+<li><input disabled="" type="checkbox"> Upgrade <code>ethrex-grandine</code></li>
 <li><input disabled="" type="checkbox"> Launch multisync on <code>ethrex-multisync-main</code></li>
 <li><input disabled="" type="checkbox"> Upgrade a local L2 created with the previous version and run the integration tests</li>
 <li><input disabled="" type="checkbox"> Run the L2 integration tests with a SP1 prover on the GPU server (<code>l2-gpu</code>)</li>
 </ul>
+<p>The commands for each target follow. The host roster changes between releases — fill in the ones you run and leave the placeholders for the rest. Replace <code>vX.Y.Z-rc.W</code> / <code>release/vX.Y.Z</code> with the version under test.</p>
+<h4 id="ethrex-ethdocker-mainnet"><a class="header" href="#ethrex-ethdocker-mainnet"><code>ethrex-ethdocker-mainnet</code></a></h4>
+<pre><code class="language-bash">ssh admin@ethrex-ethdocker-mainnet
+cd eth-docker/
+# In .env, set the release tag on this line:
+#   ETHREX_SRC_BUILD_TARGET=vX.Y.Z-rc.W
+nano .env
+./ethd update
+./ethd up
+</code></pre>
+<h4 id="ethrex-mainnet-1"><a class="header" href="#ethrex-mainnet-1"><code>ethrex-mainnet-1</code></a></h4>
+<!-- TODO: document the upgrade procedure for this host -->
+<h4 id="ethrex-prysm-ethrex-lodestar-ethrex-teku-ethrex-grandine"><a class="header" href="#ethrex-prysm-ethrex-lodestar-ethrex-teku-ethrex-grandine"><code>ethrex-prysm</code>, <code>ethrex-lodestar</code>, <code>ethrex-teku</code>, <code>ethrex-grandine</code></a></h4>
+<p>These are ethrex mainnet nodes paired with different consensus clients (Prysm, Lodestar, Teku, Grandine); the ethrex (EL) upgrade procedure is the same across them.</p>
+<!-- TODO: document the upgrade procedure for these hosts -->
+<h4 id="ethrex-multisync-main"><a class="header" href="#ethrex-multisync-main"><code>ethrex-multisync-main</code></a></h4>
+<pre><code class="language-bash">ssh admin@ethrex-multisync-main
+cd ethrex/tooling/sync/
+tmux kill-session -t sync 2&gt;/dev/null || true   # drop a leftover sync session from a previous RC
+tmux new-session -d -s sync "make multisync-loop-auto MULTISYNC_BRANCH=release/vX.Y.Z 2&gt;&amp;1"
+</code></pre>
+<p>Check progress later with <code>tmux attach -t sync</code> (detach with <code>Ctrl-b</code> then <code>d</code>).</p>
+<h4 id="local-l2-upgrade--integration-tests"><a class="header" href="#local-l2-upgrade--integration-tests">Local L2 upgrade + integration tests</a></h4>
+<p>See <a href="#upgrade-test">Upgrade test</a> for the full procedure.</p>
+<h4 id="l2-integration-tests-with-a-sp1-prover-l2-gpu"><a class="header" href="#l2-integration-tests-with-a-sp1-prover-l2-gpu">L2 integration tests with a SP1 prover (<code>l2-gpu</code>)</a></h4>
+<p>See <a href="#l2-integration-tests-with-a-sp1-gpu-prover">L2 integration tests with a SP1 GPU prover</a> for the full procedure.</p>
 <h3 id="publish"><a class="header" href="#publish">Publish</a></h3>
 <p>Once the pre-release is created and you want to publish the release, go to the <a href="https://github.com/lambdaclass/ethrex/releases">release page</a> and follow the next steps:</p>
 <ol>
@@ -11364,8 +11862,16 @@ git push origin &lt;release_version&gt;
 <p><img src="img/publish_release_step_1.png" alt="edit button"></p>
 </li>
 <li>
-<p>Manually create the tag <code>vX.Y.Z</code></p>
+<p>Manually create the tag <code>vX.Y.Z</code>. <strong>Set the tag’s <em>Target</em> to the release branch (<code>release/vX.Y.Z</code>), not the default <code>main</code></strong> — otherwise the tag lands on <code>main</code>’s HEAD, which is not the version-bumped commit.</p>
 <p><img src="img/publish_release_step_2.png" alt="edit tag"></p>
+<p>The tag is created on the remote only once you click <em>Update release</em> (step 5) — so verify it <strong>after</strong> saving (an earlier <code>ls-remote</code> returns nothing for <code>vX.Y.Z</code> and falsely “matches” two empty results). The two SHAs must be identical:</p>
+<pre><code class="language-bash">git ls-remote origin refs/tags/vX.Y.Z refs/tags/vX.Y.Z-rc.W   # run after Update release; SHAs must match
+</code></pre>
+<p>If they don’t match, move the tag to the tested commit before relying on any published artifacts: <code>git tag -f vX.Y.Z &lt;rc-commit&gt; &amp;&amp; git push origin vX.Y.Z --force</code>.</p>
+<blockquote class="blockquote-tag blockquote-tag-warning">
+<p class="blockquote-tag-title"><svg viewbox="0 0 16 16" width="18" height="18"><path d="M6.457 1.047c.659-1.234 2.427-1.234 3.086 0l6.082 11.378A1.75 1.75 0 0 1 14.082 15H1.918a1.75 1.75 0 0 1-1.543-2.575Zm1.763.707a.25.25 0 0 0-.44 0L1.698 13.132a.25.25 0 0 0 .22.368h12.164a.25.25 0 0 0 .22-.368Zm.53 3.996v2.5a.75.75 0 0 1-1.5 0v-2.5a.75.75 0 0 1 1.5 0ZM9 11a1 1 0 1 1-2 0 1 1 0 0 1 2 0Z"></path></svg>Warning</p>
+<p>The crates.io publish workflow reads <code>publish.yml</code> from <code>main</code> but checks out the <strong>tag’s commit</strong>. If the tag points at the wrong commit (e.g. an unbumped <code>main</code>), the workflow republishes the <em>previous</em> version’s crates — each is “already published”, so the run goes <strong>green while publishing nothing new</strong>. The final <code>vX.Y.Z</code> tag must point at the same commit as the tested <code>vX.Y.Z-rc.W</code> (the release branch HEAD you will merge via PR).</p>
+</blockquote>
 </li>
 <li>
 <p>Update the release title</p>
@@ -11425,56 +11931,46 @@ git push origin &lt;release_version&gt;
 <p>The workflow is idempotent: a crate version already on crates.io is skipped, so re-running after a partial failure is safe. To validate without publishing, run it manually from the Actions tab (the <code>workflow_dispatch</code> trigger) with the dry-run input checked — it lists each crate’s package contents instead of publishing.</p>
 <h2 id="5th---update-homebrew"><a class="header" href="#5th---update-homebrew">5th - Update Homebrew</a></h2>
 <p>Disclaimer: We should automate this</p>
+<p>Set the released version once, then the commands below are copy/paste:</p>
+<pre><code class="language-bash">export V=X.Y.Z   # replace with the released version, no `v` prefix (e.g. 3.0.0)
+</code></pre>
 <ol>
-<li>Commit a change in https://github.com/lambdaclass/homebrew-tap/ bumping the ethrex version (like <a href="https://github.com/lambdaclass/homebrew-tap/commit/d78a2772ad9c5412e7f84c6210bd85c970fcd0e6">this one</a>).
+<li>
+<p>Commit a change in https://github.com/lambdaclass/homebrew-tap/ bumping the ethrex version (like <a href="https://github.com/lambdaclass/homebrew-tap/commit/d78a2772ad9c5412e7f84c6210bd85c970fcd0e6">this one</a>). It needs two SHA-256 hashes:</p>
 <ul>
 <li>
-<p>The first SHA is the hash of the <code>.tar.gz</code> from the release. You can get it by downloading the <code>Source code (tar.gz)</code> from the ethrex release and running</p>
-<pre><code class="language-bash">shasum -a 256 ethrex-v3.0.0.tar.gz
+<p><strong>Source tarball hash</strong> (the <code>url</code> field) — download the GitHub source archive and hash it:</p>
+<pre><code class="language-bash">curl -L -o "ethrex-v$V.tar.gz" "https://github.com/lambdaclass/ethrex/archive/refs/tags/v$V.tar.gz"
+shasum -a 256 "ethrex-v$V.tar.gz"
 </code></pre>
 </li>
 <li>
-<p>For the second one:</p>
-<ul>
-<li>
-<p>First download the <code>ethrex-l2-macos-aarch64</code> binary from the ethrex release</p>
-</li>
-<li>
-<p>Give exec permissions to binary</p>
-<pre><code class="language-bash">chmod +x ethrex-l2-macos-aarch64
-</code></pre>
-</li>
-<li>
-<p>Create a dir <code>ethrex/3.0.0/bin</code> (replace the version as needed)</p>
-</li>
-<li>
-<p>Move (and rename) the binary to <code>ethrex/3.0.0/bin/ethrex</code> (the last <code>ethrex</code> is the binary)</p>
-</li>
-<li>
-<p>Remove quarantine flags (in this case, <code>ethrex</code> is the root dir mentioned before):</p>
-<pre><code class="language-bash">xattr -dr com.apple.metadata:kMDItemWhereFroms ethrex
+<p><strong>Bottle hash</strong> (the <code>bottle</code> section) — build the macOS bottle from the release binary. The <code>ethrex</code> directory is the bottle root:</p>
+<pre><code class="language-bash"># download the L2 macOS binary from the ethrex release
+gh release download "v$V" -R lambdaclass/ethrex -p ethrex-l2-macos-aarch64
+chmod +x ethrex-l2-macos-aarch64
+
+# lay it out as ethrex/&lt;version&gt;/bin/ethrex (last `ethrex` is the binary)
+mkdir -p "ethrex/$V/bin"
+mv ethrex-l2-macos-aarch64 "ethrex/$V/bin/ethrex"
+
+# strip quarantine flags (root dir is ./ethrex)
+xattr -dr com.apple.metadata:kMDItemWhereFroms ethrex
 xattr -dr com.apple.quarantine ethrex
+
+# tar and hash the bottle (root dir is ./ethrex)
+tar -czf "ethrex-$V.arm64_sonoma.bottle.tar.gz" ethrex
+shasum -a 256 "ethrex-$V.arm64_sonoma.bottle.tar.gz"
 </code></pre>
-</li>
-<li>
-<p>Tar the dir with the following name (again, <code>ethrex</code> is the root dir):</p>
-<pre><code class="language-bash">tar -czf ethrex-3.0.0.arm64_sonoma.bottle.tar.gz ethrex
-</code></pre>
-</li>
-<li>
-<p>Get the checksum:</p>
-<pre><code class="language-bash">shasum -a 256 ethrex-3.0.0.arm64_sonoma.bottle.tar.gz
-</code></pre>
-</li>
-<li>
-<p>Use this as the second hash (the one in the <code>bottle</code> section)</p>
 </li>
 </ul>
 </li>
-</ul>
+<li>
+<p>Push the commit.</p>
 </li>
-<li>Push the commit</li>
-<li>Create a new release with tag <code>v3.0.0</code>. <strong>IMPORTANT</strong>: attach the <code>ethrex-3.0.0.arm64_sonoma.bottle.tar.gz</code> to the release</li>
+<li>
+<p>Create a new release with tag <code>v$V</code> in homebrew-tap. <strong>IMPORTANT</strong>: attach the <code>ethrex-$V.arm64_sonoma.bottle.tar.gz</code> to the release.</p>
+</li>
 </ol>
 <h2 id="6th---merge-the-release-branch-via-pr"><a class="header" href="#6th---merge-the-release-branch-via-pr">6th - Merge the release branch via PR</a></h2>
 <p>Once the release is verified, <strong>merge the branch via PR</strong>.</p>
