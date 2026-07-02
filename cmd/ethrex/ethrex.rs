@@ -193,11 +193,24 @@ async fn main() -> eyre::Result<()> {
         _ = signal_terminate.recv() => {
             server_shutdown(&datadir, &cancel_token, peer_table, local_node_record).await;
         }
+        // A fatal subsystem (e.g. the RPC server) cancels the token to abort the node.
+        _ = cancel_token.cancelled() => {
+            server_shutdown(&datadir, &cancel_token, peer_table, local_node_record).await;
+        }
     }
 
     #[cfg(feature = "cpu_profiling")]
     if let Err(e) = write_cpu_profile(profiler_guard) {
         tracing::error!("Failed to write CPU profile: {e}");
+    }
+
+    // A shutdown initiated by a failing subsystem exits non-zero so orchestrators
+    // (systemd `Restart=on-failure`, Docker restart policies) can tell a crashed node
+    // from a clean signal-triggered stop.
+    if let Some(cause) = ethrex::initializers::fatal_shutdown_cause() {
+        return Err(eyre::eyre!(
+            "node shut down after a fatal subsystem failure: {cause}"
+        ));
     }
 
     Ok(())

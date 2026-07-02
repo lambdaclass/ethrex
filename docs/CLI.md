@@ -219,16 +219,14 @@ RPC options:
           [env: ETHREX_ENABLE_WS=]
 
       --ws.addr <ADDRESS>
-          Listening address for the websocket rpc server.
+          Listening address for the WebSocket JSON-RPC server. When unset it inherits `--http.addr` (loopback by default). Set it equal to the HTTP address to serve HTTP and WebSocket on a single listener.
           
           [env: ETHREX_WS_ADDR=]
-          [default: 0.0.0.0]
 
       --ws.port <PORT>
-          Listening port for the websocket rpc server.
+          Listening port for the WebSocket JSON-RPC server. When unset it inherits `--http.port`, so an enabled WebSocket shares the HTTP listener unless a different port is given.
           
           [env: ETHREX_WS_PORT=]
-          [default: 8546]
 
       --authrpc.addr <ADDRESS>
           Listening address for the authenticated rpc server.
@@ -429,16 +427,14 @@ RPC options:
           [env: ETHREX_ENABLE_WS=]
 
       --ws.addr <ADDRESS>
-          Listening address for the websocket rpc server.
+          Listening address for the WebSocket JSON-RPC server. When unset it inherits `--http.addr` (loopback by default). Set it equal to the HTTP address to serve HTTP and WebSocket on a single listener.
 
           [env: ETHREX_WS_ADDR=]
-          [default: 0.0.0.0]
 
       --ws.port <PORT>
-          Listening port for the websocket rpc server.
+          Listening port for the WebSocket JSON-RPC server. When unset it inherits `--http.port`, so an enabled WebSocket shares the HTTP listener unless a different port is given.
 
           [env: ETHREX_WS_PORT=]
-          [default: 8546]
 
       --authrpc.addr <ADDRESS>
           Listening address for the authenticated rpc server.
