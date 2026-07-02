@@ -582,6 +582,13 @@ pub fn execute_default_code(
     frame: &ethrex_common::types::Frame,
     target: Address,
 ) -> Result<(bool, u64, Vec<Log>), VMError> {
+    // EIP-8272: RECENT_ROOT_ADDRESS carries no runtime bytecode (the write is
+    // native, docs/eip-8272.md divergence #4), so a frame targeting it lands
+    // in this empty-code path and executes the recent-root write instead of
+    // the generic default code.
+    if target == ethrex_common::types::frame_tx_recent_root() {
+        return execute_recent_root_frame(vm, frame);
+    }
     match frame.execution_mode() {
         FrameMode::Verify => execute_default_verify(vm, frame, target),
         // Pinned EIP-8141 spec (fe0940cae2) §"Default code" lines 412-413:
@@ -592,6 +599,43 @@ pub fn execute_default_code(
         // the caller's deferred transfer).
         FrameMode::Sender | FrameMode::Default => Ok((true, 0, Vec::new())),
     }
+}
+
+/// EIP-8272 write semantics for a frame whose target is RECENT_ROOT_ADDRESS,
+/// mirroring what real predeploy bytecode would observe: msg.sender is the
+/// frame's caller (ENTRY_POINT for DEFAULT frames, the tx sender for SENDER
+/// frames), VERIFY frames run statically so the write fails, and the call
+/// reverts unless the frame data is exactly 64 bytes (`salt ‖ root`) with
+/// zero value. A successful write costs `RECENT_ROOT_WRITE_GAS`.
+fn execute_recent_root_frame(
+    vm: &mut VM<'_>,
+    frame: &ethrex_common::types::Frame,
+) -> Result<(bool, u64, Vec<Log>), VMError> {
+    // VERIFY frames are dispatched as static calls in the frame loop; the
+    // write is a state change, so it must fail there.
+    let is_static = frame.execution_mode() == FrameMode::Verify;
+    if is_static || frame.data.len() != 64 || !frame.value.is_zero() {
+        return Ok((false, 0, Vec::new()));
+    }
+    if frame.gas_limit < gas_cost::RECENT_ROOT_WRITE_GAS {
+        // The write out-of-gasses: the frame consumes its whole budget.
+        return Ok((false, frame.gas_limit, Vec::new()));
+    }
+    let ctx = vm
+        .frame_tx_context
+        .as_ref()
+        .ok_or(ExceptionalHalt::InvalidOpcode)?;
+    let caller = match frame.execution_mode() {
+        FrameMode::Sender => ctx.tx.sender,
+        _ => ethrex_common::types::frame_tx_entry_point(),
+    };
+    let salt = frame.data.get(..32).ok_or(ExceptionalHalt::OutOfBounds)?;
+    let root = frame
+        .data
+        .get(32..64)
+        .ok_or(ExceptionalHalt::OutOfBounds)?;
+    vm.recent_root_native_write(caller, salt, root)?;
+    Ok((true, gas_cost::RECENT_ROOT_WRITE_GAS, Vec::new()))
 }
 
 fn execute_default_verify(

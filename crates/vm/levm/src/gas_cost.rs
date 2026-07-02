@@ -76,6 +76,12 @@ pub const RECENT_ROOT_REFERENCE_ADDRESS_GAS: u64 = ACCESS_LIST_ADDRESS_COST;
 /// names the keccak constants KECCAK25_STATIC / KECCAK25_DYNAMIC_BASE).
 pub const RECENT_ROOT_REFERENCE_GAS: u64 =
     ACCESS_LIST_STORAGE_KEY_COST + 2 * KECCAK25_STATIC + 7 * KECCAK25_DYNAMIC_BASE;
+/// EIP-8272: flat cost of a successful native RECENT_ROOT_ADDRESS write. The
+/// spec leaves RECENT_ROOT_CODE (and its gas schedule) TBD, so ethrex prices
+/// the write as a cold created-slot SSTORE (20000 creation + 2100 cold
+/// surcharge) — the dominant real cost of committing the entry. Flat pricing
+/// slightly over-charges ring-entry overwrites, which is the safe direction.
+pub const RECENT_ROOT_WRITE_GAS: u64 = 22100;
 
 pub fn framedatacopy(
     new_memory_size: usize,

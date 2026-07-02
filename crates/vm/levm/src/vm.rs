@@ -1331,6 +1331,61 @@ impl<'a> VM<'a> {
         Ok(report)
     }
 
+    /// EIP-8272 native RECENT_ROOT_CODE write core (docs/eip-8272.md
+    /// divergence #4: the spec leaves the predeploy bytecode TBD, so ethrex
+    /// executes the 64-byte `salt ‖ root` write natively). The committed entry
+    /// is keyed by `source_id = keccak256(pad32(caller) ‖ salt)` — a
+    /// caller-authenticated namespace (nobody can write into another caller's
+    /// source_id), with the salt giving each caller as many namespaces as it
+    /// needs; a referencing transaction declares the same source_id in its
+    /// envelope. The entry commits to the CURRENT slot (EIP-7843
+    /// `env.slot_number`); last-write-wins within a block follows from plain
+    /// storage-write ordering. Callers enforce the static/value/calldata-shape
+    /// rules and gas; this core performs the storage write through the
+    /// standard backed-up path (journaled and BAL-recorded like any storage
+    /// write, and rolled back by an enclosing revert exactly as a real
+    /// bytecode SSTORE would be).
+    pub(crate) fn recent_root_native_write(
+        &mut self,
+        caller: Address,
+        salt: &[u8],
+        root: &[u8],
+    ) -> Result<(), VMError> {
+        let current_slot = self.env.slot_number;
+        // Beacon slots are u64; a larger env value can only come from a
+        // crafted header. Refuse to write rather than truncate.
+        if current_slot > U256::from(u64::MAX) {
+            return Err(ExceptionalHalt::InvalidOpcode.into());
+        }
+        let mut preimage = [0u8; 64];
+        preimage[12..32].copy_from_slice(caller.as_bytes());
+        preimage[32..64].copy_from_slice(salt);
+        let source_id = H256(ethrex_crypto::keccak::keccak_hash(preimage));
+        let entry = ethrex_common::types::RecentRootReference {
+            source_id,
+            slot: current_slot.low_u64(),
+            root: H256::from_slice(root),
+        };
+        // entry_hash/storage_key come from the shared ethrex-common helpers —
+        // the same code the read-side validity check runs, so a root written
+        // here always validates its own reference.
+        let storage_key = entry.storage_key();
+        let entry_hash = entry.entry_hash();
+        let recent_root_addr = ethrex_common::types::frame_tx_recent_root();
+        // Ensure the predeploy account is cached before touching its storage.
+        let _ = self.db.get_account(recent_root_addr)?;
+        let current = self.get_storage_value(recent_root_addr, storage_key)?;
+        let key_u256 = U256::from_big_endian(&storage_key.0);
+        self.update_account_storage(
+            recent_root_addr,
+            storage_key,
+            key_u256,
+            U256::from_big_endian(entry_hash.as_bytes()),
+            current,
+        )?;
+        Ok(())
+    }
+
     /// Execute a frame transaction (EIP-8141).
     /// This bypasses the normal prepare/finalize hooks and orchestrates per-frame execution.
     fn execute_frame_tx(&mut self) -> Result<ExecutionReport, VMError> {
@@ -1410,19 +1465,55 @@ impl<'a> VM<'a> {
             ));
         }
 
-        // EIP-8272: the recent-root reference-validity check — slot-range bound
-        // (1 <= current_slot - slot <= 8191) plus the RECENT_ROOT_ADDRESS storage
-        // assertion that the declared (source_id, slot, root) is a committed root —
-        // is not yet implemented. Until it is, a declared reference cannot be
-        // verified and RECENTROOTREFLOAD must not serve unverified roots to frame
-        // code (a soundness hole: an assertion/privacy proof would treat forged
-        // bytes as a committed root). Reject any reference-carrying frame tx so the
-        // unsound primitive is never exposed; the feature stays off until the
-        // validity check lands here (before the frame loop). See docs/eip-8272.md.
+        // EIP-8272 reference validity: every declared (source_id, slot, root)
+        // must be a committed recent root. Enforced before the frame loop so no
+        // frame executes when any reference is invalid — an invalid reference
+        // invalidates the transaction and, on block import, the whole block.
+        // The slot window (1 <= current_slot - slot <= USABLE_WINDOW) is checked
+        // in U256 against EIP-7843's env.slot_number (never block.timestamp):
+        // a root becomes referenceable the slot AFTER it was written, and past
+        // the window its ring-buffer entry may have been overwritten. The
+        // storage assertion recomputes entry_hash/storage_key with the shared
+        // ethrex-common helpers (one definition with the native write handler —
+        // a divergence would make natively written roots unreferenceable) and
+        // requires RECENT_ROOT_ADDRESS[storage_key] == entry_hash. entry_hash
+        // commits to the RAW slot, so an entry overwritten by an aliasing newer
+        // slot can never satisfy a stale reference — this is what closes the
+        // forged-roots soundness hole that previously kept references disabled.
+        // The predeploy address and each reference's storage key are warmed
+        // here; the per-reference intrinsic gas already prepaid this access.
         if !frame_tx.recent_root_references.is_empty() {
-            return Err(VMError::TxValidation(
-                crate::errors::TxValidationError::InvalidFrameTransaction,
-            ));
+            let recent_root_addr = ethrex_common::types::frame_tx_recent_root();
+            let current_slot = self.env.slot_number;
+            self.substate.add_accessed_address(recent_root_addr);
+            // Ensure the predeploy account is cached before reading its storage.
+            let _ = self.db.get_account(recent_root_addr)?;
+            for reference in &frame_tx.recent_root_references {
+                let in_window = current_slot
+                    .checked_sub(U256::from(reference.slot))
+                    .is_some_and(|age| {
+                        !age.is_zero()
+                            && age
+                                <= U256::from(
+                                    ethrex_common::types::FRAME_TX_RECENT_ROOT_USABLE_WINDOW,
+                                )
+                    });
+                if !in_window {
+                    return Err(VMError::TxValidation(
+                        crate::errors::TxValidationError::InvalidFrameTransaction,
+                    ));
+                }
+                let storage_key = reference.storage_key();
+                self.substate
+                    .add_accessed_slot(recent_root_addr, storage_key);
+                let committed = self.get_storage_value(recent_root_addr, storage_key)?;
+                let expected = U256::from_big_endian(reference.entry_hash().as_bytes());
+                if committed != expected {
+                    return Err(VMError::TxValidation(
+                        crate::errors::TxValidationError::InvalidFrameTransaction,
+                    ));
+                }
+            }
         }
 
         // Initialize FrameTxContext
