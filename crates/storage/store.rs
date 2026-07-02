@@ -2598,6 +2598,43 @@ impl Store {
         storage_key: H256,
     ) -> Result<Option<U256>, StoreError> {
         let read_view = self.backend.begin_read()?;
+        self.get_storage_at_root_with_view(
+            read_view,
+            state_root,
+            account_hash,
+            storage_root,
+            storage_key,
+        )
+    }
+
+    /// [`Self::get_storage_at_root_with_known_storage_root`] for speculative
+    /// readers: reads skip block-cache population so one-shot pre-warming
+    /// lookups don't evict entries hot for real execution.
+    pub fn get_storage_at_root_no_cache_fill(
+        &self,
+        state_root: H256,
+        account_hash: H256,
+        storage_root: H256,
+        storage_key: H256,
+    ) -> Result<Option<U256>, StoreError> {
+        let read_view = self.backend.begin_read_no_cache_fill()?;
+        self.get_storage_at_root_with_view(
+            read_view,
+            state_root,
+            account_hash,
+            storage_root,
+            storage_key,
+        )
+    }
+
+    fn get_storage_at_root_with_view(
+        &self,
+        read_view: Arc<dyn StorageReadView>,
+        state_root: H256,
+        account_hash: H256,
+        storage_root: H256,
+        storage_key: H256,
+    ) -> Result<Option<U256>, StoreError> {
         let cache = self.gated_snapshot(state_root)?;
         let last_written = self.last_written()?;
         // When FKV is active the real storage root is in the flatkeyvalue store,
@@ -2733,6 +2770,21 @@ impl Store {
         address: Address,
     ) -> Result<Option<AccountState>, StoreError> {
         let state_trie = self.open_state_trie(state_root)?;
+        self.get_account_state_from_trie(&state_trie, address)
+    }
+
+    /// [`Self::get_account_state_by_root`] for speculative readers: reads
+    /// skip block-cache population so one-shot pre-warming lookups don't
+    /// evict entries hot for real execution.
+    pub fn get_account_state_by_root_no_cache_fill(
+        &self,
+        state_root: H256,
+        address: Address,
+    ) -> Result<Option<AccountState>, StoreError> {
+        let read_view = self.backend.begin_read_no_cache_fill()?;
+        let cache = self.gated_snapshot(state_root)?;
+        let last_written = self.last_written()?;
+        let state_trie = self.open_state_trie_shared(state_root, read_view, cache, last_written)?;
         self.get_account_state_from_trie(&state_trie, address)
     }
 

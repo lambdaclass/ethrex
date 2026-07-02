@@ -252,11 +252,12 @@ fn run_pass(
     }
 
     // DB stack pinned at the parent (head) state, mirroring
-    // execute_block_pipeline (blockchain.rs:548) + Evm::new_from_db_for_l1:
-    // StoreVmDatabase -> CachingDatabase. Reads populate the persistent
-    // RocksDB block cache and code cache underneath; the decoded layers here
-    // are throwaway.
-    let vm_db = match StoreVmDatabase::new(blockchain.storage.clone(), parent.clone()) {
+    // execute_block_pipeline + Evm::new_from_db_for_l1: StoreVmDatabase ->
+    // CachingDatabase. Speculative mode: state/storage reads skip RocksDB
+    // block-cache population so a slot's worth of one-shot reads can't evict
+    // entries hot for real execution — the decoded CachingDatabase handed to
+    // the executor carries the warming benefit instead.
+    let vm_db = match StoreVmDatabase::new_speculative(blockchain.storage.clone(), parent.clone()) {
         Ok(vm_db) => vm_db,
         Err(e) => {
             warn!("prewarm pass skipped: state db unavailable: {e}");
