@@ -169,8 +169,9 @@ impl PrewarmHandle {
 pub struct MempoolPrewarmer;
 
 impl MempoolPrewarmer {
-    /// Spawns the prewarmer worker. Returns `None` (with a warn) when the
-    /// feature is disabled, the chain is L2, or the build lacks rayon.
+    /// Spawns the prewarmer worker. Returns `None` silently when the feature
+    /// is disabled; returns `None` with a warn when the chain is L2 or the
+    /// build lacks rayon (or has eip-8025 active).
     pub fn spawn(blockchain: Arc<Blockchain>) -> Option<PrewarmHandle> {
         let opts = blockchain.options.mempool_prewarm.clone();
         if !opts.enabled {
@@ -182,7 +183,9 @@ impl MempoolPrewarmer {
         }
         #[cfg(any(not(feature = "rayon"), feature = "eip-8025"))]
         {
-            warn!("mempool prewarm requires the rayon feature; disabled");
+            warn!(
+                "mempool prewarm requires the rayon feature and is unavailable on eip-8025 builds; disabled"
+            );
             None
         }
         #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
@@ -242,6 +245,14 @@ fn run_pass(
     use std::time::Instant;
     use tracing::debug;
 
+    if req.cancel.load(Ordering::Relaxed) || unix_now() >= req.deadline_unix {
+        debug!(
+            "prewarm pass for child of block {} skipped: stale at start",
+            req.parent_header.number
+        );
+        return;
+    }
+
     let start = Instant::now();
     let parent = &req.parent_header;
 
@@ -261,8 +272,12 @@ fn run_pass(
         base_fee,
         ..Default::default()
     };
-    let Ok(txs_by_sender) = blockchain.mempool.filter_transactions(&filter) else {
-        return;
+    let txs_by_sender = match blockchain.mempool.filter_transactions(&filter) {
+        Ok(txs_by_sender) => txs_by_sender,
+        Err(e) => {
+            warn!("prewarm pass skipped: mempool snapshot failed: {e}");
+            return;
+        }
     };
     let gas_budget = opts.gas_budget_multiplier.saturating_mul(parent.gas_limit);
     let warm_set = select_warm_set(txs_by_sender, base_fee, gas_budget);
@@ -284,6 +299,9 @@ fn run_pass(
     // Approximation is fine — warming only needs plausible execution context.
     let config = blockchain.storage.get_chain_config();
     let mut header = parent.clone();
+    // The clone carries the parent's cached hash; reset so any future
+    // consumer recomputes it for the (different) synthetic child header.
+    header.hash = Default::default();
     header.parent_hash = parent.hash();
     header.number = parent.number.saturating_add(1);
     header.timestamp = parent.timestamp.saturating_add(opts.slot_duration_secs);
@@ -300,8 +318,12 @@ fn run_pass(
     // StoreVmDatabase -> CachingDatabase. Reads populate the persistent
     // RocksDB block cache and code cache underneath; the decoded layers here
     // are throwaway.
-    let Ok(vm_db) = StoreVmDatabase::new(blockchain.storage.clone(), parent.clone()) else {
-        return;
+    let vm_db = match StoreVmDatabase::new(blockchain.storage.clone(), parent.clone()) {
+        Ok(vm_db) => vm_db,
+        Err(e) => {
+            warn!("prewarm pass skipped: state db unavailable: {e}");
+            return;
+        }
     };
     let inner: Arc<dyn ethrex_vm::backends::LevmDatabase> =
         Arc::new(Box::new(vm_db) as ethrex_vm::DynVmDatabase);

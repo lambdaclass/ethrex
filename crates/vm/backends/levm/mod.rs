@@ -2203,6 +2203,9 @@ impl LEVM {
                 // Execute transactions sequentially within sender group
                 // This ensures nonce and balance changes from tx[N] are visible to tx[N+1]
                 for tx in txs {
+                    if should_stop() {
+                        return;
+                    }
                     let _ = Self::execute_tx_in_block(
                         tx,
                         sender,
