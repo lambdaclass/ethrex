@@ -45,7 +45,6 @@ libssz-derive = { workspace = true }
 default = ["secp256k1"]
 c-kzg = ["ethrex-crypto/c-kzg"]
 secp256k1 = ["dep:secp256k1", "ethrex-crypto/secp256k1"]
-experimental-devnet = []
 eip-8025 = []
 
 risc0 = ["ethrex-crypto/risc0"]

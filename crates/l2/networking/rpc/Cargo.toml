@@ -39,8 +39,6 @@ url.workspace = true
 path = "./lib.rs"
 
 [features]
-experimental-devnet = []
-
 eip-8025 = ["ethrex-rpc/eip-8025"]
 
 [lints.clippy]

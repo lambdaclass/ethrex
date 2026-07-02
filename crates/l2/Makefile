@@ -86,7 +86,7 @@ init-l1: ## 🚀 Initializes an L1 Lambda ethrex Client
 	--datadir ${ethrex_L1_DEV_DB}
 
 init-l1-native: ## 🚀 Initializes an L1 Lambda ethrex Client with the EXECUTE precompile enabled (native rollups)
-	cargo run --release --features experimental-devnet --manifest-path ../../Cargo.toml --bin ethrex -- \
+	cargo run --release --features l2 --manifest-path ../../Cargo.toml --bin ethrex -- \
 	--network ${L1_GENESIS_FILE_PATH} \
 	--http.port ${L1_PORT} \
 	--http.addr ${L1_RPC_ADDRESS} \
@@ -112,7 +112,7 @@ deploy-l1: ## 📜 Deploys the L1 contracts
 
 deploy-l1-native: ## 📜 Deploys NativeRollup.sol to L1 (native rollups)
 	COMPILE_CONTRACTS=true \
-	cargo run --release --features l2,l2-sql,experimental-devnet --manifest-path ../../Cargo.toml -- l2 deploy \
+	cargo run --release --features l2,l2-sql --manifest-path ../../Cargo.toml -- l2 deploy \
 	--eth-rpc-url ${L1_RPC_URL} \
 	--private-key ${L1_PRIVATE_KEY} \
 	--native-rollups \
@@ -176,7 +176,7 @@ init-l2: ## 🚀 Initializes an L2 Lambda ethrex Client
 init-l2-native: ## 🚀 Initializes a native rollup L2 client
 	export $(shell cat ../../cmd/.env | xargs); \
 	ETHREX_NO_MONITOR=true \
-	cargo run --release --features l2,l2-sql,experimental-devnet --manifest-path ../../Cargo.toml -- \
+	cargo run --release --features l2,l2-sql --manifest-path ../../Cargo.toml -- \
 	l2 \
 	--native-rollups \
 	--native-rollups.block-time 10000 \
