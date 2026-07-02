@@ -1223,11 +1223,18 @@ mod tests {
         assert_eq!(cfg.get_last_scheduled_fork(), Fork::LStar);
 
         // Activation timestamp round-trips.
-        assert_eq!(cfg.get_activation_timestamp_for_fork(Fork::LStar), Some(1000));
+        assert_eq!(
+            cfg.get_activation_timestamp_for_fork(Fork::LStar),
+            Some(1000)
+        );
 
         // Blob schedule at LStar inherits Amsterdam's (which inherits bpo2, max=9 default).
-        let sched_lstar = cfg.get_fork_blob_schedule(1000).expect("lstar blob schedule");
-        let sched_amsterdam = cfg.get_fork_blob_schedule(999).expect("amsterdam blob schedule");
+        let sched_lstar = cfg
+            .get_fork_blob_schedule(1000)
+            .expect("lstar blob schedule");
+        let sched_amsterdam = cfg
+            .get_fork_blob_schedule(999)
+            .expect("amsterdam blob schedule");
         assert_eq!(sched_lstar.max, sched_amsterdam.max);
     }
 }
