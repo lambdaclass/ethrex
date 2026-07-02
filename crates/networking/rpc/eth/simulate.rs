@@ -4,7 +4,6 @@
 //! Request parsing and response serialization live here; the execution engine
 //! is [`ethrex_blockchain::simulate`].
 
-use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -23,14 +22,17 @@ use ethrex_vm::TxValidationError;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use ethrex_rlp::encode::RLPEncode;
+
 use crate::{
     rpc::{RpcApiContext, RpcHandler},
     types::{
-        block::RpcBlock,
+        block::{BlockBodyWrapper, FullBlockBody, RpcBlock},
         block_identifier::{BlockIdentifier, BlockIdentifierOrHash},
         block_override::BlockOverrideSet,
         receipt::RpcLog,
         state_override::StateOverrideSet,
+        transaction::RpcTransaction,
     },
     utils::RpcErr,
 };
@@ -311,12 +313,45 @@ fn build_simulated_block(
         })
         .collect();
 
-    let block = RpcBlock::build(
-        simulated.block.header,
-        simulated.block.body,
-        block_hash,
-        return_full_transactions,
-    )?;
+    let block = if return_full_transactions {
+        // RpcBlock::build recovers senders from signatures, which are zeroed
+        // in simulated transactions — build the full body from the engine's
+        // out-of-band senders instead.
+        let transactions = simulated
+            .block
+            .body
+            .transactions
+            .iter()
+            .enumerate()
+            .map(|(index, tx)| {
+                RpcTransaction::build_with_sender(
+                    tx.clone(),
+                    Some(block_number),
+                    Some(block_hash),
+                    Some(index),
+                    simulated.senders.get(index).copied().unwrap_or_default(),
+                )
+            })
+            .collect();
+        let size = simulated.block.length() as u64;
+        RpcBlock {
+            hash: block_hash,
+            size,
+            header: simulated.block.header,
+            body: BlockBodyWrapper::Full(FullBlockBody {
+                transactions,
+                uncles: Vec::new(),
+                withdrawals: simulated.block.body.withdrawals.unwrap_or_default(),
+            }),
+        }
+    } else {
+        RpcBlock::build(
+            simulated.block.header,
+            simulated.block.body,
+            block_hash,
+            false,
+        )?
+    };
     Ok(RpcSimulatedBlock { block, calls })
 }
 
@@ -631,5 +666,293 @@ mod tests {
         assert!(set.blob_base_fee_per_gas.is_some());
         assert_eq!(set.withdrawals.as_deref(), Some(&[][..]));
         assert!(!set.is_empty());
+    }
+}
+
+/// End-to-end scenarios ported from the execution-apis `eth_simulateV1` `.io`
+/// corpus, adapted to the `fixtures/genesis/l1.json` in-memory chain (the
+/// hive fixtures use a pre-merge genesis ethrex cannot import, so responses
+/// are asserted by JSON path rather than whole-body equality).
+#[cfg(test)]
+mod integration_tests {
+    use crate::rpc::map_http_requests;
+    use crate::test_utils::{default_context_with_storage, setup_store};
+    use crate::utils::{RpcErr, RpcErrorMetadata, RpcRequest};
+    use serde_json::{Value, json};
+
+    /// Funded EOA from fixtures/genesis/l1.json (10^9 ETH).
+    const RICH: &str = "0x00000a8d3f37af8def18832962ee008d8dca4f7b";
+    /// Fresh addresses with no genesis state.
+    const FRESH_A: &str = "0xc000000000000000000000000000000000000000";
+    const FRESH_B: &str = "0xc100000000000000000000000000000000000000";
+
+    async fn simulate(params: Value) -> Result<Value, RpcErr> {
+        let storage = setup_store().await;
+        let context = default_context_with_storage(storage).await;
+        let request: RpcRequest = serde_json::from_value(json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "eth_simulateV1",
+            "params": params,
+        }))
+        .unwrap();
+        map_http_requests(&request, context).await
+    }
+
+    fn error_code(err: RpcErr) -> i32 {
+        RpcErrorMetadata::from(err).code
+    }
+
+    #[tokio::test]
+    async fn simple_transfer_with_balance_override() {
+        // `ethSimulate-simple.io`: fund a fresh account via stateOverrides,
+        // then transfer out of it.
+        let result = simulate(json!([{
+            "blockStateCalls": [{
+                "stateOverrides": {FRESH_A: {"balance": "0xde0b6b3a7640000"}},
+                "calls": [{"from": FRESH_A, "to": FRESH_B, "value": "0x1"}],
+            }],
+        }, "latest"]))
+        .await
+        .unwrap();
+        let blocks = result.as_array().unwrap();
+        assert_eq!(blocks.len(), 1);
+        // Genesis is block 0, so the simulated block is 1.
+        assert_eq!(blocks[0]["number"], json!("0x1"));
+        let call = &blocks[0]["calls"][0];
+        assert_eq!(call["status"], json!("0x1"));
+        assert_eq!(call["gasUsed"], json!("0x5208"));
+        assert_eq!(call["maxUsedGas"], json!("0x5208"));
+        assert_eq!(call["returnData"], json!("0x"));
+        assert_eq!(call["logs"], json!([]));
+        // Hash-only transactions by default.
+        assert!(blocks[0]["transactions"][0].is_string());
+    }
+
+    #[tokio::test]
+    async fn empty_block_state_call_produces_empty_block() {
+        // `ethSimulate-empty.io`.
+        let result = simulate(json!([{"blockStateCalls": [{}]}, "latest"]))
+            .await
+            .unwrap();
+        let blocks = result.as_array().unwrap();
+        assert_eq!(blocks.len(), 1);
+        assert_eq!(blocks[0]["calls"], json!([]));
+        assert_eq!(blocks[0]["transactions"], json!([]));
+        assert_eq!(blocks[0]["gasUsed"], json!("0x0"));
+    }
+
+    #[tokio::test]
+    async fn block_numbers_must_ascend() {
+        // `ethSimulate-block-num-order-38020.io`.
+        let err = simulate(json!([{
+            "blockStateCalls": [
+                {"blockOverrides": {"number": "0x10"}},
+                {"blockOverrides": {"number": "0x5"}},
+            ],
+        }, "latest"]))
+        .await
+        .unwrap_err();
+        assert_eq!(error_code(err), -38020);
+    }
+
+    #[tokio::test]
+    async fn timestamps_must_increase() {
+        // `ethSimulate-block-timestamp-order-38021.io`: equal timestamps are
+        // rejected too.
+        let err = simulate(json!([{
+            "blockStateCalls": [
+                {"blockOverrides": {"time": "0x6668e112"}},
+                {"blockOverrides": {"time": "0x6668e112"}},
+            ],
+        }, "latest"]))
+        .await
+        .unwrap_err();
+        assert_eq!(error_code(err), -38021);
+    }
+
+    #[tokio::test]
+    async fn explicit_gas_above_block_limit_aborts() {
+        // `ethSimulate-run-out-of-gas-in-block-38015.io` (adapted): a small
+        // gasLimit override plus an explicit call gas beyond it.
+        let err = simulate(json!([{
+            "blockStateCalls": [{
+                "blockOverrides": {"gasLimit": "0x5208"},
+                "calls": [{"from": RICH, "to": FRESH_B, "gas": "0x10000"}],
+            }],
+        }, "latest"]))
+        .await
+        .unwrap_err();
+        assert_eq!(error_code(err), -38015);
+    }
+
+    #[tokio::test]
+    async fn validation_requires_base_fee() {
+        // `ethSimulate-basefee-too-low-with-validation-38012.io`: with
+        // validation the block keeps a real base fee, so zero-fee calls fail.
+        let err = simulate(json!([{
+            "validation": true,
+            "blockStateCalls": [{
+                "calls": [{"from": RICH, "to": FRESH_B, "value": "0x1"}],
+            }],
+        }, "latest"]))
+        .await
+        .unwrap_err();
+        assert_eq!(error_code(err), -38012);
+    }
+
+    #[tokio::test]
+    async fn insufficient_funds_aborts() {
+        // `ethSimulate-simple-no-funds.io`: value transfers from an unfunded
+        // account fail the balance check in both validation modes.
+        let err = simulate(json!([{
+            "blockStateCalls": [{
+                "calls": [{"from": FRESH_A, "to": FRESH_B, "value": "0x1"}],
+            }],
+        }, "latest"]))
+        .await
+        .unwrap_err();
+        assert_eq!(error_code(err), -38014);
+    }
+
+    #[tokio::test]
+    async fn trace_transfers_emits_synthetic_log() {
+        // `ethSimulate-eth-send-should-produce-logs.io`.
+        let result = simulate(json!([{
+            "traceTransfers": true,
+            "blockStateCalls": [{
+                "calls": [{"from": RICH, "to": FRESH_B, "value": "0x7b"}],
+            }],
+        }, "latest"]))
+        .await
+        .unwrap();
+        let call = &result[0]["calls"][0];
+        assert_eq!(call["status"], json!("0x1"));
+        let log = &call["logs"][0];
+        assert_eq!(
+            log["address"],
+            json!("0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee")
+        );
+        assert_eq!(
+            log["topics"][0],
+            json!("0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef")
+        );
+        // Topics 1/2 are the padded from/to addresses; data is the value.
+        assert_eq!(
+            log["topics"][1],
+            json!(format!("0x000000000000000000000000{}", &RICH[2..]))
+        );
+        assert_eq!(
+            log["data"],
+            json!("0x000000000000000000000000000000000000000000000000000000000000007b")
+        );
+        assert_eq!(log["logIndex"], json!("0x0"));
+        assert_eq!(log["removed"], json!(false));
+        assert!(log["blockTimestamp"].is_string());
+        // The synthetic log stays out of the block's logs bloom.
+        assert_eq!(
+            result[0]["logsBloom"],
+            json!(format!("0x{}", "0".repeat(512)))
+        );
+    }
+
+    #[tokio::test]
+    async fn state_carries_across_simulated_blocks() {
+        // `ethSimulate-transfer-over-BlockStateCalls.io` (adapted): block 1
+        // funds FRESH_A from the rich account; block 2 spends from FRESH_A.
+        let result = simulate(json!([{
+            "blockStateCalls": [
+                {"calls": [{"from": RICH, "to": FRESH_A, "value": "0xde0b6b3a7640000"}]},
+                {"calls": [{"from": FRESH_A, "to": FRESH_B, "value": "0x1"}]},
+            ],
+        }, "latest"]))
+        .await
+        .unwrap();
+        let blocks = result.as_array().unwrap();
+        assert_eq!(blocks.len(), 2);
+        assert_eq!(blocks[0]["calls"][0]["status"], json!("0x1"));
+        assert_eq!(blocks[1]["calls"][0]["status"], json!("0x1"));
+        assert_eq!(blocks[0]["number"], json!("0x1"));
+        assert_eq!(blocks[1]["number"], json!("0x2"));
+        // Chained parent hash: block 2's parentHash is block 1's hash.
+        assert_eq!(blocks[1]["parentHash"], blocks[0]["hash"]);
+        // State roots differ (both blocks mutate state).
+        assert_ne!(blocks[0]["stateRoot"], blocks[1]["stateRoot"]);
+    }
+
+    #[tokio::test]
+    async fn gap_blocks_are_included_in_response() {
+        // `ethSimulate-blocknumber-increment.io` (adapted): jumping to
+        // base+3 yields the two gap blocks as well.
+        let result = simulate(json!([{
+            "blockStateCalls": [{"blockOverrides": {"number": "0x3"}}],
+        }, "latest"]))
+        .await
+        .unwrap();
+        let blocks = result.as_array().unwrap();
+        assert_eq!(blocks.len(), 3);
+        let numbers: Vec<&Value> = blocks.iter().map(|b| &b["number"]).collect();
+        assert_eq!(numbers, vec![&json!("0x1"), &json!("0x2"), &json!("0x3")]);
+        // Timestamps advance by 12 per block.
+        let ts: Vec<u64> = blocks
+            .iter()
+            .map(|b| {
+                u64::from_str_radix(
+                    b["timestamp"].as_str().unwrap().trim_start_matches("0x"),
+                    16,
+                )
+                .unwrap()
+            })
+            .collect();
+        assert_eq!(ts[1] - ts[0], 12);
+        assert_eq!(ts[2] - ts[1], 12);
+    }
+
+    #[tokio::test]
+    async fn return_full_transactions() {
+        // `ethSimulate-simple-validation-fulltx.io` (adapted, without
+        // validation): transactions come back as objects.
+        let result = simulate(json!([{
+            "returnFullTransactions": true,
+            "blockStateCalls": [{
+                "calls": [{"from": RICH, "to": FRESH_B, "value": "0x1"}],
+            }],
+        }, "latest"]))
+        .await
+        .unwrap();
+        let tx = &result[0]["transactions"][0];
+        assert!(tx.is_object());
+        // Spec default tx type is EIP-1559 (0x2).
+        assert_eq!(tx["type"], json!("0x2"));
+        assert_eq!(tx["nonce"], json!("0x0"));
+        assert!(tx["hash"].is_string());
+    }
+
+    #[tokio::test]
+    async fn block_overrides_reflect_in_result_header() {
+        // `ethSimulate-override-block-num.io` (adapted) + simulate-spelled
+        // field names (feeRecipient/prevRandao).
+        let result = simulate(json!([{
+            "blockStateCalls": [{
+                "blockOverrides": {
+                    "number": "0x5",
+                    "time": "0x6668e200",
+                    "gasLimit": "0x1000000",
+                    "feeRecipient": "0x000000000000000000000000000000000000beef",
+                    "baseFeePerGas": "0x7",
+                },
+            }],
+        }, "latest"]))
+        .await
+        .unwrap();
+        let block = result.as_array().unwrap().last().unwrap().clone();
+        assert_eq!(block["number"], json!("0x5"));
+        assert_eq!(block["timestamp"], json!("0x6668e200"));
+        assert_eq!(block["gasLimit"], json!("0x1000000"));
+        assert_eq!(
+            block["miner"],
+            json!("0x000000000000000000000000000000000000beef")
+        );
+        assert_eq!(block["baseFeePerGas"], json!("0x7"));
     }
 }
