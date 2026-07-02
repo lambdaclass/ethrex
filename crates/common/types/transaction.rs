@@ -1955,6 +1955,15 @@ pub fn frame_tx_nonce_manager() -> Address {
 }
 
 impl FrameTransaction {
+    /// Whether the frame at `index` belongs to an atomic batch (EIP-8250): it
+    /// is a batch member (`flags` bit 2 set) or the terminator immediately
+    /// following one. Frames in a batch are reverted together, so any state a
+    /// batched frame commits can be rolled back by a sibling's failure.
+    pub fn frame_is_in_atomic_batch(&self, index: usize) -> bool {
+        let is_flagged = |i: usize| self.frames.get(i).is_some_and(Frame::is_atomic_batch);
+        is_flagged(index) || (index > 0 && is_flagged(index - 1))
+    }
+
     /// Canonical signature hash (EIP-8141, spec commit fe0940cae2): the raw
     /// `signature` bytes of every signature with empty `msg` are elided (a
     /// signature over this hash cannot commit to its own bytes). Frame data is

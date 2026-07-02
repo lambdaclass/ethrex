@@ -83,6 +83,20 @@ pub fn apply_approve(
             if ctx.payer_address.is_some() {
                 return Err(ExceptionalHalt::InvalidOpcode.into());
             }
+            // EIP-8250: a payment approval's effects (nonce consumption, payer
+            // recording, and the balance debit) must all survive together or
+            // not at all. Inside an atomic batch a sibling frame's failure
+            // rolls the whole batch's state back, which would unwind the
+            // balance debit while the tx stayed authorized — minting the
+            // difference at the end-of-tx refund. Rather than reconcile that
+            // partial state (the spec's all-effects-durable rule is not yet
+            // cross-client validated), forbid payment approval inside a batch:
+            // reverting the frame leaves `payer` unset, and payment must be
+            // granted from a non-batch frame (the validation prefix, which
+            // already bans the batch flag). See docs/eip-8250.md.
+            if ctx.tx.frame_is_in_atomic_batch(ctx.current_frame_index) {
+                return Err(VMError::RevertOpcode);
+            }
             // No sender_approved precondition: the spec allows APPROVE_PAYMENT
             // in any order relative to APPROVE_EXECUTION.
             let tx_cost = compute_tx_max_cost(ctx)?;
@@ -132,6 +146,12 @@ pub fn apply_approve(
                 return Err(ExceptionalHalt::InvalidOpcode.into());
             }
             if frame_target != ctx.tx.sender {
+                return Err(VMError::RevertOpcode);
+            }
+            // Payment approval inside an atomic batch would let a sibling revert
+            // unwind the balance debit while the tx stays authorized — forbidden
+            // (EIP-8250 durability).
+            if ctx.tx.frame_is_in_atomic_batch(ctx.current_frame_index) {
                 return Err(VMError::RevertOpcode);
             }
             let tx_cost = compute_tx_max_cost(ctx)?;
