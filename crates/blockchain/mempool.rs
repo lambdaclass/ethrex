@@ -437,6 +437,15 @@ impl Mempool {
         Ok(())
     }
 
+    /// Remove a blobs bundle by its blob transaction hash, clearing both the
+    /// bundle pool and the versioned-hash index. Used to roll back a bundle that
+    /// was inserted just before a transaction insert that then failed, so the
+    /// orphaned bundle isn't leaked.
+    pub fn remove_blobs_bundle(&self, tx_hash: &H256) -> Result<(), StoreError> {
+        self.write()?.remove_blob_bundle(tx_hash);
+        Ok(())
+    }
+
     /// Get a blobs bundle to the pool given its blob transaction hash
     pub fn get_blobs_bundle(&self, tx_hash: H256) -> Result<Option<BlobsBundle>, StoreError> {
         Ok(self.read()?.blobs_bundle_pool.get(&tx_hash).cloned())

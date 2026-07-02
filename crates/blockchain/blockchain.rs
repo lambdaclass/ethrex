@@ -2841,8 +2841,17 @@ impl Blockchain {
         // Add blobs bundle before the transaction so that when add_transaction
         // notifies payload builders the blob data is already available.
         self.mempool.add_blobs_bundle(hash, blobs_bundle)?;
-        self.mempool
-            .add_transaction(hash, sender, MempoolTransaction::new(transaction, sender))?;
+        // If the tx insert fails after the bundle was stored, roll back the
+        // orphaned bundle so it isn't leaked in the pool. Best-effort: keep the
+        // original error (a failing insert means the write lock is poisoned or
+        // eviction failed, in which case the cleanup can't do better anyway).
+        if let Err(e) =
+            self.mempool
+                .add_transaction(hash, sender, MempoolTransaction::new(transaction, sender))
+        {
+            let _ = self.mempool.remove_blobs_bundle(&hash);
+            return Err(e);
+        }
         Ok(hash)
     }
 
