@@ -12,7 +12,6 @@ pub mod payload;
 pub mod prover;
 mod receipt;
 pub mod requests;
-#[cfg(feature = "experimental-devnet")]
 pub mod stateless_ssz;
 pub mod transaction;
 pub mod tx_fields;

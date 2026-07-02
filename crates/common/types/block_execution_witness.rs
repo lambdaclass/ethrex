@@ -182,7 +182,6 @@ impl RpcExecutionWitness {
     }
 }
 
-#[cfg(feature = "experimental-devnet")]
 impl ExecutionWitness {
     /// Build an `ExecutionWitness` from an SSZ stateless input. Used by the
     /// stateless validator (EXECUTE precompile and zkVM guest program).
@@ -803,7 +802,6 @@ fn set_hash_or_validate(header: &BlockHeader, hash: H256) -> Result<(), GuestPro
     Ok(())
 }
 
-#[cfg(feature = "experimental-devnet")]
 /// Map an ethrex `Fork` to its spec `PROTOCOL_FORKS` index (execution-specs 85fc20ca).
 fn fork_to_spec_index(fork: crate::types::genesis::Fork) -> Result<u64, GuestProgramStateError> {
     use crate::types::genesis::Fork;
@@ -820,7 +818,6 @@ fn fork_to_spec_index(fork: crate::types::genesis::Fork) -> Result<u64, GuestPro
     })
 }
 
-#[cfg(feature = "experimental-devnet")]
 /// Encode an ethrex `ChainConfig` into the SSZ `SszChainConfig` (with `active_fork`).
 /// The active fork is resolved at `block_timestamp`; the native L2 activates its
 /// forks at genesis, so `activation.timestamp = [0]`.
@@ -865,7 +862,6 @@ pub fn chain_config_to_ssz(
     })
 }
 
-#[cfg(feature = "experimental-devnet")]
 /// Decode an `SszChainConfig` into an ethrex `ChainConfig`. Activates every fork
 /// up to and including the SSZ `active_fork` at timestamp 0 (native-L2 genesis
 /// activation). `blob_schedule` is left `Default` — L2 blocks carry no blobs, so
@@ -908,7 +904,7 @@ pub fn ssz_chain_config_to_internal(
     })
 }
 
-#[cfg(all(test, feature = "experimental-devnet"))]
+#[cfg(test)]
 mod active_fork_tests {
     use super::*;
     use crate::types::genesis::{ChainConfig, Fork};
