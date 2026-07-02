@@ -79,6 +79,274 @@ pub fn compute_overlap(warmed: &FxHashMap<H256, u64>, block: &Block) -> OverlapS
     stats
 }
 
+#[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+use crate::MempoolPrewarmOptions;
+use crate::{Blockchain, BlockchainType};
+use ethrex_common::types::BlockHeader;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex, mpsc};
+use std::time::{SystemTime, UNIX_EPOCH};
+use tracing::{info, warn};
+
+// Fields are only read by `run_pass`, which is compiled out when the rayon
+// feature is disabled (or eip-8025 is active); avoid a dead-code warning in
+// that configuration, where the fields are still written by `trigger`.
+#[cfg_attr(any(not(feature = "rayon"), feature = "eip-8025"), allow(dead_code))]
+struct PrewarmRequest {
+    parent_header: BlockHeader,
+    cancel: Arc<AtomicBool>,
+    deadline_unix: u64,
+}
+
+pub struct PrewarmHandle {
+    sender: mpsc::Sender<PrewarmRequest>,
+    /// Cancel flag of the most recently triggered pass. `trigger` replaces it,
+    /// `cancel_current` sets it. Both are called only from the single
+    /// block-executor thread, so replace/set cannot race.
+    current_cancel: Mutex<Arc<AtomicBool>>,
+    /// hash -> gas_limit of the last pass's warm set, for the overlap metric.
+    last_warmed: Arc<Mutex<Option<FxHashMap<H256, u64>>>>,
+    slot_duration_secs: u64,
+}
+
+fn unix_now() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
+
+impl PrewarmHandle {
+    pub fn cancel_current(&self) {
+        if let Ok(flag) = self.current_cancel.lock() {
+            flag.store(true, Ordering::Relaxed);
+        }
+    }
+
+    pub fn trigger(&self, parent_header: BlockHeader) {
+        let cancel = Arc::new(AtomicBool::new(false));
+        if let Ok(mut current) = self.current_cancel.lock() {
+            *current = cancel.clone();
+        }
+        let deadline_unix =
+            next_slot_deadline_unix(parent_header.timestamp, self.slot_duration_secs);
+        let _ = self.sender.send(PrewarmRequest {
+            parent_header,
+            cancel,
+            deadline_unix,
+        });
+    }
+
+    /// Called on every newPayload arrival, before execution. Telemetry only.
+    pub fn log_block_arrival(&self, block: &Block) {
+        // Propagation offset: how far into its slot the block reached us.
+        // Confirms the real margin the slot-boundary deadline leaves.
+        let offset_secs = unix_now().saturating_sub(block.header.timestamp);
+        let overlap = self
+            .last_warmed
+            .lock()
+            .ok()
+            .and_then(|mut w| w.take())
+            .map(|warmed| compute_overlap(&warmed, block));
+        match overlap {
+            Some(s) => info!(
+                "prewarm arrival: block {} offset {}s, overlap {}/{} txs {}/{} gas",
+                block.header.number,
+                offset_secs,
+                s.matched_txs,
+                s.block_txs,
+                s.matched_gas,
+                s.block_gas
+            ),
+            None => info!(
+                "prewarm arrival: block {} offset {}s, no warm set",
+                block.header.number, offset_secs
+            ),
+        }
+    }
+}
+
+pub struct MempoolPrewarmer;
+
+impl MempoolPrewarmer {
+    /// Spawns the prewarmer worker. Returns `None` (with a warn) when the
+    /// feature is disabled, the chain is L2, or the build lacks rayon.
+    pub fn spawn(blockchain: Arc<Blockchain>) -> Option<PrewarmHandle> {
+        let opts = blockchain.options.mempool_prewarm.clone();
+        if !opts.enabled {
+            return None;
+        }
+        if !matches!(blockchain.options.r#type, BlockchainType::L1) {
+            warn!("mempool prewarm is L1-only; disabled");
+            return None;
+        }
+        #[cfg(any(not(feature = "rayon"), feature = "eip-8025"))]
+        {
+            warn!("mempool prewarm requires the rayon feature; disabled");
+            None
+        }
+        #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+        {
+            let threads = if opts.num_threads == 0 {
+                (std::thread::available_parallelism().map_or(2, |n| n.get()) / 2).max(1)
+            } else {
+                opts.num_threads
+            };
+            let pool = rayon::ThreadPoolBuilder::new()
+                .num_threads(threads)
+                .thread_name(|i| format!("prewarm-{i}"))
+                .build()
+                .ok()?;
+            let (sender, receiver) = mpsc::channel::<PrewarmRequest>();
+            let last_warmed: Arc<Mutex<Option<FxHashMap<H256, u64>>>> = Arc::new(Mutex::new(None));
+            let last_warmed_worker = last_warmed.clone();
+            let slot_duration_secs = opts.slot_duration_secs;
+            std::thread::Builder::new()
+                .name("mempool_prewarmer".to_string())
+                .spawn(move || {
+                    while let Ok(mut req) = receiver.recv() {
+                        // Drain to the newest request; stale ones are already cancelled.
+                        while let Ok(next) = receiver.try_recv() {
+                            req = next;
+                        }
+                        run_pass(&blockchain, &pool, req, &last_warmed_worker, &opts);
+                    }
+                })
+                .ok()?;
+            Some(PrewarmHandle {
+                sender,
+                current_cancel: Mutex::new(Arc::new(AtomicBool::new(false))),
+                last_warmed,
+                slot_duration_secs,
+            })
+        }
+    }
+}
+
+#[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+fn run_pass(
+    blockchain: &Blockchain,
+    pool: &rayon::ThreadPool,
+    req: PrewarmRequest,
+    last_warmed: &Mutex<Option<FxHashMap<H256, u64>>>,
+    opts: &MempoolPrewarmOptions,
+) {
+    use crate::mempool::PendingTxFilter;
+    use crate::vm::StoreVmDatabase;
+    use ethrex_common::types::{
+        ELASTICITY_MULTIPLIER, calc_excess_blob_gas, calculate_base_fee_per_gas,
+    };
+    use ethrex_levm::vm::VMType;
+    use ethrex_vm::backends::CachingDatabase;
+    use ethrex_vm::backends::levm::LEVM;
+    use std::time::Instant;
+    use tracing::debug;
+
+    let start = Instant::now();
+    let parent = &req.parent_header;
+
+    // Predicted child base fee (same formula as the payload builder,
+    // crates/blockchain/payload.rs:173).
+    let base_fee = calculate_base_fee_per_gas(
+        parent.gas_limit,
+        parent.gas_limit,
+        parent.gas_used,
+        parent.base_fee_per_gas.unwrap_or_default(),
+        ELASTICITY_MULTIPLIER,
+    );
+
+    // Snapshot the mempool. blob_fee: None on purpose — blob txs are warmed
+    // like any other tx (the sidecar is not state), no fee gate needed.
+    let filter = PendingTxFilter {
+        base_fee,
+        ..Default::default()
+    };
+    let Ok(txs_by_sender) = blockchain.mempool.filter_transactions(&filter) else {
+        return;
+    };
+    let gas_budget = opts.gas_budget_multiplier.saturating_mul(parent.gas_limit);
+    let warm_set = select_warm_set(txs_by_sender, base_fee, gas_budget);
+    if warm_set.is_empty() {
+        debug!("prewarm pass: empty warm set, skipping");
+        return;
+    }
+
+    let warmed_map: FxHashMap<H256, u64> = warm_set
+        .iter()
+        .map(|(tx, _)| (tx.hash(&NativeCrypto), tx.gas_limit()))
+        .collect();
+    if let Ok(mut w) = last_warmed.lock() {
+        *w = Some(warmed_map);
+    }
+
+    // Synthetic child header: clone the parent and override what the warm
+    // path reads (fork selection by timestamp, base fee, blob fee inputs).
+    // Approximation is fine — warming only needs plausible execution context.
+    let config = blockchain.storage.get_chain_config();
+    let mut header = parent.clone();
+    header.parent_hash = parent.hash();
+    header.number = parent.number.saturating_add(1);
+    header.timestamp = parent.timestamp.saturating_add(opts.slot_duration_secs);
+    header.base_fee_per_gas = base_fee;
+    header.gas_used = 0;
+    if let Some(schedule) = config.get_fork_blob_schedule(header.timestamp) {
+        let fork = config.fork(header.timestamp);
+        header.excess_blob_gas = Some(calc_excess_blob_gas(parent, schedule, fork));
+        header.blob_gas_used = Some(0);
+    }
+
+    // DB stack pinned at the parent (head) state, mirroring
+    // execute_block_pipeline (blockchain.rs:548) + Evm::new_from_db_for_l1:
+    // StoreVmDatabase -> CachingDatabase. Reads populate the persistent
+    // RocksDB block cache and code cache underneath; the decoded layers here
+    // are throwaway.
+    let Ok(vm_db) = StoreVmDatabase::new(blockchain.storage.clone(), parent.clone()) else {
+        return;
+    };
+    let inner: Arc<dyn ethrex_vm::backends::LevmDatabase> =
+        Arc::new(Box::new(vm_db) as ethrex_vm::DynVmDatabase);
+    let caching: Arc<dyn ethrex_vm::backends::LevmDatabase> = Arc::new(CachingDatabase::new(
+        inner,
+        blockchain.options.precompile_cache_enabled,
+    ));
+
+    let cancel = req.cancel.clone();
+    let deadline = req.deadline_unix;
+    let should_stop = move || cancel.load(Ordering::Relaxed) || unix_now() >= deadline;
+
+    // `warm_txs` takes borrowed transactions; bridge the owned warm set.
+    let view: Vec<(&Transaction, Address)> = warm_set.iter().map(|(tx, s)| (tx, *s)).collect();
+
+    let result = pool.install(|| {
+        LEVM::warm_txs(
+            &view,
+            &header,
+            caching,
+            VMType::L1,
+            &NativeCrypto,
+            &should_stop,
+        )
+    });
+
+    let stop_reason = if req.cancel.load(Ordering::Relaxed) {
+        "cancelled"
+    } else if unix_now() >= deadline {
+        "deadline"
+    } else {
+        "completed"
+    };
+    let total_gas: u64 = warm_set.iter().map(|(tx, _)| tx.gas_limit()).sum();
+    info!(
+        "prewarm pass for block {}: {} txs, {} gas, {:?}, stop={}, err={}",
+        header.number,
+        warm_set.len(),
+        total_gas,
+        start.elapsed(),
+        stop_reason,
+        result.is_err(),
+    );
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
