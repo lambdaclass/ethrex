@@ -3329,13 +3329,18 @@ impl Blockchain {
             // the code is an EIP-7702 delegation designation (the account is
             // still an EOA in spirit, just pointing at delegate code).
             //
+            // Frame transactions are exempt: EIP-8141 ("Transaction
+            // origination") explicitly does NOT apply the EIP-3607 restriction
+            // to them, since a frame tx's `SENDER` frame legitimately
+            // originates calls where `tx.sender` is a contract account.
+            //
             // Length-based fast path: any code whose length isn't exactly
             // `EIP7702_DELEGATED_CODE_LEN` (23) cannot be a delegation, so
             // we reject without loading the bytecode. Only when the metadata
             // length matches do we fetch + verify the prefix. This avoids
             // pulling potentially large contract bytecode on every contract
             // sender that hits admission.
-            if sender_acc_info.code_hash != *EMPTY_KECCAK_HASH {
+            if !is_frame_tx && sender_acc_info.code_hash != *EMPTY_KECCAK_HASH {
                 let metadata_len = self
                     .storage
                     .get_code_metadata(sender_acc_info.code_hash)?

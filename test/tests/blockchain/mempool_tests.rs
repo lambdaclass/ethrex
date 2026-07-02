@@ -1341,28 +1341,30 @@ async fn mempool_admits_funded_sponsored_frame_tx() {
 
 #[tokio::test]
 async fn mempool_rejects_underfunded_paymaster() {
-    // A frame tx where the sender's balance covers the simulation-time deduction
-    // (effective_gas_price * total_gas_limit) but NOT the mempool's max_cost
-    // reservation (max_fee_per_gas * total_gas_limit) must be rejected with
-    // FrameTxPaymasterUnderfunded.
+    // The post-simulation availability check (`available < max_cost`, where
+    // `available = paymaster_balance - reserved_pending_cost`) must reject a
+    // frame tx with FrameTxPaymasterUnderfunded.
     //
-    // With base_fee == 0 (genesis default):
-    //   effective_gas_price = min(max_fee, base_fee + priority_fee)
-    //                       = min(2e9, 0 + 1e9) = 1e9
-    //   APPROVE deducts:  1e9 * total_gas_limit
-    //   max_cost:         2e9 * total_gas_limit  (> APPROVE deduction)
+    // Note: since APPROVE now collects the tx's MAXIMUM cost during the
+    // validation-prefix simulation (max_fee_per_gas * total_gas_limit), a payer
+    // that cannot cover max_cost reverts *inside* the simulation
+    // (FrameTxValidationFailed), never reaching this check. The availability
+    // check is therefore only reachable when the payer covers a single tx's
+    // max_cost but PRIOR pending reservations for the same paymaster leave less
+    // than max_cost available. We reproduce that by seeding the paymaster with
+    // exactly one max_cost (so simulation passes, balance exactly exhausted),
+    // then phantom-injecting a pending reservation of max_cost against it.
     //
-    // By seeding balance = effective * total_gas_limit exactly, the APPROVE
-    // deduction succeeds (balance exactly exhausted) but the availability check
-    // `balance < max_cost` fires because max_fee > effective.
+    // Setup mirrors mempool_enforces_noncanonical_paymaster_limit; the underfunded
+    // check (`available < max_cost`) is evaluated before the non-canonical
+    // pending-slot limit, so it is the error that fires here.
     let max_fee_per_gas = 2_000_000_000u64;
     let max_priority_fee_per_gas = 1_000_000_000u64;
-    // Compute total_gas_limit from the frame tx to get the exact balance.
     let frame_tx = funded_frame_tx(max_fee_per_gas, max_priority_fee_per_gas);
     let total_gas = frame_tx.total_gas_limit();
-    let balance = U256::from(max_priority_fee_per_gas) * U256::from(total_gas);
+    let max_cost = U256::from(max_fee_per_gas) * U256::from(total_gas);
 
-    let sender = Address::from_low_u64_be(FRAME_TX_SELF_SENDER);
+    let paymaster = Address::from_low_u64_be(FRAME_TX_SELF_SENDER);
     let genesis = Genesis {
         config: ChainConfig {
             chain_id: 0,
@@ -1372,11 +1374,14 @@ async fn mempool_rejects_underfunded_paymaster() {
         },
         gas_limit: 100_000_000,
         alloc: [(
-            sender,
+            paymaster,
             GenesisAccount {
                 code: approve_code(APPROVE_EXECUTION_AND_PAYMENT),
                 storage: BTreeMap::new(),
-                balance,
+                // Exactly one tx's max cost: simulation's APPROVE (which deducts
+                // max_cost) passes, but any prior reservation makes availability
+                // fall below max_cost.
+                balance: max_cost,
                 nonce: 0,
             },
         )]
@@ -1392,12 +1397,53 @@ async fn mempool_rejects_underfunded_paymaster() {
         .expect("add genesis state");
     let blockchain = Blockchain::default_with_store(store);
 
-    let tx = Transaction::FrameTransaction(frame_tx);
-    let result = blockchain.add_transaction_to_pool(tx).await;
+    // Phantom-inject a pending reservation of max_cost against the paymaster from a
+    // DIFFERENT sender (no nonce / sender-pending collision with the real tx). This
+    // drives reserved_pending_cost(paymaster) to max_cost so the real tx sees zero
+    // available balance.
+    let phantom_sender = Address::from_low_u64_be(0xDEAD_BEEF);
+    let phantom_frame_tx = FrameTransaction {
+        chain_id: 0,
+        nonce: 99,
+        sender: phantom_sender,
+        frames: vec![Frame {
+            mode: FrameMode::Verify as u8,
+            flags: APPROVE_EXECUTION_AND_PAYMENT,
+            target: Some(phantom_sender),
+            gas_limit: 100,
+            value: U256::zero(),
+            data: Bytes::new(),
+        }],
+        signatures: vec![],
+        max_priority_fee_per_gas: 0,
+        max_fee_per_gas: 0,
+        max_fee_per_blob_gas: U256::zero(),
+        blob_versioned_hashes: vec![],
+        ..Default::default()
+    };
+    let phantom_tx = Transaction::FrameTransaction(phantom_frame_tx);
+    let phantom_hash = phantom_tx.hash(&NativeCrypto);
+    blockchain
+        .mempool
+        .add_transaction(
+            phantom_hash,
+            phantom_sender,
+            MempoolTransaction::new(phantom_tx, phantom_sender),
+            Some(FramePaymasterReservation {
+                paymaster,
+                reserved_cost: max_cost,
+                is_canonical: false,
+                paymaster_balance: max_cost,
+            }),
+        )
+        .expect("phantom reservation must be directly inserted");
+
+    let real_tx = Transaction::FrameTransaction(frame_tx);
+    let result = blockchain.add_transaction_to_pool(real_tx).await;
     assert!(
         matches!(result, Err(MempoolError::FrameTxPaymasterUnderfunded)),
-        "payer whose balance covers simulation cost but not max_cost must yield \
-         FrameTxPaymasterUnderfunded; got {result:?}"
+        "payer covering one max_cost but with prior reservations exhausting its \
+         balance must yield FrameTxPaymasterUnderfunded; got {result:?}"
     );
 }
 
