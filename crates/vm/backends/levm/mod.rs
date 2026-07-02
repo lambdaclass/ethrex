@@ -40,7 +40,7 @@ use ethrex_levm::errors::{InternalError, TxValidationError};
 #[cfg(feature = "perf_opcode_timings")]
 use ethrex_levm::timings::{OPCODE_TIMINGS, PRECOMPILES_TIMINGS};
 use ethrex_levm::tracing::LevmCallTracer;
-use ethrex_levm::utils::get_base_fee_per_blob_gas;
+use ethrex_levm::utils::{calculate_blob_gas_cost, get_base_fee_per_blob_gas};
 use ethrex_levm::vm::VMType;
 use ethrex_levm::{
     Environment,
@@ -101,6 +101,8 @@ impl LEVM {
     ) -> Result<(BlockExecutionResult, Option<BlockAccessList>), EvmError> {
         let chain_config = db.store.get_chain_config()?;
         let is_amsterdam = chain_config.is_amsterdam_activated(block.header.timestamp);
+        // EIP-8079 (LStar+): compute burned fees
+        let is_lstar = chain_config.is_lstar_activated(block.header.timestamp);
 
         // Enable BAL recording for Amsterdam+ forks
         if is_amsterdam {
@@ -119,6 +121,17 @@ impl LEVM {
         // EIP-8037 (Amsterdam+): track regular and state gas separately for block-level max()
         let mut block_regular_gas_used = 0_u64;
         let mut block_state_gas_used = 0_u64;
+        // EIP-8079 (LStar+): accumulate burned fees across transactions
+        let mut total_burned_fees: u64 = 0;
+        // Pre-compute EVMConfig once for blob fee calculation (LStar path only)
+        let evm_config_for_burn = if is_lstar {
+            Some(EVMConfig::new_from_chain_config(
+                &chain_config,
+                &block.header,
+            ))
+        } else {
+            None
+        };
         let transactions_with_sender =
             block
                 .body
@@ -198,6 +211,26 @@ impl LEVM {
                 block_gas_used = block_gas_used.saturating_add(report.gas_used);
             }
 
+            // EIP-8079 (LStar+): per-tx burned fees accumulation.
+            // burned = base_fee_per_gas * gas_spent + blob_base_fee * blob_gas_used
+            // Intuition: base-fee portion is burned (coinbase only gets priority fee);
+            // entire blob base fee is burned (no blob priority component).
+            if let Some(evm_cfg) = &evm_config_for_burn {
+                let base_fee = block.header.base_fee_per_gas.unwrap_or_default();
+                // gas_spent is post-refund: what the user actually paid
+                let gas_burned: u64 = base_fee.saturating_mul(report.gas_spent);
+                // blob base fee is entirely burned (no priority-fee component for blobs)
+                let blob_burned: u64 = calculate_blob_gas_cost(
+                    &tx.blob_versioned_hashes(),
+                    block.header.excess_blob_gas,
+                    evm_cfg,
+                )
+                .map(|v| u64::try_from(v).unwrap_or(u64::MAX))
+                .unwrap_or(0);
+                total_burned_fees =
+                    total_burned_fees.saturating_add(gas_burned.saturating_add(blob_burned));
+            }
+
             let receipt = Receipt::new(
                 tx.tx_type(),
                 matches!(report.result, TxResult::Success),
@@ -256,6 +289,11 @@ impl LEVM {
                 receipts,
                 requests,
                 block_gas_used,
+                burned_fees: if is_lstar {
+                    Some(total_burned_fees)
+                } else {
+                    None
+                },
             },
             bal,
         ))
@@ -428,12 +466,16 @@ impl LEVM {
                     receipts,
                     requests,
                     block_gas_used,
+                    // burned_fees is computed on the sequential (block-production) path only;
+                    // the parallel BAL-validation path does not produce per-tx ExecutionReports.
+                    burned_fees: None,
                 },
                 None,
             ));
         }
 
         // Sequential path (existing code, for block production and non-Amsterdam)
+        let is_lstar = chain_config.is_lstar_activated(block.header.timestamp);
         if is_amsterdam {
             db.enable_bal_recording();
             // Set index 0 for pre-execution phase (system contracts)
@@ -452,6 +494,17 @@ impl LEVM {
         // EIP-8037 (Amsterdam+): track regular and state gas separately for block-level max()
         let mut block_regular_gas_used = 0_u64;
         let mut block_state_gas_used = 0_u64;
+        // EIP-8079 (LStar+): accumulate burned fees across transactions
+        let mut total_burned_fees: u64 = 0;
+        // Pre-compute EVMConfig once for blob fee calculation (LStar path only)
+        let evm_config_for_burn = if is_lstar {
+            Some(EVMConfig::new_from_chain_config(
+                &chain_config,
+                &block.header,
+            ))
+        } else {
+            None
+        };
         // Starts at 2 to account for the two precompile calls done in `Self::prepare_block`.
         // The value itself can be safely changed.
         let mut tx_since_last_flush = 2;
@@ -530,6 +583,22 @@ impl LEVM {
                 block_gas_used = block_gas_used.saturating_add(report.gas_used);
             }
 
+            // EIP-8079 (LStar+): per-tx burned fees accumulation.
+            // burned = base_fee_per_gas * gas_spent + blob_base_fee * blob_gas_used
+            if let Some(evm_cfg) = &evm_config_for_burn {
+                let base_fee = block.header.base_fee_per_gas.unwrap_or_default();
+                let gas_burned: u64 = base_fee.saturating_mul(report.gas_spent);
+                let blob_burned: u64 = calculate_blob_gas_cost(
+                    &tx.blob_versioned_hashes(),
+                    block.header.excess_blob_gas,
+                    evm_cfg,
+                )
+                .map(|v| u64::try_from(v).unwrap_or(u64::MAX))
+                .unwrap_or(0);
+                total_burned_fees =
+                    total_burned_fees.saturating_add(gas_burned.saturating_add(blob_burned));
+            }
+
             let receipt = Receipt::new(
                 tx.tx_type(),
                 matches!(report.result, TxResult::Success),
@@ -601,6 +670,11 @@ impl LEVM {
                 receipts,
                 requests,
                 block_gas_used,
+                burned_fees: if is_lstar {
+                    Some(total_burned_fees)
+                } else {
+                    None
+                },
             },
             bal,
         ))
@@ -2877,5 +2951,285 @@ mod bal_tests {
         let u = &updates[0];
         assert_eq!(u.info.as_ref().unwrap().code_hash, expected_hash);
         assert_eq!(u.code.as_ref().unwrap().bytecode, code);
+    }
+}
+
+/// Tests for EIP-8079 burned_fees computation in execute_block (LStar-gated).
+#[cfg(test)]
+mod burned_fees_tests {
+    use super::*;
+    use ethrex_common::{
+        constants::{DEFAULT_OMMERS_HASH, DEFAULT_REQUESTS_HASH},
+        types::{AccountState, Block, BlockBody, BlockHeader, ChainConfig, Code, CodeMetadata},
+        utils::keccak,
+    };
+    use ethrex_crypto::NativeCrypto;
+    use ethrex_levm::errors::DatabaseError;
+    use ethrex_rlp::encode::PayloadRLPEncode;
+
+    // ── helpers ─────────────────────────────────────────────────────────────
+
+    fn lstar_chain_config() -> ChainConfig {
+        ChainConfig {
+            chain_id: 1,
+            homestead_block: Some(0),
+            eip150_block: Some(0),
+            eip155_block: Some(0),
+            eip158_block: Some(0),
+            byzantium_block: Some(0),
+            constantinople_block: Some(0),
+            petersburg_block: Some(0),
+            istanbul_block: Some(0),
+            berlin_block: Some(0),
+            london_block: Some(0),
+            terminal_total_difficulty: Some(0),
+            terminal_total_difficulty_passed: true,
+            shanghai_time: Some(0),
+            cancun_time: Some(0),
+            prague_time: Some(0),
+            amsterdam_time: Some(0),
+            lstar_time: Some(0),
+            ..Default::default()
+        }
+    }
+
+    fn amsterdam_chain_config() -> ChainConfig {
+        ChainConfig {
+            chain_id: 1,
+            homestead_block: Some(0),
+            eip150_block: Some(0),
+            eip155_block: Some(0),
+            eip158_block: Some(0),
+            byzantium_block: Some(0),
+            constantinople_block: Some(0),
+            petersburg_block: Some(0),
+            istanbul_block: Some(0),
+            berlin_block: Some(0),
+            london_block: Some(0),
+            terminal_total_difficulty: Some(0),
+            terminal_total_difficulty_passed: true,
+            shanghai_time: Some(0),
+            cancun_time: Some(0),
+            prague_time: Some(0),
+            amsterdam_time: Some(0),
+            lstar_time: None, // no LStar → burned_fees must be None
+            ..Default::default()
+        }
+    }
+
+    // ── mock database ────────────────────────────────────────────────────────
+
+    struct MockDB {
+        chain_config: ChainConfig,
+        accounts: FxHashMap<Address, (AccountState, Bytes)>,
+    }
+
+    impl MockDB {
+        fn new(chain_config: ChainConfig) -> Self {
+            Self {
+                chain_config,
+                accounts: FxHashMap::default(),
+            }
+        }
+
+        fn with_account(mut self, address: Address, balance: U256, code: Option<Bytes>) -> Self {
+            let code_bytes = code.unwrap_or_default();
+            let code_hash = if code_bytes.is_empty() {
+                *EMPTY_KECCACK_HASH
+            } else {
+                keccak(&code_bytes)
+            };
+            let state = AccountState {
+                nonce: 0,
+                balance,
+                storage_root: H256::zero(),
+                code_hash,
+            };
+            self.accounts.insert(address, (state, code_bytes));
+            self
+        }
+    }
+
+    impl Database for MockDB {
+        fn get_account_state(&self, address: Address) -> Result<AccountState, DatabaseError> {
+            Ok(self
+                .accounts
+                .get(&address)
+                .map(|(s, _)| *s)
+                .unwrap_or_default())
+        }
+
+        fn get_storage_value(&self, _: Address, _: H256) -> Result<U256, DatabaseError> {
+            Ok(U256::zero())
+        }
+
+        fn get_block_hash(&self, _: u64) -> Result<H256, DatabaseError> {
+            Ok(H256::zero())
+        }
+
+        fn get_chain_config(&self) -> Result<ChainConfig, DatabaseError> {
+            Ok(self.chain_config.clone())
+        }
+
+        fn get_account_code(&self, code_hash: H256) -> Result<Code, DatabaseError> {
+            let crypto = NativeCrypto;
+            for (state, bytecode) in self.accounts.values() {
+                if state.code_hash == code_hash && !bytecode.is_empty() {
+                    return Ok(Code::from_bytecode(bytecode.clone(), &crypto));
+                }
+            }
+            Ok(Code::from_bytecode(Bytes::new(), &crypto))
+        }
+
+        fn get_code_metadata(&self, code_hash: H256) -> Result<CodeMetadata, DatabaseError> {
+            for (state, bytecode) in self.accounts.values() {
+                if state.code_hash == code_hash {
+                    return Ok(CodeMetadata {
+                        length: bytecode.len() as u64,
+                    });
+                }
+            }
+            Ok(CodeMetadata { length: 0 })
+        }
+    }
+
+    // ── signing ──────────────────────────────────────────────────────────────
+
+    const PRIVATE_KEY: [u8; 32] = [
+        0x4c, 0x08, 0x83, 0xa6, 0x91, 0x02, 0x93, 0x7d, 0x62, 0x31, 0x47, 0x1b, 0x5d, 0xbb, 0x62,
+        0x04, 0xfe, 0x51, 0x29, 0x61, 0x70, 0x82, 0x79, 0x2a, 0xe4, 0x68, 0xd0, 0x1a, 0x3f, 0x36,
+        0x23, 0x18,
+    ];
+
+    fn sender_address() -> Address {
+        use k256::ecdsa::SigningKey;
+        let signing_key = SigningKey::from_bytes(&PRIVATE_KEY.into()).expect("valid key");
+        let uncompressed_pub = signing_key.verifying_key().to_encoded_point(false);
+        let pub_hash = keccak(&uncompressed_pub.as_bytes()[1..]);
+        Address::from_slice(&pub_hash.0[12..])
+    }
+
+    /// Build a signed EIP-1559 ETH transfer.
+    /// base_fee = BASE_FEE, gas_limit = 21_000 → gas_spent = 21_000 (no refunds).
+    fn signed_eth_transfer(to: Address, nonce: u64, base_fee: u64) -> Transaction {
+        use k256::ecdsa::SigningKey;
+
+        let tx = EIP1559Transaction {
+            chain_id: 1,
+            nonce,
+            max_priority_fee_per_gas: 1,
+            max_fee_per_gas: base_fee + 10,
+            gas_limit: 21_000,
+            to: TxKind::Call(to),
+            value: U256::zero(),
+            ..Default::default()
+        };
+
+        // Signing hash: [0x02] || RLP(chain_id, nonce, max_priority, max_fee, gas, to, value, data, access_list)
+        let mut buf = vec![0x02u8];
+        tx.encode_payload(&mut buf);
+        let hash = keccak(&buf);
+
+        let signing_key = SigningKey::from_bytes(&PRIVATE_KEY.into()).expect("valid key");
+        let (sig, rid) = signing_key
+            .sign_prehash_recoverable(&hash.0)
+            .expect("sign ok");
+        let sig_bytes = sig.to_bytes();
+
+        Transaction::EIP1559Transaction(EIP1559Transaction {
+            signature_r: U256::from_big_endian(&sig_bytes[..32]),
+            signature_s: U256::from_big_endian(&sig_bytes[32..]),
+            signature_y_parity: rid.to_byte() != 0,
+            ..tx
+        })
+    }
+
+    // STOP opcode: system contracts need non-empty code (EIP-7002/7251 check).
+    const STOP_BYTECODE: &[u8] = &[0x00];
+
+    fn make_block_with_tx(tx: Transaction, base_fee: u64) -> Block {
+        let header = BlockHeader {
+            parent_hash: H256::zero(),
+            ommers_hash: *DEFAULT_OMMERS_HASH,
+            number: 1,
+            gas_limit: 1_000_000,
+            timestamp: 1,
+            base_fee_per_gas: Some(base_fee),
+            withdrawals_root: Some(H256::zero()),
+            requests_hash: Some(*DEFAULT_REQUESTS_HASH),
+            // No parent_beacon_block_root → skip beacon-root system call.
+            parent_beacon_block_root: None,
+            ..Default::default()
+        };
+        let body = BlockBody {
+            transactions: vec![tx],
+            ommers: vec![],
+            withdrawals: Some(vec![]),
+        };
+        Block::new(header, body)
+    }
+
+    fn make_gen_db(chain_config: ChainConfig) -> GeneralizedDatabase {
+        let sender = sender_address();
+        let stop = Bytes::from_static(STOP_BYTECODE);
+        let mock = MockDB::new(chain_config)
+            // Fund the sender with enough ETH to pay for gas + priority fee.
+            .with_account(sender, U256::from(1_000_000_000u64), None)
+            // Prague system contracts require non-empty code (EIP-7002/7251).
+            .with_account(
+                WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS.address,
+                U256::zero(),
+                Some(stop.clone()),
+            )
+            .with_account(
+                CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS.address,
+                U256::zero(),
+                Some(stop),
+            );
+        GeneralizedDatabase::new(Arc::new(mock))
+    }
+
+    // ── tests ────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_burned_fees_at_lstar() {
+        const BASE_FEE: u64 = 10;
+        const GAS_SPENT: u64 = 21_000; // simple ETH transfer, no refunds
+
+        let recipient = Address::from_low_u64_be(0xBEEF);
+        let tx = signed_eth_transfer(recipient, 0, BASE_FEE);
+        let block = make_block_with_tx(tx, BASE_FEE);
+        let mut db = make_gen_db(lstar_chain_config());
+        let crypto = NativeCrypto;
+
+        let (result, _bal) = LEVM::execute_block(&block, &mut db, VMType::L1, &crypto, None)
+            .expect("execute_block succeeded");
+
+        // burned_fees = base_fee_per_gas * gas_spent + blob_base_fee * blob_gas_used
+        //             = 10 * 21_000 + 0 = 210_000
+        assert_eq!(
+            result.burned_fees,
+            Some(BASE_FEE * GAS_SPENT),
+            "LStar: burned_fees should be Some(base_fee * gas_spent)"
+        );
+    }
+
+    #[test]
+    fn test_burned_fees_none_pre_lstar() {
+        const BASE_FEE: u64 = 10;
+
+        let recipient = Address::from_low_u64_be(0xBEEF);
+        let tx = signed_eth_transfer(recipient, 0, BASE_FEE);
+        let block = make_block_with_tx(tx, BASE_FEE);
+        let mut db = make_gen_db(amsterdam_chain_config());
+        let crypto = NativeCrypto;
+
+        let (result, _bal) = LEVM::execute_block(&block, &mut db, VMType::L1, &crypto, None)
+            .expect("execute_block succeeded");
+
+        assert_eq!(
+            result.burned_fees, None,
+            "pre-LStar (Amsterdam-only): burned_fees must be None"
+        );
     }
 }

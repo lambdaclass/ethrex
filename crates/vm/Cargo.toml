@@ -40,6 +40,9 @@ perf_opcode_timings = ["ethrex-levm/perf_opcode_timings"]
 
 debug = ["ethrex-levm/debug"]
 
+[dev-dependencies]
+k256 = { workspace = true }
+
 [lints.clippy]
 unwrap_used = "deny"
 redundant_clone = "warn"

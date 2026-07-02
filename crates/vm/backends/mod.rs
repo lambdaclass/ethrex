@@ -310,4 +310,9 @@ pub struct BlockExecutionResult {
     /// Block gas used (PRE-REFUND for Amsterdam+ per EIP-7778).
     /// This differs from receipt cumulative_gas_used which is POST-REFUND.
     pub block_gas_used: u64,
+    /// Total base-fee + blob-base-fee burned in this block (EIP-8079, LStar+).
+    /// `None` for pre-LStar forks.
+    /// Per-tx contribution: `base_fee_per_gas * gas_spent + blob_base_fee * blob_gas_used`.
+    /// Uses saturating arithmetic; wraps at u64::MAX on extreme values.
+    pub burned_fees: Option<u64>,
 }

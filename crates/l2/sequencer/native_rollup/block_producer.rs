@@ -183,6 +183,7 @@ impl NativeBlockProducer {
             receipts: context.receipts,
             requests: Vec::new(),
             block_gas_used: block.header.gas_used,
+            burned_fees: None,
         };
 
         let transactions_count = block.body.transactions.len();
