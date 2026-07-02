@@ -124,23 +124,33 @@ impl NativeL1Advancer {
         //    The parent_beacon_block_root carries the L1 messages Merkle root.
         //    The EIP-4788 system contract writes it during block processing,
         //    so the witness must include the beacon roots contract state.
+        //
+        //    Amsterdam+ blocks carry a block_access_list_hash, which requires
+        //    the BAL. The cached RPC witness carries no BAL, so when the header
+        //    signals a BAL we fall through to on-demand re-execution (which
+        //    returns both witness and BAL). Pre-Amsterdam blocks use the cache.
         let block_hash = block_header.hash();
-        let witness = match self
-            .store
-            .get_witness_by_number_and_hash(next_block, block_hash)?
-        {
-            Some(rpc_witness) => {
+        let needs_bal = block_header.block_access_list_hash.is_some();
+        let (witness, bal): (
+            ethrex_common::types::block_execution_witness::ExecutionWitness,
+            Option<ethrex_common::types::block_access_list::BlockAccessList>,
+        ) = match self.store.get_witness_by_number_and_hash(next_block, block_hash)? {
+            Some(rpc_witness) if !needs_bal => {
                 let chain_config = self.store.get_chain_config();
-                rpc_witness
+                let witness = rpc_witness
                     .into_execution_witness(chain_config, next_block)
                     .map_err(|e| {
                         NativeL1AdvancerError::Encoding(format!("cached witness conversion: {e}"))
-                    })?
+                    })?;
+                (witness, None)
             }
-            None => {
-                self.blockchain
-                    .generate_witness_for_blocks(&[block])
-                    .await?
+            _ => {
+                // BlockchainType::L1 — None is correct for fee_configs.
+                let (witness, bals) = self
+                    .blockchain
+                    .generate_witness_and_bal_for_blocks_with_fee_configs(&[block], None)
+                    .await?;
+                (witness, bals.into_iter().next().flatten())
             }
         };
 
@@ -156,8 +166,9 @@ impl NativeL1Advancer {
             })?;
 
         // 5. Build SSZ StatelessInput
-        let ssz_input = build_ssz_stateless_input(&block_header, &block_body, &witness)
-            .map_err(|e| NativeL1AdvancerError::Encoding(format!("SSZ encoding: {e}")))?;
+        let ssz_input =
+            build_ssz_stateless_input(&block_header, &block_body, &witness, bal.as_ref())
+                .map_err(|e| NativeL1AdvancerError::Encoding(format!("SSZ encoding: {e}")))?;
 
         // 6. Send advance() tx
         let tx_hash = self.send_advance(&ssz_input, l1_messages_count).await?;
@@ -207,6 +218,29 @@ impl NativeL1Advancer {
     }
 }
 
+/// Encode a Block Access List (EIP-7928) into the SSZ `ExecutionPayload`
+/// `block_access_list` field. Uses ethrex's RLP encoding, which is the
+/// preimage of `block_access_list_hash` (see `BlockAccessList::compute_hash`),
+/// so the guest-program reconstruction can decode it and recompute the same
+/// hash. `None` (pre-Amsterdam) → empty list.
+pub fn bal_to_ssz_block_access_list(
+    bal: Option<&ethrex_common::types::block_access_list::BlockAccessList>,
+) -> Result<
+    libssz_types::SszList<
+        u8,
+        // Mirrors ExecutionPayload.block_access_list field in stateless_ssz.rs (2^24).
+        16_777_216,
+    >,
+    String,
+> {
+    use ethrex_rlp::encode::RLPEncode;
+    match bal {
+        Some(bal) => libssz_types::SszList::try_from(bal.encode_to_vec())
+            .map_err(|e| format!("block_access_list exceeds MAX_BLOCK_ACCESS_LIST_BYTES: {e:?}")),
+        None => Ok(libssz_types::SszList::new()),
+    }
+}
+
 /// Build SSZ-encoded StatelessInput from block data and execution witness.
 ///
 /// Converts internal types to SSZ containers and serializes the full
@@ -215,6 +249,7 @@ pub fn build_ssz_stateless_input(
     header: &BlockHeader,
     body: &ethrex_common::types::BlockBody,
     witness: &ethrex_common::types::block_execution_witness::ExecutionWitness,
+    bal: Option<&ethrex_common::types::block_access_list::BlockAccessList>,
 ) -> Result<Vec<u8>, String> {
     use ethrex_common::types::stateless_ssz::*;
     use libssz::SszEncode;
@@ -272,7 +307,7 @@ pub fn build_ssz_stateless_input(
         withdrawals: ssz_withdrawals,
         blob_gas_used: header.blob_gas_used.unwrap_or(0),
         excess_blob_gas: header.excess_blob_gas.unwrap_or(0),
-        block_access_list: SszList::new(), // TODO(Plan 02): populate full BAL
+        block_access_list: bal_to_ssz_block_access_list(bal)?,
     };
 
     // 2. Build SSZ NewPayloadRequest
@@ -453,6 +488,33 @@ impl NativeL1Advancer {
     }
 }
 
+#[cfg(all(test, feature = "experimental-devnet"))]
+mod devnet_tests {
+    use super::*;
+
+    #[test]
+    fn bal_to_ssz_roundtrips_encoding() {
+        use ethrex_common::types::block_access_list::{AccountChanges, BlockAccessList};
+        use ethrex_common::Address;
+        use ethrex_rlp::encode::RLPEncode;
+
+        // None → empty SSZ list (pre-Amsterdam).
+        let empty = bal_to_ssz_block_access_list(None).expect("none encodes");
+        assert_eq!(empty.len(), 0);
+
+        // Some(bal) → the SSZ bytes equal the BAL's RLP encoding, so that
+        // decode-then-compute_hash on the consumer reproduces block_access_list_hash.
+        let bal = BlockAccessList::from_accounts(vec![AccountChanges::new(Address::from(
+            [0x11u8; 20],
+        ))]);
+        let expected = bal.encode_to_vec();
+        let got = bal_to_ssz_block_access_list(Some(&bal)).expect("some encodes");
+        let got_bytes: Vec<u8> = got.iter().copied().collect();
+        assert_eq!(got_bytes, expected);
+        assert!(!got_bytes.is_empty());
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -526,8 +588,8 @@ mod tests {
             storage_trie_roots: Default::default(),
         };
 
-        // Block → SSZ
-        let ssz_bytes = build_ssz_stateless_input(&header, &body, &witness)
+        // Block → SSZ (no BAL for pre-Amsterdam test block)
+        let ssz_bytes = build_ssz_stateless_input(&header, &body, &witness, None)
             .expect("SSZ encoding should succeed");
 
         // SSZ → deserialize → reconstruct Block
