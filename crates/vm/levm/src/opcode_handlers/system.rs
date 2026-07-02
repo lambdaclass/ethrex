@@ -18,7 +18,6 @@ use crate::{
     gas_cost,
     memory::{self, calculate_memory_size},
     opcode_handlers::OpcodeHandler,
-    precompiles,
     utils::{address_to_word, create_eth_transfer_log, word_to_address, *},
     vm::VM,
 };
@@ -1152,7 +1151,7 @@ impl<'a> VM<'a> {
             return Ok(OpcodeResult::Continue);
         }
 
-        if precompiles::is_precompile(&code_address, self.env.config.fork, self.vm_type)
+        if let Some(precompile_address) = self.active_precompile_at(&code_address)
             && !is_delegation_7702
         {
             // Record precompile address touch for BAL per EIP-7928
@@ -1162,7 +1161,7 @@ impl<'a> VM<'a> {
 
             let mut gas_remaining = gas_limit;
             let ctx_result = Self::execute_precompile(
-                code_address,
+                precompile_address,
                 &calldata,
                 gas_limit,
                 &mut gas_remaining,

@@ -259,6 +259,21 @@ pub fn is_precompile(address: &Address, fork: Fork, vm_type: VMType) -> bool {
         || precompiles_for_fork(fork).any(|precompile| precompile.address == *address)
 }
 
+/// `eth_simulateV1` per-block precompile relocations (`movePrecompileToAddress`).
+///
+/// A moved precompile executes at its destination address, its source address
+/// stops behaving as a precompile — as does any precompile whose account was
+/// touched by other state overrides. Resolved through
+/// [`crate::vm::VM::active_precompile_at`].
+#[derive(Debug, Clone, Default)]
+pub struct PrecompileOverrides {
+    /// Precompile addresses whose behavior was removed for the block (moved
+    /// away or overridden).
+    pub removed: std::collections::BTreeSet<Address>,
+    /// Execution address -> source precompile whose function runs there.
+    pub moved: std::collections::BTreeMap<Address, Address>,
+}
+
 /// Per-block cache for precompile results shared between warmer and executor.
 pub struct PrecompileCache {
     cache: RwLock<FxHashMap<(Address, Bytes), (Bytes, u64)>>,

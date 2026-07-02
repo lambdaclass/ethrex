@@ -16,6 +16,7 @@ pub use ethrex_levm::call_frame::CallFrameBackup;
 use ethrex_levm::db::gen_db::GeneralizedDatabase;
 pub use ethrex_levm::db::{CachingDatabase, Database as LevmDatabase};
 use ethrex_levm::errors::{ExecutionReport, TxResult};
+use ethrex_levm::precompiles::PrecompileOverrides;
 use ethrex_levm::vm::VMType;
 use std::sync::Arc;
 use std::sync::atomic::AtomicUsize;
@@ -31,13 +32,16 @@ pub struct Evm {
 
 /// Per-transaction knobs for `eth_simulateV1` execution
 /// (see [`Evm::execute_tx_simulate`]).
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Default)]
 pub struct SimTxConfig {
     /// `validation` payload flag: when false the tx runs with `eth_call`-like
     /// relaxed checks (no nonce enforcement, zeroed unpriced blob fees).
     pub validate: bool,
     /// `traceTransfers` payload flag: emit informational ETH-transfer logs.
     pub trace_transfers: bool,
+    /// Per-block `movePrecompileToAddress` relocations, shared by every tx of
+    /// the simulated block.
+    pub precompile_overrides: Option<Arc<PrecompileOverrides>>,
 }
 
 impl core::fmt::Debug for Evm {
@@ -189,8 +193,7 @@ impl Evm {
             &mut self.db,
             self.vm_type,
             self.crypto.as_ref(),
-            config.validate,
-            config.trace_transfers,
+            config,
         )?;
 
         *cumulative_gas_spent += execution_report.gas_spent;

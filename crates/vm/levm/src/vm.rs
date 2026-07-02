@@ -1054,11 +1054,9 @@ impl<'a> VM<'a> {
             && self.current_call_frame.gas_remaining >= 0
             && self.tx.authorization_list().is_none()
             // Precompiles dispatch via run_execution even with empty bytecode.
-            && !precompiles::is_precompile(
-                &self.current_call_frame.to,
-                self.env.config.fork,
-                self.vm_type,
-            )
+            && self
+                .active_precompile_at(&self.current_call_frame.to)
+                .is_none()
     }
 
     /// Main execution loop.
@@ -1106,11 +1104,7 @@ impl<'a> VM<'a> {
         }
 
         #[expect(clippy::as_conversions, reason = "remaining gas conversion")]
-        if precompiles::is_precompile(
-            &self.current_call_frame.to,
-            self.env.config.fork,
-            self.vm_type,
-        ) {
+        if let Some(precompile_address) = self.active_precompile_at(&self.current_call_frame.to) {
             // `execute_precompile` itself never touches state gas (it only mutates
             // `gas_remaining`; it has no access to `state_gas_used` / `state_gas_reservoir` /
             // `state_gas_spill`) — the assert below guards that. The EIP-2780 top-frame
@@ -1119,11 +1113,10 @@ impl<'a> VM<'a> {
             // by field rather than via `&mut self.current_call_frame` so the refund call,
             // which needs `&mut self`, can run after `execute_precompile`.
             let state_gas_used_before_precompile = self.state_gas_used;
-            let code_address = self.current_call_frame.code_address;
             let precompile_gas_limit = self.current_call_frame.gas_limit;
             let mut gas_remaining = self.current_call_frame.gas_remaining as u64;
             let result = Self::execute_precompile(
-                code_address,
+                precompile_address,
                 &self.current_call_frame.calldata,
                 precompile_gas_limit,
                 &mut gas_remaining,
@@ -1341,6 +1334,23 @@ impl<'a> VM<'a> {
     /// True if external transaction is a contract creation
     pub fn is_create(&self) -> Result<bool, InternalError> {
         Ok(self.current_call_frame.is_create)
+    }
+
+    /// The precompile that executes at `address`, if any, honoring
+    /// `eth_simulateV1` movePrecompileToAddress overrides: a moved precompile
+    /// executes at its destination address, and its source — like any
+    /// precompile whose account was overridden — stops being one.
+    #[inline]
+    pub fn active_precompile_at(&self, address: &Address) -> Option<Address> {
+        if let Some(overrides) = &self.env.precompile_overrides {
+            if let Some(source) = overrides.moved.get(address) {
+                return Some(*source);
+            }
+            if overrides.removed.contains(address) {
+                return None;
+            }
+        }
+        precompiles::is_precompile(address, self.env.config.fork, self.vm_type).then_some(*address)
     }
 
     /// The address an ETH-transfer log for `value` moving `from` → `to` should

@@ -55,6 +55,9 @@ pub struct Environment {
     /// `TRACE_TRANSFER_ADDRESS` sentinel (`eth_simulateV1` traceTransfers).
     /// On Amsterdam+ forks the consensus EIP-7708 logs take precedence.
     pub trace_eth_transfers: bool,
+    /// `eth_simulateV1` movePrecompileToAddress relocations for this block,
+    /// if any (see [`crate::precompiles::PrecompileOverrides`]).
+    pub precompile_overrides: Option<std::sync::Arc<crate::precompiles::PrecompileOverrides>>,
     /// When true, the tx is a pre-execution system contract call (EIP-2935, EIP-4788,
     /// EIP-7002, EIP-7251 etc.). Skips the block-level gas-allowance check since system
     /// calls are allowed to exceed `block_gas_limit` (their 30M cap is a separate rule).

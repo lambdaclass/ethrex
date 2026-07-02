@@ -364,6 +364,9 @@ fn simulation_error_to_rpc(error: SimulationError) -> RpcErr {
         SimulationError::BlockGasLimitReached { .. } => -38015,
         SimulationError::InvalidTx(validation_error) => validation_error_code(validation_error),
         SimulationError::InvalidParams(_) => -32602,
+        // geth reports invalid movePrecompileToAddress usage as a plain
+        // server error.
+        SimulationError::PrecompileOverride(_) => -32000,
         SimulationError::Internal(_) => -32603,
     };
     RpcErr::EthSimulate {
@@ -1031,5 +1034,115 @@ mod integration_tests {
             json!("0x000000000000000000000000000000000000beef")
         );
         assert_eq!(block["baseFeePerGas"], json!("0x7"));
+    }
+
+    /// Identity precompile (0x04).
+    const IDENTITY: &str = "0x0000000000000000000000000000000000000004";
+    const MOVE_DEST: &str = "0xc900000000000000000000000000000000000000";
+
+    #[tokio::test]
+    async fn move_precompile_executes_at_destination_only() {
+        // `ethSimulate-move-ecrecover-and-call-old-and-new.io` (adapted to the
+        // identity precompile): after the move, the destination echoes input
+        // and the source behaves like an empty account.
+        let result = simulate(json!([{
+            "blockStateCalls": [{
+                "stateOverrides": {IDENTITY: {"movePrecompileToAddress": MOVE_DEST}},
+                "calls": [
+                    {"from": RICH, "to": MOVE_DEST, "input": "0xdeadbeef"},
+                    {"from": RICH, "to": IDENTITY, "input": "0xdeadbeef"},
+                ],
+            }],
+        }, "latest"]))
+        .await
+        .unwrap();
+        let calls = &result[0]["calls"];
+        assert_eq!(calls[0]["status"], json!("0x1"));
+        assert_eq!(calls[0]["returnData"], json!("0xdeadbeef"));
+        assert_eq!(calls[1]["status"], json!("0x1"));
+        assert_eq!(calls[1]["returnData"], json!("0x"));
+    }
+
+    #[tokio::test]
+    async fn move_is_scoped_to_its_block() {
+        // The move applies to block 1 only; block 2 sees the canonical
+        // precompile layout again.
+        let result = simulate(json!([{
+            "blockStateCalls": [
+                {"stateOverrides": {IDENTITY: {"movePrecompileToAddress": MOVE_DEST}},
+                 "calls": [{"from": RICH, "to": MOVE_DEST, "input": "0x01"}]},
+                {"calls": [
+                    {"from": RICH, "to": MOVE_DEST, "input": "0x02"},
+                    {"from": RICH, "to": IDENTITY, "input": "0x03"},
+                ]},
+            ],
+        }, "latest"]))
+        .await
+        .unwrap();
+        assert_eq!(result[0]["calls"][0]["returnData"], json!("0x01"));
+        // Block 2: destination is a plain account again, source echoes again.
+        assert_eq!(result[1]["calls"][0]["returnData"], json!("0x"));
+        assert_eq!(result[1]["calls"][1]["returnData"], json!("0x03"));
+    }
+
+    #[tokio::test]
+    async fn overriding_code_at_a_precompile_disables_it() {
+        // geth removes precompile behavior for any overridden precompile
+        // address: the deployed bytecode executes instead (PUSH1 1 MSTORE
+        // MSTORE8-free simple return of one word).
+        let result = simulate(json!([{
+            "blockStateCalls": [{
+                "stateOverrides": {IDENTITY: {"code": "0x600160005260206000f3"}},
+                "calls": [{"from": RICH, "to": IDENTITY, "input": "0xdeadbeef"}],
+            }],
+        }, "latest"]))
+        .await
+        .unwrap();
+        let call = &result[0]["calls"][0];
+        assert_eq!(call["status"], json!("0x1"));
+        assert_eq!(
+            call["returnData"],
+            json!("0x0000000000000000000000000000000000000000000000000000000000000001")
+        );
+    }
+
+    #[tokio::test]
+    async fn moving_a_non_precompile_fails() {
+        // `ethSimulate-try-to-move-non-precompile.io`.
+        let err = simulate(json!([{
+            "blockStateCalls": [{
+                "stateOverrides": {FRESH_A: {"movePrecompileToAddress": MOVE_DEST}},
+            }],
+        }, "latest"]))
+        .await
+        .unwrap_err();
+        let metadata = RpcErrorMetadata::from(err);
+        assert_eq!(metadata.code, -32000);
+        assert!(
+            metadata.message.contains("is not a precompile"),
+            "unexpected message: {}",
+            metadata.message
+        );
+    }
+
+    #[tokio::test]
+    async fn moving_to_an_overridden_address_fails() {
+        let err = simulate(json!([{
+            "blockStateCalls": [{
+                "stateOverrides": {
+                    IDENTITY: {"movePrecompileToAddress": FRESH_A},
+                    FRESH_A: {"balance": "0x1"},
+                },
+            }],
+        }, "latest"]))
+        .await
+        .unwrap_err();
+        let metadata = RpcErrorMetadata::from(err);
+        assert_eq!(metadata.code, -32000);
+        assert!(
+            metadata.message.contains("is already overridden"),
+            "unexpected message: {}",
+            metadata.message
+        );
     }
 }

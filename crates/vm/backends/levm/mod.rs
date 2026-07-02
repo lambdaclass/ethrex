@@ -2354,6 +2354,7 @@ impl LEVM {
             disable_nonce_check: false,
             disable_eoa_check: false,
             trace_eth_transfers: false,
+            precompile_overrides: None,
             is_system_call: false,
         };
 
@@ -2380,8 +2381,7 @@ impl LEVM {
     /// Like [`LEVM::execute_tx`] but for `eth_simulateV1`: validation failures
     /// come back as structured [`SimulationTxError::Validation`] (the caller
     /// maps each variant to its spec error code and aborts the request), and
-    /// the simulation relaxations are applied to the environment.
-    #[allow(clippy::too_many_arguments)]
+    /// the simulation relaxations from `config` are applied to the environment.
     pub fn execute_tx_for_simulation(
         tx: &Transaction,
         tx_sender: Address,
@@ -2389,18 +2389,18 @@ impl LEVM {
         db: &mut GeneralizedDatabase,
         vm_type: VMType,
         crypto: &dyn Crypto,
-        validate: bool,
-        trace_eth_transfers: bool,
+        config: &super::SimTxConfig,
     ) -> Result<ExecutionReport, SimulationTxError> {
         let mut env = Self::setup_env(tx, tx_sender, block_header, db, vm_type)?;
         // The sender-is-EOA check is always skipped in eth_simulateV1; nonce
         // enforcement only applies with `validation: true`.
         env.disable_eoa_check = true;
-        env.disable_nonce_check = !validate;
-        env.trace_eth_transfers = trace_eth_transfers;
+        env.disable_nonce_check = !config.validate;
+        env.trace_eth_transfers = config.trace_transfers;
+        env.precompile_overrides = config.precompile_overrides.clone();
         // With `validation: false` blob fees are zeroed unless the call prices
         // them explicitly (mirrors `adjust_disabled_base_fee`'s blob branch).
-        if !validate && tx.max_fee_per_blob_gas().unwrap_or_default().is_zero() {
+        if !config.validate && tx.max_fee_per_blob_gas().unwrap_or_default().is_zero() {
             env.base_blob_fee_per_gas = U256::zero();
             env.block_excess_blob_gas = None;
         }
@@ -3047,6 +3047,7 @@ pub(crate) fn env_from_generic(
         disable_nonce_check: false,
         disable_eoa_check: false,
         trace_eth_transfers: false,
+        precompile_overrides: None,
         is_system_call: false,
     })
 }
