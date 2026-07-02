@@ -53,6 +53,32 @@ pub fn select_warm_set(
     out
 }
 
+/// Per-slot cap on warmed txs per sender. Deep same-sender queues beyond
+/// this depth cannot realistically land in the next block (they sit behind
+/// their own predecessors), so warming them only inflates the warm volume —
+/// which measured as a small next-block throughput penalty. Generous enough
+/// to keep legitimate batchers (exchanges land dozens-deep runs, rarely
+/// more) while cutting off hundred-deep spam queues.
+pub const MAX_WARMED_TXS_PER_SENDER_PER_SLOT: usize = 16;
+
+/// Enforces [`MAX_WARMED_TXS_PER_SENDER_PER_SLOT`] across a slot's delta
+/// passes: `warmed_per_sender` counts txs already warmed this slot, and each
+/// sender's snapshot group is truncated to the remaining allowance. Nonce
+/// order within groups is preserved; exhausted senders are removed.
+pub fn cap_sender_depth(
+    mut txs_by_sender: FxHashMap<Address, Vec<MempoolTransaction>>,
+    warmed_per_sender: &FxHashMap<Address, usize>,
+    cap: usize,
+) -> FxHashMap<Address, Vec<MempoolTransaction>> {
+    txs_by_sender.retain(|sender, txs| {
+        let used = warmed_per_sender.get(sender).copied().unwrap_or(0);
+        let allowance = cap.saturating_sub(used);
+        txs.truncate(allowance);
+        !txs.is_empty()
+    });
+    txs_by_sender
+}
+
 /// Drops txs already warmed this slot (by hash) from a fresh mempool
 /// snapshot, so delta passes only warm new arrivals. Nonce order within the
 /// surviving sender groups is preserved; senders left empty are removed.
@@ -298,6 +324,11 @@ fn run_pass(
     let should_stop = move || cancel.load(Ordering::Relaxed) || unix_now() >= deadline;
 
     let mut warmed_union: FxHashMap<H256, u64> = FxHashMap::default();
+    // Slot-level per-sender counts backing the depth cap: a per-snapshot cap
+    // alone would leak — once a sender's head txs are warmed and dropped by
+    // `drop_already_warmed`, the next delta would see the queue's tail as a
+    // fresh head and keep digging.
+    let mut warmed_per_sender: FxHashMap<Address, usize> = FxHashMap::default();
     let mut passes: u32 = 0;
     let mut any_err = false;
     // `None` forces the first snapshot regardless of the counter's value.
@@ -325,10 +356,16 @@ fn run_pass(
                 }
             };
             let fresh = drop_already_warmed(txs_by_sender, &warmed_union);
+            let fresh = cap_sender_depth(
+                fresh,
+                &warmed_per_sender,
+                MAX_WARMED_TXS_PER_SENDER_PER_SLOT,
+            );
             let warm_set = select_warm_set(fresh, base_fee, gas_budget);
             if !warm_set.is_empty() {
-                for (tx, _) in &warm_set {
+                for (tx, sender) in &warm_set {
                     warmed_union.insert(tx.hash(&NativeCrypto), tx.gas_limit());
+                    *warmed_per_sender.entry(*sender).or_default() += 1;
                 }
                 // `warm_txs` takes borrowed transactions; bridge the owned set.
                 let view: Vec<(&Transaction, Address)> =
@@ -401,6 +438,32 @@ mod tests {
             ..Default::default()
         });
         (sender, MempoolTransaction::new(tx, sender))
+    }
+
+    #[test]
+    fn cap_sender_depth_truncates_and_respects_slot_counts() {
+        let (a, a0) = make_tx(0xaa, 0, 100, 50, 21_000);
+        let (_, a1) = make_tx(0xaa, 1, 100, 50, 21_000);
+        let (_, a2) = make_tx(0xaa, 2, 100, 50, 21_000);
+        let (b, b0) = make_tx(0xbb, 0, 100, 50, 21_000);
+        let mut map = FxHashMap::default();
+        map.insert(a, vec![a0, a1, a2]);
+        map.insert(b, vec![b0]);
+        // Sender a already warmed 1 tx this slot; cap 2 leaves allowance 1.
+        let mut counts = FxHashMap::default();
+        counts.insert(a, 1usize);
+        let capped = cap_sender_depth(map, &counts, 2);
+        assert_eq!(capped[&a].len(), 1);
+        assert_eq!(capped[&a][0].transaction().nonce(), 0); // head kept, nonce order preserved
+        assert_eq!(capped[&b].len(), 1); // untouched sender unaffected
+        // Exhausted sender is removed entirely.
+        let mut counts2 = FxHashMap::default();
+        counts2.insert(b, 2usize);
+        let mut map2 = FxHashMap::default();
+        let (_, b1) = make_tx(0xbb, 1, 100, 50, 21_000);
+        map2.insert(b, vec![b1]);
+        let capped2 = cap_sender_depth(map2, &counts2, 2);
+        assert!(capped2.is_empty());
     }
 
     #[test]
