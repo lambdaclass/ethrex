@@ -941,14 +941,6 @@ async fn boot_walks_past_reorged_unflushed_head() {
     );
 }
 
-/// A short key that `commit_trie_layers` classifies as an account trie node:
-/// length is neither 65 nor 131 (so not a leaf) and is <= 65 (so account, not
-/// storage), routing it to ACCOUNT_TRIE_NODES.
-#[cfg(feature = "rocksdb")]
-fn account_trie_node_key(tag: u8) -> Vec<u8> {
-    vec![tag, 0, 1, 2]
-}
-
 /// A graceful `shutdown()` must flush block data that only lives in the buffer,
 /// so a block a crash would lose survives a restart.
 ///
@@ -1018,16 +1010,19 @@ async fn shutdown_flushes_buffered_block_a_crash_would_lose() {
     );
 }
 
-/// The shutdown trie flush must anchor to the confirmed canonical head, not the
-/// newest-inserted layer. A sidechain sibling imported after the head (higher
-/// layer id) must NOT become the durable state; the canonical chain must.
+/// A graceful `shutdown()` must NOT force-commit the in-memory trie diff-layers.
+/// The on-disk trie is a single-version, path-based store: folding the
+/// non-finalized tail into it would make a post-restart reorg unrecoverable, so
+/// the recent layers are deliberately left in memory and dropped on exit. They
+/// re-execute on the next start from the deep on-disk base, exactly as after any
+/// other restart.
 ///
-/// On-disk genesis -> A -> B (canonical head). B' is a sibling of B (also a child
-/// of A) stored LAST, so it holds the highest layer id. Committing from the head
-/// persists A + B and leaves B' unwritten.
+/// Genesis -> A (head). A's trie diff never reaches `DB_COMMIT_THRESHOLD` depth,
+/// so it lives only in the layer cache; after a clean shutdown + reopen its trie
+/// node must NOT be on disk.
 #[cfg(feature = "rocksdb")]
 #[tokio::test]
-async fn shutdown_commits_canonical_head_trie_not_sidechain() {
+async fn shutdown_does_not_force_commit_trie_layers() {
     use ethrex_common::types::Genesis;
     use ethrex_trie::Nibbles;
 
@@ -1037,32 +1032,8 @@ async fn shutdown_commits_canonical_head_trie_not_sidechain() {
     let genesis_hash = genesis.get_block().hash();
 
     let root_a = H256::from_low_u64_be(0xA1);
-    let root_b = H256::from_low_u64_be(0xB2);
-    let root_b_prime = H256::from_low_u64_be(0xC3);
-
-    let key_a = account_trie_node_key(0xA0);
-    let key_b = account_trie_node_key(0xB0);
-    let key_b_prime = account_trie_node_key(0xC0);
-
-    // Build a single-block UpdateBatch with one account trie-node diff.
-    let make_batch = |number: BlockNumber, parent: H256, state_root: H256, key: Vec<u8>| {
-        let header = BlockHeader {
-            number,
-            parent_hash: parent,
-            state_root,
-            ..Default::default()
-        };
-        let block = Block::new(header, BlockBody::default());
-        let batch = UpdateBatch {
-            account_updates: vec![(Nibbles::from_hex(key), vec![0x42])],
-            storage_updates: vec![],
-            receipts: vec![(block.hash(), vec![])],
-            blocks: vec![block.clone()],
-            code_updates: vec![],
-            batch_mode: false,
-        };
-        (block, batch)
-    };
+    // A short key routed to ACCOUNT_TRIE_NODES (len neither 65 nor 131, and <= 65).
+    let key_a: Vec<u8> = vec![0xA0, 0, 1, 2];
 
     let dir = tempfile::tempdir().expect("tmp");
     let path = dir.path().to_str().unwrap();
@@ -1074,47 +1045,38 @@ async fn shutdown_commits_canonical_head_trie_not_sidechain() {
             .await
             .expect("genesis");
 
-        let (block_a, batch_a) = make_batch(1, genesis_hash, root_a, key_a.clone());
-        store.store_block_updates(batch_a).expect("store A");
+        let header = BlockHeader {
+            number: 1,
+            parent_hash: genesis_hash,
+            state_root: root_a,
+            ..Default::default()
+        };
+        let block_a = Block::new(header, BlockBody::default());
         let hash_a = block_a.hash();
+        let batch_a = UpdateBatch {
+            account_updates: vec![(Nibbles::from_hex(key_a.clone()), vec![0x42])],
+            storage_updates: vec![],
+            receipts: vec![(hash_a, vec![])],
+            blocks: vec![block_a],
+            code_updates: vec![],
+            batch_mode: false,
+        };
+        store.store_block_updates(batch_a).expect("store A");
 
-        let (block_b, batch_b) = make_batch(2, hash_a, root_b, key_b.clone());
-        store.store_block_updates(batch_b).expect("store B");
-        let hash_b = block_b.hash();
-
-        // Sidechain sibling of B, stored LAST so it holds the highest layer id.
-        let (_block_b_prime, batch_b_prime) =
-            make_batch(2, hash_a, root_b_prime, key_b_prime.clone());
-        store.store_block_updates(batch_b_prime).expect("store B'");
-
-        // Make the A -> B chain canonical (head = B).
         store
-            .forkchoice_update(vec![(1, hash_a), (2, hash_b)], 2, hash_b, None, None)
+            .forkchoice_update(vec![(1, hash_a)], 1, hash_a, None, None)
             .await
-            .expect("fcu to B");
+            .expect("fcu to A");
 
         store.shutdown().await.expect("shutdown flush");
     }
 
     let store = Store::new(path, EngineType::RocksDB).expect("reopen");
 
-    // Canonical head chain (A + B) is durable...
+    // The shallow trie layer must have stayed in memory: nothing was force-committed.
     assert_eq!(
         store.get_trie_node_for_test(true, &key_a).expect("read A"),
-        Some(vec![0x42]),
-        "canonical ancestor A must be committed on shutdown"
-    );
-    assert_eq!(
-        store.get_trie_node_for_test(true, &key_b).expect("read B"),
-        Some(vec![0x42]),
-        "canonical head B must be committed on shutdown"
-    );
-    // ...but the later-inserted sidechain layer must not be persisted.
-    assert_eq!(
-        store
-            .get_trie_node_for_test(true, &key_b_prime)
-            .expect("read B'"),
         None,
-        "non-canonical sidechain layer must not be durably committed"
+        "shutdown must not force-commit the in-memory trie diff-layer"
     );
 }
