@@ -270,6 +270,15 @@ fn run_pass(
         blockchain.options.precompile_cache_enabled,
     ));
 
+    // Publish the cache for handoff: `execute_block_pipeline` seeds the next
+    // block's execution with it when the parent hash matches. Published at
+    // slot start so even a cut-short pass hands over whatever it warmed;
+    // entries written by an in-flight delta after cancellation are still
+    // valid parent-state reads going into the same shared instance.
+    if let Ok(mut p) = blockchain.prewarmed.0.lock() {
+        *p = Some((parent.hash(), caching.clone()));
+    }
+
     let cancel = req.cancel.clone();
     let deadline = req.deadline_unix;
     let should_stop = move || cancel.load(Ordering::Relaxed) || unix_now() >= deadline;
