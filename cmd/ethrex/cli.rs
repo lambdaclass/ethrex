@@ -221,6 +221,14 @@ pub struct Options {
     )]
     pub no_bal_parallel_trie: bool,
     #[arg(
+        long = "experimental-mempool-prewarm",
+        help = "Speculatively execute top-of-mempool transactions between blocks to warm state caches (PoC).",
+        default_value = "false",
+        help_heading = "Node options",
+        env = "ETHREX_EXPERIMENTAL_MEMPOOL_PREWARM"
+    )]
+    pub experimental_mempool_prewarm: bool,
+    #[arg(
         long = "log.dir",
         value_name = "LOG_DIR",
         help = "Directory to store log files.",
@@ -532,6 +540,7 @@ impl Default for Options {
             no_bal_parallel_exec: false,
             no_bal_prefetch: false,
             no_bal_parallel_trie: false,
+            experimental_mempool_prewarm: false,
         }
     }
 }
@@ -746,6 +755,7 @@ impl Subcommand {
                         bal_parallel_exec_enabled: !opts.no_bal_parallel_exec,
                         bal_prefetch_enabled: !opts.no_bal_prefetch,
                         bal_parallel_trie_enabled: !opts.no_bal_parallel_trie,
+                        mempool_prewarm: Default::default(),
                         ..Default::default()
                     },
                     export_bal.as_deref(),
