@@ -1182,6 +1182,17 @@ impl Blockchain {
         blocks: &[Block],
         fee_configs: Option<&[FeeConfig]>,
     ) -> Result<ExecutionWitness, ChainError> {
+        let (witness, _bals) = self
+            .generate_witness_and_bal_for_blocks_with_fee_configs(blocks, fee_configs)
+            .await?;
+        Ok(witness)
+    }
+
+    pub async fn generate_witness_and_bal_for_blocks_with_fee_configs(
+        &self,
+        blocks: &[Block],
+        fee_configs: Option<&[FeeConfig]>,
+    ) -> Result<(ExecutionWitness, Vec<Option<BlockAccessList>>), ChainError> {
         let first_block_header = &blocks
             .first()
             .ok_or(ChainError::WitnessGeneration(
@@ -1220,6 +1231,8 @@ impl Blockchain {
 
         let mut blockhash_opcode_references = HashMap::new();
         let mut codes = Vec::new();
+        let mut block_access_lists: Vec<Option<BlockAccessList>> =
+            Vec::with_capacity(blocks.len());
 
         for (i, block) in blocks.iter().enumerate() {
             let parent_hash = block.header.parent_hash;
@@ -1259,7 +1272,8 @@ impl Blockchain {
             };
 
             // Re-execute block with logger
-            let (execution_result, _bal) = vm.execute_block(block)?;
+            let (execution_result, bal) = vm.execute_block(block)?;
+            block_access_lists.push(bal);
 
             // Gather account updates
             let account_updates = vm.get_state_transitions()?;
@@ -1495,14 +1509,17 @@ impl Blockchain {
             storage_trie_roots.insert(hashed_address_h256, (*node).clone());
         }
 
-        Ok(ExecutionWitness {
-            codes,
-            block_headers_bytes,
-            first_block_number: first_block_header.number,
-            chain_config: self.storage.get_chain_config(),
-            state_trie_root,
-            storage_trie_roots,
-        })
+        Ok((
+            ExecutionWitness {
+                codes,
+                block_headers_bytes,
+                first_block_number: first_block_header.number,
+                chain_config: self.storage.get_chain_config(),
+                state_trie_root,
+                storage_trie_roots,
+            },
+            block_access_lists,
+        ))
     }
 
     pub fn generate_witness_from_account_updates(
@@ -3194,4 +3211,63 @@ fn collect_trie(index: u8, mut trie: Trie) -> Result<(Box<BranchNode>, Vec<TrieN
         return Err(TrieError::InvalidInput);
     };
     Ok((root, nodes))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::payload::{BuildPayloadArgs, create_payload};
+    use bytes::Bytes;
+    use ethrex_common::{
+        H160, H256,
+        types::{DEFAULT_BUILDER_GAS_CEIL, ELASTICITY_MULTIPLIER, Genesis},
+    };
+    use ethrex_storage::EngineType;
+    use std::path::Path;
+
+    async fn build_test_blockchain_with_one_block() -> (Blockchain, Vec<Block>) {
+        let genesis_path = Path::new(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../fixtures/genesis/execution-api.json"
+        ));
+        let genesis = Genesis::try_from(genesis_path).expect("Failed to load genesis");
+        let mut store =
+            Store::new("store.db", EngineType::InMemory).expect("Failed to build store");
+        store
+            .add_initial_state(genesis)
+            .await
+            .expect("Failed to add genesis");
+        let blockchain = Blockchain::default_with_store(store.clone());
+        let genesis_header = store.get_block_header(0).unwrap().unwrap();
+        let args = BuildPayloadArgs {
+            parent: genesis_header.hash(),
+            timestamp: genesis_header.timestamp + 12,
+            fee_recipient: H160::zero(),
+            random: H256::zero(),
+            withdrawals: Some(Vec::new()),
+            beacon_root: Some(H256::zero()),
+            slot_number: None,
+            version: 1,
+            elasticity_multiplier: ELASTICITY_MULTIPLIER,
+            gas_ceil: DEFAULT_BUILDER_GAS_CEIL,
+        };
+        let block_template = create_payload(&args, &store, Bytes::new()).unwrap();
+        let result = blockchain.build_payload(block_template).unwrap();
+        (blockchain, vec![result.payload])
+    }
+
+    #[tokio::test]
+    async fn generate_witness_and_bal_returns_none_at_prague() {
+        let (blockchain, blocks) = build_test_blockchain_with_one_block().await;
+
+        let (_witness, bals) = blockchain
+            .generate_witness_and_bal_for_blocks_with_fee_configs(&blocks, None)
+            .await
+            .expect("witness+bal generation");
+
+        // One BAL slot per input block, aligned by index.
+        assert_eq!(bals.len(), blocks.len());
+        // Pre-Amsterdam: no BAL is produced.
+        assert!(bals.iter().all(|b| b.is_none()));
+    }
 }
