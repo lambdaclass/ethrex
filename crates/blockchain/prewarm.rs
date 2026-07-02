@@ -62,6 +62,14 @@ pub struct OverlapStats {
 }
 
 pub fn compute_overlap(warmed: &FxHashMap<H256, u64>, block: &Block) -> OverlapStats {
+    compute_matches(&|hash| warmed.contains_key(hash), block)
+}
+
+/// Walks the block's transactions counting those matching `is_match` (by tx
+/// hash), by count and by gas limit. Shared core of the overlap metric
+/// (matched = selected by the last warming pass) and the seen metric
+/// (matched = currently in the mempool at arrival time).
+pub fn compute_matches(is_match: &dyn Fn(&H256) -> bool, block: &Block) -> OverlapStats {
     let mut stats = OverlapStats {
         matched_txs: 0,
         block_txs: block.body.transactions.len(),
@@ -71,7 +79,7 @@ pub fn compute_overlap(warmed: &FxHashMap<H256, u64>, block: &Block) -> OverlapS
     for tx in &block.body.transactions {
         let gas = tx.gas_limit();
         stats.block_gas = stats.block_gas.saturating_add(gas);
-        if warmed.contains_key(&tx.hash(&NativeCrypto)) {
+        if is_match(&tx.hash(&NativeCrypto)) {
             stats.matched_txs += 1;
             stats.matched_gas = stats.matched_gas.saturating_add(gas);
         }
@@ -179,10 +187,18 @@ impl PrewarmHandle {
     }
 
     /// Called on every newPayload arrival, before execution. Telemetry only.
-    pub fn log_block_arrival(&self, block: &Block) {
+    ///
+    /// Runs before the block's txs are pruned from the mempool, so `seen`
+    /// measures point-in-time mempool membership at arrival — the upper bound
+    /// any warming pass could have covered had it snapshotted at the last
+    /// possible instant. `overlap` (vs the last pass's selected set) below
+    /// that bound is selection/timing loss; block gas above it was never in
+    /// our mempool at all (private order flow, propagation gaps).
+    pub fn log_block_arrival(&self, block: &Block, mempool: &crate::mempool::Mempool) {
         // Propagation offset: how far into its slot the block reached us.
         // Confirms the real margin the slot-boundary deadline leaves.
         let offset_secs = unix_now().saturating_sub(block.header.timestamp);
+        let seen = compute_matches(&|hash| mempool.contains_tx(*hash).unwrap_or(false), block);
         let overlap = self
             .last_warmed
             .lock()
@@ -191,17 +207,26 @@ impl PrewarmHandle {
             .map(|warmed| compute_overlap(&warmed, block));
         match overlap {
             Some(s) => info!(
-                "prewarm arrival: block {} offset {}s, overlap {}/{} txs {}/{} gas",
+                "prewarm arrival: block {} offset {}s, overlap {}/{} txs {}/{} gas, seen {}/{} txs {}/{} gas",
                 block.header.number,
                 offset_secs,
                 s.matched_txs,
                 s.block_txs,
                 s.matched_gas,
-                s.block_gas
+                s.block_gas,
+                seen.matched_txs,
+                seen.block_txs,
+                seen.matched_gas,
+                seen.block_gas
             ),
             None => info!(
-                "prewarm arrival: block {} offset {}s, no warm set",
-                block.header.number, offset_secs
+                "prewarm arrival: block {} offset {}s, no warm set, seen {}/{} txs {}/{} gas",
+                block.header.number,
+                offset_secs,
+                seen.matched_txs,
+                seen.block_txs,
+                seen.matched_gas,
+                seen.block_gas
             ),
         }
     }
@@ -488,6 +513,30 @@ mod tests {
         // Budget 40k: tx0 (30k) is under, tx1 crosses to 60k and is included, tx2 is not.
         let set = select_warm_set(map, Some(1), 40_000);
         assert_eq!(set.len(), 2);
+    }
+
+    #[test]
+    fn matches_counts_by_arbitrary_predicate() {
+        use ethrex_common::types::{Block, BlockBody, BlockHeader};
+        use ethrex_crypto::NativeCrypto;
+        let (_, m0) = make_tx(0xaa, 0, 100, 50, 21_000);
+        let (_, m1) = make_tx(0xbb, 0, 100, 50, 30_000);
+        let tx0 = m0.transaction().clone();
+        let tx1 = m1.transaction().clone();
+        let only = tx1.hash(&NativeCrypto);
+        let block = Block::new(
+            BlockHeader::default(),
+            BlockBody {
+                transactions: vec![tx0, tx1],
+                ommers: vec![],
+                withdrawals: None,
+            },
+        );
+        let s = compute_matches(&|h| *h == only, &block);
+        assert_eq!(s.matched_txs, 1);
+        assert_eq!(s.block_txs, 2);
+        assert_eq!(s.matched_gas, 30_000);
+        assert_eq!(s.block_gas, 51_000);
     }
 
     #[test]

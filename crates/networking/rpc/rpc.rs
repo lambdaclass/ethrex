@@ -457,7 +457,7 @@ pub fn start_block_executor(blockchain: Arc<Blockchain>) -> UnboundedSender<Bloc
                 // block is still borrowable.
                 if let Some(p) = &prewarmer {
                     p.cancel_current();
-                    p.log_block_arrival(&block);
+                    p.log_block_arrival(&block, &blockchain.mempool);
                 }
                 let imported_header = prewarmer.as_ref().map(|_| block.header.clone());
                 let result = (|| {
