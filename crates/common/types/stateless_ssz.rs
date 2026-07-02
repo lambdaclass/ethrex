@@ -549,7 +549,7 @@ mod tests {
     fn list<T: SszEncode + SszDecode, const N: usize>(items: Vec<T>) -> SszList<T, N> {
         let mut list = SszList::new();
         for item in items {
-            list.push(item);
+            list.push(item).expect("test list capacity exceeded");
         }
         list
     }
@@ -630,7 +630,7 @@ mod tests {
         let mut keys: SszList<SszVector<u8, PUBLIC_KEY_BYTES>, MAX_PUBLIC_KEYS> = SszList::new();
         keys.push(key).expect("one key fits");
         round_trip(&keys);
-        assert_eq!(keys.get(0).unwrap().len(), 65);
+        assert_eq!(keys.first().unwrap().len(), 65);
     }
 
     #[test]

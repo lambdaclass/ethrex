@@ -8,7 +8,7 @@
 use bytes::Bytes;
 use ethrex_common::types::block_execution_witness::ExecutionWitness;
 use ethrex_common::types::stateless_ssz::SszStatelessInput;
-use ethrex_common::types::{Block, BlockBody, BlockHeader};
+use ethrex_common::types::{BlockBody, BlockHeader};
 use ethrex_common::{Address, H256};
 use ethrex_crypto::NativeCrypto;
 use ethrex_guest_program::l1::new_payload_request_to_block;

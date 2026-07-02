@@ -492,6 +492,7 @@ impl NativeL1Advancer {
 }
 
 #[cfg(all(test, feature = "experimental-devnet"))]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 mod devnet_tests {
     use super::*;
 
@@ -518,6 +519,7 @@ mod devnet_tests {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
     use ethrex_common::H256;
