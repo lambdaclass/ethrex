@@ -13,12 +13,27 @@ use tracing::info;
 
 const LATEST_VERSION_URL: &str = "https://api.github.com/repos/lambdaclass/ethrex/releases/latest";
 
-#[cfg(all(feature = "jemalloc", not(target_env = "msvc")))]
+#[cfg(all(
+    feature = "jemalloc",
+    not(feature = "hotpath-alloc"),
+    not(target_env = "msvc")
+))]
 #[global_allocator]
 static ALLOC: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
 
 fn log_global_allocator() {
-    if cfg!(all(feature = "jemalloc", not(target_env = "msvc"))) {
+    if cfg!(all(
+        feature = "hotpath-alloc",
+        feature = "jemalloc",
+        not(target_env = "msvc")
+    )) {
+        tracing::info!("Global allocator: hotpath CountingAllocator<jemalloc>");
+    } else if cfg!(all(
+        feature = "hotpath-alloc",
+        any(not(feature = "jemalloc"), target_env = "msvc")
+    )) {
+        tracing::info!("Global allocator: hotpath CountingAllocator<system>");
+    } else if cfg!(all(feature = "jemalloc", not(target_env = "msvc"))) {
         tracing::info!("Global allocator: jemalloc (tikv-jemallocator)");
     } else {
         tracing::info!("Global allocator: system (std::alloc::System)");
@@ -152,6 +167,27 @@ async fn periodically_check_version_update() {
 }
 
 #[tokio::main]
+#[cfg_attr(
+    all(
+        feature = "hotpath",
+        feature = "hotpath-alloc",
+        feature = "jemalloc",
+        not(target_env = "msvc")
+    ),
+    hotpath::main(allocator = tikv_jemallocator::Jemalloc)
+)]
+#[cfg_attr(
+    all(
+        feature = "hotpath",
+        feature = "hotpath-alloc",
+        any(not(feature = "jemalloc"), target_env = "msvc")
+    ),
+    hotpath::main(allocator = std::alloc::System)
+)]
+#[cfg_attr(
+    all(feature = "hotpath", not(feature = "hotpath-alloc")),
+    hotpath::main
+)]
 async fn main() -> eyre::Result<()> {
     let CLI { opts, command } = CLI::parse();
 

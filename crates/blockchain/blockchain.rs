@@ -433,6 +433,7 @@ impl Blockchain {
     }
 
     /// Executes a block withing a new vm instance and state
+    #[cfg_attr(feature = "hotpath", hotpath::measure)]
     fn execute_block(
         &self,
         block: &Block,
@@ -512,6 +513,7 @@ impl Blockchain {
     }
 
     /// Executes a block withing a new vm instance and state
+    #[cfg_attr(feature = "hotpath", hotpath::measure)]
     #[instrument(
         level = "trace",
         name = "Execute Block",
@@ -2070,6 +2072,7 @@ impl Blockchain {
         })
     }
 
+    #[cfg_attr(feature = "hotpath", hotpath::measure)]
     #[instrument(
         level = "trace",
         name = "Block DB update",

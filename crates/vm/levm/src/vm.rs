@@ -979,6 +979,7 @@ impl<'a> VM<'a> {
     }
 
     /// Executes a whole external transaction. Performing validations at the beginning.
+    #[cfg_attr(feature = "hotpath", hotpath::measure)]
     pub fn execute(&mut self) -> Result<ExecutionReport, VMError> {
         if let Err(e) = self.prepare_execution() {
             // Restore cache to state previous to this Tx execution because this Tx is invalid.

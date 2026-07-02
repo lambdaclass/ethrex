@@ -22,6 +22,7 @@ malachite = "0.6.1"
 strum = { version = "0.27.1", features = ["derive"] }
 rustc-hash.workspace = true
 rayon = { workspace = true, optional = true }
+hotpath = { workspace = true, optional = true }
 
 
 [features]
@@ -32,6 +33,7 @@ ethereum_foundation_tests = []
 debug = []
 openvm = ["ethrex-common/openvm"]
 perf_opcode_timings = []
+hotpath = ["dep:hotpath", "hotpath/hotpath"]
 # zkVM feature stubs — implementations have moved to ethrex-crypto's NativeCrypto/ZkVMCrypto
 sp1 = []
 risc0 = ["c-kzg"]
