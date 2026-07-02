@@ -82,6 +82,32 @@ fn bench_root_only(c: &mut Criterion) {
     group.finish();
 }
 
+fn bench_commit_root(c: &mut Criterion) {
+    // Mirrors the block-import state-root path: commit (which hashes the dirty
+    // nodes and collects their encodings) then root hash, via
+    // `collect_changes_since_last_hash`. This is the path that actually runs on
+    // a live node, unlike `root_only` which hashes without committing first.
+    let mut group = c.benchmark_group("trie/commit_root");
+    for n in [1_000usize, 10_000, 100_000] {
+        let data = dataset(n);
+        group.throughput(Throughput::Elements(n as u64));
+        group.bench_with_input(BenchmarkId::from_parameter(n), &data, |b, data| {
+            b.iter_batched(
+                || {
+                    let mut trie = Trie::new_temp();
+                    for (k, v) in data {
+                        trie.insert(k.as_bytes().to_vec(), v.clone()).unwrap();
+                    }
+                    trie
+                },
+                |mut trie| black_box(trie.collect_changes_since_last_hash(&NativeCrypto)),
+                BatchSize::SmallInput,
+            )
+        });
+    }
+    group.finish();
+}
+
 fn bench_sorted_merkleize(c: &mut Criterion) {
     // Parallel sorted-account merkleization — the state-root build path.
     let mut group = c.benchmark_group("trie/sorted_merkleize");
@@ -108,6 +134,7 @@ criterion_group!(
     benches,
     bench_insert_and_root,
     bench_root_only,
+    bench_commit_root,
     bench_sorted_merkleize
 );
 criterion_main!(benches);
