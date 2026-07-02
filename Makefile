@@ -70,6 +70,12 @@ dev: ## 🏃 Run the ethrex client in DEV_MODE with the InMemory Engine
 		--dev \
 		--datadir memory
 
+HOTPATH_FEATURES ?= hotpath
+dev-hotpath: ## 🔥 Run ethrex in DEV_MODE with the hotpath profiler (HOTPATH_FEATURES=hotpath,hotpath-alloc for allocations, add hotpath-cpu for CPU). Report prints on shutdown.
+	cargo run $(PROFILING_CFG) --release --features $(HOTPATH_FEATURES) -- \
+		--dev \
+		--datadir memory
+
 ETHEREUM_PACKAGE_REVISION := 35b770d5cddb5c356fd0e9157b8db8acf5809365
 ETHEREUM_PACKAGE_DIR := ethereum-package
 

@@ -177,6 +177,18 @@ cargo build -p ethrex --features hotpath-alloc
 
 Run the node as usual. On graceful shutdown (`Ctrl+C` / `SIGTERM`), a `[hotpath]` report prints to stdout with tables for timing, allocation, and per-thread breakdowns, depending on which features are enabled.
 
+For a quick dev run there is a Makefile target that boots the node in dev mode with the in-memory engine and the profiler enabled:
+
+```bash
+make dev-hotpath                                       # timing only
+make dev-hotpath HOTPATH_FEATURES=hotpath,hotpath-alloc  # timing + allocations
+make dev-hotpath HOTPATH_FEATURES=hotpath,hotpath-cpu    # timing + CPU sampling
+```
+
+### Live TUI dashboard
+
+For real-time monitoring instead of the shutdown report, install the standalone hotpath CLI (`cargo install hotpath --features tui`) and run `hotpath console` in a second terminal while the node runs with any `hotpath` feature enabled. The instrumented process exposes a small HTTP server (compiled in by the `hotpath` feature) that the TUI reads live; no extra ethrex configuration is required.
+
 Useful environment variables (see [hotpath.rs](https://hotpath.rs) for the full list): `HOTPATH_REPORT` (which report sections to print), `HOTPATH_ALLOC_METRIC=bytes|count` (allocation metric unit), `HOTPATH_OUTPUT_PATH` (write the report to a file instead of stdout), and percentile/limit variables for trimming the timing tables.
 
 ### Currently instrumented functions
