@@ -2046,8 +2046,8 @@ impl FrameTransaction {
             .sum()
     }
 
-    /// Compute total gas limit: intrinsic + calldata cost (frames + signatures)
-    /// + signature verification cost + sum of frame gas limits.
+    /// Compute total gas limit: intrinsic + calldata cost (frames + signatures
+    /// + recent-root references) + signature verification cost + sum of frame gas limits.
     pub fn total_gas_limit(&self) -> u64 {
         let mut calldata_gas: u64 = 0;
         // RLP-encode frames to compute calldata cost
@@ -2061,6 +2061,17 @@ impl FrameTransaction {
         self.signatures.encode(&mut sigs_buf);
         for byte in &sigs_buf {
             calldata_gas = calldata_gas.saturating_add(if *byte == 0 { 4 } else { 16 });
+        }
+        // EIP-8272 (EIP-7623 calldata): the recent-root references travel in the
+        // frame-tx envelope, so their RLP bytes are charged at the 4/16-per-byte
+        // calldata rate like frames and signatures. Guarded on the empty case so a
+        // reference-free transaction's gas stays byte-identical.
+        if !self.recent_root_references.is_empty() {
+            let mut refs_buf = Vec::new();
+            self.recent_root_references.encode(&mut refs_buf);
+            for byte in &refs_buf {
+                calldata_gas = calldata_gas.saturating_add(if *byte == 0 { 4 } else { 16 });
+            }
         }
         // EIP-8272: recent-root reference intrinsic gas (0 when there are none).
         let recent_root_gas = if self.recent_root_references.is_empty() {
@@ -5174,6 +5185,33 @@ mod tests {
             })
             .collect();
         assert!(tx.validate_static_constraints().is_err());
+    }
+
+    #[test]
+    fn recent_root_references_are_charged_calldata_gas() {
+        // U-2: a reference-carrying frame tx is charged EIP-7623 calldata cost over
+        // rlp(recent_root_references) in addition to the flat intrinsic reference gas.
+        let mut tx = make_test_frame_tx();
+        tx.recent_root_references = vec![];
+        let base = tx.total_gas_limit();
+
+        let refs = vec![RecentRootReference {
+            source_id: H256::repeat_byte(0x11),
+            slot: 7,
+            root: H256::repeat_byte(0x22),
+        }];
+        let mut refs_buf = Vec::new();
+        refs.encode(&mut refs_buf);
+        let expected_calldata: u64 = refs_buf.iter().map(|b| if *b == 0 { 4 } else { 16 }).sum();
+        let expected_intrinsic =
+            FRAME_TX_RECENT_ROOT_REFERENCE_ADDRESS_GAS + FRAME_TX_RECENT_ROOT_REFERENCE_GAS;
+
+        tx.recent_root_references = refs;
+        assert_eq!(
+            tx.total_gas_limit(),
+            base + expected_calldata + expected_intrinsic,
+            "reference-carrying tx must add rlp(refs) calldata cost + intrinsic reference gas",
+        );
     }
 
     fn make_frame_tx_with_gas_limits(limits: Vec<u64>) -> FrameTransaction {
