@@ -167,32 +167,9 @@ pub async fn bind_api(
 
     // Serve WebSocket on the HTTP listener when both resolve to the same address (matching
     // the L1 behavior and geth/reth/nethermind); otherwise use a separate listener.
+    // Conflicting configurations are validated by the node CLI before this is called; a
+    // genuine collision still fails the corresponding bind below with a typed error.
     let merged = ws.as_ref().is_some_and(|w| w.addr == http_addr);
-
-    // Pre-flight (mirrors L1): reject a WebSocket address that overlaps the HTTP one via a
-    // same-family wildcard on the same port — Linux would fail the second bind, but macOS/BSD
-    // SO_REUSEADDR would let it succeed and silently shadow the wildcard listener.
-    if let Some(ws_addr) = ws.as_ref().filter(|_| !merged).map(|w| w.addr)
-        && ws_addr.port() == http_addr.port()
-        && ws_addr.is_ipv4() == http_addr.is_ipv4()
-        && (ws_addr.ip().is_unspecified() || http_addr.ip().is_unspecified())
-    {
-        return Err(RpcStartupError {
-            role: RpcRole::Ws,
-            addr: ws_addr,
-            source: std::io::Error::new(
-                std::io::ErrorKind::AddrInUse,
-                "address requested by more than one RPC endpoint",
-            ),
-            hint: format!(
-                "{ws_addr} overlaps {http_addr}, requested by the {} (a wildcard address \
-                 covers every interface on its port); change {} or {}.",
-                RpcRole::Http,
-                RpcRole::Http.flags(),
-                RpcRole::Ws.flags(),
-            ),
-        });
-    }
 
     let root = if merged {
         post(handle_http_request).get(ws_upgrade_handler)

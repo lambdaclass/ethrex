@@ -517,7 +517,9 @@ pub fn start_block_executor(blockchain: Arc<Blockchain>) -> UnboundedSender<Bloc
 /// # Errors
 ///
 /// Returns [`RpcStartupError`] — naming the endpoint role, address, and the CLI flag to
-/// change — if two configured endpoints conflict or any listener fails to bind.
+/// change — if any listener fails to bind. Validating the configuration for duplicate or
+/// wildcard-overlapping addresses is the caller's responsibility (the node CLI does so
+/// before calling).
 #[allow(clippy::too_many_arguments)]
 pub async fn bind_api(
     cancel_token: CancellationToken,
@@ -586,64 +588,11 @@ pub async fn bind_api(
     let cors = CorsLayer::permissive();
 
     // Serve WebSocket on the HTTP listener when both resolve to the same address, matching
-    // geth/reth/nethermind. Merging requires exact SocketAddr equality; overlapping-but-unequal
-    // addresses are rejected by the pre-flight check below.
+    // geth/reth/nethermind. Merging requires exact SocketAddr equality. Conflicting
+    // configurations (duplicate or wildcard-overlapping addresses) are the caller's job to
+    // validate up front — the node CLI does so before calling — and a genuine collision
+    // still fails the corresponding bind below with a typed error.
     let merged = ws.as_ref().is_some_and(|w| w.addr == http_addr);
-
-    // Pre-flight: catch conflicting listener addresses before binding so the error can name
-    // BOTH conflicting flags (an OS bind error can only ever blame the second binder). Two
-    // addresses conflict when they are equal, or when they share a port and one is a wildcard
-    // of the same address family (0.0.0.0 vs 127.0.0.1 on one port fails with EADDRINUSE on
-    // Linux, but on macOS/BSD SO_REUSEADDR lets the specific bind succeed and silently shadow
-    // the wildcard for that address — rejecting up front keeps both platforms honest).
-    {
-        let ws_own_addr = ws.as_ref().filter(|_| !merged).map(|w| w.addr);
-        let listeners = [
-            (RpcRole::Http, Some(http_addr)),
-            (RpcRole::AuthRpc, Some(authrpc_addr)),
-            (RpcRole::Ws, ws_own_addr),
-        ];
-        let conflicts = |a: SocketAddr, b: SocketAddr| {
-            a == b
-                || (a.port() == b.port()
-                    && a.is_ipv4() == b.is_ipv4()
-                    && (a.ip().is_unspecified() || b.ip().is_unspecified()))
-        };
-        for i in 0..listeners.len() {
-            for j in (i + 1)..listeners.len() {
-                if let (Some(a), Some(b)) = (listeners[i].1, listeners[j].1)
-                    && conflicts(a, b)
-                {
-                    let hint = if a == b {
-                        format!(
-                            "{b} is requested by both the {} and the {}; change {} or {}.",
-                            listeners[i].0,
-                            listeners[j].0,
-                            listeners[i].0.flags(),
-                            listeners[j].0.flags(),
-                        )
-                    } else {
-                        format!(
-                            "{b} overlaps {a}, requested by the {} (a wildcard address \
-                             covers every interface on its port); change {} or {}.",
-                            listeners[i].0,
-                            listeners[i].0.flags(),
-                            listeners[j].0.flags(),
-                        )
-                    };
-                    return Err(RpcStartupError {
-                        role: listeners[j].0,
-                        addr: b,
-                        source: std::io::Error::new(
-                            std::io::ErrorKind::AddrInUse,
-                            "address requested by more than one RPC endpoint",
-                        ),
-                        hint,
-                    });
-                }
-            }
-        }
-    }
 
     // Root method-router: POST is JSON-RPC; when merged, a GET carrying the WebSocket
     // upgrade is routed to the WS handler on the same listener.

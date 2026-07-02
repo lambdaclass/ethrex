@@ -319,6 +319,14 @@ pub async fn init_rpc_api(
         None
     };
 
+    // Reject conflicting listener addresses at config time, before anything binds, with an
+    // error naming both flags to change.
+    validate_rpc_addrs(
+        get_http_socket_addr(opts),
+        Some(get_authrpc_socket_addr(opts)),
+        ws_config.as_ref().map(|ws| ws.addr),
+    )?;
+
     // Bind in the foreground so a failure (e.g. a port collision) aborts node startup with
     // an actionable error, instead of being swallowed by a detached task. Serving runs in
     // the background once every listener is bound.
@@ -619,6 +627,60 @@ pub fn get_authrpc_socket_addr(opts: &Options) -> SocketAddr {
 pub fn get_http_socket_addr(opts: &Options) -> SocketAddr {
     parse_socket_addr(&opts.http_addr, &opts.http_port)
         .expect("Failed to parse http address and port")
+}
+
+/// Two configured listener addresses conflict when they are equal, or when they share a
+/// port and one side is a same-family wildcard: Linux fails the second bind with
+/// EADDRINUSE, but on macOS/BSD `SO_REUSEADDR` lets the specific bind succeed and silently
+/// shadow the wildcard listener for that address.
+fn rpc_addrs_conflict(a: SocketAddr, b: SocketAddr) -> bool {
+    a == b
+        || (a.port() == b.port()
+            && a.is_ipv4() == b.is_ipv4()
+            && (a.ip().is_unspecified() || b.ip().is_unspecified()))
+}
+
+/// Validates the resolved RPC listener addresses at config time, before anything binds, so
+/// a conflict aborts startup with an error naming BOTH flags to change (an OS bind error
+/// can only ever blame the second binder). A WebSocket address exactly equal to the HTTP
+/// one is not a conflict: both protocols share that listener.
+pub(crate) fn validate_rpc_addrs(
+    http: SocketAddr,
+    authrpc: Option<SocketAddr>,
+    ws: Option<SocketAddr>,
+) -> eyre::Result<()> {
+    use ethrex_rpc::RpcRole;
+
+    // WS equal to HTTP shares the HTTP listener instead of binding its own.
+    let ws = ws.filter(|ws| *ws != http);
+
+    let http = (RpcRole::Http, http);
+    let authrpc = authrpc.map(|addr| (RpcRole::AuthRpc, addr));
+    let ws = ws.map(|addr| (RpcRole::Ws, addr));
+    let pairs = [
+        authrpc.map(|authrpc| (http, authrpc)),
+        ws.map(|ws| (http, ws)),
+        authrpc.zip(ws),
+    ];
+    for ((role_a, a), (role_b, b)) in pairs.into_iter().flatten() {
+        if !rpc_addrs_conflict(a, b) {
+            continue;
+        }
+        if a == b {
+            eyre::bail!(
+                "{a} is requested by both the {role_a} and the {role_b}; change {} or {}.",
+                role_a.flags(),
+                role_b.flags(),
+            );
+        }
+        eyre::bail!(
+            "{b} ({role_b}) overlaps {a} ({role_a}): a wildcard address covers every \
+             interface on its port; change {} or {}.",
+            role_a.flags(),
+            role_b.flags(),
+        );
+    }
+    Ok(())
 }
 
 pub fn get_ws_socket_addr(opts: &Options) -> SocketAddr {
@@ -998,11 +1060,84 @@ pub async fn regenerate_head_state(
 
 #[cfg(test)]
 mod tests {
-    use super::resolve_p2p_endpoints;
-    use std::net::IpAddr;
+    use super::{resolve_p2p_endpoints, validate_rpc_addrs};
+    use std::net::{IpAddr, SocketAddr};
 
     fn ip(s: &str) -> IpAddr {
         s.parse().unwrap()
+    }
+
+    fn addr(s: &str) -> SocketAddr {
+        s.parse().unwrap()
+    }
+
+    /// The default layout (distinct ports) must validate.
+    #[test]
+    fn distinct_rpc_addrs_are_valid() {
+        let result = validate_rpc_addrs(
+            addr("127.0.0.1:8545"),
+            Some(addr("127.0.0.1:8551")),
+            Some(addr("127.0.0.1:8546")),
+        );
+        assert!(result.is_ok());
+    }
+
+    /// WebSocket exactly equal to HTTP shares the HTTP listener (merged single-port
+    /// setup) — it must NOT be reported as a conflict.
+    #[test]
+    fn ws_sharing_the_http_listener_is_not_a_conflict() {
+        let result = validate_rpc_addrs(
+            addr("127.0.0.1:8545"),
+            Some(addr("127.0.0.1:8551")),
+            Some(addr("127.0.0.1:8545")),
+        );
+        assert!(result.is_ok());
+    }
+
+    /// A duplicate address must fail at config time with an error naming BOTH flags,
+    /// since an OS bind error can only ever blame the second binder.
+    #[test]
+    fn duplicate_rpc_addr_names_both_flags() {
+        let err = validate_rpc_addrs(
+            addr("127.0.0.1:8545"),
+            Some(addr("127.0.0.1:8551")),
+            Some(addr("127.0.0.1:8551")),
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(err.contains("Auth-RPC server"), "{err}");
+        assert!(err.contains("WebSocket server"), "{err}");
+        assert!(err.contains("--authrpc.port"), "{err}");
+        assert!(err.contains("--ws.port"), "{err}");
+    }
+
+    /// A same-family wildcard on the same port covers the specific address: Linux fails
+    /// the second bind, macOS/BSD lets it shadow the wildcard. Both must be rejected up
+    /// front, uniformly.
+    #[test]
+    fn wildcard_overlap_is_rejected() {
+        let err = validate_rpc_addrs(
+            addr("0.0.0.0:8545"),
+            Some(addr("127.0.0.1:8551")),
+            Some(addr("127.0.0.1:8545")),
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(err.contains("overlaps"), "{err}");
+        assert!(err.contains("--http.port"), "{err}");
+        assert!(err.contains("--ws.port"), "{err}");
+    }
+
+    /// Cross-family wildcard overlap ([::] vs 0.0.0.0) depends on the platform's
+    /// dual-stack configuration; it is deliberately left to the kernel to decide at bind.
+    #[test]
+    fn cross_family_wildcards_are_left_to_the_kernel() {
+        let result = validate_rpc_addrs(
+            addr("0.0.0.0:8545"),
+            Some(addr("127.0.0.1:8551")),
+            Some(addr("[::]:8545")),
+        );
+        assert!(result.is_ok());
     }
 
     #[test]

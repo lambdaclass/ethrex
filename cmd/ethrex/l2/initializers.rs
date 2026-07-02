@@ -59,6 +59,15 @@ async fn init_rpc_api(
 
     let allowed_namespaces: std::collections::HashSet<_> = opts.http_api.iter().copied().collect();
     let ethrex_namespace_allowed = l2_opts.http_api_ethrex;
+
+    // Reject conflicting listener addresses at config time, before anything binds. The L2
+    // node binds no Auth-RPC listener, so only HTTP and WebSocket can conflict.
+    initializers::validate_rpc_addrs(
+        get_http_socket_addr(opts),
+        None,
+        ws.as_ref().map(|ws| ws.addr),
+    )?;
+
     // Bind in the foreground so a bind failure aborts node startup with an actionable
     // error instead of being swallowed by a detached task; serve in the background.
     let bound = ethrex_l2_rpc::bind_api(
