@@ -171,7 +171,18 @@ impl MempoolPrewarmer {
                         while let Ok(next) = receiver.try_recv() {
                             req = next;
                         }
-                        run_pass(&blockchain, &pool, req, &opts);
+                        // A panic inside a pass (speculating on arbitrary
+                        // mempool txs) must not kill this loop: the worker is
+                        // the feature — if it dies, every later trigger sends
+                        // to a dropped receiver and prewarming silently
+                        // disables itself for the rest of the process.
+                        let outcome =
+                            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                                run_pass(&blockchain, &pool, req, &opts)
+                            }));
+                        if outcome.is_err() {
+                            warn!("prewarm pass panicked; worker continuing");
+                        }
                     }
                 })
                 .ok()?;
