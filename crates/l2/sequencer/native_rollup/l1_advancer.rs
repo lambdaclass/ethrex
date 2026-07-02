@@ -491,7 +491,7 @@ impl NativeL1Advancer {
     }
 }
 
-#[cfg(all(test, feature = "experimental-devnet"))]
+#[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod devnet_tests {
     use super::*;
