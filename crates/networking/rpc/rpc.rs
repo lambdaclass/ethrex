@@ -1,4 +1,5 @@
 use crate::authentication::authenticate;
+use crate::debug::bad_blocks::GetBadBlocksRequest;
 use crate::debug::chain_config::ChainConfigRequest;
 use crate::debug::execution_witness::ExecutionWitnessRequest;
 use crate::debug::execution_witness_by_hash::ExecutionWitnessByBlockHashRequest;
@@ -1165,6 +1166,7 @@ pub async fn map_debug_requests(req: &RpcRequest, context: RpcApiContext) -> Res
             ExecutionWitnessByBlockHashRequest::call(req, context).await
         }
         "debug_chainConfig" => ChainConfigRequest::call(req, context).await,
+        "debug_getBadBlocks" => GetBadBlocksRequest::call(req, context).await,
         "debug_traceTransaction" => TraceTransactionRequest::call(req, context).await,
         "debug_traceBlockByNumber" => TraceBlockByNumberRequest::call(req, context).await,
         "debug_traceBlockByHash" => TraceBlockByHashRequest::call(req, context).await,
