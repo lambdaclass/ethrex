@@ -15,9 +15,10 @@ use ethrex_common::types::{
     APPROVE_EXECUTION_AND_PAYMENT, AuthorizationTuple, BYTES_PER_BLOB, BlobsBundle, Block,
     BlockBody, BlockHeader, ChainConfig, EIP1559Transaction, EIP4844Transaction,
     EIP7702Transaction, FRAME_SIG_SCHEME_P256, FRAME_SIG_SCHEME_SECP256K1,
-    FRAME_TX_EXPIRY_DATA_LENGTH, FRAME_TX_MAX_VERIFY_GAS, Frame, FrameMode, FrameSignature,
-    FrameTransaction, Genesis, GenesisAccount, MAX_TX_SIZE, MempoolTransaction, Transaction,
-    TxKind, frame_tx_expiry_verifier, kzg_commitment_to_versioned_hash,
+    FRAME_TX_EXPIRY_DATA_LENGTH, FRAME_TX_MAX_VERIFY_GAS, FRAME_TX_RECENT_ROOT_USABLE_WINDOW,
+    Frame, FrameMode, FrameSignature, FrameTransaction, Genesis, GenesisAccount, MAX_TX_SIZE,
+    MempoolTransaction, RecentRootReference, Transaction, TxKind, frame_tx_expiry_verifier,
+    frame_tx_recent_root, kzg_commitment_to_versioned_hash,
 };
 use ethrex_common::{Address, Bytes, H160, H256, U256};
 use ethrex_storage::error::StoreError;
@@ -965,6 +966,197 @@ async fn mempool_accepts_frame_tx_with_deadline_at_head_timestamp() {
     assert!(
         result.is_ok(),
         "frame tx with deadline == head.timestamp must be admitted; got {result:?}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// EIP-8272 recent-root reference freshness policy
+// ---------------------------------------------------------------------------
+
+/// Head slot for the recent-root policy tests. Chosen larger than
+/// `FRAME_TX_RECENT_ROOT_USABLE_WINDOW + 1` so an expired reference slot is
+/// still a valid (non-underflowing) u64.
+const RECENT_ROOT_TEST_HEAD_SLOT: u64 = 10_000;
+
+/// Store where Hegota AND Amsterdam are active and the genesis head carries
+/// `slot_number == RECENT_ROOT_TEST_HEAD_SLOT` (EIP-7843), so the EIP-8272
+/// mempool freshness policy applies. Every reference in `committed` is seeded
+/// into the RECENT_ROOT_ADDRESS predeploy storage (`storage_key -> entry_hash`)
+/// so it validates against head state.
+async fn setup_hegota_store_with_slot(committed: &[RecentRootReference]) -> Store {
+    let predeploy_storage: BTreeMap<U256, U256> = committed
+        .iter()
+        .map(|reference| {
+            (
+                U256::from_big_endian(reference.storage_key().as_bytes()),
+                U256::from_big_endian(reference.entry_hash().as_bytes()),
+            )
+        })
+        .collect();
+    let genesis = Genesis {
+        config: ChainConfig {
+            chain_id: 0,
+            shanghai_time: Some(0),
+            amsterdam_time: Some(0),
+            hegota_time: Some(0),
+            ..Default::default()
+        },
+        gas_limit: 100_000_000,
+        slot_number: Some(RECENT_ROOT_TEST_HEAD_SLOT),
+        alloc: [
+            (
+                Address::from_low_u64_be(FRAME_TX_SELF_SENDER),
+                GenesisAccount {
+                    code: approve_code(APPROVE_EXECUTION_AND_PAYMENT),
+                    storage: BTreeMap::new(),
+                    balance: U256::zero(),
+                    nonce: 0,
+                },
+            ),
+            (
+                frame_tx_recent_root(),
+                GenesisAccount {
+                    // The predeploy holds no runtime bytecode (the write is
+                    // handled natively); only its storage matters here.
+                    code: Bytes::new(),
+                    storage: predeploy_storage,
+                    balance: U256::zero(),
+                    nonce: 1,
+                },
+            ),
+        ]
+        .into_iter()
+        .collect(),
+        ..Default::default()
+    };
+    let mut store = Store::new("hegota-slot-test", EngineType::InMemory).expect("Storage setup");
+    store
+        .add_initial_state(genesis)
+        .await
+        .expect("add genesis state");
+    store
+}
+
+fn recent_root_reference(slot: u64) -> RecentRootReference {
+    RecentRootReference {
+        source_id: H256::from_low_u64_be(0x1234),
+        slot,
+        root: H256::from_low_u64_be(0x5678),
+    }
+}
+
+fn frame_tx_with_reference(reference: RecentRootReference) -> FrameTransaction {
+    let mut frame_tx = minimal_valid_frame_tx();
+    frame_tx.recent_root_references = vec![reference];
+    frame_tx
+}
+
+#[tokio::test]
+async fn mempool_rejects_frame_tx_with_too_new_recent_root() {
+    // current_slot at admission = head.slot_number + 1 (the earliest slot the
+    // tx could be included in). A reference to that same slot is not yet
+    // referenceable: a root only becomes referenceable the slot AFTER it was
+    // written, so `slot >= current_slot` must be rejected.
+    let store = setup_hegota_store_with_slot(&[]).await;
+    let blockchain = Blockchain::default_with_store(store);
+
+    let reference = recent_root_reference(RECENT_ROOT_TEST_HEAD_SLOT + 1);
+    let tx = Transaction::FrameTransaction(frame_tx_with_reference(reference));
+    let result = blockchain
+        .validate_transaction(&tx, tx.sender(&NativeCrypto).unwrap())
+        .await;
+    assert!(
+        matches!(result, Err(MempoolError::FrameTxRecentRootTooNew { .. })),
+        "expected FrameTxRecentRootTooNew for slot == current_slot, got {result:?}"
+    );
+}
+
+#[tokio::test]
+async fn mempool_rejects_frame_tx_with_expired_recent_root() {
+    // current_slot = head slot + 1. A reference exactly one past the usable
+    // window (current_slot - slot == FRAME_TX_RECENT_ROOT_USABLE_WINDOW + 1)
+    // may already have been overwritten by ring-buffer aliasing and must be
+    // rejected.
+    let store = setup_hegota_store_with_slot(&[]).await;
+    let blockchain = Blockchain::default_with_store(store);
+
+    let current_slot = RECENT_ROOT_TEST_HEAD_SLOT + 1;
+    let reference = recent_root_reference(current_slot - FRAME_TX_RECENT_ROOT_USABLE_WINDOW - 1);
+    let tx = Transaction::FrameTransaction(frame_tx_with_reference(reference));
+    let result = blockchain
+        .validate_transaction(&tx, tx.sender(&NativeCrypto).unwrap())
+        .await;
+    assert!(
+        matches!(result, Err(MempoolError::FrameTxRecentRootExpired { .. })),
+        "expected FrameTxRecentRootExpired one slot past the usable window, got {result:?}"
+    );
+}
+
+#[tokio::test]
+async fn mempool_rejects_frame_tx_with_uncommitted_recent_root() {
+    // References at both inclusive window boundaries (freshest: diff == 1,
+    // oldest usable: diff == FRAME_TX_RECENT_ROOT_USABLE_WINDOW) pass the slot
+    // checks but nothing is committed in the predeploy at head state, so the
+    // storage assertion must reject them. This also pins the boundaries as
+    // inclusive: neither reference may be rejected as too-new or expired.
+    let store = setup_hegota_store_with_slot(&[]).await;
+    let blockchain = Blockchain::default_with_store(store);
+
+    let current_slot = RECENT_ROOT_TEST_HEAD_SLOT + 1;
+    for slot in [
+        RECENT_ROOT_TEST_HEAD_SLOT,
+        current_slot - FRAME_TX_RECENT_ROOT_USABLE_WINDOW,
+    ] {
+        let reference = recent_root_reference(slot);
+        let tx = Transaction::FrameTransaction(frame_tx_with_reference(reference));
+        let result = blockchain
+            .validate_transaction(&tx, tx.sender(&NativeCrypto).unwrap())
+            .await;
+        assert!(
+            matches!(result, Err(MempoolError::FrameTxRecentRootNotCommitted)),
+            "expected FrameTxRecentRootNotCommitted for uncommitted slot {slot}, got {result:?}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn mempool_admits_frame_tx_with_committed_recent_root() {
+    // A reference within the usable window whose entry hash IS committed in
+    // the RECENT_ROOT_ADDRESS predeploy at head state passes the freshness
+    // policy and the rest of admission.
+    let reference = recent_root_reference(RECENT_ROOT_TEST_HEAD_SLOT);
+    let store = setup_hegota_store_with_slot(std::slice::from_ref(&reference)).await;
+    let blockchain = Blockchain::default_with_store(store);
+
+    let tx = Transaction::FrameTransaction(frame_tx_with_reference(reference));
+    let result = blockchain
+        .validate_transaction(&tx, tx.sender(&NativeCrypto).unwrap())
+        .await;
+    assert!(
+        result.is_ok(),
+        "frame tx with a committed in-window reference must be admitted; got {result:?}"
+    );
+}
+
+#[tokio::test]
+async fn mempool_skips_recent_root_policy_without_head_slot_number() {
+    // Pre-Amsterdam head headers carry no slot number (EIP-7843), so there is
+    // nothing sound to compare a reference's slot against: the policy must be
+    // skipped (guard, don't reject) and block execution stays the
+    // authoritative check. The admission simulation only runs the validation
+    // prefix — it never reaches the VM's reference-validity check — so an
+    // uncommitted reference is admitted here.
+    let store = setup_hegota_store().await;
+    let blockchain = Blockchain::default_with_store(store);
+
+    let reference = recent_root_reference(RECENT_ROOT_TEST_HEAD_SLOT);
+    let tx = Transaction::FrameTransaction(frame_tx_with_reference(reference));
+    let result = blockchain
+        .validate_transaction(&tx, tx.sender(&NativeCrypto).unwrap())
+        .await;
+    assert!(
+        result.is_ok(),
+        "reference policy must be skipped when the head has no slot number; got {result:?}"
     );
 }
 
