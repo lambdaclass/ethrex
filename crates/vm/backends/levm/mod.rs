@@ -6,7 +6,8 @@ use crate::system_contracts::{
     AMSTERDAM_REQUEST_PREDEPLOYS, BEACON_ROOTS_ADDRESS, BUILDER_DEPOSIT_CONTRACT_ADDRESS,
     BUILDER_EXIT_CONTRACT_ADDRESS, CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS,
     EXPIRY_VERIFIER_PREDEPLOY, EXPIRY_VERIFIER_RUNTIME_BYTECODE, HISTORY_STORAGE_ADDRESS,
-    PRAGUE_SYSTEM_CONTRACTS, SYSTEM_ADDRESS, WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS,
+    PRAGUE_SYSTEM_CONTRACTS, RECENT_ROOT_ADDRESS, SYSTEM_ADDRESS,
+    WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS,
 };
 use crate::{EvmError, ExecutionResult};
 use bytes::Bytes;
@@ -2773,6 +2774,37 @@ impl LEVM {
         Ok(())
     }
 
+    /// Install the EIP-8272 RECENT_ROOT_ADDRESS predeploy at Hegota activation.
+    /// The account carries NO runtime bytecode: the 64-byte `salt‖root` write is
+    /// handled natively by the VM (docs/eip-8272.md divergence #4), so the
+    /// predeploy exists only as a protocol-managed storage namespace — nonce 1,
+    /// empty code, balance preserved (an EOA may have sent value here pre-fork).
+    /// Idempotent: the nonce converges to `max(existing, 1)`, so exactly one
+    /// account update is produced (at the first Hegota block) and none after.
+    pub fn install_recent_root_code(db: &mut GeneralizedDatabase) -> Result<(), EvmError> {
+        // Predeploy convention (matches the genesis predeploys 4788/2935/7002/7251).
+        const PREDEPLOY_NONCE: u64 = 1;
+
+        let existing_nonce = db
+            .get_account(RECENT_ROOT_ADDRESS.address)
+            .map_err(EvmError::from)?
+            .info
+            .nonce;
+        if existing_nonce >= PREDEPLOY_NONCE {
+            return Ok(());
+        }
+        // Record the BAL nonce change if recording is active, so a BAL
+        // reconstructor reproduces the same post-state.
+        if let Some(recorder) = db.bal_recorder_mut() {
+            recorder.record_nonce_change(RECENT_ROOT_ADDRESS.address, PREDEPLOY_NONCE);
+        }
+        let acc = db
+            .get_account_mut(RECENT_ROOT_ADDRESS.address)
+            .map_err(EvmError::from)?;
+        acc.info.nonce = PREDEPLOY_NONCE;
+        Ok(())
+    }
+
     pub(crate) fn read_withdrawal_requests(
         block_header: &BlockHeader,
         db: &mut GeneralizedDatabase,
@@ -2949,6 +2981,8 @@ impl LEVM {
         // hooked in apply_system_calls for the payload-build path.
         if fork >= Fork::Hegota {
             Self::install_expiry_verifier_code(db, crypto)?;
+            // EIP-8272: the recent-root storage-namespace predeploy.
+            Self::install_recent_root_code(db)?;
         }
 
         if block_header.parent_beacon_block_root.is_some() && fork >= Fork::Cancun {
