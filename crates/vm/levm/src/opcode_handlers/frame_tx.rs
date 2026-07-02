@@ -38,24 +38,28 @@ pub fn u256_to_offset(value: U256) -> Option<usize> {
     usize::try_from(value.0[0]).ok()
 }
 
-/// Compute the fee APPROVE deducts from the payer (spec line 387):
-/// tx_fee = total_gas_limit * effective_gas_price + blob_fees (at the block's
-/// actual base blob gas price). The end-of-tx unused-gas refund credits the
-/// payer at the same effective rate, so no gas is silently destroyed; the blob
-/// fee is non-refundable (matching EIP-4844 blob-fee burn semantics).
-/// NOTE: TXPARAM(0x06) / load_tx_param 0x06 intentionally still reports the
-/// MAXIMUM cost (max_fee-based, spec line 455) — that is a different quantity;
-/// do not change it.
-pub(crate) fn compute_tx_cost(
-    ctx: &crate::vm::FrameTxContext,
-    effective_gas_price: U256,
-    blob_gas_cost: U256,
-) -> Result<U256, VMError> {
-    let halt_err: VMError = ExceptionalHalt::InvalidOpcode.into();
-    let gas_limit = U256::from(ctx.total_gas_limit);
-    let tx_cost = effective_gas_price.checked_mul(gas_limit).ok_or(halt_err)?;
-    tx_cost
-        .checked_add(blob_gas_cost)
+/// Compute the transaction's MAXIMUM cost (spec line 387: APPROVE must
+/// "collect the transaction's maximum cost from payer"):
+/// `max_cost = max_fee_per_gas * total_gas_limit
+///           + len(blob_hashes) * 131072 * max_fee_per_blob_gas`.
+/// This is the single definition of "maximum cost": APPROVE (scopes 0x1/0x3)
+/// debits it from the payer, TXPARAM(0x06) reports it (spec line 455), and the
+/// mempool paymaster reservation reserves it. The end-of-tx refund returns
+/// `max_cost - effective_gas_price * total_gas_used - base-rate blob burn`, so
+/// the payer nets the effective-rate cost of the gas actually used plus the
+/// EIP-4844 blob burn (intrinsic gas is inside `total_gas_used`, so it stays
+/// non-refundable).
+pub(crate) fn compute_tx_max_cost(ctx: &crate::vm::FrameTxContext) -> Result<U256, VMError> {
+    let gas_cost = U256::from(ctx.tx.max_fee_per_gas)
+        .checked_mul(U256::from(ctx.total_gas_limit))
+        .ok_or(ExceptionalHalt::InvalidOpcode)?;
+    let blob_cost = U256::from(ctx.tx.blob_versioned_hashes.len())
+        .checked_mul(U256::from(131072u64))
+        .ok_or(ExceptionalHalt::InvalidOpcode)?
+        .checked_mul(ctx.tx.max_fee_per_blob_gas)
+        .ok_or(ExceptionalHalt::InvalidOpcode)?;
+    gas_cost
+        .checked_add(blob_cost)
         .ok_or(ExceptionalHalt::InvalidOpcode.into())
 }
 
@@ -81,12 +85,7 @@ pub fn apply_approve(
             }
             // No sender_approved precondition: the spec allows APPROVE_PAYMENT
             // in any order relative to APPROVE_EXECUTION.
-            let effective_gas_price = vm.env.gas_price;
-            let blob_gas_cost = crate::utils::calculate_blob_gas_cost(
-                &ctx.tx.blob_versioned_hashes,
-                vm.env.base_blob_fee_per_gas,
-            )?;
-            let tx_cost = compute_tx_cost(ctx, effective_gas_price, blob_gas_cost)?;
+            let tx_cost = compute_tx_max_cost(ctx)?;
             let sender = ctx.tx.sender;
 
             vm.consume_keyed_nonces(sender)?;
@@ -135,12 +134,7 @@ pub fn apply_approve(
             if frame_target != ctx.tx.sender {
                 return Err(VMError::RevertOpcode);
             }
-            let effective_gas_price = vm.env.gas_price;
-            let blob_gas_cost = crate::utils::calculate_blob_gas_cost(
-                &ctx.tx.blob_versioned_hashes,
-                vm.env.base_blob_fee_per_gas,
-            )?;
-            let tx_cost = compute_tx_cost(ctx, effective_gas_price, blob_gas_cost)?;
+            let tx_cost = compute_tx_max_cost(ctx)?;
             let sender = ctx.tx.sender;
 
             vm.consume_keyed_nonces(sender)?;
@@ -562,20 +556,7 @@ pub fn load_tx_param(ctx: &crate::vm::FrameTxContext, param_id: u64) -> Result<U
         0x03 => Ok(U256::from(ctx.tx.max_priority_fee_per_gas)),
         0x04 => Ok(U256::from(ctx.tx.max_fee_per_gas)),
         0x05 => Ok(ctx.tx.max_fee_per_blob_gas),
-        0x06 => {
-            // max_cost = max_fee_per_gas * total_gas_limit + len(blob_hashes) * 131072 * max_fee_per_blob_gas
-            let gas_cost = U256::from(ctx.tx.max_fee_per_gas)
-                .checked_mul(U256::from(ctx.total_gas_limit))
-                .ok_or(ExceptionalHalt::InvalidOpcode)?;
-            let blob_cost = U256::from(ctx.tx.blob_versioned_hashes.len())
-                .checked_mul(U256::from(131072u64))
-                .ok_or(ExceptionalHalt::InvalidOpcode)?
-                .checked_mul(ctx.tx.max_fee_per_blob_gas)
-                .ok_or(ExceptionalHalt::InvalidOpcode)?;
-            gas_cost
-                .checked_add(blob_cost)
-                .ok_or(ExceptionalHalt::InvalidOpcode.into())
-        }
+        0x06 => compute_tx_max_cost(ctx),
         0x07 => Ok(U256::from(ctx.tx.blob_versioned_hashes.len())),
         0x08 => {
             let mut bytes = [0u8; 32];
@@ -681,4 +662,52 @@ fn execute_default_verify(
     ctx.approve_called_in_current_frame = true;
 
     Ok((true, 0, Vec::new()))
+}
+
+#[cfg(test)]
+mod max_cost_tests {
+    use super::{compute_tx_max_cost, load_tx_param};
+    use crate::vm::FrameTxContext;
+    use ethrex_common::{H256, U256, types::FrameTransaction};
+
+    fn ctx(max_fee: u64, blobs: usize, max_blob_fee: u64, total_gas_limit: u64) -> FrameTxContext {
+        let tx = FrameTransaction {
+            max_fee_per_gas: max_fee,
+            max_fee_per_blob_gas: U256::from(max_blob_fee),
+            blob_versioned_hashes: vec![H256::zero(); blobs],
+            ..Default::default()
+        };
+        FrameTxContext {
+            sender_approved: false,
+            payer_address: None,
+            frame_results: Vec::new(),
+            current_frame_index: 0,
+            sig_hash: H256::zero(),
+            tx,
+            approve_called_in_current_frame: false,
+            total_gas_limit,
+            legacy_sender_nonce: 0,
+        }
+    }
+
+    #[test]
+    fn max_cost_is_max_fee_times_limit_plus_max_blob_cost() {
+        // 10 * 100_000 + 2 * 131072 * 5 = 1_000_000 + 1_310_720
+        let c = ctx(10, 2, 5, 100_000);
+        assert_eq!(compute_tx_max_cost(&c).unwrap(), U256::from(2_310_720u64));
+        // No blobs: just max_fee * total_gas_limit.
+        let c = ctx(7, 0, 999, 21_000);
+        assert_eq!(compute_tx_max_cost(&c).unwrap(), U256::from(147_000u64));
+    }
+
+    #[test]
+    fn txparam_0x06_reports_the_same_maximum_cost_approve_debits() {
+        // TXPARAM(0x06) and the APPROVE debit must stay one definition of
+        // "maximum cost"; a split between them is a consensus bug.
+        let c = ctx(10, 2, 5, 100_000);
+        assert_eq!(
+            load_tx_param(&c, 0x06).unwrap(),
+            compute_tx_max_cost(&c).unwrap()
+        );
+    }
 }

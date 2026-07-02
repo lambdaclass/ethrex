@@ -19,10 +19,10 @@ use crate::gas_cost;
 use crate::memory::calculate_memory_size;
 use crate::opcode_handlers::OpcodeHandler;
 use crate::opcode_handlers::frame_tx::{
-    address_to_u256, compute_tx_cost, index_to_usize, u256_to_offset,
+    address_to_u256, compute_tx_max_cost, index_to_usize, u256_to_offset,
 };
 use crate::utils::{
-    calculate_blob_gas_cost, code_has_delegation, size_offset_to_usize, word_to_address,
+    code_has_delegation, size_offset_to_usize, word_to_address,
 };
 use crate::vm::VM;
 
@@ -120,12 +120,13 @@ pub(crate) fn topic_at(log: &Log, n: usize) -> Option<H256> {
     log.topics.get(n).copied()
 }
 
-/// Compute the transaction gas pre-charge (the cost APPROVE would deduct):
+/// Compute the transaction gas pre-charge for a NORMAL transaction:
 /// `total_gas_limit * effective_gas_price + blob_count * BLOB_GAS_PER_BLOB * base_blob_fee`.
 ///
 /// Uses checked arithmetic; any overflow returns `ExceptionalHalt::OutOfGas`
-/// (matching the overflow convention of the `gas_cost` helpers). This is the
-/// normal-tx path; the frame-tx path reuses `compute_tx_cost`.
+/// (matching the overflow convention of the `gas_cost` helpers). The frame-tx
+/// path instead reuses `compute_tx_max_cost` — APPROVE debits the maximum
+/// cost, so that is a frame transaction's pre-charge.
 pub(crate) fn gas_pre_charge(
     total_gas_limit: u64,
     effective_gas_price: U256,
@@ -291,11 +292,9 @@ impl OpcodeHandler for OpTxTraceHandler {
                 0x14 => {
                     require_zero(in2)?;
                     if let Some(ctx) = vm.frame_tx_context.as_ref() {
-                        let blob_gas_cost = calculate_blob_gas_cost(
-                            &ctx.tx.blob_versioned_hashes,
-                            vm.env.base_blob_fee_per_gas,
-                        )?;
-                        compute_tx_cost(ctx, vm.env.gas_price, blob_gas_cost)?
+                        // Frame tx: APPROVE debits the maximum cost, so that is
+                        // the pre-charge this param reports.
+                        compute_tx_max_cost(ctx)?
                     } else {
                         gas_pre_charge(
                             vm.env.gas_limit,
