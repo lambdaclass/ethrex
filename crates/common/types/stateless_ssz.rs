@@ -664,6 +664,7 @@ mod tests {
     // reading the wrong bytes on L1.
 
     const SOL_RESULT_SUCCESS_OFFSET: usize = 32;
+    // result bytes 33..36 hold the u32 LE OFFSET to chain_config's variable data (not chain_id itself).
     const SOL_RESULT_CHAIN_CONFIG_OFFSET_POS: usize = 33;
     const SOL_EP_STATE_ROOT_OFFSET: usize = 52;
     const SOL_EP_BLOCK_NUMBER_OFFSET: usize = 404;
@@ -808,9 +809,14 @@ mod tests {
             &[0x66; 32],
             "block_hash @472"
         );
-        // EP fixed prefix length: block_access_list offset slot is the last 4 bytes of the prefix.
-        // The transactions offset (field 14) sits inside the prefix; the prefix ends at 532.
-        // Sanity: the EP variable data (empty here) starts at ep_abs + 532.
-        let _ = SOL_EP_FIXED_PREFIX_LEN; // documented invariant; asserted via field positions above
+        // block_access_list's offset slot is the last 4 bytes of the EP fixed prefix
+        // (at EP+528). SSZ offsets are container-relative, so with all variable
+        // fields empty it must equal the fixed-prefix length (532) — this pins the
+        // prefix length that NativeRollup.sol's EP_FIXED_PREFIX_LEN depends on.
+        assert_eq!(
+            u32_le(&buf, ep_abs + SOL_EP_FIXED_PREFIX_LEN - 4),
+            SOL_EP_FIXED_PREFIX_LEN,
+            "block_access_list offset slot @EP+528 must be 532 (EP fixed-prefix length)",
+        );
     }
 }
