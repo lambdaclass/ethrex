@@ -719,23 +719,19 @@ mod tests {
         result.ssz_append(&mut buf);
 
         assert_eq!(
-            buf[SOL_RESULT_SUCCESS_OFFSET],
-            1,
+            buf[SOL_RESULT_SUCCESS_OFFSET], 1,
             "successful_validation must be byte 32"
         );
         let cc_off = u32_le(&buf, SOL_RESULT_CHAIN_CONFIG_OFFSET_POS);
         assert_eq!(
-            cc_off,
-            37,
+            cc_off, 37,
             "chain_config offset value must be 37 (fixed part length), actual: {}",
             cc_off
         );
         // chain_id is the first field of SszChainConfig, uint64 LE, at cc_off.
-        let chain_id =
-            u64::from_le_bytes(buf[cc_off..cc_off + 8].try_into().unwrap());
+        let chain_id = u64::from_le_bytes(buf[cc_off..cc_off + 8].try_into().unwrap());
         assert_eq!(
-            chain_id,
-            0x1122334455667788,
+            chain_id, 0x1122334455667788,
             "chain_id must be readable at the deref offset"
         );
     }
@@ -777,14 +773,12 @@ mod tests {
         let ep_abs = npr_abs + u32_le(&buf, npr_abs);
         // The EP fixed FIELD offsets the contract reads must land where expected:
         let actual_block_number = u64::from_le_bytes(
-            buf[ep_abs + SOL_EP_BLOCK_NUMBER_OFFSET
-                ..ep_abs + SOL_EP_BLOCK_NUMBER_OFFSET + 8]
+            buf[ep_abs + SOL_EP_BLOCK_NUMBER_OFFSET..ep_abs + SOL_EP_BLOCK_NUMBER_OFFSET + 8]
                 .try_into()
                 .unwrap(),
         );
         assert_eq!(
-            actual_block_number,
-            7,
+            actual_block_number, 7,
             "block_number must be at EP offset 404, actual offset produces: {}",
             actual_block_number
         );
@@ -794,8 +788,7 @@ mod tests {
                 .unwrap(),
         );
         assert_eq!(
-            actual_gas_limit,
-            30_000_000,
+            actual_gas_limit, 30_000_000,
             "gas_limit must be at EP offset 412, actual offset produces: {}",
             actual_gas_limit
         );

@@ -1231,8 +1231,7 @@ impl Blockchain {
 
         let mut blockhash_opcode_references = HashMap::new();
         let mut codes = Vec::new();
-        let mut block_access_lists: Vec<Option<BlockAccessList>> =
-            Vec::with_capacity(blocks.len());
+        let mut block_access_lists: Vec<Option<BlockAccessList>> = Vec::with_capacity(blocks.len());
 
         for (i, block) in blocks.iter().enumerate() {
             let parent_hash = block.header.parent_hash;

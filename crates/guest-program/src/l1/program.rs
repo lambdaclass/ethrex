@@ -272,16 +272,16 @@ mod tests {
 
     #[test]
     fn reconstruction_derives_block_access_list_hash() {
-        use ethrex_common::types::block_access_list::{AccountChanges, BlockAccessList};
         use ethrex_common::Address;
+        use ethrex_common::types::block_access_list::{AccountChanges, BlockAccessList};
         use ethrex_rlp::encode::RLPEncode;
 
         let crypto = crate::crypto::NativeCrypto;
 
         // Empty field → None (pre-Amsterdam, unchanged behavior).
         let req_empty = build_minimal_new_payload_request(Vec::new());
-        let block = super::new_payload_request_to_block(&req_empty, &crypto)
-            .expect("reconstruct empty");
+        let block =
+            super::new_payload_request_to_block(&req_empty, &crypto).expect("reconstruct empty");
         assert_eq!(block.header.block_access_list_hash, None);
 
         // Non-empty field → Some(compute_hash(decoded)).
@@ -289,9 +289,12 @@ mod tests {
             BlockAccessList::from_accounts(vec![AccountChanges::new(Address::from([0x22u8; 20]))]);
         let bytes = bal.encode_to_vec();
         let req = build_minimal_new_payload_request(bytes);
-        let block = super::new_payload_request_to_block(&req, &crypto)
-            .expect("reconstruct with bal");
-        assert_eq!(block.header.block_access_list_hash, Some(bal.compute_hash()));
+        let block =
+            super::new_payload_request_to_block(&req, &crypto).expect("reconstruct with bal");
+        assert_eq!(
+            block.header.block_access_list_hash,
+            Some(bal.compute_hash())
+        );
     }
 
     fn build_minimal_new_payload_request(

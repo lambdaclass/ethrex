@@ -134,7 +134,10 @@ impl NativeL1Advancer {
         let (witness, bal): (
             ethrex_common::types::block_execution_witness::ExecutionWitness,
             Option<ethrex_common::types::block_access_list::BlockAccessList>,
-        ) = match self.store.get_witness_by_number_and_hash(next_block, block_hash)? {
+        ) = match self
+            .store
+            .get_witness_by_number_and_hash(next_block, block_hash)?
+        {
             Some(rpc_witness) if !needs_bal => {
                 let chain_config = self.store.get_chain_config();
                 let witness = rpc_witness
@@ -494,8 +497,8 @@ mod devnet_tests {
 
     #[test]
     fn bal_to_ssz_roundtrips_encoding() {
-        use ethrex_common::types::block_access_list::{AccountChanges, BlockAccessList};
         use ethrex_common::Address;
+        use ethrex_common::types::block_access_list::{AccountChanges, BlockAccessList};
         use ethrex_rlp::encode::RLPEncode;
 
         // None → empty SSZ list (pre-Amsterdam).
@@ -504,9 +507,8 @@ mod devnet_tests {
 
         // Some(bal) → the SSZ bytes equal the BAL's RLP encoding, so that
         // decode-then-compute_hash on the consumer reproduces block_access_list_hash.
-        let bal = BlockAccessList::from_accounts(vec![AccountChanges::new(Address::from(
-            [0x11u8; 20],
-        ))]);
+        let bal =
+            BlockAccessList::from_accounts(vec![AccountChanges::new(Address::from([0x11u8; 20]))]);
         let expected = bal.encode_to_vec();
         let got = bal_to_ssz_block_access_list(Some(&bal)).expect("some encodes");
         let got_bytes: Vec<u8> = got.iter().copied().collect();
