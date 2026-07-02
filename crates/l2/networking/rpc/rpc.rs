@@ -23,7 +23,8 @@ use ethrex_rpc::RpcHandler as L1RpcHandler;
 use ethrex_rpc::RpcNamespace as L1RpcNamespace;
 use ethrex_rpc::debug::execution_witness::ExecutionWitnessRequest;
 use ethrex_rpc::{
-    ClientVersion, GasTipEstimator, NodeData, RpcRequestWrapper, WebSocketConfig,
+    ClientVersion, GasTipEstimator, NodeData, RpcRequestWrapper, RpcRole, RpcStartupError,
+    WebSocketConfig, bind_listener,
     types::transaction::SendRawTransactionRequest,
     utils::{RpcRequest, RpcRequestId},
 };
@@ -37,6 +38,7 @@ use std::{
     time::Duration,
 };
 use tokio::{net::TcpListener, sync::Mutex as TokioMutex};
+use tokio_util::sync::CancellationToken;
 use tower_http::cors::CorsLayer;
 use tracing::{debug, info};
 use tracing_subscriber::{EnvFilter, Registry, reload};
@@ -76,8 +78,12 @@ pub const FILTER_DURATION: Duration = {
     }
 };
 
+/// Binds the L2 RPC listeners (public HTTP and optionally WebSocket; the L2 node exposes no
+/// Auth-RPC endpoint) and returns them ready to serve. A bind failure returns a typed
+/// [`RpcStartupError`] so the caller can fail fast before spawning any server task.
 #[expect(clippy::too_many_arguments)]
-pub async fn start_api(
+pub async fn bind_api(
+    cancel_token: CancellationToken,
     http_addr: SocketAddr,
     ws: Option<WebSocketConfig>,
     authrpc_addr: SocketAddr,
@@ -97,7 +103,7 @@ pub async fn start_api(
     sponsored_gas_limit: u64,
     allowed_namespaces: HashSet<L1RpcNamespace>,
     ethrex_namespace_allowed: bool,
-) -> Result<(), RpcErr> {
+) -> Result<BoundRpc, RpcStartupError> {
     // TODO: Refactor how filters are handled,
     // filters are used by the filters endpoints (eth_newFilter, eth_getFilterChanges, ...etc)
     if sponsored_gas_limit == 0 {
@@ -137,14 +143,19 @@ pub async fn start_api(
     };
 
     // Periodically clean up the active filters for the filters endpoints.
+    let filter_cancel = cancel_token.clone();
     tokio::task::spawn(async move {
         let mut interval = tokio::time::interval(FILTER_DURATION);
         let filters = active_filters.clone();
         loop {
-            interval.tick().await;
-            tracing::info!("Running filter clean task");
-            ethrex_rpc::clean_outdated_filters(filters.clone(), FILTER_DURATION);
-            tracing::info!("Filter clean task complete");
+            tokio::select! {
+                _ = interval.tick() => {
+                    tracing::info!("Running filter clean task");
+                    ethrex_rpc::clean_outdated_filters(filters.clone(), FILTER_DURATION);
+                    tracing::info!("Filter clean task complete");
+                }
+                _ = filter_cancel.cancelled() => break,
+            }
         }
     });
 
@@ -154,50 +165,145 @@ pub async fn start_api(
     // All headers exposed.
     let cors = CorsLayer::permissive();
 
+    // Serve WebSocket on the HTTP listener when both resolve to the same address (matching
+    // the L1 behavior and geth/reth/nethermind); otherwise use a separate listener.
+    let merged = ws.as_ref().is_some_and(|w| w.addr == http_addr);
+
+    let root = if merged {
+        post(handle_http_request).get(ws_upgrade_handler)
+    } else {
+        post(handle_http_request)
+    };
     let http_router = Router::new()
-        .route("/", post(handle_http_request))
+        .route("/", root)
         .layer(cors.clone())
         .with_state(service_context.clone());
-    let http_listener = TcpListener::bind(http_addr)
-        .await
-        .map_err(|error| RpcErr::Internal(error.to_string()))?;
-    let http_server = axum::serve(http_listener, http_router)
-        .with_graceful_shutdown(ethrex_rpc::shutdown_signal())
-        .into_future();
-    info!("Starting HTTP server at {http_addr}");
 
+    let http_listener = bind_listener(RpcRole::Http, http_addr).await?;
+    if merged {
+        info!("HTTP-RPC + WebSocket server listening on {http_addr}");
+    } else {
+        info!("HTTP-RPC server listening on {http_addr}");
+    }
     info!("Not starting Auth-RPC server. The address passed as argument is {authrpc_addr}");
 
-    if let Some(ref ws_config) = ws {
-        let ws_handler = |ws: WebSocketUpgrade, State(ctx): State<RpcApiContext>| async move {
-            ws.on_upgrade(|mut socket| async move {
-                ethrex_rpc::handle_websocket(&mut socket, &ctx.l1_ctx, |req| {
-                    let c = ctx.clone();
-                    async move { map_http_requests(&req, c).await }
-                })
-                .await;
-            })
-        };
-        let ws_router = Router::new()
-            .route("/", axum::routing::any(ws_handler))
-            .layer(cors)
-            .with_state(service_context);
-        let ws_listener = TcpListener::bind(ws_config.addr)
-            .await
-            .map_err(|error| RpcErr::Internal(error.to_string()))?;
-        let ws_server = axum::serve(ws_listener, ws_router)
-            .with_graceful_shutdown(ethrex_rpc::shutdown_signal())
+    let ws_bound = match &ws {
+        Some(ws_config) if !merged => {
+            let ws_router = Router::new()
+                .route("/", axum::routing::any(ws_upgrade_handler))
+                .layer(cors)
+                .with_state(service_context);
+            let ws_listener = bind_listener(RpcRole::Ws, ws_config.addr).await?;
+            info!("WebSocket server listening on {}", ws_config.addr);
+            Some((ws_config.addr, ws_listener, ws_router))
+        }
+        _ => None,
+    };
+
+    Ok(BoundRpc {
+        http: (http_addr, http_listener, http_router),
+        ws: ws_bound,
+        cancel_token,
+    })
+}
+
+/// L2 RPC listeners bound and ready to serve (HTTP + optional WebSocket; the L2 node has no
+/// Auth-RPC endpoint). Split from serving so a bind failure fails fast in the foreground.
+pub struct BoundRpc {
+    http: (SocketAddr, TcpListener, Router),
+    ws: Option<(SocketAddr, TcpListener, Router)>,
+    cancel_token: CancellationToken,
+}
+
+impl BoundRpc {
+    /// Serves the bound L2 listeners until graceful shutdown, returning the first serve
+    /// error so the caller can treat a runtime serve failure as fatal.
+    pub async fn serve(self) -> Result<(), RpcErr> {
+        let cancel_token = self.cancel_token;
+        let (_, http_listener, http_router) = self.http;
+        let http_server = axum::serve(http_listener, http_router)
+            .with_graceful_shutdown(ethrex_rpc::shutdown_signal(cancel_token.clone()))
             .into_future();
-        info!("Starting WS server at {}", ws_config.addr);
 
-        let _ = tokio::try_join!(http_server, ws_server)
-            .inspect_err(|e| info!("Error shutting down servers: {e:?}"));
-    } else {
-        let _ = tokio::try_join!(http_server)
-            .inspect_err(|e| info!("Error shutting down servers: {e:?}"));
+        if let Some((_, ws_listener, ws_router)) = self.ws {
+            let ws_server = axum::serve(ws_listener, ws_router)
+                .with_graceful_shutdown(ethrex_rpc::shutdown_signal(cancel_token.clone()))
+                .into_future();
+            tokio::try_join!(http_server, ws_server)
+                .map_err(|e| RpcErr::Internal(e.to_string()))?;
+        } else {
+            tokio::try_join!(http_server)
+                .map_err(|e| RpcErr::Internal(e.to_string()))?;
+        }
+        Ok(())
     }
+}
 
-    Ok(())
+/// Binds and serves the L2 RPC API. Compatibility wrapper over [`bind_api`] +
+/// [`BoundRpc::serve`]; the node uses `bind_api` directly so a bind failure fails fast.
+#[expect(clippy::too_many_arguments)]
+pub async fn start_api(
+    http_addr: SocketAddr,
+    ws: Option<WebSocketConfig>,
+    authrpc_addr: SocketAddr,
+    storage: Store,
+    blockchain: Arc<Blockchain>,
+    jwt_secret: Bytes,
+    local_p2p_node: Node,
+    local_node_record: NodeRecord,
+    syncer: Option<Arc<SyncManager>>,
+    peer_handler: Option<PeerHandler>,
+    client_version: ClientVersion,
+    valid_delegation_addresses: Vec<Address>,
+    sponsor_pk: SecretKey,
+    rollup_store: StoreRollup,
+    log_filter_handler: Option<reload::Handle<EnvFilter, Registry>>,
+    l2_gas_limit: u64,
+    sponsored_gas_limit: u64,
+    allowed_namespaces: HashSet<L1RpcNamespace>,
+    ethrex_namespace_allowed: bool,
+) -> Result<(), RpcErr> {
+    bind_api(
+        CancellationToken::new(),
+        http_addr,
+        ws,
+        authrpc_addr,
+        storage,
+        blockchain,
+        jwt_secret,
+        local_p2p_node,
+        local_node_record,
+        syncer,
+        peer_handler,
+        client_version,
+        valid_delegation_addresses,
+        sponsor_pk,
+        rollup_store,
+        log_filter_handler,
+        l2_gas_limit,
+        sponsored_gas_limit,
+        allowed_namespaces,
+        ethrex_namespace_allowed,
+    )
+    .await
+    .map_err(|e| RpcErr::Internal(e.to_string()))?
+    .serve()
+    .await
+}
+
+/// WebSocket upgrade handler shared by the merged HTTP listener and the standalone WS
+/// listener. A `GET` without a valid upgrade is rejected with `426 Upgrade Required`.
+async fn ws_upgrade_handler(
+    ws: WebSocketUpgrade,
+    State(ctx): State<RpcApiContext>,
+) -> axum::response::Response {
+    ws.on_upgrade(|mut socket| async move {
+        ethrex_rpc::handle_websocket(&mut socket, &ctx.l1_ctx, |req| {
+            let c = ctx.clone();
+            async move { map_http_requests(&req, c).await }
+        })
+        .await;
+    })
 }
 
 async fn handle_http_request(

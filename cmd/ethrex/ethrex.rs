@@ -193,6 +193,10 @@ async fn main() -> eyre::Result<()> {
         _ = signal_terminate.recv() => {
             server_shutdown(&datadir, &cancel_token, peer_table, local_node_record).await;
         }
+        // A fatal subsystem (e.g. the RPC server) cancels the token to abort the node.
+        _ = cancel_token.cancelled() => {
+            server_shutdown(&datadir, &cancel_token, peer_table, local_node_record).await;
+        }
     }
 
     #[cfg(feature = "cpu_profiling")]

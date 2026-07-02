@@ -143,7 +143,8 @@ pub fn init_metrics(opts: &Options, network: &Network, tracker: TaskTracker) {
     initialize_block_processing_profile();
     initialize_rpc_metrics();
 
-    tracker.spawn(metrics_api);
+    // Metrics is a non-fatal sidecar: its failure is logged loudly but must not down the node.
+    spawn_logged(&tracker, "metrics server", metrics_api);
 }
 
 /// Opens a new or pre-existing Store with default tunables and loads the initial
@@ -224,6 +225,47 @@ pub fn init_blockchain(store: Store, blockchain_opts: BlockchainOptions) -> Arc<
     Blockchain::new(store, blockchain_opts).into()
 }
 
+/// Spawns a subsystem whose failure is fatal to the node. On an error raised *before*
+/// shutdown has begun it logs loudly and cancels the node's token so the main loop tears
+/// everything down. An error surfacing *after* cancellation (e.g. a client dropping during
+/// a graceful drain) is downgraded to a debug line and does not re-cancel — this keeps the
+/// operator-facing shutdown reason honest.
+pub(crate) fn spawn_fatal<F, E>(
+    tracker: &TaskTracker,
+    cancel_token: CancellationToken,
+    name: &'static str,
+    fut: F,
+) where
+    F: std::future::Future<Output = Result<(), E>> + Send + 'static,
+    E: std::fmt::Display + Send + 'static,
+{
+    tracker.spawn(async move {
+        match fut.await {
+            Ok(()) => {}
+            Err(err) if cancel_token.is_cancelled() => {
+                tracing::debug!("{name} returned after shutdown began: {err}");
+            }
+            Err(err) => {
+                tracing::error!("{name} failed: {err}; shutting down the node");
+                cancel_token.cancel();
+            }
+        }
+    });
+}
+
+/// Spawns a non-fatal subsystem: an error is logged loudly but the node keeps running.
+pub(crate) fn spawn_logged<F, E>(tracker: &TaskTracker, name: &'static str, fut: F)
+where
+    F: std::future::Future<Output = Result<(), E>> + Send + 'static,
+    E: std::fmt::Display + Send + 'static,
+{
+    tracker.spawn(async move {
+        if let Err(err) = fut.await {
+            tracing::error!("{name} exited with error: {err}");
+        }
+    });
+}
+
 #[expect(clippy::too_many_arguments)]
 pub async fn init_rpc_api(
     opts: &Options,
@@ -236,7 +278,7 @@ pub async fn init_rpc_api(
     cancel_token: CancellationToken,
     tracker: TaskTracker,
     log_filter_handler: Option<reload::Handle<EnvFilter, Registry>>,
-) {
+) -> eyre::Result<()> {
     if !is_memory_datadir(datadir) {
         init_datadir(datadir);
     }
@@ -251,7 +293,7 @@ pub async fn init_rpc_api(
     let syncer = SyncManager::new(
         peer_handler.clone(),
         syncmode,
-        cancel_token,
+        cancel_token.clone(),
         blockchain.clone(),
         store.clone(),
         datadir.to_path_buf(),
@@ -259,15 +301,25 @@ pub async fn init_rpc_api(
     .await;
 
     let ws_config = if opts.ws_enabled {
+        let addr = get_ws_socket_addr(opts);
+        if !addr.ip().is_loopback() {
+            warn!(
+                "WebSocket RPC is bound to {addr}, reachable from all matching interfaces; bind 127.0.0.1 (the default) unless it sits behind a trusted proxy."
+            );
+        }
         Some(WebSocketConfig {
-            addr: get_ws_socket_addr(opts),
+            addr,
             subscription_manager: ethrex_rpc::SubscriptionManager::spawn(),
         })
     } else {
         None
     };
 
-    let rpc_api = ethrex_rpc::start_api(
+    // Bind in the foreground so a failure (e.g. a port collision) aborts node startup with
+    // an actionable error, instead of being swallowed by a detached task. Serving runs in
+    // the background once every listener is bound.
+    let bound = ethrex_rpc::bind_api(
+        cancel_token.clone(),
         get_http_socket_addr(opts),
         ws_config,
         get_authrpc_socket_addr(opts),
@@ -283,9 +335,13 @@ pub async fn init_rpc_api(
         opts.gas_limit,
         opts.extra_data.clone(),
         opts.http_api.iter().copied().collect(),
-    );
+    )
+    .await?;
 
-    tracker.spawn(rpc_api);
+    // The RPC server is fatal: if it dies while the node is running, abort the node rather
+    // than run on without an Engine API (which would leave the node unable to sync).
+    spawn_fatal(&tracker, cancel_token, "RPC server", bound.serve());
+    Ok(())
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -325,7 +381,12 @@ pub async fn init_network(
 }
 
 #[cfg(feature = "dev")]
-pub async fn init_dev_network(opts: &Options, store: &Store, tracker: TaskTracker) {
+pub async fn init_dev_network(
+    opts: &Options,
+    store: &Store,
+    tracker: TaskTracker,
+    cancel_token: CancellationToken,
+) {
     info!("Running in DEV_MODE");
 
     let head_block_hash = {
@@ -352,7 +413,8 @@ pub async fn init_dev_network(opts: &Options, store: &Store, tracker: TaskTracke
         1000,
         ethrex_common::Address::default(),
     );
-    tracker.spawn(block_producer_engine);
+    // The dev block producer is fatal: if it exhausts its retries, abort the dev node.
+    spawn_fatal(&tracker, cancel_token, "block producer", block_producer_engine);
 }
 
 pub fn get_network(opts: &Options) -> Network {
@@ -549,8 +611,11 @@ pub fn get_http_socket_addr(opts: &Options) -> SocketAddr {
 }
 
 pub fn get_ws_socket_addr(opts: &Options) -> SocketAddr {
-    parse_socket_addr(&opts.ws_addr, &opts.ws_port)
-        .expect("Failed to parse websocket address and port")
+    // When unset, WebSocket inherits the HTTP address/port, so an enabled WS shares the
+    // HTTP listener by default (a single-port setup, matching geth/reth/nethermind).
+    let addr = opts.ws_addr.as_deref().unwrap_or(&opts.http_addr);
+    let port = opts.ws_port.as_deref().unwrap_or(&opts.http_port);
+    parse_socket_addr(addr, port).expect("Failed to parse websocket address and port")
 }
 
 #[cfg(feature = "sync-test")]
@@ -685,7 +750,7 @@ pub async fn init_l1(
         tracker.clone(),
         log_filter_handler,
     )
-    .await;
+    .await?;
 
     if opts.metrics_enabled {
         init_metrics(&opts, &network, tracker.clone());
@@ -693,7 +758,7 @@ pub async fn init_l1(
 
     if opts.dev {
         #[cfg(feature = "dev")]
-        init_dev_network(&opts, &store, tracker.clone()).await;
+        init_dev_network(&opts, &store, tracker.clone(), cancel_token.clone()).await;
     } else if !opts.p2p_disabled {
         init_network(
             &opts,

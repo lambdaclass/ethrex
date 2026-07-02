@@ -39,7 +39,7 @@ use tui_logger::{LevelFilter, TuiTracingSubscriberLayer};
 use url::Url;
 
 #[allow(clippy::too_many_arguments)]
-fn init_rpc_api(
+async fn init_rpc_api(
     opts: &L1Options,
     l2_opts: &L2Options,
     peer_handler: Option<PeerHandler>,
@@ -53,12 +53,16 @@ fn init_rpc_api(
     log_filter_handler: Option<reload::Handle<EnvFilter, Registry>>,
     l2_gas_limit: u64,
     ws: Option<WebSocketConfig>,
-) {
+    cancel_token: CancellationToken,
+) -> eyre::Result<()> {
     init_datadir(&opts.datadir);
 
     let allowed_namespaces: std::collections::HashSet<_> = opts.http_api.iter().copied().collect();
     let ethrex_namespace_allowed = l2_opts.http_api_ethrex;
-    let rpc_api = ethrex_l2_rpc::start_api(
+    // Bind in the foreground so a bind failure aborts node startup with an actionable
+    // error instead of being swallowed by a detached task; serve in the background.
+    let bound = ethrex_l2_rpc::bind_api(
+        cancel_token.clone(),
         get_http_socket_addr(opts),
         ws,
         get_authrpc_socket_addr(opts),
@@ -78,9 +82,14 @@ fn init_rpc_api(
         l2_opts.sponsored_gas_limit,
         allowed_namespaces,
         ethrex_namespace_allowed,
-    );
+    )
+    .await?;
 
-    tracker.spawn(rpc_api);
+    // Fatal: if the L2 RPC server dies, cancel the sequencer token so the node shuts down
+    // (rather than run on without RPC). The token is the sequencer's, so the L2 `select!`
+    // observes the cancellation and tears the sequencer down too.
+    initializers::spawn_fatal(&tracker, cancel_token, "L2 RPC server", bound.serve());
+    Ok(())
 }
 
 fn get_valid_delegation_addresses(l2_opts: &L2Options) -> Vec<Address> {
@@ -135,7 +144,8 @@ fn init_metrics(opts: &L1Options, network: &str, tracker: TaskTracker) {
         opts.metrics_addr.clone(),
         opts.metrics_port.clone(),
     );
-    tracker.spawn(metrics_api);
+    // Metrics is a non-fatal sidecar: its failure is logged loudly but must not down the node.
+    initializers::spawn_logged(&tracker, "metrics server", metrics_api);
 }
 
 pub fn init_tracing(
@@ -345,6 +355,10 @@ pub async fn init_l2(
         None
     };
 
+    // Created before the RPC starts so the same token drives both the RPC graceful
+    // shutdown and the sequencer `select!` below (avoids a split-brain shutdown).
+    let sequencer_cancellation_token = CancellationToken::new();
+
     init_rpc_api(
         &opts.node_opts,
         &opts,
@@ -359,14 +373,15 @@ pub async fn init_l2(
         log_filter_handler,
         l2_gas_limit,
         ws_config.clone(),
-    );
+        sequencer_cancellation_token.clone(),
+    )
+    .await?;
 
     // Initialize metrics if enabled
     if opts.node_opts.metrics_enabled {
         init_metrics(&opts.node_opts, &network.to_string(), tracker);
     }
 
-    let sequencer_cancellation_token = CancellationToken::new();
     let l2_url = Url::parse(&format!(
         "http://{}:{}",
         opts.node_opts.http_addr, opts.node_opts.http_port
