@@ -151,6 +151,13 @@ pub struct BlockHeader {
         default = "Option::default"
     )]
     pub slot_number: Option<u64>,
+    // LStar fork fields (EIP-8079)
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        with = "crate::serde_utils::u64::hex_str_opt",
+        default = "Option::default"
+    )]
+    pub burned_fees: Option<u64>,
 }
 
 // Needs a explicit impl due to the hash OnceLock.
@@ -181,6 +188,7 @@ impl PartialEq for BlockHeader {
             requests_hash,
             block_access_list_hash,
             slot_number,
+            burned_fees,
         } = self;
 
         parent_hash == &other.parent_hash
@@ -204,6 +212,7 @@ impl PartialEq for BlockHeader {
             && requests_hash == &other.requests_hash
             && block_access_list_hash == &other.block_access_list_hash
             && slot_number == &other.slot_number
+            && burned_fees == &other.burned_fees
             && logs_bloom == &other.logs_bloom
             && extra_data == &other.extra_data
     }
@@ -235,6 +244,7 @@ impl RLPEncode for BlockHeader {
             .encode_optional_field(&self.requests_hash)
             .encode_optional_field(&self.block_access_list_hash)
             .encode_optional_field(&self.slot_number)
+            .encode_optional_field(&self.burned_fees)
             .finish();
     }
 }
@@ -266,6 +276,7 @@ impl RLPDecode for BlockHeader {
         let (requests_hash, decoder) = decoder.decode_optional_field();
         let (block_access_list_hash, decoder) = decoder.decode_optional_field();
         let (slot_number, decoder) = decoder.decode_optional_field();
+        let (burned_fees, decoder) = decoder.decode_optional_field();
 
         Ok((
             BlockHeader {
@@ -293,6 +304,7 @@ impl RLPDecode for BlockHeader {
                 requests_hash,
                 block_access_list_hash,
                 slot_number,
+                burned_fees,
             },
             decoder.finish()?,
         ))
@@ -1091,5 +1103,64 @@ mod test {
         );
         // With u64 this overflows
         assert!(thing.is_ok());
+    }
+
+    #[test]
+    fn burned_fees_header_roundtrip_and_hash() {
+        // For a correct round-trip, all preceding optional fields must be Some so the
+        // positional/trailing RLP decoder can attribute burned_fees correctly.
+        // This mirrors a real LStar-era block header.
+        let h = BlockHeader {
+            base_fee_per_gas: Some(7),
+            withdrawals_root: Some(H256::zero()),
+            blob_gas_used: Some(0),
+            excess_blob_gas: Some(0),
+            parent_beacon_block_root: Some(H256::zero()),
+            requests_hash: Some(H256::zero()),
+            block_access_list_hash: Some(H256::zero()),
+            slot_number: Some(1),
+            burned_fees: Some(12345),
+            ..Default::default()
+        };
+        let encoded = h.encode_to_vec();
+        let decoded = BlockHeader::decode(&encoded).expect("decode");
+        assert_eq!(decoded.burned_fees, Some(12345));
+        // None round-trips as None (pre-LStar).
+        let h_none = BlockHeader {
+            burned_fees: None,
+            ..Default::default()
+        };
+        assert_eq!(
+            BlockHeader::decode(&h_none.encode_to_vec())
+                .unwrap()
+                .burned_fees,
+            None
+        );
+        // burned_fees participates in the block hash: same base state, only burned_fees differs.
+        let h_with = BlockHeader {
+            base_fee_per_gas: Some(7),
+            withdrawals_root: Some(H256::zero()),
+            blob_gas_used: Some(0),
+            excess_blob_gas: Some(0),
+            parent_beacon_block_root: Some(H256::zero()),
+            requests_hash: Some(H256::zero()),
+            block_access_list_hash: Some(H256::zero()),
+            slot_number: Some(1),
+            burned_fees: Some(12345),
+            ..Default::default()
+        };
+        let h_without = BlockHeader {
+            base_fee_per_gas: Some(7),
+            withdrawals_root: Some(H256::zero()),
+            blob_gas_used: Some(0),
+            excess_blob_gas: Some(0),
+            parent_beacon_block_root: Some(H256::zero()),
+            requests_hash: Some(H256::zero()),
+            block_access_list_hash: Some(H256::zero()),
+            slot_number: Some(1),
+            burned_fees: None,
+            ..Default::default()
+        };
+        assert_ne!(h_with.hash(), h_without.hash());
     }
 }
