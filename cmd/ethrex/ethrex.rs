@@ -204,5 +204,14 @@ async fn main() -> eyre::Result<()> {
         tracing::error!("Failed to write CPU profile: {e}");
     }
 
+    // A shutdown initiated by a failing subsystem exits non-zero so orchestrators
+    // (systemd `Restart=on-failure`, Docker restart policies) can tell a crashed node
+    // from a clean signal-triggered stop.
+    if let Some(cause) = ethrex::initializers::fatal_shutdown_cause() {
+        return Err(eyre::eyre!(
+            "node shut down after a fatal subsystem failure: {cause}"
+        ));
+    }
+
     Ok(())
 }

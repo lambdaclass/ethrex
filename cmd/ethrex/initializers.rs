@@ -42,9 +42,7 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 use tokio_util::{sync::CancellationToken, task::TaskTracker};
-#[cfg(not(feature = "l2"))]
-use tracing::error;
-use tracing::{Level, debug, info, warn};
+use tracing::{Level, debug, error, info, warn};
 use tracing_subscriber::{
     EnvFilter, Layer, Registry, filter::Directive, fmt, layer::SubscriberExt, reload,
 };
@@ -225,11 +223,22 @@ pub fn init_blockchain(store: Store, blockchain_opts: BlockchainOptions) -> Arc<
     Blockchain::new(store, blockchain_opts).into()
 }
 
+/// Cause of a fatal-subsystem shutdown, set by [`spawn_fatal`] before it cancels the node.
+/// `main` inspects it after the shutdown sequence to exit non-zero on a fatal-initiated
+/// shutdown (signal-triggered shutdowns leave it unset and exit zero).
+static FATAL_SHUTDOWN_CAUSE: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+
+/// Returns the fatal-subsystem failure that initiated shutdown, if any.
+pub fn fatal_shutdown_cause() -> Option<&'static str> {
+    FATAL_SHUTDOWN_CAUSE.get().map(String::as_str)
+}
+
 /// Spawns a subsystem whose failure is fatal to the node. On an error raised *before*
-/// shutdown has begun it logs loudly and cancels the node's token so the main loop tears
-/// everything down. An error surfacing *after* cancellation (e.g. a client dropping during
-/// a graceful drain) is downgraded to a debug line and does not re-cancel — this keeps the
-/// operator-facing shutdown reason honest.
+/// shutdown has begun it logs loudly, records the cause (so `main` exits non-zero), and
+/// cancels the node's token so the main loop tears everything down. An error surfacing
+/// *after* cancellation (e.g. a client dropping during a graceful drain) is downgraded to
+/// a debug line and does not re-cancel — this keeps the operator-facing shutdown reason
+/// honest.
 pub(crate) fn spawn_fatal<F, E>(
     tracker: &TaskTracker,
     cancel_token: CancellationToken,
@@ -243,10 +252,11 @@ pub(crate) fn spawn_fatal<F, E>(
         match fut.await {
             Ok(()) => {}
             Err(err) if cancel_token.is_cancelled() => {
-                tracing::debug!("{name} returned after shutdown began: {err}");
+                debug!("{name} returned after shutdown began: {err}");
             }
             Err(err) => {
-                tracing::error!("{name} failed: {err}; shutting down the node");
+                error!("{name} failed: {err}; shutting down the node");
+                let _ = FATAL_SHUTDOWN_CAUSE.set(format!("{name}: {err}"));
                 cancel_token.cancel();
             }
         }
@@ -261,7 +271,7 @@ where
 {
     tracker.spawn(async move {
         if let Err(err) = fut.await {
-            tracing::error!("{name} exited with error: {err}");
+            error!("{name} exited with error: {err}");
         }
     });
 }
@@ -301,14 +311,8 @@ pub async fn init_rpc_api(
     .await;
 
     let ws_config = if opts.ws_enabled {
-        let addr = get_ws_socket_addr(opts);
-        if !addr.ip().is_loopback() {
-            warn!(
-                "WebSocket RPC is bound to {addr}, reachable from all matching interfaces; bind 127.0.0.1 (the default) unless it sits behind a trusted proxy."
-            );
-        }
         Some(WebSocketConfig {
-            addr,
+            addr: get_ws_socket_addr(opts),
             subscription_manager: ethrex_rpc::SubscriptionManager::spawn(),
         })
     } else {
@@ -338,8 +342,10 @@ pub async fn init_rpc_api(
     )
     .await?;
 
-    // The RPC server is fatal: if it dies while the node is running, abort the node rather
-    // than run on without an Engine API (which would leave the node unable to sync).
+    // Defensive wiring: axum's serve loop retries accept errors internally and only returns
+    // after graceful shutdown, so today this error arm is unreachable for the RPC server. It
+    // exists so any future serve error (an axum behavior change, a refactor) aborts the node
+    // instead of being silently dropped — a node without its Engine API cannot sync.
     spawn_fatal(&tracker, cancel_token, "RPC server", bound.serve());
     Ok(())
 }
@@ -414,7 +420,12 @@ pub async fn init_dev_network(
         ethrex_common::Address::default(),
     );
     // The dev block producer is fatal: if it exhausts its retries, abort the dev node.
-    spawn_fatal(&tracker, cancel_token, "block producer", block_producer_engine);
+    spawn_fatal(
+        &tracker,
+        cancel_token,
+        "block producer",
+        block_producer_engine,
+    );
 }
 
 pub fn get_network(opts: &Options) -> Network {
@@ -615,7 +626,16 @@ pub fn get_ws_socket_addr(opts: &Options) -> SocketAddr {
     // HTTP listener by default (a single-port setup, matching geth/reth/nethermind).
     let addr = opts.ws_addr.as_deref().unwrap_or(&opts.http_addr);
     let port = opts.ws_port.as_deref().unwrap_or(&opts.http_port);
-    parse_socket_addr(addr, port).expect("Failed to parse websocket address and port")
+    let resolved =
+        parse_socket_addr(addr, port).expect("Failed to parse websocket address and port");
+    // Warn on the RESOLVED address (explicit or inherited) so L1 and L2 alike surface a
+    // publicly reachable WebSocket bind.
+    if !resolved.ip().is_loopback() {
+        warn!(
+            "WebSocket RPC is bound to {resolved}, reachable from all matching interfaces; bind 127.0.0.1 (the default) unless it sits behind a trusted proxy."
+        );
+    }
+    resolved
 }
 
 #[cfg(feature = "sync-test")]

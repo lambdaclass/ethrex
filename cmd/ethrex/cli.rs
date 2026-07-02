@@ -1322,7 +1322,10 @@ mod tests {
         assert!(cli.opts.ws_port.is_none());
         let http = crate::initializers::get_http_socket_addr(&cli.opts);
         let ws = crate::initializers::get_ws_socket_addr(&cli.opts);
-        assert!(ws.ip().is_loopback(), "WS must default to loopback like HTTP");
+        assert!(
+            ws.ip().is_loopback(),
+            "WS must default to loopback like HTTP"
+        );
         assert_eq!(
             ws, http,
             "WS must share the HTTP endpoint by default (single listener)"

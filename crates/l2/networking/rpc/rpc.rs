@@ -150,9 +150,9 @@ pub async fn bind_api(
         loop {
             tokio::select! {
                 _ = interval.tick() => {
-                    tracing::info!("Running filter clean task");
+                    tracing::debug!("Running filter clean task");
                     ethrex_rpc::clean_outdated_filters(filters.clone(), FILTER_DURATION);
-                    tracing::info!("Filter clean task complete");
+                    tracing::debug!("Filter clean task complete");
                 }
                 _ = filter_cancel.cancelled() => break,
             }
@@ -168,6 +168,31 @@ pub async fn bind_api(
     // Serve WebSocket on the HTTP listener when both resolve to the same address (matching
     // the L1 behavior and geth/reth/nethermind); otherwise use a separate listener.
     let merged = ws.as_ref().is_some_and(|w| w.addr == http_addr);
+
+    // Pre-flight (mirrors L1): reject a WebSocket address that overlaps the HTTP one via a
+    // same-family wildcard on the same port — Linux would fail the second bind, but macOS/BSD
+    // SO_REUSEADDR would let it succeed and silently shadow the wildcard listener.
+    if let Some(ws_addr) = ws.as_ref().filter(|_| !merged).map(|w| w.addr)
+        && ws_addr.port() == http_addr.port()
+        && ws_addr.is_ipv4() == http_addr.is_ipv4()
+        && (ws_addr.ip().is_unspecified() || http_addr.ip().is_unspecified())
+    {
+        return Err(RpcStartupError {
+            role: RpcRole::Ws,
+            addr: ws_addr,
+            source: std::io::Error::new(
+                std::io::ErrorKind::AddrInUse,
+                "address requested by more than one RPC endpoint",
+            ),
+            hint: format!(
+                "{ws_addr} overlaps {http_addr}, requested by the {} (a wildcard address \
+                 covers every interface on its port); change {} or {}.",
+                RpcRole::Http,
+                RpcRole::Http.flags(),
+                RpcRole::Ws.flags(),
+            ),
+        });
+    }
 
     let root = if merged {
         post(handle_http_request).get(ws_upgrade_handler)
@@ -195,13 +220,13 @@ pub async fn bind_api(
                 .with_state(service_context);
             let ws_listener = bind_listener(RpcRole::Ws, ws_config.addr).await?;
             info!("WebSocket server listening on {}", ws_config.addr);
-            Some((ws_config.addr, ws_listener, ws_router))
+            Some((ws_listener, ws_router))
         }
         _ => None,
     };
 
     Ok(BoundRpc {
-        http: (http_addr, http_listener, http_router),
+        http: (http_listener, http_router),
         ws: ws_bound,
         cancel_token,
     })
@@ -210,8 +235,8 @@ pub async fn bind_api(
 /// L2 RPC listeners bound and ready to serve (HTTP + optional WebSocket; the L2 node has no
 /// Auth-RPC endpoint). Split from serving so a bind failure fails fast in the foreground.
 pub struct BoundRpc {
-    http: (SocketAddr, TcpListener, Router),
-    ws: Option<(SocketAddr, TcpListener, Router)>,
+    http: (TcpListener, Router),
+    ws: Option<(TcpListener, Router)>,
     cancel_token: CancellationToken,
 }
 
@@ -220,20 +245,19 @@ impl BoundRpc {
     /// error so the caller can treat a runtime serve failure as fatal.
     pub async fn serve(self) -> Result<(), RpcErr> {
         let cancel_token = self.cancel_token;
-        let (_, http_listener, http_router) = self.http;
+        let (http_listener, http_router) = self.http;
         let http_server = axum::serve(http_listener, http_router)
             .with_graceful_shutdown(ethrex_rpc::shutdown_signal(cancel_token.clone()))
             .into_future();
 
-        if let Some((_, ws_listener, ws_router)) = self.ws {
+        if let Some((ws_listener, ws_router)) = self.ws {
             let ws_server = axum::serve(ws_listener, ws_router)
                 .with_graceful_shutdown(ethrex_rpc::shutdown_signal(cancel_token.clone()))
                 .into_future();
             tokio::try_join!(http_server, ws_server)
                 .map_err(|e| RpcErr::Internal(e.to_string()))?;
         } else {
-            tokio::try_join!(http_server)
-                .map_err(|e| RpcErr::Internal(e.to_string()))?;
+            tokio::try_join!(http_server).map_err(|e| RpcErr::Internal(e.to_string()))?;
         }
         Ok(())
     }
@@ -292,7 +316,8 @@ pub async fn start_api(
 }
 
 /// WebSocket upgrade handler shared by the merged HTTP listener and the standalone WS
-/// listener. A `GET` without a valid upgrade is rejected with `426 Upgrade Required`.
+/// listener. A `GET` without a valid upgrade is rejected with a 4xx status (`400` for
+/// missing/invalid upgrade headers).
 async fn ws_upgrade_handler(
     ws: WebSocketUpgrade,
     State(ctx): State<RpcApiContext>,

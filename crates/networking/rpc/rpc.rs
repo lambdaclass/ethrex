@@ -84,13 +84,13 @@ use std::{
     time::Duration,
 };
 use tokio::net::TcpListener;
-use tokio_util::sync::CancellationToken;
 use tokio::sync::{
     Mutex as TokioMutex,
     mpsc::{UnboundedSender, unbounded_channel},
     oneshot,
 };
 use tokio::time::timeout;
+use tokio_util::sync::CancellationToken;
 use tower_http::cors::CorsLayer;
 use tracing::{error, info, warn};
 use tracing_subscriber::{EnvFilter, Registry, reload};
@@ -471,23 +471,33 @@ pub fn start_block_executor(blockchain: Arc<Blockchain>) -> UnboundedSender<Bloc
     block_worker_channel
 }
 
-/// Starts the JSON-RPC API servers.
+/// Binds the JSON-RPC API listeners and returns them ready to serve.
 ///
-/// This function initializes and runs up to three server endpoints:
+/// This function only **binds** — nothing is served until the returned [`BoundRpc`] is
+/// driven with [`BoundRpc::serve`]. Binding in the foreground lets a failure (e.g. a port
+/// collision) surface as a typed [`RpcStartupError`] so callers can fail fast and abort
+/// the node, instead of silently dropping already-bound listeners from a detached task.
 ///
-/// 1. **HTTP Server** (`http_addr`): Public JSON-RPC endpoint for standard Ethereum
-///    methods (`eth_*`, `debug_*`, `net_*`, `admin_*`, `web3_*`, `txpool_*`).
+/// Up to three endpoints are bound:
 ///
-/// 2. **WebSocket Server** (`ws`): Optional endpoint that serves the same methods as
-///    HTTP plus the subscription methods `eth_subscribe` / `eth_unsubscribe` (currently
-///    only `"newHeads"` is supported). Enabled by passing a [`WebSocketConfig`]
-///    containing the listen address and the [`SubscriptionManager`] actor handle.
+/// 1. **HTTP** (`http_addr`): Public JSON-RPC endpoint for standard Ethereum methods
+///    (`eth_*`, `debug_*`, `net_*`, `admin_*`, `web3_*`, `txpool_*`).
 ///
-/// 3. **Auth RPC Server** (`authrpc_addr`): JWT-authenticated endpoint for Engine API
-///    methods (`engine_*`) used by consensus clients.
+/// 2. **WebSocket** (`ws`): Optional endpoint that serves the same methods as HTTP plus
+///    the subscription methods `eth_subscribe` / `eth_unsubscribe` (currently only
+///    `"newHeads"` is supported). Enabled by passing a [`WebSocketConfig`] containing
+///    the listen address and the [`SubscriptionManager`] actor handle. When its address
+///    equals `http_addr`, no separate listener is bound: both protocols share the HTTP
+///    listener (`POST` → JSON-RPC, `GET` + `Upgrade` → WebSocket).
+///
+/// 3. **Auth RPC** (`authrpc_addr`): JWT-authenticated endpoint for Engine API methods
+///    (`engine_*`) used by consensus clients. Never shares a listener with the public
+///    endpoints — it alone carries the 256 MB engine body limit.
 ///
 /// # Arguments
 ///
+/// * `cancel_token` - Node-wide cancellation token; captured by [`BoundRpc::serve`] for
+///   graceful shutdown of the servers and their background tasks
 /// * `http_addr` - Socket address for the HTTP server (e.g., `127.0.0.1:8545`)
 /// * `ws` - Optional [`WebSocketConfig`] with the WS listen address and the
 ///   [`SubscriptionManager`] actor handle. `None` disables the WebSocket server.
@@ -506,19 +516,8 @@ pub fn start_block_executor(blockchain: Arc<Blockchain>) -> UnboundedSender<Bloc
 ///
 /// # Errors
 ///
-/// Returns an error if any server fails to bind to its address.
-///
-/// # Shutdown
-///
-/// All servers shut down gracefully on SIGINT (Ctrl+C).
-/// Binds all RPC listeners (public HTTP, Auth-RPC, and optionally WebSocket) in the
-/// foreground and returns them ready to serve. A bind failure returns a typed
-/// [`RpcStartupError`] so callers can fail fast (abort the node) before spawning any
-/// server task, instead of silently dropping an already-bound listener.
-///
-/// When WebSocket is enabled and its resolved address equals the HTTP address, both are
-/// served on a single listener (see [`bind_api`]'s merge handling); Auth-RPC is never
-/// merged (it alone carries the 256 MB engine body limit).
+/// Returns [`RpcStartupError`] — naming the endpoint role, address, and the CLI flag to
+/// change — if two configured endpoints conflict or any listener fails to bind.
 #[allow(clippy::too_many_arguments)]
 pub async fn bind_api(
     cancel_token: CancellationToken,
@@ -587,12 +586,16 @@ pub async fn bind_api(
     let cors = CorsLayer::permissive();
 
     // Serve WebSocket on the HTTP listener when both resolve to the same address, matching
-    // geth/reth/nethermind. Wildcard/dual-stack overlaps (e.g. 0.0.0.0 vs 127.0.0.1 on the
-    // same port) are NOT equal SocketAddrs and are left to the kernel to reject on bind.
+    // geth/reth/nethermind. Merging requires exact SocketAddr equality; overlapping-but-unequal
+    // addresses are rejected by the pre-flight check below.
     let merged = ws.as_ref().is_some_and(|w| w.addr == http_addr);
 
-    // Pre-flight: catch exact duplicate listener addresses before binding so the error can
-    // name BOTH conflicting flags (an OS bind error can only ever blame the second binder).
+    // Pre-flight: catch conflicting listener addresses before binding so the error can name
+    // BOTH conflicting flags (an OS bind error can only ever blame the second binder). Two
+    // addresses conflict when they are equal, or when they share a port and one is a wildcard
+    // of the same address family (0.0.0.0 vs 127.0.0.1 on one port fails with EADDRINUSE on
+    // Linux, but on macOS/BSD SO_REUSEADDR lets the specific bind succeed and silently shadow
+    // the wildcard for that address — rejecting up front keeps both platforms honest).
     {
         let ws_own_addr = ws.as_ref().filter(|_| !merged).map(|w| w.addr);
         let listeners = [
@@ -600,26 +603,43 @@ pub async fn bind_api(
             (RpcRole::AuthRpc, Some(authrpc_addr)),
             (RpcRole::Ws, ws_own_addr),
         ];
+        let conflicts = |a: SocketAddr, b: SocketAddr| {
+            a == b
+                || (a.port() == b.port()
+                    && a.is_ipv4() == b.is_ipv4()
+                    && (a.ip().is_unspecified() || b.ip().is_unspecified()))
+        };
         for i in 0..listeners.len() {
             for j in (i + 1)..listeners.len() {
-                if let (Some(a), Some(b)) = (listeners[i].1, listeners[j].1) {
-                    if a == b {
-                        return Err(RpcStartupError {
-                            role: listeners[j].0,
-                            addr: b,
-                            source: std::io::Error::new(
-                                std::io::ErrorKind::AddrInUse,
-                                "address requested by more than one RPC endpoint",
-                            ),
-                            hint: format!(
-                                "{b} is requested by both the {} and the {}; change {} or {}.",
-                                listeners[i].0,
-                                listeners[j].0,
-                                listeners[i].0.flags(),
-                                listeners[j].0.flags(),
-                            ),
-                        });
-                    }
+                if let (Some(a), Some(b)) = (listeners[i].1, listeners[j].1)
+                    && conflicts(a, b)
+                {
+                    let hint = if a == b {
+                        format!(
+                            "{b} is requested by both the {} and the {}; change {} or {}.",
+                            listeners[i].0,
+                            listeners[j].0,
+                            listeners[i].0.flags(),
+                            listeners[j].0.flags(),
+                        )
+                    } else {
+                        format!(
+                            "{b} overlaps {a}, requested by the {} (a wildcard address \
+                             covers every interface on its port); change {} or {}.",
+                            listeners[i].0,
+                            listeners[i].0.flags(),
+                            listeners[j].0.flags(),
+                        )
+                    };
+                    return Err(RpcStartupError {
+                        role: listeners[j].0,
+                        addr: b,
+                        source: std::io::Error::new(
+                            std::io::ErrorKind::AddrInUse,
+                            "address requested by more than one RPC endpoint",
+                        ),
+                        hint,
+                    });
                 }
             }
         }
@@ -676,14 +696,14 @@ pub async fn bind_api(
                 .with_state(service_context);
             let ws_listener = bind_listener(RpcRole::Ws, ws_config.addr).await?;
             info!("WebSocket server listening on {}", ws_config.addr);
-            Some((ws_config.addr, ws_listener, ws_router))
+            Some((ws_listener, ws_router))
         }
         _ => None,
     };
 
     Ok(BoundRpc {
-        http: (http_addr, http_listener, http_router),
-        authrpc: (authrpc_addr, authrpc_listener, authrpc_router),
+        http: (http_listener, http_router),
+        authrpc: (authrpc_listener, authrpc_router),
         ws: ws_bound,
         consensus_receiver: timer_receiver,
         cancel_token,
@@ -694,10 +714,10 @@ pub async fn bind_api(
 /// [`BoundRpc::serve`]. Splitting bind from serve lets a bind failure be surfaced and fail
 /// fast in the foreground, before any server task is spawned.
 pub struct BoundRpc {
-    http: (SocketAddr, TcpListener, Router),
-    authrpc: (SocketAddr, TcpListener, Router),
+    http: (TcpListener, Router),
+    authrpc: (TcpListener, Router),
     /// Present only when WebSocket runs on its own listener (i.e. not merged onto HTTP).
-    ws: Option<(SocketAddr, TcpListener, Router)>,
+    ws: Option<(TcpListener, Router)>,
     /// Receiver for the consensus-liveness monitor; its sender lives in the Auth-RPC
     /// handler state and drops when the servers stop.
     consensus_receiver: tokio::sync::watch::Receiver<()>,
@@ -734,17 +754,17 @@ impl BoundRpc {
             }
         });
 
-        let (_, http_listener, http_router) = self.http;
+        let (http_listener, http_router) = self.http;
         let http_server = axum::serve(http_listener, http_router)
             .with_graceful_shutdown(shutdown_signal(cancel_token.clone()))
             .into_future();
 
-        let (_, authrpc_listener, authrpc_router) = self.authrpc;
+        let (authrpc_listener, authrpc_router) = self.authrpc;
         let authrpc_server = axum::serve(authrpc_listener, authrpc_router)
             .with_graceful_shutdown(shutdown_signal(cancel_token.clone()))
             .into_future();
 
-        if let Some((_, ws_listener, ws_router)) = self.ws {
+        if let Some((ws_listener, ws_router)) = self.ws {
             let ws_server = axum::serve(ws_listener, ws_router)
                 .with_graceful_shutdown(shutdown_signal(cancel_token.clone()))
                 .into_future();
@@ -758,9 +778,15 @@ impl BoundRpc {
     }
 }
 
-/// Binds and serves the RPC API. Compatibility wrapper over [`bind_api`] +
+/// Binds and serves the RPC API until shutdown. Compatibility wrapper over [`bind_api`] +
 /// [`BoundRpc::serve`] for embedders; the node itself uses `bind_api` directly so a bind
 /// failure fails fast in the foreground.
+///
+/// # Shutdown
+///
+/// The wrapper passes a fresh, never-cancelled token, so the servers shut down gracefully
+/// on SIGINT (Ctrl+C) only. Use `bind_api` directly to drive shutdown from a
+/// [`CancellationToken`].
 #[allow(clippy::too_many_arguments)]
 pub async fn start_api(
     http_addr: SocketAddr,
@@ -822,7 +848,7 @@ impl std::fmt::Display for RpcRole {
 
 impl RpcRole {
     /// CLI flags an operator can change to resolve a bind conflict for this role.
-    fn flags(&self) -> &'static str {
+    pub fn flags(&self) -> &'static str {
         match self {
             RpcRole::Http => "--http.port (or --http.addr)",
             RpcRole::Ws => "--ws.port (or --ws.addr)",
@@ -870,7 +896,7 @@ pub async fn bind_listener(
 
 /// WebSocket upgrade handler. Shared by the merged HTTP listener (as the `GET` route) and
 /// the standalone WebSocket listener. A `GET` without a valid upgrade is rejected by
-/// [`WebSocketUpgrade`] with `426 Upgrade Required`.
+/// [`WebSocketUpgrade`] with a 4xx status (`400` for missing/invalid upgrade headers).
 async fn ws_upgrade_handler(
     ws: WebSocketUpgrade,
     State(ctx): State<RpcApiContext>,
@@ -893,11 +919,13 @@ pub async fn shutdown_signal(cancel_token: CancellationToken) {
             if let Err(error) = result {
                 // Installing the Ctrl+C handler failed (rare). Do NOT panic here: a panic
                 // in a spawned server task could be misread as a serve failure. Fall back
-                // to cancellation-driven shutdown only.
+                // to cancellation-driven shutdown only. The select! has already resolved
+                // (its cancelled() arm was dropped), so await the token again here rather
+                // than park on a pending future.
                 warn!(
                     "Failed to install Ctrl+C handler: {error}; relying on the cancellation token"
                 );
-                std::future::pending::<()>().await
+                cancel_token.cancelled().await;
             }
         }
         _ = cancel_token.cancelled() => {}

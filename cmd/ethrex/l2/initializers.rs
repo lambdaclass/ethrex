@@ -425,6 +425,13 @@ pub async fn init_l2(
     }
     tokio::time::sleep(Duration::from_secs(1)).await;
     info!("Server shutting down!");
+    // A shutdown initiated by a failing subsystem exits non-zero so orchestrators can tell
+    // a crashed node from a clean signal-triggered stop.
+    if let Some(cause) = initializers::fatal_shutdown_cause() {
+        return Err(eyre::eyre!(
+            "node shut down after a fatal subsystem failure: {cause}"
+        ));
+    }
     Ok(())
 }
 
