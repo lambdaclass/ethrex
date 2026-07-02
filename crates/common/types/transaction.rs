@@ -2006,6 +2006,61 @@ pub fn frame_tx_recent_root() -> Address {
 /// `RECENT_ROOT_REFERENCE_GAS` (= ACCESS_LIST_STORAGE_KEY_COST + 2*30 + 7*6).
 pub const FRAME_TX_RECENT_ROOT_REFERENCE_ADDRESS_GAS: u64 = 2400;
 pub const FRAME_TX_RECENT_ROOT_REFERENCE_GAS: u64 = 1900 + 2 * 30 + 7 * 6;
+
+/// EIP-8272 recent-root ring-buffer length: the RECENT_ROOT_ADDRESS predeploy
+/// keeps one entry per source per slot for the last `RECENT_ROOT_LENGTH` slots;
+/// storage keys are derived from `slot mod RECENT_ROOT_LENGTH`.
+pub const FRAME_TX_RECENT_ROOT_LENGTH: u64 = 8192;
+/// EIP-8272 usable window: a declared reference is valid iff
+/// `1 <= current_slot - slot <= FRAME_TX_RECENT_ROOT_USABLE_WINDOW`. The upper
+/// bound is `RECENT_ROOT_LENGTH - 1` because an entry exactly one ring-length
+/// old may already have been overwritten by its aliasing slot.
+pub const FRAME_TX_RECENT_ROOT_USABLE_WINDOW: u64 = 8191;
+
+/// EIP-8272 domain separator for recent-root entry hashes:
+/// `keccak256("RECENT_ROOT_ENTRY")`.
+pub fn recent_root_entry_domain() -> H256 {
+    keccak(b"RECENT_ROOT_ENTRY")
+}
+
+/// EIP-8272 domain separator for recent-root storage keys:
+/// `keccak256("RECENT_ROOT_STORAGE")`.
+pub fn recent_root_storage_domain() -> H256 {
+    keccak(b"RECENT_ROOT_STORAGE")
+}
+
+impl RecentRootReference {
+    /// EIP-8272 entry hash committed into RECENT_ROOT_ADDRESS storage:
+    /// `keccak256(ENTRY_DOMAIN || source_id || uint64_be(slot) || root)`.
+    /// Commits to the RAW slot (not `slot mod RECENT_ROOT_LENGTH`), so a
+    /// ring-buffer entry overwritten by an aliasing newer slot can never
+    /// satisfy a reference to the older slot.
+    ///
+    /// This is the single definition shared by the read-side validity check,
+    /// the native write handler, and the mempool policy — computing it in more
+    /// than one place risks a natively written root that its own reference
+    /// cannot validate.
+    pub fn entry_hash(&self) -> H256 {
+        let mut buf = Vec::with_capacity(32 + 32 + 8 + 32);
+        buf.extend_from_slice(recent_root_entry_domain().as_bytes());
+        buf.extend_from_slice(self.source_id.as_bytes());
+        buf.extend_from_slice(&self.slot.to_be_bytes());
+        buf.extend_from_slice(self.root.as_bytes());
+        keccak(&buf)
+    }
+
+    /// EIP-8272 storage key in the RECENT_ROOT_ADDRESS predeploy:
+    /// `keccak256(STORAGE_DOMAIN || source_id || uint64_be(slot mod RECENT_ROOT_LENGTH))`.
+    /// See `entry_hash` for the single-definition rule.
+    pub fn storage_key(&self) -> H256 {
+        let mut buf = Vec::with_capacity(32 + 32 + 8);
+        buf.extend_from_slice(recent_root_storage_domain().as_bytes());
+        buf.extend_from_slice(self.source_id.as_bytes());
+        buf.extend_from_slice(&(self.slot % FRAME_TX_RECENT_ROOT_LENGTH).to_be_bytes());
+        keccak(&buf)
+    }
+}
+
 impl FrameTransaction {
     /// Canonical signature hash (EIP-8141, spec commit fe0940cae2): the raw
     /// `signature` bytes of every signature with empty `msg` are elided (a
@@ -5275,6 +5330,38 @@ mod tests {
             })
             .collect();
         assert!(tx.validate_static_constraints().is_err());
+    }
+
+    #[test]
+    fn recent_root_hash_byte_layout_matches_spec() {
+        use crate::utils::keccak;
+        let r = RecentRootReference {
+            source_id: H256::repeat_byte(0xAB),
+            slot: 8195,
+            root: H256::repeat_byte(0xCD),
+        };
+        // entry_hash preimage: keccak("RECENT_ROOT_ENTRY") || source_id || be64(slot) || root
+        let mut pre = Vec::new();
+        pre.extend_from_slice(keccak(b"RECENT_ROOT_ENTRY").as_bytes());
+        pre.extend_from_slice(&[0xAB; 32]);
+        pre.extend_from_slice(&8195u64.to_be_bytes());
+        pre.extend_from_slice(&[0xCD; 32]);
+        assert_eq!(r.entry_hash(), keccak(&pre));
+        // storage_key preimage: keccak("RECENT_ROOT_STORAGE") || source_id || be64(slot mod 8192)
+        // 8195 mod 8192 = 3
+        let mut pre = Vec::new();
+        pre.extend_from_slice(keccak(b"RECENT_ROOT_STORAGE").as_bytes());
+        pre.extend_from_slice(&[0xAB; 32]);
+        pre.extend_from_slice(&3u64.to_be_bytes());
+        assert_eq!(r.storage_key(), keccak(&pre));
+        // Ring aliasing: slot and slot + RECENT_ROOT_LENGTH share a storage key
+        // but never an entry hash (entry_hash commits to the raw slot).
+        let r2 = RecentRootReference {
+            slot: 8195 + FRAME_TX_RECENT_ROOT_LENGTH,
+            ..r.clone()
+        };
+        assert_eq!(r.storage_key(), r2.storage_key());
+        assert_ne!(r.entry_hash(), r2.entry_hash());
     }
 
     #[test]
