@@ -44,16 +44,6 @@ impl RocksDBBackend {
         opts.create_if_missing(true);
         opts.create_missing_column_families(true);
 
-        // Measurement-only observability: ETHREX_ROCKSDB_STATS enables
-        // RocksDB's internal statistics (block-cache hit/miss tickers among
-        // them) and dumps them to the DB LOG file every 60s. Statistics cost
-        // a few percent of read throughput, so this is opt-in for A/B
-        // measurement boxes, never a production default.
-        if std::env::var_os("ETHREX_ROCKSDB_STATS").is_some() {
-            opts.enable_statistics();
-            opts.set_stats_dump_period_sec(60);
-        }
-
         opts.set_max_open_files(-1);
         opts.set_max_file_opening_threads(16);
 
