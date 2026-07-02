@@ -4932,7 +4932,10 @@ mod tests {
         let encoded = tx.encode_canonical_to_vec();
         let decoded = Transaction::decode_canonical(&encoded).unwrap();
         // Compare hashes since OnceCell cached state differs after encode
-        assert_eq!(tx.hash(), decoded.hash());
+        assert_eq!(
+            tx.hash(&ethrex_crypto::NativeCrypto),
+            decoded.hash(&ethrex_crypto::NativeCrypto)
+        );
         // Also verify core fields match
         assert_eq!(tx.tx_type(), decoded.tx_type());
         assert_eq!(tx.nonce(), decoded.nonce());
@@ -4987,8 +4990,8 @@ mod tests {
     #[test]
     fn test_frame_transaction_hash_uses_oncecell() {
         let tx = Transaction::FrameTransaction(make_test_frame_tx());
-        let h1 = tx.hash();
-        let h2 = tx.hash();
+        let h1 = tx.hash(&ethrex_crypto::NativeCrypto);
+        let h2 = tx.hash(&ethrex_crypto::NativeCrypto);
         assert_eq!(h1, h2);
     }
 
