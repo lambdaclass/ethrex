@@ -8,6 +8,7 @@ use crate::l1::input::ProgramInput;
 use crate::l1::output::ProgramOutput;
 
 use ethrex_common::types::ELASTICITY_MULTIPLIER;
+use ethrex_common::validate_block_access_list_hash;
 use ethrex_vm::Evm;
 
 #[cfg(not(feature = "eip-8025"))]
@@ -35,6 +36,7 @@ pub fn execution_program(
         non_privileged_count,
         chain_id,
         burned_fees: _,
+        bals: _,
     } = execute_blocks(
         &blocks,
         execution_witness,
@@ -230,6 +232,9 @@ pub fn verify_stateless_block(
     execution_witness: ethrex_common::types::block_execution_witness::ExecutionWitness,
     crypto: Arc<dyn Crypto>,
 ) -> Result<(), ExecutionError> {
+    // ChainConfig is Copy — capture it before execute_blocks consumes execution_witness.
+    let chain_config = execution_witness.chain_config;
+
     // Transform SSZ NewPayloadRequest → Block.
     // Do NOT call block.hash() here — burned_fees is not yet known so any
     // cached value would be stale.
@@ -243,7 +248,7 @@ pub fn verify_stateless_block(
     // Validate blob versioned hashes (does not touch block.hash())
     validate_versioned_hashes(&blocks[0], new_payload_request)?;
 
-    // Execute statelessly — burned_fees is recomputed from actual gas consumed.
+    // Execute statelessly — burned_fees and BAL are recomputed from actual execution.
     let result = execute_blocks(
         &blocks,
         execution_witness,
@@ -264,8 +269,19 @@ pub fn verify_stateless_block(
     // original header, so the hash is unchanged — no regression on the
     // current path.
     let recomputed_burned_fees = result.burned_fees.first().copied().flatten();
+    let recomputed_bal = result.bals.into_iter().next().flatten();
     let [block] = blocks;
+    let tx_count = block.body.transactions.len();
     let verified_header = block.header.into_with_burned_fees(recomputed_burned_fees);
+
+    // EIP-7928 (Amsterdam+): validate the recomputed BAL — structural checks
+    // (index bounds, size cap) and hash match against header.block_access_list_hash.
+    // Pre-Amsterdam blocks produce recomputed_bal = None, so this is a no-op there.
+    if let Some(ref bal) = recomputed_bal {
+        validate_block_access_list_hash(&verified_header, &chain_config, bal, tx_count)
+            .map_err(ExecutionError::BlockValidation)?;
+    }
+
     let computed_hash = verified_header.hash();
     let expected_hash =
         ethrex_common::H256::from_slice(&new_payload_request.execution_payload.block_hash);
@@ -289,6 +305,112 @@ fn validate_eip8025_execution(
     crypto: Arc<dyn Crypto>,
 ) -> Result<(), ExecutionError> {
     verify_stateless_block(new_payload_request, execution_witness, crypto)
+}
+
+/// Tests for the BAL validation gate added to `verify_stateless_block`.
+///
+/// A full stateless round-trip test (building a complete `ExecutionWitness` with
+/// state trie, block headers, etc.) is out of scope for a unit test. Instead
+/// we test `validate_block_access_list_hash` directly — the function that is now
+/// called inside `verify_stateless_block` — covering the three cases that matter:
+///
+/// 1. Pre-Amsterdam: no BAL is produced, so the gate is never entered (no-op).
+/// 2. Amsterdam with a correct BAL: validation passes.
+/// 3. Amsterdam with an incorrect BAL hash: validation rejects (discriminating
+///    negative test — proves the check actually runs and can fail).
+#[cfg(test)]
+mod bal_validation_tests {
+    use ethrex_common::types::block_access_list::{AccountChanges, BlockAccessList};
+    use ethrex_common::types::{BlockHeader, ChainConfig};
+    use ethrex_common::validate_block_access_list_hash;
+
+    fn amsterdam_chain_config() -> ChainConfig {
+        ChainConfig {
+            amsterdam_time: Some(0),
+            ..Default::default()
+        }
+    }
+
+    fn pre_amsterdam_chain_config() -> ChainConfig {
+        ChainConfig {
+            amsterdam_time: None,
+            ..Default::default()
+        }
+    }
+
+    /// Build a minimal Amsterdam-era `BlockHeader` with `block_access_list_hash`
+    /// set to the hash of `bal`.
+    fn amsterdam_header_for_bal(bal: &BlockAccessList) -> BlockHeader {
+        BlockHeader {
+            // timestamp 0 → Amsterdam activated (amsterdam_time = Some(0))
+            timestamp: 0,
+            // gas_limit must accommodate the BAL item count
+            gas_limit: 1_000_000,
+            block_access_list_hash: Some(bal.compute_hash()),
+            ..Default::default()
+        }
+    }
+
+    // ---- positive: Amsterdam block with a valid BAL passes ----
+
+    #[test]
+    fn bal_validation_amsterdam_valid_passes() {
+        let bal = BlockAccessList::from_accounts(vec![AccountChanges::new(
+            ethrex_common::Address::from([0x11u8; 20]),
+        )]);
+        let header = amsterdam_header_for_bal(&bal);
+        let cfg = amsterdam_chain_config();
+
+        // 1 account entry, tx_count = 0 (no tx, so no index out-of-bounds possible)
+        validate_block_access_list_hash(&header, &cfg, &bal, 0)
+            .expect("valid Amsterdam BAL must pass");
+    }
+
+    // ---- negative: Amsterdam block with hash mismatch is rejected ----
+
+    #[test]
+    fn bal_validation_amsterdam_hash_mismatch_fails() {
+        use ethrex_common::InvalidBlockError;
+
+        // Construct a BAL and a header whose hash points to a *different* BAL.
+        let real_bal = BlockAccessList::from_accounts(vec![AccountChanges::new(
+            ethrex_common::Address::from([0x22u8; 20]),
+        )]);
+        let wrong_bal = BlockAccessList::from_accounts(vec![AccountChanges::new(
+            ethrex_common::Address::from([0x33u8; 20]),
+        )]);
+        // Header commits to real_bal's hash, but we validate against wrong_bal.
+        let header = amsterdam_header_for_bal(&real_bal);
+        let cfg = amsterdam_chain_config();
+
+        let err = validate_block_access_list_hash(&header, &cfg, &wrong_bal, 0)
+            .expect_err("BAL hash mismatch must be rejected");
+        assert!(
+            matches!(err, InvalidBlockError::BlockAccessListHashMismatch),
+            "expected BlockAccessListHashMismatch, got {err:?}"
+        );
+    }
+
+    // ---- pre-Amsterdam: BAL validation is a no-op regardless of content ----
+
+    #[test]
+    fn bal_validation_pre_amsterdam_is_noop() {
+        // Even a completely wrong hash is accepted on a pre-Amsterdam chain.
+        let bal = BlockAccessList::from_accounts(vec![AccountChanges::new(
+            ethrex_common::Address::from([0x44u8; 20]),
+        )]);
+        // Header has no block_access_list_hash (pre-Amsterdam producer omits it).
+        let header = BlockHeader {
+            timestamp: 0,
+            block_access_list_hash: None,
+            ..Default::default()
+        };
+        let cfg = pre_amsterdam_chain_config();
+
+        // Should pass without error — the fork gate short-circuits.
+        validate_block_access_list_hash(&header, &cfg, &bal, 0)
+            .expect("pre-Amsterdam BAL check must be a no-op");
+    }
 }
 
 #[cfg(all(test, feature = "eip-8025"))]

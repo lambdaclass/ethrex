@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use ethrex_common::types::block_access_list::BlockAccessList;
 use ethrex_common::types::block_execution_witness::{ExecutionWitness, GuestProgramState};
 use ethrex_common::types::{Block, Receipt, validate_block_body};
 use ethrex_common::{
@@ -29,6 +30,9 @@ pub struct BatchExecutionResult {
     /// Per-block recomputed burned fees (EIP-8079, LStar+). `None` for pre-LStar forks.
     /// One entry per block in the same order as `receipts`.
     pub burned_fees: Vec<Option<u64>>,
+    /// Per-block recomputed Block Access List (EIP-7928, Amsterdam+). `None` for pre-Amsterdam.
+    /// One entry per block in the same order as `receipts`.
+    pub bals: Vec<Option<BlockAccessList>>,
 }
 
 /// Execute a batch of blocks using the provided VM factory.
@@ -104,6 +108,7 @@ where
     let mut parent_block_header = &parent_block_header;
     let mut acc_receipts = Vec::new();
     let mut acc_burned_fees: Vec<Option<u64>> = Vec::new();
+    let mut acc_bals: Vec<Option<BlockAccessList>> = Vec::new();
     let mut non_privileged_count: usize = 0;
 
     for (i, block) in blocks.iter().enumerate() {
@@ -128,7 +133,7 @@ where
         let mut vm = report_cycles("setup_evm", || vm_factory(&wrapped_db, i))?;
 
         // Execute block
-        let (result, _bal) = report_cycles("execute_block", || {
+        let (result, bal) = report_cycles("execute_block", || {
             vm.execute_block(block).map_err(ExecutionError::Evm)
         })?;
 
@@ -173,6 +178,7 @@ where
 
         acc_receipts.push(receipts);
         acc_burned_fees.push(block_burned_fees);
+        acc_bals.push(bal);
         parent_block_header = &block.header;
     }
 
@@ -199,5 +205,6 @@ where
         non_privileged_count: non_privileged_count.into(),
         chain_id,
         burned_fees: acc_burned_fees,
+        bals: acc_bals,
     })
 }
