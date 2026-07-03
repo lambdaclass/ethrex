@@ -6,7 +6,10 @@
 //! 2. Charges gas equal to `gas_limit + calldata.len() * EXECUTE_GAS_PER_WITNESS_BYTE`
 //! 3. Validates L2-specific constraints (no blobs, no withdrawals, etc.)
 //! 4. Delegates to the `StatelessValidator` trait for actual execution
-//! 5. Returns SSZ-encoded `StatelessValidationResult`
+//! 5. On success returns the SSZ-encoded `StatelessValidationResult`; fails
+//!    closed on invalid input or a failed validation by returning an
+//!    `ExceptionalHalt` (CALL-level `success=false`), so a `require(success)`
+//!    caller is safe and the gas charged in step 2 is still paid (bounds DoS).
 
 use bytes::Bytes;
 
