@@ -1128,7 +1128,7 @@ mod burned_fees_payload_tests {
     #[tokio::test]
     async fn lstar_block_produces_burned_fees() {
         let genesis = load_genesis_with_forks(true, true);
-        let config = genesis.config.clone();
+        let config = genesis.config;
         // slot_number=Some(1): required by the RLP trailing-optional contiguity invariant
         // when burned_fees is Some (LStar+).
         let block = build_empty_payload(genesis, Some(1)).await;

@@ -3067,7 +3067,7 @@ mod burned_fees_tests {
         }
 
         fn get_chain_config(&self) -> Result<ChainConfig, DatabaseError> {
-            Ok(self.chain_config.clone())
+            Ok(self.chain_config)
         }
 
         fn get_account_code(&self, code_hash: H256) -> Result<Code, DatabaseError> {
