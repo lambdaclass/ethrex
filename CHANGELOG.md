@@ -12,9 +12,17 @@
 
 ## Perf
 
-### 2026-06-24
+### 2026-07-03
 
 - Optimize trie building in snap sync insertion: parallelize state trie build across 16 nibble ranges, eliminate redundant code-hash iteration, and reuse buffers (~700M alloc reduction on mainnet) [#6410](https://github.com/lambdaclass/ethrex/pull/6410)
+
+### 2026-06-29
+
+- Thread `Arc<BlockAccessList>` through the block pipeline to avoid an O(BAL-size) deep clone of the Block Access List (and its validation index) per block on the parallel execution path [#6829](https://github.com/lambdaclass/ethrex/pull/6829)
+
+### 2026-06-19
+
+- Parallelize single-account storage-trie merkleization: shard a hot account's (>=2048 slot updates) storage-root computation across 16 nibble-keyed workers, so one bloated contract no longer serializes its trie inserts on a single thread [#6845](https://github.com/lambdaclass/ethrex/pull/6845)
 
 ### 2026-06-18
 
