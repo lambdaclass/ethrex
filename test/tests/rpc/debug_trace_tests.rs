@@ -165,6 +165,60 @@ async fn setup_single_transfer_block() -> TestEnv {
     }
 }
 
+/// Runtime bytecode `PUSH1 0x00 PUSH1 0x00 REVERT`: reverts on any call.
+const REVERT_BYTECODE: [u8; 5] = [0x60, 0x00, 0x60, 0x00, 0xfd];
+
+/// Builds a block with a single tx that calls a contract which always reverts.
+/// The tx is genuinely executed and reverts; it is still included in the block.
+async fn setup_reverting_call_block() -> TestEnv {
+    let sk = test_secret_key();
+    let sender = sender_from_key(&sk);
+    let signer: Signer = LocalSigner::new(sk).into();
+
+    let file = File::open(workspace_root().join("fixtures/genesis/execution-api.json"))
+        .expect("Failed to open genesis file");
+    let reader = BufReader::new(file);
+    let mut genesis: ethrex_common::types::Genesis =
+        serde_json::from_reader(reader).expect("Failed to deserialize genesis file");
+    let chain_id = genesis.config.chain_id;
+    genesis.alloc.insert(
+        sender,
+        GenesisAccount {
+            balance: U256::from(10).pow(U256::from(20)),
+            code: Bytes::new(),
+            storage: Default::default(),
+            nonce: 0,
+        },
+    );
+    let contract = Address::from_low_u64_be(0xC0);
+    genesis.alloc.insert(
+        contract,
+        GenesisAccount {
+            balance: U256::zero(),
+            code: Bytes::copy_from_slice(&REVERT_BYTECODE),
+            storage: Default::default(),
+            nonce: 1,
+        },
+    );
+    let mut store =
+        Store::new("store.db", EngineType::InMemory).expect("Failed to build DB for testing");
+    store
+        .add_initial_state(genesis)
+        .await
+        .expect("Failed to add genesis state");
+
+    let blockchain = Blockchain::default_with_store(store.clone());
+    let genesis_header = store.get_block_header(0).unwrap().unwrap();
+    let tx = create_transfer_tx(chain_id, 0, contract, U256::zero(), &signer).await;
+    let tx_hash = tx.hash(&NativeCrypto);
+    let block = build_and_execute_block(&store, &blockchain, &genesis_header, vec![tx]).await;
+    TestEnv {
+        store,
+        block,
+        tx_hash,
+    }
+}
+
 #[tokio::test]
 async fn trace_tx_noop_tracer() {
     let env = setup_single_transfer_block().await;
@@ -236,5 +290,32 @@ async fn trace_block_noop_tracer() {
             .expect("result should be an object")
             .is_empty(),
         "noopTracer should return empty object per tx"
+    );
+}
+
+/// geth's `noopTracer` returns `{}` regardless of how the tx ended. A reverting
+/// tx must therefore trace as an empty object and must NOT surface as an RPC
+/// error — guarding against `trace_tx_noop` propagating the tx outcome through
+/// `vm.execute()?` (reverts are reported in the execution result, not as `Err`).
+#[tokio::test]
+async fn trace_tx_noop_tracer_reverting_tx() {
+    let env = setup_reverting_call_block().await;
+
+    let result = rpc_call(
+        &env.store,
+        "debug_traceTransaction",
+        vec![
+            json!(format!("{:#x}", env.tx_hash)),
+            json!({"tracer": "noopTracer"}),
+        ],
+    )
+    .await;
+
+    let obj = result
+        .as_object()
+        .expect("reverting tx should trace as {}, not error");
+    assert!(
+        obj.is_empty(),
+        "noopTracer should return empty object even for a reverting tx"
     );
 }
