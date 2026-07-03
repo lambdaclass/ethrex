@@ -15,7 +15,7 @@ type AccountCache = FxHashMap<Address, AccountState>;
 type StorageCache = FxHashMap<(Address, H256), U256>;
 type CodeCache = FxHashMap<H256, Code>;
 /// Touched accounts (with storage roots) and storage slot keys; see
-/// [`CachingDatabase::touched_keys`].
+/// [`CachingDatabase::touched_keys_where`].
 pub type TouchedKeys = (Vec<(Address, H256)>, Vec<(Address, H256)>);
 
 pub trait Database: Send + Sync {
@@ -54,6 +54,12 @@ pub trait Database: Send + Sync {
 /// Thread-safe via RwLock - optimized for read-heavy concurrent access.
 ///
 /// This caching database is inspired by reth's overlay/proof worker cache.
+///
+/// Besides the per-block warmer/executor sharing above, the mempool
+/// prewarmer builds one instance per slot and publishes it across the block
+/// boundary: `execute_block_pipeline` seeds the *next* block's execution
+/// with it when the parent state and fork match (see
+/// `ethrex-blockchain::prewarm`).
 pub struct CachingDatabase {
     inner: Arc<dyn Database>,
     /// Cached account states (balance, nonce, code_hash, storage_root)
@@ -105,18 +111,25 @@ impl CachingDatabase {
         self.code.write().map_err(poison_error_to_db_error)
     }
 
-    /// Snapshot of the touched key sets: cached accounts with their storage
-    /// roots, and cached storage slot keys. The mempool prewarmer uses this
-    /// to walk exactly the trie paths the merkleizer will later rewrite for
-    /// warmed transactions (ordinary reads skip interior trie nodes once
-    /// flat-key-value is active, so execution warming alone never touches
-    /// them).
-    pub fn touched_keys(&self) -> TouchedKeys {
+    /// Snapshot of the touched key sets matching the given filters: cached
+    /// accounts (with their storage roots) and cached storage slot keys. The
+    /// mempool prewarmer uses this to walk exactly the trie paths the
+    /// merkleizer will later rewrite for warmed transactions (ordinary reads
+    /// skip interior trie nodes once flat-key-value is active, so execution
+    /// warming alone never touches them). The filters let a caller that
+    /// tracks already-processed keys collect only the delta, keeping the
+    /// per-call allocation O(new) while the scan stays O(cache).
+    pub fn touched_keys_where(
+        &self,
+        account_filter: &dyn Fn(&Address) -> bool,
+        slot_filter: &dyn Fn(&(Address, H256)) -> bool,
+    ) -> TouchedKeys {
         let accounts = self
             .accounts
             .read()
             .map(|a| {
                 a.iter()
+                    .filter(|(addr, _)| account_filter(addr))
                     .map(|(addr, st)| (*addr, st.storage_root))
                     .collect()
             })
@@ -124,7 +137,7 @@ impl CachingDatabase {
         let storage = self
             .storage
             .read()
-            .map(|s| s.keys().copied().collect())
+            .map(|s| s.keys().filter(|k| slot_filter(k)).copied().collect())
             .unwrap_or_default();
         (accounts, storage)
     }

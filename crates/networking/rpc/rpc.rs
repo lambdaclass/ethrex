@@ -453,8 +453,7 @@ pub fn start_block_executor(blockchain: Arc<Blockchain>) -> UnboundedSender<Bloc
         .spawn(move || {
             while let Some((notify, block, bal, make_witness)) = block_receiver.blocking_recv() {
                 // Kill any in-flight warming before touching the executor's
-                // resources; log the pass's predictive quality while the
-                // block is still borrowable.
+                // resources.
                 if let Some(p) = &prewarmer {
                     p.cancel_current();
                 }

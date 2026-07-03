@@ -610,11 +610,13 @@ impl Blockchain {
         // Wrap the store with CachingDatabase so both warming and execution
         // can benefit from shared caching of state lookups. If the mempool
         // prewarmer published a cache built on this block's parent state,
-        // seed execution with it: its entries are pure functions of the
-        // parent root (speculative writes never reach the cache), so a
-        // parent-hash match makes every entry valid here. Witness collection
-        // must start cold — pre-populated entries would hide reads from the
-        // witness logger beneath the cache.
+        // seed execution with it. Two conditions gate the claim: a parent-hash
+        // match makes every *state* entry valid (they are pure functions of
+        // the parent root; speculative writes never reach the cache), and
+        // fork equality covers the precompile-cache layer, whose entries are
+        // fork-dependent but not fork-keyed. Witness collection must start
+        // cold — pre-populated entries would hide reads from the witness
+        // logger beneath the cache.
         let original_store = vm.db.store.clone();
         let prewarmed = (!collect_witness)
             .then(|| self.prewarmed.0.lock().ok().and_then(|mut p| p.take()))

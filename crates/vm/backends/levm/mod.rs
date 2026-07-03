@@ -2157,8 +2157,10 @@ impl LEVM {
     /// Speculatively executes an arbitrary transaction set against `header`'s
     /// parent state to warm shared caches (used by the mempool prewarmer and
     /// `warm_block`). Sequential within a sender group, parallel across groups.
-    /// `should_stop` is polled before each group; execution results are
-    /// discarded — only cache population matters.
+    /// `should_stop` is polled before each sender group and again before each
+    /// transaction, so cancellation latency is bounded by one transaction's
+    /// execution. Execution results are discarded — only cache population
+    /// matters.
     #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
     pub fn warm_txs(
         txs_with_sender: &[(&Transaction, Address)],

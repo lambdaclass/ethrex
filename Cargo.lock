@@ -3865,7 +3865,6 @@ dependencies = [
  "crossbeam",
  "ethrex-common",
  "ethrex-crypto",
- "ethrex-levm",
  "ethrex-metrics",
  "ethrex-rlp",
  "ethrex-storage",
