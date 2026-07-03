@@ -12,6 +12,7 @@ mod eip8037_tests;
 mod eip8141_tests;
 mod eip8250_tests;
 mod eip8272_tests;
+mod simulation_env_tests;
 mod l2_fee_token_ratio_tests;
 mod l2_fee_token_tests;
 mod l2_gas_reservation_tests;
