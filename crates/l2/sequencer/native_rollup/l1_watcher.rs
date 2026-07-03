@@ -351,6 +351,7 @@ pub(crate) fn filter_unconsumed(messages: Vec<L1Message>, on_chain_index: u64) -
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 mod tests {
     use super::*;
 
