@@ -350,15 +350,23 @@ async fn native_rollup_bridge_roundtrip() {
         "L1 receiver balance: before={l1_receiver_balance_before}, after={l1_receiver_balance_after}"
     );
 
-    // The balance should have increased by approximately withdraw_amount minus gas spent
-    // on deposit + claim txs. We check a loose bound: balance_after > balance_before - max_gas_cost.
+    // `l1_receiver_balance_before` was captured after the deposit already left the account
+    // (Phase 1). The claim tx is sent from `l1_signer` = `l1_receiver`, so the receiver pays
+    // claim gas. After a correct `claimWithdrawal`, the balance delta is:
+    //   balance_after - balance_before = withdraw_amount - claim_gas
+    //
+    // Bound: assert balance_after >= balance_before + withdraw_amount - max_gas_cost.
+    // A zero transfer yields balance_after ≈ balance_before - claim_gas, which FAILS this
+    // assertion (since claim_gas << withdraw_amount when gas price is reasonable).
+    // No deposit_amount slack: the receiver is not getting the deposit back here.
     let l1_gas_price = l1_client.get_gas_price().await.unwrap().as_u64();
-    let max_gas_cost = U256::from(2_000_000u64) * U256::from(l1_gas_price) * 2;
+    // 1_000_000 gas limit (claim tx) * gas_price * 2× safety margin
+    let max_gas_cost = U256::from(1_000_000u64) * U256::from(l1_gas_price) * 2;
     assert!(
-        l1_receiver_balance_after + max_gas_cost + deposit_amount
-            >= l1_receiver_balance_before + withdraw_amount,
+        l1_receiver_balance_after >= l1_receiver_balance_before + withdraw_amount - max_gas_cost,
         "L1 receiver did not receive withdrawal amount. Before: {l1_receiver_balance_before}, \
-         After: {l1_receiver_balance_after}, Expected gain: ~{withdraw_amount}"
+         After: {l1_receiver_balance_after}, Expected gain: ~{withdraw_amount}, \
+         max_gas_cost: {max_gas_cost}"
     );
 
     // ── Phase 6: Counter contract demo via L1→L2 message ─────────────────

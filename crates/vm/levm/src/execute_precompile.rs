@@ -138,9 +138,9 @@ mod tests {
     use super::{EXECUTE_GAS_PER_WITNESS_BYTE, run_execute};
     use bytes::Bytes;
     use ethrex_common::types::stateless_ssz::{
-        Bytes20, ExecutionPayload, ExecutionRequests, NewPayloadRequest, SszChainConfig,
-        SszExecutionWitness, SszForkActivation, SszForkConfig, SszStatelessInput,
-        SszStatelessValidationResult,
+        Bytes20, DepositRequest, ExecutionPayload, ExecutionRequests, NewPayloadRequest,
+        SszChainConfig, SszExecutionWitness, SszForkActivation, SszForkConfig, SszStatelessInput,
+        SszStatelessValidationResult, Withdrawal,
     };
     use libssz::SszEncode;
 
@@ -309,6 +309,117 @@ mod tests {
         assert_eq!(
             charged, expected,
             "charge must be gas_limit + calldata.len() * EXECUTE_GAS_PER_WITNESS_BYTE"
+        );
+    }
+
+    // ── Negative constraint tests (I11) ──────────────────────────────────────
+    // Each test builds a fully valid `SszStatelessInput`, violates exactly ONE
+    // `validate_l2_constraints` check, and asserts:
+    //   (a) `run_execute` returns `Err`, and
+    //   (b) the error is non-propagating (CALL-level failure, tx is includable —
+    //       the I1×I13 property: attacker pays the gas charge).
+
+    /// Constraint 1: `blob_gas_used` must be zero.
+    #[test]
+    fn execute_rejects_blob_gas_used_nonzero() {
+        let mut input = l2_valid_input(0, 1_000_000);
+        input.new_payload_request.execution_payload.blob_gas_used = 1;
+        let mut buf = Vec::new();
+        input.ssz_append(&mut buf);
+        let calldata = Bytes::from(buf);
+        let mut gas = 100_000_000u64;
+        let err = run_execute(&MockValidator, &calldata, &mut gas)
+            .expect_err("blob_gas_used != 0 must be rejected");
+        assert!(
+            !err.should_propagate(),
+            "blob_gas_used violation must be a CALL-level failure (non-propagating); got: {err:?}"
+        );
+    }
+
+    /// Constraint 2: `excess_blob_gas` must be zero.
+    #[test]
+    fn execute_rejects_excess_blob_gas_nonzero() {
+        let mut input = l2_valid_input(0, 1_000_000);
+        input.new_payload_request.execution_payload.excess_blob_gas = 1;
+        let mut buf = Vec::new();
+        input.ssz_append(&mut buf);
+        let calldata = Bytes::from(buf);
+        let mut gas = 100_000_000u64;
+        let err = run_execute(&MockValidator, &calldata, &mut gas)
+            .expect_err("excess_blob_gas != 0 must be rejected");
+        assert!(
+            !err.should_propagate(),
+            "excess_blob_gas violation must be a CALL-level failure (non-propagating); got: {err:?}"
+        );
+    }
+
+    /// Constraint 3: `withdrawals` list must be empty.
+    #[test]
+    fn execute_rejects_nonempty_withdrawals() {
+        let mut input = l2_valid_input(0, 1_000_000);
+        input.new_payload_request.execution_payload.withdrawals = vec![Withdrawal {
+            index: 0,
+            validator_index: 0,
+            address: Bytes20([0u8; 20]),
+            amount: 1,
+        }]
+        .try_into()
+        .expect("withdrawals");
+        let mut buf = Vec::new();
+        input.ssz_append(&mut buf);
+        let calldata = Bytes::from(buf);
+        let mut gas = 100_000_000u64;
+        let err = run_execute(&MockValidator, &calldata, &mut gas)
+            .expect_err("non-empty withdrawals must be rejected");
+        assert!(
+            !err.should_propagate(),
+            "withdrawals violation must be a CALL-level failure (non-propagating); got: {err:?}"
+        );
+    }
+
+    /// Constraint 4: `execution_requests` (deposits/withdrawals/consolidations) must all be empty.
+    /// Here we add one deposit — the same check fires for any non-empty field.
+    #[test]
+    fn execute_rejects_nonempty_execution_requests() {
+        let mut input = l2_valid_input(0, 1_000_000);
+        input.new_payload_request.execution_requests.deposits = vec![DepositRequest {
+            pubkey: [0u8; 48],
+            withdrawal_credentials: [0u8; 32],
+            amount: 1,
+            signature: [0u8; 96],
+            index: 0,
+        }]
+        .try_into()
+        .expect("deposits");
+        let mut buf = Vec::new();
+        input.ssz_append(&mut buf);
+        let calldata = Bytes::from(buf);
+        let mut gas = 100_000_000u64;
+        let err = run_execute(&MockValidator, &calldata, &mut gas)
+            .expect_err("non-empty execution_requests must be rejected");
+        assert!(
+            !err.should_propagate(),
+            "execution_requests violation must be a CALL-level failure (non-propagating); got: {err:?}"
+        );
+    }
+
+    /// Constraint 5: no transaction may have type byte `0x03` (blob tx).
+    #[test]
+    fn execute_rejects_blob_typed_transaction() {
+        let mut input = l2_valid_input(0, 1_000_000);
+        // A minimal blob-typed transaction: first byte is 0x03.
+        let blob_tx = vec![0x03u8, 0x00, 0x00].try_into().expect("blob_tx bytes");
+        input.new_payload_request.execution_payload.transactions =
+            vec![blob_tx].try_into().expect("transactions");
+        let mut buf = Vec::new();
+        input.ssz_append(&mut buf);
+        let calldata = Bytes::from(buf);
+        let mut gas = 100_000_000u64;
+        let err = run_execute(&MockValidator, &calldata, &mut gas)
+            .expect_err("blob-typed transaction must be rejected");
+        assert!(
+            !err.should_propagate(),
+            "blob tx type violation must be a CALL-level failure (non-propagating); got: {err:?}"
         );
     }
 }
