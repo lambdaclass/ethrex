@@ -1,6 +1,6 @@
 use ethrex_common::{
     Address, H256,
-    types::{BlobsBundleError, BlockHash},
+    types::{BlobsBundleError, BlockHash, FrameValidationError},
 };
 use ethrex_rlp::error::RLPDecodeError;
 use ethrex_storage::error::StoreError;
@@ -131,10 +131,52 @@ pub enum MempoolError {
     InvalidTxSender(#[from] ethrex_crypto::CryptoError),
     #[error("Attempted to replace a pooled transaction with an underpriced transaction")]
     UnderpricedReplacement,
+    #[error("Frame transactions (EIP-8141) are not supported before the Hegota fork")]
+    FrameTxPreFork,
+    #[error("Frame transaction expiry deadline has passed")]
+    FrameTxExpired,
+    #[error("Invalid frame transaction: {0}")]
+    InvalidFrameTransaction(String),
+    #[error("Invalid frame transaction signature")]
+    InvalidFrameSignature,
+    #[error("Frame transaction signature is malleable (high-s)")]
+    FrameTxMalleableSignature,
+    #[error("Frame transaction blobs are not yet supported")]
+    FrameTxBlobsUnsupported,
+    #[error("Frame transaction signature verification cost exceeds MAX_VERIFY_GAS")]
+    FrameTxVerifyGasExceeded,
+    #[error("Frame transaction validation prefix does not match any recognized shape")]
+    FrameTxUnrecognizedPrefix,
+    #[error("Frame transaction prefix structure is invalid: {0}")]
+    FrameTxInvalidPrefixStructure(String),
+    #[error("Frame transaction prefix gas budget (frames + sig cost) exceeds MAX_VERIFY_GAS")]
+    FrameTxVerifyGasBudgetExceeded,
+    #[error("A pending frame transaction from this sender is already in the pool")]
+    FrameTxSenderAlreadyPending,
+    #[error("Frame transaction validation-prefix simulation failed: {0}")]
+    FrameTxValidationFailed(String),
+    #[error("Frame transaction paymaster has insufficient balance to cover the reserved max cost")]
+    FrameTxPaymasterUnderfunded,
+    #[error(
+        "Non-canonical paymaster already sponsors the maximum number of pending frame transactions"
+    )]
+    FrameTxNonCanonicalPaymasterLimit,
     #[error("EIP-7702 transaction has an empty authorization list")]
     EmptyAuthorizationList,
     #[error("EIP-7702 (type-4) transaction is not valid before Prague")]
     Eip7702TxPreFork,
+}
+
+impl From<FrameValidationError> for MempoolError {
+    fn from(err: FrameValidationError) -> Self {
+        match err {
+            FrameValidationError::UnrecognizedPrefix => MempoolError::FrameTxUnrecognizedPrefix,
+            FrameValidationError::VerifyGasBudgetExceeded { .. } => {
+                MempoolError::FrameTxVerifyGasBudgetExceeded
+            }
+            other => MempoolError::FrameTxInvalidPrefixStructure(other.to_string()),
+        }
+    }
 }
 
 #[derive(Debug)]
