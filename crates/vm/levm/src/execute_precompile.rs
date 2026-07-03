@@ -78,6 +78,19 @@ fn run_execute(
     increase_precompile_consumed_gas(charge, gas_remaining)?;
 
     let result = validator.verify(calldata)?;
+
+    use ethrex_common::types::stateless_ssz::SszStatelessValidationResult;
+    let parsed = SszStatelessValidationResult::from_ssz_bytes(&result).map_err(|e| {
+        VMError::Internal(InternalError::Custom(format!(
+            "EXECUTE: bad validation result: {e}"
+        )))
+    })?;
+    if !parsed.successful_validation {
+        return Err(VMError::Internal(InternalError::Custom(
+            "EXECUTE: stateless validation failed (fail-closed)".to_string(),
+        )));
+    }
+
     Ok(Bytes::from(result))
 }
 
@@ -140,6 +153,9 @@ mod tests {
     /// Mock `StatelessValidator` that returns a successful SSZ-encoded
     /// `SszStatelessValidationResult` without performing any real execution.
     struct MockValidator;
+
+    /// Mock `StatelessValidator` that returns `successful_validation: false`.
+    struct MockInvalidValidator;
 
     impl crate::StatelessValidator for MockValidator {
         fn verify(&self, _input: &[u8]) -> Result<Vec<u8>, crate::errors::VMError> {
@@ -216,6 +232,54 @@ mod tests {
             },
             public_keys: vec![].try_into().expect("public_keys"),
         }
+    }
+
+    impl crate::StatelessValidator for MockInvalidValidator {
+        fn verify(&self, _input: &[u8]) -> Result<Vec<u8>, crate::errors::VMError> {
+            let result = SszStatelessValidationResult {
+                new_payload_request_root: [0u8; 32],
+                successful_validation: false,
+                chain_config: SszChainConfig {
+                    chain_id: 1,
+                    active_fork: SszForkConfig {
+                        fork: 0,
+                        activation: SszForkActivation {
+                            block_number: vec![].try_into().expect("empty block_number"),
+                            timestamp: vec![].try_into().expect("empty timestamp"),
+                        },
+                        blob_schedule: vec![].try_into().expect("empty blob_schedule"),
+                    },
+                },
+            };
+            let mut buf = Vec::new();
+            result.ssz_append(&mut buf);
+            Ok(buf)
+        }
+    }
+
+    /// Fail-closed: `run_execute` must return `Err` when `successful_validation` is `false`,
+    /// and `Ok` when it is `true`.
+    #[test]
+    fn execute_fails_closed_on_invalid() {
+        let input = l2_valid_input(0, 1_000_000);
+        let mut calldata_buf = Vec::new();
+        input.ssz_append(&mut calldata_buf);
+        let calldata = Bytes::from(calldata_buf);
+
+        // Invalid result → must Err (fail-closed).
+        let mut gas = 100_000_000u64;
+        let mock_invalid = MockInvalidValidator;
+        let r = run_execute(&mock_invalid, &calldata, &mut gas);
+        assert!(
+            r.is_err(),
+            "invalid validation must revert (fail-closed), not return Ok"
+        );
+
+        // Valid result → must Ok.
+        let mut gas2 = 100_000_000u64;
+        let mock_valid = MockValidator;
+        let r2 = run_execute(&mock_valid, &calldata, &mut gas2);
+        assert!(r2.is_ok(), "valid validation must return Ok(result)");
     }
 
     /// `gas_used=0, gas_limit=1_000_000`: the charge must be `gas_limit +
