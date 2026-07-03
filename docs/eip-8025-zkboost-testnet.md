@@ -43,9 +43,9 @@ cd lighthouse && git checkout feat/eip8025
 ### Build
 
 ```bash
-# ethrex
+# ethrex (EIP-8025 host code is always-compiled; eip-8025 enables SSZ guest twins)
 cd ethrex
-cargo build --release --features experimental-devnet --bin ethrex
+cargo build --release --bin ethrex
 
 # zkboost
 cd zkboost

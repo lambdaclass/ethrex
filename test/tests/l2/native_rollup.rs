@@ -1,9 +1,9 @@
 //! Integration test for native rollup deposit (L1→L2) and withdrawal (L2→L1) roundtrip.
 //!
 //! Requires the full 3-terminal setup already running:
-//!   1. Start L1:      `NATIVE_ROLLUPS=1 make -C crates/l2 rm-db-l1 init-l1`
-//!   2. Deploy:        `NATIVE_ROLLUPS=1 make -C crates/l2 deploy-l1`
-//!   3. Start L2:      `NATIVE_ROLLUPS=1 make -C crates/l2 rm-db-l2 init-l2`
+//!   1. Start L1:      `make -C crates/l2 rm-db-l1 init-l1-native`
+//!   2. Deploy:        `make -C crates/l2 deploy-l1-native`
+//!   3. Start L2:      `make -C crates/l2 rm-db-l2 init-l2-native`
 //!   4. Run this test: `cargo test -p ethrex-test --features l2 -- l2::native_rollup_bridge --nocapture`
 
 #![allow(
@@ -52,7 +52,7 @@ const ONE_ETH: u64 = 1_000_000_000_000_000_000;
 async fn native_rollup_bridge_roundtrip() {
     read_env_file_by_config();
     let contract_address: Address = std::env::var("ETHREX_NATIVE_ROLLUP_CONTRACT_ADDRESS")
-        .expect("ETHREX_NATIVE_ROLLUP_CONTRACT_ADDRESS not set — run `NATIVE_ROLLUPS=1 make -C crates/l2 deploy-l1` first")
+        .expect("ETHREX_NATIVE_ROLLUP_CONTRACT_ADDRESS not set — run `make -C crates/l2 deploy-l1-native` first")
         .parse()
         .expect("Invalid contract address");
 

@@ -4,15 +4,23 @@
 
 [EIP-8079](https://eips.ethereum.org/EIPS/eip-8079) proposes "native rollups" — a mechanism where L1 verifies L2 state transitions by re-executing them inside the EVM via an `EXECUTE` precompile. This replaces complex proof systems (zkVM/fraud proofs) with direct execution, leveraging the fact that L1 already has an EVM capable of running the same transactions.
 
-The spec defines the EXECUTE precompile as a thin wrapper around `verify_stateless_new_payload` — the same function the L1 ZK-EVM effort uses. Our implementation reuses the stateless-validation infrastructure landed with EIP-8025 (#6427) and gates everything behind a single `experimental-devnet` cargo feature flag.
+The spec defines the EXECUTE precompile as a thin wrapper around `verify_stateless_new_payload` — the same function the L1 ZK-EVM effort uses. Our implementation reuses the stateless-validation infrastructure landed with EIP-8025 (#6427). The EXECUTE precompile code is **always-compiled**; the precompile fires only at runtime when `fork >= Fork::LStar && vm_type == VMType::L1`.
+
+> **Implementation note — spec divergences:** The implementation tracks the [l2beat native-rollups spec book](https://github.com/l2beat/l2beat) rather than the published EIP-8079 text. The two diverge in three places:
+>
+> - **Anchoring**: l2beat uses `parent_beacon_block_root` as an arbitrary `bytes32` to carry the L1 messages Merkle root. Published EIP-8079 specifies an `ANCHOR_ADDRESS` precompile for this purpose.
+> - **EXECUTE signature**: The l2beat signature passes `(uint16 _l1MessagesCount, bytes _sszStatelessInput)`. EIP-8079 specifies a different calling convention.
+> - **`burned_fees`**: EIP-8079 makes `burned_fees` a new execution-payload header field. Our implementation includes it as a recompute-only header field gated at `Fork::LStar` (EIP-8079-aligned, §G).
+>
+> Where EIP-8079 and the l2beat spec agree, "EIP-8079 conformance" also means l2beat conformance.
 
 ```
 SSZ-encoded StatelessInput (NewPayloadRequest + ExecutionWitness + ChainConfig)
         |
   EXECUTE precompile (in LEVM) — thin wrapper
         |
-  1. Deserialize SSZ to extract gas_used
-  2. Charge gas proportional to L2 block gas_used
+  1. Deserialize SSZ to extract gas_limit and calldata length
+  2. Charge gas = gas_limit + calldata_len·EXECUTE_GAS_PER_WITNESS_BYTE
   3. Validate L2 constraints (no blobs, no withdrawals, no execution_requests)
   4. Delegate to StatelessValidator trait → verify_stateless_new_payload()
         |
@@ -78,7 +86,13 @@ Before delegating to `verify_stateless_new_payload`, the precompile validates:
 
 ### Gas Charging
 
-Gas is charged proportional to the L2 block's `gas_used` field from the `ExecutionPayload`. This means the L1 gas cost of `advance()` scales linearly with the L2 block's computational complexity.
+Gas is charged as:
+
+```
+charge = gas_limit + calldata_len · EXECUTE_GAS_PER_WITNESS_BYTE
+```
+
+where `gas_limit` is from `ExecutionPayload.gas_limit` and `calldata_len` is the length of the raw `_sszStatelessInput` bytes. The precompile **fails closed** (CALL-level `ExceptionalHalt`) if the input is invalid or the charge cannot be applied — the `advance()` call reverts rather than committing an unvalidated state.
 
 ## L1 Anchoring
 
@@ -200,34 +214,47 @@ Solidity library for MPT proof verification: trie traversal, RLP decoding, accou
 
 `crates/l2/common/src/merkle_tree.rs` — Merkle tree using commutative Keccak256 hashing. Provides `compute_merkle_root()` and `compute_merkle_proof()`. Used by the L2 actors (block producer, advancer) and the L2 withdrawal proof RPC endpoint.
 
-## Feature Flag
+## Compilation and Feature Flags
 
-All native rollups and EIP-8025 code is gated behind the unified `experimental-devnet` feature flag:
+The native-rollup EXECUTE precompile, the stateless-validation pipeline, and all SSZ types are **always-compiled** — there is no cargo feature that gates them out. (The old unified devnet feature flag was removed.)
+
+**Runtime gate:** the EXECUTE precompile body executes only when `fork >= Fork::LStar && vm_type == VMType::L1`. On any other fork or VM type the precompile is a no-op CALL.
+
+The only remaining cargo feature is **`eip-8025`**, which controls the guest-program input/output format. The SSZ dep chain is:
 
 ```toml
-# crates/common/Cargo.toml
-experimental-devnet = ["dep:ssz", "dep:ssz-types", "dep:ssz-merkle", "dep:ssz-derive"]
-
-# crates/blockchain/Cargo.toml
-experimental-devnet = [
-    "ethrex-common/experimental-devnet", "ethrex-vm/experimental-devnet",
-    "ethrex-guest-program/experimental-devnet",
-    "dep:ethrex-prover", "ethrex-prover?/experimental-devnet",
-    ...
+# crates/guest-program/Cargo.toml  (guest only — not the host)
+eip-8025 = [
+    "ethrex-common/eip-8025",
+    "dep:libssz",
+    "dep:libssz-merkle",
+    "dep:libssz-types",
 ]
 
-# cmd/ethrex/Cargo.toml
-experimental-devnet = ["ethrex-blockchain/experimental-devnet", "ethrex-rpc/experimental-devnet", ...]
+# crates/blockchain/Cargo.toml
+eip-8025 = ["ethrex-common/eip-8025", "ethrex-vm/eip-8025"]
+
+# crates/common/Cargo.toml
+eip-8025 = []   # enables the SSZ stateless types unconditionally (libssz is a workspace dep)
 ```
 
-## Summary Table (vs March 2026 spec rewrite)
+When `eip-8025` is compiled into the guest program:
+- Input format: `NewPayloadRequest` (SSZ) + `ExecutionWitness` (rkyv) — the EIP-8025 wire format
+- Output format: `ProgramOutput { new_payload_request_root: [u8; 32], valid: bool }` — 33 bytes
 
-| Aspect | Spec | Us | Alignment |
-|--------|------|-----|-----------|
+Without `eip-8025`:
+- Input/output use the legacy rkyv `ProgramInput`/`ProgramOutput` format
+- The host (node) always has the SSZ types compiled in for the EXECUTE precompile
+
+## Summary Table (vs l2beat native-rollups spec; see divergences note above)
+
+| Aspect | l2beat spec | Us | Alignment |
+|--------|------------|-----|-----------|
 | Core function | `verify_stateless_new_payload` | Implemented (blockchain/stateless.rs) | **Aligned** |
 | Input format | SSZ `StatelessInput` | SSZ types via libssz | **Aligned** |
 | Output format | SSZ `StatelessValidationResult` | Implemented | **Aligned** |
-| Gas charging | `execution_payload.gas_used` | Implemented | **Aligned** |
+| Gas charging | `gas_limit + calldata·EXECUTE_GAS_PER_WITNESS_BYTE` | Implemented | **Aligned** |
+| Fail-closed on invalid input | CALL-level ExceptionalHalt | Implemented | **Aligned** |
 | L2 preprocessing | Explicit layer (no blobs, no withdrawals) | Implemented | **Aligned** |
 | Serialization | SSZ (execution-specs types) | SSZ via libssz | **Aligned** |
 | L1 anchoring | `parent_beacon_block_root` (arbitrary bytes32) | Merkle root via `parent_beacon_block_root` | **Aligned** |
@@ -236,6 +263,7 @@ experimental-devnet = ["ethrex-blockchain/experimental-devnet", "ethrex-rpc/expe
 | Gas token deposits | Preminted predeploy | L2Bridge with `U256::MAX / 2` | **Aligned** |
 | No custom tx types | Design principle | Achieved (relayer txs) | **Aligned** |
 | First deposit problem | WIP in spec | Solved (relayer pays gas) | **Ahead** |
+| `burned_fees` header field | EIP-8079 header field (§G) | Implemented — LStar-gated recompute-only field | **Aligned** |
 | Contract state | blockHash, stateRoot, blockNumber, gasLimit, chainId | Implemented | **Aligned** |
 | StatelessValidator trait | Implied (precompile wraps standard function) | Implemented in LEVM | **Aligned** |
 | Cycle-free architecture | Implied | Trait injection pattern | **Aligned** |
@@ -243,6 +271,14 @@ experimental-devnet = ["ethrex-blockchain/experimental-devnet", "ethrex-rpc/expe
 | Forced transactions | WIP (FOCIL) | Not implemented | **Gap** |
 | DA cost pricing | WIP | Not implemented | **Both WIP** |
 | `public_keys` | Pre-recovered tx keys | Empty tuple (stub) | **Stub** |
+
+### EIP-8079 divergences
+
+| Aspect | Published EIP-8079 | Our implementation |
+|--------|-------------------|-------------------|
+| L1 anchoring mechanism | `ANCHOR_ADDRESS` precompile | `parent_beacon_block_root` field (l2beat model) |
+| EXECUTE calling convention | EIP-8079 calling convention | `advance(uint16 _l1MessagesCount, bytes _sszStatelessInput)` (l2beat model) |
+| `burned_fees` | New execution-payload header field | Implemented as LStar-gated recompute-only field (matches EIP-8079 §G) |
 
 ## Limitations
 

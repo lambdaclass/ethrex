@@ -84,7 +84,7 @@ All commands are run from the repository root.
 Build the binary first (this compiles the Solidity contracts and embeds them):
 
 ```shell
-COMPILE_CONTRACTS=true cargo build --release --features l2,l2-sql,experimental-devnet
+COMPILE_CONTRACTS=true cargo build --release --features l2,l2-sql
 ```
 
 Clean up any previous state:
@@ -284,7 +284,7 @@ rex balance $L1_RECEIVER --rpc-url http://localhost:8545
 > [!TIP]
 > The integration test at `test/tests/l2/native_rollup.rs` automates the full deposit/withdraw/counter roundtrip including proof fetching and claim submission. Run it with:
 > ```shell
-> cargo test -p ethrex-test --features experimental-devnet -- l2::native_rollup --nocapture
+> cargo test -p ethrex-test --features l2 -- l2::native_rollup --nocapture
 > ```
 
 ### Step 6: Verify precompile usage with Blockscout
