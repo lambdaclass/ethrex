@@ -351,6 +351,23 @@ impl StorageBackend for RocksDBBackend {
 
         Ok(())
     }
+
+    fn flush(&self) -> Result<(), StoreError> {
+        // Flush every column family's memtable to an SST file, then sync the WAL.
+        // Together these make the next open a clean start: the memtables are
+        // durable as SST and the WAL tail (anything still in the log) is fsynced,
+        // so RocksDB does not have to replay the WAL on recovery.
+        for table in TABLES {
+            if let Some(cf) = self.db.cf_handle(table) {
+                self.db.flush_cf(&cf).map_err(|e| {
+                    StoreError::Custom(format!("RocksDB flush_cf({table}) failed: {e}"))
+                })?;
+            }
+        }
+        self.db
+            .flush_wal(true)
+            .map_err(|e| StoreError::Custom(format!("RocksDB flush_wal failed: {e}")))
+    }
 }
 
 /// Read-only view for RocksDB
