@@ -76,6 +76,27 @@ impl Stack {
         Ok(value)
     }
 
+    /// Mutable reference to the top item without changing depth (one underflow check,
+    /// no `offset` write). For stack-neutral unary ops (ISZERO, NOT, CLZ), replacing
+    /// `pop1` + `push` with `*top_mut() = f(*top)` avoids the read-modify-write of the
+    /// shared `offset`, which is the per-opcode serial dependency that pins dispatch IPC.
+    #[inline]
+    pub fn top_mut(&mut self) -> Result<&mut U256, ExceptionalHalt> {
+        self.values
+            .get_mut(self.offset)
+            .ok_or(ExceptionalHalt::StackUnderflow)
+    }
+
+    /// Pop the top value and return it together with a mutable reference to the new top.
+    /// For binary ops: `let (a, b) = pop1_and_top_mut()?; *b = f(a, *b)` writes the result
+    /// in place (one `offset` write instead of `pop::<2>` + `push`'s two), where `a` is the
+    /// original top and `*b` the original second operand.
+    #[inline]
+    pub fn pop1_and_top_mut(&mut self) -> Result<(U256, &mut U256), ExceptionalHalt> {
+        let a = self.pop1()?;
+        Ok((a, self.top_mut()?))
+    }
+
     /// Push a single U256 value to the stack, faster than the generic push.
     #[inline]
     pub fn push(&mut self, value: U256) -> Result<(), ExceptionalHalt> {
@@ -287,8 +308,21 @@ pub struct CallFrame {
     pub ret_size: usize,
     /// If true then transfer value from caller to callee
     pub should_transfer_value: bool,
-    /// EIP-8037: snapshot of VM.state_gas_used at the start of this frame (for revert restoration)
-    pub state_gas_used_snapshot: u64,
+    /// EIP-8037: snapshot of VM.state_gas_used (signed) at child-frame entry.
+    /// Used to restore parent's state_gas_used on child revert.
+    pub state_gas_used_at_entry: i64,
+    /// EIP-8037: EELS per-frame `state_gas_spilled`; LIFO refund source;
+    /// propagated to parent on child success.
+    pub frame_state_gas_spilled: u64,
+    /// EIP-8037 (#3002): whether this CREATE/CREATE2 child's target address was
+    /// already alive (existed and non-empty) before the create mutated state.
+    /// Read in `handle_return_create` to refund the unconditional new-account
+    /// state gas on the success path (no new account leaf is created).
+    pub target_alive: bool,
+    /// EIP-8037: whether the parent charged new-account state gas for this CALL
+    /// (value transfer to an empty account). Refunded on child revert/error,
+    /// mirroring EELS `generic_call` `credit_state_gas_refund(NEW_ACCOUNT)`.
+    pub new_account_state_gas_charged: bool,
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, Default)]
@@ -298,6 +332,12 @@ pub struct CallFrameBackup {
     /// BAL checkpoint for EIP-7928 - used to restore state changes on revert
     /// while preserving touched_addresses.
     pub bal_checkpoint: Option<BlockAccessListCheckpoint>,
+    /// Code hashes this frame inserted into the by-hash code cache
+    /// (`GeneralizedDatabase::codes`) for codes it deployed. Removed from the
+    /// cache on revert: a stale entry would make a later read of the same
+    /// hash (from a pre-existing account) hit the cache instead of the store,
+    /// hiding the read from execution-witness recording (EIP-8025).
+    pub inserted_code_hashes: Vec<H256>,
 }
 
 impl CallFrameBackup {
@@ -323,6 +363,7 @@ impl CallFrameBackup {
         self.original_accounts_info.clear();
         self.original_account_storage_slots.clear();
         self.bal_checkpoint = None;
+        self.inserted_code_hashes.clear();
     }
 
     /// Merges `other` into `self`, per-address. For slots present in both,
@@ -340,7 +381,33 @@ impl CallFrameBackup {
         }
         self.original_accounts_info
             .extend(other.original_accounts_info);
+        self.inserted_code_hashes.extend(other.inserted_code_hashes);
         // Don't extend bal_checkpoint - it's specific to each call frame
+    }
+
+    /// Absorb another backup, keeping the EARLIEST original value for each
+    /// account/slot (first-seen-wins). Mirrors `merge_call_frame_backup_with_parent`.
+    /// Does NOT touch `bal_checkpoint` (set once at the tx level).
+    ///
+    /// Unlike `extend` (last-wins `HashMap::extend`), this preserves the value
+    /// that was already recorded, which is required when accumulating per-frame
+    /// backups into a tx-level rollback: the original to restore is the value
+    /// from before the FIRST frame that modified it.
+    pub fn absorb(&mut self, other: &CallFrameBackup) {
+        for (address, account) in other.original_accounts_info.iter() {
+            self.original_accounts_info
+                .entry(*address)
+                .or_insert_with(|| account.clone());
+        }
+        for (address, storage) in other.original_account_storage_slots.iter() {
+            let slot = self
+                .original_account_storage_slots
+                .entry(*address)
+                .or_default();
+            for (key, value) in storage.iter() {
+                slot.entry(*key).or_insert(*value);
+            }
+        }
     }
 }
 
@@ -393,19 +460,22 @@ impl CallFrame {
             output: Bytes::default(),
             pc: 0,
             sub_return_data: Bytes::default(),
-            state_gas_used_snapshot: 0,
+            state_gas_used_at_entry: 0,
+            frame_state_gas_spilled: 0,
+            target_alive: false,
+            new_account_state_gas_charged: false,
         }
     }
 
     #[inline(always)]
     pub fn next_opcode(&self) -> u8 {
-        if self.pc < self.bytecode.bytecode.len() {
-            #[expect(unsafe_code, reason = "bounds checked above")]
-            unsafe {
-                *self.bytecode.bytecode.get_unchecked(self.pc)
-            }
-        } else {
-            0
+        // SAFETY: pc reaches at most bytecode_len + 32 (a PUSH32 at the last real
+        // byte advances 33 total: +1 in the dispatch loop, +32 in the handler).
+        // dispatch_buf() is bytecode_len + BYTECODE_PADDING (33) long, so the read
+        // is always in bounds.
+        #[expect(unsafe_code, reason = "pc bounded by padded bytecode len")]
+        unsafe {
+            *self.bytecode.dispatch_buf().get_unchecked(self.pc)
         }
     }
 
@@ -427,6 +497,16 @@ impl CallFrame {
         Ok(())
     }
 
+    /// EELS' `check_gas`: assert gas is available without consuming it.
+    #[inline(always)]
+    #[expect(clippy::as_conversions, reason = "remaining gas conversion")]
+    pub fn check_gas(&self, gas: u64) -> Result<(), ExceptionalHalt> {
+        if self.gas_remaining < 0 || (self.gas_remaining as u64) < gas {
+            return Err(ExceptionalHalt::OutOfGas);
+        }
+        Ok(())
+    }
+
     pub fn set_code(&mut self, code: Code) -> Result<(), VMError> {
         self.bytecode = code;
         Ok(())
@@ -437,6 +517,12 @@ impl<'a> VM<'a> {
     /// Adds current calframe to call_frames, sets current call frame to the passed callframe.
     #[inline(always)]
     pub fn add_callframe(&mut self, new_call_frame: CallFrame) {
+        // Reserve once on the first sub-call (p99 depth ~10, max 27): keeps the ~43% of txs that
+        // never make a call alloc-free (`call_frames` starts as `Vec::new()`), while avoiding the
+        // repeated reallocs a call-heavy tx would otherwise incur as depth grows.
+        if self.call_frames.is_empty() {
+            self.call_frames.reserve(8);
+        }
         self.call_frames.push(new_call_frame);
         #[allow(unsafe_code, reason = "just pushed, so the vec is not empty")]
         unsafe {
@@ -463,6 +549,19 @@ impl<'a> VM<'a> {
     /// Restores the cache state to the state before changes made during a callframe.
     pub fn restore_cache_state(&mut self) -> Result<(), VMError> {
         let callframe_backup = self.current_call_frame.call_frame_backup.clone();
+        restore_cache_state(self.db, callframe_backup)
+    }
+
+    /// Like [`Self::restore_cache_state`] but moves the current frame's backup out instead of
+    /// cloning it. Only sound when nothing reads `call_frame_backup` afterward: the inner-call
+    /// revert in `handle_return` (the frame is popped right after, so its backup is dead), and
+    /// the top-level / invalid-tx revert when no `BackupHook` is installed (normal L1 block
+    /// execution, gated on `VM::preserve_top_level_backup`).
+    ///
+    /// When a `BackupHook` IS present (L2 / stateless) the top-level paths must keep cloning,
+    /// because `BackupHook::finalize` reads the backup to build the tx-level undo snapshot.
+    pub fn restore_cache_state_consuming(&mut self) -> Result<(), VMError> {
+        let callframe_backup = std::mem::take(&mut self.current_call_frame.call_frame_backup);
         restore_cache_state(self.db, callframe_backup)
     }
 
@@ -500,16 +599,91 @@ impl<'a> VM<'a> {
             }
         }
 
+        // Propagate code-cache insertions so a revert of the parent also
+        // evicts codes deployed by the (committed) child frame.
+        self.current_call_frame
+            .call_frame_backup
+            .inserted_code_hashes
+            .extend(child_call_frame_backup.inserted_code_hashes.iter().copied());
+
         Ok(())
     }
 
     #[inline(always)]
-    pub fn advance_pc(&mut self, count: usize) -> Result<(), VMError> {
-        self.current_call_frame.pc = self
-            .current_call_frame
-            .pc
-            .checked_add(count)
-            .ok_or(InternalError::Overflow)?;
-        Ok(())
+    #[expect(
+        clippy::arithmetic_side_effects,
+        reason = "pc bounded by padded bytecode len"
+    )]
+    pub fn advance_pc(&mut self) {
+        self.current_call_frame.pc += 1;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ethrex_common::types::AccountInfo;
+
+    #[test]
+    fn absorb_keeps_earliest_original_value() {
+        let addr = Address::from_low_u64_be(1);
+        let mut acc = CallFrameBackup::default();
+
+        let mut first = CallFrameBackup::default();
+        first
+            .original_account_storage_slots
+            .entry(addr)
+            .or_default()
+            .insert(H256::zero(), U256::from(10));
+
+        let mut second = CallFrameBackup::default();
+        second
+            .original_account_storage_slots
+            .entry(addr)
+            .or_default()
+            .insert(H256::zero(), U256::from(20));
+
+        acc.absorb(&first);
+        acc.absorb(&second);
+
+        // First-seen-wins: the earliest original (10) is preserved.
+        let value = acc
+            .original_account_storage_slots
+            .get(&addr)
+            .and_then(|slots| slots.get(&H256::zero()))
+            .copied();
+        assert_eq!(value, Some(U256::from(10)));
+    }
+
+    #[test]
+    fn absorb_keeps_earliest_account_info() {
+        let addr = Address::from_low_u64_be(2);
+        let mut acc = CallFrameBackup::default();
+
+        let first_acc = LevmAccount {
+            info: AccountInfo {
+                nonce: 1,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let mut first = CallFrameBackup::default();
+        first.original_accounts_info.insert(addr, first_acc);
+
+        let second_acc = LevmAccount {
+            info: AccountInfo {
+                nonce: 2,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let mut second = CallFrameBackup::default();
+        second.original_accounts_info.insert(addr, second_acc);
+
+        acc.absorb(&first);
+        acc.absorb(&second);
+
+        let nonce = acc.original_accounts_info.get(&addr).map(|a| a.info.nonce);
+        assert_eq!(nonce, Some(1));
     }
 }

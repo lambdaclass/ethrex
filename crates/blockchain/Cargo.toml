@@ -5,6 +5,8 @@ edition.workspace = true
 authors.workspace = true
 documentation.workspace = true
 license.workspace = true
+description = "Block validation, execution, fork choice, mempool, and payload building for the ethrex client"
+repository.workspace = true
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
@@ -15,7 +17,7 @@ ethrex-crypto.workspace = true
 ethrex-storage.workspace = true
 ethrex-trie.workspace = true
 ethrex-vm.workspace = true
-ethrex-metrics = { path = "./metrics", default-features = false }
+ethrex-metrics = { path = "./metrics", version = "19.0.0", default-features = false }
 
 serde = { workspace = true, optional = true }
 serde_json = { workspace = true, optional = true }
@@ -37,16 +39,19 @@ tokio-util.workspace = true
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["full"] }
+ethrex-levm.workspace = true
 
 [lib]
 path = "./blockchain.rs"
 
 [features]
 default = ["secp256k1"]
-secp256k1 = ["ethrex-common/secp256k1", "ethrex-vm/secp256k1"]
+rayon = ["ethrex-vm/rayon"]
+secp256k1 = ["ethrex-common/secp256k1", "ethrex-vm/secp256k1", "rayon"]
 c-kzg = ["ethrex-common/c-kzg", "ethrex-vm/c-kzg"]
 metrics = ["ethrex-metrics/transactions"]
 eip-8025 = ["ethrex-common/eip-8025", "ethrex-vm/eip-8025"]
+testing = []
 
 [lints.clippy]
 unwrap_used = "deny"

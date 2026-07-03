@@ -1,3 +1,4 @@
+pub use crate::opcode_tracer::{LevmOpcodeTracer, OpcodeTracerConfig};
 use crate::{
     errors::{ContextResult, InternalError, TxResult, VMError},
     vm::VM,

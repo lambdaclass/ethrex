@@ -184,6 +184,7 @@ impl NativeBlockProducer {
             requests: Vec::new(),
             block_gas_used: block.header.gas_used,
             burned_fees: None,
+            tx_gas_breakdowns: Vec::new(),
         };
 
         let transactions_count = block.body.transactions.len();
@@ -339,7 +340,10 @@ impl NativeBlockProducer {
 
         // Discard blob txs — not supported in native rollup
         while blob_txs.peek().is_some() {
-            let blob_hash = blob_txs.peek().map(|tx| tx.tx.hash()).unwrap_or_default();
+            let blob_hash = blob_txs
+                .peek()
+                .map(|tx| tx.tx.hash(&ethrex_crypto::NativeCrypto))
+                .unwrap_or_default();
             self.blockchain.remove_transaction_from_pool(&blob_hash)?;
             blob_txs.pop();
         }
@@ -366,18 +370,18 @@ impl NativeBlockProducer {
                 if is_relayer_tx {
                     return Err(NativeBlockProducerError::Vm(format!(
                         "relayer tx {} failed: not enough gas",
-                        head_tx.tx.hash()
+                        head_tx.tx.hash(&ethrex_crypto::NativeCrypto)
                     )));
                 }
                 debug!(
                     "NativeBlockProducer: skipping tx {}, not enough gas",
-                    head_tx.tx.hash()
+                    head_tx.tx.hash(&ethrex_crypto::NativeCrypto)
                 );
                 txs.pop();
                 continue;
             }
 
-            let tx_hash = head_tx.tx.hash();
+            let tx_hash = head_tx.tx.hash(&ethrex_crypto::NativeCrypto);
 
             // Check whether the tx is replay-protected
             let chain_config = self.store.get_chain_config();

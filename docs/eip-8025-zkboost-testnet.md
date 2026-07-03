@@ -156,13 +156,15 @@ Four components, four terminals (or tmux windows).
 ethrex/target/release/ethrex \
   --network ~/eip8025-testnet/genesis/genesis.json \
   --http.port 8545 \
-  --http.addr 0.0.0.0 \
+  --http.api eth,net,web3,debug \
   --authrpc.port 8551 \
   --authrpc.jwtsecret ~/eip8025-testnet/jwtsecret \
   --syncmode full \
   --p2p.disabled \
   --datadir /tmp/ethrex-eip8025-data
 ```
+
+`--http.api eth,net,web3,debug` is required so zkboost can call `debug_executionWitnessByBlockHash` and `debug_chainConfig`; the default allowlist (`eth,net,web3`) blocks the `debug_*` namespace. zkboost runs on the same host and talks to `http://localhost:8545`, so the loopback default for `--http.addr` is fine.
 
 ### Terminal 2: zkboost
 

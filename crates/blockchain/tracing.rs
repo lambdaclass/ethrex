@@ -3,8 +3,14 @@ use std::{
     time::Duration,
 };
 
-use ethrex_common::{H256, tracing::CallTrace, types::Block};
+use ethrex_common::{
+    H256,
+    tracing::{CallTrace, OpcodeTraceResult, PrestateResult},
+    types::Block,
+};
+use ethrex_crypto::NativeCrypto;
 use ethrex_storage::Store;
+use ethrex_vm::tracing::OpcodeTracerConfig;
 use ethrex_vm::{Evm, EvmError};
 
 use crate::{Blockchain, error::ChainError, vm::StoreVmDatabase};
@@ -70,7 +76,7 @@ impl Blockchain {
             // We are cloning the `Arc`s here, not the structs themselves
             let block = block.clone();
             let vm = vm.clone();
-            let tx_hash = block.as_ref().body.transactions[index].hash();
+            let tx_hash = block.as_ref().body.transactions[index].hash(&NativeCrypto);
             let call_trace = timeout_trace_operation(timeout, move || {
                 vm.lock()
                     .map_err(|_| EvmError::Custom("Unexpected Runtime Error".to_string()))?
@@ -80,6 +86,137 @@ impl Blockchain {
             call_traces.push((tx_hash, call_trace));
         }
         Ok(call_traces)
+    }
+
+    /// Outputs the prestate trace for the given transaction.
+    /// If `diff_mode` is true, returns both pre and post state; otherwise returns only pre state.
+    /// `include_empty` keeps default-state entries in pre (only valid when `diff_mode` is false).
+    /// May need to re-execute blocks in order to rebuild the transaction's prestate, up to the amount given by `reexec`.
+    pub async fn trace_transaction_prestate(
+        &self,
+        tx_hash: H256,
+        reexec: u32,
+        timeout: Duration,
+        diff_mode: bool,
+        include_empty: bool,
+    ) -> Result<PrestateResult, ChainError> {
+        let Some((_, block_hash, tx_index)) =
+            self.storage.get_transaction_location(tx_hash).await?
+        else {
+            return Err(ChainError::Custom("Transaction not Found".to_string()));
+        };
+        let tx_index = tx_index as usize;
+        let Some(block) = self.storage.get_block_by_hash(block_hash).await? else {
+            return Err(ChainError::Custom("Block not Found".to_string()));
+        };
+        let mut vm = self
+            .rebuild_parent_state(block.header.parent_hash, reexec)
+            .await?;
+        // Run the block until the transaction we want to trace
+        vm.rerun_block(&block, Some(tx_index))?;
+        // Trace the transaction
+        timeout_trace_operation(timeout, move || {
+            vm.trace_tx_prestate(&block, tx_index, diff_mode, include_empty)
+        })
+        .await
+    }
+
+    /// Outputs the prestate trace for each transaction in the block along with the transaction's hash.
+    /// If `diff_mode` is true, returns both pre and post state per tx; otherwise returns only pre state.
+    /// `include_empty` keeps default-state entries in pre (only valid when `diff_mode` is false).
+    /// May need to re-execute blocks in order to rebuild the block's prestate, up to the amount given by `reexec`.
+    /// Returns prestate traces from oldest to newest transaction.
+    pub async fn trace_block_prestate(
+        &self,
+        block: Block,
+        reexec: u32,
+        timeout: Duration,
+        diff_mode: bool,
+        include_empty: bool,
+    ) -> Result<Vec<(H256, PrestateResult)>, ChainError> {
+        let mut vm = self
+            .rebuild_parent_state(block.header.parent_hash, reexec)
+            .await?;
+        // Run system calls but stop before tx 0
+        vm.rerun_block(&block, Some(0))?;
+        // Trace each transaction sequentially — state accumulates between calls
+        // We need to do this in order to pass ownership of block & evm to a blocking process without cloning
+        let vm = Arc::new(Mutex::new(vm));
+        let block = Arc::new(block);
+        let mut traces = vec![];
+        for index in 0..block.body.transactions.len() {
+            let block = block.clone();
+            let vm = vm.clone();
+            let tx_hash = block.as_ref().body.transactions[index].hash(&NativeCrypto);
+            let result = timeout_trace_operation(timeout, move || {
+                vm.lock()
+                    .map_err(|_| EvmError::Custom("Unexpected Runtime Error".to_string()))?
+                    .trace_tx_prestate(block.as_ref(), index, diff_mode, include_empty)
+            })
+            .await?;
+            traces.push((tx_hash, result));
+        }
+        Ok(traces)
+    }
+
+    /// Outputs the per-opcode (EIP-3155) trace for the given transaction.
+    /// May need to re-execute blocks in order to rebuild the transaction's prestate, up to the amount given by `reexec`.
+    pub async fn trace_transaction_opcodes(
+        &self,
+        tx_hash: H256,
+        reexec: u32,
+        timeout: Duration,
+        cfg: OpcodeTracerConfig,
+    ) -> Result<OpcodeTraceResult, ChainError> {
+        let Some((_, block_hash, tx_index)) =
+            self.storage.get_transaction_location(tx_hash).await?
+        else {
+            return Err(ChainError::Custom("Transaction not Found".to_string()));
+        };
+        let tx_index = tx_index as usize;
+        let Some(block) = self.storage.get_block_by_hash(block_hash).await? else {
+            return Err(ChainError::Custom("Block not Found".to_string()));
+        };
+        let mut vm = self
+            .rebuild_parent_state(block.header.parent_hash, reexec)
+            .await?;
+        vm.rerun_block(&block, Some(tx_index))?;
+        timeout_trace_operation(timeout, move || vm.trace_tx_opcodes(&block, tx_index, cfg)).await
+    }
+
+    /// Outputs the opcode (EIP-3155) trace for each transaction in the block along with
+    /// the transaction's hash.
+    /// May need to re-execute blocks in order to rebuild the block's prestate, up to the amount
+    /// given by `reexec`.
+    /// Returns traces from oldest to newest transaction.
+    pub async fn trace_block_opcodes(
+        &self,
+        block: Block,
+        reexec: u32,
+        timeout: Duration,
+        cfg: OpcodeTracerConfig,
+    ) -> Result<Vec<(H256, OpcodeTraceResult)>, ChainError> {
+        let mut vm = self
+            .rebuild_parent_state(block.header.parent_hash, reexec)
+            .await?;
+        vm.rerun_block(&block, Some(0))?;
+        let vm = Arc::new(Mutex::new(vm));
+        let block = Arc::new(block);
+        let mut traces = vec![];
+        for index in 0..block.body.transactions.len() {
+            let block = block.clone();
+            let vm = vm.clone();
+            let tx_hash = block.as_ref().body.transactions[index].hash(&NativeCrypto);
+            let cfg = cfg.clone();
+            let result = timeout_trace_operation(timeout, move || {
+                vm.lock()
+                    .map_err(|_| EvmError::Custom("Unexpected Runtime Error".to_string()))?
+                    .trace_tx_opcodes(block.as_ref(), index, cfg)
+            })
+            .await?;
+            traces.push((tx_hash, result));
+        }
+        Ok(traces)
     }
 
     /// Rebuild the parent state for a block given its parent hash, returning an `Evm` instance with all changes cached

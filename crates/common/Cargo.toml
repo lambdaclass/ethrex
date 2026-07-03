@@ -5,6 +5,8 @@ edition.workspace = true
 authors.workspace = true
 documentation.workspace = true
 license.workspace = true
+description = "Core Ethereum data types and block validation for the ethrex Ethereum execution client"
+repository.workspace = true
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
@@ -27,7 +29,7 @@ hex.workspace = true
 hex-literal.workspace = true
 lazy_static.workspace = true
 lru.workspace = true
-rayon.workspace = true
+rayon = { workspace = true, optional = true }
 rkyv.workspace = true
 rustc-hash.workspace = true
 indexmap.workspace = true
@@ -42,15 +44,19 @@ libssz-merkle = { workspace = true }
 libssz-derive = { workspace = true }
 
 [features]
-default = ["secp256k1"]
-c-kzg = ["ethrex-crypto/c-kzg"]
-secp256k1 = ["dep:secp256k1", "ethrex-crypto/secp256k1"]
-eip-8025 = []
+default = ["secp256k1", "rayon"]            
+c-kzg = ["ethrex-crypto/c-kzg"]         
+rayon = ["dep:rayon"]                                                                                                                                                                       
+secp256k1 = ["dep:secp256k1", "ethrex-crypto/secp256k1", "rayon"]                                                                                                                           
+eip-8025 = ["ethrex-trie/eip-8025"]
 
 risc0 = ["ethrex-crypto/risc0"]
 sp1 = []
 zisk = []
-openvm = ["ethrex-crypto/openvm"]
+# ethrex-crypto has no openvm-specific code anymore (the openvm-kzg backend
+# lives in ethrex-guest-program's OpenVm provider), so this is an empty stub
+# like `sp1`/`zisk` above, kept for the zkVM feature-propagation chain.
+openvm = []
 
 [dev-dependencies]
 k256.workspace = true

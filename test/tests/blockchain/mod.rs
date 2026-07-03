@@ -1,3 +1,11 @@
+mod bal_hash_parallel_skip;
 mod batch_tests;
+mod eip7702_revert_authority_tests;
+mod eip7702_zero_transfer_tests;
+mod l1_tx_type_tests;
+mod logs_bloom_tests;
 mod mempool_tests;
+mod payload_tests;
 mod smoke_tests;
+mod storage_sharding_tests;
+mod wrong_chain_id_tests;

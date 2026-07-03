@@ -4,6 +4,7 @@ use ethrex_blockchain::{
     constants::TX_GAS_COST,
     payload::{PayloadBuildContext, PayloadBuildResult, TransactionQueue, apply_plain_transaction},
 };
+use ethrex_common::NativeCrypto;
 use ethrex_common::{
     U256,
     types::{Block, EIP1559_DEFAULT_SERIALIZED_LENGTH, SAFE_BYTES_PER_BLOB, Transaction, TxKind},
@@ -20,6 +21,7 @@ use ethrex_metrics::{
 };
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_storage::Store;
+use ethrex_vm::check_2d_gas_allowance;
 use std::sync::Arc;
 use std::{collections::HashMap, ops::Div};
 use tokio::time::Instant;
@@ -110,6 +112,14 @@ pub async fn fill_transactions(
     let chain_config = store.get_chain_config();
     let chain_id = chain_config.chain_id;
 
+    // EIP-8037 (Amsterdam+): the tx inclusion check enforces a 2D budget per
+    // tx so a transaction's worst-case contribution in either dimension fits
+    // in the remaining block budget. Gate on the block's timestamp and apply
+    // in the inclusion loop below; the L2 builder uses
+    // `configured_block_gas_limit` (possibly tighter than
+    // `payload.header.gas_limit`) as the limit, keeping L2 tighter than L1.
+    let is_amsterdam = chain_config.is_amsterdam_activated(context.payload.header.timestamp);
+
     debug!("Fetching transactions from mempool");
     // Fetch mempool transactions
     let latest_block_number = store.get_latest_block_number().await?;
@@ -144,7 +154,10 @@ pub async fn fill_transactions(
 
         // Check if we have enough gas to run the transaction
         if context.remaining_gas < head_tx.tx.gas_limit() {
-            debug!("Skipping transaction: {}, no gas left", head_tx.tx.hash());
+            debug!(
+                "Skipping transaction: {}, no gas left",
+                head_tx.tx.hash(&NativeCrypto)
+            );
             // We don't have enough gas left for the transaction, so we skip all txs from this account
             txs.pop();
             continue;
@@ -152,7 +165,10 @@ pub async fn fill_transactions(
 
         // Check if we have enough gas to run the transaction within the configured block_gas_limit
         if context.gas_used() + head_tx.tx.gas_limit() >= configured_block_gas_limit {
-            debug!("Skipping transaction: {}, no gas left", head_tx.tx.hash());
+            debug!(
+                "Skipping transaction: {}, no gas left",
+                head_tx.tx.hash(&NativeCrypto)
+            );
             // We don't have enough gas left for the transaction, so we skip all txs from this account
             txs.pop();
             continue;
@@ -184,7 +200,7 @@ pub async fn fill_transactions(
         }
 
         // TODO: maybe fetch hash too when filtering mempool so we don't have to compute it here (we can do this in the same refactor as adding timestamp)
-        let tx_hash = head_tx.tx.hash();
+        let tx_hash = head_tx.tx.hash(&NativeCrypto);
 
         // Check whether the tx is replay-protected
         if head_tx.tx.protected() && !chain_config.is_eip155_activated(context.block_number()) {
@@ -209,10 +225,39 @@ pub async fn fill_transactions(
             continue;
         }
 
+        // EIP-8037 (Amsterdam+, PR #2703): per-tx 2D inclusion check against
+        // running block totals, using the L2-configured block gas limit
+        // (which may be tighter than the header's). Must run BEFORE we touch
+        // the BAL recorder so a rejected tx doesn't leave a sender/recipient
+        // touch in the BAL.
+        if is_amsterdam
+            && let Err(e) = check_2d_gas_allowance(
+                &head_tx.tx,
+                context.block_regular_gas_used,
+                context.block_state_gas_used,
+                configured_block_gas_limit,
+            )
+        {
+            debug!("Skipping tx {tx_hash:#x}: fails 2D inclusion check: {e}");
+            txs.pop();
+            continue;
+        }
+
         // Set BAL index for this transaction (1-indexed per EIP-7928)
-        #[allow(clippy::cast_possible_truncation, clippy::as_conversions)]
-        let tx_index = (context.payload.body.transactions.len() + 1) as u16;
+        let tx_index =
+            u32::try_from(context.payload.body.transactions.len() + 1).unwrap_or(u32::MAX);
         context.vm.set_bal_index(tx_index);
+
+        // EIP-7928: tx-level BAL checkpoint before any touches. Taken AFTER
+        // set_bal_index (which flushes the previous committed tx's net-zero
+        // filter) but BEFORE this tx's sender/recipient touches, so a rejected
+        // tx leaves no trace in the BAL. Matches the L1 builder pattern.
+        let bal_checkpoint = context
+            .vm
+            .db
+            .bal_recorder
+            .as_ref()
+            .map(|r| r.tx_checkpoint());
 
         // Record tx sender and recipient for BAL
         if let Some(recorder) = context.vm.db.bal_recorder_mut() {
@@ -222,15 +267,28 @@ pub async fn fill_transactions(
             }
         }
 
-        // Execute tx
+        // Execute tx. Snapshot every PayloadBuildContext counter that
+        // `apply_plain_transaction` mutates so the invalid-L2-message rollback
+        // below can fully undo a tx's effect. Amsterdam's 2D accounting adds
+        // `block_regular_gas_used` / `block_state_gas_used` to the set that
+        // drive `gas_used()` and the final header `gas_used`.
         let previous_remaining_gas = context.remaining_gas;
         let previous_block_value = context.block_value;
         let previous_cumulative_gas_spent = context.cumulative_gas_spent;
+        let previous_block_regular_gas_used = context.block_regular_gas_used;
+        let previous_block_state_gas_used = context.block_state_gas_used;
         let receipt = match apply_plain_transaction(&head_tx, context) {
             Ok(receipt) => receipt,
             Err(e) => {
                 debug!("Failed to execute transaction: {}, {e}", tx_hash);
                 metrics!(METRICS_TX.inc_tx_errors(e.to_metric()));
+                // Restore BAL recorder so the rejected tx contributes nothing
+                // to the block access list.
+                if let (Some(recorder), Some(checkpoint)) =
+                    (context.vm.db.bal_recorder_mut(), bal_checkpoint)
+                {
+                    recorder.tx_restore(checkpoint);
+                }
                 // Ignore following txs from sender
                 txs.pop();
                 continue;
@@ -246,6 +304,18 @@ pub async fn fill_transactions(
                 context.remaining_gas = previous_remaining_gas;
                 context.block_value = previous_block_value;
                 context.cumulative_gas_spent = previous_cumulative_gas_spent;
+                // Amsterdam 2D accounting: restore the per-dimension counters
+                // too. Without this, phantom gas from the rejected tx stays in
+                // the payload context and skews subsequent inclusion decisions
+                // plus the final header `gas_used`.
+                context.block_regular_gas_used = previous_block_regular_gas_used;
+                context.block_state_gas_used = previous_block_state_gas_used;
+                // Roll back BAL touches from the aborted tx.
+                if let (Some(recorder), Some(checkpoint)) =
+                    (context.vm.db.bal_recorder_mut(), bal_checkpoint)
+                {
+                    recorder.tx_restore(checkpoint);
+                }
                 found_invalid_message = true;
                 break;
             }
@@ -266,7 +336,7 @@ pub async fn fill_transactions(
 
         txs.shift()?;
         // Pull transaction from the mempool
-        blockchain.remove_transaction_from_pool(&head_tx.tx.hash())?;
+        blockchain.remove_transaction_from_pool(&head_tx.tx.hash(&NativeCrypto))?;
 
         // Add transaction to block
         context.payload.body.transactions.push(tx);
@@ -294,7 +364,7 @@ fn fetch_mempool_transactions(
 ) -> Result<TransactionQueue, BlockProducerError> {
     let (plain_txs, mut blob_txs) = blockchain.fetch_mempool_transactions(context)?;
     while let Some(blob_tx) = blob_txs.peek() {
-        let tx_hash = blob_tx.hash();
+        let tx_hash = blob_tx.hash(&NativeCrypto);
         blockchain.remove_transaction_from_pool(&tx_hash)?;
         blob_txs.pop();
     }

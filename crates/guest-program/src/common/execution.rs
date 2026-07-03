@@ -4,8 +4,8 @@ use ethrex_common::types::block_access_list::BlockAccessList;
 use ethrex_common::types::block_execution_witness::{ExecutionWitness, GuestProgramState};
 use ethrex_common::types::{Block, Receipt, validate_block_body};
 use ethrex_common::{
-    H256, U256, validate_block_pre_execution, validate_gas_used, validate_receipts_root,
-    validate_requests_hash,
+    H256, U256, validate_block_access_list_hash, validate_block_pre_execution, validate_gas_used,
+    validate_receipts_root_and_logs_bloom, validate_requests_hash,
 };
 use ethrex_crypto::Crypto;
 use ethrex_vm::{Evm, GuestProgramStateWrapper, VmDatabase};
@@ -166,8 +166,8 @@ where
             validate_gas_used(block_gas_used, &block.header).map_err(ExecutionError::GasValidation)
         })?;
 
-        report_cycles("validate_receipts_root", || {
-            validate_receipts_root(&block.header, &receipts, crypto.as_ref())
+        report_cycles("validate_receipts_root_and_logs_bloom", || {
+            validate_receipts_root_and_logs_bloom(&block.header, &receipts, crypto.as_ref())
                 .map_err(ExecutionError::ReceiptsRootValidation)
         })?;
 
@@ -175,6 +175,19 @@ where
             validate_requests_hash(&block.header, &chain_config, &result.requests)
                 .map_err(ExecutionError::RequestsRootValidation)
         })?;
+
+        if let Some(bal) = &bal {
+            report_cycles("validate_block_access_list_hash", || {
+                validate_block_access_list_hash(
+                    &block.header,
+                    &chain_config,
+                    bal,
+                    block.body.transactions.len(),
+                    crypto.as_ref(),
+                )
+                .map_err(ExecutionError::BlockValidation)
+            })?;
+        }
 
         acc_receipts.push(receipts);
         acc_burned_fees.push(block_burned_fees);

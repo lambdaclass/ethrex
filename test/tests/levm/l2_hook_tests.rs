@@ -1,21 +1,19 @@
 //! Tests for L2 Hook: fee token storage rollback, nonatomic finalization regression,
 //! and privileged transaction handling.
 
+use super::test_db::TestDatabase;
 use bytes::Bytes;
 use ethrex_common::{
     Address, H256, U256,
-    constants::EMPTY_TRIE_HASH,
     types::{
-        Account, AccountState, ChainConfig, Code, CodeMetadata, EIP1559Transaction, Fork,
-        PrivilegedL2Transaction, Transaction, TxKind,
+        Account, Code, EIP1559Transaction, Fork, PrivilegedL2Transaction, Transaction, TxKind,
         fee_config::{FeeConfig, OperatorFeeConfig},
     },
 };
 use ethrex_crypto::NativeCrypto;
 use ethrex_levm::{
-    db::{Database, gen_db::GeneralizedDatabase},
+    db::gen_db::GeneralizedDatabase,
     environment::{EVMConfig, Environment},
-    errors::DatabaseError,
     hooks::l2_hook::{
         COMMON_BRIDGE_L2_ADDRESS, FEE_TOKEN_RATIO_ADDRESS, FEE_TOKEN_REGISTRY_ADDRESS,
     },
@@ -24,71 +22,6 @@ use ethrex_levm::{
 };
 use rustc_hash::FxHashMap;
 use std::sync::Arc;
-
-// ==================== Test Database ====================
-
-struct TestDatabase {
-    accounts: FxHashMap<Address, Account>,
-}
-
-impl TestDatabase {
-    fn new() -> Self {
-        Self {
-            accounts: FxHashMap::default(),
-        }
-    }
-}
-
-impl Database for TestDatabase {
-    fn get_account_state(&self, address: Address) -> Result<AccountState, DatabaseError> {
-        Ok(self
-            .accounts
-            .get(&address)
-            .map(|acc| AccountState {
-                nonce: acc.info.nonce,
-                balance: acc.info.balance,
-                storage_root: *EMPTY_TRIE_HASH,
-                code_hash: acc.info.code_hash,
-            })
-            .unwrap_or_default())
-    }
-
-    fn get_storage_value(&self, address: Address, key: H256) -> Result<U256, DatabaseError> {
-        Ok(self
-            .accounts
-            .get(&address)
-            .and_then(|acc| acc.storage.get(&key).copied())
-            .unwrap_or_default())
-    }
-
-    fn get_block_hash(&self, _block_number: u64) -> Result<H256, DatabaseError> {
-        Ok(H256::zero())
-    }
-
-    fn get_chain_config(&self) -> Result<ChainConfig, DatabaseError> {
-        Ok(ChainConfig::default())
-    }
-
-    fn get_account_code(&self, code_hash: H256) -> Result<Code, DatabaseError> {
-        for acc in self.accounts.values() {
-            if acc.info.code_hash == code_hash {
-                return Ok(acc.code.clone());
-            }
-        }
-        Ok(Code::default())
-    }
-
-    fn get_code_metadata(&self, code_hash: H256) -> Result<CodeMetadata, DatabaseError> {
-        for acc in self.accounts.values() {
-            if acc.info.code_hash == code_hash {
-                return Ok(CodeMetadata {
-                    length: acc.code.bytecode.len() as u64,
-                });
-            }
-        }
-        Ok(CodeMetadata { length: 0 })
-    }
-}
 
 // ==================== Constants ====================
 
@@ -305,6 +238,7 @@ fn fee_token_storage_rolled_back_on_validation_failure() {
         is_privileged: false,
         fee_token: Some(fee_token_addr),
         disable_balance_check: false,
+        is_system_call: false,
     };
 
     let fee_config = FeeConfig {
@@ -513,6 +447,7 @@ fn fee_token_revert_during_finalize_triggers_rollback() {
         is_privileged: false,
         fee_token: Some(fee_token_addr),
         disable_balance_check: false,
+        is_system_call: false,
     };
 
     let fee_config = FeeConfig {
@@ -621,6 +556,7 @@ fn privileged_tx_intrinsic_gas_failure_preserves_sender_balance() {
         is_privileged: true,
         fee_token: None,
         disable_balance_check: false,
+        is_system_call: false,
     };
 
     let tx = Transaction::PrivilegedL2Transaction(PrivilegedL2Transaction {

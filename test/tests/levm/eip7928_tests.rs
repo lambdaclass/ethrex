@@ -10,6 +10,7 @@ use ethrex_common::types::block_access_list::{
     AccountChanges, BalanceChange, BlockAccessList, BlockAccessListRecorder, CodeChange,
     NonceChange, SlotChange, StorageChange,
 };
+use ethrex_crypto::NativeCrypto;
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
 
 // Test addresses (matching those in block_access_list.rs for RLP compatibility)
@@ -38,7 +39,7 @@ const CONTRACT_ADDR: H160 = H160([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
 fn test_empty_bal_hash() {
     // Empty BAL should have the well-known empty hash
     let bal = BlockAccessList::new();
-    let hash = bal.compute_hash();
+    let hash = bal.compute_hash(&NativeCrypto);
 
     // The empty BAL hash is keccak256(RLP([])) = 0x1dcc4de8dec75d7aab85b567b6ccd41ad312451b948a7413f0a142fd40d49347
     let expected = ethrex_common::H256::from_slice(
@@ -63,7 +64,10 @@ fn test_bal_hash_deterministic() {
     let bal1 = recorder1.build();
     let bal2 = recorder2.build();
 
-    assert_eq!(bal1.compute_hash(), bal2.compute_hash());
+    assert_eq!(
+        bal1.compute_hash(&NativeCrypto),
+        bal2.compute_hash(&NativeCrypto)
+    );
 }
 
 #[test]
@@ -82,7 +86,10 @@ fn test_bal_hash_changes_with_content() {
     let bal1 = recorder1.build();
     let bal2 = recorder2.build();
 
-    assert_ne!(bal1.compute_hash(), bal2.compute_hash());
+    assert_ne!(
+        bal1.compute_hash(&NativeCrypto),
+        bal2.compute_hash(&NativeCrypto)
+    );
 }
 
 #[test]
@@ -104,7 +111,10 @@ fn test_bal_hash_sorted_encoding() {
     let bal1 = recorder1.build();
     let bal2 = recorder2.build();
 
-    assert_eq!(bal1.compute_hash(), bal2.compute_hash());
+    assert_eq!(
+        bal1.compute_hash(&NativeCrypto),
+        bal2.compute_hash(&NativeCrypto)
+    );
 }
 
 // ==================== Net-Zero Storage Filtering Tests ====================
@@ -381,7 +391,7 @@ fn test_block_access_index_semantics() {
     assert_eq!(alice.storage_changes.len(), 3);
 
     // Verify indices are correctly assigned
-    let indices: Vec<u16> = alice
+    let indices: Vec<u32> = alice
         .storage_changes
         .iter()
         .flat_map(|s| s.slot_changes.iter().map(|c| c.block_access_index))
@@ -411,7 +421,10 @@ fn test_bal_rlp_roundtrip() {
     let decoded = BlockAccessList::decode(&encoded).expect("Failed to decode BAL");
 
     assert_eq!(original, decoded);
-    assert_eq!(original.compute_hash(), decoded.compute_hash());
+    assert_eq!(
+        original.compute_hash(&NativeCrypto),
+        decoded.compute_hash(&NativeCrypto)
+    );
 }
 
 #[test]
@@ -454,6 +467,35 @@ fn test_code_change_rlp_roundtrip() {
     let decoded = CodeChange::decode(&encoded).expect("Failed to decode CodeChange");
 
     assert_eq!(change, decoded);
+}
+
+/// EIP-7928 widened `BlockAccessIndex` from `uint16` to `uint32`. Round-trip
+/// each change variant at an index above `u16::MAX` to guard against an
+/// accidental revert to the old narrower type (would silently truncate
+/// indices for blocks with > 65535 slots referenced).
+#[test]
+fn test_change_variants_rlp_roundtrip_index_above_u16_max() {
+    use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
+    let idx: u32 = 70_000;
+    assert!(idx > u32::from(u16::MAX));
+
+    let storage = StorageChange::new(idx, U256::from(0xdead_beef_u64));
+    assert_eq!(
+        StorageChange::decode(&storage.encode_to_vec()).unwrap(),
+        storage
+    );
+
+    let balance = BalanceChange::new(idx, U256::from(1u64) << 128);
+    assert_eq!(
+        BalanceChange::decode(&balance.encode_to_vec()).unwrap(),
+        balance
+    );
+
+    let nonce = NonceChange::new(idx, u64::MAX);
+    assert_eq!(NonceChange::decode(&nonce.encode_to_vec()).unwrap(), nonce);
+
+    let code = CodeChange::new(idx, bytes::Bytes::from_static(&[0xde, 0xad]));
+    assert_eq!(CodeChange::decode(&code.encode_to_vec()).unwrap(), code);
 }
 
 // ==================== RLP Encoding Hex Validation Tests ====================
@@ -1147,4 +1189,48 @@ fn test_build_filters_reads_that_exist_in_writes() {
         "no slot should appear in both storage_changes and storage_reads"
     );
     bal.validate_ordering().unwrap();
+}
+
+// ==================== EIP-7928 u32 widening round-trip tests ====================
+// These tests prove the index type is truly u32 by using a value > u16::MAX (65535).
+
+const WIDE_IDX: u32 = u32::MAX / 2; // 2_147_483_647 — far beyond u16::MAX
+
+#[test]
+fn test_storage_change_u32_index_rlp_roundtrip() {
+    let original = StorageChange::new(WIDE_IDX, U256::from(0xdeadbeef_u64));
+    let encoded = original.encode_to_vec();
+    let decoded = StorageChange::decode(&encoded).expect("decode StorageChange");
+    assert_eq!(original, decoded);
+    assert_eq!(decoded.block_access_index, WIDE_IDX);
+}
+
+#[test]
+fn test_balance_change_u32_index_rlp_roundtrip() {
+    let original = BalanceChange::new(WIDE_IDX, U256::from(999_999_u64));
+    let encoded = original.encode_to_vec();
+    let decoded = BalanceChange::decode(&encoded).expect("decode BalanceChange");
+    assert_eq!(original, decoded);
+    assert_eq!(decoded.block_access_index, WIDE_IDX);
+}
+
+#[test]
+fn test_nonce_change_u32_index_rlp_roundtrip() {
+    let original = NonceChange::new(WIDE_IDX, 42);
+    let encoded = original.encode_to_vec();
+    let decoded = NonceChange::decode(&encoded).expect("decode NonceChange");
+    assert_eq!(original, decoded);
+    assert_eq!(decoded.block_access_index, WIDE_IDX);
+}
+
+#[test]
+fn test_code_change_u32_index_rlp_roundtrip() {
+    let original = CodeChange::new(
+        WIDE_IDX,
+        bytes::Bytes::from_static(&[0x60, 0x00, 0x60, 0x00]),
+    );
+    let encoded = original.encode_to_vec();
+    let decoded = CodeChange::decode(&encoded).expect("decode CodeChange");
+    assert_eq!(original, decoded);
+    assert_eq!(decoded.block_access_index, WIDE_IDX);
 }

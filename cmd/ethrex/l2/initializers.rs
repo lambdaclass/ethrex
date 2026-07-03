@@ -2,10 +2,11 @@ use crate::cli::Options as L1Options;
 use crate::initializers::{
     self, get_authrpc_socket_addr, get_http_socket_addr, get_local_node_record, get_local_p2p_node,
     get_network, get_signer, get_ws_socket_addr, init_blockchain, init_network, init_store,
+    init_store_with_config,
 };
 use crate::l2::{L2Options, SequencerOptions};
 use crate::utils::{
-    NodeConfigFile, get_client_version, get_client_version_string, init_datadir,
+    NodeConfigFile, get_channel, get_client_version, get_client_version_string, init_datadir,
     read_jwtsecret_file, store_node_config_file,
 };
 use ethrex_blockchain::{Blockchain, BlockchainType, L2Config};
@@ -23,7 +24,7 @@ use ethrex_p2p::{
     types::{Node, NodeRecord},
 };
 use ethrex_rpc::{SubscriptionManager, WebSocketConfig};
-use ethrex_storage::Store;
+use ethrex_storage::{Store, StoreConfig};
 use ethrex_storage_rollup::{EngineTypeRollup, StoreRollup};
 use eyre::OptionExt;
 use secp256k1::SecretKey;
@@ -55,6 +56,8 @@ fn init_rpc_api(
 ) {
     init_datadir(&opts.datadir);
 
+    let allowed_namespaces: std::collections::HashSet<_> = opts.http_api.iter().copied().collect();
+    let ethrex_namespace_allowed = l2_opts.http_api_ethrex;
     let rpc_api = ethrex_l2_rpc::start_api(
         get_http_socket_addr(opts),
         ws,
@@ -73,6 +76,8 @@ fn init_rpc_api(
         log_filter_handler,
         l2_gas_limit,
         l2_opts.sponsored_gas_limit,
+        allowed_namespaces,
+        ethrex_namespace_allowed,
     );
 
     tracker.spawn(rpc_api);
@@ -115,7 +120,7 @@ fn init_metrics(opts: &L1Options, network: &str, tracker: TaskTracker) {
     ethrex_metrics::node::MetricsNode::init(
         env!("CARGO_PKG_VERSION"),
         env!("VERGEN_GIT_SHA"),
-        env!("VERGEN_GIT_BRANCH"),
+        &get_channel(),
         env!("VERGEN_RUSTC_SEMVER"),
         env!("VERGEN_RUSTC_HOST_TRIPLE"),
         network,
@@ -196,7 +201,11 @@ pub async fn init_l2(
     let network = get_network(&opts.node_opts);
 
     let genesis = network.get_genesis()?;
-    let store = init_store(&datadir, genesis.clone()).await?;
+    let store_config = StoreConfig {
+        rocksdb_block_cache_size: opts.node_opts.rocksdb_block_cache_size,
+        ..StoreConfig::default()
+    };
+    let store = init_store_with_config(&datadir, genesis.clone(), store_config).await?;
     let rollup_store = init_rollup_store(&rollup_store_dir).await;
 
     let operator_fee_config = get_operator_fee_config(&opts.sequencer_opts)?;
@@ -224,6 +233,9 @@ pub async fn init_l2(
         max_blobs_per_block: None, // L2 doesn't support blob transactions
         precompute_witnesses: opts.node_opts.precompute_witnesses,
         precompile_cache_enabled: true,
+        bal_parallel_exec_enabled: true,
+        bal_prefetch_enabled: true,
+        bal_parallel_trie_enabled: true,
     };
 
     let blockchain = init_blockchain(store.clone(), blockchain_opts.clone());
@@ -246,7 +258,11 @@ pub async fn init_l2(
         if !opts.sequencer_opts.based {
             blockchain.set_synced();
         }
-        let peer_table = PeerTableServer::spawn(opts.node_opts.target_peers, store.clone());
+        let peer_table = PeerTableServer::spawn(
+            local_p2p_node.node_id(),
+            opts.node_opts.target_peers,
+            store.clone(),
+        );
         let p2p_context = P2PContext::new(
             local_p2p_node.clone(),
             network_config,
@@ -424,6 +440,9 @@ pub async fn init_native_rollup_l2(
         max_blobs_per_block: None,
         precompute_witnesses: opts.node_opts.precompute_witnesses,
         precompile_cache_enabled: true,
+        bal_parallel_exec_enabled: true,
+        bal_prefetch_enabled: true,
+        bal_parallel_trie_enabled: true,
     };
 
     let blockchain = init_blockchain(store.clone(), blockchain_opts);

@@ -699,7 +699,7 @@ mod tests {
         let bal = BlockAccessList::from_accounts(vec![AccountChanges::new(
             ethrex_common::Address::from([0xABu8; 20]),
         )]);
-        let bal_hash = bal.compute_hash();
+        let bal_hash = bal.compute_hash(&ethrex_crypto::NativeCrypto);
 
         // Build an Amsterdam block header: same as the Prague test but with
         // block_access_list_hash set to Some(bal_hash).

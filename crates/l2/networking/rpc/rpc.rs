@@ -15,11 +15,13 @@ use axum::{Json, Router, http::StatusCode, routing::post};
 use bytes::Bytes;
 use ethrex_blockchain::Blockchain;
 use ethrex_common::types::Transaction;
+use ethrex_crypto::NativeCrypto;
 use ethrex_p2p::peer_handler::PeerHandler;
 use ethrex_p2p::sync_manager::SyncManager;
 use ethrex_p2p::types::Node;
 use ethrex_p2p::types::NodeRecord;
 use ethrex_rpc::RpcHandler as L1RpcHandler;
+use ethrex_rpc::RpcNamespace as L1RpcNamespace;
 use ethrex_rpc::debug::execution_witness::ExecutionWitnessRequest;
 use ethrex_rpc::{
     ClientVersion, GasTipEstimator, NodeData, RpcRequestWrapper, WebSocketConfig,
@@ -29,7 +31,7 @@ use ethrex_rpc::{
 use ethrex_storage::Store;
 use serde_json::Value;
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     future::IntoFuture,
     net::SocketAddr,
     sync::{Arc, Mutex},
@@ -52,6 +54,8 @@ pub struct RpcApiContext {
     pub sponsor_pk: SecretKey,
     pub rollup_store: StoreRollup,
     pub sponsored_gas_limit: u64,
+    /// Whether L2-specific `ethrex_*` methods are reachable over HTTP/WS.
+    pub ethrex_namespace_allowed: bool,
 }
 
 pub trait RpcHandler: Sized {
@@ -92,6 +96,8 @@ pub async fn start_api(
     log_filter_handler: Option<reload::Handle<EnvFilter, Registry>>,
     l2_gas_limit: u64,
     sponsored_gas_limit: u64,
+    allowed_namespaces: HashSet<L1RpcNamespace>,
+    ethrex_namespace_allowed: bool,
 ) -> Result<(), RpcErr> {
     // TODO: Refactor how filters are handled,
     // filters are used by the filters endpoints (eth_newFilter, eth_getFilterChanges, ...etc)
@@ -122,11 +128,13 @@ pub async fn start_api(
             gas_ceil: l2_gas_limit,
             block_worker_channel,
             ws: ws.clone(),
+            allowed_namespaces: Arc::new(allowed_namespaces),
         },
         valid_delegation_addresses,
         sponsor_pk,
         rollup_store,
         sponsored_gas_limit,
+        ethrex_namespace_allowed,
     };
 
     // Periodically clean up the active filters for the filters endpoints.
@@ -226,10 +234,31 @@ async fn handle_http_request(
 /// Handle requests that can come from either clients or other users
 pub async fn map_http_requests(req: &RpcRequest, context: RpcApiContext) -> Result<Value, RpcErr> {
     match resolve_namespace(&req.method) {
-        Ok(RpcNamespace::L1RpcNamespace(ethrex_rpc::RpcNamespace::Eth)) => {
+        // `Eth` is handled here (not delegated to L1) so that L2-specific
+        // overrides in `map_eth_requests` see the full L2 context. Because we
+        // bypass `ethrex_rpc::map_http_requests`, the `--http.api` allowlist
+        // guard must be enforced explicitly here. Any future namespace that
+        // gains a dedicated arm before the `_` fallthrough must do the same.
+        Ok(RpcNamespace::L1RpcNamespace(L1RpcNamespace::Eth)) => {
+            if !context
+                .l1_ctx
+                .allowed_namespaces
+                .contains(&L1RpcNamespace::Eth)
+            {
+                return Err(RpcErr::L1RpcErr(ethrex_rpc::RpcErr::MethodNotFound(
+                    req.method.clone(),
+                )));
+            }
             map_eth_requests(req, context).await
         }
-        Ok(RpcNamespace::EthrexL2) => map_l2_requests(req, context).await,
+        Ok(RpcNamespace::EthrexL2) => {
+            if !context.ethrex_namespace_allowed {
+                return Err(RpcErr::L1RpcErr(ethrex_rpc::RpcErr::MethodNotFound(
+                    req.method.clone(),
+                )));
+            }
+            map_l2_requests(req, context).await
+        }
         _ => ethrex_rpc::map_http_requests(req, context.l1_ctx)
             .await
             .map_err(RpcErr::L1RpcErr),
@@ -243,7 +272,7 @@ pub async fn map_eth_requests(req: &RpcRequest, context: RpcApiContext) -> Resul
             if let SendRawTransactionRequest::EIP4844(wrapped_blob_tx) = tx {
                 debug!(
                     "EIP-4844 transaction are not supported in the L2: {:#x}",
-                    Transaction::EIP4844Transaction(wrapped_blob_tx.tx).hash()
+                    Transaction::EIP4844Transaction(wrapped_blob_tx.tx).hash(&NativeCrypto)
                 );
                 return Err(RpcErr::InvalidEthrexL2Message(
                     "EIP-4844 transactions are not supported in the L2".to_string(),
@@ -280,6 +309,49 @@ pub async fn map_l2_requests(req: &RpcRequest, context: RpcApiContext) -> Result
         "ethrex_getNativeWithdrawalProof" => GetNativeWithdrawalProof::call(req, context).await,
         unknown_ethrex_l2_method => {
             Err(ethrex_rpc::RpcErr::MethodNotFound(unknown_ethrex_l2_method.to_owned()).into())
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ethrex_storage::{EngineType, Store};
+    use ethrex_storage_rollup::EngineTypeRollup;
+
+    async fn test_context(ethrex_namespace_allowed: bool) -> RpcApiContext {
+        let storage =
+            Store::new("temp.db", EngineType::InMemory).expect("Failed to create test DB");
+        let l1_ctx = ethrex_rpc::test_utils::default_context_with_storage(storage).await;
+        let rollup_store = ethrex_storage_rollup::StoreRollup::new(
+            std::path::Path::new(""),
+            EngineTypeRollup::InMemory,
+        )
+        .expect("Failed to create rollup store");
+        RpcApiContext {
+            l1_ctx,
+            valid_delegation_addresses: vec![],
+            sponsor_pk: SecretKey::from_byte_array(&[0xab; 32]).unwrap(),
+            rollup_store,
+            sponsored_gas_limit: 0,
+            ethrex_namespace_allowed,
+        }
+    }
+
+    /// With `--http.api.ethrex=false`, L2-specific `ethrex_*` methods must be
+    /// rejected at the dispatcher with MethodNotFound and never reach handlers.
+    #[tokio::test]
+    async fn ethrex_namespace_blocked_when_disabled() {
+        let body = r#"{"jsonrpc":"2.0","method":"ethrex_batchNumber","params":[],"id":1}"#;
+        let request: RpcRequest = serde_json::from_str(body).unwrap();
+        let context = test_context(false).await;
+
+        let result = map_http_requests(&request, context).await;
+        match result {
+            Err(RpcErr::L1RpcErr(ethrex_rpc::RpcErr::MethodNotFound(method))) => {
+                assert_eq!(method, "ethrex_batchNumber");
+            }
+            other => panic!("expected MethodNotFound, got {other:?}"),
         }
     }
 }
