@@ -1,7 +1,7 @@
 pub mod db;
 mod tracing;
 
-use super::BlockExecutionResult;
+use super::{BlockExecutionResult, compute_burned_fees};
 use crate::system_contracts::{
     BEACON_ROOTS_ADDRESS, CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS, HISTORY_STORAGE_ADDRESS,
     PRAGUE_SYSTEM_CONTRACTS, SYSTEM_ADDRESS, WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS,
@@ -40,7 +40,7 @@ use ethrex_levm::errors::{InternalError, TxValidationError};
 #[cfg(feature = "perf_opcode_timings")]
 use ethrex_levm::timings::{OPCODE_TIMINGS, PRECOMPILES_TIMINGS};
 use ethrex_levm::tracing::LevmCallTracer;
-use ethrex_levm::utils::{calculate_blob_gas_cost, get_base_fee_per_blob_gas};
+use ethrex_levm::utils::get_base_fee_per_blob_gas;
 use ethrex_levm::vm::VMType;
 use ethrex_levm::{
     Environment,
@@ -121,17 +121,6 @@ impl LEVM {
         // EIP-8037 (Amsterdam+): track regular and state gas separately for block-level max()
         let mut block_regular_gas_used = 0_u64;
         let mut block_state_gas_used = 0_u64;
-        // EIP-8079 (LStar+): accumulate burned fees across transactions
-        let mut total_burned_fees: u64 = 0;
-        // Pre-compute EVMConfig once for blob fee calculation (LStar path only)
-        let evm_config_for_burn = if is_lstar {
-            Some(EVMConfig::new_from_chain_config(
-                &chain_config,
-                &block.header,
-            ))
-        } else {
-            None
-        };
         let transactions_with_sender =
             block
                 .body
@@ -211,26 +200,6 @@ impl LEVM {
                 block_gas_used = block_gas_used.saturating_add(report.gas_used);
             }
 
-            // EIP-8079 (LStar+): per-tx burned fees accumulation.
-            // burned = base_fee_per_gas * gas_spent + blob_base_fee * blob_gas_used
-            // Intuition: base-fee portion is burned (coinbase only gets priority fee);
-            // entire blob base fee is burned (no blob priority component).
-            if let Some(evm_cfg) = &evm_config_for_burn {
-                let base_fee = block.header.base_fee_per_gas.unwrap_or_default();
-                // gas_spent is post-refund: what the user actually paid
-                let gas_burned: u64 = base_fee.saturating_mul(report.gas_spent);
-                // blob base fee is entirely burned (no priority-fee component for blobs)
-                let blob_burned: u64 = calculate_blob_gas_cost(
-                    &tx.blob_versioned_hashes(),
-                    block.header.excess_blob_gas,
-                    evm_cfg,
-                )
-                .map(|v| u64::try_from(v).unwrap_or(u64::MAX))
-                .unwrap_or(0);
-                total_burned_fees =
-                    total_burned_fees.saturating_add(gas_burned.saturating_add(blob_burned));
-            }
-
             let receipt = Receipt::new(
                 tx.tx_type(),
                 matches!(report.result, TxResult::Success),
@@ -290,7 +259,18 @@ impl LEVM {
                 requests,
                 block_gas_used,
                 burned_fees: if is_lstar {
-                    Some(total_burned_fees)
+                    let evm_cfg = EVMConfig::new_from_chain_config(&chain_config, &block.header);
+                    let blob_base_fee =
+                        get_base_fee_per_blob_gas(block.header.excess_blob_gas, &evm_cfg)
+                            .map(|v| u64::try_from(v).unwrap_or(u64::MAX))
+                            .unwrap_or(0);
+                    let blob_gas_used = block.header.blob_gas_used.unwrap_or(0);
+                    Some(compute_burned_fees(
+                        block.header.base_fee_per_gas.unwrap_or(0),
+                        block_gas_used,
+                        blob_base_fee,
+                        blob_gas_used,
+                    ))
                 } else {
                     None
                 },
@@ -312,6 +292,7 @@ impl LEVM {
     ) -> Result<(BlockExecutionResult, Option<BlockAccessList>), EvmError> {
         let chain_config = db.store.get_chain_config()?;
         let is_amsterdam = chain_config.is_amsterdam_activated(block.header.timestamp);
+        let is_lstar = chain_config.is_lstar_activated(block.header.timestamp);
 
         let transactions_with_sender =
             block
@@ -466,16 +447,29 @@ impl LEVM {
                     receipts,
                     requests,
                     block_gas_used,
-                    // burned_fees is computed on the sequential (block-production) path only;
-                    // the parallel BAL-validation path does not produce per-tx ExecutionReports.
-                    burned_fees: None,
+                    burned_fees: if is_lstar {
+                        let evm_cfg =
+                            EVMConfig::new_from_chain_config(&chain_config, &block.header);
+                        let blob_base_fee =
+                            get_base_fee_per_blob_gas(block.header.excess_blob_gas, &evm_cfg)
+                                .map(|v| u64::try_from(v).unwrap_or(u64::MAX))
+                                .unwrap_or(0);
+                        let blob_gas_used = block.header.blob_gas_used.unwrap_or(0);
+                        Some(compute_burned_fees(
+                            block.header.base_fee_per_gas.unwrap_or(0),
+                            block_gas_used,
+                            blob_base_fee,
+                            blob_gas_used,
+                        ))
+                    } else {
+                        None
+                    },
                 },
                 None,
             ));
         }
 
         // Sequential path (existing code, for block production and non-Amsterdam)
-        let is_lstar = chain_config.is_lstar_activated(block.header.timestamp);
         if is_amsterdam {
             db.enable_bal_recording();
             // Set index 0 for pre-execution phase (system contracts)
@@ -494,17 +488,6 @@ impl LEVM {
         // EIP-8037 (Amsterdam+): track regular and state gas separately for block-level max()
         let mut block_regular_gas_used = 0_u64;
         let mut block_state_gas_used = 0_u64;
-        // EIP-8079 (LStar+): accumulate burned fees across transactions
-        let mut total_burned_fees: u64 = 0;
-        // Pre-compute EVMConfig once for blob fee calculation (LStar path only)
-        let evm_config_for_burn = if is_lstar {
-            Some(EVMConfig::new_from_chain_config(
-                &chain_config,
-                &block.header,
-            ))
-        } else {
-            None
-        };
         // Starts at 2 to account for the two precompile calls done in `Self::prepare_block`.
         // The value itself can be safely changed.
         let mut tx_since_last_flush = 2;
@@ -583,22 +566,6 @@ impl LEVM {
                 block_gas_used = block_gas_used.saturating_add(report.gas_used);
             }
 
-            // EIP-8079 (LStar+): per-tx burned fees accumulation.
-            // burned = base_fee_per_gas * gas_spent + blob_base_fee * blob_gas_used
-            if let Some(evm_cfg) = &evm_config_for_burn {
-                let base_fee = block.header.base_fee_per_gas.unwrap_or_default();
-                let gas_burned: u64 = base_fee.saturating_mul(report.gas_spent);
-                let blob_burned: u64 = calculate_blob_gas_cost(
-                    &tx.blob_versioned_hashes(),
-                    block.header.excess_blob_gas,
-                    evm_cfg,
-                )
-                .map(|v| u64::try_from(v).unwrap_or(u64::MAX))
-                .unwrap_or(0);
-                total_burned_fees =
-                    total_burned_fees.saturating_add(gas_burned.saturating_add(blob_burned));
-            }
-
             let receipt = Receipt::new(
                 tx.tx_type(),
                 matches!(report.result, TxResult::Success),
@@ -671,7 +638,18 @@ impl LEVM {
                 requests,
                 block_gas_used,
                 burned_fees: if is_lstar {
-                    Some(total_burned_fees)
+                    let evm_cfg = EVMConfig::new_from_chain_config(&chain_config, &block.header);
+                    let blob_base_fee =
+                        get_base_fee_per_blob_gas(block.header.excess_blob_gas, &evm_cfg)
+                            .map(|v| u64::try_from(v).unwrap_or(u64::MAX))
+                            .unwrap_or(0);
+                    let blob_gas_used = block.header.blob_gas_used.unwrap_or(0);
+                    Some(compute_burned_fees(
+                        block.header.base_fee_per_gas.unwrap_or(0),
+                        block_gas_used,
+                        blob_base_fee,
+                        blob_gas_used,
+                    ))
                 } else {
                     None
                 },
@@ -3192,44 +3170,67 @@ mod burned_fees_tests {
     // ── tests ────────────────────────────────────────────────────────────────
 
     #[test]
-    fn test_burned_fees_at_lstar() {
+    fn test_burned_fees_block_aggregate() {
+        use std::sync::atomic::AtomicUsize;
+        use std::sync::mpsc;
+
         const BASE_FEE: u64 = 10;
-        const GAS_SPENT: u64 = 21_000; // simple ETH transfer, no refunds
+        // Simple ETH transfer: gas_used = gas_spent = 21_000 (no refunds).
+        // Amsterdam block_gas_used = max(regular=21_000, state=0) = 21_000.
+        // No blobs: blob_gas_used = 0, blob_base_fee = 0.
+        const BLOCK_GAS_USED: u64 = 21_000;
+        let expected = compute_burned_fees(BASE_FEE, BLOCK_GAS_USED, 0, 0);
+        // = 10 * 21_000 = 210_000
+        assert_eq!(expected, 210_000, "sanity check");
 
         let recipient = Address::from_low_u64_be(0xBEEF);
         let tx = signed_eth_transfer(recipient, 0, BASE_FEE);
         let block = make_block_with_tx(tx, BASE_FEE);
-        let mut db = make_gen_db(lstar_chain_config());
         let crypto = NativeCrypto;
 
-        let (result, _bal) = LEVM::execute_block(&block, &mut db, VMType::L1, &crypto, None)
+        // (a) execute_block path
+        let mut db1 = make_gen_db(lstar_chain_config());
+        let (result, _bal) = LEVM::execute_block(&block, &mut db1, VMType::L1, &crypto, None)
             .expect("execute_block succeeded");
-
-        // burned_fees = base_fee_per_gas * gas_spent + blob_base_fee * blob_gas_used
-        //             = 10 * 21_000 + 0 = 210_000
         assert_eq!(
             result.burned_fees,
-            Some(BASE_FEE * GAS_SPENT),
-            "LStar: burned_fees should be Some(base_fee * gas_spent)"
+            Some(expected),
+            "execute_block: burned_fees matches block-aggregate formula"
         );
-    }
 
-    #[test]
-    fn test_burned_fees_none_pre_lstar() {
-        const BASE_FEE: u64 = 10;
-
-        let recipient = Address::from_low_u64_be(0xBEEF);
-        let tx = signed_eth_transfer(recipient, 0, BASE_FEE);
-        let block = make_block_with_tx(tx, BASE_FEE);
-        let mut db = make_gen_db(amsterdam_chain_config());
-        let crypto = NativeCrypto;
-
-        let (result, _bal) = LEVM::execute_block(&block, &mut db, VMType::L1, &crypto, None)
-            .expect("execute_block succeeded");
-
+        // (b) execute_block_pipeline path (sequential: no BAL provided)
+        let mut db2 = make_gen_db(lstar_chain_config());
+        let (tx_sender, _rx) = mpsc::channel();
+        let queue_len = AtomicUsize::new(0);
+        let tx2 = signed_eth_transfer(recipient, 0, BASE_FEE);
+        let block2 = make_block_with_tx(tx2, BASE_FEE);
+        let (result_pipeline, _bal) = LEVM::execute_block_pipeline(
+            &block2,
+            &mut db2,
+            VMType::L1,
+            tx_sender,
+            &queue_len,
+            &crypto,
+            None, // no BAL → sequential path
+            None,
+        )
+        .expect("execute_block_pipeline succeeded");
         assert_eq!(
-            result.burned_fees, None,
-            "pre-LStar (Amsterdam-only): burned_fees must be None"
+            result_pipeline.burned_fees,
+            Some(expected),
+            "execute_block_pipeline: burned_fees must match execute_block (production/verification consistency)"
+        );
+
+        // (c) pre-LStar → None
+        let tx3 = signed_eth_transfer(recipient, 0, BASE_FEE);
+        let block3 = make_block_with_tx(tx3, BASE_FEE);
+        let mut db3 = make_gen_db(amsterdam_chain_config());
+        let (result_pre_lstar, _) =
+            LEVM::execute_block(&block3, &mut db3, VMType::L1, &crypto, None)
+                .expect("pre-LStar execute_block succeeded");
+        assert_eq!(
+            result_pre_lstar.burned_fees, None,
+            "pre-LStar: burned_fees must be None"
         );
     }
 }
