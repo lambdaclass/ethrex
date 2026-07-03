@@ -183,8 +183,10 @@ pub fn new_payload_request_to_block(
 
 /// Validate that the blob versioned hashes in the `NewPayloadRequest` match
 /// the blob commitments in the block's transactions.
-#[cfg(feature = "eip-8025")]
-fn validate_versioned_hashes(
+///
+/// Always compiled — called by both [`verify_stateless_block`] (guest-program)
+/// and the EXECUTE precompile path in `ethrex-blockchain`.
+pub fn validate_versioned_hashes(
     block: &ethrex_common::types::Block,
     req: &ethrex_common::types::stateless_ssz::NewPayloadRequest,
 ) -> Result<(), ExecutionError> {
@@ -206,15 +208,24 @@ fn validate_versioned_hashes(
 
     if tx_hashes != req_hashes {
         return Err(ExecutionError::Internal(
-            "versioned hashes mismatch between NewPayloadRequest and transactions".to_string(),
+            "versioned hashes mismatch".to_string(),
         ));
     }
 
     Ok(())
 }
 
-#[cfg(feature = "eip-8025")]
-fn validate_eip8025_execution(
+/// Core stateless block validation shared by the EXECUTE precompile
+/// (`ethrex-blockchain`) and the EIP-8025 zk-guest path.
+///
+/// Implements the `verify_stateless_new_payload` logic from execution-specs:
+/// reconstruct block → validate versioned hashes → execute statelessly →
+/// inject recomputed `burned_fees` → verify `block_hash`.
+///
+/// **Always compiled** — no `#[cfg(feature = "eip-8025")]` gate, so the
+/// always-compiled `verify_inner` in `ethrex-blockchain` can call it without
+/// pulling in the SSZ feature.
+pub fn verify_stateless_block(
     new_payload_request: &ethrex_common::types::stateless_ssz::NewPayloadRequest,
     execution_witness: ethrex_common::types::block_execution_witness::ExecutionWitness,
     crypto: Arc<dyn Crypto>,
@@ -232,8 +243,7 @@ fn validate_eip8025_execution(
     // Validate blob versioned hashes (does not touch block.hash())
     validate_versioned_hashes(&blocks[0], new_payload_request)?;
 
-    // Execute statelessly — reuse the common `execute_blocks` infrastructure.
-    // This is where burned_fees is recomputed from actual gas consumed.
+    // Execute statelessly — burned_fees is recomputed from actual gas consumed.
     let result = execute_blocks(
         &blocks,
         execution_witness,
@@ -266,6 +276,19 @@ fn validate_eip8025_execution(
     }
 
     Ok(())
+}
+
+/// Decode and validate a single EIP-8025 block (zk-guest entry point).
+///
+/// This is the `#[cfg(feature = "eip-8025")]`-gated wrapper that decodes the
+/// wire format and delegates all validation logic to [`verify_stateless_block`].
+#[cfg(feature = "eip-8025")]
+fn validate_eip8025_execution(
+    new_payload_request: &ethrex_common::types::stateless_ssz::NewPayloadRequest,
+    execution_witness: ethrex_common::types::block_execution_witness::ExecutionWitness,
+    crypto: Arc<dyn Crypto>,
+) -> Result<(), ExecutionError> {
+    verify_stateless_block(new_payload_request, execution_witness, crypto)
 }
 
 #[cfg(all(test, feature = "eip-8025"))]

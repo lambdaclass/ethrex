@@ -10,3 +10,4 @@ pub use input::{decode_eip8025, encode_eip8025};
 pub use output::ProgramOutput;
 pub use program::execution_program;
 pub use program::new_payload_request_to_block;
+pub use program::verify_stateless_block;
