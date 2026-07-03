@@ -442,16 +442,17 @@ pub fn validate_eip8025_canonical_execution(
         .new_payload_request
         .execution_payload
         .timestamp;
-    validate_canonical_chain_config(
-        &stateless_input.chain_config,
-        &chain_config,
-        block_timestamp,
-    )?;
-
     let block_number = stateless_input
         .new_payload_request
         .execution_payload
         .block_number;
+    validate_canonical_chain_config(
+        &stateless_input.chain_config,
+        &chain_config,
+        block_number,
+        block_timestamp,
+    )?;
+
     let rpc_witness = canonical_execution_witness_to_rpc(stateless_input.witness);
     // Decode headers once; reused by the chain-linkage check and `into_execution_witness`.
     let decoded_headers = ethrex_common::types::block_execution_witness::decode_witness_headers(
@@ -479,12 +480,13 @@ pub fn validate_eip8025_canonical_execution(
     )
 }
 
-/// Validate `chain_id` and `active_fork.blob_schedule` from the prover's
-/// `CanonicalChainConfig` against the verifier's `ChainConfig`.
+/// Validate `chain_id`, `active_fork.activation`, and `active_fork.blob_schedule`
+/// from the prover's `CanonicalChainConfig` against the verifier's `ChainConfig`.
 #[cfg(feature = "eip-8025")]
 fn validate_canonical_chain_config(
     canonical: &crate::l1::input::CanonicalChainConfig,
     expected: &ethrex_common::types::ChainConfig,
+    block_number: u64,
     block_timestamp: u64,
 ) -> Result<(), ExecutionError> {
     if canonical.chain_id != expected.chain_id {
@@ -494,10 +496,40 @@ fn validate_canonical_chain_config(
         )));
     }
 
-    // TODO: `fork` and `activation` are not compared. EELS and ethrex number
-    // forks differently, and the spec stores activation values for canonical-root
-    // determinism rather than verifier cross-checking. The blob-schedule check
-    // below is a partial proxy and misses forks with identical blob parameters.
+    // EELS `validate_chain_config` / `_is_activation_active`: the declared active
+    // fork must actually be active for this payload. The activation point must set
+    // a block_number or a timestamp, and the payload must be at or past it.
+    // `block_number`/`timestamp` are `SszList<u64, MAX_OPTIONAL_FORK_ACTIVATION_VALUES=1>`,
+    // i.e. an `Option<u64>` carrying 0 or 1 value.
+    let activation = &canonical.active_fork.activation;
+    let activation_block_number = activation.block_number.iter().next().copied();
+    let activation_timestamp = activation.timestamp.iter().next().copied();
+    if activation_block_number.is_none() && activation_timestamp.is_none() {
+        return Err(ExecutionError::Internal(
+            "fork activation must set block_number or timestamp".to_string(),
+        ));
+    }
+    if let Some(activation_block_number) = activation_block_number
+        && block_number < activation_block_number
+    {
+        return Err(ExecutionError::Internal(format!(
+            "ChainConfig active_fork is not active for the target payload: \
+             block_number {block_number} precedes activation {activation_block_number}"
+        )));
+    }
+    if let Some(activation_timestamp) = activation_timestamp
+        && block_timestamp < activation_timestamp
+    {
+        return Err(ExecutionError::Internal(format!(
+            "ChainConfig active_fork is not active for the target payload: \
+             timestamp {block_timestamp} precedes activation {activation_timestamp}"
+        )));
+    }
+
+    // TODO: `fork` is not compared. EELS and ethrex number forks differently, and
+    // the spec stores the fork id for canonical-root determinism rather than
+    // verifier cross-checking. The blob-schedule check below is a partial proxy
+    // and misses forks with identical blob parameters.
 
     // Single-entry check is sound because `MAX_BLOB_SCHEDULES_PER_FORK = 1`.
     let canonical_schedule = canonical.active_fork.blob_schedule.iter().next();

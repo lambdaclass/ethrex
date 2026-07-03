@@ -81,6 +81,13 @@ impl OpcodeHandler for OpCallHandler {
             Some((auth_address, access_cost)) => (access_cost, auth_address),
             None => (0, callee),
         };
+
+        // EIP-8141 mempool validation-trace: the CALL target must be an existing
+        // account or precompile and not EIP-7702-delegated (sender exempt).
+        if vm.validation_observer.active {
+            vm.validation_check_call_target(callee, is_delegation_7702)?;
+        }
+
         let create_cost = if address_is_empty {
             gas_cost::CALL_TO_EMPTY_ACCOUNT
         } else {
@@ -256,6 +263,13 @@ impl OpcodeHandler for OpCallCodeHandler {
             None => (0, address),
         };
 
+        // EIP-8141 mempool validation-trace: CALLCODE target check (CALLCODE
+        // itself is banned in non-deploy prefix frames; this also guards the
+        // deploy-frame case).
+        if vm.validation_observer.active {
+            vm.validation_check_call_target(address, is_delegation_7702)?;
+        }
+
         // BAL touches the target before the delegation gas check.
         vm.record_bal_call_touch(
             address,
@@ -372,6 +386,12 @@ impl OpcodeHandler for OpDelegateCallHandler {
             Some((auth_address, access_cost)) => (access_cost, auth_address),
             None => (0, address),
         };
+
+        // EIP-8141 mempool validation-trace: the call target must be an existing
+        // account or precompile and not EIP-7702-delegated (sender exempt).
+        if vm.validation_observer.active {
+            vm.validation_check_call_target(address, is_delegation_7702)?;
+        }
 
         // BAL touches the target before the delegation gas check.
         vm.record_bal_call_touch(
@@ -490,6 +510,12 @@ impl OpcodeHandler for OpStaticCallHandler {
             Some((auth_address, access_cost)) => (access_cost, auth_address),
             None => (0, address),
         };
+
+        // EIP-8141 mempool validation-trace: the call target must be an existing
+        // account or precompile and not EIP-7702-delegated (sender exempt).
+        if vm.validation_observer.active {
+            vm.validation_check_call_target(address, is_delegation_7702)?;
+        }
 
         // BAL touches the target before the delegation gas check.
         vm.record_bal_call_touch(
@@ -623,6 +649,12 @@ impl OpcodeHandler for OpCreateHandler {
             vm.opcode_tracer.last_opcode_gas_cost = Some(create_gas);
         }
 
+        // EIP-8141 mempool validation-trace: contract creation is a state write
+        // permitted only inside the deploy frame.
+        if vm.validation_observer.active {
+            vm.validation_check_create();
+        }
+
         vm.generic_create(value_in_wei, code_offset, code_len, None)
     }
 }
@@ -651,6 +683,12 @@ impl OpcodeHandler for OpCreate2Handler {
         // Struct-log: record the opcode-level gas before generic_create charges forwarded gas.
         if vm.opcode_tracer.active {
             vm.opcode_tracer.last_opcode_gas_cost = Some(create2_gas);
+        }
+
+        // EIP-8141 mempool validation-trace: contract creation is a state write
+        // permitted only inside the deploy frame.
+        if vm.validation_observer.active {
+            vm.validation_check_create();
         }
 
         vm.generic_create(value_in_wei, code_offset, code_len, Some(salt))
