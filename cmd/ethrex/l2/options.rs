@@ -23,8 +23,6 @@ use std::{
 };
 use tracing::Level;
 
-use ethrex_l2::NativeRollupConfig;
-
 use clap::ArgAction;
 
 pub const DEFAULT_PROOF_COORDINATOR_QPL_TOOL_PATH: &str = "./tee/contracts/automata-dcap-qpl/automata-dcap-qpl-tool/target/release/automata-dcap-qpl-tool";
@@ -1251,33 +1249,5 @@ impl Default for ProverClientOptions {
             #[cfg(all(feature = "sp1", feature = "gpu"))]
             sp1_server: None,
         }
-    }
-}
-
-impl NativeRollupOptions {
-    pub fn to_config(
-        &self,
-        l1_rpc_urls: Vec<Url>,
-        chain_id: u64,
-    ) -> Result<NativeRollupConfig, SequencerOptionsError> {
-        let contract_address = self
-            .contract_address
-            .ok_or(SequencerOptionsError::NoOnChainProposerAddress)?;
-        let relayer_signer: Signer = LocalSigner::new(self.relayer_private_key).into();
-        let l1_signer: Signer = LocalSigner::new(self.l1_private_key).into();
-
-        Ok(NativeRollupConfig {
-            l1_rpc_urls,
-            contract_address,
-            block_time_ms: self.block_time_ms,
-            watch_interval_ms: 2000,
-            advance_interval_ms: self.advance_interval_ms,
-            max_block_step: 5000,
-            coinbase: relayer_signer.address(),
-            block_gas_limit: 30_000_000,
-            chain_id,
-            relayer_signer,
-            l1_signer,
-        })
     }
 }
