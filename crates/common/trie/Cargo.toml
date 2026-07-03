@@ -12,10 +12,10 @@ repository.workspace = true
 ethrex-crypto = { workspace = true, default-features = false }
 ethrex-rlp.workspace = true
 
-# Inlined with explicit versions instead of `workspace = true`: Cargo forbids a
-# member from setting `default-features = false` unless the workspace declaration
-# also disables them, and these are declared with defaults on for the rest of the
-# workspace. Disabling defaults is required for no_std; the `std` feature below
+# Inlined with explicit versions instead of `workspace = true`: Cargo ignores
+# (with a warning) a member setting `default-features = false` unless the workspace
+# declaration also disables them, and these are declared with defaults on for the
+# rest of the workspace. Disabling defaults is required for no_std; the `std` feature below
 # re-enables each. Keep these versions in sync with the workspace root.
 ethereum-types = { version = "0.15.1", default-features = false, features = ["serialize"] }
 anyhow = { version = "1.0.86", default-features = false }
@@ -28,7 +28,7 @@ rkyv = { version = "0.8.10", default-features = false, features = ["alloc", "una
 # no_std HashMap/HashSet, only compiled when `std` is off (replaces the std-only rustc-hash aliases)
 hashbrown = { version = "0.15", default-features = false }
 # no_std-friendly `Lazy` for EMPTY_TRIE_HASH (replaces lazy_static; compiled in all builds)
-spin = { version = "0.9.8", default-features = false, features = ["lazy"] }
+spin = { version = "0.9.8", default-features = false, features = ["lazy", "mutex", "spin_mutex"] }
 
 # std-only: parallel merkleization (threadpool / trie_sorted / validate_parallel)
 crossbeam = { workspace = true, optional = true }

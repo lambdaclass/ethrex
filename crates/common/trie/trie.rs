@@ -4,8 +4,9 @@
 // `arc_with_non_send_sync` on the `Arc<Node>` in `NodeRef`. The `Arc` is
 // deliberate: the type is shared with the std build, where `Node` is `Send + Sync`
 // and nodes are handed across rayon workers during parallel merkleization. The
-// single-hart guest never shares across threads, so the atomic refcount is
-// harmless here and keeps a single unified node type across both builds.
+// single-threaded no_std consumer (the zkVM guest) never shares across threads, so
+// the atomic refcount is harmless here and keeps a single unified node type across
+// both builds.
 #![cfg_attr(not(feature = "std"), allow(clippy::arc_with_non_send_sync))]
 
 #[macro_use]
@@ -42,16 +43,19 @@ use ethrex_rlp::constants::RLP_NULL;
 use ethrex_rlp::encode::RLPEncode;
 
 #[cfg(feature = "std")]
-use rustc_hash::{FxHashMap, FxHashSet};
+use rustc_hash::FxHashSet;
+// `FxHashMap` is part of the public API (`get_embedded_root_committed`). Its concrete
+// type is build-dependent, so callers that build this crate `no_std` (e.g. the guest
+// via `ethrex-common`) must name it through this re-export to stay type-compatible.
+#[cfg(feature = "std")]
+pub use rustc_hash::FxHashMap;
 // rustc-hash's map/set aliases require std; use hashbrown with the Fx hasher otherwise.
 #[cfg(not(feature = "std"))]
-type FxHashMap<K, V> = hashbrown::HashMap<K, V, rustc_hash::FxBuildHasher>;
+pub type FxHashMap<K, V> = hashbrown::HashMap<K, V, rustc_hash::FxBuildHasher>;
 #[cfg(not(feature = "std"))]
 type FxHashSet<K> = hashbrown::HashSet<K, rustc_hash::FxBuildHasher>;
 
-#[cfg(feature = "std")]
-pub use self::db::InMemoryTrieDB;
-pub use self::db::TrieDB;
+pub use self::db::{InMemoryTrieDB, TrieDB};
 #[cfg(feature = "std")]
 pub use self::logger::{TrieLogger, TrieWitness};
 pub use self::nibbles::Nibbles;
@@ -90,8 +94,7 @@ pub struct Trie {
     dirty: FxHashSet<Nibbles>,
 }
 
-// `Default` builds an in-memory (InMemoryTrieDB) trie, which is host-only.
-#[cfg(feature = "std")]
+// `Default` builds an in-memory (InMemoryTrieDB) trie.
 impl Default for Trie {
     fn default() -> Self {
         Self::new_temp()
@@ -637,7 +640,6 @@ impl Trie {
     }
 
     /// Creates a new Trie based on a temporary InMemory DB
-    #[cfg(feature = "std")]
     pub fn new_temp() -> Self {
         let db = InMemoryTrieDB::new(Default::default());
         Trie::new(Box::new(db))
@@ -646,7 +648,6 @@ impl Trie {
     /// Creates a new Trie based on a temporary InMemory DB, with a specified root
     ///
     /// This is usually used to create a Trie from a root that was embedded with the rest of the nodes.
-    #[cfg(feature = "std")]
     pub fn new_temp_with_root(root: NodeRef) -> Self {
         let db = InMemoryTrieDB::new(Default::default());
         let mut trie = Trie::new(Box::new(db));

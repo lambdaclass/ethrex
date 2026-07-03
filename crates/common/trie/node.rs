@@ -8,16 +8,19 @@ use alloc::{boxed::Box, vec::Vec};
 #[cfg(feature = "std")]
 pub use std::sync::OnceLock;
 
-/// `OnceLock` replacement used on `no_std` builds.
+/// Non-atomic `OnceLock` replacement used on `no_std` builds — which include the
+/// single-threaded zkVM guest (see the crate's dependency wiring in
+/// `ethrex-common`, which builds this crate without the `std` feature).
 ///
 /// `std::sync::OnceLock`'s atomics are pure overhead in the single-threaded zkVM
-/// guest, so this mirrors `once_cell::unsync::OnceCell`: interior mutability through
-/// a plain `UnsafeCell`, no atomics.
+/// guest, so this mirrors `once_cell::unsync::OnceCell`: interior mutability
+/// through a plain `UnsafeCell`, no atomics.
 ///
-/// Note it is deliberately **not** `Sync` — there is no `unsafe impl Sync`, so the
+/// It is deliberately **not** `Sync` — there is no `unsafe impl Sync`, so the
 /// `UnsafeCell` makes the type `!Sync` and the compiler forbids sharing it across
-/// threads. That keeps it sound without assuming `no_std` implies a single thread: a
-/// multi-threaded `no_std` consumer fails to compile instead of racing on the cell.
+/// threads. That keeps it sound without assuming `no_std` implies a single thread:
+/// a multi-threaded `no_std` consumer fails to compile instead of racing on the
+/// cell.
 #[cfg(not(feature = "std"))]
 pub struct OnceLock<T>(core::cell::UnsafeCell<Option<T>>);
 

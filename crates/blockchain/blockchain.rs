@@ -75,7 +75,7 @@ use ethrex_common::types::{EIP7702_DELEGATED_CODE_LEN, is_eip7702_delegation};
 use ethrex_common::types::{ELASTICITY_MULTIPLIER, P2PTransaction};
 use ethrex_common::types::{Fork, MempoolTransaction};
 use ethrex_common::utils::keccak;
-use ethrex_common::{Address, H256, TrieLogger, U256};
+use ethrex_common::{Address, H256, U256};
 pub use ethrex_common::{
     get_total_blob_gas, validate_block_access_list_hash, validate_block_pre_execution,
     validate_gas_used, validate_receipts_root_and_logs_bloom, validate_requests_hash,
@@ -89,7 +89,7 @@ use ethrex_storage::{
     AccountUpdatesList, Store, UpdateBatch, error::StoreError, hash_address, hash_key,
 };
 use ethrex_trie::node::{BranchNode, ExtensionNode, LeafNode};
-use ethrex_trie::{Nibbles, Node, NodeRef, Trie, TrieError, TrieNode};
+use ethrex_trie::{Nibbles, Node, NodeRef, Trie, TrieError, TrieLogger, TrieNode};
 use ethrex_vm::backends::CachingDatabase;
 #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
 use ethrex_vm::backends::levm::LEVM;

@@ -1,7 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use bytes::Bytes;
-use rustc_hash::FxHashMap;
 
 use crate::rkyv_utils::H256Wrapper;
 use crate::serde_utils;
@@ -15,7 +14,7 @@ use ethrex_crypto::Crypto;
 use ethrex_rlp::error::RLPDecodeError;
 use ethrex_rlp::structs::{Decoder, Encoder};
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
-use ethrex_trie::{EMPTY_TRIE_HASH, Nibbles, Node, NodeRef, Trie, TrieError};
+use ethrex_trie::{EMPTY_TRIE_HASH, FxHashMap, Nibbles, Node, NodeRef, Trie, TrieError};
 use rkyv::with::{Identity, MapKV};
 use serde::{Deserialize, Serialize};
 
