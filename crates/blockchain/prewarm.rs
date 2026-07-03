@@ -302,10 +302,13 @@ fn run_pass(
     };
     let inner: Arc<dyn ethrex_vm::backends::LevmDatabase> =
         Arc::new(Box::new(vm_db) as ethrex_vm::DynVmDatabase);
-    let caching: Arc<dyn ethrex_vm::backends::LevmDatabase> = Arc::new(CachingDatabase::new(
+    // Concrete handle kept for `touched_keys` (not on the trait); the erased
+    // clone feeds `warm_txs` and the executor handoff.
+    let caching_concrete = Arc::new(CachingDatabase::new(
         inner,
         blockchain.options.precompile_cache_enabled,
     ));
+    let caching: Arc<dyn ethrex_vm::backends::LevmDatabase> = caching_concrete.clone();
 
     // Publish the cache for handoff: `execute_block_pipeline` seeds the next
     // block's execution with it when the parent hash AND fork match (the
@@ -324,6 +327,10 @@ fn run_pass(
     let should_stop = move || cancel.load(Ordering::Relaxed) || unix_now() >= deadline;
 
     let mut warmed_union: FxHashMap<H256, u64> = FxHashMap::default();
+    // Slot-level dedup for merkle-path warming (see `warm_merkle_paths`).
+    let mut merkled_accounts: rustc_hash::FxHashSet<Address> = Default::default();
+    let mut merkled_slots: rustc_hash::FxHashSet<(Address, H256)> = Default::default();
+    let mut merkle_paths: u64 = 0;
     // Slot-level per-sender counts backing the depth cap: a per-snapshot cap
     // alone would leak — once a sender's head txs are warmed and dropped by
     // `drop_already_warmed`, the next delta would see the queue's tail as a
@@ -382,6 +389,14 @@ fn run_pass(
                 });
                 any_err |= result.is_err();
                 passes += 1;
+                merkle_paths += warm_merkle_paths(
+                    blockchain,
+                    parent,
+                    &caching_concrete,
+                    &mut merkled_accounts,
+                    &mut merkled_slots,
+                    &should_stop,
+                );
             }
         }
         // Arrival-poll cadence. Sleeping burns no CPU; the only cost is up to
@@ -404,15 +419,99 @@ fn run_pass(
     };
     let total_gas: u64 = warmed_union.values().sum();
     info!(
-        "prewarm pass for block {}: {} txs, {} gas, passes={}, {:?}, stop={}, err={}",
+        "prewarm pass for block {}: {} txs, {} gas, passes={}, merkle_paths={}, {:?}, stop={}, err={}",
         header.number,
         warmed_union.len(),
         total_gas,
         passes,
+        merkle_paths,
         start.elapsed(),
         stop_reason,
         any_err,
     );
+}
+
+/// Walks the account- and storage-trie paths of every key the warming pass
+/// has touched so far, via `get_proof` (which reads each interior node on the
+/// path). Ordinary reads skip interior trie nodes once flat-key-value is
+/// active, so without this the merkleizer finds them cold at block time; the
+/// proof walks pull them into the RocksDB block cache during the idle window.
+/// Proof outputs are discarded — the reads are the product. Returns the
+/// number of newly walked paths.
+#[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+fn warm_merkle_paths(
+    blockchain: &Blockchain,
+    parent: &BlockHeader,
+    caching: &ethrex_vm::backends::CachingDatabase,
+    done_accounts: &mut rustc_hash::FxHashSet<Address>,
+    done_slots: &mut rustc_hash::FxHashSet<(Address, H256)>,
+    should_stop: &(dyn Fn() -> bool + Sync),
+) -> u64 {
+    use ethrex_common::constants::EMPTY_TRIE_HASH;
+    use ethrex_crypto::keccak::keccak_hash;
+    use ethrex_storage::hash_key;
+    use tracing::debug;
+
+    let (accounts, slots) = caching.touched_keys();
+    let mut walked: u64 = 0;
+
+    let state_trie = match blockchain.storage.open_state_trie(parent.state_root) {
+        Ok(trie) => trie,
+        Err(e) => {
+            debug!("merkle warm skipped: state trie unavailable: {e}");
+            return 0;
+        }
+    };
+
+    // Storage roots per address, for opening storage tries below.
+    let mut roots: FxHashMap<Address, H256> = FxHashMap::default();
+    for (addr, storage_root) in accounts {
+        roots.insert(addr, storage_root);
+        if !done_accounts.insert(addr) {
+            continue;
+        }
+        if should_stop() {
+            return walked;
+        }
+        let hashed = H256::from(keccak_hash(addr.to_fixed_bytes()));
+        let _ = state_trie.get_proof(hashed.as_bytes());
+        walked += 1;
+    }
+
+    // Group new slots per account so each storage trie is opened once.
+    let mut by_account: FxHashMap<Address, Vec<H256>> = FxHashMap::default();
+    for (addr, key) in slots {
+        if done_slots.insert((addr, key)) {
+            by_account.entry(addr).or_default().push(key);
+        }
+    }
+    for (addr, keys) in by_account {
+        if should_stop() {
+            return walked;
+        }
+        let Some(storage_root) = roots.get(&addr).copied() else {
+            continue;
+        };
+        if storage_root == *EMPTY_TRIE_HASH {
+            continue;
+        }
+        let hashed = H256::from(keccak_hash(addr.to_fixed_bytes()));
+        let Ok(storage_trie) =
+            blockchain
+                .storage
+                .open_storage_trie(hashed, parent.state_root, storage_root)
+        else {
+            continue;
+        };
+        for key in keys {
+            if should_stop() {
+                return walked;
+            }
+            let _ = storage_trie.get_proof(&hash_key(&key));
+            walked += 1;
+        }
+    }
+    walked
 }
 
 #[cfg(test)]

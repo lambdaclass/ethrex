@@ -14,6 +14,9 @@ pub mod gen_db;
 type AccountCache = FxHashMap<Address, AccountState>;
 type StorageCache = FxHashMap<(Address, H256), U256>;
 type CodeCache = FxHashMap<H256, Code>;
+/// Touched accounts (with storage roots) and storage slot keys; see
+/// [`CachingDatabase::touched_keys`].
+pub type TouchedKeys = (Vec<(Address, H256)>, Vec<(Address, H256)>);
 
 pub trait Database: Send + Sync {
     fn get_account_state(&self, address: Address) -> Result<AccountState, DatabaseError>;
@@ -100,6 +103,30 @@ impl CachingDatabase {
 
     fn write_code(&self) -> Result<RwLockWriteGuard<'_, CodeCache>, DatabaseError> {
         self.code.write().map_err(poison_error_to_db_error)
+    }
+
+    /// Snapshot of the touched key sets: cached accounts with their storage
+    /// roots, and cached storage slot keys. The mempool prewarmer uses this
+    /// to walk exactly the trie paths the merkleizer will later rewrite for
+    /// warmed transactions (ordinary reads skip interior trie nodes once
+    /// flat-key-value is active, so execution warming alone never touches
+    /// them).
+    pub fn touched_keys(&self) -> TouchedKeys {
+        let accounts = self
+            .accounts
+            .read()
+            .map(|a| {
+                a.iter()
+                    .map(|(addr, st)| (*addr, st.storage_root))
+                    .collect()
+            })
+            .unwrap_or_default();
+        let storage = self
+            .storage
+            .read()
+            .map(|s| s.keys().copied().collect())
+            .unwrap_or_default();
+        (accounts, storage)
     }
 }
 
