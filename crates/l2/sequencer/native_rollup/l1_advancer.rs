@@ -291,6 +291,9 @@ pub fn build_ssz_stateless_input(
         blob_gas_used: header.blob_gas_used.unwrap_or(0),
         excess_blob_gas: header.excess_blob_gas.unwrap_or(0),
         block_access_list: bal_to_ssz_block_access_list(bal)?,
+        // EIP-7843: carry the header's slot number into the SSZ payload so L1 can
+        // read it and the reconstructed block hash matches.
+        slot_number: header.slot_number.unwrap_or(0),
     };
 
     // 2. Build SSZ NewPayloadRequest
@@ -546,6 +549,8 @@ mod tests {
             parent_beacon_block_root: Some(H256::zero()),
             // Prague fields
             requests_hash: Some(ethrex_common::types::requests::compute_requests_hash(&[])),
+            // EIP-7843: Amsterdam+ blocks carry a slot number; must survive round-trip.
+            slot_number: Some(42),
             ..Default::default()
         };
         let body = BlockBody {
@@ -728,6 +733,8 @@ mod tests {
             requests_hash: Some(ethrex_common::types::requests::compute_requests_hash(&[])),
             // Amsterdam field — set to the BAL hash we'll encode in the SSZ payload.
             block_access_list_hash: Some(bal_hash),
+            // EIP-7843: Amsterdam+ blocks carry a slot number; must survive round-trip.
+            slot_number: Some(42),
             ..Default::default()
         };
         let body = BlockBody {

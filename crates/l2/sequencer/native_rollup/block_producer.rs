@@ -143,7 +143,11 @@ impl NativeBlockProducer {
             random: H256::zero(),
             withdrawals: Some(vec![]),
             beacon_root: Some(l1_merkle_root),
-            slot_number: None,
+            // EIP-7843: the L2 provides its own slot number (there is no CL). This
+            // defaults to the block number — a monotonic value always available and
+            // consistent with the RLP `Some` invariant on LStar blocks. The value is
+            // an L2 policy choice; a rollup may substitute any provided/arbitrary u64.
+            slot_number: Some(head_header.number.saturating_add(1)),
             version: 3,
             elasticity_multiplier: 2, // EIP-1559 default
             gas_ceil: self.config.block_gas_limit,

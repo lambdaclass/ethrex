@@ -75,7 +75,10 @@ contract NativeRollup {
     uint256 constant EP_BLOCK_NUMBER_OFFSET = 404;
     uint256 constant EP_GAS_LIMIT_OFFSET = 412;
     uint256 constant EP_BLOCK_HASH_OFFSET = 472;
-    uint256 constant EP_FIXED_PREFIX_LEN = 532; // 528 fixed fields + block_access_list offset(4)
+    // EIP-7843 slot_number is a trailing fixed u64 in the payload, right after the
+    // block_access_list offset slot (528..532). All reads above are unaffected.
+    uint256 constant EP_SLOT_NUMBER_OFFSET = 532;
+    uint256 constant EP_FIXED_PREFIX_LEN = 540; // 528 fixed fields + block_access_list offset(4) + slot_number(8)
 
     // ===== Events =====
     event StateAdvanced(uint256 indexed newBlockNumber, bytes32 indexed newStateRoot);

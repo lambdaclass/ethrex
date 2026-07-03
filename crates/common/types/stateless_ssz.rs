@@ -175,6 +175,10 @@ pub struct ExecutionPayload {
     pub excess_blob_gas: u64,
     /// EIP-7928 block-level access list (full serialized BAL bytes).
     pub block_access_list: SszList<u8, MAX_BLOCK_ACCESS_LIST_BYTES>,
+    /// EIP-7843 slot number (Amsterdam+). Last field, matching the execution-specs
+    /// `ExecutionPayloadV4` layout so the native path is byte-compatible with the
+    /// spec-current payload. Provided by the L2 producer and carried to L1.
+    pub slot_number: u64,
 }
 
 // ── ExecutionRequests ──────────────────────────────────────────────
@@ -427,6 +431,7 @@ mod tests {
             blob_gas_used: 0,
             excess_blob_gas: 0,
             block_access_list: SszList::new(), // TODO(Plan 02): populate full BAL
+            slot_number: 0,
         }
     }
 
@@ -618,6 +623,7 @@ mod tests {
             blob_gas_used: 0,
             excess_blob_gas: 0,
             block_access_list: list(vec![0x01, 0x02, 0x03]),
+            slot_number: 0,
         };
         round_trip(&payload);
         assert_eq!(payload.block_access_list.len(), 3);
@@ -670,7 +676,11 @@ mod tests {
     const SOL_EP_BLOCK_NUMBER_OFFSET: usize = 404;
     const SOL_EP_GAS_LIMIT_OFFSET: usize = 412;
     const SOL_EP_BLOCK_HASH_OFFSET: usize = 472;
-    const SOL_EP_FIXED_PREFIX_LEN: usize = 532;
+    // block_access_list's offset slot sits at EP+528; slot_number (EIP-7843) is the
+    // trailing fixed u64 at EP+532; the fixed prefix is 540.
+    const SOL_EP_BAL_OFFSET_POS: usize = 528;
+    const SOL_EP_SLOT_NUMBER_OFFSET: usize = 532;
+    const SOL_EP_FIXED_PREFIX_LEN: usize = 540;
 
     fn u32_le(bytes: &[u8], off: usize) -> usize {
         (bytes[off] as usize)
@@ -699,6 +709,7 @@ mod tests {
             blob_gas_used: 0,
             excess_blob_gas: 0,
             block_access_list: SszList::new(),
+            slot_number: 0x7843,
         }
     }
 
@@ -802,14 +813,24 @@ mod tests {
             &[0x66; 32],
             "block_hash @472"
         );
-        // block_access_list's offset slot is the last 4 bytes of the EP fixed prefix
-        // (at EP+528). SSZ offsets are container-relative, so with all variable
-        // fields empty it must equal the fixed-prefix length (532) — this pins the
-        // prefix length that NativeRollup.sol's EP_FIXED_PREFIX_LEN depends on.
+        // block_access_list's offset slot is at EP+528 (slot_number, a trailing fixed
+        // u64, follows it at EP+532). SSZ offsets are container-relative, so with all
+        // variable fields empty the block_access_list data starts at the fixed-prefix
+        // length (540) — this pins NativeRollup.sol's EP_FIXED_PREFIX_LEN.
         assert_eq!(
-            u32_le(&buf, ep_abs + SOL_EP_FIXED_PREFIX_LEN - 4),
+            u32_le(&buf, ep_abs + SOL_EP_BAL_OFFSET_POS),
             SOL_EP_FIXED_PREFIX_LEN,
-            "block_access_list offset slot @EP+528 must be 532 (EP fixed-prefix length)",
+            "block_access_list offset slot @EP+528 must equal the EP fixed-prefix length (540)",
+        );
+        // slot_number (EIP-7843) round-trips as a trailing fixed LE u64 at EP+532.
+        assert_eq!(
+            u64::from_le_bytes(
+                buf[ep_abs + SOL_EP_SLOT_NUMBER_OFFSET..ep_abs + SOL_EP_SLOT_NUMBER_OFFSET + 8]
+                    .try_into()
+                    .unwrap()
+            ),
+            0x7843,
+            "slot_number must be readable at EP+532",
         );
     }
 }

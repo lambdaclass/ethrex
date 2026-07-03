@@ -199,6 +199,7 @@ mod tests {
                     blob_gas_used: 0,
                     excess_blob_gas: 0,
                     block_access_list: vec![].try_into().expect("block_access_list"),
+                    slot_number: 0,
                 },
                 versioned_hashes: vec![].try_into().expect("versioned_hashes"),
                 parent_beacon_block_root: [0u8; 32],

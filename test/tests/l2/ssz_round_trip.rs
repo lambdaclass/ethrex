@@ -42,6 +42,9 @@ fn make_test_block() -> (BlockHeader, BlockBody) {
         parent_beacon_block_root: Some(H256::from_low_u64_be(0xbeef)),
         // Prague fields
         requests_hash: Some(ethrex_common::types::requests::compute_requests_hash(&[])),
+        // EIP-7843: native-rollup (Amsterdam+) blocks carry a slot number; it must
+        // survive the SSZ round-trip (reconstruction sets it from the payload).
+        slot_number: Some(42),
         ..Default::default()
     };
 
@@ -174,6 +177,10 @@ fn block_to_ssz_to_block_preserves_hash() {
     assert_eq!(
         header.requests_hash, reconstructed_block.header.requests_hash,
         "requests_hash mismatch"
+    );
+    assert_eq!(
+        header.slot_number, reconstructed_block.header.slot_number,
+        "slot_number mismatch"
     );
 
     // Final hash check

@@ -493,6 +493,10 @@ pub fn new_payload_request_to_block(
         excess_blob_gas: Some(payload.excess_blob_gas),
         parent_beacon_block_root: Some(H256::from_slice(&req.parent_beacon_block_root)),
         requests_hash: Some(requests_hash),
+        // EIP-7843: reconstruct the slot number carried in the SSZ payload so the
+        // computed block hash matches the producer's. Native-rollup blocks are
+        // Amsterdam+, where slot_number is always present.
+        slot_number: Some(payload.slot_number),
         ..Default::default()
     };
 
