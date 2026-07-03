@@ -102,6 +102,18 @@ pub struct FramePaymasterReservation {
 /// revalidation pass.
 pub type PendingFrameTx = (H256, Address, Address);
 
+/// Inputs for the per-account queued (future-nonce) cap, checked atomically
+/// inside [`Mempool::add_transaction`] under the insertion write lock. Computed
+/// by `Blockchain::validate_transaction` (which has the sender's on-chain nonce)
+/// and passed through so the check and the insert share one lock scope.
+#[derive(Debug, Clone, Copy)]
+pub struct QueuedCap {
+    /// The sender's on-chain nonce, used to tell executable txs from future ones.
+    pub account_nonce: u64,
+    /// The maximum number of queued (future) txs allowed for the sender.
+    pub max: usize,
+}
+
 /// An alternate announcer for a known-in-flight transaction hash. Carries the
 /// announcer's own announced type and size so the eventual retry can validate
 /// the response against the alternate's metadata (which may differ from the
@@ -484,10 +496,30 @@ impl Mempool {
         sender: Address,
         transaction: MempoolTransaction,
         frame_reservation: Option<FramePaymasterReservation>,
+        queued_cap: Option<QueuedCap>,
     ) -> Result<(), MempoolError> {
         let mut inner = self.write()?;
         let is_frame = matches!(transaction.tx_type(), TxType::Frame);
         let is_blob = matches!(transaction.tx_type(), TxType::EIP4844);
+
+        // Per-account queued (future/nonce-gapped) cap, enforced atomically under
+        // the same write lock as the insertion so two concurrent submissions from
+        // one sender can't both pass a stale count and race past the limit.
+        // Only *future* txs count (executable/contiguous ones are never capped).
+        // Replacements pass `None` (the caller sets it when `find_tx_to_replace`
+        // matched), since a same-`(sender, nonce)` replace never grows the queue.
+        if let Some(QueuedCap { account_nonce, max }) = queued_cap
+            && inner.is_future(sender, account_nonce, transaction.nonce())
+        {
+            let queued = inner.queued_count_for_sender(sender, account_nonce);
+            if queued >= max {
+                return Err(MempoolError::MaxQueuedTxsPerAccountExceeded {
+                    sender,
+                    count: queued,
+                    limit: max,
+                });
+            }
+        }
 
         // One-pending-frame-tx-per-sender gate (EIP-8141 §Mempool, review fix 1.6).
         // Must run under the write lock so the check and insert are atomic.
@@ -1229,7 +1261,7 @@ mod tests {
         let tx = build_tx(nonce);
         let mtx = MempoolTransaction::new(tx, sender);
         let hash = mtx.hash(&NativeCrypto);
-        pool.add_transaction(hash, sender, mtx, None).unwrap();
+        pool.add_transaction(hash, sender, mtx, None, None).unwrap();
         hash
     }
 

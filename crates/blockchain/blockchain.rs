@@ -96,7 +96,8 @@ use ethrex_vm::backends::levm::LEVM;
 use ethrex_vm::backends::levm::db::DatabaseLogger;
 use ethrex_vm::{BlockExecutionResult, DynVmDatabase, Evm, EvmError, VmDatabase};
 use mempool::{
-    FRAME_CANONICAL_PAYMASTER_CODE_HASH, FramePaymasterReservation, Mempool, is_canonical_paymaster,
+    FRAME_CANONICAL_PAYMASTER_CODE_HASH, FramePaymasterReservation, Mempool, QueuedCap,
+    is_canonical_paymaster,
 };
 use payload::PayloadOrTask;
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -2836,8 +2837,18 @@ impl Blockchain {
         let sender = transaction.sender(&NativeCrypto)?;
 
         // Validate transaction
-        let (tx_to_replace, frame_reservation) =
+        let (tx_to_replace, frame_reservation, sender_account_nonce) =
             self.validate_transaction(&transaction, sender).await?;
+        // A replacement (same `(sender, nonce)`) doesn't grow the queue, so it's
+        // exempt from the queued cap (check find_tx_to_replace first, review fix).
+        let queued_cap = if tx_to_replace.is_some() {
+            None
+        } else {
+            sender_account_nonce.map(|account_nonce| QueuedCap {
+                account_nonce,
+                max: self.options.max_queued_txs_per_account,
+            })
+        };
         if let Some(tx_to_replace) = tx_to_replace {
             self.remove_transaction_from_pool(&tx_to_replace)?;
         }
@@ -2854,6 +2865,7 @@ impl Blockchain {
             sender,
             MempoolTransaction::new(transaction, sender),
             frame_reservation,
+            queued_cap,
         ) {
             let _ = self.mempool.remove_blobs_bundle(&hash);
             return Err(e);
@@ -2888,7 +2900,7 @@ impl Blockchain {
         }
         let sender = transaction.sender(&NativeCrypto)?;
         // Validate transaction
-        let (tx_to_replace, frame_reservation) =
+        let (tx_to_replace, frame_reservation, sender_account_nonce) =
             self.validate_transaction(&transaction, sender).await?;
         // For a frame tx, the same-nonce predecessor must NOT be removed here:
         // `add_transaction` removes it only AFTER the locked paymaster re-check
@@ -2898,6 +2910,16 @@ impl Blockchain {
         // same-nonce hash `find_tx_to_replace` returns, so the success path is
         // unchanged — including when the predecessor is a non-frame tx.
         let is_frame = matches!(transaction, Transaction::FrameTransaction(_));
+        // A replacement (same `(sender, nonce)`) doesn't grow the queue, so it's
+        // exempt from the queued cap (check find_tx_to_replace first, review fix).
+        let queued_cap = if tx_to_replace.is_some() {
+            None
+        } else {
+            sender_account_nonce.map(|account_nonce| QueuedCap {
+                account_nonce,
+                max: self.options.max_queued_txs_per_account,
+            })
+        };
         if let Some(tx_to_replace) = tx_to_replace
             && !is_frame
         {
@@ -2910,6 +2932,7 @@ impl Blockchain {
             sender,
             MempoolTransaction::new(transaction, sender),
             frame_reservation,
+            queued_cap,
         )?;
 
         Ok(hash)
@@ -3149,11 +3172,11 @@ impl Blockchain {
         &self,
         tx: &Transaction,
         sender: Address,
-    ) -> Result<(Option<H256>, Option<FramePaymasterReservation>), MempoolError> {
+    ) -> Result<(Option<H256>, Option<FramePaymasterReservation>, Option<u64>), MempoolError> {
         let nonce = tx.nonce();
 
         if matches!(tx, &Transaction::PrivilegedL2Transaction(_)) {
-            return Ok((None, None));
+            return Ok((None, None, None));
         }
 
         // Frame transactions: skip balance/EOA checks (payer unknown until execution)
@@ -3339,29 +3362,17 @@ impl Blockchain {
         };
 
         let maybe_sender_acc_info = self.storage.get_account_info(header_no, sender).await?;
+        // Sender's on-chain nonce, threaded out to `add_transaction` so the
+        // per-account queued (future/nonce-gapped) cap is enforced *atomically*
+        // under the insertion write lock (see `QueuedCap`) instead of via a
+        // separate, racy pre-check here. geth `AccountQueue` style: only future
+        // (nonce-gapped) txs count; executable/contiguous txs are never capped,
+        // and replacements pass because the caller removes the old tx first.
+        let sender_account_nonce = maybe_sender_acc_info.as_ref().map(|info| info.nonce);
 
         if let Some(sender_acc_info) = maybe_sender_acc_info {
             if nonce < sender_acc_info.nonce || nonce == u64::MAX {
                 return Err(MempoolError::NonceTooLow);
-            }
-
-            // Per-account queued (future/nonce-gapped) cap, geth `AccountQueue`
-            // style: only *future* txs (a nonce gap relative to the sender's
-            // on-chain nonce + its contiguous pooled run) count against the cap.
-            // Executable/contiguous txs are never capped, so a legitimate
-            // high-throughput single sender (and the devp2p `LargeTxRequest`
-            // conformance case) is unaffected; only nonce-gap parking spam is
-            // bounded. Replacements (same `(sender, nonce)`) are handled below.
-            if let Some(queued) =
-                self.mempool
-                    .queued_count_if_future(sender, sender_acc_info.nonce, nonce)?
-                && queued >= self.options.max_queued_txs_per_account
-            {
-                return Err(MempoolError::MaxQueuedTxsPerAccountExceeded {
-                    sender,
-                    count: queued,
-                    limit: self.options.max_queued_txs_per_account,
-                });
             }
 
             // EIP-3607: reject txs from senders with deployed code, unless
@@ -3567,7 +3578,7 @@ impl Blockchain {
             }
         }
 
-        Ok((tx_to_replace_hash, frame_reservation))
+        Ok((tx_to_replace_hash, frame_reservation, sender_account_nonce))
     }
 
     /// Marks the node's chain as up to date with the current chain
