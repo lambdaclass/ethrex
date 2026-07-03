@@ -751,7 +751,10 @@ impl Store {
         receipt: Receipt,
     ) -> Result<(), StoreError> {
         let key = receipt_key(&block_hash, index);
-        let value = receipt.encode_to_vec();
+        // Storage codec (NOT wire/consensus): preserves frame-receipt
+        // `succeeded` + aggregated logs; identical to encode_to_vec for
+        // non-frame receipts.
+        let value = receipt.encode_storage();
         self.write_async(RECEIPTS_V2, key, value).await
     }
 
@@ -766,7 +769,7 @@ impl Store {
             .enumerate()
             .map(|(index, receipt)| {
                 let key = receipt_key(&block_hash, index as u64);
-                let value = receipt.encode_to_vec();
+                let value = receipt.encode_storage();
                 (key, value)
             })
             .collect();
@@ -798,7 +801,7 @@ impl Store {
         let key = receipt_key(&block_hash, index);
         self.read_async(RECEIPTS_V2, key)
             .await?
-            .map(|bytes| Receipt::decode(bytes.as_slice()))
+            .map(|bytes| Receipt::decode_storage(bytes.as_slice()))
             .transpose()
             .map_err(StoreError::from)
     }
@@ -1248,7 +1251,7 @@ impl Store {
                 if k.len() != 40 {
                     continue;
                 }
-                receipts.push(Receipt::decode(v.as_ref())?);
+                receipts.push(Receipt::decode_storage(v.as_ref())?);
                 if let Some(max) = max_count
                     && receipts.len() >= max
                 {
