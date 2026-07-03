@@ -51,6 +51,13 @@ pub trait StorageBackend: Debug + Send + Sync {
     // TODO: remove this and provide historic data via diff-layers
     /// Creates a checkpoint of the current database state at the specified path.
     fn create_checkpoint(&self, path: &Path) -> Result<(), StoreError>;
+
+    /// Durably persists all buffered writes to disk, so a subsequent process
+    /// start needs no crash recovery. Called on graceful shutdown. Defaults to a
+    /// no-op for backends that are already durable or purely in-memory.
+    fn flush(&self) -> Result<(), StoreError> {
+        Ok(())
+    }
 }
 
 /// Read-only transaction interface.
