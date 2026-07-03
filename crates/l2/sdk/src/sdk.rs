@@ -1137,6 +1137,13 @@ pub async fn get_native_rollup_block_number(
     _call_u64_variable(client, b"blockNumber()", contract_address).await
 }
 
+pub async fn get_native_rollup_l1_message_index(
+    client: &EthClient,
+    contract_address: Address,
+) -> Result<u64, EthClientError> {
+    _call_u64_variable(client, b"l1MessageIndex()", contract_address).await
+}
+
 pub async fn get_last_verified_batch(
     client: &EthClient,
     on_chain_proposer_address: Address,

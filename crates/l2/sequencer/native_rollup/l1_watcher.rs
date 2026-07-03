@@ -9,7 +9,7 @@ use bytes::Bytes;
 use ethrex_common::utils::keccak;
 use ethrex_common::{Address, H256, U256};
 use ethrex_crypto::keccak::keccak_hash;
-use ethrex_l2_sdk::get_last_fetched_l1_block;
+use ethrex_l2_sdk::{get_last_fetched_l1_block, get_native_rollup_l1_message_index};
 use ethrex_rpc::clients::eth::EthClient;
 use ethrex_rpc::types::receipt::RpcLog;
 use spawned_concurrency::{
@@ -141,12 +141,41 @@ impl NativeL1Watcher {
             }
         }
 
+        // Skip messages the contract has already consumed (restart safety).
+        // Reading l1MessageIndex here is the authoritative source: the merkle root
+        // in advance() is anchored on pendingL1Messages[l1MessageIndex..], so our
+        // queue head must align with that index after every restart.
+        let parsed = if !parsed.is_empty() {
+            match get_native_rollup_l1_message_index(&self.eth_client, self.contract_address).await
+            {
+                Ok(on_chain_index) => {
+                    let pre = parsed.len();
+                    let filtered = filter_unconsumed(parsed, on_chain_index);
+                    let skipped = pre - filtered.len();
+                    if skipped > 0 {
+                        info!(
+                            "NativeL1Watcher: skipped {skipped} already-consumed L1 message(s) \
+                             (on-chain l1MessageIndex={on_chain_index})"
+                        );
+                    }
+                    filtered
+                }
+                Err(e) => {
+                    error!("NativeL1Watcher: failed to read l1MessageIndex from contract: {e}");
+                    return;
+                }
+            }
+        } else {
+            parsed
+        };
+
         if !parsed.is_empty()
             && let Err(e) = self
                 .producer_ref
                 .send(native_block_producer_protocol::EnqueueL1Messages { messages: parsed })
         {
             error!("NativeL1Watcher: failed to send L1 messages to block producer: {e}");
+            return; // Don't advance cursor if we failed to enqueue.
         }
 
         self.last_block_fetched = to_block;
@@ -303,5 +332,67 @@ impl NativeL1Watcher {
             ctx.clone(),
             native_l1_watcher_protocol::Poll,
         );
+    }
+}
+
+/// Return only messages whose `nonce >= on_chain_index`, dropping already-consumed ones.
+///
+/// On restart the watcher rescans from the deploy block and re-parses every
+/// `L1MessageRecorded` event. The on-chain `l1MessageIndex` tells us how many
+/// messages the contract has already consumed (`pendingL1Messages[0..l1MessageIndex]`
+/// are gone). We discard those so the producer's queue head aligns with
+/// `pendingL1Messages[l1MessageIndex]`.
+pub(crate) fn filter_unconsumed(messages: Vec<L1Message>, on_chain_index: u64) -> Vec<L1Message> {
+    let threshold = U256::from(on_chain_index);
+    messages
+        .into_iter()
+        .filter(|m| m.nonce >= threshold)
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_msg(nonce: u64) -> L1Message {
+        use ethrex_common::H256;
+        L1Message {
+            sender: Address::zero(),
+            to: Address::zero(),
+            nonce: U256::from(nonce),
+            value: U256::zero(),
+            gas_limit: 21_000,
+            data: bytes::Bytes::new(),
+            data_hash: H256::zero(),
+        }
+    }
+
+    /// Verifies that `filter_unconsumed` skips messages the contract has already
+    /// consumed (nonce < on_chain_index) and keeps the rest.
+    ///
+    /// This test MUST FAIL against the previous behaviour where no filtering
+    /// happened and all messages were forwarded to the producer, causing
+    /// `advance()` to revert with "L1 messages root mismatch" on restart.
+    #[test]
+    fn filter_unconsumed_removes_consumed_messages() {
+        let messages: Vec<L1Message> = (0..5).map(make_msg).collect();
+
+        // All five consumed — queue must be empty after restart.
+        let result = filter_unconsumed(messages.clone(), 5);
+        assert!(
+            result.is_empty(),
+            "expected empty when on_chain_index=5, got nonces: {:?}",
+            result.iter().map(|m| m.nonce).collect::<Vec<_>>()
+        );
+
+        // Three consumed — only nonces 3 and 4 survive.
+        let result = filter_unconsumed(messages.clone(), 3);
+        assert_eq!(result.len(), 2, "expected 2 messages when on_chain_index=3");
+        assert_eq!(result[0].nonce, U256::from(3u64));
+        assert_eq!(result[1].nonce, U256::from(4u64));
+
+        // None consumed — all five survive.
+        let result = filter_unconsumed(messages, 0);
+        assert_eq!(result.len(), 5, "expected all 5 when on_chain_index=0");
     }
 }
