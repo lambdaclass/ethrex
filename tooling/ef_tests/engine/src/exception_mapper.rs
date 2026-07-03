@@ -38,6 +38,8 @@ const PATTERNS: &[Entry] = &[
         text: "Gas limit changed more than allowed from the parent" },
     Entry { canonical: "TransactionException.TYPE_3_TX_MAX_BLOB_GAS_ALLOWANCE_EXCEEDED", kind: Kind::Sub,
         text: "Exceeded MAX_BLOB_GAS_PER_BLOCK" },
+    Entry { canonical: "TransactionException.INVALID_CHAINID", kind: Kind::Sub,
+        text: "Transaction has invalid chain id" },
     Entry { canonical: "BlockException.INVALID_DEPOSIT_EVENT_LAYOUT", kind: Kind::Sub,
         text: "Invalid deposit request layout" },
     Entry { canonical: "BlockException.INVALID_REQUESTS", kind: Kind::Sub,
