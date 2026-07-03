@@ -153,11 +153,7 @@ pub(crate) async fn fetch_logs_with_filter(
         .as_ref()
         .map(|f| f.as_ref().to_vec())
         .unwrap_or_default();
-    let block_numbers: Box<dyn Iterator<Item = u64> + Send> =
-        match storage.get_candidate_blocks_by_address(&index_addresses, from, to)? {
-            Some(candidates) => Box::new(candidates.into_iter()),
-            None => Box::new(from..=to),
-        };
+    let block_numbers = storage.get_candidate_blocks_by_address(&index_addresses, from, to)?;
 
     let mut logs: Vec<RpcLog> = Vec::new();
     // For each candidate block, load its receipts (bulk) and collect matching logs.

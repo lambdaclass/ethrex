@@ -124,11 +124,12 @@ const CODE_CACHE_MAX_SIZE: u64 = 64 * 1024 * 1024;
 const LOG_INDEX_SECTIONS_KEY: &[u8] = b"log_index_sections";
 
 /// `MISC_VALUES` key holding the first section the log index actually covers
-/// (`u64` little-endian) — the lowest section found to contain any logs. Absent
-/// until the indexer encounters data. A query whose range starts below this
-/// section's first block falls back to a full scan, so the index never claims
-/// coverage over blocks this node does not retain (e.g. below a snap-sync
-/// pivot), which would otherwise hide them as having no logs.
+/// (`u64` little-endian) — the section *after* the first one found to contain
+/// logs, since that first section can straddle the snap-sync pivot and be only
+/// partially populated. Absent until the indexer encounters data. A query whose
+/// range starts below this section's first block falls back to a full scan, so
+/// the index never claims coverage over blocks this node does not retain (e.g.
+/// below the pivot), which would otherwise hide them as having no logs.
 const LOG_INDEX_START_KEY: &[u8] = b"log_index_start_section";
 
 /// Key used to persist the `flushed_upto` block number in `MISC_VALUES`.
@@ -1408,12 +1409,17 @@ impl Store {
             if !section_complete {
                 break;
             }
-            // The first section that carries any logs marks where the index's
-            // exact coverage begins; below it the node has no indexable data and
-            // queries must scan rather than trust an empty index result.
+            // The first section that carries any logs is where retained data
+            // begins — but on a snap-synced node the pivot can fall mid-section,
+            // leaving the lower part of that section with no data (which would be
+            // wrongly reported as "no logs"). Begin the index's covered range at
+            // the *next* section, which is guaranteed fully post-pivot; queries
+            // into the straddling section fall back to a scan. (We have no
+            // persisted pivot block to anchor on more precisely.)
             let new_start = if start.is_none() && !address_offsets.is_empty() {
-                start = Some(section);
-                Some(section)
+                let covered = section + 1;
+                start = Some(covered);
+                Some(covered)
             } else {
                 None
             };
@@ -1425,45 +1431,48 @@ impl Store {
         Ok(newly_indexed)
     }
 
-    /// Returns the candidate block numbers in `[from, to]` whose receipts may
-    /// contain a log from any of `addresses`, using the inverted log index, or
-    /// `None` if the index can't help (no address filter, or the range starts
-    /// beyond what's indexed) and the caller should scan.
+    /// Returns the block numbers in `[from, to]` an address-filtered
+    /// `eth_getLogs` must visit: the exact candidates from the inverted index
+    /// over its covered `[indexed_from, indexed_until)` window, followed by any
+    /// tail beyond what's indexed scanned in full. Falls back to scanning the
+    /// whole range when the index can't help — no address filter, nothing
+    /// indexed yet, or the range starts outside the covered window (e.g. below
+    /// this node's snap-sync pivot) — so blocks the node may not retain are never
+    /// silently reported as having no logs.
     ///
-    /// The indexed portion is exact (no false positives); any tail of the range
-    /// not yet indexed is returned in full so the caller still scans it. The
-    /// caller still exact-filters topics on every returned block.
+    /// The tail is a lazy range, never materialized, so a wide query on a node
+    /// with a lot of unindexed data (e.g. mid-backfill after an upgrade) doesn't
+    /// load millions of block numbers into memory. The indexed portion is exact
+    /// (no false positives); the caller still exact-filters topics per block.
     pub fn get_candidate_blocks_by_address(
         &self,
         addresses: &[Address],
         from: BlockNumber,
         to: BlockNumber,
-    ) -> Result<Option<Vec<BlockNumber>>, StoreError> {
+    ) -> Result<Box<dyn Iterator<Item = BlockNumber> + Send>, StoreError> {
         use crate::log_index;
         use std::collections::BTreeSet;
 
         // The address index can only narrow address-filtered queries.
         if addresses.is_empty() {
-            return Ok(None);
+            return Ok(Box::new(from..=to));
         }
-        // The index is exact only over `[indexed_from, indexed_until)`. Outside
-        // that window — nothing indexed yet, the range starts below the covered
-        // start (e.g. before this node's snap-sync pivot), or it starts at/past
-        // what's indexed — fall back to a full scan so we don't report retained-
-        // but-unindexed or unavailable blocks as having no logs.
+        // The index is exact only over `[indexed_from, indexed_until)`. If the
+        // range starts outside that window, scan the whole thing.
         let Some(start_section) = self.get_log_index_start_section()? else {
-            return Ok(None);
+            return Ok(Box::new(from..=to));
         };
         let indexed_from = start_section.saturating_mul(log_index::SECTION_SIZE);
         let indexed_until = self
             .get_indexed_log_sections()?
             .saturating_mul(log_index::SECTION_SIZE);
         if from < indexed_from || from >= indexed_until {
-            return Ok(None);
+            return Ok(Box::new(from..=to));
         }
 
-        // Safe: the guard above already returned for `indexed_until == 0`, so
-        // here `indexed_until >= 1` and the subtraction can't underflow.
+        // Exact candidates from the indexed portion `[from, indexed_to]`.
+        // Safe: the guard above returned for `indexed_until == 0`, so here
+        // `indexed_until >= 1` and the subtraction can't underflow.
         let indexed_to = to.min(indexed_until - 1);
         let mut candidates = BTreeSet::new();
         for section in log_index::section_of(from)..=log_index::section_of(indexed_to) {
@@ -1478,11 +1487,12 @@ impl Store {
                 }
             }
         }
-        // Unindexed tail of the range: include every block so it gets scanned.
-        if to >= indexed_until {
-            candidates.extend(from.max(indexed_until)..=to);
-        }
-        Ok(Some(candidates.into_iter().collect()))
+        // Any tail beyond the indexed window is scanned in full, but lazily: this
+        // range is empty when `to < indexed_until` and is never collected into a
+        // Vec. Candidates are all `< indexed_until <= tail`, so the chain stays
+        // in ascending block order.
+        let tail = indexed_until..=to;
+        Ok(Box::new(candidates.into_iter().chain(tail)))
     }
 
     // Snap State methods
