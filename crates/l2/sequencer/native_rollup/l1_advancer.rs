@@ -118,44 +118,24 @@ impl NativeL1Advancer {
             body: block_body.clone(),
         };
 
-        // 3. Get the execution witness. Reuse the cached one stored at block
-        //    execution time when --precompute-witnesses is enabled; otherwise
-        //    re-execute the block to produce it.
+        // 3. Re-execute the block to produce the execution witness and BAL.
+        //    Native blocks are persisted via store_block, which does not write
+        //    the witness cache (only add_block_pipeline_inner / store_witness
+        //    does). The cache is therefore never populated on this path, so
+        //    the witness is always generated on demand here.
         //    The parent_beacon_block_root carries the L1 messages Merkle root.
         //    The EIP-4788 system contract writes it during block processing,
         //    so the witness must include the beacon roots contract state.
-        //
-        //    Amsterdam+ blocks carry a block_access_list_hash, which requires
-        //    the BAL. The cached RPC witness carries no BAL, so when the header
-        //    signals a BAL we fall through to on-demand re-execution (which
-        //    returns both witness and BAL). Pre-Amsterdam blocks use the cache.
-        let block_hash = block_header.hash();
-        let needs_bal = block_header.block_access_list_hash.is_some();
+        //    Amsterdam+ blocks also return a BAL alongside the witness.
+        // BlockchainType::L1 — None is correct for fee_configs.
+        let (witness, bals) = self
+            .blockchain
+            .generate_witness_and_bal_for_blocks_with_fee_configs(&[block], None)
+            .await?;
         let (witness, bal): (
             ethrex_common::types::block_execution_witness::ExecutionWitness,
             Option<ethrex_common::types::block_access_list::BlockAccessList>,
-        ) = match self
-            .store
-            .get_witness_by_number_and_hash(next_block, block_hash)?
-        {
-            Some(rpc_witness) if !needs_bal => {
-                let chain_config = self.store.get_chain_config();
-                let witness = rpc_witness
-                    .into_execution_witness(chain_config, next_block)
-                    .map_err(|e| {
-                        NativeL1AdvancerError::Encoding(format!("cached witness conversion: {e}"))
-                    })?;
-                (witness, None)
-            }
-            _ => {
-                // BlockchainType::L1 — None is correct for fee_configs.
-                let (witness, bals) = self
-                    .blockchain
-                    .generate_witness_and_bal_for_blocks_with_fee_configs(&[block], None)
-                    .await?;
-                (witness, bals.into_iter().next().flatten())
-            }
-        };
+        ) = (witness, bals.into_iter().next().flatten());
 
         // 4. Count L1 messages by counting relayer txs.
         let l1_messages_count: u16 = block_body
