@@ -124,8 +124,10 @@ impl LEVM {
     }
 
     /// Executes `tx` with tracing disabled and discards the result. Matches geth's
-    /// `noopTracer`: the transaction still runs (so execution errors surface and the
-    /// trace harness overhead is exercised), but nothing is recorded.
+    /// `noopTracer`: the transaction still runs (so execution errors surface), but
+    /// nothing is recorded. The tracer is `disabled()`, so no per-opcode hooks are
+    /// dispatched — unlike geth's noop, which attaches empty hooks and still calls
+    /// into them per opcode.
     pub fn trace_tx_noop(
         db: &mut GeneralizedDatabase,
         block_header: &BlockHeader,
