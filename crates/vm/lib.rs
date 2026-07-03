@@ -6,7 +6,7 @@ mod witness_db;
 
 pub mod backends;
 
-pub use backends::{BlockExecutionResult, Evm};
+pub use backends::{BlockExecutionResult, Evm, compute_burned_fees};
 pub use db::{DynVmDatabase, VmDatabase};
 pub use errors::EvmError;
 pub use ethrex_levm::StatelessValidator;
