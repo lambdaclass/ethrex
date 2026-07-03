@@ -305,21 +305,23 @@ impl Evm {
 
 /// Compute burned fees for a block (EIP-8079, LStar+).
 ///
-/// Formula: `base_fee_per_gas * gas_used + blob_base_fee * blob_gas_used`
+/// Formula: `base_fee_per_gas * gas_spent + blob_base_fee * blob_gas_used`
 ///
-/// `gas_used` is the block-level charged gas (= `header.gas_used`, the Amsterdam-era
-/// max(regular, state) pre-refund quantity). Using a carried header value ensures
-/// production and stateless verification always compute the identical value.
+/// `gas_spent` is the post-refund Σ gas_spent across all transactions (= the last
+/// receipt's `cumulative_gas_used`).  Per EIP-8079 the fee basis is post-refund:
+/// users receive EIP-3529 refunds, so only the net gas actually charged is burned.
+/// Production and verification always compute the identical value because both paths
+/// build identical receipts from the same transactions and initial state.
 ///
 /// Uses saturating arithmetic; saturates at `u64::MAX` on overflow.
 pub fn compute_burned_fees(
     base_fee_per_gas: u64,
-    gas_used: u64,
+    gas_spent: u64,
     blob_base_fee: u64,
     blob_gas_used: u64,
 ) -> u64 {
     base_fee_per_gas
-        .saturating_mul(gas_used)
+        .saturating_mul(gas_spent)
         .saturating_add(blob_base_fee.saturating_mul(blob_gas_used))
 }
 
@@ -332,7 +334,8 @@ pub struct BlockExecutionResult {
     pub block_gas_used: u64,
     /// Total base-fee + blob-base-fee burned in this block (EIP-8079, LStar+).
     /// `None` for pre-LStar forks.
-    /// Formula: `base_fee_per_gas * block_gas_used + blob_base_fee * blob_gas_used`.
+    /// Formula: `base_fee_per_gas * Σgas_spent + blob_base_fee * blob_gas_used`,
+    /// where `Σgas_spent` = `receipts.last().cumulative_gas_used` (post-refund per EIP-7778).
     /// Uses saturating arithmetic; saturates at u64::MAX on extreme values.
     pub burned_fees: Option<u64>,
 }

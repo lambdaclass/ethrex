@@ -267,7 +267,9 @@ impl LEVM {
                     let blob_gas_used = block.header.blob_gas_used.unwrap_or(0);
                     Some(compute_burned_fees(
                         block.header.base_fee_per_gas.unwrap_or(0),
-                        block_gas_used,
+                        // EIP-8079: burn basis is post-refund Σ gas_spent.
+                        // cumulative_gas_used is accumulated as += report.gas_spent (post-refund).
+                        cumulative_gas_used,
                         blob_base_fee,
                         blob_gas_used,
                     ))
@@ -442,28 +444,33 @@ impl LEVM {
             validate_block_access_list_size(&block.header, &chain_config, bal)
                 .map_err(|e| EvmError::Custom(e.to_string()))?;
 
+            // EIP-8079: burn basis is post-refund Σ gas_spent.
+            // Each receipt's cumulative_gas_used += report.gas_spent (post-refund);
+            // the last receipt holds the block total.  Compute before `receipts` is moved.
+            let burned_fees_par = if is_lstar {
+                let evm_cfg = EVMConfig::new_from_chain_config(&chain_config, &block.header);
+                let blob_base_fee =
+                    get_base_fee_per_blob_gas(block.header.excess_blob_gas, &evm_cfg)
+                        .map(|v| u64::try_from(v).unwrap_or(u64::MAX))
+                        .unwrap_or(0);
+                let blob_gas_used = block.header.blob_gas_used.unwrap_or(0);
+                let post_refund_gas = receipts.last().map(|r| r.cumulative_gas_used).unwrap_or(0);
+                Some(compute_burned_fees(
+                    block.header.base_fee_per_gas.unwrap_or(0),
+                    post_refund_gas,
+                    blob_base_fee,
+                    blob_gas_used,
+                ))
+            } else {
+                None
+            };
+
             return Ok((
                 BlockExecutionResult {
                     receipts,
                     requests,
                     block_gas_used,
-                    burned_fees: if is_lstar {
-                        let evm_cfg =
-                            EVMConfig::new_from_chain_config(&chain_config, &block.header);
-                        let blob_base_fee =
-                            get_base_fee_per_blob_gas(block.header.excess_blob_gas, &evm_cfg)
-                                .map(|v| u64::try_from(v).unwrap_or(u64::MAX))
-                                .unwrap_or(0);
-                        let blob_gas_used = block.header.blob_gas_used.unwrap_or(0);
-                        Some(compute_burned_fees(
-                            block.header.base_fee_per_gas.unwrap_or(0),
-                            block_gas_used,
-                            blob_base_fee,
-                            blob_gas_used,
-                        ))
-                    } else {
-                        None
-                    },
+                    burned_fees: burned_fees_par,
                 },
                 None,
             ));
@@ -646,7 +653,9 @@ impl LEVM {
                     let blob_gas_used = block.header.blob_gas_used.unwrap_or(0);
                     Some(compute_burned_fees(
                         block.header.base_fee_per_gas.unwrap_or(0),
-                        block_gas_used,
+                        // EIP-8079: burn basis is post-refund Σ gas_spent.
+                        // cumulative_gas_used is accumulated as += report.gas_spent (post-refund).
+                        cumulative_gas_used,
                         blob_base_fee,
                         blob_gas_used,
                     ))
@@ -3000,6 +3009,8 @@ mod burned_fees_tests {
     struct MockDB {
         chain_config: ChainConfig,
         accounts: FxHashMap<Address, (AccountState, Bytes)>,
+        /// Pre-set storage values (address, slot) → value.
+        storage: FxHashMap<(Address, H256), U256>,
     }
 
     impl MockDB {
@@ -3007,6 +3018,7 @@ mod burned_fees_tests {
             Self {
                 chain_config,
                 accounts: FxHashMap::default(),
+                storage: FxHashMap::default(),
             }
         }
 
@@ -3026,6 +3038,11 @@ mod burned_fees_tests {
             self.accounts.insert(address, (state, code_bytes));
             self
         }
+
+        fn with_storage(mut self, address: Address, slot: H256, value: U256) -> Self {
+            self.storage.insert((address, slot), value);
+            self
+        }
     }
 
     impl Database for MockDB {
@@ -3037,8 +3054,12 @@ mod burned_fees_tests {
                 .unwrap_or_default())
         }
 
-        fn get_storage_value(&self, _: Address, _: H256) -> Result<U256, DatabaseError> {
-            Ok(U256::zero())
+        fn get_storage_value(&self, address: Address, slot: H256) -> Result<U256, DatabaseError> {
+            Ok(self
+                .storage
+                .get(&(address, slot))
+                .copied()
+                .unwrap_or_default())
         }
 
         fn get_block_hash(&self, _: u64) -> Result<H256, DatabaseError> {
@@ -3167,6 +3188,75 @@ mod burned_fees_tests {
         GeneralizedDatabase::new(Arc::new(mock))
     }
 
+    // Contract bytecode: PUSH1 0x00, PUSH1 0x00, SSTORE, STOP
+    // Clears storage slot 0.  When the slot's initial value is non-zero, the
+    // EIP-3529 "SSTORE_CLEARS_SCHEDULE" refund of 4800 gas is applied, making
+    // gas_used > gas_spent so block_gas_used ≠ cumulative_gas_used.
+    const SSTORE_CLEAR_BYTECODE: &[u8] = &[0x60, 0x00, 0x60, 0x00, 0x55, 0x00];
+
+    /// Build a signed EIP-1559 call to `to` with an explicit gas limit.
+    fn signed_call_tx(to: Address, nonce: u64, base_fee: u64, gas_limit: u64) -> Transaction {
+        use k256::ecdsa::SigningKey;
+
+        let tx = EIP1559Transaction {
+            chain_id: 1,
+            nonce,
+            max_priority_fee_per_gas: 1,
+            max_fee_per_gas: base_fee + 10,
+            gas_limit,
+            to: TxKind::Call(to),
+            value: U256::zero(),
+            ..Default::default()
+        };
+
+        let mut buf = vec![0x02u8];
+        tx.encode_payload(&mut buf);
+        let hash = keccak(&buf);
+
+        let signing_key = SigningKey::from_bytes(&PRIVATE_KEY.into()).expect("valid key");
+        let (sig, rid) = signing_key
+            .sign_prehash_recoverable(&hash.0)
+            .expect("sign ok");
+        let sig_bytes = sig.to_bytes();
+
+        Transaction::EIP1559Transaction(EIP1559Transaction {
+            signature_r: U256::from_big_endian(&sig_bytes[..32]),
+            signature_s: U256::from_big_endian(&sig_bytes[32..]),
+            signature_y_parity: rid.to_byte() != 0,
+            ..tx
+        })
+    }
+
+    /// DB with SSTORE_CLEAR_BYTECODE deployed at `contract_addr` and slot 0 = 1.
+    /// The sender has extra ETH to cover the higher gas_limit in the call tx.
+    fn make_gen_db_sstore_clear(
+        chain_config: ChainConfig,
+        contract_addr: Address,
+    ) -> GeneralizedDatabase {
+        let sender = sender_address();
+        let stop = Bytes::from_static(STOP_BYTECODE);
+        let mock = MockDB::new(chain_config)
+            .with_account(sender, U256::from(100_000_000_000u64), None)
+            .with_account(
+                WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS.address,
+                U256::zero(),
+                Some(stop.clone()),
+            )
+            .with_account(
+                CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS.address,
+                U256::zero(),
+                Some(stop),
+            )
+            .with_account(
+                contract_addr,
+                U256::zero(),
+                Some(Bytes::from_static(SSTORE_CLEAR_BYTECODE)),
+            )
+            // Slot 0 = 1 so SSTORE(0, 0) transitions 1→0, triggering EIP-3529 refund.
+            .with_storage(contract_addr, H256::zero(), U256::one());
+        GeneralizedDatabase::new(Arc::new(mock))
+    }
+
     // ── tests ────────────────────────────────────────────────────────────────
 
     #[test]
@@ -3176,10 +3266,11 @@ mod burned_fees_tests {
 
         const BASE_FEE: u64 = 10;
         // Simple ETH transfer: gas_used = gas_spent = 21_000 (no refunds).
-        // Amsterdam block_gas_used = max(regular=21_000, state=0) = 21_000.
+        // For a pure transfer block_gas_used == cumulative_gas_used (== gas_spent),
+        // so this test cannot distinguish the two — see test_burned_fees_post_refund_discriminating.
         // No blobs: blob_gas_used = 0, blob_base_fee = 0.
-        const BLOCK_GAS_USED: u64 = 21_000;
-        let expected = compute_burned_fees(BASE_FEE, BLOCK_GAS_USED, 0, 0);
+        const GAS_SPENT: u64 = 21_000;
+        let expected = compute_burned_fees(BASE_FEE, GAS_SPENT, 0, 0);
         // = 10 * 21_000 = 210_000
         assert_eq!(expected, 210_000, "sanity check");
 
@@ -3230,6 +3321,144 @@ mod burned_fees_tests {
                 .expect("pre-LStar execute_block succeeded");
         assert_eq!(
             result_pre_lstar.burned_fees, None,
+            "pre-LStar: burned_fees must be None"
+        );
+    }
+
+    /// Discriminating test: a transaction with an EIP-3529 SSTORE refund makes
+    /// `block_gas_used` (pre-refund) differ from `cumulative_gas_used` (post-refund).
+    /// The correct `burned_fees` uses post-refund gas; using `block_gas_used` would
+    /// over-count by `base_fee * refund_amount`.
+    ///
+    /// Gas analysis (Prague + Amsterdam era):
+    ///   intrinsic = 21 000
+    ///   PUSH1 + PUSH1 = 6
+    ///   SSTORE cold (original=1, new=0): cold-access 2100 + warm-reset 2900 = 5 000
+    ///     refund = SSTORE_CLEARS_SCHEDULE = 4 800 (≤ 26 006 / 5 = 5 201, so full refund)
+    ///   gas_used = 26 006, gas_spent = 21 206
+    ///
+    /// With the wrong code (block_gas_used = 26 006):
+    ///   burned_fees = 10 * 26 006 = 260 060  ← test FAILS
+    /// After the fix (cumulative_gas_used = 21 206):
+    ///   burned_fees = 10 * 21 206 = 212 060  ← test PASSES
+    #[test]
+    fn test_burned_fees_post_refund_discriminating() {
+        use std::sync::atomic::AtomicUsize;
+        use std::sync::mpsc;
+
+        const BASE_FEE: u64 = 10;
+        // Gas limit must exceed gas_used (26 006); 100 000 is ample.
+        const TX_GAS_LIMIT: u64 = 100_000;
+
+        let contract_addr = Address::from_low_u64_be(0xC0DEBEEF);
+        let crypto = NativeCrypto;
+
+        // ── (a) execute_block path (site 1) ───────────────────────────────────
+        let tx_a = signed_call_tx(contract_addr, 0, BASE_FEE, TX_GAS_LIMIT);
+        let block_a = make_block_with_tx(tx_a, BASE_FEE);
+        let mut db_a = make_gen_db_sstore_clear(lstar_chain_config(), contract_addr);
+        let (result_a, _) = LEVM::execute_block(&block_a, &mut db_a, VMType::L1, &crypto, None)
+            .expect("execute_block with SSTORE clear succeeded");
+
+        let cumulative_a = result_a.receipts[0].cumulative_gas_used;
+        // Discriminating guard: the refund must have happened.
+        assert!(
+            result_a.block_gas_used > cumulative_a,
+            "SSTORE refund must cause block_gas_used ({}) > cumulative_gas_used ({})",
+            result_a.block_gas_used,
+            cumulative_a,
+        );
+        // Correct burned_fees uses post-refund cumulative_gas_used, not block_gas_used.
+        assert_eq!(
+            result_a.burned_fees,
+            Some(BASE_FEE * cumulative_a),
+            "execute_block: burned_fees must use post-refund gas (cumulative={}, block_gas_used={})",
+            cumulative_a,
+            result_a.block_gas_used,
+        );
+
+        // ── (b) execute_block_pipeline sequential path (site 3, no BAL) ──────
+        let tx_b = signed_call_tx(contract_addr, 0, BASE_FEE, TX_GAS_LIMIT);
+        let block_b = make_block_with_tx(tx_b, BASE_FEE);
+        let mut db_b = make_gen_db_sstore_clear(lstar_chain_config(), contract_addr);
+        let (tx_sender_b, _rx_b) = mpsc::channel();
+        let queue_len_b = AtomicUsize::new(0);
+        let (result_b, _) = LEVM::execute_block_pipeline(
+            &block_b,
+            &mut db_b,
+            VMType::L1,
+            tx_sender_b,
+            &queue_len_b,
+            &crypto,
+            None, // no BAL → sequential path (site 3)
+            None,
+        )
+        .expect("execute_block_pipeline sequential with SSTORE clear succeeded");
+
+        let cumulative_b = result_b.receipts[0].cumulative_gas_used;
+        assert!(
+            result_b.block_gas_used > cumulative_b,
+            "sequential pipeline: SSTORE refund must be present",
+        );
+        assert_eq!(
+            result_b.burned_fees,
+            Some(BASE_FEE * cumulative_b),
+            "execute_block_pipeline (sequential): burned_fees must use post-refund gas",
+        );
+
+        // ── (c) execute_block_pipeline parallel path (site 2, with BAL) ──────
+        // Generate BAL via execute_block, then re-execute using that BAL.
+        let tx_c = signed_call_tx(contract_addr, 0, BASE_FEE, TX_GAS_LIMIT);
+        let block_c = make_block_with_tx(tx_c, BASE_FEE);
+        let mut db_c1 = make_gen_db_sstore_clear(lstar_chain_config(), contract_addr);
+        let (_, bal_c) = LEVM::execute_block(&block_c, &mut db_c1, VMType::L1, &crypto, None)
+            .expect("BAL generation succeeded");
+        let bal_c = bal_c.expect("LStar must produce a BAL");
+
+        let mut db_c2 = make_gen_db_sstore_clear(lstar_chain_config(), contract_addr);
+        let (tx_sender_c, _rx_c) = mpsc::channel();
+        let queue_len_c = AtomicUsize::new(0);
+        let (result_c, _) = LEVM::execute_block_pipeline(
+            &block_c,
+            &mut db_c2,
+            VMType::L1,
+            tx_sender_c,
+            &queue_len_c,
+            &crypto,
+            Some(&bal_c), // ← parallel path (site 2)
+            None,
+        )
+        .expect("execute_block_pipeline parallel with SSTORE clear succeeded");
+
+        let cumulative_c = result_c.receipts[0].cumulative_gas_used;
+        assert!(
+            result_c.block_gas_used > cumulative_c,
+            "parallel pipeline: SSTORE refund must be present",
+        );
+        assert_eq!(
+            result_c.burned_fees,
+            Some(BASE_FEE * cumulative_c),
+            "execute_block_pipeline (parallel): burned_fees must use post-refund gas",
+        );
+
+        // ── cross-path consistency ─────────────────────────────────────────────
+        assert_eq!(
+            result_a.burned_fees, result_b.burned_fees,
+            "execute_block vs sequential pipeline: burned_fees must match",
+        );
+        assert_eq!(
+            result_a.burned_fees, result_c.burned_fees,
+            "execute_block vs parallel pipeline: burned_fees must match",
+        );
+
+        // ── (d) pre-LStar → None ──────────────────────────────────────────────
+        let tx_d = signed_call_tx(contract_addr, 0, BASE_FEE, TX_GAS_LIMIT);
+        let block_d = make_block_with_tx(tx_d, BASE_FEE);
+        let mut db_d = make_gen_db_sstore_clear(amsterdam_chain_config(), contract_addr);
+        let (result_d, _) = LEVM::execute_block(&block_d, &mut db_d, VMType::L1, &crypto, None)
+            .expect("pre-LStar with SSTORE clear succeeded");
+        assert_eq!(
+            result_d.burned_fees, None,
             "pre-LStar: burned_fees must be None"
         );
     }
