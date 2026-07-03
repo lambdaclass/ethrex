@@ -13,7 +13,7 @@ use bytes::Bytes;
 use ethrex_common::types::Fork;
 use ethrex_crypto::Crypto;
 
-use crate::errors::{InternalError, VMError};
+use crate::errors::{InternalError, PrecompileError, VMError};
 use crate::precompiles::increase_precompile_consumed_gas;
 
 /// WIP DA/decode cost — the SSZ witness decode + trie rebuild scales with input size;
@@ -54,11 +54,9 @@ fn run_execute(
     use ethrex_common::types::stateless_ssz::SszStatelessInput;
     use libssz::SszDecode;
 
-    let input = SszStatelessInput::from_ssz_bytes(calldata).map_err(|e| {
-        VMError::Internal(InternalError::Custom(format!(
-            "EXECUTE: failed to decode SSZ StatelessInput: {e}"
-        )))
-    })?;
+    // Attacker-controlled input: SSZ decode failure is a CALL-level failure, not an invariant.
+    let input = SszStatelessInput::from_ssz_bytes(calldata)
+        .map_err(|_| VMError::from(PrecompileError::ExecuteInvalidInput))?;
 
     validate_l2_constraints(&input)?;
 
@@ -86,9 +84,11 @@ fn run_execute(
         )))
     })?;
     if !parsed.successful_validation {
-        return Err(VMError::Internal(InternalError::Custom(
-            "EXECUTE: stateless validation failed (fail-closed)".to_string(),
-        )));
+        // Attacker-controlled: validation failure must be a CALL-level failure so the tx is
+        // includable and the attacker pays Task 1's gas charge. `PrecompileError` → `ExceptionalHalt`
+        // → should_propagate()==false. Using `Internal` here would abort the tx, making it
+        // non-includable and defeating the DoS bound.
+        return Err(PrecompileError::ExecuteValidationFailed.into());
     }
 
     Ok(Bytes::from(result))
@@ -100,33 +100,24 @@ fn validate_l2_constraints(
 ) -> Result<(), VMError> {
     let payload = &input.new_payload_request.execution_payload;
 
+    // All checks below are attacker-controllable input violations — CALL-level failures.
     if payload.blob_gas_used != 0 {
-        return Err(VMError::Internal(InternalError::Custom(
-            "EXECUTE: L2 blocks must have blob_gas_used == 0".to_string(),
-        )));
+        return Err(PrecompileError::ExecuteInvalidInput.into());
     }
     if payload.excess_blob_gas != 0 {
-        return Err(VMError::Internal(InternalError::Custom(
-            "EXECUTE: L2 blocks must have excess_blob_gas == 0".to_string(),
-        )));
+        return Err(PrecompileError::ExecuteInvalidInput.into());
     }
     if !payload.withdrawals.is_empty() {
-        return Err(VMError::Internal(InternalError::Custom(
-            "EXECUTE: L2 blocks must have empty withdrawals".to_string(),
-        )));
+        return Err(PrecompileError::ExecuteInvalidInput.into());
     }
     let reqs = &input.new_payload_request.execution_requests;
     if !reqs.deposits.is_empty() || !reqs.withdrawals.is_empty() || !reqs.consolidations.is_empty()
     {
-        return Err(VMError::Internal(InternalError::Custom(
-            "EXECUTE: L2 blocks must have empty execution_requests".to_string(),
-        )));
+        return Err(PrecompileError::ExecuteInvalidInput.into());
     }
     for tx_bytes in payload.transactions.iter() {
         if let Some(&0x03) = tx_bytes.iter().next() {
-            return Err(VMError::Internal(InternalError::Custom(
-                "EXECUTE: L2 blocks must not contain blob transactions".to_string(),
-            )));
+            return Err(PrecompileError::ExecuteInvalidInput.into());
         }
     }
 
@@ -266,13 +257,15 @@ mod tests {
         input.ssz_append(&mut calldata_buf);
         let calldata = Bytes::from(calldata_buf);
 
-        // Invalid result → must Err (fail-closed).
+        // Invalid result → must Err (fail-closed) with a NON-propagating error so the tx is
+        // INCLUDABLE and the attacker pays Task 1's gas charge (I1×I13 regression guard).
         let mut gas = 100_000_000u64;
         let mock_invalid = MockInvalidValidator;
         let r = run_execute(&mock_invalid, &calldata, &mut gas);
+        let err = r.expect_err("invalid validation must revert (fail-closed), not return Ok");
         assert!(
-            r.is_err(),
-            "invalid validation must revert (fail-closed), not return Ok"
+            !err.should_propagate(),
+            "invalid EXECUTE must be a CALL-level failure (includable, attacker pays), not a tx-abort; got: {err:?}"
         );
 
         // Valid result → must Ok.
