@@ -59,13 +59,17 @@ fn block_to_ssz_to_block_preserves_hash() {
     let (header, body) = make_test_block();
     let original_hash = header.compute_block_hash(&NativeCrypto);
 
-    // Create a minimal witness (empty — we only care about header round-trip)
+    // Create a minimal witness (empty — we only care about header round-trip).
+    // chain_config_to_ssz requires Cancun+ (Paris has no stateless spec fork index);
+    // the block carries Prague fields so activate both at genesis time.
     let witness = ExecutionWitness {
         codes: vec![],
         block_headers_bytes: vec![],
         first_block_number: 0,
         chain_config: ethrex_common::types::ChainConfig {
             chain_id: 1,
+            cancun_time: Some(0),
+            prague_time: Some(0),
             ..Default::default()
         },
         state_trie_root: None,
