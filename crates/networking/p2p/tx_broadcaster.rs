@@ -306,13 +306,23 @@ impl TxBroadcaster {
             .iter()
             .map(|tx| tx.transaction().clone())
             .filter(|tx| {
-                !matches!(tx, Transaction::EIP4844Transaction { .. }) && !tx.is_privileged()
+                // Blob (EIP-4844) and frame (EIP-8141) transactions have large
+                // bodies, so they are announced by hash only (never full-body
+                // broadcast), mirroring the EIP-4844 propagation policy.
+                !matches!(tx, Transaction::EIP4844Transaction { .. })
+                    && !matches!(tx, Transaction::FrameTransaction(_))
+                    && !tx.is_privileged()
             })
             .collect::<Vec<Transaction>>();
 
-        let blob_txs = txs_to_broadcast
+        // Transactions announced by hash only (not full-body): blob (EIP-4844)
+        // and frame (EIP-8141) transactions.
+        let announce_only_txs = txs_to_broadcast
             .iter()
-            .filter(|tx| matches!(tx.transaction(), Transaction::EIP4844Transaction { .. }))
+            .filter(|tx| {
+                matches!(tx.transaction(), Transaction::EIP4844Transaction { .. })
+                    || matches!(tx.transaction(), Transaction::FrameTransaction(_))
+            })
             .cloned()
             .collect::<Vec<MempoolTransaction>>();
 
@@ -342,15 +352,20 @@ impl TxBroadcaster {
                     .collect(),
                 peer_id,
             );
-            // If a peer is selected to receive the full transactions, we don't send the blob transactions, since they only require to send the hashes
+            // If a peer is selected to receive the full transactions, we don't send the announce-only transactions (blob/frame), since they only require to send the hashes
             let txs_message = Message::Transactions(Transactions {
                 transactions: txs_to_send,
             });
             connection.outgoing_message(txs_message).await.unwrap_or_else(|err| {
                 debug!(peer_id = %format!("{:#x}", peer_id), err = ?err, "Failed to send transactions");
             });
-            self.send_tx_hashes_internal(blob_txs.clone(), capabilities, &mut connection, peer_id)
-                .await?;
+            self.send_tx_hashes_internal(
+                announce_only_txs.clone(),
+                capabilities,
+                &mut connection,
+                peer_id,
+            )
+            .await?;
         }
         for (peer_id, mut connection, capabilities) in peers_to_send_hashes.iter().cloned() {
             // If a peer is not selected to receive the full transactions, we only send the hashes of all transactions (including blob transactions)
