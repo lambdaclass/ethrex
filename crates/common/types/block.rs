@@ -411,6 +411,19 @@ impl BlockHeader {
             .hash
             .get_or_init(|| self.compute_block_hash(&NativeCrypto))
     }
+
+    /// Returns `self` with `burned_fees` set and the hash cache cleared.
+    ///
+    /// After `execute_blocks`, the header's `OnceCell` may already hold a stale
+    /// hash that was computed before `burned_fees` was known (e.g. during
+    /// `initialize_block_header_hashes`).  Taking ownership and clearing the
+    /// cache guarantees that the next call to `hash()` reflects the injected
+    /// value — without any extra `once_cell` dependency at the call site.
+    pub fn into_with_burned_fees(mut self, burned_fees: Option<u64>) -> Self {
+        self.burned_fees = burned_fees;
+        let _ = self.hash.take(); // clear stale cached hash
+        self
+    }
 }
 
 #[derive(
@@ -1162,5 +1175,69 @@ mod test {
             ..Default::default()
         };
         assert_ne!(h_with.hash(), h_without.hash());
+    }
+
+    /// Verify that `into_with_burned_fees` clears the OnceCell so the resulting
+    /// hash reflects the injected value and not any previously cached hash.
+    ///
+    /// This is the TDD anchor for the Task-4 verify-flow reorder: after
+    /// `execute_blocks` caches the block hash (burned_fees=None), we must be
+    /// able to inject the recomputed `burned_fees` and still get the correct hash.
+    #[test]
+    fn into_with_burned_fees_clears_stale_cache() {
+        use crate::NativeCrypto;
+
+        // Build a default header (burned_fees = None).
+        let header_none = BlockHeader::default();
+
+        // Force the hash cache to populate with burned_fees=None value.
+        let hash_stale = header_none.hash();
+
+        // Build a reference header with burned_fees=Some(42) from scratch (fresh OnceCell).
+        let header_some_fresh = BlockHeader {
+            burned_fees: Some(42),
+            ..BlockHeader::default()
+        };
+        let hash_expected = header_some_fresh.compute_block_hash(&NativeCrypto);
+
+        // The two hashes must differ — burned_fees is RLP-encoded in the header.
+        assert_ne!(
+            hash_stale, hash_expected,
+            "burned_fees=None and burned_fees=Some(42) must produce different block hashes"
+        );
+
+        // Now inject Some(42) via into_with_burned_fees, starting from the stale-cached header.
+        let fresh_header = header_none.into_with_burned_fees(Some(42));
+        let hash_fresh = fresh_header.hash();
+
+        // Must match the reference hash, NOT the stale one.
+        assert_eq!(
+            hash_fresh, hash_expected,
+            "into_with_burned_fees must yield a hash identical to building a fresh header with the same burned_fees"
+        );
+        assert_ne!(
+            hash_fresh, hash_stale,
+            "OnceCell must have been cleared: fresh hash must differ from the stale cached hash"
+        );
+    }
+
+    /// Verify the Amsterdam (pre-LStar) no-op: injecting None into a header
+    /// whose hash was cached with burned_fees=None yields the same hash.
+    ///
+    /// This is the primary correctness requirement for Task 4: the reordered
+    /// verify-flow must not regress the current Amsterdam path.
+    #[test]
+    fn into_with_burned_fees_none_is_idempotent() {
+        let header = BlockHeader::default();
+        let hash_before = header.hash(); // populate cache with burned_fees=None
+
+        // Inject None (Amsterdam: burned_fees is None both before and after execution).
+        let header_after = header.into_with_burned_fees(None);
+        let hash_after = header_after.hash();
+
+        assert_eq!(
+            hash_before, hash_after,
+            "injecting None must not change the block hash (Amsterdam no-op)"
+        );
     }
 }

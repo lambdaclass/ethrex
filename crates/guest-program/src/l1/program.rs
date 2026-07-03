@@ -34,6 +34,7 @@ pub fn execution_program(
         last_block_hash,
         non_privileged_count,
         chain_id,
+        burned_fees: _,
     } = execute_blocks(
         &blocks,
         execution_witness,
@@ -218,13 +219,44 @@ fn validate_eip8025_execution(
     execution_witness: ethrex_common::types::block_execution_witness::ExecutionWitness,
     crypto: Arc<dyn Crypto>,
 ) -> Result<(), ExecutionError> {
-    // Transform SSZ NewPayloadRequest → Block
+    // Transform SSZ NewPayloadRequest → Block.
+    // Do NOT call block.hash() here — burned_fees is not yet known so any
+    // cached value would be stale.
     let block = new_payload_request_to_block(new_payload_request, crypto.as_ref())
         .map_err(|e| ExecutionError::Internal(format!("payload conversion: {e}")))?;
 
-    // Validate block_hash: the SSZ payload carries block_hash which must match
-    // the hash of the reconstructed block header.
-    let computed_hash = block.hash();
+    // Keep block in a fixed-size array so we can reclaim it after execute_blocks
+    // (which borrows it as &[Block] without consuming it).
+    let blocks = [block];
+
+    // Validate blob versioned hashes (does not touch block.hash())
+    validate_versioned_hashes(&blocks[0], new_payload_request)?;
+
+    // Execute statelessly — reuse the common `execute_blocks` infrastructure.
+    // This is where burned_fees is recomputed from actual gas consumed.
+    let result = execute_blocks(
+        &blocks,
+        execution_witness,
+        ELASTICITY_MULTIPLIER,
+        |db, _| Ok(Evm::new_for_l1(db.clone(), crypto.clone())),
+        crypto.clone(),
+    )?;
+
+    // Inject recomputed burned_fees into the header, then check block_hash.
+    //
+    // Safety: execute_blocks calls initialize_block_header_hashes which
+    // populates block.header.hash via OnceCell — but with burned_fees=None
+    // (pre-execution value).  into_with_burned_fees() takes ownership, sets
+    // burned_fees, and calls OnceCell::take() to clear the stale cache, so
+    // the next hash() call reflects the injected value.
+    //
+    // At Amsterdam (pre-LStar), burned_fees is None both here and in the
+    // original header, so the hash is unchanged — no regression on the
+    // current path.
+    let recomputed_burned_fees = result.burned_fees.first().copied().flatten();
+    let [block] = blocks;
+    let verified_header = block.header.into_with_burned_fees(recomputed_burned_fees);
+    let computed_hash = verified_header.hash();
     let expected_hash =
         ethrex_common::H256::from_slice(&new_payload_request.execution_payload.block_hash);
     if computed_hash != expected_hash {
@@ -232,18 +264,6 @@ fn validate_eip8025_execution(
             "block_hash mismatch: expected {expected_hash:?}, got {computed_hash:?}"
         )));
     }
-
-    // Validate blob versioned hashes
-    validate_versioned_hashes(&block, new_payload_request)?;
-
-    // Execute statelessly — reuse the common `execute_blocks` infrastructure
-    let _result = execute_blocks(
-        &[block],
-        execution_witness,
-        ELASTICITY_MULTIPLIER,
-        |db, _| Ok(Evm::new_for_l1(db.clone(), crypto.clone())),
-        crypto.clone(),
-    )?;
 
     Ok(())
 }

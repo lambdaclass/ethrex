@@ -26,6 +26,9 @@ pub struct BatchExecutionResult {
     pub non_privileged_count: U256,
     /// Chain ID from the execution witness.
     pub chain_id: u64,
+    /// Per-block recomputed burned fees (EIP-8079, LStar+). `None` for pre-LStar forks.
+    /// One entry per block in the same order as `receipts`.
+    pub burned_fees: Vec<Option<u64>>,
 }
 
 /// Execute a batch of blocks using the provided VM factory.
@@ -100,6 +103,7 @@ where
     // Execute blocks
     let mut parent_block_header = &parent_block_header;
     let mut acc_receipts = Vec::new();
+    let mut acc_burned_fees: Vec<Option<u64>> = Vec::new();
     let mut non_privileged_count: usize = 0;
 
     for (i, block) in blocks.iter().enumerate() {
@@ -130,6 +134,7 @@ where
 
         let receipts = result.receipts;
         let block_gas_used = result.block_gas_used;
+        let block_burned_fees = result.burned_fees;
 
         let account_updates = report_cycles("get_state_transitions", || {
             vm.get_state_transitions().map_err(ExecutionError::Evm)
@@ -167,6 +172,7 @@ where
         })?;
 
         acc_receipts.push(receipts);
+        acc_burned_fees.push(block_burned_fees);
         parent_block_header = &block.header;
     }
 
@@ -192,5 +198,6 @@ where
         last_block_hash,
         non_privileged_count: non_privileged_count.into(),
         chain_id,
+        burned_fees: acc_burned_fees,
     })
 }
