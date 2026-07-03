@@ -105,14 +105,16 @@ pub async fn process_storage_ranges_request(
                 ));
             }
 
-            if !account_slots.is_empty() {
+            if account_slots.is_empty() {
+                // Absent account or empty range returns no slots; charge a per-probe minimum
+                // so an all-miss `account_hashes` list trips the budget instead of opening the
+                // storage trie once per entry. Hit accounts already paid 64 B/slot above, so
+                // they are not charged again (avoids over-debiting non-empty responses).
+                bytes_used += MIN_LOOKUP_COST;
+            } else {
                 slots.push(account_slots);
             }
 
-            // Charge every account attempt (even a miss that returned no slots) so an
-            // all-miss `account_hashes` list trips the budget instead of opening the storage
-            // trie once per entry.
-            bytes_used += MIN_LOOKUP_COST;
             if bytes_used >= byte_budget {
                 break;
             }

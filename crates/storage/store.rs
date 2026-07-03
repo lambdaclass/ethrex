@@ -122,6 +122,12 @@ const CODE_CACHE_MAX_SIZE: u64 = 64 * 1024 * 1024;
 /// Key used to persist the `flushed_upto` block number in `MISC_VALUES`.
 const FLUSHED_UPTO_KEY: &[u8] = b"bodies_flushed_upto";
 
+/// Minimum budget charged per storage sub-path probe in `get_trie_nodes`. A missed or overlong
+/// path resolves to an empty node (0 bytes), so charging a per-probe minimum stops a single
+/// `GetTrieNodes` pathset packed with bogus paths from forcing an unbounded number of trie
+/// descents. Sized to match the snap serving handlers' `MIN_LOOKUP_COST`.
+const MIN_TRIE_NODE_LOOKUP_COST: u64 = 32;
+
 #[derive(Debug)]
 struct CodeCache {
     inner_cache: LruCache<H256, Code, FxBuildHasher>,
@@ -2993,7 +2999,11 @@ impl Store {
                 break;
             }
             let node = storage_trie.get_node(path)?;
-            bytes_used += node.len() as u64;
+            // Charge at least a per-probe minimum against the budget: a missed or overlong
+            // sub-path resolves to an empty node (0 bytes), so without this a single pathset
+            // packed with bogus storage paths would run one trie descent per entry while never
+            // advancing the budget (a request-amplification vector).
+            bytes_used += (node.len() as u64).max(MIN_TRIE_NODE_LOOKUP_COST);
             nodes.push(node);
         }
         Ok(nodes)

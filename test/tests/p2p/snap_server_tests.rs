@@ -1010,11 +1010,14 @@ async fn byte_codes_clamps_response_bytes() -> Result<(), SnapError> {
     Ok(())
 }
 
-// NOTE: `process_trie_nodes_request` receives the same `request.bytes.min(MAX_RESPONSE_BYTES)`
-// clamp (see `snap/server.rs`), but is not given a dedicated regression test here: exercising
-// it requires a committed state trie readable through `get_trie_nodes`' `open_state_trie`
-// path, which the direct-write test fixtures don't populate. The clamp is mechanically
-// identical to the three handlers covered above.
+// NOTE: the `GetTrieNodes` path is charged in two places — per outer pathset in
+// `process_trie_nodes_request` (see `snap/server.rs`) and, crucially, per storage sub-path
+// inside `Store::get_trie_nodes` (which now adds `MIN_TRIE_NODE_LOOKUP_COST` per probe so a
+// single pathset packed with missing/overlong sub-paths can't force an unbounded trie walk).
+// Neither gets a dedicated miss/empty-path regression test here: exercising them requires a
+// committed state trie readable through `get_trie_nodes`' snapshot-gated `open_state_trie`
+// path, which the direct-write test fixtures don't populate (it goes through the block/layer
+// commit machinery). The per-probe charge mirrors the byte-codes/storage handlers above.
 
 // Request-side amplification guard (distinct from the response-byte clamp above): the byte
 // budget must advance on every lookup *attempt*, not only on hits. Otherwise an all-miss (or
