@@ -3203,20 +3203,17 @@ fn env_from_generic(
     let block_excess_blob_gas = header.excess_blob_gas;
     let config = EVMConfig::new_from_chain_config(&chain_config, header);
 
-    // Validate slot_number for Amsterdam+ blocks
-    // For L2 chains, slot_number is always 0
+    // slot_number: tolerate a missing value exactly like the block-execution
+    // path does (see the Environment construction in `run_execution`'s caller).
+    // Headers legitimately carry None even on Amsterdam+ chains when the CL
+    // drives a pre-V4 engine API (the slot only arrives in
+    // PayloadAttributesV4), and blocks with None import and execute fine with
+    // SLOTNUM reading 0. Simulation (eth_call / eth_estimateGas) must never be
+    // stricter than execution — erroring here made every simulation fail on
+    // such chains. For L2 chains, slot_number is always 0.
     let slot_number = if let VMType::L2(_) = vm_type {
         U256::zero()
-    } else if config.fork >= Fork::Amsterdam {
-        header
-            .slot_number
-            .map(U256::from)
-            .ok_or(VMError::Internal(InternalError::Custom(
-                "slot_number must be present in Amsterdam+ blocks".to_string(),
-            )))?
     } else {
-        // Pre-Amsterdam: slot_number should be None, default to zero
-        // This value should never be used since SLOTNUM opcode doesn't exist pre-Amsterdam
         header.slot_number.map(U256::from).unwrap_or(U256::zero())
     };
 
