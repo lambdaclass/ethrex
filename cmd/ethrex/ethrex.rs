@@ -56,10 +56,11 @@ async fn server_shutdown(
     info!("Server shut down started...");
     // Stop feeding new blocks before draining, so the persist queue can't grow.
     cancel_token.cancel();
-    // Drain the persist worker, commit all in-memory trie diff-layers and the
-    // block-data buffer, and fsync the DB. Without this an abrupt exit (e.g.
-    // `docker restart -t 0`) loses up to ~128 blocks of in-memory state and
-    // leaves the DB needing WAL recovery on next start.
+    // Drain the persist worker, force-flush the block-data buffer, and fsync the
+    // DB. Without this an abrupt exit (e.g. `docker restart -t 0`) loses the
+    // buffered block-data tail and leaves the DB needing WAL recovery on next
+    // start. In-memory trie diff-layers are intentionally left uncommitted and
+    // re-executed on the next start (see `Store::shutdown`).
     info!("Flushing database to disk...");
     if let Err(err) = store.shutdown().await {
         error!("Failed to flush database on shutdown: {err}");
