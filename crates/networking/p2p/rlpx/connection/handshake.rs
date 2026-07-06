@@ -62,7 +62,7 @@ pub(crate) async fn perform(
     state: ConnectionState,
     eth_version: Arc<RwLock<EthCapVersion>>,
 ) -> Result<(Established, SplitStream<Framed<TcpStream, RLPxCodec>>), PeerConnectionError> {
-    let (context, node, framed) = match state {
+    let (context, node, framed, is_inbound) = match state {
         ConnectionState::Initiator(Initiator { context, node }) => {
             let addr = SocketAddr::new(node.ip, node.tcp_port);
             let mut stream = match tcp_stream(addr).await {
@@ -81,7 +81,7 @@ pub(crate) async fn perform(
                 keccak_hash([remote_state.nonce.0, local_state.nonce.0].concat());
             let codec = RLPxCodec::new(&local_state, &remote_state, hashed_nonces, eth_version)?;
             trace!(peer=%node, "Completed handshake as initiator");
-            (context, node, Framed::new(stream, codec))
+            (context, node, Framed::new(stream, codec), false)
         }
         ConnectionState::Receiver(Receiver {
             context,
@@ -107,7 +107,7 @@ pub(crate) async fn perform(
                 remote_state.public_key,
             );
             trace!(peer=%node, "Completed handshake as receiver");
-            (context, node, Framed::new(stream, codec))
+            (context, node, Framed::new(stream, codec), true)
         }
         ConnectionState::Established(_) => {
             return Err(PeerConnectionError::StateError(
@@ -133,6 +133,7 @@ pub(crate) async fn perform(
             outbound_tx,
             outbound_writer_timed_out,
             node,
+            is_inbound,
             storage: context.storage.clone(),
             blockchain: context.blockchain.clone(),
             capabilities: vec![],

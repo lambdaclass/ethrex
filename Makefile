@@ -76,7 +76,7 @@ dev-hotpath: ## 🔥 Run ethrex in DEV_MODE with the hotpath profiler (all signa
 		--dev \
 		--datadir memory
 
-ETHEREUM_PACKAGE_REVISION := 35b770d5cddb5c356fd0e9157b8db8acf5809365
+ETHEREUM_PACKAGE_REVISION := d47e98799c84a71d94371472e05f5e93030b3a7b
 ETHEREUM_PACKAGE_DIR := ethereum-package
 
 checkout-ethereum-package: ## 📦 Checkout specific Ethereum package revision

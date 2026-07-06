@@ -24,6 +24,10 @@ rustc-hash.workspace = true
 rayon = { workspace = true, optional = true }
 hotpath = { workspace = true, optional = true }
 
+[dev-dependencies]
+# Used by EIP-8141 frame-signature tests to mint real secp256k1/P-256 signatures.
+k256.workspace = true
+p256 = { version = "0.13.2", features = ["ecdsa", "arithmetic", "expose-field"] }
 
 [features]
 default = []
