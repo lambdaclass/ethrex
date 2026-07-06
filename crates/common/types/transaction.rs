@@ -2441,8 +2441,11 @@ impl FrameTransaction {
     /// - Deploy frame (if any) is at index 0 and uses DEFAULT execution mode.
     /// - At most one deploy frame exists in the prefix.
     /// - self_verify / only_verify / pay frames use VERIFY execution mode.
-    /// - Resolved target of each VERIFY frame matches `tx.sender` (target == None
-    ///   means sender; a non-None target must equal sender).
+    /// - Resolved target of each *execution-approving* VERIFY frame (self_verify,
+    ///   only_verify — scopes carrying the `APPROVE_EXECUTION` 0x02 bit) matches
+    ///   `tx.sender` (target == None means sender). The pay frame
+    ///   (`APPROVE_PAYMENT` 0x1) may target a distinct paymaster P != sender,
+    ///   matching execution (`apply_approve` scope 0x1 imposes no sender check).
     /// - Scope restriction matches the frame's role:
     ///   self_verify → `APPROVE_EXECUTION_AND_PAYMENT`, only_verify → `APPROVE_EXECUTION`,
     ///   pay → `APPROVE_PAYMENT`.
@@ -2489,17 +2492,6 @@ impl FrameTransaction {
                         });
                     }
 
-                    // Resolved target must be tx.sender (None means sender).
-                    let target_ok = match frame.target {
-                        None => true,
-                        Some(addr) => addr == self.sender,
-                    };
-                    if !target_ok {
-                        return Err(FrameValidationError::VerifyTargetNotSender {
-                            frame_index: idx,
-                        });
-                    }
-
                     // Scope restriction must match role.
                     let expected_scope = match prefix.shape {
                         PrefixShape::SelfVerify | PrefixShape::DeploySelfVerify => {
@@ -2520,6 +2512,29 @@ impl FrameTransaction {
                             expected: expected_scope,
                             actual: frame.scope_restriction(),
                         });
+                    }
+
+                    // Resolved target must be tx.sender ONLY for frames that grant
+                    // execution approval (the APPROVE_EXECUTION 0x02 bit): self_verify
+                    // (0x3) and only_verify (0x2). A pure APPROVE_PAYMENT (0x1) pay
+                    // frame legitimately targets a DISTINCT paymaster P != tx.sender —
+                    // that is the whole point of the canonical-paymaster
+                    // [only_verify, pay] shape. This mirrors execution exactly:
+                    // `execute_default_verify` gates target==sender on the 0x02 bit,
+                    // and `apply_approve` scope 0x1 never checks sender. Enforcing
+                    // target==sender on the pay frame here made the mempool STRICTER
+                    // than execution and rejected a first-class spec use case (see
+                    // EIP-8141 APPROVE scope rules).
+                    if (expected_scope & APPROVE_EXECUTION) != 0 {
+                        let target_ok = match frame.target {
+                            None => true,
+                            Some(addr) => addr == self.sender,
+                        };
+                        if !target_ok {
+                            return Err(FrameValidationError::VerifyTargetNotSender {
+                                frame_index: idx,
+                            });
+                        }
                     }
                 }
             }
@@ -2550,9 +2565,10 @@ pub enum PrefixShape {
     SelfVerify,
     /// DEFAULT (deploy) frame, then VERIFY frame that verifies + authorizes payment.
     DeploySelfVerify,
-    /// VERIFY(exec) + VERIFY(pay): separate verifier and paymaster.
+    /// VERIFY(exec, target=sender) + VERIFY(pay): the pay frame may target a
+    /// distinct paymaster P != sender (the canonical-paymaster shape).
     OnlyVerifyPay,
-    /// DEFAULT (deploy) + VERIFY(exec) + VERIFY(pay).
+    /// DEFAULT (deploy) + VERIFY(exec, target=sender) + VERIFY(pay, target=P).
     DeployOnlyVerifyPay,
 }
 
@@ -5081,6 +5097,128 @@ mod tests {
             },
         ];
         assert!(tx.validate_static_constraints().is_ok());
+    }
+
+    #[test]
+    fn only_verify_pay_admits_distinct_paymaster_pay_frame() {
+        // EIP-8141 canonical-paymaster shape [only_verify(target=sender,
+        // APPROVE_EXECUTION), pay(target=P, APPROVE_PAYMENT)]: the pay frame
+        // legitimately targets a DISTINCT paymaster P != sender (execution's
+        // APPROVE scope 0x1 imposes no sender check). validate_prefix_structure
+        // must accept it — it previously rejected with VerifyTargetNotSender
+        // because it pinned EVERY prefix VERIFY frame to tx.sender.
+        let sender = Address::from_low_u64_be(0xABCD);
+        let paymaster = Address::from_low_u64_be(0xBEEF);
+        let mut tx = make_test_frame_tx();
+        tx.sender = sender;
+        tx.frames = vec![
+            Frame {
+                mode: FrameMode::Verify as u8,
+                flags: APPROVE_EXECUTION,
+                target: None, // sender
+                gas_limit: 21_000,
+                value: U256::zero(),
+                data: Bytes::new(),
+            },
+            Frame {
+                mode: FrameMode::Verify as u8,
+                flags: APPROVE_PAYMENT,
+                target: Some(paymaster),
+                gas_limit: 21_000,
+                value: U256::zero(),
+                data: Bytes::new(),
+            },
+            Frame {
+                mode: FrameMode::Sender as u8,
+                flags: 0x00,
+                target: Some(Address::from_low_u64_be(0x1234)),
+                gas_limit: 21_000,
+                value: U256::zero(),
+                data: Bytes::new(),
+            },
+        ];
+        let prefix = tx.validation_prefix().expect("recognizes OnlyVerifyPay");
+        assert_eq!(prefix.shape, PrefixShape::OnlyVerifyPay);
+        assert_eq!(prefix.pay_index, Some(1));
+        tx.validate_prefix_structure(&prefix)
+            .expect("distinct-paymaster pay frame must pass structural validation");
+    }
+
+    #[test]
+    fn only_verify_exec_frame_still_pinned_to_sender() {
+        // Anti-regression: the relaxation must NOT weaken the execution-approving
+        // frame. An only_verify (APPROVE_EXECUTION) frame targeting P != sender
+        // must still be rejected with VerifyTargetNotSender.
+        let sender = Address::from_low_u64_be(0xABCD);
+        let not_sender = Address::from_low_u64_be(0xBEEF);
+        let mut tx = make_test_frame_tx();
+        tx.sender = sender;
+        tx.frames = vec![
+            Frame {
+                mode: FrameMode::Verify as u8,
+                flags: APPROVE_EXECUTION,
+                target: Some(not_sender),
+                gas_limit: 21_000,
+                value: U256::zero(),
+                data: Bytes::new(),
+            },
+            Frame {
+                mode: FrameMode::Verify as u8,
+                flags: APPROVE_PAYMENT,
+                target: Some(Address::from_low_u64_be(0xCAFE)),
+                gas_limit: 21_000,
+                value: U256::zero(),
+                data: Bytes::new(),
+            },
+            Frame {
+                mode: FrameMode::Sender as u8,
+                flags: 0x00,
+                target: Some(Address::from_low_u64_be(0x1234)),
+                gas_limit: 21_000,
+                value: U256::zero(),
+                data: Bytes::new(),
+            },
+        ];
+        let prefix = tx.validation_prefix().expect("recognizes OnlyVerifyPay");
+        assert!(matches!(
+            tx.validate_prefix_structure(&prefix),
+            Err(FrameValidationError::VerifyTargetNotSender { frame_index: 0 })
+        ));
+    }
+
+    #[test]
+    fn self_verify_frame_still_pinned_to_sender() {
+        // Anti-regression: self_verify carries APPROVE_EXECUTION_AND_PAYMENT (0x3),
+        // which includes the APPROVE_EXECUTION 0x02 bit, so it must still target
+        // the sender even though it is the pay_index frame of its prefix.
+        let sender = Address::from_low_u64_be(0xABCD);
+        let not_sender = Address::from_low_u64_be(0xBEEF);
+        let mut tx = make_test_frame_tx();
+        tx.sender = sender;
+        tx.frames = vec![
+            Frame {
+                mode: FrameMode::Verify as u8,
+                flags: APPROVE_EXECUTION_AND_PAYMENT,
+                target: Some(not_sender),
+                gas_limit: 21_000,
+                value: U256::zero(),
+                data: Bytes::new(),
+            },
+            Frame {
+                mode: FrameMode::Sender as u8,
+                flags: 0x00,
+                target: Some(Address::from_low_u64_be(0x1234)),
+                gas_limit: 21_000,
+                value: U256::zero(),
+                data: Bytes::new(),
+            },
+        ];
+        let prefix = tx.validation_prefix().expect("recognizes SelfVerify");
+        assert_eq!(prefix.shape, PrefixShape::SelfVerify);
+        assert!(matches!(
+            tx.validate_prefix_structure(&prefix),
+            Err(FrameValidationError::VerifyTargetNotSender { frame_index: 0 })
+        ));
     }
 
     #[test]

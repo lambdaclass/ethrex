@@ -1619,13 +1619,15 @@ async fn mempool_enforces_noncanonical_paymaster_limit() {
     // EIP-8141 OQ1: all paymasters are non-canonical; the per-paymaster pending
     // limit is MAX_PENDING_TXS_USING_NON_CANONICAL_PAYMASTER = 1.
     //
-    // In the current implementation `validate_prefix_structure` requires all
-    // VERIFY frames to target `tx.sender`, which means every sender is their own
-    // paymaster (there is no shape where an external paymaster address is shared
-    // between two senders). `FrameTxNonCanonicalPaymasterLimit` is therefore
-    // exercised by pre-filling the paymaster's non-canonical slot via a direct
-    // `Mempool::add_transaction` call (bypassing simulation), then submitting a
-    // real frame tx from the SAME sender via `add_transaction_to_pool`.
+    // A distinct paymaster (pay frame targeting P != sender) is now accepted by
+    // `validate_prefix_structure` (the pay frame is exempt from the
+    // target==sender rule), so an external paymaster address CAN be shared
+    // between senders. This test still exercises `FrameTxNonCanonicalPaymasterLimit`
+    // the isolated way — pre-filling the paymaster's non-canonical slot via a
+    // direct `Mempool::add_transaction` call (bypassing simulation), then
+    // submitting a real frame tx that names the SAME paymaster via
+    // `add_transaction_to_pool` — so it does not depend on standing up a paymaster
+    // contract in the simulation harness.
     //
     // Steps:
     // 1. Directly insert a frame tx from a PHANTOM sender into the mempool,
