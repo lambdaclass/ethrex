@@ -1159,9 +1159,21 @@ impl Transaction {
         let (buf, sig) = match self {
             Transaction::LegacyTransaction(tx) => {
                 let v = u64::try_from(tx.v).map_err(|_| CryptoError::InvalidSignature)?;
+                // EIP-155: valid legacy `v` is 27/28 (pre-155) or
+                // {35,36} + chain_id * 2. Any other value is a malformed
+                // signature and must be rejected rather than coerced into a
+                // parity bit (which would recover a bogus sender).
                 let signature_y_parity = match self.chain_id() {
-                    Some(chain_id) => v.saturating_sub(35 + chain_id * 2) != 0,
-                    None => v.saturating_sub(27) != 0,
+                    Some(chain_id) => match v.checked_sub(35 + chain_id * 2) {
+                        Some(0) => false,
+                        Some(1) => true,
+                        _ => return Err(CryptoError::InvalidSignature),
+                    },
+                    None => match v {
+                        27 => false,
+                        28 => true,
+                        _ => return Err(CryptoError::InvalidSignature),
+                    },
                 };
                 let mut buf = vec![];
                 match self.chain_id() {
