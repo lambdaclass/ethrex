@@ -7,7 +7,7 @@
 //! future 4-way AVX2 / FEAT_SHA3 kernel is meant to beat (see issue #6947).
 
 use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
-use ethrex_crypto::keccak::{Keccak256, keccak256_batch, keccak_hash};
+use ethrex_crypto::keccak::{Keccak256, keccak_hash, keccak256_batch};
 
 /// Deterministic pseudo-random bytes (splitmix64) so runs are comparable.
 fn pseudo_bytes(len: usize, seed: u64) -> Vec<u8> {

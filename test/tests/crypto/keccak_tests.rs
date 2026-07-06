@@ -1,4 +1,4 @@
-use ethrex_crypto::keccak::{Keccak256, keccak256_batch, keccak_hash};
+use ethrex_crypto::keccak::{Keccak256, keccak_hash, keccak256_batch};
 use std::array;
 
 const BLOCK_SIZE: usize = 136;
