@@ -485,11 +485,13 @@ impl Mempool {
     /// one-pending-frame-tx-per-sender policy which must run under this lock to
     /// avoid a TOCTOU race (EIP-8141, review fix 1.6).
     ///
-    /// The per-account **queued** (future/nonce-gapped) cap is enforced upstream
-    /// in `Blockchain::validate_transaction`, which has the sender's on-chain
-    /// nonce needed to tell executable txs from future ones. Executable
-    /// (contiguous-nonce) txs are never capped here, so a single sender can hold
-    /// arbitrarily many executable txs (bounded only by the global mempool size).
+    /// The per-account **queued** (future/nonce-gapped) cap is enforced *here*,
+    /// atomically under the write lock, when a [`QueuedCap`] is passed (see the
+    /// check below). `Blockchain::validate_transaction` supplies the sender's
+    /// on-chain nonce via that `QueuedCap` so future txs can be distinguished
+    /// from executable ones. Executable (contiguous-nonce) txs are never capped,
+    /// so a single sender can hold arbitrarily many (bounded only by the global
+    /// mempool size).
     pub fn add_transaction(
         &self,
         hash: H256,
@@ -1345,5 +1347,78 @@ mod tests {
         // b's future tx is unaffected by a's queued txs.
         assert_eq!(pool.queued_count_if_future(b, 0, 9).unwrap(), Some(0));
         assert_eq!(pool.queued_count_if_future(a, 0, 9).unwrap(), Some(2));
+    }
+
+    // Adds a future tx through `add_transaction` with an explicit `QueuedCap`,
+    // exercising the atomic cap enforcement (not just the count helper).
+    fn add_future_with_cap(
+        pool: &Mempool,
+        sender: Address,
+        nonce: u64,
+        account_nonce: u64,
+        max: usize,
+    ) -> Result<(), MempoolError> {
+        let mtx = MempoolTransaction::new(build_tx(nonce), sender);
+        let hash = mtx.hash(&NativeCrypto);
+        pool.add_transaction(
+            hash,
+            sender,
+            mtx,
+            None,
+            Some(QueuedCap { account_nonce, max }),
+        )
+    }
+
+    #[test]
+    fn add_transaction_rejects_future_tx_over_queued_cap() {
+        // On-chain nonce 0 with no tx at 0, so pooled nonces 5,6,7 are all
+        // future → the sender is at a queued cap of 3. One more future tx,
+        // checked against the cap, must be rejected under the write lock.
+        const CAP: usize = 3;
+        let pool = Mempool::new(10_000);
+        let sender = Address::from_low_u64_be(1);
+        for nonce in [5u64, 6, 7] {
+            add_tx(&pool, sender, nonce);
+        }
+        let res = add_future_with_cap(&pool, sender, 8, 0, CAP);
+        assert!(
+            matches!(
+                res,
+                Err(MempoolError::MaxQueuedTxsPerAccountExceeded { count, limit, .. })
+                    if count == CAP && limit == CAP
+            ),
+            "expected MaxQueuedTxsPerAccountExceeded(count=3, limit=3), got {res:?}"
+        );
+    }
+
+    #[test]
+    fn add_transaction_accepts_future_tx_below_queued_cap() {
+        // Two queued txs with a cap of 3: a third future tx is under the cap and
+        // is accepted.
+        const CAP: usize = 3;
+        let pool = Mempool::new(10_000);
+        let sender = Address::from_low_u64_be(1);
+        for nonce in [5u64, 6] {
+            add_tx(&pool, sender, nonce);
+        }
+        assert!(
+            add_future_with_cap(&pool, sender, 7, 0, CAP).is_ok(),
+            "a future tx below the queued cap must be accepted"
+        );
+    }
+
+    #[test]
+    fn add_transaction_never_caps_executable_txs() {
+        // A contiguous run from the on-chain nonce is executable, never future,
+        // so the cap never fires even far past it.
+        const CAP: usize = 3;
+        let pool = Mempool::new(10_000);
+        let sender = Address::from_low_u64_be(1);
+        for nonce in 0..10 {
+            assert!(
+                add_future_with_cap(&pool, sender, nonce, 0, CAP).is_ok(),
+                "contiguous (executable) tx at nonce {nonce} must never be capped"
+            );
+        }
     }
 }
