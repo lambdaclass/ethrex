@@ -122,7 +122,28 @@ nano .env
 
 These are ethrex mainnet nodes paired with different consensus clients (Prysm, Lodestar, Teku, Grandine); the ethrex (EL) upgrade procedure is the same across them.
 
-<!-- TODO: document the upgrade procedure for these hosts -->
+They run the ethrex binary downloaded from the release in a tmux session, the consensus also runs in its own tmux session.
+
+```bash
+tmux ls
+# gracefully stop ethrex
+tmux a -t ethrex
+# ctrl-c
+exit
+
+wget -q -O ethrex-linux-x86_64 \
+  https://github.com/lambdaclass/ethrex/releases/download/v20.0.0-rc.1/ethrex-linux-x86_64
+chmod +x ethrex-linux-x86_64
+
+./ethrex-linux-x86_64 --version # ethrex/v20.0.0-
+
+tmux new-session -d -s ethrex \
+  'cd ~ && RUST_LOG=info ./ethrex-linux-x86_64 \
+     --http.addr 0.0.0.0 --http.api eth,net,web3,admin \
+     --metrics --metrics.port 3701 \
+     --network mainnet \
+     --authrpc.jwtsecret /home/admin/secrets/jwt.hex 2>&1 | tee -a ~/ethrex-rc.log'
+```
 
 #### `ethrex-multisync-main`
 
