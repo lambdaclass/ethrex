@@ -89,6 +89,7 @@ use tokio::sync::{
     oneshot,
 };
 use tokio::time::timeout;
+use tokio_util::sync::CancellationToken;
 use tower_http::cors::CorsLayer;
 use tracing::{error, info, warn};
 use tracing_subscriber::{EnvFilter, Registry, reload};
@@ -524,6 +525,7 @@ pub async fn start_api(
     gas_ceil: u64,
     extra_data: String,
     allowed_namespaces: HashSet<RpcNamespace>,
+    cancel_token: CancellationToken,
 ) -> Result<(), RpcErr> {
     // TODO: Refactor how filters are handled,
     // filters are used by the filters endpoints (eth_newFilter, eth_getFilterChanges, ...etc)
@@ -580,7 +582,7 @@ pub async fn start_api(
         .await
         .map_err(|error| RpcErr::Internal(error.to_string()))?;
     let http_server = axum::serve(http_listener, http_router)
-        .with_graceful_shutdown(shutdown_signal())
+        .with_graceful_shutdown(rpc_shutdown_signal(cancel_token.clone()))
         .into_future();
     info!("Starting HTTP server at {http_addr}");
 
@@ -611,7 +613,7 @@ pub async fn start_api(
         .await
         .map_err(|error| RpcErr::Internal(error.to_string()))?;
     let authrpc_server = axum::serve(authrpc_listener, authrpc_router)
-        .with_graceful_shutdown(shutdown_signal())
+        .with_graceful_shutdown(rpc_shutdown_signal(cancel_token.clone()))
         .into_future();
     info!("Starting Auth-RPC server at {authrpc_addr}");
 
@@ -633,7 +635,7 @@ pub async fn start_api(
             .await
             .map_err(|error| RpcErr::Internal(error.to_string()))?;
         let ws_server = axum::serve(ws_listener, ws_router)
-            .with_graceful_shutdown(shutdown_signal())
+            .with_graceful_shutdown(rpc_shutdown_signal(cancel_token.clone()))
             .into_future();
         info!("Starting WS server at {}", ws_config.addr);
 
@@ -654,6 +656,19 @@ pub async fn shutdown_signal() {
     tokio::signal::ctrl_c()
         .await
         .expect("failed to install Ctrl+C handler");
+}
+
+/// Graceful-shutdown future for the node's RPC servers: completes on Ctrl+C or
+/// when `cancel_token` is cancelled.
+///
+/// `server_shutdown` cancels the token on both SIGINT and SIGTERM, so keying on
+/// it (not just Ctrl+C) is what makes the engine API stop accepting requests on
+/// SIGTERM, e.g. `docker stop`, before the store is flushed.
+async fn rpc_shutdown_signal(cancel_token: CancellationToken) {
+    tokio::select! {
+        _ = cancel_token.cancelled() => {}
+        _ = shutdown_signal() => {}
+    }
 }
 
 /// Maximum number of requests accepted in a single JSON-RPC batch on either
@@ -1524,6 +1539,7 @@ mod tests {
                             "bpo4Time": null,
                             "bpo5Time": null,
                             "amsterdamTime": null,
+                            "hegotaTime": null,
                             "terminalTotalDifficulty": "0x0",
                             "terminalTotalDifficultyPassed": true,
                             "blobSchedule": blob_schedule,
