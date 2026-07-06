@@ -148,9 +148,10 @@ mod tests {
 
     #[test]
     fn bsc_fork_id_all_forks_at_zero() {
-        // When all EVM forks are at block 0 and timestamp 0 (as in BSC mainnet
-        // config), the fork ID is just CRC32 of the genesis hash with fork_next=0.
-        let config = crate::genesis::bsc_mainnet_chain_config();
+        // With no forks scheduled (all unset), no fork transitions occur, so the
+        // fork ID is just CRC32 of the genesis hash with fork_next=0. (The real
+        // mainnet config has future timestamp forks, so it is not "all at zero".)
+        let config = ethrex_common::types::ChainConfig::default();
         let genesis_hash = H256::from_low_u64_be(1);
         let fork_id = bsc_fork_id(genesis_hash, &config, 0, 100, 1_000_000);
 

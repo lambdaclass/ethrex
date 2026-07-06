@@ -3811,6 +3811,7 @@ dependencies = [
  "ethrex-sdk",
  "ethrex-storage",
  "ethrex-storage-rollup",
+ "ethrex-trie",
  "ethrex-vm",
  "eyre",
  "hex",
@@ -3887,7 +3888,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-bsc"
-version = "9.0.0"
+version = "13.0.0"
 dependencies = [
  "bls12_381 0.8.0 (git+https://github.com/lambdaclass/bls12_381?branch=expose-affine-constructors)",
  "bytes",
@@ -3897,8 +3898,10 @@ dependencies = [
  "ethrex-crypto",
  "ethrex-rlp",
  "hex",
+ "ics23",
  "lru 0.16.4",
  "p256",
+ "prost 0.13.5",
  "ripemd",
  "secp256k1",
  "serde",
@@ -5815,6 +5818,23 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f31827a206f56af32e590ba56d5d2d085f558508192593743f16b2306495269f"
 dependencies = [
  "cc",
+]
+
+[[package]]
+name = "ics23"
+version = "0.12.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "73b17f1a5bd7d12ad30a21445cfa5f52fd7651cb3243ba866f9916b1ec112f12"
+dependencies = [
+ "anyhow",
+ "blake2",
+ "blake3",
+ "bytes",
+ "hex",
+ "prost 0.13.5",
+ "ripemd",
+ "sha2",
+ "sha3",
 ]
 
 [[package]]
