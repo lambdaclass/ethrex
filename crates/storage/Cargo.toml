@@ -28,11 +28,13 @@ tokio = { workspace = true, features = ["rt", "sync"] }
 fastbloom = "0.14"
 rayon.workspace = true
 lru.workspace = true
+hotpath = { workspace = true, optional = true }
 
 [features]
 default = []
 rocksdb = ["dep:rocksdb"]
 testing = []
+hotpath = ["dep:hotpath", "hotpath/hotpath", "ethrex-trie/hotpath"]
 
 [dev-dependencies]
 tempfile.workspace = true

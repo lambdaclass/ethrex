@@ -189,20 +189,35 @@ Useful environment variables (see [hotpath.rs](https://hotpath.rs) for the full 
 
 ### Currently instrumented functions
 
-This first pass instruments four synchronous hot paths:
+This pass instruments the synchronous hot paths, covering the three
+block-processing phases on the live (`add_block`) path — execution,
+merkleization (state-root), and commit — plus one level of decomposition
+under each:
 
-- `Blockchain::execute_block` (`crates/blockchain/blockchain.rs`)
-- `Blockchain::execute_block_pipeline` (`crates/blockchain/blockchain.rs`)
-- `Blockchain::store_block` (`crates/blockchain/blockchain.rs`)
-- `VM::execute` (`crates/vm/levm/src/vm.rs`)
+Execution:
+- `Blockchain::execute_block` (`crates/blockchain/blockchain.rs`) — full execution phase (pre-validation + block execution + state-transition build + post-validation)
+- `Blockchain::execute_block_pipeline` (`crates/blockchain/blockchain.rs`) — execution (import/sync path; fuses exec + merkleization across parallel threads)
+- `Evm::execute_block` (`crates/vm/backends/mod.rs`) — pure block execution (the transaction loop), isolated from surrounding validation
+- `Evm::get_state_transitions` (`crates/vm/backends/mod.rs`) — builds the `AccountUpdate` set from the VM cache (the exec→merkleization bridge)
+- `VM::execute` (`crates/vm/levm/src/vm.rs`) — per-transaction EVM execution
 
-`execute_block` and `execute_block_pipeline` are alternate paths: block import and full-sync use the pipeline, so a report from `ethrex import` shows `execute_block_pipeline` but not `execute_block`. Only one of the two appears in a given run.
+Merkleization (state-root):
+- `Store::apply_account_updates_batch` (`crates/storage/store.rs`) — merkleization phase entry
+- `Store::apply_account_updates_from_trie_batch` (`crates/storage/store.rs`) — the trie-batch core beneath it
+- `Trie::collect_changes_since_last_hash` (`crates/common/trie/trie.rs`) — per-trie node hashing (fires once for the state trie and once per modified storage trie)
+
+Commit:
+- `Blockchain::store_block` (`crates/blockchain/blockchain.rs`) — commit phase
+
+> **Commit is enqueue, not disk I/O.** `store_block` → `store_block_updates` → `apply_updates` hands the batch to a background persist worker (`store.rs`), so the `store_block` number measures the hand-off, not the actual RocksDB write. The write happens off-thread on the persist worker (uninstrumented, and subject to the multi-thread caveat below).
+
+`execute_block` and `execute_block_pipeline` are alternate paths: block import and full-sync use the pipeline, so a report from `ethrex import` shows `execute_block_pipeline` but not `execute_block`. Only one of the two appears in a given run. On the pipeline path, execution and merkleization run concurrently on scoped threads, so they surface as the single `execute_block_pipeline` measurement rather than split out; the separate `Store::apply_account_updates_batch` / `store_block` split is observable on the live `add_block` path.
 
 ### Async / multi-thread allocation caveat
 
 hotpath's allocation tracking is thread-local and assumes a `current_thread` tokio runtime. ethrex runs a multi-thread `#[tokio::main]` runtime, so allocation counts attributed to `async fn`s are unreliable: allocations performed on a spawned worker thread are not attributed back to the `async fn` that awaited the work. Timing is not affected by this and works correctly on any runtime.
 
-All four currently instrumented functions are synchronous, so their allocation numbers under `hotpath-alloc` are meaningful. If you instrument an `async fn` in the future, prefer timing over allocation tracking for it.
+All currently instrumented functions are synchronous, so their allocation numbers under `hotpath-alloc` are meaningful. If you instrument an `async fn` in the future, prefer timing over allocation tracking for it.
 
 ### jemalloc interaction
 
@@ -220,7 +235,8 @@ reports which backing allocator is active.
 
 The following are documented targets for future hotpath instrumentation, not covered by this pass:
 
-- Trie
+- Deeper trie internals (individual node RLP encoding / per-node hashing beneath `Trie::collect_changes_since_last_hash`; these run per node, so instrument only if the aggregate trie number points there — per-node `measure` overhead is high)
+- The actual RocksDB persist worker (the off-thread write behind the commit enqueue)
 - RLP
 - RPC
 - The levm opcode dispatch loop / per-opcode handlers

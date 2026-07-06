@@ -2092,6 +2092,7 @@ impl Store {
 
     /// Applies account updates based on the block's latest storage state
     /// and returns the new state root after the updates have been applied.
+    #[cfg_attr(feature = "hotpath", hotpath::measure(impl_type = "Store"))]
     pub fn apply_account_updates_batch(
         &self,
         block_hash: BlockHash,
@@ -2107,6 +2108,7 @@ impl Store {
         )?))
     }
 
+    #[cfg_attr(feature = "hotpath", hotpath::measure(impl_type = "Store"))]
     pub fn apply_account_updates_from_trie_batch<'a>(
         &self,
         state_trie: &mut Trie,
