@@ -251,7 +251,7 @@ pub async fn init_rpc_api(
     let syncer = SyncManager::new(
         peer_handler.clone(),
         syncmode,
-        cancel_token,
+        cancel_token.clone(),
         blockchain.clone(),
         store.clone(),
         datadir.to_path_buf(),
@@ -283,6 +283,7 @@ pub async fn init_rpc_api(
         opts.gas_limit,
         opts.extra_data.clone(),
         opts.http_api.iter().copied().collect(),
+        cancel_token,
     );
 
     tracker.spawn(rpc_api);
@@ -574,7 +575,7 @@ async fn set_sync_block(store: &Store) {
 pub async fn init_l1(
     opts: Options,
     log_filter_handler: Option<reload::Handle<EnvFilter, Registry>>,
-) -> eyre::Result<(PathBuf, CancellationToken, PeerTable, NodeRecord)> {
+) -> eyre::Result<(PathBuf, CancellationToken, PeerTable, NodeRecord, Store)> {
     let network = get_network(&opts);
     let datadir = crate::cli::compute_effective_datadir(&opts.datadir, &network, opts.dev);
 
@@ -715,6 +716,7 @@ pub async fn init_l1(
         cancel_token,
         peer_handler.peer_table,
         local_node_record,
+        store,
     ))
 }
 

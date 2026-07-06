@@ -17,7 +17,7 @@ ethrex-crypto.workspace = true
 ethrex-storage.workspace = true
 ethrex-trie.workspace = true
 ethrex-vm.workspace = true
-ethrex-metrics = { path = "./metrics", version = "18.0.0", default-features = false }
+ethrex-metrics = { path = "./metrics", version = "19.0.0", default-features = false }
 
 serde = { workspace = true, optional = true }
 serde_json = { workspace = true, optional = true }
@@ -35,6 +35,7 @@ tokio-util.workspace = true
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["full"] }
+ethrex-levm.workspace = true
 
 [lib]
 path = "./blockchain.rs"
