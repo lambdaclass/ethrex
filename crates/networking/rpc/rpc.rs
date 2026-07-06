@@ -46,7 +46,7 @@ use crate::eth::{
     },
 };
 use crate::subscription_manager::{SubscriptionManager, SubscriptionManagerProtocol};
-use crate::tracing::{TraceBlockByNumberRequest, TraceTransactionRequest};
+use crate::tracing::{TraceBlockByHashRequest, TraceBlockByNumberRequest, TraceTransactionRequest};
 use crate::types::transaction::SendRawTransactionRequest;
 use crate::utils::{
     RpcErr, RpcErrorMetadata, RpcErrorResponse, RpcNamespace, RpcRequest, RpcRequestId,
@@ -1184,6 +1184,7 @@ pub async fn map_debug_requests(req: &RpcRequest, context: RpcApiContext) -> Res
         "debug_chainConfig" => ChainConfigRequest::call(req, context).await,
         "debug_traceTransaction" => TraceTransactionRequest::call(req, context).await,
         "debug_traceBlockByNumber" => TraceBlockByNumberRequest::call(req, context).await,
+        "debug_traceBlockByHash" => TraceBlockByHashRequest::call(req, context).await,
         unknown_debug_method => Err(RpcErr::MethodNotFound(unknown_debug_method.to_owned())),
     }
 }
