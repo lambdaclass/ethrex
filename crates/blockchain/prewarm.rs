@@ -1,4 +1,4 @@
-//! Mempool-driven state pre-warming (PoC).
+//! Mempool-driven state pre-warming.
 //!
 //! After each imported block, speculatively executes top-of-mempool
 //! transactions against the new head state during the idle inter-slot gap.
@@ -32,6 +32,10 @@ fn next_slot_deadline_unix(parent_timestamp: u64, slot_duration_secs: u64) -> u6
 /// `gas_budget` (sum of gas limits) is crossed — the crossing tx is included
 /// and the group it belongs to is truncated there. Ordering fidelity does
 /// not matter for warming, only membership; senders are never interleaved.
+// This and the helpers below are only called from `run_pass`, which is
+// compiled out when the rayon feature is disabled (or eip-8025 is active);
+// keep them compiled for the unit tests instead of cfg-ing them out.
+#[cfg_attr(any(not(feature = "rayon"), feature = "eip-8025"), allow(dead_code))]
 fn select_warm_set(
     txs_by_sender: FxHashMap<Address, Vec<MempoolTransaction>>,
     base_fee: Option<u64>,
@@ -66,12 +70,14 @@ fn select_warm_set(
 /// which we measured live as a small next-block throughput penalty.
 /// Generous enough to keep legitimate batchers (exchanges land dozens-deep runs, rarely
 /// more) while cutting off hundred-deep spam queues.
+#[cfg_attr(any(not(feature = "rayon"), feature = "eip-8025"), allow(dead_code))]
 pub(crate) const MAX_WARMED_TXS_PER_SENDER_PER_SLOT: usize = 16;
 
 /// Enforces [`MAX_WARMED_TXS_PER_SENDER_PER_SLOT`] across a slot's delta
 /// passes: `warmed_per_sender` counts txs already warmed this slot, and each
 /// sender's snapshot group is truncated to the remaining allowance. Nonce
 /// order within groups is preserved; exhausted senders are removed.
+#[cfg_attr(any(not(feature = "rayon"), feature = "eip-8025"), allow(dead_code))]
 fn cap_sender_depth(
     mut txs_by_sender: FxHashMap<Address, Vec<MempoolTransaction>>,
     warmed_per_sender: &FxHashMap<Address, usize>,
@@ -89,6 +95,7 @@ fn cap_sender_depth(
 /// Drops txs already warmed this slot (by hash) from a fresh mempool
 /// snapshot, so delta passes only warm new arrivals. Nonce order within the
 /// surviving sender groups is preserved; senders left empty are removed.
+#[cfg_attr(any(not(feature = "rayon"), feature = "eip-8025"), allow(dead_code))]
 fn drop_already_warmed(
     mut txs_by_sender: FxHashMap<Address, Vec<MempoolTransaction>>,
     warmed: &FxHashMap<H256, u64>,
@@ -103,14 +110,25 @@ fn drop_already_warmed(
     txs_by_sender
 }
 
-#[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
-use crate::MempoolPrewarmOptions;
 use crate::{Blockchain, BlockchainType};
 use ethrex_common::types::BlockHeader;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, mpsc};
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
-use tracing::{info, warn};
+#[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+use std::time::{Duration, Instant};
+use std::time::{SystemTime, UNIX_EPOCH};
+#[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+use tracing::info;
+use tracing::warn;
+
+/// Mainnet slot duration, used to compute the warming deadline (the next
+/// slot boundary, one slot after the parent's timestamp).
+const SLOT_DURATION_SECS: u64 = 12;
+
+/// Warm up to this multiple of the parent block's gas limit worth of
+/// mempool txs per warming snapshot (the initial pass and each delta).
+#[cfg_attr(any(not(feature = "rayon"), feature = "eip-8025"), allow(dead_code))]
+const GAS_BUDGET_MULTIPLIER: u64 = 6;
 
 // Fields are only read by `run_pass`, which is compiled out when the rayon
 // feature is disabled (or eip-8025 is active); avoid a dead-code warning in
@@ -128,9 +146,9 @@ pub struct PrewarmHandle {
     /// it, `cancel_current` fires it. Both are called only from the single
     /// block-executor thread, so replace/fire cannot race.
     current_cancel: Mutex<Arc<AtomicBool>>,
-    slot_duration_secs: u64,
 }
 
+#[cfg_attr(any(not(feature = "rayon"), feature = "eip-8025"), allow(dead_code))]
 fn unix_now() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -139,19 +157,23 @@ fn unix_now() -> u64 {
 }
 
 impl PrewarmHandle {
+    /// Fires the cancel flag of the most recently triggered pass. Called by
+    /// the block executor before each import so in-flight warming stops
+    /// competing with execution.
     pub fn cancel_current(&self) {
         if let Ok(flag) = self.current_cancel.lock() {
             flag.store(true, Ordering::Relaxed);
         }
     }
 
+    /// Queues a warming pass for the child of `parent_header` (the newly
+    /// imported head), installing a fresh cancel flag as the current one.
     pub fn trigger(&self, parent_header: BlockHeader) {
         let cancel = Arc::new(AtomicBool::new(false));
         if let Ok(mut current) = self.current_cancel.lock() {
             *current = cancel.clone();
         }
-        let deadline_unix =
-            next_slot_deadline_unix(parent_header.timestamp, self.slot_duration_secs);
+        let deadline_unix = next_slot_deadline_unix(parent_header.timestamp, SLOT_DURATION_SECS);
         let _ = self.sender.send(PrewarmRequest {
             parent_header,
             cancel,
@@ -163,17 +185,11 @@ impl PrewarmHandle {
 pub struct MempoolPrewarmer;
 
 impl MempoolPrewarmer {
-    /// Spawns the prewarmer worker. Returns `None` silently when the feature
-    /// is disabled; returns `None` with a warn when the chain is L2, the
-    /// build lacks rayon (or has eip-8025 active), or the pool/worker-thread
-    /// creation fails.
+    /// Spawns the prewarmer worker. Prewarming is L1-only: returns `None`
+    /// silently on L2. Returns `None` with a warn when the build lacks rayon
+    /// (or has eip-8025 active), or the pool/worker-thread creation fails.
     pub fn spawn(blockchain: Arc<Blockchain>) -> Option<PrewarmHandle> {
-        let opts = blockchain.options.mempool_prewarm.clone();
-        if !opts.enabled {
-            return None;
-        }
         if !matches!(blockchain.options.r#type, BlockchainType::L1) {
-            warn!("Mempool prewarm is L1-only; disabled");
             return None;
         }
         #[cfg(any(not(feature = "rayon"), feature = "eip-8025"))]
@@ -185,11 +201,9 @@ impl MempoolPrewarmer {
         }
         #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
         {
-            let threads = if opts.num_threads == 0 {
-                (std::thread::available_parallelism().map_or(2, |n| n.get()) / 2).max(1)
-            } else {
-                opts.num_threads
-            };
+            // Half the available cores: plenty for warming while leaving
+            // headroom for the rest of the node during the idle window.
+            let threads = (std::thread::available_parallelism().map_or(2, |n| n.get()) / 2).max(1);
             let pool = rayon::ThreadPoolBuilder::new()
                 .num_threads(threads)
                 .thread_name(|i| format!("prewarm-{i}"))
@@ -197,7 +211,6 @@ impl MempoolPrewarmer {
                 .inspect_err(|e| warn!("Mempool prewarm disabled: pool creation failed: {e}"))
                 .ok()?;
             let (sender, receiver) = mpsc::channel::<PrewarmRequest>();
-            let slot_duration_secs = opts.slot_duration_secs;
             std::thread::Builder::new()
                 .name("mempool_prewarmer".to_string())
                 .spawn(move || {
@@ -213,7 +226,7 @@ impl MempoolPrewarmer {
                         // disables itself for the rest of the process.
                         let outcome =
                             std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                                run_pass(&blockchain, &pool, req, &opts)
+                                run_pass(&blockchain, &pool, req)
                             }));
                         if outcome.is_err() {
                             warn!("Prewarm pass panicked; worker continuing");
@@ -225,19 +238,13 @@ impl MempoolPrewarmer {
             Some(PrewarmHandle {
                 sender,
                 current_cancel: Mutex::new(Arc::new(AtomicBool::new(false))),
-                slot_duration_secs,
             })
         }
     }
 }
 
 #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
-fn run_pass(
-    blockchain: &Blockchain,
-    pool: &rayon::ThreadPool,
-    req: PrewarmRequest,
-    opts: &MempoolPrewarmOptions,
-) {
+fn run_pass(blockchain: &Blockchain, pool: &rayon::ThreadPool, req: PrewarmRequest) {
     use crate::mempool::PendingTxFilter;
     use crate::vm::StoreVmDatabase;
     use ethrex_common::types::{
@@ -277,7 +284,7 @@ fn run_pass(
     };
     // Budget per warming snapshot; delta snapshots each get fresh headroom
     // (their size is naturally bounded by the slot's arrival rate).
-    let gas_budget = opts.gas_budget_multiplier.saturating_mul(parent.gas_limit);
+    let gas_budget = GAS_BUDGET_MULTIPLIER.saturating_mul(parent.gas_limit);
 
     // Synthetic child header: clone the parent and override what the warm
     // path reads (fork selection by timestamp, base fee, blob fee inputs).
@@ -289,7 +296,7 @@ fn run_pass(
     header.hash = Default::default();
     header.parent_hash = parent.hash();
     header.number = parent.number.saturating_add(1);
-    header.timestamp = parent.timestamp.saturating_add(opts.slot_duration_secs);
+    header.timestamp = parent.timestamp.saturating_add(SLOT_DURATION_SECS);
     header.base_fee_per_gas = base_fee;
     header.gas_used = 0;
     if let Some(schedule) = config.get_fork_blob_schedule(header.timestamp) {
@@ -299,7 +306,7 @@ fn run_pass(
     }
 
     // DB stack pinned at the parent (head) state, mirroring
-    // execute_block_pipeline (blockchain.rs:548) + Evm::new_from_db_for_l1:
+    // execute_block_pipeline + Evm::new_from_db_for_l1:
     // StoreVmDatabase -> CachingDatabase. Reads populate the persistent
     // RocksDB block cache and code cache underneath; the decoded layers here
     // are throwaway.
@@ -470,7 +477,7 @@ fn warm_merkle_paths(
     // Collect only the delta: keys not walked in an earlier pass this slot.
     // The cache grows monotonically, so filtering here keeps the per-pass
     // allocation O(new) instead of re-cloning the whole accumulated set.
-    let (accounts, slots) = caching
+    let touched = caching
         .touched_keys_where(&|addr| !merkled_roots.contains_key(addr), &|slot_key| {
             !done_slots.contains(slot_key)
         });
@@ -484,7 +491,7 @@ fn warm_merkle_paths(
         }
     };
 
-    for (addr, storage_root) in accounts {
+    for (addr, storage_root) in touched.accounts {
         merkled_roots.insert(addr, storage_root);
         if should_stop() {
             return walked;
@@ -496,7 +503,7 @@ fn warm_merkle_paths(
 
     // Group new slots per account so each storage trie is opened once.
     let mut by_account: FxHashMap<Address, Vec<H256>> = FxHashMap::default();
-    for (addr, key) in slots {
+    for (addr, key) in touched.slots {
         if done_slots.insert((addr, key)) {
             by_account.entry(addr).or_default().push(key);
         }

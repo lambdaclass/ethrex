@@ -14,9 +14,13 @@ pub mod gen_db;
 type AccountCache = FxHashMap<Address, AccountState>;
 type StorageCache = FxHashMap<(Address, H256), U256>;
 type CodeCache = FxHashMap<H256, Code>;
-/// Touched accounts (with storage roots) and storage slot keys; see
-/// [`CachingDatabase::touched_keys_where`].
-pub type TouchedKeys = (Vec<(Address, H256)>, Vec<(Address, H256)>);
+/// Touched-key snapshot returned by [`CachingDatabase::touched_keys_where`].
+pub struct TouchedKeys {
+    /// Touched accounts with their storage roots.
+    pub accounts: Vec<(Address, H256)>,
+    /// Touched storage slots as `(account address, slot key)`.
+    pub slots: Vec<(Address, H256)>,
+}
 
 pub trait Database: Send + Sync {
     fn get_account_state(&self, address: Address) -> Result<AccountState, DatabaseError>;
@@ -60,6 +64,16 @@ pub trait Database: Send + Sync {
 /// boundary: `execute_block_pipeline` seeds the *next* block's execution
 /// with it when the parent state and fork match (see
 /// `ethrex-blockchain::prewarm`).
+///
+/// # Invariant
+///
+/// Because one instance is shared across the block boundary (and the
+/// prewarmer may still be filling it while the next block executes), every
+/// cached entry must be a pure function of the parent state root. A cache
+/// layer whose entries also depend on the executing block (fork, number,
+/// timestamp, ...) needs a matching handoff guard in
+/// `execute_block_pipeline` — see `precompile_cache`, whose fork-dependent
+/// entries are covered by the fork-equality check there.
 pub struct CachingDatabase {
     inner: Arc<dyn Database>,
     /// Cached account states (balance, nonce, code_hash, storage_root)
@@ -139,7 +153,10 @@ impl CachingDatabase {
             .read()
             .map(|s| s.keys().filter(|k| slot_filter(k)).copied().collect())
             .unwrap_or_default();
-        (accounts, storage)
+        TouchedKeys {
+            accounts,
+            slots: storage,
+        }
     }
 }
 

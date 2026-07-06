@@ -437,6 +437,11 @@ pub const FILTER_DURATION: Duration = {
 /// sequentially and prevents the async runtime from being blocked by CPU-intensive
 /// block execution.
 ///
+/// Also spawns the mempool prewarmer when enabled (see
+/// `ethrex_blockchain::prewarm`): the executor cancels any in-flight warming
+/// pass before each import and triggers a new one after each cleanly
+/// imported block, when synced and idle.
+///
 /// # Returns
 ///
 /// An unbounded channel sender for submitting blocks. Each submission includes

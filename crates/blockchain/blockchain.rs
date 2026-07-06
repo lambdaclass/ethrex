@@ -261,32 +261,6 @@ impl std::fmt::Debug for PrewarmedCache {
     }
 }
 
-/// Options for the experimental mempool-driven state pre-warmer (PoC).
-/// See `crate::prewarm`. Disabled by default.
-#[derive(Debug, Clone)]
-pub struct MempoolPrewarmOptions {
-    /// Master switch (`--experimental-mempool-prewarm`).
-    pub enabled: bool,
-    /// Slot duration used to compute the warming deadline (next slot boundary).
-    pub slot_duration_secs: u64,
-    /// Warm up to this multiple of the parent block's gas limit worth of
-    /// mempool txs per warming snapshot (the initial pass and each delta).
-    pub gas_budget_multiplier: u64,
-    /// Threads in the prewarmer's dedicated rayon pool. 0 = half the available cores.
-    pub num_threads: usize,
-}
-
-impl Default for MempoolPrewarmOptions {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            slot_duration_secs: 12,
-            gas_budget_multiplier: 6,
-            num_threads: 0,
-        }
-    }
-}
-
 /// Configuration options for the blockchain.
 #[derive(Debug, Clone)]
 pub struct BlockchainOptions {
@@ -318,8 +292,6 @@ pub struct BlockchainOptions {
     /// `--no-bal-parallel-trie`) to fall back to streaming `AccountUpdate`s from
     /// the executor and merkleizing post-execution.
     pub bal_parallel_trie_enabled: bool,
-    /// Experimental mempool-driven state pre-warming (PoC). Default disabled.
-    pub mempool_prewarm: MempoolPrewarmOptions,
 }
 
 impl Default for BlockchainOptions {
@@ -334,7 +306,6 @@ impl Default for BlockchainOptions {
             bal_parallel_exec_enabled: true,
             bal_prefetch_enabled: true,
             bal_parallel_trie_enabled: true,
-            mempool_prewarm: MempoolPrewarmOptions::default(),
         }
     }
 }

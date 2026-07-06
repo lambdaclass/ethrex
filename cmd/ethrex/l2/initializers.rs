@@ -236,13 +236,6 @@ pub async fn init_l2(
         bal_parallel_exec_enabled: true,
         bal_prefetch_enabled: true,
         bal_parallel_trie_enabled: true,
-        // Wire the flag so `MempoolPrewarmer::spawn`'s L1-only guard can warn:
-        // prewarming never runs on L2, but passing the flag should say so
-        // instead of silently doing nothing.
-        mempool_prewarm: ethrex_blockchain::MempoolPrewarmOptions {
-            enabled: opts.node_opts.experimental_mempool_prewarm,
-            ..Default::default()
-        },
     };
 
     let blockchain = init_blockchain(store.clone(), blockchain_opts.clone());
