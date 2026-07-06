@@ -652,6 +652,7 @@ mod max_cost_tests {
             tx,
             approve_called_in_current_frame: false,
             total_gas_limit,
+            legacy_sender_nonce: 0,
         }
     }
 

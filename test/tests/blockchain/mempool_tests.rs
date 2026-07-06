@@ -1414,7 +1414,8 @@ async fn mempool_rejects_underfunded_paymaster() {
     let phantom_sender = Address::from_low_u64_be(0xDEAD_BEEF);
     let phantom_frame_tx = FrameTransaction {
         chain_id: 0,
-        nonce: 99,
+        nonce_keys: vec![U256::zero()],
+        nonce_seq: 99,
         sender: phantom_sender,
         frames: vec![Frame {
             mode: FrameMode::Verify as u8,
@@ -2474,7 +2475,8 @@ mod p2p_serve_tests {
     fn make_frame_tx() -> FrameTransaction {
         FrameTransaction {
             chain_id: 1,
-            nonce: 7,
+            nonce_keys: vec![U256::zero()],
+            nonce_seq: 7,
             sender: Address::from_low_u64_be(0xABCD),
             frames: vec![Frame {
                 mode: FrameMode::Sender as u8,
