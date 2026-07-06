@@ -1213,7 +1213,7 @@ mod tests {
     fn insert_tx(mempool: &Mempool, sender: Address, tx: Transaction) -> H256 {
         let hash = H256::random();
         mempool
-            .add_transaction(hash, sender, MempoolTransaction::new(tx, sender))
+            .add_transaction(hash, sender, MempoolTransaction::new(tx, sender), None)
             .expect("add_transaction");
         hash
     }
