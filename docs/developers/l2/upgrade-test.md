@@ -416,7 +416,8 @@ set -a; source cmd/.env; set +a
   --block-producer.operator-fee-per-gas 1000000000 \
   --committer.l1-private-key 0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924 \
   --proof-coordinator.l1-private-key 0x39725efee3fb28614de3bacaffe4cc4bd8c436257e2c8bb887c4b5c4be45e76d \
-  --proof-coordinator.addr 127.0.0.1
+  --proof-coordinator.addr 127.0.0.1 \
+  --no-monitor
 ```
 
 Note:
