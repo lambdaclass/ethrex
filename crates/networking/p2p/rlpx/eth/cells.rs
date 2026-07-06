@@ -209,11 +209,11 @@ impl GetCells {
     /// hold no cells for it), the intersection collapses and we serve zero cells
     /// for the whole batch. This is a protocol-level limitation of the single
     /// per-message `cell_mask`, not a bug; callers should request hashes they
-    /// expect us to hold together. See OQ-2 in the plan.
+    /// expect us to hold together.
     pub fn handle(&self, mempool: &Mempool) -> Cells {
-        // D2c: use available_cell_mask (real availability) for the intersection,
-        // so a full-payload provider with u128::MAX availability actually serves
-        // all requested columns.
+        // Use available_cell_mask (real availability) for the intersection, so a
+        // full-payload provider with u128::MAX availability actually serves all
+        // requested columns.
         let mut served = self.cell_mask;
         for &tx_hash in &self.transaction_hashes {
             served &= mempool.available_cell_mask(tx_hash);

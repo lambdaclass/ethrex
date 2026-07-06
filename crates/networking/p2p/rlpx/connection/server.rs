@@ -1751,7 +1751,7 @@ async fn handle_incoming_message(
                             }
                         };
 
-                        // Compute the local node id once per announcement (D1: per-node entropy).
+                        // Compute the local node id once per announcement (per-node entropy).
                         let local_pubkey = public_key_from_signing_key(&state.signer);
                         let local_node_id = node_id(&local_pubkey);
                         let eager = state.blockchain.mempool.eager_provider;
@@ -1770,7 +1770,7 @@ async fn handle_incoming_message(
                                     .zip(announcement.transaction_hashes.iter())
                                     .any(|(&ty, &h)| h == hash && ty == 3);
 
-                            // D4: provider path only when is_provider_role AND peer advertised
+                            // provider path only when is_provider_role AND peer advertised
                             // full availability (all-ones mask). Otherwise sampler path.
                             let peer_is_full_provider = announcement.cell_mask == Some(u128::MAX);
                             if !is_blob
@@ -1801,7 +1801,7 @@ async fn handle_incoming_message(
                         // Sampler hashes: record the announcing peer as a provider
                         // ONLY if it signaled full availability (all-ones mask);
                         // a partially-available peer is not a provider observation.
-                        // D6b: if recording this provider hits the threshold and we already
+                        // if recording this provider hits the threshold and we already
                         // have the tx body, retrigger cell-fetch immediately rather than
                         // waiting for the tx-body response path.
                         if announcement.cell_mask == Some(u128::MAX) {
@@ -1816,7 +1816,7 @@ async fn handle_incoming_message(
                                         continue;
                                     }
                                 };
-                                // D6b retrigger: threshold just reached and tx body already known.
+                                // retrigger: threshold just reached and tx body already known.
                                 if count
                                     == ethrex_blockchain::mempool::MIN_PROVIDERS_BEFORE_SAMPLING
                                     && mempool.contains_tx(hash).unwrap_or(false)
@@ -1828,7 +1828,7 @@ async fn handle_incoming_message(
                                             continue;
                                         }
                                     };
-                                    // D6a: only add C_extra when this peer is a provider.
+                                    // only add C_extra when this peer is a provider.
                                     let mut target = custody;
                                     if let Some(extra_col) = pick_random_extra_column(custody, hash)
                                     {
@@ -2068,7 +2068,7 @@ async fn handle_incoming_message(
                                             continue;
                                         }
                                     };
-                                    // D6a: C_extra is only added when the target peer
+                                    // C_extra is only added when the target peer
                                     // is a provider (advertised full availability).
                                     let peer_mask = mempool
                                         .peer_cell_mask(peer_id)

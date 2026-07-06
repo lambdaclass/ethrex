@@ -25,7 +25,7 @@ fn zero_fcs() -> Value {
 }
 
 fn hex_mask(mask: u128) -> String {
-    format!("0x{}", hex::encode(mask.to_be_bytes()))
+    format!("0x{}", hex::encode(mask.to_le_bytes()))
 }
 
 async fn fresh_context() -> RpcApiContext {
@@ -384,7 +384,7 @@ async fn blobs_v4_parse_wrong_bitarray_length_rejected() {
 #[tokio::test]
 async fn blobs_v4_parse_valid_bitarray() {
     let mask: u128 = 0x0000_0000_0000_0000_0000_0000_0000_0001;
-    let hex = format!("0x{}", hex::encode(mask.to_be_bytes()));
+    let hex = format!("0x{}", hex::encode(mask.to_le_bytes()));
     let parsed = parse_indices_bitarray(&serde_json::json!(hex)).unwrap();
     assert_eq!(parsed, mask);
 }

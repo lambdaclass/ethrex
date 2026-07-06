@@ -425,11 +425,11 @@ fn parse_v4_custody_null() {
 
 #[test]
 fn parse_v4_custody_valid_16_bytes() {
-    // 0x00000000000000000000000000000001 => u128 = 1
+    // Little-endian: column 0 (bit 0) => byte[0] = 0x01 => u128 = 1.
     let params = Some(vec![
         minimal_fcs_json(),
         json!(null),
-        json!("0x00000000000000000000000000000001"),
+        json!("0x01000000000000000000000000000000"),
     ]);
     let (_, _, cc) = parse_v4(&params).unwrap();
     assert_eq!(cc, Some(1u128));
@@ -455,7 +455,7 @@ fn parse_custody_columns_null_returns_none() {
 #[test]
 fn parse_custody_columns_16_byte_roundtrip() {
     let mask: u128 = 0xDEAD_BEEF_1234_5678_9ABC_DEF0_1234_5678;
-    let hex = format!("0x{}", hex::encode(mask.to_be_bytes()));
+    let hex = format!("0x{}", hex::encode(mask.to_le_bytes()));
     let result = parse_custody_columns(&json!(hex)).unwrap();
     assert_eq!(result, Some(mask));
 }

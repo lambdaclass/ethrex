@@ -17,20 +17,26 @@ use ethrex_rlp::{
 use ethrex_storage::error::StoreError;
 use tracing::debug;
 
-/// Convert u128 to a fixed 16-byte big-endian array (B_16 per EIP-8070).
-/// Isolated here so endianness is a one-line change before cross-client devnet.
+/// Convert u128 to the `B_16` (uint128) `cell_mask` wire array per EIP-8070.
+///
+/// The internal convention is column index `i` == bit `i` of the u128
+/// (`1u128 << i`). Little-endian byte order therefore places column `i` at
+/// byte `i/8`, bit `i%8` (LSB-first), which is the canonical layout used by
+/// geth's `types.CustodyBitmap` (`[16]byte`, little-endian:
+/// `result[i/8] |= 1 << (i % 8)`). Matching it is required for eth/72 interop.
 pub fn u128_to_b16(v: u128) -> [u8; 16] {
-    v.to_be_bytes()
+    v.to_le_bytes()
 }
 
-/// Decode a fixed 16-byte big-endian array back to u128.
+/// Decode a `B_16` `cell_mask` wire array back to u128 (little-endian, geth
+/// `CustodyBitmap`-compatible; see `u128_to_b16`).
 pub fn b16_to_u128(b: [u8; 16]) -> u128 {
-    u128::from_be_bytes(b)
+    u128::from_le_bytes(b)
 }
 
 /// Encode `cell_mask: Option<u128>` as RLP bytes:
 /// - None  → empty bytes (RLP nil, 0x80)
-/// - Some  → 16-byte big-endian (B_16)
+/// - Some  → 16-byte little-endian (B_16, geth CustodyBitmap layout)
 fn cell_mask_to_bytes(mask: Option<u128>) -> Bytes {
     match mask {
         None => Bytes::new(),

@@ -284,7 +284,8 @@ pub struct BlobsV4Request {
     /// Versioned blob hashes to look up.
     pub(crate) versioned_blob_hashes: Vec<H256>,
     /// Bitmask of column indices to return (bit i set ⇒ return column i).
-    /// Encoded as a 16-byte big-endian hex string on the wire.
+    /// Encoded as a 16-byte little-endian hex string on the wire (column i →
+    /// byte i/8, bit i%8; same CustodyBitmap layout as `custodyColumns`).
     pub(crate) indices_bitarray: u128,
 }
 
@@ -440,7 +441,8 @@ impl RpcHandler for BlobsV4Request {
     }
 }
 
-/// Parse the 16-byte big-endian hex `indices_bitarray` param.
+/// Parse the 16-byte little-endian hex `indices_bitarray` param (column `i` →
+/// byte `i/8`, bit `i%8`; same CustodyBitmap layout as `custodyColumns`).
 pub(crate) fn parse_indices_bitarray(value: &Value) -> Result<u128, RpcErr> {
     let hex_str = value
         .as_str()
@@ -456,7 +458,7 @@ pub(crate) fn parse_indices_bitarray(value: &Value) -> Result<u128, RpcErr> {
     }
     let mut arr = [0u8; 16];
     arr.copy_from_slice(&bytes);
-    Ok(u128::from_be_bytes(arr))
+    Ok(u128::from_le_bytes(arr))
 }
 
 #[cfg(test)]

@@ -46,8 +46,9 @@ fn cell_mask_none_encodes_to_rlp_nil() {
 }
 
 #[test]
-fn cell_mask_some_round_trips_big_endian() {
-    // Some(mask) must round-trip and encode big-endian (high bit in first byte).
+fn cell_mask_some_round_trips_little_endian() {
+    // Some(mask) must round-trip; wire encoding is little-endian (geth
+    // CustodyBitmap layout: column i -> byte i/8, bit i%8).
     let mask = 0xA5u128 | (1u128 << 127);
     let msg = npth(Some(mask));
     let decoded = NewPooledTransactionHashes72::decode(&encode(&msg)).expect("decode");
@@ -56,11 +57,17 @@ fn cell_mask_some_round_trips_big_endian() {
 }
 
 #[test]
-fn u128_to_b16_is_big_endian() {
-    // bit 127 → byte 0 = 0x80
-    let b = u128_to_b16(1u128 << 127);
-    assert_eq!(b[0], 0x80);
+fn u128_to_b16_is_little_endian() {
+    // Internal convention: column i == bit i. Little-endian => column i lands in
+    // byte i/8 at bit i%8, matching geth's types.CustodyBitmap.
+    // column 0 (bit 0) -> byte 0 = 0x01
+    let b = u128_to_b16(1u128);
+    assert_eq!(b[0], 0x01);
     assert_eq!(b[15], 0x00);
+    // column 127 (bit 127) -> byte 15 = 0x80
+    let b = u128_to_b16(1u128 << 127);
+    assert_eq!(b[0], 0x00);
+    assert_eq!(b[15], 0x80);
     assert_eq!(b16_to_u128(b), 1u128 << 127);
 }
 

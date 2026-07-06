@@ -21,9 +21,11 @@ use crate::{
     utils::RpcRequest,
 };
 
-/// Parse a `custodyColumns` RPC param (16-byte big-endian hex string or null/absent).
+/// Parse a `custodyColumns` RPC param (16-byte little-endian hex string or null/absent).
 ///
-/// Spec: `DATA|null` where DATA is a 0x-prefixed 16-byte hex string.
+/// Spec: `DATA|null` where DATA is a 0x-prefixed 16-byte hex string. The bytes
+/// are little-endian (column `i` → byte `i/8`, bit `i%8`), matching geth's
+/// `types.CustodyBitmap` so EL↔CL custody sets agree across clients.
 /// Returns `Ok(None)` for JSON null or absent param.
 /// Returns `Err(RpcErr::BadParams)` when the string is present but not exactly 16 bytes.
 pub(crate) fn parse_custody_columns(value: &Value) -> Result<Option<u128>, RpcErr> {
@@ -44,7 +46,7 @@ pub(crate) fn parse_custody_columns(value: &Value) -> Result<Option<u128>, RpcEr
     }
     let mut arr = [0u8; 16];
     arr.copy_from_slice(&bytes);
-    Ok(Some(u128::from_be_bytes(arr)))
+    Ok(Some(u128::from_le_bytes(arr)))
 }
 
 /// Apply a custody column update received via `engine_forkchoiceUpdatedV4`.
@@ -234,7 +236,7 @@ impl From<ForkChoiceUpdatedV4> for RpcRequest {
     fn from(val: ForkChoiceUpdatedV4) -> Self {
         let custody_hex = val
             .custody_columns
-            .map(|m| format!("0x{}", hex::encode(m.to_be_bytes())))
+            .map(|m| format!("0x{}", hex::encode(m.to_le_bytes())))
             .map(Value::String)
             .unwrap_or(Value::Null);
         RpcRequest {
