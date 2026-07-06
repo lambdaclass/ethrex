@@ -103,6 +103,52 @@ transfers emit EIP-7708 logs from `0x…fffe`).
 > transaction hasn't mined within ~30 s, submit the SAME raw transaction to the other
 > two RPCs as well (idempotent — same hash).
 
+## Sponsored Transactions (Trustless Paymaster)
+
+A frame transaction can have its gas paid by a **distinct paymaster** contract
+(`payer != sender`) — the canonical-paymaster `[only_verify, pay]` shape. The
+exec frame targets the sender (who approves execution via the outer signature)
+and the pay frame targets a paymaster contract that calls `APPROVE(scope=1)`.
+
+`contracts/OpenSponsor.yul` is a minimal, observer-friendly sponsor: its
+`verify()` just calls `APPROVE(APPROVE_PAYMENT)`, so it sponsors any sender. It
+makes no external calls and reads no storage in the verify path, so it is
+admissible via the public mempool (unlike a balance-gated sponsor whose external
+`STATICCALL` the ERC-7562 validation observer would reject for a non-canonical
+paymaster).
+
+```bash
+cd scripts/hegota-devnet
+
+# 1. Compile the sponsor (Yul).
+solc --strict-assembly --bin contracts/OpenSponsor.yul
+
+# 2. Deploy it with the owner address appended as a 32-byte constructor arg, then
+#    fund it with ETH (any tool that sends a plain type-2 tx works, e.g. cast):
+#      initcode = <bin> || left-padded-32-byte owner
+#    cast send --create <initcode> --private-key <OWNER_KEY> --rpc-url https://rpc1.hegota.ethrex.xyz
+#    cast send <SPONSOR_ADDR> --value 1ether --private-key <OWNER_KEY> --rpc-url ...
+
+# 3. Send a sponsored transfer. The sender needs only the transferred `value`
+#    (not gas): a successful run with a gas-starved sender proves the sponsor paid.
+.venv/bin/python3 frametx_sponsor_submit.py \
+  https://rpc1.hegota.ethrex.xyz \
+  <SENDER_PRIVATE_KEY_HEX> \
+  0xSponsorAddress \
+  0xRecipientAddress \
+  1000000000000000    # amount in wei
+```
+
+The receipt's top-level `payer` field is the **sponsor**, not the sender, and the
+sender's balance drops only by the transferred `value`. The withdrawal function
+`withdraw(address,uint256)` (`0xf3fef3a3`, owner-only) reclaims the sponsor's ETH.
+
+> A sender-restricted trustless sponsor (authorizing specific senders) can
+> ecrecover an owner signature over a domain that **excludes** the signature
+> — e.g. `keccak(sender ‖ chain_id ‖ nonce_seq ‖ expiry)`. Do **not** sign over
+> `sig_hash` and carry the signature in frame data: `sig_hash` now commits frame
+> data verbatim, so that construction is a circular (unsatisfiable) fixed point.
+
 ## EIP-8250: Keyed Nonces
 
 The envelope carries `nonce_keys` (1–16 strictly-increasing u256 keys) and one
