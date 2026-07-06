@@ -26,6 +26,8 @@ All included EIPs activate together under the existing single `Fork::Hegota` / `
 | `0xB5` | `RECENTROOTREFLOAD` | 8272 | spec says `0xB4` (collides with `SIGPARAM`) → ethrex uses `0xB5` |
 | `0xB6` | `TXTRACE` | 7906 | **renumbered** from `0xB5` here |
 | `0xB7` | `EVENTDATACOPY` | 7906 | **renumbered** from `0xB6` here |
+| `0xB8` | `TXDIFF` | 7906 | **renumbered** from `0xB7` here |
+| `0xB9` | `NONCEKEYLOAD` | 8250 | **ethrex-only extension** — indexed `nonce_keys[i]`; spec defines no per-index accessor (see `docs/eip-8250.md`) |
 
 The EIP-7906 renumber lives **only on this branch** — the standalone `eip-7906` PR keeps `0xB5`/`0xB6` (it has no knowledge of EIP-8272). The dedup is intentional and documented; `test/tests/levm/eip7906_tests.rs` updates its `TXTRACE`/`EVENTDATACOPY` consts accordingly.
 

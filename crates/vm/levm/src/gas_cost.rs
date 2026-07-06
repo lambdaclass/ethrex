@@ -72,6 +72,9 @@ pub const FRAMEDATACOPY_STATIC: u64 = 3;
 pub const FRAMEDATACOPY_DYNAMIC_BASE: u64 = 3;
 pub const FRAMEPARAM: u64 = 2;
 pub const SIGPARAM: u64 = 2;
+// EIP-8250 keyed nonces — ethrex-only NONCEKEYLOAD extension (indexed envelope
+// read, priced like RECENTROOTREFLOAD; see docs/eip-8250.md).
+pub const NONCEKEYLOAD: u64 = 3;
 // EIP-8272 Recent Roots
 pub const RECENTROOTREFLOAD: u64 = 3;
 pub const RECENT_ROOT_REFERENCE_ADDRESS_GAS: u64 = ACCESS_LIST_ADDRESS_COST;
