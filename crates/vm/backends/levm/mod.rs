@@ -129,7 +129,7 @@ fn check_gas_limit(
 /// capped at `TX_MAX_GAS_LIMIT`); intrinsic underfunding is rejected separately
 /// in transaction validation, not here. Mirrors
 /// `src/ethereum/forks/amsterdam/fork.py` `check_transaction` at the
-/// `tests-glamsterdam-devnet@v6.1.0` spec.
+/// `tests-glamsterdam-devnet@v6.1.1` spec.
 ///
 /// Note: `block_gas_used_regular` here equals EELS's `block_output.block_gas_used`
 /// because our `report.gas_used` already reflects `max(raw_regular, calldata_floor)`
