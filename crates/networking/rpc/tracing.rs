@@ -44,7 +44,9 @@ pub struct TraceCallRequest {
 
 /// `debug_traceCall`'s third parameter. Extends [`TraceConfig`] with `txIndex`, the
 /// in-block transaction index whose pre-state the call should run on top of (geth's
-/// `TraceCallConfig`). `stateOverrides`/`blockOverrides` are not supported.
+/// `TraceCallConfig`). `stateOverrides`/`blockOverrides` are not supported: they are
+/// captured here only so a request that sets them is rejected explicitly (see
+/// [`TraceCallConfig::validate`]) instead of silently ignoring the override.
 #[derive(Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 struct TraceCallConfig {
@@ -52,6 +54,21 @@ struct TraceCallConfig {
     base: TraceConfig,
     #[serde(default)]
     tx_index: Option<u64>,
+    #[serde(default)]
+    state_overrides: Option<Value>,
+    #[serde(default)]
+    block_overrides: Option<Value>,
+}
+
+impl TraceCallConfig {
+    fn validate(&self) -> Result<(), RpcErr> {
+        if self.state_overrides.is_some() || self.block_overrides.is_some() {
+            return Err(RpcErr::BadParams(
+                "stateOverrides and blockOverrides are not supported".to_string(),
+            ));
+        }
+        Ok(())
+    }
 }
 
 #[derive(Deserialize, Default)]
@@ -437,16 +454,19 @@ impl RpcHandler for TraceCallRequest {
 
         let transaction = serde_json::from_value(params[0].clone())?;
 
-        // Block defaults to `latest` when omitted, matching geth.
+        // Block and traceConfig are optional: a JSON `null` is treated the same as an
+        // omitted argument, matching geth (which accepts `traceCall(call, null, {...})`).
+        // Block defaults to `latest` when absent.
         let block = match params.get(1) {
-            Some(value) => BlockIdentifierOrHash::parse(value.clone(), 1)?,
-            None => BlockIdentifierOrHash::Identifier(BlockIdentifier::default()),
+            Some(value) if !value.is_null() => BlockIdentifierOrHash::parse(value.clone(), 1)?,
+            _ => BlockIdentifierOrHash::Identifier(BlockIdentifier::default()),
         };
 
         let trace_config = match params.get(2) {
-            Some(value) => serde_json::from_value(value.clone())?,
-            None => TraceCallConfig::default(),
+            Some(value) if !value.is_null() => serde_json::from_value(value.clone())?,
+            _ => TraceCallConfig::default(),
         };
+        trace_config.validate()?;
 
         Ok(TraceCallRequest {
             transaction,

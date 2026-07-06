@@ -397,8 +397,6 @@ impl LEVM {
     }
 }
 
-/// Computes the block-invariant `(EVMConfig, chain_id, base_blob_fee)` once so a
-/// whole-block trace can reuse them across transactions instead of recomputing per tx.
 /// Recursively counts the logs captured in a call frame and all its subcalls — the
 /// number of `withLog` logs a traced tx contributes to the block-absolute log index.
 fn count_call_logs(frame: &CallTraceFrame) -> u64 {
@@ -408,6 +406,8 @@ fn count_call_logs(frame: &CallTraceFrame) -> u64 {
     })
 }
 
+/// Computes the block-invariant `(EVMConfig, chain_id, base_blob_fee)` once so a
+/// whole-block trace can reuse them across transactions instead of recomputing per tx.
 fn block_trace_env_config(
     db: &GeneralizedDatabase,
     header: &BlockHeader,
@@ -431,6 +431,9 @@ fn prepare_call_env(
 ) -> Result<(Environment, Transaction), EvmError> {
     let mut env = env_from_generic(tx, block_header, db, vm_type)?;
     env.block_gas_limit = i64::MAX as u64; // disable block gas limit
+    // Match geth: `debug_traceCall` skips the nonce check so a call traced on top of a
+    // mid-block state (`txIndex`) isn't rejected for a nonce that reflects a different point.
+    env.disable_nonce_check = true;
     adjust_disabled_base_fee(&mut env);
     let converted_tx = generic_tx_to_transaction(tx)?;
     Ok((env, converted_tx))
