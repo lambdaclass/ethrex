@@ -300,6 +300,28 @@ async fn handle_forkchoice(
                             "Failed to prune stale blob txs from mempool after fork choice: {err}"
                         );
                     }
+                    // Re-simulate pending frame txs (EIP-8141) whose validity may
+                    // have changed because of this block, evicting any that no
+                    // longer pass. This runs an EVM validation-prefix simulation
+                    // per pending frame tx, so it is offloaded to the blocking
+                    // pool to avoid stalling the async FCU worker. Best-effort
+                    // housekeeping (local peer policy): a failure must not fail an
+                    // otherwise-successful FCU, so log and continue. (Running it
+                    // fully outside the FCU handler is a deferred follow-up.)
+                    let blockchain = context.blockchain.clone();
+                    match tokio::task::spawn_blocking(move || {
+                        blockchain.revalidate_frame_txs_after_block(&block)
+                    })
+                    .await
+                    {
+                        Ok(Ok(())) => {}
+                        Ok(Err(err)) => warn!(
+                            "Failed to revalidate pending frame txs from mempool after fork choice: {err}"
+                        ),
+                        Err(err) => warn!(
+                            "Frame-tx revalidation task failed to join after fork choice: {err}"
+                        ),
+                    }
                 }
                 Ok(None) => {
                     warn!(
