@@ -188,6 +188,10 @@ pub enum Opcode {
     EVENTDATACOPY = 0xB7,
     // EIP-7906 TXDIFF (spec PR #11830). Keyed state-diff lookup.
     TXDIFF = 0xB8,
+    // EIP-8250 keyed nonces — ethrex-only extension: indexed nonce_keys[i] read.
+    // The spec defines no per-index accessor (see docs/eip-8250.md); ethrex uses
+    // the next free byte after the EIP-7906 block.
+    NONCEKEYLOAD = 0xB9,
     // EIP-8024
     DUPN = 0xE6,
     SWAPN = 0xE7,
@@ -353,6 +357,7 @@ impl From<u8> for Opcode {
             table[0xB6] = Opcode::TXTRACE;
             table[0xB7] = Opcode::EVENTDATACOPY;
             table[0xB8] = Opcode::TXDIFF;
+            table[0xB9] = Opcode::NONCEKEYLOAD;
             table[0x51] = Opcode::MLOAD;
             table[0x52] = Opcode::MSTORE;
             table[0x53] = Opcode::MSTORE8;
@@ -680,6 +685,9 @@ impl<'a> VM<'a> {
         opcode_table[Opcode::RECENTROOTREFLOAD as usize] =
             OpCodeFn::new::<OpRecentRootRefLoadHandler>();
 
+        // EIP-8250 keyed nonces — ethrex-only indexed nonce_keys[i] accessor.
+        opcode_table[Opcode::NONCEKEYLOAD as usize] = OpCodeFn::new::<OpNonceKeyLoadHandler>();
+
         // EIP-7906 transaction-trace opcodes (Hegota)
         opcode_table[Opcode::TXTRACE as usize] = OpCodeFn::new::<OpTxTraceHandler>();
         opcode_table[Opcode::EVENTDATACOPY as usize] = OpCodeFn::new::<OpEventDataCopyHandler>();
@@ -708,7 +716,7 @@ mod tests {
         for fork in [Fork::Osaka, Fork::Amsterdam] {
             let table = VM::build_opcode_table(fork);
             for byte in [
-                0xAAusize, 0xB0, 0xB1, 0xB2, 0xB3, 0xB4, 0xB5, 0xB6, 0xB7, 0xB8,
+                0xAAusize, 0xB0, 0xB1, 0xB2, 0xB3, 0xB4, 0xB5, 0xB6, 0xB7, 0xB8, 0xB9,
             ] {
                 assert!(
                     same_handler(table[byte], table[0xEF]),
@@ -718,8 +726,9 @@ mod tests {
         }
         let hegota = VM::build_opcode_table(Fork::Hegota);
         assert!(!same_handler(hegota[0xAA], hegota[0xEF]));
-        // 0xB5 RECENTROOTREFLOAD, 0xB6 TXTRACE, 0xB7 EVENTDATACOPY, 0xB8 TXDIFF.
-        for byte in [0xB5usize, 0xB6, 0xB7, 0xB8] {
+        // 0xB5 RECENTROOTREFLOAD, 0xB6 TXTRACE, 0xB7 EVENTDATACOPY, 0xB8 TXDIFF,
+        // 0xB9 NONCEKEYLOAD.
+        for byte in [0xB5usize, 0xB6, 0xB7, 0xB8, 0xB9] {
             assert!(
                 !same_handler(hegota[byte], hegota[0xEF]),
                 "frame opcode {byte:#x} must be installed at Hegota"
