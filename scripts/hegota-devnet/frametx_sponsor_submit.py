@@ -70,9 +70,13 @@ def main():
             chain_id=chain_id, nonce_keys=[0], nonce_seq=nonce_seq, sender=sender,
             frames=[
                 # exec approval by the sender (auto-approved via the outer sig).
-                Frame(mode=1, flags=APPROVE_EXECUTION, target=sender, gas_limit=80_000, value=0, data=b""),
+                # The two VERIFY (prefix) frames' gas_limits plus the signature
+                # verification cost must stay under MAX_VERIFY_GAS (100_000), so
+                # keep them small — the exec auto-approve and the sponsor's
+                # APPROVE both cost only a few thousand gas.
+                Frame(mode=1, flags=APPROVE_EXECUTION, target=sender, gas_limit=20_000, value=0, data=b""),
                 # payment approval by the sponsor contract (runs verify()).
-                Frame(mode=1, flags=APPROVE_PAYMENT, target=sponsor, gas_limit=80_000, value=0,
+                Frame(mode=1, flags=APPROVE_PAYMENT, target=sponsor, gas_limit=40_000, value=0,
                       data=SPONSOR_VERIFY_SELECTOR),
                 # the actual transfer, executed as the sender.
                 Frame(mode=2, flags=0, target=recipient, gas_limit=30_000, value=amount, data=b""),
