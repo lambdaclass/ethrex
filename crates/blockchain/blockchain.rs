@@ -54,7 +54,7 @@ use ::tracing::{debug, error, info, instrument, warn};
 use constants::{AMSTERDAM_MAX_INITCODE_SIZE, MAX_INITCODE_SIZE, POST_OSAKA_GAS_LIMIT_CAP};
 use error::MempoolError;
 use error::{ChainError, InvalidBlockError};
-use ethrex_common::constants::{EMPTY_TRIE_HASH, MIN_BASE_FEE_PER_BLOB_GAS};
+use ethrex_common::constants::{EMPTY_KECCAK_HASH, EMPTY_TRIE_HASH, MIN_BASE_FEE_PER_BLOB_GAS};
 
 use crossbeam::channel::{self as cb, TryRecvError, select};
 // Re-export stateless validation functions for backwards compatibility
@@ -71,6 +71,7 @@ use ethrex_common::types::{
     BlockNumber, ChainConfig, Code, Receipt, Transaction, WrappedEIP4844Transaction,
     synthesize_bal_updates, validate_block_body,
 };
+use ethrex_common::types::{EIP7702_DELEGATED_CODE_LEN, is_eip7702_delegation};
 use ethrex_common::types::{ELASTICITY_MULTIPLIER, P2PTransaction};
 use ethrex_common::types::{Fork, MempoolTransaction};
 use ethrex_common::utils::keccak;
@@ -93,8 +94,10 @@ use ethrex_vm::backends::CachingDatabase;
 #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
 use ethrex_vm::backends::levm::LEVM;
 use ethrex_vm::backends::levm::db::DatabaseLogger;
-use ethrex_vm::{BlockExecutionResult, DynVmDatabase, Evm, EvmError};
-use mempool::Mempool;
+use ethrex_vm::{BlockExecutionResult, DynVmDatabase, Evm, EvmError, VmDatabase};
+use mempool::{
+    FRAME_CANONICAL_PAYMASTER_CODE_HASH, FramePaymasterReservation, Mempool, is_canonical_paymaster,
+};
 use payload::PayloadOrTask;
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::collections::hash_map::Entry;
@@ -522,7 +525,7 @@ impl Blockchain {
         block: &Block,
         parent_header: &BlockHeader,
         vm: &mut Evm,
-        bal: Option<&BlockAccessList>,
+        bal: Option<Arc<BlockAccessList>>,
         collect_witness: bool,
     ) -> Result<BlockExecutionPipelineResult, ChainError> {
         let start_instant = Instant::now();
@@ -569,7 +572,7 @@ impl Blockchain {
         // consumes — the synthesized path would leave the receiver dropped.
         let optimistic_updates: Option<FxHashMap<Address, BalSynthesisItem>> =
             if self.options.bal_parallel_trie_enabled && !collect_witness {
-                bal.map(synthesize_bal_updates)
+                bal.as_deref().map(synthesize_bal_updates)
             } else {
                 None
             };
@@ -611,16 +614,20 @@ impl Blockchain {
         #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
         if self.options.bal_prefetch_enabled
             && !collect_witness
-            && let Some(bal) = bal
+            && let Some(bal_ref) = bal.as_ref()
         {
-            let slots = LEVM::bal_storage_slots(bal);
+            let slots = LEVM::bal_storage_slots(bal_ref);
             if !slots.is_empty() {
                 let _ = caching_store.prefetch_storage(&slots);
             }
         }
 
-        let (execution_result, merkleization_result, warmer_duration) =
-            std::thread::scope(|s| -> Result<_, ChainError> {
+        // Each thread that captures `bal` needs its own Arc clone (cheap pointer bump).
+        #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+        let bal_warmer = bal.clone();
+
+        let (execution_result, merkleization_result, warmer_duration) = std::thread::scope(
+            |s| -> Result<_, ChainError> {
                 #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
                 let vm_type = vm.vm_type;
                 let cancelled_ref = &cancelled;
@@ -635,11 +642,11 @@ impl Blockchain {
                                 // Warming uses the same caching store, sharing cached state with execution.
                                 // Precompile cache lives inside CachingDatabase, shared automatically.
                                 let start = Instant::now();
-                                if let Some(bal) = bal {
+                                if let Some(bal) = bal_warmer {
                                     if bal_prefetch_enabled {
                                         // Amsterdam+: BAL-based precise prefetching (no tx re-execution).
                                         if let Err(e) = LEVM::warm_block_from_bal(
-                                            bal,
+                                            &bal,
                                             caching_store,
                                             cancelled_ref,
                                         ) {
@@ -692,6 +699,10 @@ impl Blockchain {
                 // and the merkleizer uses the synthesized optimistic map directly.
                 let (tx, rx_for_merkle) =
                     if optimistic_updates.is_some() && bal_parallel_exec_enabled {
+                        // Paired with the merkleizer's `rx_for_merkle.expect()` below:
+                        // this is the only arm allowed to skip the channel. If a future
+                        // refactor lets another branch reach here with `rx == None`, the
+                        // merkleizer would panic instead of silently dropping updates.
                         (None, None)
                     } else {
                         let (tx, rx) = channel();
@@ -701,6 +712,10 @@ impl Blockchain {
                 let execution_handle = std::thread::Builder::new()
                     .name("block_executor_execution".to_string())
                     .spawn_scoped(s, move || -> Result<_, ChainError> {
+                        // Cheap Arc pointer bump: `execute_block_pipeline` takes
+                        // ownership, but the header-commitment check below still needs
+                        // the input BAL on the parallel path (produced_bal == None).
+                        let header_bal = bal.clone();
                         let result = vm.execute_block_pipeline(
                             block,
                             tx,
@@ -761,7 +776,7 @@ impl Blockchain {
                                 block.body.transactions.len(),
                                 &NativeCrypto,
                             )?;
-                        } else if let Some(header_bal) = bal
+                        } else if let Some(header_bal) = header_bal.as_deref()
                             && chain_config.is_amsterdam_activated(block.header.timestamp)
                             && !header_bal.matches_commitment(
                                 block.header.block_access_list_hash,
@@ -792,22 +807,44 @@ impl Blockchain {
                     .name("block_executor_merkleizer".to_string())
                     .spawn_scoped(s, move || -> MerkleResult {
                         let merkle_start_instant = Instant::now();
-                        let (account_updates_list, streaming_witness) =
-                            if let Some(prepared) = optimistic_updates {
+                        // Merkleizer behavior MUST match the channel-creation decision above:
+                        // a channel is created (and execution streams per-tx updates into it via
+                        // `send_state_transitions_tx`) in every case except `bal=Some &&
+                        // parallel_exec`. So the optimistic synthesized-updates path is valid ONLY
+                        // when no channel exists (`rx_for_merkle` is None); whenever a channel was
+                        // created we must consume it. Taking the optimistic path while a channel is
+                        // live drops `rx` mid-execution and races execution's later sends (the
+                        // post-requests send especially), surfacing as "sending on a closed channel".
+                        let (account_updates_list, streaming_witness) = match rx_for_merkle {
+                            None => {
+                                let prepared = optimistic_updates.expect(
+                                    "optimistic updates are present when the streaming channel is absent",
+                                );
                                 let list = self.handle_merkleization_bal_from_updates(
                                     prepared,
                                     parent_header_ref,
                                 )?;
+                                // The merkleizer builds the trie from the BAL-synthesized
+                                // updates and ignores the streaming channel. But sequential
+                                // execution (`!bal_parallel_exec_enabled`) still streams per-tx
+                                // updates over `rx_for_merkle`; if we drop the receiver before
+                                // the executor's last send, that send fails with "sending on a
+                                // closed channel", racing the real validation error. Drain the
+                                // channel (the updates are redundant here — the BAL path is
+                                // authoritative) so the executor always completes cleanly.
+                                if let Some(rx) = rx_for_merkle {
+                                    for _ in rx {}
+                                }
                                 (list, None)
-                            } else {
-                                self.handle_merkleization(
-                                    rx_for_merkle.expect("rx is Some on non-BAL path"),
-                                    parent_header_ref,
-                                    queue_length_ref,
-                                    max_queue_length_ref,
-                                    collect_witness,
-                                )?
-                            };
+                            }
+                            Some(rx) => self.handle_merkleization(
+                                rx,
+                                parent_header_ref,
+                                queue_length_ref,
+                                max_queue_length_ref,
+                                collect_witness,
+                            )?,
+                        };
                         let merkle_end_instant = Instant::now();
                         Ok((
                             account_updates_list,
@@ -840,7 +877,8 @@ impl Blockchain {
                 #[cfg(any(not(feature = "rayon"), feature = "eip-8025"))]
                 let warmer_duration = Duration::ZERO;
                 Ok((execution_result, merkleization_result, warmer_duration))
-            })?;
+            },
+        )?;
         let (account_updates_list, streaming_witness, merkle_start_instant, merkle_end_instant) =
             merkleization_result?;
         let (execution_result, produced_bal, exec_end_instant) = execution_result?;
@@ -1111,6 +1149,11 @@ impl Blockchain {
         parent_header: &BlockHeader,
     ) -> Result<AccountUpdatesList, StoreError> {
         const NUM_WORKERS: usize = 16;
+        // Accounts with at least this many storage slot updates are sharded
+        // across 16 workers inside `compute_sharded_storage_root` instead of
+        // being handled by Stage B. When hot_indices is empty the Stage B path
+        // is unchanged.
+        const STORAGE_SHARD_THRESHOLD: usize = 2048;
         let parent_state_root = parent_header.state_root;
 
         // Build code updates and work items with pre-hashed addresses from the
@@ -1130,6 +1173,20 @@ impl Blockchain {
 
         // === Stage B: Parallel per-account storage root computation ===
 
+        // Partition accounts: those with >= STORAGE_SHARD_THRESHOLD slots are
+        // handled after Stage B via `compute_sharded_storage_root` (hot_indices).
+        // The rest follow the normal Stage B greedy bin-packing path (normal_indices).
+        // When hot_indices is empty the behavior is byte-identical to the previous code.
+        let mut normal_indices: Vec<usize> = Vec::new();
+        let mut hot_indices: Vec<usize> = Vec::new();
+        for (i, (_, item)) in accounts.iter().enumerate() {
+            if item.added_storage.len() >= STORAGE_SHARD_THRESHOLD {
+                hot_indices.push(i);
+            } else {
+                normal_indices.push(i);
+            }
+        }
+
         // Sort by storage weight (descending) for greedy bin packing.
         // Every item with real Stage B work MUST have weight >= 1: the greedy
         // algorithm does `bin_weights[min] += weight`, so weight-0 items never
@@ -1137,10 +1194,10 @@ impl Blockchain {
         // piling ALL of them into a single worker.
         // Synthesis never sets `removed`/`removed_storage`, so weight is purely
         // based on storage slot count.
-        let mut work_indices: Vec<(usize, usize)> = accounts
+        let mut work_indices: Vec<(usize, usize)> = normal_indices
             .iter()
-            .enumerate()
-            .map(|(i, (_, item))| {
+            .map(|&i| {
+                let item = &accounts[i].1;
                 let weight = if !item.added_storage.is_empty() {
                     1.max(item.added_storage.len())
                 } else {
@@ -1248,6 +1305,39 @@ impl Blockchain {
             }
             Ok(())
         })?;
+
+        // === Stage B.5: Sharded storage root for hot accounts ===
+        // Each call to compute_sharded_storage_root already saturates 16 cores,
+        // so we process hot accounts sequentially. A parallel outer loop is a
+        // future option if multi-hot-account blocks appear.
+        // Skip the state-trie open entirely on the common path (no hot accounts).
+        if !hot_indices.is_empty() {
+            let state_trie = self.storage.open_state_trie(parent_state_root)?;
+            for idx in &hot_indices {
+                let idx = *idx;
+                let (hashed_address, item) = &accounts[idx];
+                let storage_root = match state_trie.get(hashed_address.as_bytes())? {
+                    Some(rlp) => AccountState::decode(&rlp)?.storage_root,
+                    None => *EMPTY_TRIE_HASH,
+                };
+                // Slots are sorted by hashed key inside compute_sharded_storage_root
+                // to match Stage B's insert order (cache locality + identical node set).
+                let hashed_storage: Vec<(H256, U256)> = item
+                    .added_storage
+                    .iter()
+                    .map(|(k, v)| (keccak(k), *v))
+                    .collect();
+                let (root_hash, nodes) = compute_sharded_storage_root(
+                    &self.storage,
+                    parent_state_root,
+                    *hashed_address,
+                    storage_root,
+                    &hashed_storage,
+                )?;
+                storage_roots[idx] = Some(root_hash);
+                storage_updates.push((*hashed_address, nodes));
+            }
+        }
 
         // === Stage C: State trie update via 16 shard workers ===
 
@@ -2051,7 +2141,7 @@ impl Blockchain {
     pub fn add_block_pipeline(
         &self,
         block: Block,
-        bal: Option<&BlockAccessList>,
+        bal: Option<Arc<BlockAccessList>>,
     ) -> Result<(), ChainError> {
         let (_, _, result) = self.add_block_pipeline_inner(block, bal, false)?;
         result
@@ -2066,7 +2156,7 @@ impl Blockchain {
     pub fn add_block_pipeline_bal(
         &self,
         block: Block,
-        bal: Option<&BlockAccessList>,
+        bal: Option<Arc<BlockAccessList>>,
     ) -> Result<Option<BlockAccessList>, ChainError> {
         let (produced_bal, _, result) = self.add_block_pipeline_inner(block, bal, false)?;
         result?;
@@ -2078,7 +2168,7 @@ impl Blockchain {
     pub fn add_block_pipeline_with_witness(
         &self,
         block: Block,
-        bal: Option<&BlockAccessList>,
+        bal: Option<Arc<BlockAccessList>>,
     ) -> Result<ExecutionWitness, ChainError> {
         let (_, witness, result) = self.add_block_pipeline_inner(block, bal, true)?;
         result?;
@@ -2100,7 +2190,7 @@ impl Blockchain {
     fn add_block_pipeline_inner(
         &self,
         block: Block,
-        bal: Option<&BlockAccessList>,
+        bal: Option<Arc<BlockAccessList>>,
         force_witness: bool,
     ) -> Result<AddBlockPipelineInnerResult, ChainError> {
         // Validate if it can be the new head and find the parent
@@ -2143,6 +2233,9 @@ impl Blockchain {
             (vm, None)
         };
 
+        // Keep a copy of the input BAL Arc for the post-execution BAL store call below.
+        // `execute_block_pipeline` takes ownership; this clone is a cheap pointer bump.
+        let input_bal = bal.clone();
         let (
             res,
             account_updates_list,
@@ -2193,7 +2286,7 @@ impl Blockchain {
         // On the parallel Amsterdam validation path the BAL is supplied via the header
         // and `produced_bal` is None, so fall back to the validated incoming `bal`.
         // Pre-Amsterdam blocks have no BAL on either source, so nothing is stored.
-        if let Some(bal) = produced_bal.as_ref().or(bal)
+        if let Some(bal) = produced_bal.as_ref().or(input_bal.as_deref())
             && let Err(err) = self.storage.store_block_access_list(block_hash, bal)
         {
             warn!("Failed to store block access list for block {block_hash}: {err}");
@@ -2224,16 +2317,18 @@ impl Blockchain {
             );
         }
 
-        metrics!(if let Some(bal_ref) = produced_bal.as_ref().or(bal) {
-            let account_count = bal_ref.accounts().len() as u64;
-            let slot_count = bal_ref.item_count().saturating_sub(account_count);
-            let size_bytes = bal_ref.length() as f64;
-            METRICS_BAL.blocks_total.inc();
-            METRICS_BAL.size_bytes.set(size_bytes);
-            METRICS_BAL.size_bytes_histogram.observe(size_bytes);
-            METRICS_BAL.account_count.set(account_count as i64);
-            METRICS_BAL.slot_count.set(slot_count as i64);
-        });
+        metrics!(
+            if let Some(bal_ref) = produced_bal.as_ref().or(input_bal.as_deref()) {
+                let account_count = bal_ref.accounts().len() as u64;
+                let slot_count = bal_ref.item_count().saturating_sub(account_count);
+                let size_bytes = bal_ref.length() as f64;
+                METRICS_BAL.blocks_total.inc();
+                METRICS_BAL.size_bytes.set(size_bytes);
+                METRICS_BAL.size_bytes_histogram.observe(size_bytes);
+                METRICS_BAL.account_count.set(account_count as i64);
+                METRICS_BAL.slot_count.set(slot_count as i64);
+            }
+        );
 
         Ok((produced_bal, witness, result))
     }
@@ -2728,15 +2823,21 @@ impl Blockchain {
         let sender = transaction.sender(&NativeCrypto)?;
 
         // Validate transaction
-        if let Some(tx_to_replace) = self.validate_transaction(&transaction, sender).await? {
+        let (tx_to_replace, frame_reservation) =
+            self.validate_transaction(&transaction, sender).await?;
+        if let Some(tx_to_replace) = tx_to_replace {
             self.remove_transaction_from_pool(&tx_to_replace)?;
         }
 
         // Add blobs bundle before the transaction so that when add_transaction
         // notifies payload builders the blob data is already available.
         self.mempool.add_blobs_bundle(hash, blobs_bundle)?;
-        self.mempool
-            .add_transaction(hash, sender, MempoolTransaction::new(transaction, sender))?;
+        self.mempool.add_transaction(
+            hash,
+            sender,
+            MempoolTransaction::new(transaction, sender),
+            frame_reservation,
+        )?;
         Ok(hash)
     }
 
@@ -2767,13 +2868,29 @@ impl Blockchain {
         }
         let sender = transaction.sender(&NativeCrypto)?;
         // Validate transaction
-        if let Some(tx_to_replace) = self.validate_transaction(&transaction, sender).await? {
+        let (tx_to_replace, frame_reservation) =
+            self.validate_transaction(&transaction, sender).await?;
+        // For a frame tx, the same-nonce predecessor must NOT be removed here:
+        // `add_transaction` removes it only AFTER the locked paymaster re-check
+        // passes, so a rejected fee-bump leaves the original pending tx intact
+        // (atomic replacement, review fix 2). `add_transaction` removes whatever
+        // occupies the sender's nonce slot (any tx type), which is the same
+        // same-nonce hash `find_tx_to_replace` returns, so the success path is
+        // unchanged — including when the predecessor is a non-frame tx.
+        let is_frame = matches!(transaction, Transaction::FrameTransaction(_));
+        if let Some(tx_to_replace) = tx_to_replace
+            && !is_frame
+        {
             self.remove_transaction_from_pool(&tx_to_replace)?;
         }
 
         // Add transaction to storage
-        self.mempool
-            .add_transaction(hash, sender, MempoolTransaction::new(transaction, sender))?;
+        self.mempool.add_transaction(
+            hash,
+            sender,
+            MempoolTransaction::new(transaction, sender),
+            frame_reservation,
+        )?;
 
         Ok(hash)
     }
@@ -2795,7 +2912,7 @@ impl Blockchain {
     /// Per-block pruning only covers the head block, so stale blob txs from
     /// non-head canonical blocks leak in and are never evicted (value/nonce
     /// eviction pins low nonces). Resetting against on-chain nonces clears them.
-    pub fn remove_stale_blob_txs(&self, head_hash: BlockHash) -> Result<(), StoreError> {
+    pub async fn remove_stale_blob_txs(&self, head_hash: BlockHash) -> Result<(), StoreError> {
         let blob_txs = self.mempool.blob_txs()?;
         if blob_txs.is_empty() {
             return Ok(());
@@ -2818,6 +2935,157 @@ impl Blockchain {
                 self.mempool.remove_transaction(&hash)?;
             }
         }
+        Ok(())
+    }
+
+    /// Re-simulate pending frame transactions (EIP-8141) whose validity may have
+    /// changed because of a newly canonical `block`, evicting any that no longer
+    /// pass. A local peer policy: it never affects consensus or block-building.
+    ///
+    /// Included frame txs are already released by
+    /// `remove_block_transactions_from_pool`, so this only revisits txs that are
+    /// still pending. To bound the work, it builds the set of accounts the block
+    /// could have mutated (every tx's sender and `Call` target, the block's
+    /// coinbase, and every withdrawal recipient) and re-simulates a pending frame
+    /// tx only when its sender, one of its touched sender storage slots' owning
+    /// account (the sender, since SLOAD/SSTORE are sender-restricted), or its
+    /// referenced paymaster falls in that set. When no frame tx is pending the
+    /// whole pass is a no-op.
+    ///
+    /// Evictions go through the normal removal path
+    /// (`remove_transaction_with_lock`), which cleans every reservation map.
+    ///
+    /// Reorg re-add of reservations for re-queued txs is OUT OF SCOPE: txs from a
+    /// re-orged-out block are not re-admitted here, so their reservations are not
+    /// reconstructed (ties to existing TODO #797). A subsequent re-submission
+    /// re-runs full admission and re-reserves.
+    pub fn revalidate_frame_txs_after_block(&self, block: &Block) -> Result<(), StoreError> {
+        let pending = self.mempool.pending_frame_txs()?;
+        // No-op when no frame tx is pending.
+        if pending.is_empty() {
+            return Ok(());
+        }
+
+        // Re-simulate every pending frame tx against the new head. We do NOT try
+        // to narrow the set to "accounts the block touched": a pending tx's
+        // sender storage can change via an internal CALL from an unrelated block
+        // tx, so a candidate set derived from tx envelopes (senders, Call
+        // targets) would miss those and under-evict. Frame txs are bounded to
+        // ~one per sender, so an unconditional rescan is cheap, and the policy's
+        // invariant (never under-reject) takes precedence over the optimization.
+        //
+        // TODO: when frame-tx volume warrants it, replace the unconditional
+        // rescan with a sound per-tx input-check: snapshot each tx's validation
+        // read-set at admission (sender account, touched sender storage slots
+        // with values, paymaster account) and here re-read only those at the new
+        // head, re-simulating just the txs whose inputs changed. This needs the
+        // validation observer to record slot values (not only keys). The block's
+        // AccountUpdates are not available at this FCU hook (they are produced
+        // during a prior newPayload execution), so an AccountUpdates-derived set
+        // is not an option here without new per-block persistence.
+        //
+        // The head to simulate against is the just-applied block (its header
+        // carries the post-execution state root). Build the read-through state
+        // view once for the whole pass; `new_evm` gives each tx its own mutable
+        // cache, so the per-tx simulations stay isolated. If the head state can't
+        // be opened we keep the simulation step disabled (None) but still apply
+        // the expiry and structural drops below, which don't need state.
+        let vm_db = match StoreVmDatabase::new(self.storage.clone(), block.header.clone()) {
+            Ok(vm_db) => Some(vm_db),
+            Err(err) => {
+                warn!("Failed to build head-state VM for frame-tx revalidation: {err}");
+                None
+            }
+        };
+
+        for (hash, _sender, paymaster) in pending {
+            let Some(mempool_tx) = self.mempool.get_mempool_transaction_by_hash(hash)? else {
+                continue;
+            };
+            let tx = mempool_tx.transaction().clone();
+            let Transaction::FrameTransaction(frame_tx) = &tx else {
+                continue;
+            };
+
+            // Drop a tx whose expiry deadline is now behind the new head.
+            if frame_tx
+                .expiry_deadline()
+                .is_some_and(|deadline| deadline < block.header.timestamp)
+            {
+                self.mempool.remove_transaction(&hash)?;
+                continue;
+            }
+
+            // Re-derive the prefix and re-simulate against the new head state.
+            let prefix = match frame_tx.validation_prefix() {
+                Ok(prefix) => prefix,
+                Err(_) => {
+                    // Structurally invalid against the current rules: evict.
+                    self.mempool.remove_transaction(&hash)?;
+                    continue;
+                }
+            };
+
+            // Without a head-state view we cannot re-simulate; keep the tx
+            // (don't under-reject on a transient state-read failure). The
+            // expiry and structural drops above already ran.
+            let Some(vm_db) = &vm_db else {
+                continue;
+            };
+            let evict = match self.new_evm(vm_db.clone()) {
+                Ok(mut vm) => {
+                    match vm.simulate_frame_validation_prefix(&tx, &block.header, &prefix, None) {
+                        // Simulation passed for this tx in isolation. The
+                        // per-tx validation prefix only catches a single-tx
+                        // drain (its own APPROVE underflows). N txs sharing one
+                        // paymaster each simulate against the full post-block
+                        // balance, so collectively they can exceed it; we must
+                        // also re-check the aggregate availability invariant
+                        // that admission enforces. Per tx the needed condition
+                        // is `balance - (reserved - this_cost) >= this_cost`,
+                        // i.e. `balance >= reserved_pending_cost(paymaster)`.
+                        // Because evicting a tx decrements
+                        // `reserved_pending_cost` (single removal path), the
+                        // pass converges to `reserved <= balance` per paymaster
+                        // and never under-evicts. (All paymasters are
+                        // non-canonical today (OQ1); the per-paymaster pending
+                        // COUNT limit cannot be exceeded by a block, so only
+                        // the balance/reserved aggregate needs re-checking.)
+                        Ok(outcome) if outcome.passed => {
+                            // Best-effort post-block balance read. A read error
+                            // is treated as "keep the tx" (consistent with the
+                            // transient-failure handling above); never panic,
+                            // never fail the FCU.
+                            let balance = match vm_db.get_account_state(paymaster) {
+                                Ok(Some(state)) => state.balance,
+                                Ok(None) => U256::zero(),
+                                Err(_) => {
+                                    // Keep the tx on a transient read failure.
+                                    continue;
+                                }
+                            };
+                            // `reserved_pending_cost` is read live, not from the
+                            // snapshot: a tx admitted after the snapshot can raise
+                            // it above `balance` and over-evict a snapshotted tx.
+                            // That is benign for a best-effort mempool policy (the
+                            // newcomer passed its own locked availability check).
+                            balance < self.mempool.reserved_pending_cost(paymaster)?
+                        }
+                        // Simulation passed flag is false: evict.
+                        Ok(_) => true,
+                        // A simulation error means the prefix can no longer be
+                        // validated against the new state: evict (conservative).
+                        Err(_) => true,
+                    }
+                }
+                Err(_) => true,
+            };
+
+            if evict {
+                self.mempool.remove_transaction(&hash)?;
+            }
+        }
+
         Ok(())
     }
 
@@ -2852,17 +3120,24 @@ impl Blockchain {
     5. Ensure the transactor is able to add a new transaction. The number of transactions sent by an account may be limited by a certain configured value
 
     */
-    /// Returns the hash of the transaction to replace in case the nonce already exists
+    /// Returns the hash of the transaction to replace in case the nonce already
+    /// exists, plus the paymaster reservation to apply on insert for frame
+    /// transactions (EIP-8141). The reservation is computed here but applied in
+    /// the locked section of `add_transaction`, so a frame tx that fails any
+    /// later admission check never leaks a reservation.
     pub async fn validate_transaction(
         &self,
         tx: &Transaction,
         sender: Address,
-    ) -> Result<Option<H256>, MempoolError> {
+    ) -> Result<(Option<H256>, Option<FramePaymasterReservation>), MempoolError> {
         let nonce = tx.nonce();
 
         if matches!(tx, &Transaction::PrivilegedL2Transaction(_)) {
-            return Ok(None);
+            return Ok((None, None));
         }
+
+        // Frame transactions: skip balance/EOA checks (payer unknown until execution)
+        let is_frame_tx = matches!(tx, Transaction::FrameTransaction(_));
 
         let header_no = self.storage.get_latest_block_number().await?;
         let header = self
@@ -2870,6 +3145,99 @@ impl Blockchain {
             .get_block_header(header_no)?
             .ok_or(MempoolError::NoBlockHeaderError)?;
         let config = self.storage.get_chain_config();
+
+        // EIP-8141 fork gating: reject frame transactions before Hegota activates.
+        // Prevents FrameTransaction (type 0x06) from entering the mempool or being
+        // forwarded over P2P on chains where EIP-8141 has not yet activated.
+        if is_frame_tx && !config.is_hegota_activated(header.timestamp) {
+            return Err(MempoolError::FrameTxPreFork);
+        }
+
+        // EIP-8141 expiry (spec commit 0b197156): drop frame txs whose expiry
+        // verifier deadline is already behind the current head timestamp.
+        // Boundary: deadline == timestamp is still valid (the verifier only
+        // reverts when block.timestamp > deadline).
+        if let Transaction::FrameTransaction(frame_tx) = tx
+            && frame_tx
+                .expiry_deadline()
+                .is_some_and(|deadline| deadline < header.timestamp)
+        {
+            return Err(MempoolError::FrameTxExpired);
+        }
+
+        // Paymaster reservation to apply on insert (EIP-8141). Computed below for
+        // frame txs after simulation + availability pass; `None` for every other
+        // tx type and threaded to the locked insert in `add_transaction`.
+        let mut frame_reservation: Option<FramePaymasterReservation> = None;
+
+        if let Transaction::FrameTransaction(frame_tx) = tx {
+            // EIP-8141 static constraints at admission (mirrors the VM check)
+            // so malformed frame txs never occupy pool slots.
+            frame_tx
+                .validate_static_constraints()
+                .map_err(MempoolError::InvalidFrameTransaction)?;
+
+            // Interim policy: no sidecar transport exists for frame-tx blobs
+            // yet, so a blob-carrying frame tx could never be included with data
+            // availability. Reject at admission (local policy). Block IMPORT does
+            // account for frame blobs (verify_blob_gas_usage counts them), but the
+            // BUILD path does not yet add them to header.blob_gas_used — so this
+            // admission gate is also what keeps the builder from ever producing
+            // such a block. If this gate is lifted, the builder must route frame
+            // blobs through blob accounting first (see payload.rs apply_transaction).
+            if !frame_tx.blob_versioned_hashes.is_empty() {
+                return Err(MempoolError::FrameTxBlobsUnsupported);
+            }
+
+            // Frame `data` size is bounded by the wire-size cap below
+            // (MAX_TX_SIZE over encode_canonical_len), which covers the
+            // frames' payloads since they are part of the canonical encoding.
+
+            // EIP-8141 §Mempool (rule #6): signature validation counts against
+            // MAX_VERIFY_GAS. Reject before any per-signature crypto runs when the
+            // signature-verification cost alone exceeds the budget — such a tx can
+            // never satisfy the validation-prefix gas limit, and this bounds the
+            // crypto work done by validate_frame_signatures below. (The full
+            // validation-prefix simulation runs below over a throwaway head-state
+            // VM and is the authoritative gas-budget check.)
+            if frame_tx.signature_verification_cost()
+                > ethrex_common::types::FRAME_TX_MAX_VERIFY_GAS
+            {
+                return Err(MempoolError::FrameTxVerifyGasExceeded);
+            }
+
+            // Authenticate the signature list BEFORE admission: without this the
+            // unauthenticated `sender` field lets fabricated senders flood the
+            // pool for free (no balance is charged at admission).
+            let sig_hash = frame_tx.compute_sig_hash();
+            if !ethrex_vm::validate_frame_signatures(
+                &frame_tx.signatures,
+                sig_hash,
+                config.fork(header.timestamp),
+                &NativeCrypto,
+            ) {
+                return Err(MempoolError::InvalidFrameSignature);
+            }
+
+            // Local anti-malleability policy (NOT consensus): reject high-s
+            // signatures at admission. EIP-8141 accepts high-s at block execution
+            // (`signer == ecrecover`), but the raw signature bytes are committed to
+            // the tx identity hash while elided from the sig hash, so a malleated
+            // `(v,r,s) -> (v^1, r, n-s)` form would produce a second valid tx hash
+            // for the same logical tx and bypass pool dedup.
+            if !ethrex_vm::frame_signatures_are_low_s(&frame_tx.signatures) {
+                return Err(MempoolError::FrameTxMalleableSignature);
+            }
+
+            // EIP-8141 §Mempool: validate the prefix shape and structural rules.
+            // The full gas-budget check (prefix frame gas limits + sig cost ≤
+            // MAX_VERIFY_GAS) is the authoritative superset of the cheap
+            // sig-cost pre-filter above; both are kept for defence-in-depth.
+            let prefix = frame_tx.validation_prefix().map_err(MempoolError::from)?;
+            frame_tx
+                .validate_prefix_structure(&prefix)
+                .map_err(MempoolError::from)?;
+        }
 
         // Wire size cap for non-blob txs: peer-policy default, not consensus.
         // Matches geth `txMaxSize` (legacypool), reth `DEFAULT_MAX_TX_INPUT_BYTES`,
@@ -2938,7 +3306,7 @@ impl Blockchain {
         }
 
         // Check that the gas limit covers the gas needs for transaction metadata.
-        if tx.gas_limit() < mempool::transaction_intrinsic_gas(tx, &header, &config)? {
+        if tx.gas_limit() < mempool::transaction_intrinsic_gas(tx, sender, &header, &config)? {
             return Err(MempoolError::TxIntrinsicGasCostAboveLimitError);
         }
 
@@ -2957,16 +3325,75 @@ impl Blockchain {
                 return Err(MempoolError::NonceTooLow);
             }
 
-            let tx_cost = tx
-                .cost_without_base_fee()
-                .ok_or(MempoolError::InvalidTxGasvalues)?;
-
-            if tx_cost > sender_acc_info.balance {
-                return Err(MempoolError::NotEnoughBalance);
+            // EIP-3607: reject txs from senders with deployed code, unless
+            // the code is an EIP-7702 delegation designation (the account is
+            // still an EOA in spirit, just pointing at delegate code).
+            //
+            // Frame transactions are exempt: EIP-8141 ("Transaction
+            // origination") explicitly does NOT apply the EIP-3607 restriction
+            // to them, since a frame tx's `SENDER` frame legitimately
+            // originates calls where `tx.sender` is a contract account.
+            //
+            // Length-based fast path: any code whose length isn't exactly
+            // `EIP7702_DELEGATED_CODE_LEN` (23) cannot be a delegation, so
+            // we reject without loading the bytecode. Only when the metadata
+            // length matches do we fetch + verify the prefix. This avoids
+            // pulling potentially large contract bytecode on every contract
+            // sender that hits admission.
+            if !is_frame_tx && sender_acc_info.code_hash != *EMPTY_KECCAK_HASH {
+                let metadata_len = self
+                    .storage
+                    .get_code_metadata(sender_acc_info.code_hash)?
+                    .map(|m| m.length);
+                let is_delegation = if metadata_len == Some(EIP7702_DELEGATED_CODE_LEN as u64) {
+                    // Metadata says the code is delegation-shaped; if the
+                    // bytecode is then missing from the store, the DB is
+                    // inconsistent — surface that as `StoreError` instead of
+                    // silently treating the sender as a contract (which would
+                    // wrongly reject a valid 7702-delegated EOA).
+                    let code = self
+                        .storage
+                        .get_account_code(sender_acc_info.code_hash)?
+                        .ok_or_else(|| {
+                            StoreError::Custom(format!(
+                                "code missing for hash {:?} despite present metadata",
+                                sender_acc_info.code_hash
+                            ))
+                        })?;
+                    is_eip7702_delegation(code.code())
+                } else {
+                    false
+                };
+                if !is_delegation {
+                    return Err(MempoolError::SenderIsContract);
+                }
             }
-        } else {
+
+            // Skip balance check for frame txs (payer unknown until execution)
+            if !is_frame_tx {
+                let tx_cost = tx
+                    .cost_without_base_fee()
+                    .ok_or(MempoolError::InvalidTxGasvalues)?;
+
+                if tx_cost > sender_acc_info.balance {
+                    return Err(MempoolError::NotEnoughBalance);
+                }
+            }
+        } else if !is_frame_tx {
             // An account that is not in the database cannot possibly have enough balance to cover the transaction cost
             return Err(MempoolError::NotEnoughBalance);
+        } else {
+            // Frame tx from a not-yet-existent sender. This is legitimate for
+            // sponsored transactions, where a separate funded payer covers gas,
+            // so we cannot reject on balance. The account's implied nonce is 0
+            // (EIP-8141: `tx.nonce == state[tx.sender].nonce`), so apply the same
+            // nonce sanity guard as the existing-account path instead of skipping
+            // nonce validation entirely. `nonce < 0` is impossible for a u64, so
+            // only the u64::MAX sentinel is rejectable here; a fresh sender's
+            // nonce-0 tx still passes.
+            if nonce == u64::MAX {
+                return Err(MempoolError::NonceTooLow);
+            }
         }
 
         // Check the nonce of pendings TXs in the mempool from the same sender
@@ -2980,7 +3407,128 @@ impl Blockchain {
             return Err(MempoolError::InvalidChainId(config.chain_id));
         }
 
-        Ok(tx_to_replace_hash)
+        // EIP-8141 §Mempool: run the validation-trace simulation + paymaster
+        // availability accounting LAST, after the cheap stateless and nonce/fee
+        // checks have passed, so a malformed nonce / fee / size never pays for an
+        // EVM simulation.
+        if let Transaction::FrameTransaction(frame_tx) = tx {
+            // Re-derive the (pure) prefix; structural validity was already
+            // checked above, so this cannot fail here.
+            let prefix = frame_tx.validation_prefix().map_err(MempoolError::from)?;
+
+            // Run the validation-trace simulation over a FRESH, throwaway
+            // `StoreVmDatabase` at the canonical head (the same state source the
+            // payload builder uses). This is a local peer policy: it never
+            // touches consensus or block-building, may over-reject, and must
+            // never under-reject. The observer enforces the ERC-7562-style trace
+            // rules; the outcome reports whether the prefix established a payer
+            // within the verify-gas budget and which sender slots / paymaster it
+            // touched.
+            let vm_db = StoreVmDatabase::new(self.storage.clone(), header.clone())
+                .map_err(|err| MempoolError::FrameTxValidationFailed(err.to_string()))?;
+            let mut vm = self
+                .new_evm(vm_db)
+                .map_err(|err| MempoolError::FrameTxValidationFailed(err.to_string()))?;
+            // OQ1: no canonical paymaster bytecode is resolvable, so no canonical
+            // code hash is passed (the canonical-pay-frame exemption never fires).
+            let outcome = vm
+                .simulate_frame_validation_prefix(tx, &header, &prefix, None)
+                .map_err(|err| MempoolError::FrameTxValidationFailed(err.to_string()))?;
+            if !outcome.passed {
+                return Err(MempoolError::FrameTxValidationFailed(
+                    outcome
+                        .violation
+                        .unwrap_or_else(|| "validation prefix did not pass".to_string()),
+                ));
+            }
+
+            // Paymaster availability accounting (EIP-8141). The simulation
+            // identified the payer (paymaster) and whether its code matched the
+            // canonical paymaster hash (always false today, OQ1). Reserve the
+            // tx's max cost against the paymaster's head balance, summed with all
+            // other pending reservations for that paymaster so concurrently
+            // pending sponsored txs cannot collectively overdraw it.
+            let max_cost = outcome.max_cost;
+            if let Some((paymaster, code_is_canonical)) = outcome.accessed_paymaster {
+                // OQ1: re-derive the canonical flag from the paymaster's head
+                // code so the (currently always-false) determination lives in
+                // one place. The storage read is skipped entirely until the
+                // canonical bytecode hash is pinned upstream (the sentinel),
+                // since `is_canonical_paymaster` can only return false until then.
+                let is_canonical = if FRAME_CANONICAL_PAYMASTER_CODE_HASH == H256::zero() {
+                    code_is_canonical
+                } else {
+                    let paymaster_code = self
+                        .storage
+                        .get_code_by_account_address(header_no, paymaster)
+                        .await?
+                        .map(|code| code.code_bytes())
+                        .unwrap_or_default();
+                    code_is_canonical || is_canonical_paymaster(&paymaster_code)
+                };
+
+                let paymaster_balance = self
+                    .storage
+                    .get_account_info(header_no, paymaster)
+                    .await?
+                    .map(|info| info.balance)
+                    .unwrap_or_else(U256::zero);
+                let reserved = self.mempool.reserved_pending_cost(paymaster)?;
+
+                // Fee-bump exemption: a same-nonce replacement removes the old tx
+                // (releasing its reservation and noncanonical slot) before the new
+                // one is inserted. This UNLOCKED pre-filter still counts the old
+                // tx's reservation, so it would falsely reject the bump on both
+                // availability and the per-paymaster limit. Skip the whole
+                // pre-filter for replacements; the locked re-check in
+                // `add_transaction` runs AFTER the old tx is removed and is the
+                // authoritative guard. The pre-filter only avoids running the EVM
+                // simulation's downstream work for clearly-rejectable fresh txs.
+                let is_fee_bump_replacement = tx_to_replace_hash.is_some();
+                if !is_fee_bump_replacement {
+                    if is_canonical {
+                        // Canonical paymaster: balance minus reservations minus the
+                        // pending withdrawal amount (OQ3: ethrex has no paymaster
+                        // withdrawal queue, so the withdrawal amount is treated as
+                        // 0) must cover the max cost.
+                        let withdrawal_amount = U256::zero();
+                        let available = paymaster_balance
+                            .saturating_sub(reserved)
+                            .saturating_sub(withdrawal_amount);
+                        if available < max_cost {
+                            return Err(MempoolError::FrameTxPaymasterUnderfunded);
+                        }
+                    } else {
+                        // Non-canonical paymaster: balance minus reservations must
+                        // cover the max cost, AND at most
+                        // FRAME_TX_MAX_PENDING_NONCANONICAL_PAYMASTER pending txs
+                        // may be sponsored by this paymaster.
+                        let available = paymaster_balance.saturating_sub(reserved);
+                        if available < max_cost {
+                            return Err(MempoolError::FrameTxPaymasterUnderfunded);
+                        }
+                        if self.mempool.noncanonical_paymaster_pending(paymaster)?
+                            >= ethrex_common::types::FRAME_TX_MAX_PENDING_NONCANONICAL_PAYMASTER
+                        {
+                            return Err(MempoolError::FrameTxNonCanonicalPaymasterLimit);
+                        }
+                    }
+                }
+
+                // Defer the increment to `add_transaction`, which re-checks
+                // availability + the non-canonical limit under the write lock
+                // (this unlocked check is a pre-filter). A tx failing any later
+                // admission check must not leak a reservation.
+                frame_reservation = Some(FramePaymasterReservation {
+                    paymaster,
+                    reserved_cost: max_cost,
+                    is_canonical,
+                    paymaster_balance,
+                });
+            }
+        }
+
+        Ok((tx_to_replace_hash, frame_reservation))
     }
 
     /// Marks the node's chain as up to date with the current chain
@@ -3035,6 +3583,9 @@ impl Blockchain {
                 ));
             }
             Transaction::FeeTokenTransaction(itx) => P2PTransaction::FeeTokenTransaction(itx),
+            // Frame transactions (EIP-8141) have no blobs bundle, so no bundle
+            // lookup is needed; they are served on request like other typed txs.
+            Transaction::FrameTransaction(itx) => P2PTransaction::FrameTransaction(itx),
         };
 
         Ok(result)
@@ -3631,4 +4182,178 @@ fn collect_trie(index: u8, mut trie: Trie) -> Result<(Box<BranchNode>, Vec<TrieN
         return Err(TrieError::InvalidInput);
     };
     Ok((root, nodes))
+}
+
+/// Serial reference computation of an account's storage root + node diff,
+/// identical to the per-account Stage B path. Used as a fallback for the
+/// degenerate sharding cases (see `compute_sharded_storage_root`) where the
+/// branchify/collapse reassembly, while producing the correct root, would emit
+/// a different (extra/stale, always unreachable) node set than the canonical
+/// serial path.
+fn serial_storage_root(
+    storage: &Store,
+    parent_state_root: H256,
+    hashed_address: H256,
+    storage_root: H256,
+    hashed_storage: &[(H256, U256)],
+) -> Result<(H256, Vec<TrieNode>), StoreError> {
+    let mut trie = storage.open_storage_trie(hashed_address, parent_state_root, storage_root)?;
+    for (hashed_key, value) in hashed_storage {
+        if value.is_zero() {
+            trie.remove(hashed_key.as_bytes())?;
+        } else {
+            trie.insert(hashed_key.as_bytes().to_vec(), value.encode_to_vec())?;
+        }
+    }
+    Ok(trie.collect_changes_since_last_hash(&NativeCrypto))
+}
+
+/// Compute the storage root for a single account by sharding its slots across
+/// 16 nibble-keyed workers. The returned `(H256, Vec<TrieNode>)` is
+/// drop-in compatible with `trie.collect_changes_since_last_hash`.
+///
+/// `hashed_storage` order does not matter (sharding and trie inserts are
+/// order-independent). All 16 shard threads spawn even for empty buckets: an
+/// empty thread opens the trie, performs no insertions, and returns
+/// `collect_trie(nibble, trie)` so the reassembled root has no holes.
+///
+/// Exposed (hidden) for the `ethrex-test` crate's equivalence tests; not part
+/// of the stable public API.
+///
+/// Load-bearing invariant: this relies on a **path-keyed** node DB, where a node
+/// is reachable only via its trie path. On inserts/updates and the degenerate
+/// fallbacks below the persisted node set is bit-identical to the serial path,
+/// but the parallel removal path may emit a few redundant nodes that are
+/// unreachable by path and therefore harmless (never read back, never GC'd).
+/// This is why the `occupied <= 1` fallback is sufficient and why we do *not*
+/// also fall back on the broader "removal collapses the trie post-bucketization"
+/// case. If the storage backend ever moves to a content-addressed / hash-keyed
+/// node DB, or grows reachability-based GC, the parallel-removal path could leak
+/// unreachable-but-persistent nodes and this assumption must be revisited.
+#[doc(hidden)]
+pub fn compute_sharded_storage_root(
+    storage: &Store,
+    parent_state_root: H256,
+    hashed_address: H256,
+    storage_root: H256,
+    hashed_storage: &[(H256, U256)],
+) -> Result<(H256, Vec<TrieNode>), StoreError> {
+    // Sort by hashed key, matching the serial Stage B path (the per-account
+    // worker). The storage root is content-addressed so order is irrelevant to
+    // correctness, but inserting in key order walks the node arena sequentially
+    // (cache locality) and keeps the persisted node set bit-identical to Stage B.
+    // Applies to both the sharded path below and the serial fallbacks: bucketing
+    // by first nibble preserves the sorted order within each bucket.
+    // Stable sort: production inputs (a map) have unique keys, but a stable order
+    // preserves last-write-wins for any duplicate keys, matching sequential apply.
+    let mut sorted = hashed_storage.to_vec();
+    sorted.sort_by(|a, b| a.0.cmp(&b.0));
+    let hashed_storage = sorted.as_slice();
+
+    // Split slots into 16 buckets by the first nibble of the hashed key.
+    let mut buckets: [Vec<(H256, U256)>; 16] = Default::default();
+    for &(key, value) in hashed_storage {
+        let nibble = (key.as_fixed_bytes()[0] >> 4) as usize;
+        buckets[nibble].push((key, value));
+    }
+
+    // A slot landing in the wrong nibble bucket would silently corrupt the
+    // reassembled root (consensus failure), so guard the invariant in debug.
+    #[cfg(debug_assertions)]
+    for (nibble, bucket) in buckets.iter().enumerate() {
+        for (key, _) in bucket {
+            debug_assert_eq!(
+                (key.as_fixed_bytes()[0] >> 4) as usize,
+                nibble,
+                "storage slot in wrong shard bucket"
+            );
+        }
+    }
+
+    // Degenerate case: with <=1 occupied bucket there is no parallelism to gain,
+    // and the branchify/collapse reassembly of a single subtree would emit an
+    // extra (unreachable) node vs the canonical serial diff. Compute serially so
+    // the persisted node set is bit-identical to the non-sharded path.
+    let occupied = buckets.iter().filter(|b| !b.is_empty()).count();
+    if occupied <= 1 {
+        return serial_storage_root(
+            storage,
+            parent_state_root,
+            hashed_address,
+            storage_root,
+            hashed_storage,
+        );
+    }
+
+    let mut root = BranchNode::default();
+    let mut nodes: Vec<TrieNode> = Vec::new();
+
+    // All 16 shard threads spawn even for empty buckets (same rationale as
+    // Stage C comment): each thread opens the storage trie and returns the
+    // existing subtree at its nibble so root reassembly has no holes.
+    std::thread::scope(|s| -> Result<(), StoreError> {
+        let handles: Vec<_> = buckets
+            .into_iter()
+            .enumerate()
+            .map(|(nibble, bucket)| {
+                std::thread::Builder::new()
+                    .name(format!("storage_shard_{nibble}"))
+                    .spawn_scoped(
+                        s,
+                        move || -> Result<(Box<BranchNode>, Vec<TrieNode>), StoreError> {
+                            let mut trie = storage.open_storage_trie(
+                                hashed_address,
+                                parent_state_root,
+                                storage_root,
+                            )?;
+                            for (hashed_key, value) in &bucket {
+                                if value.is_zero() {
+                                    trie.remove(hashed_key.as_bytes())?;
+                                } else {
+                                    trie.insert(
+                                        hashed_key.as_bytes().to_vec(),
+                                        value.encode_to_vec(),
+                                    )?;
+                                }
+                            }
+                            collect_trie(nibble as u8, trie)
+                                .map_err(|e| StoreError::Custom(format!("{e}")))
+                        },
+                    )
+                    .map_err(|e| StoreError::Custom(format!("spawn failed: {e}")))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+
+        for (i, handle) in handles.into_iter().enumerate() {
+            let (subroot, shard_nodes) = handle
+                .join()
+                .map_err(|_| StoreError::Custom("storage shard worker panicked".to_string()))??;
+            nodes.extend(shard_nodes);
+            root.choices[i] = subroot.choices[i].clone();
+        }
+        Ok(())
+    })?;
+
+    // Finalize: collapse single-child branch, commit, return root hash.
+    // prefix = Some(hashed_address) because this is a storage trie.
+    let Some(root_node) =
+        collapse_root_node(storage, parent_state_root, Some(hashed_address), root)?
+    else {
+        // The update emptied the storage trie. The sharded tombstone set differs
+        // from the canonical serial diff (deletions of now-unreachable nodes), so
+        // recompute serially for a bit-identical result. Rare (full storage clear).
+        return serial_storage_root(
+            storage,
+            parent_state_root,
+            hashed_address,
+            storage_root,
+            hashed_storage,
+        );
+    };
+
+    let mut root_ref = NodeRef::from(root_node);
+    let root_hash = root_ref.commit(Nibbles::default(), &mut nodes, &NativeCrypto);
+    let _ = DROP_SENDER.send(Box::new(root_ref));
+
+    Ok((root_hash.finalize(&NativeCrypto), nodes))
 }

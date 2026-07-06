@@ -26,6 +26,16 @@ Then, we need to update five more `Cargo.toml` files that are not part of the wo
 - `crates/guest-program/bin/openvm/Cargo.toml`
 - `crates/l2/tee/quote-gen/Cargo.toml`
 
+We also need to bump the **internal crate dependency version pins**. ethrex's library crates declare their workspace-internal dependencies with an explicit `version = "X.Y.Z"` (required for publishing to crates.io). These live in the root `Cargo.toml` under `[workspace.dependencies]`, plus a few crates that pin a sibling directly (`crates/vm/Cargo.toml`, `crates/blockchain/Cargo.toml`, `crates/l2/sdk/Cargo.toml`). Bump every one of them to the new version, then confirm none were missed — set `PREV` to the version you are bumping **from**:
+
+```bash
+PREV=X.Y.Z   # the previous release version
+grep -rn "\"$PREV\"" --include=Cargo.toml .   # must return nothing
+```
+
+> [!WARNING]
+> The version bump must cover **both** `[workspace.package].version` and these dependency pins. If you bump only the workspace version, the release-branch PR still merges cleanly, but the merged result declares every crate at the new version while requiring the **previous** version of its siblings — which breaks the entire workspace build (every `cargo` job fails to resolve).
+
 After updating the version in the `Cargo.toml` files, we need to update the `Cargo.lock` files to reflect the new versions. Run `make update-cargo-lock` from the root directory to update all the `Cargo.lock` files in the repository. You should see changes in at most the following paths:
 
 - In the root directory
@@ -59,11 +69,11 @@ After pushing the tag, a CI job will compile the binaries for different architec
 
 | name | L1 | L2 stack | Provers | CUDA support |
 | --- | --- | --- | --- | --- |
-| ethrex-linux-x86-64 | ✅ | ❌ | - | - |
+| ethrex-linux-x86_64 | ✅ | ❌ | - | - |
 | ethrex-linux-aarch64 | ✅ | ❌ | - | - |
-| ethrex-linux-macos-aarch64 | ✅ | ❌ | - | - |
-| ethrex-l2-linux-x86-64 | ✅ | ✅ | SP1 - RISC0 - Exec | ❌ |
-| ethrex-l2-linux-x86-64-gpu | ✅ | ✅ | SP1 - RISC0 - Exec | ✅ |
+| ethrex-macos-aarch64 | ✅ | ❌ | - | - |
+| ethrex-l2-linux-x86_64 | ✅ | ✅ | SP1 - RISC0 - Exec | ❌ |
+| ethrex-l2-linux-x86_64-gpu | ✅ | ✅ | SP1 - RISC0 - Exec | ✅ |
 | ethrex-l2-linux-aarch64 | ✅ | ✅ | SP1 - Exec | ❌ |
 | ethrex-l2-linux-aarch64-gpu| ✅ | ✅ | SP1 - Exec | ✅ |
 | ethrex-l2-macos-aarch64 | ✅ | ✅ | Exec | ❌ |
@@ -82,10 +92,77 @@ Before publishing the release, run through the following checks using the pre-re
 
 - [ ] Upgrade `ethrex-ethdocker-mainnet`
 - [ ] Upgrade `ethrex-mainnet-1`
-- [ ] Upgrade `ethrex-minimum-mainnet`
+- [ ] Upgrade `ethrex-prysm`
+- [ ] Upgrade `ethrex-lodestar`
+- [ ] Upgrade `ethrex-teku`
+- [ ] Upgrade `ethrex-grandine`
 - [ ] Launch multisync on `ethrex-multisync-main`
 - [ ] Upgrade a local L2 created with the previous version and run the integration tests
 - [ ] Run the L2 integration tests with a SP1 prover on the GPU server (`l2-gpu`)
+
+The commands for each target follow. The host roster changes between releases — fill in the ones you run and leave the placeholders for the rest. Replace `vX.Y.Z-rc.W` / `release/vX.Y.Z` with the version under test.
+
+#### `ethrex-ethdocker-mainnet`
+
+```bash
+ssh admin@ethrex-ethdocker-mainnet
+cd eth-docker/
+# In .env, set the release tag on this line:
+#   ETHREX_SRC_BUILD_TARGET=vX.Y.Z-rc.W
+nano .env
+./ethd update
+./ethd up
+```
+
+#### `ethrex-mainnet-1`
+
+<!-- TODO: document the upgrade procedure for this host -->
+
+#### `ethrex-prysm`, `ethrex-lodestar`, `ethrex-teku`, `ethrex-grandine`
+
+These are ethrex mainnet nodes paired with different consensus clients (Prysm, Lodestar, Teku, Grandine); the ethrex (EL) upgrade procedure is the same across them.
+
+They run the ethrex binary downloaded from the release in a tmux session, the consensus also runs in its own tmux session.
+
+```bash
+tmux ls
+# gracefully stop ethrex
+tmux a -t ethrex
+# ctrl-c
+exit
+
+wget -q -O ethrex-linux-x86_64 \
+  https://github.com/lambdaclass/ethrex/releases/download/v20.0.0-rc.1/ethrex-linux-x86_64
+chmod +x ethrex-linux-x86_64
+
+./ethrex-linux-x86_64 --version # ethrex/v20.0.0-
+
+tmux new-session -d -s ethrex \
+  'cd ~ && RUST_LOG=info ./ethrex-linux-x86_64 \
+     --http.addr 0.0.0.0 --http.api eth,net,web3,admin \
+     --metrics --metrics.port 3701 \
+     --network mainnet \
+     --authrpc.jwtsecret /home/admin/secrets/jwt.hex 2>&1 | tee -a ~/ethrex-rc.log'
+```
+
+#### `ethrex-multisync-main`
+
+```bash
+ssh admin@ethrex-multisync-main
+cd ethrex/tooling/sync/
+tmux kill-session -t sync 2>/dev/null || true   # drop a leftover sync session from a previous RC
+tmux new-session -d -s sync "make multisync-loop-auto MULTISYNC_BRANCH=release/vX.Y.Z 2>&1"
+```
+
+Check progress later with `tmux attach -t sync` (detach with `Ctrl-b` then `d`).
+
+#### Local L2 upgrade + integration tests
+
+See [Upgrade test](l2/upgrade-test.md) for the full procedure.
+
+#### L2 integration tests with a SP1 prover (`l2-gpu`)
+
+See [L2 integration tests with a SP1 GPU prover](l2/sp1-gpu-integration-test.md) for the full procedure.
 
 ### Publish
 
@@ -95,9 +172,20 @@ Once the pre-release is created and you want to publish the release, go to the [
 
     ![edit button](../img/publish_release_step_1.png)
 
-2. Manually create the tag `vX.Y.Z`
+2. Manually create the tag `vX.Y.Z`. **Set the tag's _Target_ to the release branch (`release/vX.Y.Z`), not the default `main`** — otherwise the tag lands on `main`'s HEAD, which is not the version-bumped commit.
 
     ![edit tag](../img/publish_release_step_2.png)
+
+    The tag is created on the remote only once you click *Update release* (step 5) — so verify it **after** saving (an earlier `ls-remote` returns nothing for `vX.Y.Z` and falsely "matches" two empty results). The two SHAs must be identical:
+
+    ```bash
+    git ls-remote origin refs/tags/vX.Y.Z refs/tags/vX.Y.Z-rc.W   # run after Update release; SHAs must match
+    ```
+
+    If they don't match, move the tag to the tested commit before relying on any published artifacts: `git tag -f vX.Y.Z <rc-commit> && git push origin vX.Y.Z --force`.
+
+    > [!WARNING]
+    > The crates.io publish workflow reads `publish.yml` from `main` but checks out the **tag's commit**. If the tag points at the wrong commit (e.g. an unbumped `main`), the workflow republishes the *previous* version's crates — each is "already published", so the run goes **green while publishing nothing new**. The final `vX.Y.Z` tag must point at the same commit as the tested `vX.Y.Z-rc.W` (the release branch HEAD you will merge via PR).
 
 3. Update the release title
 
@@ -163,45 +251,43 @@ The workflow is idempotent: a crate version already on crates.io is skipped, so 
 
 Disclaimer: We should automate this
 
-1. Commit a change in https://github.com/lambdaclass/homebrew-tap/ bumping the ethrex version (like [this one](https://github.com/lambdaclass/homebrew-tap/commit/d78a2772ad9c5412e7f84c6210bd85c970fcd0e6)).
-    - The first SHA is the hash of the `.tar.gz` from the release. You can get it by downloading the `Source code (tar.gz)` from the ethrex release and running
+Set the released version once, then the commands below are copy/paste:
+
+```bash
+export V=X.Y.Z   # replace with the released version, no `v` prefix (e.g. 3.0.0)
+```
+
+1. Commit a change in https://github.com/lambdaclass/homebrew-tap/ bumping the ethrex version (like [this one](https://github.com/lambdaclass/homebrew-tap/commit/d78a2772ad9c5412e7f84c6210bd85c970fcd0e6)). It needs two SHA-256 hashes:
+
+    - **Source tarball hash** (the `url` field) — download the GitHub source archive and hash it:
 
         ```bash
-        shasum -a 256 ethrex-v3.0.0.tar.gz
+        curl -L -o "ethrex-v$V.tar.gz" "https://github.com/lambdaclass/ethrex/archive/refs/tags/v$V.tar.gz"
+        shasum -a 256 "ethrex-v$V.tar.gz"
         ```
 
-    - For the second one:
-        - First download the `ethrex-l2-macos-aarch64` binary from the ethrex release
-        - Give exec permissions to binary
+    - **Bottle hash** (the `bottle` section) — build the macOS bottle from the release binary. The `ethrex` directory is the bottle root:
 
-            ```bash
-            chmod +x ethrex-l2-macos-aarch64
-            ```
+        ```bash
+        # download the L2 macOS binary from the ethrex release
+        gh release download "v$V" -R lambdaclass/ethrex -p ethrex-l2-macos-aarch64
+        chmod +x ethrex-l2-macos-aarch64
 
-        - Create a dir `ethrex/3.0.0/bin` (replace the version as needed)
-        - Move (and rename) the binary to `ethrex/3.0.0/bin/ethrex` (the last `ethrex` is the binary)
-        - Remove quarantine flags (in this case, `ethrex` is the root dir mentioned before):
+        # lay it out as ethrex/<version>/bin/ethrex (last `ethrex` is the binary)
+        mkdir -p "ethrex/$V/bin"
+        mv ethrex-l2-macos-aarch64 "ethrex/$V/bin/ethrex"
 
-            ```bash
-            xattr -dr com.apple.metadata:kMDItemWhereFroms ethrex
-            xattr -dr com.apple.quarantine ethrex
-            ```
+        # strip quarantine flags (root dir is ./ethrex)
+        xattr -dr com.apple.metadata:kMDItemWhereFroms ethrex
+        xattr -dr com.apple.quarantine ethrex
 
-        - Tar the dir with the following name (again, `ethrex` is the root dir):
+        # tar and hash the bottle (root dir is ./ethrex)
+        tar -czf "ethrex-$V.arm64_sonoma.bottle.tar.gz" ethrex
+        shasum -a 256 "ethrex-$V.arm64_sonoma.bottle.tar.gz"
+        ```
 
-            ```bash
-            tar -czf ethrex-3.0.0.arm64_sonoma.bottle.tar.gz ethrex
-            ```
-
-        - Get the checksum:
-
-            ```bash
-            shasum -a 256 ethrex-3.0.0.arm64_sonoma.bottle.tar.gz
-            ```
-
-        - Use this as the second hash (the one in the `bottle` section)
-2. Push the commit
-3. Create a new release with tag `v3.0.0`. **IMPORTANT**: attach the `ethrex-3.0.0.arm64_sonoma.bottle.tar.gz` to the release
+2. Push the commit.
+3. Create a new release with tag `v$V` in homebrew-tap. **IMPORTANT**: attach the `ethrex-$V.arm64_sonoma.bottle.tar.gz` to the release.
 
 ## 6th - Merge the release branch via PR
 
