@@ -3325,6 +3325,9 @@ impl Blockchain {
             .ok_or(MempoolError::InvalidTxGasvalues)?;
 
         let maybe_sender_acc_info = self.storage.get_account_info(header_no, sender).await?;
+        // Sender's on-chain nonce, used below to exclude obsoleted (already-mined
+        // but not-yet-pruned) txs from the cumulative-balance sum.
+        let sender_account_nonce = maybe_sender_acc_info.as_ref().map(|info| info.nonce);
 
         let sender_balance = if let Some(sender_acc_info) = maybe_sender_acc_info {
             if nonce < sender_acc_info.nonce || nonce == u64::MAX {
@@ -3414,15 +3417,19 @@ impl Blockchain {
         // tx being replaced (instead of subtracting after the fact) so a
         // `None`-cost or missing tx can't silently zero the total via
         // `MAX - MAX = 0`. It also fails closed on any inconsistency so the
-        // gate can't be bypassed by an invariant violation.
+        // gate can't be bypassed by an invariant violation. Obsoleted txs
+        // (nonce below the sender's on-chain nonce — already mined but not yet
+        // pruned) are excluded so they don't inflate the required balance.
         //
         // Skipped for frame txs: their payer is unknown until execution, so
         // (matching the single-tx balance check above) they are not gated on
         // the sender's balance.
         if !is_frame_tx {
-            let existing_cost = self
-                .mempool
-                .sum_cost_for_sender(sender, tx_to_replace_hash)?;
+            let existing_cost = self.mempool.sum_cost_for_sender(
+                sender,
+                sender_account_nonce.unwrap_or(0),
+                tx_to_replace_hash,
+            )?;
             let total = existing_cost
                 .checked_add(tx_cost)
                 .ok_or(MempoolError::InvalidTxGasvalues)?;
