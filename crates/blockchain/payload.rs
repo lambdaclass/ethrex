@@ -15,7 +15,7 @@ use ethrex_common::{
     },
     types::{
         AccountUpdate, BlobsBundle, Block, BlockBody, BlockHash, BlockHeader, BlockNumber,
-        ChainConfig, Fork, MempoolTransaction, Receipt, Transaction, TxKind, TxType, Withdrawal,
+        ChainConfig, MempoolTransaction, Receipt, Transaction, TxKind, TxType, Withdrawal,
         block_access_list::BlockAccessList,
         bloom_from_logs, calc_excess_blob_gas, calculate_base_fee_per_blob_gas,
         calculate_base_fee_per_gas, compute_receipts_root, compute_transactions_root,
@@ -695,9 +695,46 @@ impl Blockchain {
                 continue;
             }
 
+            // EIP-8141 fork gating: drop frame transactions that reached the payload
+            // builder before Hegota has activated. These must never be included in a
+            // block until the fork is live.
+            if head_tx.tx_type() == TxType::Frame
+                && !chain_config.is_hegota_activated(context.payload.header.timestamp)
+            {
+                debug!("Skipping frame transaction before Hegota fork: {}", tx_hash);
+                txs.pop();
+                self.remove_transaction_from_pool(&tx_hash)?;
+                continue;
+            }
+
+            // EIP-8141 expiry (spec commit 0b197156): drop frame txs whose
+            // expiry deadline is behind the block being built. Deterministic
+            // for this payload timestamp, so remove from the pool as well.
+            if let Transaction::FrameTransaction(frame_tx) = &*head_tx.tx
+                && frame_tx
+                    .expiry_deadline()
+                    .is_some_and(|deadline| deadline < context.payload.header.timestamp)
+            {
+                debug!("Skipping expired frame transaction: {}", tx_hash);
+                txs.pop();
+                self.remove_transaction_from_pool(&tx_hash)?;
+                continue;
+            }
+
+            let is_frame = head_tx.tx_type() == TxType::Frame;
+
             match self.apply_tx_to_payload(head_tx, context) {
                 Ok(()) => txs.shift()?,
-                Err(_) => txs.pop(),
+                Err(e) => {
+                    // Frame-tx failures are deterministic (signatures bind the
+                    // whole tx) EXCEPT nonce mismatches, which are transient
+                    // queue-ordering artifacts — keep those pooled for a later
+                    // block, mirroring how regular txs are treated.
+                    if is_frame && !is_nonce_mismatch(&e) {
+                        self.remove_transaction_from_pool(&tx_hash)?;
+                    }
+                    txs.pop()
+                }
             }
         }
         Ok(())
@@ -726,7 +763,6 @@ impl Blockchain {
         if context.is_amsterdam
             && let Err(e) = check_2d_gas_allowance(
                 &head.tx,
-                Fork::Amsterdam,
                 context.block_regular_gas_used,
                 context.block_state_gas_used,
                 context.payload.header.gas_limit,
@@ -918,6 +954,20 @@ impl Blockchain {
         context.payload.header.logs_bloom = bloom_from_logs(&logs, &NativeCrypto);
         Ok(())
     }
+}
+
+/// Returns true if `e` represents a transaction nonce mismatch.
+///
+/// The VM surfaces this as `TxValidationError::NonceMismatch` which gets
+/// stringified through `EvmError::Transaction(String)` →
+/// `ChainError::InvalidBlock(InvalidBlockError::InvalidTransaction(String))`.
+/// There is no typed variant to match at the `ChainError` level, so we detect
+/// it by the stable Display substring. Used to keep gapped-nonce frame txs
+/// pooled instead of evicting them: a nonce gap is transient because the
+/// `TransactionQueue` feeds the lowest pooled nonce without comparing to the
+/// account nonce, so the tx becomes valid once earlier nonces are included.
+fn is_nonce_mismatch(e: &ChainError) -> bool {
+    e.to_string().contains("Nonce mismatch")
 }
 
 /// Runs a plain (non blob) transaction, updates the gas count and returns the receipt
@@ -1141,5 +1191,40 @@ impl Ord for HeadTransaction {
 impl PartialOrd for HeadTransaction {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         Some(self.cmp(other))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn nonce_mismatch_detected_from_chain_error() {
+        // Build the ChainError through the REAL production conversion path so a
+        // change to the TxValidationError/VMError Display strings breaks this
+        // test instead of silently breaking `is_nonce_mismatch` (which keys off
+        // the "Nonce mismatch" substring). Path:
+        // TxValidationError::NonceMismatch -> VMError -> EvmError::Transaction
+        // (via From, which stringifies) -> ChainError::InvalidBlock.
+        use ethrex_levm::errors::{TxValidationError, VMError};
+        let nonce_err: ChainError =
+            EvmError::from(VMError::TxValidation(TxValidationError::NonceMismatch {
+                expected: 5,
+                actual: 7,
+            }))
+            .into();
+        assert!(
+            is_nonce_mismatch(&nonce_err),
+            "is_nonce_mismatch must match the real NonceMismatch Display; got: {nonce_err}"
+        );
+        // A different validation error must NOT match, also via the real path.
+        let other: ChainError = EvmError::from(VMError::TxValidation(
+            TxValidationError::InsufficientAccountFunds,
+        ))
+        .into();
+        assert!(
+            !is_nonce_mismatch(&other),
+            "is_nonce_mismatch must not match unrelated errors; got: {other}"
+        );
     }
 }
