@@ -277,6 +277,7 @@ fn sstore_env(fork: Fork) -> Environment {
         is_privileged: false,
         fee_token: None,
         disable_balance_check: true,
+        disable_nonce_check: false,
         is_system_call: false,
     }
 }

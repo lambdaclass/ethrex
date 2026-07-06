@@ -95,6 +95,7 @@ fn parity_env(fork: Fork, block_gas_limit: u64) -> Environment {
         is_privileged: false,
         fee_token: None,
         disable_balance_check: true,
+        disable_nonce_check: false,
         is_system_call: false,
     }
 }
@@ -290,6 +291,7 @@ fn exec_env(fork: Fork) -> Environment {
         is_privileged: false,
         fee_token: None,
         disable_balance_check: true,
+        disable_nonce_check: false,
         is_system_call: false,
     }
 }

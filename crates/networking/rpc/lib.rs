@@ -68,7 +68,7 @@ mod mempool;
 mod net;
 pub mod rpc;
 pub mod subscription_manager;
-mod tracing;
+pub mod tracing;
 
 pub mod clients;
 pub mod types;

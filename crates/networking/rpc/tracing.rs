@@ -52,7 +52,9 @@ pub struct TraceCallRequest {
 struct TraceCallConfig {
     #[serde(flatten)]
     base: TraceConfig,
-    #[serde(default)]
+    // geth serializes `txIndex` as `hexutil.Uint` (a hex string, e.g. `"0x2"`); accept
+    // that as well as a plain JSON number so geth-shaped requests aren't rejected.
+    #[serde(default, with = "serde_utils::u64::hex_str_opt")]
     tx_index: Option<u64>,
     #[serde(default)]
     state_overrides: Option<Value>,
