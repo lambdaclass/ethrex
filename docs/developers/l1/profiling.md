@@ -149,19 +149,18 @@ This will open the Firefox Profiler UI in your browser when the process exits.
 
 ## Profiling with hotpath
 
-[hotpath](https://hotpath.rs) is a feature-gated Rust profiler that measures function timing, CPU attribution, and per-function allocation, with zero cost when disabled: with the feature off, the `#[cfg_attr]`-gated instrumentation is never emitted, so there is no dependency, no codegen, and no runtime difference from a build without hotpath at all.
+[hotpath](https://hotpath.rs) is a feature-gated Rust profiler that measures function timing and per-function allocation, with zero cost when disabled: with the feature off, the `#[cfg_attr]`-gated instrumentation is never emitted, so there is no dependency, no codegen, and no runtime difference from a build without hotpath at all.
 
 ### Feature flags
 
-Three cargo features on the `ethrex` binary crate control hotpath:
+Two cargo features on the `ethrex` binary crate control hotpath:
 
 | Feature         | What it does                                          |
 |-----------------|--------------------------------------------------------|
-| `hotpath`       | Function timing (base feature; the other two build on it) |
-| `hotpath-cpu`   | Adds CPU-attribution sampling                          |
+| `hotpath`       | Function timing (base feature; `hotpath-alloc` builds on it) |
 | `hotpath-alloc` | Adds per-function allocation tracking (bytes/count)    |
 
-None of these are in `default`.
+Neither is in `default`.
 
 ### Building and running
 
@@ -169,8 +168,6 @@ Always scope the build to the `ethrex` package with `-p ethrex`:
 
 ```bash
 cargo build -p ethrex --features hotpath
-# or
-cargo build -p ethrex --features hotpath-cpu
 # or
 cargo build -p ethrex --features hotpath-alloc
 ```
@@ -180,9 +177,8 @@ Run the node as usual. On graceful shutdown (`Ctrl+C` / `SIGTERM`), a `[hotpath]
 For a quick dev run there is a Makefile target that boots the node in dev mode with the in-memory engine and the profiler enabled:
 
 ```bash
-make dev-hotpath                                     # all signals: timing + allocations + CPU (default)
+make dev-hotpath                                     # timing + allocations (default)
 make dev-hotpath HOTPATH_FEATURES=hotpath            # timing only
-make dev-hotpath HOTPATH_FEATURES=hotpath,hotpath-alloc  # timing + allocations
 ```
 
 ### Live TUI dashboard
@@ -200,11 +196,13 @@ This first pass instruments four synchronous hot paths:
 - `Blockchain::store_block` (`crates/blockchain/blockchain.rs`)
 - `VM::execute` (`crates/vm/levm/src/vm.rs`)
 
+`execute_block` and `execute_block_pipeline` are alternate paths: block import and full-sync use the pipeline, so a report from `ethrex import` shows `execute_block_pipeline` but not `execute_block`. Only one of the two appears in a given run.
+
 ### Async / multi-thread allocation caveat
 
-hotpath's allocation tracking is thread-local and assumes a `current_thread` tokio runtime. ethrex runs a multi-thread `#[tokio::main]` runtime, so allocation counts attributed to `async fn`s are unreliable: allocations performed on a spawned worker thread are not attributed back to the `async fn` that awaited the work. Timing and CPU attribution are not affected by this and work correctly on any runtime.
+hotpath's allocation tracking is thread-local and assumes a `current_thread` tokio runtime. ethrex runs a multi-thread `#[tokio::main]` runtime, so allocation counts attributed to `async fn`s are unreliable: allocations performed on a spawned worker thread are not attributed back to the `async fn` that awaited the work. Timing is not affected by this and works correctly on any runtime.
 
-All four currently instrumented functions are synchronous, so their allocation numbers under `hotpath-alloc` are meaningful. If you instrument an `async fn` in the future, prefer timing or CPU profiling over allocation tracking for it.
+All four currently instrumented functions are synchronous, so their allocation numbers under `hotpath-alloc` are meaningful. If you instrument an `async fn` in the future, prefer timing over allocation tracking for it.
 
 ### jemalloc interaction
 
@@ -255,5 +253,4 @@ No CI job today passes `--features` together with `--workspace`, so this is not 
 | `jemalloc`           | Use jemalloc allocator (enables external profilers)| Linux/macOS|
 | `jemalloc_profiling` | jemalloc heap profiling + RPC endpoint           | Linux/macOS|
 | `hotpath`            | Function timing report on shutdown               | Linux/macOS|
-| `hotpath-cpu`        | Adds CPU-attribution sampling to hotpath         | Linux/macOS|
 | `hotpath-alloc`      | Adds per-function allocation tracking to hotpath | Linux/macOS|

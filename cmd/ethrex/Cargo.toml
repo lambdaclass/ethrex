@@ -135,7 +135,6 @@ hotpath = [
   "ethrex-blockchain/hotpath",
   "ethrex-vm/hotpath",
 ]
-hotpath-cpu = ["hotpath", "hotpath/hotpath-cpu"]
 hotpath-alloc = ["hotpath", "hotpath/hotpath-alloc"]
 
 [build-dependencies]
