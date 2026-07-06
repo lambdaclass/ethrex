@@ -1386,19 +1386,20 @@ checksum = "c08606f8c3cbf4ce6ec8e28fb0014a2c086708fe954eaa885384a6165172e7e8"
 
 [[package]]
 name = "aws-lc-rs"
-version = "1.16.2"
+version = "1.17.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a054912289d18629dc78375ba2c3726a3afe3ff71b4edba9dedfca0e3446d1fc"
+checksum = "5ec2f1fc3ec205783a5da9a7e6c1509cc69dedf09a1949e412c1e18469326d00"
 dependencies = [
  "aws-lc-sys",
+ "untrusted 0.7.1",
  "zeroize",
 ]
 
 [[package]]
 name = "aws-lc-sys"
-version = "0.39.1"
+version = "0.41.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "83a25cf98105baa966497416dbd42565ce3a8cf8dbfd59803ec9ad46f3126399"
+checksum = "1a2f9779ce85b93ab6170dd940ad0169b5766ff848247aff13bb788b832fe3f4"
 dependencies = [
  "cc",
  "cmake",
@@ -3788,7 +3789,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex"
-version = "15.0.0"
+version = "19.0.0"
 dependencies = [
  "anyhow",
  "bytes",
@@ -3840,7 +3841,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-benches"
-version = "15.0.0"
+version = "19.0.0"
 dependencies = [
  "bytes",
  "criterion 0.5.1",
@@ -3858,15 +3859,14 @@ dependencies = [
 
 [[package]]
 name = "ethrex-blockchain"
-version = "15.0.0"
+version = "19.0.0"
 dependencies = [
  "bytes",
  "crossbeam",
  "ethrex-common",
  "ethrex-crypto",
- "ethrex-guest-program",
+ "ethrex-levm",
  "ethrex-metrics",
- "ethrex-prover",
  "ethrex-rlp",
  "ethrex-storage",
  "ethrex-trie",
@@ -3886,7 +3886,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-common"
-version = "15.0.0"
+version = "19.0.0"
 dependencies = [
  "bytes",
  "crc32fast",
@@ -3920,7 +3920,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-config"
-version = "15.0.0"
+version = "19.0.0"
 dependencies = [
  "ethrex-common",
  "ethrex-p2p",
@@ -3931,21 +3931,21 @@ dependencies = [
 
 [[package]]
 name = "ethrex-crypto"
-version = "15.0.0"
+version = "19.0.0"
 dependencies = [
  "ark-bn254",
  "ark-ec",
  "ark-ff 0.5.0",
- "bls12_381 0.8.0 (git+https://github.com/lambdaclass/bls12_381?branch=expose-affine-constructors)",
+ "aws-lc-rs",
+ "blst",
  "c-kzg",
+ "criterion 0.5.1",
  "ethereum-types 0.15.1",
- "ff 0.13.1",
  "hex-literal 0.4.1",
  "k256",
  "kzg-rs",
  "malachite 0.6.1",
  "num-bigint 0.4.6",
- "openvm-kzg",
  "p256",
  "ripemd",
  "secp256k1",
@@ -3956,7 +3956,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-dev"
-version = "15.0.0"
+version = "19.0.0"
 dependencies = [
  "bytes",
  "envy",
@@ -3975,8 +3975,9 @@ dependencies = [
 
 [[package]]
 name = "ethrex-guest-program"
-version = "15.0.0"
+version = "19.0.0"
 dependencies = [
+ "bls12_381 0.8.0 (git+https://github.com/lambdaclass/bls12_381?branch=expose-affine-constructors)",
  "bytes",
  "ethereum-types 0.15.1",
  "ethrex-common",
@@ -3984,12 +3985,14 @@ dependencies = [
  "ethrex-l2-common",
  "ethrex-rlp",
  "ethrex-vm",
+ "ff 0.13.1",
  "hex",
  "k256",
  "libssz",
  "libssz-derive",
  "libssz-merkle",
  "libssz-types",
+ "openvm-kzg",
  "risc0-build",
  "rkyv",
  "serde",
@@ -4003,7 +4006,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-l2"
-version = "15.0.0"
+version = "19.0.0"
 dependencies = [
  "agg_mode_sdk",
  "alloy",
@@ -4057,7 +4060,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-l2-common"
-version = "15.0.0"
+version = "19.0.0"
 dependencies = [
  "bytes",
  "ethereum-types 0.15.1",
@@ -4075,7 +4078,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-l2-prover"
-version = "15.0.0"
+version = "19.0.0"
 dependencies = [
  "anyhow",
  "bincode 1.3.3",
@@ -4114,7 +4117,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-l2-rpc"
-version = "15.0.0"
+version = "19.0.0"
 dependencies = [
  "axum 0.8.9",
  "bytes",
@@ -4144,14 +4147,16 @@ dependencies = [
 
 [[package]]
 name = "ethrex-levm"
-version = "15.0.0"
+version = "19.0.0"
 dependencies = [
  "bytes",
  "derive_more 1.0.0",
  "ethrex-common",
  "ethrex-crypto",
  "ethrex-rlp",
+ "k256",
  "malachite 0.6.1",
+ "p256",
  "rayon",
  "rustc-hash 2.1.2",
  "serde",
@@ -4161,7 +4166,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-metrics"
-version = "15.0.0"
+version = "19.0.0"
 dependencies = [
  "axum 0.8.9",
  "ethrex-common",
@@ -4176,7 +4181,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-monitor"
-version = "15.0.0"
+version = "19.0.0"
 dependencies = [
  "bytes",
  "chrono",
@@ -4205,7 +4210,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-p2p"
-version = "15.0.0"
+version = "19.0.0"
 dependencies = [
  "aes",
  "aes-gcm",
@@ -4253,7 +4258,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-prover"
-version = "15.0.0"
+version = "19.0.0"
 dependencies = [
  "bincode 1.3.3",
  "bytes",
@@ -4283,7 +4288,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-repl"
-version = "15.0.0"
+version = "19.0.0"
 dependencies = [
  "clap",
  "colored 2.2.0",
@@ -4301,7 +4306,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-rlp"
-version = "15.0.0"
+version = "19.0.0"
 dependencies = [
  "bytes",
  "criterion 0.7.0",
@@ -4316,7 +4321,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-rpc"
-version = "15.0.0"
+version = "19.0.0"
 dependencies = [
  "axum 0.8.9",
  "axum-extra",
@@ -4341,6 +4346,7 @@ dependencies = [
  "libssz-merkle",
  "libssz-types",
  "rand 0.8.5",
+ "rayon",
  "reqwest 0.12.28",
  "secp256k1",
  "serde",
@@ -4359,7 +4365,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-sdk"
-version = "15.0.0"
+version = "19.0.0"
 dependencies = [
  "bytes",
  "ethereum-types 0.15.1",
@@ -4383,7 +4389,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-sdk-contract-utils"
-version = "15.0.0"
+version = "19.0.0"
 dependencies = [
  "thiserror 2.0.18",
  "tracing",
@@ -4391,7 +4397,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-storage"
-version = "15.0.0"
+version = "19.0.0"
 dependencies = [
  "anyhow",
  "bytes",
@@ -4414,7 +4420,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-storage-rollup"
-version = "15.0.0"
+version = "19.0.0"
 dependencies = [
  "async-trait",
  "bincode 1.3.3",
@@ -4431,7 +4437,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-test"
-version = "15.0.0"
+version = "19.0.0"
 dependencies = [
  "aes-gcm",
  "anyhow",
@@ -4457,8 +4463,10 @@ dependencies = [
  "hasher",
  "hex",
  "hex-literal 0.4.1",
+ "k256",
  "lazy_static",
  "once_cell",
+ "p256",
  "proptest",
  "rand 0.8.5",
  "reqwest 0.12.28",
@@ -4466,13 +4474,14 @@ dependencies = [
  "rustc-hash 2.1.2",
  "secp256k1",
  "serde_json",
+ "tempfile",
  "tokio",
  "tokio-util",
 ]
 
 [[package]]
 name = "ethrex-trie"
-version = "15.0.0"
+version = "19.0.0"
 dependencies = [
  "anyhow",
  "bytes",
@@ -4490,7 +4499,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-vm"
-version = "15.0.0"
+version = "19.0.0"
 dependencies = [
  "bytes",
  "derive_more 1.0.0",
@@ -6667,16 +6676,18 @@ dependencies = [
 
 [[package]]
 name = "libssz"
-version = "0.2.1"
-source = "git+https://github.com/lambdaclass/libssz?rev=7262a4f#7262a4f17f71fb9108166ba260659bcdd64feb4c"
+version = "0.2.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d498c0482bba87d2647ea4601ea76cf2b498065e3958798a88f49274f3ced5e9"
 dependencies = [
  "smallvec",
 ]
 
 [[package]]
 name = "libssz-derive"
-version = "0.2.1"
-source = "git+https://github.com/lambdaclass/libssz?rev=7262a4f#7262a4f17f71fb9108166ba260659bcdd64feb4c"
+version = "0.2.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "08ddfb5c969c28a4a54043e630f80c723352637bd1020f256ee3ac7a8814922b"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -6685,8 +6696,9 @@ dependencies = [
 
 [[package]]
 name = "libssz-merkle"
-version = "0.2.1"
-source = "git+https://github.com/lambdaclass/libssz?rev=7262a4f#7262a4f17f71fb9108166ba260659bcdd64feb4c"
+version = "0.2.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "63c6d6d5ce5d79bba66bc98c99869eedffedf7f14f0aa0915f1a62802650bdf6"
 dependencies = [
  "libssz",
  "sha2",
@@ -6694,8 +6706,9 @@ dependencies = [
 
 [[package]]
 name = "libssz-types"
-version = "0.2.1"
-source = "git+https://github.com/lambdaclass/libssz?rev=7262a4f#7262a4f17f71fb9108166ba260659bcdd64feb4c"
+version = "0.2.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "747273ab2d923e82ed147091fe0fb3e602dd2012c872cdad5efe69e27c3b4099"
 dependencies = [
  "libssz",
  "libssz-merkle",
@@ -11358,7 +11371,7 @@ dependencies = [
  "cfg-if",
  "getrandom 0.2.17",
  "libc",
- "untrusted",
+ "untrusted 0.9.0",
  "windows-sys 0.52.0",
 ]
 
@@ -12075,7 +12088,7 @@ checksum = "64ca1bc8749bd4cf37b5ce386cc146580777b4e8572c7b97baf22c83f444bee9"
 dependencies = [
  "ring",
  "rustls-pki-types",
- "untrusted",
+ "untrusted 0.9.0",
 ]
 
 [[package]]
@@ -12087,7 +12100,7 @@ dependencies = [
  "aws-lc-rs",
  "ring",
  "rustls-pki-types",
- "untrusted",
+ "untrusted 0.9.0",
 ]
 
 [[package]]
@@ -14639,6 +14652,12 @@ dependencies = [
  "quote",
  "syn 1.0.109",
 ]
+
+[[package]]
+name = "untrusted"
+version = "0.7.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a156c684c91ea7d62626509bce3cb4e1d9ed5c4d978f7b4352658f96a4c26b4a"
 
 [[package]]
 name = "untrusted"

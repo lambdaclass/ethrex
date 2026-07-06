@@ -426,6 +426,7 @@ pub trait PeerTableServerProtocol: Send + Sync {
         node: Node,
         connection: PeerConnection,
         capabilities: Vec<Capability>,
+        is_inbound: bool,
     ) -> Result<(), ActorError>;
     fn set_session_info(&self, node_id: H256, session: Session) -> Result<(), ActorError>;
     fn remove_peer(&self, node_id: H256) -> Result<(), ActorError>;
@@ -579,7 +580,8 @@ impl PeerTableServer {
         _ctx: &Context<Self>,
     ) {
         let new_peer_id = msg.node.node_id();
-        let new_peer = PeerData::new(msg.node, None, Some(msg.connection), msg.capabilities);
+        let mut new_peer = PeerData::new(msg.node, None, Some(msg.connection), msg.capabilities);
+        new_peer.is_connection_inbound = msg.is_inbound;
         self.peers.insert(new_peer_id, new_peer);
     }
 
@@ -604,6 +606,9 @@ impl PeerTableServer {
         _ctx: &Context<Self>,
     ) {
         self.peers.swap_remove(&msg.node_id);
+        // Also drop the standalone discv5 session so it isn't retained after the peer leaves
+        // (the sessions map was previously insert-only and grew per handshake).
+        self.sessions.remove(&msg.node_id);
     }
 
     #[send_handler]

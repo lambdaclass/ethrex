@@ -6,7 +6,7 @@ use crate::{
             NodesMessage, Ordinary, Packet, PacketTrait as _, PingMessage, PongMessage,
             TalkResMessage, WhoAreYou, decrypt_message,
         },
-        server::{Discv5Message, Discv5State, update_local_ip},
+        server::{Discv5Message, Discv5State, SessionSource, update_local_ip},
         session::{
             build_challenge_data, create_id_signature, derive_session_keys, verify_id_signature,
         },
@@ -25,7 +25,7 @@ use std::{
     net::SocketAddr,
     time::{Duration, Instant},
 };
-use tracing::{error, trace, warn};
+use tracing::{debug, trace, warn};
 
 use super::server::{DiscoveryServer, DiscoveryServerError};
 
@@ -57,7 +57,7 @@ impl DiscoveryServer {
             0x01 => self.discv5_handle_who_are_you(packet, from).await,
             0x02 => self.discv5_handle_handshake(packet, from).await,
             f => {
-                tracing::info!(protocol = "discv5", "Unexpected flag {f}");
+                tracing::trace!(protocol = "discv5", "Unexpected flag {f}");
                 Err(crate::discv5::messages::PacketCodecError::MalformedData.into())
             }
         }
@@ -81,7 +81,8 @@ impl DiscoveryServer {
         let ordinary = match decrypt_key {
             Some(key) => match Ordinary::decode(&packet, &key) {
                 Ok(ordinary) => {
-                    if let Some(session_ip) = discv5.session_ips.get(&src_id)
+                    if let Some(SessionSource { ip: session_ip, .. }) =
+                        discv5.session_ips.get(&src_id)
                         && addr.ip() != *session_ip
                     {
                         trace!(
@@ -253,7 +254,13 @@ impl DiscoveryServer {
 
         self.peer_table.set_session_info(src_id, session.clone())?;
         let discv5 = self.discv5.as_mut().expect("discv5 state must exist");
-        discv5.session_ips.insert(src_id, addr.ip());
+        discv5.session_ips.insert(
+            src_id,
+            SessionSource {
+                ip: addr.ip(),
+                established_at: std::time::Instant::now(),
+            },
+        );
 
         let mut encrypted = packet.encrypted_message.clone();
         decrypt_message(&session.inbound_key, &packet, &mut encrypted)?;
@@ -354,7 +361,7 @@ impl DiscoveryServer {
         for (idx, target, node_id, node) in queries {
             let find_node_msg = self.discv5_build_find_node_for_target(target, &node);
             if let Err(e) = self.discv5_send_ordinary(find_node_msg, &node).await {
-                error!(protocol = "discv5", sending = "FindNode", addr = ?node.udp_addr(), err=?e, "Error sending message");
+                debug!(protocol = "discv5", sending = "FindNode", addr = ?node.udp_addr(), err=?e, "Error sending message");
                 self.peer_table.set_disposable(node_id)?;
                 METRICS.record_new_discarded_node();
                 if let Some(discv5) = &mut self.discv5

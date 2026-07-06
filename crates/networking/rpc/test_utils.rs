@@ -49,6 +49,30 @@ use tokio_util::{sync::CancellationToken, task::TaskTracker};
 pub const BASE_PRICE_IN_WEI: u64 = 10_u64.pow(9);
 pub const TEST_GENESIS: &str = include_str!("../../../fixtures/genesis/l1.json");
 
+thread_local! {
+    /// Per-OS-thread merkleization pool, lazily built on first use. Mirrors the
+    /// pattern in `tooling/ef_tests/*` so RPC tests don't each spawn a fresh
+    /// 17-thread rayon pool inside `Blockchain::new` (which exhausts the macOS
+    /// runner's thread limit and panics with `EAGAIN` under parallel test runs).
+    /// The merkle protocol's 16 worker jobs cross-communicate via channels, so
+    /// each pool may have only one concurrent `in_place_scope` caller (two would
+    /// deadlock). The caller is not the test thread: `default_with_store_and_pool`
+    /// contexts run block execution on a dedicated `block_executor` thread (see
+    /// `start_block_executor`). Sharing this pool is safe only because tests run
+    /// sequentially per OS thread, each builds one context, and that context's
+    /// executor processes blocks serially -> at most one live `in_place_scope` at
+    /// a time. LATENT RISK: a single test that drives block execution on two
+    /// contexts built on this thread concurrently would share this pool and
+    /// deadlock; give such a test its own pool via `Blockchain::build_merkle_pool`.
+    static MERKLE_POOL: std::cell::OnceCell<Arc<rayon::ThreadPool>> =
+        const { std::cell::OnceCell::new() };
+}
+
+/// Returns this thread's shared merkleization pool, building it on first use.
+fn merkle_pool() -> Arc<rayon::ThreadPool> {
+    MERKLE_POOL.with(|cell| cell.get_or_init(Blockchain::build_merkle_pool).clone())
+}
+
 fn test_header(block_num: u64) -> BlockHeader {
     BlockHeader {
         parent_hash: H256::from_str(
@@ -241,7 +265,10 @@ pub async fn start_test_api() -> tokio::task::JoinHandle<()> {
         .add_initial_state(serde_json::from_str(TEST_GENESIS).unwrap())
         .await
         .expect("Failed to build test genesis");
-    let blockchain = Arc::new(Blockchain::default_with_store(storage.clone()));
+    let blockchain = Arc::new(Blockchain::default_with_store_and_pool(
+        storage.clone(),
+        merkle_pool(),
+    ));
     let jwt_secret = Default::default();
     let local_p2p_node = example_p2p_node();
     let local_node_record = example_local_node_record();
@@ -269,6 +296,7 @@ pub async fn start_test_api() -> tokio::task::JoinHandle<()> {
             DEFAULT_BUILDER_GAS_CEIL,
             String::new(),
             all_namespaces_for_tests(),
+            tokio_util::sync::CancellationToken::new(),
         )
         .await
         .unwrap()
@@ -288,7 +316,10 @@ pub fn all_namespaces_for_tests() -> HashSet<RpcNamespace> {
 }
 
 pub async fn default_context_with_storage(storage: Store) -> RpcApiContext {
-    let blockchain = Arc::new(Blockchain::default_with_store(storage.clone()));
+    let blockchain = Arc::new(Blockchain::default_with_store_and_pool(
+        storage.clone(),
+        merkle_pool(),
+    ));
     let local_node_record = example_local_node_record();
     let block_worker_channel = start_block_executor(blockchain.clone());
     RpcApiContext {
@@ -324,7 +355,10 @@ pub async fn default_context_with_storage(storage: Store) -> RpcApiContext {
 /// This should only be used in tests as it won't be able to connect to the p2p network
 pub async fn dummy_sync_manager() -> SyncManager {
     let store = Store::new("", EngineType::InMemory).expect("Failed to start Store Engine");
-    let blockchain = Arc::new(Blockchain::default_with_store(store.clone()));
+    let blockchain = Arc::new(Blockchain::default_with_store_and_pool(
+        store.clone(),
+        merkle_pool(),
+    ));
     SyncManager::new(
         dummy_peer_handler(store).await,
         &SyncMode::Full,
@@ -366,7 +400,10 @@ pub async fn dummy_p2p_context(peer_table: PeerTable) -> P2PContext {
         SecretKey::from_byte_array(&[0xcd; 32]).expect("32 bytes, within curve order"),
         peer_table,
         storage.clone(),
-        Arc::new(Blockchain::default_with_store(storage)),
+        Arc::new(Blockchain::default_with_store_and_pool(
+            storage,
+            merkle_pool(),
+        )),
         "".to_string(),
         None,
         1000,

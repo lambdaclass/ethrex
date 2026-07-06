@@ -95,7 +95,9 @@ fn test_decode_ip_addresses() {
 
 #[test]
 fn test_decode_u256() {
-    let rlp = vec![RLP_NULL + 1, 0x01];
+    // Canonical RLP of the scalar `1`: a single byte < 0x80 is its own encoding (`0x01`),
+    // not a length-1 string (`0x81 0x01`, which is non-canonical and now rejected).
+    let rlp = vec![0x01];
     let decoded = U256::decode(&rlp).unwrap();
     let expected = U256::from(1);
     assert_eq!(decoded, expected);
@@ -106,6 +108,26 @@ fn test_decode_u256() {
     let decoded = U256::decode(&rlp).unwrap();
     let expected = U256::from_big_endian(&number_bytes);
     assert_eq!(decoded, expected);
+}
+
+#[test]
+fn rejects_long_form_string_for_short_payload() {
+    use ethrex_rlp::decode::decode_rlp_item;
+    // A payload < 56 bytes must use the short-string form. The long-form header
+    // `0xB8 0x01` (length-of-length 1, length 1) for a 1-byte payload is non-canonical.
+    assert!(decode_rlp_item(&[0xB8, 0x01, 0xAA]).is_err());
+    // Control: the canonical short-string form `0x81 0xAA` decodes (0xAA >= 0x80).
+    assert!(decode_rlp_item(&[0x81, 0xAA]).is_ok());
+}
+
+#[test]
+fn rejects_long_form_list_for_short_payload() {
+    use ethrex_rlp::decode::decode_rlp_item;
+    // A list payload < 56 bytes must use the short-list form (0xC0..=0xF7). The long-form
+    // header `0xF8 0x01` for a 1-byte payload is non-canonical.
+    assert!(decode_rlp_item(&[0xF8, 0x01, 0xC0]).is_err());
+    // Control: the canonical short list `0xC1` + one payload byte decodes.
+    assert!(decode_rlp_item(&[0xC1, 0xC0]).is_ok());
 }
 
 #[test]

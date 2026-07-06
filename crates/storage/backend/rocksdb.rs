@@ -270,14 +270,13 @@ impl RocksDBBackend {
 
         for cf_name in &existing_cfs {
             if cf_name != "default" && !TABLES.contains(&cf_name.as_str()) {
-                warn!("Dropping obsolete column family: {}", cf_name);
                 let _ = self
                     .db
                     .drop_cf(cf_name)
-                    .inspect(|_| info!("Successfully dropped column family: {}", cf_name))
+                    .inspect(|_| info!("Dropped obsolete column family '{}'", cf_name))
                     .inspect_err(|e|
                         // Log error but don't fail — the database is still usable
-                        warn!("Failed to drop column family '{}': {}", cf_name, e));
+                        warn!("Failed to drop obsolete column family '{}': {}", cf_name, e));
             }
         }
     }
@@ -351,6 +350,23 @@ impl StorageBackend for RocksDBBackend {
         })?;
 
         Ok(())
+    }
+
+    fn flush(&self) -> Result<(), StoreError> {
+        // Flush every column family's memtable to an SST file, then sync the WAL.
+        // Together these make the next open a clean start: the memtables are
+        // durable as SST and the WAL tail (anything still in the log) is fsynced,
+        // so RocksDB does not have to replay the WAL on recovery.
+        for table in TABLES {
+            if let Some(cf) = self.db.cf_handle(table) {
+                self.db.flush_cf(&cf).map_err(|e| {
+                    StoreError::Custom(format!("RocksDB flush_cf({table}) failed: {e}"))
+                })?;
+            }
+        }
+        self.db
+            .flush_wal(true)
+            .map_err(|e| StoreError::Custom(format!("RocksDB flush_wal failed: {e}")))
     }
 }
 
