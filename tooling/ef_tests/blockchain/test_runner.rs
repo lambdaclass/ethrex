@@ -326,6 +326,12 @@ fn exception_is_expected(
                 ),
                 ChainError::InvalidBlock(InvalidBlockError::MaximumRlpSizeExceeded(_, _))
             ) | (
+                // Legacy tx with out-of-range `v` (or out-of-range `r`/`s`): sender
+                // recovery rejects the signature during execution.
+                BlockChainExpectedException::InvalidSignature,
+                ChainError::EvmError(EvmError::Transaction(_))
+                    | ChainError::InvalidBlock(InvalidBlockError::InvalidTransaction(_))
+            ) | (
                 BlockChainExpectedException::Other,
                 _ //TODO: Decide whether to support more specific errors.
             ),
@@ -370,13 +376,23 @@ fn exception_in_rlp_decoding(block_fixture: &BlockWithRLP) -> bool {
         .iter()
         .any(|case| matches!(case, BlockChainExpectedException::RLPException));
 
+    // A typed transaction whose `y_parity` byte isn't a valid bool (0/1) is rejected
+    // at RLP decoding (MalformedBoolean), so `INVALID_SIGNATURE_VRS` is a legitimate
+    // reason for the block to fail decoding as well.
+    let expects_invalid_signature = block_fixture
+        .expect_exception
+        .as_ref()
+        .unwrap_or(&Vec::new())
+        .iter()
+        .any(|case| matches!(case, BlockChainExpectedException::InvalidSignature));
+
     match CoreBlock::decode(block_fixture.rlp.as_ref()) {
         Ok(_) => {
             assert!(!expects_rlp_exception);
             false
         }
         Err(_) => {
-            assert!(expects_rlp_exception);
+            assert!(expects_rlp_exception || expects_invalid_signature);
             true
         }
     }
