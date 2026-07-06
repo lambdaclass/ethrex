@@ -47,7 +47,15 @@ pub fn run(input: &[u8], gas_limit: u64) -> Result<(u64, Vec<u8>), PrecompileErr
     if gas_limit < SECP256K1_RECOVER_GAS {
         return Err(PrecompileError::NotEnoughGas);
     }
-    Ok((SECP256K1_RECOVER_GAS, run_inner(input).unwrap_or_default()))
+    // bsc-geth's `secp256k1SignatureRecover` returns an error on invalid input
+    // or failed verification (`return nil, errors.New(...)`), which makes the
+    // EVM burn ALL forwarded gas. A `None` here must therefore be an `Err`, not
+    // a cheap empty success — otherwise the CALL wrongly succeeds and the caller
+    // takes a different (much cheaper) path, diverging block gas from consensus.
+    match run_inner(input) {
+        Some(output) => Ok((SECP256K1_RECOVER_GAS, output)),
+        None => Err(PrecompileError::InvalidInput),
+    }
 }
 
 fn run_inner(input: &[u8]) -> Option<Vec<u8>> {
