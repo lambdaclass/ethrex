@@ -127,12 +127,9 @@ impl CachingDatabase {
 
     /// Snapshot of the touched key sets matching the given filters: cached
     /// accounts (with their storage roots) and cached storage slot keys. The
-    /// mempool prewarmer uses this to walk exactly the trie paths the
-    /// merkleizer will later rewrite for warmed transactions (ordinary reads
-    /// skip interior trie nodes once flat-key-value is active, so execution
-    /// warming alone never touches them). The filters let a caller that
-    /// tracks already-processed keys collect only the delta, keeping the
-    /// per-call allocation O(new) while the scan stays O(cache).
+    /// filters let a caller that tracks already-processed keys collect only
+    /// the delta, keeping the per-call allocation O(new) while the scan
+    /// stays O(cache).
     pub fn touched_keys_where(
         &self,
         account_filter: &dyn Fn(&Address) -> bool,

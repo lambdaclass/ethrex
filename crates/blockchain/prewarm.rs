@@ -1,30 +1,46 @@
 //! Mempool-driven state pre-warming.
 //!
 //! After each imported block, speculatively executes top-of-mempool
-//! transactions against the new head state during the idle inter-slot gap.
-//! The warmth reaches the next block three ways: the decoded per-slot
-//! `CachingDatabase` is handed to `execute_block_pipeline` when the parent
-//! state and fork match (see `Blockchain::prewarmed`), the reads populate
-//! the persistent caches underneath (RocksDB block cache, code cache), and
-//! `warm_merkle_paths` walks the touched keys' trie paths so the merkleizer
-//! finds interior nodes warm. Strictly read-only: speculative execution
-//! results are discarded and never reach shared state, so a wrong prediction
-//! costs wasted I/O, never incorrect state.
-//! The pass refreshes as new transactions arrive (per-sender depth capped by
-//! `MAX_WARMED_TXS_PER_SENDER_PER_SLOT`), covering most of the inter-block
-//! window (late-arriving txs dominate the next block's content); it is
-//! cancelled the moment the next block arrives and never runs past the next
-//! slot boundary.
+//! transactions against the new head state during the idle inter-slot gap,
+//! refreshing as new transactions arrive until the next block lands or the
+//! slot boundary passes. The warmth reaches the next block three ways: the
+//! decoded per-slot `CachingDatabase` is handed to `execute_block_pipeline`
+//! when the parent state and fork match (see `Blockchain::prewarmed`), the
+//! reads populate the persistent caches underneath (RocksDB block cache,
+//! code cache), and `warm_merkle_paths` walks the touched keys' trie paths
+//! so the merkleizer finds interior nodes warm. Strictly read-only:
+//! speculative execution results are discarded and never reach shared
+//! state, so a wrong prediction costs wasted I/O, never incorrect state.
 
-use ethrex_common::types::{MempoolTransaction, Transaction};
+#[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+use crate::PrewarmedEntry;
+use crate::{Blockchain, BlockchainType};
+use ethrex_common::types::{BlockHeader, MempoolTransaction, Transaction};
 use ethrex_common::{Address, H256, U256};
 use ethrex_crypto::NativeCrypto;
 use rustc_hash::FxHashMap;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex, mpsc};
+#[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+use std::time::{Duration, Instant};
+use std::time::{SystemTime, UNIX_EPOCH};
+#[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+use tracing::info;
+use tracing::warn;
+
+/// Mainnet slot duration, used to compute the warming deadline (the next
+/// slot boundary, one slot after the parent's timestamp).
+const SLOT_DURATION_SECS: u64 = 12;
+
+/// Warm up to this multiple of the parent block's gas limit worth of
+/// mempool txs per warming snapshot (the initial pass and each delta).
+#[cfg_attr(any(not(feature = "rayon"), feature = "eip-8025"), allow(dead_code))]
+const GAS_BUDGET_MULTIPLIER: u64 = 6;
 
 /// The next block's slot starts exactly one slot after its parent's; it cannot
 /// arrive before that. Warming must end at this boundary.
-fn next_slot_deadline_unix(parent_timestamp: u64, slot_duration_secs: u64) -> u64 {
-    parent_timestamp.saturating_add(slot_duration_secs)
+fn next_slot_deadline_unix(parent_timestamp: u64) -> u64 {
+    parent_timestamp.saturating_add(SLOT_DURATION_SECS)
 }
 
 /// Picks the warm set from a mempool snapshot: sender groups in nonce order,
@@ -66,12 +82,9 @@ fn select_warm_set(
 
 /// Per-slot cap on warmed txs per sender. Deep same-sender queues beyond
 /// this depth cannot realistically land in the next block (they sit behind
-/// their own predecessors), so warming them only inflates the warm volume,
-/// which we measured live as a small next-block throughput penalty.
-/// Generous enough to keep legitimate batchers (exchanges land dozens-deep runs, rarely
-/// more) while cutting off hundred-deep spam queues.
+/// their own predecessors), so warming them only inflates the warm volume.
 #[cfg_attr(any(not(feature = "rayon"), feature = "eip-8025"), allow(dead_code))]
-pub(crate) const MAX_WARMED_TXS_PER_SENDER_PER_SLOT: usize = 16;
+const MAX_WARMED_TXS_PER_SENDER_PER_SLOT: usize = 16;
 
 /// Enforces [`MAX_WARMED_TXS_PER_SENDER_PER_SLOT`] across a slot's delta
 /// passes: `warmed_per_sender` counts txs already warmed this slot, and each
@@ -109,26 +122,6 @@ fn drop_already_warmed(
     });
     txs_by_sender
 }
-
-use crate::{Blockchain, BlockchainType};
-use ethrex_common::types::BlockHeader;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex, mpsc};
-#[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
-use std::time::{Duration, Instant};
-use std::time::{SystemTime, UNIX_EPOCH};
-#[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
-use tracing::info;
-use tracing::warn;
-
-/// Mainnet slot duration, used to compute the warming deadline (the next
-/// slot boundary, one slot after the parent's timestamp).
-const SLOT_DURATION_SECS: u64 = 12;
-
-/// Warm up to this multiple of the parent block's gas limit worth of
-/// mempool txs per warming snapshot (the initial pass and each delta).
-#[cfg_attr(any(not(feature = "rayon"), feature = "eip-8025"), allow(dead_code))]
-const GAS_BUDGET_MULTIPLIER: u64 = 6;
 
 // Fields are only read by `run_pass`, which is compiled out when the rayon
 // feature is disabled (or eip-8025 is active); avoid a dead-code warning in
@@ -173,7 +166,7 @@ impl PrewarmHandle {
         if let Ok(mut current) = self.current_cancel.lock() {
             *current = cancel.clone();
         }
-        let deadline_unix = next_slot_deadline_unix(parent_header.timestamp, SLOT_DURATION_SECS);
+        let deadline_unix = next_slot_deadline_unix(parent_header.timestamp);
         let _ = self.sender.send(PrewarmRequest {
             parent_header,
             cancel,
@@ -266,8 +259,7 @@ fn run_pass(blockchain: &Blockchain, pool: &rayon::ThreadPool, req: PrewarmReque
     let start = Instant::now();
     let parent = &req.parent_header;
 
-    // Predicted child base fee (same formula as the payload builder,
-    // crates/blockchain/payload.rs:173).
+    // Predicted child base fee (same formula as the payload builder).
     let base_fee = calculate_base_fee_per_gas(
         parent.gas_limit,
         parent.gas_limit,
@@ -306,10 +298,9 @@ fn run_pass(blockchain: &Blockchain, pool: &rayon::ThreadPool, req: PrewarmReque
     }
 
     // DB stack pinned at the parent (head) state, mirroring
-    // execute_block_pipeline + Evm::new_from_db_for_l1:
-    // StoreVmDatabase -> CachingDatabase. Reads populate the persistent
-    // RocksDB block cache and code cache underneath; the decoded layers here
-    // are throwaway.
+    // execute_block_pipeline: StoreVmDatabase -> CachingDatabase. Reads
+    // populate the persistent RocksDB block/code caches underneath; the
+    // decoded layers here are throwaway.
     let vm_db = match StoreVmDatabase::new(blockchain.storage.clone(), parent.clone()) {
         Ok(vm_db) => vm_db,
         Err(e) => {
@@ -319,24 +310,26 @@ fn run_pass(blockchain: &Blockchain, pool: &rayon::ThreadPool, req: PrewarmReque
     };
     let inner: Arc<dyn ethrex_vm::backends::LevmDatabase> =
         Arc::new(Box::new(vm_db) as ethrex_vm::DynVmDatabase);
-    // Concrete handle kept for `touched_keys` (not on the trait); the erased
-    // clone feeds `warm_txs` and the executor handoff.
-    let caching_concrete = Arc::new(CachingDatabase::new(
+    // Concrete handle kept for `touched_keys_where` (not on the trait); the
+    // erased clone feeds `warm_txs` and the executor handoff.
+    let cache = Arc::new(CachingDatabase::new(
         inner,
         blockchain.options.precompile_cache_enabled,
     ));
-    let caching: Arc<dyn ethrex_vm::backends::LevmDatabase> = caching_concrete.clone();
+    let cache_dyn: Arc<dyn ethrex_vm::backends::LevmDatabase> = cache.clone();
 
     // Publish the cache for handoff: `execute_block_pipeline` seeds the next
-    // block's execution with it when the parent hash AND fork match (the
-    // fork guards the fork-dependent precompile-cache layer across missed
-    // slots that span a fork activation). Published at slot start so even a
-    // cut-short pass hands over whatever it warmed; entries written by an
-    // in-flight delta after cancellation are still valid parent-state reads
-    // going into the same shared instance.
+    // block's execution with it when the parent hash and fork match (see
+    // `PrewarmedCache`). Published at slot start so even a cut-short pass
+    // hands over whatever it warmed; entries written by an in-flight delta
+    // after cancellation are still valid parent-state reads.
     let warmed_fork = config.fork(header.timestamp);
-    if let Ok(mut p) = blockchain.prewarmed.0.lock() {
-        *p = Some((parent.hash(), warmed_fork, caching.clone()));
+    if let Ok(mut slot) = blockchain.prewarmed.0.lock() {
+        *slot = Some(PrewarmedEntry {
+            parent_hash: parent.hash(),
+            fork: warmed_fork,
+            cache: cache_dyn.clone(),
+        });
     }
 
     let cancel = req.cancel.clone();
@@ -345,11 +338,11 @@ fn run_pass(blockchain: &Blockchain, pool: &rayon::ThreadPool, req: PrewarmReque
 
     let mut warmed_union: FxHashMap<H256, u64> = FxHashMap::default();
     // Slot-level dedup for merkle-path warming (see `warm_merkle_paths`).
-    // Presence in the map = account path already walked; the value keeps the
-    // storage root so later delta passes can open storage tries for new
-    // slots of already-walked accounts.
-    let mut merkled_roots: FxHashMap<Address, H256> = FxHashMap::default();
-    let mut merkled_slots: rustc_hash::FxHashSet<(Address, H256)> = Default::default();
+    // Presence = account path already walked; the value keeps the hashed
+    // address and storage root so later delta passes can open storage tries
+    // for new slots of already-walked accounts without re-hashing.
+    let mut walked_accounts: FxHashMap<Address, (H256, H256)> = FxHashMap::default();
+    let mut walked_slots: rustc_hash::FxHashSet<(Address, H256)> = Default::default();
     let mut merkle_paths: u64 = 0;
     // Slot-level per-sender counts backing the depth cap: a per-snapshot cap
     // alone would leak — once a sender's head txs are warmed and dropped by
@@ -363,13 +356,10 @@ fn run_pass(blockchain: &Blockchain, pool: &rayon::ThreadPool, req: PrewarmReque
 
     // Refreshing delta passes: warm the initial snapshot, then keep warming
     // txs that arrive during the slot, until the next block arrives (cancel)
-    // or the slot boundary (deadline). This covers most of the inter-block
-    // window instead of one instant at its start, which matters because most
-    // included txs are sent moments before their block: live measurement
-    // during development (see the PR) found roughly half of block gas
-    // reached the mempool only after a start-of-slot snapshot. All deltas
-    // share `caching`, so later passes get faster as the slot's state
-    // accumulates.
+    // or the slot boundary (deadline); most included txs are sent moments
+    // before their block, so a single start-of-slot pass would miss them.
+    // All deltas share `cache`, so later passes get faster as the slot's
+    // state accumulates.
     loop {
         if should_stop() {
             break;
@@ -403,7 +393,7 @@ fn run_pass(blockchain: &Blockchain, pool: &rayon::ThreadPool, req: PrewarmReque
                     LEVM::warm_txs(
                         &view,
                         &header,
-                        caching.clone(),
+                        cache_dyn.clone(),
                         VMType::L1,
                         &NativeCrypto,
                         &should_stop,
@@ -414,9 +404,9 @@ fn run_pass(blockchain: &Blockchain, pool: &rayon::ThreadPool, req: PrewarmReque
                 merkle_paths += warm_merkle_paths(
                     blockchain,
                     parent,
-                    &caching_concrete,
-                    &mut merkled_roots,
-                    &mut merkled_slots,
+                    &cache,
+                    &mut walked_accounts,
+                    &mut walked_slots,
                     &should_stop,
                 );
             }
@@ -464,22 +454,22 @@ fn run_pass(blockchain: &Blockchain, pool: &rayon::ThreadPool, req: PrewarmReque
 fn warm_merkle_paths(
     blockchain: &Blockchain,
     parent: &BlockHeader,
-    caching: &ethrex_vm::backends::CachingDatabase,
-    merkled_roots: &mut FxHashMap<Address, H256>,
-    done_slots: &mut rustc_hash::FxHashSet<(Address, H256)>,
+    cache: &ethrex_vm::backends::CachingDatabase,
+    walked_accounts: &mut FxHashMap<Address, (H256, H256)>,
+    walked_slots: &mut rustc_hash::FxHashSet<(Address, H256)>,
     should_stop: &(dyn Fn() -> bool + Sync),
 ) -> u64 {
     use ethrex_common::constants::EMPTY_TRIE_HASH;
-    use ethrex_crypto::keccak::keccak_hash;
+    use ethrex_common::utils::keccak;
     use ethrex_storage::hash_key;
     use tracing::debug;
 
     // Collect only the delta: keys not walked in an earlier pass this slot.
     // The cache grows monotonically, so filtering here keeps the per-pass
     // allocation O(new) instead of re-cloning the whole accumulated set.
-    let touched = caching
-        .touched_keys_where(&|addr| !merkled_roots.contains_key(addr), &|slot_key| {
-            !done_slots.contains(slot_key)
+    let touched = cache
+        .touched_keys_where(&|addr| !walked_accounts.contains_key(addr), &|slot_key| {
+            !walked_slots.contains(slot_key)
         });
     let mut walked: u64 = 0;
 
@@ -492,11 +482,11 @@ fn warm_merkle_paths(
     };
 
     for (addr, storage_root) in touched.accounts {
-        merkled_roots.insert(addr, storage_root);
+        let hashed = keccak(addr.to_fixed_bytes());
+        walked_accounts.insert(addr, (hashed, storage_root));
         if should_stop() {
             return walked;
         }
-        let hashed = H256::from(keccak_hash(addr.to_fixed_bytes()));
         let _ = state_trie.get_proof(hashed.as_bytes());
         walked += 1;
     }
@@ -504,7 +494,7 @@ fn warm_merkle_paths(
     // Group new slots per account so each storage trie is opened once.
     let mut by_account: FxHashMap<Address, Vec<H256>> = FxHashMap::default();
     for (addr, key) in touched.slots {
-        if done_slots.insert((addr, key)) {
+        if walked_slots.insert((addr, key)) {
             by_account.entry(addr).or_default().push(key);
         }
     }
@@ -512,15 +502,14 @@ fn warm_merkle_paths(
         if should_stop() {
             return walked;
         }
-        // Roots persist across the slot's passes, so slots of accounts
+        // Entries persist across the slot's passes, so slots of accounts
         // walked in earlier deltas still resolve.
-        let Some(storage_root) = merkled_roots.get(&addr).copied() else {
+        let Some((hashed, storage_root)) = walked_accounts.get(&addr).copied() else {
             continue;
         };
         if storage_root == *EMPTY_TRIE_HASH {
             continue;
         }
-        let hashed = H256::from(keccak_hash(addr.to_fixed_bytes()));
         let Ok(storage_trie) =
             blockchain
                 .storage
@@ -611,7 +600,10 @@ mod tests {
 
     #[test]
     fn deadline_is_next_slot_boundary() {
-        assert_eq!(next_slot_deadline_unix(1_700_000_000, 12), 1_700_000_012);
+        assert_eq!(
+            next_slot_deadline_unix(1_700_000_000),
+            1_700_000_000 + SLOT_DURATION_SECS
+        );
     }
 
     #[test]

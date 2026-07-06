@@ -2170,11 +2170,8 @@ impl LEVM {
         crypto: &dyn Crypto,
         should_stop: &(dyn Fn() -> bool + Sync),
     ) -> Result<(), EvmError> {
-        // Group transactions by sender for sequential execution within groups.
-        // Transactions from the same sender are executed sequentially within their group
-        // to ensure correct nonce and balance propagation. Different sender groups run
-        // in parallel. This approach (inspired by Nethermind's per-sender prewarmer)
-        // improves warmup accuracy by avoiding nonce mismatches within sender groups.
+        // Group by sender so nonce/balance changes propagate within a group
+        // (inspired by Nethermind's per-sender prewarmer).
         let mut sender_groups: FxHashMap<Address, Vec<&Transaction>> = FxHashMap::default();
         for (tx, sender) in txs_with_sender {
             sender_groups.entry(*sender).or_default().push(tx);
@@ -2202,8 +2199,6 @@ impl LEVM {
                 let mut memory_pool = Vec::with_capacity(1);
                 // Each sender group gets its own db instance for state propagation
                 let mut group_db = GeneralizedDatabase::new(store.clone());
-                // Execute transactions sequentially within sender group
-                // This ensures nonce and balance changes from tx[N] are visible to tx[N+1]
                 for tx in txs {
                     if should_stop() {
                         return;

@@ -459,8 +459,8 @@ pub fn start_block_executor(blockchain: Arc<Blockchain>) -> UnboundedSender<Bloc
             while let Some((notify, block, bal, make_witness)) = block_receiver.blocking_recv() {
                 // Kill any in-flight warming before touching the executor's
                 // resources.
-                if let Some(p) = &prewarmer {
-                    p.cancel_current();
+                if let Some(handle) = &prewarmer {
+                    handle.cancel_current();
                 }
                 let imported_header = prewarmer.as_ref().map(|_| block.header.clone());
                 let result = (|| {
@@ -475,11 +475,12 @@ pub fn start_block_executor(blockchain: Arc<Blockchain>) -> UnboundedSender<Bloc
                 })();
                 // One pass per cleanly imported block, only when synced and
                 // idle (no queued blocks): warm the child of the new head.
-                if let (Some(p), Some(header), true) = (&prewarmer, imported_header, result.is_ok())
+                if let (Some(handle), Some(header), true) =
+                    (&prewarmer, imported_header, result.is_ok())
                     && blockchain.is_synced()
                     && block_receiver.is_empty()
                 {
-                    p.trigger(header);
+                    handle.trigger(header);
                 }
                 let _ = notify
                     .send(result)
