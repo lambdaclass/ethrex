@@ -2,6 +2,7 @@ use crate::authentication::authenticate;
 use crate::debug::chain_config::ChainConfigRequest;
 use crate::debug::execution_witness::ExecutionWitnessRequest;
 use crate::debug::execution_witness_by_hash::ExecutionWitnessByBlockHashRequest;
+use crate::debug::set_head::SetHeadRequest;
 use crate::engine::blobs::{BlobsV2Request, BlobsV3Request};
 use crate::engine::client_version::GetClientVersionV1Request;
 use crate::engine::payload::{
@@ -46,6 +47,7 @@ use crate::eth::{
     },
 };
 use crate::subscription_manager::{SubscriptionManager, SubscriptionManagerProtocol};
+use crate::testing::BuildBlockV1Request;
 use crate::tracing::{TraceBlockByNumberRequest, TraceTransactionRequest};
 use crate::types::transaction::SendRawTransactionRequest;
 use crate::utils::{
@@ -1083,6 +1085,7 @@ pub async fn map_http_requests(req: &RpcRequest, context: RpcApiContext) -> Resu
         RpcNamespace::Web3 => map_web3_requests(req, context),
         RpcNamespace::Net => map_net_requests(req, context).await,
         RpcNamespace::Mempool => map_mempool_requests(req, context),
+        RpcNamespace::Testing => map_testing_requests(req, context).await,
         // Engine is served on the authenticated port only. The CLI parser
         // already rejects `--http.api engine`, but `allowed_namespaces` can
         // also be built programmatically (e.g. in tests or future call sites),
@@ -1165,6 +1168,20 @@ pub async fn map_eth_requests(req: &RpcRequest, context: RpcApiContext) -> Resul
     }
 }
 
+/// Routes `testing_*` namespace requests to their handlers.
+///
+/// Testing-only methods for fixture generation. This namespace is disabled by
+/// default and must never be exposed on public-facing RPC APIs.
+pub async fn map_testing_requests(
+    req: &RpcRequest,
+    context: RpcApiContext,
+) -> Result<Value, RpcErr> {
+    match req.method.as_str() {
+        "testing_buildBlockV1" => BuildBlockV1Request::call(req, context).await,
+        unknown_testing_method => Err(RpcErr::MethodNotFound(unknown_testing_method.to_owned())),
+    }
+}
+
 /// Routes `debug_*` namespace requests to their handlers.
 ///
 /// Handles debugging and introspection methods:
@@ -1182,6 +1199,7 @@ pub async fn map_debug_requests(req: &RpcRequest, context: RpcApiContext) -> Res
             ExecutionWitnessByBlockHashRequest::call(req, context).await
         }
         "debug_chainConfig" => ChainConfigRequest::call(req, context).await,
+        "debug_setHead" => SetHeadRequest::call(req, context).await,
         "debug_traceTransaction" => TraceTransactionRequest::call(req, context).await,
         "debug_traceBlockByNumber" => TraceBlockByNumberRequest::call(req, context).await,
         unknown_debug_method => Err(RpcErr::MethodNotFound(unknown_debug_method.to_owned())),
