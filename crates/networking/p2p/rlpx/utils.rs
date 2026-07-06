@@ -121,7 +121,7 @@ mod tests {
             snappy_decompress(&frame).expect_err("oversized declared length must be rejected");
         let msg = format!("{err}").to_lowercase();
         assert!(
-            msg.contains("exceed") || msg.contains("too large"),
+            msg.contains("exceed"),
             "expected a declared-length cap rejection, got: {msg}"
         );
     }
