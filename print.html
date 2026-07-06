@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-28a965d1.js";
+            window.path_to_searchindex_js = "searchindex-a35f9bd0.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-586b7da3.js"></script>
@@ -9858,7 +9858,8 @@ set -a; source cmd/.env; set +a
   --block-producer.operator-fee-per-gas 1000000000 \
   --committer.l1-private-key 0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924 \
   --proof-coordinator.l1-private-key 0x39725efee3fb28614de3bacaffe4cc4bd8c436257e2c8bb887c4b5c4be45e76d \
-  --proof-coordinator.addr 127.0.0.1
+  --proof-coordinator.addr 127.0.0.1 \
+  --no-monitor
 </code></pre>
 <p>Note:</p>
 <ul>
@@ -11842,7 +11843,26 @@ nano .env
 <!-- TODO: document the upgrade procedure for this host -->
 <h4 id="ethrex-prysm-ethrex-lodestar-ethrex-teku-ethrex-grandine"><a class="header" href="#ethrex-prysm-ethrex-lodestar-ethrex-teku-ethrex-grandine"><code>ethrex-prysm</code>, <code>ethrex-lodestar</code>, <code>ethrex-teku</code>, <code>ethrex-grandine</code></a></h4>
 <p>These are ethrex mainnet nodes paired with different consensus clients (Prysm, Lodestar, Teku, Grandine); the ethrex (EL) upgrade procedure is the same across them.</p>
-<!-- TODO: document the upgrade procedure for these hosts -->
+<p>They run the ethrex binary downloaded from the release in a tmux session, the consensus also runs in its own tmux session.</p>
+<pre><code class="language-bash">tmux ls
+# gracefully stop ethrex
+tmux a -t ethrex
+# ctrl-c
+exit
+
+wget -q -O ethrex-linux-x86_64 \
+  https://github.com/lambdaclass/ethrex/releases/download/v20.0.0-rc.1/ethrex-linux-x86_64
+chmod +x ethrex-linux-x86_64
+
+./ethrex-linux-x86_64 --version # ethrex/v20.0.0-
+
+tmux new-session -d -s ethrex \
+  'cd ~ &amp;&amp; RUST_LOG=info ./ethrex-linux-x86_64 \
+     --http.addr 0.0.0.0 --http.api eth,net,web3,admin \
+     --metrics --metrics.port 3701 \
+     --network mainnet \
+     --authrpc.jwtsecret /home/admin/secrets/jwt.hex 2&gt;&amp;1 | tee -a ~/ethrex-rc.log'
+</code></pre>
 <h4 id="ethrex-multisync-main"><a class="header" href="#ethrex-multisync-main"><code>ethrex-multisync-main</code></a></h4>
 <pre><code class="language-bash">ssh admin@ethrex-multisync-main
 cd ethrex/tooling/sync/
