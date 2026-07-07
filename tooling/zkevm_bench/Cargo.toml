@@ -1,0 +1,26 @@
+[package]
+name = "ethrex-zkevm-bench"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+ethrex-common.workspace = true
+ethrex-rlp.workspace = true
+ethrex-prover = { workspace = true, default-features = false, features = ["zisk"] }
+ethrex-guest-program = { path = "../../crates/guest-program", default-features = false, features = ["zisk"] }
+
+clap = { workspace = true, features = ["derive"] }
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+toml = "0.8"
+flate2 = "1.0"
+eyre = "0.6"
+sha2 = "0.10"
+
+[features]
+zisk-elf = ["ethrex-guest-program/zisk-build-elf"]
+
+[[bin]]
+name = "ethrex-zkevm-bench"
+path = "src/main.rs"

@@ -4513,6 +4513,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "ethrex-zkevm-bench"
+version = "18.0.0"
+dependencies = [
+ "clap",
+ "ethrex-common",
+ "ethrex-guest-program",
+ "ethrex-prover",
+ "ethrex-rlp",
+ "eyre",
+ "flate2",
+ "serde",
+ "serde_json",
+ "sha2",
+ "toml",
+]
+
+[[package]]
 name = "eventsource-stream"
 version = "0.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"

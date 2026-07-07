@@ -25,6 +25,7 @@ members = [
   "crates/vm/levm/runner",
   "crates/common/config",
   "tooling/repl",
+  "tooling/zkevm_bench",
   "test",
 ]
 exclude = ["crates/vm/levm/bench/revm_comparison"]
@@ -84,7 +85,7 @@ ethrex-l2 = { path = "./crates/l2" }
 ethrex-l2-common = { path = "./crates/l2/common", version = "18.0.0" }
 ethrex-sdk = { path = "./crates/l2/sdk", version = "18.0.0" }
 ethrex-l2-prover = { path = "./crates/l2/prover" }
-ethrex-prover = { path = "./crates/prover" }
+ethrex-prover = { path = "./crates/prover", default-features = false }
 ethrex-guest-program = { path = "./crates/guest-program", default-features = false }
 ethrex-storage-rollup = { path = "./crates/l2/storage", version = "18.0.0" }
 ethrex = { path = "./cmd/ethrex" }
