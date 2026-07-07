@@ -1,6 +1,7 @@
 use clap::{Parser, Subcommand};
 
 mod cache;
+mod compare;
 mod manifest;
 mod report;
 
@@ -51,7 +52,15 @@ fn main() -> eyre::Result<()> {
     let cli = Cli::parse();
     match cli.command {
         Command::Run { .. } => todo!("Task 9"),
-        Command::Compare { .. } => todo!("Task 5"),
+        Command::Compare {
+            baseline,
+            head,
+            threshold_pct,
+            out,
+        } => {
+            let code = compare::run_compare(&baseline, &head, threshold_pct, out.as_deref())?;
+            std::process::exit(code);
+        }
         Command::Curate { .. } => todo!("Task 11"),
     }
 }
