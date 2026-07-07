@@ -223,7 +223,7 @@ impl OpcodeHandler for OpSModHandler {
             *slot = match lhs.checked_rem(rhs) {
                 Some(mut res) => {
                     if sign {
-                        (res, _) = (!res).overflowing_add(U256::one());
+                        res = negate_u256(res);
                     }
                     res
                 }
