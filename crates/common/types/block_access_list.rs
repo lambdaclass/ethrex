@@ -475,6 +475,15 @@ impl BlockAccessList {
                 }
             }
             for slot_change in &account.storage_changes {
+                // EIP-7928: a slot listed in storage_changes must carry at least one
+                // change; an empty slot_changes set is a malformed (no-op) entry.
+                if slot_change.slot_changes.is_empty() {
+                    return Err(format!(
+                        "Block access list storage_changes slot {:#x} for account {:#x} \
+                         has an empty change set",
+                        slot_change.slot, account.address
+                    ));
+                }
                 for window in slot_change.slot_changes.windows(2) {
                     if window[0].block_access_index >= window[1].block_access_index {
                         return Err(format!(
@@ -543,15 +552,28 @@ impl BlockAccessList {
         Ok(())
     }
 
+    /// Returns true if this BAL matches the header's EIP-8159 commitment
+    /// (`block_access_list_hash`). Used to gate persisting/serving a BAL so a
+    /// stale or regenerated-against-wrong-state BAL is never handed to peers as
+    /// if it were authoritative; callers degrade to the `0x80` "unavailable"
+    /// sentinel on a `false` here.
+    pub fn matches_commitment(
+        &self,
+        commitment: Option<H256>,
+        crypto: &dyn ethrex_crypto::Crypto,
+    ) -> bool {
+        commitment == Some(self.compute_hash(crypto))
+    }
+
     /// Computes the hash of the block access list (sorts accounts by address per EIP-7928).
     /// Use this when hashing a BAL constructed locally from execution.
-    pub fn compute_hash(&self) -> H256 {
+    pub fn compute_hash(&self, crypto: &dyn ethrex_crypto::Crypto) -> H256 {
         if self.inner.is_empty() {
             return *EMPTY_BLOCK_ACCESS_LIST_HASH;
         }
 
         let buf = self.encode_to_vec();
-        keccak(buf)
+        H256(crypto.keccak256(&buf))
     }
 
     /// Builds a validation index for fast per-tx BAL verification.
@@ -1547,7 +1569,7 @@ impl BlockAccessListRecorder {
     /// Called after destroy_account for contracts created and destroyed in the same tx.
     /// Removes nonce/code changes, converts storage writes to reads.
     /// Matches EELS `track_selfdestruct` in state_tracker.py:315.
-    pub fn track_selfdestruct(&mut self, address: Address) {
+    pub fn track_selfdestruct(&mut self, address: Address, preserve_balance: bool) {
         let idx = self.current_index;
 
         // 1. Remove nonce changes for this address at current tx index
@@ -1558,19 +1580,34 @@ impl BlockAccessListRecorder {
             }
         }
 
-        // 2. Remove balance changes if pre-balance was 0 (round-trip: 0→X→0)
-        // If initial_balance was never set, treat it as 0 (contract created with no value)
-        let pre_balance = self
-            .initial_balances
-            .get(&address)
-            .copied()
-            .unwrap_or_default();
-        if pre_balance.is_zero()
-            && let Some(changes) = self.balance_changes.get_mut(&address)
-        {
-            changes.retain(|(i, _)| *i != idx);
-            if changes.is_empty() {
-                self.balance_changes.remove(&address);
+        // 2. Balance handling depends on the fork:
+        // - Pre-Amsterdam (EIP-6780): the account is fully wiped, so its post-tx balance is
+        //   0. Collapse intermediate changes to a single (idx, 0), or drop entirely if the
+        //   pre-tx balance was also 0 (net-zero round-trip, EIP-7928). EELS derives BAL
+        //   balance changes by diffing pre-tx vs final post-tx state, so only the final 0
+        //   matters.
+        // - Amsterdam+ (EIP-8246): SELFDESTRUCT no longer burns ETH; the account keeps its
+        //   balance and becomes a plain account (delete_self_destruct_accounts preserves it).
+        //   The recorded balance changes already reflect the preserved post-tx balance, so
+        //   they are kept as-is (the create-time value transfer is a genuine 0→balance
+        //   change, not a net-zero round-trip).
+        if !preserve_balance {
+            // If initial_balance was never set, treat it as 0 (contract created with no value).
+            let pre_balance = self
+                .initial_balances
+                .get(&address)
+                .copied()
+                .unwrap_or_default();
+            if let Some(changes) = self.balance_changes.get_mut(&address) {
+                // Drop all intermediate balance changes recorded for this tx.
+                changes.retain(|(i, _)| *i != idx);
+                // Record the final post-tx balance of 0 unless it equals the pre-tx balance.
+                if !pre_balance.is_zero() {
+                    changes.push((idx, U256::zero()));
+                }
+                if changes.is_empty() {
+                    self.balance_changes.remove(&address);
+                }
             }
         }
 
@@ -1855,7 +1892,7 @@ mod synthesize_tests {
         let expected_hash = keccak(&bytecode);
         assert_eq!(item.code_hash, Some(expected_hash));
         assert!(item.code.is_some());
-        assert_eq!(item.code.as_ref().unwrap().bytecode, bytecode);
+        assert_eq!(item.code.as_ref().unwrap().code(), &bytecode[..]);
         assert!(item.added_storage.is_empty());
     }
 
@@ -1896,7 +1933,7 @@ mod synthesize_tests {
         let item = result.get(&addr(8)).expect("expected entry");
         let expected_hash = keccak(&last);
         assert_eq!(item.code_hash, Some(expected_hash));
-        assert_eq!(item.code.as_ref().unwrap().bytecode, last);
+        assert_eq!(item.code.as_ref().unwrap().code(), &last[..]);
     }
 
     /// When a slot has multiple StorageChanges, the last post_value wins.
@@ -1974,7 +2011,7 @@ mod synthesize_tests {
         let expected_hash = keccak(&bytecode);
         assert_eq!(item.code_hash, Some(expected_hash));
         assert!(item.code.is_some());
-        assert_eq!(item.code.as_ref().unwrap().bytecode, bytecode);
+        assert_eq!(item.code.as_ref().unwrap().code(), &bytecode[..]);
         let key = H256::from_uint(&U256::zero());
         assert_eq!(item.added_storage.get(&key), Some(&U256::from(7)));
     }

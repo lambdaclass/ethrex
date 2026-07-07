@@ -44,6 +44,7 @@ use ethrex_common::H256;
 #[cfg(feature = "l2")]
 use ethrex_common::types::Transaction;
 use ethrex_common::types::{MempoolTransaction, P2PTransaction, Receipt};
+use ethrex_crypto::NativeCrypto;
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_storage::{Store, error::StoreError};
 use ethrex_trie::TrieError;
@@ -77,6 +78,26 @@ const PING_INTERVAL: Duration = Duration::from_secs(10);
 const BLOCK_RANGE_UPDATE_INTERVAL: Duration = Duration::from_secs(60);
 const INFLIGHT_TX_SWEEP_INTERVAL: Duration = Duration::from_secs(15);
 const INFLIGHT_TX_TIMEOUT: Duration = Duration::from_secs(30);
+/// Max time a single outbound frame may take to flush to a peer's socket before we
+/// consider the peer wedged and drop it. Without this bound, a slow/half-dead peer
+/// (TCP send window full, never draining) blocks the connection actor's serial drain
+/// indefinitely while its unbounded mailbox keeps growing — the timer/broadcast
+/// producers below enqueue regardless of drain progress — leaking memory that is
+/// never reclaimed (the actor cannot be stopped while a handler is wedged in `.await`).
+const OUTBOUND_SEND_TIMEOUT: Duration = Duration::from_secs(30);
+/// Max time the RLPx handshake may take before we abandon the connection. Without
+/// this, an inbound peer that opens TCP and then stalls before/at the auth read
+/// parks a connection actor + socket indefinitely (the handshake runs inside
+/// `started()` with no timeout), so established sockets accumulate far beyond the
+/// peer target.
+const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
+/// If a peer fails to answer this many consecutive pings, consider it dead and drop it.
+/// Catches application-dead-but-TCP-alive peers that would otherwise never be removed.
+const MAX_MISSED_PONGS: u8 = 3;
+/// Capacity of the per-connection bounded outbound queue. The writer task drains this into
+/// the socket; if a peer can't keep up the queue fills and the peer is dropped, so outbound
+/// buffering per connection is bounded to this many messages instead of growing unbounded.
+const OUTBOUND_QUEUE_CAP: usize = 1024;
 /// How often to flush buffered transaction hash requests into a single
 /// batched GetPooledTransactions message.
 const TX_REQUEST_BATCH_INTERVAL: Duration = Duration::from_millis(50);
@@ -132,13 +153,17 @@ impl PeerConnection {
         context: P2PContext,
         peer_addr: SocketAddr,
         stream: TcpStream,
+        admission_permit: tokio::sync::OwnedSemaphorePermit,
     ) -> PeerConnection {
         let state = ConnectionState::Receiver(Receiver {
             context,
             peer_addr,
             stream: Arc::new(stream),
         });
-        let connection = PeerConnectionServer { state };
+        let connection = PeerConnectionServer {
+            state,
+            _admission_permit: Some(admission_permit),
+        };
         Self {
             handle: connection.start(),
         }
@@ -149,7 +174,11 @@ impl PeerConnection {
             context,
             node: node.clone(),
         });
-        let connection = PeerConnectionServer { state };
+        // Outbound dials are not admission-capped (we initiate them); inbound is the attack surface.
+        let connection = PeerConnectionServer {
+            state,
+            _admission_permit: None,
+        };
         Self {
             handle: connection.start(),
         }
@@ -220,10 +249,18 @@ pub struct Receiver {
 #[derive(Debug)]
 pub struct Established {
     pub(crate) signer: SecretKey,
-    // Sending part of the TcpStream to connect with the remote peer
-    // The receiving part is owned by the stream listen loop task
-    pub(crate) sink: SplitSink<Framed<TcpStream, RLPxCodec>, Message>,
+    // Bounded outbound queue to the per-connection writer task (which owns the socket sink).
+    // A bounded queue + dropping the peer on overflow keeps per-connection outbound buffering
+    // bounded instead of letting the actor mailbox grow when a peer can't keep up. The receiving
+    // part of the TcpStream is owned by the stream listen loop task. See `spawn_outbound_writer`.
+    pub(crate) outbound_tx: tokio::sync::mpsc::Sender<Message>,
+    /// Set by the writer task when it exits because a single send exceeded `OUTBOUND_SEND_TIMEOUT`
+    /// (a wedged peer), so `send` can surface `OutboundSendTimeout` once the bounded queue closes.
+    pub(crate) outbound_writer_timed_out: std::sync::Arc<std::sync::atomic::AtomicBool>,
     pub(crate) node: Node,
+    // Whether the remote peer initiated this connection (we acted as Receiver).
+    // `false` when we initiated it (we acted as Initiator).
+    pub(crate) is_inbound: bool,
     pub(crate) storage: Store,
     pub(crate) blockchain: Arc<Blockchain>,
     pub(crate) capabilities: Vec<Capability>,
@@ -265,6 +302,10 @@ pub struct Established {
     pub(crate) txs_sent_to_peer: u64,
     // Leech detection: whether we have received any transactions from this peer
     pub(crate) received_txs_from_peer: bool,
+    // Liveness: consecutive pings sent without a matching pong. Reset to 0 on every Pong,
+    // incremented on each Ping we send; at MAX_MISSED_PONGS the peer is considered dead
+    // and dropped (catches application-dead-but-TCP-alive peers that otherwise linger).
+    pub(crate) missed_pongs: u8,
 }
 
 impl Established {
@@ -280,24 +321,19 @@ impl Established {
                 .mempool
                 .clear_in_flight_txs(&requested_hashes)
             {
-                warn!(error = %e, "clear_in_flight_txs failed during teardown");
+                warn!(error = %e, "Failed to clear in-flight transaction tracking during peer teardown");
             }
             retry_on_alternates(&self.blockchain, &self.peer_table, &requested_hashes).await;
         }
         // Also clear hashes that were buffered but not yet sent.
         for (_announced, pending_hashes) in self.pending_tx_requests.drain(..) {
             if let Err(e) = self.blockchain.mempool.clear_in_flight_txs(&pending_hashes) {
-                warn!(error = %e, "clear_in_flight_txs failed during teardown");
+                warn!(error = %e, "Failed to clear in-flight transaction tracking during peer teardown");
             }
             retry_on_alternates(&self.blockchain, &self.peer_table, &pending_hashes).await;
         }
-        // Closing the sink. It may fail if it is already closed (eg. the other side already closed it)
-        // Just logging a debug line if that's the case.
-        let _ = self
-            .sink
-            .close()
-            .await
-            .inspect_err(|err| debug!("Could not close the socket: {err}"));
+        // The socket sink is owned by the per-connection writer task (`spawn_outbound_writer`),
+        // which closes it when this `Established` is dropped (its `outbound_tx` is the only sender).
     }
 }
 
@@ -312,6 +348,10 @@ pub enum ConnectionState {
 #[derive(Debug)]
 pub struct PeerConnectionServer {
     state: ConnectionState,
+    /// Inbound-admission permit (Some for inbound connections, None for outbound dials we
+    /// initiate). Held for the actor's lifetime and released when the actor is dropped, so the
+    /// inbound connection count stays bounded. See `P2PContext::inbound_admission`.
+    _admission_permit: Option<tokio::sync::OwnedSemaphorePermit>,
 }
 
 #[actor(protocol = PeerConnectionServerProtocol)]
@@ -323,7 +363,24 @@ impl PeerConnectionServer {
         let eth_version = Arc::new(RwLock::new(EthCapVersion::default()));
         // Take ownership of the state, replacing with HandshakeFailed as placeholder
         let state = std::mem::replace(&mut self.state, ConnectionState::HandshakeFailed);
-        match handshake::perform(state, eth_version.clone()).await {
+        // Bound the handshake: a peer that opens TCP and then stalls must not park this
+        // actor + socket forever (otherwise established sockets accumulate above the peer
+        // target). On timeout the handshake future is dropped, closing the socket.
+        let handshake_result = match tokio::time::timeout(
+            HANDSHAKE_TIMEOUT,
+            handshake::perform(state, eth_version.clone()),
+        )
+        .await
+        {
+            Ok(result) => result,
+            Err(_elapsed) => {
+                debug!("Handshake timed out on RLPx connection");
+                self.state = ConnectionState::HandshakeFailed;
+                ctx.stop();
+                return;
+            }
+        };
+        match handshake_result {
             Ok((mut established_state, stream)) => {
                 trace!(peer=%established_state.node, "Starting RLPx connection");
                 if let Err(reason) =
@@ -404,6 +461,14 @@ impl PeerConnectionServer {
                 {
                     debug!("Failed to remove peer from table: {e}");
                 }
+                // Free the peer's tx-broadcaster index (and clear its bit across known txs) so
+                // the broadcaster's per-peer index map / PeerMask widths stay bounded to live peers.
+                if let Err(e) = established_state
+                    .tx_broadcaster
+                    .remove_peer(established_state.node.node_id())
+                {
+                    debug!("Failed to remove peer from tx broadcaster: {e}");
+                }
                 established_state.teardown().await;
             }
             _ => {
@@ -463,7 +528,7 @@ impl PeerConnectionServer {
                 "Received outgoing request",
             );
             let Some(sender) = Arc::<oneshot::Sender<Message>>::into_inner(msg.sender) else {
-                warn!("Could not obtain sender channel: Arc has multiple references");
+                debug!("Could not obtain sender channel: Arc has multiple references");
                 return;
             };
             let result = handle_outgoing_request(established_state, msg.message, sender).await;
@@ -501,6 +566,17 @@ impl PeerConnectionServer {
         ctx: &Context<Self>,
     ) {
         if let ConnectionState::Established(ref mut established_state) = self.state {
+            // Liveness: if the peer hasn't answered the last MAX_MISSED_PONGS pings, treat it
+            // as dead and drop it instead of pinging a corpse (and keeping its actor) forever.
+            if established_state.missed_pongs >= MAX_MISSED_PONGS {
+                debug!(peer=%established_state.node, missed=MAX_MISSED_PONGS, "Peer missed max pongs, dropping");
+                // Attribute the drop as `PingTimeout` so an unresponsive-peer drop is
+                // distinguishable from a generic `NetworkError` in `ethrex_p2p_disconnections`.
+                established_state.disconnect_reason = Some(DisconnectReason::PingTimeout);
+                ctx.stop();
+                return;
+            }
+            established_state.missed_pongs = established_state.missed_pongs.saturating_add(1);
             let result = send(established_state, Message::Ping(PingMessage {})).await;
             Self::process_cast_error(&self.state, result, ctx);
         } else {
@@ -545,7 +621,7 @@ impl PeerConnectionServer {
                     // Clear in-flight before retry so the alternate's reserve_unknown_hashes
                     // doesn't race against still-in-flight state and silently no-op.
                     if let Err(e) = state.blockchain.mempool.clear_in_flight_txs(&hashes) {
-                        warn!(error = %e, "clear_in_flight_txs failed while sweeping stale requests");
+                        warn!(error = %e, "Failed to clear in-flight transaction tracking while sweeping stale requests");
                     }
                     retry_on_alternates(&state.blockchain, &state.peer_table, &hashes).await;
                 }
@@ -659,7 +735,9 @@ impl PeerConnectionServer {
                 | PeerConnectionError::InvalidPeerId
                 | PeerConnectionError::InvalidMessageLength
                 | PeerConnectionError::StateError(_)
-                | PeerConnectionError::InvalidRecoveryId => {
+                | PeerConnectionError::InvalidRecoveryId
+                | PeerConnectionError::OutboundSendTimeout
+                | PeerConnectionError::OutboundQueueFull => {
                     trace!(peer=%established_state.node, error=e.to_string(), "Peer connection error");
                     ctx.stop();
                 }
@@ -680,7 +758,7 @@ impl PeerConnectionServer {
                         error!(
                             peer=%established_state.node,
                             error=%e,
-                            "Error handling cast message",
+                            "Inconsistent trie while serving peer request; local state may be corrupted",
                         );
                     } else {
                         // If we're not synced, we expect to have inconsistent trie errors
@@ -742,6 +820,7 @@ where
         state.node.clone(),
         connection.clone(),
         state.capabilities.clone(),
+        state.is_inbound,
     )?;
 
     trace!(peer=%state.node, "Peer connection initialized.");
@@ -838,7 +917,7 @@ async fn send_all_pooled_tx_hashes(
         state
             .tx_broadcaster
             .add_txs(
-                txs.iter().map(|tx| tx.hash()).collect(),
+                txs.iter().map(|tx| tx.hash(&NativeCrypto)).collect(),
                 state.node.node_id(),
             )
             .map_err(|e| PeerConnectionError::BroadcastError(e.to_string()))?;
@@ -1078,11 +1157,11 @@ where
             if negotiated_eth_version == 0 {
                 return Err(PeerConnectionError::NoMatchingCapabilities);
             }
-            debug!("Negotatied eth version: eth/{}", negotiated_eth_version);
+            debug!("Negotiated eth version: eth/{}", negotiated_eth_version);
             state.negotiated_eth_capability = Some(Capability::eth(negotiated_eth_version));
 
             if negotiated_snap_version != 0 {
-                debug!("Negotatied snap version: snap/{}", negotiated_snap_version);
+                debug!("Negotiated snap version: snap/{}", negotiated_snap_version);
                 state.negotiated_snap_capability = Some(Capability::snap(negotiated_snap_version));
             }
 
@@ -1111,7 +1190,74 @@ pub(crate) async fn send(
         use ethrex_metrics::p2p::METRICS_P2P;
         METRICS_P2P.inc_outgoing_message(message.metric_label());
     }
-    state.sink.send(message).await
+    // Hand off to the per-connection writer task via a BOUNDED queue (non-blocking). This
+    // decouples the actor's serial drain from the network write, so a slow/wedged peer can
+    // never back up the (unbounded) actor mailbox. If the bounded queue is full the peer
+    // can't keep up: surface OutboundQueueFull so `process_cast_error` drops it.
+    match state.outbound_tx.try_send(message) {
+        Ok(()) => Ok(()),
+        Err(tokio::sync::mpsc::error::TrySendError::Full(_)) => {
+            // The peer can't drain our outbound fast enough. Attribute the drop as `UselessPeer`
+            // so it is distinguishable from a generic `NetworkError` in `ethrex_p2p_disconnections`
+            // (a spike here flags slow peers or our own over-sending, rather than hiding it).
+            state
+                .disconnect_reason
+                .get_or_insert(DisconnectReason::UselessPeer);
+            Err(PeerConnectionError::OutboundQueueFull)
+        }
+        Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => {
+            // The writer task is gone. If it exited because a single send exceeded
+            // `OUTBOUND_SEND_TIMEOUT`, the peer was wedged: surface `OutboundSendTimeout` and
+            // attribute it likewise; otherwise the socket simply closed (`Disconnected`).
+            if state
+                .outbound_writer_timed_out
+                .load(std::sync::atomic::Ordering::Acquire)
+            {
+                state
+                    .disconnect_reason
+                    .get_or_insert(DisconnectReason::UselessPeer);
+                Err(PeerConnectionError::OutboundSendTimeout)
+            } else {
+                Err(PeerConnectionError::Disconnected)
+            }
+        }
+    }
+}
+
+/// Spawns the per-connection writer task that owns the `sink` and drains a bounded outbound
+/// queue into it. Keeping the network write off the actor thread means the actor's mailbox is
+/// never gated on a slow peer; the only outbound buffer is this bounded channel (capacity
+/// `OUTBOUND_QUEUE_CAP`). The task exits — closing the socket — when the connection is dropped
+/// (all senders gone), when a send errors, or when a single send exceeds `OUTBOUND_SEND_TIMEOUT`
+/// (a wedged peer). Once it exits, further `send()`s observe a closed queue and the peer is dropped.
+pub(crate) fn spawn_outbound_writer(
+    mut sink: SplitSink<Framed<TcpStream, RLPxCodec>, Message>,
+) -> (
+    tokio::sync::mpsc::Sender<Message>,
+    std::sync::Arc<std::sync::atomic::AtomicBool>,
+) {
+    let (tx, mut rx) = tokio::sync::mpsc::channel::<Message>(OUTBOUND_QUEUE_CAP);
+    // Set when the writer exits because a single send exceeded `OUTBOUND_SEND_TIMEOUT` (a wedged
+    // peer), so `send` can surface `OutboundSendTimeout` instead of a generic `Disconnected` once
+    // the bounded queue closes.
+    let timed_out = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let writer_timed_out = timed_out.clone();
+    tokio::spawn(async move {
+        while let Some(message) = rx.recv().await {
+            match tokio::time::timeout(OUTBOUND_SEND_TIMEOUT, sink.send(message)).await {
+                Ok(Ok(())) => {}
+                // Send error: the socket is gone; let the closed queue surface as `Disconnected`.
+                Ok(Err(_)) => break,
+                // The send itself timed out: the peer is wedged. Flag it so the drop is attributed.
+                Err(_) => {
+                    writer_timed_out.store(true, std::sync::atomic::Ordering::Release);
+                    break;
+                }
+            }
+        }
+        let _ = sink.close().await;
+    });
+    (tx, timed_out)
 }
 
 /// Reads from the frame until a frame is available.
@@ -1169,7 +1315,7 @@ async fn handle_incoming_message(
             | Message::GetTrieNodes(_)
     );
     if is_data_request && !check_serve_request_rate(state) {
-        warn!(
+        debug!(
             peer = %state.node,
             window_requests = state.serve_requests_in_window,
             "Disconnecting peer: exceeded incoming request rate limit",
@@ -1202,7 +1348,8 @@ async fn handle_incoming_message(
             send(state, Message::Pong(PongMessage {})).await?;
         }
         Message::Pong(_) => {
-            // We ignore received Pong messages
+            // Liveness: the peer answered our ping; reset the missed-pong counter.
+            state.missed_pongs = 0;
         }
         Message::Status68(msg_data) => {
             if let Some(eth) = &state.negotiated_eth_capability {
@@ -1234,7 +1381,11 @@ async fn handle_incoming_message(
                 state.received_txs_from_peer = true;
             }
             if state.blockchain.is_synced() {
-                let tx_hashes: Vec<_> = txs.transactions.iter().map(|tx| tx.hash()).collect();
+                let tx_hashes: Vec<_> = txs
+                    .transactions
+                    .iter()
+                    .map(|tx| tx.hash(&NativeCrypto))
+                    .collect();
 
                 // Offload pool insertion to a background task so we don't block
                 // the ConnectionServer (validation + signature recovery are expensive).
@@ -1293,13 +1444,36 @@ async fn handle_incoming_message(
             let mut block_access_lists =
                 Vec::with_capacity(block_hashes.len().min(BLOCK_ACCESS_LIST_LIMIT));
             for hash in &block_hashes {
-                match state.storage.get_block_access_list(*hash) {
-                    Ok(bal) => block_access_lists.push(bal),
+                // EIP-8159: only serve a BAL that matches the block header's
+                // commitment. A stored BAL that doesn't hash to the header's
+                // `block_access_list_hash` (e.g. a stale/empty entry from a prior
+                // regeneration) must be reported as unavailable (`0x80`) rather
+                // than served as a wrong BAL, which receiving peers would reject.
+                let bal = match state.storage.get_block_access_list(*hash) {
+                    Ok(Some(bal)) => {
+                        let commitment = match state.storage.get_block_header_by_hash(*hash) {
+                            Ok(Some(header)) => header.block_access_list_hash,
+                            Ok(None) => None,
+                            Err(err) => {
+                                // Don't serve an unverified BAL: degrade to 0x80
+                                // (unavailable), but log so an operator can tell a
+                                // committed BAL was refused due to a DB error.
+                                warn!(
+                                    "Failed to read header for BAL commitment check (hash {hash:#x}): {err}; reporting BAL unavailable"
+                                );
+                                None
+                            }
+                        };
+                        bal.matches_commitment(commitment, &NativeCrypto)
+                            .then_some(bal)
+                    }
+                    Ok(None) => None,
                     Err(err) => {
                         error!("Error accessing DB while building BAL response for peer: {err}");
-                        block_access_lists.push(None);
+                        None
                     }
-                }
+                };
+                block_access_lists.push(bal);
                 if block_access_lists.len() >= BLOCK_ACCESS_LIST_LIMIT {
                     break;
                 }
@@ -1387,10 +1561,10 @@ async fn handle_incoming_message(
             );
             // We will only validate the incoming update, we may decide to store and use this information in the future
             if let Err(err) = update.validate() {
-                warn!(
+                debug!(
                     peer=%state.node,
                     reason=%err,
-                    "disconnected from peer",
+                    "Disconnecting peer: invalid block range update",
                 );
                 send_disconnect_message(state, Some(DisconnectReason::SubprotocolError)).await;
                 return Err(PeerConnectionError::DisconnectSent(
@@ -1419,7 +1593,7 @@ async fn handle_incoming_message(
             if state.txs_sent_to_peer + batch_size > LEECH_TX_SENT_THRESHOLD
                 && !state.received_txs_from_peer
             {
-                warn!(
+                debug!(
                     peer = %state.node,
                     txs_sent = state.txs_sent_to_peer,
                     "Disconnecting peer: leech detected (sent many txs but received none)",
@@ -1454,9 +1628,9 @@ async fn handle_incoming_message(
                             .validate_blob_commitment_hashes(&itx.tx.blob_versioned_hashes)
                             .is_err())
                 {
-                    warn!(
+                    debug!(
                         peer=%state.node,
-                        "disconnected from peer. Reason: Invalid/Missing Blobs",
+                        "Disconnecting peer: invalid or missing blobs",
                     );
                     if let Some((_announced, requested_hashes, _)) = &removed_request {
                         retry_on_alternates(&state.blockchain, &state.peer_table, requested_hashes)
@@ -1472,10 +1646,10 @@ async fn handle_incoming_message(
                 if let Some((announced, requested_hashes, _)) = &removed_request {
                     let fork = state.blockchain.current_fork().await?;
                     if let Err(error) = msg.validate_requested(announced, fork) {
-                        warn!(
+                        debug!(
                             peer=%state.node,
                             reason=%error,
-                            "disconnected from peer",
+                            "Disconnecting peer: invalid pooled transactions response",
                         );
                         retry_on_alternates(&state.blockchain, &state.peer_table, requested_hashes)
                             .await;
@@ -1496,10 +1670,10 @@ async fn handle_incoming_message(
                         error,
                         ethrex_blockchain::error::MempoolError::BlobsBundleError(_)
                     ) {
-                        warn!(
+                        debug!(
                             peer=%state.node,
                             reason=%error,
-                            "disconnected from peer",
+                            "Disconnecting peer: invalid pooled transactions response",
                         );
                         if let Some((_announced, requested_hashes, _)) = &removed_request {
                             retry_on_alternates(
@@ -1685,7 +1859,7 @@ async fn flush_pending_tx_requests(state: &mut Established) -> Result<(), PeerCo
             let unsent = &all_hashes[offset..];
             if !unsent.is_empty() {
                 if let Err(clear_err) = state.blockchain.mempool.clear_in_flight_txs(unsent) {
-                    warn!(error = %clear_err, "clear_in_flight_txs failed after send error");
+                    warn!(error = %clear_err, "Failed to clear in-flight transaction tracking after send error");
                 }
                 retry_on_alternates(&state.blockchain, &state.peer_table, unsent).await;
             }
@@ -1767,7 +1941,7 @@ async fn retry_on_alternates(
         let announcement =
             NewPooledTransactionHashes::from_raw(types.into(), sizes, hash_list.clone());
         if let Err(e) = conn.enqueue_tx_requests(announcement, hash_list) {
-            warn!(error = %e, "failed to enqueue tx requests on alternate peer");
+            debug!(error = %e, "Failed to enqueue tx requests on alternate peer");
         }
     }
 }

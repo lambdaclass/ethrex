@@ -8,6 +8,7 @@ use crate::rlpx::snap::{
 };
 use ethrex_common::types::AccountStateSlimCodec;
 
+use super::constants::MAX_RESPONSE_BYTES;
 use super::error::SnapError;
 use super::proof_to_encodable;
 
@@ -18,13 +19,17 @@ pub async fn process_account_range_request(
     store: Store,
 ) -> Result<AccountRange, SnapError> {
     tokio::task::spawn_blocking(move || {
+        // `responseBytes` is a soft limit chosen by the requester; clamp it to our server
+        // maximum so a peer cannot request an unbounded walk of the whole state trie
+        // (a single such request buffers every account into memory before replying — OOM).
+        let byte_budget = request.response_bytes.min(MAX_RESPONSE_BYTES);
         let mut accounts = vec![];
         let mut bytes_used = 0;
         for (hash, account) in store.iter_accounts_from(request.root_hash, request.starting_hash)? {
             debug_assert!(hash >= request.starting_hash);
             bytes_used += 32 + AccountStateSlimCodec(account).length() as u64;
             accounts.push(AccountRangeUnit { hash, account });
-            if hash >= request.limit_hash || bytes_used >= request.response_bytes {
+            if hash >= request.limit_hash || bytes_used >= byte_budget {
                 break;
             }
         }
@@ -48,6 +53,9 @@ pub async fn process_storage_ranges_request(
     store: Store,
 ) -> Result<StorageRanges, SnapError> {
     tokio::task::spawn_blocking(move || {
+        // Same soft-limit clamp as the account-range handler: bound the attacker-supplied
+        // budget so a peer cannot walk a contract's entire storage trie into memory.
+        let byte_budget = request.response_bytes.min(MAX_RESPONSE_BYTES);
         let mut slots = vec![];
         let mut proof = vec![];
         let mut bytes_used = 0;
@@ -63,8 +71,8 @@ pub async fn process_storage_ranges_request(
                     debug_assert!(hash >= request.starting_hash);
                     bytes_used += 64_u64; // slot size
                     account_slots.push(StorageSlot { hash, data });
-                    if hash >= request.limit_hash || bytes_used >= request.response_bytes {
-                        if bytes_used >= request.response_bytes {
+                    if hash >= request.limit_hash || bytes_used >= byte_budget {
+                        if bytes_used >= byte_budget {
                             res_capped = true;
                         }
                         break;
@@ -91,7 +99,7 @@ pub async fn process_storage_ranges_request(
                 slots.push(account_slots);
             }
 
-            if bytes_used >= request.response_bytes {
+            if bytes_used >= byte_budget {
                 break;
             }
         }
@@ -110,14 +118,18 @@ pub async fn process_byte_codes_request(
     store: Store,
 ) -> Result<ByteCodes, SnapError> {
     tokio::task::spawn_blocking(move || {
+        // Clamp the peer-supplied budget: `hashes` can be a large (or snappy-inflated,
+        // repeated) list, so an unbounded `bytes` would let one request buffer many large
+        // bytecodes into memory.
+        let byte_budget = request.bytes.min(MAX_RESPONSE_BYTES);
         let mut codes = vec![];
         let mut bytes_used = 0;
         for code_hash in request.hashes {
-            if let Some(code) = store.get_account_code(code_hash)?.map(|c| c.bytecode) {
+            if let Some(code) = store.get_account_code(code_hash)?.map(|c| c.code_bytes()) {
                 bytes_used += code.len() as u64;
                 codes.push(code);
             }
-            if bytes_used >= request.bytes {
+            if bytes_used >= byte_budget {
                 break;
             }
         }
@@ -136,7 +148,9 @@ pub async fn process_trie_nodes_request(
 ) -> Result<TrieNodes, SnapError> {
     tokio::task::spawn_blocking(move || {
         let mut nodes = vec![];
-        let mut remaining_bytes = request.bytes;
+        // Clamp the peer-supplied budget so a single request cannot pull an unbounded
+        // number of trie nodes into memory.
+        let mut byte_budget = request.bytes.min(MAX_RESPONSE_BYTES);
         for paths in request.paths {
             if paths.is_empty() {
                 return Err(SnapError::BadRequest(
@@ -146,12 +160,12 @@ pub async fn process_trie_nodes_request(
             let trie_nodes = store.get_trie_nodes(
                 request.root_hash,
                 paths.into_iter().map(|bytes| bytes.to_vec()).collect(),
-                remaining_bytes,
+                byte_budget,
             )?;
             nodes.extend(trie_nodes.iter().map(|nodes| Bytes::copy_from_slice(nodes)));
-            remaining_bytes = remaining_bytes
+            byte_budget = byte_budget
                 .saturating_sub(trie_nodes.iter().fold(0, |acc, nodes| acc + nodes.len()) as u64);
-            if remaining_bytes == 0 {
+            if byte_budget == 0 {
                 break;
             }
         }

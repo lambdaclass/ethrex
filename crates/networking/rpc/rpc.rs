@@ -2,9 +2,12 @@ use crate::authentication::authenticate;
 use crate::debug::chain_config::ChainConfigRequest;
 use crate::debug::execution_witness::ExecutionWitnessRequest;
 use crate::debug::execution_witness_by_hash::ExecutionWitnessByBlockHashRequest;
+use crate::debug::set_head::SetHeadRequest;
 use crate::engine::blobs::{BlobsV2Request, BlobsV3Request};
 use crate::engine::client_version::GetClientVersionV1Request;
-use crate::engine::payload::{GetPayloadV5Request, GetPayloadV6Request, NewPayloadV5Request};
+use crate::engine::payload::{
+    GetPayloadV5Request, GetPayloadV6Request, NewPayloadV5Request, NewPayloadWithWitnessV5Request,
+};
 use crate::engine::{
     ExchangeCapabilitiesRequest,
     blobs::BlobsV1Request,
@@ -44,6 +47,7 @@ use crate::eth::{
     },
 };
 use crate::subscription_manager::{SubscriptionManager, SubscriptionManagerProtocol};
+use crate::testing::BuildBlockV1Request;
 use crate::tracing::{TraceBlockByNumberRequest, TraceTransactionRequest};
 use crate::types::transaction::SendRawTransactionRequest;
 use crate::utils::{
@@ -64,6 +68,7 @@ use ethrex_blockchain::Blockchain;
 use ethrex_blockchain::error::ChainError;
 use ethrex_common::types::Block;
 use ethrex_common::types::block_access_list::BlockAccessList;
+use ethrex_common::types::block_execution_witness::ExecutionWitness;
 use ethrex_metrics::rpc::{RpcOutcome, record_async_duration, record_rpc_outcome};
 use ethrex_p2p::peer_handler::PeerHandler;
 use ethrex_p2p::sync_manager::SyncManager;
@@ -87,6 +92,7 @@ use tokio::sync::{
     oneshot,
 };
 use tokio::time::timeout;
+use tokio_util::sync::CancellationToken;
 use tower_http::cors::CorsLayer;
 use tracing::{error, info, warn};
 use tracing_subscriber::{EnvFilter, Registry, reload};
@@ -180,9 +186,10 @@ pub enum RpcRequestWrapper {
 
 /// Channel message type for the block executor worker thread.
 type BlockWorkerMessage = (
-    oneshot::Sender<Result<(), ChainError>>,
+    oneshot::Sender<Result<Option<ExecutionWitness>, ChainError>>,
     Block,
     Option<BlockAccessList>,
+    bool,
 );
 
 /// This struct contains all the dependencies that RPC handlers need to process requests,
@@ -446,9 +453,19 @@ pub fn start_block_executor(blockchain: Arc<Blockchain>) -> UnboundedSender<Bloc
     std::thread::Builder::new()
         .name("block_executor".to_string())
         .spawn(move || {
-            while let Some((notify, block, bal)) = block_receiver.blocking_recv() {
+            while let Some((notify, block, bal, make_witness)) = block_receiver.blocking_recv() {
+                let result = (|| {
+                    let bal = bal.map(Arc::new);
+                    if make_witness {
+                        let witness = blockchain.add_block_pipeline_with_witness(block, bal)?;
+                        Ok(Some(witness))
+                    } else {
+                        blockchain.add_block_pipeline(block, bal)?;
+                        Ok(None)
+                    }
+                })();
                 let _ = notify
-                    .send(blockchain.add_block_pipeline(block, bal.as_ref()))
+                    .send(result)
                     .inspect_err(|_| tracing::error!("failed to notify caller"));
             }
         })
@@ -513,6 +530,7 @@ pub async fn start_api(
     gas_ceil: u64,
     extra_data: String,
     allowed_namespaces: HashSet<RpcNamespace>,
+    cancel_token: CancellationToken,
 ) -> Result<(), RpcErr> {
     // TODO: Refactor how filters are handled,
     // filters are used by the filters endpoints (eth_newFilter, eth_getFilterChanges, ...etc)
@@ -570,7 +588,7 @@ pub async fn start_api(
         .await
         .map_err(|error| RpcErr::Internal(error.to_string()))?;
     let http_server = axum::serve(http_listener, http_router)
-        .with_graceful_shutdown(shutdown_signal())
+        .with_graceful_shutdown(rpc_shutdown_signal(cancel_token.clone()))
         .into_future();
     info!("Starting HTTP server at {http_addr}");
 
@@ -601,7 +619,7 @@ pub async fn start_api(
         .await
         .map_err(|error| RpcErr::Internal(error.to_string()))?;
     let authrpc_server = axum::serve(authrpc_listener, authrpc_router)
-        .with_graceful_shutdown(shutdown_signal())
+        .with_graceful_shutdown(rpc_shutdown_signal(cancel_token.clone()))
         .into_future();
     info!("Starting Auth-RPC server at {authrpc_addr}");
 
@@ -623,7 +641,7 @@ pub async fn start_api(
             .await
             .map_err(|error| RpcErr::Internal(error.to_string()))?;
         let ws_server = axum::serve(ws_listener, ws_router)
-            .with_graceful_shutdown(shutdown_signal())
+            .with_graceful_shutdown(rpc_shutdown_signal(cancel_token.clone()))
             .into_future();
         info!("Starting WS server at {}", ws_config.addr);
 
@@ -644,6 +662,19 @@ pub async fn shutdown_signal() {
     tokio::signal::ctrl_c()
         .await
         .expect("failed to install Ctrl+C handler");
+}
+
+/// Graceful-shutdown future for the node's RPC servers: completes on Ctrl+C or
+/// when `cancel_token` is cancelled.
+///
+/// `server_shutdown` cancels the token on both SIGINT and SIGTERM, so keying on
+/// it (not just Ctrl+C) is what makes the engine API stop accepting requests on
+/// SIGTERM, e.g. `docker stop`, before the store is flushed.
+async fn rpc_shutdown_signal(cancel_token: CancellationToken) {
+    tokio::select! {
+        _ = cancel_token.cancelled() => {}
+        _ = shutdown_signal() => {}
+    }
 }
 
 /// Maximum number of requests accepted in a single JSON-RPC batch on either
@@ -1054,6 +1085,7 @@ pub async fn map_http_requests(req: &RpcRequest, context: RpcApiContext) -> Resu
         RpcNamespace::Web3 => map_web3_requests(req, context),
         RpcNamespace::Net => map_net_requests(req, context).await,
         RpcNamespace::Mempool => map_mempool_requests(req, context),
+        RpcNamespace::Testing => map_testing_requests(req, context).await,
         // Engine is served on the authenticated port only. The CLI parser
         // already rejects `--http.api engine`, but `allowed_namespaces` can
         // also be built programmatically (e.g. in tests or future call sites),
@@ -1136,6 +1168,20 @@ pub async fn map_eth_requests(req: &RpcRequest, context: RpcApiContext) -> Resul
     }
 }
 
+/// Routes `testing_*` namespace requests to their handlers.
+///
+/// Testing-only methods for fixture generation. This namespace is disabled by
+/// default and must never be exposed on public-facing RPC APIs.
+pub async fn map_testing_requests(
+    req: &RpcRequest,
+    context: RpcApiContext,
+) -> Result<Value, RpcErr> {
+    match req.method.as_str() {
+        "testing_buildBlockV1" => BuildBlockV1Request::call(req, context).await,
+        unknown_testing_method => Err(RpcErr::MethodNotFound(unknown_testing_method.to_owned())),
+    }
+}
+
 /// Routes `debug_*` namespace requests to their handlers.
 ///
 /// Handles debugging and introspection methods:
@@ -1153,6 +1199,7 @@ pub async fn map_debug_requests(req: &RpcRequest, context: RpcApiContext) -> Res
             ExecutionWitnessByBlockHashRequest::call(req, context).await
         }
         "debug_chainConfig" => ChainConfigRequest::call(req, context).await,
+        "debug_setHead" => SetHeadRequest::call(req, context).await,
         "debug_traceTransaction" => TraceTransactionRequest::call(req, context).await,
         "debug_traceBlockByNumber" => TraceBlockByNumberRequest::call(req, context).await,
         unknown_debug_method => Err(RpcErr::MethodNotFound(unknown_debug_method.to_owned())),
@@ -1166,8 +1213,8 @@ pub async fn map_debug_requests(req: &RpcRequest, context: RpcApiContext) -> Res
 ///
 /// Handles:
 /// - Fork choice: `engine_forkchoiceUpdatedV1/V2/V3`
-/// - Payload submission: `engine_newPayloadV1/V2/V3/V4`
-/// - Payload retrieval: `engine_getPayloadV1/V2/V3/V4/V5`
+/// - Payload submission: `engine_newPayloadV1/V2/V3/V4/V5`, `engine_newPayloadWithWitnessV5`
+/// - Payload retrieval: `engine_getPayloadV1/V2/V3/V4/V5/V6`
 /// - Payload bodies: `engine_getPayloadBodiesByHashV1`, `engine_getPayloadBodiesByRangeV1`
 /// - Blob retrieval: `engine_getBlobsV1/V2/V3`
 /// - Capabilities: `engine_exchangeCapabilities`, `engine_exchangeTransitionConfigurationV1`
@@ -1181,9 +1228,19 @@ pub async fn map_engine_requests(
         "engine_forkchoiceUpdatedV2" => ForkChoiceUpdatedV2::call(req, context).await,
         "engine_forkchoiceUpdatedV3" => ForkChoiceUpdatedV3::call(req, context).await,
         "engine_forkchoiceUpdatedV4" => ForkChoiceUpdatedV4::call(req, context).await,
-        "engine_newPayloadV5" => NewPayloadV5Request::call(req, context).await,
-        "engine_newPayloadV4" => NewPayloadV4Request::call(req, context).await,
-        "engine_newPayloadV3" => NewPayloadV3Request::call(req, context).await,
+        // The newPayload handlers carry the largest futures of any engine arm
+        // (block execution + optional witness collection). Because this `match`
+        // awaits each arm inline, the future of `map_engine_requests` is sized to
+        // its largest arm and shared by every engine request. Box these arms so
+        // they live on the heap instead of inflating the stack frame that even a
+        // lightweight `forkchoiceUpdated` poll must reserve — otherwise a single
+        // poll overflows the 2 MB tokio worker stack in unoptimized debug builds.
+        "engine_newPayloadWithWitnessV5" => {
+            Box::pin(NewPayloadWithWitnessV5Request::call(req, context)).await
+        }
+        "engine_newPayloadV5" => Box::pin(NewPayloadV5Request::call(req, context)).await,
+        "engine_newPayloadV4" => Box::pin(NewPayloadV4Request::call(req, context)).await,
+        "engine_newPayloadV3" => Box::pin(NewPayloadV3Request::call(req, context)).await,
         "engine_newPayloadV2" => NewPayloadV2Request::call(req, context).await,
         "engine_newPayloadV1" => NewPayloadV1Request::call(req, context).await,
         "engine_exchangeTransitionConfigurationV1" => {
@@ -1501,6 +1558,7 @@ mod tests {
                             "bpo4Time": null,
                             "bpo5Time": null,
                             "amsterdamTime": null,
+                            "hegotaTime": null,
                             "terminalTotalDifficulty": "0x0",
                             "terminalTotalDifficultyPassed": true,
                             "blobSchedule": blob_schedule,

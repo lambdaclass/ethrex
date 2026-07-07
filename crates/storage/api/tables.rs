@@ -39,17 +39,18 @@ pub const RECEIPTS: &str = "receipts";
 /// Receipts v2 column family: [`Vec<u8>`] => [`Vec<u8>`]
 /// - Key: `block_hash (32B) || index (8B big-endian u64)` — fixed-width raw key
 ///   enabling cursor-based prefix iteration by block hash.
-/// - Value: `receipt.encode_to_vec()`
+/// - Value: `receipt.encode_storage()` (internal storage codec; NOT the
+///   wire/consensus format — byte-identical to `encode_to_vec()` for
+///   non-frame receipts, full-fidelity layout for frame receipts)
 pub const RECEIPTS_V2: &str = "receipts_v2";
 
 /// Transaction locations column family: [`Vec<u8>`] => [`Vec<u8>`]
-/// - [`Vec<u8>`] = Composite key
-///    ```rust,no_run
-///     // let mut composite_key = Vec::with_capacity(64);
-///     // composite_key.extend_from_slice(transaction_hash.as_bytes());
-///     // composite_key.extend_from_slice(block_hash.as_bytes());
-///    ```
-/// - [`Vec<u8>`] = `(block_number, block_hash, index).encode_to_vec()`
+/// - Key: `transaction_hash.as_bytes()` (32 bytes)
+/// - Value: `Vec<(block_number, block_hash, index)>.encode_to_vec()`
+///
+/// The value is a list because, in the rare case of a reorg, the same
+/// transaction may appear in multiple blocks. Readers must filter by the
+/// canonical chain to pick the right `(block_number, block_hash, index)`.
 pub const TRANSACTION_LOCATIONS: &str = "transaction_locations";
 
 /// Chain data column family: [`Vec<u8>`] => [`Vec<u8>`]

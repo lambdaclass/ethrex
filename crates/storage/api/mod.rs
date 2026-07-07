@@ -51,6 +51,13 @@ pub trait StorageBackend: Debug + Send + Sync {
     // TODO: remove this and provide historic data via diff-layers
     /// Creates a checkpoint of the current database state at the specified path.
     fn create_checkpoint(&self, path: &Path) -> Result<(), StoreError>;
+
+    /// Durably persists all buffered writes to disk, so a subsequent process
+    /// start needs no crash recovery. Called on graceful shutdown. Defaults to a
+    /// no-op for backends that are already durable or purely in-memory.
+    fn flush(&self) -> Result<(), StoreError> {
+        Ok(())
+    }
 }
 
 /// Read-only transaction interface.
@@ -87,6 +94,16 @@ pub trait StorageWriteBatch: Send {
 
     /// Removes a key-value pair from the specified table.
     fn delete(&mut self, table: &'static str, key: &[u8]) -> Result<(), StoreError>;
+
+    /// Appends a merge operand for the given key in the specified table.
+    ///
+    /// The actual combine step is deferred — backends with a registered merge
+    /// operator (RocksDB) apply it at read or compaction time; backends without
+    /// (InMemory) dispatch by table and apply inline.
+    ///
+    /// Currently used for `TRANSACTION_LOCATIONS`. Calling on a table without
+    /// a registered merge function is an error.
+    fn merge(&mut self, table: &'static str, key: &[u8], operand: &[u8]) -> Result<(), StoreError>;
 
     /// Commits all changes made in this transaction.
     fn commit(&mut self) -> Result<(), StoreError>;

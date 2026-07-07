@@ -68,6 +68,7 @@ mod mempool;
 mod net;
 pub mod rpc;
 pub mod subscription_manager;
+pub mod testing;
 mod tracing;
 
 pub mod clients;
@@ -77,6 +78,7 @@ pub use clients::{EngineClient, EthClient};
 
 pub use rpc::{start_api, start_block_executor};
 
+#[cfg(any(test, feature = "test-utils"))]
 pub mod test_utils;
 
 // TODO: These exports are needed by ethrex-l2-rpc, but we do not want to

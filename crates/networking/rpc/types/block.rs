@@ -3,6 +3,7 @@ use ethrex_common::{
     H256, serde_utils,
     types::{Block, BlockBody, BlockHash, BlockHeader, BlockNumber, Withdrawal},
 };
+use ethrex_crypto::NativeCrypto;
 use ethrex_rlp::encode::RLPEncode;
 
 use crate::utils::RpcErr;
@@ -77,7 +78,11 @@ impl RpcBlock {
             BlockBodyWrapper::Full(FullBlockBody::from_body(body, header.number, hash)?)
         } else {
             BlockBodyWrapper::OnlyHashes(OnlyHashesBlockBody {
-                transactions: body.transactions.iter().map(|t| t.hash()).collect(),
+                transactions: body
+                    .transactions
+                    .iter()
+                    .map(|t| t.hash(&NativeCrypto))
+                    .collect(),
                 uncles: body.ommers.iter().map(|ommer| ommer.hash()).collect(),
                 withdrawals: body.withdrawals.unwrap_or_default(),
             })
@@ -120,7 +125,7 @@ mod test {
     use bytes::Bytes;
     use ethrex_common::{
         Address, Bloom, H256, U256,
-        constants::EMPTY_KECCACK_HASH,
+        constants::EMPTY_KECCAK_HASH,
         types::{EIP1559Transaction, Transaction, TxKind},
     };
     use std::str::FromStr;
@@ -170,7 +175,7 @@ mod test {
             blob_gas_used: Some(0x00),
             excess_blob_gas: Some(0x00),
             parent_beacon_block_root: Some(H256::zero()),
-            requests_hash: Some(*EMPTY_KECCACK_HASH),
+            requests_hash: Some(*EMPTY_KECCAK_HASH),
             ..Default::default()
         };
 

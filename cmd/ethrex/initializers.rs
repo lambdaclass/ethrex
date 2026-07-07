@@ -1,8 +1,9 @@
 use crate::{
     cli::{LogColor, Options},
     utils::{
-        display_chain_initialization, get_client_version, get_client_version_string, init_datadir,
-        is_memory_datadir, parse_socket_addr, read_jwtsecret_file, read_node_config_file,
+        display_chain_initialization, get_channel, get_client_version, get_client_version_string,
+        init_datadir, is_memory_datadir, parse_socket_addr, read_jwtsecret_file,
+        read_node_config_file,
     },
 };
 use ethrex_blockchain::{Blockchain, BlockchainOptions, BlockchainType};
@@ -24,7 +25,9 @@ use ethrex_p2p::{
     types::{NetworkConfig, Node, NodeRecord},
     utils::public_key_from_signing_key,
 };
-use ethrex_storage::{EngineType, Store, error::StoreError, has_valid_db, read_chain_id_from_db};
+use ethrex_storage::{
+    EngineType, Store, StoreConfig, error::StoreError, has_valid_db, read_chain_id_from_db,
+};
 use local_ip_address::{local_ip, local_ipv6};
 use rand::rngs::OsRng;
 use secp256k1::SecretKey;
@@ -82,7 +85,7 @@ pub fn init_tracing(
             std::fs::create_dir_all(log_dir).expect("Failed to create log directory");
         }
 
-        let branch = env!("VERGEN_GIT_BRANCH").replace('/', "-");
+        let branch = get_channel().replace('/', "-");
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
@@ -121,7 +124,7 @@ pub fn init_metrics(opts: &Options, network: &Network, tracker: TaskTracker) {
     ethrex_metrics::node::MetricsNode::init(
         env!("CARGO_PKG_VERSION"),
         env!("VERGEN_GIT_SHA"),
-        env!("VERGEN_GIT_BRANCH"),
+        &get_channel(),
         env!("VERGEN_RUSTC_SEMVER"),
         env!("VERGEN_RUSTC_HOST_TRIPLE"),
         &network.to_string(),
@@ -143,30 +146,76 @@ pub fn init_metrics(opts: &Options, network: &Network, tracker: TaskTracker) {
     tracker.spawn(metrics_api);
 }
 
-/// Opens a new or pre-existing Store and loads the initial state provided by the network
+/// Opens a new or pre-existing Store with default tunables and loads the initial
+/// state provided by the network. See [`init_store_with_config`] for the variant
+/// that lets production callers thread CLI-provided storage tunables through.
 pub async fn init_store(datadir: impl AsRef<Path>, genesis: Genesis) -> Result<Store, StoreError> {
-    let mut store = open_store(datadir.as_ref())?;
+    init_store_with_config(datadir, genesis, StoreConfig::default()).await
+}
+
+/// Opens a Store with the supplied [`StoreConfig`] and loads the initial state.
+pub async fn init_store_with_config(
+    datadir: impl AsRef<Path>,
+    genesis: Genesis,
+    config: StoreConfig,
+) -> Result<Store, StoreError> {
+    let mut store = open_store_with_config(datadir.as_ref(), config)?;
     store.add_initial_state(genesis).await?;
     Ok(store)
 }
 
-/// Initializes a pre-existing Store
+/// Like [`init_store`], but trusts a pre-existing datadir's genesis instead of
+/// validating it against `genesis`. See [`Store::add_initial_state_skip_validation`].
+pub async fn init_store_skip_validation(
+    datadir: impl AsRef<Path>,
+    genesis: Genesis,
+) -> Result<Store, StoreError> {
+    init_store_skip_validation_with_config(datadir, genesis, StoreConfig::default()).await
+}
+
+/// Like [`init_store_with_config`], but trusts a pre-existing datadir's genesis
+/// instead of validating it against `genesis`.
+pub async fn init_store_skip_validation_with_config(
+    datadir: impl AsRef<Path>,
+    genesis: Genesis,
+    config: StoreConfig,
+) -> Result<Store, StoreError> {
+    let mut store = open_store_with_config(datadir.as_ref(), config)?;
+    store.add_initial_state_skip_validation(genesis).await?;
+    Ok(store)
+}
+
+/// Initializes a pre-existing Store with default tunables. See [`load_store_with_config`].
 pub async fn load_store(datadir: &Path) -> Result<Store, StoreError> {
-    let store = open_store(datadir)?;
+    load_store_with_config(datadir, StoreConfig::default()).await
+}
+
+/// Initializes a pre-existing Store, applying the supplied [`StoreConfig`].
+pub async fn load_store_with_config(
+    datadir: &Path,
+    config: StoreConfig,
+) -> Result<Store, StoreError> {
+    let store = open_store_with_config(datadir, config)?;
     store.load_initial_state().await?;
     Ok(store)
 }
 
-/// Opens a pre-existing Store or creates a new one
+/// Opens a pre-existing Store or creates a new one with default tunables.
+/// See [`open_store_with_config`].
 pub fn open_store(datadir: &Path) -> Result<Store, StoreError> {
+    open_store_with_config(datadir, StoreConfig::default())
+}
+
+/// Opens a pre-existing Store or creates a new one, applying the supplied [`StoreConfig`].
+pub fn open_store_with_config(datadir: &Path, config: StoreConfig) -> Result<Store, StoreError> {
     if is_memory_datadir(datadir) {
-        Store::new(datadir, EngineType::InMemory)
+        Store::new_with_config(datadir, EngineType::InMemory, config)
     } else {
         #[cfg(feature = "rocksdb")]
         let engine_type = EngineType::RocksDB;
         #[cfg(feature = "metrics")]
         ethrex_metrics::process::set_datadir_path(datadir.to_path_buf());
-        Store::new(datadir, engine_type)
+        Store::new_with_config(datadir, engine_type, config)
     }
 }
 
@@ -202,7 +251,7 @@ pub async fn init_rpc_api(
     let syncer = SyncManager::new(
         peer_handler.clone(),
         syncmode,
-        cancel_token,
+        cancel_token.clone(),
         blockchain.clone(),
         store.clone(),
         datadir.to_path_buf(),
@@ -234,6 +283,7 @@ pub async fn init_rpc_api(
         opts.gas_limit,
         opts.extra_data.clone(),
         opts.http_api.iter().copied().collect(),
+        cancel_token,
     );
 
     tracker.spawn(rpc_api);
@@ -525,7 +575,7 @@ async fn set_sync_block(store: &Store) {
 pub async fn init_l1(
     opts: Options,
     log_filter_handler: Option<reload::Handle<EnvFilter, Registry>>,
-) -> eyre::Result<(PathBuf, CancellationToken, PeerTable, NodeRecord)> {
+) -> eyre::Result<(PathBuf, CancellationToken, PeerTable, NodeRecord, Store)> {
     let network = get_network(&opts);
     let datadir = crate::cli::compute_effective_datadir(&opts.datadir, &network, opts.dev);
 
@@ -542,7 +592,16 @@ pub async fn init_l1(
     debug!("Preloading KZG trusted setup");
     ethrex_crypto::kzg::warm_up_trusted_setup();
 
-    let store = match init_store(&datadir, genesis).await {
+    let store_config = StoreConfig {
+        rocksdb_block_cache_size: opts.rocksdb_block_cache_size,
+        ..StoreConfig::default()
+    };
+    let store_result = if opts.skip_genesis_validation {
+        init_store_skip_validation_with_config(&datadir, genesis, store_config).await
+    } else {
+        init_store_with_config(&datadir, genesis, store_config).await
+    };
+    let store = match store_result {
         Ok(store) => store,
         Err(err @ StoreError::IncompatibleDBVersion { .. })
         | Err(err @ StoreError::NotFoundDBVersion) => {
@@ -574,6 +633,7 @@ pub async fn init_l1(
             max_blobs_per_block: opts.max_blobs_per_block,
             precompute_witnesses: opts.precompute_witnesses,
             precompile_cache_enabled: !opts.no_precompile_cache,
+            max_queued_txs_per_account: opts.mempool_max_queued_txs_per_account,
             bal_parallel_exec_enabled: !opts.no_bal_parallel_exec,
             bal_prefetch_enabled: !opts.no_bal_prefetch,
             bal_parallel_trie_enabled: !opts.no_bal_parallel_trie,
@@ -656,6 +716,7 @@ pub async fn init_l1(
         cancel_token,
         peer_handler.peer_table,
         local_node_record,
+        store,
     ))
 }
 
@@ -788,25 +849,18 @@ pub fn migrate_datadir_if_needed(
     }
 }
 
-/// Regenerates the state up to the head block by re-applying blocks from the
-/// last known state root.
-///
-/// Since the path-based feature was added, the database stores the state 128
-/// blocks behind the head block while the state of the blocks in between are
-/// kept in in-memory-diff-layers.
-///
-/// After the node is shut down, those in-memory layers are lost, and the database
-/// won't have the state for those blocks. It will have the blocks though.
-///
-/// When the node is started again, the state needs to be regenerated by
-/// re-applying the blocks from the last known state root up to the head block.
-///
-/// This function performs that regeneration.
+/// Re-apply blocks from the last on-disk state root up to the head block,
+/// rebuilding the in-memory trie diff-layers lost across a restart.
 pub async fn regenerate_head_state(
     store: &Store,
     blockchain: &Arc<Blockchain>,
 ) -> eyre::Result<()> {
+    // Precondition: the store was opened via `add_initial_state`/`load_initial_state`,
+    // which clamp `LatestBlockNumber` to `flushed_upto`. All blocks up to
+    // `head_block_number` are therefore on disk; callers that skip that clamp
+    // would break this assumption.
     let head_block_number = store.get_latest_block_number().await?;
+    debug!("regenerate_head_state head clamped to durable block {head_block_number}");
 
     let Some(last_header) = store.get_block_header(head_block_number)? else {
         unreachable!("Database is empty, genesis block should be present");

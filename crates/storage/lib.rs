@@ -66,6 +66,7 @@
 
 pub mod api;
 pub mod backend;
+pub mod block_data_buffer;
 pub mod error;
 mod layering;
 pub mod migrations;
@@ -76,8 +77,8 @@ pub mod utils;
 
 pub use layering::apply_prefix;
 pub use store::{
-    AccountUpdatesList, EngineType, Store, UpdateBatch, has_valid_db, hash_address, hash_key,
-    read_chain_id_from_db,
+    AccountUpdatesList, DEFAULT_ROCKSDB_BLOCK_CACHE_SIZE_BYTES, EngineType, Store, StoreConfig,
+    UpdateBatch, has_valid_db, hash_address, hash_key, read_chain_id_from_db,
 };
 
 /// Store Schema Version, must be updated on any breaking change.
@@ -85,7 +86,7 @@ pub use store::{
 /// When bumping this version, add a corresponding migration function to
 /// `migrations::MIGRATIONS`. The migration framework will automatically
 /// upgrade existing databases instead of requiring a full resync.
-pub const STORE_SCHEMA_VERSION: u64 = 2;
+pub const STORE_SCHEMA_VERSION: u64 = 3;
 
 /// Name of the file storing the metadata about the database.
 ///

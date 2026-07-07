@@ -1,13 +1,18 @@
 use std::sync::Arc;
 
+#[cfg(feature = "eip-8025")]
+use ethrex_common::Address;
+#[cfg(feature = "eip-8025")]
+use ethrex_common::utils::keccak;
 use ethrex_crypto::Crypto;
 
 use crate::common::ExecutionError;
 use crate::common::execute_blocks;
-#[cfg(not(feature = "eip-8025"))]
 use crate::l1::input::ProgramInput;
 #[cfg(feature = "eip-8025")]
-use crate::l1::input::{CanonicalExecutionWitness, CanonicalStatelessInput, DecodedEip8025};
+use crate::l1::input::{
+    CanonicalExecutionWitness, CanonicalStatelessInput, DecodedEip8025, PublicKeysList,
+};
 use crate::l1::output::ProgramOutput;
 
 use ethrex_common::types::ELASTICITY_MULTIPLIER;
@@ -84,17 +89,48 @@ pub fn execution_program(
     bytes: &[u8],
     crypto: Arc<dyn Crypto>,
 ) -> Result<ProgramOutput, ExecutionError> {
-    use libssz_merkle::HashTreeRoot;
-
     let decoded = super::decode_eip8025(bytes).map_err(|err| {
         ExecutionError::Internal(format!("failed to decode EIP-8025 input: {err}"))
     })?;
 
-    match decoded {
-        DecodedEip8025::Legacy {
-            new_payload_request,
+    execute_decoded(ProgramInput::Wire(decoded), crypto)
+}
+
+/// Execute an already-built [`ProgramInput`].
+///
+/// The `Direct` arm has no `NewPayloadRequest`, so it returns a sentinel
+/// `ProgramOutput` with zero request_root and `valid = true`. `ExecBackend`
+/// promotes `valid = false` to `Err` for result-only callers.
+#[cfg(feature = "eip-8025")]
+pub fn execute_decoded(
+    input: ProgramInput,
+    crypto: Arc<dyn Crypto>,
+) -> Result<ProgramOutput, ExecutionError> {
+    use libssz_merkle::HashTreeRoot;
+
+    match input {
+        ProgramInput::Direct {
+            blocks,
             execution_witness,
         } => {
+            let chain_id = execution_witness.chain_config.chain_id;
+            execute_blocks(
+                &blocks,
+                execution_witness,
+                ELASTICITY_MULTIPLIER,
+                |db, _| Ok(Evm::new_for_l1(db.clone(), crypto.clone())),
+                crypto.clone(),
+            )?;
+            Ok(ProgramOutput {
+                new_payload_request_root: [0u8; 32],
+                valid: true,
+                chain_id,
+            })
+        }
+        ProgramInput::Wire(DecodedEip8025::Legacy {
+            new_payload_request,
+            execution_witness,
+        }) => {
             let request_root = new_payload_request.hash_tree_root(&CryptoWrapper(crypto.clone()));
             let chain_id = execution_witness.chain_config.chain_id;
             let valid =
@@ -106,23 +142,35 @@ pub fn execution_program(
                 chain_id,
             })
         }
-        DecodedEip8025::Canonical {
+        ProgramInput::Wire(DecodedEip8025::Canonical {
             stateless_input,
             chain_config,
-        } => {
-            let request_root = stateless_input
-                .new_payload_request
-                .hash_tree_root(&CryptoWrapper(crypto.clone()));
-            let chain_id = stateless_input.chain_config.chain_id;
-            let valid =
-                validate_eip8025_canonical_execution(stateless_input, chain_config, crypto).is_ok();
+        }) => Ok(execute_canonical_stateless_input_decoded(
+            stateless_input,
+            chain_config,
+            crypto,
+        )),
+    }
+}
 
-            Ok(ProgramOutput {
-                new_payload_request_root: request_root,
-                valid,
-                chain_id,
-            })
-        }
+#[cfg(feature = "eip-8025")]
+fn execute_canonical_stateless_input_decoded(
+    stateless_input: CanonicalStatelessInput,
+    chain_config: ethrex_common::types::ChainConfig,
+    crypto: Arc<dyn Crypto>,
+) -> ProgramOutput {
+    use libssz_merkle::HashTreeRoot;
+
+    let request_root = stateless_input
+        .new_payload_request
+        .hash_tree_root(&CryptoWrapper(crypto.clone()));
+    let chain_id = stateless_input.chain_config.chain_id;
+    let valid = validate_eip8025_canonical_execution(stateless_input, chain_config, crypto).is_ok();
+
+    ProgramOutput {
+        new_payload_request_root: request_root,
+        valid,
+        chain_id,
     }
 }
 
@@ -133,8 +181,7 @@ fn decode_payload_transactions<const MAX_TXS: usize, const MAX_BYTES_PER_TX: usi
     transactions
         .iter()
         .map(|tx_bytes| {
-            let raw: Vec<u8> = tx_bytes.iter().copied().collect();
-            ethrex_common::types::Transaction::decode_canonical(&raw)
+            ethrex_common::types::Transaction::decode_canonical(tx_bytes)
                 .map_err(|e| format!("tx decode: {e}"))
         })
         .collect::<Result<Vec<_>, _>>()
@@ -211,15 +258,15 @@ fn new_payload_request_to_block(
     let requests_hash = compute_requests_hash(&execution_requests);
 
     let base_fee_per_gas = base_fee_per_gas_from_le_bytes(&payload.base_fee_per_gas)?;
+    let logs_bloom = Bloom::from_slice(&payload.logs_bloom);
 
-    // Build logs_bloom from SszVector<u8, 256>
-    let bloom_bytes: Vec<u8> = payload.logs_bloom.iter().copied().collect();
-    let logs_bloom = Bloom::from_slice(&bloom_bytes);
+    let transactions_root = compute_transactions_root(&transactions, crypto);
+    let withdrawals_root = compute_withdrawals_root(&withdrawals, crypto);
 
     let body = BlockBody {
-        transactions: transactions.clone(),
+        transactions,
         ommers: vec![],
-        withdrawals: Some(withdrawals.clone()),
+        withdrawals: Some(withdrawals),
     };
 
     let header = BlockHeader {
@@ -227,7 +274,7 @@ fn new_payload_request_to_block(
         ommers_hash: *DEFAULT_OMMERS_HASH,
         coinbase: Address::from_slice(&payload.fee_recipient.0),
         state_root: H256::from_slice(&payload.state_root),
-        transactions_root: compute_transactions_root(&body.transactions, crypto),
+        transactions_root,
         receipts_root: H256::from_slice(&payload.receipts_root),
         logs_bloom,
         difficulty: 0.into(),
@@ -235,11 +282,11 @@ fn new_payload_request_to_block(
         gas_limit: payload.gas_limit,
         gas_used: payload.gas_used,
         timestamp: payload.timestamp,
-        extra_data: Bytes::from(payload.extra_data.iter().copied().collect::<Vec<u8>>()),
+        extra_data: Bytes::copy_from_slice(&payload.extra_data),
         prev_randao: H256::from_slice(&payload.prev_randao),
         nonce: 0,
         base_fee_per_gas: Some(base_fee_per_gas),
-        withdrawals_root: Some(compute_withdrawals_root(&withdrawals, crypto)),
+        withdrawals_root: Some(withdrawals_root),
         blob_gas_used: Some(payload.blob_gas_used),
         excess_blob_gas: Some(payload.excess_blob_gas),
         parent_beacon_block_root: Some(H256::from_slice(&req.parent_beacon_block_root)),
@@ -271,26 +318,27 @@ fn new_payload_request_amsterdam_to_block(
     let transactions = decode_payload_transactions(&payload.transactions)?;
     let withdrawals = decode_payload_withdrawals(&payload.withdrawals);
 
-    let bal_bytes: Vec<u8> = payload.block_access_list.iter().copied().collect();
-    let block_access_list = BlockAccessList::decode(&bal_bytes)
+    let block_access_list = BlockAccessList::decode(&payload.block_access_list)
         .map_err(|e| format!("block access list decode: {e}"))?;
     block_access_list
         .validate_ordering()
         .map_err(|e| format!("block access list ordering: {e}"))?;
-    if block_access_list.encode_to_vec() != bal_bytes {
+    if block_access_list.encode_to_vec().as_slice() != &payload.block_access_list[..] {
         return Err("block access list is not canonically encoded".to_string());
     }
 
     let execution_requests = req.execution_requests.to_encoded_requests();
     let requests_hash = compute_requests_hash(&execution_requests);
     let base_fee_per_gas = base_fee_per_gas_from_le_bytes(&payload.base_fee_per_gas)?;
-    let bloom_bytes: Vec<u8> = payload.logs_bloom.iter().copied().collect();
-    let logs_bloom = Bloom::from_slice(&bloom_bytes);
+    let logs_bloom = Bloom::from_slice(&payload.logs_bloom);
+
+    let transactions_root = compute_transactions_root(&transactions, crypto);
+    let withdrawals_root = compute_withdrawals_root(&withdrawals, crypto);
 
     let body = BlockBody {
-        transactions: transactions.clone(),
+        transactions,
         ommers: vec![],
-        withdrawals: Some(withdrawals.clone()),
+        withdrawals: Some(withdrawals),
     };
 
     let header = BlockHeader {
@@ -298,7 +346,7 @@ fn new_payload_request_amsterdam_to_block(
         ommers_hash: *DEFAULT_OMMERS_HASH,
         coinbase: Address::from_slice(&payload.fee_recipient.0),
         state_root: H256::from_slice(&payload.state_root),
-        transactions_root: compute_transactions_root(&body.transactions, crypto),
+        transactions_root,
         receipts_root: H256::from_slice(&payload.receipts_root),
         logs_bloom,
         difficulty: 0.into(),
@@ -306,16 +354,16 @@ fn new_payload_request_amsterdam_to_block(
         gas_limit: payload.gas_limit,
         gas_used: payload.gas_used,
         timestamp: payload.timestamp,
-        extra_data: Bytes::from(payload.extra_data.iter().copied().collect::<Vec<u8>>()),
+        extra_data: Bytes::copy_from_slice(&payload.extra_data),
         prev_randao: H256::from_slice(&payload.prev_randao),
         nonce: 0,
         base_fee_per_gas: Some(base_fee_per_gas),
-        withdrawals_root: Some(compute_withdrawals_root(&withdrawals, crypto)),
+        withdrawals_root: Some(withdrawals_root),
         blob_gas_used: Some(payload.blob_gas_used),
         excess_blob_gas: Some(payload.excess_blob_gas),
         parent_beacon_block_root: Some(H256::from_slice(&req.parent_beacon_block_root)),
         requests_hash: Some(requests_hash),
-        block_access_list_hash: Some(block_access_list.compute_hash()),
+        block_access_list_hash: Some(block_access_list.compute_hash(crypto)),
         slot_number: Some(payload.slot_number),
         ..Default::default()
     };
@@ -365,7 +413,7 @@ fn canonical_execution_witness_to_rpc(
     fn copy_ssz_bytes<const MAX_BYTES: usize>(
         bytes: &libssz_types::SszList<u8, MAX_BYTES>,
     ) -> Bytes {
-        Bytes::from(bytes.iter().copied().collect::<Vec<u8>>())
+        Bytes::copy_from_slice(bytes)
     }
 
     ethrex_common::types::block_execution_witness::RpcExecutionWitness {
@@ -381,35 +429,154 @@ fn canonical_execution_witness_to_rpc(
     }
 }
 
+/// Validate the canonical input's `ChainConfig` and witness, then reconstruct
+/// the `Block` from the Amsterdam `NewPayloadRequest` it carries and execute it
+/// statelessly.
 #[cfg(feature = "eip-8025")]
-fn validate_eip8025_canonical_execution(
+pub fn validate_eip8025_canonical_execution(
     stateless_input: CanonicalStatelessInput,
     chain_config: ethrex_common::types::ChainConfig,
     crypto: Arc<dyn Crypto>,
 ) -> Result<(), ExecutionError> {
-    if stateless_input.chain_config.chain_id != chain_config.chain_id {
-        return Err(ExecutionError::Internal(format!(
-            "chain_id mismatch between canonical input ({}) and chain config ({})",
-            stateless_input.chain_config.chain_id, chain_config.chain_id
-        )));
-    }
-
+    let block_timestamp = stateless_input
+        .new_payload_request
+        .execution_payload
+        .timestamp;
     let block_number = stateless_input
         .new_payload_request
         .execution_payload
         .block_number;
+    validate_canonical_chain_config(
+        &stateless_input.chain_config,
+        &chain_config,
+        block_number,
+        block_timestamp,
+    )?;
+
     let rpc_witness = canonical_execution_witness_to_rpc(stateless_input.witness);
-    let execution_witness = rpc_witness.into_execution_witness(chain_config, block_number)?;
+    // Decode headers once; reused by the chain-linkage check and `into_execution_witness`.
+    let decoded_headers = ethrex_common::types::block_execution_witness::decode_witness_headers(
+        &rpc_witness.headers,
+    )?;
+    // EELS `test_validation_headers_non_contiguous_chain`: check chain linkage
+    // in input order, before any sort/dedup.
+    ethrex_common::types::block_execution_witness::validate_witness_headers_chain(
+        &decoded_headers,
+        crypto.as_ref(),
+    )?;
+
+    let execution_witness = rpc_witness.into_execution_witness(
+        chain_config,
+        block_number,
+        &decoded_headers,
+        crypto.as_ref(),
+    )?;
 
     validate_eip8025_amsterdam_execution(
         &stateless_input.new_payload_request,
         execution_witness,
         crypto,
+        stateless_input.public_keys,
     )
 }
 
+/// Validate `chain_id`, `active_fork.activation`, and `active_fork.blob_schedule`
+/// from the prover's `CanonicalChainConfig` against the verifier's `ChainConfig`.
 #[cfg(feature = "eip-8025")]
-fn validate_eip8025_execution(
+fn validate_canonical_chain_config(
+    canonical: &crate::l1::input::CanonicalChainConfig,
+    expected: &ethrex_common::types::ChainConfig,
+    block_number: u64,
+    block_timestamp: u64,
+) -> Result<(), ExecutionError> {
+    if canonical.chain_id != expected.chain_id {
+        return Err(ExecutionError::Internal(format!(
+            "chain_id mismatch between canonical input ({}) and chain config ({})",
+            canonical.chain_id, expected.chain_id
+        )));
+    }
+
+    // EELS `validate_chain_config` / `_is_activation_active`: the declared active
+    // fork must actually be active for this payload. The activation point must set
+    // a block_number or a timestamp, and the payload must be at or past it.
+    // `block_number`/`timestamp` are `SszList<u64, MAX_OPTIONAL_FORK_ACTIVATION_VALUES=1>`,
+    // i.e. an `Option<u64>` carrying 0 or 1 value.
+    let activation = &canonical.active_fork.activation;
+    let activation_block_number = activation.block_number.iter().next().copied();
+    let activation_timestamp = activation.timestamp.iter().next().copied();
+    if activation_block_number.is_none() && activation_timestamp.is_none() {
+        return Err(ExecutionError::Internal(
+            "fork activation must set block_number or timestamp".to_string(),
+        ));
+    }
+    if let Some(activation_block_number) = activation_block_number
+        && block_number < activation_block_number
+    {
+        return Err(ExecutionError::Internal(format!(
+            "ChainConfig active_fork is not active for the target payload: \
+             block_number {block_number} precedes activation {activation_block_number}"
+        )));
+    }
+    if let Some(activation_timestamp) = activation_timestamp
+        && block_timestamp < activation_timestamp
+    {
+        return Err(ExecutionError::Internal(format!(
+            "ChainConfig active_fork is not active for the target payload: \
+             timestamp {block_timestamp} precedes activation {activation_timestamp}"
+        )));
+    }
+
+    // TODO: `fork` is not compared. EELS and ethrex number forks differently, and
+    // the spec stores the fork id for canonical-root determinism rather than
+    // verifier cross-checking. The blob-schedule check below is a partial proxy
+    // and misses forks with identical blob parameters.
+
+    // Single-entry check is sound because `MAX_BLOB_SCHEDULES_PER_FORK = 1`.
+    let canonical_schedule = canonical.active_fork.blob_schedule.iter().next();
+    let expected_schedule = expected.get_fork_blob_schedule(block_timestamp);
+    match (canonical_schedule, expected_schedule) {
+        (Some(c), Some(e)) => {
+            if c.target != e.target as u64
+                || c.max != e.max as u64
+                || c.base_fee_update_fraction != e.base_fee_update_fraction
+            {
+                return Err(ExecutionError::Internal(format!(
+                    "blob_schedule mismatch: canonical \
+                     (target={}, max={}, base_fee_update_fraction={}) \
+                     vs chain config (target={}, max={}, base_fee_update_fraction={})",
+                    c.target,
+                    c.max,
+                    c.base_fee_update_fraction,
+                    e.target,
+                    e.max,
+                    e.base_fee_update_fraction
+                )));
+            }
+        }
+        (Some(_), None) => {
+            return Err(ExecutionError::Internal(
+                "blob_schedule mismatch: canonical input includes a schedule but \
+                 chain config has none at the block's timestamp"
+                    .to_string(),
+            ));
+        }
+        (None, Some(_)) => {
+            return Err(ExecutionError::Internal(
+                "blob_schedule mismatch: canonical input omits the schedule but \
+                 chain config has one at the block's timestamp"
+                    .to_string(),
+            ));
+        }
+        (None, None) => {}
+    }
+
+    Ok(())
+}
+
+/// Reconstruct the `Block` from a legacy `NewPayloadRequest` and execute it
+/// statelessly against the supplied `ExecutionWitness`.
+#[cfg(feature = "eip-8025")]
+pub fn validate_eip8025_execution(
     new_payload_request: &ethrex_common::types::eip8025_ssz::NewPayloadRequest,
     execution_witness: ethrex_common::types::block_execution_witness::ExecutionWitness,
     crypto: Arc<dyn Crypto>,
@@ -445,11 +612,40 @@ fn validate_eip8025_amsterdam_execution(
     new_payload_request: &ethrex_common::types::eip8025_ssz::NewPayloadRequestAmsterdam,
     execution_witness: ethrex_common::types::block_execution_witness::ExecutionWitness,
     crypto: Arc<dyn Crypto>,
+    public_keys: PublicKeysList,
 ) -> Result<(), ExecutionError> {
     let block = new_payload_request_amsterdam_to_block(new_payload_request, crypto.as_ref())
         .map_err(|e| ExecutionError::Internal(format!("payload conversion: {e}")))?;
 
     validate_versioned_hashes(&block, new_payload_request.versioned_hashes.iter())?;
+
+    if public_keys.len() != block.body.transactions.len() {
+        return Err(ExecutionError::Internal(format!(
+            "Found {} public keys in the stateless input, but there are {} transactions",
+            public_keys.len(),
+            block.body.transactions.len()
+        )));
+    }
+    for (public_key, tx) in public_keys.iter().zip(block.body.transactions.iter()) {
+        // SSZ decode fixes the length at 65; uncompressed secp256k1 is 0x04 || X || Y.
+        let pk_bytes: &[u8] = public_key;
+        if pk_bytes[0] != 0x04 {
+            return Err(ExecutionError::Internal(
+                "Stateless input public key is not a 65-byte uncompressed secp256k1 key"
+                    .to_string(),
+            ));
+        }
+        let derived = Address::from_slice(&keccak(&pk_bytes[1..])[12..]);
+        let recovered = tx.sender(crypto.as_ref()).map_err(|e| {
+            ExecutionError::Internal(format!("failed to recover transaction sender: {e}"))
+        })?;
+        if recovered != derived {
+            return Err(ExecutionError::Internal(
+                "Stateless input public key does not match recovered transaction sender"
+                    .to_string(),
+            ));
+        }
+    }
 
     let _result = execute_blocks(
         &[block],

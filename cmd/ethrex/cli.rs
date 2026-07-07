@@ -10,7 +10,7 @@ use std::{
 
 use clap::{ArgAction, Parser as ClapParser, Subcommand as ClapSubcommand};
 use ethrex_blockchain::{
-    BlockchainOptions, BlockchainType, L2Config,
+    BlockchainOptions, BlockchainType, DEFAULT_MAX_QUEUED_TXS_PER_ACCOUNT, L2Config,
     error::{ChainError, InvalidBlockError},
 };
 use ethrex_common::types::{Block, DEFAULT_BUILDER_GAS_CEIL, Genesis, validate_block_body};
@@ -97,6 +97,28 @@ pub struct Options {
         help_heading = "Node options"
     )]
     pub force: bool,
+    #[arg(
+        long = "rocksdb.block-cache-size",
+        value_name = "BYTES",
+        default_value_t = ethrex_storage::DEFAULT_ROCKSDB_BLOCK_CACHE_SIZE_BYTES,
+        help = "RocksDB shared block cache size in bytes (default 12 GiB). \
+                Bounds RocksDB resident memory; lower only on memory-constrained hosts.",
+        long_help = "RocksDB shared block cache size in bytes. With cache_index_and_filter_blocks \
+                     enabled it holds data blocks plus the per-SST index and bloom-filter blocks, \
+                     so it is the effective ceiling on RocksDB's resident memory.\n\
+                     \n\
+                     Default 12 GiB keeps the filter/index working set resident plus hot EVM state. \
+                     A sweep on a synced mainnet node (32 GiB cap) found 8-16 GiB all keep up with \
+                     head-following (filters resident, disk near-idle, no slow blocks); larger gives \
+                     no gain because the OS page cache backstops the uncompressed state CFs, and \
+                     ~8 GiB is the floor where the filter set starts to thrash.\n\
+                     \n\
+                     Lower only on memory-constrained hosts, accepting reduced throughput. \
+                     ETHREX_ROCKSDB_BLOCK_CACHE_SIZE sets the same value.",
+        help_heading = "Storage options",
+        env = "ETHREX_ROCKSDB_BLOCK_CACHE_SIZE",
+    )]
+    pub rocksdb_block_cache_size: usize,
     #[arg(long = "syncmode", default_value = "snap", value_name = "SYNC_MODE", value_parser = utils::parse_sync_mode, help = "The way in which the node will sync its state.", long_help = "Can be either \"full\" or \"snap\" with \"snap\" as default value.", help_heading = "P2P options", env = "ETHREX_SYNCMODE")]
     pub syncmode: SyncMode,
     #[arg(
@@ -159,6 +181,14 @@ pub struct Options {
     )]
     pub no_migrate: bool,
     #[arg(
+        long = "skip-genesis-validation",
+        action = ArgAction::SetTrue,
+        help = "Trust a pre-existing datadir's genesis instead of recomputing the genesis state root from the genesis alloc. Use only when booting against a database produced out-of-band (e.g. by a state generator) whose state root you vouch for; has no effect on a fresh datadir.",
+        help_heading = "Node options",
+        env = "ETHREX_SKIP_GENESIS_VALIDATION"
+    )]
+    pub skip_genesis_validation: bool,
+    #[arg(
         long = "no-precompile-cache",
         action = ArgAction::SetTrue,
         help = "Disable the per-block precompile result cache (benchmarking only).",
@@ -208,6 +238,15 @@ pub struct Options {
     )]
     pub mempool_max_size: usize,
     #[arg(
+        help = "Maximum number of queued (future/nonce-gapped) transactions a single sender may hold in the mempool. Executable (contiguous-nonce) txs are not capped (geth AccountQueue-style).",
+        long = "mempool.max-queued-txs-per-account",
+        default_value_t = DEFAULT_MAX_QUEUED_TXS_PER_ACCOUNT,
+        value_name = "MAX_QUEUED_TXS_PER_ACCOUNT",
+        help_heading = "Node options",
+        env = "ETHREX_MEMPOOL_MAX_QUEUED_TXS_PER_ACCOUNT"
+    )]
+    pub mempool_max_queued_txs_per_account: usize,
+    #[arg(
         long = "http.addr",
         default_value = "127.0.0.1",
         value_name = "ADDRESS",
@@ -233,7 +272,7 @@ pub struct Options {
         value_delimiter = ',',
         value_parser = utils::parse_http_namespace,
         help = "Comma-separated JSON-RPC namespaces enabled over HTTP/WS.",
-        long_help = "Comma-separated list of JSON-RPC namespaces exposed on the public HTTP and WebSocket endpoints. Defaults to `eth,net,web3`. Enable `admin`, `debug` or `txpool` only when needed; the `engine` namespace is served on the authenticated RPC port and cannot be toggled here.",
+        long_help = "Comma-separated list of JSON-RPC namespaces exposed on the public HTTP and WebSocket endpoints. Defaults to `eth,net,web3`. Enable `admin`, `debug`, `txpool` or `testing` only when needed; the `engine` namespace is served on the authenticated RPC port and cannot be toggled here.",
         help_heading = "RPC options",
         env = "ETHREX_HTTP_API"
     )]
@@ -481,6 +520,7 @@ impl Default for Options {
             network: Default::default(),
             bootnodes: Default::default(),
             datadir: Default::default(),
+            rocksdb_block_cache_size: ethrex_storage::DEFAULT_ROCKSDB_BLOCK_CACHE_SIZE_BYTES,
             syncmode: Default::default(),
             metrics_addr: "0.0.0.0".to_owned(),
             metrics_port: Default::default(),
@@ -488,6 +528,7 @@ impl Default for Options {
             dev: Default::default(),
             force: false,
             mempool_max_size: Default::default(),
+            mempool_max_queued_txs_per_account: DEFAULT_MAX_QUEUED_TXS_PER_ACCOUNT,
             tx_broadcasting_time_interval: Default::default(),
             target_peers: Default::default(),
             lookup_interval: Default::default(),
@@ -496,6 +537,7 @@ impl Default for Options {
             max_blobs_per_block: None,
             precompute_witnesses: false,
             no_migrate: false,
+            skip_genesis_validation: false,
             no_precompile_cache: false,
             no_bal_parallel_exec: false,
             no_bal_prefetch: false,
@@ -902,7 +944,11 @@ pub async fn import_blocks(
                 block_batch.push(block);
                 if block_batch.len() >= IMPORT_BATCH_SIZE || index + MIN_FULL_BLOCKS + 1 == size {
                     blockchain
-                        .add_blocks_in_batch(mem::take(&mut block_batch), CancellationToken::new())
+                        .add_blocks_in_batch(
+                            mem::take(&mut block_batch),
+                            &[],
+                            CancellationToken::new(),
+                        )
                         .await
                         .map_err(|(err, _)| err)?;
                 }
@@ -994,14 +1040,15 @@ pub async fn import_blocks_bench(
         info!(path = %bal_path, "Loading BALs from file (parallel path)");
         use ethrex_common::types::block_access_list::BlockAccessList;
         use ethrex_rlp::decode::RLPDecode as _;
+        use std::sync::Arc;
         let data = std::fs::read(bal_path)
             .unwrap_or_else(|e| panic!("failed to read BAL file at {bal_path:?}: {e}"));
         let mut remaining = data.as_slice();
-        let mut bals = Vec::new();
+        let mut bals: Vec<Arc<BlockAccessList>> = Vec::new();
         while !remaining.is_empty() {
             let (bal, rest) = BlockAccessList::decode_unfinished(remaining)
                 .unwrap_or_else(|e| panic!("failed to decode BAL from {bal_path:?}: {e}"));
-            bals.push(bal);
+            bals.push(Arc::new(bal));
             remaining = rest;
         }
         let amsterdam_blocks = chains
@@ -1068,7 +1115,10 @@ pub async fn import_blocks_bench(
             // BALs are only produced for Amsterdam+ blocks, so use a separate counter
             // that only advances for blocks that have a BAL hash in the header.
             let bal = if block.header.block_access_list_hash.is_some() {
-                let b = preloaded_bals.as_ref().and_then(|bals| bals.get(bal_index));
+                let b = preloaded_bals
+                    .as_ref()
+                    .and_then(|bals| bals.get(bal_index))
+                    .cloned();
                 bal_index += 1;
                 b
             } else {
@@ -1097,10 +1147,10 @@ pub async fn import_blocks_bench(
                     })?;
             }
 
-            // Wait for the trie-update worker's Phase 2 (disk write of bottom-most
-            // diff layer) and Phase 3 (in-memory layer removal) for the block just
-            // applied to drain. Keeps the next block's per-block timer from
-            // absorbing the previous block's background persistence cost.
+            // Wait for the persist worker to drain the block just applied: its
+            // trie diff-layer build, the disk flush and the in-memory eviction.
+            // Keeps the next block's per-block timer from absorbing the previous
+            // block's background persistence cost.
             store.wait_for_persistence_idle().await?;
         }
 
@@ -1289,6 +1339,15 @@ mod tests {
         assert_eq!(
             cli.opts.http_api,
             vec![RpcNamespace::Eth, RpcNamespace::Debug, RpcNamespace::Admin]
+        );
+    }
+
+    #[test]
+    fn http_api_parses_testing_namespace() {
+        let cli = CLI::parse_from(["ethrex", "--http.api", "eth,testing"]);
+        assert_eq!(
+            cli.opts.http_api,
+            vec![RpcNamespace::Eth, RpcNamespace::Testing]
         );
     }
 
