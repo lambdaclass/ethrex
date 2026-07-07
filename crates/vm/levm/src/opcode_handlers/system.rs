@@ -1184,6 +1184,54 @@ impl<'a> VM<'a> {
             return Ok(OpcodeResult::Continue);
         }
 
+        // EIP-8272: RECENT_ROOT_ADDRESS carries no runtime bytecode — the
+        // 64-byte `salt ‖ root` write executes natively (docs/eip-8272.md
+        // divergence #4), mirroring what real predeploy bytecode would do.
+        // Only a DIRECT call may write: DELEGATECALL/CALLCODE/7702-delegation
+        // would run the code in a foreign storage context, so they revert.
+        // Static contexts and malformed calls (calldata != 64 bytes or
+        // non-zero value) revert without writing.
+        if self.env.config.fork >= Fork::Hegota
+            && code_address == ethrex_common::types::frame_tx_recent_root()
+        {
+            // The call reaches the predeploy account even when it reverts, so
+            // it is BAL-touched like any call target (mirrors the precompile
+            // branch below).
+            if let Some(recorder) = self.db.bal_recorder.as_mut() {
+                recorder.record_touched_address(code_address);
+            }
+            if to != code_address || is_static || calldata.len() != 64 || !value.is_zero() {
+                self.early_revert_message_call(gas_limit, "RecentRootInvalidCall".to_string())?;
+                return Ok(OpcodeResult::Continue);
+            }
+            if gas_limit < gas_cost::RECENT_ROOT_WRITE_GAS {
+                // The native write out-of-gasses: the forwarded gas (already
+                // deducted from the caller by the CALL gas accounting) is
+                // consumed in full, exactly like an OOG sub-context.
+                self.current_call_frame.stack.push(FAIL)?;
+                self.tracer
+                    .exit_early(gas_limit, Some("OutOfGas".to_string()))?;
+                return Ok(OpcodeResult::Continue);
+            }
+            let salt = calldata.get(..32).ok_or(ExceptionalHalt::OutOfBounds)?;
+            let root = calldata.get(32..64).ok_or(ExceptionalHalt::OutOfBounds)?;
+            self.recent_root_native_write(msg_sender, salt, root)?;
+            // Credit back the unused forwarded gas (mirrors the precompile
+            // branch's gas return).
+            let unused = gas_limit
+                .checked_sub(gas_cost::RECENT_ROOT_WRITE_GAS)
+                .ok_or(InternalError::Underflow)?;
+            let call_frame = &mut self.current_call_frame;
+            call_frame.gas_remaining = call_frame
+                .gas_remaining
+                .checked_add(i64::try_from(unused).map_err(|_| InternalError::Overflow)?)
+                .ok_or(InternalError::Overflow)?;
+            call_frame.stack.push(SUCCESS)?;
+            self.tracer
+                .exit_early(gas_cost::RECENT_ROOT_WRITE_GAS, None)?;
+            return Ok(OpcodeResult::Continue);
+        }
+
         if precompiles::is_precompile(&code_address, self.env.config.fork, self.vm_type)
             && !is_delegation_7702
         {

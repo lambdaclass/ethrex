@@ -3208,6 +3208,69 @@ impl Blockchain {
             return Err(MempoolError::FrameTxExpired);
         }
 
+        // EIP-8272 §Mempool freshness policy (SHOULD; local peer policy — it may
+        // over-reject but must never under-reject): admit a reference-carrying
+        // frame tx only if every declared recent-root reference would be valid
+        // in the earliest block that could include it. `current_slot` at
+        // admission is therefore `head.slot_number + 1`; a reference that is
+        // "too new" or expired against that slot can never make the tx valid
+        // right now. The three consensus conditions mirrored here:
+        //   1. `slot < current_slot` (a root is only referenceable from the
+        //      slot after it was written),
+        //   2. `current_slot - slot <= FRAME_TX_RECENT_ROOT_USABLE_WINDOW`
+        //      (older entries may be overwritten by ring-buffer aliasing),
+        //   3. the entry hash is committed in the RECENT_ROOT_ADDRESS
+        //      predeploy at head state.
+        // The storage assertion must be explicit here: the validation-trace
+        // simulation below only runs the validation prefix and never reaches
+        // the frame-tx reference-validity check in the VM. References are
+        // re-validated only at admission — there is no recheck/eviction on head
+        // change yet (deferred like other frame-tx mempool niceties), so a
+        // pooled tx whose reference ages out is only dropped when block
+        // building fails it. If the head header carries no slot number the
+        // policy is skipped entirely (guard, don't reject): without a slot
+        // there is nothing sound to compare against, and block execution
+        // remains the authoritative check.
+        if let Transaction::FrameTransaction(frame_tx) = tx
+            && !frame_tx.recent_root_references.is_empty()
+            && let Some(head_slot) = header.slot_number
+        {
+            let current_slot = head_slot.saturating_add(1);
+            for reference in &frame_tx.recent_root_references {
+                if reference.slot >= current_slot {
+                    return Err(MempoolError::FrameTxRecentRootTooNew {
+                        reference_slot: reference.slot,
+                        current_slot,
+                    });
+                }
+                // `reference.slot < current_slot` holds here, so the
+                // subtraction cannot underflow.
+                if current_slot - reference.slot
+                    > ethrex_common::types::FRAME_TX_RECENT_ROOT_USABLE_WINDOW
+                {
+                    return Err(MempoolError::FrameTxRecentRootExpired {
+                        reference_slot: reference.slot,
+                        current_slot,
+                    });
+                }
+                // Head-state storage assertion: the committed entry hash must
+                // match what the reference declares. An absent predeploy or an
+                // empty/aliased slot reads as 0 and correctly fails the match.
+                let stored = self
+                    .storage
+                    .get_storage_at(
+                        header_no,
+                        ethrex_common::types::frame_tx_recent_root(),
+                        reference.storage_key(),
+                    )?
+                    .unwrap_or_default();
+                let expected = U256::from_big_endian(reference.entry_hash().as_bytes());
+                if stored != expected {
+                    return Err(MempoolError::FrameTxRecentRootNotCommitted);
+                }
+            }
+        }
+
         // Paymaster reservation to apply on insert (EIP-8141). Computed below for
         // frame txs after simulation + availability pass; `None` for every other
         // tx type and threaded to the locked insert in `add_transaction`.

@@ -165,6 +165,24 @@ pub enum MempoolError {
     EmptyAuthorizationList,
     #[error("EIP-7702 (type-4) transaction is not valid before Prague")]
     Eip7702TxPreFork,
+    #[error(
+        "EIP-8272 recent-root reference is too new: slot {reference_slot} is not referenceable before slot {current_slot}"
+    )]
+    FrameTxRecentRootTooNew {
+        reference_slot: u64,
+        current_slot: u64,
+    },
+    #[error(
+        "EIP-8272 recent-root reference expired: slot {reference_slot} is outside the usable window at slot {current_slot}"
+    )]
+    FrameTxRecentRootExpired {
+        reference_slot: u64,
+        current_slot: u64,
+    },
+    #[error(
+        "EIP-8272 recent-root reference is not committed in the RECENT_ROOT_ADDRESS predeploy at head state"
+    )]
+    FrameTxRecentRootNotCommitted,
 }
 
 impl From<FrameValidationError> for MempoolError {
