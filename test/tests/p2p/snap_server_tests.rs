@@ -14,7 +14,7 @@ use ethrex_crypto::NativeCrypto;
 use ethrex_p2p::rlpx::snap::{GetAccountRange, GetByteCodes, GetStorageRanges};
 use ethrex_p2p::snap::constants::MAX_RESPONSE_BYTES;
 use ethrex_p2p::snap::{
-    SnapError, process_account_range_request, process_byte_codes_request,
+    MAX_SERVE_LOOKUPS, SnapError, process_account_range_request, process_byte_codes_request,
     process_storage_ranges_request,
 };
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
@@ -1010,53 +1010,52 @@ async fn byte_codes_clamps_response_bytes() -> Result<(), SnapError> {
     Ok(())
 }
 
-// NOTE: the `GetTrieNodes` path is charged in two places — per outer pathset in
-// `process_trie_nodes_request` (see `snap/server.rs`) and, crucially, per storage sub-path
-// inside `Store::get_trie_nodes` (which now adds `MIN_TRIE_NODE_LOOKUP_COST` per probe so a
-// single pathset packed with missing/overlong sub-paths can't force an unbounded trie walk).
-// Neither gets a dedicated miss/empty-path regression test here: exercising them requires a
-// committed state trie readable through `get_trie_nodes`' snapshot-gated `open_state_trie`
-// path, which the direct-write test fixtures don't populate (it goes through the block/layer
-// commit machinery). The per-probe charge mirrors the byte-codes/storage handlers above.
+// NOTE: `GetTrieNodes` is bounded the same way — `process_trie_nodes_request` truncates each
+// pathset to the remaining `MAX_SERVE_LOOKUPS` budget before calling `Store::get_trie_nodes`,
+// so the total sub-path descents per request are capped. It gets no dedicated regression test
+// here: exercising it requires a committed state trie readable through `get_trie_nodes`'
+// snapshot-gated `open_state_trie` path, which the direct-write test fixtures don't populate
+// (it goes through the block/layer commit machinery).
 
-// Request-side amplification guard (distinct from the response-byte clamp above): the byte
-// budget must advance on every lookup *attempt*, not only on hits. Otherwise an all-miss (or
-// miss-heavy) request never trips the budget and the handler walks the entire peer-supplied
-// list — O(N) DB/cache probes with a near-empty response, which the message-rate limiter
-// doesn't catch. Each test puts a real hit *after* a miss, with a 1-byte budget: charging the
-// miss must exhaust the budget and stop the walk before the trailing hit is ever served.
+// Request-side amplification guard (distinct from the response-byte clamp above): a handler
+// that walks a peer-supplied list must bound the number of *lookups*, not just the response
+// bytes. An all-miss/empty request returns almost nothing, so the byte budget alone never trips
+// and the handler probes every item — O(N) DB/trie work the message-rate limiter (which counts
+// messages, not items) doesn't catch. `MAX_SERVE_LOOKUPS` caps the items probed per request;
+// each test places a real hit *past* the cap and confirms it is never reached.
 
-/// `GetByteCodes`: a missed code lookup must consume the budget. Pre-fix, misses cost nothing,
-/// so the trailing hit is served (and an all-miss request walks the whole `hashes` vector).
+/// `GetByteCodes`: at most `MAX_SERVE_LOOKUPS` codes are probed per request. A hit placed just
+/// past the cap is never served, so an all-miss walk of the `hashes` vector is bounded.
 #[tokio::test]
-async fn byte_codes_charges_missed_lookups() -> Result<(), SnapError> {
+async fn byte_codes_bounds_lookup_count() -> Result<(), SnapError> {
     let store = Store::new("null", EngineType::InMemory).unwrap();
     let code = Code::from_bytecode(Bytes::from_static(b"hit"), &NativeCrypto);
     let hit_hash = code.hash;
     store.add_account_code(code).await.unwrap();
 
-    let miss_hash = H256::from_low_u64_be(0xdead);
+    // `MAX_SERVE_LOOKUPS` misses, then the hit at index `MAX_SERVE_LOOKUPS` (past the cap).
+    // A generous byte budget ensures the *count* cap — not the byte budget — is what stops it.
+    let mut hashes = vec![H256::from_low_u64_be(0xdead); MAX_SERVE_LOOKUPS];
+    hashes.push(hit_hash);
     let request = GetByteCodes {
         id: 0,
-        hashes: vec![miss_hash, hit_hash],
-        bytes: 1,
+        hashes,
+        bytes: MAX_RESPONSE_BYTES,
     };
     let res = process_byte_codes_request(request, store).await.unwrap();
 
     assert!(
         res.codes.is_empty(),
-        "a missed lookup must consume the budget and stop the walk before the trailing hit; \
-         got {} code(s) — misses are not being charged",
+        "the hit past the lookup cap must not be reached; got {} code(s)",
         res.codes.len()
     );
     Ok(())
 }
 
-/// `GetByteCodes`: duplicate hits of a *tiny* code must be bounded by probe count, not just by
-/// response bytes. Each hit is charged at least `MIN_LOOKUP_COST` (32 B), so a 3-byte code
-/// under a 64-byte budget serves at most 2 duplicates, not the whole list.
+/// `GetByteCodes`: duplicate hits of a tiny code are bounded by the lookup-count cap, not served
+/// unboundedly — a large byte budget alone would return the whole list.
 #[tokio::test]
-async fn byte_codes_charges_min_cost_on_tiny_duplicate_hits() -> Result<(), SnapError> {
+async fn byte_codes_bounds_duplicate_hits_by_count() -> Result<(), SnapError> {
     let store = Store::new("null", EngineType::InMemory).unwrap();
     let code = Code::from_bytecode(Bytes::from_static(b"hit"), &NativeCrypto);
     let hit_hash = code.hash;
@@ -1064,35 +1063,36 @@ async fn byte_codes_charges_min_cost_on_tiny_duplicate_hits() -> Result<(), Snap
 
     let request = GetByteCodes {
         id: 0,
-        hashes: vec![hit_hash; 10],
-        bytes: 64, // 64 / 32 = 2 lookups before the budget is exhausted
+        hashes: vec![hit_hash; MAX_SERVE_LOOKUPS + 10],
+        bytes: MAX_RESPONSE_BYTES, // far above 3 B × cap, so the count cap is the bound
     };
     let res = process_byte_codes_request(request, store).await.unwrap();
 
-    assert!(
-        res.codes.len() < 10,
-        "duplicate tiny-code hits must be bounded by per-probe cost; got all {} back",
-        res.codes.len()
+    assert_eq!(
+        res.codes.len(),
+        MAX_SERVE_LOOKUPS,
+        "duplicate tiny-code hits must be capped at MAX_SERVE_LOOKUPS"
     );
     Ok(())
 }
 
-/// `GetStorageRanges`: a missed account (absent from state) must consume the budget. Pre-fix,
-/// a miss opens the trie, finds nothing, charges nothing, and continues — so an all-miss
-/// `account_hashes` list forces a trie open per entry unbounded.
+/// `GetStorageRanges`: at most `MAX_SERVE_LOOKUPS` accounts are probed per request. A populated
+/// account placed just past the cap is never walked, so an all-miss `account_hashes` list
+/// (each opening a storage trie) is bounded.
 #[tokio::test]
-async fn storage_ranges_charges_missed_accounts() -> Result<(), SnapError> {
+async fn storage_ranges_bounds_lookup_count() -> Result<(), SnapError> {
     let account_hash = H256::from_low_u64_be(0xabcd);
     let (store, root) = setup_large_storage_state(account_hash, 4)?;
 
-    let miss_account = H256::from_low_u64_be(0x1111);
+    let mut account_hashes = vec![H256::from_low_u64_be(0x1111); MAX_SERVE_LOOKUPS];
+    account_hashes.push(account_hash);
     let request = GetStorageRanges {
         id: 0,
         root_hash: root,
-        account_hashes: vec![miss_account, account_hash],
+        account_hashes,
         starting_hash: *HASH_MIN,
         limit_hash: *HASH_MAX,
-        response_bytes: 1,
+        response_bytes: MAX_RESPONSE_BYTES,
     };
     let res = process_storage_ranges_request(request, store)
         .await
@@ -1100,8 +1100,7 @@ async fn storage_ranges_charges_missed_accounts() -> Result<(), SnapError> {
 
     assert!(
         res.slots.is_empty(),
-        "a missed account must consume the budget and stop before the populated account is \
-         walked; got {} slot-set(s) — misses are not being charged",
+        "the populated account past the lookup cap must not be walked; got {} slot-set(s)",
         res.slots.len()
     );
     Ok(())
