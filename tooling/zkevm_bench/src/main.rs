@@ -1,5 +1,7 @@
 use clap::{Parser, Subcommand};
 
+mod report;
+
 #[derive(Parser)]
 #[command(
     name = "ethrex-zkevm-bench",
