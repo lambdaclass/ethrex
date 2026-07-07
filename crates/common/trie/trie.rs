@@ -71,11 +71,16 @@ pub use self::error::{ExtensionNodeErrorData, InconsistentTreeError, TrieError};
 use self::{node::LeafNode, trie_iter::TrieIterator};
 
 use ethrex_rlp::decode::RLPDecode;
-use spin::Lazy;
 
-// Hash value for an empty trie, equal to keccak(RLP_NULL).
-// `spin::Lazy` keeps the `*EMPTY_TRIE_HASH` deref API while working in no_std.
-pub static EMPTY_TRIE_HASH: Lazy<H256> = Lazy::new(|| H256(keccak_hash([RLP_NULL])));
+// Hash value for an empty trie, equal to keccak(RLP_NULL). Both `LazyLock` and
+// `spin::Lazy` expose the same `*EMPTY_TRIE_HASH` deref API; std builds use the
+// OS-blocking `std::sync::LazyLock` (no busy-spin on first access), no_std builds
+// fall back to `spin::Lazy`.
+#[cfg(feature = "std")]
+pub static EMPTY_TRIE_HASH: std::sync::LazyLock<H256> =
+    std::sync::LazyLock::new(|| H256(keccak_hash([RLP_NULL])));
+#[cfg(not(feature = "std"))]
+pub static EMPTY_TRIE_HASH: spin::Lazy<H256> = spin::Lazy::new(|| H256(keccak_hash([RLP_NULL])));
 
 /// RLP-encoded trie path
 pub type PathRLP = Vec<u8>;
