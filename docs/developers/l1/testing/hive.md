@@ -301,11 +301,11 @@ fi
 
 ### Fixtures URL Files
 
-Local ef_tests runners read the fixtures URL from per-suite files:
+Local ef_tests runners (blockchain, state, engine) share one set of fixture URL files under `tooling/ef_tests/`:
 
-- `tooling/ef_tests/blockchain/.fixtures_url` — mainnet bundle (non-Amsterdam forks)
-- `tooling/ef_tests/blockchain/.fixtures_url_amsterdam` — Amsterdam (glamsterdam-devnet) fixtures with BAL support
-- `tooling/ef_tests/blockchain/.fixtures_url_zkevm` — zkEVM (EIP-8025 stateless) fixtures
+- `tooling/ef_tests/.fixtures_url` — mainnet bundle
+- `tooling/ef_tests/.fixtures_url_amsterdam` — Amsterdam (glamsterdam-devnet) fixtures with BAL support
+- `tooling/ef_tests/.fixtures_url_zkevm` — zkEVM (EIP-8025 stateless) fixtures
 
 Contents:
 
@@ -340,13 +340,13 @@ To update to a different fork or newer versions:
 
    For Amsterdam, edit `.github/config/hive/amsterdam.yaml` the same way with the glamsterdam-devnet bundle.
 
-3. **Update fixtures URL files** used by the local runners:
+3. **Update fixtures URL files** shared by the local runners (blockchain / state / engine):
 
    ```bash
-   # Mainnet fixtures (blockchain / state / engine)
-   echo "https://github.com/ethereum/execution-specs/releases/download/tests%40<version>/fixtures.tar.gz" > tooling/ef_tests/blockchain/.fixtures_url
+   # Mainnet fixtures
+   echo "https://github.com/ethereum/execution-specs/releases/download/tests%40<version>/fixtures.tar.gz" > tooling/ef_tests/.fixtures_url
    # Amsterdam fixtures
-   echo "https://github.com/ethereum/execution-specs/releases/download/tests-glamsterdam-devnet%40<version>/fixtures_glamsterdam-devnet.tar.gz" > tooling/ef_tests/blockchain/.fixtures_url_amsterdam
+   echo "https://github.com/ethereum/execution-specs/releases/download/tests-glamsterdam-devnet%40<version>/fixtures_glamsterdam-devnet.tar.gz" > tooling/ef_tests/.fixtures_url_amsterdam
    ```
 
 4. **Update fork references** in code if switching to a different fork:
@@ -380,7 +380,7 @@ If EELS tests fail due to missing fixtures:
 
 ```bash
 # Verify fixtures URL is accessible
-curl -I $(cat tooling/ef_tests/blockchain/.fixtures_url)
+curl -I $(cat tooling/ef_tests/.fixtures_url)
 
 # Re-download fixtures (they're downloaded automatically during test execution)
 ```
