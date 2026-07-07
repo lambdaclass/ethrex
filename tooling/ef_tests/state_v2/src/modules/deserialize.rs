@@ -74,6 +74,9 @@ where
                     "TransactionException.INVALID_SIGNATURE_VRS" => {
                         TransactionExpectedException::InvalidSignatureVrs
                     }
+                    "TransactionException.INVALID_CHAINID" => {
+                        TransactionExpectedException::InvalidChainId
+                    }
                     _other => TransactionExpectedException::Other, //TODO: Support exceptions that enter here.
                 }
             })

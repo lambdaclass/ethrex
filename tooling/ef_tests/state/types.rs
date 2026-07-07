@@ -173,6 +173,7 @@ pub enum TransactionExpectedException {
     InsufficientMaxFeePerBlobGas,
     TxMaxGasLimitExceeded,
     InvalidSignatureVrs,
+    InvalidChainId,
     Other, //TODO: Implement exceptions
 }
 

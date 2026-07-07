@@ -70,12 +70,26 @@ pub async fn run_test(
 ) -> Result<(), RunnerError> {
     let mut failing_test_cases = Vec::new();
     for test_case in &test.test_cases {
-        // Transaction-validation tests carry a deliberately invalid signature only in
-        // `post[].txbytes` (no `secretKey`, since no private key produces a bad signature).
-        // The VM receives the sender pre-recovered, so we validate the signature here by
-        // recovering it from the signed bytes: a rejected recovery is the expected failure.
-        if test_case.secret_key.is_none() {
-            let checks_result = check_signature_only(test_case);
+        // Some transaction-validation failures are encoded only in the signed `post[].txbytes`
+        // and cannot be reconstructed from the `transaction` fields: an invalid signature (no
+        // `secretKey`, since no key produces a bad one) or a wrong chain id (the `transaction`
+        // object has no `chainId`). The VM receives the sender/chain pre-resolved, so we validate
+        // those directly from the signed bytes instead of executing.
+        let expected = test_case
+            .post
+            .expected_exceptions
+            .clone()
+            .unwrap_or_default();
+        let needs_txbytes_validation = test_case.secret_key.is_none()
+            || expected.iter().any(|e| {
+                matches!(
+                    e,
+                    TransactionExpectedException::InvalidSignatureVrs
+                        | TransactionExpectedException::InvalidChainId
+                )
+            });
+        if needs_txbytes_validation {
+            let checks_result = validate_from_txbytes(test_case);
             if checks_result.passed {
                 *passing_tests += 1;
             } else {
@@ -130,34 +144,38 @@ pub async fn run_test(
     Ok(())
 }
 
-/// Validates the signature of a transaction whose only signed form is `post[].txbytes`
-/// (used by `INVALID_SIGNATURE_VRS` transaction-validation tests, which omit `secretKey`).
-/// Recovery via `Transaction::sender` enforces the EIP-2 low-s rule and the r/s range checks,
-/// so a rejected recovery is exactly the expected invalid-signature failure.
-fn check_signature_only(test_case: &TestCase) -> PostCheckResult {
+/// Validates a transaction whose invalidity lives only in the signed `post[].txbytes` —
+/// a bad signature (`INVALID_SIGNATURE_VRS`) or a wrong chain id (`INVALID_CHAINID`). The tx is
+/// decoded and checked directly: `Transaction::sender` enforces the EIP-2 low-s rule and r/s
+/// range checks, and `chain_id()` is compared against the network id (1). A detected fault that
+/// matches the fixture's expected exception is a pass.
+fn validate_from_txbytes(test_case: &TestCase) -> PostCheckResult {
     let expected = test_case
         .post
         .expected_exceptions
         .clone()
         .unwrap_or_default();
-    let expects_invalid_signature = expected.iter().any(|e| {
-        matches!(
-            e,
-            TransactionExpectedException::InvalidSignatureVrs | TransactionExpectedException::Other
-        )
+
+    let (signature_bad, chain_id_bad) = match Transaction::decode_canonical(&test_case.tx_bytes) {
+        Err(_) => (true, false),
+        Ok(tx) => (
+            tx.sender(&NativeCrypto).is_err(),
+            tx.chain_id().is_some_and(|chain_id| chain_id != 1),
+        ),
+    };
+
+    let passed = expected.iter().any(|e| match e {
+        TransactionExpectedException::InvalidSignatureVrs => signature_bad,
+        TransactionExpectedException::InvalidChainId => chain_id_bad,
+        TransactionExpectedException::Other => signature_bad || chain_id_bad,
+        _ => false,
     });
 
-    let signature_valid = Transaction::decode_canonical(&test_case.tx_bytes)
-        .ok()
-        .and_then(|tx| tx.sender(&NativeCrypto).ok())
-        .is_some();
-
-    let passed = !signature_valid && expects_invalid_signature;
     PostCheckResult {
         fork: test_case.fork,
         vector: test_case.vector,
         passed,
-        exception_diff: (!passed).then(|| (expected, None)),
+        exception_diff: (!passed).then_some((expected, None)),
         ..Default::default()
     }
 }

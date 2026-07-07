@@ -478,6 +478,7 @@ pub enum TransactionExpectedException {
     Type3TxPreFork,
     InsufficientMaxFeePerBlobGas,
     InvalidSignatureVrs,
+    InvalidChainId,
     Other,
 }
 

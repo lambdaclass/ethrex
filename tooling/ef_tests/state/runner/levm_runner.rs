@@ -119,12 +119,26 @@ pub async fn run_ef_test_tx(
             )),
         ))?;
 
-    // Transaction-validation tests carry a deliberately invalid signature only in
-    // `post[].txbytes` (they have no `secretKey`, since no private key produces a bad
-    // signature). The VM receives the sender pre-recovered, so it can't observe the bad
-    // v/r/s; we validate the signature here by recovering it from the signed bytes.
-    if test_tx.secret_key.is_none() {
-        return validate_signature_only(vector, test, fork);
+    // Some transaction-validation failures are encoded only in the signed `post[].txbytes` and
+    // cannot be reconstructed from the `transaction` fields: an invalid signature (no `secretKey`,
+    // since no key produces a bad one) or a wrong chain id (the `transaction` object has no
+    // `chainId`). The VM receives the sender/chain pre-resolved, so we validate those directly
+    // from the signed bytes instead of executing.
+    let expected = test
+        .post
+        .vector_post_value(vector, *fork)
+        .expect_exception
+        .unwrap_or_default();
+    let needs_txbytes_validation = test_tx.secret_key.is_none()
+        || expected.iter().any(|e| {
+            matches!(
+                e,
+                TransactionExpectedException::InvalidSignatureVrs
+                    | TransactionExpectedException::InvalidChainId
+            )
+        });
+    if needs_txbytes_validation {
+        return validate_from_txbytes(vector, test, fork);
     }
 
     let mut db = utils::load_initial_state_levm(test).await;
@@ -148,40 +162,44 @@ pub async fn run_ef_test_tx(
     Ok(())
 }
 
-/// Validates the signature of a transaction whose only signed form is `post[].txbytes`
-/// (used by `INVALID_SIGNATURE_VRS` transaction-validation tests, which omit `secretKey`).
-/// Recovery is done via `Transaction::sender`, which enforces the EIP-2 low-s rule and the
-/// r/s range checks, so a rejected recovery is exactly the expected invalid-signature failure.
-fn validate_signature_only(
+/// Validates a transaction whose invalidity lives only in the signed `post[].txbytes` —
+/// a bad signature (`INVALID_SIGNATURE_VRS`) or a wrong chain id (`INVALID_CHAINID`). The tx is
+/// decoded and checked directly: `Transaction::sender` enforces the EIP-2 low-s rule and r/s
+/// range checks, and `chain_id()` is compared against the network id (1). A detected fault that
+/// matches the fixture's expected exception is a pass.
+fn validate_from_txbytes(
     vector: &TestVector,
     test: &EFTest,
     fork: &Fork,
 ) -> Result<(), EFTestRunnerError> {
     let post = test.post.vector_post_value(vector, *fork);
     let expected = post.expect_exception.unwrap_or_default();
-    let expects_invalid_signature = expected.iter().any(|e| {
-        matches!(
-            e,
-            TransactionExpectedException::InvalidSignatureVrs | TransactionExpectedException::Other
-        )
+
+    // Detect why the signed transaction is invalid. An undecodable payload counts as a bad
+    // signature/encoding (its malformed fields can't be recovered).
+    let (signature_bad, chain_id_bad) = match Transaction::decode_canonical(&post.txbytes) {
+        Err(_) => (true, false),
+        Ok(tx) => (
+            tx.sender(&NativeCrypto).is_err(),
+            tx.chain_id().is_some_and(|chain_id| chain_id != 1),
+        ),
+    };
+
+    let matched = expected.iter().any(|e| match e {
+        TransactionExpectedException::InvalidSignatureVrs => signature_bad,
+        TransactionExpectedException::InvalidChainId => chain_id_bad,
+        TransactionExpectedException::Other => signature_bad || chain_id_bad,
+        _ => false,
     });
 
-    let signature_valid = Transaction::decode_canonical(&post.txbytes)
-        .ok()
-        .and_then(|tx| tx.sender(&NativeCrypto).ok())
-        .is_some();
-
-    match (signature_valid, expects_invalid_signature) {
-        // Signature correctly rejected and the test expected it to be: pass.
-        (false, true) => Ok(()),
-        (false, false) => Err(EFTestRunnerError::ExpectedExceptionDoesNotMatchReceived(
+    if matched {
+        Ok(())
+    } else {
+        Err(EFTestRunnerError::ExpectedExceptionDoesNotMatchReceived(
             format!(
-                "Transaction signature was rejected but the expected exceptions were {expected:?}"
+                "txbytes validation found no matching fault (signature_bad={signature_bad}, chain_id_bad={chain_id_bad}); expected {expected:?}"
             ),
-        )),
-        (true, _) => Err(EFTestRunnerError::ExpectedExceptionDoesNotMatchReceived(
-            "Expected an invalid transaction signature but sender recovery succeeded".to_string(),
-        )),
+        ))
     }
 }
 
