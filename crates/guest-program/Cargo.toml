@@ -37,8 +37,7 @@ ff = { version = "0.13", default-features = false, optional = true }
 # OpenVM-accelerated KZG (point-evaluation precompile) for the OpenVm provider.
 # git source is fine here — guest-program is not published.
 openvm-kzg = { git = "https://github.com/axiom-crypto/openvm-kzg.git", rev = "530a6ed413def5296b7e4967650ba4fc8fd92ea1", optional = true } # v1.4.1
-# Must match ZISK_VERSION in .github/actions/install-zisk/action.yml.
-ziskos = { git = "https://github.com/0xPolygonHermez/zisk.git", tag = "v0.16.1", optional = true, default-features = false, features = ["inputcpy"] }
+ziskos = { workspace = true, optional = true }
 
 [build-dependencies]
 hex.workspace = true
@@ -91,6 +90,10 @@ ci = []
 # When this feature is enabled, the cycles used in the code inside the
 # report_cycles function will be reported to stdout when running inside SP1 zkVM.
 sp1-cycles = []
+
+# When this feature is enabled, Zisk AIR-cost profiling ecalls are emitted
+# at each scope boundary so `ziskemu -X -S` can attribute cost per scope.
+zisk-scopes = ["dep:ziskos"]
 
 [lib]
 path = "./src/lib.rs"

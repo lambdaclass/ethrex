@@ -86,3 +86,5 @@ pub use environment::*;
 pub mod account;
 #[cfg(feature = "perf_opcode_timings")]
 pub mod timings;
+#[cfg(feature = "zisk")]
+pub mod zisk_u256;
