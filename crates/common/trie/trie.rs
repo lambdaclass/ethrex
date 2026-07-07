@@ -37,7 +37,6 @@ use alloc::sync::Arc;
 #[cfg(not(feature = "std"))]
 use alloc::{boxed::Box, vec::Vec};
 use ethereum_types::H256;
-use ethrex_crypto::keccak::keccak_hash;
 use ethrex_crypto::{Crypto, NativeCrypto};
 use ethrex_rlp::constants::RLP_NULL;
 use ethrex_rlp::encode::RLPEncode;
@@ -72,15 +71,14 @@ use self::{node::LeafNode, trie_iter::TrieIterator};
 
 use ethrex_rlp::decode::RLPDecode;
 
-// Hash value for an empty trie, equal to keccak(RLP_NULL). Both `LazyLock` and
-// `spin::Lazy` expose the same `*EMPTY_TRIE_HASH` deref API; std builds use the
-// OS-blocking `std::sync::LazyLock` (no busy-spin on first access), no_std builds
-// fall back to `spin::Lazy`.
-#[cfg(feature = "std")]
-pub static EMPTY_TRIE_HASH: std::sync::LazyLock<H256> =
-    std::sync::LazyLock::new(|| H256(keccak_hash([RLP_NULL])));
-#[cfg(not(feature = "std"))]
-pub static EMPTY_TRIE_HASH: spin::Lazy<H256> = spin::Lazy::new(|| H256(keccak_hash([RLP_NULL])));
+/// Hash of an empty trie: `keccak256(RLP_NULL)`, a well-known Ethereum constant.
+/// Hardcoded so it needs no lazy initialization, works in `const` contexts, and
+/// pulls no lazy-cell dependency into `no_std` builds. The
+/// `empty_trie_hash_matches_keccak` test pins it to the computed value.
+pub const EMPTY_TRIE_HASH: H256 = H256([
+    0x56, 0xe8, 0x1f, 0x17, 0x1b, 0xcc, 0x55, 0xa6, 0xff, 0x83, 0x45, 0xe6, 0x92, 0xc0, 0xf8, 0x6e,
+    0x5b, 0x48, 0xe0, 0x1b, 0x99, 0x6c, 0xad, 0xc0, 0x01, 0x62, 0x2f, 0xb5, 0xe3, 0x63, 0xb4, 0x21,
+]);
 
 /// RLP-encoded trie path
 pub type PathRLP = Vec<u8>;
@@ -121,7 +119,7 @@ impl Trie {
     pub fn open(db: Box<dyn TrieDB>, root: H256) -> Self {
         Self {
             db,
-            root: if root != *EMPTY_TRIE_HASH {
+            root: if root != EMPTY_TRIE_HASH {
                 NodeHash::from(root).into()
             } else {
                 Default::default()
@@ -235,7 +233,7 @@ impl Trie {
                 .compute_hash_no_alloc(&mut buf, crypto)
                 .finalize(crypto)
         } else {
-            *EMPTY_TRIE_HASH
+            EMPTY_TRIE_HASH
         }
     }
 
@@ -286,7 +284,7 @@ impl Trie {
         if self.root.is_valid() {
             self.root.commit(Nibbles::default(), &mut acc, crypto);
         }
-        if self.root.compute_hash(crypto) == NodeHash::Hashed(*EMPTY_TRIE_HASH) {
+        if self.root.compute_hash(crypto) == NodeHash::Hashed(EMPTY_TRIE_HASH) {
             acc.push((Nibbles::default(), vec![RLP_NULL]))
         }
         acc.extend(self.pending_removal.drain().map(|nib| (nib, vec![])));
@@ -361,7 +359,7 @@ impl Trie {
         root_hash: H256,
     ) -> Result<NodeRef, TrieError> {
         // If the root hash is of the empty trie then we can get away by setting the NodeRef to default
-        if root_hash == *EMPTY_TRIE_HASH {
+        if root_hash == EMPTY_TRIE_HASH {
             return Ok(NodeRef::default());
         }
 
@@ -419,7 +417,7 @@ impl Trie {
         crypto: &dyn Crypto,
     ) -> Result<NodeRef, TrieError> {
         // If the root hash is of the empty trie then we can get away by setting the NodeRef to default
-        if root_hash == *EMPTY_TRIE_HASH {
+        if root_hash == EMPTY_TRIE_HASH {
             return Ok(NodeRef::default());
         }
 
@@ -818,5 +816,18 @@ impl ProofTrie {
 impl From<Trie> for ProofTrie {
     fn from(value: Trie) -> Self {
         Self(value)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ethrex_crypto::keccak::keccak_hash;
+
+    // Pins the hardcoded `EMPTY_TRIE_HASH` to `keccak256(RLP_NULL)` so a typo in the
+    // byte literal can't silently diverge from the computed value.
+    #[test]
+    fn empty_trie_hash_matches_keccak() {
+        assert_eq!(EMPTY_TRIE_HASH, H256(keccak_hash([RLP_NULL])));
     }
 }

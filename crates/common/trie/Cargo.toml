@@ -27,8 +27,8 @@ rkyv = { version = "0.8.10", default-features = false, features = ["alloc", "una
 
 # no_std HashMap/HashSet, only compiled when `std` is off (replaces the std-only rustc-hash aliases)
 hashbrown = { version = "0.15", default-features = false }
-# no_std-friendly `Lazy` for EMPTY_TRIE_HASH (replaces lazy_static; compiled in all builds)
-spin = { version = "0.9.8", default-features = false, features = ["lazy", "mutex", "spin_mutex"] }
+# no_std `Mutex` for `InMemoryTrieDB` (replaces `std::sync::Mutex` when `std` is off)
+spin = { version = "0.9.8", default-features = false, features = ["mutex", "spin_mutex"] }
 
 # std-only: parallel merkleization (threadpool / trie_sorted / validate_parallel)
 crossbeam = { workspace = true, optional = true }
