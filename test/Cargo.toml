@@ -54,10 +54,6 @@ ethrex-sdk.workspace = true
 ethrex-storage-rollup = { workspace = true, features = ["sql"] }
 anyhow.workspace = true
 tempfile.workspace = true
-# Recording-backend + undo-log surface under test (state-bench harness). Pulls
-# `ethrex-storage/{rocksdb,bench-harness}` into the test build via feature
-# unification, which the undo test needs for `RocksDBBackend`/`from_backend_bench`.
-state_bench = { path = "../tooling/state_bench" }
 # L2 integration tests dependencies
 ethrex-l2.workspace = true
 ethrex-l2-rpc.workspace = true

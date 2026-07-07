@@ -1,6 +1,5 @@
 mod blockchain;
 mod cmd;
-mod state_bench_undo;
 mod common;
 mod crypto;
 mod l2;

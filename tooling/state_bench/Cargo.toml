@@ -57,3 +57,7 @@ secp256k1.workspace = true
 # closed RocksDB read-only and querying `rocksdb.total-sst-files-size`; the
 # storage crate exposes no per-CF sizing hook.
 rocksdb.workspace = true
+
+[dev-dependencies]
+# `tests/undo.rs` opens a throwaway RocksDB in a scratch tempdir.
+tempfile.workspace = true
