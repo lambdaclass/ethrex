@@ -64,6 +64,7 @@ mod authentication;
 pub mod debug;
 pub mod engine;
 mod eth;
+mod ethrex;
 mod mempool;
 mod net;
 pub mod rpc;
