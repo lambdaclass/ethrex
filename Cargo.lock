@@ -4518,6 +4518,7 @@ version = "18.0.0"
 dependencies = [
  "clap",
  "ethrex-common",
+ "ethrex-config",
  "ethrex-guest-program",
  "ethrex-prover",
  "ethrex-rlp",
