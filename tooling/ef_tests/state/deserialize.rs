@@ -77,6 +77,9 @@ where
                     "TransactionException.GAS_LIMIT_EXCEEDS_MAXIMUM" => {
                         TransactionExpectedException::TxMaxGasLimitExceeded
                     }
+                    "TransactionException.INVALID_SIGNATURE_VRS" => {
+                        TransactionExpectedException::InvalidSignatureVrs
+                    }
                     _other => TransactionExpectedException::Other, //TODO: Support exceptions that enter here.
                 }
             })

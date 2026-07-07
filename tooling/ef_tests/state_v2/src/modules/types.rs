@@ -414,7 +414,7 @@ pub struct TestCase {
     pub max_priority_fee_per_gas: Option<U256>,
     pub max_fee_per_blob_gas: Option<U256>,
     pub nonce: u64,
-    pub secret_key: H256,
+    pub secret_key: Option<H256>,
     pub sender: Address,
     pub to: TxKind,
     pub fork: Fork,
@@ -477,6 +477,7 @@ pub enum TransactionExpectedException {
     GasLimitPriceProductOverflow,
     Type3TxPreFork,
     InsufficientMaxFeePerBlobGas,
+    InvalidSignatureVrs,
     Other,
 }
 
@@ -556,7 +557,10 @@ pub struct RawTransaction {
     pub gas_price: Option<U256>,
     #[serde(with = "u64::hex_str")]
     pub nonce: u64,
-    pub secret_key: H256,
+    // Absent in transaction-validation tests with a deliberately invalid signature
+    // (no private key can produce a bad signature); the signed tx lives in `post[].txbytes`.
+    #[serde(default)]
+    pub secret_key: Option<H256>,
     pub sender: Address,
     pub to: TxKind,
     #[serde(with = "u256::vec")]

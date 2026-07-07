@@ -71,6 +71,9 @@ where
                     "TransactionException.INSUFFICIENT_MAX_FEE_PER_BLOB_GAS" => {
                         TransactionExpectedException::InsufficientMaxFeePerBlobGas
                     }
+                    "TransactionException.INVALID_SIGNATURE_VRS" => {
+                        TransactionExpectedException::InvalidSignatureVrs
+                    }
                     _other => TransactionExpectedException::Other, //TODO: Support exceptions that enter here.
                 }
             })

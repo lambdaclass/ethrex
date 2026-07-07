@@ -109,6 +109,24 @@ pub async fn run_ef_test_tx(
     test: &EFTest,
     fork: &Fork,
 ) -> Result<(), EFTestRunnerError> {
+    let test_tx = test
+        .transactions
+        .get(vector)
+        .ok_or(EFTestRunnerError::Internal(
+            InternalError::FirstRunInternal(format!(
+                "Failed to get transaction in run_ef_test_tx(). LEVM runner, line: {}.",
+                line!()
+            )),
+        ))?;
+
+    // Transaction-validation tests carry a deliberately invalid signature only in
+    // `post[].txbytes` (they have no `secretKey`, since no private key produces a bad
+    // signature). The VM receives the sender pre-recovered, so it can't observe the bad
+    // v/r/s; we validate the signature here by recovering it from the signed bytes.
+    if test_tx.secret_key.is_none() {
+        return validate_signature_only(vector, test, fork);
+    }
+
     let mut db = utils::load_initial_state_levm(test).await;
     // Build the tx first so it outlives the VM (the VM borrows it). The Type-4-create edge case
     // is detected here, before the VM exists, just as it was inside the old `prepare_vm_for_tx`.
@@ -128,6 +146,43 @@ pub async fn run_ef_test_tx(
 
     ensure_post_state(&levm_execution_result, vector, test, fork, &mut db).await?;
     Ok(())
+}
+
+/// Validates the signature of a transaction whose only signed form is `post[].txbytes`
+/// (used by `INVALID_SIGNATURE_VRS` transaction-validation tests, which omit `secretKey`).
+/// Recovery is done via `Transaction::sender`, which enforces the EIP-2 low-s rule and the
+/// r/s range checks, so a rejected recovery is exactly the expected invalid-signature failure.
+fn validate_signature_only(
+    vector: &TestVector,
+    test: &EFTest,
+    fork: &Fork,
+) -> Result<(), EFTestRunnerError> {
+    let post = test.post.vector_post_value(vector, *fork);
+    let expected = post.expect_exception.unwrap_or_default();
+    let expects_invalid_signature = expected.iter().any(|e| {
+        matches!(
+            e,
+            TransactionExpectedException::InvalidSignatureVrs | TransactionExpectedException::Other
+        )
+    });
+
+    let signature_valid = Transaction::decode_canonical(&post.txbytes)
+        .ok()
+        .and_then(|tx| tx.sender(&NativeCrypto).ok())
+        .is_some();
+
+    match (signature_valid, expects_invalid_signature) {
+        // Signature correctly rejected and the test expected it to be: pass.
+        (false, true) => Ok(()),
+        (false, false) => Err(EFTestRunnerError::ExpectedExceptionDoesNotMatchReceived(
+            format!(
+                "Transaction signature was rejected but the expected exceptions were {expected:?}"
+            ),
+        )),
+        (true, _) => Err(EFTestRunnerError::ExpectedExceptionDoesNotMatchReceived(
+            "Expected an invalid transaction signature but sender recovery succeeded".to_string(),
+        )),
+    }
 }
 
 /// Builds the concrete `Transaction` for a test vector. Split out from `prepare_vm_for_tx` so the

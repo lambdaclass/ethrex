@@ -18,8 +18,8 @@ use ethrex_levm::{
 use crate::modules::{
     error::RunnerError,
     report::{add_test_to_report, ensure_reports_dir},
-    result_check::check_test_case_results,
-    types::{Env, Test, TestCase},
+    result_check::{PostCheckResult, check_test_case_results},
+    types::{Env, Test, TestCase, TransactionExpectedException},
     utils::{effective_gas_price, load_initial_state},
 };
 
@@ -70,6 +70,22 @@ pub async fn run_test(
 ) -> Result<(), RunnerError> {
     let mut failing_test_cases = Vec::new();
     for test_case in &test.test_cases {
+        // Transaction-validation tests carry a deliberately invalid signature only in
+        // `post[].txbytes` (no `secretKey`, since no private key produces a bad signature).
+        // The VM receives the sender pre-recovered, so we validate the signature here by
+        // recovering it from the signed bytes: a rejected recovery is the expected failure.
+        if test_case.secret_key.is_none() {
+            let checks_result = check_signature_only(test_case);
+            if checks_result.passed {
+                *passing_tests += 1;
+            } else {
+                failing_test_cases.push(checks_result);
+                *failing_tests += 1;
+            }
+            *total_run += 1;
+            continue;
+        }
+
         // Setup VM for transaction.
         let (mut db, initial_block_hash, storage, genesis) =
             load_initial_state(test, &test_case.fork, true).await;
@@ -112,6 +128,38 @@ pub async fn run_test(
     add_test_to_report((test, failing_test_cases))?;
 
     Ok(())
+}
+
+/// Validates the signature of a transaction whose only signed form is `post[].txbytes`
+/// (used by `INVALID_SIGNATURE_VRS` transaction-validation tests, which omit `secretKey`).
+/// Recovery via `Transaction::sender` enforces the EIP-2 low-s rule and the r/s range checks,
+/// so a rejected recovery is exactly the expected invalid-signature failure.
+fn check_signature_only(test_case: &TestCase) -> PostCheckResult {
+    let expected = test_case
+        .post
+        .expected_exceptions
+        .clone()
+        .unwrap_or_default();
+    let expects_invalid_signature = expected.iter().any(|e| {
+        matches!(
+            e,
+            TransactionExpectedException::InvalidSignatureVrs | TransactionExpectedException::Other
+        )
+    });
+
+    let signature_valid = Transaction::decode_canonical(&test_case.tx_bytes)
+        .ok()
+        .and_then(|tx| tx.sender(&NativeCrypto).ok())
+        .is_some();
+
+    let passed = !signature_valid && expects_invalid_signature;
+    PostCheckResult {
+        fork: test_case.fork,
+        vector: test_case.vector,
+        passed,
+        exception_diff: (!passed).then(|| (expected, None)),
+        ..Default::default()
+    }
 }
 
 /// Gets the enviroment needed to prepare the VM for a transaction.
@@ -162,6 +210,14 @@ pub fn get_vm_env_for_test(
 
 /// Constructs the transaction that will be executed in a specific test case.
 pub async fn get_tx_from_test_case(test_case: &TestCase) -> Result<Transaction, RunnerError> {
+    // Transaction-validation tests (no `secretKey`) carry the already-signed transaction —
+    // including its deliberately invalid signature — only in `tx_bytes`. Decode it directly
+    // instead of rebuilding and re-signing from the `transaction` fields.
+    if test_case.secret_key.is_none() {
+        return Transaction::decode_canonical(&test_case.tx_bytes)
+            .map_err(|e| RunnerError::Custom(format!("failed to decode txbytes: {e:?}")));
+    }
+
     let value = test_case.value;
     let data = test_case.data.clone();
     let nonce = test_case.nonce;
@@ -261,8 +317,12 @@ pub async fn get_tx_from_test_case(test_case: &TestCase) -> Result<Transaction, 
         })
     };
 
-    // Sign transaction using sender's private key.
-    let sk = SecretKey::from_slice(test_case.secret_key.as_bytes()).unwrap();
+    // Sign transaction using sender's private key. Callers only reach this for tests that
+    // provide a `secretKey`; signature-validation tests are handled by `check_signature_only`.
+    let secret_key = test_case
+        .secret_key
+        .expect("get_tx_from_test_case requires a secretKey");
+    let sk = SecretKey::from_slice(secret_key.as_bytes()).unwrap();
     let signer = Signer::Local(LocalSigner::new(sk));
     tx.sign_inplace(&signer)
         .await

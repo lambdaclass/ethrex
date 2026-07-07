@@ -172,6 +172,7 @@ pub enum TransactionExpectedException {
     Type3TxPreFork,
     InsufficientMaxFeePerBlobGas,
     TxMaxGasLimitExceeded,
+    InvalidSignatureVrs,
     Other, //TODO: Implement exceptions
 }
 
@@ -253,7 +254,10 @@ pub struct EFTestRawTransaction {
     pub gas_price: Option<U256>,
     #[serde(deserialize_with = "deserialize_u64_safe")]
     pub nonce: u64,
-    pub secret_key: H256,
+    // Absent in transaction-validation tests with a deliberately invalid signature
+    // (no private key can produce a bad signature); the signed tx lives in `post[].txbytes`.
+    #[serde(default)]
+    pub secret_key: Option<H256>,
     pub sender: Address,
     pub to: TxKind,
     #[serde(deserialize_with = "deserialize_u256_vec_safe")]
@@ -280,7 +284,7 @@ pub struct EFTestTransaction {
     pub gas_price: Option<U256>,
     #[serde(deserialize_with = "deserialize_u64_safe")]
     pub nonce: u64,
-    pub secret_key: H256,
+    pub secret_key: Option<H256>,
     pub sender: Address,
     pub to: TxKind,
     pub value: U256,
