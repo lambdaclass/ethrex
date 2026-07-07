@@ -1,0 +1,59 @@
+[package]
+name = "state_bench"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+documentation.workspace = true
+license.workspace = true
+
+[lib]
+name = "state_bench"
+path = "src/lib.rs"
+
+[[bin]]
+name = "state-bench"
+path = "src/main.rs"
+
+[dependencies]
+# The storage bench surface is hard-enabled so the binary builds without any
+# extra feature flags. `bench-harness` does not pull in `rocksdb`, so both are
+# listed explicitly.
+ethrex-storage = { workspace = true, features = ["rocksdb", "bench-harness"] }
+# The workspace pins `ethrex-blockchain` / `ethrex-vm` to `default-features =
+# false`, which compiles OUT the `rayon`-gated parallel BAL execution path
+# (levm `execute_block_pipeline`, blockchain `add_block_pipeline`). This harness
+# exists to benchmark exactly that path, so enable `secp256k1` on both — the same
+# feature `cmd/ethrex` enables, which cascades to `rayon` — otherwise
+# `add_block_pipeline(block, Some(bal))` falls through to the sequential path and
+# aborts with "sequential execution path called without a merkleizer Sender".
+ethrex-blockchain = { workspace = true, features = ["secp256k1"] }
+ethrex-common.workspace = true
+ethrex-vm = { workspace = true, features = ["secp256k1"] }
+ethrex-rlp.workspace = true
+ethrex-trie.workspace = true
+ethrex-crypto.workspace = true
+
+clap.workspace = true
+anyhow.workspace = true
+# The merkleization thread pool is sized from `--jobs` and constructed here
+# (via `Blockchain::default_with_store_and_pool`) so the flag controls real
+# import parallelism instead of only labelling the metrics.
+rayon.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+# Compact binary (de)serialization of the recording backend's undo log, which
+# crosses a process boundary in the run orchestration and can hold many
+# `Vec<u8>` key/value entries; a text format would bloat size and parse time.
+bincode = "1.3"
+# `Code::from_bytecode` (accessor contract insertion) takes a `bytes::Bytes`.
+bytes.workspace = true
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time"] }
+# Deriving the funded signer's address from its private key needs secp256k1 EC
+# math; there is no way to compute an EOA address from a key without it.
+secp256k1.workspace = true
+# Per-column-family on-disk sizes for the manifest are read by reopening the
+# closed RocksDB read-only and querying `rocksdb.total-sst-files-size`; the
+# storage crate exposes no per-CF sizing hook.
+rocksdb.workspace = true

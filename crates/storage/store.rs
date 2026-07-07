@@ -1,5 +1,5 @@
 #[cfg(feature = "rocksdb")]
-use crate::backend::rocksdb::RocksDBBackend;
+use crate::backend::rocksdb::{RocksDBBackend, RocksDbOpenOpts};
 use crate::{
     STORE_METADATA_FILENAME, STORE_SCHEMA_VERSION,
     api::{
@@ -64,7 +64,7 @@ pub const MAX_WITNESSES: u64 = 128;
 // This is due to tests requiring state older than 128 blocks.
 // TODO: unify these
 #[allow(unused)]
-const DB_COMMIT_THRESHOLD: usize = 128;
+pub const DB_COMMIT_THRESHOLD: usize = 128;
 const IN_MEMORY_COMMIT_THRESHOLD: usize = 10000;
 
 /// Commit threshold for batch (full sync) mode. Each batch layer holds ~1024
@@ -98,6 +98,13 @@ pub struct StoreConfig {
     /// blocks — that is the backpressure that throttles `newPayload`.
     /// Clamped to `max(1)` at construction (0 would make a rendezvous channel).
     pub persist_channel_capacity: usize,
+    /// Bench-only: open RocksDB with `O_DIRECT` reads (bypass the OS page cache)
+    /// for deterministic cold-read measurement. Defaults to `false`; only the
+    /// bench harness sets it, so production opens are unchanged.
+    pub rocksdb_use_direct_reads: bool,
+    /// Bench-only: enable RocksDB internal statistics (cache hit/miss counters).
+    /// Defaults to `false`.
+    pub rocksdb_enable_statistics: bool,
 }
 
 impl Default for StoreConfig {
@@ -105,6 +112,8 @@ impl Default for StoreConfig {
         Self {
             rocksdb_block_cache_size: DEFAULT_ROCKSDB_BLOCK_CACHE_SIZE_BYTES,
             persist_channel_capacity: DEFAULT_PERSIST_CHANNEL_CAPACITY,
+            rocksdb_use_direct_reads: false,
+            rocksdb_enable_statistics: false,
         }
     }
 }
@@ -1731,7 +1740,11 @@ impl Store {
                     // `receipts`) are still readable during the migration.
                     let rocksdb = Arc::new(RocksDBBackend::open(
                         &path,
-                        config.rocksdb_block_cache_size,
+                        RocksDbOpenOpts {
+                            block_cache_size: config.rocksdb_block_cache_size,
+                            use_direct_reads: config.rocksdb_use_direct_reads,
+                            enable_statistics: config.rocksdb_enable_statistics,
+                        },
                     )?);
                     crate::migrations::run_pending_migrations(rocksdb.as_ref(), &db_path, v)?;
                     rocksdb.drop_obsolete_cfs(&path);
@@ -1755,7 +1768,14 @@ impl Store {
         match engine_type {
             #[cfg(feature = "rocksdb")]
             EngineType::RocksDB => {
-                let rocksdb = RocksDBBackend::open(&path, config.rocksdb_block_cache_size)?;
+                let rocksdb = RocksDBBackend::open(
+                    &path,
+                    RocksDbOpenOpts {
+                        block_cache_size: config.rocksdb_block_cache_size,
+                        use_direct_reads: config.rocksdb_use_direct_reads,
+                        enable_statistics: config.rocksdb_enable_statistics,
+                    },
+                )?;
                 rocksdb.drop_obsolete_cfs(&path);
                 let backend: Arc<dyn StorageBackend> = Arc::new(rocksdb);
                 Self::from_backend(
@@ -1775,6 +1795,65 @@ impl Store {
                 )
             }
         }
+    }
+
+    /// Bench-only constructor: build a `Store` from an already-open backend
+    /// (e.g. a `RecordingBackend` wrapping RocksDB) so the harness can inject a
+    /// custom write-recording layer below the Store buffer.
+    ///
+    /// Validates the datadir's `STORE_SCHEMA_VERSION` before constructing. Unlike
+    /// [`Store::new_with_config`], this does NOT bootstrap a fresh datadir or run
+    /// migrations: the backend is already open (the caller injected it) so neither
+    /// is possible here. The datadir MUST already be seeded and versioned — build
+    /// it with the harness `gen-state` step first. A missing schema version or one
+    /// that would require migration is a hard error rather than a silent
+    /// bootstrap/upgrade.
+    #[cfg(feature = "bench-harness")]
+    pub fn from_backend_bench(
+        backend: Arc<dyn StorageBackend>,
+        db_path: PathBuf,
+        commit_threshold: usize,
+        persist_channel_capacity: usize,
+    ) -> Result<Self, StoreError> {
+        match read_store_schema_version(&db_path)? {
+            None => {
+                // No metadata.json: the harness requires a pre-seeded, versioned
+                // datadir. (We can't tell fresh-vs-legacy reliably once the
+                // injected backend has written its own RocksDB `CURRENT` marker,
+                // and we must not bootstrap over a benchmark fixture.)
+                return Err(StoreError::NotFoundDBVersion);
+            }
+            Some(v) if v < 1 => {
+                return Err(StoreError::MigrationFailed {
+                    from: v,
+                    to: STORE_SCHEMA_VERSION,
+                    reason: format!("DB version v{v} is invalid (predates migrations)"),
+                });
+            }
+            Some(v) if v > STORE_SCHEMA_VERSION => {
+                return Err(StoreError::MigrationFailed {
+                    from: v,
+                    to: STORE_SCHEMA_VERSION,
+                    reason: format!(
+                        "DB version v{v} is more recent than the client expects (v{STORE_SCHEMA_VERSION}). Rolling back is not supported"
+                    ),
+                });
+            }
+            Some(v) if v < STORE_SCHEMA_VERSION => {
+                return Err(StoreError::MigrationFailed {
+                    from: v,
+                    to: STORE_SCHEMA_VERSION,
+                    reason: format!(
+                        "DB version v{v} requires migration; the bench harness opens an already-migrated backend"
+                    ),
+                });
+            }
+            Some(_) => {
+                // version == STORE_SCHEMA_VERSION, proceed normally.
+            }
+        }
+
+        Self::from_backend(backend, db_path, commit_threshold, persist_channel_capacity)
     }
 
     fn from_backend(
@@ -4134,7 +4213,10 @@ pub fn read_chain_id_from_db(path: &Path) -> Option<u64> {
     {
         // The cache size is irrelevant for this one-shot chain-id read (the LRU
         // is sized as a ceiling, not pre-allocated), so we use the default.
-        let backend = match RocksDBBackend::open(path, DEFAULT_ROCKSDB_BLOCK_CACHE_SIZE_BYTES) {
+        let backend = match RocksDBBackend::open(
+            path,
+            RocksDbOpenOpts::new(DEFAULT_ROCKSDB_BLOCK_CACHE_SIZE_BYTES),
+        ) {
             Ok(backend) => backend,
             Err(e) => {
                 warn!("Failed to open RocksDB at {path:?} to read chain ID: {e}");

@@ -4474,6 +4474,7 @@ dependencies = [
  "rustc-hash 2.1.2",
  "secp256k1",
  "serde_json",
+ "state_bench",
  "tempfile",
  "tokio",
  "tokio-util",
@@ -13496,6 +13497,31 @@ name = "stable_deref_trait"
 version = "1.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6ce2be8dc25455e1f91df71bfa12ad37d7af1092ae736f3a6cd0e37bc7810596"
+
+[[package]]
+name = "state_bench"
+version = "19.0.0"
+dependencies = [
+ "anyhow",
+ "bincode 1.3.3",
+ "bytes",
+ "clap",
+ "ethrex-blockchain",
+ "ethrex-common",
+ "ethrex-crypto",
+ "ethrex-rlp",
+ "ethrex-storage",
+ "ethrex-trie",
+ "ethrex-vm",
+ "rayon",
+ "rocksdb",
+ "secp256k1",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "tracing-subscriber 0.3.23",
+]
 
 [[package]]
 name = "static_assertions"
