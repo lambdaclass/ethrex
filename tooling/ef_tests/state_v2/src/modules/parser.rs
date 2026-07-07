@@ -45,6 +45,11 @@ const IGNORED_TESTS: &[&str] = &[
     "ValueOverflowParis.json",
     // Skip for now as it requires special transaction type handling in test runner, we should improve that.
     "contract_create.json",
+    // INVALID_SIGNATURE_VRS transaction-validation tests: the signature lives only in
+    // `txbytes`, but this state runner builds the tx from the `transaction` fields and
+    // uses `sender` directly, so it can't observe a bad v/r/s. These have no `secretKey`.
+    // Signature validation is covered by the blockchain and engine suites (they decode RLP).
+    "bad_v_r_s.json",
 ];
 
 /// Parse a `.json` file of tests into a Vec<Test>.

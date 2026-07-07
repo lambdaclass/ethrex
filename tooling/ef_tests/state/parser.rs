@@ -27,6 +27,11 @@ const IGNORED_TESTS: &[&str] = &[
     "static_Call50000_sha256.json",
     "CALLBlake2f_MaxRounds.json",
     "loopMul.json",
+    // INVALID_SIGNATURE_VRS transaction-validation tests: the signature lives only in
+    // `txbytes`, but this state runner builds the tx from the `transaction` fields and
+    // uses `sender` directly, so it can't observe a bad v/r/s. These have no `secretKey`.
+    // Signature validation is covered by the blockchain and engine suites (they decode RLP).
+    "bad_v_r_s.json",
 ];
 
 // One .json can have multiple tests, sometimes we want to skip one of those.
