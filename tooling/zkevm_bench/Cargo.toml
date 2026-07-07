@@ -6,7 +6,7 @@ license.workspace = true
 
 [dependencies]
 ethrex-common.workspace = true
-ethrex-config = { workspace = true }
+ethrex-config.workspace = true
 ethrex-rlp.workspace = true
 ethrex-prover = { workspace = true, default-features = false, features = ["zisk"] }
 ethrex-guest-program = { path = "../../crates/guest-program", default-features = false, features = ["zisk"] }

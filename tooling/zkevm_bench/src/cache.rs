@@ -77,9 +77,6 @@ mod tests {
         let first = cache.blocks[0].header.number;
         let input = cache_to_program_input(cache).expect("should build program input");
         // The ProgramInput carries the same blocks.
-        #[cfg(not(feature = "eip-8025"))]
         assert_eq!(input.blocks[0].header.number, first);
-        let _ = first;
-        let _ = input;
     }
 }
