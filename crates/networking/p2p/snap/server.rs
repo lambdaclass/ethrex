@@ -182,6 +182,10 @@ pub async fn process_trie_nodes_request(
                     "zero-item pathset requested".to_string(),
                 ));
             }
+            // Every entry in a pathset is a separate trie lookup, so charge the probe
+            // cost per path — not once per pathset — otherwise a peer could pack many
+            // all-miss paths into a single pathset and pay only one probe for all of them.
+            let n_paths = paths.len() as u64;
             let trie_nodes = store.get_trie_nodes(
                 request.root_hash,
                 paths.into_iter().map(|bytes| bytes.to_vec()).collect(),
@@ -191,10 +195,11 @@ pub async fn process_trie_nodes_request(
                 .iter()
                 .fold(0u64, |acc, nodes| acc + nodes.len() as u64);
             nodes.extend(trie_nodes.iter().map(|nodes| Bytes::copy_from_slice(nodes)));
-            // Charge at least a per-pathset probe cost so overlong/empty-result pathsets
+            // Charge at least `MIN_LOOKUP_COST` per path so overlong/empty-result paths
             // (e.g. a path > 32 bytes, which resolves to an empty node) still consume the
-            // budget instead of letting the loop run over every decoded pathset.
-            byte_budget = byte_budget.saturating_sub(returned_bytes.max(MIN_LOOKUP_COST));
+            // budget instead of letting the loop run over every decoded path.
+            byte_budget = byte_budget
+                .saturating_sub(returned_bytes.max(MIN_LOOKUP_COST.saturating_mul(n_paths)));
             if byte_budget == 0 {
                 break;
             }
