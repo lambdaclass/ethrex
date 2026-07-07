@@ -329,6 +329,18 @@ impl RocksDBBackend {
             .and_then(|opts| opts.get_statistics())
     }
 
+    /// Returns the string value of a RocksDB property (e.g.
+    /// `rocksdb.total-sst-files-size`, `rocksdb.compaction-pending`,
+    /// `rocksdb.actual-delayed-write-rate`) for the given column family, or
+    /// `None` if the CF doesn't exist or the property lookup fails.
+    pub fn cf_property(&self, cf: &str, property: &str) -> Option<String> {
+        let cf_handle = self.db.cf_handle(cf)?;
+        self.db
+            .property_value_cf(&cf_handle, property)
+            .ok()
+            .flatten()
+    }
+
     /// Drops column families that exist on disk but are no longer listed in
     /// `TABLES`. Must be called **after** migrations so that migration code
     /// can still read from legacy CFs (e.g. `receipts` during v1→v2).
@@ -437,6 +449,14 @@ impl StorageBackend for RocksDBBackend {
         self.db
             .flush_wal(true)
             .map_err(|e| StoreError::Custom(format!("RocksDB flush_wal failed: {e}")))
+    }
+
+    fn statistics_string(&self) -> Option<String> {
+        Self::statistics_string(self)
+    }
+
+    fn cf_property(&self, cf: &'static str, property: &str) -> Option<String> {
+        Self::cf_property(self, cf, property)
     }
 }
 

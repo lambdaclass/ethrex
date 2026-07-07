@@ -240,6 +240,64 @@ impl Trie {
         Ok(())
     }
 
+    /// Commits all changed nodes to the DB (like [`Trie::commit`]) and then
+    /// evicts the just-committed subtree from memory, keeping only the root
+    /// node resolved.
+    ///
+    /// This is a bulk-load helper for building very large tries without letting
+    /// the in-memory node arena grow unbounded. After committing, every direct
+    /// child of the root that is still held in memory as a resolved node
+    /// (`NodeRef::Node`) is demoted to a hash reference (`NodeRef::Hash`),
+    /// which drops the `Arc`s to the entire subtree beneath it and frees the
+    /// arena accumulated since the last eviction. Children that are already
+    /// `NodeRef::Hash` are left untouched. The root node itself stays resolved,
+    /// so subsequent `insert`/`get` calls never need to re-read the root key
+    /// from disk. This bounds memory to the root plus the nodes created since
+    /// the last eviction. If the root is a hash reference or empty, this is a
+    /// no-op beyond the commit.
+    ///
+    /// The demoted children keep the same hashes as before, so the root's
+    /// encoding (and thus its memoized hash) is unchanged: eviction is
+    /// transparent to the resulting root hash and to the persisted node set.
+    ///
+    /// # Warning
+    ///
+    /// This MUST only be used on a trie backed by a *direct* backend: a raw,
+    /// path-keyed [`TrieDB`] that implements `put_batch`/`commit`. It must NOT
+    /// be used on the layered `TrieWrapper` backend, whose `put_batch` is
+    /// `unimplemented!()` and would panic, because this calls [`Trie::commit`].
+    pub fn commit_evict_below_root(&mut self, crypto: &dyn Crypto) -> Result<(), TrieError> {
+        // Persist all changed nodes (and remove the pending removals) first.
+        self.commit(crypto)?;
+
+        // Demote a resolved child reference to its hash, dropping the `Arc` to
+        // its subtree. Uses the memoized hash if present, otherwise recomputes
+        // it. Children already referenced by hash are left as-is.
+        fn demote(child: &mut NodeRef, crypto: &dyn Crypto) {
+            if let NodeRef::Node(node, memo) = child {
+                let hash = memo
+                    .get()
+                    .copied()
+                    .unwrap_or_else(|| node.compute_hash(crypto));
+                *child = NodeRef::Hash(hash);
+            }
+        }
+
+        if let NodeRef::Node(root_node, _) = &mut self.root {
+            match Arc::make_mut(root_node) {
+                Node::Branch(branch) => {
+                    for choice in &mut branch.choices {
+                        demote(choice, crypto);
+                    }
+                }
+                Node::Extension(extension) => demote(&mut extension.child, crypto),
+                Node::Leaf(_) => {}
+            }
+        }
+
+        Ok(())
+    }
+
     /// Computes the nodes that would be added if updating the trie.
     /// Nodes are given with their hash pre-calculated.
     pub fn commit_without_storing(&mut self, crypto: &dyn Crypto) -> Vec<TrieNode> {

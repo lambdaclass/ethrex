@@ -142,6 +142,10 @@ pub struct GenStateArgs {
     pub seed: u64,
     pub genesis: PathBuf,
     pub jobs: usize,
+    /// Diagnostic-only: enable RocksDB statistics and log them (plus
+    /// per-CF compaction/write indicators) at every mega storage trie
+    /// progress checkpoint.
+    pub rocksdb_stats: bool,
 }
 
 /// keccak256(seed_le || tag || index_le) — the single deterministic primitive.
@@ -212,6 +216,31 @@ fn build_small_storage_trie(
     Ok(trie.hash(&NativeCrypto)?)
 }
 
+/// Diagnostic-only: log RocksDB statistics plus compaction/write indicators
+/// for `STORAGE_TRIE_NODES`, so a mega build can be judged CPU-bound vs
+/// compaction/IO-bound. Gated by `--rocksdb-stats`; a no-op (and thus inert)
+/// when statistics weren't enabled on the store (in-memory backend, or
+/// `--rocksdb-stats` off).
+fn log_rocksdb_progress_stats(store: &Store, slots: u64, total: u64) {
+    let total_sst_files_size =
+        store.rocksdb_cf_property(STORAGE_TRIE_NODES, "rocksdb.total-sst-files-size");
+    let compaction_pending =
+        store.rocksdb_cf_property(STORAGE_TRIE_NODES, "rocksdb.compaction-pending");
+    let actual_delayed_write_rate =
+        store.rocksdb_cf_property(STORAGE_TRIE_NODES, "rocksdb.actual-delayed-write-rate");
+    info!(
+        slots,
+        total,
+        total_sst_files_size,
+        compaction_pending,
+        actual_delayed_write_rate,
+        "mega storage trie STORAGE_TRIE_NODES cf stats"
+    );
+    if let Some(stats) = store.rocksdb_statistics_string() {
+        info!(%stats, "mega storage trie rocksdb statistics");
+    }
+}
+
 /// Stream the mega account's storage trie in bounded chunks, committing every
 /// [`MEGA_COMMIT_CHUNK`] slots. Returns (storage_root, slot_count).
 fn build_mega_storage_trie(
@@ -219,6 +248,7 @@ fn build_mega_storage_trie(
     account_hash: H256,
     seed: u64,
     slot_count: u64,
+    rocksdb_stats: bool,
 ) -> Result<H256> {
     let mut trie = store.open_direct_storage_trie(account_hash, *EMPTY_TRIE_HASH)?;
     for k in 0..slot_count {
@@ -226,18 +256,27 @@ fn build_mega_storage_trie(
         let value = derive_slot_value(seed, "csb-mega-val", k);
         trie.insert(hash_key(&key), value.encode_to_vec())?;
         if (k + 1) % MEGA_COMMIT_CHUNK == 0 {
-            trie.commit(&NativeCrypto)?;
+            // Evict the committed subtree so the in-memory arena stays bounded
+            // to the root plus one chunk. A plain `commit` keeps the whole
+            // arena resident and OOMs on large fixtures (see the memory-bound
+            // diagnostic: unbounded arena ~850B/slot).
+            trie.commit_evict_below_root(&NativeCrypto)?;
             if (k + 1) % (MEGA_COMMIT_CHUNK * 10) == 0 {
                 info!(
                     slots = k + 1,
                     total = slot_count,
                     "mega storage trie progress"
                 );
+                if rocksdb_stats {
+                    log_rocksdb_progress_stats(store, k + 1, slot_count);
+                }
             }
         }
     }
-    // hash() commits any remainder and returns the root.
-    Ok(trie.hash(&NativeCrypto)?)
+    // Commit + evict any remainder (keeps the final flush bounded too), then
+    // read the memoized root hash without a second commit.
+    trie.commit_evict_below_root(&NativeCrypto)?;
+    Ok(trie.hash_no_commit(&NativeCrypto))
 }
 
 /// Measure the on-disk SST size of the four state column families.
@@ -345,6 +384,7 @@ pub async fn run(args: GenStateArgs) -> Result<()> {
         seed,
         genesis,
         jobs,
+        rocksdb_stats,
     } = args;
 
     if datadir.exists() && datadir.read_dir().map(|mut d| d.next().is_some())? {
@@ -381,7 +421,16 @@ pub async fn run(args: GenStateArgs) -> Result<()> {
         "gen-state: opening fresh datadir"
     );
 
-    let mut store = Store::new_with_config(&datadir, EngineType::RocksDB, StoreConfig::default())
+    let store_config = StoreConfig {
+        rocksdb_enable_statistics: rocksdb_stats,
+        // gen-state is a bulk WRITE: the 12 GiB default read cache is wasted here
+        // (it just inflates RSS) — a small cache suffices for the trie-path reads
+        // during insertion. Combined with the arena eviction this keeps peak RSS
+        // low and flat regardless of fixture size, so large (50 GB+) fixtures fit.
+        rocksdb_block_cache_size: 1024 * 1024 * 1024, // 1 GiB
+        ..StoreConfig::default()
+    };
+    let mut store = Store::new_with_config(&datadir, EngineType::RocksDB, store_config)
         .context("opening fresh RocksDB store")?;
     store
         .set_chain_config(&genesis.config)
@@ -505,8 +554,13 @@ pub async fn run(args: GenStateArgs) -> Result<()> {
         mega_slot_count, "building mega storage account"
     );
     let mega_account_hash = H256::from_slice(&hash_address(&mega_address));
-    let mega_storage_root =
-        build_mega_storage_trie(&store, mega_account_hash, seed, mega_slot_count)?;
+    let mega_storage_root = build_mega_storage_trie(
+        &store,
+        mega_account_hash,
+        seed,
+        mega_slot_count,
+        rocksdb_stats,
+    )?;
     account_entries.push((
         hash_address(&mega_address),
         AccountState {

@@ -3290,6 +3290,20 @@ impl Store {
         Ok(())
     }
 
+    /// Bench-only diagnostic: RocksDB's internal statistics string, or `None`
+    /// if the active backend isn't RocksDB or statistics weren't enabled at
+    /// open time (see [`StoreConfig::rocksdb_enable_statistics`]).
+    pub fn rocksdb_statistics_string(&self) -> Option<String> {
+        self.backend.statistics_string()
+    }
+
+    /// Bench-only diagnostic: the string value of a RocksDB property (e.g.
+    /// `rocksdb.total-sst-files-size`) for the given column family, or `None`
+    /// if the active backend isn't RocksDB or the CF/property doesn't exist.
+    pub fn rocksdb_cf_property(&self, cf: &'static str, property: &str) -> Option<String> {
+        self.backend.cf_property(cf, property)
+    }
+
     pub fn get_store_directory(&self) -> Result<PathBuf, StoreError> {
         Ok(self.db_path.clone())
     }

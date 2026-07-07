@@ -61,6 +61,12 @@ enum Command {
         /// Base genesis file; only its chain config is used.
         #[arg(long)]
         genesis: PathBuf,
+        /// Enable RocksDB internal statistics and log them (plus per-CF
+        /// compaction/write indicators for `STORAGE_TRIE_NODES`) at every
+        /// mega storage trie progress checkpoint. Diagnostic-only; off by
+        /// default so normal runs aren't spammed.
+        #[arg(long, default_value_t = false)]
+        rocksdb_stats: bool,
     },
     /// Produce a workload of real blocks + captured BALs (phase 3).
     GenWorkload {
@@ -149,6 +155,7 @@ async fn main() -> Result<()> {
             mega_account_gb,
             seed,
             genesis,
+            rocksdb_stats,
         } => {
             gen_state::run(GenStateArgs {
                 datadir,
@@ -158,6 +165,7 @@ async fn main() -> Result<()> {
                 seed,
                 genesis,
                 jobs,
+                rocksdb_stats,
             })
             .await
         }
