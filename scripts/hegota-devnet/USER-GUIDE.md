@@ -103,6 +103,29 @@ transfers emit EIP-7708 logs from `0x…fffe`).
 > transaction hasn't mined within ~30 s, submit the SAME raw transaction to the other
 > two RPCs as well (idempotent — same hash).
 
+## Simulate Before Sending
+
+`eth_call`/`eth_estimateGas` cannot represent a frame transaction (their input is a
+single flat call, with no frames or validation prefix). ethrex adds a dedicated
+method that dry-runs the SAME raw bytes you would submit — no submission, no mempool
+effect — and reports whether the transaction is valid and how much gas it uses:
+
+```bash
+# rawTx is the 0x-prefixed canonical type-0x06 bytes you'd pass to
+# eth_sendRawTransaction (frametx_submit.py can print these).
+curl -s https://rpc1.hegota.ethrex.xyz \
+  -H 'content-type: application/json' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"ethrex_simulateFrameTransaction","params":["0x06...","latest"]}'
+```
+
+Response fields: `valid`, `prefixShape`, `payer`, `maxCost`, `violation`, `gasUsed`,
+`frames` (per frame, each `{gasUsed, succeeded}`), `executionStatus`, `executionError`.
+Use `gasUsed`/`frames` to size gas limits, and `valid`/`violation` to debug a prefix
+that the mempool rejects. Note `valid` reports only the EIP-8141 validation-prefix
+result — it does not re-check every mempool gate (nonce, fees, signatures, paymaster
+funding), so a `true` is necessary but not sufficient for admission. This is an ethrex
+extension in the `ethrex_*` namespace, not a standard `eth_` method.
+
 ## Sponsored Transactions (Trustless Paymaster)
 
 A frame transaction can have its gas paid by a **distinct paymaster** contract

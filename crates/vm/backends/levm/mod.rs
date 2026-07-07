@@ -5,8 +5,7 @@ use super::{BlockExecutionResult, FrameValidationOutcome, TxGasBreakdown};
 use crate::system_contracts::{
     BEACON_ROOTS_ADDRESS, CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS, EXPIRY_VERIFIER_PREDEPLOY,
     EXPIRY_VERIFIER_RUNTIME_BYTECODE, HISTORY_STORAGE_ADDRESS, NONCE_MANAGER_PREDEPLOY,
-    RECENT_ROOT_ADDRESS,
-    NONCE_MANAGER_RUNTIME_BYTECODE, PRAGUE_SYSTEM_CONTRACTS, SYSTEM_ADDRESS,
+    NONCE_MANAGER_RUNTIME_BYTECODE, PRAGUE_SYSTEM_CONTRACTS, RECENT_ROOT_ADDRESS, SYSTEM_ADDRESS,
     WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS,
 };
 use crate::{EvmError, ExecutionResult};
@@ -2624,20 +2623,11 @@ impl LEVM {
         })
     }
 
-    /// TXPARAM 0x06 max cost for a frame transaction:
-    /// `max_fee_per_gas * total_gas_limit + len(blob_hashes) * 131072 * max_fee_per_blob_gas`
-    /// (mirrors `load_tx_param` 0x06 in `opcode_handlers/frame_tx.rs`), saturating.
+    /// TXPARAM 0x06 max cost for a frame transaction. Single source of truth is
+    /// [`FrameTransaction::max_cost`]; see it for the formula and the saturating
+    /// (reservation-ceiling) rationale.
     fn frame_tx_max_cost(frame_tx: &ethrex_common::types::FrameTransaction) -> U256 {
-        // Intentionally saturating (not checked): the TXPARAM 0x06 consensus handler
-        // uses checked_mul/checked_add and halts on overflow (frame_tx.rs:499-509). Here
-        // we compute a reservation ceiling for the mempool, so saturating to U256::MAX
-        // on overflow is conservative — it just makes the reservation larger, not smaller.
-        let gas_cost = U256::from(frame_tx.max_fee_per_gas)
-            .saturating_mul(U256::from(frame_tx.total_gas_limit()));
-        let blob_cost = U256::from(frame_tx.blob_versioned_hashes.len())
-            .saturating_mul(U256::from(131072u64))
-            .saturating_mul(frame_tx.max_fee_per_blob_gas);
-        gas_cost.saturating_add(blob_cost)
+        frame_tx.max_cost()
     }
 
     pub fn get_state_transitions(
