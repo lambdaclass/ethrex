@@ -885,7 +885,13 @@ fn drop_caches() {
 /// Create a RocksDB checkpoint of `src` at `dst`, then copy the `metadata.json`
 /// sidecar (a checkpoint copies only RocksDB files, not our sidecar, but
 /// `from_backend_bench` requires it) plus the gen-state manifest for parity.
-fn make_checkpoint(src: &Path, dst: &Path) -> Result<()> {
+///
+/// The checkpoint hardlinks the (immutable) SST files, so it is near-instant and
+/// uses no extra space regardless of fixture size — unlike a recursive copy. A
+/// process that later writes to `dst` only creates new SSTs; the hardlinked ones
+/// are never mutated, so `src` stays intact. Shared with `gen-workload`, which
+/// needs the same untouched-source guarantee for its throwaway.
+pub(crate) fn make_checkpoint(src: &Path, dst: &Path) -> Result<()> {
     if dst.exists() {
         std::fs::remove_dir_all(dst)
             .with_context(|| format!("removing stale checkpoint {}", dst.display()))?;

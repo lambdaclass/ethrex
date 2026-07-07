@@ -8,9 +8,10 @@
 //! is the exact one whose `compute_hash` was committed to the header, i.e. the
 //! canonical BAL that the parallel import path validates against.
 //!
-//! Generation runs against a THROWAWAY COPY of the `gen-state` datadir so the
-//! pristine benchmark fixture (the one that gets passed to `run`) is never
-//! mutated. The copy is deleted when generation finishes.
+//! Generation runs against a THROWAWAY CHECKPOINT of the `gen-state` datadir so
+//! the pristine benchmark fixture (the one that gets passed to `run`) is never
+//! mutated. The checkpoint hardlinks the immutable SSTs (near-instant, no extra
+//! space even for a huge fixture) and is deleted when generation finishes.
 
 use std::path::{Path, PathBuf};
 
@@ -215,10 +216,12 @@ pub async fn run(args: GenWorkloadArgs) -> Result<()> {
         "gen-workload: starting"
     );
 
-    // --- Throwaway copy of the pristine datadir -----------------------------
+    // --- Throwaway checkpoint of the pristine datadir -----------------------
     // All generation writes land here; the pristine --datadir is never touched.
+    // A RocksDB checkpoint hardlinks the immutable SSTs, so this is near-instant
+    // and space-free even for a 50GB+ fixture (a recursive copy would be neither).
     let throwaway = throwaway_path("gen");
-    copy_datadir(&datadir, &throwaway)?;
+    crate::run::make_checkpoint(&datadir, &throwaway)?;
 
     let generation = generate_on_copy(
         &throwaway,
@@ -662,9 +665,9 @@ async fn verify_reimport_artifacts(
     out_bals: &Path,
     _jobs: usize,
 ) -> Result<()> {
-    info!("gen-workload: verifying re-import on a fresh copy of the pristine datadir");
+    info!("gen-workload: verifying re-import on a fresh checkpoint of the pristine datadir");
     let fresh = throwaway_path("verify");
-    copy_datadir(datadir, &fresh)?;
+    crate::run::make_checkpoint(datadir, &fresh)?;
 
     let result = reimport_on_copy(&fresh, genesis, out_chain, out_bals).await;
     let _ = std::fs::remove_dir_all(&fresh);
@@ -792,34 +795,6 @@ fn read_bals_file(path: &Path) -> Result<Vec<BlockAccessList>> {
         rest = tail;
     }
     Ok(bals)
-}
-
-/// Recursively copy a datadir (RocksDB files + metadata + manifest). The source
-/// must be closed (no live store); a cleanly-closed RocksDB dir opens fine after
-/// a plain file copy.
-fn copy_datadir(src: &Path, dst: &Path) -> Result<()> {
-    if dst.exists() {
-        std::fs::remove_dir_all(dst)
-            .with_context(|| format!("removing stale copy target {}", dst.display()))?;
-    }
-    copy_dir_recursive(src, dst)
-        .with_context(|| format!("copying {} -> {}", src.display(), dst.display()))?;
-    Ok(())
-}
-
-fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<()> {
-    std::fs::create_dir_all(dst)?;
-    for entry in std::fs::read_dir(src)? {
-        let entry = entry?;
-        let from = entry.path();
-        let to = dst.join(entry.file_name());
-        if entry.file_type()?.is_dir() {
-            copy_dir_recursive(&from, &to)?;
-        } else {
-            std::fs::copy(&from, &to)?;
-        }
-    }
-    Ok(())
 }
 
 /// Unique throwaway path under the system temp dir (respects `TMPDIR`).
