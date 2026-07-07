@@ -1,6 +1,7 @@
 use clap::{Parser, Subcommand};
 
 mod cache;
+mod manifest;
 mod report;
 
 #[derive(Parser)]
