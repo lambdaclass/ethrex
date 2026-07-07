@@ -2014,6 +2014,22 @@ impl FrameTransaction {
             )
     }
 
+    /// TXPARAM `0x06` max cost: the largest amount the payer may be charged,
+    /// `max_fee_per_gas * total_gas_limit + len(blob_hashes) * 131072 * max_fee_per_blob_gas`.
+    ///
+    /// Saturating (not checked) on purpose: this is a reservation/estimate
+    /// ceiling, so overflowing to `U256::MAX` is conservative. The consensus
+    /// TXPARAM `0x06` handler (`opcode_handlers/frame_tx.rs`) instead uses
+    /// checked math and halts on overflow.
+    pub fn max_cost(&self) -> U256 {
+        let gas_cost =
+            U256::from(self.max_fee_per_gas).saturating_mul(U256::from(self.total_gas_limit()));
+        let blob_cost = U256::from(self.blob_versioned_hashes.len())
+            .saturating_mul(U256::from(131072u64))
+            .saturating_mul(self.max_fee_per_blob_gas);
+        gas_cost.saturating_add(blob_cost)
+    }
+
     /// The expiry deadline (8-byte big-endian) of this transaction's expiry
     /// verifier frame, if one exists with well-formed data.
     pub fn expiry_deadline(&self) -> Option<u64> {

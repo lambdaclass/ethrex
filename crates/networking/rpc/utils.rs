@@ -255,6 +255,13 @@ pub enum RpcNamespace {
     /// Testing-only methods for fixture generation (exposed as `testing_*`).
     /// Disabled by default; must never be exposed on public-facing RPC APIs.
     Testing,
+    /// ethrex-specific extension methods (exposed as `ethrex_*`).
+    ///
+    /// These are non-standard methods that ethrex adds outside the standardized
+    /// `eth_`/`debug_` namespaces (e.g. EIP-8141 frame-transaction simulation).
+    /// Kept in a dedicated namespace so operators can expose them publicly
+    /// without also enabling the whole `debug_` surface.
+    Ethrex,
 }
 
 impl RpcNamespace {
@@ -269,6 +276,7 @@ impl RpcNamespace {
             "net" => Some(RpcNamespace::Net),
             "txpool" => Some(RpcNamespace::Mempool),
             "testing" => Some(RpcNamespace::Testing),
+            "ethrex" => Some(RpcNamespace::Ethrex),
             _ => None,
         }
     }
@@ -451,5 +459,30 @@ pub fn parse_json_hex(hex: &serde_json::Value) -> Result<u64, String> {
         maybe_parsed.map_err(|_| format!("Could not parse given hex {maybe_hex}"))
     } else {
         Err(format!("Could not parse given hex {hex}"))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn from_prefix_recognizes_ethrex_namespace() {
+        assert_eq!(
+            RpcNamespace::from_prefix("ethrex"),
+            Some(RpcNamespace::Ethrex)
+        );
+    }
+
+    #[test]
+    fn ethrex_method_resolves_to_ethrex_namespace() {
+        let req = RpcRequest::new("ethrex_simulateFrameTransaction", None);
+        assert_eq!(req.namespace().unwrap(), RpcNamespace::Ethrex);
+    }
+
+    #[test]
+    fn unknown_namespace_is_method_not_found() {
+        let req = RpcRequest::new("bogus_method", None);
+        assert!(matches!(req.namespace(), Err(RpcErr::MethodNotFound(_))));
     }
 }
