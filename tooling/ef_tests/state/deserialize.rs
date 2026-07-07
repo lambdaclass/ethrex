@@ -315,8 +315,8 @@ where
             "Osaka" => Fork::Osaka,
             "Amsterdam" => Fork::Amsterdam,
             "Byzantium" => Fork::Byzantium,
-            "EIP158" => Fork::SpuriousDragon,
-            "EIP150" => Fork::Tangerine,
+            "EIP158" | "SpuriousDragon" => Fork::SpuriousDragon,
+            "EIP150" | "TangerineWhistle" => Fork::Tangerine,
             other => {
                 return Err(serde::de::Error::custom(format!(
                     "Unknown fork name: {other}",

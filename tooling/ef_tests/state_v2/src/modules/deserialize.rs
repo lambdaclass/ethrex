@@ -145,8 +145,8 @@ where
         let fork = match fork_str.as_str() {
             "Frontier" => Fork::Frontier,
             "Homestead" => Fork::Homestead,
-            "EIP150" => Fork::Tangerine,
-            "EIP158" => Fork::SpuriousDragon,
+            "EIP150" | "TangerineWhistle" => Fork::Tangerine,
+            "EIP158" | "SpuriousDragon" => Fork::SpuriousDragon,
             "Byzantium" => Fork::Byzantium,
             "Constantinople" => Fork::Constantinople,
             "ConstantinopleFix" | "Petersburg" => Fork::Petersburg,
