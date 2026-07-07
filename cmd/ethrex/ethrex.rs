@@ -178,6 +178,11 @@ async fn periodically_check_version_update() {
     }
 }
 
+// Attribute order matters: `#[tokio::main]` must stay outermost so it expands
+// first and hands `hotpath::main` the resulting sync `fn main`, which hotpath
+// then wraps to install its allocator and print the report on exit. The three
+// `hotpath::main` arms below are mutually exclusive (see the feature guards), so
+// at most one is ever active.
 #[tokio::main]
 #[cfg_attr(
     all(
@@ -186,6 +191,7 @@ async fn periodically_check_version_update() {
         feature = "jemalloc",
         not(target_env = "msvc")
     ),
+    // jemalloc doesn't support msvc, so it's excluded above.
     hotpath::main(allocator = tikv_jemallocator::Jemalloc)
 )]
 #[cfg_attr(

@@ -215,7 +215,7 @@ Commit:
 
 ### Async / multi-thread allocation caveat
 
-hotpath's allocation tracking is thread-local and assumes a `current_thread` tokio runtime. ethrex runs a multi-thread `#[tokio::main]` runtime, so allocation counts attributed to `async fn`s are unreliable: allocations performed on a spawned worker thread are not attributed back to the `async fn` that awaited the work. Timing is not affected by this and works correctly on any runtime.
+hotpath's allocation tracking is thread-local and assumes a `current_thread` tokio runtime. ethrex runs a multi-thread `#[tokio::main]` runtime, so allocation counts attributed to `async fn`s are unreliable: allocations performed on a spawned worker thread are not attributed back to the `async fn` that awaited the work. This cross-thread attribution problem does not distort timing. Note, though, that `hotpath-alloc` does affect timing in a different way: its `CountingAllocator` wrapper adds overhead to *every* allocation path (see [jemalloc interaction](#jemalloc-interaction) below), so measured durations under `hotpath-alloc` run slower than under plain `hotpath`. For pure timing numbers, use `hotpath` (timing only) without `hotpath-alloc`.
 
 All currently instrumented functions are synchronous, so their allocation numbers under `hotpath-alloc` are meaningful. If you instrument an `async fn` in the future, prefer timing over allocation tracking for it.
 
