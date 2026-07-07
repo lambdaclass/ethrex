@@ -516,12 +516,19 @@ pub fn new_payload_request_to_block(
     Ok(Block::new(header, body))
 }
 
-/// Core stateless block validation shared by the EXECUTE precompile
-/// (`ethrex-blockchain`) and the EIP-8025 zk-guest path.
+/// Core stateless block validation for the native-rollup EXECUTE path.
+///
+/// Sole caller: `ethrex-blockchain`'s `verify_stateless_new_payload`
+/// (`StatelessExecutor`, the `StatelessValidator` trait impl invoked by the
+/// EXECUTE precompile). NOTE: the zkVM guest binaries do **not** call this —
+/// they validate via the separate `validate_eip8025_*` path
+/// (`eip8025_new_payload_request_to_block`), so changes here do not affect
+/// zk-proof output.
 ///
 /// Implements the `verify_stateless_new_payload` logic from execution-specs:
 /// reconstruct block → validate versioned hashes → execute statelessly →
-/// inject recomputed `burned_fees` → verify `block_hash`.
+/// inject recomputed `burned_fees` → validate the recomputed block access list
+/// hash (Amsterdam+) → verify `block_hash`.
 ///
 /// **Always compiled** — no `#[cfg(feature = "eip-8025")]` gate, so the
 /// always-compiled `verify_inner` in `ethrex-blockchain` can call it without

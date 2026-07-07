@@ -48,6 +48,8 @@ pub enum NativeL1AdvancerError {
     Store(#[from] ethrex_storage::error::StoreError),
     #[error("Chain error: {0}")]
     Chain(#[from] ethrex_blockchain::error::ChainError),
+    #[error("advance() reverted on L1: {0}")]
+    RevertedAdvance(String),
 }
 
 pub struct NativeL1Advancer {
@@ -153,8 +155,10 @@ impl NativeL1Advancer {
             build_ssz_stateless_input(&block_header, &block_body, &witness, bal.as_ref())
                 .map_err(|e| NativeL1AdvancerError::Encoding(format!("SSZ encoding: {e}")))?;
 
-        // 6. Send advance() tx
-        let tx_hash = self.send_advance(&ssz_input, l1_messages_count).await?;
+        // 6. Send advance() tx (gas driven by the L2 block's gas limit — see send_advance)
+        let tx_hash = self
+            .send_advance(&ssz_input, l1_messages_count, block_header.gas_limit)
+            .await?;
 
         info!(
             "NativeL1Advancer: advanced block {} on L1 (state_root={:?}, l1_msgs={}, tx={:?})",
@@ -165,10 +169,20 @@ impl NativeL1Advancer {
     }
 
     /// Build and send the advance() transaction to NativeRollup.sol.
+    ///
+    /// `l2_block_gas_limit` is the gas limit of the L2 block being settled. It
+    /// drives the tx gas limit: advance() STATICCALLs the EXECUTE precompile,
+    /// which charges `l2_block_gas_limit + calldata*16` up front to re-execute
+    /// the whole L2 block. Because of the 63/64 call-gas rule plus advance()'s
+    /// own overhead, the tx must carry well more than that, and gas *estimation*
+    /// underestimates it (the precompile's up-front charge isn't modeled), so we
+    /// set an explicit generous limit instead of relying on `build_generic_tx`'s
+    /// estimate. Kept below the L1 block gas limit.
     async fn send_advance(
         &self,
         ssz_input: &[u8],
         l1_messages_count: u16,
+        l2_block_gas_limit: u64,
     ) -> Result<H256, NativeL1AdvancerError> {
         let calldata = encode_calldata(
             ADVANCE_FUNCTION_SIGNATURE,
@@ -179,6 +193,14 @@ impl NativeL1Advancer {
         )
         .map_err(|e| NativeL1AdvancerError::Encoding(e.to_string()))?;
 
+        let calldata_gas = u64::try_from(ssz_input.len())
+            .unwrap_or(u64::MAX)
+            .saturating_mul(16);
+        let advance_gas_limit = l2_block_gas_limit
+            .saturating_mul(2)
+            .saturating_add(calldata_gas)
+            .saturating_add(3_000_000);
+
         let tx = build_generic_tx(
             &self.eth_client,
             TxType::EIP1559,
@@ -187,6 +209,7 @@ impl NativeL1Advancer {
             Bytes::from(calldata),
             Overrides {
                 from: Some(self.signer.address()),
+                gas_limit: Some(advance_gas_limit),
                 ..Default::default()
             },
         )
@@ -196,6 +219,28 @@ impl NativeL1Advancer {
         let tx_hash = send_tx_bump_gas_exponential_backoff(&self.eth_client, tx, &self.signer)
             .await
             .map_err(NativeL1AdvancerError::EthClient)?;
+
+        // `send_tx_bump_gas_exponential_backoff` returns as soon as a receipt EXISTS; it
+        // never inspects `receipt.status`. A reverted advance() (bad witness, root/chain_id
+        // mismatch, "Not enough L1 messages", …) has a valid receipt with status=false, so
+        // without this check it would be reported as success — the caller would log
+        // "advanced block N" while the chain stayed put and re-execute + resubmit the same
+        // doomed tx every interval (silent L1 gas drain). Surface it as an error instead.
+        let receipt = self
+            .eth_client
+            .get_transaction_receipt(tx_hash)
+            .await
+            .map_err(NativeL1AdvancerError::EthClient)?
+            .ok_or_else(|| {
+                NativeL1AdvancerError::RevertedAdvance(format!(
+                    "advance() tx {tx_hash:#x} has no receipt"
+                ))
+            })?;
+        if !receipt.receipt.status {
+            return Err(NativeL1AdvancerError::RevertedAdvance(format!(
+                "advance() tx {tx_hash:#x} reverted on L1"
+            )));
+        }
 
         Ok(tx_hash)
     }

@@ -162,7 +162,10 @@ async fn native_rollup_bridge_roundtrip() {
         withdraw_calldata,
         Overrides {
             value: Some(withdraw_amount),
-            gas_limit: Some(200_000),
+            // EIP-8037 (Amsterdam+): storage writes cost cost_per_state_byte (1530)
+            // per state byte, so withdraw()'s two SSTOREs alone are ~196k state gas.
+            // 200k is a pre-EIP-8037 assumption and OOGs; give ample headroom.
+            gas_limit: Some(1_500_000),
             ..Default::default()
         },
     )
@@ -321,7 +324,10 @@ async fn native_rollup_bridge_roundtrip() {
         l1_signer.address(),
         claim_calldata,
         Overrides {
-            gas_limit: Some(1_000_000),
+            // EIP-8037: claimWithdrawal does MPT-proof verification + a new-slot
+            // SSTORE (claimedWithdrawals) + the ETH transfer; state pricing pushes
+            // it well past 1M. Headroom for the target fork's gas model.
+            gas_limit: Some(3_000_000),
             ..Default::default()
         },
     )
@@ -359,7 +365,7 @@ async fn native_rollup_bridge_roundtrip() {
     // A zero transfer yields balance_after ≈ balance_before - claim_gas, which FAILS this
     // assertion (since claim_gas << withdraw_amount when gas price is reasonable).
     // No deposit_amount slack: the receiver is not getting the deposit back here.
-    let l1_gas_price = l1_client.get_gas_price().await.unwrap().as_u64();
+    let l1_gas_price = u64::try_from(l1_client.get_gas_price().await.unwrap()).unwrap();
     // 1_000_000 gas limit (claim tx) * gas_price * 2× safety margin
     let max_gas_cost = U256::from(1_000_000u64) * U256::from(l1_gas_price) * 2;
     assert!(
@@ -399,7 +405,8 @@ async fn native_rollup_bridge_roundtrip() {
         &test_signer,
         counter_initcode,
         Overrides {
-            gas_limit: Some(500_000),
+            // EIP-8037 code deposit is ~1530 gas/byte; give the Counter deploy headroom.
+            gas_limit: Some(3_000_000),
             ..Default::default()
         },
     )
@@ -410,12 +417,17 @@ async fn native_rollup_bridge_roundtrip() {
     // Send an L1→L2 message calling counter.increment() (selector 0xd09de08a, payable)
     let increment_selector = Bytes::from(hex::decode("d09de08a").expect("Invalid selector hex"));
 
+    // The L2 subcall gas limit. increment() performs a cold 0->1 SSTORE, which
+    // under EIP-8037's state-gas model (~1530 gas/state-byte, Amsterdam+) costs
+    // ~128k gas — far more than a plain ETH-transfer message. L2Bridge silently
+    // swallows subcall failures (nonce stays in sync, funds stay in the bridge),
+    // so an under-budgeted message would leave the counter at 0 with no revert.
     let counter_msg_calldata = Bytes::from(
         encode_calldata(
             "sendL1Message(address,uint256,bytes)",
             &[
                 Value::Address(counter_address),
-                Value::Uint(U256::from(105_000u64)),
+                Value::Uint(U256::from(300_000u64)),
                 Value::Bytes(increment_selector),
             ],
         )
@@ -429,7 +441,7 @@ async fn native_rollup_bridge_roundtrip() {
         l1_signer.address(),
         counter_msg_calldata,
         Overrides {
-            gas_limit: Some(500_000),
+            gas_limit: Some(1_500_000),
             ..Default::default()
         },
     )

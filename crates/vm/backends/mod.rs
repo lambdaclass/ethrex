@@ -404,7 +404,7 @@ pub struct BlockExecutionResult {
     /// Total base-fee + blob-base-fee burned in this block (EIP-8079, LStar+).
     /// `None` for pre-LStar forks.
     /// Formula: `base_fee_per_gas * Σgas_spent + blob_base_fee * blob_gas_used`,
-    /// where `Σgas_spent` = `receipts.last().cumulative_gas_used` (post-refund per EIP-7778).
+    /// where `Σgas_spent` = `receipts.last().cumulative_gas_used` (post-refund; per EIP-8079).
     /// Uses saturating arithmetic; saturates at u64::MAX on extreme values.
     pub burned_fees: Option<u64>,
     /// Per-tx gas-dimension breakdown. Populated by `execute_block`; left empty by

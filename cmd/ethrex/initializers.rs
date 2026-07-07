@@ -329,13 +329,23 @@ pub async fn init_network(
 pub async fn init_dev_network(opts: &Options, store: &Store, tracker: TaskTracker) {
     info!("Running in DEV_MODE");
 
-    let head_block_hash = {
+    let chain_config = store.get_chain_config();
+
+    let (head_block_hash, target_gas_limit) = {
         let current_block_number = store.get_latest_block_number().await.unwrap();
-        store
+        let head_block_hash = store
             .get_canonical_block_hash(current_block_number)
             .await
             .unwrap()
+            .unwrap();
+        // Use the head block's gas limit as the V4 target so the dev chain holds
+        // its configured gas limit (execution-apis#796 requires target_gas_limit).
+        let target_gas_limit = store
+            .get_block_header(current_block_number)
             .unwrap()
+            .unwrap()
+            .gas_limit;
+        (head_block_hash, target_gas_limit)
     };
 
     let max_tries = 3;
@@ -352,6 +362,8 @@ pub async fn init_dev_network(opts: &Options, store: &Store, tracker: TaskTracke
         max_tries,
         1000,
         ethrex_common::Address::default(),
+        chain_config.amsterdam_time,
+        target_gas_limit,
     );
     tracker.spawn(block_producer_engine);
 }

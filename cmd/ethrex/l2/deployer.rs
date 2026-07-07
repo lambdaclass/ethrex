@@ -491,7 +491,13 @@ impl Default for DeployerOptions {
             deploy_based_contracts: false,
             sequencer_registry_owner: None,
             inclusion_max_wait: 3000,
-            l2_gas_limit: 30_000_000,
+            // Native-rollup L2 blocks are re-executed on L1 by the EXECUTE precompile,
+            // which charges `l2GasLimit` of *regular/compute* gas. EIP-8037 (Amsterdam+)
+            // caps a tx's regular gas at TX_MAX_GAS_LIMIT_AMSTERDAM (2^24 ≈ 16.77M), so
+            // l2GasLimit must stay below that (with headroom for the witness charge and
+            // the 63/64 call-gas rule) or advance() can never fund EXECUTE. 15M leaves
+            // ~1.4M of headroom for the per-byte witness charge.
+            l2_gas_limit: 15_000_000,
             use_compiled_genesis: true,
             router: None,
             deploy_router: false,
@@ -624,6 +630,12 @@ const ROUTER_REGISTER_SIGNATURE: &str = "register(uint256,address)";
 // Needed to avoid estimating gas of initializations when the
 // deploy transaction is still pending
 const TRANSACTION_GAS_LIMIT: u64 = 10_000_000;
+
+// NativeRollup.sol is a large contract (~14 KiB runtime). At Amsterdam+ the
+// EIP-8037 code-deposit cost is ~1530 gas per code byte, so deploying it costs
+// ~23M gas — far above TRANSACTION_GAS_LIMIT. Give the native-rollup deploy its
+// own higher limit (kept below the native L1 block gas limit).
+const NATIVE_ROLLUP_DEPLOY_GAS_LIMIT: u64 = 60_000_000;
 
 #[derive(Clone)]
 pub struct ContractAddresses {
@@ -1863,7 +1875,7 @@ pub async fn deploy_native_rollup_contracts(
         &salt,
         &eth_client,
         Overrides {
-            gas_limit: Some(TRANSACTION_GAS_LIMIT),
+            gas_limit: Some(NATIVE_ROLLUP_DEPLOY_GAS_LIMIT),
             max_fee_per_gas: Some(gas_price),
             max_priority_fee_per_gas: Some(gas_price),
             ..Default::default()

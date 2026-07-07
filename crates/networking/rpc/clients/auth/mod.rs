@@ -1,11 +1,13 @@
 use crate::{
     engine::{
         ExchangeCapabilitiesRequest,
-        fork_choice::ForkChoiceUpdatedV3,
-        payload::{GetPayloadV5Request, NewPayloadV4Request, NewPayloadV5Request},
+        fork_choice::{ForkChoiceUpdatedV3, ForkChoiceUpdatedV4},
+        payload::{GetPayloadV5Request, GetPayloadV6Request, NewPayloadV4Request, NewPayloadV5Request},
     },
     types::{
-        fork_choice::{ForkChoiceResponse, ForkChoiceState, PayloadAttributesV3},
+        fork_choice::{
+            ForkChoiceResponse, ForkChoiceState, PayloadAttributesV3, PayloadAttributesV4,
+        },
         payload::{ExecutionPayload, ExecutionPayloadResponse, PayloadStatus},
     },
     utils::{RpcRequest, RpcResponse},
@@ -96,11 +98,57 @@ impl EngineClient {
         }
     }
 
+    pub async fn engine_forkchoice_updated_v4(
+        &self,
+        state: ForkChoiceState,
+        payload_attributes: Option<PayloadAttributesV4>,
+    ) -> Result<ForkChoiceResponse, EngineClientError> {
+        let request = RpcRequest::from(ForkChoiceUpdatedV4 {
+            fork_choice_state: state,
+            payload_attributes,
+        });
+
+        match self.send_request(request).await? {
+            RpcResponse::Success(result) => serde_json::from_value(result.result)
+                .map_err(ForkChoiceUpdatedError::SerdeJSONError)
+                .map_err(EngineClientError::from),
+            RpcResponse::Error(error_response) => {
+                let error_message = if let Some(data) = error_response.error.data {
+                    format!("{}: {:?}", error_response.error.message, data)
+                } else {
+                    error_response.error.message.to_string()
+                };
+                Err(ForkChoiceUpdatedError::RPCError(error_message).into())
+            }
+        }
+    }
+
     pub async fn engine_get_payload_v5(
         &self,
         payload_id: u64,
     ) -> Result<ExecutionPayloadResponse, EngineClientError> {
         let request = GetPayloadV5Request { payload_id }.into();
+
+        match self.send_request(request).await? {
+            RpcResponse::Success(result) => serde_json::from_value(result.result)
+                .map_err(GetPayloadError::SerdeJSONError)
+                .map_err(EngineClientError::from),
+            RpcResponse::Error(error_response) => {
+                let error_message = if let Some(data) = error_response.error.data {
+                    format!("{}: {:?}", error_response.error.message, data)
+                } else {
+                    error_response.error.message.to_string()
+                };
+                Err(GetPayloadError::RPCError(error_message).into())
+            }
+        }
+    }
+
+    pub async fn engine_get_payload_v6(
+        &self,
+        payload_id: u64,
+    ) -> Result<ExecutionPayloadResponse, EngineClientError> {
+        let request = GetPayloadV6Request { payload_id }.into();
 
         match self.send_request(request).await? {
             RpcResponse::Success(result) => serde_json::from_value(result.result)

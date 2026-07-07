@@ -19,9 +19,7 @@ use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use bytes::Bytes;
-use ethrex_blockchain::payload::{
-    BuildPayloadArgs, HeadTransaction, PayloadBuildContext, apply_plain_transaction,
-};
+use ethrex_blockchain::payload::{BuildPayloadArgs, HeadTransaction, PayloadBuildContext};
 use ethrex_blockchain::{Blockchain, fork_choice::apply_fork_choice, payload::create_payload};
 use ethrex_common::types::{EIP1559Transaction, MempoolTransaction, Transaction, TxKind};
 use ethrex_common::{Address, H256, U256};
@@ -308,7 +306,17 @@ impl NativeBlockProducer {
                 nonce,
                 max_priority_fee_per_gas: max_priority_fee,
                 max_fee_per_gas: max_fee,
-                gas_limit: msg.gas_limit,
+                // processL1Message runs its own body (nonce check, Merkle-proof
+                // verification, event) AND forwards `msg.gas_limit` to the recipient
+                // subcall. The 63/64 call-gas rule means the tx must carry more than
+                // `msg.gas_limit`, or processL1Message runs out of gas at the subcall
+                // and the deposit is never credited. Grant the subcall its full
+                // gas_limit (÷63×64) plus a fixed body allowance.
+                gas_limit: msg
+                    .gas_limit
+                    .saturating_mul(64)
+                    .saturating_div(63)
+                    .saturating_add(300_000),
                 to: TxKind::Call(NATIVE_ROLLUP_L2_BRIDGE),
                 value: U256::zero(),
                 data: Bytes::from(calldata),
@@ -404,9 +412,23 @@ impl NativeBlockProducer {
                 continue;
             }
 
-            // Execute tx (the VM validates nonce, balance, etc.)
-            let receipt = match apply_plain_transaction(&head_tx, context) {
-                Ok(receipt) => receipt,
+            // Execute the tx through the full payload pipeline (apply_tx_to_payload),
+            // NOT apply_plain_transaction directly. The pipeline performs the EIP-7928
+            // BAL bookkeeping — set_bal_index(tx_index) and recording the sender/recipient
+            // as touched addresses — that L1 re-execution (execute_block) also performs.
+            // Bypassing it attributes the tx's state changes to the wrong BAL index and
+            // omits the sender/recipient touches, so the producer's block_access_list_hash
+            // (and therefore its block_hash) diverges from what the EXECUTE precompile
+            // recomputes during advance(), making settlement revert with a block_hash
+            // mismatch. It also appends the tx + receipt and, on failure, rolls the BAL
+            // recorder back so rejected txs leave no trace.
+            match self.blockchain.apply_tx_to_payload(head_tx, context) {
+                Ok(()) => {
+                    if !is_relayer_tx {
+                        txs.shift()?;
+                        self.blockchain.remove_transaction_from_pool(&tx_hash)?;
+                    }
+                }
                 Err(e) => {
                     if is_relayer_tx {
                         return Err(NativeBlockProducerError::Vm(format!(
@@ -415,18 +437,9 @@ impl NativeBlockProducer {
                     }
                     debug!("NativeBlockProducer: failed to execute tx {}: {e}", tx_hash);
                     txs.pop();
-                    continue;
+                    self.blockchain.remove_transaction_from_pool(&tx_hash)?;
                 }
-            };
-
-            if !is_relayer_tx {
-                txs.shift()?;
-                self.blockchain.remove_transaction_from_pool(&tx_hash)?;
             }
-
-            let tx: Transaction = (*head_tx).clone();
-            context.payload.body.transactions.push(tx);
-            context.receipts.push(receipt);
         }
 
         Ok(())

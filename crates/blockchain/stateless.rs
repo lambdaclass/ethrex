@@ -1,9 +1,11 @@
-//! Stateless block validation — shared between the EXECUTE precompile and zkVM guests.
+//! Stateless block validation for the native-rollup EXECUTE precompile.
 //!
 //! The core function mirrors `verify_stateless_new_payload` from execution-specs
-//! (projects/zkevm branch). It is invoked through two entry points:
-//! - the EXECUTE precompile (via the `StatelessValidator` trait), and
-//! - the zkVM guest program.
+//! (projects/zkevm branch). It is invoked by the EXECUTE precompile via the
+//! `StatelessValidator` trait (see `StatelessExecutor` below).
+//!
+//! Note: the zkVM guest binaries validate via the separate `validate_eip8025_*`
+//! path, not this module.
 
 use std::sync::Arc;
 

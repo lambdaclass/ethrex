@@ -95,11 +95,13 @@ rm -rf /tmp/ethrex_l1 /tmp/ethrex_l2
 
 #### Terminal 1 — Start L1
 
-Start a local ethrex L1 with the EXECUTE precompile enabled:
+Start a local ethrex L1 with the EXECUTE precompile enabled. This uses a
+dedicated genesis (`l1_native.json`) that activates the LStar fork, which is
+what turns address `0x0101` into the `EXECUTE` precompile:
 
 ```shell
 ./target/release/ethrex \
-  --network fixtures/genesis/l1.json \
+  --network fixtures/genesis/l1_native.json \
   --http.port 8545 --http.addr 0.0.0.0 --authrpc.port 8551 \
   --dev --datadir /tmp/ethrex_l1
 ```
