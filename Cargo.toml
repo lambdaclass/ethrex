@@ -144,6 +144,8 @@ tower-http = { version = "0.6.2", features = ["cors"] }
 indexmap = { version = "2.11.4" }
 k256 = "0.13.4"
 anyhow = "1.0.86"
+# Must match ZISK_VERSION in .github/actions/install-zisk/action.yml.
+ziskos = { git = "https://github.com/0xPolygonHermez/zisk.git", tag = "v0.16.1", default-features = false, features = ["inputcpy"] }
 
 rocksdb = { version = "0.24.0", default-features = false, features = [
   "bindgen-runtime",
