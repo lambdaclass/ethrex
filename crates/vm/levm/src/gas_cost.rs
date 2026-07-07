@@ -64,6 +64,9 @@ pub const BLOBBASEFEE: u64 = 2;
 pub const SLOTNUM: u64 = 2;
 // EIP-8141 Frame Transaction opcodes
 pub const TXPARAM: u64 = 2;
+/// EIP-8250: charged the first time a non-zero nonce key is used (NONCE_MANAGER
+/// slot transitions 0 -> nonzero), matching SSTORE storage-creation cost.
+pub const KEYED_NONCE_FIRST_USE_GAS: u64 = 20000;
 pub const FRAMEDATALOAD: u64 = 3;
 pub const FRAMEDATACOPY_STATIC: u64 = 3;
 pub const FRAMEDATACOPY_DYNAMIC_BASE: u64 = 3;

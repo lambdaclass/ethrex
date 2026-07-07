@@ -83,12 +83,26 @@ pub fn apply_approve(
             if ctx.payer_address.is_some() {
                 return Err(ExceptionalHalt::InvalidOpcode.into());
             }
+            // EIP-8250: a payment approval's effects (nonce consumption, payer
+            // recording, and the balance debit) must all survive together or
+            // not at all. Inside an atomic batch a sibling frame's failure
+            // rolls the whole batch's state back, which would unwind the
+            // balance debit while the tx stayed authorized — minting the
+            // difference at the end-of-tx refund. Rather than reconcile that
+            // partial state (the spec's all-effects-durable rule is not yet
+            // cross-client validated), forbid payment approval inside a batch:
+            // reverting the frame leaves `payer` unset, and payment must be
+            // granted from a non-batch frame (the validation prefix, which
+            // already bans the batch flag). See docs/eip-8250.md.
+            if ctx.tx.frame_is_in_atomic_batch(ctx.current_frame_index) {
+                return Err(VMError::RevertOpcode);
+            }
             // No sender_approved precondition: the spec allows APPROVE_PAYMENT
             // in any order relative to APPROVE_EXECUTION.
             let tx_cost = compute_tx_max_cost(ctx)?;
             let sender = ctx.tx.sender;
 
-            vm.increment_account_nonce(sender)?;
+            vm.consume_keyed_nonces(sender)?;
             // Payer balance underflow is a frame-level revert, not a consensus
             // fault: the outer restore_cache_state() path rolls back the nonce
             // increment above when RevertOpcode propagates.
@@ -134,10 +148,16 @@ pub fn apply_approve(
             if frame_target != ctx.tx.sender {
                 return Err(VMError::RevertOpcode);
             }
+            // Payment approval inside an atomic batch would let a sibling revert
+            // unwind the balance debit while the tx stays authorized — forbidden
+            // (EIP-8250 durability).
+            if ctx.tx.frame_is_in_atomic_batch(ctx.current_frame_index) {
+                return Err(VMError::RevertOpcode);
+            }
             let tx_cost = compute_tx_max_cost(ctx)?;
             let sender = ctx.tx.sender;
 
-            vm.increment_account_nonce(sender)?;
+            vm.consume_keyed_nonces(sender)?;
             // See scope 0x1 above for the Underflow → RevertOpcode rationale.
             match vm.decrease_account_balance(frame_target, tx_cost) {
                 Ok(()) => {}
@@ -500,7 +520,7 @@ impl OpcodeHandler for OpSigParamHandler {
 pub fn load_tx_param(ctx: &crate::vm::FrameTxContext, param_id: u64) -> Result<U256, VMError> {
     match param_id {
         0x00 => Ok(U256::from(0x06u8)), // tx_type (EIP-8141 = type 6)
-        0x01 => Ok(U256::from(ctx.tx.nonce)),
+        0x01 => Ok(U256::from(ctx.tx.nonce_seq)),
         0x02 => Ok(address_to_u256(ctx.tx.sender)),
         0x03 => Ok(U256::from(ctx.tx.max_priority_fee_per_gas)),
         0x04 => Ok(U256::from(ctx.tx.max_fee_per_gas)),
@@ -515,6 +535,18 @@ pub fn load_tx_param(ctx: &crate::vm::FrameTxContext, param_id: u64) -> Result<U
         0x09 => Ok(U256::from(ctx.tx.frames.len())),
         0x0A => Ok(U256::from(ctx.current_frame_index)),
         0x0B => Ok(U256::from(ctx.tx.signatures.len())),
+        // EIP-8250 keyed nonces.
+        0x0C => Ok(U256::from(ctx.legacy_sender_nonce)),
+        0x0D => Ok(U256::from(ctx.tx.nonce_keys.len())),
+        0x0E => Ok(U256::from_big_endian(ctx.tx.nonce_keys_hash().as_bytes())),
+        // 0x10 = nonce_keys[0], relocated from the spec's 0x0B (ethrex keeps 0x0B
+        // for len(signatures); divergence documented in docs/eip-8250.md).
+        0x10 => ctx
+            .tx
+            .nonce_keys
+            .first()
+            .copied()
+            .ok_or(ExceptionalHalt::InvalidOpcode.into()),
         _ => Err(ExceptionalHalt::InvalidOpcode.into()),
     }
 }
@@ -620,6 +652,7 @@ mod max_cost_tests {
             tx,
             approve_called_in_current_frame: false,
             total_gas_limit,
+            legacy_sender_nonce: 0,
         }
     }
 
