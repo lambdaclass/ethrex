@@ -18,6 +18,9 @@ pub mod sp1;
 #[cfg(feature = "zisk")]
 pub mod zisk;
 
+#[cfg(feature = "zisk")]
+pub mod zisk_profile;
+
 #[cfg(feature = "openvm")]
 pub mod openvm;
 
@@ -34,6 +37,9 @@ pub use sp1::Sp1Backend;
 
 #[cfg(feature = "zisk")]
 pub use zisk::ZiskBackend;
+
+#[cfg(feature = "zisk")]
+pub use zisk_profile::{ZiskAirCost, parse_air_cost};
 
 #[cfg(feature = "openvm")]
 pub use openvm::OpenVmBackend;
