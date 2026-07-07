@@ -446,10 +446,10 @@ fn test_filter_mempool_transactions() {
     let mempool = Mempool::new(MEMPOOL_MAX_SIZE_TEST);
     let filter = |tx: &Transaction| -> bool { matches!(tx, Transaction::EIP4844Transaction(_)) };
     mempool
-        .add_transaction(blob_tx_hash, blob_tx_sender, blob_tx.clone(), None)
+        .add_transaction(blob_tx_hash, blob_tx_sender, blob_tx.clone(), None, None)
         .unwrap();
     mempool
-        .add_transaction(plain_tx_hash, plain_tx_sender, plain_tx, None)
+        .add_transaction(plain_tx_hash, plain_tx_sender, plain_tx, None, None)
         .unwrap();
     let txs = mempool.filter_transactions_with_filter_fn(&filter).unwrap();
     assert_eq!(
@@ -648,6 +648,7 @@ fn frame_tx_reservation_maps_clear_after_add_and_remove() {
             sender,
             MempoolTransaction::new(tx, sender),
             Some(reservation),
+            None,
         )
         .expect("add frame tx with reservation");
 
@@ -1007,7 +1008,13 @@ fn blobs_bundle_insert_and_remove() {
             .unwrap();
 
         mempool
-            .add_transaction(hash, sender, MempoolTransaction::new(tx, sender), None)
+            .add_transaction(
+                hash,
+                sender,
+                MempoolTransaction::new(tx, sender),
+                None,
+                None,
+            )
             .expect("Failed to add blob transaction");
     }
 
@@ -1070,6 +1077,7 @@ fn blob_txs_are_not_evicted_by_regular_tx_flood() {
                 blob_sender,
                 MempoolTransaction::new(blob_tx, blob_sender),
                 None,
+                None,
             )
             .expect("Failed to add blob transaction");
         blob_hashes.push(blob_hash);
@@ -1090,7 +1098,13 @@ fn blob_txs_are_not_evicted_by_regular_tx_flood() {
             H256::random()
         };
         mempool
-            .add_transaction(hash, sender, MempoolTransaction::new(tx, sender), None)
+            .add_transaction(
+                hash,
+                sender,
+                MempoolTransaction::new(tx, sender),
+                None,
+                None,
+            )
             .expect("Failed to add regular transaction");
     }
 
@@ -1135,7 +1149,13 @@ fn add_blob_tx(mempool: &Mempool, nonce: u64, blob_fee: u64) -> H256 {
     let sender = H160::random();
     mempool.add_blobs_bundle(hash, bundle).unwrap();
     mempool
-        .add_transaction(hash, sender, MempoolTransaction::new(tx, sender), None)
+        .add_transaction(
+            hash,
+            sender,
+            MempoolTransaction::new(tx, sender),
+            None,
+            None,
+        )
         .expect("Failed to add blob transaction");
     hash
 }
@@ -1158,7 +1178,13 @@ fn add_blob_tx_with_sender(mempool: &Mempool, sender: Address, nonce: u64) -> H2
     let hash = H256::random();
     mempool.add_blobs_bundle(hash, bundle).unwrap();
     mempool
-        .add_transaction(hash, sender, MempoolTransaction::new(tx, sender), None)
+        .add_transaction(
+            hash,
+            sender,
+            MempoolTransaction::new(tx, sender),
+            None,
+            None,
+        )
         .expect("Failed to add blob transaction");
     hash
 }
@@ -1183,6 +1209,7 @@ fn blob_txs_lists_only_blob_txs_with_sender_and_nonce() {
             plain_hash,
             sender,
             MempoolTransaction::new(plain, sender),
+            None,
             None,
         )
         .unwrap();
@@ -1435,6 +1462,7 @@ async fn mempool_rejects_underfunded_paymaster() {
                 is_canonical: false,
                 paymaster_balance: max_cost,
             }),
+            None,
         )
         .expect("phantom reservation must be directly inserted");
 
@@ -1512,6 +1540,7 @@ async fn mempool_enforces_noncanonical_paymaster_limit() {
                 is_canonical: false,
                 paymaster_balance: funded_balance,
             }),
+            None,
         )
         .expect("phantom frame tx must be directly inserted to fill paymaster slot");
 
@@ -1581,6 +1610,7 @@ async fn mempool_rejects_second_frame_tx_same_sender_new_nonce() {
             nonce1_hash,
             sender,
             MempoolTransaction::new(nonce1_tx, sender),
+            None,
             None,
         )
         .expect("direct insert of nonce=1 frame tx must succeed");
@@ -1669,6 +1699,7 @@ async fn mempool_frame_tx_replaces_same_nonce_non_frame_tx() {
             regular_hash,
             sender,
             MempoolTransaction::new(regular_tx, sender),
+            None,
             None,
         )
         .expect("direct insert of non-frame tx must succeed");
@@ -1829,6 +1860,7 @@ async fn mempool_fee_bump_rejected_leaves_original_intact() {
                 is_canonical: true,
                 paymaster_balance: balance,
             }),
+            None,
         )
         .expect("phantom reservation must be directly inserted");
 
@@ -2499,7 +2531,13 @@ mod p2p_serve_tests {
         // exercise only the P2P serve path.
         blockchain
             .mempool
-            .add_transaction(hash, sender, MempoolTransaction::new(tx, sender), None)
+            .add_transaction(
+                hash,
+                sender,
+                MempoolTransaction::new(tx, sender),
+                None,
+                None,
+            )
             .expect("failed to add frame tx to mempool");
 
         let served = blockchain
