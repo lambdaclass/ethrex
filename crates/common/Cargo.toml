@@ -12,15 +12,13 @@ repository.workspace = true
 
 [dependencies]
 ethrex-rlp.workspace = true
-# Inlined (path + version) instead of `workspace = true` so we can set
-# `default-features = false`: Cargo ignores (with a warning) an override of a
-# workspace dependency's default-features unless the root declaration also disables
-# them, and the root declares `ethrex-trie` with defaults on. Keeping `ethrex-trie` no_std here means
-# the zkVM guest (which reaches the trie only through this crate) gets the
-# non-atomic `OnceLock`. Host builds re-enable `ethrex-trie/std` via the direct
-# `ethrex-trie` deps in storage/p2p/rpc/blockchain/l2 (Cargo unifies the feature
-# on). Keep the version in sync with the workspace root.
-ethrex-trie = { path = "trie", version = "19.0.0", default-features = false }
+# `ethrex-common` is a std crate (it uses `std::` directly), and everything that
+# reaches the trie through it — the node, the prover host, and the zkVM guest ELFs —
+# also builds `ethrex-vm`, whose `VmDatabase: Send + Sync` bound requires a `Sync`
+# trie. So `ethrex-common` always wants the std (atomic-`OnceLock`) `ethrex-trie`.
+# `ethrex-trie`'s no_std path is verified in isolation by the `no_std` CI job
+# (`-p ethrex-trie --no-default-features`), not through this dependency.
+ethrex-trie.workspace = true
 ethrex-crypto.workspace = true
 
 tracing.workspace = true
