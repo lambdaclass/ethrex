@@ -699,38 +699,38 @@ impl Blockchain {
             }
         }
 
-        // Warm the MPT internal nodes the merkleizer will walk (the trie-node CFs,
-        // which execution never reads). Derived from the MERKLE WRITE SET, not the
-        // access set: the merkleizer only walks accounts/slots that actually change,
-        // and `optimistic_updates` (synthesize_bal_updates) already drops read-only
-        // accesses and read-only slots. Warming trie nodes for read-only accesses is
-        // wasted cold reads that compete with execution for the same device; gating
-        // on the access set regressed read-heavy blocks (value-0 CALLs to existing
-        // accounts, bloated SLOADs) that have little or no merkle work.
-        //
-        // Gated so ordinary merkle-light blocks skip the probe cost; the payoff is on
-        // blocks that WRITE many distinct slots or modify many accounts, where merkle
-        // walks a large set of scattered, cold nodes. A cold node access costs on the
-        // order of ~2100+ gas, so 16384 sits above ordinary blocks and below the
-        // large-state blocks this targets. Tunable.
+        // Prepare the trie-node prefetch input: the MERKLE WRITE SET (changed
+        // accounts + written slots), which is exactly what the merkleizer walks.
+        // `optimistic_updates` (synthesize_bal_updates) already drops read-only
+        // accesses and read-only slots, so warming is scoped to nodes the merkleizer
+        // will actually read; using the access set instead regressed read-heavy
+        // blocks (value-0 CALLs to existing accounts, bloated SLOADs). The prefetch
+        // runs on its own thread inside the scope below (`trie_prefetch_handle`),
+        // overlapping execution rather than preceding it. Gated so ordinary
+        // merkle-light blocks skip the probe cost; the payoff is on blocks that WRITE
+        // many distinct slots or modify many accounts, where merkle walks a large set
+        // of scattered, cold nodes. Tunable.
         #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
-        if self.options.bal_prefetch_enabled
-            && let Some(updates) = optimistic_updates.as_ref()
-        {
-            const MERKLE_PREFETCH_THRESHOLD: usize = 16_384;
-            let mut write_slots: Vec<(Address, H256)> = Vec::new();
-            for (addr, item) in updates {
-                for slot in item.added_storage.keys() {
-                    write_slots.push((*addr, *slot));
+        let trie_prefetch_input: Option<(Vec<(Address, H256)>, Vec<Address>)> =
+            if self.options.bal_prefetch_enabled
+                && let Some(updates) = optimistic_updates.as_ref()
+            {
+                const MERKLE_PREFETCH_THRESHOLD: usize = 16_384;
+                let mut write_slots: Vec<(Address, H256)> = Vec::new();
+                for (addr, item) in updates {
+                    for slot in item.added_storage.keys() {
+                        write_slots.push((*addr, *slot));
+                    }
                 }
-            }
-            let write_accounts: Vec<Address> = updates.keys().copied().collect();
-            if write_slots.len() + write_accounts.len() >= MERKLE_PREFETCH_THRESHOLD {
-                let _ = self
-                    .storage
-                    .prefetch_trie_nodes(&write_slots, &write_accounts);
-            }
-        }
+                let write_accounts: Vec<Address> = updates.keys().copied().collect();
+                if write_slots.len() + write_accounts.len() >= MERKLE_PREFETCH_THRESHOLD {
+                    Some((write_slots, write_accounts))
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
 
         // Each thread that captures `bal` needs its own Arc clone (cheap pointer bump).
         #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
@@ -797,6 +797,30 @@ impl Blockchain {
                             })
                     })
                     .transpose()?;
+
+                // Warm the merkleizer's trie-node reads concurrently with execution
+                // instead of up front. Touches different CFs than execution, so no
+                // exec contention; as a high-queue-depth batch it races ahead of the
+                // merkleizer's per-account walk so those reads land warm. Best-effort:
+                // any node it misses is just cold-read by the walk. The scope joins it
+                // before the block returns, but it shares the trie-node cold reads with
+                // the merkleizer at higher aggregate queue depth, so it completes
+                // within the exec/merkle window rather than extending it.
+                #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+                let trie_prefetch_handle = match trie_prefetch_input {
+                    Some((slots, accounts)) => {
+                        let storage = &self.storage;
+                        std::thread::Builder::new()
+                            .name("block_executor_trie_prefetch".to_string())
+                            .spawn_scoped(s, move || {
+                                let _ = storage.prefetch_trie_nodes(&slots, &accounts);
+                            })
+                            .inspect_err(|e| debug!("trie-node prefetch spawn failed: {e}"))
+                            .ok()
+                    }
+                    None => None,
+                };
+
                 let max_queue_length_ref = &mut max_queue_length;
                 // Channel is needed whenever the merkleizer takes the streaming
                 // branch OR LEVM falls into the sequential path:
@@ -986,6 +1010,15 @@ impl Blockchain {
                     .unwrap_or(Duration::ZERO);
                 #[cfg(any(not(feature = "rayon"), feature = "eip-8025"))]
                 let warmer_duration = Duration::ZERO;
+                // Best-effort prefetch: join so the scope's borrows end cleanly.
+                // The warming result is discarded, but surface a panic so a failing
+                // prefetch (e.g. a RocksDB error) is observable rather than silent.
+                #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+                if let Some(h) = trie_prefetch_handle
+                    && let Err(e) = h.join()
+                {
+                    warn!("trie-node prefetch thread panicked (best-effort, ignored): {e:?}");
+                }
                 Ok((execution_result, merkleization_result, warmer_duration))
             },
         )?;
