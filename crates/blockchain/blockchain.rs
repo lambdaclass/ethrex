@@ -47,6 +47,7 @@ pub mod error;
 pub mod fork_choice;
 pub mod mempool;
 pub mod payload;
+pub mod prewarm;
 pub mod tracing;
 pub mod vm;
 
@@ -96,7 +97,8 @@ use ethrex_vm::backends::levm::LEVM;
 use ethrex_vm::backends::levm::db::DatabaseLogger;
 use ethrex_vm::{BlockExecutionResult, DynVmDatabase, Evm, EvmError, VmDatabase};
 use mempool::{
-    FRAME_CANONICAL_PAYMASTER_CODE_HASH, FramePaymasterReservation, Mempool, is_canonical_paymaster,
+    FRAME_CANONICAL_PAYMASTER_CODE_HASH, FramePaymasterReservation, Mempool, QueuedCap,
+    is_canonical_paymaster,
 };
 use payload::PayloadOrTask;
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -231,6 +233,39 @@ pub struct Blockchain {
     /// production path keeps the original semantics (one fresh pool per call
     /// to `Blockchain::new` / `default_with_store`).
     merkle_pool: Arc<rayon::ThreadPool>,
+    /// Cache handoff slot from the mempool prewarmer to
+    /// `execute_block_pipeline`; see `PrewarmedCache` and `crate::prewarm`.
+    prewarmed: PrewarmedCache,
+}
+
+/// Newtype around the prewarmer's cache-handoff slot so `Blockchain` can keep
+/// deriving `Debug` (`dyn LevmDatabase` has no `Debug` impl).
+///
+/// Alongside the parent hash, the slot carries the fork the prewarmer warmed
+/// under: the precompile cache maps `(address, calldata) -> (output, gas)`
+/// with no fork in the key, and precompile gas/outputs change at forks
+/// (e.g. EIP-7883). A missed slot across a fork activation would otherwise
+/// hand post-fork execution pre-fork entries and reject a valid block.
+#[derive(Default)]
+pub(crate) struct PrewarmedCache(pub(crate) std::sync::Mutex<Option<PrewarmedEntry>>);
+
+/// Contents of the handoff slot.
+pub(crate) struct PrewarmedEntry {
+    /// Parent block the cache was built on.
+    pub(crate) parent_hash: H256,
+    /// Fork the cache was warmed under.
+    pub(crate) fork: Fork,
+    pub(crate) cache: Arc<dyn ethrex_vm::backends::LevmDatabase>,
+}
+
+impl std::fmt::Debug for PrewarmedCache {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let state = match self.0.lock() {
+            Ok(slot) => slot.as_ref().map(|entry| (entry.parent_hash, entry.fork)),
+            Err(_) => None,
+        };
+        f.debug_tuple("PrewarmedCache").field(&state).finish()
+    }
 }
 
 /// Configuration options for the blockchain.
@@ -251,6 +286,13 @@ pub struct BlockchainOptions {
     /// warmer thread and the executor. Set to false (via `--no-precompile-cache`) to
     /// disable the cache for benchmarking purposes.
     pub precompile_cache_enabled: bool,
+    /// Maximum number of *queued* (future/nonce-gapped) transactions a single
+    /// sender may hold in the mempool. Executable (contiguous-nonce) txs are NOT
+    /// capped — mirroring geth's `AccountQueue` (a hard cap on the future/queued
+    /// subpool only), so legitimate high-throughput single senders and the
+    /// devp2p `LargeTxRequest` conformance case are unaffected. Only nonce-gapped
+    /// parking spam is bounded.
+    pub max_queued_txs_per_account: usize,
     /// If true (default), Amsterdam+ validation runs transactions in parallel
     /// using the header BAL to seed per-tx databases. Set to false (via
     /// `--no-bal-parallel-exec`) to fall back to sequential execution.
@@ -279,6 +321,7 @@ impl Default for BlockchainOptions {
             max_blobs_per_block: None,
             precompute_witnesses: false,
             precompile_cache_enabled: true,
+            max_queued_txs_per_account: DEFAULT_MAX_QUEUED_TXS_PER_ACCOUNT,
             bal_parallel_exec_enabled: true,
             bal_prefetch_enabled: true,
             bal_parallel_trie_enabled: true,
@@ -286,6 +329,11 @@ impl Default for BlockchainOptions {
         }
     }
 }
+
+/// Default per-account *queued* (future-nonce) tx cap. Matches geth's
+/// `AccountQueue` default (64) — a hard cap on the future/queued subpool only;
+/// executable txs are uncapped.
+pub const DEFAULT_MAX_QUEUED_TXS_PER_ACCOUNT: usize = 64;
 
 #[derive(Debug, Clone)]
 pub struct BatchBlockProcessingFailure {
@@ -388,6 +436,7 @@ impl Blockchain {
             payloads: Arc::new(TokioMutex::new(Vec::new())),
             options: blockchain_opts,
             merkle_pool: Self::build_merkle_pool(),
+            prewarmed: PrewarmedCache::default(),
         }
     }
 
@@ -408,6 +457,7 @@ impl Blockchain {
             payloads: Arc::new(TokioMutex::new(Vec::new())),
             options: BlockchainOptions::default(),
             merkle_pool: pool,
+            prewarmed: PrewarmedCache::default(),
         }
     }
 
@@ -419,6 +469,7 @@ impl Blockchain {
             payloads: Arc::new(TokioMutex::new(Vec::new())),
             options: BlockchainOptions::default(),
             merkle_pool: Self::build_merkle_pool(),
+            prewarmed: PrewarmedCache::default(),
         }
     }
 
@@ -553,11 +604,34 @@ impl Blockchain {
         let mut max_queue_length = 0;
 
         // Wrap the store with CachingDatabase so both warming and execution
-        // can benefit from shared caching of state lookups
+        // can benefit from shared caching of state lookups. If the mempool
+        // prewarmer published a cache built on this block's parent state,
+        // seed execution with it when the parent hash and fork match (why
+        // both must match: see `PrewarmedCache` and the `CachingDatabase`
+        // invariant). Witness collection must start cold — pre-populated
+        // entries would hide reads from the witness logger beneath the cache.
         let original_store = vm.db.store.clone();
-        let caching_store: Arc<dyn ethrex_vm::backends::LevmDatabase> = Arc::new(
-            CachingDatabase::new(original_store, self.options.precompile_cache_enabled),
-        );
+        let prewarmed = (!collect_witness)
+            .then(|| {
+                self.prewarmed
+                    .0
+                    .lock()
+                    .ok()
+                    .and_then(|mut slot| slot.take())
+            })
+            .flatten()
+            .and_then(|entry| {
+                let block_fork = self.storage.get_chain_config().fork(block.header.timestamp);
+                (entry.parent_hash == block.header.parent_hash && entry.fork == block_fork)
+                    .then_some(entry.cache)
+            });
+        let caching_store: Arc<dyn ethrex_vm::backends::LevmDatabase> = match prewarmed {
+            Some(cache) => cache,
+            None => Arc::new(CachingDatabase::new(
+                original_store,
+                self.options.precompile_cache_enabled,
+            )),
+        };
 
         // Replace the VM's store with the caching version
         vm.db.store = caching_store.clone();
@@ -2831,8 +2905,18 @@ impl Blockchain {
         let sender = transaction.sender(&NativeCrypto)?;
 
         // Validate transaction
-        let (tx_to_replace, frame_reservation) =
+        let (tx_to_replace, frame_reservation, sender_account_nonce) =
             self.validate_transaction(&transaction, sender).await?;
+        // A replacement (same `(sender, nonce)`) doesn't grow the queue, so it's
+        // exempt from the queued cap (check find_tx_to_replace first, review fix).
+        let queued_cap = if tx_to_replace.is_some() {
+            None
+        } else {
+            sender_account_nonce.map(|account_nonce| QueuedCap {
+                account_nonce,
+                max: self.options.max_queued_txs_per_account,
+            })
+        };
         if let Some(tx_to_replace) = tx_to_replace {
             self.remove_transaction_from_pool(&tx_to_replace)?;
         }
@@ -2840,12 +2924,20 @@ impl Blockchain {
         // Add blobs bundle before the transaction so that when add_transaction
         // notifies payload builders the blob data is already available.
         self.mempool.add_blobs_bundle(hash, blobs_bundle)?;
-        self.mempool.add_transaction(
+        // If the tx insert fails after the bundle was stored, roll back the
+        // orphaned bundle so it isn't leaked in the pool. Best-effort: keep the
+        // original error (a failing insert means the write lock is poisoned or
+        // eviction failed, in which case the cleanup can't do better anyway).
+        if let Err(e) = self.mempool.add_transaction(
             hash,
             sender,
             MempoolTransaction::new(transaction, sender),
             frame_reservation,
-        )?;
+            queued_cap,
+        ) {
+            let _ = self.mempool.remove_blobs_bundle(&hash);
+            return Err(e);
+        }
         Ok(hash)
     }
 
@@ -2876,7 +2968,7 @@ impl Blockchain {
         }
         let sender = transaction.sender(&NativeCrypto)?;
         // Validate transaction
-        let (tx_to_replace, frame_reservation) =
+        let (tx_to_replace, frame_reservation, sender_account_nonce) =
             self.validate_transaction(&transaction, sender).await?;
         // For a frame tx, the same-nonce predecessor must NOT be removed here:
         // `add_transaction` removes it only AFTER the locked paymaster re-check
@@ -2886,6 +2978,16 @@ impl Blockchain {
         // same-nonce hash `find_tx_to_replace` returns, so the success path is
         // unchanged — including when the predecessor is a non-frame tx.
         let is_frame = matches!(transaction, Transaction::FrameTransaction(_));
+        // A replacement (same `(sender, nonce)`) doesn't grow the queue, so it's
+        // exempt from the queued cap (check find_tx_to_replace first, review fix).
+        let queued_cap = if tx_to_replace.is_some() {
+            None
+        } else {
+            sender_account_nonce.map(|account_nonce| QueuedCap {
+                account_nonce,
+                max: self.options.max_queued_txs_per_account,
+            })
+        };
         if let Some(tx_to_replace) = tx_to_replace
             && !is_frame
         {
@@ -2898,6 +3000,7 @@ impl Blockchain {
             sender,
             MempoolTransaction::new(transaction, sender),
             frame_reservation,
+            queued_cap,
         )?;
 
         Ok(hash)
@@ -3137,11 +3240,20 @@ impl Blockchain {
         &self,
         tx: &Transaction,
         sender: Address,
-    ) -> Result<(Option<H256>, Option<FramePaymasterReservation>), MempoolError> {
+    ) -> Result<(Option<H256>, Option<FramePaymasterReservation>, Option<u64>), MempoolError> {
         let nonce = tx.nonce();
 
+        // On an L1 node, reject L2-only transaction types (FeeToken 0x7d,
+        // PrivilegedL2 0x7e). They are valid only on L2; admitting them to an L1
+        // pool diverges from other L1 clients. The block-import path rejects them
+        // via the same `is_l2_only()` guard (#6752); this is the mempool-ingress
+        // side. Gated on L1 so the shared admission path still serves L2.
+        if matches!(self.options.r#type, BlockchainType::L1) && tx.tx_type().is_l2_only() {
+            return Err(MempoolError::L2OnlyTransactionType);
+        }
+
         if matches!(tx, &Transaction::PrivilegedL2Transaction(_)) {
-            return Ok((None, None));
+            return Ok((None, None, None));
         }
 
         // Frame transactions: skip balance/EOA checks (payer unknown until execution)
@@ -3327,6 +3439,13 @@ impl Blockchain {
         };
 
         let maybe_sender_acc_info = self.storage.get_account_info(header_no, sender).await?;
+        // Sender's on-chain nonce, threaded out to `add_transaction` so the
+        // per-account queued (future/nonce-gapped) cap is enforced *atomically*
+        // under the insertion write lock (see `QueuedCap`) instead of via a
+        // separate, racy pre-check here. geth `AccountQueue` style: only future
+        // (nonce-gapped) txs count; executable/contiguous txs are never capped,
+        // and replacements pass because the caller removes the old tx first.
+        let sender_account_nonce = maybe_sender_acc_info.as_ref().map(|info| info.nonce);
 
         let sender_acc_nonce = if let Some(sender_acc_info) = &maybe_sender_acc_info {
             if nonce < sender_acc_info.nonce || nonce == u64::MAX {
@@ -3561,7 +3680,7 @@ impl Blockchain {
             }
         }
 
-        Ok((tx_to_replace_hash, frame_reservation))
+        Ok((tx_to_replace_hash, frame_reservation, sender_account_nonce))
     }
 
     /// Marks the node's chain as up to date with the current chain

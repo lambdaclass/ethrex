@@ -10,7 +10,8 @@ use std::{
 
 use clap::{ArgAction, Parser as ClapParser, Subcommand as ClapSubcommand};
 use ethrex_blockchain::{
-    BlockchainOptions, BlockchainType, DEFAULT_GAP_ADMIT_OCCUPANCY_THRESHOLD, L2Config,
+    BlockchainOptions, BlockchainType, DEFAULT_GAP_ADMIT_OCCUPANCY_THRESHOLD,
+    DEFAULT_MAX_QUEUED_TXS_PER_ACCOUNT, L2Config,
     error::{ChainError, InvalidBlockError},
 };
 use ethrex_common::types::{Block, DEFAULT_BUILDER_GAS_CEIL, Genesis, validate_block_body};
@@ -248,6 +249,15 @@ pub struct Options {
     )]
     pub mempool_gap_admit_occupancy_threshold: u8,
     #[arg(
+        help = "Maximum number of queued (future/nonce-gapped) transactions a single sender may hold in the mempool. Executable (contiguous-nonce) txs are not capped (geth AccountQueue-style).",
+        long = "mempool.max-queued-txs-per-account",
+        default_value_t = DEFAULT_MAX_QUEUED_TXS_PER_ACCOUNT,
+        value_name = "MAX_QUEUED_TXS_PER_ACCOUNT",
+        help_heading = "Node options",
+        env = "ETHREX_MEMPOOL_MAX_QUEUED_TXS_PER_ACCOUNT"
+    )]
+    pub mempool_max_queued_txs_per_account: usize,
+    #[arg(
         long = "http.addr",
         default_value = "127.0.0.1",
         value_name = "ADDRESS",
@@ -288,24 +298,24 @@ pub struct Options {
     pub ws_enabled: bool,
     #[arg(
         long = "ws.addr",
-        default_value = "0.0.0.0",
         value_name = "ADDRESS",
         requires = "ws_enabled",
-        help = "Listening address for the websocket rpc server.",
+        help = "Listening address for the websocket rpc server. Defaults to the http.addr value.",
+        long_help = "Listening address for the WebSocket JSON-RPC server. When unset it inherits `--http.addr` (loopback by default). Set it equal to the HTTP address to serve HTTP and WebSocket on a single listener.",
         help_heading = "RPC options",
         env = "ETHREX_WS_ADDR"
     )]
-    pub ws_addr: String,
+    pub ws_addr: Option<String>,
     #[arg(
         long = "ws.port",
-        default_value = "8546",
         value_name = "PORT",
         requires = "ws_enabled",
-        help = "Listening port for the websocket rpc server.",
+        help = "Listening port for the websocket rpc server. Defaults to the http.port value.",
+        long_help = "Listening port for the WebSocket JSON-RPC server. When unset it inherits `--http.port`, so an enabled WebSocket shares the HTTP listener unless a different port is given.",
         help_heading = "RPC options",
         env = "ETHREX_WS_PORT"
     )]
-    pub ws_port: String,
+    pub ws_port: Option<String>,
     #[arg(
         long = "authrpc.addr",
         default_value = "127.0.0.1",
@@ -530,6 +540,7 @@ impl Default for Options {
             force: false,
             mempool_max_size: Default::default(),
             mempool_gap_admit_occupancy_threshold: DEFAULT_GAP_ADMIT_OCCUPANCY_THRESHOLD,
+            mempool_max_queued_txs_per_account: DEFAULT_MAX_QUEUED_TXS_PER_ACCOUNT,
             tx_broadcasting_time_interval: Default::default(),
             target_peers: Default::default(),
             lookup_interval: Default::default(),
@@ -1321,6 +1332,26 @@ mod tests {
     fn http_addr_defaults_to_loopback() {
         let cli = CLI::parse_from(["ethrex"]);
         assert_eq!(cli.opts.http_addr, "127.0.0.1");
+    }
+
+    /// `--ws.addr`/`--ws.port` inherit the HTTP address/port when unset, so an enabled
+    /// WebSocket defaults to a single listener on the (loopback) HTTP endpoint — matching
+    /// geth/reth/nethermind and keeping WS off public interfaces by default.
+    #[test]
+    fn ws_defaults_to_http_endpoint() {
+        let cli = CLI::parse_from(["ethrex", "--ws.enabled"]);
+        assert!(cli.opts.ws_addr.is_none());
+        assert!(cli.opts.ws_port.is_none());
+        let http = crate::initializers::get_http_socket_addr(&cli.opts);
+        let ws = crate::initializers::get_ws_socket_addr(&cli.opts);
+        assert!(
+            ws.ip().is_loopback(),
+            "WS must default to loopback like HTTP"
+        );
+        assert_eq!(
+            ws, http,
+            "WS must share the HTTP endpoint by default (single listener)"
+        );
     }
 
     /// `--http.api` must default to `eth,net,web3`. Operators have to opt in
