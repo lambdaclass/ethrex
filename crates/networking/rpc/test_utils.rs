@@ -301,6 +301,7 @@ pub async fn start_test_api() -> tokio::task::JoinHandle<()> {
             DEFAULT_BUILDER_GAS_CEIL,
             String::new(),
             all_namespaces_for_tests(),
+            tokio_util::sync::CancellationToken::new(),
         )
         .await
         .unwrap()
@@ -316,6 +317,7 @@ pub fn all_namespaces_for_tests() -> HashSet<RpcNamespace> {
         RpcNamespace::Debug,
         RpcNamespace::Admin,
         RpcNamespace::Mempool,
+        RpcNamespace::Testing,
     ])
 }
 

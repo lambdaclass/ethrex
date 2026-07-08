@@ -11,6 +11,7 @@ mod eip7928_tests;
 mod eip8037_reservoir_tests;
 mod eip8037_tests;
 mod eip8038_tests;
+mod eip8141_tests;
 mod eip8246_tests;
 mod l2_fee_token_ratio_tests;
 mod l2_fee_token_tests;
