@@ -86,38 +86,63 @@ fn select_warm_set(
 #[cfg_attr(any(not(feature = "rayon"), feature = "eip-8025"), allow(dead_code))]
 const MAX_WARMED_TXS_PER_SENDER_PER_SLOT: usize = 16;
 
-/// Enforces [`MAX_WARMED_TXS_PER_SENDER_PER_SLOT`] across a slot's delta
-/// passes: `warmed_per_sender` counts txs already warmed this slot, and each
-/// sender's snapshot group is truncated to the remaining allowance. Nonce
-/// order within groups is preserved; exhausted senders are removed.
+/// Keeps only a sender's ready contiguous nonce prefix starting at
+/// `account_nonce`: drops stale txs (nonce below the account, e.g. mined but
+/// not yet evicted) and stops at the first nonce gap, so every kept tx
+/// validates in order against parent state. `txs` must be nonce-sorted
+/// ascending (as `filter_transactions` returns them). Without this, the warm
+/// set is padded with non-ready txs that all fail the nonce check — wasted
+/// warming that never touches state.
 #[cfg_attr(any(not(feature = "rayon"), feature = "eip-8025"), allow(dead_code))]
-fn cap_sender_depth(
+fn trim_to_ready(txs: Vec<MempoolTransaction>, account_nonce: u64) -> Vec<MempoolTransaction> {
+    let mut expected = account_nonce;
+    let mut ready = Vec::new();
+    for mtx in txs {
+        let n = mtx.transaction().nonce();
+        if n < expected {
+            continue; // stale: at/below the account's current nonce
+        }
+        if n == expected {
+            ready.push(mtx);
+            expected += 1;
+        } else {
+            break; // nonce gap: remaining txs aren't executable yet
+        }
+    }
+    ready
+}
+
+/// Trims each sender's snapshot to its ready contiguous prefix (see
+/// [`trim_to_ready`]) using the account nonce from parent state. The nonce
+/// read goes through the warming cache, so it also warms the sender account;
+/// on a read error the sender is left unfiltered. Empty senders are removed.
+#[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+fn filter_ready(
     mut txs_by_sender: FxHashMap<Address, Vec<MempoolTransaction>>,
-    warmed_per_sender: &FxHashMap<Address, usize>,
-    cap: usize,
+    db: &dyn ethrex_vm::backends::LevmDatabase,
 ) -> FxHashMap<Address, Vec<MempoolTransaction>> {
+    use ethrex_vm::backends::LevmDatabase;
     txs_by_sender.retain(|sender, txs| {
-        let used = warmed_per_sender.get(sender).copied().unwrap_or(0);
-        let allowance = cap.saturating_sub(used);
-        txs.truncate(allowance);
+        if let Ok(acc) = LevmDatabase::get_account_state(db, *sender) {
+            let taken = std::mem::take(txs);
+            *txs = trim_to_ready(taken, acc.nonce);
+        }
         !txs.is_empty()
     });
     txs_by_sender
 }
 
-/// Drops txs already warmed this slot (by hash) from a fresh mempool
-/// snapshot, so delta passes only warm new arrivals. Nonce order within the
-/// surviving sender groups is preserved; senders left empty are removed.
+/// Truncates each sender's snapshot group to at most `cap` txs, preserving
+/// nonce order. Every pass warms a sender's pending prefix from nonce 0, so
+/// capping the per-snapshot group bounds the slot's per-sender depth with no
+/// cross-pass accounting; senders left empty are removed.
 #[cfg_attr(any(not(feature = "rayon"), feature = "eip-8025"), allow(dead_code))]
-fn drop_already_warmed(
+fn cap_sender_depth(
     mut txs_by_sender: FxHashMap<Address, Vec<MempoolTransaction>>,
-    warmed: &FxHashMap<H256, u64>,
+    cap: usize,
 ) -> FxHashMap<Address, Vec<MempoolTransaction>> {
-    if warmed.is_empty() {
-        return txs_by_sender;
-    }
     txs_by_sender.retain(|_, txs| {
-        txs.retain(|mtx| !warmed.contains_key(&mtx.transaction().hash(&NativeCrypto)));
+        txs.truncate(cap);
         !txs.is_empty()
     });
     txs_by_sender
@@ -336,6 +361,9 @@ fn run_pass(blockchain: &Blockchain, pool: &rayon::ThreadPool, req: PrewarmReque
     let deadline = req.deadline_unix;
     let should_stop = move || cancel.load(Ordering::Relaxed) || unix_now() >= deadline;
 
+    // Log-only tally of the slot's distinct warmed txs and their total gas,
+    // keyed by tx hash to dedup across the re-warming delta passes. Not
+    // load-bearing for warming control.
     let mut warmed_union: FxHashMap<H256, u64> = FxHashMap::default();
     // Slot-level dedup for merkle-path warming (see `warm_merkle_paths`).
     // Presence = account path already walked; the value keeps the hashed
@@ -344,22 +372,19 @@ fn run_pass(blockchain: &Blockchain, pool: &rayon::ThreadPool, req: PrewarmReque
     let mut walked_accounts: FxHashMap<Address, (H256, H256)> = FxHashMap::default();
     let mut walked_slots: rustc_hash::FxHashSet<(Address, H256)> = Default::default();
     let mut merkle_paths: u64 = 0;
-    // Slot-level per-sender counts backing the depth cap: a per-snapshot cap
-    // alone would leak — once a sender's head txs are warmed and dropped by
-    // `drop_already_warmed`, the next delta would see the queue's tail as a
-    // fresh head and keep digging.
-    let mut warmed_per_sender: FxHashMap<Address, usize> = FxHashMap::default();
     let mut passes: u32 = 0;
     let mut any_err = false;
     // `None` forces the first snapshot regardless of the counter's value.
     let mut last_seq: Option<u64> = None;
 
-    // Refreshing delta passes: warm the initial snapshot, then keep warming
-    // txs that arrive during the slot, until the next block arrives (cancel)
-    // or the slot boundary (deadline); most included txs are sent moments
-    // before their block, so a single start-of-slot pass would miss them.
-    // All deltas share `cache`, so later passes get faster as the slot's
-    // state accumulates.
+    // Refreshing delta passes: re-warm each sender's full pending prefix every
+    // time the mempool changes, until the next block arrives (cancel) or the
+    // slot boundary (deadline). Warming from nonce 0 (rather than only new
+    // arrivals) lets a sender's successor txs validate against their
+    // predecessors' state within one `warm_txs` call; the already-cached reads
+    // make the replay cheap. Most included txs are sent moments before their
+    // block, so a single start-of-slot pass would miss them. All deltas share
+    // `cache`, so later passes get faster as the slot's state accumulates.
     loop {
         if should_stop() {
             break;
@@ -374,17 +399,14 @@ fn run_pass(blockchain: &Blockchain, pool: &rayon::ThreadPool, req: PrewarmReque
                     break;
                 }
             };
-            let fresh = drop_already_warmed(txs_by_sender, &warmed_union);
-            let fresh = cap_sender_depth(
-                fresh,
-                &warmed_per_sender,
-                MAX_WARMED_TXS_PER_SENDER_PER_SLOT,
-            );
-            let warm_set = select_warm_set(fresh, base_fee, gas_budget);
+            // Keep only each sender's ready contiguous prefix (drops stale +
+            // gapped txs that would fail the nonce check and warm nothing).
+            let ready = filter_ready(txs_by_sender, cache_dyn.as_ref());
+            let capped = cap_sender_depth(ready, MAX_WARMED_TXS_PER_SENDER_PER_SLOT);
+            let warm_set = select_warm_set(capped, base_fee, gas_budget);
             if !warm_set.is_empty() {
-                for (tx, sender) in &warm_set {
+                for (tx, _) in &warm_set {
                     warmed_union.insert(tx.hash(&NativeCrypto), tx.gas_limit());
-                    *warmed_per_sender.entry(*sender).or_default() += 1;
                 }
                 // `warm_txs` takes borrowed transactions; bridge the owned set.
                 let view: Vec<(&Transaction, Address)> =
@@ -554,7 +576,7 @@ mod tests {
     }
 
     #[test]
-    fn cap_sender_depth_truncates_and_respects_slot_counts() {
+    fn cap_sender_depth_truncates_to_cap_and_drops_empty() {
         let (a, a0) = make_tx(0xaa, 0, 100, 50, 21_000);
         let (_, a1) = make_tx(0xaa, 1, 100, 50, 21_000);
         let (_, a2) = make_tx(0xaa, 2, 100, 50, 21_000);
@@ -562,40 +584,40 @@ mod tests {
         let mut map = FxHashMap::default();
         map.insert(a, vec![a0, a1, a2]);
         map.insert(b, vec![b0]);
-        // Sender a already warmed 1 tx this slot; cap 2 leaves allowance 1.
-        let mut counts = FxHashMap::default();
-        counts.insert(a, 1usize);
-        let capped = cap_sender_depth(map, &counts, 2);
-        assert_eq!(capped[&a].len(), 1);
-        assert_eq!(capped[&a][0].transaction().nonce(), 0); // head kept, nonce order preserved
-        assert_eq!(capped[&b].len(), 1); // untouched sender unaffected
-        // Exhausted sender is removed entirely.
-        let mut counts2 = FxHashMap::default();
-        counts2.insert(b, 2usize);
-        let mut map2 = FxHashMap::default();
-        let (_, b1) = make_tx(0xbb, 1, 100, 50, 21_000);
-        map2.insert(b, vec![b1]);
-        let capped2 = cap_sender_depth(map2, &counts2, 2);
-        assert!(capped2.is_empty());
+        let capped = cap_sender_depth(map, 2);
+        // Sender a truncated to the cap; nonce order (the pending prefix) preserved.
+        assert_eq!(capped[&a].len(), 2);
+        assert_eq!(capped[&a][0].transaction().nonce(), 0);
+        assert_eq!(capped[&a][1].transaction().nonce(), 1);
+        // Sender under the cap is untouched.
+        assert_eq!(capped[&b].len(), 1);
+        // An empty group is dropped.
+        let mut empty = FxHashMap::default();
+        empty.insert(a, Vec::<MempoolTransaction>::new());
+        assert!(cap_sender_depth(empty, 2).is_empty());
     }
 
     #[test]
-    fn drop_already_warmed_removes_by_hash_and_empty_senders() {
-        use ethrex_crypto::NativeCrypto;
-        let (a, tx_a0) = make_tx(0xaa, 0, 100, 50, 21_000);
-        let (_, tx_a1) = make_tx(0xaa, 1, 100, 50, 21_000);
-        let (b, tx_b0) = make_tx(0xbb, 0, 100, 50, 21_000);
-        let mut warmed = FxHashMap::default();
-        warmed.insert(tx_a0.transaction().hash(&NativeCrypto), 21_000u64);
-        warmed.insert(tx_b0.transaction().hash(&NativeCrypto), 21_000u64);
-        let mut map = FxHashMap::default();
-        map.insert(a, vec![tx_a0, tx_a1]);
-        map.insert(b, vec![tx_b0]);
-        let fresh = drop_already_warmed(map, &warmed);
-        // Sender b fully warmed -> removed; sender a keeps only nonce 1.
-        assert_eq!(fresh.len(), 1);
-        assert_eq!(fresh[&a].len(), 1);
-        assert_eq!(fresh[&a][0].transaction().nonce(), 1);
+    fn trim_to_ready_drops_stale_and_stops_at_gap() {
+        // Account is at nonce 5. Mempool holds stale (3,4), ready (5,6),
+        // then a gap (7 missing) with 9 queued behind it.
+        let (_, t3) = make_tx(0xaa, 3, 100, 50, 21_000);
+        let (_, t4) = make_tx(0xaa, 4, 100, 50, 21_000);
+        let (_, t5) = make_tx(0xaa, 5, 100, 50, 21_000);
+        let (_, t6) = make_tx(0xaa, 6, 100, 50, 21_000);
+        let (_, t9) = make_tx(0xaa, 9, 100, 50, 21_000);
+        let ready = trim_to_ready(vec![t3, t4, t5, t6, t9], 5);
+        assert_eq!(ready.len(), 2);
+        assert_eq!(ready[0].transaction().nonce(), 5);
+        assert_eq!(ready[1].transaction().nonce(), 6);
+    }
+
+    #[test]
+    fn trim_to_ready_empty_when_head_is_gapped() {
+        // Account at nonce 5 but the lowest pending nonce is 7 -> nothing ready.
+        let (_, t7) = make_tx(0xaa, 7, 100, 50, 21_000);
+        let (_, t8) = make_tx(0xaa, 8, 100, 50, 21_000);
+        assert!(trim_to_ready(vec![t7, t8], 5).is_empty());
     }
 
     #[test]
