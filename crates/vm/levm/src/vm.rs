@@ -2774,10 +2774,26 @@ impl<'a> VM<'a> {
         }
         if address == self.validation_observer.sender {
             self.validation_observer.touched_sender_slots.push(slot);
-        } else {
-            self.validation_observer
-                .record_violation(FrameSimViolation::StorageReadNonSender);
+            return;
         }
+        // VOPS "validation reads" (author feedback: 8141 paymaster call). A VERIFY
+        // frame is the paymaster's proof-checking frame — it must be able to call a
+        // verifier/pool contract and read its state (verification key, merkle root,
+        // nullifier set) to check a proof before approving payment, e.g. a Groth16
+        // verifySpend via the BN254 pairing precompiles. ERC-7562's strict
+        // sender-only SLOAD rule blocks that (the pool/paymaster read their OWN
+        // storage, not the sender's). Permit non-sender SLOAD in VERIFY frames
+        // ("validation reads"); state WRITES stay banned (deploy-frame + sender-only
+        // via `validation_check_sstore`/`_create`), so this widens reads only. The
+        // per-tx VERIFY-gas bound (`MAX_VERIFY_GAS`) caps the DoS surface of the now
+        // read-heavier validation. INTERIM interpretation pending the author's VOPS
+        // spec — the exact allowed-reads scope may narrow once that doc is pinned.
+        const FRAME_MODE_VERIFY: u8 = 1;
+        if self.validation_observer.current_frame_mode == FRAME_MODE_VERIFY {
+            return;
+        }
+        self.validation_observer
+            .record_violation(FrameSimViolation::StorageReadNonSender);
     }
 
     /// EIP-8141 validation-trace `SSTORE` check (mempool simulation only).

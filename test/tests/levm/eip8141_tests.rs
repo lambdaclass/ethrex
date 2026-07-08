@@ -927,7 +927,12 @@ fn frame_sstore_set_reports_eip8037_state_gas() {
             Bytes::from(APPROVE_BOTH_CODE.to_vec()),
         ),
         // PUSH1 1; PUSH1 0; SSTORE; STOP
-        (writer, U256::zero(), 0u64, Bytes::from(vec![0x60, 0x01, 0x60, 0x00, 0x55, 0x00])),
+        (
+            writer,
+            U256::zero(),
+            0u64,
+            Bytes::from(vec![0x60, 0x01, 0x60, 0x00, 0x55, 0x00]),
+        ),
     ];
     let tx = frame_tx_with_frames(vec![
         verify_frame(FUNDED_SENDER),
@@ -973,7 +978,9 @@ fn reverted_frame_reports_no_state_gas() {
             writer,
             U256::zero(),
             0u64,
-            Bytes::from(vec![0x60, 0x01, 0x60, 0x00, 0x55, 0x60, 0x00, 0x60, 0x00, 0xfd]),
+            Bytes::from(vec![
+                0x60, 0x01, 0x60, 0x00, 0x55, 0x60, 0x00, 0x60, 0x00, 0xfd,
+            ]),
         ),
     ];
     let tx = frame_tx_with_frames(vec![
@@ -1075,7 +1082,12 @@ fn state_gas_reservoir_does_not_leak_across_frames() {
             ]),
         ),
         // B: SSTORE 1@6 (0->1) -> a fresh state-creating set; STOP
-        (b, U256::zero(), 0u64, Bytes::from(vec![0x60, 0x01, 0x60, 0x06, 0x55, 0x00])),
+        (
+            b,
+            U256::zero(),
+            0u64,
+            Bytes::from(vec![0x60, 0x01, 0x60, 0x06, 0x55, 0x00]),
+        ),
     ];
     let tx = frame_tx_with_frames(vec![verify_frame(FUNDED_SENDER), mk(a), mk(b)]);
     let (result, _db) = run_frame_tx(&accounts, tx);
@@ -2210,14 +2222,16 @@ mod validation_observer_tests {
     }
 
     #[test]
-    fn sload_non_sender_is_rejected() {
+    fn sload_non_sender_outside_verify_is_rejected() {
         let sender = addr(0x54_00);
         let other = addr(0x54_FF);
         // PUSH1 0, SLOAD, POP, STOP.
         let code = Bytes::from(vec![0x60, 0x00, 0x54, 0x50, 0x00]);
+        // DEFAULT frame: the VOPS "validation reads" allowance is VERIFY-only, so
+        // a non-sender SLOAD outside a VERIFY frame is still rejected.
         let tx = frame_tx_for_obs(
             sender,
-            vec![verify_frame_obs(other, 100_000, 0x03, Bytes::new())],
+            vec![default_frame_obs(other, 100_000, Bytes::new())],
         );
         let mut db = build_db(vec![
             (sender, account_with_code(0, Bytes::new())),
@@ -2227,7 +2241,33 @@ mod validation_observer_tests {
         assert_eq!(
             violation,
             Some(FrameSimViolation::StorageReadNonSender),
-            "SLOAD of a non-sender account's storage must be rejected"
+            "SLOAD of a non-sender account's storage outside a VERIFY frame must be rejected"
+        );
+    }
+
+    #[test]
+    fn sload_non_sender_in_verify_frame_allowed() {
+        // VOPS "validation reads" (author feedback: 8141 paymaster call): a VERIFY
+        // frame may read another contract's storage so the paymaster can call a
+        // verifier/pool to check a proof (e.g. Groth16 verifySpend reading its
+        // verification key / merkle root) before approving payment. Same non-sender
+        // SLOAD as the test above, but in a VERIFY frame -> no violation.
+        let sender = addr(0x56_00);
+        let pool = addr(0x56_FF);
+        // PUSH1 0, SLOAD, POP, STOP — the pool reads its own storage.
+        let code = Bytes::from(vec![0x60, 0x00, 0x54, 0x50, 0x00]);
+        let tx = frame_tx_for_obs(
+            sender,
+            vec![verify_frame_obs(pool, 100_000, 0x03, Bytes::new())],
+        );
+        let mut db = build_db(vec![
+            (sender, account_with_code(0, Bytes::new())),
+            (pool, account_with_code(0, code)),
+        ]);
+        let (_result, violation) = run(&tx, &mut db, sender, &[0], None);
+        assert_eq!(
+            violation, None,
+            "a non-sender SLOAD in a VERIFY frame is a permitted validation read, got {violation:?}"
         );
     }
 
