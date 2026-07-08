@@ -72,6 +72,20 @@ const IN_MEMORY_COMMIT_THRESHOLD: usize = 10000;
 /// blocks of trie diffs (~1 GB), so we flush aggressively to bound memory.
 const BATCH_COMMIT_THRESHOLD: usize = 4;
 
+/// Sorted, sharded `multi_get` tuning, shared by the account, storage, and
+/// trie-node batch read paths. A single `multi_get` runs at queue depth 1
+/// (async_io is off), so cold batches are split into contiguous sorted shards
+/// read on separate blocking threads. `KEYS_PER_SHARD` targets shard size,
+/// `MAX_SHARDS` caps concurrency; scattered keys make 64 the sweet spot (128
+/// over-fragments; coldbench).
+const KEYS_PER_SHARD: usize = 256;
+const MAX_SHARDS: usize = 64;
+
+/// Shard count for a sorted, sharded `multi_get` over `n` keys.
+fn shard_count(n: usize) -> usize {
+    n.div_ceil(KEYS_PER_SHARD).clamp(1, MAX_SHARDS)
+}
+
 /// Default size in bytes of the RocksDB shared block cache: 12 GiB.
 ///
 /// This cache holds both data blocks AND the index/bloom-filter blocks for every
@@ -2874,12 +2888,7 @@ impl Store {
                 .iter()
                 .map(|&i| leaf_paths[i].as_slice())
                 .collect();
-            // Accounts are scattered (no shared prefix) and the batch is smaller
-            // than a bloated account's storage, so 64 shards is the sweet spot
-            // (128 over-fragments; coldbench).
-            const KEYS_PER_SHARD: usize = 256;
-            const MAX_SHARDS: usize = 64;
-            let shards = keys.len().div_ceil(KEYS_PER_SHARD).clamp(1, MAX_SHARDS);
+            let shards = shard_count(keys.len());
             let raw: Vec<Result<Option<Vec<u8>>, StoreError>> = if shards <= 1 {
                 read_view.multi_get(ACCOUNT_FLATKEYVALUE, &keys)
             } else {
@@ -3025,9 +3034,7 @@ impl Store {
             // Shard count scales with batch size and is capped; small batches
             // run a single in-line multi_get (no thread spawn). All shards share
             // one read view (one snapshot) so the reads stay consistent.
-            const KEYS_PER_SHARD: usize = 256;
-            const MAX_SHARDS: usize = 64;
-            let shards = keys.len().div_ceil(KEYS_PER_SHARD).clamp(1, MAX_SHARDS);
+            let shards = shard_count(keys.len());
             let raw: Vec<Result<Option<Vec<u8>>, StoreError>> = if shards <= 1 {
                 read_view.multi_get(STORAGE_FLATKEYVALUE, &keys)
             } else {
@@ -3168,9 +3175,7 @@ impl Store {
         keys.sort_unstable();
         keys.dedup();
 
-        const KEYS_PER_SHARD: usize = 256;
-        const MAX_SHARDS: usize = 64;
-        let shards = keys.len().div_ceil(KEYS_PER_SHARD).clamp(1, MAX_SHARDS);
+        let shards = shard_count(keys.len());
         let read_view = self.backend.begin_read()?;
         let count_hits = |res: Vec<Result<Option<Vec<u8>>, StoreError>>| {
             res.into_iter().filter(|r| matches!(r, Ok(Some(_)))).count()
