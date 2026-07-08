@@ -111,6 +111,12 @@ Node options:
           [env: ETHREX_MEMPOOL_MAX_SIZE=]
           [default: 10000]
 
+      --mempool.max-queued-txs-per-account <MAX_QUEUED_TXS_PER_ACCOUNT>
+          Maximum number of queued (future/nonce-gapped) transactions a single sender may hold in the mempool. Executable (contiguous-nonce) txs are not capped (geth AccountQueue-style).
+
+          [env: ETHREX_MEMPOOL_MAX_QUEUED_TXS_PER_ACCOUNT=]
+          [default: 64]
+
       --precompute-witnesses
           Once synced, computes execution witnesses upon receiving newPayload messages and stores them in local storage
           
@@ -253,7 +259,7 @@ Block building options:
           Block extra data message.
           
           [env: ETHREX_BUILDER_EXTRA_DATA=]
-          [default: "ethrex 19.0.0"]
+          [default: "ethrex 20.0.0"]
 
       --builder.gas-limit <GAS_LIMIT>
           Target block gas limit.
@@ -463,7 +469,7 @@ Block building options:
           Block extra data message.
 
           [env: ETHREX_BUILDER_EXTRA_DATA=]
-          [default: "ethrex 19.0.0"]
+          [default: "ethrex 20.0.0"]
 
       --builder.gas-limit <GAS_LIMIT>
           Target block gas limit.
