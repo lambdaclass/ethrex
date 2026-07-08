@@ -7,6 +7,7 @@ mod manifest;
 mod micro;
 mod report;
 mod run;
+mod stress;
 
 #[derive(Parser)]
 #[command(
@@ -30,6 +31,15 @@ enum Command {
         out: String,
         #[arg(long)]
         elf: Option<String>,
+        /// Tier ceiling: "quick" (fastest subset), "medium" (default;
+        /// quick + medium/untagged workloads), or "slow" (the full
+        /// manifest, plus `--stress-dir` fixtures if given).
+        #[arg(long, default_value = "medium")]
+        mode: String,
+        /// Directory of extra eth-act stress fixtures (`*.json`/`*.json.gz`)
+        /// to run as additional `stress` workloads. Only used in `--mode slow`.
+        #[arg(long)]
+        stress_dir: Option<String>,
     },
     /// Diff two reports and flag regressions.
     Compare {
@@ -59,7 +69,16 @@ fn main() -> eyre::Result<()> {
             filter,
             out,
             elf,
-        } => run::run_bench(&workloads, filter.as_deref(), &out, elf.as_deref()),
+            mode,
+            stress_dir,
+        } => run::run_bench(
+            &workloads,
+            filter.as_deref(),
+            &out,
+            elf.as_deref(),
+            &mode,
+            stress_dir.as_deref(),
+        ),
         Command::Compare {
             baseline,
             head,
