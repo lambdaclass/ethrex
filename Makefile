@@ -1,7 +1,7 @@
 .PHONY: build lint test clean run-image build-image clean-vectors \
 		setup-hive test-pattern-default run-hive run-hive-debug clean-hive-logs \
 		load-test-fibonacci load-test-io run-hive-eels-blobs run-hive-eels-amsterdam \
-		run-hive-eels-bal-quick bench-rlp
+		run-hive-eels-bal-quick bench-rlp zkevm-bench-setup
 
 help: ## 📚 Show help for each of the Makefile recipes
 	@grep -E '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-30s\033[0m %s\n", $$1, $$2}'
@@ -209,6 +209,15 @@ sort-genesis-files:
 
 bench-rlp: ## ⚡ Bench the RLP decoder/encoder
 	cd ./crates/common/rlp && cargo bench
+
+zkevm-bench-setup: ## Install ZisK v0.16.1 toolchain for the zkEVM benchmark (Linux)
+	sudo apt-get update
+	sudo apt-get install -y xz-utils jq curl build-essential qemu-system libomp-dev libgmp-dev nlohmann-json3-dev protobuf-compiler uuid-dev libgrpc++-dev libsecp256k1-dev libsodium-dev libpqxx-dev nasm libopenmpi-dev openmpi-bin openmpi-common libclang-dev clang gcc-riscv64-unknown-elf
+	mkdir -p $(HOME)/.zisk/bin
+	curl -fsSL "https://raw.githubusercontent.com/0xPolygonHermez/zisk/v0.16.1/ziskup/ziskup" -o $(HOME)/.zisk/bin/ziskup
+	chmod +x $(HOME)/.zisk/bin/ziskup
+	SETUP_KEY=none $(HOME)/.zisk/bin/ziskup -v 0.16.1
+	@echo "Add $(HOME)/.zisk/bin to PATH (e.g. export PATH=$(HOME)/.zisk/bin:$$PATH). SETUP_KEY=none skips the (large) proving key — emulation doesn't need it."
 
 # Using & so make calls this recipe only once per run
 mermaid-init.js mermaid.min.js &:

@@ -22,6 +22,17 @@ fn to_air_cost(z: &ZiskAirCost) -> AirCost {
     }
 }
 
+/// Resolves a workload's manifest `source` relative to the directory
+/// containing the manifest file itself, not the process cwd. This is what
+/// lets `--workloads <anypath>/manifest.toml` work from any invocation
+/// directory: sources are always anchored to where the manifest lives.
+fn resolve_source(manifest_path: &str, source: &str) -> std::path::PathBuf {
+    let manifest_dir = std::path::Path::new(manifest_path)
+        .parent()
+        .unwrap_or_else(|| std::path::Path::new("."));
+    manifest_dir.join(source)
+}
+
 /// Scans `dir` for `*.json` / `*.json.gz` files and turns each into a
 /// `stress` `WorkloadSpec` (name = filename, no category/gas/tier). `stress`
 /// workloads load via the Cache loader (see `WorkloadType::Stress` in
@@ -66,10 +77,21 @@ pub fn run_bench(
     let backend = ZiskBackend::new();
     let mut results = Vec::new();
 
+    // Manifest-declared sources (real-block, micro, and stress alike) are
+    // written relative to the manifest file; resolve them here so callers
+    // can pass `--workloads` from any cwd. `--stress-dir`-discovered specs
+    // (added below) already carry paths resolved against that directory and
+    // are left untouched.
     let mut specs: Vec<WorkloadSpec> = manifest
         .filtered_for_run(filter, run_mode)
         .into_iter()
         .cloned()
+        .map(|mut spec| {
+            spec.source = resolve_source(workloads, &spec.source)
+                .to_string_lossy()
+                .into_owned();
+            spec
+        })
         .collect();
     if let (RunMode::Slow, Some(dir)) = (run_mode, stress_dir) {
         specs.extend(discover_stress_workloads(dir)?);
@@ -128,4 +150,24 @@ pub fn run_bench(
     report.write_json(out)?;
     println!("wrote {out} ({} workloads)", report.workloads.len());
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn resolve_source_is_relative_to_manifest_dir() {
+        let resolved = resolve_source("/a/b/manifest.toml", "blocks/x.gz");
+        assert_eq!(resolved, std::path::PathBuf::from("/a/b/blocks/x.gz"));
+    }
+
+    #[test]
+    fn resolve_source_is_unchanged_for_bare_manifest_name() {
+        // A manifest path with no directory component (e.g. just
+        // "manifest.toml") has an empty parent, so sources resolve relative
+        // to the process cwd, same as today's behavior.
+        let resolved = resolve_source("manifest.toml", "blocks/x.gz");
+        assert_eq!(resolved, std::path::PathBuf::from("blocks/x.gz"));
+    }
 }

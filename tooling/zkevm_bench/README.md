@@ -17,8 +17,9 @@ Every entry in `fixtures/manifest.toml` has a `type`:
   `Cache` format (`fixtures/blocks/*.json.gz`), curated to span the AIR-cost
   spectrum. No download needed.
 - **`micro`** — individual EEST zkevm test vectors
-  (`../ef_tests/blockchain/vectors_zkevm/`), gitignored downloaded data;
-  fetch with `make zkevm-vectors` (see Prerequisites below).
+  (`tooling/ef_tests/blockchain/vectors_zkevm/`), gitignored downloaded data;
+  fetch with `make -C tooling/ef_tests/blockchain zkevm-vectors` (see Setup
+  below).
 - **`stress`** — worst-case EEST benchmark blocks at 150M gas (one per
   compute/memory/storage/precompile category), committed gzipped under
   `fixtures/stress/` in the same `Cache` format as `real-block`. Generated
@@ -28,50 +29,74 @@ Every entry in `fixtures/manifest.toml` has a `type`:
 
 `real-block` and `stress` both load through the same `Cache` loader
 (`src/cache.rs`); `micro` goes through a separate loader for raw EEST test
-vectors (`src/micro.rs`).
+vectors (`src/micro.rs`). All three types declare their `source` relative to
+`fixtures/manifest.toml`'s own directory — `run` resolves them against
+wherever `--workloads` points, not the process cwd, so the binary works from
+any invocation directory (see [Running](#running) below).
 
-## Prerequisites
+## Setup
 
-1. **ZisK toolchain v0.16.1**, installed via `ziskup`:
-
-   ```bash
-   curl -fsSL https://raw.githubusercontent.com/0xPolygonHermez/zisk/v0.16.1/ziskup/ziskup -o ziskup
-   SETUP_KEY=none ziskup -v 0.16.1
-   ```
-
-   `SETUP_KEY=none` skips downloading the (large) proving key — emulation via
-   `ziskemu` doesn't need it. Make sure `~/.zisk/bin` is on `PATH` (it provides
-   `ziskemu`).
-
-2. **The guest ELF**, built into the benchmark binary via the `zisk-elf`
-   cargo feature. This feature enables
-   `ethrex-guest-program/{zisk-build-elf,ci}`: `zisk-build-elf` compiles the
-   guest program to the zisk RISC-V target, and the `ci` sub-feature skips
-   `cargo-zisk rom-setup` — a proving-only step that otherwise needs the
-   proving key we just skipped installing.
-
-3. **For `micro` workloads only**, the EEST zkevm fixtures under
-   `../ef_tests/blockchain/vectors_zkevm/` are gitignored downloaded data.
-   Fetch them first:
+1. **ZisK toolchain v0.16.1** (Linux only). From the repo root:
 
    ```bash
-   make -C ../ef_tests/blockchain zkevm-vectors
+   make zkevm-bench-setup
    ```
 
-   Real-block workloads need no download — their fixtures are committed
-   gzipped under `fixtures/blocks/`.
+   This installs ZisK's apt build dependencies and runs `ziskup -v 0.16.1`
+   with `SETUP_KEY=none`, which skips downloading the (large) proving key —
+   emulation via `ziskemu` doesn't need it. Afterwards, add `~/.zisk/bin` to
+   `PATH` (it provides `ziskemu`):
 
-## Running
+   ```bash
+   export PATH="$HOME/.zisk/bin:$PATH"
+   ```
 
-Build from the workspace root, then run from the crate directory —
-`fixtures/manifest.toml`'s `source` paths are relative to
-`tooling/zkevm_bench`, which is the intended cwd for a run:
+2. **For `micro` workloads only**, the EEST zkevm fixtures under
+   `tooling/ef_tests/blockchain/vectors_zkevm/` are gitignored downloaded
+   data. Fetch them first:
+
+   ```bash
+   make -C tooling/ef_tests/blockchain zkevm-vectors
+   ```
+
+   Real-block and stress workloads need no download — their fixtures are
+   committed gzipped under `fixtures/blocks/` and `fixtures/stress/`.
+
+## Build
+
+Build from the repo root:
 
 ```bash
 cargo build -p ethrex-zkevm-bench --features zisk-elf
-cd tooling/zkevm_bench
-../../target/debug/ethrex-zkevm-bench run --workloads fixtures/manifest.toml --out report.json
 ```
+
+`tooling/zkevm_bench` is a member of the root workspace, but `tooling/`
+itself also has its own nested workspace (`tooling/Cargo.toml`, used by
+`ef_tests`, `load_test`, etc.) that does *not* include this crate. Running
+cargo from inside `tooling/` picks up that nested workspace instead and
+won't find `ethrex-zkevm-bench` — always invoke cargo from the repo root.
+
+The `zisk-elf` feature enables `ethrex-guest-program/{zisk-build-elf,ci}`:
+`zisk-build-elf` compiles the guest program to the zisk RISC-V target and
+embeds it into the benchmark binary, and the `ci` sub-feature skips
+`cargo-zisk rom-setup` — a proving-only step that otherwise needs the
+proving key skipped in Setup above.
+
+## Running
+
+Workload `source` paths in the manifest resolve relative to the manifest
+file itself, so `run` can be invoked from any cwd — e.g. from the repo root:
+
+```bash
+cargo run -p ethrex-zkevm-bench --features zisk-elf -- run \
+  --mode quick \
+  --workloads tooling/zkevm_bench/fixtures/manifest.toml \
+  --out r.json
+```
+
+No `cd` into `tooling/zkevm_bench` needed. The examples below assume the
+binary has already been built (see [Build](#build)) and invoke it directly
+from the repo root as `./target/debug/ethrex-zkevm-bench`.
 
 ### Tiered modes (`--mode`)
 
@@ -91,14 +116,19 @@ Each workload in the manifest declares an optional `tier` (`quick` or
 the narrower ones.
 
 ```bash
-../../target/debug/ethrex-zkevm-bench run --mode quick --out quick.json
-../../target/debug/ethrex-zkevm-bench run --mode slow --stress-dir /path/to/generated-stress --out slow.json
+./target/debug/ethrex-zkevm-bench run \
+  --workloads tooling/zkevm_bench/fixtures/manifest.toml \
+  --mode quick --out quick.json
+
+./target/debug/ethrex-zkevm-bench run \
+  --workloads tooling/zkevm_bench/fixtures/manifest.toml \
+  --mode slow --stress-dir /path/to/generated-stress --out slow.json
 ```
 
 ### Compare two reports (regression gate)
 
 ```bash
-../../target/debug/ethrex-zkevm-bench compare baseline.json report.json
+./target/debug/ethrex-zkevm-bench compare baseline.json report.json
 ```
 
 Matches workloads by name, diffs `air_cost.total`, and exits `1` if any
@@ -108,7 +138,7 @@ diff.json` to also write the per-workload deltas as JSON.
 ### Curate real-block fixtures
 
 ```bash
-../../target/debug/ethrex-zkevm-bench curate --cache-dir <dir-of-cache_mainnet_*.json> --out curation.json [--ziskemu]
+./target/debug/ethrex-zkevm-bench curate --cache-dir <dir-of-cache_mainnet_*.json> --out curation.json [--ziskemu]
 ```
 
 Scans a directory of ethrex-replay `cache_mainnet_*.json` files, records
@@ -190,7 +220,7 @@ To regenerate a fixture or add a new one:
 2. `gzip` it into `fixtures/blocks/` (`cache_mainnet_<number>.json.gz`).
 3. Add a `[[workload]]` entry to `fixtures/manifest.toml` with a descriptive
    `name`, `type = "real-block"`, a `category`, and `source` pointing at the
-   new file.
+   new file (relative to `fixtures/`, e.g. `blocks/cache_mainnet_<number>.json.gz`).
 
 This is also the recovery path if the `Cache` schema drifts and an existing
 fixture stops deserializing (`Block` / `RpcExecutionWitness` no longer
@@ -213,7 +243,7 @@ is generated on demand rather than committed:
    tool, no zisk toolchain):
 
    ```bash
-   ../../target/debug/ethrex-zkevm-bench generate-stress \
+   ./target/debug/ethrex-zkevm-bench generate-stress \
      --input-dir <extracted>/blockchain_tests \
      --out-dir <stress-dir>
    ```
