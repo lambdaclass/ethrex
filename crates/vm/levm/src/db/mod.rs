@@ -8,6 +8,14 @@ use std::sync::{Arc, OnceLock, PoisonError, RwLock, RwLockReadGuard, RwLockWrite
 
 pub mod gen_db;
 
+/// Distinct-cold-key count above which a prefetch routes to the sorted, sharded
+/// batch read instead of per-key parallel point-gets. Shared by the account and
+/// storage prefetch gates here and by the merkle trie-node prefetch gate in
+/// `ethrex-blockchain`, so tuning it moves all three together. ~16384 cold
+/// accesses is ~34M gas of cold reads: above ordinary cold blocks, below the
+/// large-state blocks these paths target. Tunable.
+pub const BLOATED_BATCH_THRESHOLD: usize = 16_384;
+
 // Type aliases for cache storage maps
 type AccountCache = FxHashMap<Address, AccountState>;
 type StorageCache = FxHashMap<(Address, H256), U256>;
@@ -327,9 +335,7 @@ impl Database for CachingDatabase {
         // the sharded batch). Route large/cold sets to the (now sharded) batch and
         // small/warm sets to parallel point-gets. The gate counts MISSING (cold)
         // accounts, so warm blocks stay on the point-get path however many accounts
-        // they touch. Tunable.
-        const BLOATED_BATCH_THRESHOLD: usize = 16_384;
-
+        // they touch. See `BLOATED_BATCH_THRESHOLD`.
         let states = if missing.len() >= BLOATED_BATCH_THRESHOLD {
             self.inner.get_account_states_batch(&missing)?
         } else {
@@ -369,11 +375,7 @@ impl Database for CachingDatabase {
         // win is already present once a block has this many cold slots (a cold
         // benchmark shows ~1.4x at 16k and growing with size), while the warm cost
         // it trades against is a few ms and effectively cannot fire, since warm
-        // slots are not counted here. 16384 cold slots (~34M gas of cold reads)
-        // sits above ordinary cold-block behavior yet below the large-state blocks
-        // this targets. Tunable.
-        const BLOATED_BATCH_THRESHOLD: usize = 16_384;
-
+        // slots are not counted here. See `BLOATED_BATCH_THRESHOLD`.
         let values = if missing.len() >= BLOATED_BATCH_THRESHOLD {
             // Dispatch to inner's batch path. For the rocksdb-backed
             // StoreVmDatabase this is a sharded parallel multi_get on

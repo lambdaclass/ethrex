@@ -173,6 +173,11 @@ async fn run_parity_test(engine_type: EngineType) {
     wait_for_full_fkv(&store);
     assert_parity(&store, state_root, contract);
 
+    // A third state exists (FKV partially swept -> the batch splits across the
+    // multi_get fast path and the trie-walk fallback in one call) but is not
+    // covered here: it depends on racing the background FKV generator to a
+    // partial watermark, which is not deterministically reproducible in a test.
+
     drop(store);
     if !matches!(engine_type, EngineType::InMemory) && std::path::Path::new(&path).exists() {
         std::fs::remove_dir_all(&path).expect("clean test db dir");

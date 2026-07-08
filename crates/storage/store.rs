@@ -2901,7 +2901,17 @@ impl Store {
                         .collect();
                     handles
                         .into_iter()
-                        .flat_map(|h| h.join().expect("account prefetch shard panicked"))
+                        // A panicked shard yields one Err element rather than
+                        // re-panicking the whole node; the consumer's `?` below
+                        // then surfaces it and the best-effort prefetch caller
+                        // swallows it (the slots are simply left uncached).
+                        .flat_map(|h| {
+                            h.join().unwrap_or_else(|_| {
+                                vec![Err(StoreError::Custom(
+                                    "account prefetch shard panicked".into(),
+                                ))]
+                            })
+                        })
                         .collect()
                 })
             };
@@ -2972,10 +2982,11 @@ impl Store {
             .clone();
 
         let mut results: Vec<Option<U256>> = vec![None; slots.len()];
-        // Per-slot prefixed FKV leaf paths: account_hash nibbles + separator
-        // (17) + hashed-slot nibbles + leaf flag. Length 131. This is the exact
-        // key `BackendTrieDB::flatkeyvalue_computed` / `Trie::get` use for a
-        // storage leaf (see `apply_prefix`).
+        // Per-slot prefixed FKV leaf paths, length 131: 64 account-hash nibbles
+        // + 1 (account leaf flag) + 1 (separator) + 64 hashed-slot nibbles + 1
+        // (storage leaf flag). This is the exact key
+        // `BackendTrieDB::flatkeyvalue_computed` / `Trie::get` use for a storage
+        // leaf (see `apply_prefix`).
         let leaf_paths: Vec<Vec<u8>> = slots
             .iter()
             .map(|(account_hash, _storage_root, slot)| {
@@ -3047,7 +3058,17 @@ impl Store {
                         .collect();
                     handles
                         .into_iter()
-                        .flat_map(|h| h.join().expect("storage prefetch shard panicked"))
+                        // A panicked shard yields one Err element rather than
+                        // re-panicking the whole node; the consumer's `?` below
+                        // then surfaces it and the best-effort prefetch caller
+                        // swallows it (the slots are simply left uncached).
+                        .flat_map(|h| {
+                            h.join().unwrap_or_else(|_| {
+                                vec![Err(StoreError::Custom(
+                                    "storage prefetch shard panicked".into(),
+                                ))]
+                            })
+                        })
                         .collect()
                 })
             };

@@ -2269,14 +2269,6 @@ impl LEVM {
             .collect()
     }
 
-    /// Every account address touched in the BAL. Drives the account-trie
-    /// (state-trie) node prefetch — including balance/nonce-only accounts with
-    /// no storage slots (the CALL/BALANCE-family blocks), which
-    /// `bal_storage_slots` does not surface.
-    pub fn bal_accounts(bal: &BlockAccessList) -> Vec<Address> {
-        bal.accounts().iter().map(|ac| ac.address).collect()
-    }
-
     /// Concurrent block warmer for the BAL path: prefetches account states and
     /// contract code while execution runs.
     ///

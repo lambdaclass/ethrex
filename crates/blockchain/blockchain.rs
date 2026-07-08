@@ -91,6 +91,7 @@ use ethrex_storage::{
 };
 use ethrex_trie::node::{BranchNode, ExtensionNode, LeafNode};
 use ethrex_trie::{Nibbles, Node, NodeRef, Trie, TrieError, TrieNode};
+use ethrex_vm::backends::BLOATED_BATCH_THRESHOLD;
 use ethrex_vm::backends::CachingDatabase;
 #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
 use ethrex_vm::backends::levm::LEVM;
@@ -713,12 +714,16 @@ impl Blockchain {
         // overlapping execution rather than preceding it. Gated so ordinary
         // merkle-light blocks skip the probe cost; the payoff is on blocks that WRITE
         // many distinct slots or modify many accounts, where merkle walks a large set
-        // of scattered, cold nodes. Tunable.
+        // of scattered, cold nodes. See `BLOATED_BATCH_THRESHOLD`.
+        //
+        // Unlike the flat-KV warm above, this needs no `!collect_witness` guard:
+        // `prefetch_trie_nodes` reads the trie-node CFs directly via
+        // `backend.begin_read()`, bypassing the witness-recording caching layer, so
+        // it cannot pollute the witness.
         #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
         let trie_prefetch_input: Option<TriePrefetchInput> = if self.options.bal_prefetch_enabled
             && let Some(updates) = optimistic_updates.as_ref()
         {
-            const MERKLE_PREFETCH_THRESHOLD: usize = 16_384;
             let mut write_slots: Vec<(Address, H256)> = Vec::new();
             for (addr, item) in updates {
                 for slot in item.added_storage.keys() {
@@ -726,7 +731,7 @@ impl Blockchain {
                 }
             }
             let write_accounts: Vec<Address> = updates.keys().copied().collect();
-            if write_slots.len() + write_accounts.len() >= MERKLE_PREFETCH_THRESHOLD {
+            if write_slots.len() + write_accounts.len() >= BLOATED_BATCH_THRESHOLD {
                 Some((write_slots, write_accounts))
             } else {
                 None
@@ -816,6 +821,11 @@ impl Blockchain {
                         std::thread::Builder::new()
                             .name("block_executor_trie_prefetch".to_string())
                             .spawn_scoped(s, move || {
+                                // Result deliberately discarded: this is best-effort
+                                // cache warming. A read error (or any node it fails to
+                                // warm) just means the merkleizer cold-reads that node;
+                                // it never affects block output, so a failure must not
+                                // propagate into block processing.
                                 let _ = storage.prefetch_trie_nodes(&slots, &accounts);
                             })
                             .inspect_err(|e| debug!("trie-node prefetch spawn failed: {e}"))
