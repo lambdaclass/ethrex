@@ -3098,14 +3098,19 @@ impl Blockchain {
         // re-validated only at admission — there is no recheck/eviction on head
         // change yet (deferred like other frame-tx mempool niceties), so a
         // pooled tx whose reference ages out is only dropped when block
-        // building fails it. If the head header carries no slot number the
-        // policy is skipped entirely (guard, don't reject): without a slot
-        // there is nothing sound to compare against, and block execution
+        // building fails it. The head slot is the CL-supplied header slot when
+        // present, else the timestamp-derived slot once the EIP-7843
+        // `derived_slot_time` knob is active — matching the slot block execution
+        // derives (`ChainConfig::effective_slot_number`), so this pre-filter
+        // stays consistent with it. When there is genuinely no sound slot to
+        // compare against (no CL slot and the derivation knob inactive) the
+        // policy is skipped entirely (guard, don't reject); block execution
         // remains the authoritative check.
         if let Transaction::FrameTransaction(frame_tx) = tx
             && !frame_tx.recent_root_references.is_empty()
-            && let Some(head_slot) = header.slot_number
+            && (header.slot_number.is_some() || config.is_derived_slot_activated(header.timestamp))
         {
+            let head_slot = config.effective_slot_number(header.slot_number, header.timestamp);
             let current_slot = head_slot.saturating_add(1);
             for reference in &frame_tx.recent_root_references {
                 if reference.slot >= current_slot {

@@ -364,6 +364,17 @@ fn new_payload_request_amsterdam_to_block(
         parent_beacon_block_root: Some(H256::from_slice(&req.parent_beacon_block_root)),
         requests_hash: Some(requests_hash),
         block_access_list_hash: Some(block_access_list.compute_hash()),
+        // CAVEAT (EIP-7843 `derived_slot_time` knob): this reconstructs the slot
+        // verbatim from the SSZ payload (a non-optional u64), so it takes the
+        // CL-wins branch of `ChainConfig::effective_slot_number` and never applies
+        // the EL's timestamp-based slot derivation. On a chain that ran the knob
+        // with a pre-V4 CL (header slot None → derived non-zero at execution),
+        // this Amsterdam SSZ reconstruction would execute EIP-8272 writes/SLOTNUM
+        // at the wrong slot, diverging from L1 execution. Safe for the current
+        // proverless devnet; before proving is enabled on any knob-active chain
+        // the ProgramInput/witness must carry the derived slot (or this path must
+        // apply the identical derivation). The general RLP "Direct" proving path
+        // (`execution.rs`) already mirrors the derivation via the witness config.
         slot_number: Some(payload.slot_number),
         ..Default::default()
     };

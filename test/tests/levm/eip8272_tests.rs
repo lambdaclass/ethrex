@@ -5,8 +5,8 @@
 use bytes::Bytes;
 use ethrex_blockchain::vm::StoreVmDatabase;
 use ethrex_common::types::{
-    Account, BlockHeader, Code, Fork, Frame, FrameMode, FrameTransaction, RecentRootReference,
-    Transaction, frame_tx_recent_root,
+    Account, BlockHeader, ChainConfig, Code, Fork, Frame, FrameMode, FrameTransaction,
+    RecentRootReference, Transaction, frame_tx_recent_root,
 };
 use ethrex_common::{Address, H256, U256, constants::EMPTY_TRIE_HASH};
 use ethrex_crypto::NativeCrypto;
@@ -172,7 +172,8 @@ fn recent_root_native_write_commits_the_entry() {
     let report = result.expect("write frame tx must execute (this is where the RPC path failed)");
     let fr = report.frame_results.expect("frame results");
     assert_eq!(
-        fr[1].0, 1,
+        fr[1].0,
+        1,
         "the recent-root write frame must succeed; statuses={:?}",
         fr.iter().map(|f| f.0).collect::<Vec<_>>()
     );
@@ -224,7 +225,10 @@ fn recent_root_native_write_with_bal_recording() {
         .accounts()
         .iter()
         .any(|a| a.address == frame_tx_recent_root());
-    assert!(touched, "RECENT_ROOT_ADDRESS must appear in the BlockAccessList");
+    assert!(
+        touched,
+        "RECENT_ROOT_ADDRESS must appear in the BlockAccessList"
+    );
 }
 
 #[test]
@@ -257,7 +261,13 @@ fn committed_reference_validates_and_executes() {
     }
     let mut tx = frame_tx(vec![
         frame(FrameMode::Verify, 0x03, SENDER, 100_000, &[]),
-        frame(FrameMode::Sender, 0x00, Address::from_low_u64_be(0xBEEF), 30_000, &[]),
+        frame(
+            FrameMode::Sender,
+            0x00,
+            Address::from_low_u64_be(0xBEEF),
+            30_000,
+            &[],
+        ),
     ]);
     tx.recent_root_references = vec![entry.clone()];
     let env = Environment {
@@ -275,10 +285,64 @@ fn committed_reference_validates_and_executes() {
     };
     let transaction = Transaction::FrameTransaction(tx);
     let result = {
-        let mut vm = VM::new(env, &mut db, &transaction, LevmCallTracer::disabled(), VMType::L1, &NativeCrypto)
-            .expect("VM::new");
+        let mut vm = VM::new(
+            env,
+            &mut db,
+            &transaction,
+            LevmCallTracer::disabled(),
+            VMType::L1,
+            &NativeCrypto,
+        )
+        .expect("VM::new");
         vm.execute()
     };
     let report = result.expect("committed reference must validate and the tx execute");
     assert_eq!(report.payer_address, Some(SENDER));
+}
+
+/// EIP-7843 slot-derivation wiring (feedback #4): `EVMConfig::new_from_chain_config`
+/// surfaces the effective beacon slot on `EVMConfig.slot_number`, which
+/// `setup_env_with_config` copies into `env.slot_number`. The derivation formula
+/// itself is unit-tested in `ethrex-common` (`effective_slot_number`) and the
+/// write/reference logic in the tests above (with the slot set explicitly); this
+/// asserts the config→env plumbing that makes 8272 functional when the CL does
+/// not forward the slot (engine V3).
+#[test]
+fn evm_config_derives_slot_when_knob_active_and_cl_absent() {
+    let config = ChainConfig {
+        hegota_time: Some(0),
+        derived_slot_time: Some(0),
+        genesis_timestamp: Some(1000),
+        seconds_per_slot: Some(6),
+        ..Default::default()
+    };
+    // CL absent (engine V3): header carries no slot -> derived (1060-1000)/6 = 10.
+    let header = BlockHeader {
+        timestamp: 1060,
+        slot_number: None,
+        ..Default::default()
+    };
+    assert_eq!(
+        EVMConfig::new_from_chain_config(&config, &header).slot_number,
+        U256::from(10u64)
+    );
+    // CL present (engine V4): the supplied slot wins verbatim.
+    let header_v4 = BlockHeader {
+        timestamp: 1060,
+        slot_number: Some(42),
+        ..Default::default()
+    };
+    assert_eq!(
+        EVMConfig::new_from_chain_config(&config, &header_v4).slot_number,
+        U256::from(42u64)
+    );
+    // Knob absent -> 0 (unchanged behaviour on chains without the knob).
+    let no_knob = ChainConfig {
+        hegota_time: Some(0),
+        ..Default::default()
+    };
+    assert_eq!(
+        EVMConfig::new_from_chain_config(&no_knob, &header).slot_number,
+        U256::zero()
+    );
 }
