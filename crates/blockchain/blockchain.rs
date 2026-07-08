@@ -680,6 +680,9 @@ impl Blockchain {
         // Gated by `--no-bal-prefetch`: when the operator disables BAL-driven
         // prefetching, skip the synchronous storage warm too. The warmer thread
         // below already honors the same toggle.
+        // Flat-KV warm for execution (SLOAD and SSTORE original values). Uses the
+        // full BAL access set, since execution genuinely reads every accessed slot.
+        //
         // Witness collection records every read that reaches the store-backed
         // logger beneath the shared cache. The warmer's speculative reads would
         // be recorded as state accesses the canonical execution never makes,
@@ -696,12 +699,45 @@ impl Blockchain {
             }
         }
 
+        // Warm the MPT internal nodes the merkleizer will walk (the trie-node CFs,
+        // which execution never reads). Derived from the MERKLE WRITE SET, not the
+        // access set: the merkleizer only walks accounts/slots that actually change,
+        // and `optimistic_updates` (synthesize_bal_updates) already drops read-only
+        // accesses and read-only slots. Warming trie nodes for read-only accesses is
+        // wasted cold reads that compete with execution for the same device; gating
+        // on the access set regressed read-heavy blocks (value-0 CALLs to existing
+        // accounts, bloated SLOADs) that have little or no merkle work.
+        //
+        // Gated so ordinary merkle-light blocks skip the probe cost; the payoff is on
+        // blocks that WRITE many distinct slots or modify many accounts, where merkle
+        // walks a large set of scattered, cold nodes. A cold node access costs on the
+        // order of ~2100+ gas, so 16384 sits above ordinary blocks and below the
+        // large-state blocks this targets. Tunable.
+        #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+        if self.options.bal_prefetch_enabled
+            && let Some(updates) = optimistic_updates.as_ref()
+        {
+            const MERKLE_PREFETCH_THRESHOLD: usize = 16_384;
+            let mut write_slots: Vec<(Address, H256)> = Vec::new();
+            for (addr, item) in updates {
+                for slot in item.added_storage.keys() {
+                    write_slots.push((*addr, *slot));
+                }
+            }
+            let write_accounts: Vec<Address> = updates.keys().copied().collect();
+            if write_slots.len() + write_accounts.len() >= MERKLE_PREFETCH_THRESHOLD {
+                let _ = self
+                    .storage
+                    .prefetch_trie_nodes(&write_slots, &write_accounts);
+            }
+        }
+
         // Each thread that captures `bal` needs its own Arc clone (cheap pointer bump).
         #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
         let bal_warmer = bal.clone();
 
-        let (execution_result, merkleization_result, warmer_duration) = std::thread::scope(
-            |s| -> Result<_, ChainError> {
+        let (execution_result, merkleization_result, warmer_duration) =
+            std::thread::scope(|s| -> Result<_, ChainError> {
                 #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
                 let vm_type = vm.vm_type;
                 let cancelled_ref = &cancelled;
