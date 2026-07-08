@@ -78,6 +78,12 @@ pub struct GenWorkloadArgs {
     pub reads_per_block: u64,
     pub writes_per_block: u64,
     pub mega_fraction: f64,
+    /// If > 0, mega-account READS are drawn from a hot working set of this many
+    /// seeded slots (the first `hot_slots`) instead of uniformly across all
+    /// seeded slots. A small hot set re-accessed across blocks gives the read
+    /// temporal locality needed to exercise read-through / value caches; the
+    /// default (0) keeps the uniform, near-zero-reaccess cold pattern.
+    pub hot_slots: u64,
     pub genesis: PathBuf,
     pub verify_reimport: bool,
     pub jobs: usize,
@@ -121,6 +127,7 @@ pub async fn run(args: GenWorkloadArgs) -> Result<()> {
         reads_per_block,
         writes_per_block,
         mega_fraction,
+        hot_slots,
         genesis,
         verify_reimport,
         jobs,
@@ -204,12 +211,20 @@ pub async fn run(args: GenWorkloadArgs) -> Result<()> {
     let signer_sk = parse_secret_key(&manifest.funded_signer_private_key)
         .context("parsing funded_signer_private_key from manifest")?;
 
+    // Hot-set reads need seeded slots to re-access; clamp to the seeded range.
+    let hot_slots = if hot_slots > 0 {
+        hot_slots.min(mega_slots)
+    } else {
+        0
+    };
+
     info!(
         datadir = %datadir.display(),
         num_blocks,
         reads_per_block,
         writes_per_block,
         mega_fraction,
+        hot_slots,
         num_small_accounts,
         slots_per_account,
         mega_slots,
@@ -235,6 +250,7 @@ pub async fn run(args: GenWorkloadArgs) -> Result<()> {
         num_small_accounts,
         slots_per_account,
         mega_slots,
+        hot_slots,
         mega_address,
     )
     .await;
@@ -302,6 +318,7 @@ async fn generate_on_copy(
     num_small_accounts: u64,
     slots_per_account: u64,
     mega_slots: u64,
+    hot_slots: u64,
     mega_address: Address,
 ) -> Result<Generation> {
     let mut store = Store::new_with_config(throwaway, EngineType::RocksDB, StoreConfig::default())
@@ -359,6 +376,7 @@ async fn generate_on_copy(
                 num_small_accounts,
                 slots_per_account,
                 mega_slots,
+                hot_slots,
                 mega_address,
             ));
             touch_index += 1;
@@ -373,6 +391,7 @@ async fn generate_on_copy(
                 num_small_accounts,
                 slots_per_account,
                 mega_slots,
+                hot_slots,
                 mega_address,
             ));
             touch_index += 1;
@@ -495,6 +514,7 @@ fn resolve_touch(
     num_small_accounts: u64,
     slots_per_account: u64,
     mega_slots: u64,
+    hot_slots: u64,
     mega_address: Address,
 ) -> Touch {
     // Deterministic mega-vs-small choice. Fall back to small if the mega account
@@ -505,7 +525,11 @@ fn resolve_touch(
     if use_mega {
         let (slot, seeded) = match mode {
             Mode::Read => {
-                let k = index_pick(seed, TAG_MEGA_PICK, touch_index, mega_slots.max(1));
+                // Draw from the hot set (first `hot_slots` seeded slots) when set,
+                // so reads re-access a bounded window across blocks; otherwise
+                // uniformly across all seeded slots (cold, ~no re-access).
+                let read_range = if hot_slots > 0 { hot_slots } else { mega_slots };
+                let k = index_pick(seed, TAG_MEGA_PICK, touch_index, read_range.max(1));
                 (derive_slot_key(seed, "csb-mega-slot", k), true)
             }
             Mode::Write => {

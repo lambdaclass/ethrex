@@ -99,6 +99,12 @@ enum Command {
         /// Fraction of touched slots that target the mega account (0.0..=1.0).
         #[arg(long, default_value_t = 0.5)]
         mega_fraction: f64,
+        /// Size of the hot working set for mega-account reads. When > 0, reads
+        /// are drawn from the first N seeded slots and re-accessed across blocks,
+        /// giving the temporal locality that read-through / value caches need to
+        /// hit. 0 (default) keeps the uniform cold pattern (near-zero re-access).
+        #[arg(long, default_value_t = 0)]
+        hot_slots: u64,
         /// Base genesis file used at gen-state time; re-applies the chain config
         /// (must activate Amsterdam so blocks carry a BAL).
         #[arg(long)]
@@ -187,6 +193,7 @@ async fn main() -> Result<()> {
             reads_per_block,
             writes_per_block,
             mega_fraction,
+            hot_slots,
             genesis,
             verify_reimport,
         } => {
@@ -198,6 +205,7 @@ async fn main() -> Result<()> {
                 reads_per_block,
                 writes_per_block,
                 mega_fraction,
+                hot_slots,
                 genesis,
                 verify_reimport,
                 jobs,

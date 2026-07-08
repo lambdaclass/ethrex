@@ -43,6 +43,10 @@ NUM_BLOCKS ?= 2000
 READS ?= 8
 WRITES ?= 4
 MEGA_FRACTION ?= 0.5
+# Hot working set for mega-account reads (0 = uniform cold reads). Set > 0 to
+# give reads temporal locality — needed to benchmark read-through / value caches
+# (e.g. re-accessing a bounded slot window across blocks so the cache can hit).
+HOT_SLOTS ?= 0
 
 # --- run parameters ------------------------------------------------------------
 RUNS ?= 5
@@ -78,7 +82,7 @@ help: ## Show the A/B recipe and every parameter.
 	@printf "and the same JOBS/fixture/workload (see README.md).\n\n"
 	@printf "Parameters (env or make VAR=value):\n"
 	@printf "  SEED=%s NUM_SMALL_ACCOUNTS=%s SLOTS_PER_ACCOUNT=%s MEGA_GB=%s\n" "$(SEED)" "$(NUM_SMALL_ACCOUNTS)" "$(SLOTS_PER_ACCOUNT)" "$(MEGA_GB)"
-	@printf "  NUM_BLOCKS=%s READS=%s WRITES=%s MEGA_FRACTION=%s\n" "$(NUM_BLOCKS)" "$(READS)" "$(WRITES)" "$(MEGA_FRACTION)"
+	@printf "  NUM_BLOCKS=%s READS=%s WRITES=%s MEGA_FRACTION=%s HOT_SLOTS=%s\n" "$(NUM_BLOCKS)" "$(READS)" "$(WRITES)" "$(MEGA_FRACTION)" "$(HOT_SLOTS)"
 	@printf "  RUNS=%s JOBS=%s RESET=%s GENESIS=%s\n" "$(RUNS)" "$(JOBS)" "$(RESET)" "$(GENESIS)"
 	@printf "  DATADIR=%s CHAIN=%s BALS=%s\n" "$(DATADIR)" "$(CHAIN)" "$(BALS)"
 	@printf "  OUT_A=%s OUT_B=%s\n" "$(OUT_A)" "$(OUT_B)"
@@ -106,6 +110,7 @@ gen-workload: ## Build chain.rlp + bals.rlp on top of the fixture (run once; sha
 		--reads-per-block $(READS) \
 		--writes-per-block $(WRITES) \
 		--mega-fraction $(MEGA_FRACTION) \
+		--hot-slots $(HOT_SLOTS) \
 		--genesis "$(GENESIS)"
 
 run-a: ## Build state-bench from the currently checked-out tree and run it as branch A.
