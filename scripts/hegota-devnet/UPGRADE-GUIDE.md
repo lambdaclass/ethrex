@@ -31,8 +31,9 @@ Before any upgrade, ask of the diff:
   is in the container command rather than the binary, Path 1b (wrapper).
 - **Yes, but only for a fork the chain has NOT reached** → Path 2
   (deploy before the fork).
-- **Yes, for rules the chain has ALREADY been running** → Path 3 (re-genesis),
-  or the new-fork decoupling variant if history must survive.
+- **Yes, for rules the chain has ALREADY been running** → Path 2's new-fork
+  decoupling variant (a future successor fork / config knob). **Re-genesis is
+  FORBIDDEN on this devnet** (see below) — history is never wiped.
 
 Be paranoid with this test. Changes that *look* operational can be consensus:
 
@@ -53,8 +54,8 @@ only, never checked in block execution), P2P, logging, docs, the payload
 > recreates the container, which drops the file mounts (`/network-configs`,
 > `/jwt` → `Failed to open genesis file`) and destroys the EL datadir (it lives
 > in the container **writable layer**, not a volume) → resync from genesis.
-> Container recreation belongs only to Path 3, where a fresh chain is the goal.
-> Paths 1 and 1b never recreate the container.
+> Never recreate the container — re-genesis is FORBIDDEN on this devnet (below),
+> and Paths 1 and 1b never recreate it.
 
 ## Path 1 — In-place binary swap (non-consensus binary changes)
 
@@ -128,8 +129,11 @@ defaults. Always check first:
 
 **Reversible:** `docker cp` the real binary back over the wrapper and restart.
 **Durability:** retag the image (Path 1) **and** bake the flag into the launcher
-`ethereum-package/src/el/ethrex/ethrex_launcher.star` so the next re-genesis sets
-it natively — the wrapper lives in the writable layer and is lost on recreate.
+`ethereum-package/src/el/ethrex/ethrex_launcher.star` too (defence-in-depth if a
+container is ever rebuilt from the image). The wrapper lives in the writable
+layer: it survives restarts and reboots and is lost only on a container
+*recreate* — which this devnet never does (re-genesis is forbidden), so in
+practice the wrapper is the durable mechanism.
 
 ## Path 2 — Deploy before the fork (the mainnet-standard upgrade)
 
@@ -153,38 +157,26 @@ If the chain already crossed fork F and you must change behavior that F
 introduced, do **not** redefine F. Gate the change on a new config knob /
 successor fork F′ set in the future (precedent: the `postHegotaTime` field
 that deferred the NONCE_MANAGER install on an already-post-Hegotá chain).
-This preserves history at the cost of a non-canonical fork layout — acceptable
-for keeping a long-lived chain alive, wrong for a devnet whose purpose is
-testing the canonical layout. Fresh chains must keep working with the knob
+This preserves history at the cost of a non-canonical fork layout. **On this
+devnet it is the REQUIRED path** for changing already-active behavior, because
+re-genesis is forbidden (below). Fresh chains must keep working with the knob
 unset (fall back to F).
 
-## Path 3 — Re-genesis (canonical redefinition)
+## Re-genesis — FORBIDDEN
 
-For consensus changes to an already-active fork on a devnet where history is
-expendable. This wipes the chain: all balances, contracts, and history are
-gone, and users must re-claim from the faucet — **announce that explicitly**
-(always state whether users need to do anything, even when the answer is no).
+Re-genesis (`kurtosis enclave rm -f` + `kurtosis run`) wipes all chain state —
+balances, deployed contracts, history, users' funded accounts — and breaks
+everyone building on the public devnet. **It is not permitted on this devnet
+under any circumstances.** Preserve state, always.
 
-1. Build + verify the new image (unique tag; check
-   `docker run --rm --entrypoint ./ethrex <image> --version` shows the
-   expected commit).
-2. Keep the old image tagged as a rollback.
-3. `kurtosis enclave rm -f <enclave>` then
-   `kurtosis run --enclave <enclave> <ethereum-package> --args-file <config>`
-   with the **pinned** ethereum-package revision (`make checkout-ethereum-package`).
-4. With `port_publisher.public_port_start` set, EL/CL host ports are
-   **deterministic** across fresh runs (`start + participant*7 + offset`), so
-   reverse proxies and the faucet keep working. **Additional services (Dora)
-   are NOT deterministic** — front them through a stable local forward (a
-   `socat` systemd unit) and update only that unit's target port after each
-   re-genesis, never the proxy config.
-5. Kurtosis leaves every container with `RestartPolicy=no` and has no
-   `enclave start` — a host reboot would kill the devnet permanently. After
-   every deploy: `docker update --restart unless-stopped` on all enclave
-   containers (and the faucet).
-6. CL fork-epoch changes (the `network_params` epochs) are part of the CL
-   genesis state — they can only change via re-genesis. The CL release must
-   know every scheduled fork name or it will reject the genesis outright.
+- Consensus change to an already-active fork → use the new-fork decoupling
+  variant above (a future successor fork / config knob). Never a re-genesis.
+- **CL fork-epoch / CL genesis params** are the one thing that would technically
+  require re-genesis (they live in the CL genesis state). Because re-genesis is
+  forbidden, CL fork config is effectively **frozen**: any change that needs it
+  must be **escalated to the devnet owner** and never performed unilaterally.
+- Everything else uses Path 1 (binary swap) or Path 1b (wrapper) — both
+  state-preserving; neither recreates the container.
 
 ## Post-upgrade verification checklist (every path)
 
@@ -208,7 +200,9 @@ enclaves — see Path 1 step 5).
    (a bad-input call returns a handler error like `-32000`, not `-32601 Method
    not found`) and the previously-served namespaces still respond.
 8. Public endpoints respond through the reverse proxy / DNS names.
-9. Restart policies applied (step 5 of Path 3).
+9. Restart policies (`docker update --restart unless-stopped`) still set on every
+   container so a host reboot doesn't drop the devnet (in-place `docker restart`
+   preserves them).
 10. Rollback still possible: old image tag exists; for Paths 1/1b the wrapper
     can be reverted by restoring the real binary over it.
 
@@ -219,7 +213,7 @@ enclaves — see Path 1 step 5).
 | Non-consensus change in the **binary** (RPC handler, mempool policy, P2P, builder selection, logging) | 1 — binary swap |
 | Non-consensus change in the **container command** (add an RPC namespace, tune `--http.api` or a flag), state-preserving | 1b — wrapper |
 | New EIP or gas rule, fork not yet active | 2 — swap pre-fork, activate later |
-| Fixing rules of a fork already crossed (devnet) | 3 — re-genesis |
-| Changing active behavior, history must survive | 2-variant — new future fork |
-| CL fork schedule / CL genesis params | 3 — re-genesis |
+| Fixing rules of a fork already crossed / changing active behavior | 2-variant — new future fork |
+| Re-genesis (wipe + re-run) | **FORBIDDEN** — never on this devnet |
+| CL fork schedule / CL genesis params | escalate to the owner (would need forbidden re-genesis) |
 | CL image only (same fork config) | 1-style CL swap, one node at a time |
