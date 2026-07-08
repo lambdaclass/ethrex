@@ -827,3 +827,44 @@ fn set_hash_or_validate(header: &BlockHeader, hash: H256) -> Result<(), GuestPro
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ethrex_crypto::NativeCrypto;
+
+    /// Ingesting an untrusted witness must never abort the guest on a malformed
+    /// node. `decode_child` used to route a child field of 32 bytes or more into
+    /// `NodeHash::from_slice`, which panics on slices over 32 bytes, so a single
+    /// crafted node in `state` (even an unused one, since every entry is decoded)
+    /// could crash the prover.
+    #[test]
+    fn into_execution_witness_rejects_oversized_child_without_panicking() {
+        // A "branch" node whose first child field is a 34-byte RLP string: not
+        // empty, not a 32-byte hash reference, and not a sub-32-byte inline node.
+        // A well-formed trie never contains this.
+        let mut payload = vec![0xa1u8]; // RLP string, content length 33
+        payload.extend_from_slice(&[0u8; 33]);
+        payload.extend_from_slice(&[0x80u8; 16]); // 15 empty children + empty value
+        let mut malformed_node = vec![0xc0u8 + payload.len() as u8];
+        malformed_node.extend_from_slice(&payload);
+
+        let witness = RpcExecutionWitness {
+            state: vec![Bytes::from(malformed_node)],
+            ..Default::default()
+        };
+
+        // Parent header with an empty state root, so ingestion's only work is
+        // decoding the (unused) malformed node.
+        let parent = BlockHeader {
+            number: 0,
+            state_root: *EMPTY_TRIE_HASH,
+            ..Default::default()
+        };
+
+        // The unused malformed node is dropped and ingestion completes cleanly.
+        witness
+            .into_execution_witness(ChainConfig::default(), 1, &[parent], &NativeCrypto)
+            .unwrap();
+    }
+}
