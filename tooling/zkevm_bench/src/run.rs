@@ -68,10 +68,15 @@ pub fn run_bench(
     workloads: &str,
     filter: Option<&str>,
     out: &str,
-    _elf: Option<&str>,
     mode: &str,
     stress_dir: Option<&str>,
 ) -> eyre::Result<()> {
+    if ethrex_guest_program::ZKVM_ZISK_PROGRAM_ELF.is_empty() {
+        eprintln!(
+            "warning: guest ELF is empty — build with `--features zisk-elf` or every workload will fail (guest_output_ok=false)"
+        );
+    }
+
     let run_mode = RunMode::parse(mode)?;
     let manifest = load_manifest(workloads)?;
     let backend = ZiskBackend::new();

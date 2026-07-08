@@ -18,6 +18,10 @@ pub struct WorkloadSpec {
     #[serde(default)]
     pub gas: Option<u64>,
     /// Run-tier ceiling ("quick"|"medium"); `None` is treated as "medium".
+    /// Kept as a raw string here (rather than `Option<Tier>`) so
+    /// `load_manifest` can validate it itself and produce an error that
+    /// names both the offending workload and the bad value; see
+    /// `Tier::parse`.
     #[serde(default)]
     pub tier: Option<String>,
 }
@@ -28,9 +32,43 @@ pub struct Manifest {
     pub workload: Vec<WorkloadSpec>,
 }
 
+/// A workload's run-tier ceiling. Unlike the raw `WorkloadSpec::tier`
+/// string, this only ever holds a value that `Tier::parse` accepted.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Tier {
+    Quick,
+    Medium,
+}
+
+impl Tier {
+    /// Parses a manifest `tier` string. Returns `None` for anything other
+    /// than `"quick"`/`"medium"` — callers turn that into a hard manifest
+    /// load error rather than silently falling back to a default, so a
+    /// typo (e.g. `"quik"`) can't be silently dropped from quick/medium.
+    fn parse(s: &str) -> Option<Self> {
+        match s {
+            "quick" => Some(Self::Quick),
+            "medium" => Some(Self::Medium),
+            _ => None,
+        }
+    }
+}
+
 pub fn load_manifest(path: &str) -> eyre::Result<Manifest> {
     let s = std::fs::read_to_string(path)?;
-    Ok(toml::from_str(&s)?)
+    let manifest: Manifest = toml::from_str(&s)?;
+    for w in &manifest.workload {
+        if let Some(tier) = &w.tier
+            && Tier::parse(tier).is_none()
+        {
+            eyre::bail!(
+                "workload {:?} has unknown tier {:?} (expected \"quick\" or \"medium\")",
+                w.name,
+                tier
+            );
+        }
+    }
+    Ok(manifest)
 }
 
 /// Run-tier ceiling selected via `--mode`. Workloads declare an optional
@@ -57,12 +95,25 @@ impl RunMode {
     /// should run under this mode. `quick` ⊆ `medium` ⊆ `slow` by
     /// construction: `Slow` always includes, `Medium` includes `Quick`'s
     /// set plus `"medium"`/unset, `Quick` includes only `"quick"`.
+    ///
+    /// `tier` is expected to already be validated (`load_manifest` rejects
+    /// unknown values at load time). Defensively, an unrecognized non-empty
+    /// string reaching here (e.g. a `Manifest` built by hand, bypassing
+    /// `load_manifest`) is treated as neither `"quick"` nor `"medium"` —
+    /// visible only under `Slow` — rather than silently defaulting to a
+    /// lighter tier.
     pub fn includes_tier(self, tier: Option<&str>) -> bool {
-        let effective = tier.unwrap_or("medium");
-        match self {
-            RunMode::Quick => effective == "quick",
-            RunMode::Medium => matches!(effective, "quick" | "medium"),
-            RunMode::Slow => true,
+        let effective = match tier {
+            None => Some(Tier::Medium),
+            Some(t) => Tier::parse(t),
+        };
+        match effective {
+            Some(effective) => match self {
+                RunMode::Quick => effective == Tier::Quick,
+                RunMode::Medium => matches!(effective, Tier::Quick | Tier::Medium),
+                RunMode::Slow => true,
+            },
+            None => self == RunMode::Slow,
         }
     }
 }
@@ -171,5 +222,73 @@ source = "x"
         assert!(RunMode::parse("medium").is_ok());
         assert!(RunMode::parse("slow").is_ok());
         assert!(RunMode::parse("bogus").is_err());
+    }
+
+    #[test]
+    fn includes_tier_defensively_treats_unparseable_string_as_slow_only() {
+        // load_manifest rejects this before it can ever reach includes_tier;
+        // this only pins the defensive fallback for a hand-built spec that
+        // bypasses that validation.
+        assert!(!RunMode::Quick.includes_tier(Some("quik")));
+        assert!(!RunMode::Medium.includes_tier(Some("quik")));
+        assert!(RunMode::Slow.includes_tier(Some("quik")));
+    }
+
+    #[test]
+    fn load_manifest_rejects_unknown_tier() {
+        let toml = r#"
+[[workload]]
+name = "typo_tier"
+type = "micro"
+source = "x"
+tier = "quik"
+"#;
+        let path = std::env::temp_dir().join(format!(
+            "zkevm_bench_test_manifest_bad_tier_{}.toml",
+            std::process::id()
+        ));
+        std::fs::write(&path, toml).unwrap();
+
+        let err = load_manifest(path.to_str().unwrap()).expect_err("bad tier should be rejected");
+        let msg = err.to_string();
+        assert!(msg.contains("typo_tier"), "should name the workload: {msg}");
+        assert!(
+            msg.contains("quik"),
+            "should name the bad tier value: {msg}"
+        );
+
+        std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn load_manifest_accepts_known_tiers() {
+        let toml = r#"
+[[workload]]
+name = "a"
+type = "micro"
+source = "x"
+tier = "quick"
+
+[[workload]]
+name = "b"
+type = "micro"
+source = "x"
+tier = "medium"
+
+[[workload]]
+name = "c"
+type = "micro"
+source = "x"
+"#;
+        let path = std::env::temp_dir().join(format!(
+            "zkevm_bench_test_manifest_ok_tier_{}.toml",
+            std::process::id()
+        ));
+        std::fs::write(&path, toml).unwrap();
+
+        let m = load_manifest(path.to_str().unwrap()).expect("valid tiers should load fine");
+        assert_eq!(m.workload.len(), 3);
+
+        std::fs::remove_file(&path).ok();
     }
 }

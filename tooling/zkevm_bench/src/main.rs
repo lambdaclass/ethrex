@@ -29,8 +29,6 @@ enum Command {
         filter: Option<String>,
         #[arg(long, default_value = "report.json")]
         out: String,
-        #[arg(long)]
-        elf: Option<String>,
         /// Tier ceiling: "quick" (fastest subset), "medium" (default;
         /// quick + medium/untagged workloads), or "slow" (the full
         /// manifest, plus `--stress-dir` fixtures if given).
@@ -82,14 +80,12 @@ fn main() -> eyre::Result<()> {
             workloads,
             filter,
             out,
-            elf,
             mode,
             stress_dir,
         } => run::run_bench(
             &workloads,
             filter.as_deref(),
             &out,
-            elf.as_deref(),
             &mode,
             stress_dir.as_deref(),
         ),
