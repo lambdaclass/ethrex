@@ -2014,6 +2014,14 @@ impl FrameTransaction {
         keccak(&buf)
     }
 
+    /// Whether this frame tx uses non-zero (keyed) nonces (EIP-8250). Static
+    /// validation guarantees key 0 appears only as the sole key, so a frame tx
+    /// is either the linear `[0]` domain (returns `false`) or an all-non-zero
+    /// key set tracked against the NONCE_MANAGER predeploy (returns `true`).
+    pub fn is_keyed(&self) -> bool {
+        !(self.nonce_keys.len() == 1 && self.nonce_keys[0].is_zero())
+    }
+
     /// Per EIP-8141 (spec commit fe0940cae2): 2800 gas per SECP256K1 signature,
     /// 6700 per P256. Unknown schemes are rejected by static validation, so
     /// they are treated as 0 here (validation runs first).

@@ -3138,6 +3138,11 @@ impl Blockchain {
 
         // Frame transactions: skip balance/EOA checks (payer unknown until execution)
         let is_frame_tx = matches!(tx, Transaction::FrameTransaction(_));
+        // EIP-8250: a non-zero-keyed frame tx carries per-key nonces in the
+        // NONCE_MANAGER domain, so the sender's linear account nonce is the
+        // wrong yardstick — the validation-prefix simulation checks each key's
+        // nonce. Skip the linear-nonce guards below for these.
+        let is_keyed_frame_tx = matches!(tx, Transaction::FrameTransaction(ft) if ft.is_keyed());
 
         let header_no = self.storage.get_latest_block_number().await?;
         let header = self
@@ -3153,19 +3158,13 @@ impl Blockchain {
             return Err(MempoolError::FrameTxPreFork);
         }
 
-        // EIP-8250: the public mempool admits only key-0 frame transactions
-        // (nonce_keys == [0]). Multi-key / non-zero-key admission needs the
-        // per-keyset pending/replacement tracking that is out of scope for the
-        // devnet; the spec permits this minimal policy. Non-zero-key frame txs
-        // can still be included by a block builder and are validated in full at
-        // block execution.
-        if let Transaction::FrameTransaction(frame_tx) = tx
-            && (frame_tx.nonce_keys.len() != 1 || !frame_tx.nonce_keys[0].is_zero())
-        {
-            return Err(MempoolError::InvalidFrameTransaction(
-                "only key-0 frame transactions are admitted to the public mempool".to_string(),
-            ));
-        }
+        // EIP-8250: non-zero-keyed frame transactions are admitted. Their nonces
+        // live in the NONCE_MANAGER key domain, so they are tracked per
+        // `(sender, keyset)` in the mempool (disjoint key sets are independent)
+        // and their per-key nonce validity is checked by the validation-prefix
+        // simulation, not the linear account nonce. Static validation still
+        // enforces the key-set shape (key 0 only as the sole key; non-zero keys
+        // strictly increasing, 1..=16).
 
         // EIP-8141 expiry (spec commit 0b197156): drop frame txs whose expiry
         // verifier deadline is already behind the current head timestamp.
@@ -3335,7 +3334,7 @@ impl Blockchain {
         let maybe_sender_acc_info = self.storage.get_account_info(header_no, sender).await?;
 
         if let Some(sender_acc_info) = maybe_sender_acc_info {
-            if nonce < sender_acc_info.nonce || nonce == u64::MAX {
+            if !is_keyed_frame_tx && (nonce < sender_acc_info.nonce || nonce == u64::MAX) {
                 return Err(MempoolError::NonceTooLow);
             }
 
@@ -3404,8 +3403,9 @@ impl Blockchain {
             // nonce sanity guard as the existing-account path instead of skipping
             // nonce validation entirely. `nonce < 0` is impossible for a u64, so
             // only the u64::MAX sentinel is rejectable here; a fresh sender's
-            // nonce-0 tx still passes.
-            if nonce == u64::MAX {
+            // nonce-0 tx still passes. A non-zero-keyed frame tx is exempt: its
+            // nonce_seq is a NONCE_MANAGER key value, validated by the prefix sim.
+            if !is_keyed_frame_tx && nonce == u64::MAX {
                 return Err(MempoolError::NonceTooLow);
             }
         }

@@ -146,6 +146,18 @@ struct MempoolInner {
     /// ambiguity and DoS. Populated on insert; cleared on removal.
     /// Must be kept consistent with `remove_transaction_with_lock`.
     pending_frame_tx_by_sender: FxHashMap<Address, (H256, u64)>,
+    /// Pending NON-ZERO-keyed frame txs (EIP-8250), indexed by
+    /// `(sender, nonce_keys_hash)` so disjoint key sets from one sender are
+    /// tracked independently — the spec permits a policy that "admits multiple
+    /// pending frame transactions for the same sender on disjoint non-zero key
+    /// sets". At most one pending tx per `(sender, keyset)`; replacement is a
+    /// same-keyset fee bump. Value is `(tx_hash, nonce_seq)`. Key-0 frame txs
+    /// stay in the linear plumbing (`txs_by_sender_nonce` /
+    /// `pending_frame_tx_by_sender`); keyed txs are deliberately kept OUT of
+    /// `txs_by_sender_nonce` so their `nonce_seq` never collides with an
+    /// unrelated linear-nonce entry. Populated on insert; cleared on removal.
+    /// Must be kept consistent with `remove_transaction_with_lock`.
+    keyed_frame_by_sender_keyset: FxHashMap<(Address, H256), (H256, u64)>,
     /// Sum of reserved max-cost (TXPARAM 0x06) per paymaster across all pending
     /// frame txs that paymaster sponsors (EIP-8141). Admission checks a
     /// paymaster's balance against this running total so concurrently-pending
@@ -188,7 +200,17 @@ impl MempoolInner {
             self.remove_blob_bundle(hash);
         }
 
-        self.txs_by_sender_nonce.remove(&(tx.sender(), tx.nonce()));
+        // Only clear the linear slot if it actually points at THIS tx. A keyed
+        // frame tx (EIP-8250) is never stored here, but shares the
+        // `(sender, nonce_seq)` tuple with any linear tx a sender has at that
+        // nonce; an unconditional remove would evict that unrelated tx's entry.
+        if self
+            .txs_by_sender_nonce
+            .get(&(tx.sender(), tx.nonce()))
+            .is_some_and(|h| h == hash)
+        {
+            self.txs_by_sender_nonce.remove(&(tx.sender(), tx.nonce()));
+        }
         self.broadcast_pool.remove(hash);
 
         // Clear ALL frame-tx reservation state in this single removal path
@@ -202,6 +224,21 @@ impl MempoolInner {
                 .is_some_and(|(h, _)| h == hash)
             {
                 self.pending_frame_tx_by_sender.remove(&sender);
+            }
+
+            // Keyed frame txs (EIP-8250) live in the per-`(sender, keyset)` map.
+            // Recompute the key set from the tx and clear only our own entry.
+            if let Transaction::FrameTransaction(frame_tx) = &*tx
+                && frame_tx.is_keyed()
+            {
+                let key = (sender, frame_tx.nonce_keys_hash());
+                if self
+                    .keyed_frame_by_sender_keyset
+                    .get(&key)
+                    .is_some_and(|(h, _)| h == hash)
+                {
+                    self.keyed_frame_by_sender_keyset.remove(&key);
+                }
             }
 
             // Decrement the paymaster reservation maps using the recorded
@@ -382,6 +419,40 @@ impl MempoolInner {
             Err(MempoolError::FrameTxSenderAlreadyPending)
         }
     }
+
+    /// Per-`(sender, keyset)` analogue of `check_frame_tx_sender_pending` for
+    /// NON-ZERO-keyed frame txs (EIP-8250). Disjoint key sets are independent,
+    /// so only a tx sharing this exact key set can conflict:
+    ///
+    /// - No pending tx for `(sender, keyset)`: permit (`Ok(None)`).
+    /// - Same key set, **same nonce_seq**: fee-bump replacement — return the
+    ///   existing hash (`find_tx_to_replace` validated the price bump).
+    /// - Same key set, **different nonce_seq**: reject
+    ///   (`FrameTxSenderAlreadyPending`); one pending tx per key set.
+    ///
+    /// Must be called under the mempool write lock (same TOCTOU reasoning as
+    /// `check_frame_tx_sender_pending`).
+    fn check_keyed_frame_pending(
+        &self,
+        sender: Address,
+        keyset: H256,
+        nonce: u64,
+        incoming_hash: H256,
+    ) -> Result<Option<H256>, MempoolError> {
+        let Some(&(existing_hash, existing_nonce)) =
+            self.keyed_frame_by_sender_keyset.get(&(sender, keyset))
+        else {
+            return Ok(None);
+        };
+        if existing_hash == incoming_hash {
+            return Ok(None);
+        }
+        if existing_nonce == nonce {
+            Ok(Some(existing_hash))
+        } else {
+            Err(MempoolError::FrameTxSenderAlreadyPending)
+        }
+    }
 }
 
 #[derive(Debug, Default)]
@@ -449,6 +520,17 @@ impl Mempool {
         let is_frame = matches!(transaction.tx_type(), TxType::Frame);
         let is_blob = matches!(transaction.tx_type(), TxType::EIP4844);
 
+        // Key-set digest for a NON-ZERO-keyed frame tx (EIP-8250); `None` for
+        // key-0 frame txs and non-frame txs, which use the linear nonce domain.
+        // Keyed frame txs are tracked per `(sender, keyset)` instead of by the
+        // linear `(sender, nonce_seq)` slot so disjoint key sets don't collide.
+        let keyed_keyset: Option<H256> = match &*transaction {
+            Transaction::FrameTransaction(frame_tx) if frame_tx.is_keyed() => {
+                Some(frame_tx.nonce_keys_hash())
+            }
+            _ => None,
+        };
+
         // One-pending-frame-tx-per-sender gate (EIP-8141 §Mempool, review fix 1.6).
         // Must run under the write lock so the check and insert are atomic.
         if is_frame {
@@ -457,7 +539,11 @@ impl Mempool {
             // it yet. Removal must be atomic with the re-check below so a
             // rejected fee-bump never leaves the sender with neither the old nor
             // the new tx. Price validation already ran in validate_transaction.
-            let existing_frame_hash = inner.check_frame_tx_sender_pending(sender, nonce, hash)?;
+            // Keyed frame txs are gated per key set; key-0/linear per sender.
+            let existing_frame_hash = match keyed_keyset {
+                Some(keyset) => inner.check_keyed_frame_pending(sender, keyset, nonce, hash)?,
+                None => inner.check_frame_tx_sender_pending(sender, nonce, hash)?,
+            };
 
             // Paymaster availability + non-canonical-limit re-check under the
             // write lock. The check in `validate_transaction` is an unlocked
@@ -519,8 +605,33 @@ impl Mempool {
             // entry is overwritten below while the tx itself leaks). When the
             // predecessor is the same-nonce frame tx, the slot already points to it,
             // so this is equivalent to the previous `existing_frame_hash` removal.
-            if let Some(&old_hash) = inner.txs_by_sender_nonce.get(&(sender, nonce)) {
-                inner.remove_transaction_with_lock(&old_hash)?;
+            //
+            // Keyed frame txs never occupy the linear `(sender, nonce_seq)` slot
+            // (a different-key-set or regular tx may sit there); they have their
+            // own per-`(sender, keyset)` slot. Remove whatever currently occupies
+            // THAT slot — mirroring the linear branch — rather than only
+            // `existing_frame_hash`. This matters for a same-hash re-announce: two
+            // concurrent admissions of the same tx both clear the unlocked
+            // `contains_tx` pre-filter and reach this locked section;
+            // `check_keyed_frame_pending` returns `Ok(None)` for the re-announce
+            // (existing == incoming), so `existing_frame_hash` is `None`. Removing
+            // the slot occupant (the first insertion) before the unconditional
+            // re-insert below keeps the paymaster reservation net-zero, exactly as
+            // the linear slot removal does; keying off `existing_frame_hash` here
+            // would skip the removal and double-count the reservation.
+            match keyed_keyset {
+                Some(keyset) => {
+                    if let Some(&(old_hash, _)) =
+                        inner.keyed_frame_by_sender_keyset.get(&(sender, keyset))
+                    {
+                        inner.remove_transaction_with_lock(&old_hash)?;
+                    }
+                }
+                None => {
+                    if let Some(&old_hash) = inner.txs_by_sender_nonce.get(&(sender, nonce)) {
+                        inner.remove_transaction_with_lock(&old_hash)?;
+                    }
+                }
             }
         }
 
@@ -553,17 +664,35 @@ impl Mempool {
             inner.txs_order.push_back(hash);
         }
         let tx_nonce = transaction.nonce();
-        inner.txs_by_sender_nonce.insert((sender, tx_nonce), hash);
+        // Keyed frame txs are indexed per `(sender, keyset)` below, NOT in the
+        // linear `(sender, nonce_seq)` slot — their `nonce_seq` lives in the
+        // NONCE_MANAGER key domain and would otherwise collide with an unrelated
+        // linear-nonce tx from the same sender.
+        if keyed_keyset.is_none() {
+            inner.txs_by_sender_nonce.insert((sender, tx_nonce), hash);
+        }
         inner.transaction_pool.insert(hash, transaction);
         inner.broadcast_pool.insert(hash);
         inner.alternates.remove(&hash);
 
-        // Track per-sender pending frame tx for EIP-8141 admission gating.
-        // Storing the nonce alongside the hash keeps the conflict check O(1).
+        // Track the pending frame tx for admission gating. Storing the nonce
+        // alongside the hash keeps the conflict check O(1). Key-0 frame txs use
+        // the per-sender linear map (EIP-8141); keyed frame txs use the
+        // per-`(sender, keyset)` map (EIP-8250) so disjoint key sets are tracked
+        // independently.
         if is_frame {
-            inner
-                .pending_frame_tx_by_sender
-                .insert(sender, (hash, tx_nonce));
+            match keyed_keyset {
+                Some(keyset) => {
+                    inner
+                        .keyed_frame_by_sender_keyset
+                        .insert((sender, keyset), (hash, tx_nonce));
+                }
+                None => {
+                    inner
+                        .pending_frame_tx_by_sender
+                        .insert(sender, (hash, tx_nonce));
+                }
+            }
 
             // Increment the paymaster reservation maps for this frame tx. The
             // reservation was computed during admission (validate_transaction)
@@ -981,45 +1110,76 @@ impl Mempool {
         nonce: u64,
         tx: &Transaction,
     ) -> Result<Option<H256>, MempoolError> {
+        // Keyed frame txs (EIP-8250) are indexed per `(sender, keyset)`, not by
+        // the linear `(sender, nonce)` slot; find their fee-bump predecessor in
+        // that key set rather than at a nonce slot that may hold an unrelated tx.
+        if let Transaction::FrameTransaction(frame_tx) = tx
+            && frame_tx.is_keyed()
+        {
+            return self.find_keyed_frame_tx_to_replace(sender, frame_tx.nonce_keys_hash(), tx);
+        }
+
         let Some(tx_in_pool) = self.contains_sender_nonce(sender, nonce, tx.hash(&NativeCrypto))?
         else {
             return Ok(None);
         };
-        let is_a_replacement_tx = {
-            // EIP-1559 values
-            let old_tx_max_fee_per_gas = tx_in_pool.max_fee_per_gas().unwrap_or_default();
-            let old_tx_max_priority_fee_per_gas = tx_in_pool.max_priority_fee().unwrap_or_default();
-            let new_tx_max_fee_per_gas = tx.max_fee_per_gas().unwrap_or_default();
-            let new_tx_max_priority_fee_per_gas = tx.max_priority_fee().unwrap_or_default();
-
-            // Legacy tx values
-            let old_tx_gas_price = tx_in_pool.gas_price();
-            let new_tx_gas_price = tx.gas_price();
-
-            // EIP-4844 values
-            let old_tx_max_fee_per_blob = tx_in_pool.max_fee_per_blob_gas();
-            let new_tx_max_fee_per_blob = tx.max_fee_per_blob_gas();
-
-            let eip4844_higher_fees = if let (Some(old_blob_fee), Some(new_blob_fee)) =
-                (old_tx_max_fee_per_blob, new_tx_max_fee_per_blob)
-            {
-                new_blob_fee > old_blob_fee
-            } else {
-                true // We are marking it as always true if the tx is not eip-4844
-            };
-
-            let eip1559_higher_fees = new_tx_max_fee_per_gas > old_tx_max_fee_per_gas
-                && new_tx_max_priority_fee_per_gas > old_tx_max_priority_fee_per_gas;
-            let legacy_higher_fees = new_tx_gas_price > old_tx_gas_price;
-
-            eip4844_higher_fees && (eip1559_higher_fees || legacy_higher_fees)
-        };
-
-        if !is_a_replacement_tx {
+        if !Self::is_fee_bump(&tx_in_pool, tx) {
             return Err(MempoolError::UnderpricedReplacement);
         }
-
         Ok(Some(tx_in_pool.hash(&NativeCrypto)))
+    }
+
+    /// Fee-bump predecessor for a NON-ZERO-keyed frame tx (EIP-8250): the
+    /// pending tx sharing this exact `(sender, keyset)`, if any. Mirrors the
+    /// linear `find_tx_to_replace` path but keyed by the NONCE_MANAGER key set
+    /// instead of the account nonce, and enforces the same fee-bump rule.
+    fn find_keyed_frame_tx_to_replace(
+        &self,
+        sender: Address,
+        keyset: H256,
+        tx: &Transaction,
+    ) -> Result<Option<H256>, MempoolError> {
+        let (existing_hash, old_tx) = {
+            let inner = self.read()?;
+            let Some(&(existing_hash, _)) =
+                inner.keyed_frame_by_sender_keyset.get(&(sender, keyset))
+            else {
+                return Ok(None);
+            };
+            if existing_hash == tx.hash(&NativeCrypto) {
+                return Ok(None);
+            }
+            let Some(old_tx) = inner.transaction_pool.get(&existing_hash).cloned() else {
+                return Ok(None);
+            };
+            (existing_hash, old_tx)
+        };
+        if !Self::is_fee_bump(&old_tx, tx) {
+            return Err(MempoolError::UnderpricedReplacement);
+        }
+        Ok(Some(existing_hash))
+    }
+
+    /// The EIP-1559 / legacy / EIP-4844 fee-bump rule: the incoming tx must
+    /// strictly out-bid the pooled one for a replacement to be admitted. Shared
+    /// by the linear (`find_tx_to_replace`) and keyed
+    /// (`find_keyed_frame_tx_to_replace`) replacement paths.
+    fn is_fee_bump(old: &Transaction, new: &Transaction) -> bool {
+        let eip4844_higher_fees = if let (Some(old_blob_fee), Some(new_blob_fee)) =
+            (old.max_fee_per_blob_gas(), new.max_fee_per_blob_gas())
+        {
+            new_blob_fee > old_blob_fee
+        } else {
+            true // Always true when the tx is not EIP-4844.
+        };
+
+        let eip1559_higher_fees = new.max_fee_per_gas().unwrap_or_default()
+            > old.max_fee_per_gas().unwrap_or_default()
+            && new.max_priority_fee().unwrap_or_default()
+                > old.max_priority_fee().unwrap_or_default();
+        let legacy_higher_fees = new.gas_price() > old.gas_price();
+
+        eip4844_higher_fees && (eip1559_higher_fees || legacy_higher_fees)
     }
 
     /// Current reserved max-cost total for `paymaster` across pending frame txs
@@ -1070,14 +1230,18 @@ impl Mempool {
         Ok(self.read()?.transaction_pool.get(&hash).cloned())
     }
 
-    /// Sizes of the four frame-tx tracking maps:
-    /// `(pending_frame_tx_by_sender, reserved_pending_cost,
-    /// noncanonical_paymaster_pending, frame_tx_paymaster)`. Exposed for tests
-    /// that assert the maps return to empty after add + remove (EIP-8141).
-    pub fn frame_tracking_map_sizes(&self) -> Result<(usize, usize, usize, usize), StoreError> {
+    /// Sizes of the five frame-tx tracking maps:
+    /// `(pending_frame_tx_by_sender, keyed_frame_by_sender_keyset,
+    /// reserved_pending_cost, noncanonical_paymaster_pending,
+    /// frame_tx_paymaster)`. Exposed for tests that assert the maps return to
+    /// empty after add + remove (EIP-8141 / EIP-8250).
+    pub fn frame_tracking_map_sizes(
+        &self,
+    ) -> Result<(usize, usize, usize, usize, usize), StoreError> {
         let inner = self.read()?;
         Ok((
             inner.pending_frame_tx_by_sender.len(),
+            inner.keyed_frame_by_sender_keyset.len(),
             inner.reserved_pending_cost.len(),
             inner.noncanonical_paymaster_pending.len(),
             inner.frame_tx_paymaster.len(),
