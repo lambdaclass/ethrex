@@ -645,7 +645,7 @@ fn frame_tx_reservation_maps_clear_after_add_and_remove() {
     // Every map starts empty.
     assert_eq!(
         mempool.frame_tracking_map_sizes().unwrap(),
-        (0, 0, 0, 0),
+        (0, 0, 0, 0, 0),
         "frame tracking maps must start empty"
     );
 
@@ -664,11 +664,12 @@ fn frame_tx_reservation_maps_clear_after_add_and_remove() {
         )
         .expect("add frame tx with reservation");
 
-    // After insert all four maps carry exactly one entry.
+    // After insert the linear + reservation maps each carry one entry; the
+    // keyed map stays empty (this is a key-0 frame tx).
     assert_eq!(
         mempool.frame_tracking_map_sizes().unwrap(),
-        (1, 1, 1, 1),
-        "all four frame tracking maps must record the pending frame tx"
+        (1, 0, 1, 1, 1),
+        "the linear + reservation maps must record the pending frame tx"
     );
     assert_eq!(
         mempool.reserved_pending_cost(paymaster).unwrap(),
@@ -683,8 +684,8 @@ fn frame_tx_reservation_maps_clear_after_add_and_remove() {
     mempool.remove_transaction(&hash).expect("remove frame tx");
     assert_eq!(
         mempool.frame_tracking_map_sizes().unwrap(),
-        (0, 0, 0, 0),
-        "all four frame tracking maps must return to empty after removal"
+        (0, 0, 0, 0, 0),
+        "all frame tracking maps must return to empty after removal"
     );
     assert_eq!(
         mempool.reserved_pending_cost(paymaster).unwrap(),
@@ -2173,12 +2174,12 @@ async fn mempool_revalidation_evicts_invalid_frame_tx() {
         .expect("funded expiry frame tx must be admitted");
 
     // Verify the reservation was recorded (non-zero reserved cost or maps filled).
-    let (sz1, sz2, sz3, sz4) = blockchain
+    let (sz1, sz2, sz3, sz4, sz5) = blockchain
         .mempool
         .frame_tracking_map_sizes()
         .expect("frame_tracking_map_sizes");
     assert!(
-        sz1 > 0 || sz2 > 0 || sz3 > 0 || sz4 > 0,
+        sz1 > 0 || sz2 > 0 || sz3 > 0 || sz4 > 0 || sz5 > 0,
         "at least one tracking map must be non-empty after admission"
     );
 
@@ -2218,8 +2219,8 @@ async fn mempool_revalidation_evicts_invalid_frame_tx() {
             .mempool
             .frame_tracking_map_sizes()
             .expect("frame_tracking_map_sizes"),
-        (0, 0, 0, 0),
-        "all four frame tracking maps must be empty after eviction"
+        (0, 0, 0, 0, 0),
+        "all frame tracking maps must be empty after eviction"
     );
 
     // The sender's reserved cost must be zero.
