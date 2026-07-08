@@ -258,9 +258,12 @@ impl FkvWriter {
                 std::mem::take(&mut self.storage_batch),
             )
             .context("writing storage flat-KV batch")?;
-        // Drain memtables so a multi-GB build's flat-KV writes don't accumulate
-        // faster than RocksDB's background flush can clear them.
-        store.flush().context("flushing flat-KV memtables")?;
+        // NB: no explicit flush here. An earlier version flushed every batch to
+        // bound memtables, but profiling showed those synchronous full-DB
+        // flushes dominated the parallel build (stalling the producer and
+        // starving the shard workers) while barely affecting peak RSS —
+        // RocksDB's own `db_write_buffer_size` trigger bounds memtables. Only
+        // `finish()` flushes, once, so the sizing checkpoint sees the data.
         Ok(())
     }
 
