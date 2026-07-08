@@ -1608,6 +1608,12 @@ impl Blockchain {
                     Evm::new_from_db_for_l2(logger.clone(), *l2_config, Arc::new(NativeCrypto))
                 }
             };
+            // I2: witness-gen must attach the stateless validator too, so
+            // re-executing an L1 block that itself contains an EXECUTE call
+            // (native-rollup advance) does not fail with "requires a
+            // StatelessValidator". Mirrors the sibling paths at the other
+            // `new_from_db_for_l1` sites (block import + witness gen).
+            attach_stateless_validator(&mut vm);
 
             // Re-execute block with logger
             let (execution_result, bal) = vm.execute_block(block)?;

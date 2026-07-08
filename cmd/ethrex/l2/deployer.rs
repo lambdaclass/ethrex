@@ -1829,21 +1829,25 @@ pub async fn deploy_native_rollup_contracts(
     info!("L2 genesis state root: {initial_state_root:#x}");
     info!("L2 genesis block hash: {initial_block_hash:#x}");
 
-    // 5. Deploy NativeRollup.sol with constructor(initialStateRoot, initialBlockHash, blockGasLimit, chainId, advancer)
+    // 5. Deploy NativeRollup.sol with constructor(initialStateRoot, initialBlockHash, blockGasLimit, chainId, advancer, finalityDelay)
 
     let l2_chain_id = genesis.config.chain_id;
     let advancer = opts
         .native_rollups_advancer_address
         .unwrap_or_else(|| signer.address());
     info!("Advancer address (authorized for advance()): {advancer:#x}");
+    // Exit window before a withdrawal can be claimed on L1. 0 = instant finality
+    // for the local demo; production should set a reorg-safe delay.
+    let finality_delay: u64 = 0;
     let constructor_args = encode_calldata(
-        "constructor(bytes32,bytes32,uint256,uint256,address)",
+        "constructor(bytes32,bytes32,uint256,uint256,address,uint256)",
         &[
             Value::FixedBytes(initial_state_root.as_bytes().to_vec().into()),
             Value::FixedBytes(initial_block_hash.as_bytes().to_vec().into()),
             Value::Uint(U256::from(opts.l2_gas_limit)),
             Value::Uint(U256::from(l2_chain_id)),
             Value::Address(advancer),
+            Value::Uint(U256::from(finality_delay)),
         ],
     )?;
     // Strip the 4-byte selector from the encoded constructor args

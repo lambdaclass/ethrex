@@ -15,7 +15,7 @@ pub use backends::{
 pub use db::{DynVmDatabase, VmDatabase};
 pub use errors::EvmError;
 pub use ethrex_levm::StatelessValidator;
-pub use ethrex_levm::errors::{InternalError, VMError};
+pub use ethrex_levm::errors::{InternalError, PrecompileError, VMError};
 pub use ethrex_levm::precompiles::{PrecompileCache, precompiles_for_fork};
 /// EIP-8037 intrinsic gas split `(regular, state)` for a transaction.
 /// Re-exported for mempool / payload-builder use.

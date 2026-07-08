@@ -75,15 +75,21 @@ pub struct StatelessExecutor {
 
 impl ethrex_vm::StatelessValidator for StatelessExecutor {
     fn verify(&self, input: &[u8]) -> Result<Vec<u8>, ethrex_vm::VMError> {
-        use ethrex_vm::{InternalError, VMError};
+        use ethrex_vm::{PrecompileError, VMError};
         use libssz::SszDecode;
 
+        // The `input` is attacker-controlled (a sequencer-supplied SSZ blob). A
+        // malformed blob or an un-rebuildable witness is a CALL-level failure,
+        // NOT a node invariant: map both to `PrecompileError` so the precompile
+        // halts exceptionally (tx included, gas charged — the DoS bound holds)
+        // rather than to `VMError::Internal`, which would abort the whole tx and
+        // let the attacker walk away uncharged after we already did the SSZ
+        // decode + trie rebuild.
         let stateless_input = SszStatelessInput::from_ssz_bytes(input)
-            .map_err(|e| VMError::Internal(InternalError::Custom(format!("SSZ decode: {e}"))))?;
+            .map_err(|_| VMError::from(PrecompileError::ExecuteInvalidInput))?;
 
-        let execution_witness = ExecutionWitness::from_ssz(&stateless_input).map_err(|e| {
-            VMError::Internal(InternalError::Custom(format!("witness conversion: {e}")))
-        })?;
+        let execution_witness = ExecutionWitness::from_ssz(&stateless_input)
+            .map_err(|_| VMError::from(PrecompileError::ExecuteInvalidInput))?;
 
         let result = verify_stateless_new_payload(
             &stateless_input.new_payload_request,
@@ -95,5 +101,33 @@ impl ethrex_vm::StatelessValidator for StatelessExecutor {
         let mut buf = Vec::new();
         result.ssz_append(&mut buf);
         Ok(buf)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ethrex_vm::StatelessValidator;
+
+    /// I1 regression: `verify()` on malformed (attacker-controlled) input must
+    /// fail closed at the CALL level — i.e. return an error that does NOT
+    /// propagate as a tx-abort. `should_propagate()` is true only for
+    /// `VMError::Internal`; the pre-fix code returned `Internal` for SSZ-decode
+    /// and witness-conversion failures, letting an attacker abort the tx and
+    /// walk away uncharged after we did the decode + trie rebuild.
+    #[test]
+    fn verify_malformed_input_fails_closed_not_internal() {
+        let executor = StatelessExecutor {
+            crypto: Arc::new(ethrex_crypto::NativeCrypto),
+        };
+        // Not a valid SSZ `StatelessInput`.
+        let err = executor
+            .verify(&[0xff, 0xff, 0xff, 0xff])
+            .expect_err("malformed input must be rejected");
+        assert!(
+            !err.should_propagate(),
+            "malformed EXECUTE input must be a CALL-level PrecompileError (fail-closed, charged), \
+             not a tx-aborting VMError::Internal; got {err:?}"
+        );
     }
 }

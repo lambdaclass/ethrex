@@ -19,16 +19,22 @@ import {MerkleProof} from "@openzeppelin/contracts/utils/cryptography/MerkleProo
 /// to `sentMessages` storage, and emit WithdrawalInitiated. The L1 contract
 /// verifies withdrawals via MPT storage proofs against the L2 state root.
 ///
-/// Storage layout:
+/// Storage layout (NativeRollup.sol reads `sentMessages` at slot 3 for
+/// withdrawal proofs — do NOT reorder slots 0-3):
 ///   Slot 0: relayer (address)
 ///   Slot 1: l1MessageNonce (uint256)
 ///   Slot 2: withdrawalNonce (uint256)
 ///   Slot 3: sentMessages (mapping(bytes32 => bool))
+///   Slot 4: recoverableBalance (mapping(address => uint256))
 contract L2Bridge {
     address public relayer;
     uint256 public l1MessageNonce;
     uint256 public withdrawalNonce;
     mapping(bytes32 => bool) public sentMessages;
+    /// I6: ETH from L1 messages whose L2 subcall failed. Credited to the
+    /// intended recipient (`to`) so it is recoverable via `claimRecoverable`
+    /// instead of being stranded in the bridge with the nonce already consumed.
+    mapping(address => uint256) public recoverableBalance;
 
     /// @dev EIP-4788 BEACON_ROOTS system contract address.
     /// parent_beacon_block_root is stored here during block processing.
@@ -51,10 +57,17 @@ contract L2Bridge {
         uint256 indexed messageId
     );
 
+    /// Emitted when an L1 message's L2 subcall fails and its `value` is parked
+    /// in `recoverableBalance[to]` for later `claimRecoverable`.
+    event L1MessageRecoverable(address indexed to, uint256 value, uint256 indexed nonce);
+
+    event RelayerChanged(address indexed oldRelayer, address indexed newRelayer);
+
     /// @notice Process a single L1 message: verify Merkle proof, execute subcall, emit event.
-    /// @dev If the subcall fails, the nonce is still incremented and the event
-    ///      is still emitted so that L1/L2 nonces stay in sync. Assets stay in the
-    ///      bridge. User recovery mechanism is TBD.
+    /// @dev If the subcall fails, the nonce is still incremented (so L1/L2 nonces
+    ///      stay in sync) but the message's `value` is credited to
+    ///      `recoverableBalance[to]` (I6) so the intended recipient can reclaim
+    ///      it via `claimRecoverable` instead of losing it in the bridge.
     /// @param from        Original L1 sender (msg.sender on L1).
     /// @param to          Target address on L2.
     /// @param value       Amount of ETH to send.
@@ -87,10 +100,35 @@ contract L2Bridge {
         require(root != bytes32(0), "L2Bridge: no L1 anchor");
         require(MerkleProof.verify(merkleProof, root, messageHash), "L2Bridge: invalid proof");
 
-        // Execute the L2 subcall. Don't revert on failure — nonce stays in sync, assets stay in bridge.
-        to.call{value: value, gas: gasLimit}(data);
+        // Execute the L2 subcall. Don't revert on failure — the nonce must stay
+        // in sync with L1. On failure, park `value` in the recoverable ledger
+        // (I6) so it is not stranded.
+        (bool ok, ) = to.call{value: value, gas: gasLimit}(data);
+        if (!ok && value > 0) {
+            recoverableBalance[to] += value;
+            emit L1MessageRecoverable(to, value, currentNonce);
+        }
 
         emit L1MessageProcessed(from, to, value, gasLimit, keccak256(data), currentNonce);
+    }
+
+    /// @notice Withdraw ETH parked by a failed L1 message subcall. Callable by
+    /// the intended recipient (`to`) of the failed message.
+    function claimRecoverable() external {
+        uint256 amount = recoverableBalance[msg.sender];
+        require(amount > 0, "L2Bridge: nothing to recover");
+        recoverableBalance[msg.sender] = 0;
+        (bool sent, ) = msg.sender.call{value: amount}("");
+        require(sent, "L2Bridge: recover transfer failed");
+    }
+
+    /// @notice Rotate the authorized relayer. Callable only by the current
+    /// relayer (self-rotation), so a compromised/dev key can be replaced.
+    function setRelayer(address newRelayer) external {
+        require(msg.sender == relayer, "L2Bridge: not relayer");
+        require(newRelayer != address(0), "L2Bridge: relayer is zero");
+        emit RelayerChanged(relayer, newRelayer);
+        relayer = newRelayer;
     }
 
     /// @notice Initiate a withdrawal by sending ETH with the L1 receiver address.

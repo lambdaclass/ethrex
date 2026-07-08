@@ -37,6 +37,15 @@ contract NativeRollup {
     bytes32[] public pendingL1Messages;
     uint256 public l1MessageIndex;
 
+    // ===== Escrow solvency (I7) =====
+    /// Total ETH deposited via value-bearing L1 messages. Claims may never
+    /// exceed this, so the L1 escrow can only ever pay out what was actually
+    /// bridged in — an over-withdrawal on L2 (whose bridge is preminted) cannot
+    /// drain L1 funds it never received.
+    uint256 public totalDeposited;
+    /// Total ETH paid out by `claimWithdrawal`.
+    uint256 public totalClaimed;
+
     // ===== L2→L1 messaging (state proof-based) =====
     mapping(uint256 => bytes32) public stateRootHistory;
     mapping(bytes32 => bool) public claimedWithdrawals;
@@ -84,6 +93,7 @@ contract NativeRollup {
     event StateAdvanced(uint256 indexed newBlockNumber, bytes32 indexed newStateRoot);
     event L1MessageRecorded(address indexed sender, address indexed to, uint256 value, uint256 gasLimit, bytes data, uint256 indexed nonce);
     event WithdrawalClaimed(address indexed receiver, uint256 amount, uint256 blockNumber, uint256 messageId);
+    event AdvancerChanged(address indexed oldAdvancer, address indexed newAdvancer);
 
     modifier nonReentrant() {
         require(!_locked, "ReentrancyGuard: reentrant call");
@@ -102,7 +112,8 @@ contract NativeRollup {
         bytes32 _initialBlockHash,
         uint256 _blockGasLimit,
         uint256 _chainId,
-        address _advancer
+        address _advancer,
+        uint256 _finalityDelay
     ) {
         require(_advancer != address(0), "NativeRollup: advancer is zero");
         stateRoot = _initialStateRoot;
@@ -111,9 +122,19 @@ contract NativeRollup {
         l2GasLimit = _blockGasLimit;
         chainId = _chainId;
         CHAIN_ID = _chainId;
-        FINALITY_DELAY = 0;
+        // Configurable exit window (was hardcoded 0). A local demo passes 0 for
+        // instant finality; production should set a real reorg-safe delay.
+        FINALITY_DELAY = _finalityDelay;
         advancer = _advancer;
         lastFetchedL1Block = block.number;
+    }
+
+    /// @notice Rotate the authorized advancer. Callable only by the current
+    /// advancer (self-rotation), so a compromised/retired key can hand off.
+    function setAdvancer(address _newAdvancer) external onlyAdvancer {
+        require(_newAdvancer != address(0), "NativeRollup: advancer is zero");
+        emit AdvancerChanged(advancer, _newAdvancer);
+        advancer = _newAdvancer;
     }
 
     // ===== L1 Messaging =====
@@ -123,6 +144,8 @@ contract NativeRollup {
         require(_gasLimit > 0, "gasLimit must be > 0");
         require(_gasLimit <= l2GasLimit, "gasLimit exceeds L2 block gas limit");
         _burnGas(_gasLimit);
+        // I7: account bridged-in ETH so claims can never exceed deposits.
+        totalDeposited += msg.value;
         _recordL1Message(msg.sender, _to, msg.value, _gasLimit, _data);
     }
 
@@ -328,6 +351,11 @@ contract NativeRollup {
         require(!claimedWithdrawals[withdrawalHash], "Already claimed");
 
         _verifyWithdrawalProof(historicStateRoot, withdrawalHash, _accountProof, _storageProof);
+
+        // I7: escrow solvency — never pay out more than was deposited. Checked
+        // and updated before the transfer (checks-effects-interactions).
+        require(totalClaimed + _amount <= totalDeposited, "NativeRollup: escrow insolvent");
+        totalClaimed += _amount;
 
         claimedWithdrawals[withdrawalHash] = true;
 
