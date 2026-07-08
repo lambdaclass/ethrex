@@ -16,10 +16,12 @@ AMSTERDAM_FIXTURES_FILE := .fixtures_url_amsterdam
 AMSTERDAM_ARTIFACT := amsterdam-tests.tar.gz
 AMSTERDAM_URL := $(shell cat $(AMSTERDAM_FIXTURES_FILE))
 
-# zkevm@v0.3.3 ships fixtures filled against an older Amsterdam base
-# (bal@v5.6.1). Extracting them on top of the bal-devnet-7 tree would
-# clobber the newer fixtures with stale gas-accounting expectations, so we
-# keep them in a separate root and only the stateless harness reads from it.
+# zkevm@v0.5.0 is filled against glamsterdam-devnet v6.1.0 (the same base as the
+# Amsterdam bundle) but additionally carries the EIP-8025 stateless witness
+# fields (executionWitness / statelessInputBytes / statelessOutputBytes). Both
+# bundles extract a `for_amsterdam/` subtree, so we keep the zkevm bundle in a
+# separate root that only the stateless harness reads, to avoid overlaying the
+# regular Amsterdam fixtures.
 ZKEVM_VECTORS_ROOT := vectors_zkevm
 ZKEVM_VECTORS_DIR := $(ZKEVM_VECTORS_ROOT)/eest
 ZKEVM_FIXTURES_FILE := .fixtures_url_zkevm

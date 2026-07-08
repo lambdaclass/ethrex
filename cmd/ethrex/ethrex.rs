@@ -5,11 +5,12 @@ use ethrex::{
     utils::{NodeConfigFile, get_client_version, is_memory_datadir, store_node_config_file},
 };
 use ethrex_p2p::{peer_table::PeerTable, types::NodeRecord};
+use ethrex_storage::Store;
 use serde::Deserialize;
 use std::{path::Path, time::Duration};
 use tokio::signal::unix::{SignalKind, signal};
 use tokio_util::sync::CancellationToken;
-use tracing::info;
+use tracing::{error, info};
 
 const LATEST_VERSION_URL: &str = "https://api.github.com/repos/lambdaclass/ethrex/releases/latest";
 
@@ -50,9 +51,20 @@ async fn server_shutdown(
     cancel_token: &CancellationToken,
     peer_table: PeerTable,
     local_node_record: NodeRecord,
+    store: &Store,
 ) {
     info!("Server shut down started...");
+    // Stop feeding new blocks before draining, so the persist queue can't grow.
     cancel_token.cancel();
+    // Drain the persist worker, force-flush the block-data buffer, and fsync the
+    // DB. Without this an abrupt exit (e.g. `docker restart -t 0`) loses the
+    // buffered block-data tail and leaves the DB needing WAL recovery on next
+    // start. In-memory trie diff-layers are intentionally left uncommitted and
+    // re-executed on the next start (see `Store::shutdown`).
+    info!("Flushing database to disk...");
+    if let Err(err) = store.shutdown().await {
+        error!("Failed to flush database on shutdown: {err}");
+    }
     if !is_memory_datadir(datadir) {
         let node_config_path = datadir.join("node_config.json");
         info!("Storing config at {:?}...", node_config_path);
@@ -179,7 +191,7 @@ async fn main() -> eyre::Result<()> {
     info!("ethrex version: {}", get_client_version());
     tokio::spawn(periodically_check_version_update());
 
-    let (datadir, cancel_token, peer_table, local_node_record) =
+    let (datadir, cancel_token, peer_table, local_node_record, store) =
         init_l1(opts, Some(log_filter_handler)).await?;
 
     let mut signal_terminate = signal(SignalKind::terminate())?;
@@ -188,14 +200,14 @@ async fn main() -> eyre::Result<()> {
 
     tokio::select! {
         _ = tokio::signal::ctrl_c() => {
-            server_shutdown(&datadir, &cancel_token, peer_table, local_node_record).await;
+            server_shutdown(&datadir, &cancel_token, peer_table, local_node_record, &store).await;
         }
         _ = signal_terminate.recv() => {
-            server_shutdown(&datadir, &cancel_token, peer_table, local_node_record).await;
+            server_shutdown(&datadir, &cancel_token, peer_table, local_node_record, &store).await;
         }
         // A fatal subsystem (e.g. the RPC server) cancels the token to abort the node.
         _ = cancel_token.cancelled() => {
-            server_shutdown(&datadir, &cancel_token, peer_table, local_node_record).await;
+            server_shutdown(&datadir, &cancel_token, peer_table, local_node_record, &store).await;
         }
     }
 

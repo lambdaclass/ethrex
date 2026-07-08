@@ -106,10 +106,9 @@ pub async fn start_api(
         .map_err(|error| AdminError::Internal(error.to_string()))?;
     // The admin control server shuts down on Ctrl+C only (as before). A fresh, never-cancelled
     // token keeps that behavior with the new `shutdown_signal` signature.
-    let http_server = axum::serve(http_listener, http_router)
-        .with_graceful_shutdown(ethrex_rpc::shutdown_signal(
-            tokio_util::sync::CancellationToken::new(),
-        ));
+    let http_server = axum::serve(http_listener, http_router).with_graceful_shutdown(
+        ethrex_rpc::shutdown_signal(tokio_util::sync::CancellationToken::new()),
+    );
 
     Ok(http_server)
 }

@@ -2,6 +2,7 @@ use crate::authentication::authenticate;
 use crate::debug::chain_config::ChainConfigRequest;
 use crate::debug::execution_witness::ExecutionWitnessRequest;
 use crate::debug::execution_witness_by_hash::ExecutionWitnessByBlockHashRequest;
+use crate::debug::set_head::SetHeadRequest;
 use crate::engine::blobs::{BlobsV2Request, BlobsV3Request};
 use crate::engine::client_version::GetClientVersionV1Request;
 use crate::engine::payload::{
@@ -46,6 +47,7 @@ use crate::eth::{
     },
 };
 use crate::subscription_manager::{SubscriptionManager, SubscriptionManagerProtocol};
+use crate::testing::BuildBlockV1Request;
 use crate::tracing::{TraceBlockByNumberRequest, TraceTransactionRequest};
 use crate::types::transaction::SendRawTransactionRequest;
 use crate::utils::{
@@ -733,9 +735,8 @@ impl BoundRpc {
 ///
 /// # Shutdown
 ///
-/// The wrapper passes a fresh, never-cancelled token, so the servers shut down gracefully
-/// on SIGINT (Ctrl+C) only. Use `bind_api` directly to drive shutdown from a
-/// [`CancellationToken`].
+/// The servers shut down when `cancel_token` is cancelled or on SIGINT (Ctrl+C); see
+/// [`shutdown_signal`]. `bind_api` gives finer control (typed bind errors, deferred serve).
 #[allow(clippy::too_many_arguments)]
 pub async fn start_api(
     http_addr: SocketAddr,
@@ -753,9 +754,10 @@ pub async fn start_api(
     gas_ceil: u64,
     extra_data: String,
     allowed_namespaces: HashSet<RpcNamespace>,
+    cancel_token: CancellationToken,
 ) -> Result<(), RpcErr> {
     bind_api(
-        CancellationToken::new(),
+        cancel_token,
         http_addr,
         ws,
         authrpc_addr,
@@ -859,9 +861,13 @@ async fn ws_upgrade_handler(
     })
 }
 
-/// Returns a future that completes when SIGINT (Ctrl+C) is received.
+/// Graceful-shutdown future for the RPC servers: completes on SIGINT (Ctrl+C) or when
+/// `cancel_token` is cancelled.
 ///
-/// Used to implement graceful shutdown for all RPC servers.
+/// `server_shutdown` cancels the token on both SIGINT and SIGTERM, so keying on the token
+/// (not just Ctrl+C) is what makes the servers — the Engine API in particular — stop
+/// accepting requests on SIGTERM (e.g. `docker stop`) before the store is flushed, and lets
+/// a fatal subsystem abort the node.
 pub async fn shutdown_signal(cancel_token: CancellationToken) {
     tokio::select! {
         result = tokio::signal::ctrl_c() => {
@@ -1289,6 +1295,7 @@ pub async fn map_http_requests(req: &RpcRequest, context: RpcApiContext) -> Resu
         RpcNamespace::Web3 => map_web3_requests(req, context),
         RpcNamespace::Net => map_net_requests(req, context).await,
         RpcNamespace::Mempool => map_mempool_requests(req, context),
+        RpcNamespace::Testing => map_testing_requests(req, context).await,
         // Engine is served on the authenticated port only. The CLI parser
         // already rejects `--http.api engine`, but `allowed_namespaces` can
         // also be built programmatically (e.g. in tests or future call sites),
@@ -1371,6 +1378,20 @@ pub async fn map_eth_requests(req: &RpcRequest, context: RpcApiContext) -> Resul
     }
 }
 
+/// Routes `testing_*` namespace requests to their handlers.
+///
+/// Testing-only methods for fixture generation. This namespace is disabled by
+/// default and must never be exposed on public-facing RPC APIs.
+pub async fn map_testing_requests(
+    req: &RpcRequest,
+    context: RpcApiContext,
+) -> Result<Value, RpcErr> {
+    match req.method.as_str() {
+        "testing_buildBlockV1" => BuildBlockV1Request::call(req, context).await,
+        unknown_testing_method => Err(RpcErr::MethodNotFound(unknown_testing_method.to_owned())),
+    }
+}
+
 /// Routes `debug_*` namespace requests to their handlers.
 ///
 /// Handles debugging and introspection methods:
@@ -1388,6 +1409,7 @@ pub async fn map_debug_requests(req: &RpcRequest, context: RpcApiContext) -> Res
             ExecutionWitnessByBlockHashRequest::call(req, context).await
         }
         "debug_chainConfig" => ChainConfigRequest::call(req, context).await,
+        "debug_setHead" => SetHeadRequest::call(req, context).await,
         "debug_traceTransaction" => TraceTransactionRequest::call(req, context).await,
         "debug_traceBlockByNumber" => TraceBlockByNumberRequest::call(req, context).await,
         unknown_debug_method => Err(RpcErr::MethodNotFound(unknown_debug_method.to_owned())),
@@ -1766,6 +1788,7 @@ mod tests {
                             "bpo4Time": null,
                             "bpo5Time": null,
                             "amsterdamTime": null,
+                            "hegotaTime": null,
                             "terminalTotalDifficulty": "0x0",
                             "terminalTotalDifficultyPassed": true,
                             "blobSchedule": blob_schedule,

@@ -62,6 +62,27 @@ pub const BASEFEE: u64 = 2;
 pub const BLOBHASH: u64 = 3;
 pub const BLOBBASEFEE: u64 = 2;
 pub const SLOTNUM: u64 = 2;
+// EIP-8141 Frame Transaction opcodes
+pub const TXPARAM: u64 = 2;
+pub const FRAMEDATALOAD: u64 = 3;
+pub const FRAMEDATACOPY_STATIC: u64 = 3;
+pub const FRAMEDATACOPY_DYNAMIC_BASE: u64 = 3;
+pub const FRAMEPARAM: u64 = 2;
+pub const SIGPARAM: u64 = 2;
+
+pub fn framedatacopy(
+    new_memory_size: usize,
+    current_memory_size: usize,
+    size: usize,
+) -> Result<u64, VMError> {
+    copy_behavior(
+        new_memory_size,
+        current_memory_size,
+        size,
+        FRAMEDATACOPY_DYNAMIC_BASE,
+        FRAMEDATACOPY_STATIC,
+    )
+}
 pub const POP: u64 = 2;
 pub const MLOAD_STATIC: u64 = 3;
 pub const MSTORE_STATIC: u64 = 3;
