@@ -71,6 +71,12 @@ where
                     "TransactionException.INSUFFICIENT_MAX_FEE_PER_BLOB_GAS" => {
                         TransactionExpectedException::InsufficientMaxFeePerBlobGas
                     }
+                    "TransactionException.INVALID_SIGNATURE_VRS" => {
+                        TransactionExpectedException::InvalidSignatureVrs
+                    }
+                    "TransactionException.INVALID_CHAINID" => {
+                        TransactionExpectedException::InvalidChainId
+                    }
                     _other => TransactionExpectedException::Other, //TODO: Support exceptions that enter here.
                 }
             })
@@ -145,8 +151,8 @@ where
         let fork = match fork_str.as_str() {
             "Frontier" => Fork::Frontier,
             "Homestead" => Fork::Homestead,
-            "EIP150" => Fork::Tangerine,
-            "EIP158" => Fork::SpuriousDragon,
+            "EIP150" | "TangerineWhistle" => Fork::Tangerine,
+            "EIP158" | "SpuriousDragon" => Fork::SpuriousDragon,
             "Byzantium" => Fork::Byzantium,
             "Constantinople" => Fork::Constantinople,
             "ConstantinopleFix" | "Petersburg" => Fork::Petersburg,

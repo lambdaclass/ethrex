@@ -41,6 +41,7 @@ use ethrex_rlp::{
 use ethrex_trie::{EMPTY_TRIE_HASH, Nibbles, Trie, TrieLogger, TrieNode, TrieWitness};
 use ethrex_trie::{Node, NodeRLP};
 use lru::LruCache;
+use rayon::prelude::*;
 use rustc_hash::FxBuildHasher;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -3034,6 +3035,104 @@ impl Store {
         Ok(Some(AccountState::decode(&encoded_state)?))
     }
 
+    /// Batch lookup of account states by address against a given state root.
+    ///
+    /// Fast path: for addresses whose hashed path falls within the FKV cursor
+    /// (and which are not present in the in-memory diff-layer cache), values
+    /// are fetched in a single `multi_get` on `ACCOUNT_FLATKEYVALUE`. Other
+    /// addresses fall back to per-address trie walks.
+    ///
+    /// Results are returned in the same order as the input addresses.
+    pub fn get_account_states_batch_by_root(
+        &self,
+        state_root: H256,
+        addresses: &[Address],
+    ) -> Result<Vec<Option<AccountState>>, StoreError> {
+        if addresses.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let last_written = self.last_written()?;
+        let trie_cache = self
+            .trie_cache
+            .read()
+            .map_err(|_| StoreError::LockError)?
+            .clone();
+
+        let mut results: Vec<Option<AccountState>> = vec![None; addresses.len()];
+        // Per-address leaf paths (nibbles + leaf flag). Length 65.
+        let leaf_paths: Vec<Vec<u8>> = addresses
+            .iter()
+            .map(|addr| {
+                let hashed = hash_address_fixed(addr);
+                Nibbles::from_bytes(hashed.as_bytes()).into_vec()
+            })
+            .collect();
+
+        let mut fkv_indices: Vec<usize> = Vec::new();
+        let mut trie_indices: Vec<usize> = Vec::new();
+
+        // Match `BackendTrieDB::flatkeyvalue_computed` semantics: a path is
+        // covered by FKV iff `last_written >= path` as raw nibble bytes. This
+        // is the same check `Trie::get` uses; the related helper
+        // `Store::flatkeyvalue_computed_with_last_written` slices `[0..64]`
+        // and is intentionally more conservative — using that here would
+        // unnecessarily fall back to the trie when the cursor sits inside an
+        // account's storage sweep (the account leaf is already in FKV at that
+        // point; see `flatkeyvalue_generator`).
+        let fkv_cursor: &[u8] = last_written.as_slice();
+        for (i, path) in leaf_paths.iter().enumerate() {
+            if let Some(value) = trie_cache.get(state_root, path.as_slice()) {
+                if !value.is_empty() {
+                    results[i] = Some(AccountState::decode(&value)?);
+                }
+                continue;
+            }
+            if fkv_cursor >= path.as_slice() {
+                fkv_indices.push(i);
+            } else {
+                trie_indices.push(i);
+            }
+        }
+
+        if !fkv_indices.is_empty() {
+            let read_view = self.backend.begin_read()?;
+            let keys: Vec<&[u8]> = fkv_indices
+                .iter()
+                .map(|&i| leaf_paths[i].as_slice())
+                .collect();
+            let raw = read_view.multi_get(ACCOUNT_FLATKEYVALUE, &keys);
+            for (slot, res) in fkv_indices.iter().zip(raw.into_iter()) {
+                let Some(encoded) = res? else { continue };
+                if encoded.is_empty() {
+                    continue;
+                }
+                results[*slot] = Some(AccountState::decode(&encoded)?);
+            }
+        }
+
+        if !trie_indices.is_empty() {
+            // Fall back to the regular trie path for any addresses whose path
+            // hasn't been swept by the FKV generator yet. Parallelized to
+            // recover the per-address fan-out the pre-batch `par_iter` path
+            // had, which matters during initial sync when most addresses
+            // miss FKV.
+            let state_trie = self.open_state_trie(state_root)?;
+            let fetched: Result<Vec<(usize, Option<AccountState>)>, StoreError> = trie_indices
+                .par_iter()
+                .map(|&i| {
+                    self.get_account_state_from_trie(&state_trie, addresses[i])
+                        .map(|s| (i, s))
+                })
+                .collect();
+            for (i, s) in fetched? {
+                results[i] = s;
+            }
+        }
+
+        Ok(results)
+    }
+
     /// Constructs a merkle proof for the given account address against a given state.
     /// If storage_keys are provided, also constructs the storage proofs for those keys.
     ///
@@ -3222,6 +3321,9 @@ impl Store {
         // Fetch storage trie nodes
         let mut nodes = vec![];
         let mut bytes_used = 0;
+        // The number of sub-paths is bounded upstream by the snap server's per-request lookup
+        // cap (`MAX_SERVE_LOOKUPS`), which truncates the pathset before this call; here the
+        // byte budget only bounds response size.
         for path in paths.iter().skip(1) {
             if bytes_used >= byte_limit {
                 break;

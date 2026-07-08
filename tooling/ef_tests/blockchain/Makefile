@@ -1,7 +1,7 @@
 .PHONY: download-test-vectors clean-vectors test test-levm test-sp1 test-stateless amsterdam-vectors zkevm-vectors test-stateless-zkevm
 
 VECTORS_ROOT := vectors
-FIXTURES_FILE := .fixtures_url
+FIXTURES_FILE := ../.fixtures_url
 SPECTEST_ARTIFACT := tests.tar.gz
 SPECTEST_VECTORS_DIR := $(VECTORS_ROOT)/eest
 SPECTEST_URL := $(shell cat $(FIXTURES_FILE))
@@ -12,7 +12,7 @@ LEGACYTEST_COMMIT := 1f581b8ccdc4c63acf5f2c5c1b155c690c32a8eb
 LEGACYTEST_URL := https://github.com/ethereum/legacytests/archive/$(LEGACYTEST_COMMIT).tar.gz
 LEGACYTEST_ARCHIVE_ROOT := legacytests-$(LEGACYTEST_COMMIT)/Cancun/BlockchainTests
 
-AMSTERDAM_FIXTURES_FILE := .fixtures_url_amsterdam
+AMSTERDAM_FIXTURES_FILE := ../.fixtures_url_amsterdam
 AMSTERDAM_ARTIFACT := amsterdam-tests.tar.gz
 AMSTERDAM_URL := $(shell cat $(AMSTERDAM_FIXTURES_FILE))
 
@@ -24,7 +24,7 @@ AMSTERDAM_URL := $(shell cat $(AMSTERDAM_FIXTURES_FILE))
 # regular Amsterdam fixtures.
 ZKEVM_VECTORS_ROOT := vectors_zkevm
 ZKEVM_VECTORS_DIR := $(ZKEVM_VECTORS_ROOT)/eest
-ZKEVM_FIXTURES_FILE := .fixtures_url_zkevm
+ZKEVM_FIXTURES_FILE := ../.fixtures_url_zkevm
 ZKEVM_ARTIFACT := zkevm-tests.tar.gz
 ZKEVM_URL := $(shell cat $(ZKEVM_FIXTURES_FILE))
 

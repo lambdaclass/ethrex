@@ -150,7 +150,7 @@ run-hive-debug: build-image setup-hive ## 🐞 Run Hive testing suite in debug m
 # EELS Hive
 TEST_PATTERN_EELS ?= .*fork_Paris.*|.*fork_Shanghai.*|.*fork_Cancun.*|.*fork_Prague.*
 run-hive-eels: build-image setup-hive ## 🧪 Generic command for running Hive EELS tests. Specify EELS_SIM
-	- cd hive && ./hive --client-file $(HIVE_CLIENT_FILE) --client ethrex --sim $(EELS_SIM) --sim.limit "$(TEST_PATTERN_EELS)" --sim.parallelism $(SIM_PARALLELISM) --sim.loglevel $(SIM_LOG_LEVEL) --sim.buildarg fixtures=$(shell cat tooling/ef_tests/blockchain/.fixtures_url)
+	- cd hive && ./hive --client-file $(HIVE_CLIENT_FILE) --client ethrex --sim $(EELS_SIM) --sim.limit "$(TEST_PATTERN_EELS)" --sim.parallelism $(SIM_PARALLELISM) --sim.loglevel $(SIM_LOG_LEVEL) --sim.buildarg fixtures=$(shell cat tooling/ef_tests/.fixtures_url)
 
 run-hive-eels-engine: ## Run hive EELS Engine tests
 	$(MAKE) run-hive-eels EELS_SIM=ethereum/eels/consume-engine
@@ -161,7 +161,7 @@ run-hive-eels-rlp: ## Run hive EELS RLP tests
 run-hive-eels-blobs: ## Run hive EELS Blobs tests
 	$(MAKE) run-hive-eels EELS_SIM=ethereum/eels/execute-blobs
 
-AMSTERDAM_FIXTURES_URL ?= $(shell cat tooling/ef_tests/blockchain/.fixtures_url_amsterdam)
+AMSTERDAM_FIXTURES_URL ?= $(shell cat tooling/ef_tests/.fixtures_url_amsterdam)
 AMSTERDAM_FIXTURES_BRANCH ?= devnets/glamsterdam/6
 run-hive-eels-amsterdam: build-image setup-hive ## 🧪 Run hive EELS Amsterdam Engine tests
 	- cd hive && ./hive --client-file $(HIVE_CLIENT_FILE) --client ethrex --sim ethereum/eels/consume-engine --sim.limit ".*fork_Amsterdam.*" --sim.parallelism $(SIM_PARALLELISM) --sim.loglevel $(SIM_LOG_LEVEL) --sim.buildarg fixtures=$(AMSTERDAM_FIXTURES_URL) --sim.buildarg branch=$(AMSTERDAM_FIXTURES_BRANCH)
