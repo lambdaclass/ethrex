@@ -2862,12 +2862,40 @@ impl Store {
         }
 
         if !fkv_indices.is_empty() {
+            // Sort by the prefixed (hashed-order) key so adjacent accounts land
+            // in the same RocksDB data blocks, then read the sorted keys in
+            // contiguous shards concurrently. A single `multi_get` runs the whole
+            // batch at queue depth 1 (async_io is off), which on a cold account-
+            // heavy block serializes thousands of random reads (coldbench: ~13x
+            // slower than this sharded path). Mirrors the storage FKV batch.
+            fkv_indices.sort_unstable_by(|&a, &b| leaf_paths[a].cmp(&leaf_paths[b]));
             let read_view = self.backend.begin_read()?;
             let keys: Vec<&[u8]> = fkv_indices
                 .iter()
                 .map(|&i| leaf_paths[i].as_slice())
                 .collect();
-            let raw = read_view.multi_get(ACCOUNT_FLATKEYVALUE, &keys);
+            // Accounts are scattered (no shared prefix) and the batch is smaller
+            // than a bloated account's storage, so 64 shards is the sweet spot
+            // (128 over-fragments; coldbench).
+            const KEYS_PER_SHARD: usize = 256;
+            const MAX_SHARDS: usize = 64;
+            let shards = keys.len().div_ceil(KEYS_PER_SHARD).clamp(1, MAX_SHARDS);
+            let raw: Vec<Result<Option<Vec<u8>>, StoreError>> = if shards <= 1 {
+                read_view.multi_get(ACCOUNT_FLATKEYVALUE, &keys)
+            } else {
+                let chunk = keys.len().div_ceil(shards);
+                let rv = read_view.as_ref();
+                std::thread::scope(|scope| {
+                    let handles: Vec<_> = keys
+                        .chunks(chunk)
+                        .map(|ck| scope.spawn(move || rv.multi_get(ACCOUNT_FLATKEYVALUE, ck)))
+                        .collect();
+                    handles
+                        .into_iter()
+                        .flat_map(|h| h.join().expect("account prefetch shard panicked"))
+                        .collect()
+                })
+            };
             for (slot, res) in fkv_indices.iter().zip(raw.into_iter()) {
                 let Some(encoded) = res? else { continue };
                 if encoded.is_empty() {
