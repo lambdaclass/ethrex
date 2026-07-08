@@ -128,6 +128,10 @@ use ethrex_common::types::BlobsBundle;
 const MAX_PAYLOADS: usize = 10;
 const MAX_MEMPOOL_SIZE_DEFAULT: usize = 10_000;
 
+/// Merkle write set for the trie-node prefetch: written storage slots and changed accounts.
+#[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+type TriePrefetchInput = (Vec<(Address, H256)>, Vec<Address>);
+
 /// Background thread for dropping large tree structures off the critical path.
 /// Accepts any `Send` value and drops it on a dedicated thread, avoiding
 /// recursive deallocation costs (~500us for state trie roots) on hot paths.
@@ -711,26 +715,25 @@ impl Blockchain {
         // many distinct slots or modify many accounts, where merkle walks a large set
         // of scattered, cold nodes. Tunable.
         #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
-        let trie_prefetch_input: Option<(Vec<(Address, H256)>, Vec<Address>)> =
-            if self.options.bal_prefetch_enabled
-                && let Some(updates) = optimistic_updates.as_ref()
-            {
-                const MERKLE_PREFETCH_THRESHOLD: usize = 16_384;
-                let mut write_slots: Vec<(Address, H256)> = Vec::new();
-                for (addr, item) in updates {
-                    for slot in item.added_storage.keys() {
-                        write_slots.push((*addr, *slot));
-                    }
+        let trie_prefetch_input: Option<TriePrefetchInput> = if self.options.bal_prefetch_enabled
+            && let Some(updates) = optimistic_updates.as_ref()
+        {
+            const MERKLE_PREFETCH_THRESHOLD: usize = 16_384;
+            let mut write_slots: Vec<(Address, H256)> = Vec::new();
+            for (addr, item) in updates {
+                for slot in item.added_storage.keys() {
+                    write_slots.push((*addr, *slot));
                 }
-                let write_accounts: Vec<Address> = updates.keys().copied().collect();
-                if write_slots.len() + write_accounts.len() >= MERKLE_PREFETCH_THRESHOLD {
-                    Some((write_slots, write_accounts))
-                } else {
-                    None
-                }
+            }
+            let write_accounts: Vec<Address> = updates.keys().copied().collect();
+            if write_slots.len() + write_accounts.len() >= MERKLE_PREFETCH_THRESHOLD {
+                Some((write_slots, write_accounts))
             } else {
                 None
-            };
+            }
+        } else {
+            None
+        };
 
         // Each thread that captures `bal` needs its own Arc clone (cheap pointer bump).
         #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
