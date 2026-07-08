@@ -2,6 +2,7 @@ use clap::{Parser, Subcommand};
 
 mod cache;
 mod compare;
+mod curate;
 mod manifest;
 mod micro;
 mod report;
@@ -68,6 +69,10 @@ fn main() -> eyre::Result<()> {
             let code = compare::run_compare(&baseline, &head, threshold_pct, out.as_deref())?;
             std::process::exit(code);
         }
-        Command::Curate { .. } => todo!("Task 11"),
+        Command::Curate {
+            cache_dir,
+            out,
+            ziskemu,
+        } => curate::run_curate(&cache_dir, &out, ziskemu),
     }
 }
