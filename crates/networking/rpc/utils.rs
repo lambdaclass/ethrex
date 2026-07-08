@@ -252,6 +252,9 @@ pub enum RpcNamespace {
     Net,
     /// Transaction pool inspection methods (exposed as `txpool_*`).
     Mempool,
+    /// Testing-only methods for fixture generation (exposed as `testing_*`).
+    /// Disabled by default; must never be exposed on public-facing RPC APIs.
+    Testing,
 }
 
 impl RpcNamespace {
@@ -265,6 +268,7 @@ impl RpcNamespace {
             "web3" => Some(RpcNamespace::Web3),
             "net" => Some(RpcNamespace::Net),
             "txpool" => Some(RpcNamespace::Mempool),
+            "testing" => Some(RpcNamespace::Testing),
             _ => None,
         }
     }
