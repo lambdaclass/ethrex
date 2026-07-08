@@ -2365,10 +2365,11 @@ impl LEVM {
             coinbase: block_header.coinbase,
             timestamp: block_header.timestamp,
             prev_randao: Some(block_header.prev_randao),
-            slot_number: block_header
-                .slot_number
-                .map(U256::from)
-                .unwrap_or(U256::zero()),
+            // Effective EIP-7843 slot, precomputed once per block on `EVMConfig`
+            // (CL-supplied header slot, else timestamp-derived when the
+            // `derived_slot_time` knob is active, else 0). See
+            // `ChainConfig::effective_slot_number`.
+            slot_number: config.slot_number,
             chain_id: chain_id.into(),
             base_fee_per_gas: block_header.base_fee_per_gas.unwrap_or_default().into(),
             base_blob_fee_per_gas,
@@ -3237,8 +3238,16 @@ fn env_from_generic(
     let block_excess_blob_gas = header.excess_blob_gas;
     let config = EVMConfig::new_from_chain_config(&chain_config, header);
 
-    // Validate slot_number for Amsterdam+ blocks
-    // For L2 chains, slot_number is always 0
+    // slot_number: mirror the block-execution path exactly by reusing the
+    // block-invariant slot already computed on `config`
+    // (`EVMConfig::new_from_chain_config` -> `ChainConfig::effective_slot_number`).
+    // That is the CL-supplied header slot when present, else the timestamp-derived
+    // slot once the `derived_slot_time` knob is active (EIP-7843), else 0. Reading
+    // the raw header slot here instead would make eth_call / eth_estimateGas /
+    // eth_createAccessList see slot 0 while a mined block sees the derived slot —
+    // a simulation-vs-execution divergence for SLOTNUM and EIP-8272 references on
+    // a knob-active chain whose CL drives a pre-V4 engine (header slot is None).
+    // For L2 chains slot_number is always 0 (kept explicit).
     let slot_number = if let VMType::L2(_) = vm_type {
         U256::zero()
     } else if config.fork >= Fork::Amsterdam {
@@ -3249,9 +3258,7 @@ fn env_from_generic(
                 "slot_number must be present in Amsterdam+ blocks".to_string(),
             )))?
     } else {
-        // Pre-Amsterdam: slot_number should be None, default to zero
-        // This value should never be used since SLOTNUM opcode doesn't exist pre-Amsterdam
-        header.slot_number.map(U256::from).unwrap_or(U256::zero())
+        config.slot_number
     };
 
     Ok(Environment {

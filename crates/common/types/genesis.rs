@@ -282,6 +282,26 @@ pub struct ChainConfig {
     )]
     pub hegota_time: Option<u64>,
 
+    /// EIP-7843 beacon-slot derivation knob (ethrex devnet, new-fork decoupling).
+    /// When set and `block.timestamp >= derived_slot_time`, and the CL did not
+    /// supply a slot in the payload attributes (engine V3), the EL derives the
+    /// beacon slot from the block timestamp: `(timestamp - genesis_timestamp) /
+    /// seconds_per_slot`. This makes EIP-8272 recent-root references functional
+    /// on a CL that does not forward the EIP-7843 slot (e.g. Lighthouse over
+    /// `forkchoiceUpdatedV3`). Gated on a FUTURE timestamp so already-produced
+    /// blocks keep `slot_number = 0` and re-execute identically (the write/ref
+    /// state is slot-keyed). `None` on chains without this knob → behaviour is
+    /// unchanged (CL-supplied slot, else 0). Requires `genesis_timestamp` +
+    /// `seconds_per_slot` to be set; otherwise the derivation is skipped.
+    #[serde(default)]
+    pub derived_slot_time: Option<u64>,
+    /// Genesis block timestamp, used only by the `derived_slot_time` derivation.
+    #[serde(default)]
+    pub genesis_timestamp: Option<u64>,
+    /// Beacon seconds-per-slot, used only by the `derived_slot_time` derivation.
+    #[serde(default)]
+    pub seconds_per_slot: Option<u64>,
+
     /// Amount of total difficulty reached by the network that triggers the consensus upgrade.
     #[serde(default, with = "crate::serde_utils::u128::hex_str_opt")]
     pub terminal_total_difficulty: Option<u128>,
@@ -380,6 +400,43 @@ impl From<Fork> for &str {
 impl ChainConfig {
     pub fn is_hegota_activated(&self, block_timestamp: u64) -> bool {
         self.hegota_time.is_some_and(|time| time <= block_timestamp)
+    }
+
+    /// Whether the EIP-7843 beacon-slot derivation knob is active at
+    /// `block_timestamp` (see [`ChainConfig::derived_slot_time`]).
+    pub fn is_derived_slot_activated(&self, block_timestamp: u64) -> bool {
+        self.derived_slot_time
+            .is_some_and(|time| time <= block_timestamp)
+    }
+
+    /// The effective EIP-7843 beacon slot for a block, used by EIP-8272
+    /// recent-root writes/references and the SLOTNUM opcode.
+    ///
+    /// - If the CL supplied a slot (`header_slot = Some`, engine V4 path), use it
+    ///   verbatim — the CL is authoritative.
+    /// - Otherwise, once `derived_slot_time` is active and both
+    ///   `genesis_timestamp` and a non-zero `seconds_per_slot` are configured,
+    ///   derive it from the block timestamp:
+    ///   `(block_timestamp - genesis_timestamp) / seconds_per_slot`. In PoS every
+    ///   block's timestamp is `genesis + slot*seconds_per_slot`, so this is exact
+    ///   for the block's own slot (missed slots do not perturb it).
+    /// - Otherwise 0 (pre-knob and no-knob chains — unchanged behaviour).
+    ///
+    /// Deterministic across all ELs (no proposer-settable input), so it needs no
+    /// header field and produces identical state on re-execution.
+    pub fn effective_slot_number(&self, header_slot: Option<u64>, block_timestamp: u64) -> u64 {
+        if let Some(slot) = header_slot {
+            return slot;
+        }
+        if self.is_derived_slot_activated(block_timestamp)
+            && let (Some(genesis_ts), Some(seconds_per_slot)) =
+                (self.genesis_timestamp, self.seconds_per_slot)
+            && seconds_per_slot > 0
+            && block_timestamp >= genesis_ts
+        {
+            return (block_timestamp - genesis_ts) / seconds_per_slot;
+        }
+        0
     }
 
     pub fn is_amsterdam_activated(&self, block_timestamp: u64) -> bool {
@@ -1389,5 +1446,79 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(config.next_fork(0), None);
+    }
+
+    // EIP-7843 beacon-slot derivation knob (feedback #4).
+
+    /// Genesis 1000, 6s slots, knob active from ts 1000.
+    fn slot_config() -> ChainConfig {
+        ChainConfig {
+            derived_slot_time: Some(1000),
+            genesis_timestamp: Some(1000),
+            seconds_per_slot: Some(6),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn effective_slot_prefers_cl_supplied_slot() {
+        // When the CL supplies a slot (engine V4), it wins verbatim regardless of
+        // the knob / timestamp derivation.
+        let config = slot_config();
+        assert_eq!(config.effective_slot_number(Some(42), 1_000_000), 42);
+        // Even with no knob configured.
+        assert_eq!(
+            ChainConfig::default().effective_slot_number(Some(7), 999),
+            7
+        );
+    }
+
+    #[test]
+    fn effective_slot_derives_from_timestamp_when_knob_active() {
+        let config = slot_config();
+        // ts == genesis -> slot 0; each +6s -> +1 slot; exact division.
+        assert_eq!(config.effective_slot_number(None, 1000), 0);
+        assert_eq!(config.effective_slot_number(None, 1006), 1);
+        assert_eq!(config.effective_slot_number(None, 1060), 10);
+        // Non-slot-aligned timestamp truncates toward the slot it falls in.
+        assert_eq!(config.effective_slot_number(None, 1065), 10);
+    }
+
+    #[test]
+    fn effective_slot_is_zero_before_knob_activation() {
+        // Knob activates at 2000 but genesis/seconds are set; a pre-activation
+        // block still derives 0 (history preserved).
+        let config = ChainConfig {
+            derived_slot_time: Some(2000),
+            genesis_timestamp: Some(1000),
+            seconds_per_slot: Some(6),
+            ..Default::default()
+        };
+        assert_eq!(config.effective_slot_number(None, 1994), 0);
+        // At/after activation it derives.
+        assert_eq!(config.effective_slot_number(None, 2002), (2002 - 1000) / 6);
+    }
+
+    #[test]
+    fn effective_slot_is_zero_without_knob_or_params() {
+        // No knob at all -> unchanged behaviour (0 when the CL gives nothing).
+        assert_eq!(
+            ChainConfig::default().effective_slot_number(None, 1_000_000),
+            0
+        );
+        // Knob active but genesis/seconds missing -> derivation skipped, 0.
+        let partial = ChainConfig {
+            derived_slot_time: Some(0),
+            ..Default::default()
+        };
+        assert_eq!(partial.effective_slot_number(None, 1_000_000), 0);
+        // seconds_per_slot == 0 -> derivation skipped (no divide-by-zero), 0.
+        let zero_sps = ChainConfig {
+            derived_slot_time: Some(0),
+            genesis_timestamp: Some(0),
+            seconds_per_slot: Some(0),
+            ..Default::default()
+        };
+        assert_eq!(zero_sps.effective_slot_number(None, 1_000_000), 0);
     }
 }

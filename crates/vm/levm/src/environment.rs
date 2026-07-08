@@ -62,6 +62,12 @@ pub struct Environment {
 pub struct EVMConfig {
     pub fork: Fork,
     pub blob_schedule: ForkBlobSchedule,
+    /// Effective EIP-7843 beacon slot for this block (EIP-8272 recent-root
+    /// writes/references and the SLOTNUM opcode read it via `env.slot_number`).
+    /// Block-invariant. Sourced from the CL-provided header slot when present,
+    /// else derived from the block timestamp once the `derived_slot_time` knob is
+    /// active, else 0 — see [`ChainConfig::effective_slot_number`].
+    pub slot_number: U256,
 }
 
 impl EVMConfig {
@@ -69,6 +75,7 @@ impl EVMConfig {
         EVMConfig {
             fork,
             blob_schedule,
+            slot_number: U256::zero(),
         }
     }
 
@@ -79,7 +86,15 @@ impl EVMConfig {
             .get_fork_blob_schedule(block_header.timestamp)
             .unwrap_or_else(|| EVMConfig::canonical_values(fork));
 
-        EVMConfig::new(fork, blob_schedule)
+        let slot_number = U256::from(
+            chain_config.effective_slot_number(block_header.slot_number, block_header.timestamp),
+        );
+
+        EVMConfig {
+            fork,
+            blob_schedule,
+            slot_number,
+        }
     }
 
     /// This function is used for running the EF tests. If you don't
@@ -132,6 +147,7 @@ impl Default for EVMConfig {
         EVMConfig {
             fork,
             blob_schedule: Self::canonical_values(fork),
+            slot_number: U256::zero(),
         }
     }
 }
