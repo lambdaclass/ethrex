@@ -70,6 +70,16 @@ mod tests {
 
     #[test]
     fn builds_program_input_from_eest_fixture() {
+        // `vectors_zkevm` is gitignored (downloaded via `make zkevm-vectors`).
+        // CI's L1 unit-test step runs this crate before any vector download, so
+        // skip gracefully when the fixture is absent (mirrors the ziskemu-skip
+        // pattern in tests/smoke.rs). When present, the test runs and asserts.
+        if !std::path::Path::new(FIXTURE).exists() {
+            eprintln!(
+                "skipping: EEST fixture absent (run `make zkevm-vectors` in tooling/ef_tests/blockchain)"
+            );
+            return;
+        }
         // If this path moves in a future fixture bump, pick any file under
         // vectors_zkevm whose first block has no expectException and has an
         // executionWitness; the schema is uniform across the set.
