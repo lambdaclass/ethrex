@@ -3087,6 +3087,9 @@ impl Store {
         // Fetch storage trie nodes
         let mut nodes = vec![];
         let mut bytes_used = 0;
+        // The number of sub-paths is bounded upstream by the snap server's per-request lookup
+        // cap (`MAX_SERVE_LOOKUPS`), which truncates the pathset before this call; here the
+        // byte budget only bounds response size.
         for path in paths.iter().skip(1) {
             if bytes_used >= byte_limit {
                 break;
