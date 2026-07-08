@@ -298,6 +298,28 @@ impl Trie {
         Ok(())
     }
 
+    /// Drop the set of paths modified since the flat-KV was last generated.
+    ///
+    /// `dirty` exists so [`Trie::get`] knows when its flat-KV read shortcut is
+    /// stale (a path present in `dirty` forces the slow trie walk). It is never
+    /// cleared during normal operation and grows one ~64-nibble entry per
+    /// insert/remove, which is negligible for the short-lived tries the client
+    /// opens per operation but reaches multiple GB for a bulk load that inserts
+    /// millions of entries into one long-lived trie.
+    ///
+    /// A bulk load that regenerates the flat-KV wholesale afterwards (see
+    /// state-bench) can safely discard `dirty` between chunks: it issues no
+    /// flat-KV-dependent `get`s mid-build, and the post-build flat-KV pass makes
+    /// the whole trie clean regardless. Calling this keeps peak memory bounded
+    /// to a single chunk. It never touches the root hash or persisted nodes.
+    ///
+    /// Do NOT call this on a trie that will serve `get`s against an
+    /// already-computed flat-KV before the flat-KV is regenerated: a cleared
+    /// (but genuinely modified) path would be read from the stale flat-KV.
+    pub fn clear_dirty(&mut self) {
+        self.dirty.clear();
+    }
+
     /// Computes the nodes that would be added if updating the trie.
     /// Nodes are given with their hash pre-calculated.
     pub fn commit_without_storing(&mut self, crypto: &dyn Crypto) -> Vec<TrieNode> {

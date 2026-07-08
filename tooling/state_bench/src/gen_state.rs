@@ -6,12 +6,10 @@
 //! manifest describing everything a later phase needs.
 
 use std::path::{Path, PathBuf};
-use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
 use bytes::Bytes;
 use secp256k1::{PublicKey, Secp256k1, SecretKey};
-use tokio::time::sleep;
 use tracing::{info, warn};
 
 use ethrex_common::constants::EMPTY_KECCAK_HASH;
@@ -20,12 +18,13 @@ use ethrex_common::{Address, H256, U256};
 use ethrex_crypto::{NativeCrypto, keccak::keccak_hash};
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_storage::api::tables::{
-    ACCOUNT_FLATKEYVALUE, ACCOUNT_TRIE_NODES, STORAGE_FLATKEYVALUE, STORAGE_TRIE_NODES,
+    ACCOUNT_FLATKEYVALUE, ACCOUNT_TRIE_NODES, MISC_VALUES, STORAGE_FLATKEYVALUE, STORAGE_TRIE_NODES,
 };
 use ethrex_storage::{
     EngineType, STORE_SCHEMA_VERSION, Store, StoreConfig, hash_address, hash_key,
 };
 use ethrex_trie::EMPTY_TRIE_HASH;
+use state_bench::fkv::{account_fkv_key, storage_fkv_key};
 
 use crate::manifest::{MANIFEST_FILENAME, Manifest, StateCfSizes};
 
@@ -43,9 +42,6 @@ const MEGA_STORAGE_NODE_BYTES_PER_SLOT: f64 = 147.6;
 /// Decimal gigabyte. `--mega-account-gb` is interpreted in decimal GB so a
 /// target of `0.1` means 100 MB of `STORAGE_TRIE_NODES`.
 const BYTES_PER_GB: f64 = 1_000_000_000.0;
-
-/// How long to wait for flat-KV generation before giving up.
-const FLATKV_TIMEOUT: Duration = Duration::from_secs(3600);
 
 /// The accessor contract's deployed bytecode. Hand-assembled EVM that loops
 /// over 64-byte calldata records performing SLOAD or SSTORE per record. See
@@ -197,10 +193,103 @@ fn derive_signer(seed: u64) -> Result<(SecretKey, Address)> {
     bail!("failed to derive a valid signer key from seed {seed}")
 }
 
+/// Streams flat-KV entries straight from the data written to the tries, so we
+/// never call the store's background `generate_flatkeyvalue()` (which re-scans
+/// the whole trie and allocates ~fixture-proportional heap during generation —
+/// the dominant peak-RSS scaler at multi-GB fixtures). Entries are staged and
+/// written+flushed in bounded batches so peak memory stays flat regardless of
+/// fixture size.
+///
+/// Correct by construction: every entry uses the exact hashed key and RLP value
+/// that were inserted into the trie, encoded exactly as the store's generator
+/// would (`Nibbles::from_bytes` leaf paths for accounts; `apply_prefix` +
+/// leaf-path for storage slots). An equivalence test guards the encoding.
+struct FkvWriter {
+    storage_batch: Vec<(Vec<u8>, Vec<u8>)>,
+    account_batch: Vec<(Vec<u8>, Vec<u8>)>,
+    batch_limit: usize,
+}
+
+impl FkvWriter {
+    fn new() -> Self {
+        Self {
+            storage_batch: Vec::new(),
+            account_batch: Vec::new(),
+            // ~500k entries/batch bounds the staged Vec to a few tens of MB; the
+            // per-batch flush then keeps RocksDB memtables from piling up.
+            batch_limit: 500_000,
+        }
+    }
+
+    /// Stage a storage-slot flat-KV entry. `hashed_key` is the exact byte slice
+    /// inserted into `account_hash`'s storage trie; `value_rlp` is the exact RLP
+    /// stored at that leaf.
+    fn add_storage(
+        &mut self,
+        store: &Store,
+        account_hash: H256,
+        hashed_key: &[u8],
+        value_rlp: Vec<u8>,
+    ) -> Result<()> {
+        self.storage_batch
+            .push((storage_fkv_key(account_hash, hashed_key), value_rlp));
+        if self.storage_batch.len() >= self.batch_limit {
+            self.flush_storage(store)?;
+        }
+        Ok(())
+    }
+
+    /// Stage an account flat-KV entry (`state_rlp` = the exact RLP stored at the
+    /// account leaf).
+    fn add_account(&mut self, hashed_address: &[u8], state_rlp: Vec<u8>) {
+        self.account_batch
+            .push((account_fkv_key(hashed_address), state_rlp));
+    }
+
+    fn flush_storage(&mut self, store: &Store) -> Result<()> {
+        if self.storage_batch.is_empty() {
+            return Ok(());
+        }
+        store
+            .write_batch(
+                STORAGE_FLATKEYVALUE,
+                std::mem::take(&mut self.storage_batch),
+            )
+            .context("writing storage flat-KV batch")?;
+        // Drain memtables so a multi-GB build's flat-KV writes don't accumulate
+        // faster than RocksDB's background flush can clear them.
+        store.flush().context("flushing flat-KV memtables")?;
+        Ok(())
+    }
+
+    /// Flush all remaining entries and mark flat-KV generation complete so the
+    /// store — and a later reopen by `run` — treats the flat-KV as authoritative.
+    fn finish(mut self, store: &Store) -> Result<()> {
+        self.flush_storage(store)?;
+        if !self.account_batch.is_empty() {
+            store
+                .write_batch(
+                    ACCOUNT_FLATKEYVALUE,
+                    std::mem::take(&mut self.account_batch),
+                )
+                .context("writing account flat-KV batch")?;
+        }
+        // Completion sentinel: the store marks flat-KV done by persisting a lone
+        // 0xff byte at MISC_VALUES/last_written (matches the background generator;
+        // a reopen expands it to an all-0xff cursor => every path uses the FKV).
+        store
+            .write_batch(MISC_VALUES, vec![(b"last_written".to_vec(), vec![0xff])])
+            .context("writing flat-KV completion sentinel")?;
+        store.flush().context("final flat-KV flush")?;
+        Ok(())
+    }
+}
+
 /// Insert one storage-bearing account's slots into its storage trie, persist,
-/// and return the resulting storage root. `slots` yields (hashed_key, value).
+/// and return the resulting storage root. Stages each slot's flat-KV entry too.
 fn build_small_storage_trie(
     store: &Store,
+    fkv: &mut FkvWriter,
     account_hash: H256,
     seed: u64,
     account_index: u64,
@@ -211,7 +300,10 @@ fn build_small_storage_trie(
         let global_index = account_index * slots_per_account + slot_index;
         let key = derive_slot_key(seed, "csb-small-slot", global_index);
         let value = derive_slot_value(seed, "csb-small-val", global_index);
-        trie.insert(hash_key(&key), value.encode_to_vec())?;
+        let hashed = hash_key(&key);
+        let value_rlp = value.encode_to_vec();
+        trie.insert(hashed.clone(), value_rlp.clone())?;
+        fkv.add_storage(store, account_hash, &hashed, value_rlp)?;
     }
     Ok(trie.hash(&NativeCrypto)?)
 }
@@ -245,6 +337,7 @@ fn log_rocksdb_progress_stats(store: &Store, slots: u64, total: u64) {
 /// [`MEGA_COMMIT_CHUNK`] slots. Returns (storage_root, slot_count).
 fn build_mega_storage_trie(
     store: &Store,
+    fkv: &mut FkvWriter,
     account_hash: H256,
     seed: u64,
     slot_count: u64,
@@ -254,13 +347,21 @@ fn build_mega_storage_trie(
     for k in 0..slot_count {
         let key = derive_slot_key(seed, "csb-mega-slot", k);
         let value = derive_slot_value(seed, "csb-mega-val", k);
-        trie.insert(hash_key(&key), value.encode_to_vec())?;
+        let hashed = hash_key(&key);
+        let value_rlp = value.encode_to_vec();
+        trie.insert(hashed.clone(), value_rlp.clone())?;
+        fkv.add_storage(store, account_hash, &hashed, value_rlp)?;
         if (k + 1) % MEGA_COMMIT_CHUNK == 0 {
             // Evict the committed subtree so the in-memory arena stays bounded
             // to the root plus one chunk. A plain `commit` keeps the whole
             // arena resident and OOMs on large fixtures (see the memory-bound
             // diagnostic: unbounded arena ~850B/slot).
             trie.commit_evict_below_root(&NativeCrypto)?;
+            // Also drop the per-insert `dirty` path set, which would otherwise
+            // accumulate one ~64-nibble entry per slot (multiple GB over the
+            // full build). Safe here: flat-KV is regenerated wholesale after
+            // the build, so no stale-shortcut `get` can observe the cleared set.
+            trie.clear_dirty();
             if (k + 1) % (MEGA_COMMIT_CHUNK * 10) == 0 {
                 info!(
                     slots = k + 1,
@@ -341,38 +442,6 @@ fn checkpoint_path(datadir: &Path) -> PathBuf {
         .unwrap_or_else(|| "datadir".to_string());
     let parent = datadir.parent().unwrap_or_else(|| Path::new("."));
     parent.join(format!(".{name}-sizeckpt"))
-}
-
-/// Poll flat-KV generation to completion. Completion sentinel: the in-memory
-/// `last_written` cursor becomes all-`0xff` (the generator sets it to
-/// `vec![0xff; 131]` when done; a reopened store expands the on-disk `[0xff]`
-/// marker to `vec![0xff; 64]`). Partial progress holds real nibble paths whose
-/// bytes are <= 0x10, so an all-`0xff` non-empty vector is an unambiguous "done".
-async fn wait_for_flatkv(store: &Store) -> Result<()> {
-    store
-        .generate_flatkeyvalue()
-        .context("triggering flat-KV generation")?;
-    let start = Instant::now();
-    loop {
-        let last_written = store.last_written()?;
-        if !last_written.is_empty() && last_written.iter().all(|b| *b == 0xff) {
-            info!("flat-KV generation complete");
-            return Ok(());
-        }
-        if start.elapsed() > FLATKV_TIMEOUT {
-            bail!(
-                "flat-KV generation timed out after {:?}; last_written cursor len = {}",
-                FLATKV_TIMEOUT,
-                last_written.len()
-            );
-        }
-        info!(
-            elapsed_s = start.elapsed().as_secs(),
-            cursor_len = last_written.len(),
-            "waiting for flat-KV generation"
-        );
-        sleep(Duration::from_millis(500)).await;
-    }
 }
 
 pub async fn run(args: GenStateArgs) -> Result<()> {
@@ -460,6 +529,10 @@ pub async fn run(args: GenStateArgs) -> Result<()> {
     // (and thus storage roots) are known. Collect (hashed_address, state) here.
     let mut account_entries: Vec<(Vec<u8>, AccountState)> = Vec::new();
 
+    // Flat-KV is written directly from the data we insert (see `FkvWriter`),
+    // bypassing the store's scan-and-allocate background generator.
+    let mut fkv = FkvWriter::new();
+
     // --- Base genesis alloc (system contracts + any pre-funded accounts) -----
     // Seed every account from the base genesis so the fork's system contracts
     // exist in the fixture state. Mirrors `Store::setup_genesis_state_trie`.
@@ -480,7 +553,9 @@ pub async fn run(args: GenStateArgs) -> Result<()> {
         for (storage_key, storage_value) in &account.storage {
             if !storage_value.is_zero() {
                 let hashed_key = hash_key(&H256(storage_key.to_big_endian()));
-                storage_trie.insert(hashed_key, storage_value.encode_to_vec())?;
+                let value_rlp = storage_value.encode_to_vec();
+                storage_trie.insert(hashed_key.clone(), value_rlp.clone())?;
+                fkv.add_storage(&store, account_hash, &hashed_key, value_rlp)?;
             }
         }
         let storage_root = storage_trie.hash(&NativeCrypto)?;
@@ -534,7 +609,7 @@ pub async fn run(args: GenStateArgs) -> Result<()> {
         let address = derive_address(seed, "csb-small-acct", i);
         let account_hash = H256::from_slice(&hash_address(&address));
         let storage_root =
-            build_small_storage_trie(&store, account_hash, seed, i, slots_per_account)?;
+            build_small_storage_trie(&store, &mut fkv, account_hash, seed, i, slots_per_account)?;
         account_entries.push((
             hash_address(&address),
             AccountState {
@@ -556,6 +631,7 @@ pub async fn run(args: GenStateArgs) -> Result<()> {
     let mega_account_hash = H256::from_slice(&hash_address(&mega_address));
     let mega_storage_root = build_mega_storage_trie(
         &store,
+        &mut fkv,
         mega_account_hash,
         seed,
         mega_slot_count,
@@ -575,7 +651,9 @@ pub async fn run(args: GenStateArgs) -> Result<()> {
     info!(accounts = account_entries.len(), "committing state trie");
     let mut state_trie = store.open_direct_state_trie(*EMPTY_TRIE_HASH)?;
     for (hashed_address, state) in &account_entries {
-        state_trie.insert(hashed_address.clone(), state.encode_to_vec())?;
+        let state_rlp = state.encode_to_vec();
+        state_trie.insert(hashed_address.clone(), state_rlp.clone())?;
+        fkv.add_account(hashed_address, state_rlp);
     }
     let computed_state_root = state_trie.hash(&NativeCrypto)?;
     info!(state_root = %computed_state_root, "state trie committed");
@@ -606,8 +684,14 @@ pub async fn run(args: GenStateArgs) -> Result<()> {
         .context("forkchoice update to genesis")?;
     info!(hash = %genesis_hash, "block 0 finalized");
 
-    // --- Generate flat-KV (genesis writes only trie nodes) ------------------
-    wait_for_flatkv(&store).await?;
+    // --- Write flat-KV directly, bypassing the store's scan-based generator -
+    // We already staged every account and storage entry as we built the tries;
+    // flush them and mark generation complete. This keeps peak RSS flat vs
+    // fixture size (the store generator re-scans the whole trie and allocates
+    // ~fixture-proportional heap during generation).
+    info!("writing flat-KV directly");
+    fkv.finish(&store).context("writing flat-KV")?;
+    info!("flat-KV complete");
 
     // Measure per-CF on-disk sizes via a checkpoint of the still-open store,
     // then release it.

@@ -3413,6 +3413,18 @@ impl Store {
         flush_block_data(self.backend.as_ref(), &self.block_data_buffer)
     }
 
+    /// Force a synchronous flush of all column-family memtables to SST.
+    ///
+    /// Bench/bulk-load helper: during heavy bulk writes (e.g. state-bench's
+    /// flat-KV generation over a multi-GB fixture) the write loop outruns
+    /// RocksDB's background flush, so immutable memtables pile up far past the
+    /// `db_write_buffer_size` trigger and dominate peak RSS. Calling this
+    /// periodically drains them, bounding resident memtable memory regardless
+    /// of fixture size.
+    pub fn flush(&self) -> Result<(), StoreError> {
+        self.backend.flush()
+    }
+
     /// Read a raw trie node straight from the on-disk account/storage trie-node
     /// table by its committed key. For testing only — lets a reopen assert which
     /// trie diff-layers a shutdown flush did (or did not) commit to disk.
