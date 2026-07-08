@@ -5,14 +5,20 @@ use ethrex_blockchain::constants::{
     TX_DATA_NON_ZERO_GAS_EIP2028, TX_DATA_ZERO_GAS_COST, TX_GAS_COST, TX_INIT_CODE_WORD_GAS_COST,
 };
 use ethrex_blockchain::error::MempoolError;
-use ethrex_blockchain::mempool::{Mempool, transaction_intrinsic_gas};
+use ethrex_blockchain::mempool::{
+    FramePaymasterReservation, Mempool, is_canonical_paymaster, transaction_intrinsic_gas,
+};
 use ethrex_crypto::NativeCrypto;
 use rustc_hash::FxHashMap;
 
 use ethrex_common::types::{
-    AuthorizationTuple, BYTES_PER_BLOB, BlobsBundle, BlockHeader, ChainConfig, EIP1559Transaction,
-    EIP4844Transaction, EIP7702Transaction, Genesis, GenesisAccount, MempoolTransaction,
-    Transaction, TxKind, kzg_commitment_to_versioned_hash,
+    APPROVE_EXECUTION_AND_PAYMENT, AuthorizationTuple, BYTES_PER_BLOB, BlobsBundle, Block,
+    BlockBody, BlockHeader, ChainConfig, EIP1559Transaction, EIP4844Transaction,
+    EIP7702Transaction, FRAME_SIG_SCHEME_P256, FRAME_SIG_SCHEME_SECP256K1,
+    FRAME_TX_EXPIRY_DATA_LENGTH, FRAME_TX_MAX_VERIFY_GAS, FeeTokenTransaction, Frame, FrameMode,
+    FrameSignature, FrameTransaction, Genesis, GenesisAccount, MAX_TX_SIZE, MempoolTransaction,
+    PrivilegedL2Transaction, Transaction, TxKind, frame_tx_expiry_verifier,
+    kzg_commitment_to_versioned_hash,
 };
 use ethrex_common::{Address, Bytes, H160, H256, U256};
 use ethrex_storage::error::StoreError;
@@ -441,10 +447,10 @@ fn test_filter_mempool_transactions() {
     let mempool = Mempool::new(MEMPOOL_MAX_SIZE_TEST);
     let filter = |tx: &Transaction| -> bool { matches!(tx, Transaction::EIP4844Transaction(_)) };
     mempool
-        .add_transaction(blob_tx_hash, blob_tx_sender, blob_tx.clone())
+        .add_transaction(blob_tx_hash, blob_tx_sender, blob_tx.clone(), None, None)
         .unwrap();
     mempool
-        .add_transaction(plain_tx_hash, plain_tx_sender, plain_tx)
+        .add_transaction(plain_tx_hash, plain_tx_sender, plain_tx, None, None)
         .unwrap();
     let txs = mempool.filter_transactions_with_filter_fn(&filter).unwrap();
     assert_eq!(
@@ -470,6 +476,498 @@ fn blobs_bundle_loadtest() {
         };
         mempool.add_blobs_bundle(H256::random(), bundle).unwrap();
     }
+}
+
+// ---------------------------------------------------------------------------
+// EIP-8141 frame transaction mempool admission tests
+// ---------------------------------------------------------------------------
+
+/// The address used as the sender by [`minimal_valid_frame_tx`]. Genesis seeds
+/// it with APPROVE(scope=3) code so its `self_verify` validation prefix
+/// establishes a payer (itself, OQ2) during admission simulation.
+const FRAME_TX_SELF_SENDER: u64 = 0xABCD;
+
+/// APPROVE(scope) then STOP: `PUSH1 scope; PUSH1 0; PUSH1 0; APPROVE; STOP`.
+/// A VERIFY frame whose target runs this code calls APPROVE with the given
+/// scope, which is what the validation-prefix simulation requires to recognize
+/// a payer (an empty/codeless target would establish none and be rejected).
+fn approve_code(scope: u8) -> Bytes {
+    Bytes::from(vec![0x60, scope, 0x60, 0x00, 0x60, 0x00, 0xAA, 0x00])
+}
+
+/// In-memory store whose genesis head has the Hegota fork active (so frame txs
+/// pass the FrameTxPreFork gate) and a real state trie root (so account lookups
+/// during admission succeed instead of erroring on a missing trie root). The
+/// `minimal_valid_frame_tx` sender is seeded with APPROVE(3) code so its
+/// `self_verify` prefix simulation establishes a payer and is admitted.
+async fn setup_hegota_store() -> Store {
+    let genesis = Genesis {
+        config: ChainConfig {
+            chain_id: 0,
+            shanghai_time: Some(0),
+            hegota_time: Some(0),
+            ..Default::default()
+        },
+        gas_limit: 100_000_000,
+        alloc: [(
+            Address::from_low_u64_be(FRAME_TX_SELF_SENDER),
+            GenesisAccount {
+                code: approve_code(APPROVE_EXECUTION_AND_PAYMENT),
+                storage: BTreeMap::new(),
+                balance: U256::zero(),
+                nonce: 0,
+            },
+        )]
+        .into_iter()
+        .collect(),
+        ..Default::default()
+    };
+    let mut store = Store::new("hegota-test", EngineType::InMemory).expect("Storage setup");
+    store
+        .add_initial_state(genesis)
+        .await
+        .expect("add genesis state");
+    store
+}
+
+/// A minimal, statically-valid 1-frame transaction with an empty signature list.
+fn minimal_valid_frame_tx() -> FrameTransaction {
+    let sender = Address::from_low_u64_be(0xABCD);
+    FrameTransaction {
+        chain_id: 0, // matches ChainConfig::default().chain_id
+        nonce: 0,
+        sender,
+        // A single `self_verify` frame: VERIFY mode, targets the sender, and
+        // approves both execution and payment. This is the smallest frame
+        // structure that matches a recognized mempool validation prefix (a lone
+        // DEFAULT frame sets no payer and is correctly rejected).
+        frames: vec![Frame {
+            mode: FrameMode::Verify as u8,
+            flags: APPROVE_EXECUTION_AND_PAYMENT,
+            target: Some(sender),
+            // Small per-frame gas so total_gas_limit() stays below the legacy
+            // 21000 intrinsic floor: this tx is only admitted once the frame-tx
+            // intrinsic-gas fix prices it correctly.
+            gas_limit: 100,
+            value: U256::zero(),
+            data: Bytes::new(),
+        }],
+        signatures: vec![],
+        max_priority_fee_per_gas: 0,
+        max_fee_per_gas: 0,
+        max_fee_per_blob_gas: U256::zero(),
+        blob_versioned_hashes: vec![],
+        ..Default::default()
+    }
+}
+
+#[tokio::test]
+async fn mempool_rejects_frame_tx_with_invalid_signature() {
+    let store = setup_hegota_store().await;
+    let blockchain = Blockchain::default_with_store(store);
+
+    let mut frame_tx = minimal_valid_frame_tx();
+    // One secp256k1 signature with the right length (65 bytes) but garbage bytes:
+    // ecrecover will not recover the claimed signer, so admission must reject it.
+    frame_tx.signatures = vec![FrameSignature {
+        scheme: FRAME_SIG_SCHEME_SECP256K1,
+        signer: Address::from_low_u64_be(0xABCD),
+        msg: Bytes::new(),
+        signature: Bytes::from(vec![0xAB; 65]),
+    }];
+
+    let tx = Transaction::FrameTransaction(frame_tx);
+    let validation = blockchain.validate_transaction(&tx, tx.sender(&NativeCrypto).unwrap());
+    assert!(matches!(
+        validation.await,
+        Err(MempoolError::InvalidFrameSignature)
+    ));
+}
+
+#[tokio::test]
+async fn mempool_rejects_frame_tx_violating_static_constraints() {
+    let store = setup_hegota_store().await;
+    let blockchain = Blockchain::default_with_store(store);
+
+    let mut frame_tx = minimal_valid_frame_tx();
+    // mode 5 is reserved (modes 3-255 are invalid) -> static-constraint failure.
+    frame_tx.frames[0].mode = 5;
+
+    let tx = Transaction::FrameTransaction(frame_tx);
+    let validation = blockchain.validate_transaction(&tx, tx.sender(&NativeCrypto).unwrap());
+    assert!(matches!(
+        validation.await,
+        Err(MempoolError::InvalidFrameTransaction(_))
+    ));
+}
+
+#[tokio::test]
+async fn mempool_accepts_small_frame_tx() {
+    let store = setup_hegota_store().await;
+    let blockchain = Blockchain::default_with_store(store);
+
+    // Empty signature list passes signature validation (nothing to reject), and
+    // the tx otherwise satisfies static constraints + nonce/fee checks.
+    let frame_tx = minimal_valid_frame_tx();
+    let tx = Transaction::FrameTransaction(frame_tx);
+    let validation = blockchain.validate_transaction(&tx, tx.sender(&NativeCrypto).unwrap());
+    assert!(
+        validation.await.is_ok(),
+        "minimal valid frame tx should be admitted"
+    );
+}
+
+#[test]
+fn frame_tx_reservation_maps_clear_after_add_and_remove() {
+    // EIP-8141 task 3.2: a frame tx's reservation must be fully accounted on
+    // insert across ALL four tracking maps, and the single removal path must
+    // clean every one of them (no leak, no double-decrement). Drive the
+    // `Mempool` directly so we can assert the map sizes before and after.
+    let mempool = Mempool::new(MEMPOOL_MAX_SIZE_TEST);
+    let frame_tx = minimal_valid_frame_tx();
+    let sender = frame_tx.sender;
+    let paymaster = sender; // self-funded self_verify: payer == sender (OQ2)
+    let tx = Transaction::FrameTransaction(frame_tx);
+    let hash = tx.hash(&NativeCrypto);
+
+    // Every map starts empty.
+    assert_eq!(
+        mempool.frame_tracking_map_sizes().unwrap(),
+        (0, 0, 0, 0),
+        "frame tracking maps must start empty"
+    );
+
+    let reservation = FramePaymasterReservation {
+        paymaster,
+        reserved_cost: U256::from(1_000u64),
+        is_canonical: false,
+        paymaster_balance: U256::from(1_000_000u64),
+    };
+    mempool
+        .add_transaction(
+            hash,
+            sender,
+            MempoolTransaction::new(tx, sender),
+            Some(reservation),
+            None,
+        )
+        .expect("add frame tx with reservation");
+
+    // After insert all four maps carry exactly one entry.
+    assert_eq!(
+        mempool.frame_tracking_map_sizes().unwrap(),
+        (1, 1, 1, 1),
+        "all four frame tracking maps must record the pending frame tx"
+    );
+    assert_eq!(
+        mempool.reserved_pending_cost(paymaster).unwrap(),
+        U256::from(1_000u64)
+    );
+    assert_eq!(
+        mempool.noncanonical_paymaster_pending(paymaster).unwrap(),
+        1
+    );
+
+    // Removal through the single removal path cleans every map.
+    mempool.remove_transaction(&hash).expect("remove frame tx");
+    assert_eq!(
+        mempool.frame_tracking_map_sizes().unwrap(),
+        (0, 0, 0, 0),
+        "all four frame tracking maps must return to empty after removal"
+    );
+    assert_eq!(
+        mempool.reserved_pending_cost(paymaster).unwrap(),
+        U256::zero()
+    );
+    assert_eq!(
+        mempool.noncanonical_paymaster_pending(paymaster).unwrap(),
+        0
+    );
+}
+
+#[test]
+fn is_canonical_paymaster_is_false_for_all_codes_oq1_interim() {
+    // OQ1 interim: no canonical paymaster bytecode is pinned, so every paymaster
+    // is treated as non-canonical. This guards the documented interim until the
+    // canonical code hash is resolved upstream.
+    assert!(!is_canonical_paymaster(&[]));
+    assert!(!is_canonical_paymaster(&[0x60, 0x00]));
+    assert!(!is_canonical_paymaster(&[0xAA; 64]));
+}
+
+#[tokio::test]
+async fn mempool_rejects_oversized_frame_data() {
+    let store = setup_hegota_store().await;
+    let blockchain = Blockchain::default_with_store(store);
+
+    let mut frame_tx = minimal_valid_frame_tx();
+    // Frame data whose length reaches the 128KB wire cap; tx.data() is empty
+    // for frame txs, but the frames' payloads count toward the canonical
+    // encoding that MAX_TX_SIZE bounds.
+    frame_tx.frames[0].data = Bytes::from(vec![0u8; MAX_TX_SIZE]);
+
+    let tx = Transaction::FrameTransaction(frame_tx);
+    let validation = blockchain.validate_transaction(&tx, tx.sender(&NativeCrypto).unwrap());
+    assert!(matches!(
+        validation.await,
+        Err(MempoolError::TxSizeExceeded { .. })
+    ));
+}
+
+#[tokio::test]
+async fn mempool_rejects_frame_tx_with_blobs() {
+    let store = setup_hegota_store().await;
+    let blockchain = Blockchain::default_with_store(store);
+
+    let mut frame_tx = minimal_valid_frame_tx();
+    // Add a blob versioned hash; no sidecar transport exists for frame-tx
+    // blobs yet, so admission must reject such txs as unsupported.
+    frame_tx.blob_versioned_hashes = vec![H256::from([0xAB; 32])];
+
+    let tx = Transaction::FrameTransaction(frame_tx);
+    let validation = blockchain.validate_transaction(&tx, tx.sender(&NativeCrypto).unwrap());
+    assert!(matches!(
+        validation.await,
+        Err(MempoolError::FrameTxBlobsUnsupported)
+    ));
+}
+
+#[tokio::test]
+async fn mempool_rejects_frame_tx_exceeding_max_verify_gas() {
+    let store = setup_hegota_store().await;
+    let blockchain = Blockchain::default_with_store(store);
+
+    // EIP-8141 §Mempool rule #6: signature validation counts against
+    // MAX_VERIFY_GAS (100_000). P256 sigs cost 6700 each, so 15 sigs cost
+    // 100_500 > MAX_VERIFY_GAS and the tx must be rejected at admission BEFORE
+    // any per-signature crypto runs. The signature bytes need not be valid:
+    // the cap rejects first. Static constraints only require a known scheme and
+    // an empty-or-32-byte msg, which these satisfy.
+    let n_sigs = (FRAME_TX_MAX_VERIFY_GAS / 6700) as usize + 1; // 15
+    let mut frame_tx = minimal_valid_frame_tx();
+    frame_tx.signatures = (0..n_sigs)
+        .map(|_| FrameSignature {
+            scheme: FRAME_SIG_SCHEME_P256,
+            signer: Address::from_low_u64_be(0xABCD),
+            msg: Bytes::new(),
+            signature: Bytes::from(vec![0u8; 128]),
+        })
+        .collect();
+    assert!(frame_tx.signature_verification_cost() > FRAME_TX_MAX_VERIFY_GAS);
+
+    let tx = Transaction::FrameTransaction(frame_tx);
+    let validation = blockchain.validate_transaction(&tx, tx.sender(&NativeCrypto).unwrap());
+    assert!(matches!(
+        validation.await,
+        Err(MempoolError::FrameTxVerifyGasExceeded)
+    ));
+}
+
+#[tokio::test]
+async fn mempool_rejects_frame_tx_from_unknown_sender_with_sentinel_nonce() {
+    let store = setup_hegota_store().await;
+    let blockchain = Blockchain::default_with_store(store);
+
+    // Sender 0xABCD does not exist in the genesis state. A frame tx from a
+    // not-yet-existent sender is legitimate (sponsored txs fund gas via a
+    // separate payer), but its implied nonce is 0, so the u64::MAX sentinel can
+    // never match and must be rejected — not skipped as it was before.
+    let mut frame_tx = minimal_valid_frame_tx();
+    frame_tx.nonce = u64::MAX;
+
+    let tx = Transaction::FrameTransaction(frame_tx);
+    let validation = blockchain.validate_transaction(&tx, tx.sender(&NativeCrypto).unwrap());
+    assert!(matches!(validation.await, Err(MempoolError::NonceTooLow)));
+}
+
+#[tokio::test]
+async fn mempool_accepts_frame_tx_from_unknown_sender_with_zero_nonce() {
+    let store = setup_hegota_store().await;
+    let blockchain = Blockchain::default_with_store(store);
+
+    // Regression guard for the sponsored-tx use case: a fresh (non-existent)
+    // sender with nonce 0 must still be admitted after the nonce hardening —
+    // the new guard only rejects sub-current / sentinel nonces.
+    let frame_tx = minimal_valid_frame_tx(); // sender 0xABCD (absent), nonce 0
+    let tx = Transaction::FrameTransaction(frame_tx);
+    let validation = blockchain.validate_transaction(&tx, tx.sender(&NativeCrypto).unwrap());
+    assert!(
+        validation.await.is_ok(),
+        "fresh sponsored sender with nonce 0 should still be admitted"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// EIP-8141 fork gate and expiry gate tests
+// ---------------------------------------------------------------------------
+
+/// Store where Hegota is NOT active: hegota_time is None, so frame txs must be
+/// rejected with FrameTxPreFork regardless of their content.
+async fn setup_pre_hegota_store() -> Store {
+    let genesis = Genesis {
+        config: ChainConfig {
+            chain_id: 0,
+            shanghai_time: Some(0),
+            hegota_time: None, // Hegota never activates
+            ..Default::default()
+        },
+        gas_limit: 100_000_000,
+        ..Default::default()
+    };
+    let mut store = Store::new("pre-hegota-test", EngineType::InMemory).expect("Storage setup");
+    store
+        .add_initial_state(genesis)
+        .await
+        .expect("add genesis state");
+    store
+}
+
+/// Store where Hegota IS active (hegota_time == 0) and the head block has a
+/// non-zero timestamp (1000), so expiry tests can use deadlines below that.
+async fn setup_hegota_store_ts1000() -> Store {
+    let genesis = Genesis {
+        config: ChainConfig {
+            chain_id: 0,
+            shanghai_time: Some(0),
+            hegota_time: Some(0),
+            ..Default::default()
+        },
+        gas_limit: 100_000_000,
+        timestamp: 1000, // head.timestamp == 1000
+        alloc: [
+            (
+                Address::from_low_u64_be(FRAME_TX_SELF_SENDER),
+                GenesisAccount {
+                    code: approve_code(APPROVE_EXECUTION_AND_PAYMENT),
+                    storage: BTreeMap::new(),
+                    balance: U256::zero(),
+                    nonce: 0,
+                },
+            ),
+            (
+                frame_tx_expiry_verifier(),
+                GenesisAccount {
+                    // Canonical EIP-8141 expiry verifier runtime bytecode (spec
+                    // commit 0b197156): reverts unless calldata is exactly 8
+                    // bytes and the 8-byte BE deadline is >= block.timestamp.
+                    // Seeded so the interleaved expiry-verifier frame executes
+                    // (instead of hitting codeless default code) during the
+                    // admission simulation.
+                    code: Bytes::from_static(&[
+                        0x60, 0x08, 0x36, 0x14, 0x60, 0x0a, 0x57, 0x5f, 0x5f, 0xfd, 0x5b, 0x5f,
+                        0x35, 0x60, 0xc0, 0x1c, 0x42, 0x11, 0x60, 0x16, 0x57, 0x00, 0x5b, 0x5f,
+                        0x5f, 0xfd,
+                    ]),
+                    storage: BTreeMap::new(),
+                    balance: U256::zero(),
+                    nonce: 0,
+                },
+            ),
+        ]
+        .into_iter()
+        .collect(),
+        ..Default::default()
+    };
+    let mut store = Store::new("hegota-ts1000-test", EngineType::InMemory).expect("Storage setup");
+    store
+        .add_initial_state(genesis)
+        .await
+        .expect("add genesis state");
+    store
+}
+
+/// Build a minimal frame tx carrying an expiry verifier frame with the given
+/// `deadline`, followed by a `self_verify` frame. The expiry frame is a VERIFY
+/// frame targeting the expiry verifier address with exactly 8 bytes of
+/// big-endian deadline data and flags == 0. Expiry verifier frames are skipped
+/// for prefix matching, so the recognized prefix is the trailing `self_verify`.
+fn frame_tx_with_expiry(deadline: u64) -> FrameTransaction {
+    let sender = Address::from_low_u64_be(0xABCD);
+    let mut data = [0u8; FRAME_TX_EXPIRY_DATA_LENGTH];
+    data.copy_from_slice(&deadline.to_be_bytes());
+    FrameTransaction {
+        chain_id: 0,
+        nonce: 0,
+        sender,
+        frames: vec![
+            Frame {
+                mode: FrameMode::Verify as u8,
+                flags: 0x00,
+                target: Some(frame_tx_expiry_verifier()),
+                gas_limit: 100,
+                value: U256::zero(),
+                data: Bytes::from(data.to_vec()),
+            },
+            Frame {
+                mode: FrameMode::Verify as u8,
+                flags: APPROVE_EXECUTION_AND_PAYMENT,
+                target: Some(sender),
+                gas_limit: 100,
+                value: U256::zero(),
+                data: Bytes::new(),
+            },
+        ],
+        signatures: vec![],
+        max_priority_fee_per_gas: 0,
+        max_fee_per_gas: 0,
+        max_fee_per_blob_gas: U256::zero(),
+        blob_versioned_hashes: vec![],
+        ..Default::default()
+    }
+}
+
+#[tokio::test]
+async fn mempool_rejects_frame_tx_before_hegota() {
+    // With hegota_time == None the fork gate must fire before any other check.
+    let store = setup_pre_hegota_store().await;
+    let blockchain = Blockchain::default_with_store(store);
+
+    let frame_tx = minimal_valid_frame_tx();
+    let tx = Transaction::FrameTransaction(frame_tx);
+    let result = blockchain
+        .validate_transaction(&tx, tx.sender(&NativeCrypto).unwrap())
+        .await;
+    assert!(
+        matches!(result, Err(MempoolError::FrameTxPreFork)),
+        "expected FrameTxPreFork, got {result:?}"
+    );
+}
+
+#[tokio::test]
+async fn mempool_rejects_expired_frame_tx() {
+    // Head timestamp == 1000. A deadline of 999 is strictly less than 1000,
+    // so the expiry gate must fire.
+    let store = setup_hegota_store_ts1000().await;
+    let blockchain = Blockchain::default_with_store(store);
+
+    let frame_tx = frame_tx_with_expiry(999);
+    let tx = Transaction::FrameTransaction(frame_tx);
+    let result = blockchain
+        .validate_transaction(&tx, tx.sender(&NativeCrypto).unwrap())
+        .await;
+    assert!(
+        matches!(result, Err(MempoolError::FrameTxExpired)),
+        "expected FrameTxExpired for deadline 999 < head.timestamp 1000, got {result:?}"
+    );
+}
+
+#[tokio::test]
+async fn mempool_accepts_frame_tx_with_deadline_at_head_timestamp() {
+    // Head timestamp == 1000. A deadline of exactly 1000 is the boundary:
+    // the on-chain verifier only reverts when block.timestamp > deadline, so
+    // deadline == timestamp is still valid at mempool admission time.
+    let store = setup_hegota_store_ts1000().await;
+    let blockchain = Blockchain::default_with_store(store);
+
+    let frame_tx = frame_tx_with_expiry(1000);
+    let tx = Transaction::FrameTransaction(frame_tx);
+    let result = blockchain
+        .validate_transaction(&tx, tx.sender(&NativeCrypto).unwrap())
+        .await;
+    assert!(
+        result.is_ok(),
+        "frame tx with deadline == head.timestamp must be admitted; got {result:?}"
+    );
 }
 
 #[test]
@@ -511,7 +1009,13 @@ fn blobs_bundle_insert_and_remove() {
             .unwrap();
 
         mempool
-            .add_transaction(hash, sender, MempoolTransaction::new(tx, sender))
+            .add_transaction(
+                hash,
+                sender,
+                MempoolTransaction::new(tx, sender),
+                None,
+                None,
+            )
             .expect("Failed to add blob transaction");
     }
 
@@ -573,6 +1077,8 @@ fn blob_txs_are_not_evicted_by_regular_tx_flood() {
                 blob_hash,
                 blob_sender,
                 MempoolTransaction::new(blob_tx, blob_sender),
+                None,
+                None,
             )
             .expect("Failed to add blob transaction");
         blob_hashes.push(blob_hash);
@@ -593,7 +1099,13 @@ fn blob_txs_are_not_evicted_by_regular_tx_flood() {
             H256::random()
         };
         mempool
-            .add_transaction(hash, sender, MempoolTransaction::new(tx, sender))
+            .add_transaction(
+                hash,
+                sender,
+                MempoolTransaction::new(tx, sender),
+                None,
+                None,
+            )
             .expect("Failed to add regular transaction");
     }
 
@@ -638,7 +1150,13 @@ fn add_blob_tx(mempool: &Mempool, nonce: u64, blob_fee: u64) -> H256 {
     let sender = H160::random();
     mempool.add_blobs_bundle(hash, bundle).unwrap();
     mempool
-        .add_transaction(hash, sender, MempoolTransaction::new(tx, sender))
+        .add_transaction(
+            hash,
+            sender,
+            MempoolTransaction::new(tx, sender),
+            None,
+            None,
+        )
         .expect("Failed to add blob transaction");
     hash
 }
@@ -661,7 +1179,13 @@ fn add_blob_tx_with_sender(mempool: &Mempool, sender: Address, nonce: u64) -> H2
     let hash = H256::random();
     mempool.add_blobs_bundle(hash, bundle).unwrap();
     mempool
-        .add_transaction(hash, sender, MempoolTransaction::new(tx, sender))
+        .add_transaction(
+            hash,
+            sender,
+            MempoolTransaction::new(tx, sender),
+            None,
+            None,
+        )
         .expect("Failed to add blob transaction");
     hash
 }
@@ -682,7 +1206,13 @@ fn blob_txs_lists_only_blob_txs_with_sender_and_nonce() {
     });
     let plain_hash = plain.hash(&NativeCrypto);
     mempool
-        .add_transaction(plain_hash, sender, MempoolTransaction::new(plain, sender))
+        .add_transaction(
+            plain_hash,
+            sender,
+            MempoolTransaction::new(plain, sender),
+            None,
+            None,
+        )
         .unwrap();
 
     let mut got = mempool.blob_txs().unwrap();
@@ -755,6 +1285,813 @@ fn blob_eviction_offset_is_per_sender_not_cross_sender() {
     assert_eq!(
         present_deep, 3,
         "two of the backlogged sender's blobs evicted"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// EIP-8141 Phase 4 admission and revalidation tests
+// ---------------------------------------------------------------------------
+
+/// Like `setup_hegota_store` but the sender has a generous balance so it can
+/// cover a frame tx with positive fees. Any frame tx whose `max_cost` is at
+/// most 1 ETH (10^18 wei) will pass the paymaster availability check.
+async fn setup_hegota_store_funded() -> Store {
+    let genesis = Genesis {
+        config: ChainConfig {
+            chain_id: 0,
+            shanghai_time: Some(0),
+            hegota_time: Some(0),
+            ..Default::default()
+        },
+        gas_limit: 100_000_000,
+        alloc: [(
+            Address::from_low_u64_be(FRAME_TX_SELF_SENDER),
+            GenesisAccount {
+                code: approve_code(APPROVE_EXECUTION_AND_PAYMENT),
+                storage: BTreeMap::new(),
+                balance: U256::from(10u64).pow(U256::from(18u64)),
+                nonce: 0,
+            },
+        )]
+        .into_iter()
+        .collect(),
+        ..Default::default()
+    };
+    let mut store = Store::new("hegota-funded-test", EngineType::InMemory).expect("Storage setup");
+    store
+        .add_initial_state(genesis)
+        .await
+        .expect("add genesis state");
+    store
+}
+
+/// A frame tx that looks like `minimal_valid_frame_tx()` but with positive fees
+/// so `max_cost = gas_limit * max_fee_per_gas > 0`. The sender must be seeded
+/// with enough balance to cover it (use `setup_hegota_store_funded`).
+fn funded_frame_tx(max_fee_per_gas: u64, max_priority_fee_per_gas: u64) -> FrameTransaction {
+    let sender = Address::from_low_u64_be(FRAME_TX_SELF_SENDER);
+    FrameTransaction {
+        chain_id: 0,
+        nonce: 0,
+        sender,
+        frames: vec![Frame {
+            mode: FrameMode::Verify as u8,
+            flags: APPROVE_EXECUTION_AND_PAYMENT,
+            target: Some(sender),
+            gas_limit: 100,
+            value: U256::zero(),
+            data: Bytes::new(),
+        }],
+        signatures: vec![],
+        max_priority_fee_per_gas,
+        max_fee_per_gas,
+        max_fee_per_blob_gas: U256::zero(),
+        blob_versioned_hashes: vec![],
+        ..Default::default()
+    }
+}
+
+#[tokio::test]
+async fn mempool_admits_funded_sponsored_frame_tx() {
+    // A frame tx whose sender has enough balance to cover the tx max_cost must
+    // be admitted via `add_transaction_to_pool` (Ok) and the hash returned.
+    let store = setup_hegota_store_funded().await;
+    let blockchain = Blockchain::default_with_store(store);
+
+    let frame_tx = funded_frame_tx(1_000_000_000, 1_000_000_000);
+    let tx = Transaction::FrameTransaction(frame_tx);
+    let result = blockchain.add_transaction_to_pool(tx).await;
+    assert!(
+        result.is_ok(),
+        "funded self_verify frame tx must be admitted; got {result:?}"
+    );
+}
+
+#[tokio::test]
+async fn mempool_rejects_underfunded_paymaster() {
+    // The post-simulation availability check (`available < max_cost`, where
+    // `available = paymaster_balance - reserved_pending_cost`) must reject a
+    // frame tx with FrameTxPaymasterUnderfunded.
+    //
+    // Note: since APPROVE now collects the tx's MAXIMUM cost during the
+    // validation-prefix simulation (max_fee_per_gas * total_gas_limit), a payer
+    // that cannot cover max_cost reverts *inside* the simulation
+    // (FrameTxValidationFailed), never reaching this check. The availability
+    // check is therefore only reachable when the payer covers a single tx's
+    // max_cost but PRIOR pending reservations for the same paymaster leave less
+    // than max_cost available. We reproduce that by seeding the paymaster with
+    // exactly one max_cost (so simulation passes, balance exactly exhausted),
+    // then phantom-injecting a pending reservation of max_cost against it.
+    //
+    // Setup mirrors mempool_enforces_noncanonical_paymaster_limit; the underfunded
+    // check (`available < max_cost`) is evaluated before the non-canonical
+    // pending-slot limit, so it is the error that fires here.
+    let max_fee_per_gas = 2_000_000_000u64;
+    let max_priority_fee_per_gas = 1_000_000_000u64;
+    let frame_tx = funded_frame_tx(max_fee_per_gas, max_priority_fee_per_gas);
+    let total_gas = frame_tx.total_gas_limit();
+    let max_cost = U256::from(max_fee_per_gas) * U256::from(total_gas);
+
+    let paymaster = Address::from_low_u64_be(FRAME_TX_SELF_SENDER);
+    let genesis = Genesis {
+        config: ChainConfig {
+            chain_id: 0,
+            shanghai_time: Some(0),
+            hegota_time: Some(0),
+            ..Default::default()
+        },
+        gas_limit: 100_000_000,
+        alloc: [(
+            paymaster,
+            GenesisAccount {
+                code: approve_code(APPROVE_EXECUTION_AND_PAYMENT),
+                storage: BTreeMap::new(),
+                // Exactly one tx's max cost: simulation's APPROVE (which deducts
+                // max_cost) passes, but any prior reservation makes availability
+                // fall below max_cost.
+                balance: max_cost,
+                nonce: 0,
+            },
+        )]
+        .into_iter()
+        .collect(),
+        ..Default::default()
+    };
+    let mut store =
+        Store::new("hegota-underfunded-test", EngineType::InMemory).expect("Storage setup");
+    store
+        .add_initial_state(genesis)
+        .await
+        .expect("add genesis state");
+    let blockchain = Blockchain::default_with_store(store);
+
+    // Phantom-inject a pending reservation of max_cost against the paymaster from a
+    // DIFFERENT sender (no nonce / sender-pending collision with the real tx). This
+    // drives reserved_pending_cost(paymaster) to max_cost so the real tx sees zero
+    // available balance.
+    let phantom_sender = Address::from_low_u64_be(0xDEAD_BEEF);
+    let phantom_frame_tx = FrameTransaction {
+        chain_id: 0,
+        nonce: 99,
+        sender: phantom_sender,
+        frames: vec![Frame {
+            mode: FrameMode::Verify as u8,
+            flags: APPROVE_EXECUTION_AND_PAYMENT,
+            target: Some(phantom_sender),
+            gas_limit: 100,
+            value: U256::zero(),
+            data: Bytes::new(),
+        }],
+        signatures: vec![],
+        max_priority_fee_per_gas: 0,
+        max_fee_per_gas: 0,
+        max_fee_per_blob_gas: U256::zero(),
+        blob_versioned_hashes: vec![],
+        ..Default::default()
+    };
+    let phantom_tx = Transaction::FrameTransaction(phantom_frame_tx);
+    let phantom_hash = phantom_tx.hash(&NativeCrypto);
+    blockchain
+        .mempool
+        .add_transaction(
+            phantom_hash,
+            phantom_sender,
+            MempoolTransaction::new(phantom_tx, phantom_sender),
+            Some(FramePaymasterReservation {
+                paymaster,
+                reserved_cost: max_cost,
+                is_canonical: false,
+                paymaster_balance: max_cost,
+            }),
+            None,
+        )
+        .expect("phantom reservation must be directly inserted");
+
+    let real_tx = Transaction::FrameTransaction(frame_tx);
+    let result = blockchain.add_transaction_to_pool(real_tx).await;
+    assert!(
+        matches!(result, Err(MempoolError::FrameTxPaymasterUnderfunded)),
+        "payer covering one max_cost but with prior reservations exhausting its \
+         balance must yield FrameTxPaymasterUnderfunded; got {result:?}"
+    );
+}
+
+#[tokio::test]
+async fn mempool_enforces_noncanonical_paymaster_limit() {
+    // EIP-8141 OQ1: all paymasters are non-canonical; the per-paymaster pending
+    // limit is MAX_PENDING_TXS_USING_NON_CANONICAL_PAYMASTER = 1.
+    //
+    // In the current implementation `validate_prefix_structure` requires all
+    // VERIFY frames to target `tx.sender`, which means every sender is their own
+    // paymaster (there is no shape where an external paymaster address is shared
+    // between two senders). `FrameTxNonCanonicalPaymasterLimit` is therefore
+    // exercised by pre-filling the paymaster's non-canonical slot via a direct
+    // `Mempool::add_transaction` call (bypassing simulation), then submitting a
+    // real frame tx from the SAME sender via `add_transaction_to_pool`.
+    //
+    // Steps:
+    // 1. Directly insert a frame tx from a PHANTOM sender into the mempool,
+    //    carrying a `FramePaymasterReservation` that names FRAME_TX_SELF_SENDER
+    //    as the paymaster. This increments `noncanonical_paymaster_pending[sender]`
+    //    to 1 without going through validation.
+    // 2. Call `add_transaction_to_pool` for a real frame tx from
+    //    FRAME_TX_SELF_SENDER (valid simulation, funded sender, paymaster == self).
+    //    The unlocked pre-filter in `validate_transaction` sees
+    //    `noncanonical_paymaster_pending[sender] == 1 >= 1` and rejects with
+    //    `FrameTxNonCanonicalPaymasterLimit`.
+    let funded_balance = U256::from(10u64).pow(U256::from(18u64));
+    let store = setup_hegota_store_funded().await;
+    let blockchain = Blockchain::default_with_store(store);
+
+    let paymaster = Address::from_low_u64_be(FRAME_TX_SELF_SENDER);
+
+    // Build a phantom frame tx (nonce=99, different sender so no nonce conflict)
+    // and inject it directly to consume the paymaster's non-canonical slot.
+    let phantom_sender = Address::from_low_u64_be(0xDEAD_BEEF);
+    let phantom_frame_tx = FrameTransaction {
+        chain_id: 0,
+        nonce: 99,
+        sender: phantom_sender,
+        frames: vec![Frame {
+            mode: FrameMode::Verify as u8,
+            flags: APPROVE_EXECUTION_AND_PAYMENT,
+            target: Some(phantom_sender),
+            gas_limit: 100,
+            value: U256::zero(),
+            data: Bytes::new(),
+        }],
+        signatures: vec![],
+        max_priority_fee_per_gas: 0,
+        max_fee_per_gas: 0,
+        max_fee_per_blob_gas: U256::zero(),
+        blob_versioned_hashes: vec![],
+        ..Default::default()
+    };
+    let phantom_tx = Transaction::FrameTransaction(phantom_frame_tx);
+    let phantom_hash = phantom_tx.hash(&NativeCrypto);
+    blockchain
+        .mempool
+        .add_transaction(
+            phantom_hash,
+            phantom_sender,
+            MempoolTransaction::new(phantom_tx, phantom_sender),
+            Some(FramePaymasterReservation {
+                paymaster, // names FRAME_TX_SELF_SENDER as paymaster
+                reserved_cost: U256::from(1u64),
+                is_canonical: false,
+                paymaster_balance: funded_balance,
+            }),
+            None,
+        )
+        .expect("phantom frame tx must be directly inserted to fill paymaster slot");
+
+    // Verify the non-canonical slot is consumed.
+    assert_eq!(
+        blockchain
+            .mempool
+            .noncanonical_paymaster_pending(paymaster)
+            .unwrap(),
+        1,
+        "paymaster slot must be filled after phantom insertion"
+    );
+
+    // A real frame tx from FRAME_TX_SELF_SENDER (paymaster == self) must now
+    // be rejected because the noncanonical slot is saturated.
+    let real_tx = Transaction::FrameTransaction(funded_frame_tx(1_000_000_000, 1_000_000_000));
+    let result = blockchain.add_transaction_to_pool(real_tx).await;
+    assert!(
+        matches!(result, Err(MempoolError::FrameTxNonCanonicalPaymasterLimit)),
+        "frame tx must be rejected when non-canonical paymaster slot is full; got {result:?}"
+    );
+}
+
+#[tokio::test]
+async fn mempool_rejects_second_frame_tx_same_sender_new_nonce() {
+    // The one-pending-frame-tx-per-sender policy must reject a second frame tx
+    // from the same sender at a DIFFERENT nonce with FrameTxSenderAlreadyPending.
+    //
+    // The VM simulation checks that `frame_tx.nonce == sender's on-chain nonce`,
+    // so a frame tx at nonce=1 cannot pass simulation when the on-chain nonce is
+    // 0. To trigger the different-nonce path without a nonce-mismatch simulation
+    // failure, we inject a frame tx at nonce=1 DIRECTLY into the mempool
+    // (bypassing simulation), then submit a valid frame tx at nonce=0 via
+    // `add_transaction_to_pool`. The nonce=0 tx passes simulation (on-chain
+    // nonce == 0), and `check_frame_tx_sender_pending` sees an existing entry at
+    // nonce=1 with incoming nonce=0, triggering FrameTxSenderAlreadyPending.
+    let store = setup_hegota_store_funded().await;
+    let blockchain = Blockchain::default_with_store(store);
+
+    let sender = Address::from_low_u64_be(FRAME_TX_SELF_SENDER);
+
+    // Directly insert a frame tx at nonce=1 (bypasses simulation nonce check).
+    let nonce1_frame_tx = FrameTransaction {
+        chain_id: 0,
+        nonce: 1,
+        sender,
+        frames: vec![Frame {
+            mode: FrameMode::Verify as u8,
+            flags: APPROVE_EXECUTION_AND_PAYMENT,
+            target: Some(sender),
+            gas_limit: 100,
+            value: U256::zero(),
+            data: Bytes::new(),
+        }],
+        signatures: vec![],
+        max_priority_fee_per_gas: 0,
+        max_fee_per_gas: 0,
+        max_fee_per_blob_gas: U256::zero(),
+        blob_versioned_hashes: vec![],
+        ..Default::default()
+    };
+    let nonce1_tx = Transaction::FrameTransaction(nonce1_frame_tx);
+    let nonce1_hash = nonce1_tx.hash(&NativeCrypto);
+    blockchain
+        .mempool
+        .add_transaction(
+            nonce1_hash,
+            sender,
+            MempoolTransaction::new(nonce1_tx, sender),
+            None,
+            None,
+        )
+        .expect("direct insert of nonce=1 frame tx must succeed");
+
+    // Now submit a valid nonce=0 frame tx via `add_transaction_to_pool`.
+    // Simulation passes (on-chain nonce=0 == tx nonce=0), but
+    // `check_frame_tx_sender_pending` detects the existing nonce=1 entry and
+    // rejects with FrameTxSenderAlreadyPending.
+    let nonce0_tx = Transaction::FrameTransaction(funded_frame_tx(1_000_000_000, 1_000_000_000));
+    let result = blockchain.add_transaction_to_pool(nonce0_tx).await;
+    assert!(
+        matches!(result, Err(MempoolError::FrameTxSenderAlreadyPending)),
+        "frame tx at nonce=0 must be rejected when nonce=1 is already pending; got {result:?}"
+    );
+}
+
+#[tokio::test]
+async fn mempool_fee_bump_replaces_pending_frame_tx() {
+    // Admit a frame tx at nonce 0 with moderate fees, then submit the SAME
+    // nonce with strictly higher max_fee_per_gas and max_priority_fee_per_gas.
+    // The fee-bump path in `find_tx_to_replace` must accept the replacement
+    // (Ok) and the old hash must no longer be in the pool.
+    let store = setup_hegota_store_funded().await;
+    let blockchain = Blockchain::default_with_store(store);
+
+    let low_fee_tx = Transaction::FrameTransaction(funded_frame_tx(100_000_000, 100_000_000));
+    let old_hash = blockchain
+        .add_transaction_to_pool(low_fee_tx)
+        .await
+        .expect("low-fee frame tx must be admitted");
+
+    // Higher fees on the same nonce: must replace.
+    let high_fee_tx = Transaction::FrameTransaction(funded_frame_tx(200_000_000, 200_000_000));
+    let new_hash = blockchain.add_transaction_to_pool(high_fee_tx).await;
+    assert!(
+        new_hash.is_ok(),
+        "fee-bump replacement must be admitted; got {new_hash:?}"
+    );
+    let new_hash = new_hash.unwrap();
+    assert_ne!(old_hash, new_hash, "hashes must differ after fee bump");
+
+    // Old tx must be gone from the pool.
+    let old_still_present = blockchain
+        .mempool
+        .contains_tx(old_hash)
+        .expect("contains_tx");
+    assert!(
+        !old_still_present,
+        "old hash must be evicted after fee-bump replacement"
+    );
+}
+
+#[tokio::test]
+async fn mempool_frame_tx_replaces_same_nonce_non_frame_tx() {
+    // Regression for the EIP-8141 review fix: a frame tx that replaces a
+    // same-(sender, nonce) NON-frame tx must evict the predecessor, not orphan
+    // it. `find_tx_to_replace` (used during admission) matches any tx type and
+    // validated the fee bump, but the locked removal in `add_transaction`
+    // previously only consulted `check_frame_tx_sender_pending`, which sees frame
+    // predecessors only — so a same-nonce legacy/EIP-1559 tx survived in the pool
+    // while its (sender, nonce) index slot was overwritten by the frame tx.
+    let store = setup_hegota_store_funded().await;
+    let blockchain = Blockchain::default_with_store(store);
+
+    let sender = Address::from_low_u64_be(FRAME_TX_SELF_SENDER);
+
+    // Directly insert a low-fee NON-frame tx at nonce 0 under the same sender.
+    // Direct insertion lets us pin the tracked sender without needing the
+    // sender's private key (a regular tx's sender is signature-derived).
+    let regular_tx = Transaction::EIP1559Transaction(EIP1559Transaction {
+        chain_id: 0,
+        nonce: 0,
+        max_priority_fee_per_gas: 100_000_000,
+        max_fee_per_gas: 100_000_000,
+        gas_limit: 21_000,
+        to: TxKind::Call(Address::from_low_u64_be(0x1234)),
+        value: U256::zero(),
+        data: Bytes::new(),
+        access_list: vec![],
+        ..Default::default()
+    });
+    let regular_hash = regular_tx.hash(&NativeCrypto);
+    blockchain
+        .mempool
+        .add_transaction(
+            regular_hash,
+            sender,
+            MempoolTransaction::new(regular_tx, sender),
+            None,
+            None,
+        )
+        .expect("direct insert of non-frame tx must succeed");
+
+    // Submit a frame tx at the same nonce with strictly higher fees: a valid
+    // fee-bump replacement of the non-frame predecessor.
+    let frame_tx = Transaction::FrameTransaction(funded_frame_tx(200_000_000, 200_000_000));
+    let frame_hash = blockchain
+        .add_transaction_to_pool(frame_tx)
+        .await
+        .expect("frame tx must be admitted as a same-nonce fee-bump replacement");
+
+    // The non-frame predecessor must be evicted, not orphaned.
+    assert!(
+        !blockchain
+            .mempool
+            .contains_tx(regular_hash)
+            .expect("contains_tx"),
+        "same-nonce non-frame tx must be evicted when replaced by a frame tx"
+    );
+    assert!(
+        blockchain
+            .mempool
+            .contains_tx(frame_hash)
+            .expect("contains_tx"),
+        "replacing frame tx must be present in the pool"
+    );
+}
+
+/// Like `setup_hegota_store_funded` but with a caller-chosen sender balance, for
+/// tight-balance assertions.
+async fn setup_hegota_store_with_balance(balance: U256) -> Store {
+    let genesis = Genesis {
+        config: ChainConfig {
+            chain_id: 0,
+            shanghai_time: Some(0),
+            hegota_time: Some(0),
+            ..Default::default()
+        },
+        gas_limit: 100_000_000,
+        alloc: [(
+            Address::from_low_u64_be(FRAME_TX_SELF_SENDER),
+            GenesisAccount {
+                code: approve_code(APPROVE_EXECUTION_AND_PAYMENT),
+                storage: BTreeMap::new(),
+                balance,
+                nonce: 0,
+            },
+        )]
+        .into_iter()
+        .collect(),
+        ..Default::default()
+    };
+    let mut store = Store::new("hegota-balance-test", EngineType::InMemory).expect("Storage setup");
+    store
+        .add_initial_state(genesis)
+        .await
+        .expect("add genesis state");
+    store
+}
+
+#[tokio::test]
+async fn mempool_fee_bump_not_blocked_by_own_stale_reservation() {
+    // Regression: the unlocked availability pre-filter must not count the old
+    // tx's still-live reservation against its own same-nonce fee-bump. Balance
+    // funds the bumped tx alone but not the old and new reservations together;
+    // the bump must still be admitted because the locked re-check releases the
+    // old reservation before re-validating availability.
+    let low_fee = 100_000_000u64;
+    let high_fee = 200_000_000u64;
+    let gas = funded_frame_tx(high_fee, high_fee).total_gas_limit();
+    // Exactly covers the bumped tx (high_fee * gas), but not old + new together.
+    let balance = U256::from(high_fee) * U256::from(gas);
+    let store = setup_hegota_store_with_balance(balance).await;
+    let blockchain = Blockchain::default_with_store(store);
+
+    let low_tx = Transaction::FrameTransaction(funded_frame_tx(low_fee, low_fee));
+    blockchain
+        .add_transaction_to_pool(low_tx)
+        .await
+        .expect("low-fee frame tx must be admitted");
+
+    let high_tx = Transaction::FrameTransaction(funded_frame_tx(high_fee, high_fee));
+    let result = blockchain.add_transaction_to_pool(high_tx).await;
+    assert!(
+        result.is_ok(),
+        "fee-bump must not be falsely rejected by the old tx's own reservation; got {result:?}"
+    );
+}
+
+#[tokio::test]
+async fn mempool_fee_bump_rejected_leaves_original_intact() {
+    // Atomicity (review fix 2): when a same-nonce fee-bump fails the locked
+    // paymaster re-check, the old tx must NOT have been removed; the sender is
+    // left with the original pending tx, never with neither.
+    //
+    // Setup: balance covers exactly one high-fee tx. The low-fee tx is admitted
+    // first (reserving low_fee * gas). A COMPETING reservation for the SAME
+    // paymaster is then injected directly (a phantom sender, so no nonce
+    // conflict) to push `reserved_pending_cost` up. The fee-bump's adjusted
+    // re-check only excludes the OLD same-nonce tx's reservation, not the
+    // competing one, so availability fails and the bump is rejected. The
+    // injected reservation is marked canonical so it does not consume a
+    // non-canonical slot, isolating the AVAILABILITY rejection from the limit.
+    let low_fee = 100_000_000u64;
+    let high_fee = 200_000_000u64;
+    let gas = funded_frame_tx(high_fee, high_fee).total_gas_limit();
+    // Exactly covers one high-fee tx (high_fee * gas).
+    let balance = U256::from(high_fee) * U256::from(gas);
+    let store = setup_hegota_store_with_balance(balance).await;
+    let blockchain = Blockchain::default_with_store(store);
+
+    let paymaster = Address::from_low_u64_be(FRAME_TX_SELF_SENDER);
+
+    // 1. Admit the low-fee tx normally.
+    let low_tx = Transaction::FrameTransaction(funded_frame_tx(low_fee, low_fee));
+    let old_hash = blockchain
+        .add_transaction_to_pool(low_tx)
+        .await
+        .expect("low-fee frame tx must be admitted");
+
+    // 2. Inject a competing reservation for the SAME paymaster (canonical, so it
+    //    adds to `reserved_pending_cost` without touching the non-canonical
+    //    slot). reserved_cost = 1 is enough: with the old tx's reservation
+    //    excluded, the adjusted reserved is this 1 wei, and
+    //    `balance - 1 < high_fee * gas` fails.
+    let phantom_sender = Address::from_low_u64_be(0xCAFE_F00D);
+    let phantom_frame_tx = FrameTransaction {
+        chain_id: 0,
+        nonce: 7,
+        sender: phantom_sender,
+        frames: vec![Frame {
+            mode: FrameMode::Verify as u8,
+            flags: APPROVE_EXECUTION_AND_PAYMENT,
+            target: Some(phantom_sender),
+            gas_limit: 100,
+            value: U256::zero(),
+            data: Bytes::new(),
+        }],
+        signatures: vec![],
+        max_priority_fee_per_gas: 0,
+        max_fee_per_gas: 0,
+        max_fee_per_blob_gas: U256::zero(),
+        blob_versioned_hashes: vec![],
+        ..Default::default()
+    };
+    let phantom_tx = Transaction::FrameTransaction(phantom_frame_tx);
+    let phantom_hash = phantom_tx.hash(&NativeCrypto);
+    blockchain
+        .mempool
+        .add_transaction(
+            phantom_hash,
+            phantom_sender,
+            MempoolTransaction::new(phantom_tx, phantom_sender),
+            Some(FramePaymasterReservation {
+                paymaster,
+                reserved_cost: U256::from(1u64),
+                is_canonical: true,
+                paymaster_balance: balance,
+            }),
+            None,
+        )
+        .expect("phantom reservation must be directly inserted");
+
+    // 3. Submit the same-nonce fee-bump. The adjusted re-check excludes the old
+    //    tx's reservation but NOT the competing one, so availability fails.
+    let high_tx = Transaction::FrameTransaction(funded_frame_tx(high_fee, high_fee));
+    let result = blockchain.add_transaction_to_pool(high_tx).await;
+    assert!(
+        matches!(result, Err(MempoolError::FrameTxPaymasterUnderfunded)),
+        "fee-bump that does not fit must be rejected with FrameTxPaymasterUnderfunded; got {result:?}"
+    );
+
+    // 4. The original pending tx must still be in the pool (rejection was
+    //    atomic: the old tx was not removed).
+    let old_still_present = blockchain
+        .mempool
+        .contains_tx(old_hash)
+        .expect("contains_tx");
+    assert!(
+        old_still_present,
+        "original pending tx must remain after a rejected fee-bump"
+    );
+}
+
+#[tokio::test]
+async fn mempool_rejects_frame_tx_with_banned_opcode() {
+    // Task 4.2: a frame tx whose VERIFY prefix frame executes TIMESTAMP (0x42)
+    // outside the expiry-verifier context must be rejected with
+    // FrameTxValidationFailed (banned opcode detected by ValidationObserver).
+    //
+    // The sender is seeded with `[0x42, 0xAA, 0x00, ...]` bytecode: TIMESTAMP
+    // pushes a value, then APPROVE(0) (scope 0) is called, then STOP. The
+    // TIMESTAMP fires before APPROVE, so the observer records BannedOpcode(0x42)
+    // and the simulation fails even though APPROVE is reached.
+    //
+    // `approve_code(scope)` = PUSH1 scope, PUSH1 0, PUSH1 0, APPROVE(0xAA), STOP.
+    // We build code that first executes TIMESTAMP (0x42) then falls through to
+    // APPROVE so the payer IS established but the violation fires first.
+    //
+    // Code layout (10 bytes):
+    //   0x42       TIMESTAMP (banned; pushes block.timestamp on stack)
+    //   0x50       POP (clean up the extra stack value)
+    //   0x60 0x03  PUSH1 3 (APPROVE_EXECUTION_AND_PAYMENT scope)
+    //   0x60 0x00  PUSH1 0 (gas hint low)
+    //   0x60 0x00  PUSH1 0 (gas hint high)
+    //   0xAA       APPROVE
+    //   0x00       STOP
+    let timestamp_then_approve = Bytes::from(vec![
+        0x42, // TIMESTAMP (banned)
+        0x50, // POP (remove extra stack item from TIMESTAMP)
+        0x60, 0x03, // PUSH1 3
+        0x60, 0x00, // PUSH1 0
+        0x60, 0x00, // PUSH1 0
+        0xAA, // APPROVE
+        0x00, // STOP
+    ]);
+
+    let sender = Address::from_low_u64_be(FRAME_TX_SELF_SENDER);
+    let genesis = Genesis {
+        config: ChainConfig {
+            chain_id: 0,
+            shanghai_time: Some(0),
+            hegota_time: Some(0),
+            ..Default::default()
+        },
+        gas_limit: 100_000_000,
+        alloc: [(
+            sender,
+            GenesisAccount {
+                code: timestamp_then_approve,
+                storage: BTreeMap::new(),
+                balance: U256::from(10u64).pow(U256::from(18u64)),
+                nonce: 0,
+            },
+        )]
+        .into_iter()
+        .collect(),
+        ..Default::default()
+    };
+    let mut store =
+        Store::new("hegota-banned-opcode-test", EngineType::InMemory).expect("Storage setup");
+    store
+        .add_initial_state(genesis)
+        .await
+        .expect("add genesis state");
+    let blockchain = Blockchain::default_with_store(store);
+
+    let frame_tx = funded_frame_tx(1_000_000_000, 1_000_000_000);
+    let tx = Transaction::FrameTransaction(frame_tx);
+    let result = blockchain.add_transaction_to_pool(tx).await;
+    assert!(
+        matches!(result, Err(MempoolError::FrameTxValidationFailed(_))),
+        "frame tx executing TIMESTAMP in VERIFY prefix must yield FrameTxValidationFailed; got {result:?}"
+    );
+}
+
+#[tokio::test]
+async fn mempool_revalidation_evicts_invalid_frame_tx() {
+    // Task 4.3: exercises the revalidation eviction path via the expiry trigger.
+    //
+    // Setup: use `setup_hegota_store_ts1000` (head.timestamp == 1000) plus a
+    // funded sender balance. The expiry-verifier predeploy is already seeded.
+    // A frame tx with deadline 2000 (future relative to head) plus positive fees
+    // passes admission. After admission the reservation maps are non-empty.
+    //
+    // Revalidation: construct a minimal Block whose header.timestamp == 2001
+    // (strictly greater than deadline 2000). The expiry-eviction branch in
+    // `revalidate_frame_txs_after_block` fires before any state simulation,
+    // evicting the tx and cleaning every reservation map.
+    //
+    // This exercises the revalidation eviction + reservation-cleanup path via
+    // the expiry trigger. A balance/state-change trigger uses the same removal
+    // path (`remove_transaction_with_lock` -> all four maps cleared).
+    let funded_balance = U256::from(10u64).pow(U256::from(18u64));
+    let genesis = Genesis {
+        config: ChainConfig {
+            chain_id: 0,
+            shanghai_time: Some(0),
+            hegota_time: Some(0),
+            ..Default::default()
+        },
+        gas_limit: 100_000_000,
+        timestamp: 1000, // head.timestamp == 1000
+        alloc: [
+            (
+                Address::from_low_u64_be(FRAME_TX_SELF_SENDER),
+                GenesisAccount {
+                    code: approve_code(APPROVE_EXECUTION_AND_PAYMENT),
+                    storage: BTreeMap::new(),
+                    balance: funded_balance,
+                    nonce: 0,
+                },
+            ),
+            (
+                frame_tx_expiry_verifier(),
+                GenesisAccount {
+                    code: Bytes::from_static(&[
+                        0x60, 0x08, 0x36, 0x14, 0x60, 0x0a, 0x57, 0x5f, 0x5f, 0xfd, 0x5b, 0x5f,
+                        0x35, 0x60, 0xc0, 0x1c, 0x42, 0x11, 0x60, 0x16, 0x57, 0x00, 0x5b, 0x5f,
+                        0x5f, 0xfd,
+                    ]),
+                    storage: BTreeMap::new(),
+                    balance: U256::zero(),
+                    nonce: 0,
+                },
+            ),
+        ]
+        .into_iter()
+        .collect(),
+        ..Default::default()
+    };
+    let mut store =
+        Store::new("hegota-revalidation-test", EngineType::InMemory).expect("Storage setup");
+    store
+        .add_initial_state(genesis)
+        .await
+        .expect("add genesis state");
+    let blockchain = Blockchain::default_with_store(store);
+
+    // Build a frame tx with an expiry deadline of 2000 and positive fees.
+    let deadline: u64 = 2000;
+    let sender = Address::from_low_u64_be(FRAME_TX_SELF_SENDER);
+    let mut expiry_tx = frame_tx_with_expiry(deadline);
+    expiry_tx.max_fee_per_gas = 1_000_000_000;
+    expiry_tx.max_priority_fee_per_gas = 1_000_000_000;
+    let tx = Transaction::FrameTransaction(expiry_tx);
+    let tx_hash = blockchain
+        .add_transaction_to_pool(tx)
+        .await
+        .expect("funded expiry frame tx must be admitted");
+
+    // Verify the reservation was recorded (non-zero reserved cost or maps filled).
+    let (sz1, sz2, sz3, sz4) = blockchain
+        .mempool
+        .frame_tracking_map_sizes()
+        .expect("frame_tracking_map_sizes");
+    assert!(
+        sz1 > 0 || sz2 > 0 || sz3 > 0 || sz4 > 0,
+        "at least one tracking map must be non-empty after admission"
+    );
+
+    // Construct a minimal Block with timestamp 2001 (> deadline 2000).
+    // We do NOT need to apply it to the store; the expiry-eviction branch in
+    // `revalidate_frame_txs_after_block` checks `deadline < block.header.timestamp`
+    // and fires before any state-simulation code.
+    let eviction_block = Block::new(
+        BlockHeader {
+            number: 1,
+            timestamp: 2001,
+            gas_limit: 100_000_000,
+            parent_hash: H256::zero(),
+            ..Default::default()
+        },
+        BlockBody::empty(),
+    );
+
+    blockchain
+        .revalidate_frame_txs_after_block(&eviction_block)
+        .expect("revalidate_frame_txs_after_block must not error");
+
+    // The tx must be evicted.
+    let still_present = blockchain
+        .mempool
+        .get_mempool_transaction_by_hash(tx_hash)
+        .expect("get_mempool_transaction_by_hash")
+        .is_some();
+    assert!(
+        !still_present,
+        "frame tx must be evicted after its expiry deadline passes revalidation"
+    );
+
+    // Every reservation map must be empty (reservation cleanup ran).
+    assert_eq!(
+        blockchain
+            .mempool
+            .frame_tracking_map_sizes()
+            .expect("frame_tracking_map_sizes"),
+        (0, 0, 0, 0),
+        "all four frame tracking maps must be empty after eviction"
+    );
+
+    // The sender's reserved cost must be zero.
+    let reserved = blockchain
+        .mempool
+        .reserved_pending_cost(sender)
+        .expect("reserved_pending_cost");
+    assert_eq!(
+        reserved,
+        U256::zero(),
+        "reserved_pending_cost must be zero after eviction"
     );
 }
 
@@ -1139,4 +2476,113 @@ async fn validate_transaction_rejects_pre_prague_eip7702() {
         matches!(res, Err(MempoolError::Eip7702TxPreFork)),
         "pre-Prague type-4 tx must be rejected with Eip7702TxPreFork (got {res:?})"
     );
+}
+
+// `fee-token-l1-tx` (mempool-ingress side): an L1 node must reject L2-only tx
+// types (FeeToken 0x7d, PrivilegedL2 0x7e) at admission — they are valid only on
+// L2 and unknown to other L1 clients. `Blockchain::default_with_store` is an L1
+// node (`BlockchainType::L1`). The L2 acceptance path is covered by the L2
+// integration tests.
+
+#[tokio::test]
+async fn l1_validate_transaction_rejects_fee_token() {
+    let (config, header) = build_basic_config_and_header(false, false);
+    let store = setup_storage(config, header).await.expect("Storage setup");
+    let blockchain = Blockchain::default_with_store(store);
+
+    let tx = Transaction::FeeTokenTransaction(FeeTokenTransaction::default());
+    let res = blockchain
+        .validate_transaction(&tx, Address::random())
+        .await;
+    assert!(
+        matches!(res, Err(MempoolError::L2OnlyTransactionType)),
+        "an L1 node must reject FeeToken (0x7d) at admission (got {res:?})"
+    );
+}
+
+#[tokio::test]
+async fn l1_validate_transaction_rejects_privileged_l2() {
+    let (config, header) = build_basic_config_and_header(false, false);
+    let store = setup_storage(config, header).await.expect("Storage setup");
+    let blockchain = Blockchain::default_with_store(store);
+
+    let tx = Transaction::PrivilegedL2Transaction(PrivilegedL2Transaction::default());
+    let res = blockchain
+        .validate_transaction(&tx, Address::random())
+        .await;
+    assert!(
+        matches!(res, Err(MempoolError::L2OnlyTransactionType)),
+        "an L1 node must reject PrivilegedL2 (0x7e) at admission (got {res:?})"
+    );
+}
+
+// ==================== Relocated from crates/blockchain/blockchain.rs ====================
+// A pooled frame transaction (EIP-8141) must be served over P2P as a
+// `P2PTransaction::FrameTransaction` instead of being rejected.
+mod p2p_serve_tests {
+    use ethrex_blockchain::Blockchain;
+    use ethrex_common::types::{
+        FRAME_SIG_SCHEME_SECP256K1, Frame, FrameMode, FrameSignature, FrameTransaction,
+        MempoolTransaction, P2PTransaction, Transaction,
+    };
+    use ethrex_common::{Address, U256};
+    use ethrex_crypto::NativeCrypto;
+    use ethrex_storage::{EngineType, Store};
+
+    fn make_frame_tx() -> FrameTransaction {
+        FrameTransaction {
+            chain_id: 1,
+            nonce: 7,
+            sender: Address::from_low_u64_be(0xABCD),
+            frames: vec![Frame {
+                mode: FrameMode::Sender as u8,
+                flags: 0x00,
+                target: Some(Address::from_low_u64_be(0x1234)),
+                gas_limit: 100_000,
+                value: U256::zero(),
+                data: bytes::Bytes::from_static(b"call_data"),
+            }],
+            signatures: vec![FrameSignature {
+                scheme: FRAME_SIG_SCHEME_SECP256K1,
+                signer: Address::from_low_u64_be(0xABCD),
+                msg: bytes::Bytes::new(),
+                signature: bytes::Bytes::from(vec![0u8; 65]),
+            }],
+            max_priority_fee_per_gas: 1_000_000_000,
+            max_fee_per_gas: 30_000_000_000,
+            max_fee_per_blob_gas: U256::zero(),
+            blob_versioned_hashes: vec![],
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn get_p2p_transaction_by_hash_serves_frame_tx() {
+        let store = Store::new("", EngineType::InMemory).expect("failed to create in-memory store");
+        let blockchain = Blockchain::default_with_store(store);
+
+        let ftx = make_frame_tx();
+        let tx = Transaction::FrameTransaction(ftx);
+        let sender = Address::from_low_u64_be(0xABCD);
+        let hash = tx.hash(&NativeCrypto);
+
+        // Insert directly into the mempool (bypassing validation) so we
+        // exercise only the P2P serve path.
+        blockchain
+            .mempool
+            .add_transaction(
+                hash,
+                sender,
+                MempoolTransaction::new(tx, sender),
+                None,
+                None,
+            )
+            .expect("failed to add frame tx to mempool");
+
+        let served = blockchain
+            .get_p2p_transaction_by_hash(&hash)
+            .expect("frame tx should be served over P2P");
+        assert!(matches!(served, P2PTransaction::FrameTransaction(_)));
+        assert_eq!(served.compute_hash(), hash);
+    }
 }

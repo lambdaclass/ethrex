@@ -637,8 +637,16 @@ impl GuestProgramState {
             .entry(address)
             .or_insert_with(|| hash_address(&address, crypto));
 
-        let Ok(Some(encoded_state)) = self.state_trie.get(hashed_address.as_bytes()) else {
-            return Ok(None);
+        let encoded_state = match self.state_trie.get(hashed_address.as_bytes()) {
+            // The witness proves the account is absent.
+            Ok(None) => return Ok(None),
+            Ok(Some(encoded_state)) => encoded_state,
+            // A missing trie node means the witness lacks the proof needed to
+            // resolve this account. Surface it as an error rather than silently
+            // treating the account as absent, otherwise a read of an unmodified
+            // account (e.g. a failed CALL's target) would pass replay against an
+            // incomplete witness (EIP-8025 `witness_validation_state` tests).
+            Err(e) => return Err(GuestProgramStateError::Database(e.to_string())),
         };
         let state = AccountState::decode(&encoded_state).map_err(|_| {
             GuestProgramStateError::Database("Failed to get decode account from trie".to_string())

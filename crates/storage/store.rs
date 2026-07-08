@@ -41,6 +41,7 @@ use ethrex_rlp::{
 use ethrex_trie::{EMPTY_TRIE_HASH, Nibbles, Trie, TrieLogger, TrieNode, TrieWitness};
 use ethrex_trie::{Node, NodeRLP};
 use lru::LruCache;
+use rayon::prelude::*;
 use rustc_hash::FxBuildHasher;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -390,6 +391,42 @@ impl Store {
         })
         .await
         .map_err(|e| StoreError::Custom(format!("wait_for_persistence_idle join: {e}")))?
+    }
+
+    /// Flushes all in-memory state to disk for a clean shutdown.
+    ///
+    /// Sends a `Shutdown` handshake to the persist worker, which (being FIFO)
+    /// first drains every queued `Block`, then force-flushes the block-data
+    /// buffer to disk. Once the worker acks, this syncs the backend (memtables +
+    /// WAL) so the next process start needs no WAL recovery.
+    ///
+    /// The in-memory trie diff-layers are intentionally *not* force-committed.
+    /// The on-disk trie is a single-version, path-based store, so folding the
+    /// non-finalized tail into it would leave a post-restart reorg unable to
+    /// reconstruct the overwritten ancestor state (the node would wedge). The
+    /// recent (< `DB_COMMIT_THRESHOLD`) layers are dropped and re-executed on the
+    /// next start from the deep, reorg-safe on-disk base — exactly as after any
+    /// restart today.
+    ///
+    /// After this returns the persist worker has exited; the store must not be
+    /// used for further writes. Idempotent only in the sense that a second call
+    /// errors on the closed channel — call it exactly once, on shutdown.
+    pub async fn shutdown(&self) -> Result<(), StoreError> {
+        let tx = self.persist_tx.clone();
+        let backend = self.backend.clone();
+        tokio::task::spawn_blocking(move || {
+            let (ack_tx, ack_rx) = sync_channel::<Result<(), StoreError>>(1);
+            tx.send(PersistMessage::Shutdown { ack: ack_tx })
+                .map_err(|e| StoreError::Custom(format!("shutdown send: {e}")))?;
+            ack_rx
+                .recv()
+                .map_err(|e| StoreError::Custom(format!("shutdown ack: {e}")))??;
+            // Worker has flushed block data to the WAL/memtables; make it durable
+            // and recovery-free.
+            backend.flush()
+        })
+        .await
+        .map_err(|e| StoreError::Custom(format!("shutdown join: {e}")))?
     }
 
     /// Add a block in a single transaction.
@@ -751,7 +788,10 @@ impl Store {
         receipt: Receipt,
     ) -> Result<(), StoreError> {
         let key = receipt_key(&block_hash, index);
-        let value = receipt.encode_to_vec();
+        // Storage codec (NOT wire/consensus): preserves frame-receipt
+        // `succeeded` + aggregated logs; identical to encode_to_vec for
+        // non-frame receipts.
+        let value = receipt.encode_storage();
         self.write_async(RECEIPTS_V2, key, value).await
     }
 
@@ -766,7 +806,7 @@ impl Store {
             .enumerate()
             .map(|(index, receipt)| {
                 let key = receipt_key(&block_hash, index as u64);
-                let value = receipt.encode_to_vec();
+                let value = receipt.encode_storage();
                 (key, value)
             })
             .collect();
@@ -798,7 +838,7 @@ impl Store {
         let key = receipt_key(&block_hash, index);
         self.read_async(RECEIPTS_V2, key)
             .await?
-            .map(|bytes| Receipt::decode(bytes.as_slice()))
+            .map(|bytes| Receipt::decode_storage(bytes.as_slice()))
             .transpose()
             .map_err(StoreError::from)
     }
@@ -1248,7 +1288,7 @@ impl Store {
                 if k.len() != 40 {
                     continue;
                 }
-                receipts.push(Receipt::decode(v.as_ref())?);
+                receipts.push(Receipt::decode_storage(v.as_ref())?);
                 if let Some(max) = max_count
                     && receipts.len() >= max
                 {
@@ -1892,6 +1932,19 @@ impl Store {
                         // messages are fully processed. Carry the pending flush
                         // result so a live-path failure is not silently dropped.
                         let _ = ack.send(std::mem::replace(&mut last_flush_result, Ok(())));
+                    }
+                    Ok(PersistMessage::Shutdown { ack }) => {
+                        // Graceful shutdown: drain (already guaranteed by FIFO) and
+                        // force-flush the not-yet-flushed block-data tail. The trie
+                        // diff-layers stay in memory and are dropped on exit: the
+                        // on-disk trie is a single-version path store, so committing
+                        // the non-finalized tail would make a post-restart reorg
+                        // unrecoverable. Those layers re-execute on the next start.
+                        let result = flush_block_data(persist_backend.as_ref(), &persist_buffer);
+                        let prior = std::mem::replace(&mut last_flush_result, Ok(()));
+                        let _ = ack.send(prior.and(result));
+                        // No more work will follow a shutdown request.
+                        return;
                     }
                     Err(_) => return,
                 }
@@ -2748,6 +2801,104 @@ impl Store {
         Ok(Some(AccountState::decode(&encoded_state)?))
     }
 
+    /// Batch lookup of account states by address against a given state root.
+    ///
+    /// Fast path: for addresses whose hashed path falls within the FKV cursor
+    /// (and which are not present in the in-memory diff-layer cache), values
+    /// are fetched in a single `multi_get` on `ACCOUNT_FLATKEYVALUE`. Other
+    /// addresses fall back to per-address trie walks.
+    ///
+    /// Results are returned in the same order as the input addresses.
+    pub fn get_account_states_batch_by_root(
+        &self,
+        state_root: H256,
+        addresses: &[Address],
+    ) -> Result<Vec<Option<AccountState>>, StoreError> {
+        if addresses.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let last_written = self.last_written()?;
+        let trie_cache = self
+            .trie_cache
+            .read()
+            .map_err(|_| StoreError::LockError)?
+            .clone();
+
+        let mut results: Vec<Option<AccountState>> = vec![None; addresses.len()];
+        // Per-address leaf paths (nibbles + leaf flag). Length 65.
+        let leaf_paths: Vec<Vec<u8>> = addresses
+            .iter()
+            .map(|addr| {
+                let hashed = hash_address_fixed(addr);
+                Nibbles::from_bytes(hashed.as_bytes()).into_vec()
+            })
+            .collect();
+
+        let mut fkv_indices: Vec<usize> = Vec::new();
+        let mut trie_indices: Vec<usize> = Vec::new();
+
+        // Match `BackendTrieDB::flatkeyvalue_computed` semantics: a path is
+        // covered by FKV iff `last_written >= path` as raw nibble bytes. This
+        // is the same check `Trie::get` uses; the related helper
+        // `Store::flatkeyvalue_computed_with_last_written` slices `[0..64]`
+        // and is intentionally more conservative — using that here would
+        // unnecessarily fall back to the trie when the cursor sits inside an
+        // account's storage sweep (the account leaf is already in FKV at that
+        // point; see `flatkeyvalue_generator`).
+        let fkv_cursor: &[u8] = last_written.as_slice();
+        for (i, path) in leaf_paths.iter().enumerate() {
+            if let Some(value) = trie_cache.get(state_root, path.as_slice()) {
+                if !value.is_empty() {
+                    results[i] = Some(AccountState::decode(&value)?);
+                }
+                continue;
+            }
+            if fkv_cursor >= path.as_slice() {
+                fkv_indices.push(i);
+            } else {
+                trie_indices.push(i);
+            }
+        }
+
+        if !fkv_indices.is_empty() {
+            let read_view = self.backend.begin_read()?;
+            let keys: Vec<&[u8]> = fkv_indices
+                .iter()
+                .map(|&i| leaf_paths[i].as_slice())
+                .collect();
+            let raw = read_view.multi_get(ACCOUNT_FLATKEYVALUE, &keys);
+            for (slot, res) in fkv_indices.iter().zip(raw.into_iter()) {
+                let Some(encoded) = res? else { continue };
+                if encoded.is_empty() {
+                    continue;
+                }
+                results[*slot] = Some(AccountState::decode(&encoded)?);
+            }
+        }
+
+        if !trie_indices.is_empty() {
+            // Fall back to the regular trie path for any addresses whose path
+            // hasn't been swept by the FKV generator yet. Parallelized to
+            // recover the per-address fan-out the pre-batch `par_iter` path
+            // had, which matters during initial sync when most addresses
+            // miss FKV.
+            let state_trie = self.open_state_trie(state_root)?;
+            let fetched: Result<Vec<(usize, Option<AccountState>)>, StoreError> = trie_indices
+                .par_iter()
+                .map(|&i| {
+                    self.get_account_state_from_trie(&state_trie, addresses[i])
+                        .map(|s| (i, s))
+                })
+                .collect();
+            for (i, s) in fetched? {
+                results[i] = s;
+            }
+        }
+
+        Ok(results)
+    }
+
     /// Constructs a merkle proof for the given account address against a given state.
     /// If storage_keys are provided, also constructs the storage proofs for those keys.
     ///
@@ -2936,6 +3087,9 @@ impl Store {
         // Fetch storage trie nodes
         let mut nodes = vec![];
         let mut bytes_used = 0;
+        // The number of sub-paths is bounded upstream by the snap server's per-request lookup
+        // cap (`MAX_SERVE_LOOKUPS`), which truncates the pathset before this call; here the
+        // byte budget only bounds response size.
         for path in paths.iter().skip(1) {
             if bytes_used >= byte_limit {
                 break;
@@ -3268,6 +3422,23 @@ impl Store {
         flush_block_data(self.backend.as_ref(), &self.block_data_buffer)
     }
 
+    /// Read a raw trie node straight from the on-disk account/storage trie-node
+    /// table by its committed key. For testing only — lets a reopen assert which
+    /// trie diff-layers a shutdown flush did (or did not) commit to disk.
+    #[cfg(any(test, feature = "testing"))]
+    pub fn get_trie_node_for_test(
+        &self,
+        is_account: bool,
+        key: &[u8],
+    ) -> Result<Option<Vec<u8>>, StoreError> {
+        let table = if is_account {
+            ACCOUNT_TRIE_NODES
+        } else {
+            STORAGE_TRIE_NODES
+        };
+        self.backend.begin_read()?.get(table, key)
+    }
+
     /// Insert a block plus associated codes into the in-memory buffer without
     /// writing to disk.  For testing only — proves the buffer overlay resolves
     /// code that has not been persisted yet.
@@ -3420,6 +3591,13 @@ struct BlockPersist {
 enum PersistMessage {
     Block(BlockPersist),
     Ping(std::sync::mpsc::SyncSender<Result<(), StoreError>>),
+    /// Graceful-shutdown handshake. Handled only after every earlier `Block`
+    /// (FIFO), so it both drains in-flight work and force-flushes the block-data
+    /// buffer to disk. The trie diff-layers are deliberately left in memory (see
+    /// [`Store::shutdown`]). The worker acks and exits.
+    Shutdown {
+        ack: std::sync::mpsc::SyncSender<Result<(), StoreError>>,
+    },
 }
 
 /// Write one block's header, body, number, and tx locations into an open batch.
@@ -3616,12 +3794,26 @@ fn commit_trie_if_due(
         // Nothing to commit to disk, move on.
         return Ok(());
     };
+    commit_trie_layers(backend, trie_cache, fkv_ctl, &trie, root)
+}
+
+/// Writes the layer at `root` and all of its ancestors to disk in one tx, then
+/// RCU-evicts them from the cache. Used by the per-block "commit when due" path
+/// ([`commit_trie_if_due`]). `trie` is the caller's snapshot of the cache;
+/// `root` must be one of its layer keys.
+fn commit_trie_layers(
+    backend: &dyn StorageBackend,
+    trie_cache: &Arc<RwLock<Arc<TrieLayerCache>>>,
+    fkv_ctl: &SyncSender<FKVGeneratorControlMessage>,
+    trie: &Arc<TrieLayerCache>,
+    root: H256,
+) -> Result<(), StoreError> {
     // Stop the flat-key-value generator thread, as the underlying trie is about to change.
     // Ignore the error, if the channel is closed it means there is no worker to notify.
     let _ = fkv_ctl.send(FKVGeneratorControlMessage::Stop);
 
     // RCU to remove the bottom layer: update step needs to happen after disk layer is updated.
-    let mut trie_mut = (*trie).clone();
+    let mut trie_mut = (**trie).clone();
 
     let last_written = backend
         .begin_read()?
