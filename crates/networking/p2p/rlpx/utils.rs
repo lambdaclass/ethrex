@@ -85,16 +85,23 @@ pub fn snappy_decompress(msg_data: &[u8]) -> Result<Vec<u8>, RLPDecodeError> {
 /// Like [`snappy_decompress`] but rejects a declared decompressed length above `max_len` before
 /// allocating, for messages with a tighter natural bound than the global frame cap. `max_len` is
 /// clamped to [`MAX_SNAPPY_DECOMPRESSED_LEN`] so it can never exceed the global limit.
+///
+/// RLPx uses *raw* (block) snappy, which is one-shot: the block header declares the full
+/// decompressed length and `decompress_vec` produces the whole buffer in a single allocation —
+/// there is no output stream to wrap in a `Read::take(max_len)`. So the bound is enforced here,
+/// at the one point the format exposes the decoded size (the header), rather than by limiting a
+/// stream. A true streaming `.take()` bound would require snappy *frame* format, which is a
+/// different wire encoding and would break peer interop — don't "upgrade" this into one.
 pub fn snappy_decompress_bounded(
     msg_data: &[u8],
     max_len: usize,
 ) -> Result<Vec<u8>, RLPDecodeError> {
     let max_len = max_len.min(MAX_SNAPPY_DECOMPRESSED_LEN);
-    // The decompressed length is a peer-controlled varint at the head of the snappy stream,
-    // and `decompress_vec` allocates a buffer of that size *before* validating the body. A
-    // ~5-byte header can declare up to ~4 GiB, so reject an over-large declared length up
-    // front — otherwise a tiny frame forces a giant allocation (only the compressed frame is
-    // capped elsewhere, not the decoded size).
+    // The declared length is authoritative for raw snappy: `decompress_vec` allocates exactly
+    // this many bytes *before* validating the body, and a body that doesn't decompress to it
+    // fails — so a peer can't declare small then deliver large. Reject an over-large declared
+    // length up front, otherwise a tiny frame forces a giant allocation (only the compressed
+    // frame is capped elsewhere, not the decoded size).
     let declared_len =
         decompress_len(msg_data).map_err(|e| RLPDecodeError::InvalidCompression(e.to_string()))?;
     if declared_len > max_len {
