@@ -1955,7 +1955,13 @@ pub const FRAME_SIG_SCHEME_P256: u8 = 1;
 /// validation prefix. Signature validation counts against this budget (rule #6),
 /// so a frame tx whose `signature_verification_cost()` alone exceeds it can never
 /// satisfy the prefix budget and must be rejected at admission.
-pub const FRAME_TX_MAX_VERIFY_GAS: u64 = 100_000;
+///
+/// This is a mempool-admission bound only (enforced in `validate_prefix_structure`
+/// and the mempool validation-prefix simulation); it is not part of block
+/// execution/consensus. The devnet raises it above the 100_000 spec default to fit
+/// a heavier VERIFY-frame proof check while the real envelope+signature overhead is
+/// benchmarked; revisit before settling the canonical value.
+pub const FRAME_TX_MAX_VERIFY_GAS: u64 = 500_000;
 /// EIP-8141 APPROVE scope-restriction values (bits 0-1 of `Frame.flags`).
 /// Used by VERIFY and PAY frames to declare which capabilities they grant.
 pub const APPROVE_PAYMENT: u8 = 0x1;
