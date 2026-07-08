@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-41ec6044.js";
+            window.path_to_searchindex_js = "searchindex-15465852.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-586b7da3.js"></script>
@@ -8993,9 +8993,9 @@ See <a href="https://steel.ethereum.foundation/docs/execution-specs/mainnet/runn
 <li>Current commit: <code>0921fb7833e3de180eacdc9f26de6e51dcab0dba</code></li>
 </ul>
 </li>
-<li><strong><a href="https://github.com/ethereum/execution-spec-tests">ethereum/execution-spec-tests</a></strong> - Test fixtures and vectors
+<li><strong><a href="https://github.com/ethereum/execution-specs">ethereum/execution-specs</a></strong> - Test fixtures and vectors (the former <code>ethereum/execution-spec-tests</code> repo is archived)
 <ul>
-<li>Current version: <code>bal@v5.5.1</code> (Amsterdam fork support)</li>
+<li>Mainnet: <code>tests@v20.0.0</code> (Osaka + BPO1 + BPO2); Amsterdam: <code>tests-glamsterdam-devnet@v6.1.1</code></li>
 </ul>
 </li>
 <li><strong><a href="https://github.com/ethereum/execution-specs">ethereum/execution-specs</a></strong> - Fork specifications
@@ -9172,30 +9172,33 @@ TEST_PATTERN_EELS=".*fork_Paris.*|.*fork_Shanghai.*|.*fork_Cancun.*"     # Multi
 HIVE_BRANCH ?= master
 </code></pre>
 <h3 id="workflow-configuration-githubworkflowsdaily_hive_reportyaml"><a class="header" href="#workflow-configuration-githubworkflowsdaily_hive_reportyaml">Workflow Configuration (.github/workflows/daily_hive_report.yaml)</a></h3>
-<p>The workflow uses fork-specific fixtures to ensure comprehensive test coverage:</p>
-<pre><code class="language-yaml"># Amsterdam tests use fixtures_bal (includes BAL-specific tests)
+<p>Fixtures come from <a href="https://github.com/ethereum/execution-specs">ethereum/execution-specs</a> (the archived <code>ethereum/execution-spec-tests</code> repo is no longer used). The workflow uses fork-specific fixtures to ensure comprehensive test coverage, pinned via config files under <code>.github/config/hive/</code>:</p>
+<pre><code class="language-yaml"># Amsterdam tests use the glamsterdam-devnet bundle (.github/config/hive/amsterdam.yaml)
 if [[ "$SIM_LIMIT" == *"fork_Amsterdam"* ]]; then
-  FLAGS+=" --sim.buildarg fixtures=https://github.com/ethereum/execution-spec-tests/releases/download/bal%40v6.0.0/fixtures_bal.tar.gz"
-  FLAGS+=" --sim.buildarg branch=devnets/bal/4"
+  FLAGS+=" --sim.buildarg fixtures=$AMSTERDAM_FIXTURES"
+  FLAGS+=" --sim.buildarg branch=$AMSTERDAM_EELS_COMMIT"
 else
-  # Other forks use fixtures_develop (comprehensive coverage including static tests)
-  FLAGS+=" --sim.buildarg fixtures=https://github.com/ethereum/execution-spec-tests/releases/download/v5.3.0/fixtures_develop.tar.gz"
-  FLAGS+=" --sim.buildarg branch=forks/osaka"
+  # Other forks use the mainnet bundle (.github/config/hive/mainnet.yaml),
+  # which includes comprehensive coverage including ported static tests.
+  FLAGS+=" --sim.buildarg fixtures=$MAINNET_FIXTURES"
+  FLAGS+=" --sim.buildarg branch=$MAINNET_EELS_COMMIT"
 fi
 </code></pre>
 <h3 id="fixtures-url-files"><a class="header" href="#fixtures-url-files">Fixtures URL Files</a></h3>
+<p>Local ef_tests runners (blockchain, state, engine) share one set of fixture URL files under <code>tooling/ef_tests/</code>:</p>
 <ul>
-<li><code>tooling/ef_tests/blockchain/.fixtures_url</code> — Used by <code>run-hive-eels</code> Makefile target (non-Amsterdam forks)</li>
-<li><code>tooling/ef_tests/blockchain/.fixtures_url_amsterdam</code> — Amsterdam-specific fixtures with BAL support</li>
+<li><code>tooling/ef_tests/.fixtures_url</code> — mainnet bundle</li>
+<li><code>tooling/ef_tests/.fixtures_url_amsterdam</code> — Amsterdam (glamsterdam-devnet) fixtures with BAL support</li>
+<li><code>tooling/ef_tests/.fixtures_url_zkevm</code> — zkEVM (EIP-8025 stateless) fixtures</li>
 </ul>
 <p>Contents:</p>
 <pre><code># .fixtures_url
-https://github.com/ethereum/execution-spec-tests/releases/download/v5.3.0/fixtures_develop.tar.gz
+https://github.com/ethereum/execution-specs/releases/download/tests%40v20.0.0/fixtures.tar.gz
 
 # .fixtures_url_amsterdam
-https://github.com/ethereum/execution-spec-tests/releases/download/bal%40v6.0.0/fixtures_bal.tar.gz
+https://github.com/ethereum/execution-specs/releases/download/tests-glamsterdam-devnet%40v6.1.1/fixtures_glamsterdam-devnet.tar.gz
 </code></pre>
-<p><strong>Note</strong>: The CI workflow uses <code>fixtures_bal</code> with <code>branch=devnets/bal/4</code> for Amsterdam tests, and <code>fixtures_develop</code> with <code>branch=forks/osaka</code> for other forks.</p>
+<p>The CI hive config lives in <code>.github/config/hive/{mainnet,amsterdam}.yaml</code>, each pinning a <code>fixtures</code> URL and an <code>eels_commit</code> (the execution-specs commit used to build the hive consumer).</p>
 <h2 id="updating-repository-versions"><a class="header" href="#updating-repository-versions">Updating Repository Versions</a></h2>
 <p>To update to a different fork or newer versions:</p>
 <ol>
@@ -9205,22 +9208,19 @@ https://github.com/ethereum/execution-spec-tests/releases/download/bal%40v6.0.0/
 </code></pre>
 </li>
 <li>
-<p><strong>Update execution-spec-tests versions</strong> in <code>.github/workflows/daily_hive_report.yaml</code>:</p>
-<p>For Amsterdam tests (fixtures_bal):</p>
-<pre><code class="language-yaml">FLAGS+=" --sim.buildarg fixtures=https://github.com/ethereum/execution-spec-tests/releases/download/bal%40&lt;version&gt;/fixtures_bal.tar.gz"
-FLAGS+=" --sim.buildarg branch=devnets/bal/4"
+<p><strong>Update the hive fixture versions</strong> in <code>.github/config/hive/</code>:</p>
+<p>For mainnet forks, edit <code>.github/config/hive/mainnet.yaml</code>:</p>
+<pre><code class="language-yaml">fixtures: https://github.com/ethereum/execution-specs/releases/download/tests%40&lt;version&gt;/fixtures.tar.gz
+eels_commit: &lt;execution-specs-commit&gt;
 </code></pre>
-<p>For other forks (fixtures_develop):</p>
-<pre><code class="language-yaml">FLAGS+=" --sim.buildarg fixtures=https://github.com/ethereum/execution-spec-tests/releases/download/v&lt;version&gt;/fixtures_develop.tar.gz"
-FLAGS+=" --sim.buildarg branch=forks/&lt;fork-name&gt;"
-</code></pre>
+<p>For Amsterdam, edit <code>.github/config/hive/amsterdam.yaml</code> the same way with the glamsterdam-devnet bundle.</p>
 </li>
 <li>
-<p><strong>Update fixtures URL files</strong>:</p>
-<pre><code class="language-bash"># For Amsterdam fixtures
-echo "https://github.com/ethereum/execution-spec-tests/releases/download/bal%40&lt;version&gt;/fixtures_bal.tar.gz" &gt; tooling/ef_tests/blockchain/.fixtures_url_amsterdam
-# For other forks
-echo "https://github.com/ethereum/execution-spec-tests/releases/download/v&lt;version&gt;/fixtures_develop.tar.gz" &gt; tooling/ef_tests/blockchain/.fixtures_url
+<p><strong>Update fixtures URL files</strong> shared by the local runners (blockchain / state / engine):</p>
+<pre><code class="language-bash"># Mainnet fixtures
+echo "https://github.com/ethereum/execution-specs/releases/download/tests%40&lt;version&gt;/fixtures.tar.gz" &gt; tooling/ef_tests/.fixtures_url
+# Amsterdam fixtures
+echo "https://github.com/ethereum/execution-specs/releases/download/tests-glamsterdam-devnet%40&lt;version&gt;/fixtures_glamsterdam-devnet.tar.gz" &gt; tooling/ef_tests/.fixtures_url_amsterdam
 </code></pre>
 </li>
 <li>
@@ -9246,7 +9246,7 @@ make setup-hive
 <h3 id="missing-test-fixtures"><a class="header" href="#missing-test-fixtures">Missing Test Fixtures</a></h3>
 <p>If EELS tests fail due to missing fixtures:</p>
 <pre><code class="language-bash"># Verify fixtures URL is accessible
-curl -I $(cat tooling/ef_tests/blockchain/.fixtures_url)
+curl -I $(cat tooling/ef_tests/.fixtures_url)
 
 # Re-download fixtures (they're downloaded automatically during test execution)
 </code></pre>
@@ -9268,7 +9268,7 @@ docker images | grep ethrex
 <h2 id="additional-resources"><a class="header" href="#additional-resources">Additional Resources</a></h2>
 <ul>
 <li><a href="https://github.com/ethereum/hive/blob/master/docs/overview.md">Hive Documentation</a></li>
-<li><a href="https://github.com/ethereum/execution-spec-tests">Execution Spec Tests</a></li>
+<li><a href="https://github.com/ethereum/execution-specs">Execution Specs (test fixtures)</a></li>
 <li><a href="https://github.com/ethereum/execution-apis">Ethereum Execution APIs</a></li>
 <li><a href="https://eips.ethereum.org/EIPS/eip-7928">Amsterdam Fork (Glamsterdam) Details</a></li>
 </ul>
