@@ -104,8 +104,10 @@ from the repo root as `./target/debug/ethrex-zkevm-bench`.
 Each workload in the manifest declares an optional `tier` (`quick` or
 `medium`; absent means `medium`); `--mode` selects which tiers run:
 
-- **`quick`** — only `tier = "quick"` workloads. A fast sanity subset
-  (~5–10 min): one real-block, the micro vector, one stress category.
+- **`quick`** — only `tier = "quick"` workloads: a fast, **committed-only**
+  sanity subset (~5–10 min) of real blocks + a few stress categories, so it
+  needs no downloads (`micro` is deliberately excluded from `quick` because
+  it requires `make zkevm-vectors`).
 - **`medium`** (default) — `quick` plus untagged/`medium`-tagged
   workloads, i.e. the full committed manifest (~1–2 h).
 - **`slow`** — everything `medium` runs, plus (if given) `--stress-dir
