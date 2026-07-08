@@ -10,7 +10,7 @@ const ONE_LIMBS: [u64; 4] = [1u64, 0, 0, 0];
 // Hint-and-verify 256-bit division: the untrusted host supplies (quotient, remainder)
 // correctness q*b + r == a and r < b check by assert
 fn div_rem256(a: &[u64; 4], b: &[u64; 4]) -> ([u64; 4], [u64; 4]) {
-    let (quo, rem) = ziskos::zisklib::fcall_bigint256_div(a, b);
+    let (quo, rem) = ziskos::zisklib::fcall_uint256_div(a, b);
 
     let mut dl = ZERO_LIMBS;
     let mut dh = ZERO_LIMBS;

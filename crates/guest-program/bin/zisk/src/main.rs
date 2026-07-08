@@ -17,7 +17,7 @@ ziskos::entrypoint!(main);
 
 pub fn main() {
     println!("start reading input");
-    let input = ziskos::io::read_vec();
+    let input = ziskos::io::read_input_slice();
 
     #[cfg(not(feature = "eip-8025"))]
     let input = { rkyv::from_bytes::<ProgramInput, Error>(&input).unwrap() };
