@@ -1,0 +1,3245 @@
+{
+  "uid": "client-cmp-validation",
+  "id": null,
+  "title": "L1 Client Comparison \u2014 Mainnet",
+  "tags": [
+    "comparison",
+    "el-clients",
+    "mainnet"
+  ],
+  "timezone": "utc",
+  "schemaVersion": 42,
+  "version": 1,
+  "editable": true,
+  "refresh": "30s",
+  "time": {
+    "from": "now-6h",
+    "to": "now"
+  },
+  "templating": {
+    "list": [
+      {
+        "name": "node",
+        "label": "Client",
+        "type": "custom",
+        "multi": true,
+        "includeAll": true,
+        "allValue": "reth-mainnet-1|nethermind-mainnet-1|geth-mainnet-1|ethrex-mainnet-2",
+        "query": "ethrex : ethrex-mainnet-2, reth : reth-mainnet-1, nethermind : nethermind-mainnet-1, geth : geth-mainnet-1",
+        "current": {
+          "text": "All",
+          "value": "$__all"
+        },
+        "options": [
+          {
+            "text": "All",
+            "value": "$__all",
+            "selected": true
+          },
+          {
+            "text": "ethrex",
+            "value": "ethrex-mainnet-2",
+            "selected": false
+          },
+          {
+            "text": "reth",
+            "value": "reth-mainnet-1",
+            "selected": false
+          },
+          {
+            "text": "nethermind",
+            "value": "nethermind-mainnet-1",
+            "selected": false
+          },
+          {
+            "text": "geth",
+            "value": "geth-mainnet-1",
+            "selected": false
+          }
+        ]
+      }
+    ]
+  },
+  "annotations": {
+    "list": []
+  },
+  "panels": [
+    {
+      "type": "row",
+      "title": "Notes & caveats  (click to expand)",
+      "collapsed": true,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "panels": [
+        {
+          "type": "text",
+          "title": "Notes / caveats",
+          "gridPos": {
+            "h": 11,
+            "w": 24,
+            "x": 0,
+            "y": 1
+          },
+          "options": {
+            "mode": "markdown",
+            "content": "### How to read this dashboard\n\n**Fair block-time (top row) is the reference.** `execution_layer_request_times{method=\"new_payload\"}` is timed by the **same Lighthouse** in front of every EL, so p50/p99 are a true apples-to-apples cross-client comparison (including geth). `forkchoiceUpdated` is shown alongside because clients differ on where state-root / DB-commit happens.\n\n**Per-block panels use NATIVE per-client metrics \u2014 granular, but NOT a fair ranking.** Each client's own metric, normalized to Ggas/s and seconds:\n- **ethrex** \u2014 `gigagas`, `gas_used/(gigagas\u00b71e9)` (total_ms: exec + merkle + store)\n- **reth** \u2014 `\u2026_new_payload_gas_per_second_last`, `\u2026_new_payload_last` (excludes async DB persistence)\n- **nethermind** \u2014 `mgas_per_sec`, `last_block_processing_time_in_ms` (branch exec + state-root)\n- **geth** \u2014 `chain_mgasps`, `chain_inserts` @ `quantile=\"0.5\"` via `last_over_time` (full ProcessBlock; resetting-timer, sparse)\n\nTheir **scopes differ**, so the lines are not directly comparable \u2014 use them for per-client per-block trends, not to rank clients. **X-axis = ethrex head `block_number`** (shared axis; all four follow the same chain at the same head).\n\n**Process & Server Info:** host CPU/RAM from `node_exporter` and per-process CPU / RSS / threads / FDs from **`process-exporter`** (deployed on all 4 nodes, port 9256) \u2014 measured identically for every client **including geth**, on identical hardware (Xeon E-2386G / 62.7 GiB / 2\u00d7NVMe). **Memory (RSS) is a trend, not a leaderboard**: Go/.NET GC lazy-return + Rust/jemalloc arena retention confound steady-state RSS across runtimes.\n\nThe **Client** filter (top-left) applies to every panel; a client missing a given metric is simply skipped for that panel.\n\n> **Fair-panel notes:** the timeseries use a **10-min sliding window**; the *\u2014 range* bargauges aggregate over the **selected time range** \u2014 newPayload fires only ~1/slot (~12s), so a short window would snap the quantile to a single Lighthouse bucket edge (the 50/100/200 ms artifact). Lighthouse buckets are coarse (10/20/50/100/200/500 ms), so **p99 resolution is bucket-limited** (e.g. 151 ms = interpolation inside 100\u2013200). Switching all CLs to **Nimbus** (5/10/25/50/100/250 ms buckets) would sharpen the tail if ever needed."
+          }
+        }
+      ]
+    },
+    {
+      "type": "table",
+      "title": "Execution Client \u2014 version / build (all clients)",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prom-001"
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 24,
+        "x": 0,
+        "y": 1
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "filterable": true,
+            "align": "left"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm"
+      },
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true,
+              "Value": true,
+              "__name__": true,
+              "ethereum_role": true,
+              "module": true,
+              "node_name": true,
+              "job": true
+            },
+            "indexByName": {
+              "client": 0,
+              "instance": 1,
+              "version": 2
+            },
+            "renameByName": {
+              "client": "Client",
+              "instance": "Instance",
+              "version": "Version (client / semver / commit / target / runtime)"
+            }
+          }
+        }
+      ],
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom-001"
+          },
+          "editorMode": "code",
+          "instant": true,
+          "range": false,
+          "format": "table",
+          "refId": "A",
+          "expr": "label_replace(eth_exe_web3_client_version{instance=~\"($node):9093\"}, \"client\", \"$1\", \"instance\", \"([a-z]+)-mainnet.*\")"
+        }
+      ]
+    },
+    {
+      "type": "row",
+      "title": "Fair Block Processing \u2014 engine_newPayload (uniform Lighthouse observer)",
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 7
+      },
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "type": "timeseries",
+      "title": "newPayload avg (ms) \u2014 by client",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prom-001"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 6,
+        "x": 0,
+        "y": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 5,
+            "showPoints": "never"
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "ethrex"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "green"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "reth"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "blue"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "nethermind"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "orange"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "geth"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "purple"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "mean",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "editorMode": "code",
+          "range": true,
+          "legendFormat": "{{client}}",
+          "expr": "label_replace(1000 * (rate(execution_layer_request_times_sum{method=\"new_payload\",instance=~\"($node):5054\"}[10m]) / rate(execution_layer_request_times_count{method=\"new_payload\",instance=~\"($node):5054\"}[10m])), \"client\", \"$1\", \"instance\", \"([a-z]+)-mainnet.*\")"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "newPayload p50 (ms) \u2014 by client",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prom-001"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 6,
+        "x": 6,
+        "y": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 5,
+            "showPoints": "never"
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "ethrex"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "green"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "reth"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "blue"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "nethermind"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "orange"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "geth"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "purple"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "mean",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "editorMode": "code",
+          "range": true,
+          "legendFormat": "{{client}}",
+          "expr": "label_replace(1000*histogram_quantile(0.50, sum by (le,instance)(rate(execution_layer_request_times_bucket{method=\"new_payload\",instance=~\"($node):5054\"}[10m]))), \"client\", \"$1\", \"instance\", \"([a-z]+)-mainnet.*\")"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "newPayload p95 (ms) \u2014 by client",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prom-001"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 6,
+        "x": 12,
+        "y": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 5,
+            "showPoints": "never"
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "ethrex"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "green"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "reth"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "blue"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "nethermind"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "orange"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "geth"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "purple"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "mean",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "editorMode": "code",
+          "range": true,
+          "legendFormat": "{{client}}",
+          "expr": "label_replace(1000*histogram_quantile(0.95, sum by (le,instance)(rate(execution_layer_request_times_bucket{method=\"new_payload\",instance=~\"($node):5054\"}[10m]))), \"client\", \"$1\", \"instance\", \"([a-z]+)-mainnet.*\")"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "newPayload p99 (ms) \u2014 by client",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prom-001"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 6,
+        "x": 18,
+        "y": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 5,
+            "showPoints": "never"
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "ethrex"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "green"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "reth"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "blue"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "nethermind"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "orange"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "geth"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "purple"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "mean",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "editorMode": "code",
+          "range": true,
+          "legendFormat": "{{client}}",
+          "expr": "label_replace(1000*histogram_quantile(0.99, sum by (le,instance)(rate(execution_layer_request_times_bucket{method=\"new_payload\",instance=~\"($node):5054\"}[10m]))), \"client\", \"$1\", \"instance\", \"([a-z]+)-mainnet.*\")"
+        }
+      ]
+    },
+    {
+      "type": "bargauge",
+      "title": "newPayload avg \u2014 range (ms)",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prom-001"
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 6,
+        "x": 0,
+        "y": 16
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "color": {
+            "mode": "continuous-GrYlRd"
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "displayMode": "gradient",
+        "orientation": "horizontal",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "editorMode": "code",
+          "range": false,
+          "legendFormat": "{{client}}",
+          "expr": "sort(label_replace(1000 * (rate(execution_layer_request_times_sum{method=\"new_payload\",instance=~\"($node):5054\"}[$__range]) / rate(execution_layer_request_times_count{method=\"new_payload\",instance=~\"($node):5054\"}[$__range])), \"client\", \"$1\", \"instance\", \"([a-z]+)-mainnet.*\"))",
+          "instant": true
+        }
+      ]
+    },
+    {
+      "type": "bargauge",
+      "title": "newPayload p50 \u2014 range (ms)",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prom-001"
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 6,
+        "x": 6,
+        "y": 16
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "color": {
+            "mode": "continuous-GrYlRd"
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "displayMode": "gradient",
+        "orientation": "horizontal",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "editorMode": "code",
+          "range": false,
+          "legendFormat": "{{client}}",
+          "expr": "sort(label_replace(1000*histogram_quantile(0.50, sum by (le,instance)(rate(execution_layer_request_times_bucket{method=\"new_payload\",instance=~\"($node):5054\"}[$__range]))), \"client\", \"$1\", \"instance\", \"([a-z]+)-mainnet.*\"))",
+          "instant": true
+        }
+      ]
+    },
+    {
+      "type": "bargauge",
+      "title": "newPayload p95 \u2014 range (ms)",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prom-001"
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 6,
+        "x": 12,
+        "y": 16
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "color": {
+            "mode": "continuous-GrYlRd"
+          },
+          "thresholds": {
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 75
+              },
+              {
+                "color": "red",
+                "value": 150
+              }
+            ]
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "displayMode": "gradient",
+        "orientation": "horizontal",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "editorMode": "code",
+          "range": false,
+          "legendFormat": "{{client}}",
+          "expr": "sort(label_replace(1000*histogram_quantile(0.95, sum by (le,instance)(rate(execution_layer_request_times_bucket{method=\"new_payload\",instance=~\"($node):5054\"}[$__range]))), \"client\", \"$1\", \"instance\", \"([a-z]+)-mainnet.*\"))",
+          "instant": true
+        }
+      ]
+    },
+    {
+      "type": "bargauge",
+      "title": "newPayload p99 \u2014 range (ms)",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prom-001"
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 6,
+        "x": 18,
+        "y": 16
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "color": {
+            "mode": "continuous-GrYlRd"
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "displayMode": "gradient",
+        "orientation": "horizontal",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "editorMode": "code",
+          "range": false,
+          "legendFormat": "{{client}}",
+          "expr": "sort(label_replace(1000*histogram_quantile(0.99, sum by (le,instance)(rate(execution_layer_request_times_bucket{method=\"new_payload\",instance=~\"($node):5054\"}[$__range]))), \"client\", \"$1\", \"instance\", \"([a-z]+)-mainnet.*\"))",
+          "instant": true
+        }
+      ]
+    },
+    {
+      "type": "piechart",
+      "title": "Execution win-rate \u2014 share of range with fastest newPayload (fair, Lighthouse)",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prom-001"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 22
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "decimals": 1,
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "ethrex"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "green"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "reth"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "blue"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "nethermind"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "orange"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "geth"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "purple"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "pieType": "donut",
+        "displayLabels": [
+          "percent"
+        ],
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "legend": {
+          "displayMode": "table",
+          "placement": "right",
+          "showLegend": true,
+          "values": [
+            "value",
+            "percent"
+          ]
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom-001"
+          },
+          "editorMode": "code",
+          "instant": true,
+          "range": false,
+          "refId": "A",
+          "legendFormat": "{{client}}",
+          "expr": "100 * avg_over_time( ( label_replace(rate(execution_layer_request_times_sum{method=\"new_payload\",instance=~\"($node):5054\"}[2m]) / rate(execution_layer_request_times_count{method=\"new_payload\",instance=~\"($node):5054\"}[2m]), \"client\", \"$1\", \"instance\", \"([a-z]+)-mainnet.*\") == bool ignoring(client,instance) group_left min without(client,instance)(label_replace(rate(execution_layer_request_times_sum{method=\"new_payload\",instance=~\"($node):5054\"}[2m]) / rate(execution_layer_request_times_count{method=\"new_payload\",instance=~\"($node):5054\"}[2m]), \"client\", \"$1\", \"instance\", \"([a-z]+)-mainnet.*\")) )[$__range:1m] )"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Win-share over time (rolling 30m)",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prom-001"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 22
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 0,
+          "max": 100,
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 60,
+            "showPoints": "never",
+            "stacking": {
+              "mode": "normal",
+              "group": "A"
+            }
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "ethrex"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "green"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "reth"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "blue"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "nethermind"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "orange"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "geth"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "purple"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "calcs": [
+            "mean"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom-001"
+          },
+          "editorMode": "code",
+          "instant": false,
+          "range": true,
+          "refId": "A",
+          "legendFormat": "{{client}}",
+          "expr": "100 * avg_over_time( ( label_replace(rate(execution_layer_request_times_sum{method=\"new_payload\",instance=~\"($node):5054\"}[2m]) / rate(execution_layer_request_times_count{method=\"new_payload\",instance=~\"($node):5054\"}[2m]), \"client\", \"$1\", \"instance\", \"([a-z]+)-mainnet.*\") == bool ignoring(client,instance) group_left min without(client,instance)(label_replace(rate(execution_layer_request_times_sum{method=\"new_payload\",instance=~\"($node):5054\"}[2m]) / rate(execution_layer_request_times_count{method=\"new_payload\",instance=~\"($node):5054\"}[2m]), \"client\", \"$1\", \"instance\", \"([a-z]+)-mainnet.*\")) )[30m:1m] )"
+        }
+      ]
+    },
+    {
+      "type": "row",
+      "title": "Per-Block Throughput & Latency (NATIVE per-client metrics \u2014 scope differs, NOT the fair reference above)",
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 28
+      },
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "type": "xychart",
+      "title": "Ggas/s by block (all clients)",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prom-001"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 29
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "fillOpacity": 50,
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "pointShape": "circle",
+            "pointSize": {
+              "fixed": 7
+            },
+            "pointStrokeWidth": 1,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "show": "points+lines"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": 0
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          },
+          "unit": "si:Ggas/s"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Block"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "none"
+              },
+              {
+                "id": "decimals",
+                "value": 0
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "ethrex"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "green"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "reth"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "blue"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "nethermind"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "orange"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "geth"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "purple"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "calcs": [
+            "mean",
+            "max",
+            "last"
+          ],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "mapping": "auto",
+        "series": [
+          {
+            "frame": {
+              "matcher": {
+                "id": "byIndex",
+                "options": 0
+              }
+            },
+            "x": {
+              "matcher": {
+                "id": "byName",
+                "options": "Block"
+              }
+            },
+            "y": {
+              "matcher": {
+                "id": "byName",
+                "options": "ethrex"
+              }
+            }
+          },
+          {
+            "frame": {
+              "matcher": {
+                "id": "byIndex",
+                "options": 0
+              }
+            },
+            "x": {
+              "matcher": {
+                "id": "byName",
+                "options": "Block"
+              }
+            },
+            "y": {
+              "matcher": {
+                "id": "byName",
+                "options": "reth"
+              }
+            }
+          },
+          {
+            "frame": {
+              "matcher": {
+                "id": "byIndex",
+                "options": 0
+              }
+            },
+            "x": {
+              "matcher": {
+                "id": "byName",
+                "options": "Block"
+              }
+            },
+            "y": {
+              "matcher": {
+                "id": "byName",
+                "options": "nethermind"
+              }
+            }
+          },
+          {
+            "frame": {
+              "matcher": {
+                "id": "byIndex",
+                "options": 0
+              }
+            },
+            "x": {
+              "matcher": {
+                "id": "byName",
+                "options": "Block"
+              }
+            },
+            "y": {
+              "matcher": {
+                "id": "byName",
+                "options": "geth"
+              }
+            }
+          }
+        ],
+        "tooltip": {
+          "hideZeros": false,
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "transformations": [
+        {
+          "id": "joinByField",
+          "options": {
+            "byField": "Time",
+            "mode": "outer"
+          }
+        }
+      ],
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom-001"
+          },
+          "editorMode": "code",
+          "instant": false,
+          "range": true,
+          "refId": "ethrex",
+          "legendFormat": "ethrex",
+          "expr": "gigagas{job=~\"ethrex L1\", instance=~\"ethrex-mainnet-2(:\\\\d+)?$\", instance=~\"($node):.*\"}"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom-001"
+          },
+          "editorMode": "code",
+          "instant": false,
+          "range": true,
+          "refId": "reth",
+          "legendFormat": "reth",
+          "expr": "reth_consensus_engine_beacon_new_payload_gas_per_second_last{instance=~\"reth-mainnet-1:.*\", instance=~\"($node):.*\"} / 1e9"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom-001"
+          },
+          "editorMode": "code",
+          "instant": false,
+          "range": true,
+          "refId": "nethermind",
+          "legendFormat": "nethermind",
+          "expr": "max by (instance)(nethermind_mgas_per_sec{instance=~\"nethermind-mainnet-1:.*\", instance=~\"($node):.*\"}) / 1000"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom-001"
+          },
+          "editorMode": "code",
+          "instant": false,
+          "range": true,
+          "refId": "geth",
+          "legendFormat": "geth",
+          "expr": "last_over_time(chain_mgasps{instance=~\"geth-mainnet-1:.*\", instance=~\"($node):.*\", quantile=\"0.5\"}[$__rate_interval]) / 1000"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom-001"
+          },
+          "editorMode": "code",
+          "instant": false,
+          "range": true,
+          "refId": "Block",
+          "legendFormat": "Block",
+          "expr": "block_number{job=~\"ethrex L1\", instance=~\"ethrex-mainnet-2(:\\\\d+)?$\"}"
+        }
+      ],
+      "interval": "5s",
+      "pluginVersion": "12.2.1"
+    },
+    {
+      "type": "xychart",
+      "title": "Block time by block (all clients)",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prom-001"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 29
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "fillOpacity": 50,
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "pointShape": "circle",
+            "pointSize": {
+              "fixed": 7
+            },
+            "pointStrokeWidth": 1,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "show": "points+lines"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": 0
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          },
+          "unit": "s"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Block"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "none"
+              },
+              {
+                "id": "decimals",
+                "value": 0
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "ethrex"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "green"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "reth"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "blue"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "nethermind"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "orange"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "geth"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "purple"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "calcs": [
+            "mean",
+            "max",
+            "last"
+          ],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "mapping": "auto",
+        "series": [
+          {
+            "frame": {
+              "matcher": {
+                "id": "byIndex",
+                "options": 0
+              }
+            },
+            "x": {
+              "matcher": {
+                "id": "byName",
+                "options": "Block"
+              }
+            },
+            "y": {
+              "matcher": {
+                "id": "byName",
+                "options": "ethrex"
+              }
+            }
+          },
+          {
+            "frame": {
+              "matcher": {
+                "id": "byIndex",
+                "options": 0
+              }
+            },
+            "x": {
+              "matcher": {
+                "id": "byName",
+                "options": "Block"
+              }
+            },
+            "y": {
+              "matcher": {
+                "id": "byName",
+                "options": "reth"
+              }
+            }
+          },
+          {
+            "frame": {
+              "matcher": {
+                "id": "byIndex",
+                "options": 0
+              }
+            },
+            "x": {
+              "matcher": {
+                "id": "byName",
+                "options": "Block"
+              }
+            },
+            "y": {
+              "matcher": {
+                "id": "byName",
+                "options": "nethermind"
+              }
+            }
+          },
+          {
+            "frame": {
+              "matcher": {
+                "id": "byIndex",
+                "options": 0
+              }
+            },
+            "x": {
+              "matcher": {
+                "id": "byName",
+                "options": "Block"
+              }
+            },
+            "y": {
+              "matcher": {
+                "id": "byName",
+                "options": "geth"
+              }
+            }
+          }
+        ],
+        "tooltip": {
+          "hideZeros": false,
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "transformations": [
+        {
+          "id": "joinByField",
+          "options": {
+            "byField": "Time",
+            "mode": "outer"
+          }
+        }
+      ],
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom-001"
+          },
+          "editorMode": "code",
+          "instant": false,
+          "range": true,
+          "refId": "ethrex",
+          "legendFormat": "ethrex",
+          "expr": "sum by (instance)(gas_used{job=~\"ethrex L1\", instance=~\"ethrex-mainnet-2(:\\\\d+)?$\", instance=~\"($node):.*\"}) / on(instance) (sum by (instance)(gigagas{job=~\"ethrex L1\", instance=~\"ethrex-mainnet-2(:\\\\d+)?$\", instance=~\"($node):.*\"}) * 1000000000)"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom-001"
+          },
+          "editorMode": "code",
+          "instant": false,
+          "range": true,
+          "refId": "reth",
+          "legendFormat": "reth",
+          "expr": "reth_consensus_engine_beacon_new_payload_last{instance=~\"reth-mainnet-1:.*\", instance=~\"($node):.*\"}"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom-001"
+          },
+          "editorMode": "code",
+          "instant": false,
+          "range": true,
+          "refId": "nethermind",
+          "legendFormat": "nethermind",
+          "expr": "max by (instance)(nethermind_last_block_processing_time_in_ms{instance=~\"nethermind-mainnet-1:.*\", instance=~\"($node):.*\"}) / 1000"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom-001"
+          },
+          "editorMode": "code",
+          "instant": false,
+          "range": true,
+          "refId": "geth",
+          "legendFormat": "geth",
+          "expr": "last_over_time(chain_inserts{instance=~\"geth-mainnet-1:.*\", instance=~\"($node):.*\", quantile=\"0.5\"}[$__rate_interval]) / 1e9"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom-001"
+          },
+          "editorMode": "code",
+          "instant": false,
+          "range": true,
+          "refId": "Block",
+          "legendFormat": "Block",
+          "expr": "block_number{job=~\"ethrex L1\", instance=~\"ethrex-mainnet-2(:\\\\d+)?$\"}"
+        }
+      ],
+      "interval": "5s",
+      "pluginVersion": "12.2.1"
+    },
+    {
+      "type": "bargauge",
+      "title": "Ggas/s avg \u2014 range (native, scope differs)",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prom-001"
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 6,
+        "x": 0,
+        "y": 37
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "decimals": 2,
+          "min": 0,
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "ethrex"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "green"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "reth"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "blue"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "nethermind"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "orange"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "geth"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "purple"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "displayMode": "gradient",
+        "orientation": "horizontal",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom-001"
+          },
+          "editorMode": "code",
+          "instant": true,
+          "range": false,
+          "refId": "A",
+          "legendFormat": "{{client}}",
+          "expr": "sort_desc(\nlabel_replace(avg_over_time(gigagas{job=~\"ethrex L1\", instance=~\"ethrex-mainnet-2(:\\\\d+)?$\", instance=~\"($node):.*\"}[$__range]), \"client\", \"$1\", \"instance\", \"([a-z]+)-mainnet.*\")\nor label_replace(avg_over_time(reth_consensus_engine_beacon_new_payload_gas_per_second_last{instance=~\"reth-mainnet-1:.*\", instance=~\"($node):.*\"}[$__range]) / 1e9, \"client\", \"$1\", \"instance\", \"([a-z]+)-mainnet.*\")\nor label_replace(max by (instance)(avg_over_time(nethermind_mgas_per_sec{instance=~\"nethermind-mainnet-1:.*\", instance=~\"($node):.*\"}[$__range])) / 1000, \"client\", \"$1\", \"instance\", \"([a-z]+)-mainnet.*\")\nor label_replace(avg_over_time(chain_mgasps{instance=~\"geth-mainnet-1:.*\", instance=~\"($node):.*\", quantile=\"0.5\"}[$__range]) / 1000, \"client\", \"$1\", \"instance\", \"([a-z]+)-mainnet.*\")\n)"
+        }
+      ]
+    },
+    {
+      "type": "bargauge",
+      "title": "Ggas/s p50 \u2014 range (native, scope differs)",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prom-001"
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 6,
+        "x": 6,
+        "y": 37
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "decimals": 2,
+          "min": 0,
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "ethrex"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "green"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "reth"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "blue"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "nethermind"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "orange"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "geth"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "purple"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "displayMode": "gradient",
+        "orientation": "horizontal",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom-001"
+          },
+          "editorMode": "code",
+          "instant": true,
+          "range": false,
+          "refId": "A",
+          "legendFormat": "{{client}}",
+          "expr": "sort_desc(\nlabel_replace(quantile_over_time(0.50, gigagas{job=~\"ethrex L1\", instance=~\"ethrex-mainnet-2(:\\\\d+)?$\", instance=~\"($node):.*\"}[$__range]), \"client\", \"$1\", \"instance\", \"([a-z]+)-mainnet.*\")\nor label_replace(quantile_over_time(0.50, reth_consensus_engine_beacon_new_payload_gas_per_second_last{instance=~\"reth-mainnet-1:.*\", instance=~\"($node):.*\"}[$__range]) / 1e9, \"client\", \"$1\", \"instance\", \"([a-z]+)-mainnet.*\")\nor label_replace(max by (instance)(quantile_over_time(0.50, nethermind_mgas_per_sec{instance=~\"nethermind-mainnet-1:.*\", instance=~\"($node):.*\"}[$__range])) / 1000, \"client\", \"$1\", \"instance\", \"([a-z]+)-mainnet.*\")\nor label_replace(quantile_over_time(0.50, chain_mgasps{instance=~\"geth-mainnet-1:.*\", instance=~\"($node):.*\", quantile=\"0.5\"}[$__range]) / 1000, \"client\", \"$1\", \"instance\", \"([a-z]+)-mainnet.*\")\n)"
+        }
+      ]
+    },
+    {
+      "type": "bargauge",
+      "title": "Ggas/s p95 \u2014 range (native, scope differs)",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prom-001"
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 6,
+        "x": 12,
+        "y": 37
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "decimals": 2,
+          "min": 0,
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "ethrex"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "green"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "reth"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "blue"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "nethermind"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "orange"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "geth"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "purple"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "displayMode": "gradient",
+        "orientation": "horizontal",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom-001"
+          },
+          "editorMode": "code",
+          "instant": true,
+          "range": false,
+          "refId": "A",
+          "legendFormat": "{{client}}",
+          "expr": "sort_desc(\nlabel_replace(quantile_over_time(0.95, gigagas{job=~\"ethrex L1\", instance=~\"ethrex-mainnet-2(:\\\\d+)?$\", instance=~\"($node):.*\"}[$__range]), \"client\", \"$1\", \"instance\", \"([a-z]+)-mainnet.*\")\nor label_replace(quantile_over_time(0.95, reth_consensus_engine_beacon_new_payload_gas_per_second_last{instance=~\"reth-mainnet-1:.*\", instance=~\"($node):.*\"}[$__range]) / 1e9, \"client\", \"$1\", \"instance\", \"([a-z]+)-mainnet.*\")\nor label_replace(max by (instance)(quantile_over_time(0.95, nethermind_mgas_per_sec{instance=~\"nethermind-mainnet-1:.*\", instance=~\"($node):.*\"}[$__range])) / 1000, \"client\", \"$1\", \"instance\", \"([a-z]+)-mainnet.*\")\nor label_replace(quantile_over_time(0.95, chain_mgasps{instance=~\"geth-mainnet-1:.*\", instance=~\"($node):.*\", quantile=\"0.5\"}[$__range]) / 1000, \"client\", \"$1\", \"instance\", \"([a-z]+)-mainnet.*\")\n)"
+        }
+      ]
+    },
+    {
+      "type": "bargauge",
+      "title": "Ggas/s p99 \u2014 range (native, scope differs)",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prom-001"
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 6,
+        "x": 18,
+        "y": 37
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "decimals": 2,
+          "min": 0,
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "ethrex"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "green"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "reth"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "blue"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "nethermind"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "orange"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "geth"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "purple"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "displayMode": "gradient",
+        "orientation": "horizontal",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom-001"
+          },
+          "editorMode": "code",
+          "instant": true,
+          "range": false,
+          "refId": "A",
+          "legendFormat": "{{client}}",
+          "expr": "sort_desc(\nlabel_replace(quantile_over_time(0.99, gigagas{job=~\"ethrex L1\", instance=~\"ethrex-mainnet-2(:\\\\d+)?$\", instance=~\"($node):.*\"}[$__range]), \"client\", \"$1\", \"instance\", \"([a-z]+)-mainnet.*\")\nor label_replace(quantile_over_time(0.99, reth_consensus_engine_beacon_new_payload_gas_per_second_last{instance=~\"reth-mainnet-1:.*\", instance=~\"($node):.*\"}[$__range]) / 1e9, \"client\", \"$1\", \"instance\", \"([a-z]+)-mainnet.*\")\nor label_replace(max by (instance)(quantile_over_time(0.99, nethermind_mgas_per_sec{instance=~\"nethermind-mainnet-1:.*\", instance=~\"($node):.*\"}[$__range])) / 1000, \"client\", \"$1\", \"instance\", \"([a-z]+)-mainnet.*\")\nor label_replace(quantile_over_time(0.99, chain_mgasps{instance=~\"geth-mainnet-1:.*\", instance=~\"($node):.*\", quantile=\"0.5\"}[$__range]) / 1000, \"client\", \"$1\", \"instance\", \"([a-z]+)-mainnet.*\")\n)"
+        }
+      ]
+    },
+    {
+      "type": "row",
+      "title": "Chain Head & Peers (ethereum-metrics-exporter \u2014 client-agnostic)",
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 44
+      },
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "type": "timeseries",
+      "title": "Head block number",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prom-001"
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 8,
+        "x": 0,
+        "y": 45
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "decimals": 0,
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "showPoints": "never"
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "ethrex"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "green"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "reth"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "blue"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "nethermind"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "orange"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "geth"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "purple"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "editorMode": "code",
+          "range": true,
+          "legendFormat": "{{client}}",
+          "expr": "label_replace(eth_exe_block_most_recent_number{instance=~\"($node):9093\"}, \"client\", \"$1\", \"instance\", \"([a-z]+)-mainnet.*\")"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Gas used (head block) \u2014 same chain, sanity",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prom-001"
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 8,
+        "x": 8,
+        "y": 45
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "showPoints": "never"
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "ethrex"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "green"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "reth"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "blue"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "nethermind"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "orange"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "geth"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "purple"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "editorMode": "code",
+          "range": true,
+          "legendFormat": "{{client}}",
+          "expr": "label_replace(eth_exe_block_head_gas_used{instance=~\"($node):9093\"}, \"client\", \"$1\", \"instance\", \"([a-z]+)-mainnet.*\")"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Peer count",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prom-001"
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 8,
+        "x": 16,
+        "y": 45
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "decimals": 0,
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "showPoints": "never"
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "ethrex"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "green"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "reth"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "blue"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "nethermind"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "orange"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "geth"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "purple"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "editorMode": "code",
+          "range": true,
+          "legendFormat": "{{client}}",
+          "expr": "label_replace(eth_exe_net_peer_count{instance=~\"($node):9093\"}, \"client\", \"$1\", \"instance\", \"([a-z]+)-mainnet.*\")"
+        }
+      ]
+    },
+    {
+      "type": "row",
+      "title": "Process & Server Info  (per-process = native, incomplete; host = node_exporter, uniform)",
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 52
+      },
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "type": "timeseries",
+      "title": "Node CPU (cores used) \u2014 per client (process-exporter)",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prom-001"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 53
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 5,
+            "showPoints": "never"
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "ethrex"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "green"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "reth"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "blue"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "nethermind"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "orange"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "geth"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "purple"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom-001"
+          },
+          "editorMode": "code",
+          "instant": false,
+          "range": true,
+          "refId": "A",
+          "legendFormat": "{{groupname}}",
+          "expr": "sum by (groupname)(rate(namedprocess_namegroup_cpu_seconds_total{groupname=~\"ethrex|reth|nethermind|geth\", instance=~\"($node):9256\"}[$__rate_interval]))"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Node Memory (RSS) \u2014 per client (process-exporter); TREND not leaderboard",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prom-001"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 53
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 5,
+            "showPoints": "never"
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "ethrex"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "green"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "reth"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "blue"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "nethermind"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "orange"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "geth"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "purple"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom-001"
+          },
+          "editorMode": "code",
+          "instant": false,
+          "range": true,
+          "refId": "A",
+          "legendFormat": "{{groupname}}",
+          "expr": "namedprocess_namegroup_memory_bytes{memtype=\"resident\", groupname=~\"ethrex|reth|nethermind|geth\", instance=~\"($node):9256\"}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Host CPU utilization (%)",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prom-001"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 61
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 0,
+          "max": 100,
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 5,
+            "showPoints": "never"
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "ethrex"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "green"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "reth"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "blue"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "nethermind"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "orange"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "geth"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "purple"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "mean",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "editorMode": "code",
+          "range": true,
+          "legendFormat": "{{client}}",
+          "expr": "label_replace(100 * sum by (instance)(rate(node_cpu_seconds_total{mode!=\"idle\",instance=~\"($node):9122\"}[$__rate_interval])) / sum by (instance)(rate(node_cpu_seconds_total{instance=~\"($node):9122\"}[$__rate_interval])), \"client\", \"$1\", \"instance\", \"([a-z]+)-mainnet.*\")"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Host RAM used (bytes)",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prom-001"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 61
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 5,
+            "showPoints": "never"
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "ethrex"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "green"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "reth"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "blue"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "nethermind"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "orange"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "geth"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "purple"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "editorMode": "code",
+          "range": true,
+          "legendFormat": "{{client}}",
+          "expr": "label_replace(node_memory_MemTotal_bytes{instance=~\"($node):9122\"} - node_memory_MemAvailable_bytes{instance=~\"($node):9122\"}, \"client\", \"$1\", \"instance\", \"([a-z]+)-mainnet.*\")"
+        }
+      ]
+    },
+    {
+      "type": "stat",
+      "title": "EL process uptime",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prom-001"
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 8,
+        "x": 0,
+        "y": 69
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "ethrex"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "green"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "reth"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "blue"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "nethermind"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "orange"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "geth"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "purple"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "orientation": "horizontal",
+        "textMode": "value_and_name",
+        "colorMode": "value"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom-001"
+          },
+          "editorMode": "code",
+          "instant": true,
+          "range": false,
+          "refId": "A",
+          "legendFormat": "{{groupname}}",
+          "expr": "time() - namedprocess_namegroup_oldest_start_time_seconds{groupname=~\"ethrex|reth|nethermind|geth\", instance=~\"($node):9256\"}"
+        }
+      ]
+    },
+    {
+      "type": "stat",
+      "title": "Threads (process-exporter)",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prom-001"
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 8,
+        "x": 8,
+        "y": 69
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "ethrex"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "green"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "reth"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "blue"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "nethermind"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "orange"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "geth"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "purple"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "orientation": "horizontal",
+        "textMode": "value_and_name",
+        "colorMode": "value"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom-001"
+          },
+          "editorMode": "code",
+          "instant": true,
+          "range": false,
+          "refId": "A",
+          "legendFormat": "{{groupname}}",
+          "expr": "namedprocess_namegroup_num_threads{groupname=~\"ethrex|reth|nethermind|geth\", instance=~\"($node):9256\"}"
+        }
+      ]
+    },
+    {
+      "type": "stat",
+      "title": "Open FDs (process-exporter)",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prom-001"
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 8,
+        "x": 16,
+        "y": 69
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "ethrex"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "green"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "reth"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "blue"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "nethermind"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "orange"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "geth"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "purple"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "orientation": "horizontal",
+        "textMode": "value_and_name",
+        "colorMode": "value"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom-001"
+          },
+          "editorMode": "code",
+          "instant": true,
+          "range": false,
+          "refId": "A",
+          "legendFormat": "{{groupname}}",
+          "expr": "namedprocess_namegroup_open_filedesc{groupname=~\"ethrex|reth|nethermind|geth\", instance=~\"($node):9256\"}"
+        }
+      ]
+    }
+  ]
+}
