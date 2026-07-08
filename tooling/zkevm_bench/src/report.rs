@@ -20,6 +20,11 @@ pub struct WorkloadResult {
     pub gas: Option<u64>,
     pub air_cost: AirCost,
     pub steps: u64,
+    /// Guest's peak zkVM memory footprint in bytes (ziskemu `RAM USAGE`).
+    /// A footprint measurement, not a proving-cost component — distinct
+    /// from `air_cost.memory`, which is the AIR cost of memory opcodes.
+    #[serde(default)]
+    pub zkvm_ram_bytes: u64,
     pub guest_output_ok: bool,
 }
 
@@ -78,6 +83,7 @@ mod tests {
                     total: 15,
                 },
                 steps: 42,
+                zkvm_ram_bytes: 7_304_122,
                 guest_output_ok: true,
             }],
         };
@@ -85,6 +91,7 @@ mod tests {
         let back: Report = serde_json::from_str(&json).unwrap();
         assert_eq!(back.workloads.len(), 1);
         assert_eq!(back.workloads[0].air_cost.total, 15);
+        assert_eq!(back.workloads[0].zkvm_ram_bytes, 7_304_122);
         assert_eq!(back.meta.zisk_version, "v0.16.1");
     }
 }

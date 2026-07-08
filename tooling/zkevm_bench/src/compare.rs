@@ -85,6 +85,7 @@ mod tests {
                 ..Default::default()
             },
             steps: total,
+            zkvm_ram_bytes: 0,
             guest_output_ok: true,
         }
     }

@@ -10,6 +10,10 @@ pub struct ZiskAirCost {
     pub memory: u64,
     pub total: u64,
     pub steps: u64,
+    /// Guest's peak zkVM memory footprint in bytes, from ziskemu's `RAM
+    /// USAGE` line. This is a footprint measurement, not a proving-cost
+    /// component (unlike `memory`, the AIR cost of memory opcodes).
+    pub ram_usage: u64,
 }
 
 /// Parses a comma-grouped integer token (e.g. `"4,930,197,804"`) into a `u64`.
@@ -19,12 +23,17 @@ fn parse_cost_token(token: &str) -> Option<u64> {
 
 /// Parses the `COST DISTRIBUTION` summary block out of raw `ziskemu` stdout.
 ///
-/// Only the exact first whitespace-separated token of each line is matched
-/// against the summary labels, and the second token (with `,` grouping
-/// separators stripped) is taken as the value. This keeps the parser immune
-/// to the detailed per-opcode tables that follow the summary in the real
-/// output (e.g. lines starting with `OP`, `COST BY OPCODE`, or `FROPS`),
-/// since their first token never matches a summary label.
+/// The exact first whitespace-separated token of each line is matched
+/// against the summary labels. The value is then taken as the *first*
+/// remaining whitespace token on that line that parses as a `u64` once `,`
+/// grouping separators are stripped. A single extraction rule this way
+/// serves both single-word labels (`BASE 293,601,280 5.96%`, where the
+/// trailing percentage's `.` makes it fail to parse and get skipped) and the
+/// two-word `RAM USAGE` label (where `USAGE` fails to parse and gets
+/// skipped, leaving `7,304,122` as the value). This also keeps the parser
+/// immune to the detailed per-opcode tables that follow the summary in the
+/// real output (e.g. lines starting with `OP`, `COST BY OPCODE`, or
+/// `FROPS`), since their first token never matches a summary label.
 pub fn parse_air_cost(stdout: &str) -> Result<ZiskAirCost, BackendError> {
     let mut air_cost = ZiskAirCost::default();
     let mut found_component = false;
@@ -34,10 +43,7 @@ pub fn parse_air_cost(stdout: &str) -> Result<ZiskAirCost, BackendError> {
         let Some(label) = tokens.next() else {
             continue;
         };
-        let Some(value_token) = tokens.next() else {
-            continue;
-        };
-        let Some(value) = parse_cost_token(value_token) else {
+        let Some(value) = tokens.filter_map(parse_cost_token).next() else {
             continue;
         };
 
@@ -64,6 +70,7 @@ pub fn parse_air_cost(stdout: &str) -> Result<ZiskAirCost, BackendError> {
                 found_component = true;
             }
             "TOTAL" => air_cost.total = value,
+            "RAM" => air_cost.ram_usage = value,
             _ => {}
         }
     }
@@ -95,6 +102,7 @@ mod tests {
         assert_eq!(ac.precompiles, 937_548_926);
         assert_eq!(ac.memory, 495_887_679);
         assert_eq!(ac.total, 4_930_197_804);
+        assert_eq!(ac.ram_usage, 7_304_122);
         // invariant: components sum to total
         assert_eq!(
             ac.total,

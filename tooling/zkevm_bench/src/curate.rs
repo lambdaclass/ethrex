@@ -21,6 +21,8 @@ struct CurationRow {
     air_precompiles: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     air_memory: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    air_ram: Option<u64>,
 }
 
 /// True if `address` falls in the reserved precompile range `0x01..=0x0a`
@@ -63,17 +65,22 @@ fn curate_one(
     let tx_count = first_block.body.transactions.len();
     let precompile_txs = count_precompile_txs(&first_block.body.transactions);
 
-    let (air_total, air_precompiles, air_memory) = if ziskemu {
+    let (air_total, air_precompiles, air_memory, air_ram) = if ziskemu {
         let input = cache_to_program_input(cache)?;
         match backend.execute_profiled(input) {
-            Ok(z) => (Some(z.total), Some(z.precompiles), Some(z.memory)),
+            Ok(z) => (
+                Some(z.total),
+                Some(z.precompiles),
+                Some(z.memory),
+                Some(z.ram_usage),
+            ),
             Err(e) => {
                 eprintln!("{name}: ziskemu execution failed: {e}");
-                (None, None, None)
+                (None, None, None, None)
             }
         }
     } else {
-        (None, None, None)
+        (None, None, None, None)
     };
 
     Ok(CurationRow {
@@ -86,6 +93,7 @@ fn curate_one(
         air_total,
         air_precompiles,
         air_memory,
+        air_ram,
     })
 }
 

@@ -48,11 +48,11 @@ pub fn run_bench(
                 .execute_profiled(input)
                 .map_err(|e| eyre::eyre!("{e}"))
         })();
-        let (air, steps, ok) = match result {
-            Ok(z) => (to_air_cost(&z), z.steps, true),
+        let (air, steps, ram, ok) = match result {
+            Ok(z) => (to_air_cost(&z), z.steps, z.ram_usage, true),
             Err(e) => {
                 eprintln!("workload {} failed: {e}", spec.name);
-                (AirCost::default(), 0u64, false)
+                (AirCost::default(), 0u64, 0u64, false)
             }
         };
         results.push(WorkloadResult {
@@ -66,6 +66,7 @@ pub fn run_bench(
             gas: spec.gas,
             air_cost: air,
             steps,
+            zkvm_ram_bytes: ram,
             guest_output_ok: ok,
         });
     }

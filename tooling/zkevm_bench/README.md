@@ -98,6 +98,7 @@ AIR-cost breakdown. Used to select which blocks to commit as fixtures (see
         "total": 1302970621
       },
       "steps": 8558506,
+      "zkvm_ram_bytes": 7304122,
       "guest_output_ok": true
     }
   ]
@@ -108,6 +109,12 @@ AIR-cost breakdown. Used to select which blocks to commit as fixtures (see
 memory`. The example above is a real, verified `mainnet_25087668_light` run.
 `gas` is present (and `category` may be `null`) for micro workloads that
 carry a fixture-declared gas limit.
+
+`zkvm_ram_bytes` is the guest's peak zkVM memory footprint in bytes, parsed
+from ziskemu's `RAM USAGE` line, out of ZisK's ~508 MiB guest RAM budget.
+This is the memory metric the source blog (an allocator comparison) centers
+on — distinct from `air_cost.memory`, which is the *proving cost* of memory
+opcodes, not a footprint measurement.
 
 If a workload's input fails to build or the guest execution errors, it still
 appears in the report with `guest_output_ok: false` and zeroed `air_cost` /
