@@ -1,7 +1,7 @@
 use ethereum_types::Address;
 use ethrex_crypto::{Crypto, CryptoError};
 
-/// FFI bindings to ZisK's crypto accelerator functions exposed via `ziskos`.
+// FFI bindings to ZisK's crypto accelerator functions exposed via `ziskos`.
 unsafe extern "C" {
     pub fn keccak256_c(input: *const u8, input_len: usize, output: *mut u8);
 

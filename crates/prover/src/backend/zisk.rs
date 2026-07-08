@@ -7,6 +7,7 @@ use std::{
 use ethrex_common::types::prover::{ProofFormat, ProverOutput, ProverType};
 use ethrex_guest_program::{ZKVM_ZISK_PROGRAM_ELF, input::ProgramInput};
 
+use crate::backend::zisk_profile::{ZiskAirCost, parse_air_cost};
 use crate::backend::{BackendError, ProverBackend};
 
 const INPUT_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/zisk_input.bin");
@@ -123,6 +124,31 @@ impl ZiskBackend {
 
         Ok(ZiskProveOutput(proof_bytes))
     }
+
+    /// Run the guest under ziskemu with profiling and return the AIR-cost
+    /// breakdown. No proof generated.
+    pub fn execute_profiled(&self, input: ProgramInput) -> Result<ZiskAirCost, BackendError> {
+        Self::write_elf_file()?;
+        self.serialize_input(&input)?;
+        const PROFILE_FLAGS: &[&str] = &["-X"];
+        let mut args: Vec<&str> = vec!["--elf", ELF_PATH, "--inputs", INPUT_PATH];
+        args.extend_from_slice(PROFILE_FLAGS);
+        let output = Command::new("ziskemu")
+            .args(&args)
+            .stdin(Stdio::inherit())
+            .output()
+            .map_err(BackendError::execution)?;
+        if !output.status.success() {
+            return Err(BackendError::execution(format!(
+                "ziskemu profiled execution failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            )));
+        }
+        let mut combined = String::from_utf8_lossy(&output.stdout).into_owned();
+        combined.push('\n');
+        combined.push_str(&String::from_utf8_lossy(&output.stderr));
+        parse_air_cost(&combined)
+    }
 }
 
 impl ProverBackend for ZiskBackend {
@@ -146,7 +172,7 @@ impl ProverBackend for ZiskBackend {
         let mut buf = Vec::with_capacity(total_len + padding);
         buf.extend_from_slice(&data_len.to_le_bytes());
         buf.extend_from_slice(&input_bytes);
-        buf.extend(std::iter::repeat(0u8).take(padding));
+        buf.extend(std::iter::repeat_n(0u8, padding));
 
         std::fs::write(INPUT_PATH, &buf).map_err(BackendError::serialization)?;
         Ok(())
