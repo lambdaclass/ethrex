@@ -167,6 +167,8 @@ pub enum MempoolError {
     EmptyAuthorizationList,
     #[error("EIP-7702 (type-4) transaction is not valid before Prague")]
     Eip7702TxPreFork,
+    #[error("L2-only transaction type is not valid on an L1 node")]
+    L2OnlyTransactionType,
 }
 
 impl From<FrameValidationError> for MempoolError {

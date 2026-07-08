@@ -47,6 +47,7 @@ pub mod error;
 pub mod fork_choice;
 pub mod mempool;
 pub mod payload;
+pub mod prewarm;
 pub mod tracing;
 pub mod vm;
 
@@ -229,6 +230,39 @@ pub struct Blockchain {
     /// production path keeps the original semantics (one fresh pool per call
     /// to `Blockchain::new` / `default_with_store`).
     merkle_pool: Arc<rayon::ThreadPool>,
+    /// Cache handoff slot from the mempool prewarmer to
+    /// `execute_block_pipeline`; see `PrewarmedCache` and `crate::prewarm`.
+    prewarmed: PrewarmedCache,
+}
+
+/// Newtype around the prewarmer's cache-handoff slot so `Blockchain` can keep
+/// deriving `Debug` (`dyn LevmDatabase` has no `Debug` impl).
+///
+/// Alongside the parent hash, the slot carries the fork the prewarmer warmed
+/// under: the precompile cache maps `(address, calldata) -> (output, gas)`
+/// with no fork in the key, and precompile gas/outputs change at forks
+/// (e.g. EIP-7883). A missed slot across a fork activation would otherwise
+/// hand post-fork execution pre-fork entries and reject a valid block.
+#[derive(Default)]
+pub(crate) struct PrewarmedCache(pub(crate) std::sync::Mutex<Option<PrewarmedEntry>>);
+
+/// Contents of the handoff slot.
+pub(crate) struct PrewarmedEntry {
+    /// Parent block the cache was built on.
+    pub(crate) parent_hash: H256,
+    /// Fork the cache was warmed under.
+    pub(crate) fork: Fork,
+    pub(crate) cache: Arc<dyn ethrex_vm::backends::LevmDatabase>,
+}
+
+impl std::fmt::Debug for PrewarmedCache {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let state = match self.0.lock() {
+            Ok(slot) => slot.as_ref().map(|entry| (entry.parent_hash, entry.fork)),
+            Err(_) => None,
+        };
+        f.debug_tuple("PrewarmedCache").field(&state).finish()
+    }
 }
 
 /// Configuration options for the blockchain.
@@ -394,6 +428,7 @@ impl Blockchain {
             payloads: Arc::new(TokioMutex::new(Vec::new())),
             options: blockchain_opts,
             merkle_pool: Self::build_merkle_pool(),
+            prewarmed: PrewarmedCache::default(),
         }
     }
 
@@ -414,6 +449,7 @@ impl Blockchain {
             payloads: Arc::new(TokioMutex::new(Vec::new())),
             options: BlockchainOptions::default(),
             merkle_pool: pool,
+            prewarmed: PrewarmedCache::default(),
         }
     }
 
@@ -425,6 +461,7 @@ impl Blockchain {
             payloads: Arc::new(TokioMutex::new(Vec::new())),
             options: BlockchainOptions::default(),
             merkle_pool: Self::build_merkle_pool(),
+            prewarmed: PrewarmedCache::default(),
         }
     }
 
@@ -559,11 +596,34 @@ impl Blockchain {
         let mut max_queue_length = 0;
 
         // Wrap the store with CachingDatabase so both warming and execution
-        // can benefit from shared caching of state lookups
+        // can benefit from shared caching of state lookups. If the mempool
+        // prewarmer published a cache built on this block's parent state,
+        // seed execution with it when the parent hash and fork match (why
+        // both must match: see `PrewarmedCache` and the `CachingDatabase`
+        // invariant). Witness collection must start cold — pre-populated
+        // entries would hide reads from the witness logger beneath the cache.
         let original_store = vm.db.store.clone();
-        let caching_store: Arc<dyn ethrex_vm::backends::LevmDatabase> = Arc::new(
-            CachingDatabase::new(original_store, self.options.precompile_cache_enabled),
-        );
+        let prewarmed = (!collect_witness)
+            .then(|| {
+                self.prewarmed
+                    .0
+                    .lock()
+                    .ok()
+                    .and_then(|mut slot| slot.take())
+            })
+            .flatten()
+            .and_then(|entry| {
+                let block_fork = self.storage.get_chain_config().fork(block.header.timestamp);
+                (entry.parent_hash == block.header.parent_hash && entry.fork == block_fork)
+                    .then_some(entry.cache)
+            });
+        let caching_store: Arc<dyn ethrex_vm::backends::LevmDatabase> = match prewarmed {
+            Some(cache) => cache,
+            None => Arc::new(CachingDatabase::new(
+                original_store,
+                self.options.precompile_cache_enabled,
+            )),
+        };
 
         // Replace the VM's store with the caching version
         vm.db.store = caching_store.clone();
@@ -3174,6 +3234,15 @@ impl Blockchain {
         sender: Address,
     ) -> Result<(Option<H256>, Option<FramePaymasterReservation>, Option<u64>), MempoolError> {
         let nonce = tx.nonce();
+
+        // On an L1 node, reject L2-only transaction types (FeeToken 0x7d,
+        // PrivilegedL2 0x7e). They are valid only on L2; admitting them to an L1
+        // pool diverges from other L1 clients. The block-import path rejects them
+        // via the same `is_l2_only()` guard (#6752); this is the mempool-ingress
+        // side. Gated on L1 so the shared admission path still serves L2.
+        if matches!(self.options.r#type, BlockchainType::L1) && tx.tx_type().is_l2_only() {
+            return Err(MempoolError::L2OnlyTransactionType);
+        }
 
         if matches!(tx, &Transaction::PrivilegedL2Transaction(_)) {
             return Ok((None, None, None));
