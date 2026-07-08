@@ -87,7 +87,7 @@ mod tests {
 
     #[test]
     fn parses_air_cost_from_sample() {
-        let ac = parse_air_cost(SAMPLE).expect("parse");
+        let ac = parse_air_cost(SAMPLE).unwrap();
         assert_eq!(ac.steps, 40_007_528);
         assert_eq!(ac.base, 293_601_280);
         assert_eq!(ac.main, 2_720_511_904);
