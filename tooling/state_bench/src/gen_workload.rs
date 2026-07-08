@@ -84,6 +84,11 @@ pub struct GenWorkloadArgs {
     /// temporal locality needed to exercise read-through / value caches; the
     /// default (0) keeps the uniform, near-zero-reaccess cold pattern.
     pub hot_slots: u64,
+    /// Zipf exponent for mega-account reads. When > 0, reads follow a `r^-s`
+    /// power law over the read range (mainnet-like skew: hot slots + long cold
+    /// tail) instead of picking uniformly. 0 (default) = uniform. Composes with
+    /// `hot_slots` (which bounds the range the skew applies over).
+    pub zipf_s: f64,
     pub genesis: PathBuf,
     pub verify_reimport: bool,
     pub jobs: usize,
@@ -128,6 +133,7 @@ pub async fn run(args: GenWorkloadArgs) -> Result<()> {
         writes_per_block,
         mega_fraction,
         hot_slots,
+        zipf_s,
         genesis,
         verify_reimport,
         jobs,
@@ -217,6 +223,9 @@ pub async fn run(args: GenWorkloadArgs) -> Result<()> {
     } else {
         0
     };
+    if zipf_s < 0.0 {
+        bail!("--zipf-s must be >= 0 (0 = uniform), got {zipf_s}");
+    }
 
     info!(
         datadir = %datadir.display(),
@@ -225,6 +234,7 @@ pub async fn run(args: GenWorkloadArgs) -> Result<()> {
         writes_per_block,
         mega_fraction,
         hot_slots,
+        zipf_s,
         num_small_accounts,
         slots_per_account,
         mega_slots,
@@ -251,6 +261,7 @@ pub async fn run(args: GenWorkloadArgs) -> Result<()> {
         slots_per_account,
         mega_slots,
         hot_slots,
+        zipf_s,
         mega_address,
     )
     .await;
@@ -319,6 +330,7 @@ async fn generate_on_copy(
     slots_per_account: u64,
     mega_slots: u64,
     hot_slots: u64,
+    zipf_s: f64,
     mega_address: Address,
 ) -> Result<Generation> {
     let mut store = Store::new_with_config(throwaway, EngineType::RocksDB, StoreConfig::default())
@@ -377,6 +389,7 @@ async fn generate_on_copy(
                 slots_per_account,
                 mega_slots,
                 hot_slots,
+                zipf_s,
                 mega_address,
             ));
             touch_index += 1;
@@ -392,6 +405,7 @@ async fn generate_on_copy(
                 slots_per_account,
                 mega_slots,
                 hot_slots,
+                zipf_s,
                 mega_address,
             ));
             touch_index += 1;
@@ -515,6 +529,7 @@ fn resolve_touch(
     slots_per_account: u64,
     mega_slots: u64,
     hot_slots: u64,
+    zipf_s: f64,
     mega_address: Address,
 ) -> Touch {
     // Deterministic mega-vs-small choice. Fall back to small if the mega account
@@ -525,11 +540,15 @@ fn resolve_touch(
     if use_mega {
         let (slot, seeded) = match mode {
             Mode::Read => {
-                // Draw from the hot set (first `hot_slots` seeded slots) when set,
-                // so reads re-access a bounded window across blocks; otherwise
-                // uniformly across all seeded slots (cold, ~no re-access).
+                // Read universe: a bounded hot window (`hot_slots`) or all seeded
+                // slots. Within it, Zipf-skew the pick when `zipf_s > 0`
+                // (mainnet-like hot/cold) else pick uniformly (cold, ~no reaccess).
                 let read_range = if hot_slots > 0 { hot_slots } else { mega_slots };
-                let k = index_pick(seed, TAG_MEGA_PICK, touch_index, read_range.max(1));
+                let k = if zipf_s > 0.0 {
+                    zipf_pick(seed, TAG_MEGA_PICK, touch_index, read_range.max(1), zipf_s)
+                } else {
+                    index_pick(seed, TAG_MEGA_PICK, touch_index, read_range.max(1))
+                };
                 (derive_slot_key(seed, "csb-mega-slot", k), true)
             }
             Mode::Write => {
@@ -581,6 +600,26 @@ fn index_pick(seed: u64, tag: &str, index: u64, modulus: u64) -> u64 {
     let d = digest(seed, tag, index);
     let v = u64::from_be_bytes(d[0..8].try_into().expect("8-byte slice"));
     v % modulus
+}
+
+/// Zipf-like slot pick over `[0, n)`: rank `r` in `[1, n]` is drawn with density
+/// proportional to `r^-s` (a few low-index slots dominate, long cold tail),
+/// using the closed-form inverse-CDF of the continuous power law. `s ~ 1.0`
+/// mimics mainnet-ish access skew; `s -> 0` approaches uniform. Low indices are
+/// the hot ones, but since slot keys are keccak-hashed they scatter across the
+/// trie (like mainnet's hot contracts). Deterministic in `(seed, tag, index)`.
+fn zipf_pick(seed: u64, tag: &str, index: u64, n: u64, s: f64) -> u64 {
+    if n <= 1 {
+        return 0;
+    }
+    let u = fraction_pick(seed, tag, index); // uniform [0, 1)
+    let nf = n as f64;
+    let rank = if (s - 1.0).abs() < 1e-9 {
+        nf.powf(u)
+    } else {
+        (1.0 + u * (nf.powf(1.0 - s) - 1.0)).powf(1.0 / (1.0 - s))
+    };
+    (rank as u64).saturating_sub(1).min(n - 1)
 }
 
 /// Build the accessor calldata for a single (mode, slot) record: 64 bytes,

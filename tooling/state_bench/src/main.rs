@@ -105,6 +105,11 @@ enum Command {
         /// hit. 0 (default) keeps the uniform cold pattern (near-zero re-access).
         #[arg(long, default_value_t = 0)]
         hot_slots: u64,
+        /// Zipf exponent for mega-account reads. > 0 skews reads as a `r^-s`
+        /// power law (mainnet-like: hot slots + long cold tail) over the read
+        /// range; 0 (default) is uniform. Composes with `--hot-slots`.
+        #[arg(long, default_value_t = 0.0)]
+        zipf_s: f64,
         /// Base genesis file used at gen-state time; re-applies the chain config
         /// (must activate Amsterdam so blocks carry a BAL).
         #[arg(long)]
@@ -194,6 +199,7 @@ async fn main() -> Result<()> {
             writes_per_block,
             mega_fraction,
             hot_slots,
+            zipf_s,
             genesis,
             verify_reimport,
         } => {
@@ -206,6 +212,7 @@ async fn main() -> Result<()> {
                 writes_per_block,
                 mega_fraction,
                 hot_slots,
+                zipf_s,
                 genesis,
                 verify_reimport,
                 jobs,
