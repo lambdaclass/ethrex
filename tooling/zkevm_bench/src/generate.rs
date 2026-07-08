@@ -4,8 +4,10 @@
 //! embedded witness) into `generate-stress` fixtures for
 //! `ethrex-zkevm-bench`, by generating the execution witness with ethrex's
 //! own block-execution machinery (`ef_tests_blockchain::test_runner`)
-//! instead of the external eth-act `witness-generator-cli` tool used by
-//! `src/stress.rs`. Purely host-side: no zisk toolchain involved.
+//! instead of relying on an external witness-generator tool. Fixtures are
+//! written in the same `Cache` format `src/cache.rs` reads, so `stress`
+//! workloads load through the same path as `real-block` ones. Purely
+//! host-side: no zisk toolchain involved.
 
 use std::collections::BTreeMap;
 use std::io::Write;

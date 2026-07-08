@@ -23,9 +23,12 @@ fn to_air_cost(z: &ZiskAirCost) -> AirCost {
 }
 
 /// Scans `dir` for `*.json` / `*.json.gz` files and turns each into a
-/// `stress` `WorkloadSpec` (name = filename, no category/gas/tier).
-/// Used by `--mode slow --stress-dir <dir>` to sweep an external directory
-/// of eth-act stress fixtures without listing them in the manifest.
+/// `stress` `WorkloadSpec` (name = filename, no category/gas/tier). `stress`
+/// workloads load via the Cache loader (see `WorkloadType::Stress` in
+/// `run_bench`), so `dir` must contain `generate-stress`-produced Cache-format
+/// fixtures. Used by `--mode slow --stress-dir <dir>` to sweep an external
+/// directory of generated stress fixtures without listing them in the
+/// manifest.
 fn discover_stress_workloads(dir: &str) -> eyre::Result<Vec<WorkloadSpec>> {
     let mut specs = Vec::new();
     for entry in std::fs::read_dir(dir)? {
@@ -83,7 +86,7 @@ pub fn run_bench(
                 WorkloadType::Micro => {
                     crate::micro::micro_to_program_input(&spec.source, spec.gas)?
                 }
-                WorkloadType::Stress => crate::stress::stress_to_program_input(&spec.source)?,
+                WorkloadType::Stress => cache_to_program_input(load_cache(&spec.source)?)?,
             };
             backend
                 .execute_profiled(input)

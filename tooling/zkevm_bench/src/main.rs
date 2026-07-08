@@ -8,7 +8,6 @@ mod manifest;
 mod micro;
 mod report;
 mod run;
-mod stress;
 
 #[derive(Parser)]
 #[command(
@@ -37,8 +36,9 @@ enum Command {
         /// manifest, plus `--stress-dir` fixtures if given).
         #[arg(long, default_value = "medium")]
         mode: String,
-        /// Directory of extra eth-act stress fixtures (`*.json`/`*.json.gz`)
-        /// to run as additional `stress` workloads. Only used in `--mode slow`.
+        /// Directory of extra generated stress fixtures (`*.json`/`*.json.gz`,
+        /// Cache-format, e.g. from `generate-stress`) to run as additional
+        /// `stress` workloads. Only used in `--mode slow`.
         #[arg(long)]
         stress_dir: Option<String>,
     },

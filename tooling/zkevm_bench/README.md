@@ -9,6 +9,27 @@ plus step count as machine-readable JSON. Because emulation is deterministic
 for a fixed guest ELF and input, the numbers are stable across runs and
 machines, which makes them usable as a regression signal.
 
+## Workload types
+
+Every entry in `fixtures/manifest.toml` has a `type`:
+
+- **`real-block`** — committed, gzipped mainnet blocks in ethrex-replay
+  `Cache` format (`fixtures/blocks/*.json.gz`), curated to span the AIR-cost
+  spectrum. No download needed.
+- **`micro`** — individual EEST zkevm test vectors
+  (`../ef_tests/blockchain/vectors_zkevm/`), gitignored downloaded data;
+  fetch with `make zkevm-vectors` (see Prerequisites below).
+- **`stress`** — worst-case EEST benchmark blocks at 150M gas (one per
+  compute/memory/storage/precompile category), committed gzipped under
+  `fixtures/stress/` in the same `Cache` format as `real-block`. Generated
+  ahead of time with `generate-stress` (see
+  [Generating the exhaustive stress set](#generating-the-exhaustive-stress-set-for-slow)
+  below).
+
+`real-block` and `stress` both load through the same `Cache` loader
+(`src/cache.rs`); `micro` goes through a separate loader for raw EEST test
+vectors (`src/micro.rs`).
+
 ## Prerequisites
 
 1. **ZisK toolchain v0.16.1**, installed via `ziskup`:
@@ -50,6 +71,28 @@ Build from the workspace root, then run from the crate directory —
 cargo build -p ethrex-zkevm-bench --features zisk-elf
 cd tooling/zkevm_bench
 ../../target/debug/ethrex-zkevm-bench run --workloads fixtures/manifest.toml --out report.json
+```
+
+### Tiered modes (`--mode`)
+
+`run` takes a `--mode quick|medium|slow` tier ceiling (default `medium`).
+Each workload in the manifest declares an optional `tier` (`quick` or
+`medium`; absent means `medium`); `--mode` selects which tiers run:
+
+- **`quick`** — only `tier = "quick"` workloads. A fast sanity subset
+  (~5–10 min): one real-block, the micro vector, one stress category.
+- **`medium`** (default) — `quick` plus untagged/`medium`-tagged
+  workloads, i.e. the full committed manifest (~1–2 h).
+- **`slow`** — everything `medium` runs, plus (if given) `--stress-dir
+  <dir>`, which adds every generated Cache-format fixture found in `<dir>`
+  as additional `stress` workloads. This is the exhaustive sweep.
+
+`quick ⊆ medium ⊆ slow` by construction — each wider mode is a superset of
+the narrower ones.
+
+```bash
+../../target/debug/ethrex-zkevm-bench run --mode quick --out quick.json
+../../target/debug/ethrex-zkevm-bench run --mode slow --stress-dir /path/to/generated-stress --out slow.json
 ```
 
 ### Compare two reports (regression gate)
@@ -153,6 +196,41 @@ This is also the recovery path if the `Cache` schema drifts and an existing
 fixture stops deserializing (`Block` / `RpcExecutionWitness` no longer
 match): regenerate that block's witness against the current tree rather than
 dropping the fixture.
+
+## Generating the exhaustive stress set (for `slow`)
+
+`fixtures/stress/*.json.gz` commits one representative fixture per
+worst-case category (150M gas each). The execution-specs project publishes a
+much larger `tests-benchmark` set — thousands of variants, some far more
+expensive than the committed ones (e.g. a 631M-gas selfdestruct case) — which
+is generated on demand rather than committed:
+
+1. Download and extract the `tests-benchmark` release's
+   `fixtures_benchmark.tar.gz` from the
+   [execution-specs releases page](https://github.com/ethereum/execution-specs/releases).
+2. Generate Cache-format fixtures from the extracted `blockchain_tests`
+   directory using ethrex's own witness generation (no external eth-act
+   tool, no zisk toolchain):
+
+   ```bash
+   ../../target/debug/ethrex-zkevm-bench generate-stress \
+     --input-dir <extracted>/blockchain_tests \
+     --out-dir <stress-dir>
+   ```
+
+3. Point `run --mode slow --stress-dir <stress-dir>` at the output directory
+   to include every generated fixture as an additional `stress` workload.
+
+Generation is slow for the heaviest fixtures — the biggest ones (e.g. the
+631M-gas selfdestruct case) can take a while to execute and produce a
+witness for — and the full set runs to thousands of variants, which is why
+it's generated on demand instead of committed.
+
+**Known gap:** the `bls12_381` precompile stress fixture is currently
+omitted from the committed set (see the `NOTE` in `fixtures/manifest.toml`)
+because ethrex's host-side witness generation needs the `blst` feature
+enabled to exercise the BLS12-381 precompile. Enable `blst` and regenerate
+via `generate-stress` to add a `worst-precompile-bls` fixture.
 
 To find good candidate blocks, run `curate` with `--ziskemu` over a
 directory of candidate `Cache` files — the AIR-cost breakdown it reports
