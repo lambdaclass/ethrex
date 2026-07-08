@@ -21,6 +21,8 @@ use ethrex_common::{
     },
 };
 use ethrex_guest_program::input::ProgramInput;
+#[cfg(feature = "zisk")]
+use ethrex_prover::BackendError;
 #[cfg(feature = "sp1")]
 use ethrex_prover::Sp1Backend;
 use ethrex_prover::{BackendType, ExecBackend, ProverBackend};
@@ -538,6 +540,10 @@ async fn re_run_stateless(
         BackendType::Exec => ExecBackend::new().execute(program_input),
         #[cfg(feature = "sp1")]
         BackendType::SP1 => Sp1Backend::new().execute(program_input),
+        #[cfg(feature = "zisk")]
+        BackendType::ZisK => Err(BackendError::execution(
+            "zisk backend is not wired into ef_tests-blockchain's stateless re-run",
+        )),
     };
 
     if let Err(e) = execute_result {

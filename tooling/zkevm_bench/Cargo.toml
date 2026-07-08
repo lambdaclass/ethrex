@@ -10,6 +10,7 @@ ethrex-config.workspace = true
 ethrex-rlp.workspace = true
 ethrex-prover = { workspace = true, default-features = false, features = ["zisk"] }
 ethrex-guest-program = { path = "../../crates/guest-program", default-features = false, features = ["zisk"] }
+ef_tests-blockchain = { path = "../ef_tests/blockchain", features = ["zisk"] }
 
 clap = { workspace = true, features = ["derive"] }
 serde = { workspace = true, features = ["derive"] }
@@ -19,6 +20,7 @@ flate2 = "1.0"
 eyre = "0.6"
 sha2 = "0.10"
 hex = "0.4"
+bytes = { workspace = true }
 
 [features]
 zisk-elf = ["ethrex-guest-program/zisk-build-elf", "ethrex-guest-program/ci"]
