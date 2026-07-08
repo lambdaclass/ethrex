@@ -12,6 +12,10 @@
 
 ## Perf
 
+### 2026-07-08
+
+- Make mempool prewarm delta passes effective: replay each dirty sender's full in-cap queue instead of a bare suffix, so later-nonce txs warm the state they touch instead of nonce-mismatching [#6976](https://github.com/lambdaclass/ethrex/issues/6976)
+
 ### 2026-07-06
 
 - Warm state caches between blocks by speculatively executing top-of-mempool transactions [#6967](https://github.com/lambdaclass/ethrex/pull/6967)
