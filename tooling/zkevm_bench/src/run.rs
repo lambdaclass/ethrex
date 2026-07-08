@@ -33,14 +33,22 @@ pub fn run_bench(
     let mut results = Vec::new();
 
     for spec in manifest.filtered(filter) {
-        let input = match spec.r#type {
-            WorkloadType::RealBlock => {
-                let cache = load_cache(&spec.source)?;
-                cache_to_program_input(cache)?
-            }
-            WorkloadType::Micro => crate::micro::micro_to_program_input(&spec.source, spec.gas)?,
-        };
-        let (air, steps, ok) = match backend.execute_profiled(input) {
+        // Build the input and execute inside a single fallible closure so that a
+        // bad fixture (missing/corrupt cache) or an unimplemented micro workload
+        // fails just this workload (it still lands in the report with
+        // `guest_output_ok: false`) instead of aborting the whole run.
+        let result: eyre::Result<ZiskAirCost> = (|| {
+            let input = match spec.r#type {
+                WorkloadType::RealBlock => cache_to_program_input(load_cache(&spec.source)?)?,
+                WorkloadType::Micro => {
+                    crate::micro::micro_to_program_input(&spec.source, spec.gas)?
+                }
+            };
+            backend
+                .execute_profiled(input)
+                .map_err(|e| eyre::eyre!("{e}"))
+        })();
+        let (air, steps, ok) = match result {
             Ok(z) => (to_air_cost(&z), z.steps, true),
             Err(e) => {
                 eprintln!("workload {} failed: {e}", spec.name);
