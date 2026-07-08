@@ -5,11 +5,15 @@ use ethrex_common::types::block_execution_witness::{RpcExecutionWitness, decode_
 use ethrex_common::types::{Block, ChainConfig};
 use ethrex_config::networks::Network;
 use ethrex_guest_program::input::ProgramInput;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 /// Local mirror of ethrex-replay's `Cache` JSON. We only read the fields we
 /// need; L2/custom optional fields (`chain_config`, blob fields) are ignored.
-#[derive(Deserialize)]
+///
+/// Also `Serialize`d by `generate.rs` (the ethrex-native stress-fixture
+/// generator), which writes fixtures in this exact same shape so `load_cache`
+/// below can read them back unmodified.
+#[derive(Serialize, Deserialize)]
 pub struct Cache {
     pub blocks: Vec<Block>,
     pub witness: RpcExecutionWitness,
