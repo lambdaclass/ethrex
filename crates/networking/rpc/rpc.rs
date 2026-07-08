@@ -440,6 +440,11 @@ pub const FILTER_DURATION: Duration = {
 /// sequentially and prevents the async runtime from being blocked by CPU-intensive
 /// block execution.
 ///
+/// Also spawns the mempool prewarmer when enabled (see
+/// `ethrex_blockchain::prewarm`): the executor cancels any in-flight warming
+/// pass before each import and triggers a new one after each cleanly
+/// imported block, when synced and idle.
+///
 /// # Returns
 ///
 /// An unbounded channel sender for submitting blocks. Each submission includes
@@ -450,10 +455,17 @@ pub const FILTER_DURATION: Duration = {
 /// Panics if the worker thread cannot be spawned.
 pub fn start_block_executor(blockchain: Arc<Blockchain>) -> UnboundedSender<BlockWorkerMessage> {
     let (block_worker_channel, mut block_receiver) = unbounded_channel::<BlockWorkerMessage>();
+    let prewarmer = ethrex_blockchain::prewarm::MempoolPrewarmer::spawn(blockchain.clone());
     std::thread::Builder::new()
         .name("block_executor".to_string())
         .spawn(move || {
             while let Some((notify, block, bal, make_witness)) = block_receiver.blocking_recv() {
+                // Kill any in-flight warming before touching the executor's
+                // resources.
+                if let Some(handle) = &prewarmer {
+                    handle.cancel_current();
+                }
+                let imported_header = prewarmer.as_ref().map(|_| block.header.clone());
                 let result = (|| {
                     let bal = bal.map(Arc::new);
                     if make_witness {
@@ -464,6 +476,15 @@ pub fn start_block_executor(blockchain: Arc<Blockchain>) -> UnboundedSender<Bloc
                         Ok(None)
                     }
                 })();
+                // One pass per cleanly imported block, only when synced and
+                // idle (no queued blocks): warm the child of the new head.
+                if let (Some(handle), Some(header), true) =
+                    (&prewarmer, imported_header, result.is_ok())
+                    && blockchain.is_synced()
+                    && block_receiver.is_empty()
+                {
+                    handle.trigger(header);
+                }
                 let _ = notify
                     .send(result)
                     .inspect_err(|_| tracing::error!("failed to notify caller"));
