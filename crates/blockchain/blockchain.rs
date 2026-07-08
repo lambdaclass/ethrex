@@ -736,8 +736,8 @@ impl Blockchain {
         #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
         let bal_warmer = bal.clone();
 
-        let (execution_result, merkleization_result, warmer_duration) =
-            std::thread::scope(|s| -> Result<_, ChainError> {
+        let (execution_result, merkleization_result, warmer_duration) = std::thread::scope(
+            |s| -> Result<_, ChainError> {
                 #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
                 let vm_type = vm.vm_type;
                 let cancelled_ref = &cancelled;
