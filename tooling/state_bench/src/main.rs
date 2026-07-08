@@ -67,6 +67,14 @@ enum Command {
         /// default so normal runs aren't spammed.
         #[arg(long, default_value_t = false)]
         rocksdb_stats: bool,
+        /// RocksDB block-cache size in GiB. gen-state is a bulk write, but the
+        /// 16 shard workers re-read trie nodes after each per-chunk eviction, so
+        /// a cache too small for the working set thrashes on large fixtures. The
+        /// 1 GiB default suits small builds; for large ones raise it toward ~half
+        /// the target size (peak RSS ~= 9 GiB build overhead + cache, so keep it
+        /// a few GiB under machine RAM).
+        #[arg(long, default_value_t = 1.0)]
+        block_cache_gb: f64,
     },
     /// Produce a workload of real blocks + captured BALs (phase 3).
     GenWorkload {
@@ -156,6 +164,7 @@ async fn main() -> Result<()> {
             seed,
             genesis,
             rocksdb_stats,
+            block_cache_gb,
         } => {
             gen_state::run(GenStateArgs {
                 datadir,
@@ -166,6 +175,7 @@ async fn main() -> Result<()> {
                 genesis,
                 jobs,
                 rocksdb_stats,
+                block_cache_gb,
             })
             .await
         }

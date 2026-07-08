@@ -31,6 +31,10 @@ SLOTS_PER_ACCOUNT ?= 8
 # A real (non-smoke) run wants several GB in the mega account so its working
 # set does not fit in RAM; lower for a quick smoke test (e.g. MEGA_GB=0.05).
 MEGA_GB ?= 4.0
+# RocksDB block cache (GiB) used while building. Default 1 GiB is fine for small
+# fixtures; for large ones raise it toward ~half MEGA_GB so the shards' per-chunk
+# re-reads stay cached (peak RSS ~= 9 GiB + this; keep a few GiB under RAM).
+BLOCK_CACHE_GB ?= 1.0
 
 # --- gen-workload parameters --------------------------------------------------
 # A real run wants >= 1000 blocks so cold-read/write costs dominate; lower for
@@ -89,6 +93,7 @@ gen-state: ## Build the synthetic state fixture (run once; shared by A and B).
 		--num-small-accounts $(NUM_SMALL_ACCOUNTS) \
 		--slots-per-account $(SLOTS_PER_ACCOUNT) \
 		--mega-account-gb $(MEGA_GB) \
+		--block-cache-gb $(BLOCK_CACHE_GB) \
 		--genesis "$(GENESIS)"
 
 gen-workload: ## Build chain.rlp + bals.rlp on top of the fixture (run once; shared by A and B).

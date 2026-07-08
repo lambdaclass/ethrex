@@ -144,6 +144,9 @@ pub struct GenStateArgs {
     /// per-CF compaction/write indicators) at every mega storage trie
     /// progress checkpoint.
     pub rocksdb_stats: bool,
+    /// RocksDB block-cache size in GiB (see the CLI flag). Larger caches keep
+    /// the shards' post-eviction re-reads from thrashing on big fixtures.
+    pub block_cache_gb: f64,
 }
 
 /// keccak256(seed_le || tag || index_le) — the single deterministic primitive.
@@ -456,6 +459,7 @@ pub async fn run(args: GenStateArgs) -> Result<()> {
         genesis,
         jobs,
         rocksdb_stats,
+        block_cache_gb,
     } = args;
 
     if datadir.exists() && datadir.read_dir().map(|mut d| d.next().is_some())? {
@@ -492,13 +496,16 @@ pub async fn run(args: GenStateArgs) -> Result<()> {
         "gen-state: opening fresh datadir"
     );
 
+    // gen-state is a bulk WRITE, so the 12 GiB default read cache is wasted —
+    // but the shard workers re-read trie nodes after each per-chunk eviction, so
+    // the cache still matters for build speed on large fixtures (a cache smaller
+    // than the working set thrashes). Default 1 GiB (fine for small builds);
+    // `--block-cache-gb` raises it for big ones (see the flag docs).
+    let block_cache_bytes = (block_cache_gb * (1u64 << 30) as f64).round() as usize;
+    info!(block_cache_gb, "gen-state block cache");
     let store_config = StoreConfig {
         rocksdb_enable_statistics: rocksdb_stats,
-        // gen-state is a bulk WRITE: the 12 GiB default read cache is wasted here
-        // (it just inflates RSS) — a small cache suffices for the trie-path reads
-        // during insertion. Combined with the arena eviction this keeps peak RSS
-        // low and flat regardless of fixture size, so large (50 GB+) fixtures fit.
-        rocksdb_block_cache_size: 1024 * 1024 * 1024, // 1 GiB
+        rocksdb_block_cache_size: block_cache_bytes,
         ..StoreConfig::default()
     };
     let mut store = Store::new_with_config(&datadir, EngineType::RocksDB, store_config)
