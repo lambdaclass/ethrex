@@ -6,6 +6,8 @@ use std::{fmt, sync::Arc};
 
 use ethrex_trie::{Nibbles, TrieDB, TrieError};
 
+use crate::clean_cache::CleanCache;
+
 const BLOOM_SIZE: usize = 1_000_000;
 const FALSE_POSITIVE_RATE: f64 = 0.02;
 
@@ -271,6 +273,10 @@ pub struct TrieWrapper {
     pub state_root: H256,
     pub inner: Arc<TrieLayerCache>,
     pub db: Box<dyn TrieDB>,
+    /// Read-through cache of committed on-disk values, consulted after the
+    /// overlay and before disk. `None` disables it (locked/snap-sync tries and
+    /// any not-yet-synced regime, see the gate in `store.rs`).
+    clean: Option<Arc<CleanCache>>,
     /// Pre-computed prefix nibbles for storage tries.
     /// For state tries this is None; for storage tries this is
     /// `Nibbles::from_bytes(address.as_bytes()).append_new(17)`.
@@ -283,12 +289,14 @@ impl TrieWrapper {
         inner: Arc<TrieLayerCache>,
         db: Box<dyn TrieDB>,
         prefix: Option<H256>,
+        clean: Option<Arc<CleanCache>>,
     ) -> Self {
         let prefix_nibbles = prefix.map(|p| Nibbles::from_bytes(p.as_bytes()).append_new(17));
         Self {
             state_root,
             inner,
             db,
+            clean,
             prefix_nibbles,
         }
     }
@@ -322,10 +330,24 @@ impl TrieDB for TrieWrapper {
             Some(prefix) => prefix.concat(&key),
             None => key,
         };
+        // Tier 1: in-memory diff-layer overlay (recent writes).
         if let Some(value) = self.inner.get(self.state_root, key.as_ref()) {
             return Ok(Some(value));
         }
-        self.db.get(key)
+        // Tier 2: read-through cache of committed on-disk values.
+        let Some(clean) = &self.clean else {
+            return self.db.get(key);
+        };
+        let cache_key: Box<[u8]> = key.as_ref().into();
+        if let Some(value) = clean.get(&cache_key) {
+            return Ok(Some(value));
+        }
+        // Tier 3: disk. Fill the cache on a hit (positive-only caching).
+        let value = self.db.get(key)?;
+        if let Some(ref v) = value {
+            clean.insert(cache_key, v);
+        }
+        Ok(value)
     }
 
     fn put_batch(&self, _key_values: Vec<(Nibbles, Vec<u8>)>) -> Result<(), TrieError> {
