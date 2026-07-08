@@ -12,6 +12,7 @@ use bytes::Bytes;
 use secp256k1::{PublicKey, Secp256k1, SecretKey};
 use tracing::{info, warn};
 
+use ethrex_blockchain::build_sharded_storage_trie_streaming;
 use ethrex_common::constants::EMPTY_KECCAK_HASH;
 use ethrex_common::types::{AccountState, Code, Genesis};
 use ethrex_common::{Address, H256, U256};
@@ -20,6 +21,7 @@ use ethrex_rlp::encode::RLPEncode;
 use ethrex_storage::api::tables::{
     ACCOUNT_FLATKEYVALUE, ACCOUNT_TRIE_NODES, MISC_VALUES, STORAGE_FLATKEYVALUE, STORAGE_TRIE_NODES,
 };
+use ethrex_storage::error::StoreError;
 use ethrex_storage::{
     EngineType, STORE_SCHEMA_VERSION, Store, StoreConfig, hash_address, hash_key,
 };
@@ -333,8 +335,10 @@ fn log_rocksdb_progress_stats(store: &Store, slots: u64, total: u64) {
     }
 }
 
-/// Stream the mega account's storage trie in bounded chunks, committing every
-/// [`MEGA_COMMIT_CHUNK`] slots. Returns (storage_root, slot_count).
+/// Build the mega account's storage trie in parallel across 16 nibble-sharded
+/// workers (see [`build_sharded_storage_trie_streaming`]), staging each slot's
+/// flat-KV entry as it is produced. Memory stays bounded (per-shard eviction +
+/// `clear_dirty`, bounded channels); the work is the fan-out target.
 fn build_mega_storage_trie(
     store: &Store,
     fkv: &mut FkvWriter,
@@ -343,41 +347,32 @@ fn build_mega_storage_trie(
     slot_count: u64,
     rocksdb_stats: bool,
 ) -> Result<H256> {
-    let mut trie = store.open_direct_storage_trie(account_hash, *EMPTY_TRIE_HASH)?;
-    for k in 0..slot_count {
+    let derive = |k: u64| {
         let key = derive_slot_key(seed, "csb-mega-slot", k);
         let value = derive_slot_value(seed, "csb-mega-val", k);
-        let hashed = hash_key(&key);
-        let value_rlp = value.encode_to_vec();
-        trie.insert(hashed.clone(), value_rlp.clone())?;
-        fkv.add_storage(store, account_hash, &hashed, value_rlp)?;
-        if (k + 1) % MEGA_COMMIT_CHUNK == 0 {
-            // Evict the committed subtree so the in-memory arena stays bounded
-            // to the root plus one chunk. A plain `commit` keeps the whole
-            // arena resident and OOMs on large fixtures (see the memory-bound
-            // diagnostic: unbounded arena ~850B/slot).
-            trie.commit_evict_below_root(&NativeCrypto)?;
-            // Also drop the per-insert `dirty` path set, which would otherwise
-            // accumulate one ~64-nibble entry per slot (multiple GB over the
-            // full build). Safe here: flat-KV is regenerated wholesale after
-            // the build, so no stale-shortcut `get` can observe the cleared set.
-            trie.clear_dirty();
-            if (k + 1) % (MEGA_COMMIT_CHUNK * 10) == 0 {
-                info!(
-                    slots = k + 1,
-                    total = slot_count,
-                    "mega storage trie progress"
-                );
-                if rocksdb_stats {
-                    log_rocksdb_progress_stats(store, k + 1, slot_count);
-                }
-            }
-        }
+        (H256::from_slice(&hash_key(&key)), value.encode_to_vec())
+    };
+    let on_slot = |hashed_key: &H256, value_rlp: &[u8]| -> Result<(), StoreError> {
+        fkv.add_storage(
+            store,
+            account_hash,
+            hashed_key.as_bytes(),
+            value_rlp.to_vec(),
+        )
+        .map_err(|e| StoreError::Custom(format!("flat-KV staging: {e}")))
+    };
+    let root = build_sharded_storage_trie_streaming(
+        store,
+        account_hash,
+        slot_count,
+        MEGA_COMMIT_CHUNK,
+        derive,
+        on_slot,
+    )?;
+    if rocksdb_stats {
+        log_rocksdb_progress_stats(store, slot_count, slot_count);
     }
-    // Commit + evict any remainder (keeps the final flush bounded too), then
-    // read the memoized root hash without a second commit.
-    trie.commit_evict_below_root(&NativeCrypto)?;
-    Ok(trie.hash_no_commit(&NativeCrypto))
+    Ok(root)
 }
 
 /// Measure the on-disk SST size of the four state column families.

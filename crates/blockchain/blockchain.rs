@@ -103,7 +103,7 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use std::collections::hash_map::Entry;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::LazyLock;
-use std::sync::mpsc::Sender;
+use std::sync::mpsc::{Sender, sync_channel};
 use std::sync::{
     Arc, RwLock,
     atomic::{AtomicBool, AtomicUsize, Ordering},
@@ -4356,4 +4356,142 @@ pub fn compute_sharded_storage_root(
     let _ = DROP_SENDER.send(Box::new(root_ref));
 
     Ok((root_hash.finalize(&NativeCrypto), nodes))
+}
+
+/// Streaming, parallel builder for a very large storage trie built FROM SCRATCH
+/// (state-bench's mega account). Unlike [`compute_sharded_storage_root`], which
+/// takes a fully materialized slot slice and returns the whole node diff in
+/// memory, this pulls slots lazily via `derive(k)` for `k` in `0..slot_count`,
+/// stages each through `on_slot`, and routes it across 16 nibble-sharded workers
+/// over BOUNDED channels — backpressure stalls the producer when a shard lags,
+/// so the pipeline streams instead of buffering. Each worker persists its
+/// subtree incrementally with [`Trie::commit_evict_below_root`] +
+/// [`Trie::clear_dirty`] every `chunk` slots, so peak memory stays bounded
+/// regardless of `slot_count`. This is what lets a 50 GB fixture build fast
+/// without OOM.
+///
+/// The trie is assumed EMPTY at the start (fresh build): every `value_rlp` is a
+/// non-empty insert, never a removal. `on_slot(&hashed_key, &value_rlp)` runs
+/// once per slot on the producer thread (single-threaded, in index order) before
+/// the slot is routed — state-bench uses it to stream the matching flat-KV
+/// entry. Returns the storage root; the final root and the workers' top-of-shard
+/// leftover diffs are persisted before return, so the on-disk trie is complete
+/// and byte-identical to the serial build.
+///
+/// Below `MIN_PARALLEL_SLOTS` it builds serially: the 16 nibble buckets are not
+/// reliably all occupied, and a `branchify`/`collapse` reassembly of `<2`
+/// subtrees would emit extra (unreachable) nodes vs the canonical serial diff
+/// (see the `occupied <= 1` note on [`compute_sharded_storage_root`]). With
+/// keccak-uniform keys, `>= 4096` slots occupies all 16 nibbles with
+/// overwhelming probability, so the parallel path always has `> 1` root child —
+/// which is also why the `EMPTY_TRIE_HASH` placeholder passed to
+/// `collapse_root_node` below is never dereferenced.
+///
+/// Exposed (hidden) for `state_bench`; not part of the stable public API.
+#[doc(hidden)]
+pub fn build_sharded_storage_trie_streaming(
+    storage: &Store,
+    account_hash: H256,
+    slot_count: u64,
+    chunk: u64,
+    derive: impl Fn(u64) -> (H256, Vec<u8>),
+    mut on_slot: impl FnMut(&H256, &[u8]) -> Result<(), StoreError>,
+) -> Result<H256, StoreError> {
+    const MIN_PARALLEL_SLOTS: u64 = 4096;
+    // Per-shard channel bound: at most ~CAP*16 slots in flight (streaming).
+    const CAP: usize = 1024;
+    let terr = |e: TrieError| StoreError::Custom(format!("{e}"));
+
+    if slot_count < MIN_PARALLEL_SLOTS {
+        let mut trie = storage.open_direct_storage_trie(account_hash, *EMPTY_TRIE_HASH)?;
+        for k in 0..slot_count {
+            let (hashed_key, value_rlp) = derive(k);
+            on_slot(&hashed_key, &value_rlp)?;
+            trie.insert(hashed_key.as_bytes().to_vec(), value_rlp)
+                .map_err(terr)?;
+            if (k + 1).is_multiple_of(chunk) {
+                trie.commit_evict_below_root(&NativeCrypto).map_err(terr)?;
+                trie.clear_dirty();
+            }
+        }
+        trie.commit_evict_below_root(&NativeCrypto).map_err(terr)?;
+        return Ok(trie.hash_no_commit(&NativeCrypto));
+    }
+
+    let (root, mut nodes) =
+        std::thread::scope(|s| -> Result<(BranchNode, Vec<TrieNode>), StoreError> {
+            let mut senders = Vec::with_capacity(16);
+            let mut handles = Vec::with_capacity(16);
+            for nibble in 0..16u8 {
+                let (tx, rx) = sync_channel::<(H256, Vec<u8>)>(CAP);
+                senders.push(tx);
+                let handle = std::thread::Builder::new()
+                    .name(format!("mega_shard_{nibble}"))
+                    .spawn_scoped(
+                        s,
+                        move || -> Result<(Box<BranchNode>, Vec<TrieNode>), StoreError> {
+                            let mut trie =
+                                storage.open_direct_storage_trie(account_hash, *EMPTY_TRIE_HASH)?;
+                            let mut since = 0u64;
+                            for (hashed_key, value_rlp) in rx.iter() {
+                                trie.insert(hashed_key.as_bytes().to_vec(), value_rlp)
+                                    .map_err(terr)?;
+                                since += 1;
+                                if since.is_multiple_of(chunk) {
+                                    trie.commit_evict_below_root(&NativeCrypto).map_err(terr)?;
+                                    trie.clear_dirty();
+                                }
+                            }
+                            trie.commit_evict_below_root(&NativeCrypto).map_err(terr)?;
+                            collect_trie(nibble, trie).map_err(terr)
+                        },
+                    )
+                    .map_err(|e| StoreError::Custom(format!("spawn failed: {e}")))?;
+                handles.push(handle);
+            }
+
+            // Producer: derive, stage flat-KV, route by first nibble. Runs on
+            // this thread; the bounded channels apply backpressure.
+            for k in 0..slot_count {
+                let (hashed_key, value_rlp) = derive(k);
+                on_slot(&hashed_key, &value_rlp)?;
+                let nibble = (hashed_key.as_fixed_bytes()[0] >> 4) as usize;
+                senders[nibble]
+                    .send((hashed_key, value_rlp))
+                    .map_err(|e| StoreError::Custom(format!("shard send: {e}")))?;
+            }
+            drop(senders); // close channels so each shard's `rx.iter()` ends
+
+            let mut root = BranchNode::default();
+            let mut nodes: Vec<TrieNode> = Vec::new();
+            for (i, handle) in handles.into_iter().enumerate() {
+                let (subroot, shard_nodes) = handle
+                    .join()
+                    .map_err(|_| StoreError::Custom("mega shard worker panicked".to_string()))??;
+                nodes.extend(shard_nodes);
+                root.choices[i] = subroot.choices[i].clone();
+            }
+            Ok((root, nodes))
+        })?;
+
+    // Assemble the 16 subroots into the storage root. `EMPTY_TRIE_HASH` is a
+    // placeholder: with all 16 nibbles occupied the root branch has `> 1` child,
+    // so `collapse_root_node` short-circuits without dereferencing it.
+    let Some(root_node) = collapse_root_node(storage, *EMPTY_TRIE_HASH, Some(account_hash), root)?
+    else {
+        return Ok(*EMPTY_TRIE_HASH);
+    };
+    let mut root_ref = NodeRef::from(root_node);
+    let root_hash = root_ref.commit(Nibbles::default(), &mut nodes, &NativeCrypto);
+    let _ = DROP_SENDER.send(Box::new(root_ref));
+
+    // Persist the workers' top-of-shard leftover diffs AND the collapsed-root
+    // nodes; the shards already persisted everything below their nibble via
+    // `commit_evict_below_root`. A direct storage-trie DB applies the account
+    // prefix on write.
+    let persist = storage.open_direct_storage_trie(account_hash, *EMPTY_TRIE_HASH)?;
+    persist.db().put_batch(nodes).map_err(terr)?;
+    persist.db().commit().map_err(terr)?;
+
+    Ok(root_hash.finalize(&NativeCrypto))
 }
