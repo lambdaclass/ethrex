@@ -3039,6 +3039,11 @@ impl Blockchain {
 
         // Frame transactions: skip balance/EOA checks (payer unknown until execution)
         let is_frame_tx = matches!(tx, Transaction::FrameTransaction(_));
+        // EIP-8250: a non-zero-keyed frame tx carries per-key nonces in the
+        // NONCE_MANAGER domain, so the sender's linear account nonce is the
+        // wrong yardstick — the validation-prefix simulation checks each key's
+        // nonce. Skip the linear-nonce guards below for these.
+        let is_keyed_frame_tx = matches!(tx, Transaction::FrameTransaction(ft) if ft.is_keyed());
 
         let header_no = self.storage.get_latest_block_number().await?;
         let header = self
@@ -3054,19 +3059,13 @@ impl Blockchain {
             return Err(MempoolError::FrameTxPreFork);
         }
 
-        // EIP-8250: the public mempool admits only key-0 frame transactions
-        // (nonce_keys == [0]). Multi-key / non-zero-key admission needs the
-        // per-keyset pending/replacement tracking that is out of scope for the
-        // devnet; the spec permits this minimal policy. Non-zero-key frame txs
-        // can still be included by a block builder and are validated in full at
-        // block execution.
-        if let Transaction::FrameTransaction(frame_tx) = tx
-            && (frame_tx.nonce_keys.len() != 1 || !frame_tx.nonce_keys[0].is_zero())
-        {
-            return Err(MempoolError::InvalidFrameTransaction(
-                "only key-0 frame transactions are admitted to the public mempool".to_string(),
-            ));
-        }
+        // EIP-8250: non-zero-keyed frame transactions are admitted. Their nonces
+        // live in the NONCE_MANAGER key domain, so they are tracked per
+        // `(sender, keyset)` in the mempool (disjoint key sets are independent)
+        // and their per-key nonce validity is checked by the validation-prefix
+        // simulation, not the linear account nonce. Static validation still
+        // enforces the key-set shape (key 0 only as the sole key; non-zero keys
+        // strictly increasing, 1..=16).
 
         // EIP-8141 expiry (spec commit 0b197156): drop frame txs whose expiry
         // verifier deadline is already behind the current head timestamp.
@@ -3284,7 +3283,7 @@ impl Blockchain {
         let maybe_sender_acc_info = self.storage.get_account_info(header_no, sender).await?;
 
         if let Some(sender_acc_info) = maybe_sender_acc_info {
-            if nonce < sender_acc_info.nonce || nonce == u64::MAX {
+            if !is_keyed_frame_tx && (nonce < sender_acc_info.nonce || nonce == u64::MAX) {
                 return Err(MempoolError::NonceTooLow);
             }
 
@@ -3309,8 +3308,9 @@ impl Blockchain {
             // nonce sanity guard as the existing-account path instead of skipping
             // nonce validation entirely. `nonce < 0` is impossible for a u64, so
             // only the u64::MAX sentinel is rejectable here; a fresh sender's
-            // nonce-0 tx still passes.
-            if nonce == u64::MAX {
+            // nonce-0 tx still passes. A non-zero-keyed frame tx is exempt: its
+            // nonce_seq is a NONCE_MANAGER key value, validated by the prefix sim.
+            if !is_keyed_frame_tx && nonce == u64::MAX {
                 return Err(MempoolError::NonceTooLow);
             }
         }
@@ -4163,5 +4163,219 @@ mod p2p_serve_tests {
             .expect("frame tx should be served over P2P");
         assert!(matches!(served, P2PTransaction::FrameTransaction(_)));
         assert_eq!(served.compute_hash(), hash);
+    }
+
+    fn keyed_sender() -> Address {
+        Address::from_low_u64_be(0x8250)
+    }
+
+    /// A keyed frame tx (EIP-8250) with the given non-zero key set, nonce_seq,
+    /// and max fee. Sender is fixed so tests can share it. Varying any field
+    /// yields a distinct tx hash.
+    fn make_keyed_frame_tx(keys: Vec<U256>, nonce_seq: u64, max_fee: u64) -> Transaction {
+        let mut ftx = make_frame_tx();
+        ftx.sender = keyed_sender();
+        ftx.signatures[0].signer = keyed_sender();
+        ftx.nonce_keys = keys;
+        ftx.nonce_seq = nonce_seq;
+        ftx.max_fee_per_gas = max_fee;
+        Transaction::FrameTransaction(ftx)
+    }
+
+    fn add(blockchain: &Blockchain, tx: &Transaction) -> Result<(), MempoolError> {
+        let hash = tx.hash();
+        blockchain.mempool.add_transaction(
+            hash,
+            keyed_sender(),
+            MempoolTransaction::new(tx.clone(), keyed_sender()),
+            None,
+        )
+    }
+
+    fn pooled(blockchain: &Blockchain, tx: &Transaction) -> bool {
+        blockchain
+            .mempool
+            .get_transaction_by_hash(tx.hash())
+            .expect("mempool read")
+            .is_some()
+    }
+
+    // EIP-8250: two frame txs from one sender on DISJOINT non-zero key sets are
+    // independent — both are admitted (no linear-nonce collision), even at the
+    // same nonce_seq.
+    #[test]
+    fn disjoint_keysets_are_both_admitted() {
+        let store = Store::new("", EngineType::InMemory).unwrap();
+        let blockchain = Blockchain::default_with_store(store);
+
+        let a = make_keyed_frame_tx(vec![U256::one()], 0, 30_000_000_000);
+        let b = make_keyed_frame_tx(vec![U256::from(2)], 0, 30_000_000_000);
+        add(&blockchain, &a).expect("keyset {1} admitted");
+        add(&blockchain, &b).expect("keyset {2} admitted independently");
+
+        assert!(pooled(&blockchain, &a) && pooled(&blockchain, &b));
+        // Both live in the keyed map; the linear pending map is untouched.
+        let (linear, keyed, ..) = blockchain.mempool.frame_tracking_map_sizes().unwrap();
+        assert_eq!((linear, keyed), (0, 2));
+    }
+
+    // Same sender + same key set + same nonce_seq is a fee-bump replacement:
+    // the predecessor is removed, only the replacement remains.
+    #[test]
+    fn same_keyset_same_seq_replaces() {
+        let store = Store::new("", EngineType::InMemory).unwrap();
+        let blockchain = Blockchain::default_with_store(store);
+
+        let a = make_keyed_frame_tx(vec![U256::one()], 0, 30_000_000_000);
+        let b = make_keyed_frame_tx(vec![U256::one()], 0, 60_000_000_000);
+        add(&blockchain, &a).unwrap();
+        add(&blockchain, &b).unwrap();
+
+        assert!(!pooled(&blockchain, &a), "predecessor evicted");
+        assert!(pooled(&blockchain, &b), "replacement kept");
+        let (_, keyed, ..) = blockchain.mempool.frame_tracking_map_sizes().unwrap();
+        assert_eq!(keyed, 1);
+    }
+
+    // Same sender + same key set + DIFFERENT nonce_seq is rejected: one pending
+    // tx per (sender, keyset).
+    #[test]
+    fn same_keyset_different_seq_rejected() {
+        let store = Store::new("", EngineType::InMemory).unwrap();
+        let blockchain = Blockchain::default_with_store(store);
+
+        add(
+            &blockchain,
+            &make_keyed_frame_tx(vec![U256::one()], 0, 30_000_000_000),
+        )
+        .unwrap();
+        let err = add(
+            &blockchain,
+            &make_keyed_frame_tx(vec![U256::one()], 5, 30_000_000_000),
+        )
+        .expect_err("same keyset, different seq must be rejected");
+        assert!(matches!(err, MempoolError::FrameTxSenderAlreadyPending));
+    }
+
+    // Key-0 frame txs keep using the linear plumbing, untouched by the keyed
+    // path: they land in `pending_frame_tx_by_sender`, not the keyed map.
+    #[test]
+    fn key_zero_frame_tx_uses_linear_tracking() {
+        let store = Store::new("", EngineType::InMemory).unwrap();
+        let blockchain = Blockchain::default_with_store(store);
+
+        let tx = Transaction::FrameTransaction(make_frame_tx()); // nonce_keys == [0]
+        blockchain
+            .mempool
+            .add_transaction(
+                tx.hash(),
+                Address::from_low_u64_be(0xABCD),
+                MempoolTransaction::new(tx, Address::from_low_u64_be(0xABCD)),
+                None,
+            )
+            .unwrap();
+
+        let (linear, keyed, ..) = blockchain.mempool.frame_tracking_map_sizes().unwrap();
+        assert_eq!((linear, keyed), (1, 0));
+    }
+
+    // Removing a keyed frame tx clears its keyed-map entry (all frame-tx
+    // tracking maps return to empty).
+    #[test]
+    fn removing_keyed_frame_tx_clears_keyed_map() {
+        let store = Store::new("", EngineType::InMemory).unwrap();
+        let blockchain = Blockchain::default_with_store(store);
+
+        let a = make_keyed_frame_tx(vec![U256::one()], 0, 30_000_000_000);
+        add(&blockchain, &a).unwrap();
+        blockchain.mempool.remove_transaction(&a.hash()).unwrap();
+
+        assert_eq!(
+            blockchain.mempool.frame_tracking_map_sizes().unwrap(),
+            (0, 0, 0, 0, 0)
+        );
+    }
+
+    // The fee-bump rule applies to keyed replacements: a lower-fee same-keyset
+    // tx is underpriced; a strictly higher-fee one replaces.
+    #[test]
+    fn keyed_replacement_enforces_fee_bump() {
+        let store = Store::new("", EngineType::InMemory).unwrap();
+        let blockchain = Blockchain::default_with_store(store);
+
+        let a = make_keyed_frame_tx(vec![U256::one()], 0, 30_000_000_000);
+        add(&blockchain, &a).unwrap();
+
+        let underpriced = make_keyed_frame_tx(vec![U256::one()], 0, 20_000_000_000);
+        assert!(matches!(
+            blockchain
+                .mempool
+                .find_tx_to_replace(keyed_sender(), 0, &underpriced),
+            Err(MempoolError::UnderpricedReplacement)
+        ));
+
+        let bumped = make_keyed_frame_tx(vec![U256::one()], 0, 60_000_000_000);
+        assert_eq!(
+            blockchain
+                .mempool
+                .find_tx_to_replace(keyed_sender(), 0, &bumped)
+                .unwrap(),
+            Some(a.hash())
+        );
+    }
+
+    // Regression (adversarial review, HIGH): a same-hash re-announce of a keyed
+    // frame tx must not double-count the paymaster reservation. Two concurrent
+    // admissions of the same tx both clear the unlocked `contains_tx`
+    // pre-filter and reach the locked `add_transaction`; the keyed-slot removal
+    // must self-heal the reservation exactly as the linear slot does, so it
+    // returns to baseline on removal. Uses a canonical paymaster (the path where
+    // the non-canonical pending limit does NOT pre-reject the duplicate).
+    #[test]
+    fn keyed_reannounce_does_not_leak_reservation() {
+        let store = Store::new("", EngineType::InMemory).unwrap();
+        let blockchain = Blockchain::default_with_store(store);
+
+        let paymaster = Address::from_low_u64_be(0xBEEF);
+        let cost = U256::from(1_000u64);
+        let reservation = || {
+            Some(FramePaymasterReservation {
+                paymaster,
+                reserved_cost: cost,
+                is_canonical: true,
+                paymaster_balance: U256::from(4_000u64), // >= 2*cost so the locked re-check passes
+            })
+        };
+
+        let h = make_keyed_frame_tx(vec![U256::one()], 0, 30_000_000_000);
+        let hash = h.hash();
+        let add_once = || {
+            blockchain.mempool.add_transaction(
+                hash,
+                keyed_sender(),
+                MempoolTransaction::new(h.clone(), keyed_sender()),
+                reservation(),
+            )
+        };
+        add_once().unwrap();
+        add_once().unwrap(); // same-hash re-announce
+
+        // Exactly one reservation of `cost`, not 2*cost.
+        assert_eq!(
+            blockchain.mempool.reserved_pending_cost(paymaster).unwrap(),
+            cost
+        );
+
+        blockchain.mempool.remove_transaction(&hash).unwrap();
+
+        // Fully returned to baseline — no stranded reservation.
+        assert_eq!(
+            blockchain.mempool.reserved_pending_cost(paymaster).unwrap(),
+            U256::zero()
+        );
+        assert_eq!(
+            blockchain.mempool.frame_tracking_map_sizes().unwrap(),
+            (0, 0, 0, 0, 0)
+        );
     }
 }
