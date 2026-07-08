@@ -1,11 +1,79 @@
+# zkEVM execution benchmark workload manifest.
+#
+# Real-block workloads reference committed gzipped ethrex-replay `Cache`
+# fixtures under fixtures/blocks/ (curated from mainnet to span the AIR-cost
+# spectrum and different dominant cost components). Micro workloads reference
+# in-repo EEST zkevm fixtures under ../ef_tests/blockchain/vectors_zkevm/, which
+# are downloaded (gitignored) test data — run `make zkevm-vectors` in
+# tooling/ef_tests/blockchain first. All `source` paths are relative to the
+# crate dir (tooling/zkevm_bench), which is the intended run cwd.
+#
+# `category` records the block's cost character (from the curation ziskemu pass):
+#   light/small/typical = cost tier; compute = high MAIN/OPCODES, low precompiles;
+#   memory = highest memory fraction; tx-heavy = most transactions;
+#   large-state = biggest witness/state footprint.
+
 [[workload]]
 name = "mainnet_25087668_light"
 type = "real-block"
 category = "light"
 source = "fixtures/blocks/cache_mainnet_25087668.json.gz"
 
-# Micro workloads reference in-repo EEST zkevm fixtures. Paths are relative to
-# the crate dir (tooling/zkevm_bench), which is the intended run cwd.
+[[workload]]
+name = "mainnet_25100902_tiny"
+type = "real-block"
+category = "light"
+source = "fixtures/blocks/cache_mainnet_25100902.json.gz"
+
+[[workload]]
+name = "mainnet_25087647_small"
+type = "real-block"
+category = "small"
+source = "fixtures/blocks/cache_mainnet_25087647.json.gz"
+
+[[workload]]
+name = "mainnet_25087308_lowmid"
+type = "real-block"
+category = "small"
+source = "fixtures/blocks/cache_mainnet_25087308.json.gz"
+
+[[workload]]
+name = "mainnet_25087554_typical"
+type = "real-block"
+category = "typical"
+source = "fixtures/blocks/cache_mainnet_25087554.json.gz"
+
+[[workload]]
+name = "mainnet_25087563_midhigh"
+type = "real-block"
+category = "typical"
+source = "fixtures/blocks/cache_mainnet_25087563.json.gz"
+
+[[workload]]
+name = "mainnet_25087666_compute"
+type = "real-block"
+category = "compute"
+source = "fixtures/blocks/cache_mainnet_25087666.json.gz"
+
+[[workload]]
+name = "mainnet_25087667_memory"
+type = "real-block"
+category = "memory"
+source = "fixtures/blocks/cache_mainnet_25087667.json.gz"
+
+[[workload]]
+name = "mainnet_25087407_txheavy"
+type = "real-block"
+category = "tx-heavy"
+source = "fixtures/blocks/cache_mainnet_25087407.json.gz"
+
+[[workload]]
+name = "mainnet_25087416_largestate"
+type = "real-block"
+category = "large-state"
+source = "fixtures/blocks/cache_mainnet_25087416.json.gz"
+
+# Micro workloads reference in-repo EEST zkevm fixtures (see header note).
 [[workload]]
 name = "eest_amsterdam_witness_7702_delegation_chain"
 type = "micro"
