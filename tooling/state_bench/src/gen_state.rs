@@ -337,8 +337,12 @@ fn log_rocksdb_progress_stats(store: &Store, slots: u64, total: u64) {
 
 /// Build the mega account's storage trie in parallel across 16 nibble-sharded
 /// workers (see [`build_sharded_storage_trie_streaming`]), staging each slot's
-/// flat-KV entry as it is produced. Memory stays bounded (per-shard eviction +
-/// `clear_dirty`, bounded channels); the work is the fan-out target.
+/// flat-KV entry as it is produced. Peak memory grows only logarithmically with
+/// fixture size (per-shard eviction + `clear_dirty` bound each worker to ~one
+/// chunk; what grows is the depth of the path re-materialized per chunk):
+/// measured ~6.2 GB at a 4 GB fixture, projecting to ~8-9 GB at 50 GB. Higher
+/// than the serial build's flat ~2.4 GB (16 concurrent arenas) but the fan-out
+/// roughly halves wall-clock.
 fn build_mega_storage_trie(
     store: &Store,
     fkv: &mut FkvWriter,
