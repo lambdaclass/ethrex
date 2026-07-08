@@ -27,7 +27,8 @@ Before any upgrade, ask of the diff:
 > *Would re-executing an already-produced block under the new binary yield a
 > different state root, receipt, or gas usage?*
 
-- **No** → the change is non-consensus. Path 1 (in-place swap).
+- **No** → the change is non-consensus. Path 1 (binary swap) or, if the change
+  is in the container command rather than the binary, Path 1b (wrapper).
 - **Yes, but only for a fork the chain has NOT reached** → Path 2
   (deploy before the fork).
 - **Yes, for rules the chain has ALREADY been running** → Path 3 (re-genesis),
@@ -44,33 +45,91 @@ Be paranoid with this test. Changes that *look* operational can be consensus:
   or the BAL (EIP-7928) footprint.
 
 Genuinely non-consensus: RPC handlers, mempool admission policy (execution
-still validates in full), P2P, logging, docs, the payload *builder's* tx
-selection (not its execution).
+still validates in full — e.g. `MAX_VERIFY_GAS` is a mempool-admission bound
+only, never checked in block execution), P2P, logging, docs, the payload
+*builder's* tx selection (not its execution).
 
-## Path 1 — In-place rolling swap (non-consensus changes)
+> **Never use `kurtosis service update` for a state-preserving upgrade.** It
+> recreates the container, which drops the file mounts (`/network-configs`,
+> `/jwt` → `Failed to open genesis file`) and destroys the EL datadir (it lives
+> in the container **writable layer**, not a volume) → resync from genesis.
+> Container recreation belongs only to Path 3, where a fresh chain is the goal.
+> Paths 1 and 1b never recreate the container.
 
-Zero downtime, zero history loss. Swap one EL at a time and verify consensus
-between steps.
+## Path 1 — In-place binary swap (non-consensus binary changes)
 
-1. Build the new image under a **unique immutable tag** (never reuse a mutable
-   tag like `ethrex:hegota` on a shared build host — a concurrent build can
-   hijack it): `make build-image TAG=hegota-<short-sha>`.
-2. Tag the running image as a rollback:
-   `docker tag ethrex:<current> ethrex:rollback-<current-sha>`.
-3. Canary first: upgrade **el-2** (never the bootnode first), then el-3, then
-   el-1.
-4. `kurtosis service update --image ...` **drops all file mounts**
-   (`/network-configs`, `/jwt`) — the EL will exit with
-   `Failed to open genesis file` unless you pass them back:
-   `--files "/network-configs:<artifact>,/jwt:jwt_file"` (re-upload the
-   artifact with `kurtosis files upload` if you changed the genesis).
-5. The EL datadir lives in the **container writable layer**, not a volume —
-   `service update` destroys it. Sandwich every swap with
-   `docker cp <ctr>:/data/ethrex ./bk-elN` before and a restore after, or the
-   node will resync from genesis.
-6. Host ports **remap** after `service update` — re-read them with
-   `kurtosis port print` and update anything that references them.
-7. Verify after each node (see the checklist below) before touching the next.
+Zero downtime, zero history loss, no container recreate. The default for any
+non-consensus change that lives in the **binary** (RPC handlers, mempool policy,
+P2P, logging, builder selection).
+
+Why it is safe: `docker restart` re-runs the entrypoint against the **same
+writable layer**, so overwriting the binary in place and restarting leaves the
+datadir physically untouched; the node re-executes the block tail and — for a
+non-consensus change — computes identical state roots.
+
+1. Build under a **unique immutable tag** (never reuse a mutable tag like
+   `ethrex:hegota` on a shared build host — a concurrent build can hijack it):
+   `make build-image TAG=hegota-<short-sha>`, then verify
+   `docker run --rm --entrypoint ./ethrex ethrex:hegota-<short-sha> --version`.
+2. Extract the binary once:
+   `id=$(docker create ethrex:hegota-<short-sha>); docker cp $id:/usr/local/bin/ethrex /tmp/ethrex-new; docker rm $id`.
+   **If you `scp` the binary between hosts, `chmod +x /tmp/ethrex-new` afterwards** —
+   `scp` drops the execute bit and the container crash-loops
+   `exec: /usr/local/bin/ethrex-real: Permission denied` (`docker cp` from an
+   image preserves it). The datadir is untouched because the failure is pre-exec.
+3. **Canary order: el-2 first (never the bootnode), then el-3, then el-1.**
+4. Per EL: `docker cp /tmp/ethrex-new <ctr>:/usr/local/bin/ethrex` then
+   `docker restart -t 20 <ctr>`.
+5. **Host ports:** enclaves with `port_publisher` set have **deterministic**
+   ports that survive restart. Enclaves that publish dynamically (older kurtosis)
+   **remap the host port on every restart** — re-read it with
+   `docker port <ctr> 8545` (or `kurtosis port print`) before verifying.
+6. Verify (checklist below) before touching the next EL.
+7. Rollback: keep the previous image (`docker tag ethrex:<current> ethrex:rollback-<sha>`)
+   so you can `docker cp` the old binary back and restart.
+
+**Durability:** the swapped binary lives in the writable layer — it survives
+reboots (set `docker update --restart unless-stopped` on all containers) but a
+container **recreate** reverts to the image. Retag the image
+(`docker tag ethrex:hegota-<short-sha> ethrex:hegota`) so a future recreate uses
+the new binary.
+
+## Path 1b — Add/change a CLI flag or RPC namespace without re-genesis (wrapper)
+
+For a **non-consensus** change that lives in the container **command**, not the
+binary — e.g. exposing a new RPC namespace via `--http.api`, or any flag tweak.
+The command is baked into `.Config.Cmd` at container creation; changing it
+normally needs a recreate (datadir loss). Wrap the entrypoint instead — same
+`docker cp` + `docker restart` mechanics as Path 1, so it is equally
+state-preserving, per-EL, and reversible.
+
+1. Swap the binary to a **sidecar path** (Path 1, but as `ethrex-real`):
+   `docker cp /tmp/ethrex-new <ctr>:/usr/local/bin/ethrex-real`.
+2. Install a wrapper at the **entrypoint path** that re-execs the real binary
+   with the extra flags appended:
+   ```
+   printf '#!/bin/sh\nexec /usr/local/bin/ethrex-real "$@" --http.api=eth,net,web3,ethrex\n' > /tmp/w
+   chmod +x /tmp/w
+   docker cp /tmp/w <ctr>:/usr/local/bin/ethrex
+   ```
+   Put the wrapper where the image's ENTRYPOINT resolves: `["ethrex"]` is
+   PATH-resolved (`/usr/local/bin/ethrex`); `["./ethrex"]` is relative to the
+   image `WorkingDir` (check `docker inspect <ctr> --format '{{.Config.WorkingDir}}'`).
+3. `docker restart -t 20 <ctr>`, then verify, canary order el-2 → el-3 → el-1.
+
+**The `--http.api` union rule.** `--http.api` is a multi-value flag with
+`args_override_self`, so multiple occurrences **union** (accumulate), not
+override. Appending `--http.api=ethrex` therefore *merges* `ethrex` into whatever
+the launcher already set. **But if the container passes no `--http.api`** (it then
+runs the default `eth,net,web3`), your appended occurrence is the *only* one — so
+append the **full** set you want (`eth,net,web3,ethrex`), or you will drop the
+defaults. Always check first:
+`docker inspect <ctr> --format '{{json .Config.Cmd}}'`.
+
+**Reversible:** `docker cp` the real binary back over the wrapper and restart.
+**Durability:** retag the image (Path 1) **and** bake the flag into the launcher
+`ethereum-package/src/el/ethrex/ethrex_launcher.star` so the next re-genesis sets
+it natively — the wrapper lives in the writable layer and is lost on recreate.
 
 ## Path 2 — Deploy before the fork (the mainnet-standard upgrade)
 
@@ -82,9 +141,9 @@ For consensus changes gated on a fork timestamp the chain has **not** reached.
 2. Schedule the fork **in the future** in the genesis/chain config. Setting a
    fork time at or before existing block timestamps retroactively redefines
    history → guaranteed state-root mismatch.
-3. Swap all ELs (Path 1 mechanics) **while the chain is still pre-fork**. The
-   new binary re-executes pre-fork blocks under pre-fork rules — identical
-   results — and the fork later activates under the new binary.
+3. Swap all ELs (Path 1 binary-swap mechanics) **while the chain is still
+   pre-fork**. The new binary re-executes pre-fork blocks under pre-fork rules —
+   identical results — and the fork later activates under the new binary.
 4. If the fork also needs CL awareness (new engine-API version, new payload
    fields), confirm the CL release supports it *before* scheduling.
 
@@ -129,25 +188,36 @@ gone, and users must re-claim from the faucet — **announce that explicitly**
 
 ## Post-upgrade verification checklist (every path)
 
-Run all of it; a node that starts is not a node that works.
+Run all of it; a node that starts is not a node that works. Verify on the
+node's **current** host RPC port (re-derive it after restart on dynamic-publish
+enclaves — see Path 1 step 5).
 
 1. `web3_clientVersion` on **every** EL shows the expected commit.
-2. 3-EL consensus: same head number **and hash** on all ELs.
-3. Finality advancing (safe/finalized within normal distance of head).
-4. Predeploys present (`eth_getCode` on `0x…8141`, `0x…8250`; `0x…8272` is
-   intentionally empty-code).
-5. A live frame transaction mines with status `0x1` (the submitter script in
+2. 3-EL consensus: same head number **and hash** on all ELs (cross-check a
+   recent block's hash across el-1/2/3 — this also proves a partially-upgraded
+   fleet still agrees, i.e. the change really is non-consensus).
+3. **State preserved** (Paths 1/1b/2): a deep block's hash (e.g. block 1000) is
+   **identical before and after** on every EL, and the startup log shows
+   `Finished regenerating state` with **no** `World State Root does not match`.
+4. Finality advancing (safe/finalized within normal distance of head).
+5. Predeploys present (`eth_getCode` on `0x…8141`, `0x…8250`; `0x…8272` is
+   intentionally empty-code) — Hegotá stack only.
+6. A live frame transaction mines with status `0x1` (the submitter script in
    this directory), plus a regular EIP-1559 tx.
-6. Public endpoints respond through the reverse proxy / DNS names.
-7. Restart policies applied (step 5 of Path 3).
-8. Rollback still possible: old image tag exists; for Path 1, datadir backups
-   exist.
+7. If the upgrade added/changed an RPC surface: the new method is **reachable**
+   (a bad-input call returns a handler error like `-32000`, not `-32601 Method
+   not found`) and the previously-served namespaces still respond.
+8. Public endpoints respond through the reverse proxy / DNS names.
+9. Restart policies applied (step 5 of Path 3).
+10. Rollback still possible: old image tag exists; for Paths 1/1b the wrapper
+    can be reverted by restoring the real binary over it.
 
 ## Quick decision table
 
 | Change | Path |
 |---|---|
-| RPC / mempool policy / P2P / builder selection / docs | 1 — rolling swap |
+| Non-consensus change in the **binary** (RPC handler, mempool policy, P2P, builder selection, logging) | 1 — binary swap |
+| Non-consensus change in the **container command** (add an RPC namespace, tune `--http.api` or a flag), state-preserving | 1b — wrapper |
 | New EIP or gas rule, fork not yet active | 2 — swap pre-fork, activate later |
 | Fixing rules of a fork already crossed (devnet) | 3 — re-genesis |
 | Changing active behavior, history must survive | 2-variant — new future fork |
