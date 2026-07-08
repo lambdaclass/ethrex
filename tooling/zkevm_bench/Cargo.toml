@@ -18,9 +18,10 @@ toml = "0.8"
 flate2 = "1.0"
 eyre = "0.6"
 sha2 = "0.10"
+hex = "0.4"
 
 [features]
-zisk-elf = ["ethrex-guest-program/zisk-build-elf"]
+zisk-elf = ["ethrex-guest-program/zisk-build-elf", "ethrex-guest-program/ci"]
 
 [[bin]]
 name = "ethrex-zkevm-bench"

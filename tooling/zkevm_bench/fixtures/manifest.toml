@@ -1,0 +1,5 @@
+[[workload]]
+name = "mainnet_25087668_light"
+type = "real-block"
+category = "light"
+source = "fixtures/blocks/cache_mainnet_25087668.json.gz"

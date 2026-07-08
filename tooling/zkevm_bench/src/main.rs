@@ -3,7 +3,9 @@ use clap::{Parser, Subcommand};
 mod cache;
 mod compare;
 mod manifest;
+mod micro;
 mod report;
+mod run;
 
 #[derive(Parser)]
 #[command(
@@ -51,7 +53,12 @@ enum Command {
 fn main() -> eyre::Result<()> {
     let cli = Cli::parse();
     match cli.command {
-        Command::Run { .. } => todo!("Task 9"),
+        Command::Run {
+            workloads,
+            filter,
+            out,
+            elf,
+        } => run::run_bench(&workloads, filter.as_deref(), &out, elf.as_deref()),
         Command::Compare {
             baseline,
             head,

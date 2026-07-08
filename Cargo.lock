@@ -4524,6 +4524,7 @@ dependencies = [
  "ethrex-rlp",
  "eyre",
  "flate2",
+ "hex",
  "serde",
  "serde_json",
  "sha2",
