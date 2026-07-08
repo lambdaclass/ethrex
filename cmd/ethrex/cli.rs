@@ -10,7 +10,7 @@ use std::{
 
 use clap::{ArgAction, Parser as ClapParser, Subcommand as ClapSubcommand};
 use ethrex_blockchain::{
-    BlockchainOptions, BlockchainType, L2Config,
+    BlockchainOptions, BlockchainType, DEFAULT_MAX_QUEUED_TXS_PER_ACCOUNT, L2Config,
     error::{ChainError, InvalidBlockError},
 };
 use ethrex_common::types::{Block, DEFAULT_BUILDER_GAS_CEIL, Genesis, validate_block_body};
@@ -238,6 +238,15 @@ pub struct Options {
     )]
     pub mempool_max_size: usize,
     #[arg(
+        help = "Maximum number of queued (future/nonce-gapped) transactions a single sender may hold in the mempool. Executable (contiguous-nonce) txs are not capped (geth AccountQueue-style).",
+        long = "mempool.max-queued-txs-per-account",
+        default_value_t = DEFAULT_MAX_QUEUED_TXS_PER_ACCOUNT,
+        value_name = "MAX_QUEUED_TXS_PER_ACCOUNT",
+        help_heading = "Node options",
+        env = "ETHREX_MEMPOOL_MAX_QUEUED_TXS_PER_ACCOUNT"
+    )]
+    pub mempool_max_queued_txs_per_account: usize,
+    #[arg(
         long = "http.addr",
         default_value = "127.0.0.1",
         value_name = "ADDRESS",
@@ -263,7 +272,7 @@ pub struct Options {
         value_delimiter = ',',
         value_parser = utils::parse_http_namespace,
         help = "Comma-separated JSON-RPC namespaces enabled over HTTP/WS.",
-        long_help = "Comma-separated list of JSON-RPC namespaces exposed on the public HTTP and WebSocket endpoints. Defaults to `eth,net,web3`. Enable `admin`, `debug` or `txpool` only when needed; the `engine` namespace is served on the authenticated RPC port and cannot be toggled here.",
+        long_help = "Comma-separated list of JSON-RPC namespaces exposed on the public HTTP and WebSocket endpoints. Defaults to `eth,net,web3`. Enable `admin`, `debug`, `txpool` or `testing` only when needed; the `engine` namespace is served on the authenticated RPC port and cannot be toggled here.",
         help_heading = "RPC options",
         env = "ETHREX_HTTP_API"
     )]
@@ -278,24 +287,24 @@ pub struct Options {
     pub ws_enabled: bool,
     #[arg(
         long = "ws.addr",
-        default_value = "0.0.0.0",
         value_name = "ADDRESS",
         requires = "ws_enabled",
-        help = "Listening address for the websocket rpc server.",
+        help = "Listening address for the websocket rpc server. Defaults to the http.addr value.",
+        long_help = "Listening address for the WebSocket JSON-RPC server. When unset it inherits `--http.addr` (loopback by default). Set it equal to the HTTP address to serve HTTP and WebSocket on a single listener.",
         help_heading = "RPC options",
         env = "ETHREX_WS_ADDR"
     )]
-    pub ws_addr: String,
+    pub ws_addr: Option<String>,
     #[arg(
         long = "ws.port",
-        default_value = "8546",
         value_name = "PORT",
         requires = "ws_enabled",
-        help = "Listening port for the websocket rpc server.",
+        help = "Listening port for the websocket rpc server. Defaults to the http.port value.",
+        long_help = "Listening port for the WebSocket JSON-RPC server. When unset it inherits `--http.port`, so an enabled WebSocket shares the HTTP listener unless a different port is given.",
         help_heading = "RPC options",
         env = "ETHREX_WS_PORT"
     )]
-    pub ws_port: String,
+    pub ws_port: Option<String>,
     #[arg(
         long = "authrpc.addr",
         default_value = "127.0.0.1",
@@ -519,6 +528,7 @@ impl Default for Options {
             dev: Default::default(),
             force: false,
             mempool_max_size: Default::default(),
+            mempool_max_queued_txs_per_account: DEFAULT_MAX_QUEUED_TXS_PER_ACCOUNT,
             tx_broadcasting_time_interval: Default::default(),
             target_peers: Default::default(),
             lookup_interval: Default::default(),
@@ -934,7 +944,11 @@ pub async fn import_blocks(
                 block_batch.push(block);
                 if block_batch.len() >= IMPORT_BATCH_SIZE || index + MIN_FULL_BLOCKS + 1 == size {
                     blockchain
-                        .add_blocks_in_batch(mem::take(&mut block_batch), CancellationToken::new())
+                        .add_blocks_in_batch(
+                            mem::take(&mut block_batch),
+                            &[],
+                            CancellationToken::new(),
+                        )
                         .await
                         .map_err(|(err, _)| err)?;
                 }
@@ -1026,14 +1040,15 @@ pub async fn import_blocks_bench(
         info!(path = %bal_path, "Loading BALs from file (parallel path)");
         use ethrex_common::types::block_access_list::BlockAccessList;
         use ethrex_rlp::decode::RLPDecode as _;
+        use std::sync::Arc;
         let data = std::fs::read(bal_path)
             .unwrap_or_else(|e| panic!("failed to read BAL file at {bal_path:?}: {e}"));
         let mut remaining = data.as_slice();
-        let mut bals = Vec::new();
+        let mut bals: Vec<Arc<BlockAccessList>> = Vec::new();
         while !remaining.is_empty() {
             let (bal, rest) = BlockAccessList::decode_unfinished(remaining)
                 .unwrap_or_else(|e| panic!("failed to decode BAL from {bal_path:?}: {e}"));
-            bals.push(bal);
+            bals.push(Arc::new(bal));
             remaining = rest;
         }
         let amsterdam_blocks = chains
@@ -1100,7 +1115,10 @@ pub async fn import_blocks_bench(
             // BALs are only produced for Amsterdam+ blocks, so use a separate counter
             // that only advances for blocks that have a BAL hash in the header.
             let bal = if block.header.block_access_list_hash.is_some() {
-                let b = preloaded_bals.as_ref().and_then(|bals| bals.get(bal_index));
+                let b = preloaded_bals
+                    .as_ref()
+                    .and_then(|bals| bals.get(bal_index))
+                    .cloned();
                 bal_index += 1;
                 b
             } else {
@@ -1129,10 +1147,10 @@ pub async fn import_blocks_bench(
                     })?;
             }
 
-            // Wait for the trie-update worker's Phase 2 (disk write of bottom-most
-            // diff layer) and Phase 3 (in-memory layer removal) for the block just
-            // applied to drain. Keeps the next block's per-block timer from
-            // absorbing the previous block's background persistence cost.
+            // Wait for the persist worker to drain the block just applied: its
+            // trie diff-layer build, the disk flush and the in-memory eviction.
+            // Keeps the next block's per-block timer from absorbing the previous
+            // block's background persistence cost.
             store.wait_for_persistence_idle().await?;
         }
 
@@ -1304,6 +1322,26 @@ mod tests {
         assert_eq!(cli.opts.http_addr, "127.0.0.1");
     }
 
+    /// `--ws.addr`/`--ws.port` inherit the HTTP address/port when unset, so an enabled
+    /// WebSocket defaults to a single listener on the (loopback) HTTP endpoint — matching
+    /// geth/reth/nethermind and keeping WS off public interfaces by default.
+    #[test]
+    fn ws_defaults_to_http_endpoint() {
+        let cli = CLI::parse_from(["ethrex", "--ws.enabled"]);
+        assert!(cli.opts.ws_addr.is_none());
+        assert!(cli.opts.ws_port.is_none());
+        let http = crate::initializers::get_http_socket_addr(&cli.opts);
+        let ws = crate::initializers::get_ws_socket_addr(&cli.opts);
+        assert!(
+            ws.ip().is_loopback(),
+            "WS must default to loopback like HTTP"
+        );
+        assert_eq!(
+            ws, http,
+            "WS must share the HTTP endpoint by default (single listener)"
+        );
+    }
+
     /// `--http.api` must default to `eth,net,web3`. Operators have to opt in
     /// explicitly to expose `admin`, `debug` or `txpool`.
     #[test]
@@ -1321,6 +1359,15 @@ mod tests {
         assert_eq!(
             cli.opts.http_api,
             vec![RpcNamespace::Eth, RpcNamespace::Debug, RpcNamespace::Admin]
+        );
+    }
+
+    #[test]
+    fn http_api_parses_testing_namespace() {
+        let cli = CLI::parse_from(["ethrex", "--http.api", "eth,testing"]);
+        assert_eq!(
+            cli.opts.http_api,
+            vec![RpcNamespace::Eth, RpcNamespace::Testing]
         );
     }
 

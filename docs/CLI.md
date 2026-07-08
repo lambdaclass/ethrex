@@ -111,6 +111,12 @@ Node options:
           [env: ETHREX_MEMPOOL_MAX_SIZE=]
           [default: 10000]
 
+      --mempool.max-queued-txs-per-account <MAX_QUEUED_TXS_PER_ACCOUNT>
+          Maximum number of queued (future/nonce-gapped) transactions a single sender may hold in the mempool. Executable (contiguous-nonce) txs are not capped (geth AccountQueue-style).
+
+          [env: ETHREX_MEMPOOL_MAX_QUEUED_TXS_PER_ACCOUNT=]
+          [default: 64]
+
       --precompute-witnesses
           Once synced, computes execution witnesses upon receiving newPayload messages and stores them in local storage
           
@@ -208,7 +214,7 @@ RPC options:
           [default: 8545]
 
       --http.api <NAMESPACES>
-          Comma-separated list of JSON-RPC namespaces exposed on the public HTTP and WebSocket endpoints. Defaults to `eth,net,web3`. Enable `admin`, `debug` or `txpool` only when needed; the `engine` namespace is served on the authenticated RPC port and cannot be toggled here.
+          Comma-separated list of JSON-RPC namespaces exposed on the public HTTP and WebSocket endpoints. Defaults to `eth,net,web3`. Enable `admin`, `debug`, `txpool` or `testing` only when needed; the `engine` namespace is served on the authenticated RPC port and cannot be toggled here.
           
           [env: ETHREX_HTTP_API=]
           [default: eth,net,web3]
@@ -219,16 +225,14 @@ RPC options:
           [env: ETHREX_ENABLE_WS=]
 
       --ws.addr <ADDRESS>
-          Listening address for the websocket rpc server.
+          Listening address for the WebSocket JSON-RPC server. When unset it inherits `--http.addr` (loopback by default). Set it equal to the HTTP address to serve HTTP and WebSocket on a single listener.
           
           [env: ETHREX_WS_ADDR=]
-          [default: 0.0.0.0]
 
       --ws.port <PORT>
-          Listening port for the websocket rpc server.
+          Listening port for the WebSocket JSON-RPC server. When unset it inherits `--http.port`, so an enabled WebSocket shares the HTTP listener unless a different port is given.
           
           [env: ETHREX_WS_PORT=]
-          [default: 8546]
 
       --authrpc.addr <ADDRESS>
           Listening address for the authenticated rpc server.
@@ -253,7 +257,7 @@ Block building options:
           Block extra data message.
           
           [env: ETHREX_BUILDER_EXTRA_DATA=]
-          [default: "ethrex 15.0.0"]
+          [default: "ethrex 20.0.0"]
 
       --builder.gas-limit <GAS_LIMIT>
           Target block gas limit.
@@ -418,7 +422,7 @@ RPC options:
           [default: 8545]
 
       --http.api <NAMESPACES>
-          Comma-separated list of JSON-RPC namespaces exposed on the public HTTP and WebSocket endpoints. Defaults to `eth,net,web3`. Enable `admin`, `debug` or `txpool` only when needed; the `engine` namespace is served on the authenticated RPC port and cannot be toggled here.
+          Comma-separated list of JSON-RPC namespaces exposed on the public HTTP and WebSocket endpoints. Defaults to `eth,net,web3`. Enable `admin`, `debug`, `txpool` or `testing` only when needed; the `engine` namespace is served on the authenticated RPC port and cannot be toggled here.
 
           [env: ETHREX_HTTP_API=]
           [default: eth,net,web3]
@@ -429,16 +433,14 @@ RPC options:
           [env: ETHREX_ENABLE_WS=]
 
       --ws.addr <ADDRESS>
-          Listening address for the websocket rpc server.
+          Listening address for the WebSocket JSON-RPC server. When unset it inherits `--http.addr` (loopback by default). Set it equal to the HTTP address to serve HTTP and WebSocket on a single listener.
 
           [env: ETHREX_WS_ADDR=]
-          [default: 0.0.0.0]
 
       --ws.port <PORT>
-          Listening port for the websocket rpc server.
+          Listening port for the WebSocket JSON-RPC server. When unset it inherits `--http.port`, so an enabled WebSocket shares the HTTP listener unless a different port is given.
 
           [env: ETHREX_WS_PORT=]
-          [default: 8546]
 
       --authrpc.addr <ADDRESS>
           Listening address for the authenticated rpc server.
@@ -463,7 +465,7 @@ Block building options:
           Block extra data message.
 
           [env: ETHREX_BUILDER_EXTRA_DATA=]
-          [default: "ethrex 15.0.0"]
+          [default: "ethrex 20.0.0"]
 
       --builder.gas-limit <GAS_LIMIT>
           Target block gas limit.

@@ -212,7 +212,7 @@ impl Simulator {
 /// Waits until the node is initialized by reading its logs.
 /// Returns the enode URL of the node.
 async fn wait_for_initialization(mut logs_file: File) -> String {
-    const NODE_STARTED_LOG: &str = "Starting Auth-RPC server at";
+    const NODE_STARTED_LOG: &str = "Auth-RPC server listening on";
 
     let mut file_contents = String::new();
 
@@ -307,7 +307,7 @@ impl Node {
             .execution_payload
             .block_access_list
             .as_ref()
-            .map(|bal| bal.compute_hash());
+            .map(|bal| bal.compute_hash(&ethrex_common::NativeCrypto));
         let block = payload_response
             .execution_payload
             .into_block(

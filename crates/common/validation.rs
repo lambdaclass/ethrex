@@ -7,11 +7,11 @@ use crate::constants::{GAS_PER_BLOB, MAX_RLP_BLOCK_SIZE, POST_OSAKA_GAS_LIMIT_CA
 use crate::errors::InvalidBlockError;
 use crate::types::requests::{EncodedRequests, Requests, compute_requests_hash};
 use crate::types::{
-    Block, BlockHeader, ChainConfig, EIP4844Transaction, Receipt,
+    Block, BlockHeader, ChainConfig, EIP4844Transaction, Receipt, Transaction,
     compute_receipts_root_and_logs_bloom, validate_block_header, validate_cancun_header_fields,
     validate_prague_header_fields, validate_pre_cancun_header_fields,
 };
-use ethrex_crypto::Crypto;
+use ethrex_crypto::{Crypto, NativeCrypto};
 use ethrex_rlp::encode::RLPEncode;
 
 /// Performs pre-execution validation of the block's header values in reference to the parent_header.
@@ -55,6 +55,32 @@ pub fn validate_block_pre_execution(
         verify_blob_gas_usage(block, chain_config)?;
     } else {
         validate_pre_cancun_header_fields(&block.header)?;
+    }
+
+    // A transaction's chain id is bound into its signature (EIP-155 / the typed-tx
+    // `chain_id` field), so the recovered sender is only valid for that chain. Reject any
+    // transaction whose chain id does not match this chain: other clients (geth's signer)
+    // reject it at block validation, so accepting one would split consensus. Legacy
+    // pre-EIP-155 transactions carry no chain id (`None`) and are left untouched.
+    //
+    // Privileged (L2) transactions are exempt: their sender comes from an unsigned `from`
+    // field, so chain id is not a signature-binding scalar for them, and on L2 it may name
+    // a different source chain (cross-chain deposits). On L1 they are rejected outright as
+    // an unsupported transaction type, so this exemption opens no L1 gap. The other L2-only
+    // type, `FeeTokenTransaction` (0x7d), is signature-recovered and therefore stays
+    // checked — on L2 it carries the L2 chain id; on L1 it is rejected as unsupported.
+    for tx in &block.body.transactions {
+        if matches!(tx, Transaction::PrivilegedL2Transaction(_)) {
+            continue;
+        }
+        if let Some(tx_chain_id) = tx.chain_id()
+            && tx_chain_id != chain_config.chain_id
+        {
+            return Err(InvalidBlockError::InvalidTransactionChainId {
+                have: tx_chain_id,
+                want: chain_config.chain_id,
+            });
+        }
     }
 
     Ok(())
@@ -182,6 +208,7 @@ pub fn validate_block_access_list_hash(
     chain_config: &ChainConfig,
     computed_bal: &crate::types::block_access_list::BlockAccessList,
     transaction_count: usize,
+    crypto: &dyn Crypto,
 ) -> Result<(), InvalidBlockError> {
     use crate::constants::BAL_ITEM_COST;
 
@@ -238,7 +265,7 @@ pub fn validate_block_access_list_hash(
         });
     }
 
-    let computed_hash = computed_bal.compute_hash();
+    let computed_hash = computed_bal.compute_hash(crypto);
     let valid = header
         .block_access_list_hash
         .map(|expected_hash| expected_hash == computed_hash)
@@ -282,7 +309,7 @@ pub fn validate_block_access_list_size(
 
 /// Perform validations over the block's blob gas usage.
 /// Must be called only if the block has cancun activated.
-fn verify_blob_gas_usage(block: &Block, config: &ChainConfig) -> Result<(), InvalidBlockError> {
+pub fn verify_blob_gas_usage(block: &Block, config: &ChainConfig) -> Result<(), InvalidBlockError> {
     let mut blob_gas_used = 0_u32;
     let mut blobs_in_block = 0_u32;
     let max_blob_number_per_block = config
@@ -292,9 +319,16 @@ fn verify_blob_gas_usage(block: &Block, config: &ChainConfig) -> Result<(), Inva
     let max_blob_gas_per_block = max_blob_number_per_block * GAS_PER_BLOB;
 
     for transaction in block.body.transactions.iter() {
-        if let crate::types::Transaction::EIP4844Transaction(tx) = transaction {
-            blob_gas_used += get_total_blob_gas(tx);
-            blobs_in_block += tx.blob_versioned_hashes.len() as u32;
+        match transaction {
+            crate::types::Transaction::EIP4844Transaction(tx) => {
+                blob_gas_used += get_total_blob_gas(tx);
+                blobs_in_block += tx.blob_versioned_hashes.len() as u32;
+            }
+            crate::types::Transaction::FrameTransaction(tx) => {
+                blob_gas_used += GAS_PER_BLOB * tx.blob_versioned_hashes.len() as u32;
+                blobs_in_block += tx.blob_versioned_hashes.len() as u32;
+            }
+            _ => {}
         }
     }
     if blob_gas_used > max_blob_gas_per_block {
@@ -321,7 +355,7 @@ fn verify_transaction_max_gas_limit(block: &Block) -> Result<(), InvalidBlockErr
         if transaction.gas_limit() > POST_OSAKA_GAS_LIMIT_CAP {
             return Err(InvalidBlockError::InvalidTransaction(format!(
                 "Transaction gas limit exceeds maximum. Transaction hash: {}, transaction gas limit: {}",
-                transaction.hash(),
+                transaction.hash(&NativeCrypto),
                 transaction.gas_limit()
             )));
         }
@@ -332,4 +366,67 @@ fn verify_transaction_max_gas_limit(block: &Block) -> Result<(), InvalidBlockErr
 /// Calculates the blob gas required by a transaction.
 pub fn get_total_blob_gas(tx: &EIP4844Transaction) -> u32 {
     GAS_PER_BLOB * tx.blob_versioned_hashes.len() as u32
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::H256;
+    use crate::types::{Block, BlockBody, BlockHeader, ChainConfig, Transaction};
+
+    /// Minimal cancun-active ChainConfig: only cancun_time set (= 0), default
+    /// blob schedule (max = 6 blobs per block).
+    fn cancun_config() -> ChainConfig {
+        ChainConfig {
+            cancun_time: Some(0),
+            ..Default::default()
+        }
+    }
+
+    /// Build a minimal Block with the given transactions and blob_gas_used header
+    /// value. timestamp = 1 so cancun_time = 0 is active.
+    fn make_block(transactions: Vec<Transaction>, blob_gas_used: u64) -> Block {
+        Block {
+            header: BlockHeader {
+                timestamp: 1,
+                gas_limit: 30_000_000,
+                blob_gas_used: Some(blob_gas_used),
+                excess_blob_gas: Some(0),
+                ..Default::default()
+            },
+            body: BlockBody {
+                transactions,
+                ommers: vec![],
+                withdrawals: Some(vec![]),
+            },
+        }
+    }
+
+    // --- EIP-4844 blob gas accounting (regression guard) ---
+
+    #[test]
+    fn eip4844_blob_gas_counts_correctly() {
+        let config = cancun_config();
+        let tx = Transaction::EIP4844Transaction(EIP4844Transaction {
+            blob_versioned_hashes: vec![H256::zero(), H256::zero()],
+            ..Default::default()
+        });
+        let block = make_block(vec![tx], 2 * GAS_PER_BLOB as u64);
+        assert!(verify_blob_gas_usage(&block, &config).is_ok());
+    }
+
+    #[test]
+    fn eip4844_blob_gas_mismatch_fails() {
+        let config = cancun_config();
+        let tx = Transaction::EIP4844Transaction(EIP4844Transaction {
+            blob_versioned_hashes: vec![H256::zero(), H256::zero()],
+            ..Default::default()
+        });
+        // Header claims 0 but actual is 2 * GAS_PER_BLOB
+        let block = make_block(vec![tx], 0);
+        assert!(matches!(
+            verify_blob_gas_usage(&block, &config),
+            Err(InvalidBlockError::BlobGasUsedMismatch)
+        ));
+    }
 }
