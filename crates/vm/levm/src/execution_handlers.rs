@@ -149,20 +149,22 @@ impl<'a> VM<'a> {
         let new_account = self.get_account_mut(new_contract_address)?;
 
         if new_account.create_would_collide() {
-            // EIP-8037: a collision returns before any opcode executes, so no execution
-            // state gas was charged via `increase_state_gas` (the only writer of
-            // `state_gas_spill` / `frame_state_gas_spilled`). Intrinsic state gas was added
-            // directly to `state_gas_used` in `add_intrinsic_gas` and never spills. There is
-            // therefore nothing for `refill_frame_state_gas` to roll back; the retained
-            // create-tx NEW_ACCOUNT refund in `finalize_execution` covers the account charge.
-            debug_assert_eq!(
-                self.state_gas_spill, 0,
-                "create collision must occur before any execution state gas spills"
-            );
-            debug_assert_eq!(
-                self.current_call_frame.frame_state_gas_spilled, 0,
-                "create collision must occur before any per-frame state gas spills"
-            );
+            // EIP-8037: `prepare_execution`'s in-region CREATE `NEW_ACCOUNT` charge
+            // (Task 4.2) runs before this collision check and fires whenever the
+            // target's pre-state was EMPTY_ACCOUNT — which can be true even for a
+            // colliding target in the EELS-documented "highly unlikely" case of a
+            // zero-nonce/zero-code/zero-balance address that nonetheless has storage
+            // (`create_would_collide` also considers storage; `is_empty()` doesn't).
+            // Roll that charge back to the frame's entry baseline: EELS never runs
+            // `prepare_dispatch` for a colliding create (`process_message_call`
+            // short-circuits on `account_deployable() == False` before calling
+            // `process_create_message`), so a collision must leave `state_gas_used`
+            // (and any state-gas spill) net zero. No opcodes have run yet, so
+            // `frame_used = state_gas_used - entry` is exactly this charge, if any.
+            if self.env.config.fork >= Fork::Amsterdam {
+                let entry = self.current_call_frame.state_gas_used_at_entry;
+                self.refill_frame_state_gas(entry)?;
+            }
 
             // Per EIP-684: a tx-level CREATE collision burns the
             // full forwarded execution gas as `regular_gas_used`. Zero `gas_remaining`
@@ -177,16 +179,6 @@ impl<'a> VM<'a> {
                 output: Bytes::new(),
             }));
         }
-
-        // EIP-8037 (#3002): capture whether the create-tx target is already alive
-        // (exists and non-empty) BEFORE balance/nonce mutation, mirroring EELS
-        // `target_alive = is_account_alive(message.current_target)` (set in
-        // `process_message_call` only for the non-colliding deployable path).
-        // A non-colliding alive target must have balance > 0 (collision rules forbid
-        // code/nonce/storage), so `!is_empty()` matches `is_account_alive` semantics.
-        // Used in `finalize_execution` to refund the unconditional new-account state
-        // gas on a successful create-tx whose target already existed.
-        self.created_target_alive = !new_account.is_empty();
 
         let value = self.current_call_frame.msg_value;
         self.increase_account_balance(new_contract_address, value)?;

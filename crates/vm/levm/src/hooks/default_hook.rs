@@ -157,43 +157,73 @@ impl Hook for DefaultHook {
             validate_type_4_tx(vm)?;
         }
 
-        // EIP-2780 (merged EIPs#11645) top-level post-7702 charges.
-        // Applied AFTER EIP-7702 authorizations are set (so recipient emptiness /
-        // delegation reflect the post-auth state) and BEFORE the value transfer.
-        // Only for Amsterdam+ non-create transactions.
-        if vm.env.config.fork >= Fork::Amsterdam && !vm.is_create()? {
-            let to = vm.current_call_frame.to;
-            let recipient = vm.db.get_account(to)?;
-            let recipient_is_empty = recipient.is_empty();
-            let recipient_code_hash = recipient.info.code_hash;
-            let recipient_is_delegated = if recipient_code_hash == *EMPTY_KECCAK_HASH {
-                false
+        // EIP-8037 (atomic prepare region): EELS `prepare_dispatch` create/value
+        // branch (interpreter.py:277-291). The CREATE / value-to-not-alive
+        // `NEW_ACCOUNT` charge is evaluated IN-REGION via `increase_state_gas`: an
+        // insufficient reservoir/gas rolls back the whole region
+        // (`vm.fail_prepare_region()`) and burns all gas, rather than rejecting the
+        // tx (which would wrongly invalidate the block). Applied AFTER EIP-7702
+        // authorizations are set (so recipient emptiness / delegation reflect the
+        // post-auth state) and BEFORE the value transfer.
+        if vm.env.config.fork >= Fork::Amsterdam && !vm.pending_prep_oog {
+            if vm.is_create()? {
+                // EELS `prepare_dispatch`: `get_pre_state_account(message.current_target)
+                // == EMPTY_ACCOUNT`. The created address cannot have been touched by
+                // this tx's fee deduction / nonce bump (those only touch the sender),
+                // and a create transaction can never carry an authorization list
+                // (`validate_type_4_tx` rejects `to == None`), so the current DB read
+                // already equals the pre-tx state for this address.
+                let created_addr = vm.current_call_frame.to;
+                if vm.db.get_account(created_addr)?.is_empty() {
+                    let charge = vm.state_gas_new_account;
+                    if vm.increase_state_gas(charge).is_err() {
+                        vm.fail_prepare_region()?;
+                    }
+                }
             } else {
-                let code = vm.db.get_code(recipient_code_hash)?.code_bytes();
-                code_has_delegation(&code)?
-            };
+                let to = vm.current_call_frame.to;
+                let recipient = vm.db.get_account(to)?;
+                let recipient_is_empty = recipient.is_empty();
+                let recipient_code_hash = recipient.info.code_hash;
+                let recipient_is_delegated = if recipient_code_hash == *EMPTY_KECCAK_HASH {
+                    false
+                } else {
+                    let code = vm.db.get_code(recipient_code_hash)?.code_bytes();
+                    code_has_delegation(&code)?
+                };
 
-            // If the recipient is EIP-161-empty and the tx transfers value, the
-            // value transfer will materialize a new account: charge the
-            // new-account state gas. (Skipped if a 7702 auth already materialized
-            // the recipient this tx, since emptiness is evaluated post-auth.)
-            // EIP-2780 (EELS PR #3048): no precompile carve-out. EIP-161/EIP-2780
-            // define emptiness structurally, so an empty (unfunded) precompile
-            // receiving value is created like any other account and pays
-            // NEW_ACCOUNT. A pre-funded precompile is non-empty, so
-            // `recipient_is_empty` is already false and it stays exempt.
-            // The charge is deferred to `run_execution` (charged from the reservoir there)
-            // so an OOG reverts the tx rather than invalidating the block; the emptiness
-            // check must happen here, before the value transfer materializes the account.
-            if recipient_is_empty && !vm.tx.value().is_zero() {
-                vm.pending_top_frame_state_gas = vm.state_gas_new_account;
-            }
+                // If the recipient is EIP-161-empty and the tx transfers value, the
+                // value transfer will materialize a new account: charge the
+                // new-account state gas IN-REGION (EELS `prepare_dispatch` value
+                // branch: `is_account_alive`). Skipped if a 7702 auth already
+                // materialized the recipient this tx, since emptiness is evaluated
+                // post-auth. EIP-2780 (EELS PR #3048): no precompile carve-out.
+                // EIP-161/EIP-2780 define emptiness structurally, so an empty
+                // (unfunded) precompile receiving value is created like any other
+                // account and pays NEW_ACCOUNT. A pre-funded precompile is
+                // non-empty, so `recipient_is_empty` is already false and it stays
+                // exempt.
+                if recipient_is_empty && !vm.tx.value().is_zero() {
+                    let charge = vm.state_gas_new_account;
+                    if vm.increase_state_gas(charge).is_err() {
+                        vm.fail_prepare_region()?;
+                    } else {
+                        // Signal so a subsequent Amsterdam precompile-halt in
+                        // `run_execution` rolls this charge back (the recipient
+                        // never materializes on halt) — replaces the old
+                        // `pending_top_frame_state_gas > 0` derivation, which no
+                        // longer fires now that this charge is applied in-region.
+                        vm.value_new_account_charged = true;
+                    }
+                }
 
-            // If the recipient is a 7702-delegated account, charge an additional
-            // cold account access for resolving the delegation target. Deferred to
-            // run_execution (like the state charge) so an OOG reverts the tx.
-            if recipient_is_delegated {
-                vm.pending_top_frame_regular_gas = cold_account_access_cost(vm.env.config.fork);
+                // If the recipient is a 7702-delegated account, charge an
+                // additional cold account access for resolving the delegation
+                // target. Still deferred to `run_execution` (Phase 6 moves it
+                // in-region); unaffected by the state-charge move above.
+                if !vm.pending_prep_oog && recipient_is_delegated {
+                    vm.pending_top_frame_regular_gas = cold_account_access_cost(vm.env.config.fork);
+                }
             }
         }
 
@@ -237,23 +267,26 @@ impl Hook for DefaultHook {
         }
 
         // EIP-8037 (Amsterdam+): CREATE-tx address collision.
-        // Per EELS process_message_call (interpreter.py:120-145) the collision
-        // returns `state_gas_left = message.state_gas_reservoir` (reservoir is
-        // PRESERVED, not burned). The failure block in fork.py:1086-1094 then
-        // adds `new_account_refund` to both `state_gas_left` and `state_refund`,
-        // so the user gets back reservoir + new_account_refund. tx_state_gas
-        // collapses to 0, tx_regular_gas = max(intrinsic_regular + message.gas,
-        // calldata_floor). The user does NOT lose the whole gas_limit.
+        // Per EELS process_message_call (interpreter.py:120-145), `prepare_dispatch`
+        // never runs for a colliding create (the collision check short-circuits before
+        // `process_create_message`/`process_message`), so `state_gas_used=0` and the
+        // reservoir is PRESERVED (not burned): `state_gas_left = message.state_gas_reservoir`.
+        // tx_state_gas collapses to 0, tx_regular_gas = max(intrinsic_regular +
+        // message.gas, calldata_floor). The user does NOT lose the whole gas_limit.
+        //
+        // ethrex's in-region CREATE NEW_ACCOUNT charge (Task 4.2) runs before the
+        // collision check and is rolled back to the frame's entry baseline by
+        // `handle_create_transaction` on collision (see that function), so
+        // `state_gas_used` is already net zero here. `state_refund` is not read: a
+        // create tx can never carry an EIP-7702 authorization list
+        // (`validate_type_4_tx` rejects `to == None`), and Task 4.3 removed the only
+        // other create-related `state_refund` producer, so it is always 0 for a
+        // collision anyway.
         if vm.env.config.fork >= Fork::Amsterdam && ctx_result.is_collision() {
             let gas_limit = vm.env.gas_limit;
-            // state_gas_used is already net (signed, inline refunds applied).
-            // state_refund carries the EIP-7702 auth refund and CREATE-failure intrinsic
-            // (added by vm.finalize_execution). Clamp at zero.
-            let state_refund_signed =
-                i64::try_from(vm.state_refund).map_err(|_| InternalError::Overflow)?;
+            // state_gas_used is already net (signed, inline refunds applied); clamp at zero.
             let state_gas: u64 =
-                u64::try_from(vm.state_gas_used.saturating_sub(state_refund_signed).max(0))
-                    .map_err(|_| InternalError::Overflow)?;
+                u64::try_from(vm.state_gas_used.max(0)).map_err(|_| InternalError::Overflow)?;
             let floor = vm.get_min_gas_used()?;
             // Regular gas = gas_limit - state_gas_left, where state_gas_left =
             // reservoir (PRESERVED across collision in EELS, with new_account_refund
