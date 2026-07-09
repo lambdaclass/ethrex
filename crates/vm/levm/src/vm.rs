@@ -1436,7 +1436,12 @@ impl<'a> VM<'a> {
         self.current_call_frame.call_frame_backup.bal_checkpoint =
             self.db.bal_recorder.as_ref().map(|r| r.checkpoint());
 
-        if self.is_create()? {
+        // EIP-8037: skip the CREATE nonce bump / endowment / collision check when the
+        // atomic prepare region OOG'd (`pending_prep_oog`). EELS raises in
+        // `prepare_dispatch` before `process_create_message` runs, so the contract is
+        // never created — `run_execution` below emits the full-gas revert. Bumping the
+        // nonce here would leave a phantom nonce=1 the region rollback can't reach.
+        if !self.pending_prep_oog && self.is_create()? {
             // Create contract, reverting the Tx if address is already occupied.
             if let Some(context_result) = self.handle_create_transaction()? {
                 let report = self.finalize_execution(context_result)?;
