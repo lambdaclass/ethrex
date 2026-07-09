@@ -6,7 +6,10 @@ use crate::{
 };
 use ExceptionalHalt::OutOfGas;
 /// Contains the gas costs of the EVM instructions
-use ethrex_common::{U256, types::Fork, types::tx_fields::AccessList};
+use ethrex_common::{
+    Address, U256,
+    types::{Fork, TxKind, tx_fields::AccessList},
+};
 use malachite::base::num::logic::traits::*;
 use malachite::{Natural, base::num::basic::traits::Zero as _};
 
@@ -226,8 +229,16 @@ pub const CREATE_ACCESS_AMSTERDAM: u64 = 11000;
 pub const TX_VALUE_COST_AMSTERDAM: u64 = 4244;
 pub const TRANSFER_LOG_COST_AMSTERDAM: u64 = 1756;
 
+// EIP-8038: size in bytes of one RLP-encoded authorization tuple, used to
+// derive its calldata-floor contribution below.
+pub const AUTH_TUPLE_BYTES_AMSTERDAM: u64 = 101;
+
 // EIP-8038: regular cost per EIP-7702 authorization, in addition to ACCOUNT_WRITE.
-// 101 bytes * 16 (calldata floor) + ECRECOVER (3000) + COLD_ACCOUNT_ACCESS (3000) + 2*WARM (200).
+// This is EELS `REGULAR_PER_AUTH_BASE_COST`: the fixed *regular*-gas charge levied
+// per authorization tuple, independent of the (separate) state-gas charge for a
+// newly-materialized authority account.
+// AUTH_TUPLE_BYTES_AMSTERDAM * 16 (calldata floor) + ECRECOVER (3000)
+//   + COLD_ACCOUNT_ACCESS (3000) + 2*WARM (2*100) = 101*16 + 3000 + 3000 + 200 = 7816.
 pub const PER_AUTH_BASE_COST_AMSTERDAM: u64 = 7816;
 
 /// Transaction base cost (sender-side). EIP-2780 lowers the flat 21000 base to
@@ -286,6 +297,44 @@ pub fn call_positive_value_cost(fork: Fork) -> u64 {
         CALL_VALUE_AMSTERDAM
     } else {
         CALL_POSITIVE_VALUE
+    }
+}
+
+/// Regular-gas contribution of the `tx.to` / `tx.value` charges (EIP-2780,
+/// items 2-3 of EELS `calculate_intrinsic_cost`). Returns 0 pre-Amsterdam.
+/// Excludes the sender-side base cost (`tx_base_cost`) and the EIP-3860
+/// init-code-word cost — both are applied separately by callers. Shared by
+/// `VM::get_intrinsic_gas`, `intrinsic_gas_dimensions`, and the calldata-floor
+/// anchor so all three stay in lock-step.
+pub fn recipient_regular_gas(to: &TxKind, value: U256, sender: Address, fork: Fork) -> u64 {
+    if fork < Fork::Amsterdam {
+        return 0;
+    }
+
+    let is_self_transfer = matches!(to, TxKind::Call(addr) if *addr == sender);
+    if is_self_transfer {
+        return 0;
+    }
+
+    let is_create = matches!(to, TxKind::Create);
+    let regular_gas = if is_create {
+        CREATE_ACCESS_AMSTERDAM
+    } else {
+        cold_account_access_cost(fork)
+    };
+
+    #[expect(
+        clippy::arithmetic_side_effects,
+        reason = "sum of small constant gas costs (<= ~17000), cannot overflow u64"
+    )]
+    if !value.is_zero() {
+        if is_create {
+            regular_gas + TRANSFER_LOG_COST_AMSTERDAM
+        } else {
+            regular_gas + TRANSFER_LOG_COST_AMSTERDAM + TX_VALUE_COST_AMSTERDAM
+        }
+    } else {
+        regular_gas
     }
 }
 

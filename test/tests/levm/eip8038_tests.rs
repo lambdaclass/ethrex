@@ -29,6 +29,7 @@ use ethrex_crypto::NativeCrypto;
 use ethrex_levm::{
     db::gen_db::GeneralizedDatabase,
     environment::{EVMConfig, Environment},
+    errors::{ExceptionalHalt, TxResult, VMError},
     gas_cost,
     tracing::LevmCallTracer,
     utils::intrinsic_gas_dimensions,
@@ -672,6 +673,104 @@ fn test_sstore_clear_then_restore_osaka_control() {
         refund, 2800,
         "clear-then-restore net refund at Osaka must stay 2800"
     );
+}
+
+// ----- Cold-access-boundary regression (Task 1.4, review CRITICAL #2) ------
+//
+// EIP-8038 raises COLD_STORAGE_ACCESS to 3000, above the 2300 EIP-2200
+// stipend, so the flat pre-Amsterdam stipend gate is no longer a sufficient
+// sentry on its own at Amsterdam+. A cold slot with `2301 <= gas_remaining <
+// 3000` must OOG on the access-cost gate itself, before the slot is ever
+// marked accessed or recorded to the BAL (EIP-7928: "If pre-state validation
+// fails, the target is never accessed and must not appear in BAL").
+
+#[test]
+fn test_sstore_cold_access_boundary_amsterdam_no_bal_read_on_oog() {
+    let fork = Fork::Amsterdam;
+
+    // Probe: STOP-only code measures the exact intrinsic gas for this tx shape
+    // (a plain CALL to CONTRACT, zero value, no calldata).
+    let intrinsic_gas = {
+        let env = sstore_env(fork);
+        let mut db = sstore_db(vec![0x00], U256::zero());
+        let tx = sstore_tx();
+        let mut vm = VM::new(
+            env,
+            &mut db,
+            &tx,
+            LevmCallTracer::disabled(),
+            VMType::L1,
+            &NativeCrypto,
+        )
+        .expect("VM::new (intrinsic probe)");
+        let report = vm.execute().expect("probe execute");
+        assert!(report.is_success(), "probe must succeed: {report:?}");
+        assert_eq!(report.gas_refunded, 0, "probe must not refund");
+        report.gas_used
+    };
+
+    // PUSH1 value (3) + PUSH1 SLOT_KEY (3) + SSTORE. Size `gas_limit` so exactly
+    // 2500 gas remains when the SSTORE gate runs: inside 2301..3000, i.e. above
+    // the flat 2300 stipend (which the pre-fix code gated on for every fork) but
+    // below the Amsterdam cold access cost (3000).
+    const REMAINING_AT_SSTORE_GATE: u64 = 2500;
+    const PUSH_GAS: u64 = 6;
+    let code = sstore_seq(5);
+    let gas_limit = intrinsic_gas
+        .checked_add(PUSH_GAS)
+        .and_then(|g| g.checked_add(REMAINING_AT_SSTORE_GATE))
+        .expect("gas_limit overflow");
+
+    // The top-level call frame's gas budget comes from `Environment::gas_limit`,
+    // not `Transaction::gas_limit` (only used for cap/floor validation), so it
+    // must be trimmed here to land exactly on the boundary under test.
+    let mut env = sstore_env(fork);
+    env.gas_limit = gas_limit;
+    let mut db = sstore_db(code, U256::zero());
+    db.enable_bal_recording();
+    let tx = Transaction::EIP1559Transaction(EIP1559Transaction {
+        chain_id: 1,
+        nonce: 0,
+        max_priority_fee_per_gas: 0,
+        max_fee_per_gas: 0,
+        gas_limit,
+        to: TxKind::Call(CONTRACT),
+        value: U256::zero(),
+        data: Bytes::new(),
+        access_list: Default::default(),
+        ..Default::default()
+    });
+    let mut vm = VM::new(
+        env,
+        &mut db,
+        &tx,
+        LevmCallTracer::disabled(),
+        VMType::L1,
+        &NativeCrypto,
+    )
+    .expect("VM::new");
+    let report = vm.execute().expect("execute");
+
+    assert_eq!(
+        report.result,
+        TxResult::Revert(VMError::ExceptionalHalt(ExceptionalHalt::OutOfGas)),
+        "cold Amsterdam SSTORE with 2301..3000 gas remaining must OOG on the \
+         access-cost gate: {report:?}"
+    );
+
+    let bal = db.take_bal().expect("BAL recording was enabled");
+    if let Some(changes) = bal.accounts().iter().find(|a| a.address == CONTRACT) {
+        assert!(
+            changes.storage_reads.is_empty(),
+            "slot must not appear as a BAL read when the op OOGs on the \
+             access-cost gate: {changes:?}"
+        );
+        assert!(
+            changes.storage_changes.is_empty(),
+            "slot must not appear as a BAL write when the op OOGs on the \
+             access-cost gate: {changes:?}"
+        );
+    }
 }
 
 // ===========================================================================
