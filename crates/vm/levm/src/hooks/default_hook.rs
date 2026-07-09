@@ -175,6 +175,16 @@ impl Hook for DefaultHook {
                 // (`validate_type_4_tx` rejects `to == None`), so the current DB read
                 // already equals the pre-tx state for this address.
                 let created_addr = vm.current_call_frame.to;
+                // EIP-7928: record the created address in the BAL now that the prepare
+                // region has read its pre-state (EELS `prepare_dispatch`
+                // `get_pre_state_account(current_target)`), so a create that OOGs on the
+                // in-region NEW_ACCOUNT charge still lists the address — the access record
+                // survives the region rollback. Without this, a create that halts before
+                // dispatch (which is where `handle_create_transaction` records the address)
+                // would drop it and fork on the BAL hash.
+                if let Some(recorder) = vm.db.bal_recorder.as_mut() {
+                    recorder.record_touched_address(created_addr);
+                }
                 if vm.db.get_account(created_addr)?.is_empty() {
                     let charge = vm.state_gas_new_account;
                     if vm.increase_state_gas(charge).is_err() {
@@ -186,6 +196,17 @@ impl Hook for DefaultHook {
                 let recipient = vm.db.get_account(to)?;
                 let recipient_is_empty = recipient.is_empty();
                 let recipient_code_hash = recipient.info.code_hash;
+                // EIP-7928 (tests-glamsterdam-devnet@v7.1.0): record the recipient in the
+                // BAL at its load point — mirroring EELS `prepare_dispatch`, which loads
+                // the recipient (`get_account`) at the START of dispatch, BEFORE the
+                // value NEW_ACCOUNT / delegation-access charges below. Recording here (not
+                // after the region) means a subsequent in-region OOG on those charges
+                // still lists the recipient (it was already loaded), while an earlier
+                // EIP-7702 auth halt — which skips this whole block via the
+                // `!vm.pending_prep_oog` guard above — correctly excludes it.
+                if let Some(recorder) = vm.db.bal_recorder.as_mut() {
+                    recorder.record_touched_address(to);
+                }
                 // Resolve a 7702-delegated recipient's target address (EELS
                 // `prepare_dispatch`: `get_delegated_code_address(recipient_code)`),
                 // evaluated post-auth so an auth on `tx.to` this tx is reflected.
@@ -906,8 +927,15 @@ pub fn set_bytecode_and_code_address(vm: &mut VM<'_>) -> Result<(), VMError> {
         // Here bytecode and code_address could be either from the account or from the delegated account.
         let to = vm.current_call_frame.to;
 
-        // Record tx.to as touched in BAL (the target of message call transaction)
-        if let Some(recorder) = vm.db.bal_recorder.as_mut() {
+        // Record tx.to as touched in BAL (the target of message call transaction).
+        // EIP-7928 (tests-glamsterdam-devnet@v7.1.0): skipped when the atomic prepare
+        // region rolled back (`pending_prep_oog`). EELS v7.1.0 stopped loading the
+        // recipient at inclusion (`prepare_message`) and now loads it only in the
+        // top-frame `prepare_dispatch`, which an EIP-7702 auth halt precedes — so a
+        // tx that OOGs during authorization processing must not touch the recipient.
+        if !vm.pending_prep_oog
+            && let Some(recorder) = vm.db.bal_recorder.as_mut()
+        {
             recorder.record_touched_address(to);
         }
 
