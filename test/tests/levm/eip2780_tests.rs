@@ -228,7 +228,11 @@ fn test_intrinsic_eth_transfer_to_existing_eoa_amsterdam() {
 
 #[test]
 fn test_intrinsic_create_zero_value_amsterdam() {
-    // contract-creation, value=0: base + CREATE_ACCESS + new-account state gas.
+    // contract-creation, value=0: base + CREATE_ACCESS. The NEW_ACCOUNT state gas is
+    // no longer part of the intrinsic (Task 4.1): it is charged IN-REGION by
+    // `prepare_execution` (EELS `prepare_dispatch` create branch), conditioned on
+    // `get_pre_state_account(created_addr) == EMPTY_ACCOUNT`, not unconditionally at
+    // intrinsic time.
     let tx = call_tx(TxKind::Create, U256::zero());
     let (regular, state) = intrinsic_with_parity(Fork::Amsterdam, &tx);
     assert_eq!(
@@ -237,12 +241,16 @@ fn test_intrinsic_create_zero_value_amsterdam() {
         "create value=0 regular gas (12000 + 11000 = 23000)"
     );
     assert_eq!(regular, 23000, "create value=0 regular gas must be 23000");
-    assert!(state > 0, "create must charge new-account state gas");
+    assert_eq!(
+        state, 0,
+        "create intrinsic state gas is 0 (NEW_ACCOUNT moved in-region)"
+    );
 }
 
 #[test]
 fn test_intrinsic_create_nonzero_value_amsterdam() {
     // contract-creation, value>0: base + CREATE_ACCESS + transfer log (no value cost).
+    // As above, the NEW_ACCOUNT state gas is charged in-region, not at intrinsic time.
     let tx = call_tx(TxKind::Create, U256::from(1u64));
     let (regular, state) = intrinsic_with_parity(Fork::Amsterdam, &tx);
     assert_eq!(
@@ -251,7 +259,10 @@ fn test_intrinsic_create_nonzero_value_amsterdam() {
         "create value>0 regular gas (23000 + 1756 = 24756)"
     );
     assert_eq!(regular, 24756, "create value>0 regular gas must be 24756");
-    assert!(state > 0, "create must charge new-account state gas");
+    assert_eq!(
+        state, 0,
+        "create intrinsic state gas is 0 (NEW_ACCOUNT moved in-region)"
+    );
 }
 
 // ===========================================================================

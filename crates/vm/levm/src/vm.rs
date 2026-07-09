@@ -640,11 +640,10 @@ pub struct VM<'a> {
     pub cost_per_state_byte: u64,
     /// EIP-8037: State gas for new account creation (STATE_BYTES_PER_NEW_ACCOUNT * cost_per_state_byte).
     pub state_gas_new_account: u64,
-    /// EIP-2780 top-frame new-account state gas pending for the top-level value
-    /// transfer to an empty recipient. Captured in `prepare_execution` (before the
-    /// value transfer, while the recipient is still empty) and charged at the start
-    /// of `run_execution` so an OOG reverts the tx (EELS charges it inside
-    /// `process_message`) instead of invalidating the block.
+    /// EIP-2780: previously the deferred top-frame new-account state gas for a
+    /// value transfer to an empty recipient. Task 4.2 moved that charge into the
+    /// atomic prepare region (see `value_new_account_charged`), so this field is
+    /// now always 0; kept until Phase 6 removes the whole deferred mechanism.
     pub pending_top_frame_state_gas: u64,
     /// EIP-2780 top-frame regular gas pending for a 7702-delegated recipient (the
     /// extra COLD_ACCOUNT_ACCESS to resolve the delegation). Deferred to
@@ -673,13 +672,13 @@ pub struct VM<'a> {
     /// execution portion to the reservoir — block accounting then bills the intrinsic
     /// (matches EELS `tx_state_gas = intrinsic_state_gas + tx_output.state_gas_used`).
     pub intrinsic_state_gas: u64,
-    /// EIP-8037 (#3002): whether a top-level CREATE transaction targeted an
-    /// already-alive account (existed and non-empty) at tx start, captured in
-    /// `handle_create_transaction` before any state mutation. Mirrors EELS
-    /// `MessageCallOutput.created_target_alive`. Extends the create-tx
-    /// new-account refund in `finalize_execution` to also fire on success when
-    /// the target was alive (no new account leaf created). Default false.
-    pub created_target_alive: bool,
+    /// EIP-8037: set by `prepare_execution` when the in-region value-to-not-alive
+    /// `NEW_ACCOUNT` charge fires (a value-bearing call to a not-yet-alive
+    /// recipient). Consumed once, at the top of `run_execution`, to decide
+    /// whether an Amsterdam precompile-halt must roll the charge back (the
+    /// recipient never materializes on halt) — replaces the old derivation from
+    /// `pending_top_frame_state_gas > 0` now that the charge is applied in-region.
+    pub value_new_account_charged: bool,
     /// EIP-8037: `current_call_frame.state_gas_used_at_entry` captured by
     /// `enter_prepare_region` right before the atomic prepare region (EIP-7702
     /// auth + prepare-dispatch charges) begins. `fail_prepare_region` refills the
@@ -1067,7 +1066,7 @@ impl<'a> VM<'a> {
             state_gas_auth_base,
             state_refund: 0,
             intrinsic_state_gas: 0,
-            created_target_alive: false,
+            value_new_account_charged: false,
             prep_baseline_state_gas: 0,
             prep_region_backup_marker: PrepareRegionBackupMarker::default(),
             pending_prep_oog: false,
@@ -2618,16 +2617,22 @@ impl<'a> VM<'a> {
             });
         }
 
-        // A pending top-frame NEW_ACCOUNT charge means the recipient was an EIP-161-empty
-        // account receiving value. If the recipient is a precompile that then exceptionally
-        // halts/reverts, the account is never materialized, so the charge is rolled back in
-        // the precompile branch below (mirrors EELS `refill_frame_state_gas`).
-        let top_frame_new_account_charged = self.pending_top_frame_state_gas > 0;
+        // A charged value-to-not-alive NEW_ACCOUNT means the recipient was not yet alive
+        // at tx start and the tx transfers value. If the recipient is a precompile that
+        // then exceptionally halts/reverts, the account is never materialized, so the
+        // charge is rolled back in the precompile branch below (mirrors EELS
+        // `refill_frame_state_gas`). Set in-region by `prepare_execution` (Task 4.2);
+        // replaces the old `pending_top_frame_state_gas > 0` derivation now that the
+        // charge is no longer deferred.
+        let top_frame_new_account_charged = self.value_new_account_charged;
 
-        // EIP-2780 top-frame new-account state charge (deferred from prepare_execution):
-        // charged from the state-gas reservoir at the top of the frame, mirroring EELS
-        // `process_message`. If it cannot be covered the tx reverts (consuming all gas),
-        // rather than being rejected as an invalid transaction.
+        // EIP-2780 top-frame delegation-resolve regular-gas charge, applied here
+        // (`pending_top_frame_regular_gas`) via `prepare_execution`. The state-gas half
+        // of this block is now dead: `pending_state` is always 0, since Task 4.2 applies
+        // the value NEW_ACCOUNT charge directly in-region instead of setting
+        // `pending_top_frame_state_gas`; Phase 6 deletes this whole mechanism. If the
+        // charge below cannot be covered the tx reverts (consuming all gas), rather than
+        // being rejected as an invalid transaction.
         if self.pending_top_frame_state_gas > 0 || self.pending_top_frame_regular_gas > 0 {
             let pending_state = std::mem::take(&mut self.pending_top_frame_state_gas);
             let pending_regular = std::mem::take(&mut self.pending_top_frame_regular_gas);
@@ -3126,37 +3131,18 @@ impl<'a> VM<'a> {
         // the top-frame `refill_frame_state_gas` (seeded at the post-intrinsic baseline in
         // `add_intrinsic_gas` and fired on revert/halt in `handle_opcode_error` /
         // `handle_opcode_result`). The intrinsic portion stays in `state_gas_used` so block
-        // accounting bills it. No reservoir-move is performed here. Collision returns before
-        // any execution state gas is charged, so it has nothing to refill (see the create
-        // collision branch in `handle_create_transaction`).
+        // accounting bills it. No reservoir-move is performed here. A create-tx collision
+        // rolls its own in-region `NEW_ACCOUNT` charge (if any) back to the frame's entry
+        // baseline inside `handle_create_transaction`'s collision branch, so there is
+        // nothing left to refill here either (see that function).
         //
-        // EIP-8037 (#3002): the create-tx NEW_ACCOUNT refund fires for every top-level
-        // CREATE-tx failure (revert / halt / OOG / collision), AND on success when the
-        // target was already alive (`created_target_alive`) — no new account leaf created.
-        // EELS reference: fork.py::process_transaction:
-        //   if isinstance(tx.to, Bytes0) and (
-        //       tx_output.error is not None or tx_output.created_target_alive
-        //   ):
-        //       new_account_refund = STATE_BYTES_PER_NEW_ACCOUNT * COST_PER_STATE_BYTE
-        //       tx_output.state_gas_left += new_account_refund
-        //       tx_output.state_refund   += new_account_refund
-        // The `created_target_alive` term only ever holds on the success path: on
-        // collision `handle_create_transaction` returns before setting it, so the
-        // collision refund still fires exactly once via `!is_success`.
-        if self.env.config.fork >= Fork::Amsterdam
-            && self.is_create()?
-            && (!ctx_result.is_success() || self.created_target_alive)
-        {
-            let new_account_refund = self.state_gas_new_account;
-            self.state_gas_reservoir = self
-                .state_gas_reservoir
-                .checked_add(new_account_refund)
-                .ok_or(InternalError::Overflow)?;
-            self.state_refund = self
-                .state_refund
-                .checked_add(new_account_refund)
-                .ok_or(InternalError::Overflow)?;
-        }
+        // EIP-8037 (Task 4.3): there is no longer a separate create-failure `NEW_ACCOUNT`
+        // refund here. The charge itself (Task 4.2, `prepare_execution`) is now
+        // conditioned on `get_pre_state_account(created_addr) == EMPTY_ACCOUNT`, so it
+        // simply never fires for an already-alive target (positive balance implies
+        // non-empty pre-state) and is rolled back by `handle_create_transaction` on
+        // collision — matching EELS v7, which drops `MessageCallOutput.created_target_alive`
+        // entirely because `prepare_dispatch` never runs for a colliding create.
 
         // See `prepare_execution`: per-hook `Rc::clone` avoids the `self.hooks.clone()` realloc.
         for i in 0..self.hooks.len() {
@@ -3425,7 +3411,7 @@ impl<'a> VM<'a> {
             state_gas_auth_base: 0,
             state_refund: 0,
             intrinsic_state_gas: 0,
-            created_target_alive: false,
+            value_new_account_charged: false,
             prep_baseline_state_gas: 0,
             prep_region_backup_marker: PrepareRegionBackupMarker::default(),
             pending_prep_oog: false,

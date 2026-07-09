@@ -8,8 +8,8 @@ use crate::{
     gas_cost::{
         self, ACCOUNT_WRITE_AMSTERDAM, BLOB_GAS_PER_BLOB, CREATE_BASE_COST,
         PER_AUTH_BASE_COST_AMSTERDAM, STANDARD_TOKEN_COST, STATE_BYTES_PER_AUTH_TOTAL,
-        STATE_BYTES_PER_NEW_ACCOUNT, WARM_ADDRESS_ACCESS_COST, cold_account_access_cost,
-        cost_per_state_byte, floor_tokens_in_access_list, total_cost_floor_per_token, tx_base_cost,
+        WARM_ADDRESS_ACCESS_COST, cold_account_access_cost, cost_per_state_byte,
+        floor_tokens_in_access_list, total_cost_floor_per_token, tx_base_cost,
     },
     vm::{Substate, VM},
 };
@@ -644,13 +644,9 @@ impl<'a> VM<'a> {
                 ))
                 .ok_or(OutOfGas)?;
 
-            // Contract-creation: state gas for the new account (EIP-8037). Kept
-            // separate from `recipient_regular_gas`, which only covers regular gas.
-            if is_create {
-                state_gas = state_gas
-                    .checked_add(self.state_gas_new_account)
-                    .ok_or(OutOfGas)?;
-            }
+            // Contract-creation: NEW_ACCOUNT state gas is charged in-region by
+            // `prepare_execution` (EELS `prepare_dispatch` create branch), not
+            // at intrinsic time. Amsterdam+ create intrinsic state is 0.
         } else {
             // Base Cost
             regular_gas = regular_gas.checked_add(TX_BASE_COST).ok_or(OutOfGas)?;
@@ -866,18 +862,13 @@ pub fn intrinsic_gas_dimensions(
     let mut regular_gas: u64 = 0;
     let mut state_gas: u64 = 0;
 
-    let (state_gas_new_account, state_gas_auth_total) = if fork >= Fork::Amsterdam {
+    let state_gas_auth_total = if fork >= Fork::Amsterdam {
         let cpsb = cost_per_state_byte(block_gas_limit);
-        (
-            STATE_BYTES_PER_NEW_ACCOUNT
-                .checked_mul(cpsb)
-                .ok_or(InternalError::Overflow)?,
-            STATE_BYTES_PER_AUTH_TOTAL
-                .checked_mul(cpsb)
-                .ok_or(InternalError::Overflow)?,
-        )
+        STATE_BYTES_PER_AUTH_TOTAL
+            .checked_mul(cpsb)
+            .ok_or(InternalError::Overflow)?
     } else {
-        (0, 0)
+        0
     };
 
     // Calldata cost (EIP-2028 weighted)
@@ -909,13 +900,9 @@ pub fn intrinsic_gas_dimensions(
             ))
             .ok_or(OutOfGas)?;
 
-        // Contract-creation: state gas for the new account (EIP-8037). Kept
-        // separate from `recipient_regular_gas`, which only covers regular gas.
-        if is_create {
-            state_gas = state_gas
-                .checked_add(state_gas_new_account)
-                .ok_or(OutOfGas)?;
-        }
+        // Contract-creation: NEW_ACCOUNT state gas is charged in-region by
+        // `prepare_execution` (EELS `prepare_dispatch` create branch), not
+        // at intrinsic time. Amsterdam+ create intrinsic state is 0.
     } else {
         // Base cost
         regular_gas = regular_gas.checked_add(TX_BASE_COST).ok_or(OutOfGas)?;
