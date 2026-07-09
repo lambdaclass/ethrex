@@ -24,7 +24,7 @@ use ethrex_common::{
     constants::EMPTY_TRIE_HASH,
     types::{
         Account, AccountState, BlockHeader, ChainConfig, Code, CodeMetadata, EIP1559Transaction,
-        Fork, LegacyTransaction, Transaction, TxKind,
+        EIP2930Transaction, Fork, LegacyTransaction, Transaction, TxKind,
     },
 };
 use ethrex_crypto::NativeCrypto;
@@ -486,5 +486,94 @@ fn test_no_transfer_to_7702_delegated_amsterdam() {
         delegated_gas,
         18000 + exec_gas,
         "delegated regular gas must be 12000 + 2x3000 + exec_gas"
+    );
+}
+
+/// Access-list-bearing (EIP-2930) call, so a warmed delegation target can be tested.
+fn access_list_call(
+    nonce: u64,
+    gas: u64,
+    to: Address,
+    value: U256,
+    access_list: Vec<(Address, Vec<H256>)>,
+) -> Transaction {
+    Transaction::EIP2930Transaction(EIP2930Transaction {
+        chain_id: 1,
+        nonce,
+        gas_price: U256::from(1),
+        gas_limit: gas,
+        to: TxKind::Call(to),
+        value,
+        data: Bytes::new(),
+        access_list,
+        ..Default::default()
+    })
+}
+
+fn run_amsterdam_call_al(
+    recipient: Address,
+    accounts: FxHashMap<Address, Account>,
+    access_list: Vec<(Address, Vec<H256>)>,
+) -> u64 {
+    let sender = Address::from_low_u64_be(0x100);
+    let mut db = store_db(accounts);
+    let gas_limit = 1_000_000u64;
+    let env = amsterdam_env(sender, gas_limit);
+    let tx = access_list_call(0, gas_limit, recipient, U256::zero(), access_list);
+
+    let mut vm = VM::new(
+        env,
+        &mut db,
+        &tx,
+        LevmCallTracer::disabled(),
+        VMType::L1,
+        &NativeCrypto,
+    )
+    .expect("VM::new");
+
+    let result = vm.execute().expect("execution");
+    assert!(result.is_success(), "call should succeed");
+    result.gas_used
+}
+
+#[test]
+fn test_no_transfer_to_7702_delegated_warm_amsterdam() {
+    // Same as `test_no_transfer_to_7702_delegated_amsterdam`, but the delegation
+    // TARGET is pre-warmed via the tx access list, so the in-region
+    // `prepare_dispatch` delegation-resolve charges WARM_ACCESS (100) instead of
+    // COLD (3000) — EELS `prepare_dispatch` delegation branch. Differencing against a
+    // plain-contract control that carries the IDENTICAL access list cancels the
+    // access-list intrinsic cost, isolating the +100 warm delegation-resolve charge.
+    const WARM_ACCESS: u64 = 100;
+    let delegated_account = Address::from_low_u64_be(0x200);
+    let target_account = Address::from_low_u64_be(0x300);
+    let plain_contract = Address::from_low_u64_be(0x400);
+    // Warm the delegation target at tx start.
+    let access_list = vec![(target_account, Vec::<H256>::new())];
+
+    // Delegated path (target warmed by the access list).
+    let mut delegated_accounts = FxHashMap::default();
+    let (sender_addr, sender_acc) = sender_account();
+    delegated_accounts.insert(sender_addr, sender_acc);
+    delegated_accounts.insert(
+        delegated_account,
+        code_account(create_delegation_code(target_account)),
+    );
+    delegated_accounts.insert(target_account, code_account(gas_burn_code()));
+    let delegated_gas =
+        run_amsterdam_call_al(delegated_account, delegated_accounts, access_list.clone());
+
+    // Plain-contract control (same executed bytecode + same access list, no delegation).
+    let mut plain_accounts = FxHashMap::default();
+    let (sender_addr, sender_acc) = sender_account();
+    plain_accounts.insert(sender_addr, sender_acc);
+    plain_accounts.insert(plain_contract, code_account(gas_burn_code()));
+    let plain_gas = run_amsterdam_call_al(plain_contract, plain_accounts, access_list);
+
+    // Delta is the warm delegation-resolve charge only (access-list cost cancels).
+    assert_eq!(
+        delegated_gas - plain_gas,
+        WARM_ACCESS,
+        "7702-delegated recipient with a warmed target must pay only +100 warm access"
     );
 }

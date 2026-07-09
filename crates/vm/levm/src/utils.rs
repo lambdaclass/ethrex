@@ -7,9 +7,9 @@ use crate::{
     errors::{ExceptionalHalt, InternalError, TxValidationError, VMError},
     gas_cost::{
         self, ACCOUNT_WRITE_AMSTERDAM, BLOB_GAS_PER_BLOB, CREATE_BASE_COST,
-        PER_AUTH_BASE_COST_AMSTERDAM, STANDARD_TOKEN_COST, STATE_BYTES_PER_AUTH_TOTAL,
-        WARM_ADDRESS_ACCESS_COST, cold_account_access_cost, cost_per_state_byte,
-        floor_tokens_in_access_list, total_cost_floor_per_token, tx_base_cost,
+        PER_AUTH_BASE_COST_AMSTERDAM, STANDARD_TOKEN_COST, WARM_ADDRESS_ACCESS_COST,
+        cold_account_access_cost, floor_tokens_in_access_list, total_cost_floor_per_token,
+        tx_base_cost,
     },
     vm::{Substate, VM},
 };
@@ -25,7 +25,7 @@ use ethrex_common::{
 };
 use ethrex_common::{types::TxKind, utils::u256_from_big_endian_const};
 use ethrex_rlp;
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 pub type Storage = FxHashMap<U256, H256>;
 
 // ================== Address related functions ======================
@@ -320,65 +320,78 @@ pub struct IntrinsicGas {
 }
 
 impl<'a> VM<'a> {
-    /// Sets the account code as the EIP7702 determines.
-    /// EIP-8037 Rule 1 (Amsterdam+): an INVALID EIP-7702 authorization is skipped
-    /// without per-auth processing, so the worst-case intrinsic gas charged for it
-    /// from the auth-list length must be credited back. Its entire state-gas portion
-    /// `(STATE_BYTES_PER_NEW_ACCOUNT + STATE_BYTES_PER_AUTH_BASE) × CPSB`
-    /// (`state_gas_auth_total`) is refilled to the reservoir and the tx-level state
-    /// refund channel, and the `ACCOUNT_WRITE` regular surcharge is refunded — so the
-    /// net per-tx state gas of a skipped authorization is zero (the report subtracts
-    /// `state_refund`). Pre-Amsterdam has no state-gas dimension and uses the legacy
-    /// auth-cost model, so this is a no-op there.
-    fn refund_skipped_authorization(&mut self, refunded_gas: &mut u64) -> Result<(), VMError> {
-        if self.env.config.fork < Fork::Amsterdam {
-            return Ok(());
-        }
-        self.state_gas_reservoir = self
-            .state_gas_reservoir
-            .checked_add(self.state_gas_auth_total)
-            .ok_or(InternalError::Overflow)?;
-        self.state_refund = self
-            .state_refund
-            .checked_add(self.state_gas_auth_total)
-            .ok_or(InternalError::Overflow)?;
-        *refunded_gas = refunded_gas
-            .checked_add(ACCOUNT_WRITE_AMSTERDAM)
-            .ok_or(InternalError::Overflow)?;
-        Ok(())
-    }
-
+    /// Applies the EIP-7702 authorizations and charges their state-dependent costs at
+    /// the top frame, mirroring EELS `set_delegation`
+    /// (`amsterdam/vm/eoa_delegation.py::set_delegation`).
+    ///
+    /// Amsterdam+ (EIP-8037/8038): the per-auth intrinsic regular charge is only
+    /// `REGULAR_PER_AUTH_BASE_COST`; the state-dependent charges are levied here, in the
+    /// atomic prepare region (so an OOG rolls the whole region back and burns all gas
+    /// rather than rejecting the tx). Per valid authorization, in EELS order:
+    /// - `NEW_ACCOUNT` (state) when the authority's account leaf does not yet exist;
+    /// - `ACCOUNT_WRITE` (regular, 8000) when this is the transaction's first write to
+    ///   the authority's leaf (the sender's leaf was written at inclusion, and the
+    ///   recipient's when `value > 0`, so those pay nothing here — a self-sponsored
+    ///   authority and repeated authorizations on one authority pay `ACCOUNT_WRITE` at
+    ///   most once);
+    /// - `AUTH_BASE` (state) when a net-new delegation indicator is written (the
+    ///   authority was not delegated before the tx and none was set for it earlier in
+    ///   the tx). Charged at most once per authority and never credited back.
+    ///
+    /// On any `OutOfGas` from a charge, `fail_prepare_region` rolls back the region and
+    /// this returns `Ok` (the full-gas revert is emitted by `run_execution`); it never
+    /// propagates an `Err` (that would wrongly invalidate the block).
+    ///
+    /// Pre-Amsterdam keeps the legacy per-auth model: `PER_EMPTY_ACCOUNT_COST` was
+    /// charged at intrinsic and `REFUND_AUTH_PER_EXISTING_ACCOUNT` is credited here for
+    /// an authority that already exists in the trie.
     pub fn eip7702_set_access_code(&mut self) -> Result<(), VMError> {
+        let amsterdam = self.env.config.fork >= Fork::Amsterdam;
+
+        // Pre-Amsterdam existing-authority refund accumulator.
         let mut refunded_gas: u64 = 0;
+
         // EELS `delegated_before_tx`: whether each authority was already delegated at
         // tx start. The first time an authority is seen its code is still the pre-tx
         // code (auth processing runs before execution), so we cache it then.
         let mut delegated_before_tx: FxHashMap<Address, bool> = FxHashMap::default();
 
+        // EELS `set_delegation` bookkeeping (Amsterdam+ only):
+        // - `written_accounts`: leaves this tx has already written. The sender's leaf
+        //   was written at inclusion (nonce bump + fee deduction); the recipient's when
+        //   value is transferred. An authority already in this set pays no ACCOUNT_WRITE.
+        // - `delegation_set_for`: authorities a delegation indicator was set for earlier
+        //   in this tx (so AUTH_BASE is charged at most once per authority).
+        let mut written_accounts: FxHashSet<Address> = FxHashSet::default();
+        let mut delegation_set_for: FxHashSet<Address> = FxHashSet::default();
+        if amsterdam {
+            written_accounts.insert(self.env.origin);
+            if !self.tx.value().is_zero() {
+                written_accounts.insert(self.current_call_frame.to);
+            }
+        }
+
         // IMPORTANT:
         // If any of the below steps fail, immediately stop processing that tuple and continue to the next tuple in the list. It will in the case of multiple tuples for the same authority, set the code using the address in the last valid occurrence.
-        // If transaction execution results in failure (any exceptional condition or code reverting), setting delegation designations is not rolled back.
+        // If transaction execution results in failure (any exceptional condition or code reverting), setting delegation designations is not rolled back (unless the atomic prepare region OOGs, which rolls back everything).
         for auth_tuple in self.tx.authorization_list().cloned().unwrap_or_default() {
             let chain_id_not_equals_this_chain_id = auth_tuple.chain_id != self.env.chain_id;
             let chain_id_not_zero = !auth_tuple.chain_id.is_zero();
 
             // 1. Verify the chain id is either 0 or the chain’s current ID.
             if chain_id_not_zero && chain_id_not_equals_this_chain_id {
-                self.refund_skipped_authorization(&mut refunded_gas)?;
                 continue;
             }
 
             // 2. Verify the nonce is less than 2**64 - 1.
             // NOTE: nonce is a u64, it's always less than or equal to u64::MAX
             if auth_tuple.nonce == u64::MAX {
-                self.refund_skipped_authorization(&mut refunded_gas)?;
                 continue;
             }
 
             // 3. authority = ecrecover(keccak(MAGIC || rlp([chain_id, address, nonce])), y_parity, r, s)
             //      s value must be less than or equal to secp256k1n/2, as specified in EIP-2.
             let Some(authority_address) = eip7702_recover_address(&auth_tuple, self.crypto)? else {
-                self.refund_skipped_authorization(&mut refunded_gas)?;
                 continue;
             };
 
@@ -394,7 +407,8 @@ impl<'a> VM<'a> {
             let authority_code_is_empty = authority_code.is_empty();
             let delegated_now = code_has_delegation(authority_code.code())?;
             let empty_or_delegated = authority_code_is_empty || delegated_now;
-            // First sighting of an authority captures its pre-tx delegation state.
+            // First sighting of an authority captures its pre-tx delegation state
+            // (EELS `delegated_before_tx` from `get_pre_state_account`).
             let pre_delegated = *delegated_before_tx
                 .entry(authority_address)
                 .or_insert(delegated_now);
@@ -408,7 +422,6 @@ impl<'a> VM<'a> {
             }
 
             if !empty_or_delegated {
-                self.refund_skipped_authorization(&mut refunded_gas)?;
                 continue;
             }
 
@@ -416,79 +429,51 @@ impl<'a> VM<'a> {
             // If it doesn't exist, it means the nonce is zero. The get_account() function will return Account::default()
             // If it has nonce, the account.info.nonce should equal auth_tuple.nonce
             if authority_info.nonce != auth_tuple.nonce {
-                self.refund_skipped_authorization(&mut refunded_gas)?;
                 continue;
             }
 
-            // 7. Refund if authority exists in the trie.
-            // EIP-8037 (Amsterdam+): return STATE_BYTES_PER_NEW_ACCOUNT * cost_per_state_byte
-            // to the state gas reservoir (the new-account portion of the auth state charge).
-            // Pre-Amsterdam: add REFUND_AUTH_PER_EXISTING_ACCOUNT (12500) to global refund counter.
-            // NOTE: Uses `exists` (account_exists in EELS / Exist in geth), NOT `!is_empty()`.
-            // An account can exist in the trie but be empty (e.g., has non-empty storage root).
-            if authority_exists {
-                if self.env.config.fork >= Fork::Amsterdam {
-                    // EIP-7702: refund
-                    // `STATE_BYTES_PER_NEW_ACCOUNT * cpsb` for each existing authority via
-                    // two independent channels:
-                    //   1. `state_gas_reservoir += refund` — sender gets the gas back via
-                    //      receipt refund at tx finalize.
-                    //   2. `state_refund += refund` — block-level state-gas accounting
-                    //      subtracts this at refund_sender (mirrors EELS
-                    //      `MessageCallOutput.state_refund`).
-                    // `state_gas_used` is NOT decremented here: the refund goes through
-                    // `state_refund` (tx-level channel) so block-level accounting subtracts it.
-                    let refund = self.state_gas_new_account;
-                    self.state_gas_reservoir = self
-                        .state_gas_reservoir
-                        .checked_add(refund)
-                        .ok_or(InternalError::Overflow)?;
-                    self.state_refund = self
-                        .state_refund
-                        .checked_add(refund)
-                        .ok_or(InternalError::Overflow)?;
-                    // EIP-8038: the ACCOUNT_WRITE charged per auth at intrinsic time is
-                    // not needed for an existing authority; refund it (regular counter).
-                    refunded_gas = refunded_gas
-                        .checked_add(ACCOUNT_WRITE_AMSTERDAM)
-                        .ok_or(InternalError::Overflow)?;
-                } else {
-                    refunded_gas = refunded_gas
-                        .checked_add(REFUND_AUTH_PER_EXISTING_ACCOUNT)
-                        .ok_or(InternalError::Overflow)?;
+            if amsterdam {
+                // EELS `set_delegation` charges, in order:
+                // (a) NEW_ACCOUNT (state) when the authority leaf is absent. Uses `exists`
+                //     (EELS `account_exists`), NOT `!is_empty()`; a repeated authority
+                //     that a prior tuple already materialized reads `exists == true`.
+                if !authority_exists && self.increase_state_gas(self.state_gas_new_account).is_err()
+                {
+                    self.fail_prepare_region()?;
+                    return Ok(());
                 }
-            }
 
-            // EIP-7702 AUTH_BASE state-gas refill, mirroring EELS `set_delegation`:
-            //   clear (auth.address == 0): refund AUTH_BASE; +AUTH_BASE more if the
-            //     slot was delegated this tx but not at tx start (delegated_now &&
-            //     !delegated_before_tx), undoing the prior auth's AUTH_BASE charge.
-            //   set (auth.address != 0): refund AUTH_BASE if already delegated now or
-            //     at tx start (no new indicator bytes are created).
-            if self.env.config.fork >= Fork::Amsterdam {
-                let auth_base_refills: u64 = if auth_tuple.address == Address::zero() {
-                    if delegated_now && !pre_delegated {
-                        2
-                    } else {
-                        1
+                // (b) ACCOUNT_WRITE (regular) on the first write to the authority leaf.
+                if !written_accounts.contains(&authority_address) {
+                    if self
+                        .current_call_frame
+                        .increase_consumed_gas(ACCOUNT_WRITE_AMSTERDAM)
+                        .is_err()
+                    {
+                        self.fail_prepare_region()?;
+                        return Ok(());
                     }
-                } else {
-                    u64::from(delegated_now || pre_delegated)
-                };
-                if auth_base_refills > 0 {
-                    let refund = self
-                        .state_gas_auth_base
-                        .checked_mul(auth_base_refills)
-                        .ok_or(InternalError::Overflow)?;
-                    self.state_gas_reservoir = self
-                        .state_gas_reservoir
-                        .checked_add(refund)
-                        .ok_or(InternalError::Overflow)?;
-                    self.state_refund = self
-                        .state_refund
-                        .checked_add(refund)
-                        .ok_or(InternalError::Overflow)?;
+                    written_accounts.insert(authority_address);
                 }
+
+                // (c) AUTH_BASE (state) when a net-new delegation indicator is written:
+                //     setting a non-null delegation, the authority was not delegated
+                //     before the tx, and none was set for it earlier this tx.
+                if auth_tuple.address != Address::zero() {
+                    if !pre_delegated
+                        && !delegation_set_for.contains(&authority_address)
+                        && self.increase_state_gas(self.state_gas_auth_base).is_err()
+                    {
+                        self.fail_prepare_region()?;
+                        return Ok(());
+                    }
+                    delegation_set_for.insert(authority_address);
+                }
+            } else if authority_exists {
+                // Pre-Amsterdam: existing authority refund (legacy model).
+                refunded_gas = refunded_gas
+                    .checked_add(REFUND_AUTH_PER_EXISTING_ACCOUNT)
+                    .ok_or(InternalError::Overflow)?;
             }
 
             // 8. Set the code of authority to be 0xef0100 || address. This is a delegation designation.
@@ -515,11 +500,29 @@ impl<'a> VM<'a> {
                 .map_err(|_| TxValidationError::NonceIsMax)?;
         }
 
-        self.substate.refunded_gas = self
-            .substate
-            .refunded_gas
-            .checked_add(refunded_gas)
-            .ok_or(InternalError::Overflow)?;
+        // Pre-Amsterdam legacy refund channel (Amsterdam+ leaves `refunded_gas` at 0).
+        if refunded_gas > 0 {
+            self.substate.refunded_gas = self
+                .substate
+                .refunded_gas
+                .checked_add(refunded_gas)
+                .ok_or(InternalError::Overflow)?;
+        }
+
+        // EELS `auth_state_gas_used` lock-in (`interpreter.py`: after `set_delegation`,
+        // `evm.auth_state_gas_used = frame_state_gas_used(evm)`,
+        // `message.state_gas_reservoir = evm.state_gas_left`, `evm.state_gas_spilled = 0`).
+        // Re-seed the frame's state-gas baseline past the committed auth state gas so a
+        // later *execution* revert's `refill_frame_state_gas` cannot credit auth state
+        // gas back, and zero the frame spill so the auth spill stays consumed. The
+        // subsequent prepare-dispatch (create/value/delegation-resolve) charges sit above
+        // this baseline and stay refillable on an execution revert. The prep-OOG path
+        // instead refills to `prep_baseline_state_gas` (pre-region), so it fully rolls
+        // auth back too. Skipped if the auth loop already OOG'd (early return above).
+        if amsterdam {
+            self.current_call_frame.state_gas_used_at_entry = self.state_gas_used;
+            self.current_call_frame.frame_state_gas_spilled = 0;
+        }
 
         Ok(())
     }
@@ -606,7 +609,10 @@ impl<'a> VM<'a> {
     pub fn get_intrinsic_gas(&self) -> Result<IntrinsicGas, VMError> {
         // Intrinsic Gas = Calldata cost + Create cost + Base cost + Access list cost
         let mut regular_gas: u64 = 0;
-        let mut state_gas: u64 = 0;
+        // Amsterdam+ intrinsic state gas is 0 (CREATE/value NEW_ACCOUNT and all EIP-7702
+        // auth state charges are levied in the atomic prepare region). Pre-Amsterdam has
+        // no state dimension. Kept as a named binding for the `IntrinsicGas` result.
+        let state_gas: u64 = 0;
         let fork = self.env.config.fork;
 
         // Calldata Cost
@@ -713,20 +719,16 @@ impl<'a> VM<'a> {
         };
 
         if fork >= Fork::Amsterdam {
-            // EIP-8038: per-auth regular = ACCOUNT_WRITE + PER_AUTH_BASE_COST_AMSTERDAM;
-            // ACCOUNT_WRITE is refunded for existing authorities (process_authorization_list).
-            // State is STATE_BYTES_PER_AUTH_TOTAL * cost_per_state_byte.
-            let regular_auth_cost = ACCOUNT_WRITE_AMSTERDAM
-                .checked_add(PER_AUTH_BASE_COST_AMSTERDAM)
-                .ok_or(InternalError::Overflow)?
+            // EIP-8038 (EELS `calculate_intrinsic_cost`): the per-auth intrinsic regular
+            // charge is only `REGULAR_PER_AUTH_BASE_COST` (`PER_AUTH_BASE_COST_AMSTERDAM`,
+            // 7816). The ACCOUNT_WRITE (regular) and NEW_ACCOUNT / AUTH_BASE (state)
+            // charges are state-dependent and levied in-region by
+            // `eip7702_set_access_code` (EELS `set_delegation`), not at intrinsic time.
+            // Amsterdam auth intrinsic state is 0.
+            let regular_auth_cost = PER_AUTH_BASE_COST_AMSTERDAM
                 .checked_mul(amount_of_auth_tuples)
                 .ok_or(InternalError::Overflow)?;
             regular_gas = regular_gas.checked_add(regular_auth_cost).ok_or(OutOfGas)?;
-            let state_auth_cost = self
-                .state_gas_auth_total
-                .checked_mul(amount_of_auth_tuples)
-                .ok_or(InternalError::Overflow)?;
-            state_gas = state_gas.checked_add(state_auth_cost).ok_or(OutOfGas)?;
         } else {
             let authorization_list_cost = PER_EMPTY_ACCOUNT_COST
                 .checked_mul(amount_of_auth_tuples)
@@ -840,8 +842,10 @@ impl<'a> VM<'a> {
 
 /// Compute `(regular, state)` intrinsic gas for a transaction without needing
 /// a full VM instance. Mirrors `VM::get_intrinsic_gas` but operates on the raw
-/// transaction, fork, and block gas limit (for cpsb derivation). Pre-Amsterdam
-/// returns `(regular, 0)`.
+/// transaction and fork. Amsterdam+ intrinsic state gas is 0 — CREATE/value
+/// `NEW_ACCOUNT` and all EIP-7702 auth state charges are levied in the atomic
+/// prepare region, not at intrinsic time — so this returns `(regular, 0)` for
+/// every fork.
 ///
 /// Used by the block executor to perform the EIP-8037 (PR #2703) per-tx 2D
 /// inclusion check before the tx runs.
@@ -857,19 +861,10 @@ pub fn intrinsic_gas_dimensions(
     tx: &Transaction,
     sender: Address,
     fork: Fork,
-    block_gas_limit: u64,
+    _block_gas_limit: u64,
 ) -> Result<(u64, u64), VMError> {
     let mut regular_gas: u64 = 0;
-    let mut state_gas: u64 = 0;
-
-    let state_gas_auth_total = if fork >= Fork::Amsterdam {
-        let cpsb = cost_per_state_byte(block_gas_limit);
-        STATE_BYTES_PER_AUTH_TOTAL
-            .checked_mul(cpsb)
-            .ok_or(InternalError::Overflow)?
-    } else {
-        0
-    };
+    let state_gas: u64 = 0;
 
     // Calldata cost (EIP-2028 weighted)
     let calldata_cost = gas_cost::tx_calldata(tx.data())?;
@@ -958,19 +953,14 @@ pub fn intrinsic_gas_dimensions(
     };
 
     if fork >= Fork::Amsterdam {
-        // EIP-8038: ACCOUNT_WRITE + PER_AUTH_BASE_COST_AMSTERDAM per auth (charged amount;
-        // ACCOUNT_WRITE is refunded for existing authorities at execution). Mirrors
-        // `VM::get_intrinsic_gas`.
-        let regular_auth_cost = ACCOUNT_WRITE_AMSTERDAM
-            .checked_add(PER_AUTH_BASE_COST_AMSTERDAM)
-            .ok_or(InternalError::Overflow)?
+        // EIP-8038 (EELS `calculate_intrinsic_cost`): per-auth intrinsic regular is only
+        // `REGULAR_PER_AUTH_BASE_COST` (`PER_AUTH_BASE_COST_AMSTERDAM`, 7816). The
+        // ACCOUNT_WRITE / NEW_ACCOUNT / AUTH_BASE charges move to `set_delegation`
+        // (in-region). Amsterdam auth intrinsic state is 0. Mirrors `VM::get_intrinsic_gas`.
+        let regular_auth_cost = PER_AUTH_BASE_COST_AMSTERDAM
             .checked_mul(amount_of_auth_tuples)
             .ok_or(InternalError::Overflow)?;
         regular_gas = regular_gas.checked_add(regular_auth_cost).ok_or(OutOfGas)?;
-        let state_auth_cost = state_gas_auth_total
-            .checked_mul(amount_of_auth_tuples)
-            .ok_or(InternalError::Overflow)?;
-        state_gas = state_gas.checked_add(state_auth_cost).ok_or(OutOfGas)?;
     } else {
         let auth_cost = PER_EMPTY_ACCOUNT_COST
             .checked_mul(amount_of_auth_tuples)

@@ -3,8 +3,9 @@ use crate::{
     constants::*,
     errors::{ContextResult, ExceptionalHalt, InternalError, TxValidationError, VMError},
     gas_cost::{
-        STANDARD_TOKEN_COST, cold_account_access_cost, floor_tokens_in_access_list,
-        recipient_regular_gas, total_cost_floor_per_token, tx_base_cost,
+        STANDARD_TOKEN_COST, WARM_ADDRESS_ACCESS_COST, cold_account_access_cost,
+        floor_tokens_in_access_list, recipient_regular_gas, total_cost_floor_per_token,
+        tx_base_cost,
     },
     hooks::hook::Hook,
     utils::*,
@@ -185,12 +186,20 @@ impl Hook for DefaultHook {
                 let recipient = vm.db.get_account(to)?;
                 let recipient_is_empty = recipient.is_empty();
                 let recipient_code_hash = recipient.info.code_hash;
-                let recipient_is_delegated = if recipient_code_hash == *EMPTY_KECCAK_HASH {
-                    false
-                } else {
-                    let code = vm.db.get_code(recipient_code_hash)?.code_bytes();
-                    code_has_delegation(&code)?
-                };
+                // Resolve a 7702-delegated recipient's target address (EELS
+                // `prepare_dispatch`: `get_delegated_code_address(recipient_code)`),
+                // evaluated post-auth so an auth on `tx.to` this tx is reflected.
+                let recipient_delegated_target: Option<Address> =
+                    if recipient_code_hash == *EMPTY_KECCAK_HASH {
+                        None
+                    } else {
+                        let code = vm.db.get_code(recipient_code_hash)?.code_bytes();
+                        if code_has_delegation(&code)? {
+                            Some(get_authorized_address_from_code(&code)?)
+                        } else {
+                            None
+                        }
+                    };
 
                 // If the recipient is EIP-161-empty and the tx transfers value, the
                 // value transfer will materialize a new account: charge the
@@ -210,19 +219,32 @@ impl Hook for DefaultHook {
                     } else {
                         // Signal so a subsequent Amsterdam precompile-halt in
                         // `run_execution` rolls this charge back (the recipient
-                        // never materializes on halt) — replaces the old
-                        // `pending_top_frame_state_gas > 0` derivation, which no
-                        // longer fires now that this charge is applied in-region.
+                        // never materializes on halt).
                         vm.value_new_account_charged = true;
                     }
                 }
 
-                // If the recipient is a 7702-delegated account, charge an
-                // additional cold account access for resolving the delegation
-                // target. Still deferred to `run_execution` (Phase 6 moves it
-                // in-region); unaffected by the state-charge move above.
-                if !vm.pending_prep_oog && recipient_is_delegated {
-                    vm.pending_top_frame_regular_gas = cold_account_access_cost(vm.env.config.fork);
+                // EIP-8037 (atomic prepare region): EELS `prepare_dispatch` delegation
+                // branch. If the recipient is 7702-delegated, charge the account access
+                // for resolving the delegation target IN-REGION via `increase_consumed_gas`
+                // (regular gas): WARM if the target is already accessed, else COLD (and
+                // mark it accessed). Charged AFTER the value NEW_ACCOUNT state charge, so
+                // an OOG here rolls back the whole region (auth + value) and burns all gas
+                // rather than rejecting the tx.
+                if !vm.pending_prep_oog
+                    && let Some(target) = recipient_delegated_target
+                {
+                    let is_warm = vm.substate.is_address_accessed(&target);
+                    let charge = if is_warm {
+                        WARM_ADDRESS_ACCESS_COST
+                    } else {
+                        cold_account_access_cost(vm.env.config.fork)
+                    };
+                    if vm.current_call_frame.increase_consumed_gas(charge).is_err() {
+                        vm.fail_prepare_region()?;
+                    } else if !is_warm {
+                        vm.substate.add_accessed_address(target);
+                    }
                 }
             }
         }
@@ -277,11 +299,7 @@ impl Hook for DefaultHook {
         // ethrex's in-region CREATE NEW_ACCOUNT charge (Task 4.2) runs before the
         // collision check and is rolled back to the frame's entry baseline by
         // `handle_create_transaction` on collision (see that function), so
-        // `state_gas_used` is already net zero here. `state_refund` is not read: a
-        // create tx can never carry an EIP-7702 authorization list
-        // (`validate_type_4_tx` rejects `to == None`), and Task 4.3 removed the only
-        // other create-related `state_refund` producer, so it is always 0 for a
-        // collision anyway.
+        // `state_gas_used` is already net zero here.
         if vm.env.config.fork >= Fork::Amsterdam && ctx_result.is_collision() {
             let gas_limit = vm.env.gas_limit;
             // state_gas_used is already net (signed, inline refunds applied); clamp at zero.
@@ -366,13 +384,12 @@ pub fn refund_sender(
     // Block header gas_used = max(regular_dimension, state_dimension) per EIP-7778.
     // Receipt cumulative_gas_used = post-refund total (what user pays).
     if vm.env.config.fork >= Fork::Amsterdam {
-        // EIP-8037: state_gas_used is already net (signed, credits applied inline).
-        // Subtract state_refund (EIP-7702 tx-level channel) and clamp at zero.
-        let state_refund_signed =
-            i64::try_from(vm.state_refund).map_err(|_| InternalError::Overflow)?;
+        // EIP-8037: state_gas_used is already net (signed, credits applied inline);
+        // clamp at zero. There is no separate tx-level refund channel — EELS
+        // `process_transaction` sets `tx_state_gas = intrinsic_state_gas + state_gas_used`
+        // directly.
         let state_gas: u64 =
-            u64::try_from(vm.state_gas_used.saturating_sub(state_refund_signed).max(0))
-                .map_err(|_| InternalError::Overflow)?;
+            u64::try_from(vm.state_gas_used.max(0)).map_err(|_| InternalError::Overflow)?;
         // Compute raw consumption from scratch (gas_limit minus gas_remaining)
         // to avoid interference from any reservoir-current subtraction baked
         // into the caller's pre-refund number.
