@@ -6,10 +6,9 @@ use crate::{
     db::gen_db::GeneralizedDatabase,
     errors::{ExceptionalHalt, InternalError, TxValidationError, VMError},
     gas_cost::{
-        self, ACCOUNT_WRITE_AMSTERDAM, BLOB_GAS_PER_BLOB, CREATE_ACCESS_AMSTERDAM,
-        CREATE_BASE_COST, PER_AUTH_BASE_COST_AMSTERDAM, STANDARD_TOKEN_COST,
-        STATE_BYTES_PER_AUTH_TOTAL, STATE_BYTES_PER_NEW_ACCOUNT, TRANSFER_LOG_COST_AMSTERDAM,
-        TX_VALUE_COST_AMSTERDAM, WARM_ADDRESS_ACCESS_COST, cold_account_access_cost,
+        self, ACCOUNT_WRITE_AMSTERDAM, BLOB_GAS_PER_BLOB, CREATE_BASE_COST,
+        PER_AUTH_BASE_COST_AMSTERDAM, STANDARD_TOKEN_COST, STATE_BYTES_PER_AUTH_TOTAL,
+        STATE_BYTES_PER_NEW_ACCOUNT, WARM_ADDRESS_ACCESS_COST, cold_account_access_cost,
         cost_per_state_byte, floor_tokens_in_access_list, total_cost_floor_per_token, tx_base_cost,
     },
     vm::{Substate, VM},
@@ -627,47 +626,29 @@ impl<'a> VM<'a> {
             // (not substate warmth), the cold rate is applied automatically.
             let sender = self.env.origin;
             let to = self.tx.to();
-            let is_self_transfer = matches!(to, TxKind::Call(addr) if addr == sender);
 
             // Sender base: always TX_BASE_COST_AMSTERDAM (12000).
             regular_gas = regular_gas
                 .checked_add(tx_base_cost(fork))
                 .ok_or(OutOfGas)?;
 
-            // tx.to charge.
-            if is_self_transfer {
-                // sender == to: no recipient access charge.
-            } else if is_create {
-                // Contract-creation: CREATE_ACCESS_AMSTERDAM regular + state gas
-                // for the new account (EIP-8037).
-                regular_gas = regular_gas
-                    .checked_add(CREATE_ACCESS_AMSTERDAM)
-                    .ok_or(OutOfGas)?;
+            // tx.to + tx.value recipient charge (EELS `calculate_intrinsic_cost`
+            // items 2-3), shared with `intrinsic_gas_dimensions` and the
+            // calldata-floor anchor via `recipient_regular_gas`.
+            regular_gas = regular_gas
+                .checked_add(gas_cost::recipient_regular_gas(
+                    &to,
+                    self.tx.value(),
+                    sender,
+                    fork,
+                ))
+                .ok_or(OutOfGas)?;
+
+            // Contract-creation: state gas for the new account (EIP-8037). Kept
+            // separate from `recipient_regular_gas`, which only covers regular gas.
+            if is_create {
                 state_gas = state_gas
                     .checked_add(self.state_gas_new_account)
-                    .ok_or(OutOfGas)?;
-            } else {
-                // Regular call to a distinct account: cold account access.
-                regular_gas = regular_gas
-                    .checked_add(cold_account_access_cost(fork))
-                    .ok_or(OutOfGas)?;
-            }
-
-            // tx.value charge.
-            let value_is_zero = self.tx.value().is_zero();
-            if value_is_zero || is_self_transfer {
-                // zero value or self-transfer: no value-transfer charge.
-            } else if is_create {
-                // non-zero value contract-creation: transfer-log cost only.
-                regular_gas = regular_gas
-                    .checked_add(TRANSFER_LOG_COST_AMSTERDAM)
-                    .ok_or(OutOfGas)?;
-            } else {
-                // non-zero value to a distinct account: transfer-log + value cost.
-                regular_gas = regular_gas
-                    .checked_add(TRANSFER_LOG_COST_AMSTERDAM)
-                    .ok_or(OutOfGas)?
-                    .checked_add(TX_VALUE_COST_AMSTERDAM)
                     .ok_or(OutOfGas)?;
             }
         } else {
@@ -896,42 +877,29 @@ pub fn intrinsic_gas_dimensions(
         // EIP-2780 (merged EIPs#11645): resource-based intrinsic gas.
         // Mirror of `VM::get_intrinsic_gas`. These tx-level sender/to charges
         // are ALWAYS the cold rate; access lists do NOT warm tx-level accounts.
-        let is_self_transfer = matches!(to, TxKind::Call(addr) if addr == sender);
 
         // Sender base: always TX_BASE_COST_AMSTERDAM (12000).
         regular_gas = regular_gas
             .checked_add(tx_base_cost(fork))
             .ok_or(OutOfGas)?;
 
-        // tx.to charge.
-        if is_self_transfer {
-            // sender == to: no recipient access charge.
-        } else if is_create {
-            regular_gas = regular_gas
-                .checked_add(CREATE_ACCESS_AMSTERDAM)
-                .ok_or(OutOfGas)?;
+        // tx.to + tx.value recipient charge (EELS `calculate_intrinsic_cost`
+        // items 2-3), shared with `VM::get_intrinsic_gas` and the
+        // calldata-floor anchor via `recipient_regular_gas`.
+        regular_gas = regular_gas
+            .checked_add(gas_cost::recipient_regular_gas(
+                &to,
+                tx.value(),
+                sender,
+                fork,
+            ))
+            .ok_or(OutOfGas)?;
+
+        // Contract-creation: state gas for the new account (EIP-8037). Kept
+        // separate from `recipient_regular_gas`, which only covers regular gas.
+        if is_create {
             state_gas = state_gas
                 .checked_add(state_gas_new_account)
-                .ok_or(OutOfGas)?;
-        } else {
-            regular_gas = regular_gas
-                .checked_add(cold_account_access_cost(fork))
-                .ok_or(OutOfGas)?;
-        }
-
-        // tx.value charge.
-        let value_is_zero = tx.value().is_zero();
-        if value_is_zero || is_self_transfer {
-            // zero value or self-transfer: no value-transfer charge.
-        } else if is_create {
-            regular_gas = regular_gas
-                .checked_add(TRANSFER_LOG_COST_AMSTERDAM)
-                .ok_or(OutOfGas)?;
-        } else {
-            regular_gas = regular_gas
-                .checked_add(TRANSFER_LOG_COST_AMSTERDAM)
-                .ok_or(OutOfGas)?
-                .checked_add(TX_VALUE_COST_AMSTERDAM)
                 .ok_or(OutOfGas)?;
         }
     } else {
