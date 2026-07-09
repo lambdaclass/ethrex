@@ -386,13 +386,26 @@ fn exception_in_rlp_decoding(block_fixture: &BlockWithRLP) -> bool {
         .iter()
         .any(|case| matches!(case, BlockChainExpectedException::InvalidSignature));
 
+    // A transaction nonce of 2^64 or greater does not fit ethrex's `u64` nonce field
+    // (the nonce is a `u64` per the yellow paper / EIP-2681), so it is rejected at RLP
+    // decoding with an `InvalidLength` error rather than at validation. EEST's
+    // `NONCE_IS_MAX` fixtures (e.g. `tx_max_nonce`, nonce = 2^64) therefore fail decoding
+    // here — a legitimate reason for the block to be rejected. (`create_transaction_high_nonce`
+    // uses nonce = 2^64-1, which fits `u64`, decodes fine, and is caught later at validation.)
+    let expects_nonce_too_high = block_fixture
+        .expect_exception
+        .as_ref()
+        .unwrap_or(&Vec::new())
+        .iter()
+        .any(|case| matches!(case, BlockChainExpectedException::TxtException(msg) if msg == "Nonce is max"));
+
     match CoreBlock::decode(block_fixture.rlp.as_ref()) {
         Ok(_) => {
             assert!(!expects_rlp_exception);
             false
         }
         Err(_) => {
-            assert!(expects_rlp_exception || expects_invalid_signature);
+            assert!(expects_rlp_exception || expects_invalid_signature || expects_nonce_too_high);
             true
         }
     }

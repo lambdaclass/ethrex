@@ -269,12 +269,11 @@ impl LEVM {
                 let bal_index = u32::try_from(tx_idx + 1).unwrap_or(u32::MAX);
                 db.set_bal_index(bal_index);
 
-                // Record tx sender and recipient for BAL
+                // Record tx sender for BAL. The recipient is recorded when the prepare
+                // region loads it (default_hook), per the EIP-7928 v7.1.0 update: an
+                // EIP-7702 auth halt before the recipient load must exclude it.
                 if let Some(recorder) = db.bal_recorder_mut() {
                     recorder.record_touched_address(tx_sender);
-                    if let TxKind::Call(to) = tx.to() {
-                        recorder.record_touched_address(to);
-                    }
                 }
             }
 
@@ -683,12 +682,11 @@ impl LEVM {
                 let bal_index = u32::try_from(tx_idx + 1).unwrap_or(u32::MAX);
                 db.set_bal_index(bal_index);
 
-                // Record tx sender and recipient for BAL
+                // Record tx sender for BAL. The recipient is recorded when the prepare
+                // region loads it (default_hook), per the EIP-7928 v7.1.0 update: an
+                // EIP-7702 auth halt before the recipient load must exclude it.
                 if let Some(recorder) = db.bal_recorder_mut() {
                     recorder.record_touched_address(tx_sender);
-                    if let TxKind::Call(to) = tx.to() {
-                        recorder.record_touched_address(to);
-                    }
                 }
             }
 
@@ -1185,11 +1183,11 @@ impl LEVM {
                 tx_db.enable_bal_recording();
                 let bal_index = u32::try_from(tx_idx + 1).unwrap_or(u32::MAX);
                 tx_db.set_bal_index(bal_index);
+                // Record tx sender for BAL. The recipient is recorded when the prepare
+                // region loads it (default_hook), per the EIP-7928 v7.1.0 update: an
+                // EIP-7702 auth halt before the recipient load must exclude it.
                 if let Some(recorder) = tx_db.bal_recorder_mut() {
                     recorder.record_touched_address(*sender);
-                    if let TxKind::Call(to) = tx.to() {
-                        recorder.record_touched_address(to);
-                    }
                 }
 
                 let report = LEVM::execute_tx_in_block(
