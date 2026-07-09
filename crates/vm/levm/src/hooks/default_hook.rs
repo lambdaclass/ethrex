@@ -249,17 +249,22 @@ impl Hook for DefaultHook {
             }
         }
 
-        transfer_value(vm)?;
-
-        set_bytecode_and_code_address(vm)?;
-
         // EIP-8037: the atomic prepare region rolled back (one of its charges OOG'd)
-        // and burned all gas. Nothing else to do here — `run_execution` turns
-        // `pending_prep_oog` into a full-gas revert `ContextResult` instead of a
-        // tx-level rejection `Err` (which would wrongly invalidate the block).
+        // and burned all gas. Skip ALL post-region state mutations — the value
+        // transfer, the bytecode/code-address resolution, and (in `execute`) the
+        // CREATE nonce bump / endowment. EELS aborts the whole dispatch on this OOG
+        // (`prepare_dispatch` raises before the value move), so none of those may
+        // persist; `run_execution` turns `pending_prep_oog` into a full-gas revert
+        // `ContextResult` instead of a tx-level rejection `Err` (which would wrongly
+        // invalidate the block). Only the pre-region sender nonce bump + fee
+        // deduction survive (written in stone before the region).
         if vm.pending_prep_oog {
             return Ok(());
         }
+
+        transfer_value(vm)?;
+
+        set_bytecode_and_code_address(vm)?;
 
         Ok(())
     }
