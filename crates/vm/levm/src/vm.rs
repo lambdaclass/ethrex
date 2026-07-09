@@ -1,5 +1,6 @@
 use crate::{
     TransientStorage,
+    account::LevmAccount,
     call_frame::{CallFrame, Stack},
     db::gen_db::GeneralizedDatabase,
     debug::DebugMode,
@@ -31,7 +32,7 @@ use ethrex_common::{
     tracing::CallType,
     types::{
         AccessListEntry, Code, Fork, Frame, FrameMode, Log, Transaction, TxType,
-        fee_config::FeeConfig,
+        block_access_list::BlockAccessListCheckpoint, fee_config::FeeConfig,
     },
 };
 use ethrex_crypto::Crypto;
@@ -560,6 +561,18 @@ pub struct PrepareRegionBackupMarker {
     storage: FxHashSet<Address>,
     /// Length of `inserted_code_hashes` before the region.
     code_hashes_len: usize,
+    /// Region-entry state of every account already backed up before the region
+    /// (notably the sender, post-fee/post-nonce). The marker excludes these from
+    /// the region rollback to preserve their pre-region writes, but first-write-wins
+    /// backup means an in-region write to one of them (e.g. a self-sponsored EIP-7702
+    /// authorization on the sender) leaves no new backup entry. `fail_prepare_region`
+    /// restores these to the captured state, reverting the in-region write while
+    /// keeping the pre-region nonce bump / fee deduction.
+    entry_state: FxHashMap<Address, LevmAccount>,
+    /// BAL recorder checkpoint at region entry, so an applied-then-reverted
+    /// delegation's code/nonce changes are discarded (demoted to an access-only
+    /// touch) rather than leaking into the block access list.
+    bal_checkpoint: Option<BlockAccessListCheckpoint>,
 }
 
 /// Result of [`VM::simulate_validation_prefix`] (EIP-8141 mempool simulation).
@@ -1294,14 +1307,33 @@ impl<'a> VM<'a> {
         self.prep_baseline_reservoir = self.state_gas_reservoir;
         self.prep_baseline_state_gas_spill = self.state_gas_spill;
         let backup = &self.current_call_frame.call_frame_backup;
+        let accounts: FxHashSet<Address> = backup.original_accounts_info.keys().copied().collect();
+        let storage: FxHashSet<Address> = backup
+            .original_account_storage_slots
+            .keys()
+            .copied()
+            .collect();
+        let code_hashes_len = backup.inserted_code_hashes.len();
+        // Capture the region-entry state of every already-backed-up account so a
+        // self-sponsored EIP-7702 authorization (or any in-region write to a
+        // pre-region-touched account) can be reverted without disturbing its
+        // pre-region nonce/fee writes. See `PrepareRegionBackupMarker::entry_state`.
+        let entry_state: FxHashMap<Address, LevmAccount> = accounts
+            .iter()
+            .filter_map(|address| {
+                self.db
+                    .current_accounts_state
+                    .get(address)
+                    .map(|account| (*address, account.clone()))
+            })
+            .collect();
+        let bal_checkpoint = self.db.bal_recorder.as_ref().map(|r| r.checkpoint());
         self.prep_region_backup_marker = PrepareRegionBackupMarker {
-            accounts: backup.original_accounts_info.keys().copied().collect(),
-            storage: backup
-                .original_account_storage_slots
-                .keys()
-                .copied()
-                .collect(),
-            code_hashes_len: backup.inserted_code_hashes.len(),
+            accounts,
+            storage,
+            code_hashes_len,
+            entry_state,
+            bal_checkpoint,
         };
     }
 
@@ -1363,6 +1395,33 @@ impl<'a> VM<'a> {
         }
 
         self.current_call_frame.call_frame_backup = backup;
+
+        // Revert in-region writes to accounts that were already backed up before the
+        // region (the marker filter above leaves these untouched to preserve their
+        // pre-region nonce/fee writes, but first-write-wins backup means an in-region
+        // write — e.g. a self-sponsored EIP-7702 authorization writing the sender's
+        // delegation code + auth nonce bump — created no new backup entry). Restoring
+        // to the region-entry snapshot undoes the in-region write while keeping the
+        // pre-region writes baked into that snapshot. Mirrors EELS `restore_tx_state`.
+        for (address, entry_account) in marker.entry_state {
+            if let Some(current) = self.db.current_accounts_state.get_mut(&address) {
+                current.info = entry_account.info;
+                current.status = entry_account.status;
+                current.has_storage = entry_account.has_storage;
+                current.exists = entry_account.exists;
+            }
+        }
+
+        // Roll back the BAL recorder to region entry so an applied-then-reverted
+        // delegation's code/nonce changes are discarded (demoted to an access-only
+        // touch, matching EELS `restore_tx_state`). `restore` preserves touched
+        // addresses — including the pre-charge authority touches recorded during
+        // `set_delegation` — so a reverted authority still appears as an access.
+        if let Some(checkpoint) = marker.bal_checkpoint
+            && let Some(recorder) = self.db.bal_recorder.as_mut()
+        {
+            recorder.restore(checkpoint);
+        }
 
         // Rewind the state-gas machinery to the pre-region snapshot. The
         // `set_delegation` auth lock-in re-seeds `state_gas_used_at_entry` and zeroes

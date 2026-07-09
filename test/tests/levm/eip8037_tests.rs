@@ -1784,6 +1784,103 @@ fn test_auth_new_account_over_budget_full_gas_revert_amsterdam() {
     assert_eq!(b_nonce, 0, "authority B nonce must be unchanged");
 }
 
+// Regression (code-review CRITICAL #1 & #2): a self-sponsored EIP-7702 authorization
+// (authority == sender) applies its delegation to the SENDER in-region. The sender is
+// already backed up before the region (fee deduction + inclusion nonce bump), so
+// first-write-wins `call_frame_backup` records no new entry for the in-region
+// delegation write and the key-set marker excludes the sender from the region
+// rollback. A later in-region OOG must STILL revert the sender's delegation code + auth
+// nonce bump (state-root) AND discard them from the BAL (code/nonce changes), leaving
+// only the pre-region inclusion nonce bump. Without the entry-state + BAL-checkpoint
+// rollback in `fail_prepare_region`, the sender keeps a phantom delegation → consensus
+// divergence. The full engine fixture suite does not cover this (self-sponsored authority
+// + region OOG), so this asserts it directly.
+#[test]
+fn test_self_sponsored_auth_region_oog_rolls_back_sender_amsterdam() {
+    let ks = SecretKey::from_slice(&[0x77u8; 32]).unwrap();
+    let sender = secret_to_address(&ks);
+    let kb = SecretKey::from_slice(&[0x22u8; 32]).unwrap();
+    let authority_b = secret_to_address(&kb);
+    let target = Address::from_low_u64_be(0x7777);
+    let recipient = Address::from_low_u64_be(0x9999);
+
+    // Sender exists (nonce 0, funded); B is absent.
+    let sender_acc = Account::new(
+        U256::from(10u64).pow(18.into()),
+        Code::default(),
+        0,
+        FxHashMap::default(),
+    );
+    let mut accounts: FxHashMap<Address, Account> = FxHashMap::default();
+    accounts.insert(sender, sender_acc);
+    let mut testdb = TestDatabase::new();
+    for (addr, acc) in &accounts {
+        testdb.accounts.insert(*addr, acc.clone());
+    }
+    let mut db = GeneralizedDatabase::new_with_account_state(Arc::new(testdb), accounts);
+    db.enable_bal_recording();
+
+    // Self-sponsored auth carries nonce 1 (sender bumped at inclusion before the auth
+    // loop). B (absent) carries nonce 0; its NEW_ACCOUNT (183_600) is charged first for
+    // that tuple and OOGs the region. intrinsic (2 auths, cold recipient) =
+    // 12000 + 3000 + 7816*2 = 30_632; gas_limit 100_000 -> 69_368 left; self AUTH_BASE
+    // (35_190) succeeds (34_178 left); B NEW_ACCOUNT (183_600) OOGs.
+    let gas_limit = 100_000u64;
+    let self_auth = sign_auth(1, target, 1, &ks);
+    let auth_b = sign_auth(1, target, 0, &kb);
+    let tx = set_code_tx(gas_limit, recipient, U256::zero(), vec![self_auth, auth_b]);
+    let mut env = auth_env(gas_limit);
+    env.origin = sender;
+
+    let mut vm = VM::new(
+        env,
+        &mut db,
+        &tx,
+        LevmCallTracer::disabled(),
+        VMType::L1,
+        &NativeCrypto,
+    )
+    .expect("VM::new");
+    let report = vm
+        .execute()
+        .expect("execute must return Ok — block stays valid");
+
+    assert!(
+        !report.is_success(),
+        "tx must revert (region OOG): {report:?}"
+    );
+    assert_eq!(report.gas_used, gas_limit, "all gas burned");
+
+    // State (CRITICAL #1): the self-delegation code + auth nonce bump are reverted;
+    // only the pre-region inclusion nonce bump (0 -> 1) survives.
+    let sender_nonce = vm.db.get_account(sender).expect("sender").info.nonce;
+    assert_eq!(
+        sender_nonce, 1,
+        "sender nonce: inclusion bump kept, self-auth bump reverted (got {sender_nonce})"
+    );
+    assert!(
+        vm.db
+            .get_account_code(sender)
+            .expect("sender code")
+            .is_empty(),
+        "sender self-delegation code must be rolled back to empty"
+    );
+
+    // BAL (CRITICAL #2): the reverted delegation must not leak as a code change, and the
+    // only nonce change recorded is the inclusion bump (to 1), never the auth bump (2).
+    let bal = db.take_bal().expect("BAL recording enabled");
+    if let Some(changes) = bal.accounts().iter().find(|a| a.address == sender) {
+        assert!(
+            changes.code_changes.is_empty(),
+            "reverted self-delegation must not appear as a BAL code change: {changes:?}"
+        );
+        assert!(
+            changes.nonce_changes.iter().all(|n| n.post_nonce <= 1),
+            "BAL must not record the reverted auth nonce bump (post_nonce 2): {changes:?}"
+        );
+    }
+}
+
 // Task 6.4: unified-region rollback. Gas suffices for the whole auth loop but not
 // for the subsequent delegation-resolve cold access → whole region rolls back
 // (auth delegation reverted), all gas burned, block valid. Proves the shared
