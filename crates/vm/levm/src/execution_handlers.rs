@@ -155,6 +155,16 @@ impl<'a> VM<'a> {
             // colliding target in the EELS-documented "highly unlikely" case of a
             // zero-nonce/zero-code/zero-balance address that nonetheless has storage
             // (`create_would_collide` also considers storage; `is_empty()` doesn't).
+            //
+            // Known near-unreachable divergence (code review, accepted): if the
+            // reservoir/gas cannot cover that in-region NEW_ACCOUNT charge for such a
+            // storage-only colliding target, ethrex takes the region-OOG path (burns all
+            // gas) whereas EELS — which checks `account_deployable()` before
+            // `prepare_dispatch` — never charges and preserves the reservoir. This
+            // requires deriving a CREATE address that already holds storage with zero
+            // nonce/code/balance AND under-funding it, which is not reachable via real
+            // CREATE/CREATE2 address derivation; documented rather than guarded.
+            //
             // Roll that charge back to the frame's entry baseline: EELS never runs
             // `prepare_dispatch` for a colliding create (`process_message_call`
             // short-circuits on `account_deployable() == False` before calling
