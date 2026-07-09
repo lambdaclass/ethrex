@@ -1159,8 +1159,10 @@ fn test_extcodesize_full_vm_warm_charges_extra_100() {
     // Osaka. (PUSH20 + POP costs cancel against the probe since both run them.)
     //
     // Layout: PUSH20 CONTRACT; EXTCODEHASH; POP; [probe: STOP] | [test: PUSH20 CONTRACT; EXTCODESIZE; POP; STOP]
-    // EIP-2780 lowers the Amsterdam intrinsic base to 12000, so a short probe
-    // would fall below the EIP-7623 calldata floor (21000) and report the floor
+    // EIP-2780 lowers the Amsterdam intrinsic base to 12000, and the calldata
+    // floor (EIP-7976) re-anchors on `12000 + recipient_regular_gas + tokens*16`
+    // (here: no calldata, distinct cold recipient, value=0 -> 12000 + 3000 =
+    // 15000), so a short probe would fall below that floor and report the floor
     // instead of raw regular, breaking the probe subtraction. Prepend the
     // gas-burning prefix so both probe and full clear the floor; it cancels in
     // the subtraction.
@@ -1252,9 +1254,11 @@ fn test_selfdestruct_full_vm_positive_balance_to_empty() {
     // The caller (CONTRACT) is given a positive balance in `call_db`. Its code is
     // burn_prefix; PUSH20 EMPTY_BENEFICIARY; SELFDESTRUCT.
     //
-    // EIP-2780 lowers the Amsterdam intrinsic base to 12000, so a STOP-only probe
-    // would fall below the EIP-7623 calldata floor (21000) and report the floor
-    // instead of raw regular, breaking the probe subtraction. Prepend the
+    // EIP-2780 lowers the Amsterdam intrinsic base to 12000, and the calldata
+    // floor (EIP-7976) re-anchors on `12000 + recipient_regular_gas + tokens*16`
+    // (here: no calldata, distinct cold recipient, value=0 -> 12000 + 3000 =
+    // 15000), so a STOP-only probe would fall below that floor and report the
+    // floor instead of raw regular, breaking the probe subtraction. Prepend the
     // gas-burning prefix to BOTH the run and the probe so both clear the floor;
     // the burn cancels in the subtraction.
     let mut code = burn_prefix();
