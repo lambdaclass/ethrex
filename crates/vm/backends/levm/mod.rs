@@ -1209,7 +1209,7 @@ impl LEVM {
 
                 let current_state = std::mem::take(&mut tx_db.current_accounts_state);
                 let codes = std::mem::take(&mut tx_db.codes);
-                let tracked = tx_db.accessed_accounts.take().unwrap_or_default();
+                let mut tracked = tx_db.accessed_accounts.take().unwrap_or_default();
                 let (shadow_touched, shadow_reads) = tx_db
                     .bal_recorder
                     .take()
@@ -1298,6 +1298,16 @@ impl LEVM {
 
                 drop(current_state);
                 drop(codes);
+
+                // The shadow BAL recorder's touched addresses are ethrex's exact
+                // EELS `account_reads` analog: an address is recorded here iff EELS
+                // would add it to `account_reads` (e.g. a CREATE target read by
+                // `is_account_alive` before an OOG state-gas charge). The coarse
+                // `accessed_accounts` tracker only sees `load_account` calls, which
+                // can miss such a target when the frame OOGs before materializing it.
+                // Fold the recorder touches into `tracked` so the pure-access
+                // checklist is reduced by everything ethrex legitimately accessed.
+                tracked.extend(shadow_touched.iter().copied());
 
                 Ok((
                     tx_idx,

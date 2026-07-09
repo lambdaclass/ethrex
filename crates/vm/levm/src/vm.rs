@@ -9,8 +9,8 @@ use crate::{
         VMError,
     },
     gas_cost::{
-        STATE_BYTES_PER_AUTH_BASE, STATE_BYTES_PER_AUTH_TOTAL, STATE_BYTES_PER_NEW_ACCOUNT,
-        STATE_BYTES_PER_STORAGE_SET, cost_per_state_byte as compute_cost_per_state_byte,
+        STATE_BYTES_PER_AUTH_BASE, STATE_BYTES_PER_NEW_ACCOUNT, STATE_BYTES_PER_STORAGE_SET,
+        cost_per_state_byte as compute_cost_per_state_byte,
     },
     hooks::{
         backup_hook::BackupHook,
@@ -642,8 +642,6 @@ pub struct VM<'a> {
     pub state_gas_new_account: u64,
     /// EIP-8037: State gas for storage slot creation (STATE_BYTES_PER_STORAGE_SET * cost_per_state_byte).
     pub state_gas_storage_set: u64,
-    /// EIP-8037: State gas for EIP-7702 auth total (STATE_BYTES_PER_AUTH_TOTAL * cost_per_state_byte).
-    pub state_gas_auth_total: u64,
     /// EIP-8037: State gas for the 23-byte EIP-7702 delegation indicator
     /// (STATE_BYTES_PER_AUTH_BASE * cost_per_state_byte). Charged in-region by
     /// `eip7702_set_access_code` (EELS `set_delegation`) once per authority when a
@@ -1000,24 +998,18 @@ impl<'a> VM<'a> {
             clippy::arithmetic_side_effects,
             reason = "byte-count constants are small (<200) and cpsb is bounded by block_gas_limit/year formula"
         )]
-        let (
-            cpsb,
-            state_gas_new_account,
-            state_gas_storage_set,
-            state_gas_auth_total,
-            state_gas_auth_base,
-        ) = if fork >= Fork::Amsterdam {
-            let cpsb = compute_cost_per_state_byte(env.block_gas_limit);
-            (
-                cpsb,
-                STATE_BYTES_PER_NEW_ACCOUNT * cpsb,
-                STATE_BYTES_PER_STORAGE_SET * cpsb,
-                STATE_BYTES_PER_AUTH_TOTAL * cpsb,
-                STATE_BYTES_PER_AUTH_BASE * cpsb,
-            )
-        } else {
-            (0, 0, 0, 0, 0)
-        };
+        let (cpsb, state_gas_new_account, state_gas_storage_set, state_gas_auth_base) =
+            if fork >= Fork::Amsterdam {
+                let cpsb = compute_cost_per_state_byte(env.block_gas_limit);
+                (
+                    cpsb,
+                    STATE_BYTES_PER_NEW_ACCOUNT * cpsb,
+                    STATE_BYTES_PER_STORAGE_SET * cpsb,
+                    STATE_BYTES_PER_AUTH_BASE * cpsb,
+                )
+            } else {
+                (0, 0, 0, 0)
+            };
 
         // Derive whether the top-level backup must be preserved from the installed hooks rather
         // than from `vm_type`. The flag's real meaning is "a hook reads the top-level backup in
@@ -1052,7 +1044,6 @@ impl<'a> VM<'a> {
             cost_per_state_byte: cpsb,
             state_gas_new_account,
             state_gas_storage_set,
-            state_gas_auth_total,
             state_gas_auth_base,
             intrinsic_state_gas: 0,
             value_new_account_charged: false,
@@ -3371,7 +3362,6 @@ impl<'a> VM<'a> {
             cost_per_state_byte: 0,
             state_gas_new_account: 0,
             state_gas_storage_set: 0,
-            state_gas_auth_total: 0,
             state_gas_auth_base: 0,
             intrinsic_state_gas: 0,
             value_new_account_charged: false,
