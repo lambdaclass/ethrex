@@ -785,15 +785,29 @@ impl<'a> VM<'a> {
                 .ok_or(InternalError::Overflow)?;
         }
 
-        // EELS `data_floor_gas_cost = total_floor_tokens * TX_DATA_TOKEN_FLOOR + TX_BASE`.
-        // Floor base is `tx_base_cost(fork)`: 21000 pre-Amsterdam, 12000 at Amsterdam
-        // (EIP-2780). EIP-7976 raises the per-token rate from 10 to 16.
+        // EELS `data_floor_gas_cost = total_floor_tokens * TX_DATA_TOKEN_FLOOR + base_regular_gas`
+        // where `base_regular_gas = TX_BASE + recipient_regular_gas`. Pre-Amsterdam the floor
+        // base stays anchored on bare `tx_base_cost(fork)` (21000); Amsterdam+ (EIP-2780) folds
+        // in the recipient/value regular-gas contribution via `recipient_regular_gas`.
         let mut min_gas_used: u64 = tokens_in_calldata
             .checked_mul(total_cost_floor_per_token(fork))
             .ok_or(InternalError::Overflow)?;
 
+        let floor_base = if fork >= Fork::Amsterdam {
+            tx_base_cost(fork)
+                .checked_add(gas_cost::recipient_regular_gas(
+                    &self.tx.to(),
+                    self.tx.value(),
+                    self.env.origin,
+                    fork,
+                ))
+                .ok_or(InternalError::Overflow)?
+        } else {
+            tx_base_cost(fork)
+        };
+
         min_gas_used = min_gas_used
-            .checked_add(tx_base_cost(fork))
+            .checked_add(floor_base)
             .ok_or(InternalError::Overflow)?;
 
         Ok(min_gas_used)
@@ -989,10 +1003,15 @@ pub fn intrinsic_gas_dimensions(
 /// and folds EIP-7981 access-list data bytes into the token count. Pre-
 /// Amsterdam uses the weighted EIP-7623 formula.
 ///
+/// `sender` is the transaction's recovered sender; it feeds the Amsterdam+
+/// floor-base anchor (`tx_base_cost(fork) + recipient_regular_gas(...)`, see
+/// EIP-2780), which needs the sender for the self-transfer zero-rule. Unused
+/// pre-Amsterdam.
+///
 /// A mismatch between this and `VM::get_min_gas_used` would cause mempool
 /// admission to drift from VM rejection; keep the two in sync. The
 /// `test_intrinsic_parity_*` suite also guards this.
-pub fn intrinsic_gas_floor(tx: &Transaction, fork: Fork) -> Result<u64, VMError> {
+pub fn intrinsic_gas_floor(tx: &Transaction, sender: Address, fork: Fork) -> Result<u64, VMError> {
     // EIP-7976: floor tokens count ALL calldata bytes unweighted. For CREATE
     // txs the calldata is the init code. Mirrors `get_min_gas_used`.
     let calldata = tx.data();
@@ -1016,11 +1035,26 @@ pub fn intrinsic_gas_floor(tx: &Transaction, fork: Fork) -> Result<u64, VMError>
             .ok_or(InternalError::Overflow)?;
     }
 
-    // Floor base `tx_base_cost(fork)` (12000 at Amsterdam); mirrors `get_min_gas_used`.
+    // Floor base: Amsterdam+ anchors on `tx_base_cost(fork) + recipient_regular_gas(...)`
+    // (EIP-2780); pre-Amsterdam stays anchored on bare `tx_base_cost(fork)` (21000).
+    // Mirrors `get_min_gas_used`.
+    let floor_base = if fork >= Fork::Amsterdam {
+        tx_base_cost(fork)
+            .checked_add(gas_cost::recipient_regular_gas(
+                &tx.to(),
+                tx.value(),
+                sender,
+                fork,
+            ))
+            .ok_or(InternalError::Overflow)?
+    } else {
+        tx_base_cost(fork)
+    };
+
     tokens_in_calldata
         .checked_mul(total_cost_floor_per_token(fork))
         .ok_or(InternalError::Overflow)?
-        .checked_add(tx_base_cost(fork))
+        .checked_add(floor_base)
         .ok_or(InternalError::Overflow.into())
 }
 

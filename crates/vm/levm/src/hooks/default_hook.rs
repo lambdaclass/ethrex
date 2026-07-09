@@ -4,7 +4,7 @@ use crate::{
     errors::{ContextResult, ExceptionalHalt, InternalError, TxValidationError, VMError},
     gas_cost::{
         STANDARD_TOKEN_COST, cold_account_access_cost, floor_tokens_in_access_list,
-        total_cost_floor_per_token, tx_base_cost,
+        recipient_regular_gas, total_cost_floor_per_token, tx_base_cost,
     },
     hooks::hook::Hook,
     utils::*,
@@ -527,14 +527,29 @@ pub fn validate_min_gas_limit(vm: &mut VM<'_>, intrinsic: &IntrinsicGas) -> Resu
             .ok_or(InternalError::Overflow)?;
     }
 
-    // floor_cost_by_tokens = tx_base_cost(fork) + total_cost_floor_per_token(fork) * tokens
+    // floor_cost_by_tokens = base_regular_gas + total_cost_floor_per_token(fork) * tokens
     // EIP-7976 (Amsterdam+) raises the floor multiplier from 10 to 16.
-    // The floor base is `tx_base_cost(fork)`: 21000 pre-Amsterdam, 12000 at Amsterdam
-    // (EIP-2780 lowers the flat base; EELS `data_floor_gas_cost` adds `GasCosts.TX_BASE`).
+    // The floor base is `tx_base_cost(fork)`: 21000 pre-Amsterdam, unchanged.
+    // Amsterdam+ (EIP-2780) anchors on `tx_base_cost(fork) + recipient_regular_gas(...)`
+    // (12000 base + the recipient/value regular-gas contribution), mirroring EELS
+    // `data_floor_gas_cost = total_floor_tokens * TX_DATA_TOKEN_FLOOR + base_regular_gas`.
+    let floor_base = if fork >= Fork::Amsterdam {
+        tx_base_cost(fork)
+            .checked_add(recipient_regular_gas(
+                &vm.tx.to(),
+                vm.tx.value(),
+                vm.env.origin,
+                fork,
+            ))
+            .ok_or(InternalError::Overflow)?
+    } else {
+        tx_base_cost(fork)
+    };
+
     let floor_cost_by_tokens = tokens_in_calldata
         .checked_mul(total_cost_floor_per_token(fork))
         .ok_or(InternalError::Overflow)?
-        .checked_add(tx_base_cost(fork))
+        .checked_add(floor_base)
         .ok_or(InternalError::Overflow)?;
 
     // EIP-8037 (Amsterdam+): Regular gas is capped at TX_MAX_GAS_LIMIT — reject if

@@ -1288,7 +1288,8 @@ pub fn transaction_intrinsic_gas(
     // it the same way (`fork >= Fork::Prague` in the default hook). Applying it
     // pre-Prague would spuriously raise the admission threshold.
     let calldata_floor = if fork >= Fork::Prague {
-        intrinsic_gas_floor(tx, fork).map_err(|e| MempoolError::IntrinsicGasError(e.to_string()))?
+        intrinsic_gas_floor(tx, sender, fork)
+            .map_err(|e| MempoolError::IntrinsicGasError(e.to_string()))?
     } else {
         0
     };

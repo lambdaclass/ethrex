@@ -417,9 +417,11 @@ fn test_no_transfer_to_7702_delegated_amsterdam() {
     //   intrinsic: 12000 base + 3000 cold access (distinct, value=0) = 15000
     //   top-level: + 3000 cold access for the delegation = 18000 total regular.
     //
-    // The EIP-7623 calldata floor (21000 with empty calldata) masks the raw
-    // 18000 at the receipt level, so we isolate the +3000 top-level delegation
-    // charge by differencing two executions that run IDENTICAL target code:
+    // The EIP-7976 calldata floor (`12000 + recipient_regular_gas + tokens*16`;
+    // here: no calldata, distinct cold recipient, value=0 -> 12000 + 3000 =
+    // 15000) masks the raw 18000 at the receipt level, so we isolate the +3000
+    // top-level delegation charge by differencing two executions that run
+    // IDENTICAL target code:
     //   * recipient A: 7702-delegated to target B (runs B's code via delegation)
     //   * recipient C: a plain contract carrying the same code as B
     // The gas-burning target pushes raw consumption above the floor in both, so
@@ -447,7 +449,11 @@ fn test_no_transfer_to_7702_delegated_amsterdam() {
     plain_accounts.insert(plain_contract, code_account(gas_burn_code()));
     let plain_gas = run_amsterdam_call(plain_contract, plain_accounts);
 
-    // Both clear the EIP-7623 floor, so the receipt reflects raw consumption.
+    // Both clear the EIP-7976 floor (15000, see above), so the receipt
+    // reflects raw consumption. The >21000 bound below is a conservative
+    // margin (the legacy pre-Amsterdam flat base), well above the actual
+    // 15000 floor, chosen so this assertion stays robust to floor-formula
+    // changes.
     assert!(
         delegated_gas > 21000 && plain_gas > 21000,
         "both executions must clear the 21000 floor (delegated={delegated_gas}, plain={plain_gas})"
