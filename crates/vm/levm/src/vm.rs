@@ -543,6 +543,25 @@ impl FrameTxContext {
     }
 }
 
+/// Snapshot of `call_frame_backup`'s key-space taken by [`VM::enter_prepare_region`]
+/// at the start of the atomic prepare region (EIP-8037 auth + prepare-dispatch
+/// charges). `original_accounts_info` / `original_account_storage_slots` are
+/// first-write-wins maps keyed by address, so a plain entry-count marker can't
+/// tell which keys are region-added; recording the pre-region key sets lets
+/// [`VM::fail_prepare_region`] revert exactly the region's writes while leaving
+/// the earlier sender nonce-bump / fee-deduction backup entries intact.
+/// `inserted_code_hashes` is an append-only `Vec`, so its pre-region length is
+/// enough to identify the region-added tail.
+#[derive(Debug, Default)]
+pub struct PrepareRegionBackupMarker {
+    /// Addresses already backed up in `original_accounts_info` before the region.
+    accounts: FxHashSet<Address>,
+    /// Addresses already backed up in `original_account_storage_slots` before the region.
+    storage: FxHashSet<Address>,
+    /// Length of `inserted_code_hashes` before the region.
+    code_hashes_len: usize,
+}
+
 /// Result of [`VM::simulate_validation_prefix`] (EIP-8141 mempool simulation).
 #[derive(Debug, Clone)]
 pub struct PrefixSimResult {
@@ -661,6 +680,22 @@ pub struct VM<'a> {
     /// new-account refund in `finalize_execution` to also fire on success when
     /// the target was alive (no new account leaf created). Default false.
     pub created_target_alive: bool,
+    /// EIP-8037: `current_call_frame.state_gas_used_at_entry` captured by
+    /// `enter_prepare_region` right before the atomic prepare region (EIP-7702
+    /// auth + prepare-dispatch charges) begins. `fail_prepare_region` refills the
+    /// frame's state gas back to this pre-region baseline on an internal OOG,
+    /// mirroring EELS `refill_frame_state_gas` applied to the `prep_snapshot`.
+    pub prep_baseline_state_gas: i64,
+    /// EIP-8037: pre-region key-space snapshot of `call_frame_backup`, recorded by
+    /// `enter_prepare_region`. Lets `fail_prepare_region` revert only region-added
+    /// writes, leaving the sender nonce-bump / fee-deduction entries intact.
+    pub prep_region_backup_marker: PrepareRegionBackupMarker,
+    /// EIP-8037: set by `fail_prepare_region` when an internal OOG rolls back the
+    /// atomic prepare region. Consumed by `run_execution`, which turns it into a
+    /// full-gas revert `ContextResult` (mirrors EELS depth-0
+    /// `except ExceptionalHalt: evm.regular_gas_used += evm.gas_left; evm.gas_left = 0`)
+    /// instead of a tx-level rejection `Err` that would wrongly invalidate the block.
+    pub pending_prep_oog: bool,
     /// The opcode table mapping opcodes to opcode handlers for fast lookup.
     /// A shared `&'static` reference to a per-fork table that is `const`-built once for the
     /// whole process (immutable), so each VM holds only a pointer instead of a 2 KB inline copy.
@@ -1033,6 +1068,9 @@ impl<'a> VM<'a> {
             state_refund: 0,
             intrinsic_state_gas: 0,
             created_target_alive: false,
+            prep_baseline_state_gas: 0,
+            prep_region_backup_marker: PrepareRegionBackupMarker::default(),
+            pending_prep_oog: false,
             current_call_frame: CallFrame::new(
                 env.origin,
                 callee,
@@ -1260,6 +1298,91 @@ impl<'a> VM<'a> {
             .checked_sub(spilled)
             .ok_or(InternalError::Underflow)?;
         self.current_call_frame.frame_state_gas_spilled = 0;
+        Ok(())
+    }
+
+    /// EIP-8037: enters the atomic prepare region (EELS `interpreter.py`'s depth-0
+    /// `try` around `set_delegation` + `prepare_dispatch`, `interpreter.py:353-375`).
+    /// Must be called in `prepare_execution`, after the sender nonce bump and fee
+    /// deduction (those survive a region rollback) but before the type-4 auth
+    /// handling (the first region charge). Captures the pre-region state-gas
+    /// baseline and the `call_frame_backup` key-space so `fail_prepare_region` can
+    /// later undo exactly the region's writes.
+    pub fn enter_prepare_region(&mut self) {
+        self.prep_baseline_state_gas = self.current_call_frame.state_gas_used_at_entry;
+        let backup = &self.current_call_frame.call_frame_backup;
+        self.prep_region_backup_marker = PrepareRegionBackupMarker {
+            accounts: backup.original_accounts_info.keys().copied().collect(),
+            storage: backup
+                .original_account_storage_slots
+                .keys()
+                .copied()
+                .collect(),
+            code_hashes_len: backup.inserted_code_hashes.len(),
+        };
+    }
+
+    /// EIP-8037: rolls back the atomic prepare region on an internal OOG from any of
+    /// its charges (7702 auth, CREATE/value `NEW_ACCOUNT`, recipient delegation-resolve).
+    /// Restores every `call_frame_backup` entry added since `enter_prepare_region`
+    /// (leaving the earlier sender nonce-bump / fee-deduction entries untouched),
+    /// refills the frame's state gas back to the pre-region baseline, and sets
+    /// `pending_prep_oog` so `run_execution` turns this into a full-gas revert
+    /// instead of a tx-level rejection `Err` (which would wrongly invalidate the
+    /// block). Mirrors EELS `restore_tx_state(prep_snapshot)` + `refill_frame_state_gas`
+    /// (`interpreter.py:366-374`).
+    pub fn fail_prepare_region(&mut self) -> Result<(), VMError> {
+        let marker = std::mem::take(&mut self.prep_region_backup_marker);
+        let mut backup = std::mem::take(&mut self.current_call_frame.call_frame_backup);
+
+        // Restore + drop every account backup entry added during the region.
+        let region_accounts: Vec<Address> = backup
+            .original_accounts_info
+            .keys()
+            .filter(|address| !marker.accounts.contains(*address))
+            .copied()
+            .collect();
+        for address in region_accounts {
+            if let Some(account) = backup.original_accounts_info.remove(&address)
+                && let Some(current_account) = self.db.current_accounts_state.get_mut(&address)
+            {
+                current_account.info = account.info;
+                current_account.status = account.status;
+                current_account.has_storage = account.has_storage;
+                current_account.exists = account.exists;
+            }
+        }
+
+        // Restore + drop every storage backup entry added during the region.
+        let region_storage: Vec<Address> = backup
+            .original_account_storage_slots
+            .keys()
+            .filter(|address| !marker.storage.contains(*address))
+            .copied()
+            .collect();
+        for address in region_storage {
+            if let Some(slots) = backup.original_account_storage_slots.remove(&address)
+                && let Some(current_account) = self.db.current_accounts_state.get_mut(&address)
+            {
+                for (key, value) in slots {
+                    current_account.storage.insert(key, value);
+                }
+            }
+        }
+
+        // Evict codes the region inserted, mirroring `restore_cache_state`: a stale
+        // by-hash cache entry would hide a later read of the same hash from the store.
+        for code_hash in backup
+            .inserted_code_hashes
+            .split_off(marker.code_hashes_len)
+        {
+            self.db.codes.remove(&code_hash);
+        }
+
+        self.current_call_frame.call_frame_backup = backup;
+
+        self.refill_frame_state_gas(self.prep_baseline_state_gas)?;
+        self.pending_prep_oog = true;
         Ok(())
     }
 
@@ -2480,6 +2603,21 @@ impl<'a> VM<'a> {
             });
         }
 
+        // EIP-8037: the atomic prepare region rolled back (one of its charges — 7702
+        // auth, CREATE/value NEW_ACCOUNT, recipient delegation-resolve — OOG'd).
+        // Burn all gas and revert the tx rather than rejecting it as invalid (which
+        // would wrongly invalidate the block). Mirrors EELS depth-0
+        // `except ExceptionalHalt: evm.regular_gas_used += evm.gas_left; evm.gas_left = 0`
+        // (`interpreter.py:366-374`).
+        if self.pending_prep_oog {
+            return Ok(ContextResult {
+                result: TxResult::Revert(ExceptionalHalt::OutOfGas.into()),
+                gas_used: self.current_call_frame.gas_limit,
+                gas_spent: self.current_call_frame.gas_limit,
+                output: Bytes::new(),
+            });
+        }
+
         // A pending top-frame NEW_ACCOUNT charge means the recipient was an EIP-161-empty
         // account receiving value. If the recipient is a precompile that then exceptionally
         // halts/reverts, the account is never materialized, so the charge is rolled back in
@@ -3288,6 +3426,9 @@ impl<'a> VM<'a> {
             state_refund: 0,
             intrinsic_state_gas: 0,
             created_target_alive: false,
+            prep_baseline_state_gas: 0,
+            prep_region_backup_marker: PrepareRegionBackupMarker::default(),
+            pending_prep_oog: false,
             opcode_table: VM::build_opcode_table(fork),
             crypto,
             validation_observer: ValidationObserver::disabled(),

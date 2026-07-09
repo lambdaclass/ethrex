@@ -144,6 +144,13 @@ impl Hook for DefaultHook {
             validate_4844_tx(vm)?;
         }
 
+        // EIP-8037: enter the atomic prepare region (EELS `interpreter.py`'s depth-0
+        // `try` around `set_delegation` + `prepare_dispatch`). Taken after the sender
+        // nonce bump (7) and fee deduction (3) above so both survive a region
+        // rollback, and before the type-4 auth handling below (the first region
+        // charge). See `VM::enter_prepare_region` / `VM::fail_prepare_region`.
+        vm.enter_prepare_region();
+
         // [EIP-7702]: https://eips.ethereum.org/EIPS/eip-7702
         // Transaction is type 4 if authorization_list is Some
         if vm.tx.authorization_list().is_some() {
@@ -193,6 +200,14 @@ impl Hook for DefaultHook {
         transfer_value(vm)?;
 
         set_bytecode_and_code_address(vm)?;
+
+        // EIP-8037: the atomic prepare region rolled back (one of its charges OOG'd)
+        // and burned all gas. Nothing else to do here — `run_execution` turns
+        // `pending_prep_oog` into a full-gas revert `ContextResult` instead of a
+        // tx-level rejection `Err` (which would wrongly invalidate the block).
+        if vm.pending_prep_oog {
+            return Ok(());
+        }
 
         Ok(())
     }
