@@ -250,15 +250,20 @@ impl Hook for DefaultHook {
         }
 
         // EIP-8037: the atomic prepare region rolled back (one of its charges OOG'd)
-        // and burned all gas. Skip ALL post-region state mutations — the value
-        // transfer, the bytecode/code-address resolution, and (in `execute`) the
-        // CREATE nonce bump / endowment. EELS aborts the whole dispatch on this OOG
-        // (`prepare_dispatch` raises before the value move), so none of those may
-        // persist; `run_execution` turns `pending_prep_oog` into a full-gas revert
-        // `ContextResult` instead of a tx-level rejection `Err` (which would wrongly
-        // invalidate the block). Only the pre-region sender nonce bump + fee
-        // deduction survive (written in stone before the region).
-        if vm.pending_prep_oog {
+        // and burned all gas; `run_execution` turns `pending_prep_oog` into a full-gas
+        // revert `ContextResult` (not a tx-level `Err`, which would wrongly invalidate
+        // the block). What must be skipped afterward depends on the tx kind:
+        //
+        // - CREATE: skip everything. The value transfer would fund the created address
+        //   and (in `execute`) the nonce bump would materialize it; `undo_value_transfer`
+        //   only re-credits the sender on the create path, so the funding would persist
+        //   as a phantom account. EELS never creates the account on this OOG.
+        // - non-CREATE: still run `transfer_value` + `set_bytecode_and_code_address`.
+        //   The full-gas revert routes through `finalize_execution`, whose
+        //   `undo_value_transfer` reverses the transfer symmetrically (net zero) — the
+        //   same behavior these cases had before the region existed. Skipping only the
+        //   transfer here (while `undo` still runs) would underflow the recipient.
+        if vm.pending_prep_oog && vm.is_create()? {
             return Ok(());
         }
 
