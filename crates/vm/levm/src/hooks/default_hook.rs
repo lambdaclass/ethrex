@@ -904,8 +904,17 @@ pub fn set_bytecode_and_code_address(vm: &mut VM<'_>) -> Result<(), VMError> {
         let (is_delegation, _eip7702_gas_consumed, code_address, bytecode) =
             eip7702_get_code(vm.db, &mut vm.substate, to, vm.env.config.fork)?;
 
-        // If EIP-7702 delegation, also record the delegation target (code source) in BAL
-        if is_delegation && let Some(recorder) = vm.db.bal_recorder.as_mut() {
+        // If EIP-7702 delegation, also record the delegation target (code source) in BAL.
+        // Skipped when the atomic prepare region rolled back (`pending_prep_oog`): EELS
+        // `prepare_dispatch` resolves and reads the delegated address (`get_account`,
+        // which feeds `account_reads`) only AFTER its warm/cold access charge succeeds.
+        // When that charge OOGs — or an earlier in-region charge (auth / value
+        // NEW_ACCOUNT) OOGs before the delegation is reached — EELS never records the
+        // target, so neither may ethrex, or the BAL would carry a spurious touch.
+        if is_delegation
+            && !vm.pending_prep_oog
+            && let Some(recorder) = vm.db.bal_recorder.as_mut()
+        {
             recorder.record_touched_address(code_address);
         }
 
