@@ -14,7 +14,7 @@
 //! accounting is byte-identical.
 //!
 //! Expected values follow the EELS Amsterdam reference at the fixture tag
-//! `tests-glamsterdam-devnet@v6.1.1`
+//! `tests-glamsterdam-devnet@v7.0.0`
 //! (ethereum/execution-specs `amsterdam/vm/instructions/storage.py::sstore`):
 //! the first change to a slot charges the access cost (cold XOR warm) plus a
 //! flat `STORAGE_WRITE` (= 10000) surcharge, and a restore-to-original refunds
