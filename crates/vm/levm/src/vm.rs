@@ -640,32 +640,15 @@ pub struct VM<'a> {
     pub cost_per_state_byte: u64,
     /// EIP-8037: State gas for new account creation (STATE_BYTES_PER_NEW_ACCOUNT * cost_per_state_byte).
     pub state_gas_new_account: u64,
-    /// EIP-2780: previously the deferred top-frame new-account state gas for a
-    /// value transfer to an empty recipient. Task 4.2 moved that charge into the
-    /// atomic prepare region (see `value_new_account_charged`), so this field is
-    /// now always 0; kept until Phase 6 removes the whole deferred mechanism.
-    pub pending_top_frame_state_gas: u64,
-    /// EIP-2780 top-frame regular gas pending for a 7702-delegated recipient (the
-    /// extra COLD_ACCOUNT_ACCESS to resolve the delegation). Deferred to
-    /// `run_execution` for the same revert-not-invalidate reason as the state charge.
-    pub pending_top_frame_regular_gas: u64,
     /// EIP-8037: State gas for storage slot creation (STATE_BYTES_PER_STORAGE_SET * cost_per_state_byte).
     pub state_gas_storage_set: u64,
     /// EIP-8037: State gas for EIP-7702 auth total (STATE_BYTES_PER_AUTH_TOTAL * cost_per_state_byte).
     pub state_gas_auth_total: u64,
     /// EIP-8037: State gas for the 23-byte EIP-7702 delegation indicator
-    /// (STATE_BYTES_PER_AUTH_BASE * cost_per_state_byte). Refunded by
-    /// `set_delegation` when no new delegation indicator bytes are written —
-    /// either the authority's code slot already holds an indicator or the
-    /// auth clears against an empty authority.
+    /// (STATE_BYTES_PER_AUTH_BASE * cost_per_state_byte). Charged in-region by
+    /// `eip7702_set_access_code` (EELS `set_delegation`) once per authority when a
+    /// net-new delegation indicator is written, and never credited back.
     pub state_gas_auth_base: u64,
-    /// EIP-8037: state-gas refund channel.
-    /// Mirrors EELS `MessageCallOutput.state_refund` — a separate, monotonic accumulator
-    /// for refunds that bypass per-frame `state_gas_used` accounting. Populated by
-    /// `set_delegation` for existing-authority refunds, subtracted from block-level
-    /// state-gas at the end of `refund_sender`. Survives revert/halt/OOG since it lives
-    /// on the VM, not in any call-frame backup.
-    pub state_refund: u64,
     /// EIP-8037: intrinsic state gas (`tx_env.intrinsic_state_gas` in EELS). Captured at
     /// `add_intrinsic_gas` time. ethrex lumps intrinsic + execution into `state_gas_used`,
     /// so on top-level error this field is what we leave behind when refunding the
@@ -676,15 +659,24 @@ pub struct VM<'a> {
     /// `NEW_ACCOUNT` charge fires (a value-bearing call to a not-yet-alive
     /// recipient). Consumed once, at the top of `run_execution`, to decide
     /// whether an Amsterdam precompile-halt must roll the charge back (the
-    /// recipient never materializes on halt) — replaces the old derivation from
-    /// `pending_top_frame_state_gas > 0` now that the charge is applied in-region.
+    /// recipient never materializes on halt).
     pub value_new_account_charged: bool,
     /// EIP-8037: `current_call_frame.state_gas_used_at_entry` captured by
     /// `enter_prepare_region` right before the atomic prepare region (EIP-7702
-    /// auth + prepare-dispatch charges) begins. `fail_prepare_region` refills the
-    /// frame's state gas back to this pre-region baseline on an internal OOG,
-    /// mirroring EELS `refill_frame_state_gas` applied to the `prep_snapshot`.
+    /// auth + prepare-dispatch charges) begins. `fail_prepare_region` rewinds the
+    /// frame's `state_gas_used` back to this pre-region baseline on an internal OOG,
+    /// mirroring EELS `restore_tx_state(prep_snapshot)`.
     pub prep_baseline_state_gas: i64,
+    /// EIP-8037: `state_gas_reservoir` captured by `enter_prepare_region`. The
+    /// `set_delegation` auth lock-in zeroes the frame spill, so `fail_prepare_region`
+    /// cannot reconstruct the pre-region reservoir from `refill_frame_state_gas`
+    /// arithmetic; it restores this captured value directly (EELS
+    /// `message.state_gas_reservoir = prep_reservoir`).
+    pub prep_baseline_reservoir: u64,
+    /// EIP-8037: cumulative `state_gas_spill` captured by `enter_prepare_region`, so
+    /// `fail_prepare_region` restores block-accounting spill to its pre-region value
+    /// (the region's spilled state gas is fully rolled back / burned as regular).
+    pub prep_baseline_state_gas_spill: u64,
     /// EIP-8037: pre-region key-space snapshot of `call_frame_backup`, recorded by
     /// `enter_prepare_region`. Lets `fail_prepare_region` revert only region-added
     /// writes, leaving the sender nonce-bump / fee-deduction entries intact.
@@ -1059,15 +1051,14 @@ impl<'a> VM<'a> {
             state_gas_spill: 0,
             cost_per_state_byte: cpsb,
             state_gas_new_account,
-            pending_top_frame_state_gas: 0,
-            pending_top_frame_regular_gas: 0,
             state_gas_storage_set,
             state_gas_auth_total,
             state_gas_auth_base,
-            state_refund: 0,
             intrinsic_state_gas: 0,
             value_new_account_charged: false,
             prep_baseline_state_gas: 0,
+            prep_baseline_reservoir: 0,
+            prep_baseline_state_gas_spill: 0,
             prep_region_backup_marker: PrepareRegionBackupMarker::default(),
             pending_prep_oog: false,
             current_call_frame: CallFrame::new(
@@ -1309,6 +1300,8 @@ impl<'a> VM<'a> {
     /// later undo exactly the region's writes.
     pub fn enter_prepare_region(&mut self) {
         self.prep_baseline_state_gas = self.current_call_frame.state_gas_used_at_entry;
+        self.prep_baseline_reservoir = self.state_gas_reservoir;
+        self.prep_baseline_state_gas_spill = self.state_gas_spill;
         let backup = &self.current_call_frame.call_frame_backup;
         self.prep_region_backup_marker = PrepareRegionBackupMarker {
             accounts: backup.original_accounts_info.keys().copied().collect(),
@@ -1380,7 +1373,22 @@ impl<'a> VM<'a> {
 
         self.current_call_frame.call_frame_backup = backup;
 
-        self.refill_frame_state_gas(self.prep_baseline_state_gas)?;
+        // Rewind the state-gas machinery to the pre-region snapshot. The
+        // `set_delegation` auth lock-in re-seeds `state_gas_used_at_entry` and zeroes
+        // the frame spill, so `refill_frame_state_gas` (which derives the reservoir
+        // credit from the frame spill) would leave the reservoir over-credited by the
+        // locked-in auth state gas. Restore `state_gas_used`, the reservoir, and the
+        // cumulative spill to the values captured by `enter_prepare_region`, and clear
+        // the frame spill — this fully reverts the region's state charges (auth +
+        // prepare-dispatch) regardless of the lock-in. Mirrors EELS
+        // `restore_tx_state(prep_snapshot)` + `message.state_gas_reservoir = prep_reservoir`
+        // (`interpreter.py:365-369`). `gas_remaining` is left as-is: the failing charge
+        // already drove it negative, so `run_execution` burns all gas (EELS
+        // `evm.regular_gas_used += evm.gas_left; evm.gas_left = 0`).
+        self.state_gas_used = self.prep_baseline_state_gas;
+        self.state_gas_reservoir = self.prep_baseline_reservoir;
+        self.state_gas_spill = self.prep_baseline_state_gas_spill;
+        self.current_call_frame.frame_state_gas_spilled = 0;
         self.pending_prep_oog = true;
         Ok(())
     }
@@ -2214,14 +2222,8 @@ impl<'a> VM<'a> {
         // `state_gas_used` here lets the block-level regular/state split
         // (regular = gas_used - state_gas_used) attribute it to the state dimension
         // instead of billing the whole amount as regular gas.
-        let state_refund_signed =
-            i64::try_from(self.state_refund).map_err(|_| InternalError::Overflow)?;
-        let state_gas_used = u64::try_from(
-            self.state_gas_used
-                .saturating_sub(state_refund_signed)
-                .max(0),
-        )
-        .map_err(|_| InternalError::Overflow)?;
+        let state_gas_used =
+            u64::try_from(self.state_gas_used.max(0)).map_err(|_| InternalError::Overflow)?;
 
         // Unused frame gas in GAS UNITS for the report — distinct from the wei
         // refund above (which also returns the max-vs-effective fee delta).
@@ -2574,9 +2576,6 @@ impl<'a> VM<'a> {
     fn is_simple_transfer_fast_path(&self) -> bool {
         !self.current_call_frame.is_create
             && self.current_call_frame.bytecode.is_empty()
-            // A pending EIP-2780 top-frame charge must be applied via run_execution.
-            && self.pending_top_frame_state_gas == 0
-            && self.pending_top_frame_regular_gas == 0
             // Privileged L2 txs can leave gas negative; let the slow path surface that as OOG.
             && self.current_call_frame.gas_remaining >= 0
             && self.tx.authorization_list().is_none()
@@ -2621,37 +2620,8 @@ impl<'a> VM<'a> {
         // at tx start and the tx transfers value. If the recipient is a precompile that
         // then exceptionally halts/reverts, the account is never materialized, so the
         // charge is rolled back in the precompile branch below (mirrors EELS
-        // `refill_frame_state_gas`). Set in-region by `prepare_execution` (Task 4.2);
-        // replaces the old `pending_top_frame_state_gas > 0` derivation now that the
-        // charge is no longer deferred.
+        // `refill_frame_state_gas`). Set in-region by `prepare_execution` (Task 4.2).
         let top_frame_new_account_charged = self.value_new_account_charged;
-
-        // EIP-2780 top-frame delegation-resolve regular-gas charge, applied here
-        // (`pending_top_frame_regular_gas`) via `prepare_execution`. The state-gas half
-        // of this block is now dead: `pending_state` is always 0, since Task 4.2 applies
-        // the value NEW_ACCOUNT charge directly in-region instead of setting
-        // `pending_top_frame_state_gas`; Phase 6 deletes this whole mechanism. If the
-        // charge below cannot be covered the tx reverts (consuming all gas), rather than
-        // being rejected as an invalid transaction.
-        if self.pending_top_frame_state_gas > 0 || self.pending_top_frame_regular_gas > 0 {
-            let pending_state = std::mem::take(&mut self.pending_top_frame_state_gas);
-            let pending_regular = std::mem::take(&mut self.pending_top_frame_regular_gas);
-            // State charge first, then the 7702-delegation regular cold-access (EELS order).
-            let charged = (pending_state == 0 || self.increase_state_gas(pending_state).is_ok())
-                && (pending_regular == 0
-                    || self
-                        .current_call_frame
-                        .increase_consumed_gas(pending_regular)
-                        .is_ok());
-            if !charged {
-                return Ok(ContextResult {
-                    result: TxResult::Revert(ExceptionalHalt::OutOfGas.into()),
-                    gas_used: self.current_call_frame.gas_limit,
-                    gas_spent: self.current_call_frame.gas_limit,
-                    output: Bytes::new(),
-                });
-            }
-        }
 
         #[expect(clippy::as_conversions, reason = "remaining gas conversion")]
         if precompiles::is_precompile(
@@ -2661,11 +2631,12 @@ impl<'a> VM<'a> {
         ) {
             // `execute_precompile` itself never touches state gas (it only mutates
             // `gas_remaining`; it has no access to `state_gas_used` / `state_gas_reservoir` /
-            // `state_gas_spill`) — the assert below guards that. The EIP-2780 top-frame
-            // NEW_ACCOUNT charge applied above, however, IS frame state gas, and on an
-            // exceptional halt/revert it must be rolled back (see below). `self` is borrowed
-            // by field rather than via `&mut self.current_call_frame` so the refund call,
-            // which needs `&mut self`, can run after `execute_precompile`.
+            // `state_gas_spill`) — the assert below guards that. The in-region EIP-2780
+            // value-to-not-alive NEW_ACCOUNT charge (`prepare_execution`, Task 4.2),
+            // however, IS frame state gas, and on an exceptional halt/revert it must be
+            // rolled back (see below). `self` is borrowed by field rather than via
+            // `&mut self.current_call_frame` so the refund call, which needs `&mut self`,
+            // can run after `execute_precompile`.
             let state_gas_used_before_precompile = self.state_gas_used;
             let code_address = self.current_call_frame.code_address;
             let precompile_gas_limit = self.current_call_frame.gas_limit;
@@ -2692,7 +2663,7 @@ impl<'a> VM<'a> {
             // untouched forwarded amount — under Amsterdam that would make the block
             // report only the intrinsic portion. Zero it so the block matches the
             // `gas_used = gas_limit` contract from `handle_precompile_result`, and roll
-            // back the top-frame NEW_ACCOUNT charge (the recipient is never materialized
+            // back the in-region value NEW_ACCOUNT charge (the recipient is never materialized
             // on halt) so the burned gas counts entirely as regular gas, matching EELS
             // `refill_frame_state_gas`. Pre-Amsterdam reads `ctx_result.gas_used` directly
             // and is unaffected by this path either way.
@@ -3141,7 +3112,7 @@ impl<'a> VM<'a> {
         // conditioned on `get_pre_state_account(created_addr) == EMPTY_ACCOUNT`, so it
         // simply never fires for an already-alive target (positive balance implies
         // non-empty pre-state) and is rolled back by `handle_create_transaction` on
-        // collision — matching EELS v7, which drops `MessageCallOutput.created_target_alive`
+        // collision — matching EELS v7, which drops the created-target-alive output flag
         // entirely because `prepare_dispatch` never runs for a colliding create.
 
         // See `prepare_execution`: per-hook `Rc::clone` avoids the `self.hooks.clone()` realloc.
@@ -3173,18 +3144,13 @@ impl<'a> VM<'a> {
             Vec::new()
         };
 
-        // EIP-8037: `state_gas_used` is already net (signed; credits
-        // decrement it inline). Subtract `state_refund` (EIP-7702 tx-level channel) and
-        // clamp at zero for block accounting — `state_gas_used` may be negative when inline
-        // refunds exceed gross charges.
-        let state_refund_signed =
-            i64::try_from(self.state_refund).map_err(|_| InternalError::Overflow)?;
-        let net_state_gas_used: u64 = u64::try_from(
-            self.state_gas_used
-                .saturating_sub(state_refund_signed)
-                .max(0),
-        )
-        .map_err(|_| InternalError::Overflow)?;
+        // EIP-8037: `state_gas_used` is already net (signed; credits decrement it
+        // inline), so `tx_state_gas = intrinsic_state_gas + state_gas_used` exactly
+        // (EELS `fork.py::process_transaction`, which no longer carries a separate
+        // tx-level refund channel). Clamp at zero — `state_gas_used` may be negative when
+        // inline refunds exceed gross charges.
+        let net_state_gas_used: u64 =
+            u64::try_from(self.state_gas_used.max(0)).map_err(|_| InternalError::Overflow)?;
 
         let report = ExecutionReport {
             result: ctx_result.result.clone(),
@@ -3404,15 +3370,14 @@ impl<'a> VM<'a> {
             state_gas_spill: 0,
             cost_per_state_byte: 0,
             state_gas_new_account: 0,
-            pending_top_frame_state_gas: 0,
-            pending_top_frame_regular_gas: 0,
             state_gas_storage_set: 0,
             state_gas_auth_total: 0,
             state_gas_auth_base: 0,
-            state_refund: 0,
             intrinsic_state_gas: 0,
             value_new_account_charged: false,
             prep_baseline_state_gas: 0,
+            prep_baseline_reservoir: 0,
+            prep_baseline_state_gas_spill: 0,
             prep_region_backup_marker: PrepareRegionBackupMarker::default(),
             pending_prep_oog: false,
             opcode_table: VM::build_opcode_table(fork),
