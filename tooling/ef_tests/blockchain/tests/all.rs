@@ -40,17 +40,13 @@ const EXTRA_SKIPS: &[&str] = &[
 // `tests-glamsterdam-devnet@v6.1.0` — the same base as the live `vectors/` fixtures — so the
 // whole bundle re-executes cleanly and no blanket skip is needed. Per-fixture leniency cases
 // (`*_extra_unused_*` padding, deliberately-invalid witnesses) are handled in `test_runner.rs`.
-// TEMPORARY: the stateless zkevm bundle is still `tests-zkevm@v0.5.0` (filled
-// against glamsterdam-devnet v6.1.0), which predeploys the EIP-8282 builder
-// deposit/exit contracts at the OLD addresses (`…d9008282` / `…0f008282`). This
-// client now uses the devnet-7 addresses (`…300d8282` / `…800e8282`, matching
-// the live `vectors/` v7.2.0 bundle), so every Amsterdam block's end-of-block
-// builder system call finds no code at the new addresses and fails the block.
-// Since the whole zkevm bundle is `for_amsterdam`, skip it wholesale until a
-// zkevm bundle filled with the new predeploy addresses is released, then remove
-// this skip (mirrors #6740's "unskip stateless validation tests").
+// Amsterdam+ fixtures are skipped in the stateless run by fork (see
+// `parse_and_execute` in `test_runner.rs` and docs/known_issues.md): the
+// tests-zkevm@v0.5.0 bundle predeploys the EIP-8282 builder contracts at the OLD
+// addresses, incompatible with this client's devnet-7 addresses. That skip is
+// fork-based (not name-based), so no per-test entries are needed here.
 #[cfg(feature = "stateless")]
-const EXTRA_SKIPS: &[&str] = &["for_amsterdam"];
+const EXTRA_SKIPS: &[&str] = &[];
 #[cfg(not(any(feature = "sp1", feature = "stateless")))]
 const EXTRA_SKIPS: &[&str] = &[];
 
