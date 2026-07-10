@@ -971,6 +971,54 @@ impl Mempool {
             .map(|((_address, nonce), _hash)| nonce + 1))
     }
 
+    /// Returns the sum of `cost_without_base_fee()` for every pending
+    /// transaction from `sender` currently in the pool, optionally excluding
+    /// `exclude` (used by the cumulative-balance admission gate to drop the
+    /// cost of a tx that's about to be replaced at the same nonce).
+    ///
+    /// Used at mempool admission to gate a sender's cumulative pending cost
+    /// against their on-chain balance: without this check, a sender at the
+    /// per-sender slot cap can have most of their pending txs be
+    /// guaranteed-fail at execution time and waste pool space.
+    ///
+    /// Fails closed on any inconsistency: if `txs_by_sender_nonce` references
+    /// a hash missing from `transaction_pool`, or if any included tx's cost
+    /// can't be computed, the function returns an error rather than silently
+    /// undercounting (which would let a malformed or invariant-violating tx
+    /// bypass the cumulative check).
+    pub fn sum_cost_for_sender(
+        &self,
+        sender: Address,
+        account_nonce: u64,
+        exclude: Option<H256>,
+    ) -> Result<U256, MempoolError> {
+        let inner = self.read()?;
+        let mut total = U256::zero();
+        // Start at `account_nonce`, not 0, so obsoleted txs (nonce below the
+        // sender's on-chain nonce — already executed but not yet pruned from the
+        // pool) don't count toward the sender's required balance.
+        for (_key, hash) in inner
+            .txs_by_sender_nonce
+            .range((sender, account_nonce)..=(sender, u64::MAX))
+        {
+            if Some(*hash) == exclude {
+                continue;
+            }
+            let tx = inner.transaction_pool.get(hash).ok_or_else(|| {
+                MempoolError::StoreError(StoreError::Custom(format!(
+                    "mempool index/pool inconsistency: hash {hash:?} in sender-nonce index but missing from transaction_pool",
+                )))
+            })?;
+            let cost = tx
+                .cost_without_base_fee()
+                .ok_or(MempoolError::InvalidTxGasvalues)?;
+            total = total
+                .checked_add(cost)
+                .ok_or(MempoolError::InvalidTxGasvalues)?;
+        }
+        Ok(total)
+    }
+
     pub fn get_mempool_size(&self) -> Result<(u64, u64), MempoolError> {
         let txs_size = {
             let pool_lock = &self.read()?.transaction_pool;
