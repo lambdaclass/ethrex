@@ -123,6 +123,12 @@ use ethrex_common::types::BlobsBundle;
 
 const MAX_PAYLOADS: usize = 10;
 const MAX_MEMPOOL_SIZE_DEFAULT: usize = 10_000;
+// Below this many touched storage slots the BFS prefetch's own overhead (one
+// `multi_get` per trie level) isn't worth it; the serial insert loop's
+// per-slot lazy resolution is cheap enough on its own. Shared by the Stage B
+// worker, `serial_storage_root`, and `compute_sharded_storage_root`'s
+// serial fallbacks.
+const STORAGE_PREFETCH_THRESHOLD: usize = 64;
 
 /// Background thread for dropping large tree structures off the critical path.
 /// Accepts any `Send` value and drops it on a dedicated thread, avoiding
@@ -1338,6 +1344,20 @@ impl Blockchain {
                                             .map(|(k, v)| (keccak(k), *v))
                                             .collect();
                                         hashed_storage.sort_unstable_by(|a, b| a.0.cmp(&b.0));
+
+                                        // Warm the touched subtrie breadth-first before the
+                                        // serial insert/remove loop below, using the same
+                                        // sorted key set/order the loop iterates. Hash-preserving
+                                        // (see `Trie::prefetch_sorted`); does not affect the
+                                        // resulting root or persisted node set.
+                                        if hashed_storage.len() >= STORAGE_PREFETCH_THRESHOLD {
+                                            let paths: Vec<Nibbles> = hashed_storage
+                                                .iter()
+                                                .map(|(k, _)| Nibbles::from_bytes(k.as_bytes()))
+                                                .collect();
+                                            trie.prefetch_sorted(&paths)?;
+                                        }
+
                                         for (hashed_key, value) in &hashed_storage {
                                             if value.is_zero() {
                                                 trie.remove(hashed_key.as_bytes())?;
@@ -3848,6 +3868,18 @@ fn serial_storage_root(
     hashed_storage: &[(H256, U256)],
 ) -> Result<(H256, Vec<TrieNode>), StoreError> {
     let mut trie = storage.open_storage_trie(hashed_address, parent_state_root, storage_root)?;
+
+    // Both call sites (`compute_sharded_storage_root`'s `occupied <= 1` and
+    // "storage emptied" fallbacks) pass an already key-sorted slice, so it is
+    // safe to reuse that order directly for prefetch.
+    if hashed_storage.len() >= STORAGE_PREFETCH_THRESHOLD {
+        let paths: Vec<Nibbles> = hashed_storage
+            .iter()
+            .map(|(k, _)| Nibbles::from_bytes(k.as_bytes()))
+            .collect();
+        trie.prefetch_sorted(&paths)?;
+    }
+
     for (hashed_key, value) in hashed_storage {
         if value.is_zero() {
             trie.remove(hashed_key.as_bytes())?;
@@ -3956,6 +3988,22 @@ pub fn compute_sharded_storage_root(
                                 parent_state_root,
                                 storage_root,
                             )?;
+
+                            // `bucket` is a nibble-filtered split of `hashed_storage`,
+                            // which is sorted by the caller, so per-shard order is
+                            // already ascending: reuse it directly for prefetch.
+                            // Shard-scaled gate: each shard holds ~1/16 of the
+                            // account's slots, so the whole-account 64 threshold
+                            // would almost never fire here.
+                            const SHARD_PREFETCH_THRESHOLD: usize = 4;
+                            if bucket.len() >= SHARD_PREFETCH_THRESHOLD {
+                                let paths: Vec<Nibbles> = bucket
+                                    .iter()
+                                    .map(|(k, _)| Nibbles::from_bytes(k.as_bytes()))
+                                    .collect();
+                                trie.prefetch_sorted(&paths)?;
+                            }
+
                             for (hashed_key, value) in &bucket {
                                 if value.is_zero() {
                                     trie.remove(hashed_key.as_bytes())?;
