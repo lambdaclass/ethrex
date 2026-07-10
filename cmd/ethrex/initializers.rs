@@ -740,6 +740,7 @@ pub async fn init_l1(
 
     let store_config = StoreConfig {
         rocksdb_block_cache_size: opts.rocksdb_block_cache_size,
+        max_reorg_depth: opts.max_reorg_depth,
         ..StoreConfig::default()
     };
     let store_result = if opts.skip_genesis_validation {

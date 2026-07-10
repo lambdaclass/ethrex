@@ -200,6 +200,15 @@ Storage options:
           [env: ETHREX_ROCKSDB_BLOCK_CACHE_SIZE=]
           [default: 12884901888]
 
+      --max-reorg-depth <BLOCKS>
+          Maximum number of canonical blocks a single forkchoiceUpdated can revert. Rewinds deeper than this are rejected with engine API error -38006 (Too deep reorg).
+          
+          The limit equals the store's state-history retention: ethrex keeps one in-memory trie diff-layer per block and folds older layers into the single-version on-disk trie, after which they can no longer be unwound. Raising the limit retains more layers, each costing roughly one block's worth of trie updates in memory, so values above the default are mainly intended for testing environments that rewind deep chains (e.g. hive simulators resetting a shared client to genesis between tests).
+          
+          Defaults to 128 with the RocksDB backend and 10000 with the in-memory backend. ETHREX_MAX_REORG_DEPTH sets the same value.
+          
+          [env: ETHREX_MAX_REORG_DEPTH=]
+
 RPC options:
       --http.addr <ADDRESS>
           Listening address for the HTTP JSON-RPC server. Defaults to 127.0.0.1 so the endpoint is only reachable from localhost; pass 0.0.0.0 to bind on all interfaces (only recommended when the node sits behind a trusted firewall or reverse proxy).

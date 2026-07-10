@@ -61,8 +61,10 @@ use tracing::{debug, error, info, warn};
 /// Maximum number of execution witnesses to keep in the database
 pub const MAX_WITNESSES: u64 = 128;
 
-// We use one constant for in-memory and another for on-disk backends.
-// This is due to tests requiring state older than 128 blocks.
+// Default trie diff-layer retention per backend, overridable via
+// `StoreConfig::max_reorg_depth`. We use one constant for in-memory and
+// another for on-disk backends because tests require state older than
+// 128 blocks.
 // TODO: unify these
 #[allow(unused)]
 const DB_COMMIT_THRESHOLD: usize = 128;
@@ -99,6 +101,18 @@ pub struct StoreConfig {
     /// blocks — that is the backpressure that throttles `newPayload`.
     /// Clamped to `max(1)` at construction (0 would make a rendezvous channel).
     pub persist_channel_capacity: usize,
+    /// Maximum reorg depth the store can serve, in blocks. Sets the in-memory
+    /// trie diff-layer retention (the [`TrieLayerCache`] commit threshold):
+    /// during live per-block execution one layer holds one block's state diff,
+    /// and once a layer is folded into the single-version on-disk trie the
+    /// ancestor state it replaced can no longer be unwound. Fork choice derives
+    /// its -38006 "too deep reorg" limit from this value (see
+    /// [`Store::max_reorg_depth`]), so the limit and the retention cannot drift
+    /// apart. `None` keeps the backend default: `DB_COMMIT_THRESHOLD` (128) for
+    /// RocksDB, `IN_MEMORY_COMMIT_THRESHOLD` (10000) for in-memory. Each
+    /// retained layer costs memory (one block's trie updates), so raising this
+    /// is mainly intended for testing environments with deep reorgs.
+    pub max_reorg_depth: Option<usize>,
 }
 
 impl Default for StoreConfig {
@@ -106,6 +120,7 @@ impl Default for StoreConfig {
         Self {
             rocksdb_block_cache_size: DEFAULT_ROCKSDB_BLOCK_CACHE_SIZE_BYTES,
             persist_channel_capacity: DEFAULT_PERSIST_CHANNEL_CAPACITY,
+            max_reorg_depth: None,
         }
     }
 }
@@ -1688,8 +1703,7 @@ impl Store {
     pub fn new_with_config(
         path: impl AsRef<Path>,
         engine_type: EngineType,
-        // `config` only feeds the RocksDB backend; without that feature it is unused.
-        #[cfg_attr(not(feature = "rocksdb"), allow(unused_variables))] config: StoreConfig,
+        config: StoreConfig,
     ) -> Result<Self, StoreError> {
         let db_path = path.as_ref().to_path_buf();
 
@@ -1740,7 +1754,7 @@ impl Store {
                     return Self::from_backend(
                         backend,
                         db_path,
-                        DB_COMMIT_THRESHOLD,
+                        config.max_reorg_depth.unwrap_or(DB_COMMIT_THRESHOLD),
                         config.persist_channel_capacity,
                     );
                 }
@@ -1762,7 +1776,7 @@ impl Store {
                 Self::from_backend(
                     backend,
                     db_path,
-                    DB_COMMIT_THRESHOLD,
+                    config.max_reorg_depth.unwrap_or(DB_COMMIT_THRESHOLD),
                     config.persist_channel_capacity,
                 )
             }
@@ -1771,7 +1785,7 @@ impl Store {
                 Self::from_backend(
                     backend,
                     db_path,
-                    IN_MEMORY_COMMIT_THRESHOLD,
+                    config.max_reorg_depth.unwrap_or(IN_MEMORY_COMMIT_THRESHOLD),
                     config.persist_channel_capacity,
                 )
             }
@@ -3264,6 +3278,20 @@ impl Store {
             Some(account_hash),
         );
         Ok(Trie::open(Box::new(trie_db), storage_root))
+    }
+
+    /// Maximum reorg depth this store can serve: the number of in-memory trie
+    /// diff-layers retained (one per block during live sync) before they are
+    /// folded into the single-version on-disk trie. Ancestor states deeper than
+    /// this are unrecoverable, so fork choice rejects deeper rewinds with
+    /// -38006 (see `apply_fork_choice`). Configurable via
+    /// [`StoreConfig::max_reorg_depth`] (`--max-reorg-depth`).
+    pub fn max_reorg_depth(&self) -> Result<u64, StoreError> {
+        Ok(self
+            .trie_cache
+            .read()
+            .map_err(|_| StoreError::LockError)?
+            .commit_threshold() as u64)
     }
 
     pub fn has_state_root(&self, state_root: H256) -> Result<bool, StoreError> {
