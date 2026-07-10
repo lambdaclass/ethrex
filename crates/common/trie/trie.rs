@@ -152,6 +152,94 @@ impl Trie {
         Ok(())
     }
 
+    /// Pre-resolves, via breadth-first batched reads, every trie node that the
+    /// upcoming serial `insert`/`remove` loop over `sorted_paths` would
+    /// otherwise resolve one at a time (one `db.get` per level per key).
+    ///
+    /// Nodes are installed into the in-memory arena exactly the way lazy
+    /// resolution does it (see [`NodeRef::get_node_mut`]): the decoded node
+    /// replaces the `NodeRef::Hash` with a `NodeRef::Node` that keeps the SAME
+    /// memoized hash (`OnceLock::from(hash)`). This is purely a caching step:
+    /// it never modifies any node's content, never marks anything dirty, and
+    /// is therefore transparent to the resulting root hash and to the
+    /// persisted node set produced by `collect_changes_since_last_hash`
+    /// (verified by the `trie_prefetch` equivalence test). Prefetching extra
+    /// nodes for keys that later diverge during insert is safe for the same
+    /// reason: an unmodified, hash-preserved node is never re-emitted.
+    ///
+    /// No-op if `sorted_paths` is empty or if the trie's root isn't a
+    /// `NodeRef::Hash(NodeHash::Hashed(_))` (empty trie, inline root, or a
+    /// root that's already resolved — nothing left to batch).
+    pub fn prefetch_sorted(&mut self, sorted_paths: &[Nibbles]) -> Result<(), TrieError> {
+        if sorted_paths.is_empty() {
+            return Ok(());
+        }
+        if !matches!(self.root, NodeRef::Hash(NodeHash::Hashed(_))) {
+            return Ok(());
+        }
+
+        // Resolve the root itself first, exactly like the first `insert`
+        // would (a single `db.get`).
+        if self
+            .root
+            .get_node_mut(self.db.as_ref(), Nibbles::default())?
+            .is_none()
+        {
+            // Root hash points to a node that isn't in the DB. Let the real
+            // insert/remove loop hit (and report) this inconsistency;
+            // prefetching can't fix it and shouldn't hide it.
+            return Ok(());
+        }
+
+        let all_indices: Vec<usize> = (0..sorted_paths.len()).collect();
+        // Defensive guard against a malformed/cyclic trie: legitimate paths
+        // are at most 65 nibbles (64 nibbles + leaf terminator) deep.
+        const MAX_LEVELS: usize = 68;
+
+        for _ in 0..MAX_LEVELS {
+            // Clone the root's Arc (cheap refcount bump) so the following
+            // immutable scan doesn't hold a borrow of `self.root`, freeing it
+            // up for the later mutable install pass without any `&mut`
+            // reference held across the `multi_get` call in between.
+            let root_node = match &self.root {
+                NodeRef::Node(node, _) => node.clone(),
+                _ => break,
+            };
+
+            let mut to_fetch: Vec<Nibbles> = Vec::new();
+            collect_prefetch_targets(
+                &root_node,
+                &Nibbles::default(),
+                &all_indices,
+                sorted_paths,
+                &mut to_fetch,
+            );
+            // Release the extra strong ref to the root before the mutable
+            // install pass, so `Arc::make_mut` below sees strong count 1 (the
+            // common single-owner case) and does not clone the resolved path.
+            drop(root_node);
+            if to_fetch.is_empty() {
+                break;
+            }
+
+            let mut results = self.db.multi_get(&to_fetch).into_iter();
+
+            let NodeRef::Node(root_arc, _) = &mut self.root else {
+                break;
+            };
+            let root_mut = Arc::make_mut(root_arc);
+            install_prefetch_targets(
+                root_mut,
+                &Nibbles::default(),
+                &all_indices,
+                sorted_paths,
+                &mut results,
+            )?;
+        }
+
+        Ok(())
+    }
+
     /// Remove a value from the trie given its RLP-encoded path.
     /// Returns the value if it was succesfully removed or None if it wasn't part of the trie
     pub fn remove(&mut self, path: &[u8]) -> Result<Option<ValueRLP>, TrieError> {
@@ -689,6 +777,186 @@ impl Trie {
             }
         }
     }
+}
+
+/// Immutable BFS-boundary scan used by [`Trie::prefetch_sorted`]: given an
+/// already-resolved node and the set of key indices routed to it, finds every
+/// `NodeRef::Hash` child that lies on the path of at least one of those keys,
+/// stopping the recursion at the first unresolved node in each branch
+/// (already-resolved descendants, if any, are explored further in the same
+/// call). Mirrors the descent performed by `Node::get`/`BranchNode::insert`/
+/// `ExtensionNode::insert`.
+fn collect_prefetch_targets(
+    node: &Node,
+    path: &Nibbles,
+    key_indices: &[usize],
+    sorted_paths: &[Nibbles],
+    out: &mut Vec<Nibbles>,
+) {
+    match node {
+        Node::Branch(branch) => {
+            let depth = path.len();
+            let mut buckets: [Vec<usize>; 16] = std::array::from_fn(|_| Vec::new());
+            for &i in key_indices {
+                let p = sorted_paths[i].as_ref();
+                if depth >= p.len() {
+                    continue;
+                }
+                let nibble = p[depth];
+                if nibble < 16 {
+                    buckets[nibble as usize].push(i);
+                }
+            }
+            for (nibble, indices) in buckets.iter().enumerate() {
+                if indices.is_empty() {
+                    continue;
+                }
+                let child_path = path.append_new(nibble as u8);
+                match &branch.choices[nibble] {
+                    NodeRef::Hash(NodeHash::Hashed(_)) => out.push(child_path),
+                    NodeRef::Node(child, _) => {
+                        collect_prefetch_targets(child, &child_path, indices, sorted_paths, out)
+                    }
+                    // Inline (embedded, no separate disk node) or invalid/empty: nothing to fetch.
+                    _ => {}
+                }
+            }
+        }
+        Node::Extension(ext) => {
+            let depth = path.len();
+            let prefix = ext.prefix.as_ref();
+            let matched: Vec<usize> = key_indices
+                .iter()
+                .copied()
+                .filter(|&i| {
+                    let p = sorted_paths[i].as_ref();
+                    depth + prefix.len() <= p.len() && &p[depth..depth + prefix.len()] == prefix
+                })
+                .collect();
+            if matched.is_empty() {
+                // No key continues through this prefix: they diverge and will
+                // cause the extension to be restructured on insert; nothing
+                // to prefetch here.
+                return;
+            }
+            let child_path = path.concat(&ext.prefix);
+            match &ext.child {
+                NodeRef::Hash(NodeHash::Hashed(_)) => out.push(child_path),
+                NodeRef::Node(child, _) => {
+                    collect_prefetch_targets(child, &child_path, &matched, sorted_paths, out)
+                }
+                _ => {}
+            }
+        }
+        // Terminal: leaves have no children to prefetch.
+        Node::Leaf(_) => {}
+    }
+}
+
+/// Mutable counterpart to [`collect_prefetch_targets`] used by
+/// [`Trie::prefetch_sorted`]: repeats the identical descent/routing so it
+/// visits `NodeRef::Hash` children in the exact same order, installing the
+/// corresponding (same-order) `multi_get` result into the arena
+/// hash-preservingly, exactly as `NodeRef::get_node_mut` installs a single
+/// resolved node. On a `None`/empty result the ref is left untouched (absent
+/// path); the subsequent `insert` will create it.
+fn install_prefetch_targets(
+    node: &mut Node,
+    path: &Nibbles,
+    key_indices: &[usize],
+    sorted_paths: &[Nibbles],
+    results: &mut std::vec::IntoIter<Result<Option<Vec<u8>>, TrieError>>,
+) -> Result<(), TrieError> {
+    match node {
+        Node::Branch(branch) => {
+            let depth = path.len();
+            let mut buckets: [Vec<usize>; 16] = std::array::from_fn(|_| Vec::new());
+            for &i in key_indices {
+                let p = sorted_paths[i].as_ref();
+                if depth >= p.len() {
+                    continue;
+                }
+                let nibble = p[depth];
+                if nibble < 16 {
+                    buckets[nibble as usize].push(i);
+                }
+            }
+            for (nibble, indices) in buckets.iter().enumerate() {
+                if indices.is_empty() {
+                    continue;
+                }
+                let child_path = path.append_new(nibble as u8);
+                let slot = &mut branch.choices[nibble];
+                match slot {
+                    NodeRef::Hash(hash @ NodeHash::Hashed(_)) => {
+                        let hash = *hash;
+                        let bytes = results.next().ok_or_else(|| {
+                            TrieError::DbError(anyhow::anyhow!(
+                                "prefetch_sorted: multi_get returned fewer results than requested"
+                            ))
+                        })??;
+                        if let Some(bytes) = bytes.filter(|b| !b.is_empty()) {
+                            let decoded = Node::decode(&bytes).map_err(TrieError::RLPDecode)?;
+                            *slot = NodeRef::Node(Arc::new(decoded), OnceLock::from(hash));
+                        }
+                    }
+                    NodeRef::Node(child, _) => {
+                        let child_mut = Arc::make_mut(child);
+                        install_prefetch_targets(
+                            child_mut,
+                            &child_path,
+                            indices,
+                            sorted_paths,
+                            results,
+                        )?;
+                    }
+                    _ => {}
+                }
+            }
+        }
+        Node::Extension(ext) => {
+            let depth = path.len();
+            let prefix = ext.prefix.as_ref();
+            let matched: Vec<usize> = key_indices
+                .iter()
+                .copied()
+                .filter(|&i| {
+                    let p = sorted_paths[i].as_ref();
+                    depth + prefix.len() <= p.len() && &p[depth..depth + prefix.len()] == prefix
+                })
+                .collect();
+            if matched.is_empty() {
+                return Ok(());
+            }
+            let child_path = path.concat(&ext.prefix);
+            let slot = &mut ext.child;
+            match slot {
+                NodeRef::Hash(hash @ NodeHash::Hashed(_)) => {
+                    let hash = *hash;
+                    let bytes = results
+                        .next()
+                        .expect("prefetch_sorted: fetch/result count mismatch")?;
+                    if let Some(bytes) = bytes.filter(|b| !b.is_empty()) {
+                        let decoded = Node::decode(&bytes).map_err(TrieError::RLPDecode)?;
+                        *slot = NodeRef::Node(Arc::new(decoded), OnceLock::from(hash));
+                    }
+                }
+                NodeRef::Node(child, _) => {
+                    let child_mut = Arc::make_mut(child);
+                    install_prefetch_targets(
+                        child_mut,
+                        &child_path,
+                        &matched,
+                        sorted_paths,
+                        results,
+                    )?;
+                }
+                _ => {}
+            }
+        }
+        Node::Leaf(_) => {}
+    }
+    Ok(())
 }
 
 /// Validate a subtree rooted at `start_ref`, checking that all referenced nodes exist
