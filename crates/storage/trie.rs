@@ -136,6 +136,39 @@ impl TrieDB for BackendTrieDB {
             .map_err(|e| TrieError::DbError(anyhow::anyhow!("Failed to get from database: {}", e)))
     }
 
+    fn multi_get(&self, keys: &[Nibbles]) -> Vec<Result<Option<Vec<u8>>, TrieError>> {
+        // Compute the prefixed key and target table for every input key,
+        // preserving the original index so results can be scattered back
+        // in input order after being partitioned by table.
+        let prefixed_keys: Vec<Vec<u8>> = keys.iter().map(|k| self.make_key(k.clone())).collect();
+
+        // table -> (original index, key bytes)
+        let mut by_table: std::collections::HashMap<&'static str, Vec<(usize, &[u8])>> =
+            std::collections::HashMap::new();
+        for (idx, key) in prefixed_keys.iter().enumerate() {
+            let table = self.table_for_key(key);
+            by_table.entry(table).or_default().push((idx, key.as_ref()));
+        }
+
+        let mut results: Vec<Option<Result<Option<Vec<u8>>, TrieError>>> =
+            (0..keys.len()).map(|_| None).collect();
+
+        for (table, entries) in by_table {
+            let (indices, refs): (Vec<usize>, Vec<&[u8]>) = entries.into_iter().unzip();
+            let table_results = self.read_view.multi_get(table, &refs);
+            for (idx, res) in indices.into_iter().zip(table_results) {
+                results[idx] = Some(res.map_err(|e| {
+                    TrieError::DbError(anyhow::anyhow!("Failed to get from database: {}", e))
+                }));
+            }
+        }
+
+        results
+            .into_iter()
+            .map(|r| r.expect("every key is assigned to exactly one table"))
+            .collect()
+    }
+
     fn put_batch(&self, key_values: Vec<(Nibbles, Vec<u8>)>) -> Result<(), TrieError> {
         let mut tx = self.db.begin_write().map_err(|e| {
             TrieError::DbError(anyhow::anyhow!("Failed to begin write transaction: {}", e))
