@@ -1800,7 +1800,6 @@ fn test_self_sponsored_auth_region_oog_rolls_back_sender_amsterdam() {
     let ks = SecretKey::from_slice(&[0x77u8; 32]).unwrap();
     let sender = secret_to_address(&ks);
     let kb = SecretKey::from_slice(&[0x22u8; 32]).unwrap();
-    let authority_b = secret_to_address(&kb);
     let target = Address::from_low_u64_be(0x7777);
     let recipient = Address::from_low_u64_be(0x9999);
 
