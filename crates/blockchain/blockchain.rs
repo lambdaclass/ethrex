@@ -133,6 +133,10 @@ const MAX_MEMPOOL_SIZE_DEFAULT: usize = 10_000;
 // worker, `serial_storage_root`, and `compute_sharded_storage_root`'s
 // serial fallbacks.
 const STORAGE_PREFETCH_THRESHOLD: usize = 64;
+// Per-shard gate for the Stage C state-trie update. Each of the 16 shards holds
+// ~1/16 of the block's touched accounts, so the threshold is scaled down like
+// the storage shard path.
+const STATE_SHARD_PREFETCH_THRESHOLD: usize = 4;
 
 /// Background thread for dropping large tree structures off the critical path.
 /// Accepts any `Send` value and drops it on a dedicated thread, avoiding
@@ -1467,6 +1471,22 @@ impl Blockchain {
                             move || -> Result<(Box<BranchNode>, Vec<TrieNode>), StoreError> {
                                 let mut state_trie =
                                     self.storage.open_state_trie(parent_state_root)?;
+
+                                // Breadth-first batch-prefetch the account-trie nodes for
+                                // this shard's accounts before the serial get/insert loop,
+                                // so cold state-trie reads are issued per level instead of
+                                // one dependent read at a time. Sorted so adjacent paths
+                                // share fetched nodes; warming only, root is unchanged.
+                                if shard_items.len() >= STATE_SHARD_PREFETCH_THRESHOLD {
+                                    let mut addrs: Vec<H256> =
+                                        shard_items.iter().map(|i| i.hashed_address).collect();
+                                    addrs.sort_unstable();
+                                    let paths: Vec<Nibbles> = addrs
+                                        .iter()
+                                        .map(|a| Nibbles::from_bytes(a.as_bytes()))
+                                        .collect();
+                                    state_trie.prefetch_sorted(&paths)?;
+                                }
 
                                 for item in &shard_items {
                                     let path = item.hashed_address.as_bytes();
