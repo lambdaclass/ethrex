@@ -220,7 +220,7 @@ async fn run_two_pass_parallel(test_key: &str, test: &TestUnit) -> Result<(), St
     let store1 = build_store_for_test(test).await;
     let blockchain1 = Blockchain::default_with_store_and_pool(store1.clone(), merkle_pool());
 
-    let mut bals: Vec<BlockAccessList> = Vec::with_capacity(test.blocks.len());
+    let mut bals: Vec<Arc<BlockAccessList>> = Vec::with_capacity(test.blocks.len());
 
     for block_fixture in test.blocks.iter() {
         // Skip fixtures that expect an exception — the normal run() already verified them.
@@ -243,7 +243,7 @@ async fn run_two_pass_parallel(test_key: &str, test: &TestUnit) -> Result<(), St
 
         // If execution produced no BAL (non-Amsterdam block in a transition test), skip pass 2.
         match produced_bal {
-            Some(bal) => bals.push(bal),
+            Some(bal) => bals.push(Arc::new(bal)),
             None => return Ok(()),
         }
     }
@@ -257,7 +257,7 @@ async fn run_two_pass_parallel(test_key: &str, test: &TestUnit) -> Result<(), St
         let hash = block.hash();
 
         blockchain2
-            .add_block_pipeline(block, Some(bal))
+            .add_block_pipeline(block, Some(Arc::clone(bal)))
             .map_err(|e| format!("Two-pass pass-2 (parallel) failed for test {test_key}: {e:?}"))?;
 
         apply_fork_choice(&store2, hash, hash, hash)
@@ -326,6 +326,12 @@ fn exception_is_expected(
                 ),
                 ChainError::InvalidBlock(InvalidBlockError::MaximumRlpSizeExceeded(_, _))
             ) | (
+                // Legacy tx with out-of-range `v` (or out-of-range `r`/`s`): sender
+                // recovery rejects the signature during execution.
+                BlockChainExpectedException::InvalidSignature,
+                ChainError::EvmError(EvmError::Transaction(_))
+                    | ChainError::InvalidBlock(InvalidBlockError::InvalidTransaction(_))
+            ) | (
                 BlockChainExpectedException::Other,
                 _ //TODO: Decide whether to support more specific errors.
             ),
@@ -370,13 +376,23 @@ fn exception_in_rlp_decoding(block_fixture: &BlockWithRLP) -> bool {
         .iter()
         .any(|case| matches!(case, BlockChainExpectedException::RLPException));
 
+    // A typed transaction whose `y_parity` byte isn't a valid bool (0/1) is rejected
+    // at RLP decoding (MalformedBoolean), so `INVALID_SIGNATURE_VRS` is a legitimate
+    // reason for the block to fail decoding as well.
+    let expects_invalid_signature = block_fixture
+        .expect_exception
+        .as_ref()
+        .unwrap_or(&Vec::new())
+        .iter()
+        .any(|case| matches!(case, BlockChainExpectedException::InvalidSignature));
+
     match CoreBlock::decode(block_fixture.rlp.as_ref()) {
         Ok(_) => {
             assert!(!expects_rlp_exception);
             false
         }
         Err(_) => {
-            assert!(expects_rlp_exception);
+            assert!(expects_rlp_exception || expects_invalid_signature);
             true
         }
     }

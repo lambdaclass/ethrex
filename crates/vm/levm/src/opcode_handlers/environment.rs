@@ -58,6 +58,7 @@ impl OpcodeHandler for OpBalanceHandler {
         vm.current_call_frame
             .increase_consumed_gas(gas_cost::balance(
                 vm.substate.add_accessed_address(address),
+                vm.env.config.fork,
             )?)?;
 
         // State access AFTER gas check passes
@@ -292,7 +293,14 @@ impl OpcodeHandler for OpExtCodeSizeHandler {
         vm.current_call_frame
             .increase_consumed_gas(gas_cost::extcodesize(
                 vm.substate.add_accessed_address(address),
+                vm.env.config.fork,
             )?)?;
+
+        // EIP-8141 mempool validation-trace: EXTCODESIZE target must exist and
+        // not be EIP-7702-delegated (sender exempt).
+        if vm.validation_observer.active {
+            vm.validation_check_extcode_target(address)?;
+        }
 
         // State access AFTER gas check passes (using optimized code length lookup)
         let account_code_length = vm.db.get_code_length(address)?.into();
@@ -324,11 +332,18 @@ impl OpcodeHandler for OpExtCodeCopyHandler {
                 calculate_memory_size(dst_offset, len)?,
                 vm.current_call_frame.memory.len(),
                 vm.substate.add_accessed_address(address),
+                vm.env.config.fork,
             )?)?;
 
         // Record address touch for BAL (after gas check passes)
         if let Some(recorder) = vm.db.bal_recorder.as_mut() {
             recorder.record_touched_address(address);
+        }
+
+        // EIP-8141 mempool validation-trace: EXTCODECOPY target must exist and
+        // not be EIP-7702-delegated (sender exempt).
+        if vm.validation_observer.active {
+            vm.validation_check_extcode_target(address)?;
         }
 
         // EELS reads the account's code unconditionally (even for size=0), so
@@ -365,7 +380,14 @@ impl OpcodeHandler for OpExtCodeHashHandler {
         vm.current_call_frame
             .increase_consumed_gas(gas_cost::extcodehash(
                 vm.substate.add_accessed_address(address),
+                vm.env.config.fork,
             )?)?;
+
+        // EIP-8141 mempool validation-trace: EXTCODEHASH target must exist and
+        // not be EIP-7702-delegated (sender exempt).
+        if vm.validation_observer.active {
+            vm.validation_check_extcode_target(address)?;
+        }
 
         let account = vm.db.get_account(address)?;
         let account_is_empty = account.is_empty();

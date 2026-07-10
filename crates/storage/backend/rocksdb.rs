@@ -351,6 +351,23 @@ impl StorageBackend for RocksDBBackend {
 
         Ok(())
     }
+
+    fn flush(&self) -> Result<(), StoreError> {
+        // Flush every column family's memtable to an SST file, then sync the WAL.
+        // Together these make the next open a clean start: the memtables are
+        // durable as SST and the WAL tail (anything still in the log) is fsynced,
+        // so RocksDB does not have to replay the WAL on recovery.
+        for table in TABLES {
+            if let Some(cf) = self.db.cf_handle(table) {
+                self.db.flush_cf(&cf).map_err(|e| {
+                    StoreError::Custom(format!("RocksDB flush_cf({table}) failed: {e}"))
+                })?;
+            }
+        }
+        self.db
+            .flush_wal(true)
+            .map_err(|e| StoreError::Custom(format!("RocksDB flush_wal failed: {e}")))
+    }
 }
 
 /// Read-only view for RocksDB
@@ -368,6 +385,28 @@ impl StorageReadView for RocksDBReadTx {
         self.db
             .get_cf(&cf, key)
             .map_err(|e| StoreError::Custom(format!("Failed to get from {}: {}", table, e)))
+    }
+
+    fn multi_get(
+        &self,
+        table: &'static str,
+        keys: &[&[u8]],
+    ) -> Vec<Result<Option<Vec<u8>>, StoreError>> {
+        let Some(cf) = self.db.cf_handle(table) else {
+            let err_msg = format!("Table {} not found", table);
+            return (0..keys.len())
+                .map(|_| Err(StoreError::Custom(err_msg.clone())))
+                .collect();
+        };
+        // `sorted_input=false`: rocksdb sorts internally. Caller may pass arbitrary order.
+        self.db
+            .batched_multi_get_cf(&cf, keys.iter().copied(), false)
+            .into_iter()
+            .map(|res| {
+                res.map(|opt| opt.map(|slice| slice.to_vec()))
+                    .map_err(|e| StoreError::Custom(format!("multi_get {}: {}", table, e)))
+            })
+            .collect()
     }
 
     fn prefix_iterator(

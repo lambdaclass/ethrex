@@ -225,7 +225,7 @@ impl StorageWriteBatch for InMemoryWriteTx {
         // `delete_range` above mutates the live `Arc<Database>` immediately under
         // the write lock; `commit` is a no-op. Anyone using this backend cannot
         // rely on multi-op atomicity (e.g. the journal entry + trie writes in
-        // `apply_trie_updates`, or the `delete_range` + finalized-number update
+        // `commit_trie_layers`, or the `delete_range` + finalized-number update
         // in `forkchoice_update_inner`).
         Ok(())
     }
