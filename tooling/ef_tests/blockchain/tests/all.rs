@@ -44,7 +44,7 @@ const EXTRA_SKIPS: &[&str] = &[
 // against glamsterdam-devnet v6.1.0), which predeploys the EIP-8282 builder
 // deposit/exit contracts at the OLD addresses (`…d9008282` / `…0f008282`). This
 // client now uses the devnet-7 addresses (`…300d8282` / `…800e8282`, matching
-// the live `vectors/` v7.1.0 bundle), so every Amsterdam block's end-of-block
+// the live `vectors/` v7.2.0 bundle), so every Amsterdam block's end-of-block
 // builder system call finds no code at the new addresses and fails the block.
 // Since the whole zkevm bundle is `for_amsterdam`, skip it wholesale until a
 // zkevm bundle filled with the new predeploy addresses is released, then remove

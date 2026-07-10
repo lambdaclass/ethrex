@@ -434,10 +434,16 @@ pub fn refund_sender(
             .saturating_sub(vm.intrinsic_state_gas)
             .saturating_sub(vm.state_gas_reservoir_initial)
             .saturating_sub(vm.state_gas_spill);
-        // EIP-7778: block regular dimension is the unfloored, pre-refund regular gas
-        // (EELS `tx_regular_gas = tx_gas_used_before_refund - state_gas`). The floor
-        // and refund apply only to the user payment (`gas_spent`), not block gas_used.
+        // EIP-8037 (glamsterdam-devnet-7 v7.2.0, EIPs#11908): the calldata floor
+        // binds the block-level regular gas dimension. Each tx contributes
+        // `max(pre_refund_gas - state_gas, calldata_floor)` to block gas, so
+        // state-gas spending cannot discount the floor. `regular_gas` here is
+        // `pre_refund_gas - state_gas`; flooring it matches EELS `tx_regular_gas`.
+        // The refund still applies only to the user payment (`gas_spent`), not
+        // block gas_used.
+        let floor = vm.get_min_gas_used()?;
         ctx_result.gas_used = regular_gas
+            .max(floor)
             .checked_add(state_gas)
             .ok_or(InternalError::Overflow)?;
         // User pays post-refund gas (with floor)
