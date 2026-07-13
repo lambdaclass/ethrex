@@ -16,7 +16,7 @@ use ethrex_common::types::{
     APPROVE_EXECUTION_AND_PAYMENT, BYTES_PER_BLOB, BlobsBundle, Block, BlockBody, BlockHeader,
     ChainConfig, EIP1559Transaction, EIP4844Transaction, FRAME_SIG_SCHEME_P256,
     FRAME_SIG_SCHEME_SECP256K1, FRAME_TX_EXPIRY_DATA_LENGTH, FRAME_TX_MAX_VERIFY_GAS,
-    FRAME_TX_RECENT_ROOT_USABLE_WINDOW, Frame, FrameMode, FrameSignature, FrameTransaction,
+    FRAME_TX_RECENT_ROOT_USABLE_WINDOW, Fork, Frame, FrameMode, FrameSignature, FrameTransaction,
     Genesis, GenesisAccount, MAX_TX_SIZE, MempoolTransaction, RecentRootReference, Transaction,
     TxKind, frame_tx_expiry_verifier, frame_tx_recent_root, kzg_commitment_to_versioned_hash,
 };
@@ -152,6 +152,58 @@ fn amsterdam_create_intrinsic_matches_vm_dimensions() {
     assert_ne!(
         intrinsic_gas, TX_CREATE_GAS_COST,
         "Amsterdam CREATE must NOT use legacy TX_CREATE_GAS_COST"
+    );
+}
+
+/// Regression (Hegotá devnet inclusion stall): the Amsterdam intrinsic branch
+/// must be selected by the fork ORDINAL, not the explicit `amsterdamTime`
+/// field. A chain that schedules a post-Amsterdam fork (Hegota) WITHOUT
+/// setting `amsterdamTime` — exactly the devnet's genesis — previously fell
+/// into the legacy `TX_CREATE_GAS_COST = 53000` branch here while execution
+/// (gated ordinally on `fork >= Amsterdam`) charged the repriced ~225k
+/// intrinsic. Under-provisioned CREATEs were admitted, failed
+/// deterministically at every payload build, stayed pooled, and pinned their
+/// sender's queue head indefinitely.
+#[test]
+fn hegota_without_amsterdam_time_uses_repriced_create_intrinsic() {
+    use ethrex_levm::gas_cost::{
+        REGULAR_GAS_CREATE, STATE_BYTES_PER_NEW_ACCOUNT, cost_per_state_byte,
+    };
+
+    let (mut config, header) = build_basic_config_and_header(true, true);
+    // The devnet shape: Hegota scheduled, NO amsterdam_time.
+    config.cancun_time = Some(0);
+    config.prague_time = Some(0);
+    config.osaka_time = Some(0);
+    config.hegota_time = Some(0);
+    assert!(config.amsterdam_time.is_none());
+    assert!(config.fork(header.timestamp) >= Fork::Amsterdam);
+
+    let tx = Transaction::EIP1559Transaction(EIP1559Transaction {
+        nonce: 0,
+        max_priority_fee_per_gas: 0,
+        max_fee_per_gas: 0,
+        gas_limit: 150_000, // the live devnet's stuck-CREATE provisioning
+        to: TxKind::Create,
+        value: U256::zero(),
+        data: Bytes::default(),
+        access_list: Default::default(),
+        ..Default::default()
+    });
+
+    let cpsb = cost_per_state_byte(header.gas_limit);
+    let expected = TX_GAS_COST + REGULAR_GAS_CREATE + STATE_BYTES_PER_NEW_ACCOUNT * cpsb;
+
+    let intrinsic_gas = transaction_intrinsic_gas(&tx, &header, &config).expect("intrinsic gas");
+    assert_eq!(
+        intrinsic_gas, expected,
+        "Hegota-without-amsterdamTime must use the repriced CREATE intrinsic \
+         (execution gates ordinally), not the legacy 53000"
+    );
+    // The whole point: a 150k CREATE must now fail the admission gas check.
+    assert!(
+        tx.gas_limit() < intrinsic_gas,
+        "an under-provisioned CREATE (150k) must be below the repriced intrinsic"
     );
 }
 

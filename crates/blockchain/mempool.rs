@@ -20,7 +20,7 @@ use ethrex_common::{
     Address, H160, H256, U256,
     types::{
         BlobTuple, BlobsBundle, BlockHeader, ChainConfig,
-        FRAME_TX_MAX_PENDING_NONCANONICAL_PAYMASTER, MempoolTransaction, Transaction, TxType,
+        FRAME_TX_MAX_PENDING_NONCANONICAL_PAYMASTER, Fork, MempoolTransaction, Transaction, TxType,
         kzg_commitment_to_versioned_hash,
     },
     utils::keccak,
@@ -1294,8 +1294,18 @@ pub fn transaction_intrinsic_gas(
     // `validate_min_gas_limit`. Apply the same max here so we don't admit
     // txs whose calldata floor exceeds the weighted intrinsic — those would
     // pass mempool and then fail at block inclusion, polluting the pool.
-    if config.is_amsterdam_activated(header.timestamp) {
-        let fork = config.fork(header.timestamp);
+    //
+    // Gate on the fork ORDINAL (`fork >= Amsterdam`), never on the explicit
+    // `amsterdamTime` field: execution gates the repricing ordinally (levm
+    // `vm.env.config.fork >= Fork::Amsterdam`), so on a chain that schedules a
+    // post-Amsterdam fork WITHOUT setting `amsterdamTime` (the Hegotá devnet) a
+    // field-based check here takes the legacy 53k-CREATE branch while execution
+    // charges the repriced ~225k intrinsic — admitting under-provisioned CREATEs
+    // that then fail deterministically at every payload build and, because
+    // failed regular txs stay pooled, pin their sender's queue head forever
+    // (the observed multi-day devnet inclusion stall).
+    let fork = config.fork(header.timestamp);
+    if fork >= Fork::Amsterdam {
         let (regular, state) = intrinsic_gas_dimensions(tx, fork, header.gas_limit)
             .map_err(|_| MempoolError::TxGasOverflowError)?;
         let intrinsic = regular

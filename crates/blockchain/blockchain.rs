@@ -3239,7 +3239,12 @@ impl Blockchain {
 
         // Check init code size
         // [EIP-7954] - Amsterdam increases the limit
-        let max_initcode_size = if config.is_amsterdam_activated(header.timestamp) {
+        // Gate on the fork ORDINAL to match execution (levm validate_init_code_size
+        // uses `fork >= Fork::Amsterdam`): on a chain running a post-Amsterdam fork
+        // without an explicit `amsterdamTime` (the Hegotá devnet), a field-based
+        // check would apply the smaller legacy cap and over-reject initcode sizes
+        // execution accepts.
+        let max_initcode_size = if config.fork(header.timestamp) >= Fork::Amsterdam {
             AMSTERDAM_MAX_INITCODE_SIZE
         } else {
             MAX_INITCODE_SIZE
@@ -3251,8 +3256,13 @@ impl Blockchain {
             return Err(MempoolError::TxMaxInitCodeSizeError);
         }
 
+        // EIP-7825 raw gas-limit cap applies from Osaka until Amsterdam, where
+        // EIP-8037 replaces it (excess gas_limit becomes state-gas reservoir and
+        // only the intrinsic REGULAR dimension is capped — enforced by execution
+        // and mirrored by `transaction_intrinsic_gas` above). Ordinal fork check
+        // to match execution's gating on chains without an explicit amsterdamTime.
         if config.is_osaka_activated(header.timestamp)
-            && !config.is_amsterdam_activated(header.timestamp)
+            && config.fork(header.timestamp) < Fork::Amsterdam
             && tx.gas_limit() > POST_OSAKA_GAS_LIMIT_CAP
         {
             // https://eips.ethereum.org/EIPS/eip-7825

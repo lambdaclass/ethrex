@@ -707,7 +707,23 @@ impl Blockchain {
                     // whole tx) EXCEPT nonce mismatches, which are transient
                     // queue-ordering artifacts — keep those pooled for a later
                     // block, mirroring how regular txs are treated.
-                    if is_frame && !is_nonce_mismatch(&e) {
+                    //
+                    // Regular txs are normally kept pooled (most failures are
+                    // transient: nonce gaps, balance, base-fee), but a
+                    // deterministically-invalid one (intrinsic-gas / initcode
+                    // class) can never become valid and must be evicted:
+                    // `txs.pop()` drops the sender's WHOLE queue for this build,
+                    // so a doomed tx left at the queue head permanently starves
+                    // the sender's backlog (see `is_deterministic_invalid`).
+                    let evict = if is_frame {
+                        !is_nonce_mismatch(&e)
+                    } else {
+                        is_deterministic_invalid(&e)
+                    };
+                    if evict {
+                        debug!(
+                            "Evicting deterministically-invalid transaction {tx_hash:x} from the mempool: {e}"
+                        );
                         self.remove_transaction_from_pool(&tx_hash)?;
                     }
                     txs.pop()
@@ -920,6 +936,32 @@ impl Blockchain {
 /// account nonce, so the tx becomes valid once earlier nonces are included.
 fn is_nonce_mismatch(e: &ChainError) -> bool {
     e.to_string().contains("Nonce mismatch")
+}
+
+/// Whether a payload-build execution failure is DETERMINISTIC for a regular
+/// (non-frame) transaction: state-independent given the fork, so the tx can
+/// never become valid later and must be evicted from the pool. Keeping such a
+/// tx pooled is not harmless — a failed head tx `pop()`s its sender's whole
+/// queue every build, so one doomed tx starves the sender's entire backlog
+/// until it is manually replaced (observed on the Hegotá devnet: an
+/// under-provisioned CREATE, admitted through a mempool/execution
+/// intrinsic-gas gate mismatch, pinned its sender for days).
+///
+/// Deliberately matches ONLY the intrinsic/size class (like
+/// [`is_nonce_mismatch`], by the stable levm Display substrings, pinned by
+/// tests below):
+/// - `IntrinsicGasTooLow` — "gas limit lower than the minimum gas cost"
+/// - `IntrinsicGasBelowFloorGasCost` — "gas cost floor for calldata tokens"
+/// - `InitcodeSizeExceeded` — "Initcode size exceeded"
+///
+/// Transient failures (nonce gaps, balance, fee-vs-base-fee, block-context
+/// limits) are NOT matched and stay pooled, preserving standard mempool
+/// semantics.
+fn is_deterministic_invalid(e: &ChainError) -> bool {
+    let msg = e.to_string();
+    msg.contains("gas limit lower than the minimum gas cost")
+        || msg.contains("gas cost floor for calldata tokens")
+        || msg.contains("Initcode size exceeded")
 }
 
 /// Runs a plain (non blob) transaction, updates the gas count and returns the receipt
@@ -1178,5 +1220,63 @@ mod tests {
             !is_nonce_mismatch(&other),
             "is_nonce_mismatch must not match unrelated errors; got: {other}"
         );
+    }
+
+    #[test]
+    fn deterministic_invalid_detected_from_chain_error() {
+        // Pin `is_deterministic_invalid`'s Display substrings through the REAL
+        // production conversion path (same rationale as the nonce-mismatch pin
+        // test above): a reworded levm error must break this test, not silently
+        // stop evicting doomed txs.
+        use ethrex_levm::errors::{TxValidationError, VMError};
+        let to_chain = |e: TxValidationError| -> ChainError {
+            EvmError::from(VMError::TxValidation(e)).into()
+        };
+
+        for (err, name) in [
+            (TxValidationError::IntrinsicGasTooLow, "IntrinsicGasTooLow"),
+            (
+                TxValidationError::IntrinsicGasBelowFloorGasCost,
+                "IntrinsicGasBelowFloorGasCost",
+            ),
+            (
+                TxValidationError::InitcodeSizeExceeded {
+                    max_size: 1,
+                    actual_size: 2,
+                },
+                "InitcodeSizeExceeded",
+            ),
+        ] {
+            let e = to_chain(err);
+            assert!(
+                is_deterministic_invalid(&e),
+                "is_deterministic_invalid must match {name}; got: {e}"
+            );
+        }
+
+        // Transient failures must NOT be evicted: nonce gaps, balance, fees.
+        for (err, name) in [
+            (
+                TxValidationError::NonceMismatch {
+                    expected: 5,
+                    actual: 7,
+                },
+                "NonceMismatch",
+            ),
+            (
+                TxValidationError::InsufficientAccountFunds,
+                "InsufficientAccountFunds",
+            ),
+            (
+                TxValidationError::InsufficientMaxFeePerGas,
+                "InsufficientMaxFeePerGas",
+            ),
+        ] {
+            let e = to_chain(err);
+            assert!(
+                !is_deterministic_invalid(&e),
+                "is_deterministic_invalid must NOT match transient {name}; got: {e}"
+            );
+        }
     }
 }
