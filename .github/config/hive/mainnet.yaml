@@ -3,4 +3,4 @@
 # Osaka + BPO1 + BPO2). Replaces the archived
 # ethereum/execution-spec-tests `fixtures_develop` bundle.
 fixtures: https://github.com/ethereum/execution-specs/releases/download/tests%40v20.0.0/fixtures.tar.gz
-eels_commit: b6956dbe42a64d143569d5e9b20a0e7f7b9d0ac9
+eels_commit: 376414e07c4642574b38c4bb97eab2f2f719436b
