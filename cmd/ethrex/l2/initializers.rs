@@ -6,7 +6,7 @@ use crate::initializers::{
 };
 use crate::l2::{L2Options, SequencerOptions};
 use crate::utils::{
-    NodeConfigFile, get_client_version, get_client_version_string, init_datadir,
+    NodeConfigFile, get_channel, get_client_version, get_client_version_string, init_datadir,
     read_jwtsecret_file, store_node_config_file,
 };
 use ethrex_blockchain::{Blockchain, BlockchainType, L2Config};
@@ -39,7 +39,7 @@ use tui_logger::{LevelFilter, TuiTracingSubscriberLayer};
 use url::Url;
 
 #[allow(clippy::too_many_arguments)]
-fn init_rpc_api(
+async fn init_rpc_api(
     opts: &L1Options,
     l2_opts: &L2Options,
     peer_handler: Option<PeerHandler>,
@@ -53,12 +53,25 @@ fn init_rpc_api(
     log_filter_handler: Option<reload::Handle<EnvFilter, Registry>>,
     l2_gas_limit: u64,
     ws: Option<WebSocketConfig>,
-) {
+    cancel_token: CancellationToken,
+) -> eyre::Result<()> {
     init_datadir(&opts.datadir);
 
     let allowed_namespaces: std::collections::HashSet<_> = opts.http_api.iter().copied().collect();
     let ethrex_namespace_allowed = l2_opts.http_api_ethrex;
-    let rpc_api = ethrex_l2_rpc::start_api(
+
+    // Reject conflicting listener addresses at config time, before anything binds. The L2
+    // node binds no Auth-RPC listener, so only HTTP and WebSocket can conflict.
+    initializers::validate_rpc_addrs(
+        get_http_socket_addr(opts),
+        None,
+        ws.as_ref().map(|ws| ws.addr),
+    )?;
+
+    // Bind in the foreground so a bind failure aborts node startup with an actionable
+    // error instead of being swallowed by a detached task; serve in the background.
+    let bound = ethrex_l2_rpc::bind_api(
+        cancel_token.clone(),
         get_http_socket_addr(opts),
         ws,
         get_authrpc_socket_addr(opts),
@@ -78,9 +91,14 @@ fn init_rpc_api(
         l2_opts.sponsored_gas_limit,
         allowed_namespaces,
         ethrex_namespace_allowed,
-    );
+    )
+    .await?;
 
-    tracker.spawn(rpc_api);
+    // Fatal: if the L2 RPC server dies, cancel the sequencer token so the node shuts down
+    // (rather than run on without RPC). The token is the sequencer's, so the L2 `select!`
+    // observes the cancellation and tears the sequencer down too.
+    initializers::spawn_fatal(&tracker, cancel_token, "L2 RPC server", bound.serve());
+    Ok(())
 }
 
 fn get_valid_delegation_addresses(l2_opts: &L2Options) -> Vec<Address> {
@@ -120,7 +138,7 @@ fn init_metrics(opts: &L1Options, network: &str, tracker: TaskTracker) {
     ethrex_metrics::node::MetricsNode::init(
         env!("CARGO_PKG_VERSION"),
         env!("VERGEN_GIT_SHA"),
-        env!("VERGEN_GIT_BRANCH"),
+        &get_channel(),
         env!("VERGEN_RUSTC_SEMVER"),
         env!("VERGEN_RUSTC_HOST_TRIPLE"),
         network,
@@ -135,7 +153,8 @@ fn init_metrics(opts: &L1Options, network: &str, tracker: TaskTracker) {
         opts.metrics_addr.clone(),
         opts.metrics_port.clone(),
     );
-    tracker.spawn(metrics_api);
+    // Metrics is a non-fatal sidecar: its failure is logged loudly but must not down the node.
+    initializers::spawn_logged(&tracker, "metrics server", metrics_api);
 }
 
 pub fn init_tracing(
@@ -203,6 +222,7 @@ pub async fn init_l2(
     let genesis = network.get_genesis()?;
     let store_config = StoreConfig {
         rocksdb_block_cache_size: opts.node_opts.rocksdb_block_cache_size,
+        ..StoreConfig::default()
     };
     let store = init_store_with_config(&datadir, genesis.clone(), store_config).await?;
     let rollup_store = init_rollup_store(&rollup_store_dir).await;
@@ -232,9 +252,11 @@ pub async fn init_l2(
         max_blobs_per_block: None, // L2 doesn't support blob transactions
         precompute_witnesses: opts.node_opts.precompute_witnesses,
         precompile_cache_enabled: true,
+        max_queued_txs_per_account: opts.node_opts.mempool_max_queued_txs_per_account,
         bal_parallel_exec_enabled: true,
         bal_prefetch_enabled: true,
         bal_parallel_trie_enabled: true,
+        gap_admit_occupancy_threshold: opts.node_opts.mempool_gap_admit_occupancy_threshold,
     };
 
     let blockchain = init_blockchain(store.clone(), blockchain_opts.clone());
@@ -344,6 +366,10 @@ pub async fn init_l2(
         None
     };
 
+    // Created before the RPC starts so the same token drives both the RPC graceful
+    // shutdown and the sequencer `select!` below (avoids a split-brain shutdown).
+    let sequencer_cancellation_token = CancellationToken::new();
+
     init_rpc_api(
         &opts.node_opts,
         &opts,
@@ -358,14 +384,15 @@ pub async fn init_l2(
         log_filter_handler,
         l2_gas_limit,
         ws_config.clone(),
-    );
+        sequencer_cancellation_token.clone(),
+    )
+    .await?;
 
     // Initialize metrics if enabled
     if opts.node_opts.metrics_enabled {
         init_metrics(&opts.node_opts, &network.to_string(), tracker);
     }
 
-    let sequencer_cancellation_token = CancellationToken::new();
     let l2_url = Url::parse(&format!(
         "http://{}:{}",
         opts.node_opts.http_addr, opts.node_opts.http_port
@@ -409,6 +436,13 @@ pub async fn init_l2(
     }
     tokio::time::sleep(Duration::from_secs(1)).await;
     info!("Server shutting down!");
+    // A shutdown initiated by a failing subsystem exits non-zero so orchestrators can tell
+    // a crashed node from a clean signal-triggered stop.
+    if let Some(cause) = initializers::fatal_shutdown_cause() {
+        return Err(eyre::eyre!(
+            "node shut down after a fatal subsystem failure: {cause}"
+        ));
+    }
     Ok(())
 }
 
