@@ -7,7 +7,7 @@ use std::path::Path;
 compile_error!("Only one of `sp1` and `stateless` can be enabled at a time.");
 
 // test-levm / test-sp1 read snobal-devnet-6 + legacy from `vectors/`.
-// test-stateless reads zkevm@v0.6.1 (EIP-8025 canonical bundle) from a separate
+// test-stateless reads zkevm@v0.6.2 (EIP-8025 canonical bundle) from a separate
 // `vectors_zkevm/` so the bundles don't overlay each other.
 #[cfg(feature = "stateless")]
 const TEST_FOLDER: &str = "vectors_zkevm/";
@@ -34,11 +34,12 @@ const EXTRA_SKIPS: &[&str] = &[
     "Return50000",
     "static_Call1MB1024Calldepth",
 ];
-// The stateless run executes the zkevm@v0.6.1 bundle (`vectors_zkevm/`), filled against
+// The stateless run executes the zkevm@v0.6.2 bundle (`vectors_zkevm/`), filled against
 // `tests-glamsterdam-devnet@v7.2.0` — the same base as the live `vectors/` fixtures on this
-// branch — and carrying the devnet-7 EIP-8282 builder predeploy addresses plus the updated
-// canonical stateless-input format (schema id, `SszForkConfig`). The whole bundle re-executes
-// cleanly, so no blanket skip and no per-fork skip are needed. Per-fixture leniency cases
+// branch. v0.6.2 fixes the EIP-8282 fill (PR ethereum/execution-specs#3157): the canonical
+// `SszExecutionRequests` now carries the builder-deposit (0x03) and builder-exit (0x04) request
+// lists, mirrored in `eip8025_ssz::ExecutionRequests`. The whole bundle re-executes cleanly, so
+// no blanket skip and no per-fork skip are needed. Per-fixture leniency cases
 // (`*_extra_unused_*` padding, deliberately-invalid witnesses) are handled in `test_runner.rs`.
 #[cfg(feature = "stateless")]
 const EXTRA_SKIPS: &[&str] = &[];
