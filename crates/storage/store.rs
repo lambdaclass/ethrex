@@ -1713,7 +1713,7 @@ impl Store {
         //   in-flight batches to ~1.
         let (ack_tx, ack_rx) = sync_channel(1);
         self.persist_tx
-            .send(PersistMessage::Block(BlockPersist {
+            .send(PersistMessage::Block(Box::new(BlockPersist {
                 blocks: blocks_with_receipts,
                 codes: code_updates,
                 parent_state_root,
@@ -1724,7 +1724,7 @@ impl Store {
                 block_number: last_block_number,
                 block_hash: last_block_hash,
                 ack: ack_tx,
-            }))
+            })))
             .map_err(|e| StoreError::Custom(format!("failed to send block persist: {e}")))?;
         ack_rx
             .recv()
@@ -1916,6 +1916,7 @@ impl Store {
             loop {
                 match rx.recv() {
                     Ok(PersistMessage::Block(bp)) => {
+                        let bp = *bp;
                         // Stage block data (sole swapper of the buffer; codes
                         // are batch-level and attributed to the first block).
                         let staged = mutate_block_buffer(&persist_buffer, move |b| {
@@ -3656,7 +3657,7 @@ struct BlockPersist {
 /// [`Store::wait_for_persistence_idle`]: the FIFO worker handles it only after
 /// all earlier `Block` messages are fully processed.
 enum PersistMessage {
-    Block(BlockPersist),
+    Block(Box<BlockPersist>),
     Ping(std::sync::mpsc::SyncSender<Result<(), StoreError>>),
     /// Graceful-shutdown handshake. Handled only after every earlier `Block`
     /// (FIFO), so it both drains in-flight work and force-flushes the block-data
@@ -3802,6 +3803,7 @@ impl PendingTrieRoots {
 /// Build the trie diff-layer, RCU-swap it into `trie_cache`, then clear the
 /// pending root. Swap MUST precede the clear so a woken reader sees the layer.
 /// On swap failure the root is still cleared so gated readers error, not deadlock.
+#[allow(clippy::too_many_arguments)]
 fn apply_trie_phase1(
     trie_cache: &Arc<RwLock<Arc<TrieLayerCache>>>,
     pending_roots: &PendingTrieRoots,
@@ -4532,7 +4534,13 @@ mod state_history_tests {
     fn journal_entry_written_per_block_in_regular_mode() {
         let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::open().unwrap());
         let dir = tempfile::tempdir().unwrap();
-        let store = Store::from_backend(backend.clone(), dir.path().to_path_buf(), 1, DEFAULT_PERSIST_CHANNEL_CAPACITY).unwrap();
+        let store = Store::from_backend(
+            backend.clone(),
+            dir.path().to_path_buf(),
+            1,
+            DEFAULT_PERSIST_CHANNEL_CAPACITY,
+        )
+        .unwrap();
 
         let state_root_1 = H256::repeat_byte(0x11);
         let block1 = make_block(1, H256::zero(), state_root_1);
@@ -4603,7 +4611,13 @@ mod state_history_tests {
     fn journal_skipped_in_batch_mode() {
         let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::open().unwrap());
         let dir = tempfile::tempdir().unwrap();
-        let store = Store::from_backend(backend.clone(), dir.path().to_path_buf(), 1, DEFAULT_PERSIST_CHANNEL_CAPACITY).unwrap();
+        let store = Store::from_backend(
+            backend.clone(),
+            dir.path().to_path_buf(),
+            1,
+            DEFAULT_PERSIST_CHANNEL_CAPACITY,
+        )
+        .unwrap();
 
         let mut prev_hash = H256::zero();
         for n in 1..=5u64 {
@@ -4636,7 +4650,13 @@ mod state_history_tests {
     fn journal_storage_updates_appear_in_storage_diff() {
         let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::open().unwrap());
         let dir = tempfile::tempdir().unwrap();
-        let store = Store::from_backend(backend.clone(), dir.path().to_path_buf(), 1, DEFAULT_PERSIST_CHANNEL_CAPACITY).unwrap();
+        let store = Store::from_backend(
+            backend.clone(),
+            dir.path().to_path_buf(),
+            1,
+            DEFAULT_PERSIST_CHANNEL_CAPACITY,
+        )
+        .unwrap();
 
         let account_hash_a = H256::repeat_byte(0xa0);
         let account_hash_b = H256::repeat_byte(0xb0);
@@ -4725,7 +4745,13 @@ mod state_history_tests {
     async fn finality_advance_prunes_journal_below_boundary() {
         let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::open().unwrap());
         let dir = tempfile::tempdir().unwrap();
-        let store = Store::from_backend(backend.clone(), dir.path().to_path_buf(), 1, DEFAULT_PERSIST_CHANNEL_CAPACITY).unwrap();
+        let store = Store::from_backend(
+            backend.clone(),
+            dir.path().to_path_buf(),
+            1,
+            DEFAULT_PERSIST_CHANNEL_CAPACITY,
+        )
+        .unwrap();
 
         seed_journal_entries(&backend, &(1..=10).collect::<Vec<_>>());
         for n in 1..=10 {
@@ -4756,7 +4782,13 @@ mod state_history_tests {
     async fn finality_no_op_does_not_prune() {
         let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::open().unwrap());
         let dir = tempfile::tempdir().unwrap();
-        let store = Store::from_backend(backend.clone(), dir.path().to_path_buf(), 1, DEFAULT_PERSIST_CHANNEL_CAPACITY).unwrap();
+        let store = Store::from_backend(
+            backend.clone(),
+            dir.path().to_path_buf(),
+            1,
+            DEFAULT_PERSIST_CHANNEL_CAPACITY,
+        )
+        .unwrap();
 
         store
             .forkchoice_update_inner(vec![], 100, H256::zero(), None, Some(5))
@@ -4799,7 +4831,13 @@ mod state_history_tests {
     async fn malformed_finalized_returns_error_not_silent_zero() {
         let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::open().unwrap());
         let dir = tempfile::tempdir().unwrap();
-        let store = Store::from_backend(backend.clone(), dir.path().to_path_buf(), 1, DEFAULT_PERSIST_CHANNEL_CAPACITY).unwrap();
+        let store = Store::from_backend(
+            backend.clone(),
+            dir.path().to_path_buf(),
+            1,
+            DEFAULT_PERSIST_CHANNEL_CAPACITY,
+        )
+        .unwrap();
 
         // Plant a 4-byte (instead of 8-byte) FinalizedBlockNumber value.
         let mut tx = backend.begin_write().unwrap();
