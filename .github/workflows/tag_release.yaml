@@ -52,12 +52,15 @@ jobs:
             os: macos
             stack: l2
             features: l2,l2-sql
+          # risc0 temporarily dropped from features: the c-kzg 2.1.8 floor exceeds the highest
+          # risc0 c-kzg fork tag (v2.1.7-risczero.0), so the risc0 guest can't build. Re-add
+          # ",risc0" once risc0/c-kzg-4844 publishes a >=2.1.8 tag.
           - platform: ubuntu-22.04
             stack: l2
-            features: l2,l2-sql,sp1,risc0
+            features: l2,l2-sql,sp1
           - platform: ubuntu-22.04
             stack: l2_gpu
-            features: l2,l2-sql,sp1,risc0,gpu
+            features: l2,l2-sql,sp1,gpu
           - platform: ubuntu-22.04-arm
             stack: l2
             features: l2,l2-sql,sp1
@@ -127,7 +130,7 @@ jobs:
         if: ${{ matrix.platform == 'ubuntu-22.04' && matrix.stack == 'l2_gpu' }} # Run only once
         run: |
           mkdir -p ./verification_keys
-          mv crates/guest-program/bin/risc0/out/riscv32im-risc0-vk verification_keys/ethrex-riscv32im-risc0-vk
+          # risc0 vk temporarily not produced (risc0 disabled; see build-ethrex features note).
           mv crates/guest-program/bin/sp1/out/riscv32im-succinct-zkvm-vk-bn254 verification_keys/ethrex-riscv32im-succinct-zkvm-vk-bn254
           mv crates/guest-program/bin/sp1/out/riscv32im-succinct-zkvm-vk-u32 verification_keys/ethrex-riscv32im-succinct-zkvm-vk-u32
 
@@ -149,9 +152,10 @@ jobs:
   build-ethrex-guest:
     strategy:
       matrix:
+        # risc0 temporarily disabled: c-kzg 2.1.8 floor exceeds the highest risc0 c-kzg fork tag
+        # (v2.1.7-risczero.0), so the guest can't build. Re-add "- risc0" once a >=2.1.8 tag exists.
         zkvm:
           - sp1
-          - risc0
           - zisk
     runs-on: ubuntu-latest
     steps:
@@ -245,17 +249,8 @@ jobs:
           name: sp1_verification_keys
           path: ethrex_guests/sp1/
 
-      - name: Download RISC0 elf artifact
-        uses: actions/download-artifact@v6
-        with:
-          name: ethrex-riscv32im-risc0-elf-${{ env.SANITIZED_REF }}
-          path: ethrex_guests/risc0/
-
-      - name: Download RISC0 verification keys artifacts
-        uses: actions/download-artifact@v6
-        with:
-          name: risc0_verification_keys
-          path: ethrex_guests/risc0/
+      # risc0 elf/vk downloads temporarily removed: risc0 is disabled (c-kzg 2.1.8 floor exceeds
+      # the highest risc0 c-kzg fork tag), so build-ethrex-guest no longer produces these artifacts.
 
       - name: Download ZisK elf artifact
         uses: actions/download-artifact@v6
