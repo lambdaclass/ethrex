@@ -66,6 +66,13 @@ pub const MAX_WITNESSES: u64 = 128;
 pub const DB_COMMIT_THRESHOLD: usize = 128;
 const IN_MEMORY_COMMIT_THRESHOLD: usize = 10000;
 
+/// Depth-only commit threshold for batch execution (full sync / block import). Each batch
+/// layer holds ~1024 blocks of trie diffs (~1 GB), so we flush after a few layers to bound
+/// memory. The canonical `head - DB_COMMIT_THRESHOLD` safe-commit root never lands on a batch
+/// layer boundary, so batch mode commits by depth instead; this is sound because full sync and
+/// import only ever extend a single canonical chain (no competing forks to mis-commit).
+const BATCH_COMMIT_THRESHOLD: usize = 4;
+
 /// Default size in bytes of the RocksDB shared block cache: 12 GiB.
 ///
 /// This cache holds both data blocks AND the index/bloom-filter blocks for every
@@ -1921,6 +1928,7 @@ impl Store {
                                     &persist_trie_cache,
                                     &persist_fkv_ctl,
                                     bp.parent_state_root,
+                                    bp.wait_for_flush,
                                 )
                             });
                         // BATCH: ack after flush (bounds in-flight batches to ~1),
@@ -3758,21 +3766,30 @@ fn apply_trie_phase1(
     build
 }
 
-/// Flush and prune the committable trie-layer backlog, bounded by the canonical
-/// safe-commit root (`TrieLayerCache::get_commitable`). No-ops when nothing is
-/// committable (e.g. the safe-commit root has not advanced past the on-disk root).
+/// Flush and prune the committable trie-layer backlog. No-ops when nothing is committable.
+///
+/// `is_batch` selects the gate: batch execution (full sync / import) commits by depth
+/// (`BATCH_COMMIT_THRESHOLD`), because the canonical `head - 128` safe-commit root never lands
+/// on a batch layer boundary; live block-by-block execution uses the canonical safe-commit gate
+/// (`TrieLayerCache::get_commitable`) so non-canonical `newPayload` state is never persisted.
 fn commit_trie_if_due(
     backend: &dyn StorageBackend,
     trie_cache: &Arc<RwLock<Arc<TrieLayerCache>>>,
     fkv_ctl: &SyncSender<FKVGeneratorControlMessage>,
     parent_state_root: H256,
+    is_batch: bool,
 ) -> Result<(), StoreError> {
     let trie = trie_cache
         .read()
         .map_err(|_| StoreError::LockError)?
         .clone();
     // Phase 2 + 3: flush and prune the committable backlog.
-    let Some(root) = trie.get_commitable(parent_state_root) else {
+    let commitable = if is_batch {
+        trie.get_commitable_by_depth(parent_state_root, BATCH_COMMIT_THRESHOLD)
+    } else {
+        trie.get_commitable(parent_state_root)
+    };
+    let Some(root) = commitable else {
         // Nothing to commit to disk, move on.
         return Ok(());
     };

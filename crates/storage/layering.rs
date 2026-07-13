@@ -178,15 +178,18 @@ impl TrieLayerCache {
         None
     }
 
-    /// Test-only reproduction of the pre-fix depth-only commit gate.
+    /// Depth-only commit gate for batch execution (full sync / block import).
     ///
     /// Walks the parent chain from `state_root`, counting layers, and returns the state root of
-    /// the layer that is `threshold` layers deep — committing purely by depth, ignoring
-    /// canonicality and the [`safe_commit_root`](Self::safe_commit_root) cell. This mirrors the
-    /// deleted `get_commitable_with_threshold` and exists only so the regression test can
-    /// contrast it against the canonical+depth [`get_commitable`](Self::get_commitable) gate.
-    #[cfg(test)]
-    fn get_commitable_by_depth_for_test(
+    /// the layer that is `threshold` layers deep — committing purely by depth, ignoring the
+    /// canonical [`safe_commit_root`](Self::safe_commit_root) cell.
+    ///
+    /// Used only in batch mode, where the node extends a single canonical chain (full sync and
+    /// `import` never execute competing forks), so the non-canonical-commit hazard that the
+    /// canonical gate guards against cannot occur. The canonical gate keys on the `head - 128`
+    /// safe-commit root, which never lands on a batch layer boundary (~1024 blocks apart), so it
+    /// would never flush during batch execution; this depth gate bounds memory instead.
+    pub(crate) fn get_commitable_by_depth(
         &self,
         mut state_root: H256,
         threshold: usize,
@@ -503,32 +506,61 @@ mod tests {
         );
     }
 
-    /// Red -> green regression: the old depth-only gate commits non-canonical state (pruning
-    /// genesis -> the "post-state for block 0 absent" wedge); the canonical+depth gate commits
-    /// nothing while no canonical safe-commit point exists.
+    /// Why live block-by-block execution must NOT use the depth gate: with nothing canonicalized
+    /// (safe_commit cell ZERO), the depth gate would flush a non-canonical layer and prune genesis
+    /// -> the "post-state for block 0 absent" wedge. The canonical gate commits nothing instead.
     ///
     /// Wedge simulation: non-canonical newPayload layers pile up but nothing is canonicalized,
     /// so the safe_commit cell stays ZERO and never advances.
     #[test]
-    fn noncanonical_depth_old_gate_commits_new_gate_does_not() {
+    fn live_canonical_gate_holds_while_depth_gate_would_commit() {
         // threshold = 4, safe_commit cell = ZERO (nothing canonicalized).
         let (mut cache, _cell) = cache_with_cell(4, H256::zero());
         // Linear chain L1 <- L2 <- L3 <- L4 <- L5 (distinct keys so guards pass).
         let roots = build_chain(&mut cache, 5);
         let l5 = *roots.last().unwrap();
 
-        // OLD gate: commits a layer at depth 4 (the bug) -> would prune genesis on the
-        // path-keyed disk root.
+        // Depth gate: commits a layer at depth 4 -> would prune genesis on the path-keyed disk
+        // root if used in live mode. This is why live mode uses the canonical gate below.
         assert!(
-            cache.get_commitable_by_depth_for_test(l5, 4).is_some(),
-            "old depth-only gate must commit at depth 4 (the bug)"
+            cache.get_commitable_by_depth(l5, 4).is_some(),
+            "depth-only gate commits at depth 4 regardless of canonicality"
         );
 
-        // NEW gate: safe_commit cell is zero, so nothing is committed and genesis is preserved.
+        // Canonical gate (live mode): safe_commit cell is zero, so nothing is committed and
+        // genesis is preserved.
         assert_eq!(
             cache.get_commitable(l5),
             None,
-            "canonical+depth gate must commit nothing while safe_commit is zero (the fix)"
+            "canonical gate must commit nothing while safe_commit is zero (the wedge fix)"
+        );
+    }
+
+    /// Batch execution (full sync / import) must still flush even when no FCU has advanced the
+    /// safe-commit cell. The canonical gate stays parked at zero (import does not FCU until the
+    /// end; full sync's `head - 128` root never lands on a ~1024-block batch boundary), so batch
+    /// mode commits by depth instead -> memory stays bounded and state is durable across restart.
+    #[test]
+    fn batch_depth_gate_flushes_without_safe_commit() {
+        // safe_commit cell = ZERO, as during bulk import before the terminal FCU.
+        let (mut cache, _cell) = cache_with_cell(4, H256::zero());
+        // Five batch layers stacked (each stands in for ~1024 blocks in real batch mode).
+        let roots = build_chain(&mut cache, 5);
+        let tip = *roots.last().unwrap();
+
+        // Canonical gate would never flush here -> unbounded memory (the regression iovoid flagged).
+        assert_eq!(
+            cache.get_commitable(tip),
+            None,
+            "canonical gate never flushes batch layers while safe_commit is zero"
+        );
+
+        // Depth gate (batch mode) flushes the layer BATCH_COMMIT_THRESHOLD deep: root_2 sits 4
+        // layers below the tip (tip=root_5).
+        assert_eq!(
+            cache.get_commitable_by_depth(tip, 4),
+            Some(roots[1]),
+            "batch depth gate must flush the layer 4 deep, bounding memory"
         );
     }
 }
