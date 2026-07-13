@@ -18,7 +18,7 @@ use ethrex_levm::db::gen_db::GeneralizedDatabase;
 pub use ethrex_levm::db::{CachingDatabase, Database as LevmDatabase};
 pub use ethrex_levm::errors::{self, InternalError, VMError};
 use ethrex_levm::errors::{ExecutionReport, TxResult};
-use ethrex_levm::vm::VMType;
+pub use ethrex_levm::vm::VMType;
 use std::sync::Arc;
 use std::sync::atomic::AtomicUsize;
 use std::sync::mpsc::Sender;

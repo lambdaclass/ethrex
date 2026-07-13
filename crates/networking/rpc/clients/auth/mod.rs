@@ -2,7 +2,9 @@ use crate::{
     engine::{
         ExchangeCapabilitiesRequest,
         fork_choice::{ForkChoiceUpdatedV3, ForkChoiceUpdatedV4},
-        payload::{GetPayloadV5Request, GetPayloadV6Request, NewPayloadV4Request, NewPayloadV5Request},
+        payload::{
+            GetPayloadV5Request, GetPayloadV6Request, NewPayloadV4Request, NewPayloadV5Request,
+        },
     },
     types::{
         fork_choice::{
