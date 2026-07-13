@@ -1,5 +1,5 @@
 use ethrex_common::{
-    H256,
+    Address, H256, U256,
     types::{BlobsBundleError, BlockHash, FrameValidationError},
 };
 use ethrex_rlp::error::RLPDecodeError;
@@ -83,6 +83,14 @@ pub enum MempoolError {
     TxMaxInitCodeSizeError,
     #[error("Transaction encoded size ({actual} bytes) exceeds the {limit}-byte limit")]
     TxSizeExceeded { actual: usize, limit: usize },
+    #[error(
+        "Sender {sender:#x} has {count} queued (future-nonce) transactions (per-account cap {limit}); rejecting new future transaction"
+    )]
+    MaxQueuedTxsPerAccountExceeded {
+        sender: Address,
+        count: usize,
+        limit: usize,
+    },
     #[error("Transaction sender is a contract account (EIP-3607)")]
     SenderIsContract,
     #[error("Transaction gas limit exceeded")]
@@ -111,6 +119,8 @@ pub enum MempoolError {
     InvalidChainId(u64),
     #[error("Account does not have enough balance to cover the tx cost")]
     NotEnoughBalance,
+    #[error("Sender's cumulative pending-tx cost ({required}) exceeds balance ({available})")]
+    InsufficientCumulativeBalance { required: U256, available: U256 },
     #[error("Transaction gas fields are invalid")]
     InvalidTxGasvalues,
     #[error("Invalid pooled TxType, expected: {0}")]
@@ -157,6 +167,8 @@ pub enum MempoolError {
     EmptyAuthorizationList,
     #[error("EIP-7702 (type-4) transaction is not valid before Prague")]
     Eip7702TxPreFork,
+    #[error("L2-only transaction type is not valid on an L1 node")]
+    L2OnlyTransactionType,
 }
 
 impl From<FrameValidationError> for MempoolError {
