@@ -14,7 +14,7 @@ panic = "abort"
 
 [dependencies]
 # Must match ZISK_VERSION in .github/actions/install-zisk/action.yml.
-ziskos = { git = "https://github.com/0xPolygonHermez/zisk.git", tag = "v0.16.1" }
+ziskos = { git = "https://github.com/0xPolygonHermez/zisk.git", tag = "v1.0.0-alpha" }
 rkyv = { version = "0.8.10", features = ["std", "unaligned"] }
 
 ethrex-guest-program = { path = "../../", default-features = false, features = [
