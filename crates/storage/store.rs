@@ -3413,22 +3413,30 @@ impl Store {
         let mut fresh = TrieLayerCache::new(threshold);
         fresh.set_overlay(Arc::new(overlay));
 
-        // Wait for the trie-update worker to be idle before swapping the cache.
-        // `apply_trie_updates` reads `trie_cache`, mutates a local clone, and writes
-        // back; if it is mid-flight when we install, its write-back can clobber the
-        // overlay we are about to set. `TrieMessage::Ping` is sent on the same
-        // `sync_channel(0)` and is a rendezvous: `send` returns only after the
-        // worker pulls the message from the channel, which proves the worker has
-        // finished processing the previous Update (it only recvs one message at
-        // a time) and is back at `rx.recv()`. With our subsequent `trie_cache.write()`
-        // serialising any future RCU, the install is now safe.
-        self.trie_update_worker_tx
-            .send(TrieMessage::Ping)
+        // Wait for the persist worker to be idle before swapping the cache. That
+        // worker owns the trie-layer install (`apply_trie_phase1`, run from the
+        // `PersistMessage::Block` handler): it reads `trie_cache`, mutates a local
+        // clone, and RCU-writes it back; if it is mid-flight when we install, its
+        // write-back can clobber the overlay we are about to set. `PersistMessage::Ping`
+        // carries an ack channel and the worker is FIFO, so its ack proves every
+        // earlier `Block` (and thus every earlier trie install) is fully processed
+        // and the worker is back at `rx.recv()`. This is the synchronous core of
+        // [`wait_for_persistence_idle`]; we inline it here because this fn is not
+        // async. With our subsequent `trie_cache.write()` serialising any future
+        // RCU, the install is now safe.
+        let (ack_tx, ack_rx) = sync_channel::<Result<(), StoreError>>(1);
+        self.persist_tx
+            .send(PersistMessage::Ping(ack_tx))
             .map_err(|e| {
                 StoreError::Custom(format!(
-                    "install_overlay_for_reorg: failed to ping trie-update worker: {e}"
+                    "install_overlay_for_reorg: failed to ping persist worker: {e}"
                 ))
             })?;
+        ack_rx.recv().map_err(|e| {
+            StoreError::Custom(format!(
+                "install_overlay_for_reorg: persist worker ping ack failed: {e}"
+            ))
+        })??;
 
         let mut guard = self.trie_cache.write().map_err(|_| StoreError::LockError)?;
         *guard = Arc::new(fresh);
@@ -5052,7 +5060,13 @@ mod state_history_tests {
     async fn highest_state_history_block_number_finds_max() {
         let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::open().unwrap());
         let dir = tempfile::tempdir().unwrap();
-        let store = Store::from_backend(backend.clone(), dir.path().to_path_buf(), 1).unwrap();
+        let store = Store::from_backend(
+            backend.clone(),
+            dir.path().to_path_buf(),
+            1,
+            DEFAULT_PERSIST_CHANNEL_CAPACITY,
+        )
+        .unwrap();
 
         assert_eq!(store.highest_state_history_block_number().unwrap(), None);
 
@@ -5071,7 +5085,13 @@ mod state_history_tests {
     async fn install_overlay_replaces_cache_with_fresh_one() {
         let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::open().unwrap());
         let dir = tempfile::tempdir().unwrap();
-        let store = Store::from_backend(backend.clone(), dir.path().to_path_buf(), 4).unwrap();
+        let store = Store::from_backend(
+            backend.clone(),
+            dir.path().to_path_buf(),
+            4,
+            DEFAULT_PERSIST_CHANNEL_CAPACITY,
+        )
+        .unwrap();
 
         seed_journal_entries(&backend, &[3, 4]);
 
@@ -5119,7 +5139,13 @@ mod state_history_tests {
     async fn install_overlay_failure_preserves_cache() {
         let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::open().unwrap());
         let dir = tempfile::tempdir().unwrap();
-        let store = Store::from_backend(backend.clone(), dir.path().to_path_buf(), 4).unwrap();
+        let store = Store::from_backend(
+            backend.clone(),
+            dir.path().to_path_buf(),
+            4,
+            DEFAULT_PERSIST_CHANNEL_CAPACITY,
+        )
+        .unwrap();
 
         // Only seed block 5; constructor will walk down through 4 and 3 and fail.
         seed_journal_entries(&backend, &[5]);
@@ -5168,7 +5194,13 @@ mod state_history_tests {
     async fn abort_reorg_resets_cache_to_fresh() {
         let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::open().unwrap());
         let dir = tempfile::tempdir().unwrap();
-        let store = Store::from_backend(backend.clone(), dir.path().to_path_buf(), 4).unwrap();
+        let store = Store::from_backend(
+            backend.clone(),
+            dir.path().to_path_buf(),
+            4,
+            DEFAULT_PERSIST_CHANNEL_CAPACITY,
+        )
+        .unwrap();
 
         seed_journal_entries(&backend, &[3, 4]);
         store.install_overlay_for_reorg(4, 3, |_| None).unwrap();
@@ -5214,7 +5246,13 @@ mod state_history_tests {
     async fn clear_reorg_overlay_removes_overlay_and_is_idempotent() {
         let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::open().unwrap());
         let dir = tempfile::tempdir().unwrap();
-        let store = Store::from_backend(backend.clone(), dir.path().to_path_buf(), 4).unwrap();
+        let store = Store::from_backend(
+            backend.clone(),
+            dir.path().to_path_buf(),
+            4,
+            DEFAULT_PERSIST_CHANNEL_CAPACITY,
+        )
+        .unwrap();
 
         // Idempotent when no overlay is installed.
         store.clear_reorg_overlay().unwrap();

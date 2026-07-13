@@ -272,6 +272,19 @@ impl PayloadStatus {
             witness: None,
         }
     }
+
+    /// Creates a PayloadStatus with `ACCEPTED` status. Used by the deep-reorg
+    /// path (issue #6685) when a payload's parent state is not currently
+    /// materialized: the block is stored but execution is deferred until a
+    /// later forkchoiceUpdated drives the deep-reorg apply.
+    pub fn accepted() -> Self {
+        PayloadStatus {
+            status: PayloadValidationStatus::Accepted,
+            latest_valid_hash: None,
+            validation_error: None,
+            witness: None,
+        }
+    }
 }
 
 mod optional_hex_bytes {
@@ -299,18 +312,6 @@ mod optional_hex_bytes {
                 .map(Some)
                 .map_err(|error| D::Error::custom(error.to_string())),
             _ => Ok(None),
-        }
-    }
-
-    /// Creates a PayloadStatus with `ACCEPTED` status. Used by the deep-reorg
-    /// path (issue #6685) when a payload's parent state is not currently
-    /// materialized: the block is stored but execution is deferred until a
-    /// later forkchoiceUpdated drives the deep-reorg apply.
-    pub fn accepted() -> Self {
-        PayloadStatus {
-            status: PayloadValidationStatus::Accepted,
-            latest_valid_hash: None,
-            validation_error: None,
         }
     }
 }
