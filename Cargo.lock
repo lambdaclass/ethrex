@@ -3512,7 +3512,7 @@ dependencies = [
 
 [[package]]
 name = "ef_tests-blockchain"
-version = "18.0.0"
+version = "20.0.0"
 dependencies = [
  "bytes",
  "datatest-stable",
@@ -4560,7 +4560,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-zkevm-bench"
-version = "18.0.0"
+version = "20.0.0"
 dependencies = [
  "bytes",
  "clap",
