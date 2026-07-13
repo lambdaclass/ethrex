@@ -17,7 +17,6 @@
 //! implementation into the link. The symbols are resolved only when `cargo-zisk`
 //! links the guest ELF.
 
-use ethereum_types::Address;
 use ethrex_crypto::{Crypto, CryptoError};
 
 /// `zkvm_status` success value. Any other value is a failure.
@@ -193,36 +192,27 @@ impl Crypto for ZiskCrypto {
         Ok(self.keccak256(&pubkey.0))
     }
 
-    fn recover_signer(&self, sig: &[u8; 65], msg: &[u8; 32]) -> Result<Address, CryptoError> {
-        // EIP-2: reject high-s signatures (s > secp256k1n/2)
-        const SECP256K1_N_HALF: [u8; 32] = [
-            0x7f, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
-            0xff, 0xff, 0x5d, 0x57, 0x6e, 0x73, 0x57, 0xa4, 0x50, 0x1d, 0xdf, 0xe9, 0x2f, 0x46,
-            0x68, 0x1b, 0x20, 0xa0,
-        ];
-        #[allow(clippy::indexing_slicing)]
-        if sig[32..64] > SECP256K1_N_HALF[..] {
-            return Err(CryptoError::InvalidSignature);
-        }
-
-        let sig64 = take::<64>(sig)?;
-        let hash = self.secp256k1_ecrecover(&sig64, sig[64], msg)?;
-        Ok(Address::from_slice(&hash[12..]))
-    }
+    // `recover_signer` is not overridden: the default impl in `ethrex-crypto`
+    // already performs the EIP-2 high-s rejection and delegates to
+    // `secp256k1_ecrecover`, which dispatches to the override above.
 
     fn keccak256(&self, input: &[u8]) -> [u8; 32] {
+        // These trait methods return the hash directly (no `Result`), so an
+        // accelerator failure can't be surfaced as an error. Fail loud instead
+        // of handing back the zero-initialized buffer as if it were a valid hash.
         let mut output = B32([0u8; 32]);
-        unsafe {
-            zkvm_keccak256(input.as_ptr(), input.len(), &mut output);
-        }
+        let status = unsafe { zkvm_keccak256(input.as_ptr(), input.len(), &mut output) };
+        assert_eq!(
+            status, ZKVM_EOK,
+            "zkvm_keccak256 failed with status {status}"
+        );
         output.0
     }
 
     fn sha256(&self, input: &[u8]) -> [u8; 32] {
         let mut output = B32([0u8; 32]);
-        unsafe {
-            zkvm_sha256(input.as_ptr(), input.len(), &mut output);
-        }
+        let status = unsafe { zkvm_sha256(input.as_ptr(), input.len(), &mut output) };
+        assert_eq!(status, ZKVM_EOK, "zkvm_sha256 failed with status {status}");
         output.0
     }
 
@@ -230,15 +220,16 @@ impl Crypto for ZiskCrypto {
         // The state/message/offset are little-endian u64 arrays, ABI-identical to
         // the 8-byte-aligned byte-array structs the interface expects. `h` is
         // updated in place.
-        unsafe {
+        let status = unsafe {
             zkvm_blake2f(
                 rounds,
                 h.as_mut_ptr().cast::<B64>(),
                 m.as_ptr().cast::<B128>(),
                 t.as_ptr().cast::<B16>(),
                 f as u8,
-            );
-        }
+            )
+        };
+        assert_eq!(status, ZKVM_EOK, "zkvm_blake2f failed with status {status}");
     }
 
     fn bn254_g1_add(&self, p1: &[u8], p2: &[u8]) -> Result<[u8; 64], CryptoError> {
