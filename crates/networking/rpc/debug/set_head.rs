@@ -55,7 +55,8 @@ impl RpcHandler for SetHeadRequest {
         // apply_fork_choice refuses to rewind below the stored finalized block
         // number. Surface this as BadParams so callers know they passed an
         // invalid target rather than interpreting it as a server bug.
-        apply_fork_choice(&context.storage, block_hash, block_hash, block_hash)
+        // `None`: use the finality-bounded default reorg cap (no operator override).
+        apply_fork_choice(&context.storage, block_hash, block_hash, block_hash, None)
             .await
             .map_err(|err| RpcErr::BadParams(format!("cannot set head: {err}")))?;
 

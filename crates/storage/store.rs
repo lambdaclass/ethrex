@@ -5149,7 +5149,13 @@ mod state_history_tests {
     async fn lowest_state_history_block_number_finds_min() {
         let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::open().unwrap());
         let dir = tempfile::tempdir().unwrap();
-        let store = Store::from_backend(backend.clone(), dir.path().to_path_buf(), 1).unwrap();
+        let store = Store::from_backend(
+            backend.clone(),
+            dir.path().to_path_buf(),
+            1,
+            DEFAULT_PERSIST_CHANNEL_CAPACITY,
+        )
+        .unwrap();
 
         assert_eq!(store.lowest_state_history_block_number().unwrap(), None);
 
