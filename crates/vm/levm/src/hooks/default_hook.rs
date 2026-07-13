@@ -188,7 +188,7 @@ impl Hook for DefaultHook {
                 if vm.db.get_account(created_addr)?.is_empty() {
                     let charge = vm.state_gas_new_account;
                     if vm.increase_state_gas(charge).is_err() {
-                        vm.fail_prepare_region()?;
+                        vm.fail_prepare_region();
                     }
                 }
             } else {
@@ -236,7 +236,7 @@ impl Hook for DefaultHook {
                 if recipient_is_empty && !vm.tx.value().is_zero() {
                     let charge = vm.state_gas_new_account;
                     if vm.increase_state_gas(charge).is_err() {
-                        vm.fail_prepare_region()?;
+                        vm.fail_prepare_region();
                     } else {
                         // Signal so a subsequent Amsterdam precompile-halt in
                         // `run_execution` rolls this charge back (the recipient
@@ -262,7 +262,7 @@ impl Hook for DefaultHook {
                         cold_account_access_cost(vm.env.config.fork)
                     };
                     if vm.current_call_frame.increase_consumed_gas(charge).is_err() {
-                        vm.fail_prepare_region()?;
+                        vm.fail_prepare_region();
                     } else if !is_warm {
                         vm.substate.add_accessed_address(target);
                     }
@@ -327,7 +327,7 @@ impl Hook for DefaultHook {
         // tx_state_gas collapses to 0, tx_regular_gas = max(intrinsic_regular +
         // message.gas, calldata_floor). The user does NOT lose the whole gas_limit.
         //
-        // ethrex's in-region CREATE NEW_ACCOUNT charge (Task 4.2) runs before the
+        // ethrex's in-region CREATE NEW_ACCOUNT charge runs before the
         // collision check and is rolled back to the frame's entry baseline by
         // `handle_create_transaction` on collision (see that function), so
         // `state_gas_used` is already net zero here.

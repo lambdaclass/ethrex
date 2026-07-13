@@ -554,7 +554,7 @@ impl FrameTxContext {
 /// `inserted_code_hashes` is an append-only `Vec`, so its pre-region length is
 /// enough to identify the region-added tail.
 #[derive(Debug, Default)]
-pub struct PrepareRegionBackupMarker {
+struct PrepareRegionBackupMarker {
     /// Addresses already backed up in `original_accounts_info` before the region.
     accounts: FxHashSet<Address>,
     /// Addresses already backed up in `original_account_storage_slots` before the region.
@@ -691,7 +691,7 @@ pub struct VM<'a> {
     /// EIP-8037: pre-region key-space snapshot of `call_frame_backup`, recorded by
     /// `enter_prepare_region`. Lets `fail_prepare_region` revert only region-added
     /// writes, leaving the sender nonce-bump / fee-deduction entries intact.
-    pub prep_region_backup_marker: PrepareRegionBackupMarker,
+    prep_region_backup_marker: PrepareRegionBackupMarker,
     /// EIP-8037: set by `fail_prepare_region` when an internal OOG rolls back the
     /// atomic prepare region. Consumed by `run_execution`, which turns it into a
     /// full-gas revert `ContextResult` (mirrors EELS depth-0
@@ -1346,7 +1346,7 @@ impl<'a> VM<'a> {
     /// instead of a tx-level rejection `Err` (which would wrongly invalidate the
     /// block). Mirrors EELS `restore_tx_state(prep_snapshot)` + `refill_frame_state_gas`
     /// (`interpreter.py:366-374`).
-    pub fn fail_prepare_region(&mut self) -> Result<(), VMError> {
+    pub fn fail_prepare_region(&mut self) {
         let marker = std::mem::take(&mut self.prep_region_backup_marker);
         let mut backup = std::mem::take(&mut self.current_call_frame.call_frame_backup);
 
@@ -1440,7 +1440,6 @@ impl<'a> VM<'a> {
         self.state_gas_spill = self.prep_baseline_state_gas_spill;
         self.current_call_frame.frame_state_gas_spilled = 0;
         self.pending_prep_oog = true;
-        Ok(())
     }
 
     /// Executes a whole external transaction. Performing validations at the beginning.
@@ -2675,7 +2674,7 @@ impl<'a> VM<'a> {
         // at tx start and the tx transfers value. If the recipient is a precompile that
         // then exceptionally halts/reverts, the account is never materialized, so the
         // charge is rolled back in the precompile branch below (mirrors EELS
-        // `refill_frame_state_gas`). Set in-region by `prepare_execution` (Task 4.2).
+        // `refill_frame_state_gas`). Set in-region by `prepare_execution`.
         let top_frame_new_account_charged = self.value_new_account_charged;
 
         #[expect(clippy::as_conversions, reason = "remaining gas conversion")]
@@ -2687,7 +2686,7 @@ impl<'a> VM<'a> {
             // `execute_precompile` itself never touches state gas (it only mutates
             // `gas_remaining`; it has no access to `state_gas_used` / `state_gas_reservoir` /
             // `state_gas_spill`) — the assert below guards that. The in-region EIP-2780
-            // value-to-not-alive NEW_ACCOUNT charge (`prepare_execution`, Task 4.2),
+            // value-to-not-alive NEW_ACCOUNT charge (`prepare_execution`),
             // however, IS frame state gas, and on an exceptional halt/revert it must be
             // rolled back (see below). `self` is borrowed by field rather than via
             // `&mut self.current_call_frame` so the refund call, which needs `&mut self`,
@@ -3162,8 +3161,8 @@ impl<'a> VM<'a> {
         // baseline inside `handle_create_transaction`'s collision branch, so there is
         // nothing left to refill here either (see that function).
         //
-        // EIP-8037 (Task 4.3): there is no longer a separate create-failure `NEW_ACCOUNT`
-        // refund here. The charge itself (Task 4.2, `prepare_execution`) is now
+        // EIP-8037: there is no longer a separate create-failure `NEW_ACCOUNT`
+        // refund here. The charge itself (`prepare_execution`) is now
         // conditioned on `get_pre_state_account(created_addr) == EMPTY_ACCOUNT`, so it
         // simply never fires for an already-alive target (positive balance implies
         // non-empty pre-state) and is rolled back by `handle_create_transaction` on
