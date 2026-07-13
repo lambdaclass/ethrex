@@ -407,8 +407,11 @@ impl MempoolInner {
                     });
                 }
             }
-            // Gapped-nonce rejection under pool pressure (#6609).
-            if tx_nonce != admission.account_nonce && admission.gap_threshold < 100 {
+            // Gapped-nonce rejection under pool pressure (#6609). A gap is a
+            // forward jump (`>`); `tx_nonce < account_nonce` was already rejected
+            // as `NonceTooLow` in `validate_transaction`, so `>` and `!=` coincide
+            // here, but `>` states the intent and is robust to future refactors.
+            if tx_nonce > admission.account_nonce && admission.gap_threshold < 100 {
                 let occupancy_pct = self.occupancy_pct_inner();
                 if occupancy_pct >= admission.gap_threshold {
                     return Err(MempoolError::GapAdmissionDeniedUnderPressure {
@@ -1679,10 +1682,11 @@ mod tests {
     }
 
     // Seed a cost-bearing tx directly into the pool (no admission gate).
-    fn add_tx_cost(pool: &Mempool, sender: Address, nonce: u64, cost: u64) {
+    fn add_tx_cost(pool: &Mempool, sender: Address, nonce: u64, cost: u64) -> H256 {
         let mtx = MempoolTransaction::new(build_tx_cost(nonce, cost), sender);
         let hash = mtx.hash(&NativeCrypto);
         pool.add_transaction(hash, sender, mtx, None, None).unwrap();
+        hash
     }
 
     // Add a tx through `add_transaction` with only the cumulative-balance gate
@@ -1818,6 +1822,33 @@ mod tests {
         assert!(
             add_with_gap_gate(&pool, sender, 5, 0, 90).is_ok(),
             "a replacement must bypass the gap gate under pressure"
+        );
+    }
+
+    #[test]
+    fn rejected_balance_replacement_keeps_original() {
+        // A replacement that fails the *locked* cumulative-balance re-check must
+        // leave the original same-nonce tx intact: the replaced tx is removed only
+        // after `check_admission` passes, inside the same write lock as the insert
+        // (mirroring the frame-tx path), so a rejected fee-bump can't leave the
+        // sender with neither tx (issue #6938 / Codex + Claude review).
+        let pool = Mempool::new(10_000);
+        let sender = Address::from_low_u64_be(1);
+        // Original at nonce 5 (cost 50) and another pending tx at nonce 6 (cost
+        // 100). The replacement's balance sum excludes the original (nonce 5) but
+        // still includes nonce 6.
+        let original = add_tx_cost(&pool, sender, 5, 50);
+        add_tx_cost(&pool, sender, 6, 100);
+        // Replacement at nonce 5, cost 100, balance 150: excluded-sum is 100
+        // (nonce 6), 100 + 100 = 200 > 150 → rejected under the write lock.
+        let res = add_with_balance(&pool, sender, 5, 0, 100, 150);
+        assert!(
+            matches!(res, Err(MempoolError::InsufficientCumulativeBalance { .. })),
+            "expected the replacement to be rejected on cumulative balance, got {res:?}"
+        );
+        assert!(
+            pool.contains_tx(original).unwrap(),
+            "a rejected fee-bump must leave the original same-nonce tx in the pool"
         );
     }
 }
