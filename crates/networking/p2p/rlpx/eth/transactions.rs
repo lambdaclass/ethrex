@@ -310,12 +310,14 @@ impl PooledTransactions {
         // how little we asked for.
         let mut seen = HashSet::with_capacity(self.pooled_transactions.len());
         for tx in &self.pooled_transactions {
-            if let P2PTransaction::EIP4844TransactionWithBlobs(itx) = tx {
-                itx.blobs_bundle.validate_cheap(&itx.tx, fork)?;
-            }
+            // Reject duplicates before any per-tx work (blob validation, hash lookup) so a peer
+            // echoing the same tx N times can't force N rounds of that work — fail fast.
             let tx_hash = tx.compute_hash();
             if !seen.insert(tx_hash) {
                 return Err(MempoolError::DuplicatePooledTx);
+            }
+            if let P2PTransaction::EIP4844TransactionWithBlobs(itx) = tx {
+                itx.blobs_bundle.validate_cheap(&itx.tx, fork)?;
             }
             let Some(pos) = requested
                 .transaction_hashes
