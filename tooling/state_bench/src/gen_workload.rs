@@ -349,19 +349,19 @@ async fn generate_on_copy(
     let chain_config = store.get_chain_config();
     let chain_id = chain_config.chain_id;
 
-    // Assert the fixture's fork is BAL-enabled at the workload timestamps.
+    // Detect whether the fixture's fork records BALs at the workload timestamps.
+    // Amsterdam+ (l1-bal.json) exercises the BAL parallel import path; pre-Amsterdam
+    // (l1.json) is the realistic mainnet path (no BAL anywhere, streaming merkleizer).
     let genesis_header = store
         .get_block_header(0)
         .context("reading genesis header")?
         .context("genesis header (block 0) missing from datadir")?;
     let first_block_ts = genesis_header.timestamp + 12;
-    if !chain_config.is_amsterdam_activated(first_block_ts) {
-        bail!(
-            "the fixture chain config does not activate Amsterdam at timestamp {first_block_ts}; \
-             workload blocks would carry no BAL. Regenerate gen-state with an Amsterdam-activated \
-             genesis (e.g. fixtures/genesis/l1-bal.json, amsterdamTime=0) and pass the same file \
-             to gen-workload via --genesis."
-        );
+    let with_bal = chain_config.is_amsterdam_activated(first_block_ts);
+    if with_bal {
+        info!("gen-workload: Amsterdam active; capturing one BAL per block (BAL parallel path)");
+    } else {
+        info!("gen-workload: pre-Amsterdam fixture; blocks carry no BAL (realistic mainnet path)");
     }
 
     let blockchain = Blockchain::default_with_store(store.clone());
@@ -450,22 +450,27 @@ async fn generate_on_copy(
             );
         }
 
-        // Capture the canonical BAL: `result.block_access_list` is exactly the BAL
-        // whose `compute_hash` was written into `header.block_access_list_hash` by
-        // `finalize_payload`. Assert that binding so we know the artifact we emit is
-        // the one the parallel import path validates.
-        let bal = result.block_access_list.ok_or_else(|| {
-            anyhow::anyhow!(
-                "block {block_number} produced no BAL despite Amsterdam being active; \
-                 payload build did not record a block access list"
-            )
-        })?;
-        let commitment = block.header.block_access_list_hash;
-        if commitment != Some(bal.compute_hash(&NativeCrypto)) {
-            bail!(
-                "block {block_number}: captured BAL hash does not match header \
-                 block_access_list_hash; captured BAL is not the canonical one"
-            );
+        // Capture the canonical BAL on Amsterdam+: `result.block_access_list` is
+        // exactly the BAL whose `compute_hash` was written into
+        // `header.block_access_list_hash` by `finalize_payload`. Assert that binding
+        // so we know the artifact we emit is the one the parallel import path
+        // validates. Pre-Amsterdam blocks produce no BAL, so there is nothing to
+        // capture and the import path passes `None`.
+        if with_bal {
+            let bal = result.block_access_list.ok_or_else(|| {
+                anyhow::anyhow!(
+                    "block {block_number} produced no BAL despite Amsterdam being active; \
+                     payload build did not record a block access list"
+                )
+            })?;
+            let commitment = block.header.block_access_list_hash;
+            if commitment != Some(bal.compute_hash(&NativeCrypto)) {
+                bail!(
+                    "block {block_number}: captured BAL hash does not match header \
+                     block_access_list_hash; captured BAL is not the canonical one"
+                );
+            }
+            bals.push(bal);
         }
 
         // Persist + advance the head-state so the next block parents on this one.
@@ -493,7 +498,6 @@ async fn generate_on_copy(
 
         parent_header = block.header.clone();
         blocks.push(block);
-        bals.push(bal);
 
         if block_number % 100 == 0 || block_number == num_blocks {
             info!(
