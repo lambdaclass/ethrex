@@ -9,6 +9,7 @@ on:
     paths:
       - "crates/common/**"
       - "crates/vm/**"
+      - ".github/targets/**"
       - ".github/workflows/pr_nostd.yaml"
 
 permissions:
@@ -24,20 +25,29 @@ env:
 
 jobs:
   no-std-check:
-    name: no_std build check (riscv64imac)
+    # Builds the guest crates against the eth-act zkVM standard target to catch
+    # `use std::` regressions. Needs nightly (JSON target spec + build-std);
+    # see .github/targets/README.md.
+    name: no_std build check (riscv64im_zicclsm)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
 
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@1.91.0
+      # Pinned for reproducibility (build-std + json-target-spec are nightly-only);
+      # bump the date deliberately. dtolnay has no per-date ref, so pass it as input.
+      - name: Install Rust nightly + rust-src
+        uses: dtolnay/rust-toolchain@master
         with:
-          targets: riscv64imac-unknown-none-elf
+          toolchain: nightly-2026-06-29
+          components: rust-src
 
-      - name: Check no_std crates
+      - name: Check no_std crates against the zkVM standard target
         run: |
-          cargo check -p ethrex-rlp -p ethrex-crypto --no-default-features --target riscv64imac-unknown-none-elf
-          cargo check -p ethrex-crypto --no-default-features --features kzg-rs --target riscv64imac-unknown-none-elf
+          TARGET=.github/targets/riscv64im_zicclsm-unknown-none-elf.json
+          cargo +nightly-2026-06-29 -Z json-target-spec -Z build-std=core,alloc check \
+            -p ethrex-rlp -p ethrex-crypto --no-default-features --target "$TARGET"
+          cargo +nightly-2026-06-29 -Z json-target-spec -Z build-std=core,alloc check \
+            -p ethrex-crypto --no-default-features --features kzg-rs --target "$TARGET"
 
   crypto-backend-test:
     name: ethrex-crypto test (no default features)
