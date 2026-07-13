@@ -3946,9 +3946,13 @@ fn flush_storage_buffer(
     )?;
     // `prefetch_sorted` requires ascending paths; slots arrive in routing order.
     // H256 sorts bytewise, matching nibble order, so sorting by key gives the
-    // order `Nibbles::from_bytes` needs.
+    // order `Nibbles::from_bytes` needs. The sort MUST be stable: the streaming
+    // path buffers per-tx updates, so the same slot can appear more than once
+    // (written by successive txs in the block) and the last write must win, as it
+    // does in the per-slot insert path. A stable sort keeps equal keys in arrival
+    // (tx) order so the final insert below applies the latest value last.
     if slots.len() >= STREAM_STORAGE_PREFETCH_THRESHOLD {
-        slots.sort_unstable_by(|a, b| a.0.cmp(&b.0));
+        slots.sort_by(|a, b| a.0.cmp(&b.0));
         let paths: Vec<Nibbles> = slots
             .iter()
             .map(|(k, _)| Nibbles::from_bytes(k.as_bytes()))
