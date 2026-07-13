@@ -397,7 +397,7 @@ impl Node {
         let sender_address = signer.address();
         let nonce = self
             .rpc_client
-            .get_nonce(sender_address, BlockIdentifier::Tag(BlockTag::Latest))
+            .get_nonce(sender_address, BlockIdentifier::Tag(BlockTag::Pending))
             .await
             .unwrap();
         let tx = EIP1559Transaction {
@@ -431,7 +431,7 @@ impl Node {
         let sender_address = signer.address();
         let nonce = self
             .rpc_client
-            .get_nonce(sender_address, BlockIdentifier::Tag(BlockTag::Latest))
+            .get_nonce(sender_address, BlockIdentifier::Tag(BlockTag::Pending))
             .await
             .unwrap();
         let tx = EIP1559Transaction {
@@ -469,7 +469,7 @@ impl Node {
         let sender_address = signer.address();
         let nonce = self
             .rpc_client
-            .get_nonce(sender_address, BlockIdentifier::Tag(BlockTag::Latest))
+            .get_nonce(sender_address, BlockIdentifier::Tag(BlockTag::Pending))
             .await
             .unwrap();
         let tx = EIP1559Transaction {
