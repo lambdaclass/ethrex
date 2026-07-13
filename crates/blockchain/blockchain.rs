@@ -2905,14 +2905,11 @@ impl Blockchain {
         let sender = transaction.sender(&NativeCrypto)?;
 
         // Validate transaction. The returned `sender_admission` carries the
-        // per-sender gate inputs, re-checked atomically inside `add_transaction`
-        // (#6938). A replacement is removed first so the locked cumulative sum
-        // (and the pool occupancy the gap gate reads) already excludes it.
-        let (tx_to_replace, frame_reservation, sender_admission) =
+        // per-sender gate inputs, re-checked atomically inside `add_transaction`,
+        // which also removes any same-nonce tx being replaced under the same lock
+        // (#6938) — so no separate pre-removal here.
+        let (_tx_to_replace, frame_reservation, sender_admission) =
             self.validate_transaction(&transaction, sender).await?;
-        if let Some(tx_to_replace) = tx_to_replace {
-            self.remove_transaction_from_pool(&tx_to_replace)?;
-        }
 
         // Add blobs bundle before the transaction so that when add_transaction
         // notifies payload builders the blob data is already available.
@@ -2961,26 +2958,14 @@ impl Blockchain {
         }
         let sender = transaction.sender(&NativeCrypto)?;
         // Validate transaction. The returned `sender_admission` carries the
-        // per-sender gate inputs, re-checked atomically inside `add_transaction`
-        // (#6938).
-        let (tx_to_replace, frame_reservation, sender_admission) =
+        // per-sender gate inputs, re-checked atomically inside `add_transaction`,
+        // which also removes whatever occupies the sender's nonce slot (any tx
+        // type) under the same lock, so replacement detection, the gates, the
+        // removal, and the insert are one atomic scope (#6938). For a frame tx
+        // the removal happens only after the locked paymaster re-check, so a
+        // rejected fee-bump leaves the original pending tx intact.
+        let (_tx_to_replace, frame_reservation, sender_admission) =
             self.validate_transaction(&transaction, sender).await?;
-        // For a frame tx, the same-nonce predecessor must NOT be removed here:
-        // `add_transaction` removes it only AFTER the locked paymaster re-check
-        // passes, so a rejected fee-bump leaves the original pending tx intact
-        // (atomic replacement, review fix 2). `add_transaction` removes whatever
-        // occupies the sender's nonce slot (any tx type), which is the same
-        // same-nonce hash `find_tx_to_replace` returns, so the success path is
-        // unchanged — including when the predecessor is a non-frame tx.
-        //
-        // For non-frame replacements, removing first means the locked cumulative
-        // sum already excludes the replaced tx (frame txs are not balance-gated).
-        let is_frame = matches!(transaction, Transaction::FrameTransaction(_));
-        if let Some(tx_to_replace) = tx_to_replace
-            && !is_frame
-        {
-            self.remove_transaction_from_pool(&tx_to_replace)?;
-        }
 
         // Add transaction to storage
         self.mempool.add_transaction(
@@ -3725,7 +3710,6 @@ impl Blockchain {
             account_nonce,
             queued_max: self.options.max_queued_txs_per_account,
             gap_threshold: self.options.gap_admit_occupancy_threshold,
-            is_replacement: tx_to_replace_hash.is_some(),
             // Frame txs are not balance-gated (payer unknown until execution).
             balance_check: (!is_frame_tx).then_some(BalanceCheck {
                 tx_cost,

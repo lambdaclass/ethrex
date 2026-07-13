@@ -123,11 +123,6 @@ pub struct SenderAdmission {
     /// Mempool occupancy percentage at or above which a gapped-nonce tx is
     /// rejected; `100` disables the gate (#6609).
     pub gap_threshold: u8,
-    /// A same-`(sender, nonce)` replacement is exempt from the queued cap and
-    /// the gap gate (it doesn't grow the queue and isn't gapped). The caller
-    /// removes the replaced tx before insertion, so the cumulative-balance
-    /// re-check already sees the live sum without it.
-    pub is_replacement: bool,
     /// Cumulative-balance inputs (#6606). `None` for frame txs, whose payer is
     /// unknown until execution and which are therefore not balance-gated.
     pub balance_check: Option<BalanceCheck>,
@@ -382,16 +377,24 @@ impl MempoolInner {
     /// write lock so each gate reads the live pool state that the insert will
     /// mutate — closing the TOCTOU against the unlocked pre-filter in
     /// `validate_transaction` (issue #6938). The incoming tx is not yet in the
-    /// pool, and any replaced tx has already been removed by the caller.
+    /// pool; the caller removes any replaced tx *after* this check (under the
+    /// same lock), so a same-`(sender, nonce)` predecessor is still present here.
     fn check_admission(
         &self,
         sender: Address,
         tx_nonce: u64,
         admission: &SenderAdmission,
     ) -> Result<(), MempoolError> {
-        // The queued cap and gap gate exempt replacements: a same-`(sender,
-        // nonce)` replace neither grows the queue nor introduces a nonce gap.
-        if !admission.is_replacement {
+        // Whether this insert replaces a tx already occupying the sender's nonce
+        // slot, determined *live* under the write lock rather than precomputed in
+        // `validate_transaction` — otherwise a concurrent removal in the
+        // validate→insert window could leave a stale "is replacement" flag and
+        // let a now-fresh gapped/future tx skip the gates below (issue #6938).
+        let replaced = self.txs_by_sender_nonce.get(&(sender, tx_nonce)).copied();
+
+        // A replacement neither grows the queue nor introduces a nonce gap, so it
+        // is exempt from the queued cap and the gap gate.
+        if replaced.is_none() {
             // Per-account queued (future/nonce-gapped) cap (#6603). Only future
             // txs count; executable/contiguous ones are never capped.
             if self.is_future(sender, admission.account_nonce, tx_nonce) {
@@ -416,14 +419,16 @@ impl MempoolInner {
             }
         }
         // Cumulative balance across the sender's pending txs (#6606). Runs for
-        // replacements too — the replaced tx is already removed, so the live sum
-        // excludes it with `exclude = None`. Skipped for frame txs (`None`).
+        // replacements too — `replaced` (the predecessor at this nonce, still in
+        // the pool) is excluded from the sum so the bump isn't double-counted.
+        // Skipped for frame txs (`None`).
         if let Some(BalanceCheck {
             tx_cost,
             sender_balance,
         }) = admission.balance_check
         {
-            let existing = self.sum_cost_for_sender_inner(sender, admission.account_nonce, None)?;
+            let existing =
+                self.sum_cost_for_sender_inner(sender, admission.account_nonce, replaced)?;
             let total = existing
                 .checked_add(tx_cost)
                 .ok_or(MempoolError::InvalidTxGasvalues)?;
@@ -644,6 +649,24 @@ impl Mempool {
         // effect. `None` for direct/test inserts that bypass admission.
         if let Some(admission) = &sender_admission {
             inner.check_admission(sender, transaction.nonce(), admission)?;
+
+            // Non-frame replacement: remove the tx currently occupying this
+            // sender's nonce slot (if any) under this same lock, *after*
+            // `check_admission` observed it (for the replacement exemption and the
+            // excluded-cost sum). Doing the removal here — rather than in the
+            // caller before the lock — keeps replacement detection, the gates, the
+            // removal, and the insert in one atomic scope (issue #6938). Gated on
+            // the admission guard, so raw index-only inserts (`None`, used by
+            // direct callers) keep their existing behavior. Frame txs defer their
+            // slot removal to the paymaster re-check below, so a rejected fee-bump
+            // leaves the old tx intact.
+            if !is_frame
+                && let Some(&old_hash) = inner
+                    .txs_by_sender_nonce
+                    .get(&(sender, transaction.nonce()))
+            {
+                inner.remove_transaction_with_lock(&old_hash)?;
+            }
         }
 
         // One-pending-frame-tx-per-sender gate (EIP-8141 §Mempool, review fix 1.6).
@@ -1581,7 +1604,6 @@ mod tests {
                 account_nonce,
                 queued_max: max,
                 gap_threshold: 100, // disabled
-                is_replacement: false,
                 balance_check: None,
             }),
         )
@@ -1684,7 +1706,6 @@ mod tests {
                 account_nonce,
                 queued_max: usize::MAX,
                 gap_threshold: 100, // disabled
-                is_replacement: false,
                 balance_check: Some(BalanceCheck {
                     tx_cost: U256::from(tx_cost),
                     sender_balance: U256::from(sender_balance),
@@ -1693,16 +1714,17 @@ mod tests {
         )
     }
 
-    // Add a tx through `add_transaction` with only the gap gate active.
+    // Add a tx through `add_transaction` with only the gap gate active. Whether
+    // it counts as a replacement is derived live from the pool (slot occupancy),
+    // so callers seed a same-nonce tx first to exercise the replacement path.
     fn add_with_gap_gate(
         pool: &Mempool,
         sender: Address,
         nonce: u64,
         account_nonce: u64,
         gap_threshold: u8,
-        is_replacement: bool,
     ) -> Result<(), MempoolError> {
-        let mtx = MempoolTransaction::new(build_tx(nonce), sender);
+        let mtx = MempoolTransaction::new(build_tx_cost(nonce, 1), sender);
         let hash = mtx.hash(&NativeCrypto);
         pool.add_transaction(
             hash,
@@ -1713,7 +1735,6 @@ mod tests {
                 account_nonce,
                 queued_max: usize::MAX,
                 gap_threshold,
-                is_replacement,
                 balance_check: None,
             }),
         )
@@ -1760,7 +1781,7 @@ mod tests {
         let pool = Mempool::new(10);
         fill_mempool(&pool, 10);
         let sender = Address::from_low_u64_be(0xAAA);
-        let res = add_with_gap_gate(&pool, sender, 5, 0, 90, false);
+        let res = add_with_gap_gate(&pool, sender, 5, 0, 90);
         assert!(
             matches!(
                 res,
@@ -1777,19 +1798,25 @@ mod tests {
         fill_mempool(&pool, 5);
         let sender = Address::from_low_u64_be(0xAAA);
         assert!(
-            add_with_gap_gate(&pool, sender, 5, 0, 90, false).is_ok(),
+            add_with_gap_gate(&pool, sender, 5, 0, 90).is_ok(),
             "gapped tx below the occupancy threshold must be accepted"
         );
     }
 
     #[test]
     fn add_transaction_replacement_bypasses_gap_gate() {
-        // A replacement bypasses the gap gate even at 100% occupancy.
+        // A tx already occupying the sender's nonce slot makes the next insert a
+        // replacement, detected live under the lock — so it bypasses the gap gate
+        // even at 100% occupancy (whereas a fresh gapped tx would be rejected, per
+        // `add_transaction_rejects_gapped_tx_under_pressure`).
         let pool = Mempool::new(10);
-        fill_mempool(&pool, 10);
+        fill_mempool(&pool, 9);
         let sender = Address::from_low_u64_be(0xAAA);
+        // Seed the sender's own tx at nonce 5 (10th tx → pool now at 100%).
+        add_tx_cost(&pool, sender, 5, 100);
+        // A higher-cost tx at the same nonce is a replacement and must be admitted.
         assert!(
-            add_with_gap_gate(&pool, sender, 5, 0, 90, true).is_ok(),
+            add_with_gap_gate(&pool, sender, 5, 0, 90).is_ok(),
             "a replacement must bypass the gap gate under pressure"
         );
     }
