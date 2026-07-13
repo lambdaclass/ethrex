@@ -39,6 +39,10 @@ enum Command {
         /// `stress` workloads. Only used in `--mode slow`.
         #[arg(long)]
         stress_dir: Option<String>,
+        /// Fail immediately if the embedded guest ELF is empty (built without
+        /// `--features zisk-elf`), instead of producing an all-`false` report.
+        #[arg(long)]
+        strict_elf: bool,
     },
     /// Diff two reports and flag regressions.
     Compare {
@@ -82,12 +86,14 @@ fn main() -> eyre::Result<()> {
             out,
             mode,
             stress_dir,
+            strict_elf,
         } => run::run_bench(
             &workloads,
             filter.as_deref(),
             &out,
             &mode,
             stress_dir.as_deref(),
+            strict_elf,
         ),
         Command::Compare {
             baseline,

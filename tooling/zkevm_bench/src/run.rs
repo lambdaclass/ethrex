@@ -11,6 +11,47 @@ fn guest_elf_sha256() -> String {
     hex::encode(h.finalize())
 }
 
+/// zisk version recorded when `ziskemu --version` can't be queried. Kept in
+/// sync with the pinned zisk dependency in `Cargo.toml`.
+const FALLBACK_ZISK_VERSION: &str = "v0.16.1";
+
+/// Queries the installed `ziskemu` for its version so reports are attributed to
+/// the emulator actually used, rather than a hardcoded string that drifts on
+/// upgrades. Falls back to [`FALLBACK_ZISK_VERSION`] (with a warning) when
+/// `ziskemu` isn't on `PATH` or its output can't be parsed.
+fn detect_zisk_version() -> String {
+    let parsed = std::process::Command::new("ziskemu")
+        .arg("--version")
+        .output()
+        .ok()
+        .filter(|out| out.status.success())
+        .and_then(|out| {
+            // Output looks like "ziskemu 0.16.1"; pick the first token that
+            // looks like a version (a leading `v` is optional) and normalize
+            // it to a leading `v`.
+            String::from_utf8_lossy(&out.stdout)
+                .split_whitespace()
+                .find(|&t| {
+                    t.strip_prefix('v')
+                        .unwrap_or(t)
+                        .starts_with(|c: char| c.is_ascii_digit())
+                })
+                .map(|t| {
+                    if t.starts_with('v') {
+                        t.to_string()
+                    } else {
+                        format!("v{t}")
+                    }
+                })
+        });
+    parsed.unwrap_or_else(|| {
+        eprintln!(
+            "warning: could not determine ziskemu version (`ziskemu --version` unavailable or unparseable); recording {FALLBACK_ZISK_VERSION}"
+        );
+        FALLBACK_ZISK_VERSION.to_string()
+    })
+}
+
 fn to_air_cost(z: &ZiskAirCost) -> AirCost {
     AirCost {
         main: z.main,
@@ -70,11 +111,15 @@ pub fn run_bench(
     out: &str,
     mode: &str,
     stress_dir: Option<&str>,
+    strict_elf: bool,
 ) -> eyre::Result<()> {
-    if ethrex_guest_program::ZKVM_ZISK_PROGRAM_ELF.is_empty() {
-        eprintln!(
-            "warning: guest ELF is empty — build with `--features zisk-elf` or every workload will fail (guest_output_ok=false)"
-        );
+    let elf_empty = ethrex_guest_program::ZKVM_ZISK_PROGRAM_ELF.is_empty();
+    if elf_empty {
+        let msg = "guest ELF is empty — build with `--features zisk-elf` or every workload will fail (guest_output_ok=false)";
+        if strict_elf {
+            eyre::bail!("{msg}");
+        }
+        eprintln!("warning: {msg}");
     }
 
     let run_mode = RunMode::parse(mode)?;
@@ -145,15 +190,33 @@ pub fn run_bench(
 
     let report = Report {
         meta: Meta {
-            zisk_version: "v0.16.1".into(),
+            zisk_version: detect_zisk_version(),
             guest_elf_sha256: guest_elf_sha256(),
             generated_by: "ethrex-zkevm-bench".into(),
             git_commit: std::env::var("GIT_COMMIT").ok(),
         },
         workloads: results,
     };
+    let ok_count = report
+        .workloads
+        .iter()
+        .filter(|w| w.guest_output_ok)
+        .count();
     report.write_json(out)?;
-    println!("wrote {out} ({} workloads)", report.workloads.len());
+    println!(
+        "wrote {out} ({} workloads, {ok_count} ok)",
+        report.workloads.len()
+    );
+
+    // An empty ELF makes every workload fail; the report is still written for
+    // inspection, but we exit non-zero so it can't be mistaken for a valid
+    // regression signal (e.g. when consumed by CI).
+    if elf_empty && ok_count == 0 {
+        eyre::bail!(
+            "guest ELF was empty and no workload produced valid output; \
+             report at {out} is not a usable regression signal (rebuild with `--features zisk-elf`)"
+        );
+    }
     Ok(())
 }
 

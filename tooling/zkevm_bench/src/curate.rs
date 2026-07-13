@@ -97,11 +97,14 @@ fn curate_one(
     })
 }
 
-/// Scans `cache_dir` for ethrex-replay `cache_mainnet_*.json` files (other
-/// files — e.g. polygon/amoy caches or `.gz` archives — are skipped) and
-/// writes a per-block metric table to `out` as pretty JSON. With `ziskemu`,
-/// also runs each block through `ZiskBackend::execute_profiled` and records
-/// the AIR-cost breakdown.
+/// Scans `cache_dir` for ethrex-replay `cache_mainnet_*` caches (both `.json`
+/// and gzipped `.json.gz`; `load_cache` decodes either) and writes a per-block
+/// metric table to `out` as pretty JSON. Non-mainnet caches (e.g. polygon/amoy)
+/// are skipped. With `ziskemu`, also runs each block through
+/// `ZiskBackend::execute_profiled` and records the AIR-cost breakdown.
+///
+/// Errors if the scan produces no rows, so pointing `curate` at a directory
+/// with no matching caches fails loudly instead of writing an empty report.
 pub fn run_curate(cache_dir: &str, out: &str, ziskemu: bool) -> eyre::Result<()> {
     let backend = ZiskBackend::new();
     let mut rows = Vec::new();
@@ -112,7 +115,9 @@ pub fn run_curate(cache_dir: &str, out: &str, ziskemu: bool) -> eyre::Result<()>
         let Some(name) = path.file_name().map(|n| n.to_string_lossy().into_owned()) else {
             continue;
         };
-        if !name.starts_with("cache_mainnet_") || !name.ends_with(".json") {
+        if !name.starts_with("cache_mainnet_")
+            || !(name.ends_with(".json") || name.ends_with(".json.gz"))
+        {
             continue;
         }
 
@@ -126,6 +131,13 @@ pub fn run_curate(cache_dir: &str, out: &str, ziskemu: bool) -> eyre::Result<()>
                 skipped += 1;
             }
         }
+    }
+
+    if rows.is_empty() {
+        eyre::bail!(
+            "no cache_mainnet_* caches scanned in {cache_dir} ({skipped} skipped); \
+             expected ethrex-replay `cache_mainnet_*.json` or `.json.gz` files"
+        );
     }
 
     std::fs::write(out, serde_json::to_string_pretty(&rows)?)?;
