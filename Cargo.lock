@@ -3145,18 +3145,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d7a1e2f27636f116493b8b860f5546edb47c8d8f8ea73e1d2a20be88e28d1fea"
 
 [[package]]
-name = "datatest-stable"
-version = "0.2.10"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "833306ca7eec4d95844e65f0d7502db43888c5c1006c6c517e8cf51a27d15431"
-dependencies = [
- "camino",
- "fancy-regex",
- "libtest-mimic",
- "walkdir",
-]
-
-[[package]]
 name = "debugid"
 version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3511,29 +3499,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "ef_tests-blockchain"
-version = "20.0.0"
-dependencies = [
- "bytes",
- "datatest-stable",
- "ethrex-blockchain",
- "ethrex-common",
- "ethrex-crypto",
- "ethrex-guest-program",
- "ethrex-prover",
- "ethrex-rlp",
- "ethrex-storage",
- "ethrex-vm",
- "hex",
- "lazy_static",
- "rayon",
- "regex",
- "serde",
- "serde_json",
- "tokio",
-]
-
-[[package]]
 name = "either"
 version = "1.15.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3749,12 +3714,6 @@ name = "error-code"
 version = "3.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "dea2df4cf52843e0452895c455a1a2cfbb842a1e7329671acf418fdc53ed4c59"
-
-[[package]]
-name = "escape8259"
-version = "0.5.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5692dd7b5a1978a5aeb0ce83b7655c58ca8efdcb79d21036ea249da95afec2c6"
 
 [[package]]
 name = "eth-keystore"
@@ -4559,28 +4518,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "ethrex-zkevm-bench"
-version = "20.0.0"
-dependencies = [
- "bytes",
- "clap",
- "ef_tests-blockchain",
- "ethrex-common",
- "ethrex-config",
- "ethrex-guest-program",
- "ethrex-prover",
- "ethrex-rlp",
- "eyre",
- "flate2",
- "hex",
- "serde",
- "serde_json",
- "sha2",
- "tokio",
- "toml",
-]
-
-[[package]]
 name = "eventsource-stream"
 version = "0.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4618,17 +4555,6 @@ name = "fallible-streaming-iterator"
 version = "0.1.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7360491ce676a36bf9bb3c56c1aa791658183a54d2744120f27285738d90465a"
-
-[[package]]
-name = "fancy-regex"
-version = "0.14.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6e24cb5a94bcae1e5408b0effca5cd7172ea3c5755049c5f3af4cd283a165298"
-dependencies = [
- "bit-set",
- "regex-automata",
- "regex-syntax",
-]
 
 [[package]]
 name = "fastbloom"
@@ -6788,18 +6714,6 @@ dependencies = [
  "libssz",
  "libssz-merkle",
  "smallvec",
-]
-
-[[package]]
-name = "libtest-mimic"
-version = "0.8.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "14e6ba06f0ade6e504aff834d7c34298e5155c6baca353cc6a4aaff2f9fd7f33"
-dependencies = [
- "anstream",
- "anstyle",
- "clap",
- "escape8259",
 ]
 
 [[package]]

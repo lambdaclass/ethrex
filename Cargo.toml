@@ -25,10 +25,15 @@ members = [
   "crates/vm/levm/runner",
   "crates/common/config",
   "tooling/repl",
-  "tooling/zkevm_bench",
   "test",
 ]
-exclude = ["crates/vm/levm/bench/revm_comparison"]
+# zkevm_bench is a standalone workspace: it hard-depends on zisk (lib-c),
+# which is x86-64-only (nasm + x86 asm) and cannot build on arm/macos. Keeping
+# it out of the root workspace keeps default builds, lint and Docker portable.
+exclude = [
+  "crates/vm/levm/bench/revm_comparison",
+  "tooling/zkevm_bench",
+]
 resolver = "2"
 
 default-members = ["cmd/ethrex"]

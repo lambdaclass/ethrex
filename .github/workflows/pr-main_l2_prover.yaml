@@ -97,6 +97,20 @@ jobs:
         run: |
           git diff --exit-code -- crates/guest-program/bin/${{ matrix.backend }}/Cargo.lock
 
+      # zkevm_bench is a standalone workspace excluded from the root workspace
+      # (it hard-depends on x86-64-only zisk), so it must be linted explicitly.
+      # --all-targets compiles the smoke test without running it (the test needs
+      # a full guest ELF, which CI skips). --locked doubles as a lockfile check.
+      - name: Clippy zkevm_bench
+        if: matrix.backend == 'zisk'
+        run: |
+          cargo clippy --locked --manifest-path tooling/zkevm_bench/Cargo.toml --all-targets
+
+      - name: Check zkevm_bench Cargo.lock modified but not committed
+        if: matrix.backend == 'zisk'
+        run: |
+          git diff --exit-code -- tooling/zkevm_bench/Cargo.lock
+
   lint_exec:
     name: Lint exec backend
     needs: detect-changes
