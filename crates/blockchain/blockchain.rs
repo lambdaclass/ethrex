@@ -3950,7 +3950,8 @@ fn flush_storage_buffer(
     // path buffers per-tx updates, so the same slot can appear more than once
     // (written by successive txs in the block) and the last write must win, as it
     // does in the per-slot insert path. A stable sort keeps equal keys in arrival
-    // (tx) order so the final insert below applies the latest value last.
+    // (tx) order so the final insert below applies the latest value last. Use
+    // `sort_by` (stable), NOT `sort_unstable_by`, or duplicate slots regress.
     if slots.len() >= STREAM_STORAGE_PREFETCH_THRESHOLD {
         slots.sort_by(|a, b| a.0.cmp(&b.0));
         let paths: Vec<Nibbles> = slots

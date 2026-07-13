@@ -933,9 +933,11 @@ fn install_prefetch_targets(
             match slot {
                 NodeRef::Hash(hash @ NodeHash::Hashed(_)) => {
                     let hash = *hash;
-                    let bytes = results
-                        .next()
-                        .expect("prefetch_sorted: fetch/result count mismatch")?;
+                    let bytes = results.next().ok_or_else(|| {
+                        TrieError::DbError(anyhow::anyhow!(
+                            "prefetch_sorted: multi_get returned fewer results than requested"
+                        ))
+                    })??;
                     if let Some(bytes) = bytes.filter(|b| !b.is_empty()) {
                         let decoded = Node::decode(&bytes).map_err(TrieError::RLPDecode)?;
                         *slot = NodeRef::Node(Arc::new(decoded), OnceLock::from(hash));
