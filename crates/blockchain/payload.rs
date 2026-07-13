@@ -249,6 +249,10 @@ pub struct PayloadBuildContext {
     pub payload_size: u64,
     /// Block Access List for EIP-7928
     pub block_access_list: Option<BlockAccessList>,
+    /// Set when building from an explicit transaction list (`testing_buildBlockV1`),
+    /// which carries no blob sidecars. Lets the blob path derive blob gas from the
+    /// tx's versioned hashes instead of a mempool bundle.
+    pub explicit_build: bool,
 }
 
 impl PayloadBuildContext {
@@ -301,6 +305,7 @@ impl PayloadBuildContext {
             account_updates: Vec::new(),
             payload_size,
             block_access_list: None,
+            explicit_build: false,
         })
     }
 
@@ -476,8 +481,32 @@ impl Blockchain {
         Ok(res)
     }
 
-    /// Completes the payload building process, return the block value
+    /// Completes the payload building process, return the block value.
+    /// Transactions are pulled from the mempool.
     pub fn build_payload(&self, payload: Block) -> Result<PayloadBuildResult, ChainError> {
+        self.build_payload_inner(payload, None)
+    }
+
+    /// Builds a payload from an explicit, ordered list of transactions instead of the
+    /// mempool. Used by `testing_buildBlockV1`. Every transaction must execute
+    /// successfully and is included in the given order; the first failing
+    /// transaction aborts the build (matching geth's `BuildTestingPayload`).
+    pub fn build_payload_with_transactions(
+        &self,
+        payload: Block,
+        transactions: Vec<Transaction>,
+    ) -> Result<PayloadBuildResult, ChainError> {
+        self.build_payload_inner(payload, Some(transactions))
+    }
+
+    /// Shared block-building pipeline. When `explicit_transactions` is `None` the
+    /// payload is filled from the mempool; otherwise the provided transactions are
+    /// applied verbatim.
+    fn build_payload_inner(
+        &self,
+        payload: Block,
+        explicit_transactions: Option<Vec<Transaction>>,
+    ) -> Result<PayloadBuildResult, ChainError> {
         let since = Instant::now();
 
         debug!("Building payload");
@@ -487,7 +516,11 @@ impl Blockchain {
         if let BlockchainType::L1 = self.options.r#type {
             self.apply_system_operations(&mut context)?;
         }
-        self.fill_transactions(&mut context)?;
+        context.explicit_build = explicit_transactions.is_some();
+        match explicit_transactions {
+            None => self.fill_transactions(&mut context)?,
+            Some(transactions) => self.fill_explicit_transactions(&mut context, transactions)?,
+        }
         // EIP-7928: Post-tx phase uses index n+1 for both requests and withdrawals.
         // Order must match geth: requests (system calls) BEFORE withdrawals.
         if context
@@ -686,10 +719,86 @@ impl Blockchain {
                 continue;
             }
 
+            // EIP-8141 fork gating: drop frame transactions that reached the payload
+            // builder before Hegota has activated. These must never be included in a
+            // block until the fork is live.
+            if head_tx.tx_type() == TxType::Frame
+                && !chain_config.is_hegota_activated(context.payload.header.timestamp)
+            {
+                debug!("Skipping frame transaction before Hegota fork: {}", tx_hash);
+                txs.pop();
+                self.remove_transaction_from_pool(&tx_hash)?;
+                continue;
+            }
+
+            // EIP-8141 expiry (spec commit 0b197156): drop frame txs whose
+            // expiry deadline is behind the block being built. Deterministic
+            // for this payload timestamp, so remove from the pool as well.
+            if let Transaction::FrameTransaction(frame_tx) = &*head_tx.tx
+                && frame_tx
+                    .expiry_deadline()
+                    .is_some_and(|deadline| deadline < context.payload.header.timestamp)
+            {
+                debug!("Skipping expired frame transaction: {}", tx_hash);
+                txs.pop();
+                self.remove_transaction_from_pool(&tx_hash)?;
+                continue;
+            }
+
+            let is_frame = head_tx.tx_type() == TxType::Frame;
+
             match self.apply_tx_to_payload(head_tx, context) {
                 Ok(()) => txs.shift()?,
-                Err(_) => txs.pop(),
+                Err(e) => {
+                    // Frame-tx failures are deterministic (signatures bind the
+                    // whole tx) EXCEPT nonce mismatches, which are transient
+                    // queue-ordering artifacts — keep those pooled for a later
+                    // block, mirroring how regular txs are treated.
+                    if is_frame && !is_nonce_mismatch(&e) {
+                        self.remove_transaction_from_pool(&tx_hash)?;
+                    }
+                    txs.pop()
+                }
             }
+        }
+        Ok(())
+    }
+
+    /// Applies an explicit, ordered list of transactions to the payload, bypassing
+    /// the mempool. Used by `testing_buildBlockV1`. Every transaction must execute
+    /// successfully; the first failure aborts the build.
+    ///
+    /// Blob (type-3) transactions carry no sidecar in the canonical encoding accepted
+    /// here, so the resulting blobs bundle is empty; blob gas is still accounted from
+    /// the tx's versioned hashes (see `apply_blob_transaction`).
+    fn fill_explicit_transactions(
+        &self,
+        context: &mut PayloadBuildContext,
+        transactions: Vec<Transaction>,
+    ) -> Result<(), ChainError> {
+        let base_fee = context.base_fee_per_gas();
+        for tx in transactions {
+            // L1 blocks must not contain L2-only transaction types (`FeeToken`
+            // 0x7d, `Privileged` 0x7e). Block import rejects them too
+            // (`validate_l1_transaction_types`); reject here so an explicit-tx
+            // build never produces a payload no other L1 client would accept.
+            if let BlockchainType::L1 = self.options.r#type
+                && tx.tx_type().is_l2_only()
+            {
+                return Err(ChainError::Custom(format!(
+                    "transaction type {:#x} is not valid on L1",
+                    tx.tx_type() as u8
+                )));
+            }
+            let sender = tx.sender(&NativeCrypto).map_err(|err| {
+                ChainError::Custom(format!("invalid transaction signature: {err}"))
+            })?;
+            let tip = tx.effective_gas_tip(base_fee).unwrap_or_default();
+            let head = HeadTransaction {
+                tx: MempoolTransaction::new(tx, sender),
+                tip,
+            };
+            self.apply_tx_to_payload(head, context)?;
         }
         Ok(())
     }
@@ -796,13 +905,22 @@ impl Blockchain {
         // Fetch blobs bundle
         let tx_hash = head.tx.hash(&NativeCrypto);
         let max_blob_number_per_block = self.effective_max_blobs(context);
-        let Some(blobs_bundle) = self.mempool.get_blobs_bundle(tx_hash)? else {
-            // No blob tx should enter the mempool without its blobs bundle so this is an internal error
-            return Err(
-                StoreError::Custom(format!("No blobs bundle found for blob tx {tx_hash}")).into(),
-            );
+        // The blob count drives blob-gas accounting. Normally it comes from the
+        // mempool sidecar; for an explicit build (`testing_buildBlockV1`) there is
+        // no sidecar, so derive it from the tx's versioned hashes and leave the
+        // blobs bundle empty (the EVM only needs the hashes, which are in the tx).
+        let (blob_count, bundle) = match self.mempool.get_blobs_bundle(tx_hash)? {
+            Some(blobs_bundle) => (blobs_bundle.blobs.len(), Some(blobs_bundle)),
+            None if context.explicit_build => ((**head).blob_versioned_hashes().len(), None),
+            None => {
+                // No blob tx should enter the mempool without its blobs bundle so this is an internal error
+                return Err(StoreError::Custom(format!(
+                    "No blobs bundle found for blob tx {tx_hash}"
+                ))
+                .into());
+            }
         };
-        if context.blobs_bundle.blobs.len() + blobs_bundle.blobs.len() > max_blob_number_per_block {
+        if context.blobs_bundle.blobs.len() + blob_count > max_blob_number_per_block {
             // This error will only be used for debug tracing
             return Err(EvmError::Custom("max data blobs reached".to_string()).into());
         };
@@ -811,8 +929,10 @@ impl Blockchain {
         // Update context with blob data
         let prev_blob_gas = context.payload.header.blob_gas_used.unwrap_or_default();
         context.payload.header.blob_gas_used =
-            Some(prev_blob_gas + (blobs_bundle.blobs.len() * GAS_PER_BLOB as usize) as u64);
-        context.blobs_bundle += blobs_bundle;
+            Some(prev_blob_gas + (blob_count * GAS_PER_BLOB as usize) as u64);
+        if let Some(blobs_bundle) = bundle {
+            context.blobs_bundle += blobs_bundle;
+        }
         Ok(receipt)
     }
 
@@ -883,6 +1003,20 @@ impl Blockchain {
         context.payload.header.logs_bloom = bloom_from_logs(&logs, &NativeCrypto);
         Ok(())
     }
+}
+
+/// Returns true if `e` represents a transaction nonce mismatch.
+///
+/// The VM surfaces this as `TxValidationError::NonceMismatch` which gets
+/// stringified through `EvmError::Transaction(String)` →
+/// `ChainError::InvalidBlock(InvalidBlockError::InvalidTransaction(String))`.
+/// There is no typed variant to match at the `ChainError` level, so we detect
+/// it by the stable Display substring. Used to keep gapped-nonce frame txs
+/// pooled instead of evicting them: a nonce gap is transient because the
+/// `TransactionQueue` feeds the lowest pooled nonce without comparing to the
+/// account nonce, so the tx becomes valid once earlier nonces are included.
+fn is_nonce_mismatch(e: &ChainError) -> bool {
+    e.to_string().contains("Nonce mismatch")
 }
 
 /// Runs a plain (non blob) transaction, updates the gas count and returns the receipt
@@ -1106,5 +1240,40 @@ impl Ord for HeadTransaction {
 impl PartialOrd for HeadTransaction {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         Some(self.cmp(other))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn nonce_mismatch_detected_from_chain_error() {
+        // Build the ChainError through the REAL production conversion path so a
+        // change to the TxValidationError/VMError Display strings breaks this
+        // test instead of silently breaking `is_nonce_mismatch` (which keys off
+        // the "Nonce mismatch" substring). Path:
+        // TxValidationError::NonceMismatch -> VMError -> EvmError::Transaction
+        // (via From, which stringifies) -> ChainError::InvalidBlock.
+        use ethrex_levm::errors::{TxValidationError, VMError};
+        let nonce_err: ChainError =
+            EvmError::from(VMError::TxValidation(TxValidationError::NonceMismatch {
+                expected: 5,
+                actual: 7,
+            }))
+            .into();
+        assert!(
+            is_nonce_mismatch(&nonce_err),
+            "is_nonce_mismatch must match the real NonceMismatch Display; got: {nonce_err}"
+        );
+        // A different validation error must NOT match, also via the real path.
+        let other: ChainError = EvmError::from(VMError::TxValidation(
+            TxValidationError::InsufficientAccountFunds,
+        ))
+        .into();
+        assert!(
+            !is_nonce_mismatch(&other),
+            "is_nonce_mismatch must not match unrelated errors; got: {other}"
+        );
     }
 }
