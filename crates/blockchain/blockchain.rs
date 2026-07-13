@@ -3256,13 +3256,20 @@ impl Blockchain {
             return Err(MempoolError::TxMaxInitCodeSizeError);
         }
 
-        // EIP-7825 raw gas-limit cap applies from Osaka until Amsterdam, where
-        // EIP-8037 replaces it (excess gas_limit becomes state-gas reservoir and
-        // only the intrinsic REGULAR dimension is capped — enforced by execution
-        // and mirrored by `transaction_intrinsic_gas` above). Ordinal fork check
-        // to match execution's gating on chains without an explicit amsterdamTime.
+        // EIP-7825 raw gas-limit cap (Osaka until Amsterdam, where EIP-8037's
+        // reservoir replaces it). This MUST stay field-gated (`!is_amsterdam_activated`)
+        // to match the block-IMPORT gate (`validate_block_pre_execution` ->
+        // `verify_transaction_max_gas_limit`, crates/common/validation.rs), which is
+        // also field-gated. On a chain running a post-Amsterdam fork WITHOUT an
+        // explicit `amsterdamTime` (the Hegotá devnet), an ordinal check here would
+        // admit >POST_OSAKA_GAS_LIMIT_CAP reservoir txs that the field-gated import
+        // check then rejects — the builder would produce blocks every node fails at
+        // import (network-wide proposal failure). Admission must not out-loosen
+        // import. (Aligning ALL Amsterdam field-vs-ordinal gates — admission,
+        // import, execution — to enable EIP-8037 reservoir txs on the devnet is a
+        // separate consensus-scope change; tracked, not done here.)
         if config.is_osaka_activated(header.timestamp)
-            && config.fork(header.timestamp) < Fork::Amsterdam
+            && !config.is_amsterdam_activated(header.timestamp)
             && tx.gas_limit() > POST_OSAKA_GAS_LIMIT_CAP
         {
             // https://eips.ethereum.org/EIPS/eip-7825
