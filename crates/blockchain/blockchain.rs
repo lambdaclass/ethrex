@@ -137,6 +137,18 @@ const STORAGE_PREFETCH_THRESHOLD: usize = 64;
 // ~1/16 of the block's touched accounts, so the threshold is scaled down like
 // the storage shard path.
 const STATE_SHARD_PREFETCH_THRESHOLD: usize = 4;
+// Streaming merkleizer (`handle_subtrie`): a single storage trie's touched slots
+// are sharded across the 16 workers by key nibble, so each worker holds only
+// ~1/16 of them. The prefetch gate is therefore scaled down from
+// `STORAGE_PREFETCH_THRESHOLD` by 16 (same reasoning as
+// `STATE_SHARD_PREFETCH_THRESHOLD`): a trie with ~64 total touched slots then
+// clears the gate on each of its shards. Used only on the BAL-less / pre-Amsterdam
+// streaming path.
+const STREAM_STORAGE_PREFETCH_THRESHOLD: usize = 4;
+// Cap on the per-worker, per-trie slot buffer before an opportunistic mid-routing
+// flush (one sorted `prefetch_sorted` + the inserts). Bounds transient memory for
+// very heavy single-account blocks; smaller buffers just flush once at RoutingDone.
+const STREAM_STORAGE_FLUSH_BATCH: usize = 1024;
 
 /// Background thread for dropping large tree structures off the critical path.
 /// Accepts any `Send` value and drops it on a dedicated thread, avoiding
@@ -3912,6 +3924,47 @@ fn get_or_open_storage_trie<'a>(
     }
 }
 
+/// Flush one storage trie's buffered slots (streaming merkleizer path). Opens the
+/// trie if needed, breadth-first prefetches the touched nodes in one batch when
+/// the slice clears the threshold, then applies the inserts/removes. Warming-only:
+/// `prefetch_sorted` installs decoded nodes hash-preservingly, so the resulting
+/// storage root is byte-identical to the per-slot path.
+fn flush_storage_buffer(
+    storage_tries: &mut FxHashMap<H256, Trie>,
+    storage: &Store,
+    parent_state_root: H256,
+    prefix: H256,
+    storage_root: H256,
+    mut slots: Vec<(H256, U256)>,
+) -> Result<(), StoreError> {
+    let trie = get_or_open_storage_trie(
+        storage_tries,
+        storage,
+        parent_state_root,
+        prefix,
+        storage_root,
+    )?;
+    // `prefetch_sorted` requires ascending paths; slots arrive in routing order.
+    // H256 sorts bytewise, matching nibble order, so sorting by key gives the
+    // order `Nibbles::from_bytes` needs.
+    if slots.len() >= STREAM_STORAGE_PREFETCH_THRESHOLD {
+        slots.sort_unstable_by(|a, b| a.0.cmp(&b.0));
+        let paths: Vec<Nibbles> = slots
+            .iter()
+            .map(|(k, _)| Nibbles::from_bytes(k.as_bytes()))
+            .collect();
+        trie.prefetch_sorted(&paths)?;
+    }
+    for (hashed_key, value) in slots {
+        if value.is_zero() {
+            trie.remove(hashed_key.as_bytes())?;
+        } else {
+            trie.insert(hashed_key.as_bytes().to_vec(), value.encode_to_vec())?;
+        }
+    }
+    Ok(())
+}
+
 fn handle_subtrie(
     storage: Store,
     rx: cb::Receiver<WorkerRequest>,
@@ -3931,6 +3984,10 @@ fn handle_subtrie(
     let mut pre_collected_state: Vec<TrieNode> = vec![];
     let mut storage_tries: FxHashMap<H256, Trie> = Default::default();
     let mut pre_collected_storage: FxHashMap<H256, Vec<TrieNode>> = Default::default();
+    // Per storage trie, slots buffered until they can be flushed as a prefetched
+    // batch (see `flush_storage_buffer`). Value is (storage_root, pending slots).
+    // Cleared on delete; fully drained before storage collection begins.
+    let mut storage_buffer: FxHashMap<H256, (H256, Vec<(H256, U256)>)> = Default::default();
 
     // Held until collection finishes to keep cross-worker channels open.
     let mut worker_senders: Option<Vec<cb::Sender<WorkerRequest>>> = Some(worker_senders);
@@ -4075,8 +4132,11 @@ fn handle_subtrie(
                 }
 
                 if removed || removed_storage {
-                    // Delete locally + send DeleteStorage to other 15 workers
+                    // Delete locally + send DeleteStorage to other 15 workers.
+                    // Drop any slots buffered for this trie: the reset wipes them,
+                    // exactly as the per-slot path's inserts would have been.
                     pre_collected_storage.remove(&prefix);
+                    storage_buffer.remove(&prefix);
                     storage_tries.insert(prefix, Trie::new_temp());
                     for (i, tx) in senders.iter().enumerate() {
                         if i as u8 != index {
@@ -4106,18 +4166,23 @@ fn handle_subtrie(
                         let bucket = hashed_key.as_fixed_bytes()[0] >> 4;
                         *expected_shards.entry(prefix).or_insert(0u16) |= 1 << bucket;
                         if bucket == index {
-                            // Local storage: insert directly
-                            let trie = get_or_open_storage_trie(
-                                &mut storage_tries,
-                                &storage,
-                                parent_state_root,
-                                prefix,
-                                storage_root,
-                            )?;
-                            if value.is_zero() {
-                                trie.remove(hashed_key.as_bytes())?;
-                            } else {
-                                trie.insert(hashed_key.as_bytes().to_vec(), value.encode_to_vec())?;
+                            // Local storage: buffer for a prefetched batch flush.
+                            let buf = storage_buffer
+                                .entry(prefix)
+                                .or_insert_with(|| (storage_root, Vec::new()));
+                            buf.1.push((hashed_key, value));
+                            if buf.1.len() >= STREAM_STORAGE_FLUSH_BATCH {
+                                let (root, slots) = storage_buffer
+                                    .remove(&prefix)
+                                    .expect("buffer just inserted");
+                                flush_storage_buffer(
+                                    &mut storage_tries,
+                                    &storage,
+                                    parent_state_root,
+                                    prefix,
+                                    root,
+                                    slots,
+                                )?;
                             }
                         } else {
                             senders[bucket as usize]
@@ -4142,22 +4207,30 @@ fn handle_subtrie(
                 value,
                 storage_root,
             } => {
-                let trie = get_or_open_storage_trie(
-                    &mut storage_tries,
-                    &storage,
-                    parent_state_root,
-                    prefix,
-                    storage_root,
-                )?;
-                if value.is_zero() {
-                    trie.remove(key.as_bytes())?;
-                } else {
-                    trie.insert(key.as_bytes().to_vec(), value.encode_to_vec())?;
+                // Buffer for a prefetched batch flush (see local-storage path).
+                let buf = storage_buffer
+                    .entry(prefix)
+                    .or_insert_with(|| (storage_root, Vec::new()));
+                buf.1.push((key, value));
+                if buf.1.len() >= STREAM_STORAGE_FLUSH_BATCH {
+                    let (root, slots) = storage_buffer
+                        .remove(&prefix)
+                        .expect("buffer just inserted");
+                    flush_storage_buffer(
+                        &mut storage_tries,
+                        &storage,
+                        parent_state_root,
+                        prefix,
+                        root,
+                        slots,
+                    )?;
                 }
                 dirty = true;
             }
             WorkerRequest::DeleteStorage(prefix) => {
+                // Reset wipes any buffered slots for this trie (see ProcessAccount).
                 pre_collected_storage.remove(&prefix);
+                storage_buffer.remove(&prefix);
                 storage_tries.insert(prefix, Trie::new_temp());
                 dirty = true;
             }
@@ -4175,6 +4248,19 @@ fn handle_subtrie(
             WorkerRequest::RoutingDone { from } => {
                 routing_done_mask |= 1u16 << from;
                 if routing_done_mask == 0xFFFF && !collecting_storages && !routing_complete {
+                    // Routing is done: no more slots will arrive, so flush every
+                    // remaining buffer into its storage trie before draining for
+                    // collection. Missing this would silently drop buffered slots.
+                    for (prefix, (root, slots)) in storage_buffer.drain() {
+                        flush_storage_buffer(
+                            &mut storage_tries,
+                            &storage,
+                            parent_state_root,
+                            prefix,
+                            root,
+                            slots,
+                        )?;
+                    }
                     collecting_storages = true;
                     routing_complete = true;
                     storage_to_collect = storage_tries.drain().collect();
