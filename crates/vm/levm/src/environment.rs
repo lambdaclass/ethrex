@@ -73,6 +73,10 @@ pub struct EVMConfig {
     /// else derived from the block timestamp once the `derived_slot_time` knob is
     /// active, else 0 — see [`ChainConfig::effective_slot_number`].
     pub slot_number: U256,
+    /// Whether the resolved-payer TXPARAM knob is active for this block, gating
+    /// the EIP-8141 frame-tx opcode `TXPARAM(0x11)`. Block-invariant; derived
+    /// from [`ChainConfig::payer_txparam_time`] vs the block timestamp.
+    pub payer_txparam_active: bool,
 }
 
 impl EVMConfig {
@@ -81,6 +85,7 @@ impl EVMConfig {
             fork,
             blob_schedule,
             slot_number: U256::zero(),
+            payer_txparam_active: false,
         }
     }
 
@@ -99,6 +104,7 @@ impl EVMConfig {
             fork,
             blob_schedule,
             slot_number,
+            payer_txparam_active: chain_config.is_payer_txparam_activated(block_header.timestamp),
         }
     }
 
@@ -153,6 +159,7 @@ impl Default for EVMConfig {
             fork,
             blob_schedule: Self::canonical_values(fork),
             slot_number: U256::zero(),
+            payer_txparam_active: false,
         }
     }
 }
