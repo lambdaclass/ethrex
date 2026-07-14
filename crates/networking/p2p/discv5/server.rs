@@ -1,3 +1,4 @@
+use crate::discovery::lookup::IterativeLookup;
 use crate::discv5::messages::Message;
 use crate::{
     discv5::messages::Packet,
@@ -12,6 +13,7 @@ use std::{
     num::NonZero,
     time::{Duration, Instant},
 };
+use tracing::trace;
 
 /// Maximum number of entries in the per-IP WHOAREYOU rate limit cache.
 pub const MAX_WHOAREYOU_RATE_LIMIT_ENTRIES: usize = 10_000;
@@ -21,6 +23,17 @@ const IP_VOTE_WINDOW: Duration = Duration::from_secs(300);
 const IP_VOTE_THRESHOLD: usize = 3;
 /// Timeout for pending messages awaiting WhoAreYou response.
 const MESSAGE_CACHE_TIMEOUT: Duration = Duration::from_secs(2);
+/// Max age of a `session_ips` entry before it is evicted. Bounds the map: it is inserted
+/// per discv5 handshake and (absent this) was never removed for nodes we don't keep as peers.
+const SESSION_TTL: Duration = Duration::from_secs(3600);
+
+/// Source IP a discv5 session was established from, paired with when it was recorded so stale
+/// entries can be evicted (see `SESSION_TTL`).
+#[derive(Debug, Clone)]
+pub struct SessionSource {
+    pub ip: IpAddr,
+    pub established_at: Instant,
+}
 
 /// Discv5-specific state held within the unified DiscoveryServer.
 #[derive(Debug)]
@@ -38,14 +51,17 @@ pub struct Discv5State {
     pub whoareyou_global_count: u32,
     /// Start of the current global rate limit window.
     pub whoareyou_global_window_start: Instant,
-    /// Tracks the source IP that each session was established from.
-    pub session_ips: FxHashMap<H256, IpAddr>,
+    /// Tracks the source IP that each session was established from, with the insertion time
+    /// so stale entries can be evicted (see `SESSION_TTL`).
+    pub session_ips: FxHashMap<H256, SessionSource>,
     /// Collects recipient_addr IPs from PONGs for external IP detection via majority voting.
     pub ip_votes: FxHashMap<IpAddr, FxHashSet<H256>>,
     /// When the current IP voting period started. None if no votes received yet.
     pub ip_vote_period_start: Option<Instant>,
     /// Whether the first (fast) voting round has completed.
     pub first_ip_vote_round_completed: bool,
+    /// Currently active iterative lookups.
+    pub active_lookups: Vec<IterativeLookup>,
 }
 
 impl Default for Discv5State {
@@ -64,6 +80,7 @@ impl Default for Discv5State {
             ip_votes: Default::default(),
             ip_vote_period_start: None,
             first_ip_vote_round_completed: false,
+            active_lookups: Vec::new(),
         }
     }
 }
@@ -87,15 +104,35 @@ impl Discv5State {
     pub fn cleanup_stale_entries(&mut self) -> Option<IpAddr> {
         let now = Instant::now();
 
+        let before_messages = self.pending_by_nonce.len();
         self.pending_by_nonce
             .retain(|_nonce, (_node, _message, timestamp)| {
                 now.duration_since(*timestamp) < MESSAGE_CACHE_TIMEOUT
             });
+        let removed_messages = before_messages - self.pending_by_nonce.len();
 
+        let before_challenges = self.pending_challenges.len();
         self.pending_challenges
             .retain(|_src_id, (_challenge_data, timestamp, _raw)| {
                 now.duration_since(*timestamp) < MESSAGE_CACHE_TIMEOUT
             });
+        let removed_challenges = before_challenges - self.pending_challenges.len();
+
+        let before_sessions = self.session_ips.len();
+        self.session_ips
+            .retain(|_node_id, source| now.duration_since(source.established_at) < SESSION_TTL);
+        let removed_sessions = before_sessions - self.session_ips.len();
+
+        let total_removed = removed_messages + removed_challenges + removed_sessions;
+        if total_removed > 0 {
+            trace!(
+                protocol = "discv5",
+                "Cleaned up {} stale entries ({} messages, {} challenges)",
+                total_removed,
+                removed_messages,
+                removed_challenges,
+            );
+        }
 
         if let Some(start) = self.ip_vote_period_start
             && now.duration_since(start) >= IP_VOTE_WINDOW

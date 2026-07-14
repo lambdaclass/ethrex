@@ -13,6 +13,20 @@ use ethrex_levm::{
     vm::{VM, VMType},
 };
 use std::str::FromStr;
+use std::sync::Arc;
+
+thread_local! {
+    /// Per-OS-thread merkleization pool, lazily built on first use. See the
+    /// matching helper in `tooling/ef_tests/blockchain/test_runner.rs` for the
+    /// reasoning; the merkle protocol requires exclusive ownership of its pool
+    /// per concurrent caller, and keying by `thread_local!` provides that.
+    static MERKLE_POOL: std::cell::OnceCell<Arc<rayon::ThreadPool>> =
+        const { std::cell::OnceCell::new() };
+}
+
+fn merkle_pool() -> Arc<rayon::ThreadPool> {
+    MERKLE_POOL.with(|cell| cell.get_or_init(Blockchain::build_merkle_pool).clone())
+}
 
 use crate::modules::types::TestCase;
 use crate::modules::{
@@ -23,7 +37,26 @@ use crate::modules::{
 };
 
 pub async fn run_tests(tests: Vec<Test>) -> Result<(), RunnerError> {
+    // Fusaka EIPs that block-mode supports; mirrors the allowlist in runner.rs.
+    // TODO: drop once all Fusaka EIPs land.
+    let fusaka_eips_to_test: Vec<&str> =
+        vec!["eip-7594", "eip-7939", "eip-7918", "eip-7892", "eip-7883"];
+
     for test in &tests {
+        // Apply the same gating runner.rs uses so we don't unconditionally run
+        // every Osaka fixture in block mode. Fixtures without `_info` (e.g.
+        // goevmlab-generated) bypass the filter — we can't read the EIP list,
+        // so silently dropping them would be wrong.
+        if test.path.to_str().unwrap().contains("osaka")
+            && let Some(spec) = test
+                ._info
+                .as_ref()
+                .and_then(|info| info.reference_spec.as_deref())
+            && !fusaka_eips_to_test.iter().any(|eip| spec.contains(eip))
+        {
+            continue;
+        }
+
         println!("Running test group: {}", test.name);
         for test_case in &test.test_cases {
             let res = run_test(test, test_case).await;
@@ -43,7 +76,7 @@ pub async fn run_test(test: &Test, test_case: &TestCase) -> Result<(), RunnerErr
     let tracer = LevmCallTracer::disabled();
 
     let (mut db, initial_block_hash, store, _genesis) =
-        load_initial_state(test, &test_case.fork).await;
+        load_initial_state(test, &test_case.fork, false).await;
     let mut vm = VM::new(env.clone(), &mut db, &tx, tracer, VMType::L1, &NativeCrypto)
         .map_err(RunnerError::VMError)?;
     let execution_result = vm.execute();
@@ -81,7 +114,7 @@ pub async fn run_test(test: &Test, test_case: &TestCase) -> Result<(), RunnerErr
     // So they could be specified in the test but if the fork is e.g. Paris we should set them to None despite that.
     // Otherwise it will fail block header validations
     let (excess_blob_gas, blob_gas_used, parent_beacon_block_root, requests_hash) = match fork {
-        Fork::Prague | Fork::Cancun => {
+        Fork::Cancun | Fork::Prague | Fork::Osaka => {
             let blob_gas_used = match tx {
                 Transaction::EIP4844Transaction(blob_tx) => {
                     Some(get_total_blob_gas(&blob_tx) as u64)
@@ -97,10 +130,10 @@ pub async fn run_test(test: &Test, test_case: &TestCase) -> Result<(), RunnerErr
                     .unwrap(),
             );
             let parent_beacon_block_root = Some(H256::zero());
-            let requests_hash = if fork == Fork::Prague {
-                Some(*DEFAULT_REQUESTS_HASH)
-            } else {
-                None
+            // Prague added requests; Osaka inherits the same mechanism.
+            let requests_hash = match fork {
+                Fork::Prague | Fork::Osaka => Some(*DEFAULT_REQUESTS_HASH),
+                _ => None,
             };
             (
                 excess_blob_gas,
@@ -148,7 +181,7 @@ pub async fn run_test(test: &Test, test_case: &TestCase) -> Result<(), RunnerErr
 
     // 3. Create Blockchain and add block.
 
-    let blockchain = Blockchain::new(store, ethrex_blockchain::BlockchainOptions::default());
+    let blockchain = Blockchain::default_with_store_and_pool(store, merkle_pool());
 
     let result = blockchain.add_block_pipeline(block, None);
 

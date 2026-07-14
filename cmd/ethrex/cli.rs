@@ -10,7 +10,8 @@ use std::{
 
 use clap::{ArgAction, Parser as ClapParser, Subcommand as ClapSubcommand};
 use ethrex_blockchain::{
-    BlockchainOptions, BlockchainType, L2Config,
+    BlockchainOptions, BlockchainType, DEFAULT_GAP_ADMIT_OCCUPANCY_THRESHOLD,
+    DEFAULT_MAX_QUEUED_TXS_PER_ACCOUNT, L2Config,
     error::{ChainError, InvalidBlockError},
 };
 use ethrex_common::types::{Block, DEFAULT_BUILDER_GAS_CEIL, Genesis, validate_block_body};
@@ -97,6 +98,28 @@ pub struct Options {
         help_heading = "Node options"
     )]
     pub force: bool,
+    #[arg(
+        long = "rocksdb.block-cache-size",
+        value_name = "BYTES",
+        default_value_t = ethrex_storage::DEFAULT_ROCKSDB_BLOCK_CACHE_SIZE_BYTES,
+        help = "RocksDB shared block cache size in bytes (default 12 GiB). \
+                Bounds RocksDB resident memory; lower only on memory-constrained hosts.",
+        long_help = "RocksDB shared block cache size in bytes. With cache_index_and_filter_blocks \
+                     enabled it holds data blocks plus the per-SST index and bloom-filter blocks, \
+                     so it is the effective ceiling on RocksDB's resident memory.\n\
+                     \n\
+                     Default 12 GiB keeps the filter/index working set resident plus hot EVM state. \
+                     A sweep on a synced mainnet node (32 GiB cap) found 8-16 GiB all keep up with \
+                     head-following (filters resident, disk near-idle, no slow blocks); larger gives \
+                     no gain because the OS page cache backstops the uncompressed state CFs, and \
+                     ~8 GiB is the floor where the filter set starts to thrash.\n\
+                     \n\
+                     Lower only on memory-constrained hosts, accepting reduced throughput. \
+                     ETHREX_ROCKSDB_BLOCK_CACHE_SIZE sets the same value.",
+        help_heading = "Storage options",
+        env = "ETHREX_ROCKSDB_BLOCK_CACHE_SIZE",
+    )]
+    pub rocksdb_block_cache_size: usize,
     #[arg(long = "syncmode", default_value = "snap", value_name = "SYNC_MODE", value_parser = utils::parse_sync_mode, help = "The way in which the node will sync its state.", long_help = "Can be either \"full\" or \"snap\" with \"snap\" as default value.", help_heading = "P2P options", env = "ETHREX_SYNCMODE")]
     pub syncmode: SyncMode,
     #[arg(
@@ -159,6 +182,14 @@ pub struct Options {
     )]
     pub no_migrate: bool,
     #[arg(
+        long = "skip-genesis-validation",
+        action = ArgAction::SetTrue,
+        help = "Trust a pre-existing datadir's genesis instead of recomputing the genesis state root from the genesis alloc. Use only when booting against a database produced out-of-band (e.g. by a state generator) whose state root you vouch for; has no effect on a fresh datadir.",
+        help_heading = "Node options",
+        env = "ETHREX_SKIP_GENESIS_VALIDATION"
+    )]
+    pub skip_genesis_validation: bool,
+    #[arg(
         long = "no-precompile-cache",
         action = ArgAction::SetTrue,
         help = "Disable the per-block precompile result cache (benchmarking only).",
@@ -166,6 +197,30 @@ pub struct Options {
         env = "ETHREX_NO_PRECOMPILE_CACHE"
     )]
     pub no_precompile_cache: bool,
+    #[arg(
+        long = "no-bal-parallel-exec",
+        action = ArgAction::SetTrue,
+        help = "Disable BAL-driven parallel transaction execution on Amsterdam+ blocks (falls back to sequential).",
+        help_heading = "Node options",
+        env = "ETHREX_NO_BAL_PARALLEL_EXEC"
+    )]
+    pub no_bal_parallel_exec: bool,
+    #[arg(
+        long = "no-bal-prefetch",
+        action = ArgAction::SetTrue,
+        help = "Disable the BAL-driven state prefetch warmer thread on Amsterdam+ blocks.",
+        help_heading = "Node options",
+        env = "ETHREX_NO_BAL_PREFETCH"
+    )]
+    pub no_bal_prefetch: bool,
+    #[arg(
+        long = "no-bal-parallel-trie",
+        action = ArgAction::SetTrue,
+        help = "Disable BAL-driven optimistic trie merkleization on Amsterdam+ blocks (falls back to streaming AccountUpdates from the executor).",
+        help_heading = "Node options",
+        env = "ETHREX_NO_BAL_PARALLEL_TRIE"
+    )]
+    pub no_bal_parallel_trie: bool,
     #[arg(
         long = "log.dir",
         value_name = "LOG_DIR",
@@ -183,6 +238,25 @@ pub struct Options {
         env = "ETHREX_MEMPOOL_MAX_SIZE"
     )]
     pub mempool_max_size: usize,
+    #[arg(
+        help = "Mempool occupancy percentage (0-100) at or above which incoming transactions with a nonce gap relative to the sender's on-chain nonce are rejected. Setting to 100 disables the check.",
+        long = "mempool.gap-admit-occupancy-threshold",
+        default_value_t = DEFAULT_GAP_ADMIT_OCCUPANCY_THRESHOLD,
+        value_name = "PERCENTAGE",
+        value_parser = clap::value_parser!(u8).range(0..=100),
+        help_heading = "Node options",
+        env = "ETHREX_MEMPOOL_GAP_ADMIT_OCCUPANCY_THRESHOLD"
+    )]
+    pub mempool_gap_admit_occupancy_threshold: u8,
+    #[arg(
+        help = "Maximum number of queued (future/nonce-gapped) transactions a single sender may hold in the mempool. Executable (contiguous-nonce) txs are not capped (geth AccountQueue-style).",
+        long = "mempool.max-queued-txs-per-account",
+        default_value_t = DEFAULT_MAX_QUEUED_TXS_PER_ACCOUNT,
+        value_name = "MAX_QUEUED_TXS_PER_ACCOUNT",
+        help_heading = "Node options",
+        env = "ETHREX_MEMPOOL_MAX_QUEUED_TXS_PER_ACCOUNT"
+    )]
+    pub mempool_max_queued_txs_per_account: usize,
     #[arg(
         long = "http.addr",
         default_value = "127.0.0.1",
@@ -209,7 +283,7 @@ pub struct Options {
         value_delimiter = ',',
         value_parser = utils::parse_http_namespace,
         help = "Comma-separated JSON-RPC namespaces enabled over HTTP/WS.",
-        long_help = "Comma-separated list of JSON-RPC namespaces exposed on the public HTTP and WebSocket endpoints. Defaults to `eth,net,web3`. Enable `admin`, `debug` or `txpool` only when needed; the `engine` namespace is served on the authenticated RPC port and cannot be toggled here.",
+        long_help = "Comma-separated list of JSON-RPC namespaces exposed on the public HTTP and WebSocket endpoints. Defaults to `eth,net,web3`. Enable `admin`, `debug`, `txpool` or `testing` only when needed; the `engine` namespace is served on the authenticated RPC port and cannot be toggled here.",
         help_heading = "RPC options",
         env = "ETHREX_HTTP_API"
     )]
@@ -224,24 +298,24 @@ pub struct Options {
     pub ws_enabled: bool,
     #[arg(
         long = "ws.addr",
-        default_value = "0.0.0.0",
         value_name = "ADDRESS",
         requires = "ws_enabled",
-        help = "Listening address for the websocket rpc server.",
+        help = "Listening address for the websocket rpc server. Defaults to the http.addr value.",
+        long_help = "Listening address for the WebSocket JSON-RPC server. When unset it inherits `--http.addr` (loopback by default). Set it equal to the HTTP address to serve HTTP and WebSocket on a single listener.",
         help_heading = "RPC options",
         env = "ETHREX_WS_ADDR"
     )]
-    pub ws_addr: String,
+    pub ws_addr: Option<String>,
     #[arg(
         long = "ws.port",
-        default_value = "8546",
         value_name = "PORT",
         requires = "ws_enabled",
-        help = "Listening port for the websocket rpc server.",
+        help = "Listening port for the websocket rpc server. Defaults to the http.port value.",
+        long_help = "Listening port for the WebSocket JSON-RPC server. When unset it inherits `--http.port`, so an enabled WebSocket shares the HTTP listener unless a different port is given.",
         help_heading = "RPC options",
         env = "ETHREX_WS_PORT"
     )]
-    pub ws_port: String,
+    pub ws_port: Option<String>,
     #[arg(
         long = "authrpc.addr",
         default_value = "127.0.0.1",
@@ -457,6 +531,7 @@ impl Default for Options {
             network: Default::default(),
             bootnodes: Default::default(),
             datadir: Default::default(),
+            rocksdb_block_cache_size: ethrex_storage::DEFAULT_ROCKSDB_BLOCK_CACHE_SIZE_BYTES,
             syncmode: Default::default(),
             metrics_addr: "0.0.0.0".to_owned(),
             metrics_port: Default::default(),
@@ -464,6 +539,8 @@ impl Default for Options {
             dev: Default::default(),
             force: false,
             mempool_max_size: Default::default(),
+            mempool_gap_admit_occupancy_threshold: DEFAULT_GAP_ADMIT_OCCUPANCY_THRESHOLD,
+            mempool_max_queued_txs_per_account: DEFAULT_MAX_QUEUED_TXS_PER_ACCOUNT,
             tx_broadcasting_time_interval: Default::default(),
             target_peers: Default::default(),
             lookup_interval: Default::default(),
@@ -472,7 +549,11 @@ impl Default for Options {
             max_blobs_per_block: None,
             precompute_witnesses: false,
             no_migrate: false,
+            skip_genesis_validation: false,
             no_precompile_cache: false,
+            no_bal_parallel_exec: false,
+            no_bal_prefetch: false,
+            no_bal_parallel_trie: false,
         }
     }
 }
@@ -515,6 +596,19 @@ pub enum Subcommand {
         removedb: bool,
         #[arg(long, action = ArgAction::SetTrue)]
         l2: bool,
+        #[arg(
+            long = "export-bal",
+            value_name = "FILE",
+            help = "Export BALs produced during sequential execution to a single RLP file (concatenated, one per block). All BALs are buffered in memory before writing; suitable for benchmark-sized runs, not 100k+ block exports."
+        )]
+        export_bal: Option<String>,
+        #[arg(
+            long = "with-bal",
+            value_name = "FILE",
+            help = "Load BALs from a single RLP file and use the parallel execution path. The entire file is decoded into memory upfront; suitable for benchmark-sized runs, not 100k+ blocks.",
+            conflicts_with = "export_bal"
+        )]
+        with_bal: Option<String>,
     },
     #[command(
         name = "export",
@@ -645,7 +739,13 @@ impl Subcommand {
                 )
                 .await?;
             }
-            Subcommand::ImportBench { path, removedb, l2 } => {
+            Subcommand::ImportBench {
+                path,
+                removedb,
+                l2,
+                export_bal,
+                with_bal,
+            } => {
                 if removedb {
                     remove_db(&effective_datadir, opts.force);
                 }
@@ -665,8 +765,13 @@ impl Subcommand {
                         r#type: blockchain_type,
                         perf_logs_enabled: true,
                         precompile_cache_enabled: !opts.no_precompile_cache,
+                        bal_parallel_exec_enabled: !opts.no_bal_parallel_exec,
+                        bal_prefetch_enabled: !opts.no_bal_prefetch,
+                        bal_parallel_trie_enabled: !opts.no_bal_parallel_trie,
                         ..Default::default()
                     },
+                    export_bal.as_deref(),
+                    with_bal.as_deref(),
                 )
                 .await?;
             }
@@ -851,7 +956,11 @@ pub async fn import_blocks(
                 block_batch.push(block);
                 if block_batch.len() >= IMPORT_BATCH_SIZE || index + MIN_FULL_BLOCKS + 1 == size {
                     blockchain
-                        .add_blocks_in_batch(mem::take(&mut block_batch), CancellationToken::new())
+                        .add_blocks_in_batch(
+                            mem::take(&mut block_batch),
+                            &[],
+                            CancellationToken::new(),
+                        )
                         .await
                         .map_err(|(err, _)| err)?;
                 }
@@ -897,13 +1006,20 @@ pub async fn import_blocks_bench(
     datadir: &Path,
     genesis: Genesis,
     blockchain_opts: BlockchainOptions,
+    export_bal_path: Option<&str>,
+    with_bal_path: Option<&str>,
 ) -> Result<(), ChainError> {
     let start_time = Instant::now();
     init_datadir(datadir);
     let store = init_store(datadir, genesis).await?;
     let blockchain = init_blockchain(store.clone(), blockchain_opts);
     regenerate_head_state(&store, &blockchain).await.unwrap();
-    let path_metadata = metadata(path).expect("Failed to read path");
+    let path_metadata =
+        metadata(path).unwrap_or_else(|e| panic!("failed to stat path {path:?}: {e}"));
+
+    if let Some(bal_path) = export_bal_path {
+        info!(path = %bal_path, "Will export BALs to file");
+    }
 
     // If it's an .rlp file it will be just one chain, but if it's a directory there can be multiple chains.
     let chains: Vec<Vec<Block>> = if path_metadata.is_dir() {
@@ -929,7 +1045,49 @@ pub async fn import_blocks_bench(
         vec![utils::read_chain_file(path)]
     };
 
+    // Pre-load all BALs into memory upfront to avoid per-block I/O during benchmark.
+    // Done after chain loading so we can validate the count matches the number of
+    // Amsterdam+ blocks across all chains and fail fast on truncated BAL files.
+    let preloaded_bals = if let Some(bal_path) = with_bal_path {
+        info!(path = %bal_path, "Loading BALs from file (parallel path)");
+        use ethrex_common::types::block_access_list::BlockAccessList;
+        use ethrex_rlp::decode::RLPDecode as _;
+        use std::sync::Arc;
+        let data = std::fs::read(bal_path)
+            .unwrap_or_else(|e| panic!("failed to read BAL file at {bal_path:?}: {e}"));
+        let mut remaining = data.as_slice();
+        let mut bals: Vec<Arc<BlockAccessList>> = Vec::new();
+        while !remaining.is_empty() {
+            let (bal, rest) = BlockAccessList::decode_unfinished(remaining)
+                .unwrap_or_else(|e| panic!("failed to decode BAL from {bal_path:?}: {e}"));
+            bals.push(Arc::new(bal));
+            remaining = rest;
+        }
+        let amsterdam_blocks = chains
+            .iter()
+            .flatten()
+            .filter(|b| b.header.block_access_list_hash.is_some())
+            .count();
+        assert_eq!(
+            bals.len(),
+            amsterdam_blocks,
+            "--with-bal file at {bal_path:?} has {} entries but chain has {} Amsterdam+ blocks (block_access_list_hash set). \
+             Mismatched BAL files would silently fall through to sequential execution and produce misleading benchmark numbers.",
+            bals.len(),
+            amsterdam_blocks,
+        );
+        info!(count = bals.len(), "Loaded BALs into memory");
+        Some(bals)
+    } else {
+        None
+    };
+
+    let mut exported_bals = Vec::new();
     let mut total_blocks_imported = 0;
+    // Shared across chains: a directory import processes multiple chain files
+    // sequentially and the preloaded BAL list spans all Amsterdam+ blocks across
+    // all chains, so the cursor must persist between chains.
+    let mut bal_index = 0usize;
     for blocks in chains {
         let size = blocks.len();
         let mut numbers_and_hashes = blocks
@@ -965,21 +1123,47 @@ pub async fn import_blocks_bench(
             validate_block_body(&block.header, &block.body, &ethrex_crypto::NativeCrypto)
                 .map_err(InvalidBlockError::InvalidBody)?;
 
-            blockchain
-                .add_block_pipeline(block, None)
-                .inspect_err(|err| match err {
-                    // Block number 1's parent not found, the chain must not belong to the same network as the genesis file
-                    ChainError::ParentNotFound if number == 1 => warn!("The chain file is not compatible with the genesis file. Are you sure you selected the correct network?"),
-                    _ => warn!("Failed to add block {number} with hash {hash:#x}"),
-                })?;
+            // Look up preloaded BAL for this block (if --with-bal was provided).
+            // BALs are only produced for Amsterdam+ blocks, so use a separate counter
+            // that only advances for blocks that have a BAL hash in the header.
+            let bal = if block.header.block_access_list_hash.is_some() {
+                let b = preloaded_bals
+                    .as_ref()
+                    .and_then(|bals| bals.get(bal_index))
+                    .cloned();
+                bal_index += 1;
+                b
+            } else {
+                None
+            };
 
-            // TODO: replace this
-            // This sleep is because we have a background process writing to disk the last layer
-            // And until it's done we can't execute the new block
-            // Because this wants to compare against running a real node in terms of reported performance
-            // It takes less than 500ms, so this is good enough, but we should report the performance
-            // without taking into account that wait.
-            tokio::time::sleep(Duration::from_millis(500)).await;
+            if export_bal_path.is_some() {
+                // Sequential path: execute and capture the produced BAL
+                let produced_bal = blockchain
+                    .add_block_pipeline_bal(block, None)
+                    .inspect_err(|err| match err {
+                        ChainError::ParentNotFound if number == 1 => warn!("The chain file is not compatible with the genesis file. Are you sure you selected the correct network?"),
+                        _ => warn!("Failed to add block {number} with hash {hash:#x}"),
+                    })?;
+
+                if let Some(bal) = produced_bal {
+                    exported_bals.push(bal);
+                }
+            } else {
+                // Normal path (or parallel if BAL was loaded)
+                blockchain
+                    .add_block_pipeline(block, bal)
+                    .inspect_err(|err| match err {
+                        ChainError::ParentNotFound if number == 1 => warn!("The chain file is not compatible with the genesis file. Are you sure you selected the correct network?"),
+                        _ => warn!("Failed to add block {number} with hash {hash:#x}"),
+                    })?;
+            }
+
+            // Wait for the persist worker to drain the block just applied: its
+            // trie diff-layer build, the disk flush and the in-memory eviction.
+            // Keeps the next block's per-block timer from absorbing the previous
+            // block's background persistence cost.
+            store.wait_for_persistence_idle().await?;
         }
 
         // Make head canonical and label all special blocks correctly.
@@ -996,6 +1180,17 @@ pub async fn import_blocks_bench(
         }
 
         total_blocks_imported += size;
+    }
+
+    // Write all exported BALs to a single file
+    if let Some(bal_path) = export_bal_path {
+        let mut buf = Vec::new();
+        for bal in &exported_bals {
+            bal.encode(&mut buf);
+        }
+        std::fs::write(bal_path, &buf)
+            .unwrap_or_else(|e| panic!("failed to write BAL file at {bal_path:?}: {e}"));
+        info!(count = exported_bals.len(), "Exported BALs to file");
     }
 
     let total_duration = start_time.elapsed();
@@ -1139,6 +1334,26 @@ mod tests {
         assert_eq!(cli.opts.http_addr, "127.0.0.1");
     }
 
+    /// `--ws.addr`/`--ws.port` inherit the HTTP address/port when unset, so an enabled
+    /// WebSocket defaults to a single listener on the (loopback) HTTP endpoint — matching
+    /// geth/reth/nethermind and keeping WS off public interfaces by default.
+    #[test]
+    fn ws_defaults_to_http_endpoint() {
+        let cli = CLI::parse_from(["ethrex", "--ws.enabled"]);
+        assert!(cli.opts.ws_addr.is_none());
+        assert!(cli.opts.ws_port.is_none());
+        let http = crate::initializers::get_http_socket_addr(&cli.opts);
+        let ws = crate::initializers::get_ws_socket_addr(&cli.opts);
+        assert!(
+            ws.ip().is_loopback(),
+            "WS must default to loopback like HTTP"
+        );
+        assert_eq!(
+            ws, http,
+            "WS must share the HTTP endpoint by default (single listener)"
+        );
+    }
+
     /// `--http.api` must default to `eth,net,web3`. Operators have to opt in
     /// explicitly to expose `admin`, `debug` or `txpool`.
     #[test]
@@ -1156,6 +1371,15 @@ mod tests {
         assert_eq!(
             cli.opts.http_api,
             vec![RpcNamespace::Eth, RpcNamespace::Debug, RpcNamespace::Admin]
+        );
+    }
+
+    #[test]
+    fn http_api_parses_testing_namespace() {
+        let cli = CLI::parse_from(["ethrex", "--http.api", "eth,testing"]);
+        assert_eq!(
+            cli.opts.http_api,
+            vec![RpcNamespace::Eth, RpcNamespace::Testing]
         );
     }
 

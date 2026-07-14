@@ -1,6 +1,6 @@
 use ethrex_common::{
     Address, H256, U256,
-    constants::EMPTY_KECCACK_HASH,
+    constants::EMPTY_KECCAK_HASH,
     types::{AccountState, BlockHash, BlockHeader, BlockNumber, ChainConfig, Code, CodeMetadata},
 };
 use ethrex_crypto::keccak::keccak_hash;
@@ -47,7 +47,10 @@ impl StoreVmDatabase {
             .has_state_root(block_header.state_root)
             .map_err(|e| EvmError::DB(e.to_string()))?
         {
-            return Err(EvmError::DB("state root missing".to_string()));
+            return Err(EvmError::DB(format!(
+                "state root missing for block {} (state_root {:#x})",
+                block_header.number, block_header.state_root
+            )));
         }
         Ok(StoreVmDatabase {
             store,
@@ -68,7 +71,10 @@ impl StoreVmDatabase {
             .has_state_root(block_header.state_root)
             .map_err(|e| EvmError::DB(e.to_string()))?
         {
-            return Err(EvmError::DB("state root missing".to_string()));
+            return Err(EvmError::DB(format!(
+                "state root missing for block {} (state_root {:#x})",
+                block_header.number, block_header.state_root
+            )));
         }
         Ok(StoreVmDatabase {
             store,
@@ -77,6 +83,20 @@ impl StoreVmDatabase {
             account_state_cache: Arc::new(RwLock::new(FxHashMap::default())),
             state_root: block_header.state_root,
         })
+    }
+
+    /// Build a `StoreVmDatabase` for a given `store` without checking that the
+    /// state root exists.  For testing only — the test may not have a real
+    /// state but still needs to exercise the code-read path.
+    #[cfg(any(test, feature = "testing"))]
+    pub fn new_for_test(store: Store) -> Self {
+        StoreVmDatabase {
+            store,
+            block_hash: H256::zero(),
+            block_hash_cache: Arc::new(Mutex::new(BTreeMap::new())),
+            account_state_cache: Arc::new(RwLock::new(FxHashMap::default())),
+            state_root: H256::zero(),
+        }
     }
 
     fn get_cached_account_state_entry(
@@ -120,6 +140,72 @@ impl VmDatabase for StoreVmDatabase {
         Ok(self
             .get_cached_account_state_entry(address)?
             .map(|entry| entry.state))
+    }
+
+    #[instrument(
+        level = "trace",
+        name = "Account read batch",
+        skip_all,
+        fields(namespace = "block_execution", n = addresses.len())
+    )]
+    fn get_account_states_batch(
+        &self,
+        addresses: &[Address],
+    ) -> Result<Vec<Option<AccountState>>, EvmError> {
+        // Split into cached / uncached so the rocksdb multi_get only fires for
+        // addresses we haven't memoized yet on this StoreVmDatabase.
+        let mut results: Vec<Option<AccountState>> = vec![None; addresses.len()];
+        let mut miss_idx: Vec<usize> = Vec::new();
+        let mut miss_addrs: Vec<Address> = Vec::new();
+        {
+            let cache = self
+                .account_state_cache
+                .read()
+                .map_err(|_| EvmError::Custom("LockError".to_string()))?;
+            for (i, addr) in addresses.iter().enumerate() {
+                match cache.get(addr) {
+                    Some(Some(entry)) => results[i] = Some(entry.state),
+                    Some(None) => results[i] = None,
+                    None => {
+                        miss_idx.push(i);
+                        miss_addrs.push(*addr);
+                    }
+                }
+            }
+        }
+
+        if miss_addrs.is_empty() {
+            return Ok(results);
+        }
+
+        let fetched = self
+            .store
+            .get_account_states_batch_by_root(self.state_root, &miss_addrs)
+            .map_err(|e| EvmError::DB(e.to_string()))?;
+
+        // Populate the per-DB cache and assemble results. `insert` (vs `or_insert`)
+        // is intentional: `state_root` is fixed for this `StoreVmDatabase`, so a
+        // concurrent populator can only have written the same value for the same
+        // address — overwriting is a no-op, and the unconditional insert avoids
+        // the extra `entry`-API lookup.
+        let mut cache = self
+            .account_state_cache
+            .write()
+            .map_err(|_| EvmError::Custom("LockError".to_string()))?;
+        for ((slot, addr), state) in miss_idx
+            .iter()
+            .zip(miss_addrs.iter())
+            .zip(fetched.into_iter())
+        {
+            let cached = state.map(|state| AccountStateCacheEntry {
+                state,
+                hashed_address: H256::from(keccak_hash(addr.to_fixed_bytes())),
+            });
+            cache.insert(*addr, cached);
+            results[*slot] = cached.map(|e| e.state);
+        }
+
+        Ok(results)
     }
 
     #[instrument(
@@ -210,7 +296,7 @@ impl VmDatabase for StoreVmDatabase {
         fields(namespace = "block_execution")
     )]
     fn get_account_code(&self, code_hash: H256) -> Result<Code, EvmError> {
-        if code_hash == *EMPTY_KECCACK_HASH {
+        if code_hash == *EMPTY_KECCAK_HASH {
             return Ok(Code::default());
         }
         match self.store.get_account_code(code_hash) {
@@ -229,9 +315,9 @@ impl VmDatabase for StoreVmDatabase {
         fields(namespace = "block_execution")
     )]
     fn get_code_metadata(&self, code_hash: H256) -> Result<CodeMetadata, EvmError> {
-        use ethrex_common::constants::EMPTY_KECCACK_HASH;
+        use ethrex_common::constants::EMPTY_KECCAK_HASH;
 
-        if code_hash == *EMPTY_KECCACK_HASH {
+        if code_hash == *EMPTY_KECCAK_HASH {
             return Ok(CodeMetadata { length: 0 });
         }
         match self.store.get_code_metadata(code_hash) {

@@ -48,7 +48,15 @@ pub struct P2PContext {
     pub based_context: Option<P2PBasedContext>,
     pub tx_broadcaster: ActorRef<TxBroadcaster>,
     pub initial_lookup_interval: f64,
+    /// Caps concurrent INBOUND connections (including pre-handshake) so a flood of inbound
+    /// dials can't accumulate connection actors/sockets without bound. Each inbound connection
+    /// actor holds a permit for its lifetime; the permit is released when the actor is dropped.
+    pub(crate) inbound_admission: Arc<tokio::sync::Semaphore>,
 }
+
+/// Max concurrent inbound connections (peer_table TARGET_PEERS = 100, plus headroom for
+/// pre-handshake churn and short-lived overlap).
+const MAX_INBOUND_CONNECTIONS: usize = 150;
 
 impl P2PContext {
     #[allow(clippy::too_many_arguments)]
@@ -96,6 +104,7 @@ impl P2PContext {
             based_context,
             tx_broadcaster,
             initial_lookup_interval: lookup_interval,
+            inbound_admission: Arc::new(tokio::sync::Semaphore::new(MAX_INBOUND_CONNECTIONS)),
         })
     }
 }
@@ -167,7 +176,18 @@ pub(crate) async fn serve_p2p_requests(context: P2PContext) {
             continue;
         }
 
-        let _ = PeerConnection::spawn_as_receiver(context.clone(), peer_addr, stream);
+        // Bound concurrent inbound connections: if we're at capacity, drop this one instead
+        // of letting connection actors/sockets accumulate. The permit is moved into the
+        // connection actor and released when the actor is dropped.
+        let permit = match context.inbound_admission.clone().try_acquire_owned() {
+            Ok(permit) => permit,
+            Err(_) => {
+                tracing::debug!(peer = %peer_addr, "Inbound connection cap reached, dropping connection");
+                continue;
+            }
+        };
+
+        let _ = PeerConnection::spawn_as_receiver(context.clone(), peer_addr, stream, permit);
     }
 }
 
@@ -236,6 +256,10 @@ pub async fn periodically_show_peer_stats_during_syncing(
 
     loop {
         if blockchain.is_synced() {
+            if !sync_started_logged {
+                info!("Node already has state; following chain via full sync");
+                return;
+            }
             // Log sync complete summary
             let total_elapsed = format_duration(start.elapsed());
             let headers_downloaded = METRICS.downloaded_headers.get();
@@ -792,7 +816,7 @@ pub async fn periodically_show_peer_stats_after_sync(peer_table: &PeerTable) {
                         .any(|cap| peer.supported_capabilities.contains(cap))
             })
             .count();
-        info!("Snap Peers: {snap_active_peers} / Total Peers: {active_peers}");
+        info!("Peers: {active_peers} (snap-capable: {snap_active_peers})");
         interval.tick().await;
     }
 }

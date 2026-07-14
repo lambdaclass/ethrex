@@ -181,6 +181,27 @@ impl StorageWriteBatch for InMemoryWriteTx {
         Ok(())
     }
 
+    fn merge(&mut self, table: &'static str, key: &[u8], operand: &[u8]) -> Result<(), StoreError> {
+        // InMemory has no native merge operator, so apply the merge inline.
+        // Only TRANSACTION_LOCATIONS uses merge today; dispatch by table.
+        if table != crate::api::tables::TRANSACTION_LOCATIONS {
+            return Err(StoreError::Custom(format!(
+                "merge not supported for table {table}"
+            )));
+        }
+        let mut db = self
+            .backend
+            .write()
+            .map_err(|_| StoreError::Custom("Failed to acquire write lock".to_string()))?;
+        let db_mut = Arc::make_mut(&mut *db);
+        let table_ref = db_mut.entry(table).or_default();
+        let existing = table_ref.get(key).map(|v| v.as_slice());
+        let merged = crate::store::tx_locations_merge(existing, std::iter::once(operand))
+            .ok_or_else(|| StoreError::Custom("tx_locations_merge returned None".to_string()))?;
+        table_ref.insert(key.to_vec(), merged);
+        Ok(())
+    }
+
     fn commit(&mut self) -> Result<(), StoreError> {
         // FIXME: in-memory writes aren't atomic
         Ok(())

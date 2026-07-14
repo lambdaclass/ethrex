@@ -75,18 +75,9 @@ impl TryFrom<&Path> for Genesis {
         let genesis_reader = BufReader::new(genesis_file);
         let genesis: Genesis = serde_json::from_reader(genesis_reader)?;
 
-        // Try to derive if the genesis file is PoS
-        // Different genesis files have different configurations
-        // TODO: Remove once we have a way to run PoW chains, i.e Snap Sync
-        if genesis.config.terminal_total_difficulty != Some(0)
-            && genesis.config.merge_netsplit_block != Some(0)
-            && genesis.config.shanghai_time != Some(0)
-            && genesis.config.cancun_time != Some(0)
-            && genesis.config.prague_time != Some(0)
-        {
-            // Hive has a minimalistic genesis file, which is not supported
-            // return Err(GenesisError::InvalidFork());
-            warn!("Invalid fork, only post-merge networks are supported.");
+        // ethrex only supports post-merge (PoS) networks. PoW execution is not planned.
+        if is_unsupported_pow_genesis(&genesis) {
+            warn!("Genesis has no merge configuration; ethrex only supports post-merge networks.");
         }
 
         if genesis.config.bpo3_time.is_some() && genesis.config.blob_schedule.bpo3.is_none()
@@ -98,6 +89,25 @@ impl TryFrom<&Path> for Genesis {
 
         Ok(genesis)
     }
+}
+
+/// Returns true for a genesis that describes a pre-merge PoW chain with no
+/// merge configured. A real post-merge genesis either configures the merge
+/// (terminal total difficulty or merge-netsplit block) or starts post-merge
+/// (genesis difficulty 0). The previous heuristic warned whenever the
+/// post-merge forks were scheduled at non-zero timestamps, which false-fired
+/// on every mainnet-style genesis.
+///
+/// Note: `terminal_total_difficulty = Some(0)` is the sentinel for "PoS active
+/// from genesis" and counts as merge-configured here, as does the
+/// `terminal_total_difficulty_passed` flag (the post-merge signal used by the
+/// sync manager).
+fn is_unsupported_pow_genesis(genesis: &Genesis) -> bool {
+    let merge_configured = genesis.config.terminal_total_difficulty.is_some()
+        || genesis.config.merge_netsplit_block.is_some()
+        || genesis.config.terminal_total_difficulty_passed;
+    let post_merge_at_genesis = genesis.difficulty.is_zero();
+    !merge_configured && !post_merge_at_genesis
 }
 
 #[allow(unused)]
@@ -258,6 +268,19 @@ pub struct ChainConfig {
     pub bpo4_time: Option<u64>,
     pub bpo5_time: Option<u64>,
     pub amsterdam_time: Option<u64>,
+    /// `hezeTime`/`heze_time`, and `bogotaTime`/`bogota_time` in genesis JSON
+    /// to track upstream rename of the post-Glamsterdam fork
+    /// (Bogotá → Hegotá → Hezé). The ethereum-genesis-generator (6.0.5)
+    /// currently emits `bogotaTime` regardless of which name kurtosis args
+    /// use. Internal name stays `hegota_time` until upstream picks a final
+    /// name; this is purely a parsing alias.
+    #[serde(
+        alias = "hezeTime",
+        alias = "heze_time",
+        alias = "bogotaTime",
+        alias = "bogota_time"
+    )]
+    pub hegota_time: Option<u64>,
 
     /// Amount of total difficulty reached by the network that triggers the consensus upgrade.
     #[serde(default, with = "crate::serde_utils::u128::hex_str_opt")]
@@ -317,6 +340,7 @@ pub enum Fork {
     BPO4 = 23,
     BPO5 = 24,
     Amsterdam = 25,
+    Hegota = 26,
 }
 
 impl From<Fork> for &str {
@@ -348,11 +372,16 @@ impl From<Fork> for &str {
             Fork::BPO4 => "BPO4",
             Fork::BPO5 => "BPO5",
             Fork::Amsterdam => "Amsterdam",
+            Fork::Hegota => "Hegota",
         }
     }
 }
 
 impl ChainConfig {
+    pub fn is_hegota_activated(&self, block_timestamp: u64) -> bool {
+        self.hegota_time.is_some_and(|time| time <= block_timestamp)
+    }
+
     pub fn is_amsterdam_activated(&self, block_timestamp: u64) -> bool {
         self.amsterdam_time
             .is_some_and(|time| time <= block_timestamp)
@@ -418,6 +447,7 @@ impl ChainConfig {
             ("Verkle", self.verkle_time),
             ("Osaka", self.osaka_time),
             ("Amsterdam", self.amsterdam_time),
+            ("Hegota", self.hegota_time),
         ];
 
         let active_forks: Vec<_> = post_merge_forks
@@ -437,7 +467,9 @@ impl ChainConfig {
     }
 
     pub fn get_fork(&self, block_timestamp: u64) -> Fork {
-        if self.is_amsterdam_activated(block_timestamp) {
+        if self.is_hegota_activated(block_timestamp) {
+            Fork::Hegota
+        } else if self.is_amsterdam_activated(block_timestamp) {
             Fork::Amsterdam
         } else if self.is_bpo5_activated(block_timestamp) {
             Fork::BPO5
@@ -463,6 +495,13 @@ impl ChainConfig {
     }
 
     pub fn get_fork_blob_schedule(&self, block_timestamp: u64) -> Option<ForkBlobSchedule> {
+        // Hegotá inherits Amsterdam's blob schedule unless an explicit Hegotá
+        // entry is added to BlobSchedule in a future change.
+        if self.is_hegota_activated(block_timestamp)
+            && let Some(schedule) = self.blob_schedule.amsterdam
+        {
+            return Some(schedule);
+        }
         // Amsterdam (and BPO3-5) don't independently define blob params in Hive;
         // they inherit from the highest activated BPO fork. If the fork-specific
         // entry is None, fall through to find the right BPO schedule.
@@ -508,37 +547,42 @@ impl ChainConfig {
     }
 
     pub fn next_fork(&self, block_timestamp: u64) -> Option<Fork> {
-        let next = if self.is_amsterdam_activated(block_timestamp) {
-            None
-        } else if self.is_bpo5_activated(block_timestamp) && self.amsterdam_time.is_some() {
-            Some(Fork::Amsterdam)
-        } else if self.is_bpo4_activated(block_timestamp) && self.bpo5_time.is_some() {
-            Some(Fork::BPO5)
-        } else if self.is_bpo3_activated(block_timestamp) && self.bpo4_time.is_some() {
-            Some(Fork::BPO4)
-        } else if self.is_bpo2_activated(block_timestamp) && self.bpo3_time.is_some() {
-            Some(Fork::BPO3)
-        } else if self.is_bpo1_activated(block_timestamp) && self.bpo2_time.is_some() {
-            Some(Fork::BPO2)
-        } else if self.is_osaka_activated(block_timestamp) && self.bpo1_time.is_some() {
-            Some(Fork::BPO1)
-        } else if self.is_prague_activated(block_timestamp) && self.osaka_time.is_some() {
-            Some(Fork::Osaka)
-        } else if self.is_cancun_activated(block_timestamp) && self.prague_time.is_some() {
-            Some(Fork::Prague)
-        } else if self.is_shanghai_activated(block_timestamp) && self.cancun_time.is_some() {
-            Some(Fork::Cancun)
-        } else {
-            None
-        };
-        match next {
-            Some(fork) if fork > self.fork(block_timestamp) => next,
-            _ => None,
-        }
+        // Pick the scheduled fork with the smallest activation timestamp strictly
+        // greater than `block_timestamp`. Iterating all timestamp-based forks avoids
+        // bugs when intermediate forks (e.g. BPOs) are skipped in a network's schedule.
+        //
+        // NOTE: every timestamp-based fork MUST appear here in chronological order.
+        // Omitting a fork will silently cause `next_fork` to skip it; ties are
+        // broken by array position, so the order also encodes the canonical
+        // schedule independent of the `Fork` enum's discriminants.
+        [
+            Fork::Shanghai,
+            Fork::Cancun,
+            Fork::Prague,
+            Fork::Osaka,
+            Fork::BPO1,
+            Fork::BPO2,
+            Fork::BPO3,
+            Fork::BPO4,
+            Fork::BPO5,
+            Fork::Amsterdam,
+            Fork::Hegota,
+        ]
+        .into_iter()
+        .enumerate()
+        .filter_map(|(pos, fork)| {
+            self.get_activation_timestamp_for_fork(fork)
+                .filter(|&t| t > block_timestamp)
+                .map(|t| (fork, t, pos))
+        })
+        .min_by(|a, b| a.1.cmp(&b.1).then_with(|| a.2.cmp(&b.2)))
+        .map(|(fork, _, _)| fork)
     }
 
     pub fn get_last_scheduled_fork(&self) -> Fork {
-        if self.amsterdam_time.is_some() {
+        if self.hegota_time.is_some() {
+            Fork::Hegota
+        } else if self.amsterdam_time.is_some() {
             Fork::Amsterdam
         } else if self.bpo5_time.is_some() {
             Fork::BPO5
@@ -572,6 +616,7 @@ impl ChainConfig {
             Fork::BPO4 => self.bpo4_time,
             Fork::BPO5 => self.bpo5_time,
             Fork::Amsterdam => self.amsterdam_time,
+            Fork::Hegota => self.hegota_time,
             Fork::Homestead => self.homestead_block,
             Fork::DaoFork => self.dao_fork_block,
             Fork::Byzantium => self.byzantium_block,
@@ -600,6 +645,9 @@ impl ChainConfig {
             Fork::BPO4 => self.blob_schedule.bpo4,
             Fork::BPO5 => self.blob_schedule.bpo5,
             Fork::Amsterdam => self.blob_schedule.amsterdam,
+            // Hegotá inherits Amsterdam's blob schedule unless an explicit
+            // Hegotá entry is added to BlobSchedule in a future change.
+            Fork::Hegota => self.blob_schedule.amsterdam,
             _ => None,
         }
     }
@@ -645,6 +693,7 @@ impl ChainConfig {
             self.bpo4_time,
             self.bpo5_time,
             self.amsterdam_time,
+            self.hegota_time,
             self.verkle_time,
         ]
         .into_iter()
@@ -781,6 +830,81 @@ mod tests {
     use crate::types::INITIAL_BASE_FEE;
 
     use super::*;
+
+    #[test]
+    fn terminal_total_difficulty_accepts_number_or_hex_string() {
+        // geth/reth-style genesis files encode terminalTotalDifficulty as a
+        // bare decimal number that exceeds u64::MAX; ethrex must accept it as
+        // well as the 0x-hex-string form.
+        let dca = r#""depositContractAddress":"0x00000000219ab540356cbb839cbe05303d7705fa""#;
+
+        let from_number: ChainConfig = serde_json::from_str(&format!(
+            r#"{{"chainId":1,"terminalTotalDifficulty":58750000000000000000000,{dca}}}"#
+        ))
+        .expect("number-encoded TTD should parse");
+        // f64 cast is lossy above u64::MAX; assert the known, stable
+        // approximation so a regression to Some(0) can't silently pass.
+        assert_eq!(
+            from_number.terminal_total_difficulty,
+            Some(58749999999999996329984u128)
+        );
+
+        let from_hex: ChainConfig = serde_json::from_str(&format!(
+            r#"{{"chainId":1,"terminalTotalDifficulty":"0xc70d808a128d7380000",{dca}}}"#
+        ))
+        .expect("hex-string TTD should parse");
+        assert_eq!(
+            from_hex.terminal_total_difficulty,
+            Some(58750000000000000000000u128)
+        );
+
+        let small: ChainConfig = serde_json::from_str(&format!(
+            r#"{{"chainId":1,"terminalTotalDifficulty":17000000000000000,{dca}}}"#
+        ))
+        .expect("small number TTD should parse");
+        assert_eq!(small.terminal_total_difficulty, Some(17000000000000000u128));
+
+        // A negative bare number must error, not silently saturate to Some(0).
+        let negative = serde_json::from_str::<ChainConfig>(&format!(
+            r#"{{"chainId":1,"terminalTotalDifficulty":-1,{dca}}}"#
+        ));
+        let err = negative.expect_err("negative TTD must be rejected");
+        assert!(
+            err.to_string().contains("finite, non-negative"),
+            "error should name the sign/finiteness cause, got: {err}"
+        );
+    }
+
+    #[test]
+    fn pow_genesis_detection() {
+        // Default genesis: difficulty 0 (post-merge at genesis) -> supported.
+        let mut g = Genesis::default();
+        assert!(!is_unsupported_pow_genesis(&g));
+
+        // PoW genesis: non-zero difficulty, no merge configured -> unsupported.
+        g.difficulty = U256::from(0x4000_0000u64);
+        assert!(is_unsupported_pow_genesis(&g));
+
+        // Mainnet-style: non-zero difficulty but TTD configured -> supported.
+        g.config.terminal_total_difficulty = Some(58750000000000000000000);
+        assert!(!is_unsupported_pow_genesis(&g));
+
+        // Merge-netsplit block configured (no TTD) -> supported.
+        g.config.terminal_total_difficulty = None;
+        g.config.merge_netsplit_block = Some(15537394);
+        assert!(!is_unsupported_pow_genesis(&g));
+
+        // TTD = Some(0) sentinel (PoS from genesis), non-zero difficulty -> supported.
+        g.config.merge_netsplit_block = None;
+        g.config.terminal_total_difficulty = Some(0);
+        assert!(!is_unsupported_pow_genesis(&g));
+
+        // terminal_total_difficulty_passed with no TTD value (post-merge snapshot
+        // that dropped the redundant field), non-zero difficulty -> supported.
+        g.config.terminal_total_difficulty = None;
+        g.config.terminal_total_difficulty_passed = true;
+        assert!(!is_unsupported_pow_genesis(&g));
+    }
 
     #[test]
     fn deserialize_genesis_file() {
@@ -1145,5 +1269,125 @@ mod tests {
 
         let error_message = result.unwrap_err().to_string();
         assert!(error_message.contains("missing field `depositContractAddress`"),);
+    }
+
+    #[test]
+    fn test_hegota_after_amsterdam() {
+        // Discriminant ordering: Hegota strictly follows Amsterdam.
+        assert!(Fork::Hegota > Fork::Amsterdam);
+        assert_eq!(Fork::Hegota as u8, 26);
+        assert_eq!(Fork::Amsterdam as u8, 25);
+
+        // String conversion.
+        let hegota_str: &str = Fork::Hegota.into();
+        assert_eq!(hegota_str, "Hegota");
+
+        // Activation predicate boundary behavior.
+        let mut config = ChainConfig {
+            chain_id: 1,
+            deposit_contract_address: Address::default(),
+            ..Default::default()
+        };
+        config.hegota_time = Some(1000);
+        assert!(!config.is_hegota_activated(999));
+        assert!(config.is_hegota_activated(1000));
+        assert!(config.is_hegota_activated(1001));
+
+        // None means inactive.
+        config.hegota_time = None;
+        assert!(!config.is_hegota_activated(0));
+        assert!(!config.is_hegota_activated(u64::MAX));
+
+        // get_fork returns Hegota when both Amsterdam and Hegota are active.
+        let mut config = ChainConfig {
+            chain_id: 1,
+            deposit_contract_address: Address::default(),
+            ..Default::default()
+        };
+        config.amsterdam_time = Some(500);
+        config.hegota_time = Some(1000);
+        assert_eq!(config.get_fork(499), Fork::Paris);
+        assert_eq!(config.get_fork(500), Fork::Amsterdam);
+        assert_eq!(config.get_fork(999), Fork::Amsterdam);
+        assert_eq!(config.get_fork(1000), Fork::Hegota);
+        assert_eq!(config.get_fork(2000), Fork::Hegota);
+
+        // next_fork transitions correctly.
+        assert_eq!(config.next_fork(500), Some(Fork::Hegota));
+        assert_eq!(config.next_fork(1000), None);
+
+        // get_last_scheduled_fork picks Hegota when scheduled.
+        assert_eq!(config.get_last_scheduled_fork(), Fork::Hegota);
+
+        // get_activation_timestamp_for_fork returns the right value.
+        assert_eq!(
+            config.get_activation_timestamp_for_fork(Fork::Hegota),
+            Some(1000)
+        );
+    }
+
+    #[test]
+    fn chain_config_accepts_heze_and_bogota_aliases_for_hegota_time() {
+        for key in [
+            "hegotaTime",
+            "hezeTime",
+            "heze_time",
+            "bogotaTime",
+            "bogota_time",
+        ] {
+            let json = format!(
+                r#"{{
+                    "chainId": 1,
+                    "depositContractAddress": "0x0000000000000000000000000000000000000000",
+                    "{key}": 1700000000
+                }}"#
+            );
+            let cfg: ChainConfig = serde_json::from_str(&json)
+                .unwrap_or_else(|e| panic!("alias {key} must deserialize: {e}"));
+            assert_eq!(cfg.hegota_time, Some(1_700_000_000), "alias {key}");
+        }
+    }
+
+    #[test]
+    fn next_fork_skips_unscheduled_intermediate_forks() {
+        // bal-devnet-7 layout: every post-merge fork up to Osaka at t=0, Amsterdam
+        // scheduled later, no BPOs scheduled. `next_fork` must return Amsterdam
+        // even though the BPO chain between Osaka and Amsterdam is empty.
+        let config = ChainConfig {
+            shanghai_time: Some(0),
+            cancun_time: Some(0),
+            prague_time: Some(0),
+            osaka_time: Some(0),
+            amsterdam_time: Some(1_779_098_127),
+            ..Default::default()
+        };
+        assert_eq!(config.next_fork(0), Some(Fork::Amsterdam));
+        assert_eq!(config.next_fork(1_779_098_126), Some(Fork::Amsterdam));
+        assert_eq!(config.next_fork(1_779_098_127), None);
+    }
+
+    #[test]
+    fn next_fork_picks_earliest_scheduled() {
+        // Contiguous schedule: at Cancun, next should be Prague (not Osaka).
+        let config = ChainConfig {
+            shanghai_time: Some(0),
+            cancun_time: Some(100),
+            prague_time: Some(200),
+            osaka_time: Some(300),
+            ..Default::default()
+        };
+        assert_eq!(config.next_fork(150), Some(Fork::Prague));
+        assert_eq!(config.next_fork(250), Some(Fork::Osaka));
+        assert_eq!(config.next_fork(300), None);
+    }
+
+    #[test]
+    fn next_fork_returns_none_when_at_last_scheduled() {
+        let config = ChainConfig {
+            shanghai_time: Some(0),
+            cancun_time: Some(0),
+            ..Default::default()
+        };
+        assert_eq!(config.next_fork(0), None);
     }
 }

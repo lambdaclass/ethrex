@@ -1,8 +1,9 @@
 use crate::{
     cli::{LogColor, Options},
     utils::{
-        display_chain_initialization, get_client_version, get_client_version_string, init_datadir,
-        is_memory_datadir, parse_socket_addr, read_jwtsecret_file, read_node_config_file,
+        display_chain_initialization, get_channel, get_client_version, get_client_version_string,
+        init_datadir, is_memory_datadir, parse_socket_addr, read_jwtsecret_file,
+        read_node_config_file,
     },
 };
 use ethrex_blockchain::{Blockchain, BlockchainOptions, BlockchainType};
@@ -24,7 +25,9 @@ use ethrex_p2p::{
     types::{NetworkConfig, Node, NodeRecord},
     utils::public_key_from_signing_key,
 };
-use ethrex_storage::{EngineType, Store, error::StoreError, has_valid_db, read_chain_id_from_db};
+use ethrex_storage::{
+    EngineType, Store, StoreConfig, error::StoreError, has_valid_db, read_chain_id_from_db,
+};
 use local_ip_address::{local_ip, local_ipv6};
 use rand::rngs::OsRng;
 use secp256k1::SecretKey;
@@ -39,9 +42,7 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 use tokio_util::{sync::CancellationToken, task::TaskTracker};
-#[cfg(not(feature = "l2"))]
-use tracing::error;
-use tracing::{Level, debug, info, warn};
+use tracing::{Level, debug, error, info, warn};
 use tracing_subscriber::{
     EnvFilter, Layer, Registry, filter::Directive, fmt, layer::SubscriberExt, reload,
 };
@@ -82,7 +83,7 @@ pub fn init_tracing(
             std::fs::create_dir_all(log_dir).expect("Failed to create log directory");
         }
 
-        let branch = env!("VERGEN_GIT_BRANCH").replace('/', "-");
+        let branch = get_channel().replace('/', "-");
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
@@ -121,7 +122,7 @@ pub fn init_metrics(opts: &Options, network: &Network, tracker: TaskTracker) {
     ethrex_metrics::node::MetricsNode::init(
         env!("CARGO_PKG_VERSION"),
         env!("VERGEN_GIT_SHA"),
-        env!("VERGEN_GIT_BRANCH"),
+        &get_channel(),
         env!("VERGEN_RUSTC_SEMVER"),
         env!("VERGEN_RUSTC_HOST_TRIPLE"),
         &network.to_string(),
@@ -140,39 +141,139 @@ pub fn init_metrics(opts: &Options, network: &Network, tracker: TaskTracker) {
     initialize_block_processing_profile();
     initialize_rpc_metrics();
 
-    tracker.spawn(metrics_api);
+    // Metrics is a non-fatal sidecar: its failure is logged loudly but must not down the node.
+    spawn_logged(&tracker, "metrics server", metrics_api);
 }
 
-/// Opens a new or pre-existing Store and loads the initial state provided by the network
+/// Opens a new or pre-existing Store with default tunables and loads the initial
+/// state provided by the network. See [`init_store_with_config`] for the variant
+/// that lets production callers thread CLI-provided storage tunables through.
 pub async fn init_store(datadir: impl AsRef<Path>, genesis: Genesis) -> Result<Store, StoreError> {
-    let mut store = open_store(datadir.as_ref())?;
+    init_store_with_config(datadir, genesis, StoreConfig::default()).await
+}
+
+/// Opens a Store with the supplied [`StoreConfig`] and loads the initial state.
+pub async fn init_store_with_config(
+    datadir: impl AsRef<Path>,
+    genesis: Genesis,
+    config: StoreConfig,
+) -> Result<Store, StoreError> {
+    let mut store = open_store_with_config(datadir.as_ref(), config)?;
     store.add_initial_state(genesis).await?;
     Ok(store)
 }
 
-/// Initializes a pre-existing Store
+/// Like [`init_store`], but trusts a pre-existing datadir's genesis instead of
+/// validating it against `genesis`. See [`Store::add_initial_state_skip_validation`].
+pub async fn init_store_skip_validation(
+    datadir: impl AsRef<Path>,
+    genesis: Genesis,
+) -> Result<Store, StoreError> {
+    init_store_skip_validation_with_config(datadir, genesis, StoreConfig::default()).await
+}
+
+/// Like [`init_store_with_config`], but trusts a pre-existing datadir's genesis
+/// instead of validating it against `genesis`.
+pub async fn init_store_skip_validation_with_config(
+    datadir: impl AsRef<Path>,
+    genesis: Genesis,
+    config: StoreConfig,
+) -> Result<Store, StoreError> {
+    let mut store = open_store_with_config(datadir.as_ref(), config)?;
+    store.add_initial_state_skip_validation(genesis).await?;
+    Ok(store)
+}
+
+/// Initializes a pre-existing Store with default tunables. See [`load_store_with_config`].
 pub async fn load_store(datadir: &Path) -> Result<Store, StoreError> {
-    let store = open_store(datadir)?;
+    load_store_with_config(datadir, StoreConfig::default()).await
+}
+
+/// Initializes a pre-existing Store, applying the supplied [`StoreConfig`].
+pub async fn load_store_with_config(
+    datadir: &Path,
+    config: StoreConfig,
+) -> Result<Store, StoreError> {
+    let store = open_store_with_config(datadir, config)?;
     store.load_initial_state().await?;
     Ok(store)
 }
 
-/// Opens a pre-existing Store or creates a new one
+/// Opens a pre-existing Store or creates a new one with default tunables.
+/// See [`open_store_with_config`].
 pub fn open_store(datadir: &Path) -> Result<Store, StoreError> {
+    open_store_with_config(datadir, StoreConfig::default())
+}
+
+/// Opens a pre-existing Store or creates a new one, applying the supplied [`StoreConfig`].
+pub fn open_store_with_config(datadir: &Path, config: StoreConfig) -> Result<Store, StoreError> {
     if is_memory_datadir(datadir) {
-        Store::new(datadir, EngineType::InMemory)
+        Store::new_with_config(datadir, EngineType::InMemory, config)
     } else {
         #[cfg(feature = "rocksdb")]
         let engine_type = EngineType::RocksDB;
         #[cfg(feature = "metrics")]
         ethrex_metrics::process::set_datadir_path(datadir.to_path_buf());
-        Store::new(datadir, engine_type)
+        Store::new_with_config(datadir, engine_type, config)
     }
 }
 
 pub fn init_blockchain(store: Store, blockchain_opts: BlockchainOptions) -> Arc<Blockchain> {
     info!("Initiating blockchain with levm");
     Blockchain::new(store, blockchain_opts).into()
+}
+
+/// Cause of a fatal-subsystem shutdown, set by [`spawn_fatal`] before it cancels the node.
+/// `main` inspects it after the shutdown sequence to exit non-zero on a fatal-initiated
+/// shutdown (signal-triggered shutdowns leave it unset and exit zero).
+static FATAL_SHUTDOWN_CAUSE: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+
+/// Returns the fatal-subsystem failure that initiated shutdown, if any.
+pub fn fatal_shutdown_cause() -> Option<&'static str> {
+    FATAL_SHUTDOWN_CAUSE.get().map(String::as_str)
+}
+
+/// Spawns a subsystem whose failure is fatal to the node. On an error raised *before*
+/// shutdown has begun it logs loudly, records the cause (so `main` exits non-zero), and
+/// cancels the node's token so the main loop tears everything down. An error surfacing
+/// *after* cancellation (e.g. a client dropping during a graceful drain) is downgraded to
+/// a debug line and does not re-cancel — this keeps the operator-facing shutdown reason
+/// honest.
+pub(crate) fn spawn_fatal<F, E>(
+    tracker: &TaskTracker,
+    cancel_token: CancellationToken,
+    name: &'static str,
+    fut: F,
+) where
+    F: std::future::Future<Output = Result<(), E>> + Send + 'static,
+    E: std::fmt::Display + Send + 'static,
+{
+    tracker.spawn(async move {
+        match fut.await {
+            Ok(()) => {}
+            Err(err) if cancel_token.is_cancelled() => {
+                debug!("{name} returned after shutdown began: {err}");
+            }
+            Err(err) => {
+                error!("{name} failed: {err}; shutting down the node");
+                let _ = FATAL_SHUTDOWN_CAUSE.set(format!("{name}: {err}"));
+                cancel_token.cancel();
+            }
+        }
+    });
+}
+
+/// Spawns a non-fatal subsystem: an error is logged loudly but the node keeps running.
+pub(crate) fn spawn_logged<F, E>(tracker: &TaskTracker, name: &'static str, fut: F)
+where
+    F: std::future::Future<Output = Result<(), E>> + Send + 'static,
+    E: std::fmt::Display + Send + 'static,
+{
+    tracker.spawn(async move {
+        if let Err(err) = fut.await {
+            error!("{name} exited with error: {err}");
+        }
+    });
 }
 
 #[expect(clippy::too_many_arguments)]
@@ -187,7 +288,7 @@ pub async fn init_rpc_api(
     cancel_token: CancellationToken,
     tracker: TaskTracker,
     log_filter_handler: Option<reload::Handle<EnvFilter, Registry>>,
-) {
+) -> eyre::Result<()> {
     if !is_memory_datadir(datadir) {
         init_datadir(datadir);
     }
@@ -202,7 +303,7 @@ pub async fn init_rpc_api(
     let syncer = SyncManager::new(
         peer_handler.clone(),
         syncmode,
-        cancel_token,
+        cancel_token.clone(),
         blockchain.clone(),
         store.clone(),
         datadir.to_path_buf(),
@@ -218,7 +319,19 @@ pub async fn init_rpc_api(
         None
     };
 
-    let rpc_api = ethrex_rpc::start_api(
+    // Reject conflicting listener addresses at config time, before anything binds, with an
+    // error naming both flags to change.
+    validate_rpc_addrs(
+        get_http_socket_addr(opts),
+        Some(get_authrpc_socket_addr(opts)),
+        ws_config.as_ref().map(|ws| ws.addr),
+    )?;
+
+    // Bind in the foreground so a failure (e.g. a port collision) aborts node startup with
+    // an actionable error, instead of being swallowed by a detached task. Serving runs in
+    // the background once every listener is bound.
+    let bound = ethrex_rpc::bind_api(
+        cancel_token.clone(),
         get_http_socket_addr(opts),
         ws_config,
         get_authrpc_socket_addr(opts),
@@ -234,9 +347,15 @@ pub async fn init_rpc_api(
         opts.gas_limit,
         opts.extra_data.clone(),
         opts.http_api.iter().copied().collect(),
-    );
+    )
+    .await?;
 
-    tracker.spawn(rpc_api);
+    // Defensive wiring: axum's serve loop retries accept errors internally and only returns
+    // after graceful shutdown, so today this error arm is unreachable for the RPC server. It
+    // exists so any future serve error (an axum behavior change, a refactor) aborts the node
+    // instead of being silently dropped — a node without its Engine API cannot sync.
+    spawn_fatal(&tracker, cancel_token, "RPC server", bound.serve());
+    Ok(())
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -276,7 +395,12 @@ pub async fn init_network(
 }
 
 #[cfg(feature = "dev")]
-pub async fn init_dev_network(opts: &Options, store: &Store, tracker: TaskTracker) {
+pub async fn init_dev_network(
+    opts: &Options,
+    store: &Store,
+    tracker: TaskTracker,
+    cancel_token: CancellationToken,
+) {
     info!("Running in DEV_MODE");
 
     let head_block_hash = {
@@ -303,7 +427,13 @@ pub async fn init_dev_network(opts: &Options, store: &Store, tracker: TaskTracke
         1000,
         ethrex_common::Address::default(),
     );
-    tracker.spawn(block_producer_engine);
+    // The dev block producer is fatal: if it exhausts its retries, abort the dev node.
+    spawn_fatal(
+        &tracker,
+        cancel_token,
+        "block producer",
+        block_producer_engine,
+    );
 }
 
 pub fn get_network(opts: &Options) -> Network {
@@ -360,27 +490,27 @@ pub fn get_signer(datadir: &Path) -> SecretKey {
     }
 }
 
-pub fn get_local_p2p_node(opts: &Options, signer: &SecretKey) -> (Node, NetworkConfig) {
-    let tcp_port = opts.p2p_port.parse().expect("Failed to parse p2p port");
-    let udp_port = opts
-        .discovery_port
-        .parse()
-        .expect("Failed to parse discovery port");
-
-    let local_public_key = public_key_from_signing_key(signer);
-
-    // Determine bind and external addresses.
-    //
-    // --nat.extip sets the address announced to peers (for nodes behind NAT).
-    // --p2p.addr sets the bind address (defaults to the auto-detected local IP
-    //   when --nat.extip is not given, or to the unspecified address when it is:
-    //   0.0.0.0 for IPv4, :: for IPv6).
-    let (bind_addr, external_addr): (IpAddr, IpAddr) = match (&opts.p2p_addr, &opts.nat_extip) {
+/// Decide the bind and externally-announced addresses for the P2P endpoint.
+///
+/// Precedence:
+/// - `--nat.extip` wins for the announced address; bind comes from `--p2p.addr` if given,
+///   else the unspecified address of the matching family.
+/// - `--p2p.addr` alone is used for both bind and announce, except when it's an unspecified
+///   address (`0.0.0.0` / `::`). In that case the announced address falls back to the
+///   auto-detected local IP of the matching family; this avoids advertising `0.0.0.0` in
+///   the ENR, which would make the node unreachable for inbound connections. Operators
+///   behind NAT still need `--nat.extip` for that case to resolve correctly.
+/// - With neither flag set, the auto-detected local IP is used for both bind and announce.
+fn resolve_p2p_endpoints(
+    p2p_addr: Option<&str>,
+    nat_extip: Option<&str>,
+    local_v4: Option<IpAddr>,
+    local_v6: Option<IpAddr>,
+) -> (IpAddr, IpAddr) {
+    match (p2p_addr, nat_extip) {
         (_, Some(extip)) => {
             let external: IpAddr = extip.parse().expect("Failed to parse --nat.extip address");
-            let bind: IpAddr = opts
-                .p2p_addr
-                .as_deref()
+            let bind: IpAddr = p2p_addr
                 .map(|a| {
                     let addr: IpAddr = a.parse().expect("Failed to parse p2p address");
                     assert!(
@@ -399,16 +529,59 @@ pub fn get_local_p2p_node(opts: &Options, signer: &SecretKey) -> (Node, NetworkC
             (bind, external)
         }
         (Some(addr), None) => {
-            let ip: IpAddr = addr.parse().expect("Failed to parse p2p address");
-            (ip, ip)
+            let bind: IpAddr = addr.parse().expect("Failed to parse p2p address");
+            if bind.is_unspecified() {
+                // Stay in the same address family: an IPv4 socket can't accept
+                // inbound IPv6 connections (and vice versa), so falling back
+                // across families would just advertise an unreachable address.
+                let external = if bind.is_ipv6() { local_v6 } else { local_v4 };
+                match external {
+                    Some(ext) => {
+                        info!(
+                            announced = %ext,
+                            bind = %bind,
+                            "--p2p.addr is unspecified; announcing auto-detected local IP. Set --nat.extip to override."
+                        );
+                        (bind, ext)
+                    }
+                    None => {
+                        warn!(
+                            bind = %bind,
+                            "--p2p.addr is unspecified and no local IP could be detected; \
+                             announcing the unspecified address. Inbound peer connections will fail. \
+                             Set --nat.extip=<ip> or --p2p.addr=<ip> to fix."
+                        );
+                        (bind, bind)
+                    }
+                }
+            } else {
+                (bind, bind)
+            }
         }
         (None, None) => {
-            let ip = local_ip().unwrap_or_else(|_| {
-                local_ipv6().expect("Neither ipv4 nor ipv6 local address found")
-            });
+            let ip = local_v4
+                .or(local_v6)
+                .expect("Neither ipv4 nor ipv6 local address found");
             (ip, ip)
         }
-    };
+    }
+}
+
+pub fn get_local_p2p_node(opts: &Options, signer: &SecretKey) -> (Node, NetworkConfig) {
+    let tcp_port = opts.p2p_port.parse().expect("Failed to parse p2p port");
+    let udp_port = opts
+        .discovery_port
+        .parse()
+        .expect("Failed to parse discovery port");
+
+    let local_public_key = public_key_from_signing_key(signer);
+
+    let (bind_addr, external_addr) = resolve_p2p_endpoints(
+        opts.p2p_addr.as_deref(),
+        opts.nat_extip.as_deref(),
+        local_ip().ok(),
+        local_ipv6().ok(),
+    );
 
     let node = Node::new(external_addr, udp_port, tcp_port, local_public_key);
     let network_config = NetworkConfig {
@@ -456,9 +629,75 @@ pub fn get_http_socket_addr(opts: &Options) -> SocketAddr {
         .expect("Failed to parse http address and port")
 }
 
+/// Two configured listener addresses conflict when they are equal, or when they share a
+/// port and one side is a same-family wildcard: Linux fails the second bind with
+/// EADDRINUSE, but on macOS/BSD `SO_REUSEADDR` lets the specific bind succeed and silently
+/// shadow the wildcard listener for that address.
+fn rpc_addrs_conflict(a: SocketAddr, b: SocketAddr) -> bool {
+    a == b
+        || (a.port() == b.port()
+            && a.is_ipv4() == b.is_ipv4()
+            && (a.ip().is_unspecified() || b.ip().is_unspecified()))
+}
+
+/// Validates the resolved RPC listener addresses at config time, before anything binds, so
+/// a conflict aborts startup with an error naming BOTH flags to change (an OS bind error
+/// can only ever blame the second binder). A WebSocket address exactly equal to the HTTP
+/// one is not a conflict: both protocols share that listener.
+pub(crate) fn validate_rpc_addrs(
+    http: SocketAddr,
+    authrpc: Option<SocketAddr>,
+    ws: Option<SocketAddr>,
+) -> eyre::Result<()> {
+    use ethrex_rpc::RpcRole;
+
+    // WS equal to HTTP shares the HTTP listener instead of binding its own.
+    let ws = ws.filter(|ws| *ws != http);
+
+    let http = (RpcRole::Http, http);
+    let authrpc = authrpc.map(|addr| (RpcRole::AuthRpc, addr));
+    let ws = ws.map(|addr| (RpcRole::Ws, addr));
+    let pairs = [
+        authrpc.map(|authrpc| (http, authrpc)),
+        ws.map(|ws| (http, ws)),
+        authrpc.zip(ws),
+    ];
+    for ((role_a, a), (role_b, b)) in pairs.into_iter().flatten() {
+        if !rpc_addrs_conflict(a, b) {
+            continue;
+        }
+        if a == b {
+            eyre::bail!(
+                "{a} is requested by both the {role_a} and the {role_b}; change {} or {}.",
+                role_a.flags(),
+                role_b.flags(),
+            );
+        }
+        eyre::bail!(
+            "{b} ({role_b}) overlaps {a} ({role_a}): a wildcard address covers every \
+             interface on its port; change {} or {}.",
+            role_a.flags(),
+            role_b.flags(),
+        );
+    }
+    Ok(())
+}
+
 pub fn get_ws_socket_addr(opts: &Options) -> SocketAddr {
-    parse_socket_addr(&opts.ws_addr, &opts.ws_port)
-        .expect("Failed to parse websocket address and port")
+    // When unset, WebSocket inherits the HTTP address/port, so an enabled WS shares the
+    // HTTP listener by default (a single-port setup, matching geth/reth/nethermind).
+    let addr = opts.ws_addr.as_deref().unwrap_or(&opts.http_addr);
+    let port = opts.ws_port.as_deref().unwrap_or(&opts.http_port);
+    let resolved =
+        parse_socket_addr(addr, port).expect("Failed to parse websocket address and port");
+    // Warn on the RESOLVED address (explicit or inherited) so L1 and L2 alike surface a
+    // publicly reachable WebSocket bind.
+    if !resolved.ip().is_loopback() {
+        warn!(
+            "WebSocket RPC is bound to {resolved}, reachable from all matching interfaces; bind 127.0.0.1 (the default) unless it sits behind a trusted proxy."
+        );
+    }
+    resolved
 }
 
 #[cfg(feature = "sync-test")]
@@ -482,7 +721,7 @@ async fn set_sync_block(store: &Store) {
 pub async fn init_l1(
     opts: Options,
     log_filter_handler: Option<reload::Handle<EnvFilter, Registry>>,
-) -> eyre::Result<(PathBuf, CancellationToken, PeerTable, NodeRecord)> {
+) -> eyre::Result<(PathBuf, CancellationToken, PeerTable, NodeRecord, Store)> {
     let network = get_network(&opts);
     let datadir = crate::cli::compute_effective_datadir(&opts.datadir, &network, opts.dev);
 
@@ -499,7 +738,16 @@ pub async fn init_l1(
     debug!("Preloading KZG trusted setup");
     ethrex_crypto::kzg::warm_up_trusted_setup();
 
-    let store = match init_store(&datadir, genesis).await {
+    let store_config = StoreConfig {
+        rocksdb_block_cache_size: opts.rocksdb_block_cache_size,
+        ..StoreConfig::default()
+    };
+    let store_result = if opts.skip_genesis_validation {
+        init_store_skip_validation_with_config(&datadir, genesis, store_config).await
+    } else {
+        init_store_with_config(&datadir, genesis, store_config).await
+    };
+    let store = match store_result {
         Ok(store) => store,
         Err(err @ StoreError::IncompatibleDBVersion { .. })
         | Err(err @ StoreError::NotFoundDBVersion) => {
@@ -531,6 +779,11 @@ pub async fn init_l1(
             max_blobs_per_block: opts.max_blobs_per_block,
             precompute_witnesses: opts.precompute_witnesses,
             precompile_cache_enabled: !opts.no_precompile_cache,
+            max_queued_txs_per_account: opts.mempool_max_queued_txs_per_account,
+            bal_parallel_exec_enabled: !opts.no_bal_parallel_exec,
+            bal_prefetch_enabled: !opts.no_bal_prefetch,
+            bal_parallel_trie_enabled: !opts.no_bal_parallel_trie,
+            gap_admit_occupancy_threshold: opts.mempool_gap_admit_occupancy_threshold,
         },
     );
 
@@ -542,7 +795,8 @@ pub async fn init_l1(
 
     let local_node_record = get_local_node_record(&datadir, &local_p2p_node, &signer);
 
-    let peer_table = PeerTableServer::spawn(opts.target_peers, store.clone());
+    let peer_table =
+        PeerTableServer::spawn(local_p2p_node.node_id(), opts.target_peers, store.clone());
 
     // TODO: Check every module starts properly.
     let tracker = TaskTracker::new();
@@ -580,7 +834,7 @@ pub async fn init_l1(
         tracker.clone(),
         log_filter_handler,
     )
-    .await;
+    .await?;
 
     if opts.metrics_enabled {
         init_metrics(&opts, &network, tracker.clone());
@@ -588,7 +842,7 @@ pub async fn init_l1(
 
     if opts.dev {
         #[cfg(feature = "dev")]
-        init_dev_network(&opts, &store, tracker.clone()).await;
+        init_dev_network(&opts, &store, tracker.clone(), cancel_token.clone()).await;
     } else if !opts.p2p_disabled {
         init_network(
             &opts,
@@ -609,6 +863,7 @@ pub async fn init_l1(
         cancel_token,
         peer_handler.peer_table,
         local_node_record,
+        store,
     ))
 }
 
@@ -741,25 +996,18 @@ pub fn migrate_datadir_if_needed(
     }
 }
 
-/// Regenerates the state up to the head block by re-applying blocks from the
-/// last known state root.
-///
-/// Since the path-based feature was added, the database stores the state 128
-/// blocks behind the head block while the state of the blocks in between are
-/// kept in in-memory-diff-layers.
-///
-/// After the node is shut down, those in-memory layers are lost, and the database
-/// won't have the state for those blocks. It will have the blocks though.
-///
-/// When the node is started again, the state needs to be regenerated by
-/// re-applying the blocks from the last known state root up to the head block.
-///
-/// This function performs that regeneration.
+/// Re-apply blocks from the last on-disk state root up to the head block,
+/// rebuilding the in-memory trie diff-layers lost across a restart.
 pub async fn regenerate_head_state(
     store: &Store,
     blockchain: &Arc<Blockchain>,
 ) -> eyre::Result<()> {
+    // Precondition: the store was opened via `add_initial_state`/`load_initial_state`,
+    // which clamp `LatestBlockNumber` to `flushed_upto`. All blocks up to
+    // `head_block_number` are therefore on disk; callers that skip that clamp
+    // would break this assumption.
     let head_block_number = store.get_latest_block_number().await?;
+    debug!("regenerate_head_state head clamped to durable block {head_block_number}");
 
     let Some(last_header) = store.get_block_header(head_block_number)? else {
         unreachable!("Database is empty, genesis block should be present");
@@ -811,4 +1059,151 @@ pub async fn regenerate_head_state(
     info!("Finished regenerating state");
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{resolve_p2p_endpoints, validate_rpc_addrs};
+    use std::net::{IpAddr, SocketAddr};
+
+    fn ip(s: &str) -> IpAddr {
+        s.parse().unwrap()
+    }
+
+    fn addr(s: &str) -> SocketAddr {
+        s.parse().unwrap()
+    }
+
+    /// The default layout (distinct ports) must validate.
+    #[test]
+    fn distinct_rpc_addrs_are_valid() {
+        let result = validate_rpc_addrs(
+            addr("127.0.0.1:8545"),
+            Some(addr("127.0.0.1:8551")),
+            Some(addr("127.0.0.1:8546")),
+        );
+        assert!(result.is_ok());
+    }
+
+    /// WebSocket exactly equal to HTTP shares the HTTP listener (merged single-port
+    /// setup) — it must NOT be reported as a conflict.
+    #[test]
+    fn ws_sharing_the_http_listener_is_not_a_conflict() {
+        let result = validate_rpc_addrs(
+            addr("127.0.0.1:8545"),
+            Some(addr("127.0.0.1:8551")),
+            Some(addr("127.0.0.1:8545")),
+        );
+        assert!(result.is_ok());
+    }
+
+    /// A duplicate address must fail at config time with an error naming BOTH flags,
+    /// since an OS bind error can only ever blame the second binder.
+    #[test]
+    fn duplicate_rpc_addr_names_both_flags() {
+        let err = validate_rpc_addrs(
+            addr("127.0.0.1:8545"),
+            Some(addr("127.0.0.1:8551")),
+            Some(addr("127.0.0.1:8551")),
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(err.contains("Auth-RPC server"), "{err}");
+        assert!(err.contains("WebSocket server"), "{err}");
+        assert!(err.contains("--authrpc.port"), "{err}");
+        assert!(err.contains("--ws.port"), "{err}");
+    }
+
+    /// A same-family wildcard on the same port covers the specific address: Linux fails
+    /// the second bind, macOS/BSD lets it shadow the wildcard. Both must be rejected up
+    /// front, uniformly.
+    #[test]
+    fn wildcard_overlap_is_rejected() {
+        let err = validate_rpc_addrs(
+            addr("0.0.0.0:8545"),
+            Some(addr("127.0.0.1:8551")),
+            Some(addr("127.0.0.1:8545")),
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(err.contains("overlaps"), "{err}");
+        assert!(err.contains("--http.port"), "{err}");
+        assert!(err.contains("--ws.port"), "{err}");
+    }
+
+    /// Cross-family wildcard overlap ([::] vs 0.0.0.0) depends on the platform's
+    /// dual-stack configuration; it is deliberately left to the kernel to decide at bind.
+    #[test]
+    fn cross_family_wildcards_are_left_to_the_kernel() {
+        let result = validate_rpc_addrs(
+            addr("0.0.0.0:8545"),
+            Some(addr("127.0.0.1:8551")),
+            Some(addr("[::]:8545")),
+        );
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn p2p_addr_unspecified_v4_announces_local_ip() {
+        let local = ip("10.0.0.5");
+        let (bind, ext) = resolve_p2p_endpoints(Some("0.0.0.0"), None, Some(local), None);
+        assert_eq!(bind, ip("0.0.0.0"));
+        assert_eq!(ext, local);
+    }
+
+    #[test]
+    fn p2p_addr_unspecified_without_local_ip_keeps_unspecified() {
+        let (bind, ext) = resolve_p2p_endpoints(Some("0.0.0.0"), None, None, None);
+        assert_eq!(bind, ip("0.0.0.0"));
+        assert_eq!(ext, ip("0.0.0.0"));
+    }
+
+    #[test]
+    fn extip_overrides_unspecified_bind() {
+        let (bind, ext) = resolve_p2p_endpoints(
+            Some("0.0.0.0"),
+            Some("203.0.113.5"),
+            Some(ip("10.0.0.5")),
+            None,
+        );
+        assert_eq!(bind, ip("0.0.0.0"));
+        assert_eq!(ext, ip("203.0.113.5"));
+    }
+
+    #[test]
+    fn specific_p2p_addr_used_for_both() {
+        let (bind, ext) =
+            resolve_p2p_endpoints(Some("10.0.0.5"), None, Some(ip("192.168.1.1")), None);
+        assert_eq!(bind, ip("10.0.0.5"));
+        assert_eq!(ext, ip("10.0.0.5"));
+    }
+
+    #[test]
+    fn no_flags_uses_local_v4_when_available() {
+        let local = ip("10.0.0.5");
+        let (bind, ext) = resolve_p2p_endpoints(None, None, Some(local), Some(ip("fe80::1")));
+        assert_eq!(bind, local);
+        assert_eq!(ext, local);
+    }
+
+    #[test]
+    fn extip_only_uses_unspecified_bind() {
+        let (bind, ext) = resolve_p2p_endpoints(None, Some("203.0.113.5"), None, None);
+        assert_eq!(bind, ip("0.0.0.0"));
+        assert_eq!(ext, ip("203.0.113.5"));
+    }
+
+    #[test]
+    fn p2p_addr_unspecified_v6_announces_local_ipv6() {
+        let local6 = ip("fe80::1");
+        let (bind, ext) = resolve_p2p_endpoints(Some("::"), None, None, Some(local6));
+        assert_eq!(bind, ip("::"));
+        assert_eq!(ext, local6);
+    }
+
+    #[test]
+    #[should_panic(expected = "--p2p.addr and --nat.extip must use the same address family")]
+    fn family_mismatch_panics() {
+        let _ = resolve_p2p_endpoints(Some("0.0.0.0"), Some("::1"), None, None);
+    }
 }

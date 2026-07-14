@@ -71,6 +71,12 @@ where
                     "TransactionException.INSUFFICIENT_MAX_FEE_PER_BLOB_GAS" => {
                         TransactionExpectedException::InsufficientMaxFeePerBlobGas
                     }
+                    "TransactionException.INVALID_SIGNATURE_VRS" => {
+                        TransactionExpectedException::InvalidSignatureVrs
+                    }
+                    "TransactionException.INVALID_CHAINID" => {
+                        TransactionExpectedException::InvalidChainId
+                    }
                     _other => TransactionExpectedException::Other, //TODO: Support exceptions that enter here.
                 }
             })
@@ -138,9 +144,16 @@ where
     let post_deserialized = HashMap::<String, Vec<RawPostValue>>::deserialize(deserializer)?;
     let mut post_parsed = HashMap::new();
     for (fork_str, values) in post_deserialized {
+        // Keep names in sync with the `Fork` enum in `crates/common/types/genesis.rs`.
+        // An unknown fork name is a hard error so that newly-emitted fixture forks
+        // surface as a build break (forcing a deserializer/Fork update), rather than
+        // silently dropping test coverage.
         let fork = match fork_str.as_str() {
             "Frontier" => Fork::Frontier,
             "Homestead" => Fork::Homestead,
+            "EIP150" | "TangerineWhistle" => Fork::Tangerine,
+            "EIP158" | "SpuriousDragon" => Fork::SpuriousDragon,
+            "Byzantium" => Fork::Byzantium,
             "Constantinople" => Fork::Constantinople,
             "ConstantinopleFix" | "Petersburg" => Fork::Petersburg,
             "Istanbul" => Fork::Istanbul,
@@ -150,9 +163,13 @@ where
             "Shanghai" => Fork::Shanghai,
             "Cancun" => Fork::Cancun,
             "Prague" => Fork::Prague,
-            "Byzantium" => Fork::Byzantium,
-            "EIP158" => Fork::SpuriousDragon,
-            "EIP150" => Fork::Tangerine,
+            "Osaka" => Fork::Osaka,
+            "BPO1" => Fork::BPO1,
+            "BPO2" => Fork::BPO2,
+            "BPO3" => Fork::BPO3,
+            "BPO4" => Fork::BPO4,
+            "BPO5" => Fork::BPO5,
+            "Amsterdam" => Fork::Amsterdam,
             other => {
                 return Err(serde::de::Error::custom(format!(
                     "Unknown fork name: {other}",
