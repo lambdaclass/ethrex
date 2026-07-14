@@ -3396,6 +3396,15 @@ impl Store {
         Ok(Some(BlockNumber::from_be_bytes(arr)))
     }
 
+    /// The in-memory diff-layer retention (the layer cache's commit threshold):
+    /// the deepest reorg the node can serve straight from the layer cache, with no
+    /// journal/overlay reconstruction. RocksDB default 128, in-memory 10000. Used by
+    /// `compute_reorg_ceiling` as the physical floor when there is no finality signal.
+    pub fn reorg_retention(&self) -> Result<u64, StoreError> {
+        let cache = self.trie_cache.read().map_err(|_| StoreError::LockError)?;
+        Ok(cache.commit_threshold() as u64)
+    }
+
     /// Test-only: inserts a pre-encoded `STATE_HISTORY` entry at the given block
     /// number. Lets integration tests seed the journal without running enough
     /// commits to trip the in-memory cache's flush threshold.

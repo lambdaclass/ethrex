@@ -436,6 +436,53 @@ async fn reorg_depth_bounded_by_finalized() {
     );
 }
 
+/// Regression (PR #6724 CI, Hive Paris engine re-org tests): with no finalized block
+/// and an empty journal (case 3 of `compute_reorg_ceiling`), a shallow reorg the node
+/// can serve straight from its in-memory layer cache must be allowed. The former
+/// `unwrap_or(0)` ceiling rejected every reorg on short, unfinalized chains with
+/// `TooDeepReorg { limit: 0 }`, which is exactly what the Hive `N Block Re-Org (Paris)`
+/// cases hit (short chain, no finality set). This builds 8 unfinalized blocks (journal
+/// empty on the in-memory backend) and asserts a depth-5 reorg is accepted.
+#[tokio::test]
+async fn unfinalized_shallow_reorg_with_empty_journal_is_allowed() {
+    let store = test_store().await;
+    let genesis = store.get_block_header(0).unwrap().unwrap();
+    let blockchain = Blockchain::default_with_store(store.clone());
+
+    let mut parent = genesis;
+    let mut chain_a: Vec<(u64, H256)> = Vec::new();
+    for _ in 0..8 {
+        let block = new_block(&store, &parent).await;
+        parent = block.header.clone();
+        chain_a.push((block.header.number, block.hash()));
+        blockchain.add_block(block).unwrap();
+    }
+    let (_, head_a) = *chain_a.last().unwrap();
+    store
+        .forkchoice_update(chain_a.clone(), 8, head_a, None, None)
+        .await
+        .unwrap();
+    assert!(
+        store.lowest_state_history_block_number().unwrap().is_none(),
+        "journal must be empty (in-memory threshold not reached) to exercise case 3"
+    );
+
+    // Chain B diverges at block 4; link = block 3 (real, live state).
+    // reorg_depth = latest(8) - 3 = 5, with no finalized/safe hash.
+    let (_, link3) = chain_a[2];
+    let mut phash = link3;
+    let mut head_b = link3;
+    for n in 4..=8u64 {
+        let h = store_fake_block(&store, n, phash).await;
+        phash = h;
+        head_b = h;
+    }
+    apply_fork_choice(&store, head_b, H256::zero(), H256::zero(), None)
+        .await
+        .expect("depth-5 unfinalized reorg with empty journal must be allowed (case-3 physical ceiling), not TooDeepReorg");
+    assert!(is_canonical(&store, 8, head_b).await.unwrap());
+}
+
 /// Task 2.7b: A reorg of depth 129 succeeds when finality ceiling is 129,
 /// proving the old hardcoded 128-block cap is gone.
 #[tokio::test]

@@ -25,9 +25,11 @@ use crate::{
 ///    The `-1` accounts for the entry at `lowest_journal_block` itself being the
 ///    reverse-diff used to step PAST that block; the deepest reachable pivot is
 ///    therefore one below the journal floor.
-/// 3. **No finalized block, journal empty**: ceiling is `operator_override.unwrap_or(0)`.
-///    With no finality signal and no journal, no deep reorg can be safely executed;
-///    reject all non-trivial reorgs unless the operator explicitly permits them.
+/// 3. **No finalized block, journal empty**: ceiling is the layer-cache retention
+///    (`Store::reorg_retention`, capped at `latest`), i.e. how deep the node can reorg
+///    straight from its in-memory diff-layers. With nothing finalized there is no lower
+///    bound to protect, so any reorg the node can physically serve is allowed; the
+///    operator override caps it when set. (Pre-PR-4 this was the fixed 128 cap.)
 ///
 /// An operator override of `Some(0)` disables deep reorgs entirely regardless of
 /// the finality state (pre-PR-4 behaviour, under full operator control).
@@ -91,8 +93,18 @@ async fn compute_reorg_ceiling(
             })
         }
         None => {
-            // Case 3: journal empty and no finality signal; reject unless operator permits.
-            Ok(max_reorg_depth.unwrap_or(0))
+            // Case 3: no finalized block and the journal is empty. This is a fresh or
+            // short chain that has not reached the commit threshold, so every block
+            // since genesis is still an uncommitted in-memory diff-layer and the node
+            // can serve a reorg to any of them. The physical ceiling is the layer-cache
+            // retention (the pre-PR-4 fixed cap), bounded by `latest`. Returning 0 here
+            // wrongly rejected legal shallow reorgs on unfinalized chains (the Hive
+            // engine re-org tests). The operator override still caps it when set.
+            let physical = latest.min(store.reorg_retention()?);
+            Ok(match max_reorg_depth {
+                Some(d) => physical.min(d),
+                None => physical,
+            })
         }
     }
 }
