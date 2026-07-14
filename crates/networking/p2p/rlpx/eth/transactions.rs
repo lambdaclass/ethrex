@@ -36,6 +36,13 @@ const POOLED_TX_SIZE_TOLERANCE: usize = 8;
 /// that with margin while staying 4× below the frame cap.
 const MAX_POOLED_TRANSACTIONS_BYTES: usize = 4 * 1024 * 1024;
 
+/// Target maximum size of a `PooledTransactions` response we *serve*, matching go-ethereum's
+/// `softResponseLimit` (2 MiB). We stop before a transaction would push the response over this,
+/// so what we emit stays well under any peer's inbound decode cap
+/// ([`MAX_POOLED_TRANSACTIONS_BYTES`]). Partial responses are protocol-legal — the requester
+/// re-requests whatever it still needs.
+const MAX_POOLED_RESPONSE_BYTES: usize = 2 * 1024 * 1024;
+
 // https://github.com/ethereum/devp2p/blob/master/caps/eth.md#transactions-0x02
 // Broadcast message
 #[derive(Debug, Clone)]
@@ -241,18 +248,36 @@ impl GetPooledTransactions {
 
     pub fn handle(&self, blockchain: &Blockchain) -> Result<PooledTransactions, StoreError> {
         // TODO(#1615): get transactions in batch instead of iterating over them.
-        let txs = self
-            .transaction_hashes
-            .iter()
+        let mut pooled_transactions = Vec::new();
+        let mut seen = HashSet::with_capacity(self.transaction_hashes.len());
+        let mut bytes_used = 0usize;
+        for hash in &self.transaction_hashes {
+            // Serve each requested hash at most once: a peer padding the request with duplicates
+            // must not amplify the response or force repeated mempool lookups (the lookup is
+            // skipped for a repeat, so an all-duplicate request costs one probe, not N).
+            if !seen.insert(*hash) {
+                continue;
+            }
             // As per the spec, skipping unavailable transactions is perfectly acceptable,
             // for example if a transaction was taken out of the mempool due to payload
             // building after being advertised.
-            .filter_map(|hash| blockchain.get_p2p_transaction_by_hash(hash).ok())
-            .collect::<Vec<_>>();
+            let Ok(tx) = blockchain.get_p2p_transaction_by_hash(hash) else {
+                continue;
+            };
+            // Cap the response size (geth `softResponseLimit`): stop before a tx would push the
+            // response over the budget so we never emit more than a peer's inbound cap accepts.
+            // Always serve at least one tx so a lone oversized (blob) tx still goes out.
+            let tx_size = tx.encode_canonical_to_vec().len();
+            if !pooled_transactions.is_empty() && bytes_used + tx_size > MAX_POOLED_RESPONSE_BYTES {
+                break;
+            }
+            bytes_used += tx_size;
+            pooled_transactions.push(tx);
+        }
 
         Ok(PooledTransactions {
             id: self.id,
-            pooled_transactions: txs,
+            pooled_transactions,
         })
     }
 }
