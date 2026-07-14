@@ -183,10 +183,19 @@ impl Database for CachingDatabase {
     #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
     fn prefetch_accounts(&self, addresses: &[Address]) -> Result<(), DatabaseError> {
         // Fetch from inner in parallel (no lock contention), then single write-lock to populate cache.
-        let fetched: Vec<(Address, AccountState)> = addresses
-            .par_iter()
-            .map(|&addr| self.inner.get_account_state(addr).map(|s| (addr, s)))
-            .collect::<Result<_, _>>()?;
+        let fetch = || {
+            addresses
+                .par_iter()
+                .map(|&addr| self.inner.get_account_state(addr).map(|s| (addr, s)))
+                .collect::<Result<Vec<(Address, AccountState)>, _>>()
+        };
+        // Run the parallel cold fetch on the dedicated queue-depth pool when configured
+        // (ETHREX_PREFETCH_THREADS), else on the global rayon pool. Same result; the
+        // dedicated pool just raises in-flight read queue depth toward the device ceiling.
+        let fetched = match prefetch_pool() {
+            Some(pool) => pool.install(fetch),
+            None => fetch(),
+        }?;
         let mut cache = self.write_accounts()?;
         for (addr, state) in fetched {
             cache.entry(addr).or_insert(state);
@@ -197,18 +206,49 @@ impl Database for CachingDatabase {
     #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
     fn prefetch_storage(&self, keys: &[(Address, H256)]) -> Result<(), DatabaseError> {
         // Fetch from inner in parallel (no lock contention), then single write-lock to populate cache.
-        let fetched: Vec<((Address, H256), U256)> = keys
-            .par_iter()
-            .map(|&(addr, key)| {
-                self.inner
-                    .get_storage_value(addr, key)
-                    .map(|v| ((addr, key), v))
-            })
-            .collect::<Result<_, _>>()?;
+        let fetch = || {
+            keys.par_iter()
+                .map(|&(addr, key)| {
+                    self.inner
+                        .get_storage_value(addr, key)
+                        .map(|v| ((addr, key), v))
+                })
+                .collect::<Result<Vec<((Address, H256), U256)>, _>>()
+        };
+        let fetched = match prefetch_pool() {
+            Some(pool) => pool.install(fetch),
+            None => fetch(),
+        }?;
         let mut cache = self.write_storage()?;
         for (key, value) in fetched {
             cache.entry(key).or_insert(value);
         }
         Ok(())
     }
+}
+
+/// Opt-in dedicated pool for cold-read PREFETCH (`prefetch_accounts`/`prefetch_storage`),
+/// sized by `ETHREX_PREFETCH_THREADS`. Prefetch workers block on cold DB reads, so sizing
+/// the pool well above the core count raises in-flight read queue depth toward the NVMe
+/// device ceiling (measured ~30x at QD64 on the mainnet md-RAID). Unset or `0` keeps the
+/// previous behavior: prefetch runs on the global rayon pool (num_cpus). Sibling to the
+/// re-execution warmer's `ETHREX_WARMER_THREADS` pool.
+#[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+fn prefetch_pool() -> Option<&'static rayon::ThreadPool> {
+    static PREFETCH_POOL: std::sync::LazyLock<Option<rayon::ThreadPool>> =
+        std::sync::LazyLock::new(|| {
+            let n: usize = std::env::var("ETHREX_PREFETCH_THREADS")
+                .ok()?
+                .parse()
+                .ok()?;
+            if n == 0 {
+                return None;
+            }
+            rayon::ThreadPoolBuilder::new()
+                .num_threads(n)
+                .thread_name(|i| format!("prefetch-{i}"))
+                .build()
+                .ok()
+        });
+    PREFETCH_POOL.as_ref()
 }

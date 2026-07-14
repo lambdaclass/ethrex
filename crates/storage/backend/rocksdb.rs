@@ -337,7 +337,12 @@ impl StorageBackend for RocksDBBackend {
             .cf_handle(table_name)
             .ok_or_else(|| StoreError::Custom(format!("Table {} not found", table_name)))?;
 
-        Ok(Box::new(RocksDBLocked { db, lock, cf }))
+        Ok(Box::new(RocksDBLocked {
+            db,
+            lock,
+            cf,
+            table_name,
+        }))
     }
 
     fn create_checkpoint(&self, path: &Path) -> Result<(), StoreError> {
@@ -365,6 +370,14 @@ impl StorageReadView for RocksDBReadTx {
             .db
             .cf_handle(table)
             .ok_or_else(|| StoreError::Custom(format!("Table {} not found", table)))?;
+
+        if crate::read_stats::is_enabled() {
+            let start = std::time::Instant::now();
+            let result = self.db.get_cf(&cf, key);
+            crate::read_stats::record(table, start.elapsed().as_nanos() as u64);
+            return result
+                .map_err(|e| StoreError::Custom(format!("Failed to get from {}: {}", table, e)));
+        }
 
         self.db
             .get_cf(&cf, key)
@@ -471,10 +484,18 @@ pub struct RocksDBLocked {
     lock: SnapshotWithThreadMode<'static, DBWithThreadMode<MultiThreaded>>,
     /// Column family handle
     cf: Arc<rocksdb::BoundColumnFamily<'static>>,
+    /// Column family name (for read accounting)
+    table_name: &'static str,
 }
 
 impl StorageLockedView for RocksDBLocked {
     fn get(&self, key: &[u8]) -> Result<Option<Vec<u8>>, StoreError> {
+        if crate::read_stats::is_enabled() {
+            let start = std::time::Instant::now();
+            let result = self.lock.get_cf(&self.cf, key);
+            crate::read_stats::record(self.table_name, start.elapsed().as_nanos() as u64);
+            return result.map_err(|e| StoreError::Custom(format!("Failed to get:{e:?}")));
+        }
         self.lock
             .get_cf(&self.cf, key)
             .map_err(|e| StoreError::Custom(format!("Failed to get:{e:?}")))

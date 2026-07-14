@@ -1,5 +1,7 @@
 pub mod db;
 mod tracing;
+#[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+mod xen;
 
 use super::{BlockExecutionResult, TxGasBreakdown};
 use crate::system_contracts::{
@@ -274,6 +276,7 @@ impl LEVM {
                 base_blob_fee_per_gas,
                 &mut shared_stack_pool,
                 &mut shared_memory_pool,
+                false,
                 false,
                 crypto,
                 evm_config,
@@ -679,6 +682,7 @@ impl LEVM {
                 base_blob_fee_per_gas,
                 &mut shared_stack_pool,
                 &mut shared_memory_pool,
+                false,
                 false,
                 crypto,
                 evm_config,
@@ -1159,6 +1163,7 @@ impl LEVM {
                     base_blob_fee_per_gas,
                     &mut stack_pool,
                     &mut memory_pool,
+                    false,
                     false,
                     crypto,
                     evm_config,
@@ -2089,10 +2094,81 @@ impl LEVM {
                 EvmError::Transaction(format!("Couldn't recover addresses with error: {error}"))
             })?;
 
-        // Group transactions by sender for sequential execution within groups
-        let mut sender_groups: FxHashMap<Address, Vec<&Transaction>> = FxHashMap::default();
-        for (tx, sender) in &txs_with_sender {
-            sender_groups.entry(*sender).or_default().push(tx);
+        // Group transactions by sender for sequential execution within groups.
+        // Keep each tx's block index so light groups can preserve block order after
+        // the optional heaviest-first hoist below.
+        let mut sender_groups: FxHashMap<Address, Vec<(usize, &Transaction)>> =
+            FxHashMap::default();
+        for (i, (tx, sender)) in txs_with_sender.iter().enumerate() {
+            sender_groups.entry(*sender).or_default().push((i, tx));
+        }
+
+        // Optional heavy same-sender group splitting + heaviest-first ordering, opt-in
+        // via ETHREX_WARMER_SPLIT_GROUP (the per-group gas-limit threshold in MILLIONS;
+        // unset or 0 disables it, preserving the previous behavior). A single-sender
+        // chain whose combined gas limit exceeds the threshold warms slower on one
+        // worker than the main executor runs it, leaving the tail txs cold; splitting
+        // it into per-tx units warms them in parallel from parent state. Each split tx
+        // then carries a nonce ahead of the parent account nonce, so the warmer runs
+        // with the nonce-mismatch check disabled (see `disable_nonce_check` below) —
+        // otherwise the tail txs would abort in prepare_execution before their bodies
+        // (and read-sets) run. Heavy groups are hoisted to the front (heaviest first)
+        // so the slowest-to-warm work gets the most lead time. Adapted from Nethermind
+        // #12425.
+        //
+        // Parsed once per process (not per block), mirroring the WARMER_POOL static below.
+        static WARMER_SPLIT_GAS: std::sync::LazyLock<u64> = std::sync::LazyLock::new(|| {
+            std::env::var("ETHREX_WARMER_SPLIT_GROUP")
+                .ok()
+                .and_then(|v| v.parse::<u64>().ok())
+                .map_or(0, |millions| millions.saturating_mul(1_000_000))
+        });
+        let split_threshold_gas: u64 = *WARMER_SPLIT_GAS;
+        // Disable the nonce check only while splitting is active, so split singletons
+        // (run from parent state) execute their bodies. With the feature off this stays
+        // false and warming behavior is byte-identical to before.
+        let disable_nonce_check = split_threshold_gas != 0;
+        let group_gas = |txs: &[(usize, &Transaction)]| {
+            txs.iter()
+                .fold(0u64, |acc, (_, tx)| acc.saturating_add(tx.gas_limit()))
+        };
+        // Work units carry (sort_gas, first_index) purely to order the fan-out; the
+        // warmer only consumes (sender, txs).
+        let mut work: Vec<(u64, usize, Address, Vec<&Transaction>)> =
+            Vec::with_capacity(sender_groups.len());
+        for (sender, txs) in sender_groups {
+            let total_gas = group_gas(&txs);
+            if split_threshold_gas != 0 && txs.len() >= 2 && total_gas > split_threshold_gas {
+                for (i, tx) in txs {
+                    work.push((tx.gas_limit(), i, sender, vec![tx]));
+                }
+            } else {
+                let first_index = txs.first().map(|(i, _)| *i).unwrap_or(0);
+                work.push((
+                    total_gas,
+                    first_index,
+                    sender,
+                    txs.into_iter().map(|(_, tx)| tx).collect(),
+                ));
+            }
+        }
+        if split_threshold_gas != 0 {
+            work.sort_by(|a, b| {
+                let (a_heavy, b_heavy) = (a.0 > split_threshold_gas, b.0 > split_threshold_gas);
+                if a_heavy != b_heavy {
+                    // Heavy groups ahead of light ones.
+                    return if a_heavy {
+                        std::cmp::Ordering::Less
+                    } else {
+                        std::cmp::Ordering::Greater
+                    };
+                }
+                if a_heavy {
+                    b.0.cmp(&a.0) // heaviest gas first
+                } else {
+                    a.1.cmp(&b.1) // light groups keep block order
+                }
+            });
         }
 
         // Block-invariant EVM config + chain id, computed once and shared (by copy)
@@ -2128,9 +2204,9 @@ impl LEVM {
         // Parallel across sender groups, sequential within each group. The stack pool is reused
         // across all groups a worker handles (it is `Send`).
         let warm_groups = move || {
-            sender_groups.into_par_iter().for_each_with(
+            work.into_par_iter().for_each_with(
                 Vec::with_capacity(STACK_LIMIT),
-                |stack_pool, (sender, txs)| {
+                |stack_pool, (_sort_gas, _first_index, sender, txs)| {
                     if cancelled.load(Ordering::Relaxed) {
                         return;
                     }
@@ -2153,6 +2229,7 @@ impl LEVM {
                             stack_pool,
                             &mut memory_pool,
                             true,
+                            disable_nonce_check,
                             crypto,
                             evm_config,
                             chain_id,
@@ -2339,6 +2416,7 @@ impl LEVM {
             is_privileged: matches!(tx, Transaction::PrivilegedL2Transaction(_)),
             fee_token: tx.fee_token(),
             disable_balance_check: false,
+            disable_nonce_check: false,
             is_system_call: false,
         };
 
@@ -2378,6 +2456,7 @@ impl LEVM {
         stack_pool: &mut Vec<Stack>,
         memory_pool: &mut Vec<Memory>,
         disable_balance_check: bool,
+        disable_nonce_check: bool,
         crypto: &dyn Crypto,
         config: EVMConfig,
         chain_id: u64,
@@ -2392,6 +2471,7 @@ impl LEVM {
             base_blob_fee_per_gas,
         )?;
         env.disable_balance_check = disable_balance_check;
+        env.disable_nonce_check = disable_nonce_check;
         // Draw the root frame's stack and memory buffer from the shared pools (and adopt the
         // stacks for sub-frames), then return them afterwards so the next tx reuses them instead
         // of allocating + zeroing a fresh 32 KB stack and a fresh memory buffer per transaction.
@@ -2909,6 +2989,7 @@ fn env_from_generic(
         is_privileged: false,
         fee_token: tx.fee_token,
         disable_balance_check: false,
+        disable_nonce_check: false,
         is_system_call: false,
     })
 }

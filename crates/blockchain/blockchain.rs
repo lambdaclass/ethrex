@@ -617,6 +617,23 @@ impl Blockchain {
             }
         }
 
+        // Pre-BAL XEN-specialized analytic prefetch (opt-in via `ETHREX_XEN_PREFETCH`,
+        // mainnet-only — all gating lives inside `xen_predicted_read_set`). XEN Torrent
+        // batch-mint trains are the dominant cold-read bad blocks and the single-sender
+        // train defeats the general re-execution warmer; the proxy read-set is
+        // analytically derivable from calldata, so prefetch it up front on the same
+        // queue-depth pool. A cheap no-op on non-XEN blocks. Storage-only for now (the
+        // proxy accounts are derivable too, but account prefetch is deferred to avoid the
+        // measured ~+150 ms regression noted above). Skipped once a BAL is present
+        // (post-Amsterdam the protocol BAL supplies the exact read-set for free).
+        #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+        if bal.is_none() {
+            let (_accounts, slots) = LEVM::xen_predicted_read_set(block, caching_store.as_ref());
+            if !slots.is_empty() {
+                let _ = caching_store.prefetch_storage(&slots);
+            }
+        }
+
         let (execution_result, merkleization_result, warmer_duration) =
             std::thread::scope(|s| -> Result<_, ChainError> {
                 #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
@@ -2413,6 +2430,11 @@ impl Blockchain {
             warmer_early_ms.abs(),
             warmer_relation,
         );
+        // Opt-in (ETHREX_READ_STATS=1): per-column-family read attribution for
+        // this block — exec-phase flat-KV vs commit-phase trie-node cold reads.
+        if let Some(reads) = ethrex_storage::read_stats::block_delta_summary() {
+            info!("  `- reads:    {reads}");
+        }
 
         // Set prometheus metrics
         metrics!(

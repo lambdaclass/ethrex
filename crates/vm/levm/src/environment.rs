@@ -44,6 +44,11 @@ pub struct Environment {
     /// When true, skip balance deduction in `deduct_caller`. Used by the prewarmer
     /// to avoid early reverts on insufficient balance so that warming touches more storage.
     pub disable_balance_check: bool,
+    /// When true, skip the tx nonce-mismatch check. Set only by the speculative block
+    /// warmer: when heavy same-sender groups are split, the tail txs are warmed from
+    /// parent state and carry a nonce ahead of the parent account nonce, so the check
+    /// would otherwise abort them before their bodies (and read-sets) execute.
+    pub disable_nonce_check: bool,
     /// When true, the tx is a pre-execution system contract call (EIP-2935, EIP-4788,
     /// EIP-7002, EIP-7251 etc.). Skips the block-level gas-allowance check since system
     /// calls are allowed to exceed `block_gas_limit` (their 30M cap is a separate rule).
