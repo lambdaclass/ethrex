@@ -15,24 +15,20 @@ use crate::{
 
 /// Computes the maximum reorg depth ethrex will accept for a given fork-choice update.
 ///
-/// The ceiling is finality-bounded: the CL is authoritative, and the EL only rejects
-/// when it physically cannot unwind. Three cases are handled:
+/// `-38006 TooDeepReorg` reflects what the node can PHYSICALLY reconstruct, not a
+/// finality barrier. Finality is deliberately NOT an input: geth, nethermind and reth
+/// do not reject reorgs by finality (they trust the CL's fork choice), and the engine
+/// API tests reorg across the CL's `finalized` on purpose. Rejecting those was an
+/// over-strict reading of `-38006`.
 ///
-/// 1. **Finalized block known** (`finalized_hash` is non-zero and resolves): ceiling is
-///    `latest - finalized_number`, capped by the operator override if set.
-/// 2. **No finalized block, journal non-empty** (pre-merge or fresh node): ceiling is
-///    `latest - (lowest_journal_block - 1)`, capped by the operator override if set.
-///    The `-1` accounts for the entry at `lowest_journal_block` itself being the
-///    reverse-diff used to step PAST that block; the deepest reachable pivot is
-///    therefore one below the journal floor.
-/// 3. **No finalized block, journal empty**: ceiling is the layer-cache retention
-///    (`Store::reorg_retention`, capped at `latest`), i.e. how deep the node can reorg
-///    straight from its in-memory diff-layers. With nothing finalized there is no lower
-///    bound to protect, so any reorg the node can physically serve is allowed; the
-///    operator override caps it when set. (Pre-PR-4 this was the fixed 128 cap.)
+/// The node can serve a reorg down to whichever is deeper:
+/// - the oldest in-memory diff-layer it retains (`Store::reorg_retention`), or
+/// - the oldest journal entry, whose reverse-diff overlay reconstructs deeper state.
+///   Entry at block N unwinds N -> N-1, so the deepest reachable pivot is `lowest - 1`,
+///   giving a journal reach of `latest - (lowest - 1)`.
 ///
-/// An operator override of `Some(0)` disables deep reorgs entirely regardless of
-/// the finality state (pre-PR-4 behaviour, under full operator control).
+/// The ceiling is the deeper of the two, capped at `latest` (cannot reorg below genesis)
+/// and by the operator override `max_reorg_depth` when set (`Some(0)` disables reorgs).
 ///
 /// Reference values across ELs (devnet branches, 2026-04-30):
 /// - besu (main): 90_000 — effectively unlimited
@@ -40,73 +36,28 @@ use crate::{
 /// - geth / nethermind / reth: no engine-API rejection; trust the CL's fork choice
 async fn compute_reorg_ceiling(
     store: &Store,
-    finalized_hash: &H256,
     latest: u64,
     max_reorg_depth: Option<u64>,
 ) -> Result<u64, InvalidForkChoice> {
-    // Operator cap of 0 means "no deep reorgs at all".
-    if max_reorg_depth == Some(0) {
-        return Ok(0);
-    }
+    // Layer-cache reach: every retained in-memory diff-layer can be unwound directly.
+    let retention = store.reorg_retention()?;
 
-    if !finalized_hash.is_zero() {
-        // Case 1: finalized block is known AND locally synced.
-        // If the CL sends a finalized hash the EL hasn't synced yet (plausible after
-        // snap sync or a recent restart), fall through to the journal/operator path
-        // rather than treating finalized_number as 0 (which would let any depth pass).
-        if let Some(h) = store.get_block_header_by_hash(*finalized_hash)? {
-            // Floor at 1: a depth-1 operation is always a canonical extend or a
-            // single-block fork switch whose parent state is live, never a
-            // rewrite of finalized history, so it must never be rejected as
-            // "too deep". Without the floor, `latest - finalized` collapses to 0
-            // whenever the finalized hash IS the head (e.g. the L2 sequencer
-            // calls `apply_fork_choice(head, head, head, ..)` after producing a
-            // block), which would reject every canonical extension with
-            // `TooDeepReorg { reorg_depth: 1, limit: 0 }`.
-            let finality_ceiling = latest.saturating_sub(h.number).max(1);
-            return Ok(match max_reorg_depth {
-                Some(d) => finality_ceiling.min(d),
-                None => finality_ceiling,
-            });
-        }
-    }
+    // Journal reach: the reverse-diff overlay reconstructs state back to `lowest - 1`.
+    // `lowest.saturating_sub(1)` is safe: entries are written by commit and genesis is
+    // never committed, so `lowest >= 1` whenever an entry exists; saturating is defensive.
+    let journal_reach = match store.lowest_state_history_block_number()? {
+        Some(lowest) => latest.saturating_sub(lowest.saturating_sub(1)),
+        None => 0,
+    };
 
-    // Case 2 / 3: no finalized block.
-    match store.lowest_state_history_block_number()? {
-        Some(lowest) => {
-            // Case 2: journal is non-empty; use journal extent as physical ceiling.
-            //
-            // Each entry at block N is a reverse-diff unwinding N -> N-1, so the
-            // deepest reachable pivot is `lowest - 1` (we use the entry at `lowest`
-            // to step from state-after-`lowest` to state-after-(`lowest`-1)). Max
-            // physical depth is therefore `latest - (lowest - 1)`, matching case 1
-            // when the journal floor lines up with finality (`lowest = finalized + 1`).
-            //
-            // `lowest.saturating_sub(1)` is safe: journal entries are written by
-            // commit, genesis is never committed, so `lowest >= 1` whenever the
-            // outer `Some(lowest)` branch fires. The saturating form is defensive
-            // against a future change that could relax that invariant.
-            let journal_ceiling = latest.saturating_sub(lowest.saturating_sub(1));
-            Ok(match max_reorg_depth {
-                Some(d) => journal_ceiling.min(d),
-                None => journal_ceiling,
-            })
-        }
-        None => {
-            // Case 3: no finalized block and the journal is empty. This is a fresh or
-            // short chain that has not reached the commit threshold, so every block
-            // since genesis is still an uncommitted in-memory diff-layer and the node
-            // can serve a reorg to any of them. The physical ceiling is the layer-cache
-            // retention (the pre-PR-4 fixed cap), bounded by `latest`. Returning 0 here
-            // wrongly rejected legal shallow reorgs on unfinalized chains (the Hive
-            // engine re-org tests). The operator override still caps it when set.
-            let physical = latest.min(store.reorg_retention()?);
-            Ok(match max_reorg_depth {
-                Some(d) => physical.min(d),
-                None => physical,
-            })
-        }
-    }
+    // Deeper of the two physical reaches, never past genesis.
+    let physical = latest.min(retention.max(journal_reach));
+
+    // Operator override is an explicit cap (e.g. `Some(0)` disables reorgs entirely).
+    Ok(match max_reorg_depth {
+        Some(d) => physical.min(d),
+        None => physical,
+    })
 }
 
 /// Applies new fork choice data to the current blockchain. It performs validity checks:
@@ -120,8 +71,8 @@ async fn compute_reorg_ceiling(
 /// If the fork choice state is applied correctly, the head block header is returned.
 ///
 /// `max_reorg_depth` is the operator-configured cap (`BlockchainOptions::max_reorg_depth`).
-/// Pass `None` for the finality-bounded default. See [`compute_reorg_ceiling`] for the
-/// three-case logic.
+/// Pass `None` for the physical default (layer-cache + journal reach). See
+/// [`compute_reorg_ceiling`].
 pub async fn apply_fork_choice(
     store: &Store,
     head_hash: H256,
@@ -198,11 +149,11 @@ pub async fn apply_fork_choice(
     };
 
     // execution-apis PR 786 point 6: -38006 TooDeepReorg is returned when the reorg
-    // depth exceeds the limitation specific to the client software. ethrex's limit
-    // is finality-bounded: the ceiling is derived from the distance to the last
-    // known finalized block (or to the lowest journal entry when no finalized block
-    // is known), capped further by the operator-configured `max_reorg_depth` if set.
-    // See `compute_reorg_ceiling` for the three-case logic.
+    // depth exceeds the limitation specific to the client software. ethrex's limit is
+    // physical: how far back it can reconstruct state (layer-cache retention plus the
+    // reverse-diff journal), capped by the operator-configured `max_reorg_depth` if set.
+    // Finality is NOT a limit here, matching geth/nethermind/reth. See
+    // `compute_reorg_ceiling`.
     //
     // This check is intentionally placed before the finalized/safe connectivity
     // checks so that an over-depth reorg is rejected without those further reads. The CL is
@@ -222,7 +173,7 @@ pub async fn apply_fork_choice(
             .saturating_sub(1)
     };
     let reorg_depth = latest.saturating_sub(canonical_link_height);
-    let ceiling = compute_reorg_ceiling(store, &finalized_hash, latest, max_reorg_depth).await?;
+    let ceiling = compute_reorg_ceiling(store, latest, max_reorg_depth).await?;
     if reorg_depth > ceiling {
         return Err(InvalidForkChoice::TooDeepReorg {
             reorg_depth,
@@ -403,8 +354,8 @@ async fn find_link_with_canonical_chain(
 /// For shallow reorgs and no-op cases the call falls through to `apply_fork_choice`
 /// and behaves identically.
 ///
-/// The reorg depth ceiling is finality-bounded; see [`compute_reorg_ceiling`] for
-/// the three-case logic. The operator can further restrict depth via
+/// The reorg depth ceiling is physical (layer-cache retention plus journal reach); see
+/// [`compute_reorg_ceiling`]. The operator can further restrict depth via
 /// `--max-reorg-depth` (`BlockchainOptions::max_reorg_depth`).
 ///
 /// Tracking issue: #6685. Merged PRs: #6686, #6687, #6689, and this PR.
