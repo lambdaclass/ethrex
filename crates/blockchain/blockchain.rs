@@ -522,13 +522,18 @@ impl Blockchain {
         self.reorg_in_progress.load(Ordering::Acquire)
     }
 
-    /// Marks the start of a deep-reorg apply pass and returns a RAII guard that
-    /// clears the flag on drop (success, error, or panic). At most one apply
-    /// pass should be running at a time; callers must check
-    /// [`is_reorg_in_progress`](Self::is_reorg_in_progress) before invoking.
-    pub fn enter_reorg(&self) -> ReorgGuard<'_> {
-        self.reorg_in_progress.store(true, Ordering::Release);
-        ReorgGuard { blockchain: self }
+    /// Attempts to mark the start of a deep-reorg apply pass. Returns a RAII
+    /// guard that clears the flag on drop (success, error, or panic) if no other
+    /// pass is in flight, or `None` if one already is. This is a test-and-set:
+    /// the flag transition `false -> true` is atomic, so two concurrent FCUs
+    /// that both reach the deep path can never both acquire the guard. The loser
+    /// short-circuits to SYNCING and the CL retries. At most one apply pass runs
+    /// at a time.
+    pub fn enter_reorg(&self) -> Option<ReorgGuard<'_>> {
+        self.reorg_in_progress
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .is_ok()
+            .then_some(ReorgGuard { blockchain: self })
     }
 
     /// Executes a block withing a new vm instance and state
@@ -4581,10 +4586,17 @@ mod reorg_guard_tests {
         assert!(!blockchain.is_reorg_in_progress(), "flag starts false");
 
         {
-            let _guard = blockchain.enter_reorg();
+            let guard = blockchain.enter_reorg();
+            assert!(guard.is_some(), "first enter_reorg must acquire the guard");
             assert!(
                 blockchain.is_reorg_in_progress(),
                 "flag must be set while guard is alive"
+            );
+            // A second attempt while the first guard is alive must fail the
+            // test-and-set and return None.
+            assert!(
+                blockchain.enter_reorg().is_none(),
+                "concurrent enter_reorg must not acquire a second guard"
             );
         }
         assert!(
@@ -4602,6 +4614,7 @@ mod reorg_guard_tests {
             assert!(blockchain.is_reorg_in_progress());
             panic!("simulated apply failure");
         }));
+        // guard is dropped by the unwind; flag must be clear below.
         assert!(result.is_err(), "panic must propagate out of the scope");
         assert!(
             !blockchain.is_reorg_in_progress(),

@@ -332,11 +332,15 @@ async fn reorg_apply_deep(
     safe_hash: H256,
     finalized_hash: H256,
 ) -> Result<BlockHeader, InvalidForkChoice> {
-    // Mark the reorg in progress for the duration of this call. The guard
-    // clears the flag on every exit path (success, error, panic via
-    // unwinding). Concurrent FCUs see the flag set and short-circuit to
-    // SYNCING (see `apply_fork_choice_with_deep_reorg`).
-    let _reorg_guard = blockchain.enter_reorg();
+    // Atomically claim the reorg slot. If another FCU is already mid-apply, the
+    // test-and-set fails and we short-circuit to SYNCING rather than racing on
+    // the shared overlay/layer cache. The guard clears the flag on every exit
+    // path (success, error, panic via unwinding). The pre-check in
+    // `apply_fork_choice_with_deep_reorg` is only a cheap fast-path; this is the
+    // authoritative gate.
+    let Some(_reorg_guard) = blockchain.enter_reorg() else {
+        return Err(InvalidForkChoice::Syncing);
+    };
 
     let store = blockchain.store();
 
@@ -435,9 +439,14 @@ async fn reorg_apply_deep(
                 return Err(InvalidForkChoice::UnlinkedHead);
             }
         };
+        let parent_hash = block.header.parent_hash;
         if let Err(e) = blockchain.add_block(block) {
             error!(%number, %block_hash, error = %e, "deep-reorg: side-chain block execution failed");
-            return Err(map_chain_error_for_fcu(e));
+            // `parent_hash` is the last block we replayed successfully (or the
+            // pivot for the first iteration), i.e. the deepest still-valid head
+            // on the new chain ; the correct `latestValidHash` for an INVALID
+            // response.
+            return Err(map_chain_error_for_fcu(e, parent_hash));
         }
     }
 
@@ -515,10 +524,36 @@ impl Drop for AbortReorgGuard<'_> {
 }
 
 /// Maps a [`ChainError`] from a side-chain block execution to the closest
-/// [`InvalidForkChoice`] variant. Side-chain execution failures during deep
-/// reorg almost always indicate the new chain is invalid; we collapse them
-/// to `StateNotReachable` (engine API responds `SYNCING`). A follow-up could
-/// walk back to emit `InvalidAncestor` with the last-valid-hash.
-fn map_chain_error_for_fcu(_: ChainError) -> InvalidForkChoice {
-    InvalidForkChoice::StateNotReachable
+/// [`InvalidForkChoice`] variant.
+///
+/// A block that fails validation or execution is genuinely invalid, so we emit
+/// `InvalidAncestor(last_valid_hash)` ; the engine API then responds `INVALID`
+/// with a `latestValidHash`, telling the CL to abandon this branch. Collapsing
+/// these to `StateNotReachable` (which responds `SYNCING`) would hide the
+/// verdict and let the CL retry the same invalid branch indefinitely.
+///
+/// Infrastructure errors (missing parent block/state, DB/trie/RLP faults) are
+/// NOT a statement about block validity ; they stay `StateNotReachable` so the
+/// FCU is retried rather than the branch wrongly rejected. `EvmError` is treated
+/// as infrastructure here: genuine transaction-level EVM faults are already
+/// reclassified into `ChainError::InvalidBlock` by `From<EvmError>`, so a bare
+/// `EvmError` at this layer is a state/db problem, not an invalid block.
+///
+/// `last_valid_hash` is the failing block's parent ; the deepest block on the
+/// new chain that replayed successfully.
+fn map_chain_error_for_fcu(err: ChainError, last_valid_hash: H256) -> InvalidForkChoice {
+    match err {
+        ChainError::InvalidBlock(_) | ChainError::InvalidTransaction(_) => {
+            InvalidForkChoice::InvalidAncestor(last_valid_hash)
+        }
+        ChainError::ParentNotFound
+        | ChainError::ParentStateNotFound
+        | ChainError::StoreError(_)
+        | ChainError::TrieError(_)
+        | ChainError::RLPDecodeError(_)
+        | ChainError::EvmError(_)
+        | ChainError::WitnessGeneration(_)
+        | ChainError::Custom(_)
+        | ChainError::UnknownPayload => InvalidForkChoice::StateNotReachable,
+    }
 }

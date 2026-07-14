@@ -4178,9 +4178,25 @@ fn commit_trie_layers(
             committed_block_number, t,
             "first new-chain commit must be at the pivot's T height (overlay.to_block)"
         );
-        let start = t.to_be_bytes();
-        let end = d.saturating_add(1).to_be_bytes();
-        result = write_tx.delete_range(STATE_HISTORY, &start, &end);
+        // Only reconcile when the committed block is exactly the pivot height `t`.
+        // The `delete_range` wipes the OLD-chain journal entries `[t, d]` while
+        // this commit writes a single new entry at `committed_block_number`; if
+        // that number is not `t` the range delete would drop new-chain entries
+        // that belong in `[t, d]` and leave gaps that break later reorg recovery.
+        // The debug_assert catches this loudly in tests; in release we skip the
+        // delete (and log) rather than corrupt STATE_HISTORY.
+        if committed_block_number == t {
+            let start = t.to_be_bytes();
+            let end = d.saturating_add(1).to_be_bytes();
+            result = write_tx.delete_range(STATE_HISTORY, &start, &end);
+        } else {
+            error!(
+                committed_block_number,
+                t,
+                d,
+                "deep-reorg reconciliation skipped: first overlay-backed commit not at pivot height; skipping STATE_HISTORY delete_range to avoid history gaps"
+            );
+        }
     }
 
     // Stage the journal entry into the same write batch as the trie/flat-KV overwrites.
