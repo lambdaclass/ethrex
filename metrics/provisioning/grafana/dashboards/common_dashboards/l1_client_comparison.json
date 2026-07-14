@@ -1056,13 +1056,329 @@
       ]
     },
     {
+      "type": "xychart",
+      "title": "Block complexity vs duration \u2014 gas used (X) vs FAIR newPayload time (Y, ms)",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prom-001"
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 24,
+        "x": 0,
+        "y": 28
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "fillOpacity": 40,
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "pointShape": "circle",
+            "pointSize": {
+              "fixed": 4
+            },
+            "pointStrokeWidth": 0,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "show": "points"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": 0
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          },
+          "unit": "ms"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Gas"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "short"
+              },
+              {
+                "id": "decimals",
+                "value": 0
+              },
+              {
+                "id": "min",
+                "value": 0
+              },
+              {
+                "id": "max",
+                "value": 60000000
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "ethrex"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "green"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "reth"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "blue"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "nethermind"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "orange"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "geth"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "purple"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "calcs": [
+            "mean",
+            "max",
+            "last"
+          ],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "mapping": "auto",
+        "series": [
+          {
+            "frame": {
+              "matcher": {
+                "id": "byIndex",
+                "options": 0
+              }
+            },
+            "x": {
+              "matcher": {
+                "id": "byName",
+                "options": "Gas"
+              }
+            },
+            "y": {
+              "matcher": {
+                "id": "byName",
+                "options": "ethrex"
+              }
+            }
+          },
+          {
+            "frame": {
+              "matcher": {
+                "id": "byIndex",
+                "options": 0
+              }
+            },
+            "x": {
+              "matcher": {
+                "id": "byName",
+                "options": "Gas"
+              }
+            },
+            "y": {
+              "matcher": {
+                "id": "byName",
+                "options": "reth"
+              }
+            }
+          },
+          {
+            "frame": {
+              "matcher": {
+                "id": "byIndex",
+                "options": 0
+              }
+            },
+            "x": {
+              "matcher": {
+                "id": "byName",
+                "options": "Gas"
+              }
+            },
+            "y": {
+              "matcher": {
+                "id": "byName",
+                "options": "nethermind"
+              }
+            }
+          },
+          {
+            "frame": {
+              "matcher": {
+                "id": "byIndex",
+                "options": 0
+              }
+            },
+            "x": {
+              "matcher": {
+                "id": "byName",
+                "options": "Gas"
+              }
+            },
+            "y": {
+              "matcher": {
+                "id": "byName",
+                "options": "geth"
+              }
+            }
+          }
+        ],
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "transformations": [
+        {
+          "id": "joinByField",
+          "options": {
+            "byField": "Time",
+            "mode": "outer"
+          }
+        }
+      ],
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom-001"
+          },
+          "editorMode": "code",
+          "instant": false,
+          "range": true,
+          "refId": "ethrex",
+          "legendFormat": "ethrex",
+          "expr": "1000 * ( rate(execution_layer_request_times_sum{method=\"new_payload\",instance=~\"ethrex-mainnet-2:5054\",instance=~\"($node):.*\"}[$__rate_interval]) / rate(execution_layer_request_times_count{method=\"new_payload\",instance=~\"ethrex-mainnet-2:5054\",instance=~\"($node):.*\"}[$__rate_interval]) )"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom-001"
+          },
+          "editorMode": "code",
+          "instant": false,
+          "range": true,
+          "refId": "reth",
+          "legendFormat": "reth",
+          "expr": "1000 * ( rate(execution_layer_request_times_sum{method=\"new_payload\",instance=~\"reth-mainnet-1:5054\",instance=~\"($node):.*\"}[$__rate_interval]) / rate(execution_layer_request_times_count{method=\"new_payload\",instance=~\"reth-mainnet-1:5054\",instance=~\"($node):.*\"}[$__rate_interval]) )"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom-001"
+          },
+          "editorMode": "code",
+          "instant": false,
+          "range": true,
+          "refId": "nethermind",
+          "legendFormat": "nethermind",
+          "expr": "1000 * ( rate(execution_layer_request_times_sum{method=\"new_payload\",instance=~\"nethermind-mainnet-1:5054\",instance=~\"($node):.*\"}[$__rate_interval]) / rate(execution_layer_request_times_count{method=\"new_payload\",instance=~\"nethermind-mainnet-1:5054\",instance=~\"($node):.*\"}[$__rate_interval]) )"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom-001"
+          },
+          "editorMode": "code",
+          "instant": false,
+          "range": true,
+          "refId": "geth",
+          "legendFormat": "geth",
+          "expr": "1000 * ( rate(execution_layer_request_times_sum{method=\"new_payload\",instance=~\"geth-mainnet-1:5054\",instance=~\"($node):.*\"}[$__rate_interval]) / rate(execution_layer_request_times_count{method=\"new_payload\",instance=~\"geth-mainnet-1:5054\",instance=~\"($node):.*\"}[$__rate_interval]) )"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom-001"
+          },
+          "editorMode": "code",
+          "instant": false,
+          "range": true,
+          "refId": "Gas",
+          "legendFormat": "Gas",
+          "expr": "gas_used{job=~\"ethrex L1\", instance=~\"ethrex-mainnet-2:.*\"}"
+        }
+      ],
+      "interval": "5s",
+      "pluginVersion": "12.2.1"
+    },
+    {
       "type": "row",
       "title": "Per-Block Throughput & Latency (NATIVE per-client metrics \u2014 scope differs, NOT the fair reference above)",
       "gridPos": {
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 28
+        "y": 37
       },
       "collapsed": false,
       "panels": []
@@ -1078,7 +1394,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 29
+        "y": 38
       },
       "fieldConfig": {
         "defaults": {
@@ -1387,7 +1703,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 29
+        "y": 38
       },
       "fieldConfig": {
         "defaults": {
@@ -1696,7 +2012,7 @@
         "h": 7,
         "w": 6,
         "x": 0,
-        "y": 37
+        "y": 46
       },
       "fieldConfig": {
         "defaults": {
@@ -1807,7 +2123,7 @@
         "h": 7,
         "w": 6,
         "x": 6,
-        "y": 37
+        "y": 46
       },
       "fieldConfig": {
         "defaults": {
@@ -1918,7 +2234,7 @@
         "h": 7,
         "w": 6,
         "x": 12,
-        "y": 37
+        "y": 46
       },
       "fieldConfig": {
         "defaults": {
@@ -2029,7 +2345,7 @@
         "h": 7,
         "w": 6,
         "x": 18,
-        "y": 37
+        "y": 46
       },
       "fieldConfig": {
         "defaults": {
@@ -2136,7 +2452,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 44
+        "y": 53
       },
       "collapsed": false,
       "panels": []
@@ -2152,7 +2468,7 @@
         "h": 7,
         "w": 8,
         "x": 0,
-        "y": 45
+        "y": 54
       },
       "fieldConfig": {
         "defaults": {
@@ -2257,7 +2573,7 @@
         "h": 7,
         "w": 8,
         "x": 8,
-        "y": 45
+        "y": 54
       },
       "fieldConfig": {
         "defaults": {
@@ -2361,7 +2677,7 @@
         "h": 7,
         "w": 8,
         "x": 16,
-        "y": 45
+        "y": 54
       },
       "fieldConfig": {
         "defaults": {
@@ -2462,7 +2778,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 52
+        "y": 61
       },
       "collapsed": false,
       "panels": []
@@ -2478,7 +2794,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 53
+        "y": 62
       },
       "fieldConfig": {
         "defaults": {
@@ -2593,7 +2909,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 53
+        "y": 62
       },
       "fieldConfig": {
         "defaults": {
@@ -2708,7 +3024,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 61
+        "y": 70
       },
       "fieldConfig": {
         "defaults": {
@@ -2821,7 +3137,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 61
+        "y": 70
       },
       "fieldConfig": {
         "defaults": {
@@ -2931,7 +3247,7 @@
         "h": 5,
         "w": 8,
         "x": 0,
-        "y": 69
+        "y": 78
       },
       "fieldConfig": {
         "defaults": {
@@ -3038,7 +3354,7 @@
         "h": 5,
         "w": 8,
         "x": 8,
-        "y": 69
+        "y": 78
       },
       "fieldConfig": {
         "defaults": {
@@ -3145,7 +3461,7 @@
         "h": 5,
         "w": 8,
         "x": 16,
-        "y": 69
+        "y": 78
       },
       "fieldConfig": {
         "defaults": {
@@ -3249,7 +3565,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 74
+        "y": 83
       },
       "panels": [
         {
@@ -3298,7 +3614,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 75
+        "y": 84
       },
       "panels": [
         {
@@ -3347,7 +3663,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 76
+        "y": 85
       },
       "panels": [
         {
@@ -3396,7 +3712,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 77
+        "y": 86
       },
       "panels": [
         {
