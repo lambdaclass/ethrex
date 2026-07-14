@@ -864,6 +864,20 @@ mod authdata_tests {
         );
     }
 
+    /// The length check is exact (`!= 24`), so over-length authdata is rejected too — a peer
+    /// can't smuggle trailing bytes past `authdata[16..]`.
+    #[test]
+    fn who_are_you_decode_rejects_over_length_authdata() {
+        let packet = packet_with_authdata(WhoAreYou::TYPE_FLAG, vec![0u8; 32]);
+        assert!(
+            matches!(
+                WhoAreYou::decode(&packet),
+                Err(PacketCodecError::InvalidSize)
+            ),
+            "over-length WHOAREYOU authdata must be rejected"
+        );
+    }
+
     /// The ordinary-packet handler reads the 32-byte source id straight from `authdata` before
     /// the session lookup; a peer can send authdata of any length, so extracting the id must be
     /// length-checked rather than panicking in `H256::from_slice`.
