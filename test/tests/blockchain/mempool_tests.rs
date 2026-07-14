@@ -112,15 +112,17 @@ fn create_transaction_intrinsic_gas() {
 /// the VM charge, not the legacy `TX_CREATE_GAS_COST = 53000`. The regular
 /// portion is the resource-based decomposition
 /// `TX_BASE_COST_AMSTERDAM (12000) + CREATE_ACCESS_AMSTERDAM (11000) = 23000`
-/// (no value transfer here), plus a state portion
-/// (`STATE_BYTES_PER_NEW_ACCOUNT * cpsb`). Mempool admission must return the
-/// total so txs whose `gas_limit` is below the VM intrinsic are rejected before
-/// they enter the pool, and txs above it aren't spuriously rejected.
+/// (no value transfer here). The state portion is 0: the `NEW_ACCOUNT` charge
+/// is no longer part of the intrinsic (v7 Task 4.1) — it is charged IN-REGION
+/// by `prepare_execution` (EELS `prepare_dispatch` create branch), conditioned
+/// on `get_pre_state_account(created_addr) == EMPTY_ACCOUNT`, so mempool
+/// admission cannot know it upfront without simulating the tx. Mempool
+/// admission must return the (now purely regular) intrinsic so txs whose
+/// `gas_limit` is below the VM intrinsic are rejected before they enter the
+/// pool, and txs above it aren't spuriously rejected.
 #[test]
 fn amsterdam_create_intrinsic_matches_vm_dimensions() {
-    use ethrex_levm::gas_cost::{
-        CREATE_ACCESS_AMSTERDAM, STATE_BYTES_PER_NEW_ACCOUNT, cost_per_state_byte,
-    };
+    use ethrex_levm::gas_cost::CREATE_ACCESS_AMSTERDAM;
     const TX_BASE_COST_AMSTERDAM: u64 = 12000;
 
     let (mut config, header) = build_basic_config_and_header(true, true);
@@ -145,16 +147,14 @@ fn amsterdam_create_intrinsic_matches_vm_dimensions() {
         ..Default::default()
     });
 
-    let cpsb = cost_per_state_byte(header.gas_limit);
-    let expected =
-        TX_BASE_COST_AMSTERDAM + CREATE_ACCESS_AMSTERDAM + STATE_BYTES_PER_NEW_ACCOUNT * cpsb;
+    let expected = TX_BASE_COST_AMSTERDAM + CREATE_ACCESS_AMSTERDAM;
 
     let intrinsic_gas = transaction_intrinsic_gas(&tx, Address::default(), &header, &config)
         .expect("intrinsic gas");
     assert_eq!(
         intrinsic_gas, expected,
         "Amsterdam CREATE intrinsic must be TX_BASE_COST_AMSTERDAM + \
-         CREATE_ACCESS_AMSTERDAM + STATE_BYTES_PER_NEW_ACCOUNT * cpsb, not the legacy 53000"
+         CREATE_ACCESS_AMSTERDAM (state portion moved in-region), not the legacy 53000"
     );
     // Guard against regression to the legacy 53000 constant.
     assert_ne!(
