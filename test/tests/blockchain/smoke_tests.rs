@@ -14,6 +14,7 @@ use ethrex_common::{
 };
 use ethrex_storage::{EngineType, Store};
 use ethrex_trie::EMPTY_TRIE_HASH;
+use ethrex_vm::BlockExecutionResult;
 
 #[tokio::test]
 async fn test_small_to_long_reorg() {
@@ -745,6 +746,74 @@ async fn new_block(store: &Store, parent: &BlockHeader) -> Block {
     let block = create_payload(&args, store, Bytes::new()).unwrap();
     let result = blockchain.build_payload(block).unwrap();
     result.payload
+}
+
+/// Builds a block on `parent`, executes it, and stores it via `store_block` (the
+/// L2 sequencer path) WITHOUT canonicalizing it: the block lands in the store and
+/// advances `latest`, but `CANONICAL_BLOCK_HASHES` is left untouched, exactly like
+/// `BlockProducer::produce_block`. Returns the stored block hash.
+async fn store_block_l2_style(store: &Store, parent: &BlockHeader) -> H256 {
+    let args = BuildPayloadArgs {
+        parent: parent.hash(),
+        timestamp: parent.timestamp + 12,
+        fee_recipient: H160::random(),
+        random: H256::random(),
+        withdrawals: Some(Vec::new()),
+        beacon_root: Some(H256::random()),
+        slot_number: None,
+        version: 1,
+        elasticity_multiplier: ELASTICITY_MULTIPLIER,
+        gas_ceil: DEFAULT_BUILDER_GAS_CEIL,
+    };
+    let blockchain = Blockchain::default_with_store(store.clone());
+    let block = create_payload(&args, store, Bytes::new()).unwrap();
+    let result = blockchain.build_payload(block).unwrap();
+    let block = result.payload;
+    let block_hash = block.hash();
+    let account_updates_list = store
+        .apply_account_updates_batch(block.header.parent_hash, &result.account_updates)
+        .unwrap()
+        .expect("parent state must be present");
+    let execution_result = BlockExecutionResult {
+        receipts: result.receipts,
+        requests: Vec::new(),
+        block_gas_used: block.header.gas_used,
+        tx_gas_breakdowns: Vec::new(),
+    };
+    blockchain
+        .store_block(block, account_updates_list, execution_result)
+        .unwrap();
+    block_hash
+}
+
+/// Regression for PR #6724 review (ElFantasma, blocking): the L2 sequencer
+/// canonicalizes every freshly produced block with
+/// `apply_fork_choice(hash, hash, hash, None)` after `store_block` (which does
+/// not touch `CANONICAL_BLOCK_HASHES`). That is a depth-1 canonical extend, but
+/// passing the new block as its own `finalized` makes the finality ceiling
+/// `latest - finalized = 0`. Without the floor-of-1 in `compute_reorg_ceiling`
+/// the FCU is rejected with `TooDeepReorg { reorg_depth: 1, limit: 0 }` and every
+/// sequencer block fails to canonicalize. This asserts the extend is allowed.
+#[tokio::test]
+async fn self_finalized_canonical_extend_is_allowed() {
+    let store = test_store().await;
+    let mut parent = store.get_block_header(0).unwrap().unwrap();
+
+    for _ in 0..3 {
+        let block_hash = store_block_l2_style(&store, &parent).await;
+        apply_fork_choice(&store, block_hash, block_hash, block_hash, None)
+            .await
+            .expect("L2-style self-finalized canonical extend must be allowed");
+        let header = store.get_block_header_by_hash(block_hash).unwrap().unwrap();
+        assert!(
+            is_canonical(&store, header.number, block_hash)
+                .await
+                .unwrap(),
+            "self-finalized block at height {} should be canonical",
+            header.number
+        );
+        parent = header;
+    }
 }
 
 fn workspace_root() -> PathBuf {

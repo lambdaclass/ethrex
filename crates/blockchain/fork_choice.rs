@@ -53,7 +53,15 @@ async fn compute_reorg_ceiling(
         // snap sync or a recent restart), fall through to the journal/operator path
         // rather than treating finalized_number as 0 (which would let any depth pass).
         if let Some(h) = store.get_block_header_by_hash(*finalized_hash)? {
-            let finality_ceiling = latest.saturating_sub(h.number);
+            // Floor at 1: a depth-1 operation is always a canonical extend or a
+            // single-block fork switch whose parent state is live, never a
+            // rewrite of finalized history, so it must never be rejected as
+            // "too deep". Without the floor, `latest - finalized` collapses to 0
+            // whenever the finalized hash IS the head (e.g. the L2 sequencer
+            // calls `apply_fork_choice(head, head, head, ..)` after producing a
+            // block), which would reject every canonical extension with
+            // `TooDeepReorg { reorg_depth: 1, limit: 0 }`.
+            let finality_ceiling = latest.saturating_sub(h.number).max(1);
             return Ok(match max_reorg_depth {
                 Some(d) => finality_ceiling.min(d),
                 None => finality_ceiling,
