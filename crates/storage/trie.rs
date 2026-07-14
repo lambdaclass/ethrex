@@ -3,26 +3,25 @@ use crate::api::tables::{
 };
 use crate::api::{StorageBackend, StorageLockedView, StorageReadView};
 use crate::error::StoreError;
-use crate::layering::apply_prefix;
+use crate::trie_key::TrieKey;
 use ethrex_common::H256;
 use ethrex_trie::{Nibbles, TrieDB, error::TrieError};
 use std::sync::Arc;
 
 /// TrieDB implementation that holds a pre-acquired read view for the entire
 /// trie traversal, avoiding per-node-lookup allocation and lock acquisition.
+///
+/// Table routing (which RocksDB column family to read/write) is handled by
+/// [`TrieKey::table()`], based on the nibble-path length after prefix application.
 pub struct BackendTrieDB {
     /// Reference to the storage backend (used only for writes)
     db: Arc<dyn StorageBackend>,
     /// Pre-acquired read view held for the lifetime of this struct.
-    /// Using Arc allows sharing a single read view across multiple BackendTrieDB
-    /// instances (e.g., state trie + storage trie in a single query).
     read_view: Arc<dyn StorageReadView>,
     /// Last flatkeyvalue path already generated
     last_computed_flatkeyvalue: Nibbles,
-    nodes_table: &'static str,
-    fkv_table: &'static str,
-    /// Storage trie address prefix (for storage tries)
-    /// None for state tries, Some(address) for storage tries
+    /// Storage trie address prefix (for storage tries).
+    /// None for state tries, Some(keccak(address)) for storage tries.
     address_prefix: Option<H256>,
 }
 
@@ -47,8 +46,6 @@ impl BackendTrieDB {
             db,
             read_view,
             last_computed_flatkeyvalue,
-            nodes_table: ACCOUNT_TRIE_NODES,
-            fkv_table: ACCOUNT_FLATKEYVALUE,
             address_prefix: None,
         })
     }
@@ -73,8 +70,6 @@ impl BackendTrieDB {
             db,
             read_view,
             last_computed_flatkeyvalue,
-            nodes_table: STORAGE_TRIE_NODES,
-            fkv_table: STORAGE_FLATKEYVALUE,
             address_prefix: None,
         })
     }
@@ -101,38 +96,27 @@ impl BackendTrieDB {
             db,
             read_view,
             last_computed_flatkeyvalue,
-            nodes_table: STORAGE_TRIE_NODES,
-            fkv_table: STORAGE_FLATKEYVALUE,
             address_prefix: Some(address_prefix),
         })
     }
 
-    fn make_key(&self, path: Nibbles) -> Vec<u8> {
-        apply_prefix(self.address_prefix, path).into_vec()
-    }
-
-    /// Key might be for an account or storage slot
-    fn table_for_key(&self, key: &[u8]) -> &'static str {
-        let is_leaf = key.len() == 65 || key.len() == 131;
-        if is_leaf {
-            self.fkv_table
-        } else {
-            self.nodes_table
-        }
+    /// Build a [`TrieKey`] by applying this DB's address prefix to a raw path.
+    fn make_trie_key(&self, path: Nibbles) -> TrieKey {
+        TrieKey::with_prefix(self.address_prefix, path)
     }
 }
 
 impl TrieDB for BackendTrieDB {
     fn flatkeyvalue_computed(&self, key: Nibbles) -> bool {
-        let key = apply_prefix(self.address_prefix, key);
-        self.last_computed_flatkeyvalue >= key
+        let trie_key = self.make_trie_key(key);
+        self.last_computed_flatkeyvalue >= *trie_key.nibbles()
     }
 
     fn get(&self, key: Nibbles) -> Result<Option<Vec<u8>>, TrieError> {
-        let prefixed_key = self.make_key(key);
-        let table = self.table_for_key(&prefixed_key);
+        let trie_key = self.make_trie_key(key);
+        let table = trie_key.table();
         self.read_view
-            .get(table, prefixed_key.as_ref())
+            .get(table, trie_key.as_bytes())
             .map_err(|e| TrieError::DbError(anyhow::anyhow!("Failed to get from database: {}", e)))
     }
 
@@ -141,9 +125,9 @@ impl TrieDB for BackendTrieDB {
             TrieError::DbError(anyhow::anyhow!("Failed to begin write transaction: {}", e))
         })?;
         for (key, value) in key_values {
-            let prefixed_key = self.make_key(key);
-            let table = self.table_for_key(&prefixed_key);
-            tx.put_batch(table, vec![(prefixed_key, value)])
+            let trie_key = self.make_trie_key(key);
+            let table = trie_key.table();
+            tx.put_batch(table, vec![(trie_key.into_vec(), value)])
                 .map_err(|e| TrieError::DbError(anyhow::anyhow!("Failed to write batch: {}", e)))?;
         }
         tx.commit()
@@ -151,7 +135,10 @@ impl TrieDB for BackendTrieDB {
     }
 }
 
-/// Read-only version with persistent locked transaction/snapshot for batch reads
+/// Read-only version with persistent locked transaction/snapshot for batch reads.
+///
+/// Unlike [`BackendTrieDB`], this acquires per-CF locked snapshots at creation
+/// time, so that all reads within a batch see a consistent view.
 pub struct BackendTrieDBLocked {
     account_trie_tx: Box<dyn StorageLockedView>,
     storage_trie_tx: Box<dyn StorageLockedView>,
@@ -177,17 +164,16 @@ impl BackendTrieDBLocked {
         })
     }
 
-    /// Key is already prefixed
+    /// Select the locked view for the column family that this key belongs to.
     fn tx_for_key(&self, key: &Nibbles) -> &dyn StorageLockedView {
-        let is_leaf = key.len() == 65 || key.len() == 131;
-        let is_account = key.len() <= 65;
-        if is_leaf {
-            if is_account {
+        let trie_key = TrieKey::from_nibbles(key.clone());
+        if trie_key.is_leaf() {
+            if trie_key.is_account() {
                 &*self.account_fkv_tx
             } else {
                 &*self.storage_fkv_tx
             }
-        } else if is_account {
+        } else if trie_key.is_account() {
             &*self.account_trie_tx
         } else {
             &*self.storage_trie_tx

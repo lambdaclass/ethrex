@@ -3829,8 +3829,11 @@ fn commit_trie_layers(
     let nodes = trie_mut.commit(root).unwrap_or_default();
     let mut result = Ok(());
     for (key, value) in nodes {
-        let is_leaf = key.len() == 65 || key.len() == 131;
-        let is_account = key.len() <= 65;
+        let trie_key = crate::trie_key::TrieKey::from_nibbles(
+            ethrex_trie::Nibbles::from_hex(key.clone()),
+        );
+        let is_leaf = trie_key.is_leaf();
+        let is_account = trie_key.is_account();
 
         if is_leaf && key > last_written {
             continue;
@@ -4001,7 +4004,7 @@ fn flatkeyvalue_generator(
                 write_txn.commit()?;
                 *last_computed_fkv
                     .write()
-                    .map_err(|_| StoreError::LockError)? = vec![0xff; 131];
+                    .map_err(|_| StoreError::LockError)? = vec![0xff; crate::trie_key::STORAGE_LEAF_LEN];
                 info!("FlatKeyValue generation finished.");
                 return Ok(());
             }
