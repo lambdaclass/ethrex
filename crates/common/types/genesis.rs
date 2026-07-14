@@ -302,6 +302,18 @@ pub struct ChainConfig {
     #[serde(default)]
     pub seconds_per_slot: Option<u64>,
 
+    /// Resolved-payer TXPARAM knob (ethrex devnet extension, new-fork
+    /// decoupling). When set and `block.timestamp >= payer_txparam_time`, the
+    /// EIP-8141 frame-tx opcode `TXPARAM(0x11)` resolves to the transaction's
+    /// resolved payer — the account a payment-scoped APPROVE charged — zero-
+    /// padded like `TXPARAM(0x02)` sender; before the payer is resolved it reads
+    /// the zero address. Before the knob (and on chains without it) the index
+    /// keeps its historical exceptional-halt (`InvalidOpcode`), so already-
+    /// produced blocks re-execute identically. Gated on a FUTURE timestamp for a
+    /// state-preserving rollout. `None` = unchanged behaviour.
+    #[serde(default)]
+    pub payer_txparam_time: Option<u64>,
+
     /// Amount of total difficulty reached by the network that triggers the consensus upgrade.
     #[serde(default, with = "crate::serde_utils::u128::hex_str_opt")]
     pub terminal_total_difficulty: Option<u128>,
@@ -406,6 +418,13 @@ impl ChainConfig {
     /// `block_timestamp` (see [`ChainConfig::derived_slot_time`]).
     pub fn is_derived_slot_activated(&self, block_timestamp: u64) -> bool {
         self.derived_slot_time
+            .is_some_and(|time| time <= block_timestamp)
+    }
+
+    /// Whether the resolved-payer TXPARAM knob is active at `block_timestamp`
+    /// (see [`ChainConfig::payer_txparam_time`]).
+    pub fn is_payer_txparam_activated(&self, block_timestamp: u64) -> bool {
+        self.payer_txparam_time
             .is_some_and(|time| time <= block_timestamp)
     }
 

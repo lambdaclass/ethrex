@@ -275,13 +275,18 @@ impl OpcodeHandler for OpTxParamHandler {
         vm.current_call_frame
             .increase_consumed_gas(gas_cost::TXPARAM)?;
 
+        // Block-invariant knob flag (mirrors env.slot_number): gates the
+        // resolved-payer index 0x11 so pre-knob blocks preserve its historical
+        // exceptional-halt and re-execute identically.
+        let payer_txparam_active = vm.env.config.payer_txparam_active;
+
         let ctx = vm
             .frame_tx_context
             .as_ref()
             .ok_or(ExceptionalHalt::InvalidOpcode)?;
 
         let param_id = u64::try_from(param_id).map_err(|_| ExceptionalHalt::InvalidOpcode)?;
-        let result = load_tx_param(ctx, param_id)?;
+        let result = load_tx_param(ctx, param_id, payer_txparam_active)?;
         vm.current_call_frame.stack.push(result)?;
 
         Ok(OpcodeResult::Continue)
@@ -599,7 +604,11 @@ impl OpcodeHandler for OpNonceKeyLoadHandler {
 
 // -- Helper functions --
 
-pub fn load_tx_param(ctx: &crate::vm::FrameTxContext, param_id: u64) -> Result<U256, VMError> {
+pub fn load_tx_param(
+    ctx: &crate::vm::FrameTxContext,
+    param_id: u64,
+    payer_txparam_active: bool,
+) -> Result<U256, VMError> {
     match param_id {
         0x00 => Ok(U256::from(0x06u8)), // tx_type (EIP-8141 = type 6)
         0x01 => Ok(U256::from(ctx.tx.nonce_seq)),
@@ -631,6 +640,20 @@ pub fn load_tx_param(ctx: &crate::vm::FrameTxContext, param_id: u64) -> Result<U
             .ok_or(ExceptionalHalt::InvalidOpcode.into()),
         // EIP-8272: count of recent-root references.
         0x0F => Ok(U256::from(ctx.tx.recent_root_references.len())),
+        // Resolved payer address (ethrex extension, not in the EIP-8141 draft).
+        // Gated on the payer_txparam knob: before it (and on chains without it)
+        // this index falls through to the exceptional halt below, so already-
+        // produced blocks re-execute identically. When active it returns the
+        // account a payment-scoped APPROVE charged, zero-padded like the 0x02
+        // sender. `None` (payer not yet resolved — e.g. a validation-prefix
+        // VERIFY frame that runs before payment) reads as the zero address,
+        // matching the receipt's payer encoding; a committed tx always has a
+        // resolved payer (post-execution invariant), so the SENDER/POST_TX
+        // frames that consume this always observe the real payer.
+        0x11 if payer_txparam_active => Ok(ctx
+            .payer_address
+            .map(address_to_u256)
+            .unwrap_or_else(U256::zero)),
         _ => Err(ExceptionalHalt::InvalidOpcode.into()),
     }
 }
@@ -781,10 +804,10 @@ fn execute_default_verify(
 
 #[cfg(test)]
 mod max_cost_tests {
-    use super::{compute_tx_max_cost, load_nonce_key, load_tx_param};
+    use super::{address_to_u256, compute_tx_max_cost, load_nonce_key, load_tx_param};
     use crate::errors::{ExceptionalHalt, VMError};
     use crate::vm::FrameTxContext;
-    use ethrex_common::{H256, U256, types::FrameTransaction};
+    use ethrex_common::{Address, H256, U256, types::FrameTransaction};
 
     fn ctx(max_fee: u64, blobs: usize, max_blob_fee: u64, total_gas_limit: u64) -> FrameTxContext {
         let tx = FrameTransaction {
@@ -822,9 +845,55 @@ mod max_cost_tests {
         // "maximum cost"; a split between them is a consensus bug.
         let c = ctx(10, 2, 5, 100_000);
         assert_eq!(
-            load_tx_param(&c, 0x06).unwrap(),
+            load_tx_param(&c, 0x06, false).unwrap(),
             compute_tx_max_cost(&c).unwrap()
         );
+    }
+
+    #[test]
+    fn txparam_0x11_reads_resolved_payer_when_knob_active() {
+        let payer = Address::from_low_u64_be(0xABCD);
+        let mut c = ctx(10, 0, 0, 21_000);
+        c.payer_address = Some(payer);
+        assert_eq!(
+            load_tx_param(&c, 0x11, true).unwrap(),
+            address_to_u256(payer),
+            "0x11 must report the resolved payer when the knob is active"
+        );
+    }
+
+    #[test]
+    fn txparam_0x11_reads_zero_before_payer_resolved() {
+        // A validation-prefix VERIFY frame runs before payment is approved.
+        let c = ctx(10, 0, 0, 21_000);
+        assert!(c.payer_address.is_none());
+        assert_eq!(
+            load_tx_param(&c, 0x11, true).unwrap(),
+            U256::zero(),
+            "0x11 must read the zero address before the payer is resolved"
+        );
+    }
+
+    #[test]
+    fn txparam_0x11_halts_when_knob_inactive() {
+        // History preservation: before the payer_txparam knob, 0x11 keeps its
+        // exceptional halt so already-produced blocks re-execute identically —
+        // even when a payer is present.
+        let mut c = ctx(10, 0, 0, 21_000);
+        c.payer_address = Some(Address::from_low_u64_be(0xABCD));
+        assert!(matches!(
+            load_tx_param(&c, 0x11, false),
+            Err(VMError::ExceptionalHalt(ExceptionalHalt::InvalidOpcode))
+        ));
+    }
+
+    #[test]
+    fn txparam_unknown_index_halts_even_when_knob_active() {
+        let c = ctx(10, 0, 0, 21_000);
+        assert!(matches!(
+            load_tx_param(&c, 0x12, true),
+            Err(VMError::ExceptionalHalt(ExceptionalHalt::InvalidOpcode))
+        ));
     }
 
     #[test]

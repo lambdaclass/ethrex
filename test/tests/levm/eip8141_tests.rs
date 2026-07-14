@@ -1420,7 +1420,7 @@ mod frame_tx_opcode_handler_tests {
     #[test]
     fn txparam_0x0b_returns_signature_count() {
         let ctx = ctx_with_one_signature();
-        let result = load_tx_param(&ctx, 0x0B).unwrap();
+        let result = load_tx_param(&ctx, 0x0B, false).unwrap();
         assert_eq!(result, U256::from(1u64));
     }
 
@@ -1437,7 +1437,7 @@ mod frame_tx_opcode_handler_tests {
             total_gas_limit: 0,
             legacy_sender_nonce: 0,
         };
-        let result = load_tx_param(&ctx, 0x0B).unwrap();
+        let result = load_tx_param(&ctx, 0x0B, false).unwrap();
         assert_eq!(result, U256::zero());
     }
 
