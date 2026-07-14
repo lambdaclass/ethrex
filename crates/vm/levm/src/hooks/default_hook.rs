@@ -111,8 +111,9 @@ impl Hook for DefaultHook {
         vm.increment_account_nonce(sender_address)
             .map_err(|_| TxValidationError::NonceIsMax)?;
 
-        // check for nonce mismatch
-        if sender_info.nonce != vm.env.tx_nonce {
+        // check for nonce mismatch (skipped by the speculative warmer, which runs
+        // split same-sender txs from parent state — see Environment::disable_nonce_check)
+        if !vm.env.disable_nonce_check && sender_info.nonce != vm.env.tx_nonce {
             return Err(TxValidationError::NonceMismatch {
                 expected: sender_info.nonce,
                 actual: vm.env.tx_nonce,
