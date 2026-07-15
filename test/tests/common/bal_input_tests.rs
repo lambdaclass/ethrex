@@ -57,18 +57,23 @@ fn rlp_str_opt_prefix_and_absence_handling() {
     );
 }
 
+fn account_addr(i: usize) -> Address {
+    let mut a = Address::zero();
+    a.0[16..20].copy_from_slice(&(i as u32).to_be_bytes());
+    a
+}
+
 /// The capacity hints in `build_validation_index` are capped against a supplied
 /// BAL's (attacker-controlled) account count, but the cap is only a
 /// pre-allocation hint: a block with more accounts than the cap must still be
-/// indexed in full. Binds the `PREALLOC_CAP` min() against silent truncation.
+/// indexed in full. Binds the `PREALLOC_CAP` min() against silent truncation
+/// across all three capacity-capped collections.
 #[test]
 fn build_validation_index_indexes_more_accounts_than_prealloc_cap() {
     let n = 8192usize + 5; // > PREALLOC_CAP
     let accounts: Vec<AccountChanges> = (0..n)
         .map(|i| {
-            let mut a = Address::zero();
-            a.0[16..20].copy_from_slice(&(i as u32).to_be_bytes());
-            AccountChanges::new(a)
+            AccountChanges::new(account_addr(i))
                 .with_balance_changes(vec![BalanceChange::new(1, U256::from(i as u64 + 1))])
         })
         .collect();
@@ -77,6 +82,16 @@ fn build_validation_index_indexes_more_accounts_than_prealloc_cap() {
     assert_eq!(
         index.addr_to_idx.len(),
         n,
-        "every account must be indexed despite the capacity-hint cap"
+        "addr_to_idx must hold every account despite the capacity-hint cap"
+    );
+    assert_eq!(
+        index.slot_idx_by_account.len(),
+        n,
+        "slot_idx_by_account must have an entry per account despite the cap"
+    );
+    // A point lookup past the cap boundary must resolve.
+    assert!(
+        index.addr_to_idx.contains_key(&account_addr(n - 1)),
+        "the last account (well past the cap) must be indexed"
     );
 }
