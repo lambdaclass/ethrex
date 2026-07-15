@@ -269,15 +269,28 @@ pub(crate) struct PrewarmedEntry {
 pub(crate) struct WarmDiff {
     pub(crate) this_branch: FxHashSet<H256>,
     pub(crate) pr: FxHashSet<H256>,
+    /// Union of every tx hash present in ANY of the slot's mempool snapshots
+    /// (pre-selection, from the pool keys). Lets the executor split an
+    /// uncovered block tx into "we had it, selection dropped it" (present here)
+    /// vs "it arrived after our last snapshot" (absent here). See
+    /// [`log_warm_diff`].
+    pub(crate) seen_in_snapshot: FxHashSet<H256>,
 }
 
-/// Stage 1 warm-diff instrumentation (temporary). Logs, for the block being
-/// executed, how many of its txs each warm-selection strategy would have
-/// warmed. `pr_only` — block txs PR #6977 would warm that this branch did not —
-/// is the number we're after; if it stays ~0, the PR's deeper mempool reach
-/// never touches the imminent block. Measured on this same block, so there is
-/// no block-to-block bias.
-fn log_warm_diff(block: &Block, entry: &PrewarmedEntry) {
+/// Stage 1 warm-diff instrumentation (temporary). Emits two lines for the block
+/// being executed, both measured on this same block (no block-to-block bias):
+///
+/// - `warm-diff`: how many of the block's txs each warm-selection strategy
+///   would have warmed. `pr_only` (block txs PR #6977 would warm that this
+///   branch did not) is the branch-vs-PR answer; if it stays ~0 the PR's deeper
+///   mempool reach never touches the imminent block.
+/// - `coverage`: the four-way split of every block tx — `warmed` (this branch
+///   selected it), `private` (not in our pool at execute time: private order
+///   flow or propagation lag), `late` (in our pool now but never in a slot
+///   snapshot → arrived after our last snapshot), `sel_loss` (was in a snapshot
+///   but selection dropped it: tip/gas-budget/cap/nonce-gap). These distinguish
+///   the hard ceiling (private) from the addressable gaps (late, sel_loss).
+fn log_warm_diff(block: &Block, entry: &PrewarmedEntry, mempool: &Mempool) {
     let Ok(diff) = entry.warm_diff.lock() else {
         return;
     };
@@ -311,6 +324,34 @@ fn log_warm_diff(block: &Block, entry: &PrewarmedEntry) {
         in_both + pr_only,
         diff.this_branch.len(),
         diff.pr.len(),
+    );
+
+    // Coverage split of the uncovered txs. `in_pool` is the pool state at
+    // execute time (block txs are pruned only after acceptance), so a block tx
+    // absent here was never in our pool.
+    let in_pool = mempool.pending_hashes().unwrap_or_default();
+    let (mut warmed, mut private, mut late, mut sel_loss) = (0u32, 0u32, 0u32, 0u32);
+    for h in &block_hashes {
+        if diff.this_branch.contains(h) {
+            warmed += 1;
+        } else if !in_pool.contains(h) {
+            private += 1;
+        } else if diff.seen_in_snapshot.contains(h) {
+            sel_loss += 1;
+        } else {
+            late += 1;
+        }
+    }
+    info!(
+        "Prewarm coverage block {}: block_txs={}, warmed={}, private={}, late={}, sel_loss={}, \
+         seen_in_snapshot={}",
+        block.header.number,
+        block_hashes.len(),
+        warmed,
+        private,
+        late,
+        sel_loss,
+        diff.seen_in_snapshot.len(),
     );
 }
 
@@ -666,7 +707,7 @@ impl Blockchain {
         // block, the warm sets of this branch vs PR #6977 (simulated). See
         // `log_warm_diff` and `crate::prewarm`.
         if let Some(entry) = &prewarmed_entry {
-            log_warm_diff(block, entry);
+            log_warm_diff(block, entry, &self.mempool);
         }
         let prewarmed = prewarmed_entry.map(|entry| entry.cache);
         let caching_store: Arc<dyn ethrex_vm::backends::LevmDatabase> = match prewarmed {

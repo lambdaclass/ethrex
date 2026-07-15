@@ -457,12 +457,17 @@ fn run_pass(blockchain: &Blockchain, pool: &rayon::ThreadPool, req: PrewarmReque
             let capped = cap_sender_depth(ready, MAX_WARMED_TXS_PER_SENDER_PER_SLOT);
             let warm_set = select_warm_set(capped, base_fee, gas_budget);
 
-            // Record both strategies' running selections for the executor's
-            // block-time diff (see `log_warm_diff`).
+            // Record both strategies' running selections plus the full set of
+            // hashes present in this snapshot (pool keys, no re-hashing) for the
+            // executor's block-time diff + coverage split (see `log_warm_diff`).
+            let snapshot_hashes = blockchain.mempool.pending_hashes().ok();
             if let Ok(mut diff) = warm_diff.lock() {
                 diff.pr.extend(pr_hashes.iter().copied());
                 diff.this_branch
                     .extend(warm_set.iter().map(|(tx, _)| tx.hash(&NativeCrypto)));
+                if let Some(hashes) = snapshot_hashes {
+                    diff.seen_in_snapshot.extend(hashes);
+                }
             }
             if !warm_set.is_empty() {
                 for (tx, _) in &warm_set {

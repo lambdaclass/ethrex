@@ -975,6 +975,16 @@ impl Mempool {
         Ok(contains)
     }
 
+    /// Stage 1 warm-diff instrumentation (temporary). Every tx hash currently
+    /// in the pool, read straight from the map keys (no re-hashing — the pool
+    /// is keyed by hash). The prewarmer unions these across a slot's snapshots
+    /// to form the "seen by a warming pass" set, and the executor uses them to
+    /// test whether an uncovered block tx was ever in our pool. Remove with the
+    /// rest of the instrumentation.
+    pub fn pending_hashes(&self) -> Result<FxHashSet<H256>, MempoolError> {
+        Ok(self.read()?.transaction_pool.keys().copied().collect())
+    }
+
     pub fn find_tx_to_replace(
         &self,
         sender: Address,
