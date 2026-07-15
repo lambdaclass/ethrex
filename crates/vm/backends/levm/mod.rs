@@ -1322,7 +1322,9 @@ impl LEVM {
                             .storage_changes
                             .binary_search_by(|sc| sc.slot.cmp(slot))
                             .is_ok();
-                        let in_reads = acct.storage_reads.contains(slot);
+                        // storage_reads is validated strictly-ascending, so binary search
+                        // (matches storage_changes above) instead of a linear scan.
+                        let in_reads = acct.storage_reads.binary_search(slot).is_ok();
                         if !in_changes && !in_reads {
                             return Err(EvmError::Custom(format!(
                                 "BAL validation failed for tx {tx_idx}: storage slot {slot} of \
