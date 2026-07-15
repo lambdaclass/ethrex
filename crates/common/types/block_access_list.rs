@@ -579,12 +579,21 @@ impl BlockAccessList {
     /// Builds a validation index for fast per-tx BAL verification.
     /// Call once per block before parallel execution.
     pub fn build_validation_index(&self) -> BalAddressIndex {
-        let mut addr_to_idx =
-            FxHashMap::with_capacity_and_hasher(self.inner.len(), Default::default());
+        // Cap the capacity hints derived from attacker-controlled lengths in a
+        // supplied BAL. These are only pre-allocation hints — the collections
+        // still grow to whatever a genuine block needs — but bounding them stops
+        // a BAL padded with millions of (empty) accounts from forcing a huge
+        // up-front allocation here, before the per-account and size-cap checks
+        // downstream reject it. The block's own account count is far below this.
+        const PREALLOC_CAP: usize = 8192;
+        let mut addr_to_idx = FxHashMap::with_capacity_and_hasher(
+            self.inner.len().min(PREALLOC_CAP),
+            Default::default(),
+        );
         let mut tx_to_accounts: FxHashMap<u32, Vec<usize>> = FxHashMap::default();
         let mut accounts_by_min_index: Vec<(u32, usize)> = Vec::new();
         let mut slot_idx_by_account: Vec<FxHashMap<H256, usize>> =
-            Vec::with_capacity(self.inner.len());
+            Vec::with_capacity(self.inner.len().min(PREALLOC_CAP));
 
         for (i, acct) in self.inner.iter().enumerate() {
             addr_to_idx.insert(acct.address, i);
@@ -616,8 +625,10 @@ impl BlockAccessList {
 
             // Per-account slot → storage_changes index map for O(1) lookup on
             // lazy-cursor cache miss. Empty for accounts with no storage writes.
-            let mut slot_map: FxHashMap<H256, usize> =
-                FxHashMap::with_capacity_and_hasher(acct.storage_changes.len(), Default::default());
+            let mut slot_map: FxHashMap<H256, usize> = FxHashMap::with_capacity_and_hasher(
+                acct.storage_changes.len().min(PREALLOC_CAP),
+                Default::default(),
+            );
             for (sc_idx, sc) in acct.storage_changes.iter().enumerate() {
                 slot_map.insert(u256_to_h256(sc.slot), sc_idx);
             }
@@ -1796,6 +1807,36 @@ mod decode_tests {
             change.post_balance, expected,
             "RLP decoder produced wrong post_balance: got {}, expected {}",
             change.post_balance, expected,
+        );
+    }
+}
+
+#[cfg(test)]
+mod build_index_tests {
+    use super::*;
+    use ethereum_types::Address;
+
+    /// The capacity hints in `build_validation_index` are capped against a
+    /// supplied BAL's (attacker-controlled) account count, but the cap is only a
+    /// pre-allocation hint: a block with more accounts than the cap must still be
+    /// indexed in full. Binds the `PREALLOC_CAP` min() against silent truncation.
+    #[test]
+    fn build_validation_index_indexes_more_accounts_than_prealloc_cap() {
+        let n = 8192usize + 5; // > PREALLOC_CAP
+        let accounts: Vec<AccountChanges> = (0..n)
+            .map(|i| {
+                let mut a = Address::zero();
+                a.0[16..20].copy_from_slice(&(i as u32).to_be_bytes());
+                AccountChanges::new(a)
+                    .with_balance_changes(vec![BalanceChange::new(1, U256::from(i as u64 + 1))])
+            })
+            .collect();
+        let bal = BlockAccessList::from_accounts(accounts);
+        let index = bal.build_validation_index();
+        assert_eq!(
+            index.addr_to_idx.len(),
+            n,
+            "every account must be indexed despite the capacity-hint cap"
         );
     }
 }
