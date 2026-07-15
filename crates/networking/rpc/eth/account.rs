@@ -339,6 +339,7 @@ mod tests {
                 address,
                 MempoolTransaction::new(tx, address),
                 None,
+                None,
             )
             .unwrap();
     }

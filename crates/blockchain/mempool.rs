@@ -159,6 +159,18 @@ pub struct FramePaymasterReservation {
 /// revalidation pass.
 pub type PendingFrameTx = (H256, Address, Address);
 
+/// Inputs for the per-account queued (future-nonce) cap, checked atomically
+/// inside [`Mempool::add_transaction`] under the insertion write lock. Computed
+/// by `Blockchain::validate_transaction` (which has the sender's on-chain nonce)
+/// and passed through so the check and the insert share one lock scope.
+#[derive(Debug, Clone, Copy)]
+pub struct QueuedCap {
+    /// The sender's on-chain nonce, used to tell executable txs from future ones.
+    pub account_nonce: u64,
+    /// The maximum number of queued (future) txs allowed for the sender.
+    pub max: usize,
+}
+
 /// An alternate announcer for a known-in-flight transaction hash. Carries the
 /// announcer's own announced type and size so the eventual retry can validate
 /// the response against the alternate's metadata (which may differ from the
@@ -330,6 +342,40 @@ impl MempoolInner {
     /// exactly one bundle entry, so the bundle pool size is the blob tx count.
     fn blob_tx_count(&self) -> usize {
         self.blobs_bundle_pool.len()
+    }
+
+    /// The first nonce for `sender` that is NOT contiguously present starting
+    /// from the on-chain `account_nonce` — i.e. the end of the executable run.
+    /// A tx whose nonce equals this value is executable (it extends the run); a
+    /// tx with a higher nonce is "future"/queued (there is a nonce gap below it).
+    /// Lock-free: caller must hold the guard.
+    fn next_executable_nonce(&self, sender: Address, account_nonce: u64) -> u64 {
+        let mut expected = account_nonce;
+        for (&(s, nonce), _) in self
+            .txs_by_sender_nonce
+            .range((sender, account_nonce)..=(sender, u64::MAX))
+        {
+            if s != sender || nonce != expected {
+                break;
+            }
+            expected += 1;
+        }
+        expected
+    }
+
+    /// True if a tx at `tx_nonce` from `sender` would be a future/queued tx
+    /// (nonce-gapped) rather than executable, given the on-chain `account_nonce`.
+    fn is_future(&self, sender: Address, account_nonce: u64, tx_nonce: u64) -> bool {
+        tx_nonce > self.next_executable_nonce(sender, account_nonce)
+    }
+
+    /// Count of `sender`'s pooled txs that are future/queued (beyond the
+    /// contiguous executable run from `account_nonce`).
+    fn queued_count_for_sender(&self, sender: Address, account_nonce: u64) -> usize {
+        let gap = self.next_executable_nonce(sender, account_nonce);
+        self.txs_by_sender_nonce
+            .range((sender, gap)..=(sender, u64::MAX))
+            .count()
     }
 
     /// Number of non-blob txs currently in the pool.
@@ -550,16 +596,44 @@ impl Mempool {
     /// Add transaction to the pool without doing validity checks, except for the
     /// one-pending-frame-tx-per-sender policy which must run under this lock to
     /// avoid a TOCTOU race (EIP-8141, review fix 1.6).
+    ///
+    /// The per-account **queued** (future/nonce-gapped) cap is enforced *here*,
+    /// atomically under the write lock, when a [`QueuedCap`] is passed (see the
+    /// check below). `Blockchain::validate_transaction` supplies the sender's
+    /// on-chain nonce via that `QueuedCap` so future txs can be distinguished
+    /// from executable ones. Executable (contiguous-nonce) txs are never capped,
+    /// so a single sender can hold arbitrarily many (bounded only by the global
+    /// mempool size).
     pub fn add_transaction(
         &self,
         hash: H256,
         sender: Address,
         transaction: MempoolTransaction,
         frame_reservation: Option<FramePaymasterReservation>,
+        queued_cap: Option<QueuedCap>,
     ) -> Result<(), MempoolError> {
         let mut inner = self.write()?;
         let is_frame = matches!(transaction.tx_type(), TxType::Frame);
         let is_blob = matches!(transaction.tx_type(), TxType::EIP4844);
+
+        // Per-account queued (future/nonce-gapped) cap, enforced atomically under
+        // the same write lock as the insertion so two concurrent submissions from
+        // one sender can't both pass a stale count and race past the limit.
+        // Only *future* txs count (executable/contiguous ones are never capped).
+        // Replacements pass `None` (the caller sets it when `find_tx_to_replace`
+        // matched), since a same-`(sender, nonce)` replace never grows the queue.
+        if let Some(QueuedCap { account_nonce, max }) = queued_cap
+            && inner.is_future(sender, account_nonce, transaction.nonce())
+        {
+            let queued = inner.queued_count_for_sender(sender, account_nonce);
+            if queued >= max {
+                return Err(MempoolError::MaxQueuedTxsPerAccountExceeded {
+                    sender,
+                    count: queued,
+                    limit: max,
+                });
+            }
+        }
 
         // One-pending-frame-tx-per-sender gate (EIP-8141 §Mempool, review fix 1.6).
         // Must run under the write lock so the check and insert are atomic.
@@ -769,6 +843,15 @@ impl Mempool {
                 .insert(tx_hash, i);
         }
         mempool.blobs_bundle_pool.insert(tx_hash, blobs_bundle);
+        Ok(())
+    }
+
+    /// Remove a blobs bundle by its blob transaction hash, clearing both the
+    /// bundle pool and the versioned-hash index. Used to roll back a bundle that
+    /// was inserted just before a transaction insert that then failed, so the
+    /// orphaned bundle isn't leaked.
+    pub fn remove_blobs_bundle(&self, tx_hash: &H256) -> Result<(), StoreError> {
+        self.write()?.remove_blob_bundle(tx_hash);
         Ok(())
     }
 
@@ -1112,6 +1195,54 @@ impl Mempool {
             .map(|((_address, nonce), _hash)| nonce + 1))
     }
 
+    /// Returns the sum of `cost_without_base_fee()` for every pending
+    /// transaction from `sender` currently in the pool, optionally excluding
+    /// `exclude` (used by the cumulative-balance admission gate to drop the
+    /// cost of a tx that's about to be replaced at the same nonce).
+    ///
+    /// Used at mempool admission to gate a sender's cumulative pending cost
+    /// against their on-chain balance: without this check, a sender at the
+    /// per-sender slot cap can have most of their pending txs be
+    /// guaranteed-fail at execution time and waste pool space.
+    ///
+    /// Fails closed on any inconsistency: if `txs_by_sender_nonce` references
+    /// a hash missing from `transaction_pool`, or if any included tx's cost
+    /// can't be computed, the function returns an error rather than silently
+    /// undercounting (which would let a malformed or invariant-violating tx
+    /// bypass the cumulative check).
+    pub fn sum_cost_for_sender(
+        &self,
+        sender: Address,
+        account_nonce: u64,
+        exclude: Option<H256>,
+    ) -> Result<U256, MempoolError> {
+        let inner = self.read()?;
+        let mut total = U256::zero();
+        // Start at `account_nonce`, not 0, so obsoleted txs (nonce below the
+        // sender's on-chain nonce — already executed but not yet pruned from the
+        // pool) don't count toward the sender's required balance.
+        for (_key, hash) in inner
+            .txs_by_sender_nonce
+            .range((sender, account_nonce)..=(sender, u64::MAX))
+        {
+            if Some(*hash) == exclude {
+                continue;
+            }
+            let tx = inner.transaction_pool.get(hash).ok_or_else(|| {
+                MempoolError::StoreError(StoreError::Custom(format!(
+                    "mempool index/pool inconsistency: hash {hash:?} in sender-nonce index but missing from transaction_pool",
+                )))
+            })?;
+            let cost = tx
+                .cost_without_base_fee()
+                .ok_or(MempoolError::InvalidTxGasvalues)?;
+            total = total
+                .checked_add(cost)
+                .ok_or(MempoolError::InvalidTxGasvalues)?;
+        }
+        Ok(total)
+    }
+
     pub fn get_mempool_size(&self) -> Result<(u64, u64), MempoolError> {
         let txs_size = {
             let pool_lock = &self.read()?.transaction_pool;
@@ -1123,6 +1254,25 @@ impl Mempool {
         };
 
         Ok((txs_size as u64, blobs_size as u64))
+    }
+
+    /// Returns the current occupancy of the transaction pool as an integer
+    /// percentage of its configured maximum size, in the range `[0, 100]`.
+    ///
+    /// Returns `0` when the pool has unlimited capacity (`max_mempool_size == 0`)
+    /// to avoid a division by zero and to signal that pressure-gated admission
+    /// rules should treat the pool as empty in that configuration.
+    ///
+    /// The computation uses integer arithmetic (`len * 100 / max`) so threshold
+    /// boundary comparisons are deterministic — float rounding from a prior
+    /// `f64`-based implementation could misclassify near-boundary cases.
+    pub fn occupancy_pct(&self) -> Result<u8, MempoolError> {
+        let inner = self.read()?;
+        if inner.max_mempool_size == 0 {
+            return Ok(0);
+        }
+        let pct = inner.transaction_pool.len().saturating_mul(100) / inner.max_mempool_size;
+        Ok(pct.min(100) as u8)
     }
 
     /// Returns all transactions currently in the pool
@@ -1432,6 +1582,23 @@ impl Mempool {
         result
     }
 
+    /// For the per-account **queued** (future-nonce) cap: if a tx at `tx_nonce`
+    /// from `sender` would be a future/queued tx given the on-chain
+    /// `account_nonce`, returns `Some(current_queued_count)` for the caller to
+    /// compare against the cap. Returns `None` for executable (contiguous-nonce)
+    /// txs, which are never capped. Single read-lock.
+    pub fn queued_count_if_future(
+        &self,
+        sender: Address,
+        account_nonce: u64,
+        tx_nonce: u64,
+    ) -> Result<Option<usize>, MempoolError> {
+        let inner = self.read()?;
+        Ok(inner
+            .is_future(sender, account_nonce, tx_nonce)
+            .then(|| inner.queued_count_for_sender(sender, account_nonce)))
+    }
+
     pub fn find_tx_to_replace(
         &self,
         sender: Address,
@@ -1597,9 +1764,232 @@ pub fn transaction_intrinsic_gas(
     // it the same way (`fork >= Fork::Prague` in the default hook). Applying it
     // pre-Prague would spuriously raise the admission threshold.
     let calldata_floor = if fork >= Fork::Prague {
-        intrinsic_gas_floor(tx, fork).map_err(|e| MempoolError::IntrinsicGasError(e.to_string()))?
+        intrinsic_gas_floor(tx, sender, fork)
+            .map_err(|e| MempoolError::IntrinsicGasError(e.to_string()))?
     } else {
         0
     };
     Ok(intrinsic.max(calldata_floor))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ethrex_common::types::{EIP1559Transaction, Transaction, TxKind};
+    use ethrex_common::{Address, Bytes};
+
+    fn dummy_mempool_tx(sender: Address, nonce: u64) -> MempoolTransaction {
+        let tx = Transaction::EIP1559Transaction(EIP1559Transaction {
+            nonce,
+            max_priority_fee_per_gas: 0,
+            max_fee_per_gas: 0,
+            gas_limit: 21_000,
+            to: TxKind::Call(Address::from_low_u64_be(1)),
+            value: U256::zero(),
+            data: Bytes::default(),
+            access_list: Default::default(),
+            ..Default::default()
+        });
+        MempoolTransaction::new(tx, sender)
+    }
+
+    fn fill_mempool(mempool: &Mempool, count: usize) {
+        for i in 0..count {
+            let sender = Address::from_low_u64_be(i as u64 + 1);
+            let hash = H256::from_low_u64_be(i as u64 + 1);
+            mempool
+                .add_transaction(hash, sender, dummy_mempool_tx(sender, 0), None, None)
+                .expect("Failed to add transaction");
+        }
+    }
+
+    #[test]
+    fn occupancy_pct_empty_pool() {
+        let mempool = Mempool::new(100);
+        assert_eq!(mempool.occupancy_pct().unwrap(), 0);
+    }
+
+    #[test]
+    fn occupancy_pct_half_full_pool() {
+        let mempool = Mempool::new(100);
+        fill_mempool(&mempool, 50);
+        assert_eq!(mempool.occupancy_pct().unwrap(), 50);
+    }
+
+    #[test]
+    fn occupancy_pct_full_pool() {
+        let mempool = Mempool::new(100);
+        fill_mempool(&mempool, 100);
+        assert_eq!(mempool.occupancy_pct().unwrap(), 100);
+    }
+
+    fn build_tx(nonce: u64) -> Transaction {
+        Transaction::EIP1559Transaction(EIP1559Transaction {
+            nonce,
+            ..Default::default()
+        })
+    }
+
+    fn add_tx(pool: &Mempool, sender: Address, nonce: u64) -> H256 {
+        let tx = build_tx(nonce);
+        let mtx = MempoolTransaction::new(tx, sender);
+        let hash = mtx.hash(&NativeCrypto);
+        pool.add_transaction(hash, sender, mtx, None, None).unwrap();
+        hash
+    }
+
+    // The per-account cap is on the QUEUED (future/nonce-gapped) subpool only,
+    // computed relative to the sender's on-chain nonce; executable (contiguous)
+    // txs are never capped. `queued_count_if_future` is the check the admission
+    // path (`validate_transaction`) uses: it returns `Some(queued_count)` for a
+    // future tx and `None` for an executable one.
+
+    #[test]
+    fn contiguous_txs_are_executable_not_future() {
+        // Sender at on-chain nonce 0 with contiguous 0,1,2 pooled: the next
+        // contiguous nonce (3) — and any already-covered nonce — is executable.
+        let pool = Mempool::new(64);
+        let sender = Address::from_low_u64_be(1);
+        for nonce in 0..3 {
+            add_tx(&pool, sender, nonce);
+        }
+        assert_eq!(pool.queued_count_if_future(sender, 0, 3).unwrap(), None);
+        assert_eq!(pool.queued_count_if_future(sender, 0, 2).unwrap(), None);
+    }
+
+    #[test]
+    fn executable_flood_is_never_capped() {
+        // A large contiguous run from the on-chain nonce (the `LargeTxRequest`
+        // shape) stays executable regardless of count → never future/capped.
+        let pool = Mempool::new(10_000);
+        let sender = Address::from_low_u64_be(1);
+        for nonce in 0..2000 {
+            add_tx(&pool, sender, nonce);
+        }
+        // Any nonce up to the contiguous end (2000) is executable.
+        assert_eq!(pool.queued_count_if_future(sender, 0, 1999).unwrap(), None);
+        assert_eq!(pool.queued_count_if_future(sender, 0, 2000).unwrap(), None);
+    }
+
+    #[test]
+    fn gapped_tx_is_future_and_counts_only_queued() {
+        // Pool {0,1,2} then a gapped 5. Executable run ends at 3, so only nonce
+        // 5 is queued. A new future tx (nonce 6) reports queued_count == 1.
+        let pool = Mempool::new(64);
+        let sender = Address::from_low_u64_be(1);
+        for nonce in 0..3 {
+            add_tx(&pool, sender, nonce);
+        }
+        add_tx(&pool, sender, 5);
+        assert_eq!(pool.queued_count_if_future(sender, 0, 6).unwrap(), Some(1));
+    }
+
+    #[test]
+    fn queued_count_grows_with_more_future_txs() {
+        let pool = Mempool::new(64);
+        let sender = Address::from_low_u64_be(1);
+        // On-chain nonce 0, no tx at nonce 0 → everything from 5 up is future.
+        for nonce in [5u64, 6, 7] {
+            add_tx(&pool, sender, nonce);
+        }
+        // The next future tx sees the 3 already-queued.
+        assert_eq!(pool.queued_count_if_future(sender, 0, 8).unwrap(), Some(3));
+    }
+
+    #[test]
+    fn future_count_is_relative_to_on_chain_nonce() {
+        // Pooled nonces below the on-chain nonce are stale (not queued): with
+        // on-chain nonce 3 and pool {0,1,2}, a fresh future tx sees 0 queued.
+        let pool = Mempool::new(64);
+        let sender = Address::from_low_u64_be(1);
+        for nonce in 0..3 {
+            add_tx(&pool, sender, nonce);
+        }
+        assert_eq!(pool.queued_count_if_future(sender, 3, 9).unwrap(), Some(0));
+    }
+
+    #[test]
+    fn queued_cap_isolates_senders() {
+        let pool = Mempool::new(64);
+        let a = Address::from_low_u64_be(1);
+        let b = Address::from_low_u64_be(2);
+        add_tx(&pool, a, 5); // future for a
+        add_tx(&pool, a, 6); // future for a
+        // b's future tx is unaffected by a's queued txs.
+        assert_eq!(pool.queued_count_if_future(b, 0, 9).unwrap(), Some(0));
+        assert_eq!(pool.queued_count_if_future(a, 0, 9).unwrap(), Some(2));
+    }
+
+    // Adds a future tx through `add_transaction` with an explicit `QueuedCap`,
+    // exercising the atomic cap enforcement (not just the count helper).
+    fn add_future_with_cap(
+        pool: &Mempool,
+        sender: Address,
+        nonce: u64,
+        account_nonce: u64,
+        max: usize,
+    ) -> Result<(), MempoolError> {
+        let mtx = MempoolTransaction::new(build_tx(nonce), sender);
+        let hash = mtx.hash(&NativeCrypto);
+        pool.add_transaction(
+            hash,
+            sender,
+            mtx,
+            None,
+            Some(QueuedCap { account_nonce, max }),
+        )
+    }
+
+    #[test]
+    fn add_transaction_rejects_future_tx_over_queued_cap() {
+        // On-chain nonce 0 with no tx at 0, so pooled nonces 5,6,7 are all
+        // future → the sender is at a queued cap of 3. One more future tx,
+        // checked against the cap, must be rejected under the write lock.
+        const CAP: usize = 3;
+        let pool = Mempool::new(10_000);
+        let sender = Address::from_low_u64_be(1);
+        for nonce in [5u64, 6, 7] {
+            add_tx(&pool, sender, nonce);
+        }
+        let res = add_future_with_cap(&pool, sender, 8, 0, CAP);
+        assert!(
+            matches!(
+                res,
+                Err(MempoolError::MaxQueuedTxsPerAccountExceeded { count, limit, .. })
+                    if count == CAP && limit == CAP
+            ),
+            "expected MaxQueuedTxsPerAccountExceeded(count=3, limit=3), got {res:?}"
+        );
+    }
+
+    #[test]
+    fn add_transaction_accepts_future_tx_below_queued_cap() {
+        // Two queued txs with a cap of 3: a third future tx is under the cap and
+        // is accepted.
+        const CAP: usize = 3;
+        let pool = Mempool::new(10_000);
+        let sender = Address::from_low_u64_be(1);
+        for nonce in [5u64, 6] {
+            add_tx(&pool, sender, nonce);
+        }
+        assert!(
+            add_future_with_cap(&pool, sender, 7, 0, CAP).is_ok(),
+            "a future tx below the queued cap must be accepted"
+        );
+    }
+
+    #[test]
+    fn add_transaction_never_caps_executable_txs() {
+        // A contiguous run from the on-chain nonce is executable, never future,
+        // so the cap never fires even far past it.
+        const CAP: usize = 3;
+        let pool = Mempool::new(10_000);
+        let sender = Address::from_low_u64_be(1);
+        for nonce in 0..10 {
+            assert!(
+                add_future_with_cap(&pool, sender, nonce, 0, CAP).is_ok(),
+                "contiguous (executable) tx at nonce {nonce} must never be capped"
+            );
+        }
+    }
 }

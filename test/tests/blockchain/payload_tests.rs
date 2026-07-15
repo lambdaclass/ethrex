@@ -188,7 +188,7 @@ async fn builder_caps_elided_blob_bundles_to_fork_max() {
 
         blockchain
             .mempool
-            .add_transaction(tx_hash, sender, mempool_tx, None)
+            .add_transaction(tx_hash, sender, mempool_tx, None, None)
             .expect("add_transaction");
 
         // Elided bundle: blobs empty, real commitment + cell proofs.

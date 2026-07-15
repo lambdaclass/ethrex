@@ -249,6 +249,10 @@ pub struct PayloadBuildContext {
     pub payload_size: u64,
     /// Block Access List for EIP-7928
     pub block_access_list: Option<BlockAccessList>,
+    /// Set when building from an explicit transaction list (`testing_buildBlockV1`),
+    /// which carries no blob sidecars. Lets the blob path derive blob gas from the
+    /// tx's versioned hashes instead of a mempool bundle.
+    pub explicit_build: bool,
 }
 
 impl PayloadBuildContext {
@@ -309,6 +313,7 @@ impl PayloadBuildContext {
             account_updates: Vec::new(),
             payload_size,
             block_access_list: None,
+            explicit_build: false,
         })
     }
 
@@ -484,8 +489,32 @@ impl Blockchain {
         Ok(res)
     }
 
-    /// Completes the payload building process, return the block value
+    /// Completes the payload building process, return the block value.
+    /// Transactions are pulled from the mempool.
     pub fn build_payload(&self, payload: Block) -> Result<PayloadBuildResult, ChainError> {
+        self.build_payload_inner(payload, None)
+    }
+
+    /// Builds a payload from an explicit, ordered list of transactions instead of the
+    /// mempool. Used by `testing_buildBlockV1`. Every transaction must execute
+    /// successfully and is included in the given order; the first failing
+    /// transaction aborts the build (matching geth's `BuildTestingPayload`).
+    pub fn build_payload_with_transactions(
+        &self,
+        payload: Block,
+        transactions: Vec<Transaction>,
+    ) -> Result<PayloadBuildResult, ChainError> {
+        self.build_payload_inner(payload, Some(transactions))
+    }
+
+    /// Shared block-building pipeline. When `explicit_transactions` is `None` the
+    /// payload is filled from the mempool; otherwise the provided transactions are
+    /// applied verbatim.
+    fn build_payload_inner(
+        &self,
+        payload: Block,
+        explicit_transactions: Option<Vec<Transaction>>,
+    ) -> Result<PayloadBuildResult, ChainError> {
         let since = Instant::now();
 
         debug!("Building payload");
@@ -495,7 +524,11 @@ impl Blockchain {
         if let BlockchainType::L1 = self.options.r#type {
             self.apply_system_operations(&mut context)?;
         }
-        self.fill_transactions(&mut context)?;
+        context.explicit_build = explicit_transactions.is_some();
+        match explicit_transactions {
+            None => self.fill_transactions(&mut context)?,
+            Some(transactions) => self.fill_explicit_transactions(&mut context, transactions)?,
+        }
         // EIP-7928: Post-tx phase uses index n+1 for both requests and withdrawals.
         // Order must match geth: requests (system calls) BEFORE withdrawals.
         if context
@@ -740,6 +773,45 @@ impl Blockchain {
         Ok(())
     }
 
+    /// Applies an explicit, ordered list of transactions to the payload, bypassing
+    /// the mempool. Used by `testing_buildBlockV1`. Every transaction must execute
+    /// successfully; the first failure aborts the build.
+    ///
+    /// Blob (type-3) transactions carry no sidecar in the canonical encoding accepted
+    /// here, so the resulting blobs bundle is empty; blob gas is still accounted from
+    /// the tx's versioned hashes (see `apply_blob_transaction`).
+    fn fill_explicit_transactions(
+        &self,
+        context: &mut PayloadBuildContext,
+        transactions: Vec<Transaction>,
+    ) -> Result<(), ChainError> {
+        let base_fee = context.base_fee_per_gas();
+        for tx in transactions {
+            // L1 blocks must not contain L2-only transaction types (`FeeToken`
+            // 0x7d, `Privileged` 0x7e). Block import rejects them too
+            // (`validate_l1_transaction_types`); reject here so an explicit-tx
+            // build never produces a payload no other L1 client would accept.
+            if let BlockchainType::L1 = self.options.r#type
+                && tx.tx_type().is_l2_only()
+            {
+                return Err(ChainError::Custom(format!(
+                    "transaction type {:#x} is not valid on L1",
+                    tx.tx_type() as u8
+                )));
+            }
+            let sender = tx.sender(&NativeCrypto).map_err(|err| {
+                ChainError::Custom(format!("invalid transaction signature: {err}"))
+            })?;
+            let tip = tx.effective_gas_tip(base_fee).unwrap_or_default();
+            let head = HeadTransaction {
+                tx: MempoolTransaction::new(tx, sender),
+                tip,
+            };
+            self.apply_tx_to_payload(head, context)?;
+        }
+        Ok(())
+    }
+
     /// Apply a single transaction to the in-progress payload.
     ///
     /// Runs the full per-tx pipeline: EIP-8037 2D inclusion check, EIP-7928
@@ -842,38 +914,46 @@ impl Blockchain {
         // Fetch blobs bundle
         let tx_hash = head.tx.hash(&NativeCrypto);
         let max_blob_number_per_block = self.effective_max_blobs(context);
-        let Some(stored_bundle) = self.mempool.get_blobs_bundle(tx_hash)? else {
-            // No blob tx should enter the mempool without its blobs bundle so this is an internal error
-            return Err(
-                StoreError::Custom(format!("No blobs bundle found for blob tx {tx_hash}")).into(),
-            );
-        };
-
-        // Resolve the bundle: if blobs are elided (eth/72 path), reconstruct them
-        // from the held cells. If reconstruction is impossible (< 64 columns held),
-        // drop the tx non-fatally so the builder continues with other transactions.
-        let blobs_bundle = if stored_bundle.blobs.is_empty() {
-            match self.mempool.reconstruct_blobs_bundle(tx_hash)? {
-                Some(full) => {
-                    // Cache the reconstructed bundle so future build ticks reuse it.
-                    self.mempool.add_blobs_bundle(tx_hash, full.clone())?;
-                    full
-                }
-                None => {
-                    // Not enough cells to reconstruct; skip this tx non-fatally.
-                    return Err(EvmError::Custom(format!(
-                        "insufficient cells to reconstruct blobs for tx {tx_hash}"
-                    ))
-                    .into());
-                }
+        // The blob count drives blob-gas accounting. Normally it comes from the
+        // mempool sidecar; for an explicit build (`testing_buildBlockV1`) there is
+        // no sidecar, so derive it from the tx's versioned hashes and leave the
+        // blobs bundle empty (the EVM only needs the hashes, which are in the tx).
+        let (blob_count, bundle) = match self.mempool.get_blobs_bundle(tx_hash)? {
+            Some(stored_bundle) => {
+                // Resolve the bundle: if blobs are elided (eth/72 path), reconstruct
+                // them from the held cells. If reconstruction is impossible (< 64
+                // columns held), drop the tx non-fatally so the builder continues
+                // with other transactions.
+                let blobs_bundle = if stored_bundle.blobs.is_empty() {
+                    match self.mempool.reconstruct_blobs_bundle(tx_hash)? {
+                        Some(full) => {
+                            // Cache the reconstructed bundle so future build ticks reuse it.
+                            self.mempool.add_blobs_bundle(tx_hash, full.clone())?;
+                            full
+                        }
+                        None => {
+                            // Not enough cells to reconstruct; skip this tx non-fatally.
+                            return Err(EvmError::Custom(format!(
+                                "insufficient cells to reconstruct blobs for tx {tx_hash}"
+                            ))
+                            .into());
+                        }
+                    }
+                } else {
+                    stored_bundle
+                };
+                (blobs_bundle.blobs.len(), Some(blobs_bundle))
             }
-        } else {
-            stored_bundle
+            None if context.explicit_build => ((**head).blob_versioned_hashes().len(), None),
+            None => {
+                // No blob tx should enter the mempool without its blobs bundle so this is an internal error
+                return Err(StoreError::Custom(format!(
+                    "No blobs bundle found for blob tx {tx_hash}"
+                ))
+                .into());
+            }
         };
-
-        if context.blobs_bundle.commitments.len() + blobs_bundle.commitments.len()
-            > max_blob_number_per_block
-        {
+        if context.blobs_bundle.blobs.len() + blob_count > max_blob_number_per_block {
             // This error will only be used for debug tracing
             return Err(EvmError::Custom("max data blobs reached".to_string()).into());
         };
@@ -882,8 +962,10 @@ impl Blockchain {
         // Update context with blob data
         let prev_blob_gas = context.payload.header.blob_gas_used.unwrap_or_default();
         context.payload.header.blob_gas_used =
-            Some(prev_blob_gas + (blobs_bundle.commitments.len() * GAS_PER_BLOB as usize) as u64);
-        context.blobs_bundle += blobs_bundle;
+            Some(prev_blob_gas + (blob_count * GAS_PER_BLOB as usize) as u64);
+        if let Some(blobs_bundle) = bundle {
+            context.blobs_bundle += blobs_bundle;
+        }
         Ok(receipt)
     }
 
