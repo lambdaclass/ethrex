@@ -1211,11 +1211,31 @@ impl LEVM {
                 let current_state = std::mem::take(&mut tx_db.current_accounts_state);
                 let codes = std::mem::take(&mut tx_db.codes);
                 let mut tracked = tx_db.accessed_accounts.take().unwrap_or_default();
-                let (shadow_touched, shadow_reads) = tx_db
+                let (shadow_touched, shadow_reads, shadow_writes) = tx_db
                     .bal_recorder
                     .take()
-                    .map(|mut r| (r.take_touched_addresses(), r.take_storage_reads()))
+                    .map(|mut r| {
+                        (
+                            r.take_touched_addresses(),
+                            r.take_storage_reads(),
+                            r.take_storage_writes(),
+                        )
+                    })
                     .unwrap_or_default();
+                // Genuine pure reads = observed reads minus written slots. A slot read
+                // then written stays in `shadow_reads` (the recorder promotes it only in
+                // `build()`, which the shadow path skips) and SSTORE always records an
+                // implicit read — so this subtraction is required for correctness, not
+                // just efficiency: without it a written slot would be treated as a pure
+                // read and its BAL entry skipped. The execution->BAL check skips the
+                // DB-backed seeded lookup for genuine reads: a read never diverges from
+                // its pre-tx value, so there is nothing to validate.
+                let written: FxHashSet<(Address, U256)> = shadow_writes.into_iter().collect();
+                let pure_reads: FxHashSet<(Address, U256)> = shadow_reads
+                    .iter()
+                    .copied()
+                    .filter(|k| !written.contains(k))
+                    .collect();
 
                 // Precompute the per-tx inputs the serial pass uses to update
                 // the shared unread_storage_reads set. Selfdestruct clears
@@ -1277,6 +1297,7 @@ impl LEVM {
                         &arc_idx,
                         &system_seed,
                         &store,
+                        &pure_reads,
                     )
                     .map_err(|e| {
                         EvmError::Custom(format!("BAL validation failed for tx {tx_idx}: {e}"))
@@ -1589,6 +1610,10 @@ impl LEVM {
     /// `index`: pre-built validation index
     /// `system_seed`: pre-system-call state snapshot (for extraneous entry detection)
     /// `store`: database (fallback for pre-state lookups)
+    /// `pure_reads`: slots the shadow recorder observed as pure reads (never
+    ///   written); the execution->BAL check skips the seeded pre-state lookup for these since a
+    ///   genuine read cannot diverge from its pre-tx value. Pass an empty set to
+    ///   validate every slot unconditionally (e.g. from unit tests).
     ///
     /// Exposed as `pub` (rather than crate-private) solely so BAL content-validation
     /// unit tests outside this crate can call it directly.
@@ -1603,9 +1628,11 @@ impl LEVM {
         index: &BalAddressIndex,
         system_seed: &CacheDB,
         store: &Arc<dyn Database>,
+        pure_reads: &FxHashSet<(Address, U256)>,
     ) -> Result<(), BalValidationError> {
-        // PART A: For each BAL account with changes at bal_idx,
-        //         verify execution produced matching post-state.
+        // BAL -> execution: for each BAL account with changes at bal_idx,
+        // verify execution produced the matching post-state (and that no
+        // claimed change is a no-op equal to the start-of-tx value).
         if let Some(active_accounts) = index.tx_to_accounts.get(&bal_idx) {
             for &acct_inner_idx in active_accounts {
                 let acct = &bal.accounts()[acct_inner_idx];
@@ -1854,8 +1881,8 @@ impl LEVM {
             }
         }
 
-        // PART B: For each modified account in execution state,
-        //         verify no unexpected mutations (changes not claimed by BAL).
+        // execution -> BAL: for each account modified by execution, verify every
+        // mutation it produced is claimed by the BAL (no unrecorded change).
         for (addr, account) in current_state {
             if account.is_unmodified() {
                 continue;
@@ -1967,7 +1994,11 @@ impl LEVM {
                 // storage_reads: the shadow-reads check in execute_block_parallel only
                 // verifies the slot is present in *some* list, never that a changed value
                 // was recorded in the correct one.
-                else {
+                //
+                // Fast path: the recorder proved this slot a pure read (writes are
+                // excluded from `pure_reads`), so its value equals the pre-tx value by
+                // construction — skip the DB-backed seeded lookup entirely.
+                else if !pure_reads.contains(&(*addr, slot_u256)) {
                     let dummy_slot_change = SlotChange::new(slot_u256);
                     let pre_value = Self::seeded_storage(
                         seed_idx,
@@ -1997,8 +2028,8 @@ impl LEVM {
     /// After `process_withdrawals` + `extract_all_requests_levm` run on the BAL-seeded
     /// DB, `current_accounts_state` reflects the actual state. Validation is bidirectional:
     ///
-    /// Part A (BAL -> DB): every BAL claim at the withdrawal index must match the DB.
-    /// Part B (DB -> BAL): every account modified during the withdrawal/request phase
+    /// BAL -> DB: every BAL claim at the withdrawal index must match the DB.
+    /// DB -> BAL: every account modified during the withdrawal/request phase
     ///         must have a corresponding BAL entry. Without this reverse check, a
     ///         malicious builder could omit a withdrawal recipient from the BAL,
     ///         causing the BAL-derived state root to exclude the withdrawal balance
@@ -2010,7 +2041,7 @@ impl LEVM {
         withdrawal_idx: u32,
         index: &BalAddressIndex,
     ) -> Result<(), EvmError> {
-        // Part A: For each BAL account with changes at the withdrawal index,
+        // BAL -> DB: For each BAL account with changes at the withdrawal index,
         //         verify the DB matches.
         for acct in bal.accounts() {
             let addr = acct.address;
@@ -2104,7 +2135,7 @@ impl LEVM {
             }
         }
 
-        // Part B: For each account modified during the withdrawal/request phase,
+        // DB -> BAL: For each account modified during the withdrawal/request phase,
         //         verify it has a corresponding BAL entry claiming the change.
         for (addr, account) in &db.current_accounts_state {
             if account.is_unmodified() {

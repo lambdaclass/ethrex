@@ -972,12 +972,29 @@ impl BlockAccessListRecorder {
     }
 
     /// Consumes and returns recorded storage reads as `(address, slot)` pairs.
-    /// Excludes slots that were later written (they get promoted to `storage_writes`).
+    /// Note: a slot that was read and then written stays in this set (promotion
+    /// filtering only happens in `build()`); callers needing genuine pure reads
+    /// must subtract [`take_storage_writes`](Self::take_storage_writes).
     pub fn take_storage_reads(&mut self) -> Vec<(Address, U256)> {
         let reads = std::mem::take(&mut self.storage_reads);
         let mut out = Vec::new();
         for (addr, slots) in reads {
             for slot in slots {
+                out.push((addr, slot));
+            }
+        }
+        out
+    }
+
+    /// Consumes and returns the set of storage slots WRITTEN during execution as
+    /// `(address, slot)` pairs (includes slots that were also read, i.e. promoted
+    /// reads). Used by parallel BAL validation to distinguish genuine pure reads
+    /// (skippable) from writes (must be validated against the BAL).
+    pub fn take_storage_writes(&mut self) -> Vec<(Address, U256)> {
+        let writes = std::mem::take(&mut self.storage_writes);
+        let mut out = Vec::new();
+        for (addr, slots) in writes {
+            for slot in slots.into_keys() {
                 out.push((addr, slot));
             }
         }

@@ -1,8 +1,8 @@
 //! Unit tests calling `LEVM::validate_tx_execution` directly (bypassing the
 //! full block-import pipeline exercised in `bal_content_validation_tests.rs`).
 //!
-//! These bind the same "no-op BAL entry" (Phase 1, PART A) and "missing
-//! storage-write omission" (Phase 2, PART B) checks, but as pure unit tests
+//! These bind the same "no-op BAL entry" (BAL->execution) and "missing
+//! storage-write omission" (execution->BAL) checks, but as pure unit tests
 //! against the validation function itself: construct a post-execution
 //! `current_state` plus a hand-built `BlockAccessList`, call
 //! `validate_tx_execution`, and assert on the `Result` directly instead of
@@ -35,7 +35,7 @@ use ethrex_levm::{
     errors::DatabaseError,
 };
 use ethrex_vm::backends::levm::{BalValidationError, LEVM};
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 
 /// Minimal `Database` stub. Every scenario below seeds pre-tx values directly
 /// via `system_seed`, so `validate_tx_execution`'s `store` fallback is never
@@ -155,6 +155,7 @@ fn noop_balance_change_rejected() {
         &index,
         &system_seed_map,
         &unused_store(),
+        &FxHashSet::default(),
     );
     assert_mismatch(&result, "no-op BAL balance change");
 }
@@ -201,6 +202,7 @@ fn noop_nonce_change_rejected() {
         &index,
         &system_seed,
         &unused_store(),
+        &FxHashSet::default(),
     );
     assert_mismatch(&result, "no-op BAL nonce change");
 }
@@ -240,6 +242,7 @@ fn noop_code_change_rejected() {
         &index,
         &system_seed,
         &unused_store(),
+        &FxHashSet::default(),
     );
     assert_mismatch(&result, "no-op BAL code change");
 }
@@ -290,6 +293,7 @@ fn noop_storage_change_rejected() {
         &index,
         &system_seed,
         &unused_store(),
+        &FxHashSet::default(),
     );
     assert_mismatch(&result, "no-op BAL storage change");
 }
@@ -339,6 +343,7 @@ fn genuine_balance_change_accepted() {
         &index,
         &system_seed,
         &unused_store(),
+        &FxHashSet::default(),
     );
     assert!(result.is_ok(), "expected Ok(()), got: {result:?}");
 }
@@ -390,6 +395,7 @@ fn missing_storage_write_rejected() {
         &index,
         &system_seed,
         &unused_store(),
+        &FxHashSet::default(),
     );
     assert_mismatch(&result, "has no storage_changes entry");
 }
@@ -438,6 +444,7 @@ fn read_only_slot_not_in_changes_accepted() {
         &index,
         &system_seed,
         &unused_store(),
+        &FxHashSet::default(),
     );
     assert!(result.is_ok(), "expected Ok(()), got: {result:?}");
 }
@@ -446,7 +453,7 @@ fn read_only_slot_not_in_changes_accepted() {
 /// the BAL declares under `storage_reads` instead of `storage_changes` must be
 /// rejected: a changed value has to live in `storage_changes`. The shadow-reads
 /// cross-check only verifies the slot is present in *some* list, so this must be
-/// caught here in PART B.
+/// caught here by the execution->BAL check.
 #[test]
 fn written_slot_misdeclared_as_read_rejected() {
     let address = addr(14);
@@ -492,6 +499,7 @@ fn written_slot_misdeclared_as_read_rejected() {
         &index,
         &system_seed,
         &unused_store(),
+        &FxHashSet::default(),
     );
     assert_mismatch(&result, "declared_as_read=true");
 }
@@ -539,6 +547,7 @@ fn noop_balance_change_absent_account_rejected() {
         &index,
         &system_seed,
         &unused_store(),
+        &FxHashSet::default(),
     );
     assert_mismatch(&result, "spurious no-op BAL balance change");
 }
@@ -577,6 +586,7 @@ fn noop_nonce_change_absent_account_rejected() {
         &index,
         &system_seed,
         &unused_store(),
+        &FxHashSet::default(),
     );
     assert_mismatch(&result, "spurious no-op BAL nonce change");
 }
@@ -613,6 +623,7 @@ fn noop_code_change_absent_account_rejected() {
         &index,
         &system_seed,
         &unused_store(),
+        &FxHashSet::default(),
     );
     assert_mismatch(&result, "spurious no-op BAL code change");
 }
@@ -657,6 +668,7 @@ fn noop_storage_change_absent_slot_rejected() {
         &index,
         &system_seed,
         &unused_store(),
+        &FxHashSet::default(),
     );
     assert_mismatch(&result, "spurious no-op BAL storage change");
 }
@@ -714,6 +726,7 @@ fn storage_change_omitted_at_this_index_rejected() {
         &index,
         &system_seed,
         &unused_store(),
+        &FxHashSet::default(),
     );
     assert_mismatch(&result, "has no change at index");
 }
@@ -768,6 +781,7 @@ fn storage_read_at_this_index_with_later_change_accepted() {
         &index,
         &system_seed,
         &unused_store(),
+        &FxHashSet::default(),
     );
     assert!(result.is_ok(), "expected Ok(()), got: {result:?}");
 }

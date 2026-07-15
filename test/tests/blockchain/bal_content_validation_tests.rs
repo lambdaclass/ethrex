@@ -666,6 +666,76 @@ async fn parallel_path_rejects_omitted_storage_write() {
     );
 }
 
+/// Moving the SSTORE contract's slot-0 write from `storage_changes` into
+/// `storage_reads` (mis-declaring a real write as a read) must be rejected on
+/// the parallel path. Because SSTORE also records an implicit read, the shadow
+/// recorder sees the slot as read AND written; the execution->BAL check must
+/// subtract writes from the observed reads before deciding a slot is skippable,
+/// otherwise this slot would be treated as a pure read, skipped, and then wave
+/// through Group B (which only checks the slot is present in *some* list). Binds
+/// that write-subtraction end-to-end.
+#[tokio::test]
+async fn parallel_path_rejects_write_misdeclared_as_read() {
+    let signer: Signer = LocalSigner::new(test_secret_key()).into();
+
+    let (build_store, chain_id) = setup_store().await;
+    let build_blockchain = parallel_blockchain(build_store.clone());
+    let genesis_header = build_store.get_block_header(0).unwrap().unwrap();
+    let tx = sign(
+        eip1559_tx(
+            chain_id,
+            0,
+            TxKind::Call(SSTORE_CONTRACT_ADDRESS),
+            U256::zero(),
+            Bytes::new(),
+        ),
+        &signer,
+    )
+    .await;
+    build_blockchain
+        .add_transaction_to_pool(tx)
+        .await
+        .expect("tx should enter pool");
+    let (block, bal, receipts) =
+        build_block_with_txs(&build_store, &build_blockchain, &genesis_header).await;
+    assert!(receipts[0].succeeded, "tx must succeed, got: {receipts:?}");
+
+    // Move slot 0 from storage_changes into storage_reads: the real write is
+    // now mis-declared as a read.
+    let mut accounts = bal.accounts().to_vec();
+    {
+        let acc = accounts
+            .iter_mut()
+            .find(|a| a.address == SSTORE_CONTRACT_ADDRESS)
+            .unwrap();
+        acc.storage_changes.retain(|sc| sc.slot != U256::zero());
+        acc.storage_reads.push(U256::zero());
+        acc.storage_reads.sort_unstable();
+        acc.storage_reads.dedup();
+    }
+    let mutated_bal = BlockAccessList::from_accounts(accounts);
+
+    // Same effect on merkleization as omitting the write (slot 0 stays at its
+    // pre-block value of 0), so forge both commitments.
+    let mut mutated_block = block.clone();
+    mutated_block.header.state_root = forge_state_root(&build_store, &genesis_header, &mutated_bal);
+    mutated_block.header.block_access_list_hash = Some(mutated_bal.compute_hash(&NativeCrypto));
+
+    let (store_par, _) = setup_store().await;
+    let bc_par = parallel_blockchain(store_par);
+    let par = bc_par.add_block_pipeline_bal(mutated_block, Some(Arc::new(mutated_bal)));
+    assert_content_rejected(&par, "declared_as_read=true");
+
+    // Positive control: the unmutated block must still import.
+    let (store_ok, _) = setup_store().await;
+    let bc_ok = parallel_blockchain(store_ok);
+    let ok = bc_ok.add_block_pipeline_bal(block, Some(Arc::new(bal)));
+    assert!(
+        ok.is_ok(),
+        "parallel path must accept the unmutated block, got: {ok:?}"
+    );
+}
+
 // --- 4.5: selfdestruct phantom-read fix (Phase 3, finding #2) + control ---
 
 #[tokio::test]
