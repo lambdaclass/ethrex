@@ -12,6 +12,10 @@
 
 ## Perf
 
+### 2026-07-08
+
+- Add a bounded read-through cache of committed on-disk state values beneath the diff-layer overlay, so repeated cold reads of hot-but-unwritten accounts/slots (read every block but not recently written) hit memory instead of re-reading disk each block [#6979](https://github.com/lambdaclass/ethrex/pull/6979)
+
 ### 2026-07-06
 
 - Warm state caches between blocks by speculatively executing top-of-mempool transactions [#6967](https://github.com/lambdaclass/ethrex/pull/6967)

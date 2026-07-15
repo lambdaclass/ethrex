@@ -9,6 +9,7 @@ This directory is the source of truth for ethrex performance optimization work.
 | [methodology.md](methodology.md) | Complete benchmarking workflow |
 | [ideas.md](ideas.md) | All performance ideas with status tracking |
 | [architecture.md](architecture.md) | Code architecture and bottleneck analysis |
+| [storage-cold-paths.md](storage-cold-paths.md) | Storage read paths: cold access, accounts, trie, FKV, caches, RocksDB tuning |
 | [tracking.md](tracking.md) | Session and historical tracking formats |
 | [observability.md](observability.md) | Dashboard and notification setup |
 | [zkvm-guidelines.md](zkvm-guidelines.md) | zkVM-specific benchmarking guidance |

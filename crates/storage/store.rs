@@ -15,6 +15,7 @@ use crate::{
     apply_prefix,
     backend::in_memory::InMemoryBackend,
     block_data_buffer::BlockDataBuffer,
+    clean_cache::CleanCache,
     error::StoreError,
     layering::{TrieLayerCache, TrieWrapper},
     rlp::{BlockBodyRLP, BlockHeaderRLP, BlockRLP},
@@ -82,6 +83,17 @@ const BATCH_COMMIT_THRESHOLD: usize = 4;
 /// with larger giving no gain (the OS page cache backstops the uncompressed state
 /// CFs) and ~8 GiB the floor where the filter set starts to thrash.
 pub const DEFAULT_ROCKSDB_BLOCK_CACHE_SIZE_BYTES: usize = 12 * 1024 * 1024 * 1024;
+
+/// Total byte budget for the read-through [`CleanCache`] of committed on-disk
+/// state values: 512 MiB.
+///
+/// This is resident memory *in addition to* the RocksDB block cache, but far
+/// denser: it stores decoded-path values (~40-130 B each) rather than whole
+/// 4-16 KB SST blocks, so for random hashed-key access it holds far more of the
+/// working set per byte. The cache is hard-bounded to this figure (see
+/// [`CleanCache`]). Only active once the node is synced (FKV fully built).
+// TODO: make this configurable via `StoreConfig`.
+pub const DEFAULT_CLEAN_CACHE_MAX_BYTES: usize = 512 * 1024 * 1024;
 
 /// Tunable configuration for [`Store::new_with_config`] and related constructors.
 ///
@@ -197,6 +209,11 @@ pub struct Store {
     latest_block_header: LatestBlockHeaderCache,
     /// Last computed FlatKeyValue for incremental updates.
     last_computed_flatkeyvalue: Arc<RwLock<Vec<u8>>>,
+
+    /// Read-through cache of committed on-disk state values, sitting beneath the
+    /// diff-layer overlay in the read cascade. Only consulted once the node is
+    /// synced (FKV fully built); see [`Store::clean_cache_if_synced`].
+    clean_cache: Arc<CleanCache>,
 
     /// Cache for account bytecodes, keyed by the bytecode hash.
     /// Note that we don't remove entries on account code changes, since
@@ -1411,7 +1428,11 @@ impl Store {
             txn.commit()
         })
         .await
-        .map_err(|e| StoreError::Custom(format!("Task panicked: {}", e)))?
+        .map_err(|e| StoreError::Custom(format!("Task panicked: {}", e)))??;
+        // This path mutates on-disk state outside `commit_trie_layers`, so drop
+        // the read-through cache wholesale rather than tracking per-key changes.
+        self.clean_cache.clear();
+        Ok(())
     }
 
     /// CAUTION: This method writes directly to the underlying database, bypassing any caching layer.
@@ -1820,6 +1841,7 @@ impl Store {
             persist_tx,
             pending_trie_roots: Arc::new(PendingTrieRoots::default()),
             last_computed_flatkeyvalue: Arc::new(RwLock::new(last_written)),
+            clean_cache: Arc::new(CleanCache::new(DEFAULT_CLEAN_CACHE_MAX_BYTES)),
             account_code_cache: Arc::new(Mutex::new(CodeCache::default())),
             code_metadata_cache: Arc::new(Mutex::new(rustc_hash::FxHashMap::default())),
             fcu_lock: Arc::new(tokio::sync::Mutex::new(())),
@@ -1851,6 +1873,7 @@ impl Store {
         let persist_trie_cache = store.trie_cache.clone();
         let persist_pending_roots = store.pending_trie_roots.clone();
         let persist_fkv_ctl = store.flatkeyvalue_control_tx.clone();
+        let persist_clean_cache = store.clean_cache.clone();
         background_threads.push(std::thread::spawn(move || {
             let rx = persist_rx;
             // Carries the prior flush result: the live path acks after staging,
@@ -1914,6 +1937,7 @@ impl Store {
                                     persist_backend.as_ref(),
                                     &persist_trie_cache,
                                     &persist_fkv_ctl,
+                                    &persist_clean_cache,
                                     bp.parent_state_root,
                                     bp.wait_for_flush,
                                 )
@@ -3130,6 +3154,7 @@ impl Store {
                 self.last_written()?,
             )?),
             None,
+            self.clean_cache_if_synced(),
         );
         Ok(Trie::open(Box::new(trie_db), state_root))
     }
@@ -3159,6 +3184,8 @@ impl Store {
                 self.last_written()?,
             )?),
             None,
+            // Locked/snap-sync tries read a point-in-time snapshot; never cache.
+            None,
         );
         Ok(Trie::open(Box::new(trie_db), state_root))
     }
@@ -3179,6 +3206,7 @@ impl Store {
                 self.last_written()?,
             )?),
             Some(account_hash),
+            self.clean_cache_if_synced(),
         );
         Ok(Trie::open(Box::new(trie_db), storage_root))
     }
@@ -3202,6 +3230,7 @@ impl Store {
                 last_written,
             )?),
             None,
+            self.clean_cache_if_synced(),
         );
         Ok(Trie::open(Box::new(trie_db), state_root))
     }
@@ -3225,6 +3254,7 @@ impl Store {
                 last_written,
             )?),
             Some(account_hash),
+            self.clean_cache_if_synced(),
         );
         Ok(Trie::open(Box::new(trie_db), storage_root))
     }
@@ -3262,6 +3292,8 @@ impl Store {
                 self.last_written()?,
             )?),
             Some(account_hash),
+            // Locked/snap-sync tries read a point-in-time snapshot; never cache.
+            None,
         );
         Ok(Trie::open(Box::new(trie_db), storage_root))
     }
@@ -3385,6 +3417,33 @@ impl Store {
     fn flatkeyvalue_computed_with_last_written(account: H256, last_written: &[u8]) -> bool {
         let account_nibbles = Nibbles::from_bytes(account.as_bytes());
         &last_written[0..64] > account_nibbles.as_ref()
+    }
+
+    /// Returns the read-through [`CleanCache`] only when the node is synced, i.e.
+    /// FKV generation is complete.
+    ///
+    /// Before that point, several code paths mutate the on-disk state CFs outside
+    /// `commit_trie_layers` (genesis, snap-sync healing, FKV backfill) without
+    /// invalidating the cache. Gating on FKV-complete restricts the cache to the
+    /// regime where `commit_trie_layers` and `write_storage_trie_nodes_batch` are
+    /// the only writers, both of which do invalidate. This is also exactly the
+    /// workload the cache targets (steady-state head-following).
+    fn clean_cache_if_synced(&self) -> Option<Arc<CleanCache>> {
+        let synced = self
+            .last_written()
+            .map(|lw| fkv_fully_built(&lw))
+            .unwrap_or(false);
+        synced.then(|| self.clean_cache.clone())
+    }
+
+    /// Snapshot of the read-through cache's memory usage: `(used_bytes,
+    /// max_bytes, entries)`. Intended for observability / debugging.
+    pub fn clean_cache_stats(&self) -> (usize, usize, usize) {
+        (
+            self.clean_cache.used_bytes(),
+            self.clean_cache.max_bytes(),
+            self.clean_cache.len(),
+        )
     }
 
     /// Returns the highest block number durably flushed to disk, or `0` when
@@ -3770,6 +3829,14 @@ fn apply_trie_phase1(
     build
 }
 
+/// True when the FKV watermark indicates a complete flat-key-value store, i.e.
+/// the node is synced. The watermark is a trie nibble path, whose bytes are all
+/// `< 0x11`, so an all-`0xff` value can only be the completion sentinel (see the
+/// FKV generator and `from_backend`). Used to gate the read-through cache.
+fn fkv_fully_built(last_written: &[u8]) -> bool {
+    !last_written.is_empty() && last_written.iter().all(|&b| b == 0xff)
+}
+
 /// When the diff-layer chain is deep enough, flush the bottom layer to disk and
 /// RCU-evict it. `is_batch` selects `BATCH_COMMIT_THRESHOLD` (full sync) over
 /// the default per-block threshold. No-ops when nothing is committable.
@@ -3777,6 +3844,7 @@ fn commit_trie_if_due(
     backend: &dyn StorageBackend,
     trie_cache: &Arc<RwLock<Arc<TrieLayerCache>>>,
     fkv_ctl: &SyncSender<FKVGeneratorControlMessage>,
+    clean_cache: &CleanCache,
     parent_state_root: H256,
     is_batch: bool,
 ) -> Result<(), StoreError> {
@@ -3794,7 +3862,7 @@ fn commit_trie_if_due(
         // Nothing to commit to disk, move on.
         return Ok(());
     };
-    commit_trie_layers(backend, trie_cache, fkv_ctl, &trie, root)
+    commit_trie_layers(backend, trie_cache, fkv_ctl, clean_cache, &trie, root)
 }
 
 /// Writes the layer at `root` and all of its ancestors to disk in one tx, then
@@ -3805,6 +3873,7 @@ fn commit_trie_layers(
     backend: &dyn StorageBackend,
     trie_cache: &Arc<RwLock<Arc<TrieLayerCache>>>,
     fkv_ctl: &SyncSender<FKVGeneratorControlMessage>,
+    clean_cache: &CleanCache,
     trie: &Arc<TrieLayerCache>,
     root: H256,
 ) -> Result<(), StoreError> {
@@ -3831,6 +3900,12 @@ fn commit_trie_layers(
     for (key, value) in nodes {
         let is_leaf = key.len() == 65 || key.len() == 131;
         let is_account = key.len() <= 65;
+
+        // This key's on-disk value is about to change, drop any stale
+        // read-through entry. Safe against concurrent readers: the overlay still
+        // shadows this key until the RCU swap below, so the clean cache is not
+        // consulted for it during this window.
+        clean_cache.invalidate(&key);
 
         if is_leaf && key > last_written {
             continue;
