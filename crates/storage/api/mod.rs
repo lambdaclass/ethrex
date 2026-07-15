@@ -66,6 +66,21 @@ pub trait StorageReadView: Send + Sync {
     /// Retrieves a value by key from the specified table.
     fn get(&self, table: &'static str, key: &[u8]) -> Result<Option<Vec<u8>>, StoreError>;
 
+    /// Retrieves multiple values by key from the specified table.
+    /// Returns results in the same order as the input keys.
+    /// Backends that support batched reads (e.g. RocksDB `multi_get_cf`)
+    /// should override this for better throughput. Callers should not
+    /// assume `multi_get` is asymptotically faster than `get`; on backends
+    /// without a batched read primitive (e.g. the in-memory backend) the
+    /// default impl below is equivalent to N independent `get` calls.
+    fn multi_get(
+        &self,
+        table: &'static str,
+        keys: &[&[u8]],
+    ) -> Vec<Result<Option<Vec<u8>>, StoreError>> {
+        keys.iter().map(|k| self.get(table, k)).collect()
+    }
+
     /// Returns an iterator over all key-value pairs with the given prefix.
     fn prefix_iterator(
         &self,

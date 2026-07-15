@@ -15,6 +15,11 @@
 ### 2026-07-06
 
 - Lower the RocksDB data-block size from 16KB to 4KB on the execution-read-path column families (`ACCOUNT_TRIE_NODES`/`STORAGE_TRIE_NODES`, `ACCOUNT_FLATKEYVALUE`/`STORAGE_FLATKEYVALUE`). These CFs serve exact-key point lookups, so a page-sized block cuts per-get read+search amplification vs the prior scan-tuned 16KB. ~+18% Mgas/s and ~-36% disk read on a cold, larger-than-RAM bloated-state benchmark [#6940](https://github.com/lambdaclass/ethrex/pull/6940)
+- Warm state caches between blocks by speculatively executing top-of-mempool transactions [#6967](https://github.com/lambdaclass/ethrex/pull/6967)
+
+### 2026-07-01
+
+- Precompute the `eth_getLogs` filter's address/topic blooms once instead of re-deriving them per block, removing redundant hashing from the header-bloom prefilter on wide-range queries [#6895](https://github.com/lambdaclass/ethrex/pull/6895)
 
 ### 2026-06-29
 
@@ -46,6 +51,10 @@
 ### 2026-06-03
 
 - Short-circuit the `KECCAK256` opcode on zero-length input by returning the precomputed `keccak256("")` constant, skipping the permutation [#6775](https://github.com/lambdaclass/ethrex/pull/6775)
+
+### 2026-05-28
+
+- Batch account-state prefetch via rocksdb `multi_get_cf` on the flat key-value table [#6712](https://github.com/lambdaclass/ethrex/pull/6712)
 
 ### 2026-05-27
 
