@@ -11,6 +11,7 @@
 //! test asserts the SPEC value; a failing test signals an implementation divergence.
 
 use bytes::Bytes;
+use ethrex_common::utils::keccak;
 use ethrex_common::{
     Address, H256, U256,
     types::{
@@ -20,15 +21,21 @@ use ethrex_common::{
 };
 use ethrex_crypto::NativeCrypto;
 use ethrex_levm::{
+    constants::SET_CODE_DELEGATION_BYTES,
     db::{Database, gen_db::GeneralizedDatabase},
     environment::{EVMConfig, Environment},
     errors::DatabaseError,
-    gas_cost::{STATE_BYTES_PER_NEW_ACCOUNT, STATE_BYTES_PER_STORAGE_SET, cost_per_state_byte},
+    gas_cost::{
+        STATE_BYTES_PER_AUTH_BASE, STATE_BYTES_PER_NEW_ACCOUNT, STATE_BYTES_PER_STORAGE_SET,
+        cost_per_state_byte,
+    },
     tracing::LevmCallTracer,
     utils::intrinsic_gas_dimensions,
     vm::{VM, VMType},
 };
+use ethrex_rlp::encode::RLPEncode;
 use rustc_hash::FxHashMap;
+use secp256k1::{Message as SecpMessage, PublicKey, SECP256K1, SecretKey};
 use std::sync::Arc;
 
 struct TestDb;
@@ -228,6 +235,34 @@ fn test_intrinsic_parity_eip7702_auth_list() {
         assert_parity(fork, 30_000_000, &tx);
         assert_parity(fork, 120_000_000, &tx);
     }
+
+    // EIP-8038 (Amsterdam): the per-auth intrinsic regular charge is exactly
+    // REGULAR_PER_AUTH_BASE_COST (7816) per tuple, and intrinsic auth state is 0. The
+    // ACCOUNT_WRITE (8000) / NEW_ACCOUNT / AUTH_BASE charges move to the in-region
+    // `set_delegation`. Full regular = TX_BASE (12000) + cold recipient access (3000)
+    // + 7816 * 2. `to` (0xBEEF) is not the sender (0x1000) and value is 0, so the
+    // recipient charge is a bare cold account access.
+    let env = parity_env(Fork::Amsterdam, 30_000_000);
+    let mut db = parity_db();
+    let vm = VM::new(
+        env,
+        &mut db,
+        &tx,
+        LevmCallTracer::disabled(),
+        VMType::L1,
+        &NativeCrypto,
+    )
+    .expect("VM::new");
+    let intrinsic = vm.get_intrinsic_gas().expect("get_intrinsic_gas");
+    assert_eq!(
+        intrinsic.state, 0,
+        "Amsterdam auth intrinsic state must be 0"
+    );
+    assert_eq!(
+        intrinsic.regular,
+        12_000 + 3_000 + 7_816 * 2,
+        "Amsterdam auth intrinsic regular = TX_BASE + cold recipient + 7816*n"
+    );
 }
 
 // ===========================================================================
@@ -1568,4 +1603,521 @@ fn test_state_gas_gas_opcode_excludes_reservoir_osaka_control() {
     );
     // Pre-Amsterdam: state_gas_used must be 0.
     assert_state_gas(&report, 0, "GAS opcode Osaka control");
+}
+
+// ===========================================================================
+// Section 3: atomic prepare-region rollback (EIP-7702 auth + prepare-dispatch)
+//
+// These exercise the shared `enter/fail_prepare_region` snapshot: an OOG in any
+// region charge (7702 `set_delegation` NEW_ACCOUNT/ACCOUNT_WRITE/AUTH_BASE, or the
+// prepare-dispatch delegation-resolve) rolls back EVERY region write — including
+// already-applied delegations — and burns all gas, WITHOUT invalidating the block
+// (`execute()` returns Ok with a Revert result). Mirrors EELS `process_message`'s
+// depth-0 `try/except ExceptionalHalt`.
+// ===========================================================================
+
+/// Derives the 20-byte address of a secp256k1 secret key (keccak of the
+/// uncompressed public key, minus the 0x04 prefix, low 20 bytes).
+fn secret_to_address(sk: &SecretKey) -> Address {
+    let pk = PublicKey::from_secret_key(SECP256K1, sk);
+    let ser = pk.serialize_uncompressed(); // 65 bytes: 0x04 || X || Y
+    let hash = keccak(&ser[1..]);
+    Address::from_slice(&hash.as_bytes()[12..])
+}
+
+/// Signs an EIP-7702 authorization tuple (`keccak(0x05 || rlp([chain_id, address,
+/// nonce]))`) with `sk`, producing a tuple the VM recovers back to
+/// `secret_to_address(sk)`.
+fn sign_auth(chain_id: u64, address: Address, nonce: u64, sk: &SecretKey) -> AuthorizationTuple {
+    let mut buf = Vec::new();
+    buf.push(0x05u8);
+    (U256::from(chain_id), address, nonce).encode(&mut buf);
+    let hash = keccak(&buf);
+    let msg = SecpMessage::from_digest(hash.0);
+    let (recovery_id, sig) = SECP256K1
+        .sign_ecdsa_recoverable(&msg, sk)
+        .serialize_compact();
+    let r = U256::from_big_endian(&sig[..32]);
+    let s = U256::from_big_endian(&sig[32..64]);
+    let y_parity = U256::from(Into::<i32>::into(recovery_id) as u64);
+    AuthorizationTuple {
+        chain_id: U256::from(chain_id),
+        address,
+        nonce,
+        y_parity,
+        r_signature: r,
+        s_signature: s,
+    }
+}
+
+/// 0xef0100 || target — an EIP-7702 delegation designation.
+fn delegation_code(target: Address) -> Bytes {
+    let mut c = SET_CODE_DELEGATION_BYTES.to_vec();
+    c.extend_from_slice(target.as_bytes());
+    Bytes::from(c)
+}
+
+/// Amsterdam env for the auth-region tests (funded sender, zero gas price, balance
+/// checks off), with `gas_limit` overridden to match the tx.
+fn auth_env(gas_limit: u64) -> Environment {
+    let mut env = exec_env(Fork::Amsterdam);
+    env.gas_limit = gas_limit;
+    env
+}
+
+/// Database with a funded `EXEC_SENDER` (nonce 0) plus the given extra accounts.
+fn auth_db(extra: &[(Address, Account)]) -> GeneralizedDatabase {
+    let sender = Account::new(
+        U256::from(10u64).pow(18.into()),
+        Code::default(),
+        0,
+        FxHashMap::default(),
+    );
+    let mut accounts: FxHashMap<Address, Account> = FxHashMap::default();
+    accounts.insert(EXEC_SENDER, sender);
+    for (addr, acc) in extra {
+        accounts.insert(*addr, acc.clone());
+    }
+    let mut db = TestDatabase::new();
+    for (addr, acc) in &accounts {
+        db.accounts.insert(*addr, acc.clone());
+    }
+    GeneralizedDatabase::new_with_account_state(Arc::new(db), accounts)
+}
+
+/// A SetCode (type-4) tx from `EXEC_SENDER` (nonce 0) with the given auth list.
+fn set_code_tx(
+    gas_limit: u64,
+    to: Address,
+    value: U256,
+    auth_list: Vec<AuthorizationTuple>,
+) -> Transaction {
+    Transaction::EIP7702Transaction(EIP7702Transaction {
+        chain_id: 1,
+        nonce: 0,
+        max_priority_fee_per_gas: 0,
+        max_fee_per_gas: 0,
+        gas_limit,
+        to,
+        value,
+        data: Bytes::new(),
+        access_list: Default::default(),
+        authorization_list: auth_list,
+        ..Default::default()
+    })
+}
+
+// Task 5.7: cumulative auth NEW_ACCOUNT exceeds remaining gas → full-gas revert,
+// applied delegations rolled back, block valid.
+#[test]
+fn test_auth_new_account_over_budget_full_gas_revert_amsterdam() {
+    // Two authorities. A pre-exists (nonce 0, empty code): its delegation is APPLIED
+    // (ACCOUNT_WRITE 8000 + AUTH_BASE 35190, no NEW_ACCOUNT). B is absent, so its
+    // NEW_ACCOUNT (183_600) — charged FIRST for that tuple, per EELS `set_delegation`
+    // — exceeds the remaining gas. `fail_prepare_region` rolls the region back,
+    // reverting A's already-applied delegation, and burns all gas.
+    //
+    // Budget: intrinsic (2 auths, cold recipient) = 12000 + 3000 + 7816*2 = 30632.
+    // gas_limit 100_000 -> 69_368 left; A ACCOUNT_WRITE (8000) + AUTH_BASE (35_190)
+    // succeed (26_178 left); B NEW_ACCOUNT (183_600) OOGs.
+    let ka = SecretKey::from_slice(&[0x11u8; 32]).unwrap();
+    let kb = SecretKey::from_slice(&[0x22u8; 32]).unwrap();
+    let authority_a = secret_to_address(&ka);
+    let authority_b = secret_to_address(&kb);
+    let target = Address::from_low_u64_be(0x7777);
+    let recipient = Address::from_low_u64_be(0x9999);
+
+    let a_acct = Account::new(U256::from(1u64), Code::default(), 0, FxHashMap::default());
+    let mut db = auth_db(&[(authority_a, a_acct)]);
+
+    let gas_limit = 100_000u64;
+    let auth_a = sign_auth(1, target, 0, &ka);
+    let auth_b = sign_auth(1, target, 0, &kb);
+    let tx = set_code_tx(gas_limit, recipient, U256::zero(), vec![auth_a, auth_b]);
+    let env = auth_env(gas_limit);
+
+    let mut vm = VM::new(
+        env,
+        &mut db,
+        &tx,
+        LevmCallTracer::disabled(),
+        VMType::L1,
+        &NativeCrypto,
+    )
+    .expect("VM::new");
+    let report = vm
+        .execute()
+        .expect("execute must return Ok — the block stays valid");
+
+    assert!(
+        !report.is_success(),
+        "tx must revert (auth NEW_ACCOUNT over budget): {report:?}"
+    );
+    assert_eq!(
+        report.gas_used, gas_limit,
+        "all gas burned (block gas_used)"
+    );
+    assert_eq!(report.gas_spent, gas_limit, "all gas burned (user payment)");
+
+    // A's applied delegation was rolled back with the whole region.
+    let a_nonce = vm
+        .db
+        .get_account(authority_a)
+        .expect("account A")
+        .info
+        .nonce;
+    assert_eq!(a_nonce, 0, "authority A nonce must be rolled back to 0");
+    assert!(
+        vm.db
+            .get_account_code(authority_a)
+            .expect("A code")
+            .is_empty(),
+        "authority A delegation code must be rolled back to empty"
+    );
+    // B never materialized.
+    let b_nonce = vm
+        .db
+        .get_account(authority_b)
+        .expect("account B")
+        .info
+        .nonce;
+    assert_eq!(b_nonce, 0, "authority B nonce must be unchanged");
+}
+
+// Regression (code-review CRITICAL #1 & #2): a self-sponsored EIP-7702 authorization
+// (authority == sender) applies its delegation to the SENDER in-region. The sender is
+// already backed up before the region (fee deduction + inclusion nonce bump), so
+// first-write-wins `call_frame_backup` records no new entry for the in-region
+// delegation write and the key-set marker excludes the sender from the region
+// rollback. A later in-region OOG must STILL revert the sender's delegation code + auth
+// nonce bump (state-root) AND discard them from the BAL (code/nonce changes), leaving
+// only the pre-region inclusion nonce bump. Without the entry-state + BAL-checkpoint
+// rollback in `fail_prepare_region`, the sender keeps a phantom delegation → consensus
+// divergence. The full engine fixture suite does not cover this (self-sponsored authority
+// + region OOG), so this asserts it directly.
+#[test]
+fn test_self_sponsored_auth_region_oog_rolls_back_sender_amsterdam() {
+    let ks = SecretKey::from_slice(&[0x77u8; 32]).unwrap();
+    let sender = secret_to_address(&ks);
+    let kb = SecretKey::from_slice(&[0x22u8; 32]).unwrap();
+    let target = Address::from_low_u64_be(0x7777);
+    let recipient = Address::from_low_u64_be(0x9999);
+
+    // Sender exists (nonce 0, funded); B is absent.
+    let sender_acc = Account::new(
+        U256::from(10u64).pow(18.into()),
+        Code::default(),
+        0,
+        FxHashMap::default(),
+    );
+    let mut accounts: FxHashMap<Address, Account> = FxHashMap::default();
+    accounts.insert(sender, sender_acc);
+    let mut testdb = TestDatabase::new();
+    for (addr, acc) in &accounts {
+        testdb.accounts.insert(*addr, acc.clone());
+    }
+    let mut db = GeneralizedDatabase::new_with_account_state(Arc::new(testdb), accounts);
+    db.enable_bal_recording();
+
+    // Self-sponsored auth carries nonce 1 (sender bumped at inclusion before the auth
+    // loop). B (absent) carries nonce 0; its NEW_ACCOUNT (183_600) is charged first for
+    // that tuple and OOGs the region. intrinsic (2 auths, cold recipient) =
+    // 12000 + 3000 + 7816*2 = 30_632; gas_limit 100_000 -> 69_368 left; self AUTH_BASE
+    // (35_190) succeeds (34_178 left); B NEW_ACCOUNT (183_600) OOGs.
+    let gas_limit = 100_000u64;
+    let self_auth = sign_auth(1, target, 1, &ks);
+    let auth_b = sign_auth(1, target, 0, &kb);
+    let tx = set_code_tx(gas_limit, recipient, U256::zero(), vec![self_auth, auth_b]);
+    let mut env = auth_env(gas_limit);
+    env.origin = sender;
+
+    let mut vm = VM::new(
+        env,
+        &mut db,
+        &tx,
+        LevmCallTracer::disabled(),
+        VMType::L1,
+        &NativeCrypto,
+    )
+    .expect("VM::new");
+    let report = vm
+        .execute()
+        .expect("execute must return Ok — block stays valid");
+
+    assert!(
+        !report.is_success(),
+        "tx must revert (region OOG): {report:?}"
+    );
+    assert_eq!(report.gas_used, gas_limit, "all gas burned");
+
+    // State (CRITICAL #1): the self-delegation code + auth nonce bump are reverted;
+    // only the pre-region inclusion nonce bump (0 -> 1) survives.
+    let sender_nonce = vm.db.get_account(sender).expect("sender").info.nonce;
+    assert_eq!(
+        sender_nonce, 1,
+        "sender nonce: inclusion bump kept, self-auth bump reverted (got {sender_nonce})"
+    );
+    assert!(
+        vm.db
+            .get_account_code(sender)
+            .expect("sender code")
+            .is_empty(),
+        "sender self-delegation code must be rolled back to empty"
+    );
+
+    // BAL (CRITICAL #2): the reverted delegation must not leak as a code change, and the
+    // only nonce change recorded is the inclusion bump (to 1), never the auth bump (2).
+    let bal = db.take_bal().expect("BAL recording enabled");
+    if let Some(changes) = bal.accounts().iter().find(|a| a.address == sender) {
+        assert!(
+            changes.code_changes.is_empty(),
+            "reverted self-delegation must not appear as a BAL code change: {changes:?}"
+        );
+        assert!(
+            changes.nonce_changes.iter().all(|n| n.post_nonce <= 1),
+            "BAL must not record the reverted auth nonce bump (post_nonce 2): {changes:?}"
+        );
+    }
+}
+
+// Task 6.4: unified-region rollback. Gas suffices for the whole auth loop but not
+// for the subsequent delegation-resolve cold access → whole region rolls back
+// (auth delegation reverted), all gas burned, block valid. Proves the shared
+// snapshot spans auth + prepare-dispatch.
+#[test]
+fn test_unified_region_rollback_delegation_resolve_over_budget_amsterdam() {
+    // Recipient R is already 7702-delegated to an absent (cold) target. The tx's single
+    // auth on authority A (pre-existing) is APPLIED by the auth loop; then the in-region
+    // prepare-dispatch delegation-resolve on R's target charges COLD (3000), which OOGs.
+    // One `fail_prepare_region` reverts BOTH A's delegation and the resolve.
+    //
+    // Budget: intrinsic (1 auth, cold recipient) = 12000 + 3000 + 7816 = 22816.
+    // gas_limit 67_000 -> 44_184 left; A ACCOUNT_WRITE (8000) + AUTH_BASE (35_190)
+    // succeed (994 left); delegation-resolve COLD (3000) OOGs.
+    let ka = SecretKey::from_slice(&[0x33u8; 32]).unwrap();
+    let authority_a = secret_to_address(&ka);
+    let a_target = Address::from_low_u64_be(0x7777);
+    let recipient = Address::from_low_u64_be(0x9999);
+    let r_target = Address::from_low_u64_be(0xABCD); // R's (cold, absent) delegation target
+
+    let a_acct = Account::new(U256::from(1u64), Code::default(), 0, FxHashMap::default());
+    let r_code = Code::from_bytecode(delegation_code(r_target), &NativeCrypto);
+    let r_acct = Account::new(U256::from(1u64), r_code, 5, FxHashMap::default());
+    let mut db = auth_db(&[(authority_a, a_acct), (recipient, r_acct)]);
+
+    let gas_limit = 67_000u64;
+    let auth_a = sign_auth(1, a_target, 0, &ka);
+    let tx = set_code_tx(gas_limit, recipient, U256::zero(), vec![auth_a]);
+    let env = auth_env(gas_limit);
+
+    let mut vm = VM::new(
+        env,
+        &mut db,
+        &tx,
+        LevmCallTracer::disabled(),
+        VMType::L1,
+        &NativeCrypto,
+    )
+    .expect("VM::new");
+    let report = vm
+        .execute()
+        .expect("execute must return Ok — the block stays valid");
+
+    assert!(
+        !report.is_success(),
+        "tx must revert (delegation-resolve over budget): {report:?}"
+    );
+    assert_eq!(
+        report.gas_used, gas_limit,
+        "all gas burned (block gas_used)"
+    );
+    assert_eq!(report.gas_spent, gas_limit, "all gas burned (user payment)");
+
+    // A's applied delegation rolled back by the shared region snapshot.
+    let a_nonce = vm
+        .db
+        .get_account(authority_a)
+        .expect("account A")
+        .info
+        .nonce;
+    assert_eq!(a_nonce, 0, "authority A nonce must be rolled back to 0");
+    assert!(
+        vm.db
+            .get_account_code(authority_a)
+            .expect("A code")
+            .is_empty(),
+        "authority A delegation code must be rolled back to empty"
+    );
+    // Recipient R is untouched (the region never wrote it).
+    let r_nonce = vm
+        .db
+        .get_account(recipient)
+        .expect("recipient R")
+        .info
+        .nonce;
+    assert_eq!(r_nonce, 5, "recipient R nonce must be unchanged");
+}
+
+/// AUTH_BASE = STATE_BYTES_PER_AUTH_BASE * CPSB = 23 * 1530 = 35_190
+const SPEC_AUTH_BASE: u64 = STATE_BYTES_PER_AUTH_BASE * 1530;
+
+/// Runs a SetCode tx to `recipient` with `auth_list`, ample gas, and returns the report.
+fn run_set_code(
+    recipient: Address,
+    extra: &[(Address, Account)],
+    auth_list: Vec<AuthorizationTuple>,
+) -> ethrex_levm::errors::ExecutionReport {
+    let gas_limit = 500_000u64;
+    let mut db = auth_db(extra);
+    let tx = set_code_tx(gas_limit, recipient, U256::zero(), auth_list);
+    let env = auth_env(gas_limit);
+    let mut vm = VM::new(
+        env,
+        &mut db,
+        &tx,
+        LevmCallTracer::disabled(),
+        VMType::L1,
+        &NativeCrypto,
+    )
+    .expect("VM::new");
+    vm.execute().expect("execute")
+}
+
+// Task 5.6: existing authority pays NO NEW_ACCOUNT; absent authority pays it.
+#[test]
+fn test_set_delegation_existing_vs_absent_authority_amsterdam() {
+    let target = Address::from_low_u64_be(0x7777);
+    let recipient = Address::from_low_u64_be(0x9999); // absent, value 0 -> plain STOP
+
+    // Existing (but code-empty) authority: NEW_ACCOUNT is NOT charged, only AUTH_BASE.
+    let ke = SecretKey::from_slice(&[0x44u8; 32]).unwrap();
+    let authority_e = secret_to_address(&ke);
+    let e_acct = Account::new(U256::from(1u64), Code::default(), 0, FxHashMap::default());
+    let auth_e = sign_auth(1, target, 0, &ke);
+    let report_e = run_set_code(recipient, &[(authority_e, e_acct)], vec![auth_e]);
+    assert!(
+        report_e.is_success(),
+        "existing-authority set-code must succeed: {report_e:?}"
+    );
+    assert_eq!(
+        report_e.state_gas_used, SPEC_AUTH_BASE,
+        "existing authority: AUTH_BASE only, NO NEW_ACCOUNT"
+    );
+
+    // Absent authority: NEW_ACCOUNT + AUTH_BASE.
+    let ka = SecretKey::from_slice(&[0x55u8; 32]).unwrap();
+    let auth_a = sign_auth(1, target, 0, &ka);
+    let report_a = run_set_code(recipient, &[], vec![auth_a]);
+    assert!(
+        report_a.is_success(),
+        "absent-authority set-code must succeed: {report_a:?}"
+    );
+    assert_eq!(
+        report_a.state_gas_used,
+        SPEC_NEW_ACCOUNT + SPEC_AUTH_BASE,
+        "absent authority: NEW_ACCOUNT + AUTH_BASE"
+    );
+}
+
+// Task 5.6: two authorizations on the SAME authority charge NEW_ACCOUNT / ACCOUNT_WRITE
+// / AUTH_BASE at most once.
+#[test]
+fn test_set_delegation_repeated_authority_pays_once_amsterdam() {
+    let target = Address::from_low_u64_be(0x7777);
+    let recipient = Address::from_low_u64_be(0x9999);
+
+    // Same absent authority twice. First auth (nonce 0) materializes + delegates it;
+    // second auth (nonce 1, matching the post-apply live nonce) is valid but adds NO
+    // NEW_ACCOUNT (now exists), NO ACCOUNT_WRITE (already written), NO AUTH_BASE
+    // (already delegation_set_for). So state gas == NEW_ACCOUNT + AUTH_BASE, once.
+    let ka = SecretKey::from_slice(&[0x66u8; 32]).unwrap();
+    let auth0 = sign_auth(1, target, 0, &ka);
+    let auth1 = sign_auth(1, target, 1, &ka);
+    let report = run_set_code(recipient, &[], vec![auth0, auth1]);
+    assert!(
+        report.is_success(),
+        "repeated-authority set-code must succeed: {report:?}"
+    );
+    assert_eq!(
+        report.state_gas_used,
+        SPEC_NEW_ACCOUNT + SPEC_AUTH_BASE,
+        "repeated authority charges NEW_ACCOUNT + AUTH_BASE exactly once"
+    );
+}
+
+// Task 5.6: a self-sponsored authority (authority == sender) pays NO ACCOUNT_WRITE
+// (the sender's leaf was already written at inclusion).
+#[test]
+fn test_set_delegation_self_sponsored_no_account_write_amsterdam() {
+    const ACCOUNT_WRITE: u64 = 8000;
+    let target = Address::from_low_u64_be(0x7777);
+    let recipient = Address::from_low_u64_be(0x9999);
+
+    // --- Self-sponsored: sender authorizes itself. ---
+    let ks = SecretKey::from_slice(&[0x77u8; 32]).unwrap();
+    let sender = secret_to_address(&ks);
+    let gas_limit = 500_000u64;
+
+    // The sender nonce is bumped at inclusion (prepare_execution step 7) BEFORE the
+    // auth loop, so a self-sponsored auth must carry nonce 1.
+    let self_auth = sign_auth(1, target, 1, &ks);
+    let self_report = {
+        let sender_acc = Account::new(
+            U256::from(10u64).pow(18.into()),
+            Code::default(),
+            0,
+            FxHashMap::default(),
+        );
+        let mut accounts: FxHashMap<Address, Account> = FxHashMap::default();
+        accounts.insert(sender, sender_acc);
+        let mut db = TestDatabase::new();
+        for (addr, acc) in &accounts {
+            db.accounts.insert(*addr, acc.clone());
+        }
+        let mut db = GeneralizedDatabase::new_with_account_state(Arc::new(db), accounts);
+        let tx = set_code_tx(gas_limit, recipient, U256::zero(), vec![self_auth]);
+        let mut env = auth_env(gas_limit);
+        env.origin = sender;
+        let mut vm = VM::new(
+            env,
+            &mut db,
+            &tx,
+            LevmCallTracer::disabled(),
+            VMType::L1,
+            &NativeCrypto,
+        )
+        .expect("VM::new");
+        vm.execute().expect("execute")
+    };
+    assert!(
+        self_report.is_success(),
+        "self-sponsored set-code must succeed: {self_report:?}"
+    );
+    assert_eq!(
+        self_report.state_gas_used, SPEC_AUTH_BASE,
+        "self-sponsored authority: AUTH_BASE only (exists, so no NEW_ACCOUNT)"
+    );
+
+    // --- Non-self existing authority (identical shape) DOES pay ACCOUNT_WRITE. ---
+    let ke = SecretKey::from_slice(&[0x88u8; 32]).unwrap();
+    let authority_e = secret_to_address(&ke);
+    let e_acct = Account::new(U256::from(1u64), Code::default(), 0, FxHashMap::default());
+    let other_auth = sign_auth(1, target, 0, &ke);
+    let other_report = run_set_code(recipient, &[(authority_e, e_acct)], vec![other_auth]);
+    assert!(
+        other_report.is_success(),
+        "non-self set-code must succeed: {other_report:?}"
+    );
+    assert_eq!(
+        other_report.state_gas_used, SPEC_AUTH_BASE,
+        "non-self existing authority also has AUTH_BASE-only state gas"
+    );
+
+    // Both have identical state gas; the non-self case pays exactly one extra
+    // ACCOUNT_WRITE (regular) that the self-sponsored case does not.
+    assert_eq!(
+        other_report.gas_used - self_report.gas_used,
+        ACCOUNT_WRITE,
+        "non-self authority pays +8000 ACCOUNT_WRITE that a self-sponsored one does not"
+    );
 }
