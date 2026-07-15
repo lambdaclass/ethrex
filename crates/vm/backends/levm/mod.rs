@@ -1635,44 +1635,51 @@ impl LEVM {
                             )));
                         }
                         None => {
-                            // Account not in execution state. Check if the BAL entry
-                            // is extraneous (claimed post-balance == pre-state balance,
-                            // i.e., a no-op recorded by the builder). The state root
-                            // will catch any true discrepancy.
+                            // Account absent from execution state, yet the BAL declares a
+                            // balance change for it at this tx. Never canonical: either it
+                            // differs from the start-of-tx seeded balance (a real mismatch)
+                            // or equals it (a spurious no-op the builder must not record).
+                            // Reject both to match the sequential path; the state root does
+                            // NOT catch the no-op case (post==pre leaves the root unchanged).
                             let seeded = Self::seeded_balance(seed_idx, acct, system_seed, store)?;
-                            if expected != seeded {
-                                // Dump full BAL entry for diagnosis
-                                let all_bal_indices: Vec<u32> = acct
-                                    .balance_changes
-                                    .iter()
-                                    .map(|c| c.block_access_index)
-                                    .collect();
-                                let all_nonce_indices: Vec<u32> = acct
-                                    .nonce_changes
-                                    .iter()
-                                    .map(|c| c.block_access_index)
-                                    .collect();
-                                let all_storage_indices: Vec<(u32, u64)> = acct
-                                    .storage_changes
-                                    .iter()
-                                    .flat_map(|sc| {
-                                        sc.slot_changes
-                                            .iter()
-                                            .map(|c| (c.block_access_index, sc.slot.low_u64()))
-                                    })
-                                    .collect();
-                                let code_indices: Vec<u32> = acct
-                                    .code_changes
-                                    .iter()
-                                    .map(|c| c.block_access_index)
-                                    .collect();
+                            if expected == seeded {
                                 return Err(BalValidationError::Mismatch(format!(
-                                    "account {addr:?} has BAL balance change at {bal_idx} \
-                                     but not in execution state (expected={expected}, pre={seeded}, \
-                                     all_bal_idx={all_bal_indices:?}, nonce_idx={all_nonce_indices:?}, \
-                                     storage_idx={all_storage_indices:?}, code_idx={code_indices:?})"
+                                    "account {addr:?} has spurious no-op BAL balance change \
+                                     at index {bal_idx} for an account absent from execution \
+                                     state: post==pre=={expected}"
                                 )));
                             }
+                            // Dump full BAL entry for diagnosis
+                            let all_bal_indices: Vec<u32> = acct
+                                .balance_changes
+                                .iter()
+                                .map(|c| c.block_access_index)
+                                .collect();
+                            let all_nonce_indices: Vec<u32> = acct
+                                .nonce_changes
+                                .iter()
+                                .map(|c| c.block_access_index)
+                                .collect();
+                            let all_storage_indices: Vec<(u32, u64)> = acct
+                                .storage_changes
+                                .iter()
+                                .flat_map(|sc| {
+                                    sc.slot_changes
+                                        .iter()
+                                        .map(|c| (c.block_access_index, sc.slot.low_u64()))
+                                })
+                                .collect();
+                            let code_indices: Vec<u32> = acct
+                                .code_changes
+                                .iter()
+                                .map(|c| c.block_access_index)
+                                .collect();
+                            return Err(BalValidationError::Mismatch(format!(
+                                "account {addr:?} has BAL balance change at {bal_idx} \
+                                 but not in execution state (expected={expected}, pre={seeded}, \
+                                 all_bal_idx={all_bal_indices:?}, nonce_idx={all_nonce_indices:?}, \
+                                 storage_idx={all_storage_indices:?}, code_idx={code_indices:?})"
+                            )));
                         }
                     }
                 }
@@ -1700,13 +1707,21 @@ impl LEVM {
                             )));
                         }
                         None => {
+                            // Account absent from execution state, yet the BAL declares a
+                            // nonce change: reject the no-op (post==pre) and the mismatch
+                            // alike (see the balance arm rationale).
                             let seeded = Self::seeded_nonce(seed_idx, acct, system_seed, store)?;
-                            if expected != seeded {
+                            if expected == seeded {
                                 return Err(BalValidationError::Mismatch(format!(
-                                    "account {addr:?} has BAL nonce change at {bal_idx} \
-                                     but not in execution state (expected={expected}, pre={seeded})"
+                                    "account {addr:?} has spurious no-op BAL nonce change \
+                                     at index {bal_idx} for an account absent from execution \
+                                     state: post==pre=={expected}"
                                 )));
                             }
+                            return Err(BalValidationError::Mismatch(format!(
+                                "account {addr:?} has BAL nonce change at {bal_idx} \
+                                 but not in execution state (expected={expected}, pre={seeded})"
+                            )));
                         }
                     }
                 }
@@ -1768,12 +1783,19 @@ impl LEVM {
                                 })?;
                                 c.code_bytes()
                             };
-                            if *expected_code != pre_code {
+                            if *expected_code == pre_code {
+                                // Spurious no-op: BAL code change equals pre-state code
+                                // for an account absent from execution state. Reject to
+                                // match the sequential path (the state root won't catch it).
                                 return Err(BalValidationError::Mismatch(format!(
-                                    "account {addr:?} has BAL code change at {bal_idx} \
-                                     but not in execution state"
+                                    "account {addr:?} has spurious no-op BAL code change \
+                                     at index {bal_idx} for an account absent from execution state"
                                 )));
                             }
+                            return Err(BalValidationError::Mismatch(format!(
+                                "account {addr:?} has BAL code change at {bal_idx} \
+                                 but not in execution state"
+                            )));
                         }
                     }
                 }
@@ -1786,8 +1808,11 @@ impl LEVM {
                         let key = ethrex_common::utils::u256_to_h256(sc.slot);
                         let actual_value = actual.and_then(|a| a.storage.get(&key)).copied();
                         if actual_value != Some(expected_value) {
-                            // If account/slot not in execution state, check the
-                            // start-of-tx seeded value.
+                            // Slot absent from execution state. Compare against the
+                            // start-of-tx seeded value: an entry equal to it is a
+                            // spurious no-op (post==pre) that the builder must not
+                            // record. Reject it to match the sequential path — the
+                            // state root won't catch it since the value is unchanged.
                             if actual.is_none() || actual_value.is_none() {
                                 let seeded = Self::seeded_storage(
                                     seed_idx,
@@ -1798,7 +1823,12 @@ impl LEVM {
                                     store,
                                 )?;
                                 if expected_value == seeded {
-                                    continue; // Extraneous entry
+                                    return Err(BalValidationError::Mismatch(format!(
+                                        "account {addr:?} has spurious no-op BAL storage \
+                                         change for slot {} at index {bal_idx} for a slot \
+                                         absent from execution state: post==pre=={expected_value}",
+                                        sc.slot
+                                    )));
                                 }
                             }
                             return Err(BalValidationError::Mismatch(format!(

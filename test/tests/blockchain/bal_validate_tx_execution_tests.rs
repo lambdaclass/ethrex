@@ -442,6 +442,171 @@ fn read_only_slot_not_in_changes_accepted() {
     assert!(result.is_ok(), "expected Ok(()), got: {result:?}");
 }
 
+// -- No-op entries for accounts/slots ABSENT from execution state (None arm).
+//
+// The `Some` arm no-op checks above cover accounts execution actually touched.
+// These bind the sibling gap: a spurious `post==pre` entry for an account/slot
+// execution never touched (absent from `current_state`) must also be rejected.
+// A no-op leaves the state root unchanged, so nothing downstream catches it;
+// the parallel path must reject it here to match the sequential path.
+
+/// No-op balance change for an account absent from execution state → rejected.
+#[test]
+fn noop_balance_change_absent_account_rejected() {
+    let address = addr(10);
+    let pre_balance = U256::from(100);
+
+    let mut system_seed: CacheDB = FxHashMap::default();
+    system_seed.insert(
+        address,
+        account_with(
+            pre_balance,
+            0,
+            *ethrex_common::constants::EMPTY_KECCAK_HASH,
+            AccountStatus::Unmodified,
+        ),
+    );
+
+    // Execution never touched the account: absent from current_state.
+    let current_state: FxHashMap<Address, LevmAccount> = FxHashMap::default();
+
+    let bal = BlockAccessList::from_accounts(vec![
+        AccountChanges::new(address).with_balance_changes(vec![BalanceChange::new(1, pre_balance)]),
+    ]);
+    let index = bal.build_validation_index();
+    let codes: FxHashMap<H256, Code> = FxHashMap::default();
+
+    let result = LEVM::validate_tx_execution(
+        1,
+        0,
+        &current_state,
+        &codes,
+        &bal,
+        &index,
+        &system_seed,
+        &unused_store(),
+    );
+    assert_mismatch(&result, "spurious no-op BAL balance change");
+}
+
+/// No-op nonce change for an account absent from execution state → rejected.
+#[test]
+fn noop_nonce_change_absent_account_rejected() {
+    let address = addr(11);
+    let pre_nonce = 5u64;
+
+    let mut system_seed: CacheDB = FxHashMap::default();
+    system_seed.insert(
+        address,
+        account_with(
+            U256::zero(),
+            pre_nonce,
+            *ethrex_common::constants::EMPTY_KECCAK_HASH,
+            AccountStatus::Unmodified,
+        ),
+    );
+
+    let current_state: FxHashMap<Address, LevmAccount> = FxHashMap::default();
+
+    let bal = BlockAccessList::from_accounts(vec![
+        AccountChanges::new(address).with_nonce_changes(vec![NonceChange::new(1, pre_nonce)]),
+    ]);
+    let index = bal.build_validation_index();
+    let codes: FxHashMap<H256, Code> = FxHashMap::default();
+
+    let result = LEVM::validate_tx_execution(
+        1,
+        0,
+        &current_state,
+        &codes,
+        &bal,
+        &index,
+        &system_seed,
+        &unused_store(),
+    );
+    assert_mismatch(&result, "spurious no-op BAL nonce change");
+}
+
+/// No-op code change for an account absent from execution state → rejected.
+#[test]
+fn noop_code_change_absent_account_rejected() {
+    let address = addr(12);
+    let code_bytes = Bytes::from_static(&[0x60, 0x00, 0x60, 0x00, 0xf3]);
+    let code = Code::from_bytecode(code_bytes.clone(), &NativeCrypto);
+    let code_hash = code.hash;
+
+    let mut system_seed: CacheDB = FxHashMap::default();
+    system_seed.insert(
+        address,
+        account_with(U256::zero(), 0, code_hash, AccountStatus::Unmodified),
+    );
+
+    let current_state: FxHashMap<Address, LevmAccount> = FxHashMap::default();
+
+    let bal = BlockAccessList::from_accounts(vec![
+        AccountChanges::new(address).with_code_changes(vec![CodeChange::new(1, code_bytes)]),
+    ]);
+    let index = bal.build_validation_index();
+    let mut codes: FxHashMap<H256, Code> = FxHashMap::default();
+    codes.insert(code_hash, code);
+
+    let result = LEVM::validate_tx_execution(
+        1,
+        0,
+        &current_state,
+        &codes,
+        &bal,
+        &index,
+        &system_seed,
+        &unused_store(),
+    );
+    assert_mismatch(&result, "spurious no-op BAL code change");
+}
+
+/// No-op storage change for a slot absent from execution state → rejected.
+#[test]
+fn noop_storage_change_absent_slot_rejected() {
+    let address = addr(13);
+    let slot = U256::from(7);
+    let key = u256_to_h256(slot);
+    let pre_value = U256::from(42);
+
+    let mut system_seed: CacheDB = FxHashMap::default();
+    let mut seed_account = account_with(
+        U256::zero(),
+        0,
+        *ethrex_common::constants::EMPTY_KECCAK_HASH,
+        AccountStatus::Unmodified,
+    );
+    seed_account.storage.insert(key, pre_value);
+    system_seed.insert(address, seed_account);
+
+    // Execution never materialized this slot: absent from current_state.
+    let current_state: FxHashMap<Address, LevmAccount> = FxHashMap::default();
+
+    let bal =
+        BlockAccessList::from_accounts(vec![AccountChanges::new(address).with_storage_changes(
+            vec![SlotChange::with_changes(
+                slot,
+                vec![StorageChange::new(1, pre_value)],
+            )],
+        )]);
+    let index = bal.build_validation_index();
+    let codes: FxHashMap<H256, Code> = FxHashMap::default();
+
+    let result = LEVM::validate_tx_execution(
+        1,
+        0,
+        &current_state,
+        &codes,
+        &bal,
+        &index,
+        &system_seed,
+        &unused_store(),
+    );
+    assert_mismatch(&result, "spurious no-op BAL storage change");
+}
+
 /// A slot the BAL declares a change for only at a LATER tx index (so this tx
 /// has no exact change and `seeded_pos == 0`) that execution nonetheless wrote
 /// at THIS tx must be rejected: the write's BAL entry at this index was omitted.
