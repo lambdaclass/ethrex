@@ -252,6 +252,66 @@ pub(crate) struct PrewarmedEntry {
     /// Fork the cache was warmed under.
     pub(crate) fork: Fork,
     pub(crate) cache: Arc<dyn ethrex_vm::backends::LevmDatabase>,
+    /// Stage 1 warm-diff instrumentation (temporary). Shared with the running
+    /// prewarmer, which appends across delta passes while the executor may
+    /// take this entry mid-slot on block arrival. See [`WarmDiff`].
+    pub(crate) warm_diff: Arc<std::sync::Mutex<WarmDiff>>,
+}
+
+/// Stage 1 warm-diff instrumentation (temporary). Per-slot tx-hash sets for the
+/// two warm-selection strategies, so [`log_warm_diff`] can measure — on the
+/// exact block being executed — how many of its txs each would have warmed.
+/// `this_branch` is what this branch's `filter_ready` + `cap_sender_depth` path
+/// actually selected; `pr` is what PR #6977's `select_dirty_senders` would have
+/// selected (simulated in the prewarmer, never executed). Remove with the rest
+/// of the instrumentation once the question is settled.
+#[derive(Default)]
+pub(crate) struct WarmDiff {
+    pub(crate) this_branch: FxHashSet<H256>,
+    pub(crate) pr: FxHashSet<H256>,
+}
+
+/// Stage 1 warm-diff instrumentation (temporary). Logs, for the block being
+/// executed, how many of its txs each warm-selection strategy would have
+/// warmed. `pr_only` — block txs PR #6977 would warm that this branch did not —
+/// is the number we're after; if it stays ~0, the PR's deeper mempool reach
+/// never touches the imminent block. Measured on this same block, so there is
+/// no block-to-block bias.
+fn log_warm_diff(block: &Block, entry: &PrewarmedEntry) {
+    let Ok(diff) = entry.warm_diff.lock() else {
+        return;
+    };
+    let block_hashes: FxHashSet<H256> = block
+        .body
+        .transactions
+        .iter()
+        .map(|tx| tx.hash(&NativeCrypto))
+        .collect();
+    let in_both = block_hashes
+        .iter()
+        .filter(|h| diff.this_branch.contains(h) && diff.pr.contains(h))
+        .count();
+    let pr_only = block_hashes
+        .iter()
+        .filter(|h| diff.pr.contains(h) && !diff.this_branch.contains(h))
+        .count();
+    let branch_only = block_hashes
+        .iter()
+        .filter(|h| diff.this_branch.contains(h) && !diff.pr.contains(h))
+        .count();
+    info!(
+        "Prewarm warm-diff block {}: block_txs={}, in_both={}, pr_only={}, branch_only={}, \
+         warmed_this_branch={}, warmed_pr={}, set_this_branch={}, set_pr={}",
+        block.header.number,
+        block_hashes.len(),
+        in_both,
+        pr_only,
+        branch_only,
+        in_both + branch_only,
+        in_both + pr_only,
+        diff.this_branch.len(),
+        diff.pr.len(),
+    );
 }
 
 impl std::fmt::Debug for PrewarmedCache {
@@ -589,7 +649,7 @@ impl Blockchain {
         // invariant). Witness collection must start cold — pre-populated
         // entries would hide reads from the witness logger beneath the cache.
         let original_store = vm.db.store.clone();
-        let prewarmed = (!collect_witness)
+        let prewarmed_entry = (!collect_witness)
             .then(|| {
                 self.prewarmed
                     .0
@@ -598,11 +658,17 @@ impl Blockchain {
                     .and_then(|mut slot| slot.take())
             })
             .flatten()
-            .and_then(|entry| {
+            .filter(|entry| {
                 let block_fork = self.storage.get_chain_config().fork(block.header.timestamp);
-                (entry.parent_hash == block.header.parent_hash && entry.fork == block_fork)
-                    .then_some(entry.cache)
+                entry.parent_hash == block.header.parent_hash && entry.fork == block_fork
             });
+        // Stage 1 warm-diff instrumentation (temporary): compare, on this exact
+        // block, the warm sets of this branch vs PR #6977 (simulated). See
+        // `log_warm_diff` and `crate::prewarm`.
+        if let Some(entry) = &prewarmed_entry {
+            log_warm_diff(block, entry);
+        }
+        let prewarmed = prewarmed_entry.map(|entry| entry.cache);
         let caching_store: Arc<dyn ethrex_vm::backends::LevmDatabase> = match prewarmed {
             Some(cache) => cache,
             None => Arc::new(CachingDatabase::new(

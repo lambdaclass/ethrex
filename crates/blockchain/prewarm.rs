@@ -12,9 +12,9 @@
 //! speculative execution results are discarded and never reach shared
 //! state, so a wrong prediction costs wasted I/O, never incorrect state.
 
-#[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
-use crate::PrewarmedEntry;
 use crate::{Blockchain, BlockchainType};
+#[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+use crate::{PrewarmedEntry, WarmDiff};
 use ethrex_common::types::{BlockHeader, MempoolTransaction, Transaction};
 use ethrex_common::{Address, H256, U256};
 use ethrex_crypto::NativeCrypto;
@@ -144,6 +144,28 @@ fn cap_sender_depth(
     txs_by_sender.retain(|_, txs| {
         txs.truncate(cap);
         !txs.is_empty()
+    });
+    txs_by_sender
+}
+
+/// Stage 1 warm-diff instrumentation (temporary). Faithful port of PR #6977's
+/// `select_dirty_senders`, kept here to simulate — without executing — what
+/// that PR's delta pass would have selected, so `run_pass` can record it for
+/// the executor's block-time diff. The only deviation from the PR is that
+/// `warmed` is a hash set rather than a `hash -> gas` map (the map's values
+/// were never read by the retain, only membership). Truncates each sender's
+/// queue head-first to `cap`, then keeps a sender only while its in-cap queue
+/// still holds a not-yet-warmed tx. Remove with the rest of the instrumentation.
+#[cfg_attr(any(not(feature = "rayon"), feature = "eip-8025"), allow(dead_code))]
+fn select_dirty_senders(
+    mut txs_by_sender: FxHashMap<Address, Vec<MempoolTransaction>>,
+    warmed: &rustc_hash::FxHashSet<H256>,
+    cap: usize,
+) -> FxHashMap<Address, Vec<MempoolTransaction>> {
+    txs_by_sender.retain(|_, txs| {
+        txs.truncate(cap);
+        txs.iter()
+            .any(|mtx| !warmed.contains(&mtx.transaction().hash(&NativeCrypto)))
     });
     txs_by_sender
 }
@@ -349,11 +371,16 @@ fn run_pass(blockchain: &Blockchain, pool: &rayon::ThreadPool, req: PrewarmReque
     // hands over whatever it warmed; entries written by an in-flight delta
     // after cancellation are still valid parent-state reads.
     let warmed_fork = config.fork(header.timestamp);
+    // Stage 1 warm-diff instrumentation (temporary): shared with the executor
+    // so it can diff, on the imminent block, this branch's warm set against a
+    // simulation of PR #6977's. Populated per pass below.
+    let warm_diff = Arc::new(Mutex::new(WarmDiff::default()));
     if let Ok(mut slot) = blockchain.prewarmed.0.lock() {
         *slot = Some(PrewarmedEntry {
             parent_hash: parent.hash(),
             fork: warmed_fork,
             cache: cache_dyn.clone(),
+            warm_diff: warm_diff.clone(),
         });
     }
 
@@ -365,6 +392,12 @@ fn run_pass(blockchain: &Blockchain, pool: &rayon::ThreadPool, req: PrewarmReque
     // keyed by tx hash to dedup across the re-warming delta passes. Not
     // load-bearing for warming control.
     let mut warmed_union: FxHashMap<H256, u64> = FxHashMap::default();
+    // Stage 1 warm-diff instrumentation (temporary): the tx hashes PR #6977's
+    // `select_dirty_senders` would have warmed so far this slot. Kept separate
+    // from `warmed_union` (this branch's set) so the PR's deeper-reach
+    // trajectory across delta passes is simulated faithfully — its dirty-sender
+    // gate must see its own warmed history, not ours.
+    let mut warmed_union_pr: rustc_hash::FxHashSet<H256> = Default::default();
     // Slot-level dedup for merkle-path warming (see `warm_merkle_paths`).
     // Presence = account path already walked; the value keeps the hashed
     // address and storage root so later delta passes can open storage tries
@@ -399,11 +432,38 @@ fn run_pass(blockchain: &Blockchain, pool: &rayon::ThreadPool, req: PrewarmReque
                     break;
                 }
             };
+            // Stage 1 warm-diff instrumentation (temporary): simulate PR #6977's
+            // selection on this same snapshot (against its own warmed history)
+            // and record its tx hashes. Selection math only — nothing is
+            // executed. The clone is measurement overhead; remove with the rest.
+            let pr_selected = select_warm_set(
+                select_dirty_senders(
+                    txs_by_sender.clone(),
+                    &warmed_union_pr,
+                    MAX_WARMED_TXS_PER_SENDER_PER_SLOT,
+                ),
+                base_fee,
+                gas_budget,
+            );
+            let pr_hashes: Vec<H256> = pr_selected
+                .iter()
+                .map(|(tx, _)| tx.hash(&NativeCrypto))
+                .collect();
+            warmed_union_pr.extend(pr_hashes.iter().copied());
+
             // Keep only each sender's ready contiguous prefix (drops stale +
             // gapped txs that would fail the nonce check and warm nothing).
             let ready = filter_ready(txs_by_sender, cache_dyn.as_ref());
             let capped = cap_sender_depth(ready, MAX_WARMED_TXS_PER_SENDER_PER_SLOT);
             let warm_set = select_warm_set(capped, base_fee, gas_budget);
+
+            // Record both strategies' running selections for the executor's
+            // block-time diff (see `log_warm_diff`).
+            if let Ok(mut diff) = warm_diff.lock() {
+                diff.pr.extend(pr_hashes.iter().copied());
+                diff.this_branch
+                    .extend(warm_set.iter().map(|(tx, _)| tx.hash(&NativeCrypto)));
+            }
             if !warm_set.is_empty() {
                 for (tx, _) in &warm_set {
                     warmed_union.insert(tx.hash(&NativeCrypto), tx.gas_limit());
@@ -595,6 +655,49 @@ mod tests {
         let mut empty = FxHashMap::default();
         empty.insert(a, Vec::<MempoolTransaction>::new());
         assert!(cap_sender_depth(empty, 2).is_empty());
+    }
+
+    #[test]
+    fn select_dirty_senders_truncates_to_cap_and_keeps_dirty() {
+        // Nothing warmed yet: sender is dirty, kept and truncated to cap 2.
+        let (a, a0) = make_tx(0xaa, 0, 100, 50, 21_000);
+        let (_, a1) = make_tx(0xaa, 1, 100, 50, 21_000);
+        let (_, a2) = make_tx(0xaa, 2, 100, 50, 21_000);
+        let mut map = FxHashMap::default();
+        map.insert(a, vec![a0, a1, a2]);
+        let out = select_dirty_senders(map, &rustc_hash::FxHashSet::default(), 2);
+        assert_eq!(out[&a].len(), 2);
+        assert_eq!(out[&a][0].transaction().nonce(), 0);
+        assert_eq!(out[&a][1].transaction().nonce(), 1);
+    }
+
+    #[test]
+    fn select_dirty_senders_keeps_full_queue_when_prefix_warmed() {
+        // Sender a: nonce 0 warmed, nonce 1 new -> dirty, keeps FULL in-cap queue.
+        // Sender b: only tx warmed -> dropped. Sender c: in-cap queue fully
+        // warmed, its one new tx sits beyond the cap -> dropped.
+        // Distinct max_fee per sender: `make_tx`'s hash is content-only (no
+        // signature), so same-content txs across senders would otherwise collide.
+        let (a, a0) = make_tx(0xaa, 0, 100, 50, 21_000);
+        let (_, a1) = make_tx(0xaa, 1, 100, 50, 21_000);
+        let (b, b0) = make_tx(0xbb, 0, 101, 50, 21_000);
+        let (c, c0) = make_tx(0xcc, 0, 102, 50, 21_000);
+        let (_, c1) = make_tx(0xcc, 1, 102, 50, 21_000);
+        let (_, c2) = make_tx(0xcc, 2, 102, 50, 21_000);
+        let mut warmed = rustc_hash::FxHashSet::default();
+        warmed.insert(a0.transaction().hash(&NativeCrypto));
+        warmed.insert(b0.transaction().hash(&NativeCrypto));
+        warmed.insert(c0.transaction().hash(&NativeCrypto));
+        warmed.insert(c1.transaction().hash(&NativeCrypto));
+        let mut map = FxHashMap::default();
+        map.insert(a, vec![a0, a1]);
+        map.insert(b, vec![b0]);
+        map.insert(c, vec![c0, c1, c2]);
+        let out = select_dirty_senders(map, &warmed, 2);
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[&a].len(), 2); // full queue retained, warmed prefix included
+        assert_eq!(out[&a][0].transaction().nonce(), 0);
+        assert_eq!(out[&a][1].transaction().nonce(), 1);
     }
 
     #[test]
