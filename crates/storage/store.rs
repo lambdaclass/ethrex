@@ -6,10 +6,10 @@ use crate::{
         StorageBackend, StorageReadView, StorageWriteBatch,
         tables::{
             ACCOUNT_CODE_METADATA, ACCOUNT_CODES, ACCOUNT_FLATKEYVALUE, ACCOUNT_TRIE_NODES,
-            BLOCK_ACCESS_LISTS, BLOCK_NUMBERS, BODIES, CANONICAL_BLOCK_HASHES, CHAIN_DATA,
-            EXECUTION_WITNESSES, FULLSYNC_HEADERS, HEADERS, INVALID_CHAINS, MISC_VALUES,
-            PENDING_BLOCKS, RECEIPTS_V2, SNAP_STATE, STORAGE_FLATKEYVALUE, STORAGE_TRIE_NODES,
-            TRANSACTION_LOCATIONS,
+            BAD_BLOCKS, BLOCK_ACCESS_LISTS, BLOCK_NUMBERS, BODIES, CANONICAL_BLOCK_HASHES,
+            CHAIN_DATA, EXECUTION_WITNESSES, FULLSYNC_HEADERS, HEADERS, INVALID_CHAINS,
+            MISC_VALUES, PENDING_BLOCKS, RECEIPTS_V2, SNAP_STATE, STORAGE_FLATKEYVALUE,
+            STORAGE_TRIE_NODES, TRANSACTION_LOCATIONS,
         },
     },
     apply_prefix,
@@ -64,12 +64,14 @@ pub const MAX_WITNESSES: u64 = 128;
 // We use one constant for in-memory and another for on-disk backends.
 // This is due to tests requiring state older than 128 blocks.
 // TODO: unify these
-#[allow(unused)]
-const DB_COMMIT_THRESHOLD: usize = 128;
+pub const DB_COMMIT_THRESHOLD: usize = 128;
 const IN_MEMORY_COMMIT_THRESHOLD: usize = 10000;
 
-/// Commit threshold for batch (full sync) mode. Each batch layer holds ~1024
-/// blocks of trie diffs (~1 GB), so we flush aggressively to bound memory.
+/// Depth-only commit threshold for batch execution (full sync / block import). Each batch
+/// layer holds ~1024 blocks of trie diffs (~1 GB), so we flush after a few layers to bound
+/// memory. The canonical `head - DB_COMMIT_THRESHOLD` safe-commit root never lands on a batch
+/// layer boundary, so batch mode commits by depth instead; this is sound because full sync and
+/// import only ever extend a single canonical chain (no competing forks to mis-commit).
 const BATCH_COMMIT_THRESHOLD: usize = 4;
 
 /// Default size in bytes of the RocksDB shared block cache: 12 GiB.
@@ -122,6 +124,12 @@ const CODE_CACHE_MAX_SIZE: u64 = 64 * 1024 * 1024;
 
 /// Key used to persist the `flushed_upto` block number in `MISC_VALUES`.
 const FLUSHED_UPTO_KEY: &[u8] = b"bodies_flushed_upto";
+
+/// Single key under which the bounded list of bad blocks is stored in `BAD_BLOCKS`.
+const BAD_BLOCKS_KEY: &[u8] = b"bad_blocks";
+
+/// Maximum number of bad blocks retained for `debug_getBadBlocks`.
+const MAX_BAD_BLOCKS: usize = 16;
 
 #[derive(Debug)]
 struct CodeCache {
@@ -212,6 +220,13 @@ pub struct Store {
     /// update and the DB write transaction remain mutually ordered.
     fcu_lock: Arc<tokio::sync::Mutex<()>>,
 
+    /// Canonical safe-commit state root, computed after each forkchoice update.
+    ///
+    /// Shared with the [`TrieLayerCache`] so that the Store can update the cell without
+    /// replacing the cache Arc. `H256::zero()` means "no safe commit point yet".
+    /// Cloning `Store` shares this cell across all clones, which is required and correct.
+    safe_commit_root: Arc<RwLock<H256>>,
+
     background_threads: Arc<ThreadList>,
 }
 
@@ -262,9 +277,9 @@ pub struct UpdateBatch {
     pub receipts: Vec<(H256, Vec<Receipt>)>,
     /// Contract code updates (code hash -> bytecode).
     pub code_updates: Vec<(H256, Code)>,
-    /// Whether this batch comes from full sync (batch execution mode).
-    /// When true, uses `BATCH_COMMIT_THRESHOLD` (aggressive) instead of
-    /// `DB_COMMIT_THRESHOLD` to bound memory during bulk block import.
+    /// Whether this batch comes from full sync (batch execution mode). When true,
+    /// the persist worker waits for the disk flush (`wait_for_flush`) to bound
+    /// in-flight batches during bulk import.
     pub batch_mode: bool,
 }
 
@@ -1352,6 +1367,40 @@ impl Store {
             .map_err(StoreError::from)
     }
 
+    /// Records a block that failed validation so it can be served by
+    /// `debug_getBadBlocks`. The list is bounded to [`MAX_BAD_BLOCKS`] entries,
+    /// kept sorted by descending block number, with the oldest dropped once the
+    /// bound is exceeded. Duplicate `(number, hash)` entries are ignored.
+    pub async fn add_bad_block(&self, block: Block) -> Result<(), StoreError> {
+        let mut bad_blocks = self.get_bad_blocks().await?;
+        let block_number = block.header.number;
+        let block_hash = block.hash();
+        if bad_blocks
+            .iter()
+            .any(|b| b.header.number == block_number && b.hash() == block_hash)
+        {
+            return Ok(());
+        }
+        bad_blocks.push(block);
+        bad_blocks.sort_by(|a, b| b.header.number.cmp(&a.header.number));
+        bad_blocks.truncate(MAX_BAD_BLOCKS);
+        self.write_async(
+            BAD_BLOCKS,
+            BAD_BLOCKS_KEY.to_vec(),
+            bad_blocks.encode_to_vec(),
+        )
+        .await
+    }
+
+    /// Returns the recent bad blocks seen by the client, sorted by descending
+    /// block number. Used by `debug_getBadBlocks`.
+    pub async fn get_bad_blocks(&self) -> Result<Vec<Block>, StoreError> {
+        match self.read_async(BAD_BLOCKS, BAD_BLOCKS_KEY.to_vec()).await? {
+            Some(bytes) => Vec::<Block>::decode(&bytes).map_err(StoreError::from),
+            None => Ok(Vec::new()),
+        }
+    }
+
     /// Obtain block number for a given hash
     pub fn get_block_number_sync(
         &self,
@@ -1809,12 +1858,16 @@ impl Store {
         initial_buffer.set_flushed_upto(initial_flushed_upto);
 
         let mut background_threads = Vec::new();
+        let safe_commit_root = Arc::new(RwLock::new(H256::zero()));
         let mut store = Self {
             db_path,
             backend,
             chain_config: Default::default(),
             latest_block_header: Default::default(),
-            trie_cache: Arc::new(RwLock::new(Arc::new(TrieLayerCache::new(commit_threshold)))),
+            trie_cache: Arc::new(RwLock::new(Arc::new(TrieLayerCache::new_with_safe_commit(
+                commit_threshold,
+                safe_commit_root.clone(),
+            )))),
             flatkeyvalue_control_tx: fkv_tx,
             block_data_buffer: Arc::new(RwLock::new(Arc::new(initial_buffer))),
             persist_tx,
@@ -1823,6 +1876,7 @@ impl Store {
             account_code_cache: Arc::new(Mutex::new(CodeCache::default())),
             code_metadata_cache: Arc::new(Mutex::new(rustc_hash::FxHashMap::default())),
             fcu_lock: Arc::new(tokio::sync::Mutex::new(())),
+            safe_commit_root,
             background_threads: Default::default(),
         };
         let backend_clone = store.backend.clone();
@@ -1927,6 +1981,21 @@ impl Store {
                             last_flush_result = flushed;
                         }
                     }
+                    Ok(PersistMessage::Commit(root)) => match persist_trie_cache.read() {
+                        Ok(guard) => {
+                            let trie = guard.clone();
+                            drop(guard);
+                            let _ = commit_to_disk(
+                                persist_backend.as_ref(),
+                                &persist_fkv_ctl,
+                                &persist_trie_cache,
+                                &trie,
+                                root,
+                            )
+                            .inspect_err(|err| error!("commit_to_disk failed: {err}"));
+                        }
+                        Err(_) => error!("trie cache lock poisoned during commit"),
+                    },
                     Ok(PersistMessage::Ping(ack)) => {
                         // Idle handshake: reached only after all earlier Block
                         // messages are fully processed. Carry the pending flush
@@ -2728,7 +2797,70 @@ impl Store {
             return Err(err);
         }
 
+        // Refresh the canonical safe-commit root now that the canonical tables reflect the new
+        // head. `None` (chain shorter than the threshold, e.g. genesis init at head 0) leaves the
+        // cell unchanged so genesis-on-disk is never gated away.
+        // No `latest_block_header` rollback on error here (unlike the `inner` failure above): the
+        // only error is a poisoned safe-commit `RwLock`, which is an unrecoverable process state.
+        if let Some(root) = self.compute_safe_commit_root(head_number)? {
+            // Advancing the cell alone does not flush: the commit step (Phase 2) only runs
+            // while blocks execute, so an execute-all-then-one-forkchoice flow (e.g. block
+            // import) would accumulate every layer and never persist. When the safe-commit
+            // root advances, poke the worker to flush the now-committable backlog up to it.
+            if self.set_safe_commit_root(root)? {
+                let tx = self.persist_tx.clone();
+                let _ = tokio::task::spawn_blocking(move || tx.send(PersistMessage::Commit(root)))
+                    .await;
+            }
+        }
+
         Ok(())
+    }
+
+    /// Updates the dedicated safe-commit-root cell with the given state root,
+    /// returning `true` if the cell changed (so callers can skip a redundant flush).
+    ///
+    /// This is a plain synchronous function; it touches only the dedicated cell
+    /// and is disjoint from the trie-cache Arc (no cache clone or replacement).
+    /// Crate-private: only `forkchoice_update` (post-canonicalization) may set it,
+    /// preserving the invariant that the cell only ever holds a canonical state root.
+    pub(crate) fn set_safe_commit_root(&self, root: H256) -> Result<bool, StoreError> {
+        let mut guard = self
+            .safe_commit_root
+            .write()
+            .map_err(|_| StoreError::LockError)?;
+        let changed = *guard != root;
+        *guard = root;
+        Ok(changed)
+    }
+
+    /// Computes the canonical safe-commit state root: the state root of the canonical block
+    /// `commit_threshold` layers below `head`.
+    ///
+    /// Returns `Ok(None)` when the chain is shorter than the threshold (underflow), or when the
+    /// target block is not yet canonical / its header is absent. Synchronous getters only; no
+    /// await and no lock guard held across one. The threshold is read from the trie cache to
+    /// avoid duplicating the IN_MEMORY/DB selection that `from_backend` already made.
+    /// Crate-private: only `forkchoice_update` consumes it.
+    pub(crate) fn compute_safe_commit_root(
+        &self,
+        head: BlockNumber,
+    ) -> Result<Option<H256>, StoreError> {
+        let commit_threshold = self
+            .trie_cache
+            .read()
+            .map_err(|_| StoreError::LockError)?
+            .commit_threshold;
+        let Some(target) = head.checked_sub(commit_threshold as u64) else {
+            return Ok(None);
+        };
+        let Some(hash) = self.get_canonical_block_hash_sync(target)? else {
+            return Ok(None);
+        };
+        let Some(header) = self.get_block_header_by_hash(hash)? else {
+            return Ok(None);
+        };
+        Ok(Some(header.state_root))
     }
 
     /// Obtain the storage trie for the given block
@@ -3590,6 +3722,12 @@ struct BlockPersist {
 /// all earlier `Block` messages are fully processed.
 enum PersistMessage {
     Block(BlockPersist),
+    /// Flush the committable layer backlog up to and including this state root, then
+    /// prune the flushed layers. Sent by `forkchoice_update` when the safe-commit root
+    /// advances: the commit step otherwise only runs while blocks execute, so an
+    /// execute-all-then-one-forkchoice flow (e.g. block import) would accumulate every
+    /// layer and never persist anything to disk.
+    Commit(H256),
     Ping(std::sync::mpsc::SyncSender<Result<(), StoreError>>),
     /// Graceful-shutdown handshake. Handled only after every earlier `Block`
     /// (FIFO), so it both drains in-flight work and force-flushes the block-data
@@ -3770,9 +3908,12 @@ fn apply_trie_phase1(
     build
 }
 
-/// When the diff-layer chain is deep enough, flush the bottom layer to disk and
-/// RCU-evict it. `is_batch` selects `BATCH_COMMIT_THRESHOLD` (full sync) over
-/// the default per-block threshold. No-ops when nothing is committable.
+/// Flush and prune the committable trie-layer backlog. No-ops when nothing is committable.
+///
+/// `is_batch` selects the gate: batch execution (full sync / import) commits by depth
+/// (`BATCH_COMMIT_THRESHOLD`), because the canonical `head - 128` safe-commit root never lands
+/// on a batch layer boundary; live block-by-block execution uses the canonical safe-commit gate
+/// (`TrieLayerCache::get_commitable`) so non-canonical `newPayload` state is never persisted.
 fn commit_trie_if_due(
     backend: &dyn StorageBackend,
     trie_cache: &Arc<RwLock<Arc<TrieLayerCache>>>,
@@ -3784,9 +3925,9 @@ fn commit_trie_if_due(
         .read()
         .map_err(|_| StoreError::LockError)?
         .clone();
-    // Phase 2: update disk layer.
+    // Phase 2 + 3: flush and prune the committable backlog.
     let commitable = if is_batch {
-        trie.get_commitable_with_threshold(parent_state_root, BATCH_COMMIT_THRESHOLD)
+        trie.get_commitable_by_depth(parent_state_root, BATCH_COMMIT_THRESHOLD)
     } else {
         trie.get_commitable(parent_state_root)
     };
@@ -3794,17 +3935,22 @@ fn commit_trie_if_due(
         // Nothing to commit to disk, move on.
         return Ok(());
     };
-    commit_trie_layers(backend, trie_cache, fkv_ctl, &trie, root)
+    commit_to_disk(backend, fkv_ctl, trie_cache, &trie, root)
 }
 
-/// Writes the layer at `root` and all of its ancestors to disk in one tx, then
-/// RCU-evicts them from the cache. Used by the per-block "commit when due" path
-/// ([`commit_trie_if_due`]). `trie` is the caller's snapshot of the cache;
-/// `root` must be one of its layer keys.
-fn commit_trie_layers(
+/// Flush the layer at `root` and all older ancestors to disk, then prune them from the
+/// in-memory cache (Phases 2 and 3 of the persistence pipeline).
+///
+/// `trie` must be the current cache snapshot and `root` a committable layer (as returned
+/// by [`TrieLayerCache::get_commitable`]). A `root` that is not a layer commits nothing.
+///
+/// Reused by both the per-block path ([`commit_trie_if_due`]) and the forkchoice-driven
+/// flush ([`PersistMessage::Commit`]): without the latter, an execute-all-then-one-forkchoice
+/// flow (block import) would never persist, because the commit step only runs while blocks execute.
+fn commit_to_disk(
     backend: &dyn StorageBackend,
-    trie_cache: &Arc<RwLock<Arc<TrieLayerCache>>>,
     fkv_ctl: &SyncSender<FKVGeneratorControlMessage>,
+    trie_cache: &Arc<RwLock<Arc<TrieLayerCache>>>,
     trie: &Arc<TrieLayerCache>,
     root: H256,
 ) -> Result<(), StoreError> {
@@ -4443,7 +4589,7 @@ mod datadir_tests {
     #[test]
     fn dir_with_marker_named_subdirectories_has_no_existing_db() {
         // A *directory* named like a marker file must not be mistaken for a DB;
-        // RocksDB only ever writes these as plain files.
+        // RocksDB only ever visits these as plain files.
         let dir = tempfile::tempdir().unwrap();
         fs::create_dir(dir.path().join("CURRENT")).unwrap();
         fs::create_dir(dir.path().join("MANIFEST-000001")).unwrap();
