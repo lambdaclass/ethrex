@@ -41,6 +41,11 @@ const EXTRA_SKIPS: &[&str] = &[
 // lists, mirrored in `eip8025_ssz::ExecutionRequests`. The whole bundle re-executes cleanly, so
 // no blanket skip and no per-fork skip are needed. Per-fixture leniency cases
 // (`*_extra_unused_*` padding, deliberately-invalid witnesses) are handled in `test_runner.rs`.
+// Amsterdam+ fixtures are skipped in the stateless run by fork (see
+// `parse_and_execute` in `test_runner.rs` and docs/known_issues.md): the
+// tests-zkevm@v0.5.0 bundle predeploys the EIP-8282 builder contracts at the OLD
+// addresses, incompatible with this client's devnet-7 addresses. That skip is
+// fork-based (not name-based), so no per-test entries are needed here.
 #[cfg(feature = "stateless")]
 const EXTRA_SKIPS: &[&str] = &[];
 #[cfg(not(any(feature = "sp1", feature = "stateless")))]

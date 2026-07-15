@@ -876,11 +876,21 @@ fn decode_nonce_field(decoder: Decoder) -> Result<(u64, Decoder), RLPDecodeError
     let wrap =
         |err| RLPDecodeError::Custom(format!("Error decoding field 'nonce' of type u64: {err}"));
     let (item, rest) = decoder.get_encoded_item_ref().map_err(wrap)?;
-    // An over-u64 nonce (>= 2**64) has more than 8 significant bytes. EEST uses
-    // it for TransactionException.NONCE_IS_MAX; surface a nonce-domain rejection
-    // rather than a generic RLP field-decode error so the exception mapper maps
-    // it to NONCE_IS_MAX in both the upstream Python and local Rust mappers.
-    if matches!(decode_bytes(item), Ok((content, _)) if content.len() > 8) {
+    // A *canonical* over-u64 nonce (>= 2**64) has more than 8 significant bytes and,
+    // being canonical, no leading zero byte. EEST uses it for
+    // TransactionException.NONCE_IS_MAX; surface a nonce-domain rejection rather than
+    // a generic RLP field-decode error so the exception mapper maps it to NONCE_IS_MAX
+    // in both the upstream Python and local Rust mappers.
+    //
+    // A non-canonical >8-byte encoding (leading-zero padding) is a malformed RLP
+    // integer, not an over-u64 value, so it must NOT be reported as NONCE_IS_MAX. Leave
+    // it to fall through to `u64::decode_unfinished` below, which rejects it as an
+    // ordinary field-decode error (mapped to RLP_STRUCTURES_ENCODING) — matching strict
+    // mappers like Hive.
+    if let Ok((content, _)) = decode_bytes(item)
+        && content.len() > 8
+        && content.first() != Some(&0)
+    {
         return Err(RLPDecodeError::Custom("Nonce is max".into()));
     }
     let (nonce, _) = u64::decode_unfinished(item).map_err(wrap)?;
