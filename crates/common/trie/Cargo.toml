@@ -17,7 +17,6 @@ anyhow = "1.0.86"
 bytes.workspace = true
 thiserror.workspace = true
 serde.workspace = true
-lazy_static.workspace = true
 crossbeam.workspace = true
 rayon.workspace = true
 rustc-hash.workspace = true
