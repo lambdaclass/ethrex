@@ -654,7 +654,7 @@ async fn parallel_path_rejects_omitted_storage_write() {
     let (store_par, _) = setup_store().await;
     let bc_par = parallel_blockchain(store_par);
     let par = bc_par.add_block_pipeline_bal(mutated_block, Some(Arc::new(mutated_bal)));
-    assert_content_rejected(&par, "absent from BAL");
+    assert_content_rejected(&par, "has no storage_changes entry");
 
     // Positive control: the unmutated block must still import.
     let (store_ok, _) = setup_store().await;

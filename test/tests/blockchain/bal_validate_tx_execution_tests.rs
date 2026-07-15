@@ -391,7 +391,7 @@ fn missing_storage_write_rejected() {
         &system_seed,
         &unused_store(),
     );
-    assert_mismatch(&result, "absent from BAL");
+    assert_mismatch(&result, "has no storage_changes entry");
 }
 
 /// Positive control: a slot declared solely via `storage_reads` (genuinely
@@ -440,6 +440,60 @@ fn read_only_slot_not_in_changes_accepted() {
         &unused_store(),
     );
     assert!(result.is_ok(), "expected Ok(()), got: {result:?}");
+}
+
+/// A slot execution actually WROTE (value diverges from its pre-tx value) but
+/// the BAL declares under `storage_reads` instead of `storage_changes` must be
+/// rejected: a changed value has to live in `storage_changes`. The shadow-reads
+/// cross-check only verifies the slot is present in *some* list, so this must be
+/// caught here in PART B.
+#[test]
+fn written_slot_misdeclared_as_read_rejected() {
+    let address = addr(14);
+    let slot = U256::from(11);
+    let key = u256_to_h256(slot);
+    let pre_value = U256::from(1);
+    let post_value = U256::from(2);
+
+    let mut system_seed: CacheDB = FxHashMap::default();
+    let mut seed_account = account_with(
+        U256::zero(),
+        0,
+        *ethrex_common::constants::EMPTY_KECCAK_HASH,
+        AccountStatus::Unmodified,
+    );
+    seed_account.storage.insert(key, pre_value);
+    system_seed.insert(address, seed_account);
+
+    // Execution wrote the slot to a value differing from its start-of-tx value.
+    let mut current_state: FxHashMap<Address, LevmAccount> = FxHashMap::default();
+    let mut current_account = account_with(
+        U256::zero(),
+        0,
+        *ethrex_common::constants::EMPTY_KECCAK_HASH,
+        AccountStatus::Modified,
+    );
+    current_account.storage.insert(key, post_value);
+    current_state.insert(address, current_account);
+
+    // The write is mis-declared as a read.
+    let bal = BlockAccessList::from_accounts(vec![
+        AccountChanges::new(address).with_storage_reads(vec![slot]),
+    ]);
+    let index = bal.build_validation_index();
+    let codes: FxHashMap<H256, Code> = FxHashMap::default();
+
+    let result = LEVM::validate_tx_execution(
+        1,
+        0,
+        &current_state,
+        &codes,
+        &bal,
+        &index,
+        &system_seed,
+        &unused_store(),
+    );
+    assert_mismatch(&result, "declared_as_read=true");
 }
 
 // -- No-op entries for accounts/slots ABSENT from execution state (None arm).

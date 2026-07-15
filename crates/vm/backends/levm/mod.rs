@@ -1958,14 +1958,16 @@ impl LEVM {
                         }
                     }
                 }
-                // Slot not in BAL storage_changes. If it's a declared read, it's
-                // validated by the shadow-reads check in execute_block_parallel —
-                // cheap skip. Otherwise execution wrote this slot (it's present in
-                // current_state) but the BAL declares neither a change nor a read
-                // for it: a missing-write omission, unless the value never actually
-                // diverged from its start-of-block baseline (e.g. a reverted/OOG
-                // SSTORE left the slot at its pre value).
-                else if !acct.storage_reads.contains(&slot_u256) {
+                // Slot not in BAL storage_changes (a slot is in at most one of
+                // storage_changes/storage_reads per EIP-7928 ordering rules). A value
+                // that diverges from the start-of-tx baseline means execution WROTE the
+                // slot but the write was not recorded in storage_changes — non-canonical.
+                // A genuine read leaves value == pre_value and passes. This catches both
+                // an entirely-absent slot AND a real write mis-declared under
+                // storage_reads: the shadow-reads check in execute_block_parallel only
+                // verifies the slot is present in *some* list, never that a changed value
+                // was recorded in the correct one.
+                else {
                     let dummy_slot_change = SlotChange::new(slot_u256);
                     let pre_value = Self::seeded_storage(
                         seed_idx,
@@ -1976,10 +1978,11 @@ impl LEVM {
                         store,
                     )?;
                     if value != pre_value {
+                        let declared_as_read = acct.storage_reads.contains(&slot_u256);
                         return Err(BalValidationError::Mismatch(format!(
                             "account {addr:?} storage slot {slot_u256} was written by \
-                             execution ({value}) but is absent from BAL (no storage_changes \
-                             or storage_reads entry; pre_value={pre_value})"
+                             execution ({value}) but has no storage_changes entry at index \
+                             {bal_idx} (pre_value={pre_value}, declared_as_read={declared_as_read})"
                         )));
                     }
                 }
