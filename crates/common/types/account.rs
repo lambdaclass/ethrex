@@ -24,7 +24,13 @@ use crate::constants::{EMPTY_KECCAK_HASH, EMPTY_TRIE_HASH};
 /// placeholder and every EOA / empty-code load would otherwise each allocate.
 static EMPTY_JUMP_TARGETS: LazyLock<Arc<[u32]>> = LazyLock::new(|| Arc::from(Vec::new()));
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Hash)]
+/// Trailing STOP bytes appended to every bytecode so the dispatch loop can read
+/// the next opcode without a bounds check. 33 is the widest single-opcode advance
+/// (PUSH32: 1 opcode byte + 32 immediate bytes), so `pc` can never step past the
+/// padding regardless of which opcode sits at the last real byte.
+pub const BYTECODE_PADDING: usize = 33;
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Code {
     // hash is only used for bytecodes stored in the DB, either for reading it from the DB
     // or with the CODEHASH opcode, which needs an account address as argument and
@@ -32,7 +38,10 @@ pub struct Code {
     // We use a bogus H256::zero() value for initcodes as there is no way for the VM or
     // endpoints to access that hash, saving one expensive Keccak hash.
     pub hash: H256,
-    pub bytecode: Bytes,
+    /// bytecode padded with 33 zeroes (STOP opcodes, due to PUSH32) to avoid checks on the hot path.
+    bytecode: Bytes,
+    /// The real bytecode length, needed for some opcodes, `bytecode` is padded with 33 STOPs to avoid checked adds on hot loop.
+    bytecode_len: usize,
     // `Arc<[u32]>` so cloning `Code` (hot: every message-call resolves and clones
     // the callee's code) is a refcount bump instead of deep-copying the table.
     // Serializes via serde's `rc` feature (enabled workspace-wide).
@@ -46,20 +55,38 @@ impl Code {
     // SAFETY: hash will be stored as-is, so it either needs to match
     // the real code hash (i.e. it was precomputed and we're reusing)
     // or never be read (e.g. for initcode).
+    //
+    // `code` is the logical, unpadded bytecode; `BYTECODE_PADDING` STOP bytes are
+    // appended internally by `from_parts_unchecked`.
     pub fn from_bytecode_unchecked(code: Bytes, hash: H256) -> Self {
         let jump_targets = Self::compute_jump_targets(&code);
-        Self {
-            hash,
-            bytecode: code,
-            jump_targets,
-        }
+        Self::from_parts_unchecked(hash, &code, jump_targets)
     }
 
+    /// `code` is the logical, unpadded bytecode; `BYTECODE_PADDING` STOP bytes are
+    /// appended internally by `from_parts_unchecked`.
     pub fn from_bytecode(code: Bytes, crypto: &dyn Crypto) -> Self {
         let jump_targets = Self::compute_jump_targets(&code);
+        let hash = H256(crypto.keccak256(code.as_ref()));
+        Self::from_parts_unchecked(hash, &code, jump_targets)
+    }
+
+    /// Builds a `Code` from precomputed parts. The caller must guarantee `hash`
+    /// and `jump_targets` correspond to `code`; neither is recomputed or validated.
+    ///
+    /// `code` is the logical, unpadded bytecode: this function appends
+    /// `BYTECODE_PADDING` STOP bytes and records the original length in
+    /// `bytecode_len`. Never pass a pre-padded buffer, or the logical length and
+    /// every `JUMPDEST`/`PUSH` offset derived from it would be wrong.
+    pub fn from_parts_unchecked(hash: H256, code: &[u8], jump_targets: Arc<[u32]>) -> Self {
+        let bytecode_len = code.len();
+        let mut padded_code = Vec::with_capacity(bytecode_len + BYTECODE_PADDING);
+        padded_code.extend_from_slice(code);
+        padded_code.extend_from_slice(&[0u8; BYTECODE_PADDING]);
         Self {
-            hash: H256(crypto.keccak256(code.as_ref())),
-            bytecode: code,
+            hash,
+            bytecode: Bytes::from_owner(padded_code),
+            bytecode_len,
             jump_targets,
         }
     }
@@ -93,6 +120,34 @@ impl Code {
         }
     }
 
+    #[inline]
+    pub fn code(&self) -> &[u8] {
+        self.bytecode.get(..self.bytecode_len).unwrap_or_default()
+    }
+
+    #[inline]
+    pub fn code_bytes(&self) -> Bytes {
+        self.bytecode.slice(..self.bytecode_len)
+    }
+
+    #[inline]
+    pub fn len(&self) -> usize {
+        self.bytecode_len
+    }
+
+    #[inline]
+    pub fn is_empty(&self) -> bool {
+        self.bytecode_len == 0
+    }
+
+    /// Returns the padded bytecode buffer (real code + [`BYTECODE_PADDING`] trailing
+    /// STOPs) used by the opcode dispatch loop to read opcodes without bounds checks.
+    /// Use [`Code::code`] for the real, unpadded bytecode.
+    #[inline]
+    pub fn dispatch_buf(&self) -> &[u8] {
+        &self.bytecode
+    }
+
     /// Estimates the size of the Code struct in bytes
     /// (including stack size and heap allocation).
     ///
@@ -109,9 +164,38 @@ impl Code {
     }
 }
 
-impl AsRef<Bytes> for Code {
-    fn as_ref(&self) -> &Bytes {
-        &self.bytecode
+/// Serde shadow for [`Code`]. Stores the *logical* (unpadded) bytecode so the
+/// padding is never part of the serialized form. Deserialization re-pads through
+/// [`Code::from_parts_unchecked`], which keeps the dispatch-loop invariant (every
+/// `Code` is padded with [`BYTECODE_PADDING`] trailing STOPs) sound regardless of
+/// where the bytes came from. Deserializing the padded buffer directly would
+/// otherwise let unpadded input through and cause OOB reads during execution.
+#[derive(Serialize, Deserialize)]
+struct CodeSerde {
+    hash: H256,
+    code: Bytes,
+    jump_targets: Arc<[u32]>,
+}
+
+impl Serialize for Code {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        CodeSerde {
+            hash: self.hash,
+            code: self.code_bytes(),
+            jump_targets: self.jump_targets.clone(),
+        }
+        .serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for Code {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let CodeSerde {
+            hash,
+            code,
+            jump_targets,
+        } = CodeSerde::deserialize(deserializer)?;
+        Ok(Self::from_parts_unchecked(hash, &code, jump_targets))
     }
 }
 
@@ -176,7 +260,8 @@ impl Default for AccountState {
 impl Default for Code {
     fn default() -> Self {
         Self {
-            bytecode: Bytes::new(),
+            bytecode: Bytes::from_static(&[0u8; BYTECODE_PADDING]),
+            bytecode_len: 0,
             hash: *EMPTY_KECCAK_HASH,
             jump_targets: EMPTY_JUMP_TARGETS.clone(),
         }
@@ -204,6 +289,19 @@ impl From<GenesisAccount> for Account {
 
 pub fn code_hash(code: &Bytes, crypto: &dyn Crypto) -> H256 {
     H256(crypto.keccak256(code.as_ref()))
+}
+
+/// EIP-7702 delegation designation: an EOA whose code is `0xef0100 || address`.
+/// See <https://eips.ethereum.org/EIPS/eip-7702>.
+pub const EIP7702_DELEGATION_PREFIX: [u8; 3] = [0xef, 0x01, 0x00];
+/// Total byte length of an EIP-7702 delegation designation: 3-byte prefix
+/// plus the 20-byte target address.
+pub const EIP7702_DELEGATED_CODE_LEN: usize = 23;
+
+/// Returns true iff `code` is a valid EIP-7702 delegation designation
+/// (exactly 23 bytes, prefixed with `0xef0100`).
+pub fn is_eip7702_delegation(code: &[u8]) -> bool {
+    code.len() == EIP7702_DELEGATED_CODE_LEN && code.starts_with(&EIP7702_DELEGATION_PREFIX)
 }
 
 impl RLPEncode for AccountInfo {
@@ -410,5 +508,50 @@ mod test {
             H256::from_str("c5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470")
                 .unwrap()
         )
+    }
+
+    #[test]
+    fn test_is_eip7702_delegation_valid() {
+        // 0xef0100 || 20-byte address
+        let mut code = Vec::with_capacity(23);
+        code.extend_from_slice(&EIP7702_DELEGATION_PREFIX);
+        code.extend_from_slice(&[0x42; 20]);
+        assert!(is_eip7702_delegation(&code));
+    }
+
+    #[test]
+    fn test_is_eip7702_delegation_rejects_empty() {
+        assert!(!is_eip7702_delegation(&[]));
+    }
+
+    #[test]
+    fn test_is_eip7702_delegation_rejects_short() {
+        // Prefix only, no address.
+        assert!(!is_eip7702_delegation(&EIP7702_DELEGATION_PREFIX));
+    }
+
+    #[test]
+    fn test_is_eip7702_delegation_rejects_long() {
+        // Correct prefix but 24 bytes total.
+        let mut code = Vec::with_capacity(24);
+        code.extend_from_slice(&EIP7702_DELEGATION_PREFIX);
+        code.extend_from_slice(&[0x42; 21]);
+        assert!(!is_eip7702_delegation(&code));
+    }
+
+    #[test]
+    fn test_is_eip7702_delegation_rejects_wrong_prefix() {
+        // Right length, wrong magic.
+        let mut code = Vec::with_capacity(23);
+        code.extend_from_slice(&[0xef, 0x01, 0x01]); // off by one in the last prefix byte
+        code.extend_from_slice(&[0x42; 20]);
+        assert!(!is_eip7702_delegation(&code));
+    }
+
+    #[test]
+    fn test_is_eip7702_delegation_rejects_arbitrary_contract_code() {
+        // Real contract code starting with anything else.
+        let code = vec![0x60, 0x60, 0x60, 0x40, 0x52 /* ... */];
+        assert!(!is_eip7702_delegation(&code));
     }
 }

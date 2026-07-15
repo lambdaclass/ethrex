@@ -161,6 +161,30 @@ pub mod u32 {
     }
 }
 
+pub mod u8 {
+    use super::*;
+
+    pub mod hex_str {
+        use super::*;
+
+        pub fn deserialize<'de, D>(d: D) -> Result<u8, D::Error>
+        where
+            D: Deserializer<'de>,
+        {
+            let value = String::deserialize(d)?;
+            u8::from_str_radix(value.trim_start_matches("0x"), 16)
+                .map_err(|_| D::Error::custom("Failed to deserialize u8 value"))
+        }
+
+        pub fn serialize<S>(value: &u8, serializer: S) -> Result<S::Ok, S::Error>
+        where
+            S: Serializer,
+        {
+            serializer.serialize_str(&format!("{value:#x}"))
+        }
+    }
+}
+
 pub mod u64 {
     use serde::de::IntoDeserializer;
 
@@ -709,13 +733,18 @@ pub mod block_access_list {
         {
             let value = Option::<String>::deserialize(d)?;
             match value {
-                Some(s) if !s.is_empty() => hex::decode(s.trim_start_matches("0x"))
-                    .map_err(|e| D::Error::custom(e.to_string()))
-                    .and_then(|b| {
-                        BlockAccessList::decode(&b)
-                            .map_err(|_| D::Error::custom("Failed to RLP decode BAL"))
-                    })
-                    .map(Some),
+                // An empty hex string ("0x") encodes the absence of a BAL, not an
+                // empty list. Treat it as None so pre-Amsterdam newPayload calls
+                // (which send "0x") deserialize instead of failing RLP decode.
+                Some(s) if !s.trim_start_matches("0x").is_empty() => {
+                    hex::decode(s.trim_start_matches("0x"))
+                        .map_err(|e| D::Error::custom(e.to_string()))
+                        .and_then(|b| {
+                            BlockAccessList::decode(&b)
+                                .map_err(|_| D::Error::custom("Failed to RLP decode BAL"))
+                        })
+                        .map(Some)
+                }
                 _ => Ok(None),
             }
         }

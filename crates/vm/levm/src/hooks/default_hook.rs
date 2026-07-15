@@ -2,15 +2,18 @@ use crate::{
     account::LevmAccount,
     constants::*,
     errors::{ContextResult, ExceptionalHalt, InternalError, TxValidationError, VMError},
-    gas_cost::{STANDARD_TOKEN_COST, floor_tokens_in_access_list, total_cost_floor_per_token},
+    gas_cost::{
+        STANDARD_TOKEN_COST, cold_account_access_cost, floor_tokens_in_access_list,
+        total_cost_floor_per_token, tx_base_cost,
+    },
     hooks::hook::Hook,
     utils::*,
     vm::VM,
 };
 
-use bytes::Bytes;
 use ethrex_common::{
     Address, H256, U256,
+    constants::EMPTY_KECCAK_HASH,
     types::{Code, Fork},
 };
 
@@ -28,6 +31,28 @@ impl Hook for DefaultHook {
     /// - It calculates and adds intrinsic gas to the 'gas used' of callframe and environment.
     ///   See 'docs' for more information about validations.
     fn prepare_execution(&mut self, vm: &mut VM<'_>) -> Result<(), VMError> {
+        // System calls (EELS `process_unchecked_system_transaction`) have no
+        // sender semantics: no validation, no nonce bump, no fee deduction.
+        // EELS never reads the SYSTEM_ADDRESS account, so skip the whole
+        // sender path to keep the read out of execution witnesses (EIP-8025).
+        if vm.env.is_system_call {
+            // EELS `process_unchecked_system_transaction` builds the message with
+            // intrinsic_regular_gas=0 and intrinsic_state_gas=0: a system call gets
+            // the full SYS_CALL_GAS_LIMIT with no intrinsic deducted. We still call
+            // `add_intrinsic_gas` (with a zeroed intrinsic) so the Amsterdam state-gas
+            // reservoir is set up, but charge no intrinsic — otherwise the frame
+            // budget would fall below SYS_CALL_GAS_LIMIT and diverge from EELS (a
+            // system contract engineered to consume exactly SYS_CALL_GAS_LIMIT+1
+            // would then fail to run out of gas).
+            let mut intrinsic = vm.get_intrinsic_gas()?;
+            intrinsic.regular = 0;
+            intrinsic.state = 0;
+            vm.add_intrinsic_gas(&intrinsic)?;
+            transfer_value(vm)?;
+            set_bytecode_and_code_address(vm)?;
+            return Ok(());
+        }
+
         let sender_address = vm.env.origin;
         let sender_info = vm.db.get_account(sender_address)?.info.clone();
 
@@ -46,7 +71,7 @@ impl Hook for DefaultHook {
             {
                 return Err(VMError::TxValidation(
                     TxValidationError::TxMaxGasLimitExceeded {
-                        tx_hash: vm.tx.hash(),
+                        tx_hash: vm.tx.hash(vm.crypto),
                         tx_gas_limit: vm.tx.gas_limit(),
                     },
                 ));
@@ -109,7 +134,7 @@ impl Hook for DefaultHook {
 
         // (9) SENDER_NOT_EOA
         let code = vm.db.get_code(sender_info.code_hash)?;
-        validate_sender(sender_address, &code.bytecode)?;
+        validate_sender(sender_address, code.code())?;
 
         // (10) GAS_ALLOWANCE_EXCEEDED
         validate_gas_allowance(vm)?;
@@ -123,6 +148,46 @@ impl Hook for DefaultHook {
         // Transaction is type 4 if authorization_list is Some
         if vm.tx.authorization_list().is_some() {
             validate_type_4_tx(vm)?;
+        }
+
+        // EIP-2780 (merged EIPs#11645) top-level post-7702 charges.
+        // Applied AFTER EIP-7702 authorizations are set (so recipient emptiness /
+        // delegation reflect the post-auth state) and BEFORE the value transfer.
+        // Only for Amsterdam+ non-create transactions.
+        if vm.env.config.fork >= Fork::Amsterdam && !vm.is_create()? {
+            let to = vm.current_call_frame.to;
+            let recipient = vm.db.get_account(to)?;
+            let recipient_is_empty = recipient.is_empty();
+            let recipient_code_hash = recipient.info.code_hash;
+            let recipient_is_delegated = if recipient_code_hash == *EMPTY_KECCAK_HASH {
+                false
+            } else {
+                let code = vm.db.get_code(recipient_code_hash)?.code_bytes();
+                code_has_delegation(&code)?
+            };
+
+            // If the recipient is EIP-161-empty and the tx transfers value, the
+            // value transfer will materialize a new account: charge the
+            // new-account state gas. (Skipped if a 7702 auth already materialized
+            // the recipient this tx, since emptiness is evaluated post-auth.)
+            // EIP-2780 (EELS PR #3048): no precompile carve-out. EIP-161/EIP-2780
+            // define emptiness structurally, so an empty (unfunded) precompile
+            // receiving value is created like any other account and pays
+            // NEW_ACCOUNT. A pre-funded precompile is non-empty, so
+            // `recipient_is_empty` is already false and it stays exempt.
+            // The charge is deferred to `run_execution` (charged from the reservoir there)
+            // so an OOG reverts the tx rather than invalidating the block; the emptiness
+            // check must happen here, before the value transfer materializes the account.
+            if recipient_is_empty && !vm.tx.value().is_zero() {
+                vm.pending_top_frame_state_gas = vm.state_gas_new_account;
+            }
+
+            // If the recipient is a 7702-delegated account, charge an additional
+            // cold account access for resolving the delegation target. Deferred to
+            // run_execution (like the state charge) so an OOG reverts the tx.
+            if recipient_is_delegated {
+                vm.pending_top_frame_regular_gas = cold_account_access_cost(vm.env.config.fork);
+            }
         }
 
         transfer_value(vm)?;
@@ -142,6 +207,16 @@ impl Hook for DefaultHook {
         vm: &mut VM<'_>,
         ctx_result: &mut ContextResult,
     ) -> Result<(), VMError> {
+        // System calls (EELS `process_unchecked_system_transaction`) have no
+        // sender or fee semantics: there is nothing to undo, refund, or pay
+        // (the value and gas price are zero), so skip straight to the
+        // self-destruct cleanup. Callers ignore the gas accounting fields for
+        // system calls.
+        if vm.env.is_system_call {
+            delete_self_destruct_accounts(vm)?;
+            return Ok(());
+        }
+
         if !ctx_result.is_success() {
             undo_value_transfer(vm)?;
         }
@@ -243,8 +318,6 @@ pub fn refund_sender(
     // Block header gas_used = max(regular_dimension, state_dimension) per EIP-7778.
     // Receipt cumulative_gas_used = post-refund total (what user pays).
     if vm.env.config.fork >= Fork::Amsterdam {
-        // EIP-7623 floor applies to the regular (non-state) gas component only.
-        let floor = vm.get_min_gas_used()?;
         // EIP-8037: state_gas_used is already net (signed, credits applied inline).
         // Subtract state_refund (EIP-7702 tx-level channel) and clamp at zero.
         let state_refund_signed =
@@ -265,8 +338,10 @@ pub fn refund_sender(
             .saturating_sub(vm.intrinsic_state_gas)
             .saturating_sub(vm.state_gas_reservoir_initial)
             .saturating_sub(vm.state_gas_spill);
-        let effective_regular = regular_gas.max(floor);
-        ctx_result.gas_used = effective_regular
+        // EIP-7778: block regular dimension is the unfloored, pre-refund regular gas
+        // (EELS `tx_regular_gas = tx_gas_used_before_refund - state_gas`). The floor
+        // and refund apply only to the user payment (`gas_spent`), not block gas_used.
+        ctx_result.gas_used = regular_gas
             .checked_add(state_gas)
             .ok_or(InternalError::Overflow)?;
         // User pays post-refund gas (with floor)
@@ -343,6 +418,15 @@ pub fn pay_coinbase(vm: &mut VM<'_>, gas_to_pay: u64) -> Result<(), VMError> {
     // Only pay coinbase if there's actually a fee to pay.
     if !coinbase_fee.is_zero() {
         vm.increase_account_balance(vm.env.coinbase, coinbase_fee)?;
+    } else if !vm.env.is_system_call {
+        // The spec reads the coinbase account unconditionally during user-tx
+        // fee transfer (EELS `process_transaction` calls `get_account` before
+        // deciding whether to credit), but system contract calls never touch
+        // the coinbase. Keep the read observable for zero-fee user txs
+        // (including gas-price-zero txs on zero-base-fee chains) so execution
+        // witnesses (EIP-8025) record the coinbase trie path, including its
+        // exclusion proof when it doesn't exist.
+        vm.db.get_account(vm.env.coinbase)?;
     }
 
     Ok(())
@@ -350,46 +434,49 @@ pub fn pay_coinbase(vm: &mut VM<'_>, gas_to_pay: u64) -> Result<(), VMError> {
 
 // In Cancun the only addresses destroyed are contracts created in this transaction
 pub fn delete_self_destruct_accounts(vm: &mut VM<'_>) -> Result<(), VMError> {
-    // EIP-7708: Emit Burn logs for accounts with non-zero balance marked for deletion
-    // Must emit in lexicographical order of address
-    if vm.env.config.fork >= Fork::Amsterdam {
-        let mut addresses_with_balance: Vec<(Address, U256)> = vm
-            .substate
-            .iter_selfdestruct()
-            .filter_map(|addr| {
-                let balance = vm.db.get_account(*addr).ok()?.info.balance;
-                if !balance.is_zero() {
-                    Some((*addr, balance))
-                } else {
-                    None
-                }
-            })
-            .collect();
+    // EIP-8246 (Amsterdam+): SELFDESTRUCT no longer burns ETH.
+    // Accounts in the selfdestruct set have nonce reset to 0, code cleared, and storage cleared,
+    // but balance is preserved. If the resulting balance is zero, EIP-161 removes the account.
+    //
+    // Pre-Amsterdam (EIP-6780 / Cancun): accounts are fully wiped (LevmAccount::default()).
+    //
+    // Note: the pre-Amsterdam Amsterdam+ burn-log loop has been removed because under EIP-8246
+    // no ETH is ever burned by SELFDESTRUCT, so no Burn log is emitted at finalization.
 
-        // Sort by address (lexicographical order per EIP-7708)
-        addresses_with_balance.sort_by_key(|(addr, _)| *addr);
+    let addresses: Vec<Address> = vm.substate.iter_selfdestruct().copied().collect();
 
-        for (addr, balance) in addresses_with_balance {
-            let log = create_burn_log(addr, balance);
-            vm.substate.add_log(log);
-        }
-    }
-
-    // Delete the accounts
-    for address in vm.substate.iter_selfdestruct() {
+    for address in &addresses {
         // Backup must be taken before mark_modified flips `exists` to true.
-        let account_to_remove = vm.db.get_account(*address)?;
+        let account_snapshot = vm.db.get_account(*address)?;
         vm.current_call_frame
             .call_frame_backup
-            .backup_account_info(*address, account_to_remove)?;
+            .backup_account_info(*address, account_snapshot)?;
 
-        let account_to_remove = vm.db.get_account_mut(*address)?;
-        *account_to_remove = LevmAccount::default();
-        account_to_remove.mark_destroyed();
+        if vm.env.config.fork >= Fork::Amsterdam {
+            // EIP-8246: preserve balance; clear nonce, code, and storage.
+            let account = vm.db.get_account_mut(*address)?;
+            let preserved_balance = account.info.balance;
+            account.info.nonce = 0;
+            account.info.code_hash = *EMPTY_KECCAK_HASH;
+            account.storage.clear();
+            account.has_storage = false;
+            account.info.balance = preserved_balance;
+            // Reach DestroyedModified so get_state_transitions emits removed_storage=true
+            // and correctly computes acc_info_updated (nonce/code_hash changed).
+            account.mark_destroyed();
+            account.mark_modified();
+        } else {
+            let account = vm.db.get_account_mut(*address)?;
+            *account = LevmAccount::default();
+            account.mark_destroyed();
+        }
 
-        // EIP-7928: Clean up BAL for selfdestructed account
+        // EIP-7928: Clean up BAL for selfdestructed account. Under EIP-8246 (Amsterdam+)
+        // the balance is preserved (no burn), so the BAL keeps its balance changes; pre-
+        // Amsterdam the account is wiped and its balance collapses to 0.
+        let preserve_balance = vm.env.config.fork >= Fork::Amsterdam;
         if let Some(recorder) = vm.db.bal_recorder.as_mut() {
-            recorder.track_selfdestruct(*address);
+            recorder.track_selfdestruct(*address, preserve_balance);
         }
     }
 
@@ -440,12 +527,14 @@ pub fn validate_min_gas_limit(vm: &mut VM<'_>, intrinsic: &IntrinsicGas) -> Resu
             .ok_or(InternalError::Overflow)?;
     }
 
-    // floor_cost_by_tokens = TX_BASE_COST + total_cost_floor_per_token(fork) * tokens
+    // floor_cost_by_tokens = tx_base_cost(fork) + total_cost_floor_per_token(fork) * tokens
     // EIP-7976 (Amsterdam+) raises the floor multiplier from 10 to 16.
+    // The floor base is `tx_base_cost(fork)`: 21000 pre-Amsterdam, 12000 at Amsterdam
+    // (EIP-2780 lowers the flat base; EELS `data_floor_gas_cost` adds `GasCosts.TX_BASE`).
     let floor_cost_by_tokens = tokens_in_calldata
         .checked_mul(total_cost_floor_per_token(fork))
         .ok_or(InternalError::Overflow)?
-        .checked_add(TX_BASE_COST)
+        .checked_add(tx_base_cost(fork))
         .ok_or(InternalError::Overflow)?;
 
     // EIP-8037 (Amsterdam+): Regular gas is capped at TX_MAX_GAS_LIMIT — reject if
@@ -603,7 +692,7 @@ pub fn validate_type_4_tx(vm: &mut VM<'_>) -> Result<(), VMError> {
     vm.eip7702_set_access_code()
 }
 
-pub fn validate_sender(sender_address: Address, code: &Bytes) -> Result<(), VMError> {
+pub fn validate_sender(sender_address: Address, code: &[u8]) -> Result<(), VMError> {
     if !code.is_empty() && !code_has_delegation(code)? {
         return Err(TxValidationError::SenderNotEOA(sender_address).into());
     }
@@ -673,11 +762,8 @@ pub fn deduct_caller(
     // Up front cost is the maximum amount of wei that a user is willing to pay for. Gaslimit * gasprice + value + blob_gas_cost
     let value = vm.current_call_frame.msg_value;
 
-    let blob_gas_cost = calculate_blob_gas_cost(
-        &vm.env.tx_blob_hashes,
-        vm.env.block_excess_blob_gas,
-        &vm.env.config,
-    )?;
+    let blob_gas_cost =
+        calculate_blob_gas_cost(&vm.env.tx_blob_hashes, vm.env.base_blob_fee_per_gas)?;
 
     // The real cost to deduct is calculated as effective_gas_price * gas_limit + value + blob_gas_cost
     let up_front_cost = gas_limit_price_product
@@ -736,7 +822,7 @@ pub fn set_bytecode_and_code_address(vm: &mut VM<'_>) -> Result<(), VMError> {
         }
 
         let (is_delegation, _eip7702_gas_consumed, code_address, bytecode) =
-            eip7702_get_code(vm.db, &mut vm.substate, to)?;
+            eip7702_get_code(vm.db, &mut vm.substate, to, vm.env.config.fork)?;
 
         // If EIP-7702 delegation, also record the delegation target (code source) in BAL
         if is_delegation && let Some(recorder) = vm.db.bal_recorder.as_mut() {

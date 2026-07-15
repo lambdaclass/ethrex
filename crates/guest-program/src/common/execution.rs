@@ -173,6 +173,7 @@ where
                     &chain_config,
                     bal,
                     block.body.transactions.len(),
+                    crypto.as_ref(),
                 )
                 .map_err(ExecutionError::BlockValidation)
             })?;
