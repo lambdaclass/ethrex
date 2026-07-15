@@ -116,3 +116,13 @@ rex send <BRIDGE_ADDRESS> "setL2GasLimit(uint256)" <NEW_GAS_LIMIT> \
 ```
 
 After updating the on-chain value, restart the sequencer for it to take effect. Until the restart, the sequencer continues using the previous gas limit, which may cause a temporary mismatch with the on-chain value.
+
+### OnChainProposer upgrade precondition (L1 contracts)
+
+This version introduces `committedPrivilegedTxCount` and `committedL2MessageCount` counters in the OnChainProposer contract. These counters track the number of privileged transactions and L2 messages that have been committed but not yet verified, and are used as offsets when computing rolling hashes for consecutive batch commitments.
+
+Because the counters are new storage variables, they initialize to zero after the upgrade. If any committed-but-unverified batches exist at upgrade time that contain privileged transactions or L2 messages, the counters will be out of sync: verification will attempt to subtract from zero, causing an underflow revert, and new commits will use the wrong offset for hash computation.
+
+**Precondition:** ensure all committed batches are verified (`lastCommittedBatch == lastVerifiedBatch`) before upgrading the OnChainProposer. This applies to both the standard and based variants of the contract.
+
+If this precondition cannot be met, revert all unverified batches before upgrading, or add a one-time reinitializer that recomputes the counters from the committed batch range.
