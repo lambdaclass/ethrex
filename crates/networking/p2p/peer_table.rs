@@ -47,6 +47,9 @@ const REQUESTS_WEIGHT: i64 = 1;
 const MAX_CONCURRENT_REQUESTS_PER_PEER: i64 = 100;
 /// The target number of RLPx connections to reach.
 pub const TARGET_PEERS: usize = 100;
+/// Minimum cumulative failure count (empty + timeouts + invalid) before an idle,
+/// never-served peer is eligible for eviction.
+const EVICT_FAILURE_THRESHOLD: u64 = 8;
 /// Maximum number of ENRs to return in a FindNode response (discv4 compatible).
 pub(crate) const MAX_NODES_IN_NEIGHBORS_PACKET: usize = 16;
 /// Maximum number of ENRs to return in a discv5 FindNode response.
@@ -163,6 +166,26 @@ fn bucket_index(local_node_id: &H256, node_id: &H256) -> Option<usize> {
 /// iff xor_distance(target, a) < xor_distance(target, b).
 pub(crate) fn xor_distance(a: &H256, b: &H256) -> H256 {
     *a ^ *b
+}
+
+/// Whether a peer should be evicted for being chronically unhelpful.
+/// Conservative: only when the peer is idle (no in-flight requests) AND a
+/// replacement is available to dial, and EITHER it is a protocol violator
+/// (score floored to critical) OR it has never served us despite repeated failures.
+fn should_evict_peer(
+    score: i64,
+    in_flight: i64,
+    served: u64,
+    failures: u64,
+    replacement_available: bool,
+) -> bool {
+    if in_flight != 0 || !replacement_available {
+        return false;
+    }
+    if score <= MIN_SCORE_CRITICAL {
+        return true;
+    }
+    served == 0 && failures >= EVICT_FAILURE_THRESHOLD
 }
 
 /// Outcome of a block-data request to a peer.
@@ -362,6 +385,8 @@ pub struct PeerDiagnostics {
     pub client_version: String,
     pub connection_direction: String,
     pub last_response_time: Option<u64>,
+    /// Whether the peer currently has an active RLPx connection.
+    pub connected: bool,
 }
 
 /// Result of contact validation.
@@ -727,6 +752,34 @@ impl PeerTableServer {
                     p.invalid += 1;
                 }
             });
+
+        // Evaluate eviction after stats are updated. Only failures can lead to
+        // eviction (a Served outcome raises the score and sets served>0), so skip
+        // the check, and the connection-pool scan it does, on the hot success path.
+        let evict = if matches!(msg.outcome, RequestOutcome::Served) {
+            false
+        } else if let Some(p) = self.peers.get(&msg.node_id) {
+            let failures = p.empty + p.timeouts + p.invalid;
+            let replacement = self.has_dialable_contact();
+            should_evict_peer(p.score, p.requests, p.served, failures, replacement)
+        } else {
+            false
+        };
+        if evict {
+            if let Some(p) = self.peers.get(&msg.node_id) {
+                let score = p.score;
+                let served = p.served;
+                let failures = p.empty + p.timeouts + p.invalid;
+                tracing::debug!(
+                    peer_id = ?msg.node_id,
+                    score,
+                    served,
+                    failures,
+                    "Evicting chronically unhelpful peer; a replacement will be dialed",
+                );
+            }
+            self.peers.swap_remove(&msg.node_id);
+        }
     }
 
     #[send_handler]
@@ -1138,6 +1191,7 @@ impl PeerTableServer {
                     "outbound".to_string()
                 },
                 last_response_time: peer_data.last_response_time,
+                connected: peer_data.connection.is_some(),
             })
             .collect()
     }
@@ -1338,6 +1392,26 @@ impl PeerTableServer {
             // (these don't get promoted, just removed)
             bucket.replacements.retain(|(_, c)| !c.disposable);
         }
+    }
+
+    /// Returns true if there is at least one node in the connection pool that
+    /// is not already a connected peer, is not marked unwanted, has acknowledged
+    /// us (knows_us == true), and has a valid (or unknown) fork ID.
+    /// Mirrors the eligibility criteria of `do_get_contact_to_initiate` but is
+    /// read-only and does not mutate `already_tried_peers`.
+    fn has_dialable_contact(&self) -> bool {
+        for (node_id, _) in &self.connection_pool {
+            if self.peers.contains_key(node_id) {
+                continue;
+            }
+            match self.get_contact_or_replacement(node_id) {
+                Some(c) if c.knows_us && !c.unwanted && c.is_fork_id_valid != Some(false) => {
+                    return true;
+                }
+                _ => {}
+            }
+        }
+        false
     }
 
     fn do_get_contact_to_initiate(&mut self) -> Option<Contact> {
@@ -1849,5 +1923,61 @@ mod tests {
         let mut remote = H256::zero();
         remote.0[0] = 0x80;
         assert_eq!(bucket_index(&local, &remote), Some(255));
+    }
+
+    // --- should_evict_peer ---
+
+    #[test]
+    fn evict_critical_score_idle_with_replacement() {
+        // Protocol violator at critical floor, idle, replacement available → evict
+        assert!(should_evict_peer(MIN_SCORE_CRITICAL, 0, 0, 0, true));
+    }
+
+    #[test]
+    fn evict_never_served_enough_failures() {
+        // served==0, failures >= threshold, idle, replacement → evict
+        assert!(should_evict_peer(
+            MIN_SCORE,
+            0,
+            0,
+            EVICT_FAILURE_THRESHOLD,
+            true
+        ));
+    }
+
+    #[test]
+    fn no_evict_failures_below_threshold() {
+        // served==0 but not enough failures yet
+        assert!(!should_evict_peer(
+            MIN_SCORE,
+            0,
+            0,
+            EVICT_FAILURE_THRESHOLD - 1,
+            true
+        ));
+    }
+
+    #[test]
+    fn no_evict_when_served_despite_floor() {
+        // Has served at least once → not chronically unhelpful
+        assert!(!should_evict_peer(
+            MIN_SCORE,
+            0,
+            1,
+            EVICT_FAILURE_THRESHOLD,
+            true
+        ));
+    }
+
+    #[test]
+    fn no_evict_when_in_flight() {
+        // Critical score but still has in-flight requests → leave alone
+        assert!(!should_evict_peer(MIN_SCORE_CRITICAL, 1, 0, 0, true));
+    }
+
+    #[test]
+    fn no_evict_when_no_replacement_even_if_critical() {
+        // No replacement to dial → do not evict, even for critical violator
+        assert!(!should_evict_peer(MIN_SCORE_CRITICAL, 0, 0, 0, false));
     }
 }

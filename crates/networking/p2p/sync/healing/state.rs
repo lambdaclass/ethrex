@@ -25,7 +25,7 @@ use tracing::{debug, trace};
 use crate::{
     metrics::{CurrentStepValue, METRICS},
     peer_handler::{PeerHandler, RequestMetadata},
-    peer_table::PeerTableServerProtocol as _,
+    peer_table::{PeerTable, PeerTableServerProtocol as _},
     rlpx::p2p::SUPPORTED_SNAP_CAPABILITIES,
     snap::{
         SnapError,
@@ -301,13 +301,20 @@ async fn heal_state_trie(
                     };
 
                     let tx = task_sender.clone();
+                    let peer_table: PeerTable = peers.peer_table.clone();
                     inflight_tasks += 1;
 
                     tokio::spawn(async move {
                         // TODO: check errors to determine whether the current block is stale
-                        let response =
-                            request_state_trienodes(connection, permit, state_root, batch.clone())
-                                .await;
+                        let response = request_state_trienodes(
+                            connection,
+                            permit,
+                            peer_id,
+                            &peer_table,
+                            state_root,
+                            batch.clone(),
+                        )
+                        .await;
                         // TODO: add error handling
                         tx.send((peer_id, response, batch)).await.inspect_err(
                             |err| debug!(error=?err, "Failed to send state trie nodes response"),
