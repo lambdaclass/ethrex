@@ -120,6 +120,30 @@ pub struct Options {
         env = "ETHREX_ROCKSDB_BLOCK_CACHE_SIZE",
     )]
     pub rocksdb_block_cache_size: usize,
+    #[arg(
+        long = "max-reorg-depth",
+        value_name = "BLOCKS",
+        value_parser = clap::builder::RangedU64ValueParser::<usize>::new().range(1..),
+        help = "Maximum reorg depth the node can unwind, in blocks (default: 128). \
+                Deeper forkchoiceUpdated rewinds are rejected with -38006 Too deep reorg.",
+        long_help = "Maximum number of canonical blocks a single forkchoiceUpdated can revert. \
+                     Rewinds deeper than this are rejected with engine API error -38006 \
+                     (Too deep reorg).\n\
+                     \n\
+                     The limit equals the store's state-history retention: ethrex keeps one \
+                     in-memory trie diff-layer per block and folds older layers into the \
+                     single-version on-disk trie, after which they can no longer be unwound. \
+                     Raising the limit retains more layers, each costing roughly one block's \
+                     worth of trie updates in memory, so values above the default are mainly \
+                     intended for testing environments that rewind deep chains (e.g. hive \
+                     simulators resetting a shared client to genesis between tests).\n\
+                     \n\
+                     Defaults to 128 with the RocksDB backend and 10000 with the in-memory \
+                     backend. ETHREX_MAX_REORG_DEPTH sets the same value.",
+        help_heading = "Storage options",
+        env = "ETHREX_MAX_REORG_DEPTH",
+    )]
+    pub max_reorg_depth: Option<usize>,
     #[arg(long = "syncmode", default_value = "snap", value_name = "SYNC_MODE", value_parser = utils::parse_sync_mode, help = "The way in which the node will sync its state.", long_help = "Can be either \"full\" or \"snap\" with \"snap\" as default value.", help_heading = "P2P options", env = "ETHREX_SYNCMODE")]
     pub syncmode: SyncMode,
     #[arg(
@@ -532,6 +556,7 @@ impl Default for Options {
             bootnodes: Default::default(),
             datadir: Default::default(),
             rocksdb_block_cache_size: ethrex_storage::DEFAULT_ROCKSDB_BLOCK_CACHE_SIZE_BYTES,
+            max_reorg_depth: None,
             syncmode: Default::default(),
             metrics_addr: "0.0.0.0".to_owned(),
             metrics_port: Default::default(),

@@ -128,6 +128,13 @@ impl TrieLayerCache {
         None
     }
 
+    /// Number of layers retained before a disk flush is triggered — equivalently,
+    /// the depth of state history this cache keeps unwindable (one layer per block
+    /// during regular per-block execution).
+    pub fn commit_threshold(&self) -> usize {
+        self.commit_threshold
+    }
+
     /// Returns the state root from which to start a disk commit, using the cache's
     /// default `commit_threshold`.
     ///

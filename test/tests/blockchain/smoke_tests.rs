@@ -12,7 +12,7 @@ use ethrex_common::{
     H160, H256,
     types::{Block, BlockHeader, DEFAULT_BUILDER_GAS_CEIL, ELASTICITY_MULTIPLIER},
 };
-use ethrex_storage::{EngineType, Store};
+use ethrex_storage::{EngineType, Store, StoreConfig};
 
 #[tokio::test]
 async fn test_small_to_long_reorg() {
@@ -290,10 +290,10 @@ async fn latest_block_number_should_always_be_the_canonical_head() {
 async fn unfinalized_reorg_deeper_than_32_is_allowed() {
     // Per execution-apis PR 786 point 6, -38006 TooDeepReorg fires when the reorg
     // depth exceeds the implementation-specific limit. ethrex defines that limit as
-    // its state-history retention (REORG_DEPTH_LIMIT = 128), matching the stance of
-    // Erigon/Nethermind/Besu/geth — the EL trusts the CL's fork choice and only
-    // rejects when it physically cannot unwind. A 33-block reorg from genesis is
-    // well under the cap and must succeed.
+    // its state-history retention (`Store::max_reorg_depth`, 128 by default on
+    // RocksDB), matching the stance of Erigon/Nethermind/Besu/geth — the EL trusts
+    // the CL's fork choice and only rejects when it physically cannot unwind. A
+    // 33-block reorg from genesis is well under the cap and must succeed.
 
     let store = test_store().await;
     let genesis_header = store.get_block_header(0).unwrap().unwrap();
@@ -345,6 +345,66 @@ async fn unfinalized_reorg_deeper_than_32_is_allowed() {
     }
 }
 
+#[tokio::test]
+async fn reorg_depth_limit_follows_store_retention() {
+    // The -38006 TooDeepReorg limit is derived from the store's state-history
+    // retention (`StoreConfig::max_reorg_depth`), so configuring the store moves
+    // the fork-choice limit with it. A small retention keeps the test fast; the
+    // rewind-to-genesis models how EEST's consume-enginex simulator resets a
+    // shared client between tests.
+    let store = test_store_with_config(StoreConfig {
+        max_reorg_depth: Some(8),
+        ..StoreConfig::default()
+    })
+    .await;
+    assert_eq!(store.max_reorg_depth().unwrap(), 8);
+
+    let genesis_header = store.get_block_header(0).unwrap().unwrap();
+    let genesis_hash = genesis_header.hash();
+    let blockchain = Blockchain::default_with_store(store.clone());
+
+    // Build a 10-block canonical chain: genesis → A1 → ... → A10.
+    let mut parent = genesis_header.clone();
+    let mut hashes = Vec::new();
+    for _ in 0..10 {
+        let block = new_block(&store, &parent).await;
+        parent = block.header.clone();
+        hashes.push(block.hash());
+        blockchain.add_block(block).unwrap();
+    }
+    let head = *hashes.last().unwrap();
+    apply_fork_choice(&store, head, H256::zero(), H256::zero())
+        .await
+        .expect("FCU to chain head should succeed");
+
+    // Rewinding to genesis is 10 blocks deep: over the configured limit of 8.
+    let result = apply_fork_choice(&store, genesis_hash, H256::zero(), H256::zero()).await;
+    assert!(
+        matches!(
+            result,
+            Err(InvalidForkChoice::TooDeepReorg {
+                reorg_depth: 10,
+                limit: 8
+            })
+        ),
+        "expected TooDeepReorg {{ reorg_depth: 10, limit: 8 }}, got {result:?}"
+    );
+    // The refused rewind must leave the head untouched.
+    assert_eq!(store.get_latest_block_number().await.unwrap(), 10);
+
+    // A rewind of exactly the configured depth is allowed (the check is exclusive)
+    // and the target state is still retained, so the FCU succeeds end-to-end.
+    apply_fork_choice(&store, hashes[1], H256::zero(), H256::zero())
+        .await
+        .expect("rewind at the configured limit should succeed");
+    assert_eq!(store.get_latest_block_number().await.unwrap(), 2);
+
+    // Without an explicit override the limit is the backend default rather than
+    // a hardcoded fork-choice constant (10000 for the in-memory backend).
+    let store = test_store().await;
+    assert_eq!(store.max_reorg_depth().unwrap(), 10000);
+}
+
 async fn new_block(store: &Store, parent: &BlockHeader) -> Block {
     let args = BuildPayloadArgs {
         parent: parent.hash(),
@@ -372,6 +432,10 @@ fn workspace_root() -> PathBuf {
 }
 
 async fn test_store() -> Store {
+    test_store_with_config(StoreConfig::default()).await
+}
+
+async fn test_store_with_config(config: StoreConfig) -> Store {
     // Get genesis
     let file = File::open(workspace_root().join("fixtures/genesis/execution-api.json"))
         .expect("Failed to open genesis file");
@@ -379,8 +443,8 @@ async fn test_store() -> Store {
     let genesis = serde_json::from_reader(reader).expect("Failed to deserialize genesis file");
 
     // Build store with genesis
-    let mut store =
-        Store::new("store.db", EngineType::InMemory).expect("Failed to build DB for testing");
+    let mut store = Store::new_with_config("store.db", EngineType::InMemory, config)
+        .expect("Failed to build DB for testing");
 
     store
         .add_initial_state(genesis)

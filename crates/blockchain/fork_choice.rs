@@ -11,22 +11,6 @@ use crate::{
     is_canonical,
 };
 
-/// Maximum number of canonical blocks ethrex can revert in a single forkchoice update.
-///
-/// This is an implementation cap, not a spec policy. ethrex's state-history retention
-/// keeps the last ~128 blocks of state diffs, so reorgs deeper than this cannot be
-/// undone regardless of finalization status — the data simply isn't there.
-///
-/// The spec (execution-apis PR 786, "engine: Restrict no-reorg to the prefix of known
-/// finalized") only forbids reorging past the finalized prefix. The finalized check is
-/// applied first; this cap is a secondary guard for the implementation limit.
-///
-/// Reference values across ELs (devnet branches, 2026-04-30):
-/// - besu (main): 90_000 — effectively unlimited
-/// - erigon (glamsterdam-devnet-0): 96, env-configurable via `MAX_REORG_DEPTH`
-/// - geth / nethermind / reth: no engine-API rejection; trust the CL's fork choice
-pub const REORG_DEPTH_LIMIT: u64 = 128;
-
 /// Applies new fork choice data to the current blockchain. It performs validity checks:
 /// - The finalized, safe and head hashes must correspond to already saved blocks.
 /// - The saved blocks should be in the correct order (finalized <= safe <= head).
@@ -127,12 +111,21 @@ pub async fn apply_fork_choice(
 
     // execution-apis PR 786 point 6: -38006 TooDeepReorg is returned when the reorg
     // depth exceeds the limitation specific to the client software. ethrex's limit
-    // is its state-history retention: we keep the last REORG_DEPTH_LIMIT blocks of
-    // state diffs, so reorgs deeper than that cannot be unwound. We do not reject
+    // is its state-history retention: the store keeps one in-memory trie diff-layer
+    // per block before folding it into the single-version on-disk trie, so reorgs
+    // deeper than the retained layers cannot be unwound — the data simply isn't
+    // there. The limit is therefore derived from the store (128 by default,
+    // configurable via `--max-reorg-depth` / `StoreConfig::max_reorg_depth`), which
+    // keeps the check and the retention from drifting apart. We do not reject
     // reorgs that would cross the finalized prefix — the spec's only requirement on
     // finalized is point 2 (skip-when-ancestor-of-finalized, handled above) and
     // point 5 (-38002 for disconnected safe/finalized). The CL is authoritative on
     // fork choice and an EL must honor what the CL sends if it physically can.
+    //
+    // Reference values across ELs (devnet branches, 2026-04-30):
+    // - besu (main): 90_000 — effectively unlimited
+    // - erigon (glamsterdam-devnet-0): 96, env-configurable via `MAX_REORG_DEPTH`
+    // - geth / nethermind / reth: no engine-API rejection; trust the CL's fork choice
     //
     // The shared canonical ancestor is `head` itself when head is canonical (the
     // FCU truncates the canonical chain), or one below the lowest sidechain block
@@ -147,10 +140,11 @@ pub async fn apply_fork_choice(
             .saturating_sub(1)
     };
     let reorg_depth = latest.saturating_sub(canonical_link_height);
-    if reorg_depth > REORG_DEPTH_LIMIT {
+    let max_reorg_depth = store.max_reorg_depth()?;
+    if reorg_depth > max_reorg_depth {
         return Err(InvalidForkChoice::TooDeepReorg {
             reorg_depth,
-            limit: REORG_DEPTH_LIMIT,
+            limit: max_reorg_depth,
         });
     }
 
