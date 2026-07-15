@@ -326,20 +326,41 @@ fn log_warm_diff(block: &Block, entry: &PrewarmedEntry, mempool: &Mempool) {
         diff.pr.len(),
     );
 
-    // Coverage split of the uncovered txs. `in_pool` is the pool state at
-    // execute time (block txs are pruned only after acceptance), so a block tx
-    // absent here was never in our pool.
-    let in_pool = mempool.pending_hashes().unwrap_or_default();
+    // Coverage split of the uncovered txs. `arrivals` (hash -> unix micros) is
+    // the pool state at execute time (block txs are pruned only after
+    // acceptance), so a block tx absent here was never in our pool. For the
+    // `late` bucket, split by arrival time vs the slot boundary (= the
+    // prewarmer's deadline = this block's timestamp) and vs block receipt:
+    //   before_deadline — recoverable by snapshotting right at the deadline;
+    //   in_prop_window   — recoverable only by warming past the deadline until
+    //                      the block arrives;
+    //   after_recv       — arrived after we got the block: unrecoverable.
+    let arrivals = mempool.pending_arrivals().unwrap_or_default();
+    let now_micros = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_micros())
+        .unwrap_or(0);
+    let deadline_micros = (block.header.timestamp as u128).saturating_mul(1_000_000);
     let (mut warmed, mut private, mut late, mut sel_loss) = (0u32, 0u32, 0u32, 0u32);
+    let (mut late_before_deadline, mut late_in_window, mut late_after_recv) = (0u32, 0u32, 0u32);
     for h in &block_hashes {
         if diff.this_branch.contains(h) {
             warmed += 1;
-        } else if !in_pool.contains(h) {
-            private += 1;
-        } else if diff.seen_in_snapshot.contains(h) {
-            sel_loss += 1;
+        } else if let Some(&t_arr) = arrivals.get(h) {
+            if diff.seen_in_snapshot.contains(h) {
+                sel_loss += 1;
+            } else {
+                late += 1;
+                if t_arr >= now_micros {
+                    late_after_recv += 1;
+                } else if t_arr <= deadline_micros {
+                    late_before_deadline += 1;
+                } else {
+                    late_in_window += 1;
+                }
+            }
         } else {
-            late += 1;
+            private += 1;
         }
     }
     info!(
@@ -352,6 +373,16 @@ fn log_warm_diff(block: &Block, entry: &PrewarmedEntry, mempool: &Mempool) {
         late,
         sel_loss,
         diff.seen_in_snapshot.len(),
+    );
+    info!(
+        "Prewarm late-split block {}: late={}, before_deadline={}, in_prop_window={}, \
+         after_recv={}, recv_offset_ms={}",
+        block.header.number,
+        late,
+        late_before_deadline,
+        late_in_window,
+        late_after_recv,
+        (now_micros as i128 - deadline_micros as i128) / 1000,
     );
 }
 

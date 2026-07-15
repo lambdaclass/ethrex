@@ -985,6 +985,19 @@ impl Mempool {
         Ok(self.read()?.transaction_pool.keys().copied().collect())
     }
 
+    /// Stage 1 warm-diff instrumentation (temporary). Pool tx hash -> arrival
+    /// time (unix micros, when the tx reached our mempool). The executor uses
+    /// this to split the `late` coverage bucket by when each tx arrived
+    /// relative to the slot boundary and block receipt. Remove with the rest.
+    pub fn pending_arrivals(&self) -> Result<FxHashMap<H256, u128>, MempoolError> {
+        Ok(self
+            .read()?
+            .transaction_pool
+            .iter()
+            .map(|(h, tx)| (*h, tx.time()))
+            .collect())
+    }
+
     pub fn find_tx_to_replace(
         &self,
         sender: Address,
