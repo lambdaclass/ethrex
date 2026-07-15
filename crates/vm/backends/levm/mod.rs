@@ -156,7 +156,7 @@ fn check_gas_limit(
 /// capped at `TX_MAX_GAS_LIMIT`); intrinsic underfunding is rejected separately
 /// in transaction validation, not here. Mirrors
 /// `src/ethereum/forks/amsterdam/fork.py` `check_transaction` at the
-/// `tests-glamsterdam-devnet@v6.1.1` spec.
+/// `tests-glamsterdam-devnet@v7.1.0` spec.
 ///
 /// Note: `block_gas_used_regular` here equals EELS's `block_output.block_gas_used`
 /// because our `report.gas_used` already reflects `max(raw_regular, calldata_floor)`
@@ -299,12 +299,11 @@ impl LEVM {
                 let bal_index = u32::try_from(tx_idx + 1).unwrap_or(u32::MAX);
                 db.set_bal_index(bal_index);
 
-                // Record tx sender and recipient for BAL
+                // Record tx sender for BAL. The recipient is recorded when the prepare
+                // region loads it (default_hook), per the EIP-7928 v7.1.0 update: an
+                // EIP-7702 auth halt before the recipient load must exclude it.
                 if let Some(recorder) = db.bal_recorder_mut() {
                     recorder.record_touched_address(tx_sender);
-                    if let TxKind::Call(to) = tx.to() {
-                        recorder.record_touched_address(to);
-                    }
                 }
             }
 
@@ -728,12 +727,11 @@ impl LEVM {
                 let bal_index = u32::try_from(tx_idx + 1).unwrap_or(u32::MAX);
                 db.set_bal_index(bal_index);
 
-                // Record tx sender and recipient for BAL
+                // Record tx sender for BAL. The recipient is recorded when the prepare
+                // region loads it (default_hook), per the EIP-7928 v7.1.0 update: an
+                // EIP-7702 auth halt before the recipient load must exclude it.
                 if let Some(recorder) = db.bal_recorder_mut() {
                     recorder.record_touched_address(tx_sender);
-                    if let TxKind::Call(to) = tx.to() {
-                        recorder.record_touched_address(to);
-                    }
                 }
             }
 
@@ -1235,11 +1233,11 @@ impl LEVM {
                 tx_db.enable_bal_recording();
                 let bal_index = u32::try_from(tx_idx + 1).unwrap_or(u32::MAX);
                 tx_db.set_bal_index(bal_index);
+                // Record tx sender for BAL. The recipient is recorded when the prepare
+                // region loads it (default_hook), per the EIP-7928 v7.1.0 update: an
+                // EIP-7702 auth halt before the recipient load must exclude it.
                 if let Some(recorder) = tx_db.bal_recorder_mut() {
                     recorder.record_touched_address(*sender);
-                    if let TxKind::Call(to) = tx.to() {
-                        recorder.record_touched_address(to);
-                    }
                 }
 
                 let report = LEVM::execute_tx_in_block(
@@ -1260,7 +1258,7 @@ impl LEVM {
 
                 let current_state = std::mem::take(&mut tx_db.current_accounts_state);
                 let codes = std::mem::take(&mut tx_db.codes);
-                let tracked = tx_db.accessed_accounts.take().unwrap_or_default();
+                let mut tracked = tx_db.accessed_accounts.take().unwrap_or_default();
                 let (shadow_touched, shadow_reads) = tx_db
                     .bal_recorder
                     .take()
@@ -1349,6 +1347,16 @@ impl LEVM {
 
                 drop(current_state);
                 drop(codes);
+
+                // The shadow BAL recorder's touched addresses are ethrex's exact
+                // EELS `account_reads` analog: an address is recorded here iff EELS
+                // would add it to `account_reads` (e.g. a CREATE target read by
+                // `is_account_alive` before an OOG state-gas charge). The coarse
+                // `accessed_accounts` tracker only sees `load_account` calls, which
+                // can miss such a target when the frame OOGs before materializing it.
+                // Fold the recorder touches into `tracked` so the pure-access
+                // checklist is reduced by everything ethrex legitimately accessed.
+                tracked.extend(shadow_touched.iter().copied());
 
                 Ok((
                     tx_idx,

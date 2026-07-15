@@ -50,10 +50,19 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
+      # Persist lychee's per-URL result cache so unchanged links aren't
+      # re-fetched on every run (config lives in lychee.toml).
+      - name: Restore lychee cache
+        uses: actions/cache@v4
+        with:
+          path: .lycheecache
+          key: lychee-${{ github.sha }}
+          restore-keys: lychee-
+
       - name: Check links
         uses: lycheeverse/lychee-action@v2
         with:
-          args: --no-progress --exclude 'localhost' --exclude 'medium.com' --exclude 'mirror.xyz' --exclude 'stateless-validation.l2beat.com' --exclude 'etherscan.io' docs/
+          args: --no-progress --config lychee.toml docs/
           fail: true
 
   deploy:
