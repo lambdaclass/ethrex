@@ -417,11 +417,10 @@ pub struct DeployerOptions {
         long = "native-rollups.finality-delay",
         value_name = "SECONDS",
         env = "ETHREX_NATIVE_ROLLUPS_FINALITY_DELAY",
-        default_value = "0",
         help_heading = "Native rollups options",
-        help = "Seconds a state root must age on L1 before its withdrawals can be claimed (NativeRollup.FINALITY_DELAY). 0 = instant finality (local demo only); production must set a reorg-safe delay."
+        help = "Seconds a state root must age on L1 before its withdrawals can be claimed (NativeRollup.FINALITY_DELAY, immutable). Required with --native-rollups — no default, so a deploy can't silently bake 0. Pass 0 explicitly for a local demo (instant finality); production must pass a reorg-safe value."
     )]
-    pub native_rollups_finality_delay: u64,
+    pub native_rollups_finality_delay: Option<u64>,
 }
 
 impl Default for DeployerOptions {
@@ -513,7 +512,7 @@ impl Default for DeployerOptions {
             native_rollups: false,
             native_rollups_relayer_pk: None,
             native_rollups_advancer_address: None,
-            native_rollups_finality_delay: 0,
+            native_rollups_finality_delay: None,
         }
     }
 }
@@ -1843,16 +1842,22 @@ pub async fn deploy_native_rollup_contracts(
         .native_rollups_advancer_address
         .unwrap_or_else(|| signer.address());
     info!("Advancer address (authorized for advance()): {advancer:#x}");
-    // Exit window before a withdrawal can be claimed on L1, from
-    // --native-rollups.finality-delay (default 0 = instant finality for the local
-    // demo; production must pass a reorg-safe delay). Baked immutably into the
-    // contract at construction.
-    let finality_delay: u64 = opts.native_rollups_finality_delay;
+    // Exit window before a withdrawal can be claimed on L1. Baked immutably into
+    // the contract at construction, so --native-rollups.finality-delay has NO
+    // default and is required: a scripted/CI deploy that forgot to set it fails
+    // loudly here rather than silently minting FINALITY_DELAY=0. Passing 0
+    // explicitly is a conscious choice (instant finality, local demo only).
+    let finality_delay: u64 = opts.native_rollups_finality_delay.ok_or_else(|| {
+        DeployerError::InternalError(
+            "--native-rollups.finality-delay is required (seconds); it is baked into the \
+             immutable contract. Pass a reorg-safe value, or 0 for a local demo."
+                .into(),
+        )
+    })?;
     if finality_delay == 0 {
         warn!(
-            "NativeRollup FINALITY_DELAY is 0 (instant finality). This is only safe \
-             for a local demo; a production deployment must set \
-             --native-rollups.finality-delay to a reorg-safe value."
+            "NativeRollup FINALITY_DELAY set to 0 (instant finality). LOCAL DEMO ONLY — \
+             a production deployment must use a reorg-safe delay."
         );
     }
     let constructor_args = encode_calldata(

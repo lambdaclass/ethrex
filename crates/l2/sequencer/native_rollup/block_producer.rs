@@ -48,7 +48,7 @@ use super::types::L1Message;
 /// check, Merkle-proof verification, event) on top of the forwarded
 /// `msg.gas_limit`. Must match `RELAYER_GAS_BODY_ALLOWANCE` in `NativeRollup.sol`,
 /// which caps `sendL1Message` so every accepted message stays includable.
-const RELAYER_GAS_BODY_ALLOWANCE: u64 = 300_000;
+pub const RELAYER_GAS_BODY_ALLOWANCE: u64 = 300_000;
 
 /// Gas limit the producer assigns to the relayer tx that delivers an L1 message
 /// with the given `msg_gas_limit`: the forwarded gas grossed up by the 63/64

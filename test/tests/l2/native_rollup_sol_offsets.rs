@@ -45,10 +45,12 @@ fn sol_uint_const(src: &str, name: &str) -> usize {
     let eq = after
         .find('=')
         .unwrap_or_else(|| panic!("no `=` after constant {name}"));
+    // Solidity allows `_` digit separators (e.g. `300_000`); strip them.
     let value: String = after[eq + 1..]
         .trim_start()
         .chars()
-        .take_while(|c| c.is_ascii_digit())
+        .take_while(|c| c.is_ascii_digit() || *c == '_')
+        .filter(|c| *c != '_')
         .collect();
     value
         .parse()
@@ -237,5 +239,22 @@ fn sol_result_offsets_match_encoding() {
     assert_eq!(
         chain_id, 0x1122334455667788,
         "chain_id must be readable at the RESULT_CHAIN_CONFIG_OFFSET_POS deref"
+    );
+}
+
+/// Drift guard for the relayer-gas overhead constant, which is duplicated in
+/// Solidity (`NativeRollup.sol`) and Rust (`block_producer.rs`). `sendL1Message`'s
+/// includability cap and the producer's relayer-tx sizing both use it and MUST
+/// agree — a silent drift wedges the bridge (Rust > Sol) or makes a valid message
+/// un-includable (Sol > Rust). This pins the `.sol` value to the Rust source of
+/// truth, the same way `sol_ep_offsets_match_encoding` pins the SSZ offsets.
+#[test]
+fn sol_relayer_gas_allowance_matches_rust() {
+    let src = read_contract();
+    let sol = sol_uint_const(&src, "RELAYER_GAS_BODY_ALLOWANCE") as u64;
+    assert_eq!(
+        sol,
+        ethrex_l2::sequencer::native_rollup::block_producer::RELAYER_GAS_BODY_ALLOWANCE,
+        "RELAYER_GAS_BODY_ALLOWANCE drifted between NativeRollup.sol and block_producer.rs"
     );
 }

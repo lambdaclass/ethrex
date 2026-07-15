@@ -127,6 +127,7 @@ deploy-l1-native: ## 📜 Deploys NativeRollup.sol to L1 (native rollups)
 	--private-key ${L1_PRIVATE_KEY} \
 	--native-rollups \
 	--native-rollups.relayer-pk ${NATIVE_RELAYER_PRIVATE_KEY} \
+	--native-rollups.finality-delay 0 \
 	--genesis-l2-path ${NATIVE_L2_GENESIS_FILE_PATH} \
 	--l2-gas-limit 15000000
 

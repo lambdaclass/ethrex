@@ -131,6 +131,16 @@ contract NativeRollup {
         uint256 _finalityDelay
     ) {
         require(_advancer != address(0), "NativeRollup: advancer is zero");
+        // l2GasLimit is immutable in practice (advance() enforces provenGasLimit ==
+        // l2GasLimit). sendL1Message's cap computes (l2GasLimit -
+        // RELAYER_GAS_BODY_ALLOWANCE); a block gas limit at or below that allowance
+        // would underflow-revert every sendL1Message, permanently bricking the
+        // L1->L2 bridge. Reject it at construction (cheap defence for a value baked
+        // in for the contract's lifetime).
+        require(
+            _blockGasLimit > RELAYER_GAS_BODY_ALLOWANCE,
+            "NativeRollup: l2GasLimit too small"
+        );
         stateRoot = _initialStateRoot;
         blockHash = _initialBlockHash;
         blockNumber = 0;
