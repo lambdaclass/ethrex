@@ -974,7 +974,8 @@ impl BlockAccessListRecorder {
     /// Consumes and returns recorded storage reads as `(address, slot)` pairs.
     /// Note: a slot that was read and then written stays in this set (promotion
     /// filtering only happens in `build()`); callers needing genuine pure reads
-    /// must subtract [`take_storage_writes`](Self::take_storage_writes).
+    /// must subtract the written slots (the keys of
+    /// [`take_tx_initial_storage`](Self::take_tx_initial_storage)).
     pub fn take_storage_reads(&mut self) -> Vec<(Address, U256)> {
         let reads = std::mem::take(&mut self.storage_reads);
         let mut out = Vec::new();
@@ -986,19 +987,18 @@ impl BlockAccessListRecorder {
         out
     }
 
-    /// Consumes and returns the set of storage slots WRITTEN during execution as
-    /// `(address, slot)` pairs (includes slots that were also read, i.e. promoted
-    /// reads). Used by parallel BAL validation to distinguish genuine pure reads
-    /// (skippable) from writes (must be validated against the BAL).
-    pub fn take_storage_writes(&mut self) -> Vec<(Address, U256)> {
-        let writes = std::mem::take(&mut self.storage_writes);
-        let mut out = Vec::new();
-        for (addr, slots) in writes {
-            for slot in slots.into_keys() {
-                out.push((addr, slot));
-            }
-        }
-        out
+    /// Consumes and returns the per-tx captured start-of-tx storage values as a
+    /// `(address, slot) -> pre_value` map. An entry is recorded (first-write-wins,
+    /// via `capture_pre_storage`) the first time a slot's value genuinely changes
+    /// during the tx, so `pre_value` is the value at the start of the tx regardless
+    /// of any later reverts.
+    ///
+    /// Parallel BAL validation uses this two ways: its keys are exactly the slots
+    /// genuinely written (so `reads - keys` yields the pure reads), and the values
+    /// are the start-of-tx seed for those slots — letting the validator reuse a
+    /// value the EVM already computed instead of re-reading it from the store.
+    pub fn take_tx_initial_storage(&mut self) -> BTreeMap<(Address, U256), U256> {
+        std::mem::take(&mut self.tx_initial_storage)
     }
 
     /// Records an address as touched during execution.
@@ -1814,6 +1814,63 @@ mod decode_tests {
             "RLP decoder produced wrong post_balance: got {}, expected {}",
             change.post_balance, expected,
         );
+    }
+}
+
+#[cfg(test)]
+mod recorder_tests {
+    use super::*;
+    use ethereum_types::Address;
+
+    /// A slot written only inside a reverted call becomes a read on restore, yet
+    /// `tx_initial_storage` must still hold its true start-of-tx value. The
+    /// parallel BAL validator seeds storage from this map, so a stale/missing
+    /// pre-value here would mis-validate a reverted-write slot.
+    #[test]
+    fn tx_initial_storage_retains_prevalue_for_reverted_fresh_write() {
+        let mut r = BlockAccessListRecorder::new();
+        r.set_block_access_index(1);
+        let a = Address::zero();
+        let slot = U256::from(9);
+
+        let cp = r.checkpoint();
+        // Fresh write inside the (soon-reverted) call: capture pre=3, then write 4.
+        r.capture_pre_storage(a, slot, U256::from(3));
+        r.record_storage_write(a, slot, U256::from(4));
+        r.restore(cp);
+
+        // The reverted fresh write is reclassified as a read...
+        let reads = r.take_storage_reads();
+        assert!(
+            reads.contains(&(a, slot)),
+            "a reverted fresh write must be recorded as a read"
+        );
+        // ...but the captured start-of-tx value survives the revert unchanged.
+        let ti = r.take_tx_initial_storage();
+        assert_eq!(
+            ti.get(&(a, slot)),
+            Some(&U256::from(3)),
+            "tx_initial_storage must retain the true start-of-tx value after revert"
+        );
+    }
+
+    /// First-write-wins: a second write in the same tx must not overwrite the
+    /// captured start-of-tx value.
+    #[test]
+    fn tx_initial_storage_is_first_write_wins() {
+        let mut r = BlockAccessListRecorder::new();
+        r.set_block_access_index(1);
+        let a = Address::zero();
+        let slot = U256::from(1);
+
+        r.capture_pre_storage(a, slot, U256::from(10));
+        r.record_storage_write(a, slot, U256::from(20));
+        // Second write in the same tx re-captures, but or_insert keeps the first.
+        r.capture_pre_storage(a, slot, U256::from(20));
+        r.record_storage_write(a, slot, U256::from(30));
+
+        let ti = r.take_tx_initial_storage();
+        assert_eq!(ti.get(&(a, slot)), Some(&U256::from(10)));
     }
 }
 

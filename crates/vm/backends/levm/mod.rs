@@ -1211,17 +1211,23 @@ impl LEVM {
                 let current_state = std::mem::take(&mut tx_db.current_accounts_state);
                 let codes = std::mem::take(&mut tx_db.codes);
                 let mut tracked = tx_db.accessed_accounts.take().unwrap_or_default();
-                let (shadow_touched, shadow_reads, shadow_writes) = tx_db
+                let (shadow_touched, shadow_reads, tx_initial_storage) = tx_db
                     .bal_recorder
                     .take()
                     .map(|mut r| {
                         (
                             r.take_touched_addresses(),
                             r.take_storage_reads(),
-                            r.take_storage_writes(),
+                            r.take_tx_initial_storage(),
                         )
                     })
                     .unwrap_or_default();
+                // `tx_initial_storage` maps each genuinely-written slot to its start-of-tx
+                // value (see `take_tx_initial_storage`). It serves the storage checks two
+                // ways: its keys are the written slots, and its values are the seeded
+                // pre-state the validator would otherwise re-read from the store.
+                let tx_initial: FxHashMap<(Address, U256), U256> =
+                    tx_initial_storage.into_iter().collect();
                 // Genuine pure reads = observed reads minus written slots. A slot read
                 // then written stays in `shadow_reads` (the recorder promotes it only in
                 // `build()`, which the shadow path skips) and SSTORE always records an
@@ -1230,11 +1236,10 @@ impl LEVM {
                 // read and its BAL entry skipped. The execution->BAL check skips the
                 // DB-backed seeded lookup for genuine reads: a read never diverges from
                 // its pre-tx value, so there is nothing to validate.
-                let written: FxHashSet<(Address, U256)> = shadow_writes.into_iter().collect();
                 let pure_reads: FxHashSet<(Address, U256)> = shadow_reads
                     .iter()
                     .copied()
-                    .filter(|k| !written.contains(k))
+                    .filter(|k| !tx_initial.contains_key(k))
                     .collect();
 
                 // Precompute the per-tx inputs the serial pass uses to update
@@ -1298,6 +1303,7 @@ impl LEVM {
                         &system_seed,
                         &store,
                         &pure_reads,
+                        &tx_initial,
                     )
                     .map_err(|e| {
                         EvmError::Custom(format!("BAL validation failed for tx {tx_idx}: {e}"))
@@ -1567,6 +1573,10 @@ impl LEVM {
 
     /// Gets the seeded value for a storage slot at `seed_idx` from BAL, falling
     /// back to system_seed/store if no BAL entry exists before that index.
+    ///
+    /// Fast path: for a slot the EVM genuinely wrote this tx, `tx_initial` already
+    /// holds the start-of-tx value it captured during execution — identical to what
+    /// this function would otherwise recompute — so return it and skip the lookup.
     #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
     fn seeded_storage(
         seed_idx: u32,
@@ -1575,7 +1585,11 @@ impl LEVM {
         key: H256,
         system_seed: &CacheDB,
         store: &Arc<dyn Database>,
+        tx_initial: &FxHashMap<(Address, U256), U256>,
     ) -> Result<U256, BalValidationError> {
+        if let Some(v) = tx_initial.get(&(addr, sc.slot)) {
+            return Ok(*v);
+        }
         let pos = sc
             .slot_changes
             .partition_point(|c| c.block_access_index <= seed_idx);
@@ -1616,6 +1630,10 @@ impl LEVM {
     ///   written); the execution->BAL check skips the seeded pre-state lookup for these since a
     ///   genuine read cannot diverge from its pre-tx value. Pass an empty set to
     ///   validate every slot unconditionally (e.g. from unit tests).
+    /// `tx_initial`: start-of-tx storage values the EVM already captured for
+    ///   written slots (`(addr, slot) -> pre_value`); used as the storage seed
+    ///   fast-path so `seeded_storage` avoids a store read. Pass an empty map to
+    ///   force the store fallback (e.g. from unit tests).
     ///
     /// Exposed as `pub` (rather than crate-private) solely so BAL content-validation
     /// unit tests outside this crate can call it directly.
@@ -1631,6 +1649,7 @@ impl LEVM {
         system_seed: &CacheDB,
         store: &Arc<dyn Database>,
         pure_reads: &FxHashSet<(Address, U256)>,
+        tx_initial: &FxHashMap<(Address, U256), U256>,
     ) -> Result<(), BalValidationError> {
         // BAL -> execution: for each BAL account with changes at bal_idx,
         // verify execution produced the matching post-state (and that no
@@ -1850,6 +1869,7 @@ impl LEVM {
                                     key,
                                     system_seed,
                                     store,
+                                    tx_initial,
                                 )?;
                                 if expected_value == seeded {
                                     return Err(BalValidationError::Mismatch(format!(
@@ -1869,8 +1889,15 @@ impl LEVM {
                         // Matching arm: slot present in execution state and equal
                         // to expected. Reject spurious no-op entries (post == the
                         // start-of-tx seeded value).
-                        let seeded =
-                            Self::seeded_storage(seed_idx, sc, addr, key, system_seed, store)?;
+                        let seeded = Self::seeded_storage(
+                            seed_idx,
+                            sc,
+                            addr,
+                            key,
+                            system_seed,
+                            store,
+                            tx_initial,
+                        )?;
                         if expected_value == seeded {
                             return Err(BalValidationError::Mismatch(format!(
                                 "account {addr:?} has spurious no-op BAL storage change for \
@@ -1977,6 +2004,7 @@ impl LEVM {
                             *key_h256,
                             system_seed,
                             store,
+                            tx_initial,
                         )?;
                         if value != seeded {
                             return Err(BalValidationError::Mismatch(format!(
@@ -2001,6 +2029,9 @@ impl LEVM {
                 // excluded from `pure_reads`), so its value equals the pre-tx value by
                 // construction — skip the DB-backed seeded lookup entirely.
                 else if !pure_reads.contains(&(*addr, slot_u256)) {
+                    // `seeded_storage`'s tx_initial fast-path keys on `sc.slot`, so the
+                    // dummy carries the real slot; a written slot hits tx_initial and
+                    // skips the store read.
                     let dummy_slot_change = SlotChange::new(slot_u256);
                     let pre_value = Self::seeded_storage(
                         seed_idx,
@@ -2009,6 +2040,7 @@ impl LEVM {
                         *key_h256,
                         system_seed,
                         store,
+                        tx_initial,
                     )?;
                     if value != pre_value {
                         let declared_as_read = acct.storage_reads.contains(&slot_u256);

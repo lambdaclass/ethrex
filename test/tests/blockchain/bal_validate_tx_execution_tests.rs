@@ -156,6 +156,7 @@ fn noop_balance_change_rejected() {
         &system_seed_map,
         &unused_store(),
         &FxHashSet::default(),
+        &FxHashMap::default(),
     );
     assert_mismatch(&result, "no-op BAL balance change");
 }
@@ -203,6 +204,7 @@ fn noop_nonce_change_rejected() {
         &system_seed,
         &unused_store(),
         &FxHashSet::default(),
+        &FxHashMap::default(),
     );
     assert_mismatch(&result, "no-op BAL nonce change");
 }
@@ -243,6 +245,7 @@ fn noop_code_change_rejected() {
         &system_seed,
         &unused_store(),
         &FxHashSet::default(),
+        &FxHashMap::default(),
     );
     assert_mismatch(&result, "no-op BAL code change");
 }
@@ -294,6 +297,7 @@ fn noop_storage_change_rejected() {
         &system_seed,
         &unused_store(),
         &FxHashSet::default(),
+        &FxHashMap::default(),
     );
     assert_mismatch(&result, "no-op BAL storage change");
 }
@@ -344,6 +348,7 @@ fn genuine_balance_change_accepted() {
         &system_seed,
         &unused_store(),
         &FxHashSet::default(),
+        &FxHashMap::default(),
     );
     assert!(result.is_ok(), "expected Ok(()), got: {result:?}");
 }
@@ -396,6 +401,7 @@ fn missing_storage_write_rejected() {
         &system_seed,
         &unused_store(),
         &FxHashSet::default(),
+        &FxHashMap::default(),
     );
     assert_mismatch(&result, "has no storage_changes entry");
 }
@@ -445,6 +451,7 @@ fn read_only_slot_not_in_changes_accepted() {
         &system_seed,
         &unused_store(),
         &FxHashSet::default(),
+        &FxHashMap::default(),
     );
     assert!(result.is_ok(), "expected Ok(()), got: {result:?}");
 }
@@ -500,6 +507,7 @@ fn written_slot_misdeclared_as_read_rejected() {
         &system_seed,
         &unused_store(),
         &FxHashSet::default(),
+        &FxHashMap::default(),
     );
     assert_mismatch(&result, "declared_as_read=true");
 }
@@ -548,6 +556,7 @@ fn noop_balance_change_absent_account_rejected() {
         &system_seed,
         &unused_store(),
         &FxHashSet::default(),
+        &FxHashMap::default(),
     );
     assert_mismatch(&result, "spurious no-op BAL balance change");
 }
@@ -587,6 +596,7 @@ fn noop_nonce_change_absent_account_rejected() {
         &system_seed,
         &unused_store(),
         &FxHashSet::default(),
+        &FxHashMap::default(),
     );
     assert_mismatch(&result, "spurious no-op BAL nonce change");
 }
@@ -624,6 +634,7 @@ fn noop_code_change_absent_account_rejected() {
         &system_seed,
         &unused_store(),
         &FxHashSet::default(),
+        &FxHashMap::default(),
     );
     assert_mismatch(&result, "spurious no-op BAL code change");
 }
@@ -669,6 +680,7 @@ fn noop_storage_change_absent_slot_rejected() {
         &system_seed,
         &unused_store(),
         &FxHashSet::default(),
+        &FxHashMap::default(),
     );
     assert_mismatch(&result, "spurious no-op BAL storage change");
 }
@@ -727,6 +739,7 @@ fn storage_change_omitted_at_this_index_rejected() {
         &system_seed,
         &unused_store(),
         &FxHashSet::default(),
+        &FxHashMap::default(),
     );
     assert_mismatch(&result, "has no change at index");
 }
@@ -782,6 +795,122 @@ fn storage_read_at_this_index_with_later_change_accepted() {
         &system_seed,
         &unused_store(),
         &FxHashSet::default(),
+        &FxHashMap::default(),
     );
     assert!(result.is_ok(), "expected Ok(()), got: {result:?}");
+}
+
+/// The storage seed fast-path: when `tx_initial` carries a slot's start-of-tx
+/// value, `seeded_storage` must use it and never touch the store. Proven by an
+/// empty `system_seed` + an erroring `unused_store`: reaching the store fallback
+/// would surface a `Database` error, so `Ok` means the fast-path was taken.
+#[test]
+fn storage_seed_uses_tx_initial_fast_path() {
+    let address = addr(15);
+    let slot = U256::from(7);
+    let pre = U256::from(5);
+    let post = U256::from(9);
+
+    // Seed the account's info (so the balance/nonce/code baseline checks resolve
+    // in-memory) but deliberately leave the slot out of seed storage: the only
+    // non-erroring source for the slot's seed is tx_initial. The store errors, so
+    // reaching it would surface a Database error.
+    let mut system_seed: CacheDB = FxHashMap::default();
+    system_seed.insert(
+        address,
+        account_with(
+            U256::zero(),
+            0,
+            *ethrex_common::constants::EMPTY_KECCAK_HASH,
+            AccountStatus::Unmodified,
+        ),
+    );
+
+    let mut current_state: FxHashMap<Address, LevmAccount> = FxHashMap::default();
+    let mut current_account = account_with(
+        U256::zero(),
+        0,
+        *ethrex_common::constants::EMPTY_KECCAK_HASH,
+        AccountStatus::Modified,
+    );
+    current_account.storage.insert(u256_to_h256(slot), post);
+    current_state.insert(address, current_account);
+
+    let bal =
+        BlockAccessList::from_accounts(vec![AccountChanges::new(address).with_storage_changes(
+            vec![SlotChange::with_changes(
+                slot,
+                vec![StorageChange::new(1, post)],
+            )],
+        )]);
+    let index = bal.build_validation_index();
+    let codes: FxHashMap<H256, Code> = FxHashMap::default();
+
+    let mut tx_initial: FxHashMap<(Address, U256), U256> = FxHashMap::default();
+    tx_initial.insert((address, slot), pre);
+
+    let result = LEVM::validate_tx_execution(
+        1,
+        0,
+        &current_state,
+        &codes,
+        &bal,
+        &index,
+        &system_seed,
+        &unused_store(),
+        &FxHashSet::default(),
+        &tx_initial,
+    );
+    // post (9) != pre (5) → genuine change, accepted — and no store error.
+    assert!(result.is_ok(), "expected Ok(()), got: {result:?}");
+}
+
+/// The fast-path value feeds no-op detection: a storage change whose post-value
+/// equals the `tx_initial` start-of-tx value is rejected as a spurious no-op,
+/// again without touching the store.
+#[test]
+fn storage_noop_detected_via_tx_initial() {
+    let address = addr(16);
+    let slot = U256::from(7);
+    let value = U256::from(5);
+
+    let system_seed: CacheDB = FxHashMap::default();
+
+    let mut current_state: FxHashMap<Address, LevmAccount> = FxHashMap::default();
+    let mut current_account = account_with(
+        U256::zero(),
+        0,
+        *ethrex_common::constants::EMPTY_KECCAK_HASH,
+        AccountStatus::Modified,
+    );
+    current_account.storage.insert(u256_to_h256(slot), value);
+    current_state.insert(address, current_account);
+
+    let bal =
+        BlockAccessList::from_accounts(vec![AccountChanges::new(address).with_storage_changes(
+            vec![SlotChange::with_changes(
+                slot,
+                vec![StorageChange::new(1, value)],
+            )],
+        )]);
+    let index = bal.build_validation_index();
+    let codes: FxHashMap<H256, Code> = FxHashMap::default();
+
+    // Start-of-tx value == post value → no-op.
+    let mut tx_initial: FxHashMap<(Address, U256), U256> = FxHashMap::default();
+    tx_initial.insert((address, slot), value);
+
+    let result = LEVM::validate_tx_execution(
+        1,
+        0,
+        &current_state,
+        &codes,
+        &bal,
+        &index,
+        &system_seed,
+        &unused_store(),
+        &FxHashSet::default(),
+        &tx_initial,
+    );
+    assert_mismatch(&result, "no-op BAL storage change");
 }
