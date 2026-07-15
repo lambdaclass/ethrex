@@ -107,10 +107,11 @@ transfers emit EIP-7708 logs from `0x…fffe`).
 
 The [`rex`](https://github.com/lambdaclass/rex) CLI has first-class frame-transaction
 support on its **`hegota-devnet`** branch, which git-pins ethrex's `hegota-devnet`
-crates and so speaks the exact wire format this devnet runs.
+crates and so speaks the exact wire format this devnet runs. Install the `rex` binary
+straight from that branch (`--locked` builds against the pinned ethrex revision):
 
 ```bash
-git clone -b hegota-devnet https://github.com/lambdaclass/rex && cd rex && make cli
+cargo install --locked --git https://github.com/lambdaclass/rex.git --branch hegota-devnet
 ```
 
 ```bash
