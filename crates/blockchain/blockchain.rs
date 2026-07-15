@@ -343,6 +343,13 @@ fn log_warm_diff(block: &Block, entry: &PrewarmedEntry, mempool: &Mempool) {
     let deadline_micros = (block.header.timestamp as u128).saturating_mul(1_000_000);
     let (mut warmed, mut private, mut late, mut sel_loss) = (0u32, 0u32, 0u32, 0u32);
     let (mut late_before_deadline, mut late_in_window, mut late_after_recv) = (0u32, 0u32, 0u32);
+    // CDF of recoverable late txs by how far past the boundary they arrived:
+    // `le[i]` = recoverable late txs catchable by extending warming to
+    // `deadline + TH_MS[i]`. le[0] (<=0ms) = the before_deadline set. Precise
+    // because the slot boundary is an exact integer second and arrival is
+    // micros. Answers "benefit of X ms extra wait".
+    const TH_MS: [i128; 6] = [0, 500, 1000, 1500, 2000, 3000];
+    let mut le = [0u32; 6];
     for h in &block_hashes {
         if diff.this_branch.contains(h) {
             warmed += 1;
@@ -353,10 +360,20 @@ fn log_warm_diff(block: &Block, entry: &PrewarmedEntry, mempool: &Mempool) {
                 late += 1;
                 if t_arr >= now_micros {
                     late_after_recv += 1;
-                } else if t_arr <= deadline_micros {
-                    late_before_deadline += 1;
                 } else {
-                    late_in_window += 1;
+                    // Recoverable (arrived before receipt). Bin by offset past
+                    // the boundary; <=0 means it arrived before the deadline.
+                    let off_ms = (t_arr as i128 - deadline_micros as i128) / 1000;
+                    for (i, &th) in TH_MS.iter().enumerate() {
+                        if off_ms <= th {
+                            le[i] += 1;
+                        }
+                    }
+                    if off_ms <= 0 {
+                        late_before_deadline += 1;
+                    } else {
+                        late_in_window += 1;
+                    }
                 }
             }
         } else {
@@ -383,6 +400,18 @@ fn log_warm_diff(block: &Block, entry: &PrewarmedEntry, mempool: &Mempool) {
         late_in_window,
         late_after_recv,
         (now_micros as i128 - deadline_micros as i128) / 1000,
+    );
+    info!(
+        "Prewarm late-cdf block {}: recoverable={}, le0={}, le500={}, le1000={}, le1500={}, \
+         le2000={}, le3000={}",
+        block.header.number,
+        late_before_deadline + late_in_window,
+        le[0],
+        le[1],
+        le[2],
+        le[3],
+        le[4],
+        le[5],
     );
 }
 
