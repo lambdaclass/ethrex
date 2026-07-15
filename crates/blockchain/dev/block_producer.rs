@@ -148,6 +148,10 @@ pub async fn start_block_producer(
         tracing::info!("Produced block {produced_block_hash:#x}");
 
         head_block_hash = produced_block_hash;
+        // Reset the failure counter on success so `max_tries` bounds CONSECUTIVE failures,
+        // not cumulative ones over the node's lifetime (otherwise a long-lived dev node
+        // with occasional transient hiccups would eventually abort).
+        tries = 0;
     }
     Err(EngineClientError::SystemFailed(format!("{max_tries}")))
 }

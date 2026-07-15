@@ -38,6 +38,8 @@ fn test_execution_report_has_both_gas_fields() {
         state_gas_used: 0,
         output: Bytes::new(),
         logs: vec![],
+        payer_address: None,
+        frame_results: None,
     };
 
     // Verify both fields are present and different
