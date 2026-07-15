@@ -103,6 +103,50 @@ transfers emit EIP-7708 logs from `0x…fffe`).
 > transaction hasn't mined within ~30 s, submit the SAME raw transaction to the other
 > two RPCs as well (idempotent — same hash).
 
+## Send & Inspect a Frame Transaction (rex CLI)
+
+The [`rex`](https://github.com/lambdaclass/rex) CLI has first-class frame-transaction
+support on its **`hegota-devnet`** branch, which git-pins ethrex's `hegota-devnet`
+crates and so speaks the exact wire format this devnet runs.
+
+```bash
+git clone -b hegota-devnet https://github.com/lambdaclass/rex && cd rex && make cli
+```
+
+```bash
+# Self-verified transfer (VERIFY approve exec+payment, then SENDER transfer).
+# Prints the tx hash, then the decoded frames once it mines.
+rex frame send \
+  --to 0xRecipientAddress \
+  --value 1gwei \
+  --private-key <YOUR_PRIVATE_KEY_HEX> \
+  --rpc-url https://rpc1.hegota.ethrex.xyz
+
+# Preview the raw 0x06 bytes without submitting:
+rex frame send --to 0x… --value 1gwei --private-key <KEY> --dry-run
+```
+
+To **see the frames of any transaction and their results**, `rex frame inspect`
+fetches the transaction and its receipt and prints a unified, decoded view — each
+frame's mode (VERIFY/SENDER/POST_TX), APPROVE scope, target, value and data, paired
+with its per-frame status/gas/logs, plus the resolved payer:
+
+```bash
+rex frame inspect <TX_HASH> --rpc-url https://rpc1.hegota.ethrex.xyz
+```
+```
+Frame transaction (type 0x06)
+  status:    SUCCESS   block: 0x2f6b6   gas used: 0x52fe
+  payer:     0xe255…6425 (self)   sender: 0xe255…6425   nonceKeys: [0x0] seq: 0xe
+  frames:    2
+    [0] VERIFY [APPROVE execution+payment] -> 0xe255…6425  value 0x0  data 0B    ✓ gas 0x0, 0 logs
+    [1] SENDER [APPROVE none]               -> 0xe255…6425  value 0x1  data 0B    ✓ gas 0x0, 0 logs
+```
+
+`rex frame build` produces a raw unsigned envelope from explicit JSON frames. See the
+[rex CLI reference](https://github.com/lambdaclass/rex/blob/hegota-devnet/cli/README.md#rex-frame)
+for all options and examples.
+
 ## Simulate Before Sending
 
 `eth_call`/`eth_estimateGas` cannot represent a frame transaction (their input is a
