@@ -12,6 +12,19 @@ pub trait VmDatabase: Send + Sync + DynClone {
     fn get_chain_config(&self) -> Result<ChainConfig, EvmError>;
     fn get_account_code(&self, code_hash: H256) -> Result<Code, EvmError>;
     fn get_code_metadata(&self, code_hash: H256) -> Result<CodeMetadata, EvmError>;
+
+    /// Batch account-state lookup. Default impl loops `get_account_state`.
+    /// Backends that can amortize per-key cost (e.g. rocksdb `multi_get_cf` on
+    /// the flat key-value table) should override this.
+    fn get_account_states_batch(
+        &self,
+        addresses: &[Address],
+    ) -> Result<Vec<Option<AccountState>>, EvmError> {
+        addresses
+            .iter()
+            .map(|a| self.get_account_state(*a))
+            .collect()
+    }
 }
 
 dyn_clone::clone_trait_object!(VmDatabase);

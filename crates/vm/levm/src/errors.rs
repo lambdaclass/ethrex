@@ -140,12 +140,16 @@ pub enum TxValidationError {
     Type4TxAuthorizationListIsEmpty,
     #[error("Contract creation in type 4 transaction")]
     Type4TxContractCreation,
+    #[error("Frame transactions (EIP-8141) are not supported before the Hegota fork")]
+    FrameTxPreFork,
     #[error("Gas limit price product overflow")]
     GasLimitPriceProductOverflow,
     #[error(
         "Transaction gas limit exceeds maximum. Transaction hash: {tx_hash}, transaction gas limit: {tx_gas_limit}"
     )]
     TxMaxGasLimitExceeded { tx_hash: H256, tx_gas_limit: u64 },
+    #[error("Invalid frame transaction: VERIFY frame did not call APPROVE or payer not approved")]
+    InvalidFrameTransaction,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error, Serialize, Deserialize)]
@@ -249,6 +253,12 @@ pub struct ExecutionReport {
     pub state_gas_used: u64,
     pub output: Bytes,
     pub logs: Vec<Log>,
+    /// For frame transactions: the address that paid for gas
+    pub payer_address: Option<Address>,
+    /// For frame transactions: per-frame results (status, gas_used, logs).
+    /// `status` is a `FRAME_RECEIPT_STATUS_*` code (0 = failure, 1 = success,
+    /// 3 = skipped due to failed atomic batch, per EIP-8141 receipt encoding).
+    pub frame_results: Option<Vec<(u8, u64, Vec<Log>)>>,
 }
 
 impl ExecutionReport {

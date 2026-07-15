@@ -116,6 +116,8 @@
 - [L2](./developers/l2/introduction.md)
   - [Ethrex L2 as local development mode](./developers/l2/dev-mode.md)
   - [Integration tests](./developers/l2/integration-tests.md)
+  - [Upgrade test](./developers/l2/upgrade-test.md)
+  - [L2 integration tests with a SP1 GPU prover](./developers/l2/sp1-gpu-integration-test.md)
   - [Running the Prover](./developers/l2/prover.md)
   - [Generate blobs for the state reconstruction test](./developers/l2/state-reconstruction-blobs.md)
 - [Prover](./prover/prover.md)

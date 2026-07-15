@@ -7,7 +7,7 @@ use std::path::Path;
 compile_error!("Only one of `sp1` and `stateless` can be enabled at a time.");
 
 // test-levm / test-sp1 read snobal-devnet-6 + legacy from `vectors/`.
-// test-stateless reads zkevm@v0.4.1 (EIP-8025 canonical bundle) from a separate
+// test-stateless reads zkevm@v0.5.0 (EIP-8025 canonical bundle) from a separate
 // `vectors_zkevm/` so the bundles don't overlay each other.
 #[cfg(feature = "stateless")]
 const TEST_FOLDER: &str = "vectors_zkevm/";
@@ -34,19 +34,19 @@ const EXTRA_SKIPS: &[&str] = &[
     "Return50000",
     "static_Call1MB1024Calldepth",
 ];
-// The stateless run executes the zkevm@v0.4.1 bundle (`vectors_zkevm/`), the only published zkevm
-// test release. Its fixtures were filled against an older glamsterdam devnet but re-execute every
-// case under the Amsterdam fork, so they lag the v6.1.0 gas accounting this client now implements:
-// ~2790/2864 fail with stale gas ("Transaction execution unexpectedly failed"), the failures spread
-// pervasively across every fork and even through the eip8025 proof suite, so no clean passing
-// subset exists. There is no v6.1.0-aligned zkevm bundle to bump to, so the whole bundle is skipped
-// here until one is published. The skip matches the `fork_Amsterdam` parametrization present in
-// every test key of this Amsterdam-only bundle (the skip list is matched against the test key, i.e.
-// the `...::test_x[fork_Amsterdam-...]` id, not the file path). The current-fixture `test-levm` run,
-// the engine ef-tests, and the state ef-tests validate these EIPs against the live v6.1.0 fixtures.
-// Tracked in `docs/known_issues.md`.
+// The stateless run executes the zkevm@v0.5.0 bundle (`vectors_zkevm/`). Unlike the earlier
+// v0.4.1 release (filled against an older glamsterdam devnet, which lagged this client's v6.1.0
+// gas accounting and failed ~2790/2864 with stale gas), v0.5.0 is filled against
+// `tests-glamsterdam-devnet@v6.1.0` — the same base as the live `vectors/` fixtures — so the
+// whole bundle re-executes cleanly and no blanket skip is needed. Per-fixture leniency cases
+// (`*_extra_unused_*` padding, deliberately-invalid witnesses) are handled in `test_runner.rs`.
+// Amsterdam+ fixtures are skipped in the stateless run by fork (see
+// `parse_and_execute` in `test_runner.rs` and docs/known_issues.md): the
+// tests-zkevm@v0.5.0 bundle predeploys the EIP-8282 builder contracts at the OLD
+// addresses, incompatible with this client's devnet-7 addresses. That skip is
+// fork-based (not name-based), so no per-test entries are needed here.
 #[cfg(feature = "stateless")]
-const EXTRA_SKIPS: &[&str] = &["fork_Amsterdam"];
+const EXTRA_SKIPS: &[&str] = &[];
 #[cfg(not(any(feature = "sp1", feature = "stateless")))]
 const EXTRA_SKIPS: &[&str] = &[];
 

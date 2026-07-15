@@ -91,6 +91,14 @@ async fn run_case(
 ) -> Result<bool, RunnerError> {
     let (mut db, initial_block_hash, storage, _genesis) =
         load_initial_state(test, &test_case.fork, true).await;
+
+    // `statetest` is a root-diff differential harness (for goevmlab) with no notion of expected
+    // exceptions, so it can't assess transaction-validation fixtures. Those omit `secretKey` and
+    // carry a deliberately invalid signature only in `tx_bytes`; the bulk runner covers them.
+    if test_case.secret_key.is_none() {
+        return Ok(false);
+    }
+
     let env = get_vm_env_for_test(test.env, test_case)?;
     let tx = get_tx_from_test_case(test_case).await?;
 

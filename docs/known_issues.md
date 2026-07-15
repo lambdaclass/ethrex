@@ -1,23 +1,22 @@
-### Stateless blockchain EF-tests (zkevm bundle) skipped under Amsterdam v6.1.0
+### Stateless (zkEVM) Amsterdam+ EF tests skipped
 
-`make -C tooling/ef_tests/blockchain test-stateless` runs against the
-`tests-zkevm@v0.4.1` fixture bundle — currently the only published zkevm test
-release. Those fixtures were filled against an older glamsterdam devnet and
-re-execute every case under the `for_amsterdam` fork, so they lag the
-glamsterdam-devnet **v6.1.0** gas accounting this client now implements
-(EIP-8037 / EIP-8038 / EIP-2780 / EIP-7976 / EIP-7981 …). Re-executing them
-yields ~`2790/2864` stale-gas failures ("Transaction execution unexpectedly
-failed"), spread pervasively across every fork and through the EIP-8025 proof
-suite, so there is no clean passing subset to keep.
+**Where:** `tooling/ef_tests/blockchain/test_runner.rs` — `parse_and_execute` skips
+fixtures with `network >= Fork::Amsterdam` when running with a stateless backend.
+Affects `make test-stateless` (the `vectors_zkevm/` run); `make test-levm` is
+unaffected.
 
-Until a v6.1.0-aligned zkevm bundle is published, the entire bundle is skipped
-for the stateless run via the `fork_Amsterdam` entry in the stateless-only
-`EXTRA_SKIPS` (`tooling/ef_tests/blockchain/tests/all.rs`) — every test in this
-Amsterdam-only bundle carries the `[fork_Amsterdam-…]` parametrization in its
-test key. The skip is `#[cfg(feature = "stateless")]`, so it does **not** touch
-the non-stateless `test-levm` run. Coverage of these EIPs is retained by
-`test-levm`, the engine EF-tests, and the state EF-tests, all of which execute
-against the live v6.1.0 fixtures and pass.
+**Why:** The stateless run uses the `tests-zkevm@v0.5.0` bundle, filled against
+`glamsterdam-devnet` v6.1.0, which predeploys the EIP-8282 builder deposit/exit
+contracts at the OLD addresses (`0x0000884d…d9008282` / `0x000014574a…0f008282`).
+This client uses the devnet-7 addresses (`0x0000bff4…300d8282` /
+`0x000064d6…800e8282`, matching the live `tests-glamsterdam-devnet@v7.2.0` bundle
+used by `make test-levm`). Every Amsterdam+ block runs the end-of-block EIP-8282
+builder system call; with the new addresses absent from the v0.5.0 bundle, each
+stateless Amsterdam+ block fails with
+`SystemContractCallFailed("System contract: 0x0000…8282 has no code after deployment")`.
+The skip is by fork rather than by test name, since cross-fork directories such as
+`for_amsterdam/prague/...` still execute at the Amsterdam fork.
 
-Re-enable by removing the `"fork_Amsterdam"` skip once `.fixtures_url_zkevm`
-points at a zkevm bundle filled for glamsterdam-devnet v6.1.0.
+**Removal:** Delete the `skip_stateless_amsterdam` branch in `parse_and_execute`
+once a `tests-zkevm` bundle filled with the devnet-7 builder predeploy addresses is
+released and `.fixtures_url_zkevm` is bumped to it.

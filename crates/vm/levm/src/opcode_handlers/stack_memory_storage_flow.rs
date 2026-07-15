@@ -20,7 +20,7 @@
 use crate::{
     constants::WORD_SIZE_IN_BYTES_USIZE,
     errors::{ExceptionalHalt, InternalError, OpcodeResult, VMError},
-    gas_cost::{self, SSTORE_STIPEND, STORAGE_CLEAR_REFUND_AMSTERDAM},
+    gas_cost::{self, SSTORE_DEFAULT_DYNAMIC, SSTORE_STIPEND, STORAGE_CLEAR_REFUND_AMSTERDAM},
     memory::calculate_memory_size,
     opcode_handlers::OpcodeHandler,
     opcodes::Opcode,
@@ -245,6 +245,11 @@ impl OpcodeHandler for OpSLoadHandler {
         // Record to BAL AFTER gas check passes per EIP-7928
         vm.record_storage_slot_to_bal(address, storage_slot_key);
 
+        // EIP-8141 mempool validation-trace: SLOAD restricted to the sender's storage.
+        if vm.validation_observer.active {
+            vm.validation_check_sload(address, key);
+        }
+
         let value = vm.get_storage_value(address, key)?;
         vm.current_call_frame.stack.push(value)?;
 
@@ -261,8 +266,11 @@ impl OpcodeHandler for OpSStoreHandler {
             return Err(ExceptionalHalt::OpcodeNotAllowedInStaticContext.into());
         }
 
-        // EIP-2200
-        if vm.current_call_frame.gas_remaining <= SSTORE_STIPEND {
+        let fork = vm.env.config.fork;
+
+        // EIP-2200. Pre-Amsterdam, COLD_STORAGE_ACCESS (2100) never exceeds the
+        // 2300 stipend, so gating on the flat stipend alone is sufficient.
+        if fork < Fork::Amsterdam && vm.current_call_frame.gas_remaining <= SSTORE_STIPEND {
             return Err(ExceptionalHalt::OutOfGas.into());
         }
 
@@ -275,15 +283,42 @@ impl OpcodeHandler for OpSStoreHandler {
             hash
         };
 
+        if fork >= Fork::Amsterdam {
+            // EIP-8038 (review CRITICAL #2) raises COLD_STORAGE_ACCESS to 3000,
+            // above the 2300 stipend, so the flat pre-Amsterdam gate above no
+            // longer suffices as the EIP-2200 sentry. Peek warmth WITHOUT
+            // marking the slot accessed, gate on
+            // `max(access_cost, SSTORE_STIPEND + 1)` per EELS `check_gas`
+            // (amsterdam/vm/instructions/storage.py::sstore), and only mark the
+            // slot accessed / record the BAL read once this gate passes.
+            let is_cold = !vm.substate.is_slot_accessed(&to, &key);
+            let access_cost = if is_cold {
+                gas_cost::cold_storage_access_cost(fork)
+            } else {
+                SSTORE_DEFAULT_DYNAMIC
+            };
+            let sstore_stipend_floor = u64::try_from(SSTORE_STIPEND)
+                .map_err(|_| InternalError::TypeConversion)?
+                .checked_add(1)
+                .ok_or(InternalError::Overflow)?;
+            vm.current_call_frame
+                .check_gas(access_cost.max(sstore_stipend_floor))?;
+        }
+
         let (current_value, original_value, storage_slot_was_cold) =
             vm.access_storage_slot_for_sstore(to, key)?;
 
-        // Record storage read to BAL AFTER SSTORE_STIPEND check passes, BEFORE main gas check.
-        // Per EIP-7928: if SSTORE passes the stipend check but fails the main gas charge,
-        // the slot MUST appear as a read because the implicit SLOAD has already happened.
+        // Record storage read to BAL AFTER the stipend/access-cost gate passes,
+        // BEFORE the main gas check. Per EIP-7928: if SSTORE passes that gate
+        // but fails the main gas charge, the slot MUST appear as a read
+        // because the implicit SLOAD has already happened.
         vm.record_storage_slot_to_bal(to, storage_slot_key);
 
-        let fork = vm.env.config.fork;
+        // EIP-8141 mempool validation-trace: SSTORE allowed only inside the
+        // deploy frame and only against the sender's own storage.
+        if vm.validation_observer.active {
+            vm.validation_check_sstore(to, key);
+        }
 
         // EIP-8037 (Amsterdam+): check if state gas is needed for new storage slot (0 -> nonzero),
         // but charge it AFTER regular gas per EELS ordering (ethereum/EIPs#11421).

@@ -81,6 +81,13 @@ impl OpcodeHandler for OpCallHandler {
             Some((auth_address, access_cost)) => (access_cost, auth_address),
             None => (0, callee),
         };
+
+        // EIP-8141 mempool validation-trace: the CALL target must be an existing
+        // account or precompile and not EIP-7702-delegated (sender exempt).
+        if vm.validation_observer.active {
+            vm.validation_check_call_target(callee, is_delegation_7702)?;
+        }
+
         let create_cost = if address_is_empty {
             gas_cost::CALL_TO_EMPTY_ACCOUNT
         } else {
@@ -256,6 +263,13 @@ impl OpcodeHandler for OpCallCodeHandler {
             None => (0, address),
         };
 
+        // EIP-8141 mempool validation-trace: CALLCODE target check (CALLCODE
+        // itself is banned in non-deploy prefix frames; this also guards the
+        // deploy-frame case).
+        if vm.validation_observer.active {
+            vm.validation_check_call_target(address, is_delegation_7702)?;
+        }
+
         // BAL touches the target before the delegation gas check.
         vm.record_bal_call_touch(
             address,
@@ -372,6 +386,12 @@ impl OpcodeHandler for OpDelegateCallHandler {
             Some((auth_address, access_cost)) => (access_cost, auth_address),
             None => (0, address),
         };
+
+        // EIP-8141 mempool validation-trace: the call target must be an existing
+        // account or precompile and not EIP-7702-delegated (sender exempt).
+        if vm.validation_observer.active {
+            vm.validation_check_call_target(address, is_delegation_7702)?;
+        }
 
         // BAL touches the target before the delegation gas check.
         vm.record_bal_call_touch(
@@ -490,6 +510,12 @@ impl OpcodeHandler for OpStaticCallHandler {
             Some((auth_address, access_cost)) => (access_cost, auth_address),
             None => (0, address),
         };
+
+        // EIP-8141 mempool validation-trace: the call target must be an existing
+        // account or precompile and not EIP-7702-delegated (sender exempt).
+        if vm.validation_observer.active {
+            vm.validation_check_call_target(address, is_delegation_7702)?;
+        }
 
         // BAL touches the target before the delegation gas check.
         vm.record_bal_call_touch(
@@ -623,6 +649,12 @@ impl OpcodeHandler for OpCreateHandler {
             vm.opcode_tracer.last_opcode_gas_cost = Some(create_gas);
         }
 
+        // EIP-8141 mempool validation-trace: contract creation is a state write
+        // permitted only inside the deploy frame.
+        if vm.validation_observer.active {
+            vm.validation_check_create();
+        }
+
         vm.generic_create(value_in_wei, code_offset, code_len, None)
     }
 }
@@ -651,6 +683,12 @@ impl OpcodeHandler for OpCreate2Handler {
         // Struct-log: record the opcode-level gas before generic_create charges forwarded gas.
         if vm.opcode_tracer.active {
             vm.opcode_tracer.last_opcode_gas_cost = Some(create2_gas);
+        }
+
+        // EIP-8141 mempool validation-trace: contract creation is a state write
+        // permitted only inside the deploy frame.
+        if vm.validation_observer.active {
+            vm.validation_check_create();
         }
 
         vm.generic_create(value_in_wei, code_offset, code_len, Some(salt))
@@ -844,12 +882,6 @@ impl<'a> VM<'a> {
             return Err(ExceptionalHalt::OutOfGas.into());
         }
 
-        // EIP-8037 (Amsterdam+): charge state gas for new account creation AFTER
-        // initcode size validation, so oversized CREATE doesn't burn state gas.
-        if self.env.config.fork >= Fork::Amsterdam {
-            self.increase_state_gas(self.state_gas_new_account)?;
-        }
-
         let current_call_frame = &mut self.current_call_frame;
 
         // Pre-Amsterdam: is_static check happens here, before gas reservation
@@ -859,10 +891,6 @@ impl<'a> VM<'a> {
 
         // Clear callframe subreturn data
         current_call_frame.sub_return_data = Bytes::new();
-
-        // Reserve gas for subcall
-        let gas_limit = gas_cost::max_message_call_gas(current_call_frame)?;
-        current_call_frame.increase_consumed_gas(gas_limit)?;
 
         // Load code from memory
         let code = self
@@ -883,13 +911,10 @@ impl<'a> VM<'a> {
             None => calculate_create_address(deployer, deployer_nonce),
         };
 
-        // Log CREATE in tracer
         let call_type = match salt {
             Some(_) => CallType::CREATE2,
             None => CallType::CREATE,
         };
-        self.tracer
-            .enter(call_type, deployer, new_address, value, gas_limit, &code);
 
         let new_depth = self
             .current_call_frame
@@ -897,8 +922,11 @@ impl<'a> VM<'a> {
             .checked_add(1)
             .ok_or(InternalError::Overflow)?;
 
-        // Validations that push 0 (FAIL) to the stack and return reserved gas to deployer
-        // Per reference: these checks happen BEFORE the new address is tracked for BAL.
+        // Validations that push 0 (FAIL) to the stack. Per EELS `generic_create`
+        // these run BEFORE the target address is accessed
+        // (`accessed_addresses.add` / `is_account_alive`) and BEFORE the
+        // NEW_ACCOUNT state-gas charge, so no account is touched and no gas is
+        // reserved or charged on this early exit (EELS `push(0); return`).
         // 1. Sender doesn't have enough balance to send value.
         // 2. Depth limit has been reached
         // 3. Sender nonce is max.
@@ -909,13 +937,13 @@ impl<'a> VM<'a> {
         ];
         for (condition, reason) in checks {
             if condition {
-                // EIP-8037: no account created on early failure — refund the CREATE
-                // account state gas charged at the top of this function, per EELS
-                // `credit_state_gas_refund(evm, create_account_state_gas)`.
-                if self.env.config.fork >= Fork::Amsterdam {
-                    self.credit_state_gas_refund(self.state_gas_new_account)?;
-                }
-                self.early_revert_message_call(gas_limit, reason.to_string())?;
+                // Child gas preview for the tracer only; no gas is reserved on this
+                // path (mirrors EELS `push(0); return`).
+                let preview_gas = gas_cost::max_message_call_gas(&self.current_call_frame)?;
+                self.tracer
+                    .enter(call_type, deployer, new_address, value, preview_gas, &code);
+                self.current_call_frame.stack.push(FAIL)?;
+                self.tracer.exit_early(0, Some(reason.to_string()))?;
                 return Ok(OpcodeResult::Continue);
             }
         }
@@ -923,10 +951,42 @@ impl<'a> VM<'a> {
         // Add new contract to accessed addresses (after early checks pass, per reference)
         self.substate.add_accessed_address(new_address);
 
-        // Record address touch for BAL (after early checks pass per EIP-7928 reference)
+        // Record address touch for BAL (after early checks pass per EIP-7928 reference).
+        // EELS records the target via `is_account_alive(contract_address)` in
+        // `generic_create` BEFORE charging the NEW_ACCOUNT state gas, so the target
+        // stays listed as accessed in the BAL even when the state-gas charge OOGs.
         if let Some(recorder) = self.db.bal_recorder.as_mut() {
             recorder.record_touched_address(new_address);
         }
+
+        // EIP-8037 (#3002): read the create target BEFORE charging, mirroring EELS
+        // `generic_create` `new_account_charged = not is_account_alive(contract_address)`
+        // (evaluated just before `charge_state_gas`). Reading it here also records the
+        // target access into `accessed_accounts` for the BAL pure-access checklist.
+        // `is_account_alive` == exists && non-empty; a nonexistent target reads as an
+        // empty account, so `!is_empty()` is exactly `is_account_alive`.
+        let target_alive = !self.get_account_mut(new_address)?.is_empty();
+
+        // EIP-8037 (Amsterdam+): charge the NEW_ACCOUNT state gas only when the
+        // target leaf does not yet exist (`new_account_charged = !target_alive`).
+        // Charging conditionally — rather than the previous charge-then-refund —
+        // keeps `gas_left` untouched for an alive/colliding target, so the child-gas
+        // split below matches EELS on a spilling reservoir (EELS never charges, hence
+        // never spills, for an alive target). The charge follows the target read and
+        // the BAL record, so an OOG here still leaves the target in the access set,
+        // and — since it precedes the child-gas reservation below — its spill into
+        // `gas_left` is reflected by `max_message_call_gas`.
+        if self.env.config.fork >= Fork::Amsterdam && !target_alive {
+            self.increase_state_gas(self.state_gas_new_account)?;
+        }
+
+        // Reserve gas for subcall (EELS `max_message_call_gas` after `charge_state_gas`).
+        let gas_limit = gas_cost::max_message_call_gas(&self.current_call_frame)?;
+        self.current_call_frame.increase_consumed_gas(gas_limit)?;
+
+        // Log CREATE in tracer (success path) with the reserved child gas.
+        self.tracer
+            .enter(call_type, deployer, new_address, value, gas_limit, &code);
 
         // Increment sender nonce (irreversible change)
         self.increment_account_nonce(deployer)?;
@@ -934,9 +994,10 @@ impl<'a> VM<'a> {
         // Deployment will fail (consuming all gas) if the contract already exists.
         let new_account = self.get_account_mut(new_address)?;
         if new_account.create_would_collide() {
-            // Per EELS: on collision, regular gas stays consumed (not returned)
-            // but the CREATE account state gas IS refunded — no account was created.
-            if self.env.config.fork >= Fork::Amsterdam {
+            // Per EELS: on collision, regular gas stays consumed (not returned).
+            // The NEW_ACCOUNT state gas is refunded only if it was charged (target
+            // not alive) — EELS `if new_account_charged: credit_state_gas_refund`.
+            if self.env.config.fork >= Fork::Amsterdam && !target_alive {
                 self.credit_state_gas_refund(self.state_gas_new_account)?;
             }
             self.current_call_frame.stack.push(FAIL)?;
@@ -944,16 +1005,6 @@ impl<'a> VM<'a> {
                 .exit_early(gas_limit, Some("CreateAccExists".to_string()))?;
             return Ok(OpcodeResult::Continue);
         }
-        // EIP-8037 (#3002): capture whether the create target is already alive,
-        // AFTER the collision guard and BEFORE any nonce increment / state
-        // mutation, mirroring EELS `target_alive = is_account_alive(...)`.
-        // `create_would_collide()` already excluded any account with code, nonce,
-        // or storage, so a surviving non-empty target can differ only by
-        // balance > 0; hence `!is_empty()` is exactly `is_account_alive` for
-        // create targets (nonexistent or empty -> not alive). Used on the success
-        // path to refund the unconditionally-charged new-account state gas (no new
-        // account leaf created).
-        let target_alive = !self.get_account_mut(new_address)?.is_empty();
 
         // Create BAL checkpoint before entering create call for potential revert per EIP-7928
         let bal_checkpoint = self.db.bal_recorder.as_ref().map(|r| r.checkpoint());
@@ -1453,27 +1504,23 @@ impl<'a> VM<'a> {
                     .frame_state_gas_spilled
                     .checked_add(child_frame_state_gas_spilled)
                     .ok_or(InternalError::Overflow)?;
-                // EIP-8037 (#3002): the parent charged the new-account state gas
-                // unconditionally before the child ran. On success, if the target was
-                // already alive (existed and non-empty), no new account leaf is created,
-                // so refund the new-account portion — EELS `generic_create`:
-                //   if target_alive: credit_state_gas_refund(evm, StateGasCosts.NEW_ACCOUNT)
-                // LIFO via `credit_state_gas_refund` (drains the parent frame spill first,
-                // then the reservoir). Disjoint from the failure/collision refunds, which
-                // only fire on the Revert arm / early-return paths.
-                if self.env.config.fork >= Fork::Amsterdam && target_alive {
-                    self.credit_state_gas_refund(self.state_gas_new_account)?;
-                }
+                // EIP-8037 (#3002): the parent charged the NEW_ACCOUNT state gas only
+                // when the target was NOT alive (`new_account_charged = !target_alive`),
+                // exactly as EELS `generic_create`. On child success EELS does not
+                // refund it (`incorporate_child_on_success` keeps the charge — a new
+                // account leaf was created), and when the target was alive nothing was
+                // charged, so there is nothing to refund here in either case.
             }
             TxResult::Revert(err) => {
                 // EIP-8037: the child already self-refilled its state gas via
                 // `refill_frame_state_gas` in `handle_opcode_error`, so no parent-side
                 // state-gas reabsorption is needed here.
 
-                // EIP-8037: CREATE's account state gas was charged in the parent before
-                // the child frame began; no account was created, so refund it per EELS
-                // `credit_state_gas_refund(evm, create_account_state_gas)`.
-                if self.env.config.fork >= Fork::Amsterdam {
+                // EIP-8037: CREATE's account state gas was charged in the parent
+                // before the child frame began ONLY when the target was not alive
+                // (`new_account_charged = !target_alive`). On child error EELS refunds
+                // it only in that case: `if new_account_charged: credit_state_gas_refund`.
+                if self.env.config.fork >= Fork::Amsterdam && !target_alive {
                     self.credit_state_gas_refund(self.state_gas_new_account)?;
                 }
 

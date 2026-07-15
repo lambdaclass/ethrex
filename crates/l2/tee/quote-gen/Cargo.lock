@@ -439,9 +439,9 @@ dependencies = [
 
 [[package]]
 name = "c-kzg"
-version = "2.1.5"
+version = "2.1.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e00bf4b112b07b505472dbefd19e37e53307e2bfed5a79e0cc161d58ccd0e687"
+checksum = "38d04308254695569fdb9bfe3bacc1c91837a670d0806605eb82d63748fbd3a6"
 dependencies = [
  "blst",
  "cc",
@@ -1021,7 +1021,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-blockchain"
-version = "18.0.0"
+version = "21.0.0"
 dependencies = [
  "bytes",
  "crossbeam",
@@ -1042,7 +1042,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-common"
-version = "18.0.0"
+version = "21.0.0"
 dependencies = [
  "bytes",
  "crc32fast",
@@ -1071,7 +1071,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-crypto"
-version = "18.0.0"
+version = "21.0.0"
 dependencies = [
  "ark-bn254",
  "ark-ec",
@@ -1092,7 +1092,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-guest-program"
-version = "18.0.0"
+version = "21.0.0"
 dependencies = [
  "bytes",
  "ethereum-types",
@@ -1110,7 +1110,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-l2-common"
-version = "18.0.0"
+version = "21.0.0"
 dependencies = [
  "bytes",
  "ethereum-types",
@@ -1128,7 +1128,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-levm"
-version = "18.0.0"
+version = "21.0.0"
 dependencies = [
  "bytes",
  "derive_more",
@@ -1145,7 +1145,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-metrics"
-version = "18.0.0"
+version = "21.0.0"
 dependencies = [
  "axum",
  "ethrex-common",
@@ -1160,7 +1160,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-p2p"
-version = "18.0.0"
+version = "21.0.0"
 dependencies = [
  "aes",
  "aes-gcm",
@@ -1201,7 +1201,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-rlp"
-version = "18.0.0"
+version = "21.0.0"
 dependencies = [
  "bytes",
  "ethereum-types",
@@ -1210,7 +1210,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-rpc"
-version = "18.0.0"
+version = "21.0.0"
 dependencies = [
  "axum",
  "axum-extra",
@@ -1249,7 +1249,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-storage"
-version = "18.0.0"
+version = "21.0.0"
 dependencies = [
  "anyhow",
  "bytes",
@@ -1270,7 +1270,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-trie"
-version = "18.0.0"
+version = "21.0.0"
 dependencies = [
  "anyhow",
  "bytes",
@@ -1288,7 +1288,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-vm"
-version = "18.0.0"
+version = "21.0.0"
 dependencies = [
  "bytes",
  "derive_more",
@@ -2822,7 +2822,7 @@ dependencies = [
 
 [[package]]
 name = "quote-gen"
-version = "18.0.0"
+version = "21.0.0"
 dependencies = [
  "configfs-tsm",
  "ethrex-blockchain",

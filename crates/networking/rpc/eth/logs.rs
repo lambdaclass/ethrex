@@ -143,6 +143,10 @@ pub(crate) async fn fetch_logs_with_filter(
         Some(AddressFilter::Many(addresses)) => addresses.iter().collect(),
         None => HashSet::new(),
     };
+    // Derive the filter's address/topic blooms once, up front, so the per-block
+    // header-bloom check below is a cheap bit-subset test instead of re-hashing
+    // every address and topic for each block in the range.
+    let bloom_matcher = BloomFilterMatcher::new(&address_filter, &filter.topics);
 
     let mut logs: Vec<RpcLog> = Vec::new();
     // The idea here is to fetch every log and filter by address, if given.
@@ -158,7 +162,7 @@ pub(crate) async fn fetch_logs_with_filter(
             .ok_or(RpcErr::Internal(format!(
                 "Could not get header for block {block_num}"
             )))?;
-        if !block_bloom_matches(&block_header.logs_bloom, &address_filter, &filter.topics) {
+        if !bloom_matcher.matches(&block_header.logs_bloom) {
             continue;
         }
         // Take the body of the block, we
@@ -243,45 +247,89 @@ pub(crate) async fn fetch_logs_with_filter(
     Ok(filtered_logs)
 }
 
-/// Necessary-condition check: returns `true` if the block's header bloom could
-/// contain a log matching the filter, `false` only when it provably cannot.
+/// A log filter's addresses and topic positions pre-derived into header-bloom
+/// `Bloom`s once, so the per-block check is a cheap bit-subset test rather than
+/// re-hashing every address/topic for each block in the range.
 ///
-/// A log matches when its address is one of the requested addresses (or none
-/// were requested) AND, for every constrained topic position, the log's topic
-/// equals one of the allowed values. Since the header bloom records every
-/// logged address and topic (position-agnostic), a matching log implies its
-/// address and each constrained topic are present in the bloom. We therefore
-/// require: at least one requested address present (if any), and at least one
-/// allowed topic present for each constrained position. Bloom false positives
-/// are fine — exact filtering still runs on the blocks we don't skip.
-fn block_bloom_matches(
-    bloom: &Bloom,
-    address_filter: &HashSet<&H160>,
-    topics: &[TopicFilter],
-) -> bool {
-    if !address_filter.is_empty()
-        && !address_filter
+/// `Bloom::contains_input` internally builds a `Bloom` from the input (a keccak
+/// hash plus bit extraction) before testing it; for wide-range queries that skip
+/// most blocks that derivation dominates the per-block cost. We do it once here.
+struct BloomFilterMatcher {
+    /// One bloom per requested address; empty means no address constraint.
+    addresses: Vec<Bloom>,
+    /// One entry per *constrained* topic position, each holding that position's
+    /// alternatives; at least one must be present. Wildcard positions impose no
+    /// constraint and are dropped (a no-op in the all-positions check), so the
+    /// position index is irrelevant — the header bloom is position-agnostic.
+    topic_positions: Vec<Vec<Bloom>>,
+}
+
+impl BloomFilterMatcher {
+    fn new(address_filter: &HashSet<&H160>, topics: &[TopicFilter]) -> Self {
+        let to_bloom = |bytes: &[u8]| Bloom::from(BloomInput::Raw(bytes));
+        let addresses = address_filter
             .iter()
-            .any(|address| bloom.contains_input(BloomInput::Raw(address.as_bytes())))
-    {
-        return false;
+            .map(|address| to_bloom(address.as_bytes()))
+            .collect();
+        let topic_positions = topics
+            .iter()
+            .filter_map(|topic_filter| match topic_filter {
+                // A wildcard position imposes no constraint; drop it.
+                TopicFilter::Topic(None) => None,
+                TopicFilter::Topic(Some(topic)) => Some(vec![to_bloom(topic.as_bytes())]),
+                // An empty alternatives list, or one containing any `None`, is a
+                // wildcard for this position (the `None` means "any topic" —
+                // without it, `topics: [[null, T]]` would skip blocks matching
+                // via the wildcard and drop valid logs); drop it.
+                TopicFilter::Topics(sub_topics)
+                    if sub_topics.is_empty() || sub_topics.iter().any(Option::is_none) =>
+                {
+                    None
+                }
+                // Otherwise OR over the concrete alternatives.
+                TopicFilter::Topics(sub_topics) => Some(
+                    sub_topics
+                        .iter()
+                        .flatten()
+                        .map(|topic| to_bloom(topic.as_bytes()))
+                        .collect(),
+                ),
+            })
+            .collect();
+        Self {
+            addresses,
+            topic_positions,
+        }
     }
 
-    let topic_in_bloom = |topic: &H256| bloom.contains_input(BloomInput::Raw(topic.as_bytes()));
-    topics.iter().all(|topic_filter| match topic_filter {
-        // A wildcard position imposes no constraint.
-        TopicFilter::Topic(None) => true,
-        TopicFilter::Topic(Some(topic)) => topic_in_bloom(topic),
-        // An empty alternatives list, or one containing any `None`, is a
-        // wildcard for this position (the `None` means "any topic" — without
-        // it, `topics: [[null, T]]` would skip blocks matching via the wildcard
-        // and drop valid logs). Otherwise OR over the concrete alternatives.
-        TopicFilter::Topics(sub_topics) => {
-            sub_topics.is_empty()
-                || sub_topics.iter().any(Option::is_none)
-                || sub_topics.iter().flatten().any(topic_in_bloom)
+    /// Necessary-condition check: returns `true` if the block's header bloom
+    /// could contain a log matching the filter, `false` only when it provably
+    /// cannot.
+    ///
+    /// A log matches when its address is one of the requested addresses (or none
+    /// were requested) AND, for every constrained topic position, the log's
+    /// topic equals one of the allowed values. Since the header bloom records
+    /// every logged address and topic (position-agnostic), a matching log
+    /// implies its address and each constrained topic are present in the bloom.
+    /// We therefore require: at least one requested address present (if any), and
+    /// at least one allowed topic present for each constrained position. Bloom
+    /// false positives are fine — exact filtering still runs on the blocks we
+    /// don't skip.
+    fn matches(&self, block_bloom: &Bloom) -> bool {
+        if !self.addresses.is_empty()
+            && !self
+                .addresses
+                .iter()
+                .any(|address| block_bloom.contains_bloom(address))
+        {
+            return false;
         }
-    })
+        self.topic_positions.iter().all(|alternatives| {
+            alternatives
+                .iter()
+                .any(|topic| block_bloom.contains_bloom(topic))
+        })
+    }
 }
 
 #[cfg(test)]
@@ -359,44 +407,40 @@ mod tests {
         addresses.iter().collect()
     }
 
+    fn bloom_matches(bloom: &Bloom, addresses: &HashSet<&H160>, topics: &[TopicFilter]) -> bool {
+        BloomFilterMatcher::new(addresses, topics).matches(bloom)
+    }
+
     #[test]
     fn bloom_match_empty_filter_always_matches() {
         // No address and no topic constraints: never skip a block.
-        assert!(block_bloom_matches(&Bloom::zero(), &HashSet::new(), &[]));
+        assert!(bloom_matches(&Bloom::zero(), &HashSet::new(), &[]));
     }
 
     #[test]
     fn bloom_match_address_present_and_absent() {
         let bloom = bloom_with(&[addr(1)], &[]);
-        assert!(block_bloom_matches(&bloom, &addr_set(&[addr(1)]), &[]));
-        assert!(!block_bloom_matches(&bloom, &addr_set(&[addr(2)]), &[]));
+        assert!(bloom_matches(&bloom, &addr_set(&[addr(1)]), &[]));
+        assert!(!bloom_matches(&bloom, &addr_set(&[addr(2)]), &[]));
     }
 
     #[test]
     fn bloom_match_multiple_addresses_is_or() {
         let bloom = bloom_with(&[addr(1)], &[]);
         // Only one of the requested addresses needs to be present.
-        assert!(block_bloom_matches(
-            &bloom,
-            &addr_set(&[addr(1), addr(2)]),
-            &[]
-        ));
-        assert!(!block_bloom_matches(
-            &bloom,
-            &addr_set(&[addr(2), addr(3)]),
-            &[]
-        ));
+        assert!(bloom_matches(&bloom, &addr_set(&[addr(1), addr(2)]), &[]));
+        assert!(!bloom_matches(&bloom, &addr_set(&[addr(2), addr(3)]), &[]));
     }
 
     #[test]
     fn bloom_match_topic_present_and_absent() {
         let bloom = bloom_with(&[], &[topic(1)]);
-        assert!(block_bloom_matches(
+        assert!(bloom_matches(
             &bloom,
             &HashSet::new(),
             &[TopicFilter::Topic(Some(topic(1)))]
         ));
-        assert!(!block_bloom_matches(
+        assert!(!bloom_matches(
             &bloom,
             &HashSet::new(),
             &[TopicFilter::Topic(Some(topic(2)))]
@@ -406,12 +450,12 @@ mod tests {
     #[test]
     fn bloom_match_wildcard_topic_ignored() {
         // A `None` (wildcard) topic position imposes no constraint.
-        assert!(block_bloom_matches(
+        assert!(bloom_matches(
             &Bloom::zero(),
             &HashSet::new(),
             &[TopicFilter::Topic(None)]
         ));
-        assert!(block_bloom_matches(
+        assert!(bloom_matches(
             &Bloom::zero(),
             &HashSet::new(),
             &[TopicFilter::Topics(vec![])]
@@ -425,7 +469,7 @@ mod tests {
         // even when the sibling topic is absent from the bloom. Regression test for
         // a false-negative that dropped valid logs for `topics: [[null, T]]` queries.
         let bloom = bloom_with(&[], &[]); // contains neither topic
-        assert!(block_bloom_matches(
+        assert!(bloom_matches(
             &bloom,
             &HashSet::new(),
             &[TopicFilter::Topics(vec![Some(topic(2)), None])]
@@ -436,13 +480,13 @@ mod tests {
     fn bloom_match_topic_position_is_or_across_positions_is_and() {
         let bloom = bloom_with(&[], &[topic(1), topic(2)]);
         // OR within a position: any allowed value present is enough.
-        assert!(block_bloom_matches(
+        assert!(bloom_matches(
             &bloom,
             &HashSet::new(),
             &[TopicFilter::Topics(vec![Some(topic(2)), Some(topic(9))])]
         ));
         // AND across positions: every constrained position must be satisfied.
-        assert!(block_bloom_matches(
+        assert!(bloom_matches(
             &bloom,
             &HashSet::new(),
             &[
@@ -450,7 +494,7 @@ mod tests {
                 TopicFilter::Topic(Some(topic(2))),
             ]
         ));
-        assert!(!block_bloom_matches(
+        assert!(!bloom_matches(
             &bloom,
             &HashSet::new(),
             &[
@@ -463,13 +507,13 @@ mod tests {
     #[test]
     fn bloom_match_requires_both_address_and_topic() {
         let bloom = bloom_with(&[addr(1)], &[topic(1)]);
-        assert!(block_bloom_matches(
+        assert!(bloom_matches(
             &bloom,
             &addr_set(&[addr(1)]),
             &[TopicFilter::Topic(Some(topic(1)))]
         ));
         // Address matches but topic does not.
-        assert!(!block_bloom_matches(
+        assert!(!bloom_matches(
             &bloom,
             &addr_set(&[addr(1)]),
             &[TopicFilter::Topic(Some(topic(2)))]
