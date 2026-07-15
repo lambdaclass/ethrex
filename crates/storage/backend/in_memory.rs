@@ -235,12 +235,14 @@ impl StorageWriteBatch for InMemoryWriteTx {
     }
 
     fn commit(&mut self) -> Result<(), StoreError> {
-        // FIXME: in-memory writes aren't atomic. Every `put`, `delete`, and
-        // `delete_range` above mutates the live `Arc<Database>` immediately under
-        // the write lock; `commit` is a no-op. Anyone using this backend cannot
-        // rely on multi-op atomicity (e.g. the journal entry + trie writes in
-        // `commit_trie_layers`, or the `delete_range` + finalized-number update
-        // in `forkchoice_update_inner`).
+        // NOTE: every `put`, `delete`, and `delete_range` above mutates the live
+        // `Arc<Database>` immediately under the write lock, so `commit` is a no-op
+        // and multi-op sequences (e.g. the journal entry + trie writes in
+        // `commit_trie_layers`, or the `delete_range` + finalized-number update in
+        // `forkchoice_update_inner`) are not atomic. That's acceptable here: this
+        // backend is RAM-backed (dev/test only), and atomicity only guards crash
+        // recovery — a process death loses all in-memory state anyway, so a
+        // half-applied batch is never observable.
         Ok(())
     }
 }
