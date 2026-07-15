@@ -7,7 +7,7 @@
 
 use ethrex_common::{
     Address, H256, U256,
-    constants::{EMPTY_KECCACK_HASH, EMPTY_TRIE_HASH},
+    constants::{EMPTY_KECCAK_HASH, EMPTY_TRIE_HASH},
     types::{
         AccountState, BlockHeader,
         block_access_list::{
@@ -251,7 +251,7 @@ fn apply_bal_code_deployment() {
 
     let stored_code = store.get_account_code(code_hash).unwrap();
     assert!(stored_code.is_some(), "code should be stored in the store");
-    assert_eq!(stored_code.unwrap().bytecode, bytecode);
+    assert_eq!(stored_code.unwrap().code_bytes(), bytecode);
 }
 
 #[test]
@@ -344,7 +344,7 @@ fn apply_bal_delegation_clear() {
     bal.add_account_changes(changes);
 
     let mut expected_acct = pre_acct;
-    expected_acct.code_hash = *EMPTY_KECCACK_HASH;
+    expected_acct.code_hash = *EMPTY_KECCAK_HASH;
     let mut expected_state_trie = store.open_direct_state_trie(*EMPTY_TRIE_HASH).unwrap();
     expected_state_trie
         .insert(hash_address(&addr), expected_acct.encode_to_vec())
@@ -362,7 +362,7 @@ fn apply_bal_delegation_clear() {
     let encoded = trie_after.get(&hash_address(&addr)).unwrap().unwrap();
     let acct = AccountState::decode(&encoded).unwrap();
     assert_eq!(
-        acct.code_hash, *EMPTY_KECCACK_HASH,
+        acct.code_hash, *EMPTY_KECCAK_HASH,
         "code_hash should be EMPTY_KECCAK after delegation clear"
     );
 }
@@ -397,7 +397,7 @@ fn post_amsterdam_header_for(
     BlockHeader {
         parent_hash,
         state_root,
-        block_access_list_hash: Some(bal.compute_hash()),
+        block_access_list_hash: Some(bal.compute_hash(&NativeCrypto)),
         ..Default::default()
     }
 }
@@ -481,7 +481,7 @@ fn try_apply_bal_block_rejects_bad_state_root() {
     let header = BlockHeader {
         parent_hash,
         state_root: H256::from([0x99u8; 32]),
-        block_access_list_hash: Some(bal.compute_hash()),
+        block_access_list_hash: Some(bal.compute_hash(&NativeCrypto)),
         ..Default::default()
     };
 
@@ -505,7 +505,7 @@ fn try_apply_bal_block_chain_of_three_advances_state_root() {
             number: n,
             parent_hash,
             state_root,
-            block_access_list_hash: Some(bal.compute_hash()),
+            block_access_list_hash: Some(bal.compute_hash(&NativeCrypto)),
             ..Default::default()
         };
         let new_root = try_apply_bal_block(&store, &header, &bal, state_root, parent_hash).unwrap();

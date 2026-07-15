@@ -16,7 +16,7 @@ pub use ethrex_levm::call_frame::CallFrameBackup;
 use ethrex_levm::db::gen_db::GeneralizedDatabase;
 pub use ethrex_levm::db::{CachingDatabase, Database as LevmDatabase};
 use ethrex_levm::errors::{ExecutionReport, TxResult};
-use ethrex_levm::vm::VMType;
+pub use ethrex_levm::vm::VMType;
 use std::sync::Arc;
 use std::sync::atomic::AtomicUsize;
 use std::sync::mpsc::Sender;
@@ -111,7 +111,7 @@ impl Evm {
         block: &Block,
         merkleizer: Option<Sender<Vec<AccountUpdate>>>,
         queue_length: &AtomicUsize,
-        bal: Option<&BlockAccessList>,
+        bal: Option<Arc<BlockAccessList>>,
         bal_parallel_exec_enabled: bool,
     ) -> Result<(BlockExecutionResult, Option<BlockAccessList>), EvmError> {
         LEVM::execute_block_pipeline(
@@ -138,7 +138,7 @@ impl Evm {
         cumulative_gas_spent: &mut u64,
         sender: Address,
     ) -> Result<(Receipt, ExecutionReport), EvmError> {
-        let execution_report = LEVM::execute_tx(
+        let mut execution_report = LEVM::execute_tx(
             tx,
             sender,
             block_header,
@@ -150,12 +150,29 @@ impl Evm {
         // Track cumulative post-refund gas for receipt
         *cumulative_gas_spent += execution_report.gas_spent;
 
-        let receipt = Receipt::new(
+        let mut receipt = Receipt::new(
             tx.tx_type(),
             execution_report.is_success(),
             *cumulative_gas_spent,
             execution_report.logs.clone(),
         );
+
+        // For frame transactions, populate payer and per-frame receipts
+        if matches!(tx, Transaction::FrameTransaction(_)) {
+            receipt.payer = execution_report.payer_address;
+            receipt.frame_receipts = execution_report.frame_results.take().map(|results| {
+                results
+                    .into_iter()
+                    .map(
+                        |(status, gas_used, logs)| ethrex_common::types::FrameReceipt {
+                            status,
+                            gas_used,
+                            logs,
+                        },
+                    )
+                    .collect()
+            });
+        }
 
         Ok((receipt, execution_report))
     }
@@ -169,6 +186,13 @@ impl Evm {
     pub fn apply_system_calls(&mut self, block_header: &BlockHeader) -> Result<(), EvmError> {
         let chain_config = self.db.store.get_chain_config()?;
         let fork = chain_config.fork(block_header.timestamp);
+
+        // EIP-8141: the expiry verifier predeploy must exist from Hegota
+        // activation onward (spec commit 0b197156). Idempotent install for the
+        // payload-build path; the block-import path is hooked in prepare_block.
+        if fork >= Fork::Hegota && matches!(self.vm_type, VMType::L1) {
+            LEVM::install_expiry_verifier_code(&mut self.db, self.crypto.as_ref())?;
+        }
 
         if block_header.parent_beacon_block_root.is_some() && fork >= Fork::Cancun {
             LEVM::beacon_root_contract_call(
@@ -241,6 +265,26 @@ impl Evm {
         LEVM::simulate_tx_from_generic(tx, header, &mut self.db, self.vm_type, self.crypto.as_ref())
     }
 
+    /// EIP-8141 mempool validation-prefix simulation (local peer policy).
+    /// Wraps [`LEVM::simulate_frame_validation_prefix`].
+    pub fn simulate_frame_validation_prefix(
+        &mut self,
+        tx: &Transaction,
+        header: &BlockHeader,
+        prefix: &ethrex_common::types::ValidationPrefix,
+        canonical_paymaster_code_hash: Option<ethrex_common::H256>,
+    ) -> Result<FrameValidationOutcome, EvmError> {
+        LEVM::simulate_frame_validation_prefix(
+            tx,
+            header,
+            &mut self.db,
+            self.vm_type,
+            self.crypto.as_ref(),
+            prefix,
+            canonical_paymaster_code_hash,
+        )
+    }
+
     pub fn create_access_list(
         &mut self,
         tx: &GenericTransaction,
@@ -282,6 +326,29 @@ impl Evm {
             }
         }
     }
+}
+
+/// Outcome of an EIP-8141 mempool validation-prefix simulation
+/// ([`Evm::simulate_frame_validation_prefix`]). A local peer policy result, not
+/// a consensus value.
+#[derive(Clone, Debug)]
+pub struct FrameValidationOutcome {
+    /// Whether the validation prefix passed every trace rule and produced a
+    /// payer without reverting within the verify-gas budget.
+    pub passed: bool,
+    /// The first validation-trace violation observed, if any (rendered to a
+    /// string for the admission error). `None` when `passed` is true.
+    pub violation: Option<String>,
+    /// The transaction's max cost (TXPARAM 0x06): the largest amount the payer
+    /// may be charged. Used by the paymaster reservation accounting (Phase 3).
+    pub max_cost: ethrex_common::U256,
+    /// The paymaster accessed by the prefix and whether its code matched the
+    /// canonical paymaster hash. `None` when no distinct paymaster was
+    /// identified (e.g. self-funded self_verify).
+    pub accessed_paymaster: Option<(Address, bool)>,
+    /// Sender storage slots touched during the prefix, recorded for the
+    /// admission-time revalidation affected-set (Phase 3).
+    pub touched_sender_slots: Vec<ethrex_common::H256>,
 }
 
 #[derive(Clone, Debug)]

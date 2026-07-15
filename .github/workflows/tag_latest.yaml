@@ -98,19 +98,30 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Retag Docker images
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Promote RC images to release tags
         run: |
           set -euo pipefail
-          docker buildx imagetools create \
-            -t "${REGISTRY}/${IMAGE_NAME}:${NEW_TAG}" \
-            -t "${REGISTRY}/${IMAGE_NAME}:latest" \
-            -t "${REGISTRY}/${IMAGE_NAME}:performance" \
-            "${REGISTRY}/${IMAGE_NAME}:${PREV_TAG}"
-          docker buildx imagetools create \
-            -t "${REGISTRY}/${IMAGE_NAME}:${NEW_TAG}-l2" \
-            -t "${REGISTRY}/${IMAGE_NAME}:l2" \
-            -t "${REGISTRY}/${IMAGE_NAME}:performance-l2" \
-            "${REGISTRY}/${IMAGE_NAME}:${PREV_TAG}-l2"
+          # Promote by re-stamping the tested RC image with the stable channel. A
+          # one-instruction `FROM <rc> / ENV ETHREX_CHANNEL=stable` build keeps the
+          # compiled binary layers straight from the RC image (no recompile), so the
+          # tested executable is byte-identical; only the image config gains
+          # ETHREX_CHANNEL, which the binary reads at runtime to report `…-stable-…`.
+          # RC images carry no such env and report their baked `…-rc.N-…`. The
+          # org.opencontainers.image.version label is inherited from the RC image.
+          promote() { # promote <src-tag> <version-tag> <floating-1> <floating-2>
+            printf 'FROM %s\nENV ETHREX_CHANNEL=stable\n' "${REGISTRY}/${IMAGE_NAME}:$1" > Dockerfile.promote
+            docker buildx build -f Dockerfile.promote \
+              --platform linux/amd64,linux/arm64 \
+              -t "${REGISTRY}/${IMAGE_NAME}:$2" \
+              -t "${REGISTRY}/${IMAGE_NAME}:$3" \
+              -t "${REGISTRY}/${IMAGE_NAME}:$4" \
+              --push .
+          }
+          promote "${PREV_TAG}"    "${NEW_TAG}"    "latest" "performance"
+          promote "${PREV_TAG}-l2" "${NEW_TAG}-l2" "l2"     "performance-l2"
 
   publish-apt:
     needs: [resolve, retag_docker_images]

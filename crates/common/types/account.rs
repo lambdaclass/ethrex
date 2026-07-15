@@ -291,6 +291,19 @@ pub fn code_hash(code: &Bytes, crypto: &dyn Crypto) -> H256 {
     H256(crypto.keccak256(code.as_ref()))
 }
 
+/// EIP-7702 delegation designation: an EOA whose code is `0xef0100 || address`.
+/// See <https://eips.ethereum.org/EIPS/eip-7702>.
+pub const EIP7702_DELEGATION_PREFIX: [u8; 3] = [0xef, 0x01, 0x00];
+/// Total byte length of an EIP-7702 delegation designation: 3-byte prefix
+/// plus the 20-byte target address.
+pub const EIP7702_DELEGATED_CODE_LEN: usize = 23;
+
+/// Returns true iff `code` is a valid EIP-7702 delegation designation
+/// (exactly 23 bytes, prefixed with `0xef0100`).
+pub fn is_eip7702_delegation(code: &[u8]) -> bool {
+    code.len() == EIP7702_DELEGATED_CODE_LEN && code.starts_with(&EIP7702_DELEGATION_PREFIX)
+}
+
 impl RLPEncode for AccountInfo {
     fn encode(&self, buf: &mut dyn bytes::BufMut) {
         Encoder::new(buf)
@@ -495,5 +508,50 @@ mod test {
             H256::from_str("c5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470")
                 .unwrap()
         )
+    }
+
+    #[test]
+    fn test_is_eip7702_delegation_valid() {
+        // 0xef0100 || 20-byte address
+        let mut code = Vec::with_capacity(23);
+        code.extend_from_slice(&EIP7702_DELEGATION_PREFIX);
+        code.extend_from_slice(&[0x42; 20]);
+        assert!(is_eip7702_delegation(&code));
+    }
+
+    #[test]
+    fn test_is_eip7702_delegation_rejects_empty() {
+        assert!(!is_eip7702_delegation(&[]));
+    }
+
+    #[test]
+    fn test_is_eip7702_delegation_rejects_short() {
+        // Prefix only, no address.
+        assert!(!is_eip7702_delegation(&EIP7702_DELEGATION_PREFIX));
+    }
+
+    #[test]
+    fn test_is_eip7702_delegation_rejects_long() {
+        // Correct prefix but 24 bytes total.
+        let mut code = Vec::with_capacity(24);
+        code.extend_from_slice(&EIP7702_DELEGATION_PREFIX);
+        code.extend_from_slice(&[0x42; 21]);
+        assert!(!is_eip7702_delegation(&code));
+    }
+
+    #[test]
+    fn test_is_eip7702_delegation_rejects_wrong_prefix() {
+        // Right length, wrong magic.
+        let mut code = Vec::with_capacity(23);
+        code.extend_from_slice(&[0xef, 0x01, 0x01]); // off by one in the last prefix byte
+        code.extend_from_slice(&[0x42; 20]);
+        assert!(!is_eip7702_delegation(&code));
+    }
+
+    #[test]
+    fn test_is_eip7702_delegation_rejects_arbitrary_contract_code() {
+        // Real contract code starting with anything else.
+        let code = vec![0x60, 0x60, 0x60, 0x40, 0x52 /* ... */];
+        assert!(!is_eip7702_delegation(&code));
     }
 }

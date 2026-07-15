@@ -56,7 +56,19 @@ pub fn parse_and_execute(
     let mut failures = Vec::new();
 
     for (test_key, test) in tests {
+        // TEMPORARY: the stateless run uses the tests-zkevm@v0.5.0 bundle (filled
+        // against glamsterdam-devnet v6.1.0), which predeploys the EIP-8282 builder
+        // deposit/exit contracts at the OLD addresses. This client uses the devnet-7
+        // addresses, so every Amsterdam+ block's end-of-block builder system call
+        // finds no code at the new addresses and fails. Skip Amsterdam+ fixtures in
+        // the stateless run — by fork, not by name, since cross-fork dirs like
+        // `for_amsterdam/prague/...` still run at the Amsterdam fork — until a zkevm
+        // bundle filled with the new predeploy addresses is released and
+        // `.fixtures_url_zkevm` is bumped. See docs/known_issues.md.
+        let skip_stateless_amsterdam =
+            stateless_backend.is_some() && test.network >= Fork::Amsterdam;
         let should_skip_test = test.network < Fork::Merge
+            || skip_stateless_amsterdam
             || skipped_tests
                 .map(|skipped| skipped.iter().any(|s| test_key.contains(s)))
                 .unwrap_or(false);
@@ -220,7 +232,7 @@ async fn run_two_pass_parallel(test_key: &str, test: &TestUnit) -> Result<(), St
     let store1 = build_store_for_test(test).await;
     let blockchain1 = Blockchain::default_with_store_and_pool(store1.clone(), merkle_pool());
 
-    let mut bals: Vec<BlockAccessList> = Vec::with_capacity(test.blocks.len());
+    let mut bals: Vec<Arc<BlockAccessList>> = Vec::with_capacity(test.blocks.len());
 
     for block_fixture in test.blocks.iter() {
         // Skip fixtures that expect an exception — the normal run() already verified them.
@@ -243,7 +255,7 @@ async fn run_two_pass_parallel(test_key: &str, test: &TestUnit) -> Result<(), St
 
         // If execution produced no BAL (non-Amsterdam block in a transition test), skip pass 2.
         match produced_bal {
-            Some(bal) => bals.push(bal),
+            Some(bal) => bals.push(Arc::new(bal)),
             None => return Ok(()),
         }
     }
@@ -257,7 +269,7 @@ async fn run_two_pass_parallel(test_key: &str, test: &TestUnit) -> Result<(), St
         let hash = block.hash();
 
         blockchain2
-            .add_block_pipeline(block, Some(bal))
+            .add_block_pipeline(block, Some(Arc::clone(bal)))
             .map_err(|e| format!("Two-pass pass-2 (parallel) failed for test {test_key}: {e:?}"))?;
 
         apply_fork_choice(&store2, hash, hash, hash)
@@ -326,6 +338,12 @@ fn exception_is_expected(
                 ),
                 ChainError::InvalidBlock(InvalidBlockError::MaximumRlpSizeExceeded(_, _))
             ) | (
+                // Legacy tx with out-of-range `v` (or out-of-range `r`/`s`): sender
+                // recovery rejects the signature during execution.
+                BlockChainExpectedException::InvalidSignature,
+                ChainError::EvmError(EvmError::Transaction(_))
+                    | ChainError::InvalidBlock(InvalidBlockError::InvalidTransaction(_))
+            ) | (
                 BlockChainExpectedException::Other,
                 _ //TODO: Decide whether to support more specific errors.
             ),
@@ -370,13 +388,36 @@ fn exception_in_rlp_decoding(block_fixture: &BlockWithRLP) -> bool {
         .iter()
         .any(|case| matches!(case, BlockChainExpectedException::RLPException));
 
+    // A typed transaction whose `y_parity` byte isn't a valid bool (0/1) is rejected
+    // at RLP decoding (MalformedBoolean), so `INVALID_SIGNATURE_VRS` is a legitimate
+    // reason for the block to fail decoding as well.
+    let expects_invalid_signature = block_fixture
+        .expect_exception
+        .as_ref()
+        .unwrap_or(&Vec::new())
+        .iter()
+        .any(|case| matches!(case, BlockChainExpectedException::InvalidSignature));
+
+    // A transaction nonce of 2^64 or greater does not fit ethrex's `u64` nonce field
+    // (the nonce is a `u64` per the yellow paper / EIP-2681), so it is rejected at RLP
+    // decoding with an `InvalidLength` error rather than at validation. EEST's
+    // `NONCE_IS_MAX` fixtures (e.g. `tx_max_nonce`, nonce = 2^64) therefore fail decoding
+    // here — a legitimate reason for the block to be rejected. (`create_transaction_high_nonce`
+    // uses nonce = 2^64-1, which fits `u64`, decodes fine, and is caught later at validation.)
+    let expects_nonce_too_high = block_fixture
+        .expect_exception
+        .as_ref()
+        .unwrap_or(&Vec::new())
+        .iter()
+        .any(|case| matches!(case, BlockChainExpectedException::TxtException(msg) if msg == "Nonce is max"));
+
     match CoreBlock::decode(block_fixture.rlp.as_ref()) {
         Ok(_) => {
             assert!(!expects_rlp_exception);
             false
         }
         Err(_) => {
-            assert!(expects_rlp_exception);
+            assert!(expects_rlp_exception || expects_invalid_signature || expects_nonce_too_high);
             true
         }
     }
