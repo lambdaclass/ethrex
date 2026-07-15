@@ -1,6 +1,7 @@
 use crate::authentication::authenticate;
 use crate::debug::bad_blocks::GetBadBlocksRequest;
 use crate::debug::chain_config::ChainConfigRequest;
+use crate::debug::dump_block::DumpBlockRequest;
 use crate::debug::execution_witness::ExecutionWitnessRequest;
 use crate::debug::execution_witness_by_hash::ExecutionWitnessByBlockHashRequest;
 use crate::debug::set_head::SetHeadRequest;
@@ -1435,6 +1436,7 @@ pub async fn map_debug_requests(req: &RpcRequest, context: RpcApiContext) -> Res
         "debug_setHead" => SetHeadRequest::call(req, context).await,
         "debug_traceTransaction" => TraceTransactionRequest::call(req, context).await,
         "debug_traceBlockByNumber" => TraceBlockByNumberRequest::call(req, context).await,
+        "debug_dumpBlock" => DumpBlockRequest::call(req, context).await,
         unknown_debug_method => Err(RpcErr::MethodNotFound(unknown_debug_method.to_owned())),
     }
 }
