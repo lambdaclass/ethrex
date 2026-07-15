@@ -111,6 +111,12 @@ Node options:
           [env: ETHREX_MEMPOOL_MAX_SIZE=]
           [default: 10000]
 
+      --mempool.gap-admit-occupancy-threshold <PERCENTAGE>
+          Mempool occupancy percentage (0-100) at or above which incoming transactions with a nonce gap relative to the sender's on-chain nonce are rejected. Setting to 100 disables the check.
+
+          [env: ETHREX_MEMPOOL_GAP_ADMIT_OCCUPANCY_THRESHOLD=]
+          [default: 90]
+
       --mempool.max-queued-txs-per-account <MAX_QUEUED_TXS_PER_ACCOUNT>
           Maximum number of queued (future/nonce-gapped) transactions a single sender may hold in the mempool. Executable (contiguous-nonce) txs are not capped (geth AccountQueue-style).
 
@@ -257,7 +263,7 @@ Block building options:
           Block extra data message.
           
           [env: ETHREX_BUILDER_EXTRA_DATA=]
-          [default: "ethrex 20.0.0"]
+          [default: "ethrex 21.0.0"]
 
       --builder.gas-limit <GAS_LIMIT>
           Target block gas limit.
@@ -357,6 +363,12 @@ Node options:
 
           [env: ETHREX_MEMPOOL_MAX_SIZE=]
           [default: 10000]
+
+      --mempool.gap-admit-occupancy-threshold <PERCENTAGE>
+          Mempool occupancy percentage (0-100) at or above which incoming transactions with a nonce gap relative to the sender's on-chain nonce are rejected. Setting to 100 disables the check.
+
+          [env: ETHREX_MEMPOOL_GAP_ADMIT_OCCUPANCY_THRESHOLD=]
+          [default: 90]
 
 P2P options:
       --bootnodes <BOOTNODE_LIST>...
@@ -465,7 +477,7 @@ Block building options:
           Block extra data message.
 
           [env: ETHREX_BUILDER_EXTRA_DATA=]
-          [default: "ethrex 20.0.0"]
+          [default: "ethrex 21.0.0"]
 
       --builder.gas-limit <GAS_LIMIT>
           Target block gas limit.
