@@ -214,7 +214,7 @@ async fn main() -> eyre::Result<()> {
         }
         // A fatal subsystem (e.g. the RPC server) cancels the token to abort the node.
         _ = cancel_token.cancelled() => {
-            server_shutdown(&datadir, &cancel_token, peer_table, local_node_record, &store).await;
+            server_shutdown(&datadir, &cancel_token, peer_table, shared_local_node, &store).await;
         }
     }
 
