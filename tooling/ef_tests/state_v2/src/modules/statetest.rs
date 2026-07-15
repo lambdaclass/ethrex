@@ -109,6 +109,7 @@ async fn run_case(
         LevmCallTracer::disabled(),
         VMType::L1,
         &NativeCrypto,
+        None,
     )
     .map_err(RunnerError::VMError)?;
 
