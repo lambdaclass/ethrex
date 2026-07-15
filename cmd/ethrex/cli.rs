@@ -10,7 +10,8 @@ use std::{
 
 use clap::{ArgAction, Parser as ClapParser, Subcommand as ClapSubcommand};
 use ethrex_blockchain::{
-    BlockchainOptions, BlockchainType, DEFAULT_MAX_QUEUED_TXS_PER_ACCOUNT, L2Config,
+    BlockchainOptions, BlockchainType, DEFAULT_GAP_ADMIT_OCCUPANCY_THRESHOLD,
+    DEFAULT_MAX_QUEUED_TXS_PER_ACCOUNT, L2Config,
     error::{ChainError, InvalidBlockError},
 };
 use ethrex_common::types::{Block, DEFAULT_BUILDER_GAS_CEIL, Genesis, validate_block_body};
@@ -237,6 +238,16 @@ pub struct Options {
         env = "ETHREX_MEMPOOL_MAX_SIZE"
     )]
     pub mempool_max_size: usize,
+    #[arg(
+        help = "Mempool occupancy percentage (0-100) at or above which incoming transactions with a nonce gap relative to the sender's on-chain nonce are rejected. Setting to 100 disables the check.",
+        long = "mempool.gap-admit-occupancy-threshold",
+        default_value_t = DEFAULT_GAP_ADMIT_OCCUPANCY_THRESHOLD,
+        value_name = "PERCENTAGE",
+        value_parser = clap::value_parser!(u8).range(0..=100),
+        help_heading = "Node options",
+        env = "ETHREX_MEMPOOL_GAP_ADMIT_OCCUPANCY_THRESHOLD"
+    )]
+    pub mempool_gap_admit_occupancy_threshold: u8,
     #[arg(
         help = "Maximum number of queued (future/nonce-gapped) transactions a single sender may hold in the mempool. Executable (contiguous-nonce) txs are not capped (geth AccountQueue-style).",
         long = "mempool.max-queued-txs-per-account",
@@ -536,6 +547,7 @@ impl Default for Options {
             dev: Default::default(),
             force: false,
             mempool_max_size: Default::default(),
+            mempool_gap_admit_occupancy_threshold: DEFAULT_GAP_ADMIT_OCCUPANCY_THRESHOLD,
             mempool_max_queued_txs_per_account: DEFAULT_MAX_QUEUED_TXS_PER_ACCOUNT,
             tx_broadcasting_time_interval: Default::default(),
             target_peers: Default::default(),

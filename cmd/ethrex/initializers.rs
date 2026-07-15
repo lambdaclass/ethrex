@@ -784,6 +784,7 @@ pub async fn init_l1(
             bal_prefetch_enabled: !opts.no_bal_prefetch,
             bal_parallel_trie_enabled: !opts.no_bal_parallel_trie,
             max_reorg_depth: opts.max_reorg_depth,
+            gap_admit_occupancy_threshold: opts.mempool_gap_admit_occupancy_threshold,
         },
     );
 

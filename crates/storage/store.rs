@@ -6,10 +6,10 @@ use crate::{
         StorageBackend, StorageReadView, StorageWriteBatch,
         tables::{
             ACCOUNT_CODE_METADATA, ACCOUNT_CODES, ACCOUNT_FLATKEYVALUE, ACCOUNT_TRIE_NODES,
-            BLOCK_ACCESS_LISTS, BLOCK_NUMBERS, BODIES, CANONICAL_BLOCK_HASHES, CHAIN_DATA,
-            EXECUTION_WITNESSES, FULLSYNC_HEADERS, HEADERS, INVALID_CHAINS, MISC_VALUES,
-            PENDING_BLOCKS, RECEIPTS_V2, SNAP_STATE, STATE_HISTORY, STORAGE_FLATKEYVALUE,
-            STORAGE_TRIE_NODES, TRANSACTION_LOCATIONS,
+            BAD_BLOCKS, BLOCK_ACCESS_LISTS, BLOCK_NUMBERS, BODIES, CANONICAL_BLOCK_HASHES,
+            CHAIN_DATA, EXECUTION_WITNESSES, FULLSYNC_HEADERS, HEADERS, INVALID_CHAINS,
+            MISC_VALUES, PENDING_BLOCKS, RECEIPTS_V2, SNAP_STATE, STATE_HISTORY,
+            STORAGE_FLATKEYVALUE, STORAGE_TRIE_NODES, TRANSACTION_LOCATIONS,
         },
     },
     apply_prefix,
@@ -123,6 +123,12 @@ const CODE_CACHE_MAX_SIZE: u64 = 64 * 1024 * 1024;
 
 /// Key used to persist the `flushed_upto` block number in `MISC_VALUES`.
 const FLUSHED_UPTO_KEY: &[u8] = b"bodies_flushed_upto";
+
+/// Single key under which the bounded list of bad blocks is stored in `BAD_BLOCKS`.
+const BAD_BLOCKS_KEY: &[u8] = b"bad_blocks";
+
+/// Maximum number of bad blocks retained for `debug_getBadBlocks`.
+const MAX_BAD_BLOCKS: usize = 16;
 
 #[derive(Debug)]
 struct CodeCache {
@@ -1393,6 +1399,40 @@ impl Store {
             .map(|bytes| H256::decode(bytes.as_slice()))
             .transpose()
             .map_err(StoreError::from)
+    }
+
+    /// Records a block that failed validation so it can be served by
+    /// `debug_getBadBlocks`. The list is bounded to [`MAX_BAD_BLOCKS`] entries,
+    /// kept sorted by descending block number, with the oldest dropped once the
+    /// bound is exceeded. Duplicate `(number, hash)` entries are ignored.
+    pub async fn add_bad_block(&self, block: Block) -> Result<(), StoreError> {
+        let mut bad_blocks = self.get_bad_blocks().await?;
+        let block_number = block.header.number;
+        let block_hash = block.hash();
+        if bad_blocks
+            .iter()
+            .any(|b| b.header.number == block_number && b.hash() == block_hash)
+        {
+            return Ok(());
+        }
+        bad_blocks.push(block);
+        bad_blocks.sort_by(|a, b| b.header.number.cmp(&a.header.number));
+        bad_blocks.truncate(MAX_BAD_BLOCKS);
+        self.write_async(
+            BAD_BLOCKS,
+            BAD_BLOCKS_KEY.to_vec(),
+            bad_blocks.encode_to_vec(),
+        )
+        .await
+    }
+
+    /// Returns the recent bad blocks seen by the client, sorted by descending
+    /// block number. Used by `debug_getBadBlocks`.
+    pub async fn get_bad_blocks(&self) -> Result<Vec<Block>, StoreError> {
+        match self.read_async(BAD_BLOCKS, BAD_BLOCKS_KEY.to_vec()).await? {
+            Some(bytes) => Vec::<Block>::decode(&bytes).map_err(StoreError::from),
+            None => Ok(Vec::new()),
+        }
     }
 
     /// Obtain block number for a given hash

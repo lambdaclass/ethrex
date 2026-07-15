@@ -1032,6 +1032,25 @@ impl Mempool {
         Ok((txs_size as u64, blobs_size as u64))
     }
 
+    /// Returns the current occupancy of the transaction pool as an integer
+    /// percentage of its configured maximum size, in the range `[0, 100]`.
+    ///
+    /// Returns `0` when the pool has unlimited capacity (`max_mempool_size == 0`)
+    /// to avoid a division by zero and to signal that pressure-gated admission
+    /// rules should treat the pool as empty in that configuration.
+    ///
+    /// The computation uses integer arithmetic (`len * 100 / max`) so threshold
+    /// boundary comparisons are deterministic — float rounding from a prior
+    /// `f64`-based implementation could misclassify near-boundary cases.
+    pub fn occupancy_pct(&self) -> Result<u8, MempoolError> {
+        let inner = self.read()?;
+        if inner.max_mempool_size == 0 {
+            return Ok(0);
+        }
+        let pct = inner.transaction_pool.len().saturating_mul(100) / inner.max_mempool_size;
+        Ok(pct.min(100) as u8)
+    }
+
     /// Returns all transactions currently in the pool
     pub fn content(&self) -> Result<Vec<Transaction>, MempoolError> {
         let pooled_transactions = &self.read()?.transaction_pool;
@@ -1288,7 +1307,8 @@ pub fn transaction_intrinsic_gas(
     // it the same way (`fork >= Fork::Prague` in the default hook). Applying it
     // pre-Prague would spuriously raise the admission threshold.
     let calldata_floor = if fork >= Fork::Prague {
-        intrinsic_gas_floor(tx, fork).map_err(|e| MempoolError::IntrinsicGasError(e.to_string()))?
+        intrinsic_gas_floor(tx, sender, fork)
+            .map_err(|e| MempoolError::IntrinsicGasError(e.to_string()))?
     } else {
         0
     };
@@ -1298,7 +1318,53 @@ pub fn transaction_intrinsic_gas(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ethrex_common::types::EIP1559Transaction;
+    use ethrex_common::types::{EIP1559Transaction, Transaction, TxKind};
+    use ethrex_common::{Address, Bytes};
+
+    fn dummy_mempool_tx(sender: Address, nonce: u64) -> MempoolTransaction {
+        let tx = Transaction::EIP1559Transaction(EIP1559Transaction {
+            nonce,
+            max_priority_fee_per_gas: 0,
+            max_fee_per_gas: 0,
+            gas_limit: 21_000,
+            to: TxKind::Call(Address::from_low_u64_be(1)),
+            value: U256::zero(),
+            data: Bytes::default(),
+            access_list: Default::default(),
+            ..Default::default()
+        });
+        MempoolTransaction::new(tx, sender)
+    }
+
+    fn fill_mempool(mempool: &Mempool, count: usize) {
+        for i in 0..count {
+            let sender = Address::from_low_u64_be(i as u64 + 1);
+            let hash = H256::from_low_u64_be(i as u64 + 1);
+            mempool
+                .add_transaction(hash, sender, dummy_mempool_tx(sender, 0), None, None)
+                .expect("Failed to add transaction");
+        }
+    }
+
+    #[test]
+    fn occupancy_pct_empty_pool() {
+        let mempool = Mempool::new(100);
+        assert_eq!(mempool.occupancy_pct().unwrap(), 0);
+    }
+
+    #[test]
+    fn occupancy_pct_half_full_pool() {
+        let mempool = Mempool::new(100);
+        fill_mempool(&mempool, 50);
+        assert_eq!(mempool.occupancy_pct().unwrap(), 50);
+    }
+
+    #[test]
+    fn occupancy_pct_full_pool() {
+        let mempool = Mempool::new(100);
+        fill_mempool(&mempool, 100);
+        assert_eq!(mempool.occupancy_pct().unwrap(), 100);
+    }
 
     fn build_tx(nonce: u64) -> Transaction {
         Transaction::EIP1559Transaction(EIP1559Transaction {

@@ -3,8 +3,9 @@ use crate::{
     constants::*,
     errors::{ContextResult, ExceptionalHalt, InternalError, TxValidationError, VMError},
     gas_cost::{
-        STANDARD_TOKEN_COST, cold_account_access_cost, floor_tokens_in_access_list,
-        total_cost_floor_per_token, tx_base_cost,
+        STANDARD_TOKEN_COST, WARM_ADDRESS_ACCESS_COST, cold_account_access_cost,
+        floor_tokens_in_access_list, recipient_regular_gas, total_cost_floor_per_token,
+        tx_base_cost,
     },
     hooks::hook::Hook,
     utils::*,
@@ -144,50 +145,147 @@ impl Hook for DefaultHook {
             validate_4844_tx(vm)?;
         }
 
+        // EIP-8037: enter the atomic prepare region (EELS `interpreter.py`'s depth-0
+        // `try` around `set_delegation` + `prepare_dispatch`). Taken after the sender
+        // nonce bump (7) and fee deduction (3) above so both survive a region
+        // rollback, and before the type-4 auth handling below (the first region
+        // charge). See `VM::enter_prepare_region` / `VM::fail_prepare_region`.
+        vm.enter_prepare_region();
+
         // [EIP-7702]: https://eips.ethereum.org/EIPS/eip-7702
         // Transaction is type 4 if authorization_list is Some
         if vm.tx.authorization_list().is_some() {
             validate_type_4_tx(vm)?;
         }
 
-        // EIP-2780 (merged EIPs#11645) top-level post-7702 charges.
-        // Applied AFTER EIP-7702 authorizations are set (so recipient emptiness /
-        // delegation reflect the post-auth state) and BEFORE the value transfer.
-        // Only for Amsterdam+ non-create transactions.
-        if vm.env.config.fork >= Fork::Amsterdam && !vm.is_create()? {
-            let to = vm.current_call_frame.to;
-            let recipient = vm.db.get_account(to)?;
-            let recipient_is_empty = recipient.is_empty();
-            let recipient_code_hash = recipient.info.code_hash;
-            let recipient_is_delegated = if recipient_code_hash == *EMPTY_KECCAK_HASH {
-                false
+        // EIP-8037 (atomic prepare region): EELS `prepare_dispatch` create/value
+        // branch (interpreter.py:277-291). The CREATE / value-to-not-alive
+        // `NEW_ACCOUNT` charge is evaluated IN-REGION via `increase_state_gas`: an
+        // insufficient reservoir/gas rolls back the whole region
+        // (`vm.fail_prepare_region()`) and burns all gas, rather than rejecting the
+        // tx (which would wrongly invalidate the block). Applied AFTER EIP-7702
+        // authorizations are set (so recipient emptiness / delegation reflect the
+        // post-auth state) and BEFORE the value transfer.
+        if vm.env.config.fork >= Fork::Amsterdam && !vm.pending_prep_oog {
+            if vm.is_create()? {
+                // EELS `prepare_dispatch`: `get_pre_state_account(message.current_target)
+                // == EMPTY_ACCOUNT`. The created address cannot have been touched by
+                // this tx's fee deduction / nonce bump (those only touch the sender),
+                // and a create transaction can never carry an authorization list
+                // (`validate_type_4_tx` rejects `to == None`), so the current DB read
+                // already equals the pre-tx state for this address.
+                let created_addr = vm.current_call_frame.to;
+                // EIP-7928: record the created address in the BAL now that the prepare
+                // region has read its pre-state (EELS `prepare_dispatch`
+                // `get_pre_state_account(current_target)`), so a create that OOGs on the
+                // in-region NEW_ACCOUNT charge still lists the address — the access record
+                // survives the region rollback. Without this, a create that halts before
+                // dispatch (which is where `handle_create_transaction` records the address)
+                // would drop it and fork on the BAL hash.
+                if let Some(recorder) = vm.db.bal_recorder.as_mut() {
+                    recorder.record_touched_address(created_addr);
+                }
+                if vm.db.get_account(created_addr)?.is_empty() {
+                    let charge = vm.state_gas_new_account;
+                    if vm.increase_state_gas(charge).is_err() {
+                        vm.fail_prepare_region();
+                    }
+                }
             } else {
-                let code = vm.db.get_code(recipient_code_hash)?.code_bytes();
-                code_has_delegation(&code)?
-            };
+                let to = vm.current_call_frame.to;
+                let recipient = vm.db.get_account(to)?;
+                let recipient_is_empty = recipient.is_empty();
+                let recipient_code_hash = recipient.info.code_hash;
+                // EIP-7928 (tests-glamsterdam-devnet@v7.1.0): record the recipient in the
+                // BAL at its load point — mirroring EELS `prepare_dispatch`, which loads
+                // the recipient (`get_account`) at the START of dispatch, BEFORE the
+                // value NEW_ACCOUNT / delegation-access charges below. Recording here (not
+                // after the region) means a subsequent in-region OOG on those charges
+                // still lists the recipient (it was already loaded), while an earlier
+                // EIP-7702 auth halt — which skips this whole block via the
+                // `!vm.pending_prep_oog` guard above — correctly excludes it.
+                if let Some(recorder) = vm.db.bal_recorder.as_mut() {
+                    recorder.record_touched_address(to);
+                }
+                // Resolve a 7702-delegated recipient's target address (EELS
+                // `prepare_dispatch`: `get_delegated_code_address(recipient_code)`),
+                // evaluated post-auth so an auth on `tx.to` this tx is reflected.
+                let recipient_delegated_target: Option<Address> =
+                    if recipient_code_hash == *EMPTY_KECCAK_HASH {
+                        None
+                    } else {
+                        let code = vm.db.get_code(recipient_code_hash)?.code_bytes();
+                        if code_has_delegation(&code)? {
+                            Some(get_authorized_address_from_code(&code)?)
+                        } else {
+                            None
+                        }
+                    };
 
-            // If the recipient is EIP-161-empty and the tx transfers value, the
-            // value transfer will materialize a new account: charge the
-            // new-account state gas. (Skipped if a 7702 auth already materialized
-            // the recipient this tx, since emptiness is evaluated post-auth.)
-            // EIP-2780 (EELS PR #3048): no precompile carve-out. EIP-161/EIP-2780
-            // define emptiness structurally, so an empty (unfunded) precompile
-            // receiving value is created like any other account and pays
-            // NEW_ACCOUNT. A pre-funded precompile is non-empty, so
-            // `recipient_is_empty` is already false and it stays exempt.
-            // The charge is deferred to `run_execution` (charged from the reservoir there)
-            // so an OOG reverts the tx rather than invalidating the block; the emptiness
-            // check must happen here, before the value transfer materializes the account.
-            if recipient_is_empty && !vm.tx.value().is_zero() {
-                vm.pending_top_frame_state_gas = vm.state_gas_new_account;
-            }
+                // If the recipient is EIP-161-empty and the tx transfers value, the
+                // value transfer will materialize a new account: charge the
+                // new-account state gas IN-REGION (EELS `prepare_dispatch` value
+                // branch: `is_account_alive`). Skipped if a 7702 auth already
+                // materialized the recipient this tx, since emptiness is evaluated
+                // post-auth. EIP-2780 (EELS PR #3048): no precompile carve-out.
+                // EIP-161/EIP-2780 define emptiness structurally, so an empty
+                // (unfunded) precompile receiving value is created like any other
+                // account and pays NEW_ACCOUNT. A pre-funded precompile is
+                // non-empty, so `recipient_is_empty` is already false and it stays
+                // exempt.
+                if recipient_is_empty && !vm.tx.value().is_zero() {
+                    let charge = vm.state_gas_new_account;
+                    if vm.increase_state_gas(charge).is_err() {
+                        vm.fail_prepare_region();
+                    } else {
+                        // Signal so a subsequent Amsterdam precompile-halt in
+                        // `run_execution` rolls this charge back (the recipient
+                        // never materializes on halt).
+                        vm.value_new_account_charged = true;
+                    }
+                }
 
-            // If the recipient is a 7702-delegated account, charge an additional
-            // cold account access for resolving the delegation target. Deferred to
-            // run_execution (like the state charge) so an OOG reverts the tx.
-            if recipient_is_delegated {
-                vm.pending_top_frame_regular_gas = cold_account_access_cost(vm.env.config.fork);
+                // EIP-8037 (atomic prepare region): EELS `prepare_dispatch` delegation
+                // branch. If the recipient is 7702-delegated, charge the account access
+                // for resolving the delegation target IN-REGION via `increase_consumed_gas`
+                // (regular gas): WARM if the target is already accessed, else COLD (and
+                // mark it accessed). Charged AFTER the value NEW_ACCOUNT state charge, so
+                // an OOG here rolls back the whole region (auth + value) and burns all gas
+                // rather than rejecting the tx.
+                if !vm.pending_prep_oog
+                    && let Some(target) = recipient_delegated_target
+                {
+                    let is_warm = vm.substate.is_address_accessed(&target);
+                    let charge = if is_warm {
+                        WARM_ADDRESS_ACCESS_COST
+                    } else {
+                        cold_account_access_cost(vm.env.config.fork)
+                    };
+                    if vm.current_call_frame.increase_consumed_gas(charge).is_err() {
+                        vm.fail_prepare_region();
+                    } else if !is_warm {
+                        vm.substate.add_accessed_address(target);
+                    }
+                }
             }
+        }
+
+        // EIP-8037: the atomic prepare region rolled back (one of its charges OOG'd)
+        // and burned all gas; `run_execution` turns `pending_prep_oog` into a full-gas
+        // revert `ContextResult` (not a tx-level `Err`, which would wrongly invalidate
+        // the block). What must be skipped afterward depends on the tx kind:
+        //
+        // - CREATE: skip everything. The value transfer would fund the created address
+        //   and (in `execute`) the nonce bump would materialize it; `undo_value_transfer`
+        //   only re-credits the sender on the create path, so the funding would persist
+        //   as a phantom account. EELS never creates the account on this OOG.
+        // - non-CREATE: still run `transfer_value` + `set_bytecode_and_code_address`.
+        //   The full-gas revert routes through `finalize_execution`, whose
+        //   `undo_value_transfer` reverses the transfer symmetrically (net zero) — the
+        //   same behavior these cases had before the region existed. Skipping only the
+        //   transfer here (while `undo` still runs) would underflow the recipient.
+        if vm.pending_prep_oog && vm.is_create()? {
+            return Ok(());
         }
 
         transfer_value(vm)?;
@@ -222,23 +320,22 @@ impl Hook for DefaultHook {
         }
 
         // EIP-8037 (Amsterdam+): CREATE-tx address collision.
-        // Per EELS process_message_call (interpreter.py:120-145) the collision
-        // returns `state_gas_left = message.state_gas_reservoir` (reservoir is
-        // PRESERVED, not burned). The failure block in fork.py:1086-1094 then
-        // adds `new_account_refund` to both `state_gas_left` and `state_refund`,
-        // so the user gets back reservoir + new_account_refund. tx_state_gas
-        // collapses to 0, tx_regular_gas = max(intrinsic_regular + message.gas,
-        // calldata_floor). The user does NOT lose the whole gas_limit.
+        // Per EELS process_message_call (interpreter.py:120-145), `prepare_dispatch`
+        // never runs for a colliding create (the collision check short-circuits before
+        // `process_create_message`/`process_message`), so `state_gas_used=0` and the
+        // reservoir is PRESERVED (not burned): `state_gas_left = message.state_gas_reservoir`.
+        // tx_state_gas collapses to 0, tx_regular_gas = max(intrinsic_regular +
+        // message.gas, calldata_floor). The user does NOT lose the whole gas_limit.
+        //
+        // ethrex's in-region CREATE NEW_ACCOUNT charge runs before the
+        // collision check and is rolled back to the frame's entry baseline by
+        // `handle_create_transaction` on collision (see that function), so
+        // `state_gas_used` is already net zero here.
         if vm.env.config.fork >= Fork::Amsterdam && ctx_result.is_collision() {
             let gas_limit = vm.env.gas_limit;
-            // state_gas_used is already net (signed, inline refunds applied).
-            // state_refund carries the EIP-7702 auth refund and CREATE-failure intrinsic
-            // (added by vm.finalize_execution). Clamp at zero.
-            let state_refund_signed =
-                i64::try_from(vm.state_refund).map_err(|_| InternalError::Overflow)?;
+            // state_gas_used is already net (signed, inline refunds applied); clamp at zero.
             let state_gas: u64 =
-                u64::try_from(vm.state_gas_used.saturating_sub(state_refund_signed).max(0))
-                    .map_err(|_| InternalError::Overflow)?;
+                u64::try_from(vm.state_gas_used.max(0)).map_err(|_| InternalError::Overflow)?;
             let floor = vm.get_min_gas_used()?;
             // Regular gas = gas_limit - state_gas_left, where state_gas_left =
             // reservoir (PRESERVED across collision in EELS, with new_account_refund
@@ -318,13 +415,12 @@ pub fn refund_sender(
     // Block header gas_used = max(regular_dimension, state_dimension) per EIP-7778.
     // Receipt cumulative_gas_used = post-refund total (what user pays).
     if vm.env.config.fork >= Fork::Amsterdam {
-        // EIP-8037: state_gas_used is already net (signed, credits applied inline).
-        // Subtract state_refund (EIP-7702 tx-level channel) and clamp at zero.
-        let state_refund_signed =
-            i64::try_from(vm.state_refund).map_err(|_| InternalError::Overflow)?;
+        // EIP-8037: state_gas_used is already net (signed, credits applied inline);
+        // clamp at zero. There is no separate tx-level refund channel — EELS
+        // `process_transaction` sets `tx_state_gas = intrinsic_state_gas + state_gas_used`
+        // directly.
         let state_gas: u64 =
-            u64::try_from(vm.state_gas_used.saturating_sub(state_refund_signed).max(0))
-                .map_err(|_| InternalError::Overflow)?;
+            u64::try_from(vm.state_gas_used.max(0)).map_err(|_| InternalError::Overflow)?;
         // Compute raw consumption from scratch (gas_limit minus gas_remaining)
         // to avoid interference from any reservoir-current subtraction baked
         // into the caller's pre-refund number.
@@ -338,10 +434,16 @@ pub fn refund_sender(
             .saturating_sub(vm.intrinsic_state_gas)
             .saturating_sub(vm.state_gas_reservoir_initial)
             .saturating_sub(vm.state_gas_spill);
-        // EIP-7778: block regular dimension is the unfloored, pre-refund regular gas
-        // (EELS `tx_regular_gas = tx_gas_used_before_refund - state_gas`). The floor
-        // and refund apply only to the user payment (`gas_spent`), not block gas_used.
+        // EIP-8037 (glamsterdam-devnet-7 v7.2.0, EIPs#11908): the calldata floor
+        // binds the block-level regular gas dimension. Each tx contributes
+        // `max(pre_refund_gas - state_gas, calldata_floor)` to block gas, so
+        // state-gas spending cannot discount the floor. `regular_gas` here is
+        // `pre_refund_gas - state_gas`; flooring it matches EELS `tx_regular_gas`.
+        // The refund still applies only to the user payment (`gas_spent`), not
+        // block gas_used.
+        let floor = vm.get_min_gas_used()?;
         ctx_result.gas_used = regular_gas
+            .max(floor)
             .checked_add(state_gas)
             .ok_or(InternalError::Overflow)?;
         // User pays post-refund gas (with floor)
@@ -527,14 +629,29 @@ pub fn validate_min_gas_limit(vm: &mut VM<'_>, intrinsic: &IntrinsicGas) -> Resu
             .ok_or(InternalError::Overflow)?;
     }
 
-    // floor_cost_by_tokens = tx_base_cost(fork) + total_cost_floor_per_token(fork) * tokens
+    // floor_cost_by_tokens = base_regular_gas + total_cost_floor_per_token(fork) * tokens
     // EIP-7976 (Amsterdam+) raises the floor multiplier from 10 to 16.
-    // The floor base is `tx_base_cost(fork)`: 21000 pre-Amsterdam, 12000 at Amsterdam
-    // (EIP-2780 lowers the flat base; EELS `data_floor_gas_cost` adds `GasCosts.TX_BASE`).
+    // The floor base is `tx_base_cost(fork)`: 21000 pre-Amsterdam, unchanged.
+    // Amsterdam+ (EIP-2780) anchors on `tx_base_cost(fork) + recipient_regular_gas(...)`
+    // (12000 base + the recipient/value regular-gas contribution), mirroring EELS
+    // `data_floor_gas_cost = total_floor_tokens * TX_DATA_TOKEN_FLOOR + base_regular_gas`.
+    let floor_base = if fork >= Fork::Amsterdam {
+        tx_base_cost(fork)
+            .checked_add(recipient_regular_gas(
+                &vm.tx.to(),
+                vm.tx.value(),
+                vm.env.origin,
+                fork,
+            ))
+            .ok_or(InternalError::Overflow)?
+    } else {
+        tx_base_cost(fork)
+    };
+
     let floor_cost_by_tokens = tokens_in_calldata
         .checked_mul(total_cost_floor_per_token(fork))
         .ok_or(InternalError::Overflow)?
-        .checked_add(tx_base_cost(fork))
+        .checked_add(floor_base)
         .ok_or(InternalError::Overflow)?;
 
     // EIP-8037 (Amsterdam+): Regular gas is capped at TX_MAX_GAS_LIMIT — reject if
@@ -816,16 +933,32 @@ pub fn set_bytecode_and_code_address(vm: &mut VM<'_>) -> Result<(), VMError> {
         // Here bytecode and code_address could be either from the account or from the delegated account.
         let to = vm.current_call_frame.to;
 
-        // Record tx.to as touched in BAL (the target of message call transaction)
-        if let Some(recorder) = vm.db.bal_recorder.as_mut() {
+        // Record tx.to as touched in BAL (the target of message call transaction).
+        // EIP-7928 (tests-glamsterdam-devnet@v7.1.0): skipped when the atomic prepare
+        // region rolled back (`pending_prep_oog`). EELS v7.1.0 stopped loading the
+        // recipient at inclusion (`prepare_message`) and now loads it only in the
+        // top-frame `prepare_dispatch`, which an EIP-7702 auth halt precedes — so a
+        // tx that OOGs during authorization processing must not touch the recipient.
+        if !vm.pending_prep_oog
+            && let Some(recorder) = vm.db.bal_recorder.as_mut()
+        {
             recorder.record_touched_address(to);
         }
 
         let (is_delegation, _eip7702_gas_consumed, code_address, bytecode) =
             eip7702_get_code(vm.db, &mut vm.substate, to, vm.env.config.fork)?;
 
-        // If EIP-7702 delegation, also record the delegation target (code source) in BAL
-        if is_delegation && let Some(recorder) = vm.db.bal_recorder.as_mut() {
+        // If EIP-7702 delegation, also record the delegation target (code source) in BAL.
+        // Skipped when the atomic prepare region rolled back (`pending_prep_oog`): EELS
+        // `prepare_dispatch` resolves and reads the delegated address (`get_account`,
+        // which feeds `account_reads`) only AFTER its warm/cold access charge succeeds.
+        // When that charge OOGs — or an earlier in-region charge (auth / value
+        // NEW_ACCOUNT) OOGs before the delegation is reached — EELS never records the
+        // target, so neither may ethrex, or the BAL would carry a spurious touch.
+        if is_delegation
+            && !vm.pending_prep_oog
+            && let Some(recorder) = vm.db.bal_recorder.as_mut()
+        {
             recorder.record_touched_address(code_address);
         }
 

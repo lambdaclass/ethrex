@@ -1292,6 +1292,11 @@ async fn try_execute_payload(
     // Execute and store the block
     debug!(%block_hash, %block_number, "Executing payload");
 
+    // Retain a copy so we can record it via `debug_getBadBlocks` if it turns out
+    // to be invalid. `add_block` consumes the block, so we must clone beforehand;
+    // this happens once per newPayload and is negligible next to block execution.
+    let bad_block_candidate = block.clone();
+
     match add_block(context, block, bal, make_witness).await {
         Err(ChainError::ParentNotFound) => {
             // Start sync
@@ -1313,6 +1318,7 @@ async fn try_execute_payload(
                 .storage
                 .set_latest_valid_ancestor(block_hash, latest_valid_hash)
                 .await?;
+            context.storage.add_bad_block(bad_block_candidate).await?;
             Ok(PayloadStatus::invalid_with(
                 latest_valid_hash,
                 error.to_string(),
@@ -1324,6 +1330,7 @@ async fn try_execute_payload(
                 .storage
                 .set_latest_valid_ancestor(block_hash, latest_valid_hash)
                 .await?;
+            context.storage.add_bad_block(bad_block_candidate).await?;
             Ok(PayloadStatus::invalid_with(
                 latest_valid_hash,
                 error.to_string(),
