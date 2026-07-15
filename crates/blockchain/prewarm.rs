@@ -37,10 +37,22 @@ const SLOT_DURATION_SECS: u64 = 12;
 #[cfg_attr(any(not(feature = "rayon"), feature = "eip-8025"), allow(dead_code))]
 const GAS_BUDGET_MULTIPLIER: u64 = 6;
 
-/// The next block's slot starts exactly one slot after its parent's; it cannot
-/// arrive before that. Warming must end at this boundary.
+/// Keep warming this long past the slot boundary. The next block cannot arrive
+/// before its slot starts (one slot after the parent), but it typically lands
+/// ~2s into the slot; most includable txs a start-of-slot pass misses arrive in
+/// that propagation window. Warming ~1s past the boundary recovers the bulk of
+/// them (~4/5 of the recoverable late txs, measured on mainnet) while still
+/// stopping ~1s before the block's average arrival, so the prewarmer isn't
+/// running when execution begins. `cancel` (next block imported) stops warming
+/// earlier for blocks that arrive within this window.
+const PREWARM_EXTEND_PAST_SLOT_SECS: u64 = 1;
+
+/// Warming deadline: the slot boundary plus [`PREWARM_EXTEND_PAST_SLOT_SECS`],
+/// to catch txs that arrive during the block's propagation window.
 fn next_slot_deadline_unix(parent_timestamp: u64) -> u64 {
-    parent_timestamp.saturating_add(SLOT_DURATION_SECS)
+    parent_timestamp
+        .saturating_add(SLOT_DURATION_SECS)
+        .saturating_add(PREWARM_EXTEND_PAST_SLOT_SECS)
 }
 
 /// Picks the warm set from a mempool snapshot: sender groups in nonce order,
@@ -621,10 +633,10 @@ mod tests {
     }
 
     #[test]
-    fn deadline_is_next_slot_boundary() {
+    fn deadline_is_slot_boundary_plus_extension() {
         assert_eq!(
             next_slot_deadline_unix(1_700_000_000),
-            1_700_000_000 + SLOT_DURATION_SECS
+            1_700_000_000 + SLOT_DURATION_SECS + PREWARM_EXTEND_PAST_SLOT_SECS
         );
     }
 
