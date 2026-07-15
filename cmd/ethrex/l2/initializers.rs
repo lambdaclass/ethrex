@@ -109,8 +109,9 @@ fn get_valid_delegation_addresses(l2_opts: &L2Options) -> Vec<Address> {
     let addresses: Vec<Address> = read_to_string(path)
         .unwrap_or_else(|_| panic!("Failed to load file {path}"))
         .lines()
-        .filter(|line| !line.trim().is_empty())
-        .map(|line| line.to_string().parse::<Address>())
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .map(|line| line.parse::<Address>())
         .filter_map(Result::ok)
         .collect();
     if addresses.is_empty() {
@@ -259,7 +260,7 @@ pub async fn init_l2(
         gap_admit_occupancy_threshold: opts.node_opts.mempool_gap_admit_occupancy_threshold,
     };
 
-    let blockchain = init_blockchain(store.clone(), blockchain_opts.clone());
+    let blockchain = init_blockchain(store.clone(), blockchain_opts);
 
     regenerate_state(&store, &rollup_store, &blockchain, None).await?;
 
