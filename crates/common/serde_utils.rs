@@ -705,8 +705,13 @@ pub mod block_access_list {
             D: Deserializer<'de>,
         {
             let value = String::deserialize(d)?;
-            let bytes = hex::decode(value.trim_start_matches("0x"))
-                .map_err(|e| D::Error::custom(e.to_string()))?;
+            // EIP-7928 blockAccessList is a DATA field (`^0x[0-9a-f]*$`): the `0x`
+            // prefix is mandatory. Require it rather than silently trimming, so an
+            // unprefixed (schema-invalid) value is rejected as strict clients do.
+            let hex_body = value
+                .strip_prefix("0x")
+                .ok_or_else(|| D::Error::custom("blockAccessList must be 0x-prefixed"))?;
+            let bytes = hex::decode(hex_body).map_err(|e| D::Error::custom(e.to_string()))?;
             BlockAccessList::decode(&bytes)
                 .map_err(|_| D::Error::custom("Failed to RLP decode BAL"))
         }
@@ -733,19 +738,24 @@ pub mod block_access_list {
         {
             let value = Option::<String>::deserialize(d)?;
             match value {
-                // An empty hex string ("0x") encodes the absence of a BAL, not an
-                // empty list. Treat it as None so pre-Amsterdam newPayload calls
-                // (which send "0x") deserialize instead of failing RLP decode.
-                Some(s) if !s.trim_start_matches("0x").is_empty() => {
-                    hex::decode(s.trim_start_matches("0x"))
-                        .map_err(|e| D::Error::custom(e.to_string()))
-                        .and_then(|b| {
-                            BlockAccessList::decode(&b)
-                                .map_err(|_| D::Error::custom("Failed to RLP decode BAL"))
-                        })
+                Some(s) => {
+                    // EIP-7928 blockAccessList is a DATA field: the `0x` prefix is
+                    // mandatory. An empty hex string ("0x") encodes the absence of a
+                    // BAL (not an empty list), so pre-Amsterdam newPayload calls that
+                    // send "0x" deserialize to None instead of failing RLP decode.
+                    let hex_body = s
+                        .strip_prefix("0x")
+                        .ok_or_else(|| D::Error::custom("blockAccessList must be 0x-prefixed"))?;
+                    if hex_body.is_empty() {
+                        return Ok(None);
+                    }
+                    let bytes =
+                        hex::decode(hex_body).map_err(|e| D::Error::custom(e.to_string()))?;
+                    BlockAccessList::decode(&bytes)
                         .map(Some)
+                        .map_err(|_| D::Error::custom("Failed to RLP decode BAL"))
                 }
-                _ => Ok(None),
+                None => Ok(None),
             }
         }
 
@@ -762,5 +772,64 @@ pub mod block_access_list {
                 .map(|bytes| format!("0x{}", hex::encode(bytes)));
             Option::<String>::serialize(&bal, serializer)
         }
+    }
+}
+
+#[cfg(test)]
+mod block_access_list_serde_tests {
+    use crate::types::block_access_list::BlockAccessList;
+    use ethrex_rlp::encode::RLPEncode;
+    use serde::Deserialize;
+
+    #[derive(Deserialize)]
+    struct WrapReq {
+        #[serde(with = "crate::serde_utils::block_access_list::rlp_str")]
+        bal: BlockAccessList,
+    }
+
+    #[derive(Deserialize)]
+    struct WrapOpt {
+        #[serde(with = "crate::serde_utils::block_access_list::rlp_str_opt")]
+        bal: Option<BlockAccessList>,
+    }
+
+    /// `0x` + RLP hex of an empty BAL (`0xc0`).
+    fn empty_bal_hex() -> String {
+        format!(
+            "0x{}",
+            hex::encode(BlockAccessList::from_accounts(vec![]).encode_to_vec())
+        )
+    }
+
+    #[test]
+    fn rlp_str_accepts_prefixed_and_rejects_unprefixed() {
+        let hex = empty_bal_hex();
+        let ok: WrapReq = serde_json::from_value(serde_json::json!({ "bal": hex })).unwrap();
+        assert_eq!(ok.bal.accounts().len(), 0);
+
+        // Same bytes without the mandatory 0x prefix must be rejected.
+        let unprefixed = hex.trim_start_matches("0x").to_string();
+        let err = serde_json::from_value::<WrapReq>(serde_json::json!({ "bal": unprefixed }));
+        assert!(err.is_err(), "unprefixed BAL hex must be rejected");
+    }
+
+    #[test]
+    fn rlp_str_opt_prefix_and_absence_handling() {
+        // "0x" encodes absence → None.
+        let none: WrapOpt = serde_json::from_value(serde_json::json!({ "bal": "0x" })).unwrap();
+        assert!(none.bal.is_none());
+
+        // JSON null → None.
+        let null: WrapOpt = serde_json::from_value(serde_json::json!({ "bal": null })).unwrap();
+        assert!(null.bal.is_none());
+
+        // A prefixed valid BAL → Some.
+        let some: WrapOpt =
+            serde_json::from_value(serde_json::json!({ "bal": empty_bal_hex() })).unwrap();
+        assert!(some.bal.is_some());
+
+        // Unprefixed (schema-invalid) → error, not silently accepted.
+        let err = serde_json::from_value::<WrapOpt>(serde_json::json!({ "bal": "c0" }));
+        assert!(err.is_err(), "unprefixed BAL hex must be rejected");
     }
 }
