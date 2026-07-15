@@ -77,6 +77,32 @@ use std::sync::atomic::AtomicBool;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc::Sender;
 
+/// EIP-8079 `burned_fees` for an LStar block: `base_fee · post_refund_gas +
+/// blob_base_fee · blob_gas_used`. `post_refund_gas` is the block's post-refund
+/// Σ gas_spent (the running `cumulative_gas_used`, equivalently the last
+/// receipt's `cumulative_gas_used`). Callers gate this on `is_lstar` and wrap
+/// the result in `Some`. Extracted so the production and verification paths
+/// (`execute_block` and both `execute_block_pipeline` arms) derive the burn
+/// identically.
+fn lstar_burned_fees(
+    chain_config: &ethrex_common::types::ChainConfig,
+    header: &ethrex_common::types::BlockHeader,
+    post_refund_gas: u64,
+) -> u64 {
+    let evm_cfg = EVMConfig::new_from_chain_config(chain_config, header);
+    let blob_base_fee = get_base_fee_per_blob_gas(header.excess_blob_gas, &evm_cfg)
+        .map(|v| u64::try_from(v).unwrap_or(u64::MAX))
+        .unwrap_or(0);
+    let blob_gas_used = header.blob_gas_used.unwrap_or(0);
+    compute_burned_fees(
+        header.base_fee_per_gas.unwrap_or(0),
+        // EIP-8079: burn basis is post-refund Σ gas_spent.
+        post_refund_gas,
+        blob_base_fee,
+        blob_gas_used,
+    )
+}
+
 /// The struct implements the following functions:
 /// [LEVM::execute_block]
 /// [LEVM::execute_tx]
@@ -404,24 +430,9 @@ impl LEVM {
                 receipts,
                 requests,
                 block_gas_used,
-                burned_fees: if is_lstar {
-                    let evm_cfg = EVMConfig::new_from_chain_config(&chain_config, &block.header);
-                    let blob_base_fee =
-                        get_base_fee_per_blob_gas(block.header.excess_blob_gas, &evm_cfg)
-                            .map(|v| u64::try_from(v).unwrap_or(u64::MAX))
-                            .unwrap_or(0);
-                    let blob_gas_used = block.header.blob_gas_used.unwrap_or(0);
-                    Some(compute_burned_fees(
-                        block.header.base_fee_per_gas.unwrap_or(0),
-                        // EIP-8079: burn basis is post-refund Σ gas_spent.
-                        // cumulative_gas_used is accumulated as += report.gas_spent (post-refund).
-                        cumulative_gas_used,
-                        blob_base_fee,
-                        blob_gas_used,
-                    ))
-                } else {
-                    None
-                },
+                // cumulative_gas_used is accumulated as += report.gas_spent (post-refund).
+                burned_fees: is_lstar
+                    .then(|| lstar_burned_fees(&chain_config, &block.header, cumulative_gas_used)),
                 tx_gas_breakdowns,
             },
             bal,
@@ -634,24 +645,10 @@ impl LEVM {
 
             // EIP-8079: burn basis is post-refund Σ gas_spent.
             // Each receipt's cumulative_gas_used += report.gas_spent (post-refund);
-            // the last receipt holds the block total.  Compute before `receipts` is moved.
-            let burned_fees_par = if is_lstar {
-                let evm_cfg = EVMConfig::new_from_chain_config(&chain_config, &block.header);
-                let blob_base_fee =
-                    get_base_fee_per_blob_gas(block.header.excess_blob_gas, &evm_cfg)
-                        .map(|v| u64::try_from(v).unwrap_or(u64::MAX))
-                        .unwrap_or(0);
-                let blob_gas_used = block.header.blob_gas_used.unwrap_or(0);
-                let post_refund_gas = receipts.last().map(|r| r.cumulative_gas_used).unwrap_or(0);
-                Some(compute_burned_fees(
-                    block.header.base_fee_per_gas.unwrap_or(0),
-                    post_refund_gas,
-                    blob_base_fee,
-                    blob_gas_used,
-                ))
-            } else {
-                None
-            };
+            // the last receipt holds the block total. Compute before `receipts` is moved.
+            let post_refund_gas = receipts.last().map(|r| r.cumulative_gas_used).unwrap_or(0);
+            let burned_fees_par =
+                is_lstar.then(|| lstar_burned_fees(&chain_config, &block.header, post_refund_gas));
 
             return Ok((
                 BlockExecutionResult {
@@ -877,24 +874,9 @@ impl LEVM {
                 receipts,
                 requests,
                 block_gas_used,
-                burned_fees: if is_lstar {
-                    let evm_cfg = EVMConfig::new_from_chain_config(&chain_config, &block.header);
-                    let blob_base_fee =
-                        get_base_fee_per_blob_gas(block.header.excess_blob_gas, &evm_cfg)
-                            .map(|v| u64::try_from(v).unwrap_or(u64::MAX))
-                            .unwrap_or(0);
-                    let blob_gas_used = block.header.blob_gas_used.unwrap_or(0);
-                    Some(compute_burned_fees(
-                        block.header.base_fee_per_gas.unwrap_or(0),
-                        // EIP-8079: burn basis is post-refund Σ gas_spent.
-                        // cumulative_gas_used is accumulated as += report.gas_spent (post-refund).
-                        cumulative_gas_used,
-                        blob_base_fee,
-                        blob_gas_used,
-                    ))
-                } else {
-                    None
-                },
+                // cumulative_gas_used is accumulated as += report.gas_spent (post-refund).
+                burned_fees: is_lstar
+                    .then(|| lstar_burned_fees(&chain_config, &block.header, cumulative_gas_used)),
                 tx_gas_breakdowns,
             },
             bal,

@@ -160,21 +160,19 @@ pub struct NativeRollupOptions {
         value_name = "PRIVATE_KEY",
         value_parser = utils::parse_private_key,
         env = "ETHREX_NATIVE_ROLLUPS_RELAYER_PK",
-        default_value = "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d",
         help_heading = "Native rollups options",
-        help = "Private key for the relayer account (signs processL1Message txs on L2)."
+        help = "Private key for the relayer account (signs processL1Message txs on L2). Required with --native-rollups."
     )]
-    pub relayer_private_key: SecretKey,
+    pub relayer_private_key: Option<SecretKey>,
     #[arg(
         long = "native-rollups.l1-pk",
         value_name = "PRIVATE_KEY",
         value_parser = utils::parse_private_key,
         env = "ETHREX_NATIVE_ROLLUPS_L1_PK",
-        default_value = "0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924",
         help_heading = "Native rollups options",
-        help = "Private key for L1 transactions (advance() calls)."
+        help = "Private key for L1 transactions (advance() calls). Required with --native-rollups."
     )]
-    pub l1_private_key: SecretKey,
+    pub l1_private_key: Option<SecretKey>,
     #[arg(
         long = "native-rollups.block-time",
         id = "native_rollups_block_time_ms",
@@ -201,14 +199,8 @@ impl Default for NativeRollupOptions {
     fn default() -> Self {
         Self {
             contract_address: None,
-            relayer_private_key: utils::parse_private_key(
-                "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d",
-            )
-            .expect("Valid default relayer key"),
-            l1_private_key: utils::parse_private_key(
-                "0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924",
-            )
-            .expect("Valid default L1 key"),
+            relayer_private_key: None,
+            l1_private_key: None,
             block_time_ms: 10000,
             advance_interval_ms: 3000,
         }

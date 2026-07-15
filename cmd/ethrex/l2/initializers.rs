@@ -472,6 +472,7 @@ pub async fn init_native_rollup_l2(
         max_blobs_per_block: None,
         precompute_witnesses: opts.node_opts.precompute_witnesses,
         precompile_cache_enabled: true,
+        max_queued_txs_per_account: opts.node_opts.mempool_max_queued_txs_per_account,
         bal_parallel_exec_enabled: true,
         bal_prefetch_enabled: true,
         bal_parallel_trie_enabled: true,
@@ -501,6 +502,9 @@ pub async fn init_native_rollup_l2(
         ethrex_l2::sequencer::utils::get_l2_gas_limit(l1_rpc_urls.clone(), contract_address)
             .await?;
 
+    // Fresh token: this native-rollup devnet RPC path has no graceful-shutdown
+    // wiring, so the token is never cancelled (matches prior behavior).
+    let cancel_token = CancellationToken::new();
     init_rpc_api(
         &opts.node_opts,
         &opts,
@@ -515,12 +519,19 @@ pub async fn init_native_rollup_l2(
         log_filter_handler,
         block_gas_limit,
         None, // no websocket for the native rollup devnet RPC
-    );
+        cancel_token,
+    )
+    .await?;
 
+    let relayer_private_key = native_opts
+        .relayer_private_key
+        .ok_or_else(|| eyre::eyre!("--native-rollups.relayer-pk is required"))?;
+    let l1_private_key = native_opts
+        .l1_private_key
+        .ok_or_else(|| eyre::eyre!("--native-rollups.l1-pk is required"))?;
     let relayer_signer: ethrex_l2_rpc::signer::Signer =
-        LocalSigner::new(native_opts.relayer_private_key).into();
-    let l1_signer: ethrex_l2_rpc::signer::Signer =
-        LocalSigner::new(native_opts.l1_private_key).into();
+        LocalSigner::new(relayer_private_key).into();
+    let l1_signer: ethrex_l2_rpc::signer::Signer = LocalSigner::new(l1_private_key).into();
 
     let config = NativeRollupConfig {
         l1_rpc_urls,

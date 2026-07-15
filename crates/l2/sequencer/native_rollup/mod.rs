@@ -60,9 +60,9 @@ pub struct NativeRollupConfig {
 
 /// Start the native rollup L2 actors.
 ///
-/// Spawns three actors:
-/// 1. NativeL1Watcher — polls L1 for L1MessageRecorded events
-/// 2. NativeBlockProducer — drains L1 messages, builds relayer txs, produces blocks
+/// Spawns three actors (producer first, so the watcher can hold its `ActorRef`):
+/// 1. NativeBlockProducer — owns the pending-L1-messages queue, builds relayer txs, produces blocks
+/// 2. NativeL1Watcher — polls L1 for L1MessageRecorded events, forwards them to the producer
 /// 3. NativeL1Advancer — reads blocks from Store, generates witness, submits to L1
 ///
 /// Returns refs to the spawned actors.

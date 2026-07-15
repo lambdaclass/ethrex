@@ -66,35 +66,32 @@ fn verify_inner(
 /// depends on `ethrex-vm` and `ethrex-guest-program`, which in turn depend on
 /// `ethrex-levm`. A direct call would form a cycle. The trait breaks it via
 /// dependency inversion: levm owns the interface, blockchain owns the
-/// implementation, and an `Arc<dyn StatelessValidator>` is injected into
-/// `VM::new` from blockchain at runtime (see `blockchain.rs` VM construction
-/// sites).
+/// implementation, and a borrowed `&dyn StatelessValidator` (backed by an
+/// `Arc<StatelessExecutor>` the blockchain holds) is passed to `VM::new` as its
+/// `Option<&dyn StatelessValidator>` argument at runtime (see `blockchain.rs` VM
+/// construction sites).
 pub struct StatelessExecutor {
     pub crypto: Arc<dyn Crypto>,
 }
 
 impl ethrex_vm::StatelessValidator for StatelessExecutor {
-    fn verify(&self, input: &[u8]) -> Result<Vec<u8>, ethrex_vm::VMError> {
+    fn verify(&self, input: &SszStatelessInput) -> Result<Vec<u8>, ethrex_vm::VMError> {
         use ethrex_vm::{PrecompileError, VMError};
-        use libssz::SszDecode;
 
-        // The `input` is attacker-controlled (a sequencer-supplied SSZ blob). A
-        // malformed blob or an un-rebuildable witness is a CALL-level failure,
-        // NOT a node invariant: map both to `PrecompileError` so the precompile
-        // halts exceptionally (tx included, gas charged — the DoS bound holds)
-        // rather than to `VMError::Internal`, which would abort the whole tx and
-        // let the attacker walk away uncharged after we already did the SSZ
-        // decode + trie rebuild.
-        let stateless_input = SszStatelessInput::from_ssz_bytes(input)
-            .map_err(|_| VMError::from(PrecompileError::ExecuteInvalidInput))?;
-
-        let execution_witness = ExecutionWitness::from_ssz(&stateless_input)
+        // `input` was decoded by the precompile from attacker-controlled
+        // calldata. Rebuilding the witness can still fail on a malformed or
+        // un-rebuildable witness; that is a CALL-level failure, NOT a node
+        // invariant, so map it to `PrecompileError` (the precompile halts
+        // exceptionally: tx included, gas charged — the DoS bound holds) rather
+        // than `VMError::Internal`, which would abort the whole tx and let the
+        // attacker walk away uncharged after we already did the trie rebuild.
+        let execution_witness = ExecutionWitness::from_ssz(input)
             .map_err(|_| VMError::from(PrecompileError::ExecuteInvalidInput))?;
 
         let result = verify_stateless_new_payload(
-            &stateless_input.new_payload_request,
+            &input.new_payload_request,
             execution_witness,
-            &stateless_input.chain_config,
+            &input.chain_config,
             self.crypto.clone(),
         );
 
@@ -104,30 +101,8 @@ impl ethrex_vm::StatelessValidator for StatelessExecutor {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use ethrex_vm::StatelessValidator;
-
-    /// I1 regression: `verify()` on malformed (attacker-controlled) input must
-    /// fail closed at the CALL level — i.e. return an error that does NOT
-    /// propagate as a tx-abort. `should_propagate()` is true only for
-    /// `VMError::Internal`; the pre-fix code returned `Internal` for SSZ-decode
-    /// and witness-conversion failures, letting an attacker abort the tx and
-    /// walk away uncharged after we did the decode + trie rebuild.
-    #[test]
-    fn verify_malformed_input_fails_closed_not_internal() {
-        let executor = StatelessExecutor {
-            crypto: Arc::new(ethrex_crypto::NativeCrypto),
-        };
-        // Not a valid SSZ `StatelessInput`.
-        let err = executor
-            .verify(&[0xff, 0xff, 0xff, 0xff])
-            .expect_err("malformed input must be rejected");
-        assert!(
-            !err.should_propagate(),
-            "malformed EXECUTE input must be a CALL-level PrecompileError (fail-closed, charged), \
-             not a tx-aborting VMError::Internal; got {err:?}"
-        );
-    }
-}
+// Note: the malformed/attacker-controlled-input fail-closed regression (I1) now
+// lives with the SSZ decode in the EXECUTE precompile itself — see
+// `execute_rejects_malformed_ssz_input` in `crates/vm/levm/src/execute_precompile.rs`.
+// `verify` here receives an already-decoded `SszStatelessInput`, so it can no
+// longer be exercised with raw malformed bytes.

@@ -228,8 +228,14 @@ pub const P256VERIFY: Precompile = Precompile {
 };
 
 /// EXECUTE precompile address (0x0101) for Native Rollups (EIP-8079).
-/// Active only on L1 at or above Fork::LStar — enforced via runtime gate in
-/// `is_precompile` and `execute_precompile`.
+/// Active only on L1 at or above `Fork::LStar`. The L1-only + LStar gate is
+/// enforced in `is_precompile` (the `matches!(vm_type, VMType::L1)` check);
+/// `execute_precompile`'s dispatch only re-checks `fork >= LStar` and relies on
+/// `is_precompile` having already rejected the L2 case at the call site.
+/// NOTE: `EXECUTE` is intentionally NOT in the `PRECOMPILES` array, so its
+/// `active_since_fork` below is never consulted by `precompiles_for_fork` — the
+/// gating is entirely the hand-written checks above. The field is set for
+/// documentation only.
 pub const EXECUTE: Precompile = Precompile {
     address: H160([
         0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,

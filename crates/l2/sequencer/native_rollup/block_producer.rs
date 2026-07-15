@@ -1,13 +1,17 @@
 //! NativeBlockProducer actor — produces L2 blocks compatible with the
 //! EXECUTE precompile on L1.
 //!
-//! Follows the same pattern as `payload_builder.rs` in the L2 stack:
-//! 1. `create_payload` builds an initial empty block
-//! 2. Relayer txs for L1 messages are built (not added to mempool)
-//! 3. Relayer txs are executed first to guarantee L1 message inclusion
-//! 4. Remaining gas is filled from mempool txs
-//! 5. `finalize_payload` computes state root and receipts
-//! 6. Block is stored and fork choice is applied
+//! Follows the same pattern as `payload_builder.rs` in the L2 stack, with one
+//! ordering difference: the L1 messages are selected and their relayer txs are
+//! built *before* the payload is created, because the L1-messages Merkle root is
+//! seeded into the payload's `parent_beacon_block_root` at creation time.
+//! 1. Select pending L1 messages and build their relayer txs (not via mempool)
+//! 2. `create_payload` builds the block, seeding `parent_beacon_block_root` with
+//!    the L1-messages Merkle root
+//! 3. Relayer txs are executed first to guarantee L1 message inclusion, then
+//!    remaining gas is filled from mempool txs
+//! 4. `finalize_payload` computes state root and receipts
+//! 5. Block is stored and fork choice is applied
 //!
 //! The key difference from the L2 payload builder: this uses `BlockchainType::L1`
 //! (and thus `VMType::L1`), has no blob-size constraints, and handles L1 message
@@ -40,6 +44,25 @@ use tracing::{debug, error, info, warn};
 
 use super::types::L1Message;
 
+/// Fixed gas the relayer tx reserves for `processL1Message`'s own body (nonce
+/// check, Merkle-proof verification, event) on top of the forwarded
+/// `msg.gas_limit`. Must match `RELAYER_GAS_BODY_ALLOWANCE` in `NativeRollup.sol`,
+/// which caps `sendL1Message` so every accepted message stays includable.
+const RELAYER_GAS_BODY_ALLOWANCE: u64 = 300_000;
+
+/// Gas limit the producer assigns to the relayer tx that delivers an L1 message
+/// with the given `msg_gas_limit`: the forwarded gas grossed up by the 63/64
+/// call-gas rule, plus the body allowance. This is what the message actually
+/// costs in an L2 block, so message selection must budget against it (not the
+/// raw `gas_limit`), otherwise a message near the block ceiling becomes
+/// un-includable and its deposit gets permanently stuck.
+fn relayer_tx_gas_limit(msg_gas_limit: u64) -> u64 {
+    msg_gas_limit
+        .saturating_mul(64)
+        .saturating_div(63)
+        .saturating_add(RELAYER_GAS_BODY_ALLOWANCE)
+}
+
 /// Configuration for the native block producer.
 #[derive(Clone, Debug)]
 pub struct NativeBlockProducerConfig {
@@ -63,6 +86,8 @@ pub enum NativeBlockProducerError {
     Evm(#[from] ethrex_vm::EvmError),
     #[error("VM error: {0}")]
     Vm(String),
+    #[error("parent header not found in store")]
+    MissingParentHeader,
     #[error("Encoding error: {0}")]
     Encoding(String),
     #[error("Internal error: {0}")]
@@ -121,9 +146,9 @@ impl NativeBlockProducer {
         // 2. Create initial payload (same as L2 block producer)
         let head_header = {
             let current_block_number = self.store.get_latest_block_number().await?;
-            self.store.get_block_header(current_block_number)?.ok_or(
-                NativeBlockProducerError::Vm("parent header not found".into()),
-            )?
+            self.store
+                .get_block_header(current_block_number)?
+                .ok_or(NativeBlockProducerError::MissingParentHeader)?
         };
         let head_hash = head_header.hash();
 
@@ -170,7 +195,7 @@ impl NativeBlockProducer {
         // 7. Finalize payload (compute state root, receipts root, etc.)
         self.blockchain.finalize_payload(&mut context)?;
 
-        // 7. Store block
+        // 8. Store block
         let block = context.payload;
         let account_updates = context.account_updates;
 
@@ -195,7 +220,7 @@ impl NativeBlockProducer {
         self.blockchain
             .store_block(block, account_updates_list, execution_result)?;
 
-        // 8. Apply fork choice
+        // 9. Apply fork choice
         apply_fork_choice(&self.store, block_hash, block_hash, block_hash).await?;
 
         info!(
@@ -210,18 +235,25 @@ impl NativeBlockProducer {
 
     /// Take L1 messages from the internal queue that fit within the block gas limit.
     ///
-    /// Pops messages one by one, summing each message's gas limit. Once adding
-    /// another message would exceed `block_gas_limit`, the remaining messages
-    /// stay in the queue for the next block.
+    /// Pops messages one by one, summing the gas each message's *relayer tx*
+    /// consumes (`relayer_tx_gas_limit`), not the raw `msg.gas_limit`: the relayer
+    /// tx is what actually lands in the block, and `fill_transactions` checks each
+    /// relayer tx's full gas limit against the remaining block gas. Budgeting the
+    /// raw `gas_limit` here would select a message whose relayer tx then can't fit,
+    /// which `fill_transactions` treats as a hard error and the message would be
+    /// dropped without being re-queued. Once adding another message would exceed
+    /// `block_gas_limit`, the remaining messages stay in the queue for the next
+    /// block. (`sendL1Message` on L1 caps `gasLimit` so a single message always
+    /// fits, so this can never deadlock on an over-large head-of-queue message.)
     fn take_l1_messages_for_block(&mut self) -> Vec<L1Message> {
         let mut selected = Vec::new();
         let mut cumulative_gas: u64 = 0;
 
         while let Some(msg) = self.pending_l1_messages.front() {
-            let next_gas = cumulative_gas.saturating_add(msg.gas_limit);
+            let next_gas = cumulative_gas.saturating_add(relayer_tx_gas_limit(msg.gas_limit));
             if next_gas > self.config.block_gas_limit {
                 warn!(
-                    "NativeBlockProducer: L1 messages gas ({next_gas}) would exceed \
+                    "NativeBlockProducer: L1 messages relayer gas ({next_gas}) would exceed \
                      block gas limit ({}), deferring {} remaining messages",
                     self.config.block_gas_limit,
                     self.pending_l1_messages.len()
@@ -310,13 +342,10 @@ impl NativeBlockProducer {
                 // verification, event) AND forwards `msg.gas_limit` to the recipient
                 // subcall. The 63/64 call-gas rule means the tx must carry more than
                 // `msg.gas_limit`, or processL1Message runs out of gas at the subcall
-                // and the deposit is never credited. Grant the subcall its full
-                // gas_limit (÷63×64) plus a fixed body allowance.
-                gas_limit: msg
-                    .gas_limit
-                    .saturating_mul(64)
-                    .saturating_div(63)
-                    .saturating_add(300_000),
+                // and the deposit is never credited. `relayer_tx_gas_limit` grants the
+                // subcall its full gas_limit (÷63×64) plus a fixed body allowance;
+                // `take_l1_messages_for_block` budgets selection against this same value.
+                gas_limit: relayer_tx_gas_limit(msg.gas_limit),
                 to: TxKind::Call(NATIVE_ROLLUP_L2_BRIDGE),
                 value: U256::zero(),
                 data: Bytes::from(calldata),
@@ -495,5 +524,31 @@ impl NativeBlockProducer {
             );
         }
         self.pending_l1_messages.extend(msg.messages);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{RELAYER_GAS_BODY_ALLOWANCE, relayer_tx_gas_limit};
+
+    /// C1 regression: a message sent at the contract's maximum allowed gasLimit
+    /// — `(block_gas_limit - RELAYER_GAS_BODY_ALLOWANCE) * 63 / 64`, the cap in
+    /// `NativeRollup.sol::sendL1Message` — must produce a relayer tx whose gas
+    /// limit still fits in one L2 block. Before the fix, selection budgeted the
+    /// raw `msg.gas_limit`, so a message near the ceiling produced a relayer tx
+    /// larger than the block, which `fill_transactions` dropped — permanently
+    /// wedging the L1→L2 bridge. This ties the on-chain cap to the producer's
+    /// `relayer_tx_gas_limit` inflation so they can't silently drift apart.
+    #[test]
+    fn relayer_tx_for_max_allowed_message_fits_block() {
+        for block_gas_limit in [1_000_000u64, 15_000_000, 30_000_000, 100_000_000] {
+            let max_msg = (block_gas_limit - RELAYER_GAS_BODY_ALLOWANCE) * 63 / 64;
+            let relayer_gas = relayer_tx_gas_limit(max_msg);
+            assert!(
+                relayer_gas <= block_gas_limit,
+                "relayer tx gas ({relayer_gas}) for the max-allowed message ({max_msg}) must fit \
+                 block_gas_limit ({block_gas_limit})"
+            );
+        }
     }
 }

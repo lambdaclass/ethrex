@@ -2,14 +2,19 @@
 //!
 //! This is a thin wrapper around `verify_stateless_new_payload` (accessed via
 //! the `StatelessValidator` trait). The precompile:
-//! 1. Deserializes SSZ `StatelessInput` (to extract gas_limit and validate L2 constraints)
-//! 2. Charges gas equal to `gas_limit + calldata.len() * EXECUTE_GAS_PER_WITNESS_BYTE`
-//! 3. Validates L2-specific constraints (no blobs, no withdrawals, etc.)
-//! 4. Delegates to the `StatelessValidator` trait for actual execution
-//! 5. On success returns the SSZ-encoded `StatelessValidationResult`; fails
-//!    closed on invalid input or a failed validation by returning an
-//!    `ExceptionalHalt` (CALL-level `success=false`), so a `require(success)`
-//!    caller is safe and the gas charged in step 2 is still paid (bounds DoS).
+//! 1. Deserializes SSZ `StatelessInput` once (to read gas_limit and check L2 constraints)
+//! 2. Validates L2-specific constraints (no blobs, no withdrawals, etc.)
+//! 3. Charges gas equal to `gas_limit + calldata.len() * EXECUTE_GAS_PER_WITNESS_BYTE`
+//! 4. Delegates to the `StatelessValidator` trait, passing the already-decoded input
+//! 5. On success returns the SSZ-encoded `StatelessValidationResult`.
+//!
+//! Fail-closed semantics: both invalid input and a failed validation return an
+//! `ExceptionalHalt` (CALL-level `success=false`), so a `require(success)` caller
+//! is safe. Invalid input (undecodable SSZ or an L2-constraint violation) is
+//! rejected in steps 1-2, *before* the step-3 gas charge — those checks are cheap
+//! and already priced by the L1 calldata gas the attacker paid to submit the blob.
+//! A *failed validation* (step 4) is rejected *after* the step-3 charge, so an
+//! attacker who forces full re-execution still pays for it: that is the DoS bound.
 
 use bytes::Bytes;
 
@@ -78,7 +83,9 @@ fn run_execute(
     let charge = gas_limit.saturating_add(witness_charge);
     increase_precompile_consumed_gas(charge, gas_remaining)?;
 
-    let result = validator.verify(calldata)?;
+    // Hand the already-decoded `input` to the validator so it doesn't re-parse
+    // the (potentially large) witness a second time.
+    let result = validator.verify(&input)?;
 
     use ethrex_common::types::stateless_ssz::SszStatelessValidationResult;
     let parsed = SszStatelessValidationResult::from_ssz_bytes(&result).map_err(|e| {
@@ -152,7 +159,7 @@ mod tests {
     struct MockInvalidValidator;
 
     impl crate::StatelessValidator for MockValidator {
-        fn verify(&self, _input: &[u8]) -> Result<Vec<u8>, crate::errors::VMError> {
+        fn verify(&self, _input: &SszStatelessInput) -> Result<Vec<u8>, crate::errors::VMError> {
             let result = SszStatelessValidationResult {
                 new_payload_request_root: [0u8; 32],
                 successful_validation: true,
@@ -230,7 +237,7 @@ mod tests {
     }
 
     impl crate::StatelessValidator for MockInvalidValidator {
-        fn verify(&self, _input: &[u8]) -> Result<Vec<u8>, crate::errors::VMError> {
+        fn verify(&self, _input: &SszStatelessInput) -> Result<Vec<u8>, crate::errors::VMError> {
             let result = SszStatelessValidationResult {
                 new_payload_request_root: [0u8; 32],
                 successful_validation: false,
@@ -313,12 +320,34 @@ mod tests {
         );
     }
 
+    /// I1 regression (moved from `stateless.rs`) + ElFantasma malformed-SSZ ask:
+    /// `run_execute` must fail closed at the CALL level (non-propagating) when
+    /// the calldata is not a decodable SSZ `StatelessInput`, rejecting it at the
+    /// up-front decode *before* the validator runs — so a garbage or
+    /// bad-offset blob can never be turned into wrong proven values, and the
+    /// error is includable rather than a tx-abort.
+    #[test]
+    fn execute_rejects_malformed_ssz_input() {
+        // 4 bytes of 0xff: an out-of-range SSZ offset, undecodable as StatelessInput.
+        let calldata = Bytes::from(vec![0xffu8, 0xff, 0xff, 0xff]);
+        let mut gas = 100_000_000u64;
+        let err = run_execute(&MockValidator, &calldata, &mut gas)
+            .expect_err("malformed SSZ input must be rejected");
+        assert!(
+            !err.should_propagate(),
+            "malformed EXECUTE input must be a CALL-level failure (non-propagating), not a tx-abort; got: {err:?}"
+        );
+    }
+
     // ── Negative constraint tests (I11) ──────────────────────────────────────
     // Each test builds a fully valid `SszStatelessInput`, violates exactly ONE
     // `validate_l2_constraints` check, and asserts:
     //   (a) `run_execute` returns `Err`, and
-    //   (b) the error is non-propagating (CALL-level failure, tx is includable —
-    //       the I1×I13 property: attacker pays the gas charge).
+    //   (b) the error is non-propagating (CALL-level failure, so the tx is
+    //       includable rather than aborted). Note: a constraint violation is
+    //       rejected *before* the precompile gas charge (cheap reject, already
+    //       priced by L1 calldata gas), unlike a failed *validation*, which is
+    //       charged first — see the module-level fail-closed note.
 
     /// Constraint 1: `blob_gas_used` must be zero.
     #[test]

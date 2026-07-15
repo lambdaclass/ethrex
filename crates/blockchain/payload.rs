@@ -1002,7 +1002,7 @@ impl Blockchain {
         {
             let base_fee_per_gas = context.payload.header.base_fee_per_gas.unwrap_or(0);
             // Post-refund Σ gas_spent: last receipt's cumulative_gas_used (per EIP-8079).
-            // Do NOT use header.gas_used — that is pre-refund for Amsterdam+ per EIP-8037.
+            // Do NOT use header.gas_used — that is pre-refund for Amsterdam+ per EIP-7778.
             let gas_spent = context
                 .receipts
                 .last()

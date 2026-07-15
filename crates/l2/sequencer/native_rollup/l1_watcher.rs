@@ -1,6 +1,8 @@
-//! NativeL1Watcher actor — polls L1 for `L1MessageRecorded` events
-//! from the NativeRollup.sol contract and pushes them into the shared
-//! `PendingL1Messages` queue.
+//! NativeL1Watcher actor — polls L1 for `L1MessageRecorded` events from the
+//! NativeRollup.sol contract and forwards them to the `NativeBlockProducer` via
+//! `EnqueueL1Messages` messages. There is no shared queue: the producer owns a
+//! private `pending_l1_messages` `VecDeque` that only it mutates (this is
+//! distinct from the contract's on-chain `pendingL1Messages` array).
 
 use std::sync::LazyLock;
 use std::time::Duration;

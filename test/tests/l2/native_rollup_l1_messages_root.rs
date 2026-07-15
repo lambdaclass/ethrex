@@ -81,6 +81,32 @@ fn solidity_mirror_matches_lambdaworks_across_sizes() {
     }
 }
 
+/// ElFantasma test-gap #1: `advance()` must reject a claimed `_l1MessagesCount`
+/// that doesn't match what the block actually consumed. The contract binds the
+/// count by requiring `provenL1MessagesRoot == _computeL1MessagesRoot(startIdx,
+/// count)`. This proves that binding is discriminating: over the same message
+/// queue, the root for any claimed count differs from the root for any other
+/// (actual) count, so an over- or under-claim can never match the payload's
+/// `parent_beacon_block_root`.
+#[test]
+fn l1_messages_root_detects_count_desync() {
+    let msgs = fake_message_hashes(8);
+    for claimed in 0..=8usize {
+        for actual in 0..=8usize {
+            if claimed == actual {
+                continue;
+            }
+            let root_claimed = solidity_l1_messages_root_mirror(&msgs[..claimed]);
+            let root_actual = solidity_l1_messages_root_mirror(&msgs[..actual]);
+            assert_ne!(
+                root_claimed, root_actual,
+                "claimed count {claimed} and actual count {actual} must yield different \
+                 L1-messages roots so advance() can detect the desync"
+            );
+        }
+    }
+}
+
 #[test]
 fn single_leaf_root_is_the_leaf() {
     // lambdaworks treats `len == 1` as already power-of-two: root == leaf.

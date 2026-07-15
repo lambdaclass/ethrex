@@ -74,7 +74,9 @@ contract L2Bridge {
     /// @param gasLimit    Maximum gas for the L2 subcall.
     /// @param data        Calldata to execute on L2 (can be empty for simple ETH transfers).
     /// @param nonce       Nonce from the L1 message (must match current l1MessageNonce).
-    /// @param merkleProof Merkle proof against the L1 messages root anchored in L1Anchor.
+    /// @param merkleProof Merkle proof against the L1 messages root, which is
+    ///        anchored via `parent_beacon_block_root` in the EIP-4788
+    ///        BEACON_ROOTS contract (see `_getBeaconRoot` below).
     function processL1Message(
         address from,
         address to,

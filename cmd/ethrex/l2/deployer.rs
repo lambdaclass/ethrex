@@ -402,10 +402,9 @@ pub struct DeployerOptions {
         value_parser = parse_private_key,
         env = "ETHREX_NATIVE_ROLLUPS_RELAYER_PK",
         help_heading = "Native rollups options",
-        help = "Private key for the relayer account on L2 (signs processL1Message txs).",
-        default_value = "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d"
+        help = "Private key for the relayer account on L2 (signs processL1Message txs). Required with --native-rollups."
     )]
-    pub native_rollups_relayer_pk: SecretKey,
+    pub native_rollups_relayer_pk: Option<SecretKey>,
     #[arg(
         long = "native-rollups.advancer-address",
         value_name = "ADDRESS",
@@ -414,6 +413,15 @@ pub struct DeployerOptions {
         help = "L1 address authorized to call NativeRollup.advance(). Defaults to the deployer address."
     )]
     pub native_rollups_advancer_address: Option<Address>,
+    #[arg(
+        long = "native-rollups.finality-delay",
+        value_name = "SECONDS",
+        env = "ETHREX_NATIVE_ROLLUPS_FINALITY_DELAY",
+        default_value = "0",
+        help_heading = "Native rollups options",
+        help = "Seconds a state root must age on L1 before its withdrawals can be claimed (NativeRollup.FINALITY_DELAY). 0 = instant finality (local demo only); production must set a reorg-safe delay."
+    )]
+    pub native_rollups_finality_delay: u64,
 }
 
 impl Default for DeployerOptions {
@@ -503,12 +511,9 @@ impl Default for DeployerOptions {
             deploy_router: false,
             initial_fee_token: None,
             native_rollups: false,
-            native_rollups_relayer_pk: SecretKey::from_slice(
-                &hex::decode("59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d")
-                    .expect("Valid hex"),
-            )
-            .expect("Valid key"),
+            native_rollups_relayer_pk: None,
             native_rollups_advancer_address: None,
+            native_rollups_finality_delay: 0,
         }
     }
 }
@@ -1797,9 +1802,11 @@ pub async fn deploy_native_rollup_contracts(
     )?;
 
     // 1. Derive relayer address from the relayer private key
-    let relayer_address =
-        get_address_from_secret_key(&opts.native_rollups_relayer_pk.secret_bytes())
-            .map_err(DeployerError::InternalError)?;
+    let native_rollups_relayer_pk = opts.native_rollups_relayer_pk.ok_or_else(|| {
+        DeployerError::InternalError("--native-rollups.relayer-pk is required".into())
+    })?;
+    let relayer_address = get_address_from_secret_key(&native_rollups_relayer_pk.secret_bytes())
+        .map_err(DeployerError::InternalError)?;
     info!("Relayer address: {relayer_address:#x}");
 
     // 2. Read the existing L2 genesis (preserves system contracts and other
@@ -1836,9 +1843,18 @@ pub async fn deploy_native_rollup_contracts(
         .native_rollups_advancer_address
         .unwrap_or_else(|| signer.address());
     info!("Advancer address (authorized for advance()): {advancer:#x}");
-    // Exit window before a withdrawal can be claimed on L1. 0 = instant finality
-    // for the local demo; production should set a reorg-safe delay.
-    let finality_delay: u64 = 0;
+    // Exit window before a withdrawal can be claimed on L1, from
+    // --native-rollups.finality-delay (default 0 = instant finality for the local
+    // demo; production must pass a reorg-safe delay). Baked immutably into the
+    // contract at construction.
+    let finality_delay: u64 = opts.native_rollups_finality_delay;
+    if finality_delay == 0 {
+        warn!(
+            "NativeRollup FINALITY_DELAY is 0 (instant finality). This is only safe \
+             for a local demo; a production deployment must set \
+             --native-rollups.finality-delay to a reorg-safe value."
+        );
+    }
     let constructor_args = encode_calldata(
         "constructor(bytes32,bytes32,uint256,uint256,address,uint256)",
         &[
@@ -1901,36 +1917,14 @@ pub async fn deploy_native_rollup_contracts(
     }
     info!("NativeRollup.sol deployed at: {contract_address:#x}");
 
-    // 6. Back the relayer's L2 genesis prefund with L1 ETH in the contract.
-    let fund_nonce = eth_client
-        .get_nonce(signer.address(), BlockIdentifier::Tag(BlockTag::Pending))
-        .await?;
-    let fund_amount = U256::from(100) * U256::from(10).pow(U256::from(18)); // 100 ETH
-    let fund_tx = build_generic_tx(
-        &eth_client,
-        TxType::EIP1559,
-        contract_address,
-        signer.address(),
-        Bytes::new(),
-        Overrides {
-            nonce: Some(fund_nonce),
-            gas_limit: Some(30_000),
-            max_fee_per_gas: Some(gas_price),
-            max_priority_fee_per_gas: Some(gas_price),
-            value: Some(fund_amount),
-            ..Default::default()
-        },
-    )
-    .await?;
-    let fund_tx_hash = send_generic_transaction(&eth_client, fund_tx, &signer).await?;
-    let fund_receipt = wait_for_transaction_receipt(fund_tx_hash, &eth_client, 100).await?;
-    if !fund_receipt.receipt.status {
-        warn!("Failed to fund NativeRollup contract with ETH");
-    } else {
-        info!("Funded NativeRollup contract with 100 ETH");
-    }
+    // The contract is intentionally NOT pre-funded with L1 ETH. Under the
+    // escrow-solvency invariant (I7), `claimWithdrawal` only ever pays out up to
+    // `totalDeposited` — incremented solely by value-bearing `sendL1Message`
+    // deposits — so any ETH transferred in directly would be untracked and
+    // permanently unclaimable (and `NativeRollup.receive()` now rejects it).
+    // Deposits fund the escrow; that is what backs withdrawals.
 
-    // 7. Write contract address to .env
+    // 6. Write contract address to .env
     let env_file_path = opts
         .env_file_path
         .unwrap_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../.env"));

@@ -14,6 +14,14 @@ import os
 import sys
 import time
 import uuid
+from urllib.parse import urlparse
+
+
+def _connect(host, port, secure):
+    """Open an HTTP(S) connection matching the target's scheme."""
+    if secure:
+        return http.client.HTTPSConnection(host, port)
+    return http.client.HTTPConnection(host, port)
 
 COMPILER_VERSION = "v0.8.31+commit.fd3a2265"
 CONTRACT_NAME = "NativeRollup"
@@ -62,7 +70,7 @@ def build_standard_input(source):
     })
 
 
-def submit_verification(host, port, address, standard_input):
+def submit_verification(host, port, secure, address, standard_input):
     boundary = uuid.uuid4().hex
 
     body = ""
@@ -83,7 +91,7 @@ def submit_verification(host, port, address, standard_input):
     )
     body += f"--{boundary}--\r\n"
 
-    conn = http.client.HTTPConnection(host, port)
+    conn = _connect(host, port, secure)
     conn.request(
         "POST",
         f"/api/v2/smart-contracts/{address}/verification/via/standard-input",
@@ -101,8 +109,8 @@ def submit_verification(host, port, address, standard_input):
     return result
 
 
-def check_verified(host, port, address):
-    conn = http.client.HTTPConnection(host, port)
+def check_verified(host, port, secure, address):
+    conn = _connect(host, port, secure)
     conn.request("GET", f"/api?module=contract&action=getabi&address={address}")
     resp = conn.getresponse()
     result = json.loads(resp.read())
@@ -118,14 +126,13 @@ def main():
     address = sys.argv[1]
     blockscout_url = sys.argv[2] if len(sys.argv) > 2 else "http://localhost"
 
-    # Parse host:port from URL
-    url = blockscout_url.replace("http://", "").replace("https://", "")
-    if ":" in url:
-        host, port = url.split(":")
-        port = int(port)
-    else:
-        host = url
-        port = 80
+    # Parse scheme/host/port from URL, honoring https (default http:// if omitted).
+    if "://" not in blockscout_url:
+        blockscout_url = "http://" + blockscout_url
+    parsed = urlparse(blockscout_url)
+    secure = parsed.scheme == "https"
+    host = parsed.hostname
+    port = parsed.port or (443 if secure else 80)
 
     print(f"Flattening NativeRollup.sol + MPTProof.sol...")
     source = flatten_source()
@@ -136,7 +143,7 @@ def main():
     print(f"Waiting for Blockscout to index {address}...")
     for attempt in range(30):
         try:
-            conn = http.client.HTTPConnection(host, port)
+            conn = _connect(host, port, secure)
             conn.request("GET", f"/api/v2/smart-contracts/{address}")
             resp = conn.getresponse()
             body = resp.read()
@@ -154,13 +161,13 @@ def main():
         sys.exit(1)
 
     print(f"Submitting verification for {address} to {blockscout_url}...")
-    result = submit_verification(host, port, address, standard_input)
+    result = submit_verification(host, port, secure, address, standard_input)
     print(f"  {result.get('message', result)}")
 
     # Poll for completion
     for i in range(30):
         time.sleep(1)
-        if check_verified(host, port, address):
+        if check_verified(host, port, secure, address):
             print("Contract verified successfully!")
             return
 

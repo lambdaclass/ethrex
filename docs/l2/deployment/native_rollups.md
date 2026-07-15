@@ -46,9 +46,9 @@ This guide covers how to deploy a native rollup L2 using ethrex. Native rollups 
 
 The three L2 GenServer actors run as concurrent tasks:
 
-- **NativeL1Watcher** — Polls the L1 NativeRollup.sol contract at regular intervals for `L1MessageRecorded` events and pushes them into a shared `PendingL1Messages` queue. It scans L1 logs in configurable block ranges and parses the event data (sender, recipient, value, gas limit, calldata, nonce).
+- **NativeL1Watcher** — Polls the L1 NativeRollup.sol contract at regular intervals for `L1MessageRecorded` events and forwards them to the NativeBlockProducer via `EnqueueL1Messages` actor messages (there is no shared queue; the producer owns a private message queue). It scans L1 logs in configurable block ranges and parses the event data (sender, recipient, value, gas limit, calldata, nonce).
 
-- **NativeBlockProducer** — Produces L2 blocks every `block_time_ms` milliseconds. It first consumes pending L1 messages from the queue, builds signed relayer transactions to execute those messages via the L2Bridge contract, then fills remaining block gas with regular mempool transactions. It sets `parent_beacon_block_root` in the block header to the L1 messages Merkle root, which the EIP-4788 system contract stores at `BEACON_ROOTS_ADDRESS` during block processing.
+- **NativeBlockProducer** — Produces L2 blocks every `block_time_ms` milliseconds. It first consumes pending L1 messages from its own queue, builds signed relayer transactions to execute those messages via the L2Bridge contract, then fills remaining block gas with regular mempool transactions. It sets `parent_beacon_block_root` in the block header to the L1 messages Merkle root, which the EIP-4788 system contract stores at `BEACON_ROOTS_ADDRESS` during block processing.
 
 - **NativeL1Advancer** — Reads produced L2 blocks from the Store, generates an execution witness, encodes it as SSZ `StatelessInput`, and submits it to NativeRollup.sol via `advance()`. The contract forwards the SSZ to the EXECUTE precompile which calls `verify_stateless_new_payload`.
 

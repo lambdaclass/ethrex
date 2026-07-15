@@ -18,12 +18,16 @@ import "./MPTProof.sol";
 ///   Slot 4:  chainId (uint256)
 ///   Slot 5:  pendingL1Messages (bytes32[])
 ///   Slot 6:  l1MessageIndex (uint256)
-///   Slot 7:  stateRootHistory (mapping(uint256 => bytes32))
-///   Slot 8:  claimedWithdrawals (mapping(bytes32 => bool))
-///   Slot 9:  stateRootTimestamps (mapping(uint256 => uint256))
-///   Slot 10: _locked (bool)
-///   Slot 11: lastFetchedL1Block (uint256)
-///   Slot 12: advancer (address)
+///   Slot 7:  totalDeposited (uint256)
+///   Slot 8:  totalClaimed (uint256)
+///   Slot 9:  stateRootHistory (mapping(uint256 => bytes32))
+///   Slot 10: claimedWithdrawals (mapping(bytes32 => bool))
+///   Slot 11: stateRootTimestamps (mapping(uint256 => uint256))
+///   Slot 12: _locked (bool)
+///   Slot 13: lastFetchedL1Block (uint256)
+///   Slot 14: advancer (address)
+///   Slot 15: pendingAdvancer (address)
+///   (CHAIN_ID and FINALITY_DELAY are `immutable` — stored in code, not storage)
 
 contract NativeRollup {
     // ===== L2 chain state (spec-aligned) =====
@@ -60,6 +64,9 @@ contract NativeRollup {
 
     // ===== Access control =====
     address public advancer;
+    /// Nominated next advancer, pending acceptance (two-step handoff). Set by
+    /// `setAdvancer`, cleared once the nominee calls `acceptAdvancer`.
+    address public pendingAdvancer;
 
     // ===== Immutables =====
     uint256 public immutable CHAIN_ID;
@@ -70,6 +77,13 @@ contract NativeRollup {
     // Storage slot of `sentMessages` in L2Bridge.sol. Must match that layout —
     // reordering L2Bridge storage silently breaks withdrawal proofs here.
     uint256 constant SENT_MESSAGES_SLOT = 3;
+
+    // Fixed gas the L2 block producer reserves around each L1 message, on top of
+    // the 63/64 call-gas rule, when it builds the relayer tx (must match
+    // `build_relayer_transactions` in block_producer.rs). A message whose
+    // gasLimit leaves no room for this within one L2 block would be un-includable,
+    // so `sendL1Message` rejects it up front (see the cap there).
+    uint256 constant RELAYER_GAS_BODY_ALLOWANCE = 300_000;
 
     // SSZ `StatelessValidationResult`: root(32) + successful_validation(1, @32) +
     // chain_config(variable → 4-byte offset @33). chain_config's first field is
@@ -93,6 +107,7 @@ contract NativeRollup {
     event StateAdvanced(uint256 indexed newBlockNumber, bytes32 indexed newStateRoot);
     event L1MessageRecorded(address indexed sender, address indexed to, uint256 value, uint256 gasLimit, bytes data, uint256 indexed nonce);
     event WithdrawalClaimed(address indexed receiver, uint256 amount, uint256 blockNumber, uint256 messageId);
+    event AdvancerTransferStarted(address indexed currentAdvancer, address indexed pendingAdvancer);
     event AdvancerChanged(address indexed oldAdvancer, address indexed newAdvancer);
 
     modifier nonReentrant() {
@@ -129,27 +144,61 @@ contract NativeRollup {
         lastFetchedL1Block = block.number;
     }
 
-    /// @notice Rotate the authorized advancer. Callable only by the current
-    /// advancer (self-rotation), so a compromised/retired key can hand off.
+    /// @notice Begin rotating the authorized advancer (step 1 of 2). Callable
+    /// only by the current advancer. The nominee does not gain control until it
+    /// calls `acceptAdvancer`, so a typo or wrong address cannot brick this
+    /// (immutable, non-upgradeable) contract.
+    /// @param _newAdvancer Address nominated to become the next advancer.
     function setAdvancer(address _newAdvancer) external onlyAdvancer {
         require(_newAdvancer != address(0), "NativeRollup: advancer is zero");
-        emit AdvancerChanged(advancer, _newAdvancer);
-        advancer = _newAdvancer;
+        pendingAdvancer = _newAdvancer;
+        emit AdvancerTransferStarted(advancer, _newAdvancer);
+    }
+
+    /// @notice Complete the advancer rotation (step 2 of 2). Callable only by
+    /// the address nominated in `setAdvancer`, proving it can transact before it
+    /// gains control.
+    function acceptAdvancer() external {
+        require(msg.sender == pendingAdvancer, "NativeRollup: not pending advancer");
+        emit AdvancerChanged(advancer, pendingAdvancer);
+        advancer = pendingAdvancer;
+        pendingAdvancer = address(0);
     }
 
     // ===== L1 Messaging =====
 
+    /// @notice Enqueue an L1→L2 message (optionally value-bearing) for the L2 to
+    /// consume. Permissionless. Burns `_gasLimit` gas on L1 to price the L2
+    /// execution the message will trigger.
+    /// @param _to L2 recipient of the message.
+    /// @param _gasLimit Gas the message may consume on L2. Capped below
+    ///        `l2GasLimit` so the producer's relayer tx (which adds the 63/64
+    ///        call-gas overhead plus `RELAYER_GAS_BODY_ALLOWANCE`) still fits in
+    ///        one L2 block.
+    /// @param _data Calldata delivered to `_to` on L2.
     function sendL1Message(address _to, uint256 _gasLimit, bytes calldata _data) external payable {
-        // Reject messages that can never fit in a single L2 block.
-        require(_gasLimit > 0, "gasLimit must be > 0");
-        require(_gasLimit <= l2GasLimit, "gasLimit exceeds L2 block gas limit");
+        require(_gasLimit > 0, "NativeRollup: gasLimit must be > 0");
+        // Reject messages that can never fit in a single L2 block: the producer
+        // builds a relayer tx of `_gasLimit * 64/63 + RELAYER_GAS_BODY_ALLOWANCE`
+        // (block_producer.rs::build_relayer_transactions). Requiring that to be
+        // <= l2GasLimit means every accepted message is includable, so a valid
+        // deposit can never get permanently stuck.
+        require(
+            _gasLimit <= ((l2GasLimit - RELAYER_GAS_BODY_ALLOWANCE) * 63) / 64,
+            "NativeRollup: gasLimit exceeds includable limit"
+        );
         _burnGas(_gasLimit);
         // I7: account bridged-in ETH so claims can never exceed deposits.
         totalDeposited += msg.value;
         _recordL1Message(msg.sender, _to, msg.value, _gasLimit, _data);
     }
 
-    receive() external payable {}
+    /// @notice Reject plain ETH transfers. All value must enter via
+    /// `sendL1Message` so escrow accounting (`totalDeposited`) stays consistent;
+    /// ETH sent directly would be untracked and unrecoverable.
+    receive() external payable {
+        revert("NativeRollup: use sendL1Message to deposit");
+    }
 
     function _recordL1Message(
         address _from,
@@ -184,7 +233,7 @@ contract NativeRollup {
         bytes calldata _sszStatelessInput
     ) external onlyAdvancer {
         uint256 startIdx = l1MessageIndex;
-        require(startIdx + _l1MessagesCount <= pendingL1Messages.length, "Not enough L1 messages");
+        require(startIdx + _l1MessagesCount <= pendingL1Messages.length, "NativeRollup: not enough L1 messages");
 
         _runExecutePrecompile(_sszStatelessInput);
 
@@ -203,16 +252,16 @@ contract NativeRollup {
 
     function _runExecutePrecompile(bytes calldata sszInput) internal view {
         (bool success, bytes memory result) = EXECUTE_PRECOMPILE.staticcall(sszInput);
-        require(success, "EXECUTE precompile failed");
+        require(success, "NativeRollup: EXECUTE precompile failed");
 
-        require(result.length >= RESULT_FIXED_LEN, "Invalid result length");
-        require(uint8(result[RESULT_SUCCESS_OFFSET]) == 1, "L2 validation failed");
+        require(result.length >= RESULT_FIXED_LEN, "NativeRollup: invalid result length");
+        require(uint8(result[RESULT_SUCCESS_OFFSET]) == 1, "NativeRollup: L2 validation failed");
 
         // chain_config is variable-size (contains active_fork); it is offset-encoded.
         // chain_id is its first field.
         uint256 ccOffset = _decodeSszUint32LE(result, RESULT_CHAIN_CONFIG_OFFSET_POS);
         uint64 provenChainId = _decodeSszUint64LE(result, ccOffset);
-        require(provenChainId == chainId, "chain_id mismatch");
+        require(provenChainId == chainId, "NativeRollup: chain_id mismatch");
     }
 
     function _checkAndDecodeProvenFields(
@@ -234,13 +283,13 @@ contract NativeRollup {
         ) = _decodeProvenPayloadFields(sszInput);
 
         newBlockNumber = blockNumber + 1;
-        require(uint256(provenBlockNumber) == newBlockNumber, "block_number mismatch");
-        require(provenParentHash == blockHash, "parent_hash mismatch");
-        require(uint256(provenGasLimit) == l2GasLimit, "gas_limit mismatch");
+        require(uint256(provenBlockNumber) == newBlockNumber, "NativeRollup: block_number mismatch");
+        require(provenParentHash == blockHash, "NativeRollup: parent_hash mismatch");
+        require(uint256(provenGasLimit) == l2GasLimit, "NativeRollup: gas_limit mismatch");
 
         require(
             provenL1MessagesRoot == _computeL1MessagesRoot(startIdx, l1MessagesCount),
-            "L1 messages root mismatch"
+            "NativeRollup: L1 messages root mismatch"
         );
 
         newBlockHash = provenBlockHash;
@@ -332,6 +381,16 @@ contract NativeRollup {
 
     // ===== Withdrawal Claiming (MPT proof-based) =====
 
+    /// @notice Claim an L2→L1 withdrawal by proving its inclusion in a
+    /// finalized L2 state root. Permissionless; pays `_amount` to `_receiver`
+    /// from the L1 escrow, bounded by escrow solvency (I7).
+    /// @param _from L2 sender that initiated the withdrawal.
+    /// @param _receiver L1 recipient of the withdrawn ETH.
+    /// @param _amount Amount to withdraw, in wei.
+    /// @param _messageId L2Bridge message id of the withdrawal.
+    /// @param _atBlockNumber L2 block whose committed state root proves the withdrawal.
+    /// @param _accountProof MPT proof of the L2Bridge account against the state root.
+    /// @param _storageProof MPT proof of the withdrawal slot against the storage root.
     function claimWithdrawal(
         address _from,
         address payable _receiver,
@@ -342,13 +401,13 @@ contract NativeRollup {
         bytes[] calldata _storageProof
     ) external nonReentrant {
         bytes32 historicStateRoot = stateRootHistory[_atBlockNumber];
-        require(historicStateRoot != bytes32(0), "State root not found");
+        require(historicStateRoot != bytes32(0), "NativeRollup: state root not found");
 
         uint256 stateRootTime = stateRootTimestamps[_atBlockNumber];
-        require(block.timestamp >= stateRootTime + FINALITY_DELAY, "Not yet final");
+        require(block.timestamp >= stateRootTime + FINALITY_DELAY, "NativeRollup: withdrawal not yet final");
 
         bytes32 withdrawalHash = keccak256(abi.encodePacked(_from, _receiver, _amount, _messageId));
-        require(!claimedWithdrawals[withdrawalHash], "Already claimed");
+        require(!claimedWithdrawals[withdrawalHash], "NativeRollup: withdrawal already claimed");
 
         _verifyWithdrawalProof(historicStateRoot, withdrawalHash, _accountProof, _storageProof);
 
@@ -360,7 +419,7 @@ contract NativeRollup {
         claimedWithdrawals[withdrawalHash] = true;
 
         (bool sent, ) = _receiver.call{value: _amount}("");
-        require(sent, "ETH transfer failed");
+        require(sent, "NativeRollup: ETH transfer failed");
 
         emit WithdrawalClaimed(_receiver, _amount, _atBlockNumber, _messageId);
     }
@@ -387,7 +446,7 @@ contract NativeRollup {
             _storageProof
         );
         uint256 value = MPTProof.decodeRlpUint(valueRLP);
-        require(value == 1, "Withdrawal not found in L2Bridge storage");
+        require(value == 1, "NativeRollup: withdrawal not found in L2Bridge storage");
     }
 
     /// @dev Decode an SSZ `uint32` (4 little-endian bytes) at `offset` into `data` (memory).

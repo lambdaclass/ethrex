@@ -19,10 +19,10 @@ SSZ-encoded StatelessInput (NewPayloadRequest + ExecutionWitness + ChainConfig)
         |
   EXECUTE precompile (in LEVM) — thin wrapper
         |
-  1. Deserialize SSZ to extract gas_limit and calldata length
-  2. Charge gas = gas_limit + calldata_len·EXECUTE_GAS_PER_WITNESS_BYTE
-  3. Validate L2 constraints (no blobs, no withdrawals, no execution_requests)
-  4. Delegate to StatelessValidator trait → verify_stateless_new_payload()
+  1. Deserialize SSZ once (read gas_limit; keep the decoded input)
+  2. Validate L2 constraints (no blobs, no withdrawals, no execution_requests)
+  3. Charge gas = gas_limit + calldata_len·EXECUTE_GAS_PER_WITNESS_BYTE
+  4. Delegate the decoded input to StatelessValidator → verify_stateless_new_payload()
         |
         v
   verify_stateless_new_payload (in crates/blockchain/stateless.rs)
@@ -39,7 +39,7 @@ SSZ-encoded StatelessInput (NewPayloadRequest + ExecutionWitness + ChainConfig)
 
 ## EXECUTE Precompile
 
-The core logic lives in `execute_precompile.rs`. It parses SSZ-encoded `StatelessInput`, charges gas proportional to the L2 block's `gas_used`, validates L2-specific constraints, and delegates to `verify_stateless_new_payload` via the `StatelessValidator` trait.
+The core logic lives in `execute_precompile.rs`. It parses SSZ-encoded `StatelessInput` once, validates L2-specific constraints, charges gas (`gas_limit + calldata_len · EXECUTE_GAS_PER_WITNESS_BYTE`), and delegates the already-decoded input to `verify_stateless_new_payload` via the `StatelessValidator` trait. Gas is charged on `gas_limit` (the true upper bound on re-execution), never on the attacker-controlled `gas_used`.
 
 ### Input Format
 
@@ -178,18 +178,23 @@ L1 contract that manages L2 state on-chain. Storage layout:
 | 0 | `blockHash` | Current L2 block hash |
 | 1 | `stateRoot` | Current L2 state root |
 | 2 | `blockNumber` | Latest committed L2 block number |
-| 3 | `gasLimit` | L2 block gas limit |
+| 3 | `l2GasLimit` | L2 block gas limit |
 | 4 | `chainId` | L2 chain ID |
 | 5 | `pendingL1Messages` | Array of L1 message hashes |
 | 6 | `l1MessageIndex` | Next L1 message index to consume |
-| 7 | `stateRootHistory` | `mapping(uint256 => bytes32)` — state root per block number |
-| 8 | `claimedWithdrawals` | `mapping(bytes32 => bool)` — prevents double-claiming |
-| 9 | `stateRootTimestamps` | `mapping(uint256 => uint256)` — commit timestamp per block |
-| 10 | `_locked` | Reentrancy protection |
+| 7 | `totalDeposited` | Total ETH bridged in via `sendL1Message` (escrow solvency) |
+| 8 | `totalClaimed` | Total ETH paid out by `claimWithdrawal` |
+| 9 | `stateRootHistory` | `mapping(uint256 => bytes32)` — state root per block number |
+| 10 | `claimedWithdrawals` | `mapping(bytes32 => bool)` — prevents double-claiming |
+| 11 | `stateRootTimestamps` | `mapping(uint256 => uint256)` — commit timestamp per block |
+| 12 | `_locked` | Reentrancy protection |
+| 13 | `lastFetchedL1Block` | Deploy block; seeds the L1 watcher cursor |
+| 14 | `advancer` | Address authorized to call `advance()` |
+| 15 | `pendingAdvancer` | Nominated next advancer, pending acceptance (two-step handoff) |
 
-Immutables: `CHAIN_ID` (L2 chain ID) and `FINALITY_DELAY` (minimum seconds before withdrawals can be claimed, set to 0 for PoC).
+`CHAIN_ID` and `FINALITY_DELAY` are `immutable` (stored in code, not storage). `FINALITY_DELAY` is the minimum seconds a state root must age before its withdrawals can be claimed; it is set at deploy time from `--native-rollups.finality-delay` (default 0 = instant finality for the local demo; production must pass a reorg-safe value).
 
-Constructor: `constructor(bytes32 _initialStateRoot, bytes32 _initialBlockHash, uint256 _blockGasLimit, uint256 _chainId)`.
+Constructor: `constructor(bytes32 _initialStateRoot, bytes32 _initialBlockHash, uint256 _blockGasLimit, uint256 _chainId, address _advancer, uint256 _finalityDelay)`.
 
 Functions:
 
@@ -226,16 +231,18 @@ The only remaining cargo feature is **`eip-8025`**, which controls the guest-pro
 # crates/guest-program/Cargo.toml  (guest only — not the host)
 eip-8025 = [
     "ethrex-common/eip-8025",
+    "ethrex-vm/eip-8025",
     "dep:libssz",
     "dep:libssz-merkle",
     "dep:libssz-types",
+    "dep:libssz-derive",
 ]
 
 # crates/blockchain/Cargo.toml
 eip-8025 = ["ethrex-common/eip-8025", "ethrex-vm/eip-8025"]
 
 # crates/common/Cargo.toml
-eip-8025 = []   # enables the SSZ stateless types unconditionally (libssz is a workspace dep)
+eip-8025 = ["ethrex-trie/eip-8025"]   # guest-only trie SSZ support; the always-compiled stateless SSZ types do not need it
 ```
 
 When `eip-8025` is compiled into the guest program:

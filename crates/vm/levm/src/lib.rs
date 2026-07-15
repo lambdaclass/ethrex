@@ -96,7 +96,13 @@ pub mod timings;
 pub trait StatelessValidator: Send + Sync {
     /// Validate a stateless block execution.
     ///
-    /// Input: SSZ-encoded `StatelessInput` bytes.
+    /// Input: the already-decoded `StatelessInput`. The EXECUTE precompile
+    /// decodes the SSZ calldata once up front (to charge gas and check L2
+    /// constraints) and hands the decoded value here, so the witness is not
+    /// parsed a second time.
     /// Output: SSZ-encoded `StatelessValidationResult` bytes.
-    fn verify(&self, input: &[u8]) -> Result<Vec<u8>, errors::VMError>;
+    fn verify(
+        &self,
+        input: &ethrex_common::types::stateless_ssz::SszStatelessInput,
+    ) -> Result<Vec<u8>, errors::VMError>;
 }
