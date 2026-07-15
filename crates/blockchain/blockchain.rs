@@ -127,6 +127,9 @@ use ethrex_common::types::BlobsBundle;
 
 const MAX_PAYLOADS: usize = 10;
 const MAX_MEMPOOL_SIZE_DEFAULT: usize = 10_000;
+/// Default mempool occupancy percentage (0-100) at which gapped-nonce
+/// transaction admission is denied. Set to 100 to disable the check.
+pub const DEFAULT_GAP_ADMIT_OCCUPANCY_THRESHOLD: u8 = 90;
 
 /// Background thread for dropping large tree structures off the critical path.
 /// Accepts any `Send` value and drops it on a dedicated thread, avoiding
@@ -324,6 +327,10 @@ pub struct BlockchainOptions {
     /// `--no-bal-parallel-trie`) to fall back to streaming `AccountUpdate`s from
     /// the executor and merkleizing post-execution.
     pub bal_parallel_trie_enabled: bool,
+    /// Mempool occupancy percentage (0-100) at or above which incoming
+    /// transactions with a nonce gap relative to the sender's on-chain nonce
+    /// are rejected. Setting to 100 disables the check.
+    pub gap_admit_occupancy_threshold: u8,
 }
 
 impl Default for BlockchainOptions {
@@ -339,6 +346,7 @@ impl Default for BlockchainOptions {
             bal_parallel_exec_enabled: true,
             bal_prefetch_enabled: true,
             bal_parallel_trie_enabled: true,
+            gap_admit_occupancy_threshold: DEFAULT_GAP_ADMIT_OCCUPANCY_THRESHOLD,
         }
     }
 }
@@ -3573,6 +3581,10 @@ impl Blockchain {
             U256::zero()
         };
 
+        // On-chain nonce for the gap-admission check below (0 for a
+        // not-yet-existent sender, matching the implied EIP-8141 nonce).
+        let sender_acc_nonce = sender_account_nonce.unwrap_or(0);
+
         // Check the nonce of pendings TXs in the mempool from the same sender
         // If it exists check if the new tx has higher fees
         let tx_to_replace_hash = self.mempool.find_tx_to_replace(sender, nonce, tx)?;
@@ -3615,6 +3627,28 @@ impl Blockchain {
             .is_some_and(|chain_id| chain_id != config.chain_id)
         {
             return Err(MempoolError::InvalidChainId(config.chain_id));
+        }
+
+        // When the mempool is heavily occupied, reject incoming transactions
+        // whose nonce is not contiguous with the sender's on-chain nonce. This
+        // prevents a flood of gapped-nonce spam txs from pinning pool budget
+        // that productive txs could use. Replacements (same nonce as a tx
+        // already in the pool) bypass this rule since they are not gapped.
+        //
+        // Read occupancy once and reuse it for both the gate check and the
+        // error message — taking the read lock twice (a separate check plus a
+        // re-read for the message) would allow TOCTOU drift where the reported
+        // occupancy differs from the value the gate fired on.
+        let threshold = self.options.gap_admit_occupancy_threshold;
+        if tx_to_replace_hash.is_none() && nonce != sender_acc_nonce && threshold < 100 {
+            let occupancy_pct = self.mempool.occupancy_pct()?;
+            if occupancy_pct >= threshold {
+                let nonce_gap = nonce.saturating_sub(sender_acc_nonce);
+                return Err(MempoolError::GapAdmissionDeniedUnderPressure {
+                    occupancy_pct,
+                    nonce_gap,
+                });
+            }
         }
 
         // EIP-8141 §Mempool: run the validation-trace simulation + paymaster
