@@ -1,5 +1,5 @@
 use ethrex_common::{
-    Address, H256,
+    Address, H256, U256,
     types::{BlobsBundleError, BlockHash, FrameValidationError},
 };
 use ethrex_rlp::error::RLPDecodeError;
@@ -119,6 +119,8 @@ pub enum MempoolError {
     InvalidChainId(u64),
     #[error("Account does not have enough balance to cover the tx cost")]
     NotEnoughBalance,
+    #[error("Sender's cumulative pending-tx cost ({required}) exceeds balance ({available})")]
+    InsufficientCumulativeBalance { required: U256, available: U256 },
     #[error("Transaction gas fields are invalid")]
     InvalidTxGasvalues,
     #[error("Invalid pooled TxType, expected: {0}")]
@@ -165,6 +167,8 @@ pub enum MempoolError {
     EmptyAuthorizationList,
     #[error("EIP-7702 (type-4) transaction is not valid before Prague")]
     Eip7702TxPreFork,
+    #[error("Mempool {occupancy_pct}% full; rejecting gapped-nonce tx (nonce gap = {nonce_gap})")]
+    GapAdmissionDeniedUnderPressure { occupancy_pct: u8, nonce_gap: u64 },
     #[error("L2-only transaction type is not valid on an L1 node")]
     L2OnlyTransactionType,
 }
