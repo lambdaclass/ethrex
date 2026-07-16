@@ -3497,17 +3497,62 @@ impl Store {
     /// Returns the highest block number with a `STATE_HISTORY` entry; the cache
     /// edge `D` (the deepest block whose post-state is on disk). Returns `None`
     /// if the journal is empty (no commits since boot, or fully pruned by finality).
+    ///
+    /// O(1) via reverse seek on the column family's last key.
     pub fn highest_state_history_block_number(&self) -> Result<Option<BlockNumber>, StoreError> {
         let read = self.backend.begin_read()?;
-        let mut max: Option<BlockNumber> = None;
-        for entry in read.prefix_iterator(STATE_HISTORY, &[])? {
-            let (key, _) = entry?;
-            if let Ok(arr) = <[u8; 8]>::try_from(key.as_ref()) {
-                let n = BlockNumber::from_be_bytes(arr);
-                max = Some(max.map_or(n, |m| m.max(n)));
-            }
-        }
-        Ok(max)
+        let Some(key) = read.last_key(STATE_HISTORY)? else {
+            return Ok(None);
+        };
+        let arr = <[u8; 8]>::try_from(key.as_slice()).map_err(|_| {
+            StoreError::Custom(format!(
+                "STATE_HISTORY key has unexpected length: {}",
+                key.len()
+            ))
+        })?;
+        Ok(Some(BlockNumber::from_be_bytes(arr)))
+    }
+
+    /// Returns the lowest block number with a `STATE_HISTORY` entry. Returns `None`
+    /// if the journal is empty (no commits since boot, or fully pruned by finality).
+    ///
+    /// O(1) via forward seek on the column family's first key.
+    pub fn lowest_state_history_block_number(&self) -> Result<Option<BlockNumber>, StoreError> {
+        let read = self.backend.begin_read()?;
+        let Some(key) = read.first_key(STATE_HISTORY)? else {
+            return Ok(None);
+        };
+        let arr = <[u8; 8]>::try_from(key.as_slice()).map_err(|_| {
+            StoreError::Custom(format!(
+                "STATE_HISTORY key has unexpected length: {}",
+                key.len()
+            ))
+        })?;
+        Ok(Some(BlockNumber::from_be_bytes(arr)))
+    }
+
+    /// The in-memory diff-layer retention (the layer cache's commit threshold):
+    /// the deepest reorg the node can serve straight from the layer cache, with no
+    /// journal/overlay reconstruction. RocksDB default 128, in-memory 10000. Used by
+    /// `compute_reorg_ceiling` as the physical floor when there is no finality signal.
+    pub fn reorg_retention(&self) -> Result<u64, StoreError> {
+        let cache = self.trie_cache.read().map_err(|_| StoreError::LockError)?;
+        Ok(cache.commit_threshold() as u64)
+    }
+
+    /// Test-only: inserts a pre-encoded `STATE_HISTORY` entry at the given block
+    /// number. Lets integration tests seed the journal without running enough
+    /// commits to trip the in-memory cache's flush threshold.
+    #[doc(hidden)]
+    pub fn put_state_history_entry_for_test(
+        &self,
+        block_number: BlockNumber,
+        encoded: &[u8],
+    ) -> Result<(), StoreError> {
+        let mut tx = self.backend.begin_write()?;
+        tx.put(STATE_HISTORY, &block_number.to_be_bytes(), encoded)?;
+        tx.commit()?;
+        Ok(())
     }
 
     /// Atomically prepares the store for a deep-reorg apply pass.
@@ -3579,6 +3624,18 @@ impl Store {
         let mut guard = self.trie_cache.write().map_err(|_| StoreError::LockError)?;
         *guard = Arc::new(fresh);
         Ok(())
+    }
+
+    /// Returns `(entry_count, byte_size)` of the currently installed overlay, or
+    /// `(0, 0)` when no overlay is installed. Used by the observability layer in
+    /// `fork_choice.rs` immediately after `install_overlay_for_reorg` to emit
+    /// `ethrex_reorg_overlay_entries` / `ethrex_reorg_overlay_bytes`.
+    pub fn reorg_overlay_size_hint(&self) -> Result<(usize, usize), StoreError> {
+        let guard = self.trie_cache.read().map_err(|_| StoreError::LockError)?;
+        match guard.overlay() {
+            Some(ov) => Ok((ov.len(), ov.byte_size())),
+            None => Ok((0, 0)),
+        }
     }
 
     /// Removes any installed overlay from the layer cache. Called by the
@@ -5315,6 +5372,31 @@ mod state_history_tests {
             store.highest_state_history_block_number().unwrap(),
             Some(11),
             "max over present entries"
+        );
+    }
+
+    /// `lowest_state_history_block_number` SHALL return the min key present in
+    /// `STATE_HISTORY`, or `None` when the table is empty. Phase 2's cap fallback
+    /// depends on this when no finalized hash is known.
+    #[tokio::test]
+    async fn lowest_state_history_block_number_finds_min() {
+        let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::open().unwrap());
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::from_backend(
+            backend.clone(),
+            dir.path().to_path_buf(),
+            1,
+            DEFAULT_PERSIST_CHANNEL_CAPACITY,
+        )
+        .unwrap();
+
+        assert_eq!(store.lowest_state_history_block_number().unwrap(), None);
+
+        seed_journal_entries(&backend, &[7, 3, 11, 5, 8]);
+        assert_eq!(
+            store.lowest_state_history_block_number().unwrap(),
+            Some(3),
+            "min over present entries"
         );
     }
 

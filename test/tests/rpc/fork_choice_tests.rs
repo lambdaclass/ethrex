@@ -135,7 +135,7 @@ async fn test_fcu_v3_finalized_ancestor_returns_valid_with_null_payload_id() {
 
     // head = block_2 (latest tip), safe = finalized = block_1.
     // After this, block_1 is canonical, finalized number == 1, latest == 2.
-    apply_fork_choice(&store, hash_2, hash_1, hash_1)
+    apply_fork_choice(&store, hash_2, hash_1, hash_1, None)
         .await
         .expect("apply_fork_choice failed");
 

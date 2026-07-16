@@ -327,6 +327,12 @@ pub struct BlockchainOptions {
     /// `--no-bal-parallel-trie`) to fall back to streaming `AccountUpdate`s from
     /// the executor and merkleizing post-execution.
     pub bal_parallel_trie_enabled: bool,
+    /// Optional operator override for the maximum reorg depth. `None` ; cap is purely
+    /// finality-bounded (the natural physical ceiling). `Some(d)` ; reject reorgs of
+    /// depth `> d` before the deep-reorg fallback even runs. `Some(0)` disables deep
+    /// reorgs entirely (the pre-PR-4 behaviour, but with the cap fully under operator
+    /// control).
+    pub max_reorg_depth: Option<u64>,
     /// Mempool occupancy percentage (0-100) at or above which incoming
     /// transactions with a nonce gap relative to the sender's on-chain nonce
     /// are rejected. Setting to 100 disables the check.
@@ -346,6 +352,7 @@ impl Default for BlockchainOptions {
             bal_parallel_exec_enabled: true,
             bal_prefetch_enabled: true,
             bal_parallel_trie_enabled: true,
+            max_reorg_depth: None,
             gap_admit_occupancy_threshold: DEFAULT_GAP_ADMIT_OCCUPANCY_THRESHOLD,
         }
     }

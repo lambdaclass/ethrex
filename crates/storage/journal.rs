@@ -13,6 +13,23 @@
 //! ensures lexicographic order matches numeric order, which lets finality
 //! pruning use a single `delete_range`.
 //!
+//! ## Pruning model
+//!
+//! When a `forkchoice_update` advances the finalized block, `forkchoice_update_inner`
+//! calls `delete_range(STATE_HISTORY, 0, finalized_number + 1)`, removing all journal
+//! entries at or below the new finality boundary. The surviving entries cover
+//! `[finalized_number+1, cache_edge_D]`, which is exactly the window a future
+//! deep reorg could need. After pruning, `Store::lowest_state_history_block_number`
+//! reflects the new floor.
+//!
+//! ## Batch mode (full sync)
+//!
+//! When `batch_mode == true` (full sync), the commit path skips journaling
+//! entirely. A full-sync import writes one layer per ~1024 blocks and does
+//! not produce the per-block reverse-diffs needed for deep reorgs. Reorg
+//! support is only active after the node transitions to normal block-by-block
+//! execution.
+//!
 //! ## Codec
 //!
 //! Entries use a hand-rolled compact format: a version byte at offset 0, then
@@ -21,6 +38,16 @@
 //! account flat-KV, storage flat-KV. RLP/bincode/postcard are skipped — the
 //! access pattern (write-once, read-on-reorg, large volume) makes encode/decode
 //! cost matter.
+//!
+//! ## Version strategy
+//!
+//! [`JOURNAL_VERSION`] is a single byte at offset 0 of every entry. The decoder
+//! rejects any version other than the current one with
+//! [`JournalDecodeError::VersionMismatch`]. On a codec bump, the journal should
+//! be drained at a finality boundary so the new binary starts with an empty
+//! journal and never encounters old-format entries. A future bump that needs to
+//! keep history across the upgrade should introduce per-version `decode_vN` arms
+//! rather than re-encoding existing entries.
 
 use ethrex_common::H256;
 
@@ -611,6 +638,86 @@ mod tests {
             JournalDecodeError::TrailingBytes { trailing, .. } => assert_eq!(trailing, 1),
             other => panic!("expected TrailingBytes, got {other:?}"),
         }
+    }
+
+    /// Round-trip property: any structurally-valid `JournalEntry` must decode
+    /// back to itself after `encode`. Complements the hand-written cases above
+    /// by covering shapes the author did not think to enumerate (empty paths,
+    /// large counts, mixed presence patterns, paths/values that straddle the
+    /// varint width boundary, etc.).
+    #[test]
+    fn proptest_encode_decode_round_trip() {
+        use proptest::collection::vec;
+        use proptest::prelude::*;
+        let entry_strategy = (
+            any::<[u8; 32]>(),
+            any::<[u8; 32]>(),
+            vec(flat_diff_entry(), 0..16),
+            vec(flat_diff_entry(), 0..16),
+            vec(flat_diff_entry(), 0..16),
+            vec(flat_diff_entry(), 0..16),
+        )
+            .prop_map(|(bh, psr, a, b, c, d)| JournalEntry {
+                block_hash: H256::from(bh),
+                parent_state_root: H256::from(psr),
+                account_trie_diff: a,
+                storage_trie_diff: b,
+                account_flat_diff: c,
+                storage_flat_diff: d,
+            });
+        proptest!(|(entry in entry_strategy)| {
+            let bytes = entry.encode();
+            let decoded = JournalEntry::decode(&bytes).expect("encoded entry must decode");
+            prop_assert_eq!(decoded, entry);
+        });
+    }
+
+    /// Safety property: the decoder must never panic, abort, or hang on
+    /// arbitrary input. Only `Ok` or `Err` outcomes are permitted. This is the
+    /// minimum bar for code that reads possibly-corrupted bytes off disk and
+    /// motivated the OOM / varint-truncation / trailing-bytes hardening above.
+    #[test]
+    fn proptest_decoder_never_panics_on_arbitrary_bytes() {
+        use proptest::collection::vec;
+        use proptest::prelude::*;
+        proptest!(|(bytes in vec(any::<u8>(), 0..1024))| {
+            let _ = JournalEntry::decode(&bytes);
+        });
+    }
+
+    /// Mutation property: flipping a byte in a valid encoding must either
+    /// produce `Err` or decode to a *different* entry. A silent
+    /// "corrupted-but-still-valid" result would be a hole in the decoder's
+    /// validation.
+    #[test]
+    fn proptest_single_byte_mutation_never_silently_accepted() {
+        use proptest::prelude::*;
+        let entry = JournalEntry {
+            block_hash: h(0x42),
+            parent_state_root: h(0x43),
+            account_trie_diff: vec![(vec![0x01, 0x02], Some(vec![0xaa, 0xbb]))],
+            storage_trie_diff: vec![(vec![0x0a; 67], None)],
+            account_flat_diff: vec![(vec![0xcc; 65], Some(vec![0xdd]))],
+            storage_flat_diff: vec![],
+        };
+        let baseline = entry.encode();
+        proptest!(|(idx in 0..baseline.len(), bit in 0u8..8)| {
+            let mut mutated = baseline.clone();
+            mutated[idx] ^= 1 << bit;
+            match JournalEntry::decode(&mutated) {
+                Err(_) => {}
+                Ok(decoded) => prop_assert_ne!(decoded, entry.clone()),
+            }
+        });
+    }
+
+    fn flat_diff_entry() -> impl proptest::strategy::Strategy<Value = ReverseDiffEntry> {
+        use proptest::collection::vec;
+        use proptest::prelude::*;
+        (
+            vec(any::<u8>(), 0..200),
+            proptest::option::of(vec(any::<u8>(), 0..200)),
+        )
     }
 
     /// `diff_byte_estimate` must be a lower-bound that matches the actual encoded

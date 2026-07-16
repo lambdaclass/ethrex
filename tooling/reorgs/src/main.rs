@@ -19,28 +19,97 @@ async fn main() {
     // Setup logging
     init_tracing(&Options::default_l1());
 
-    // Fetch the path to the ethrex binary from the command line arguments
-    // If not provided, use the default path
-    let cmd_path: PathBuf = std::env::args()
-        .nth(1)
-        .map(|o| o.parse().unwrap())
-        .unwrap_or_else(|| "../../target/debug/ethrex".parse().unwrap());
+    // Argument parsing:
+    //   cargo run                            -> run all scenarios (legacy default path)
+    //   cargo run -- <binary_path>           -> run all scenarios with given binary
+    //   cargo run -- --scenario <name>       -> run one named scenario (default binary path)
+    //   cargo run -- --scenario <name> <bin> -> run one named scenario with given binary
+    let args: Vec<String> = std::env::args().skip(1).collect();
+
+    let (scenario_filter, cmd_path) = parse_args(&args);
 
     let version = get_ethrex_version(&cmd_path).await;
 
     info!(%version, binary_path = %cmd_path.display(), "Fetched ethrex binary version");
-    info!("Starting test run");
+    if let Some(ref filter) = scenario_filter {
+        info!(scenario = %filter, "Running single scenario");
+    } else {
+        info!("Starting test run (all scenarios)");
+    }
     info!("");
 
-    run_test(&cmd_path, no_reorgs_full_sync_smoke_test).await;
-    run_test(&cmd_path, test_reorg_back_to_base).await;
+    let all_scenarios: &[(&str, ScenarioFn)] = &[
+        ("no_reorgs_full_sync_smoke_test", |s| {
+            Box::pin(no_reorgs_full_sync_smoke_test(s))
+        }),
+        ("test_reorg_back_to_base", |s| {
+            Box::pin(test_reorg_back_to_base(s))
+        }),
+        ("test_chain_split", |s| Box::pin(test_chain_split(s))),
+        ("test_one_block_reorg_and_back", |s| {
+            Box::pin(test_one_block_reorg_and_back(s))
+        }),
+        ("test_reorg_back_to_base_with_common_ancestor", |s| {
+            Box::pin(test_reorg_back_to_base_with_common_ancestor(s))
+        }),
+        ("test_storage_slots_reorg", |s| {
+            Box::pin(test_storage_slots_reorg(s))
+        }),
+        ("test_many_blocks_reorg", |s| {
+            Box::pin(test_many_blocks_reorg(s))
+        }),
+        ("deep_reorg_beyond_128", |s| {
+            Box::pin(test_deep_reorg_beyond_128(s))
+        }),
+        ("deep_reorg_side_chain_replay", |s| {
+            Box::pin(test_deep_reorg_side_chain_replay(s))
+        }),
+        ("deep_reorg_state_oracle", |s| {
+            Box::pin(test_deep_reorg_state_oracle(s))
+        }),
+    ];
 
-    run_test(&cmd_path, test_chain_split).await;
+    for (name, scenario_fn) in all_scenarios {
+        if let Some(ref filter) = scenario_filter
+            && *name != filter.as_str()
+        {
+            continue;
+        }
+        run_test_dyn(&cmd_path, name, *scenario_fn).await;
+    }
+}
 
-    run_test(&cmd_path, test_one_block_reorg_and_back).await;
-    run_test(&cmd_path, test_reorg_back_to_base_with_common_ancestor).await;
-    run_test(&cmd_path, test_storage_slots_reorg).await;
-    run_test(&cmd_path, test_many_blocks_reorg).await;
+/// Parse CLI args into an optional scenario filter and a binary path.
+///
+/// Supported invocations:
+///   (none)                          -> all scenarios, default binary
+///   <binary_path>                   -> all scenarios, given binary (arg contains '/')
+///   <scenario_name>                 -> one scenario, default binary (no '/' in arg)
+///   --scenario <name>               -> one scenario, default binary
+///   --scenario <name> <binary_path> -> one scenario, given binary
+fn parse_args(args: &[String]) -> (Option<String>, PathBuf) {
+    let default_bin: PathBuf = "../../target/debug/ethrex".parse().unwrap();
+
+    let mut scenario: Option<String> = None;
+    let mut bin: Option<PathBuf> = None;
+    let mut i = 0;
+    while i < args.len() {
+        if args[i] == "--scenario" {
+            i += 1;
+            if i < args.len() {
+                scenario = Some(args[i].clone());
+            }
+        } else if args[i].contains('/') || args[i].starts_with('.') {
+            // Looks like a file path -- treat as binary location.
+            bin = Some(args[i].parse().unwrap());
+        } else {
+            // Plain word without path separator -- treat as scenario name.
+            scenario = Some(args[i].clone());
+        }
+        i += 1;
+    }
+
+    (scenario, bin.unwrap_or(default_bin))
 }
 
 async fn get_ethrex_version(cmd_path: &Path) -> String {
@@ -51,12 +120,11 @@ async fn get_ethrex_version(cmd_path: &Path) -> String {
     String::from_utf8(version_output.stdout).expect("failed to parse version output")
 }
 
-async fn run_test<F, Fut>(cmd_path: &Path, test_fn: F)
-where
-    F: Fn(Arc<Mutex<Simulator>>) -> Fut,
-    Fut: Future<Output = ()> + Send + 'static,
-{
-    let test_name = std::any::type_name::<F>();
+type ScenarioFn =
+    fn(Arc<Mutex<Simulator>>) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>>;
+
+/// Run a scenario function identified by a display name.
+async fn run_test_dyn(cmd_path: &Path, test_name: &str, test_fn: ScenarioFn) {
     let start = std::time::Instant::now();
 
     info!(test=%test_name, "Running test");
@@ -406,4 +474,349 @@ async fn test_storage_slots_reorg(simulator: Arc<Mutex<Simulator>>) {
     assert_eq!(value_slot0, U256::zero());
     let value_slot1 = node0.get_storage_at(contract_address, slot_key1).await;
     assert_eq!(value_slot1, slot_value1);
+}
+
+/// Verifies that ethrex accepts a reorg deeper than the legacy 128-block cap.
+///
+/// `build_payload` issues an FCU on every block so the canonical chain
+/// advances with each call. The original version of this test built a single
+/// 200-block chain from genesis and then FCUd to its tip; at that point the
+/// tip was *already* canonical, so the cap check inside `apply_fork_choice`
+/// saw `reorg_depth = 0` and never exercised the lifted limit.
+///
+/// To actually trigger the cap check, this version builds two parallel
+/// chains:
+///
+///   1. Chain A: 150 blocks from genesis. Each `build_payload` FCUs the new
+///      tip canonical, so after the loop `latest_canonical_block_number = 150`.
+///   2. Chain B: 200 blocks, also from genesis (a sibling of A). The first
+///      `build_payload` on B issues `FCU(head = genesis)`, which lands in
+///      `apply_fork_choice` with `latest = 150`, `canonical_link_height = 0`,
+///      hence `reorg_depth = 150`. The old `REORG_DEPTH_LIMIT = 128` would
+///      have returned `TooDeepReorg`; PR 4's finality-bounded ceiling
+///      (`latest - finalized_number = 150`) accepts it.
+///
+/// Chain B is salted (`with_salt(1)`) so its blocks diverge from chain A's
+/// from block 1 onward. Without the salt the two chains would produce
+/// byte-identical blocks (payload attributes are deterministic from the
+/// parent hash), `engine_newPayload(chain_b_block_N)` would short-circuit on
+/// the chain-A header already in storage, no layer would be added to the
+/// cache after the deep-reorg overlay install, and every subsequent FCU would
+/// loop back into `reorg_apply_deep` until the simulator panicked on
+/// `Syncing`. See the `salt` field on `Chain` for the longer explanation.
+async fn test_deep_reorg_beyond_128(simulator: Arc<Mutex<Simulator>>) {
+    let mut simulator = simulator.lock().await;
+    let node = simulator.start_node().await;
+    let base_chain = simulator.get_base_chain();
+
+    // Phase 1: build chain A and make it canonical.
+    let mut chain_a = base_chain.fork();
+    let chain_a_len: usize = std::env::var("DEEP_REORG_CHAIN_A_LEN")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(150);
+    info!(chain_a_len, "Building chain A (canonical baseline)");
+    for i in 0..chain_a_len {
+        chain_a = node.build_payload(chain_a).await;
+        node.notify_new_payload(&chain_a).await;
+        if i % 50 == 49 {
+            info!(block = i + 1, "Chain A progress");
+        }
+    }
+    info!(latest = chain_a_len, "Chain A tip is canonical");
+
+    // Phase 2: build chain B from genesis. The first build_payload triggers
+    // the cap-check at reorg_depth = 150 (latest_A - link_to_genesis = 150).
+    // Pre-PR-4 this would return TooDeepReorg{ limit: 128 } and the test
+    // would panic on the build_payload assertion.
+    let mut chain_b = base_chain.fork().with_salt(1);
+    info!("Building chain B (200 blocks, forks at genesis -- first FCU is the 150-deep reorg)");
+    for i in 0..200usize {
+        chain_b = node.build_payload(chain_b).await;
+        node.notify_new_payload(&chain_b).await;
+        if i % 50 == 49 {
+            info!(block = i + 1, "Chain B progress");
+        }
+    }
+
+    info!(
+        canonical_baseline = 150,
+        side_chain_len = chain_b.len() - 1,
+        "Deep reorg beyond legacy 128-block cap accepted -- test passed"
+    );
+}
+
+/// Exercises the deep-reorg REPLAY loop with `side_chain_len >> 0`.
+///
+/// `deep_reorg_beyond_128` validates the cap-lift policy but its FCU lands on
+/// genesis itself, so `reorg_apply_deep` runs with `side_chain_len = 0` (head
+/// is the pivot, no blocks to replay). This scenario complements it by driving
+/// the replay loop and the overlay-backed cascade for 200 sequential
+/// `add_block` calls.
+///
+/// Setup uses two nodes because building a competing chain on the same node
+/// would FCU each new tip canonical, defeating the "non-canonical head" setup
+/// the replay loop needs:
+///
+///   1. Node 0 builds chain A to height `COMMON = 100`, each block FCU'd
+///      canonical. Node 1 receives those same blocks via `submit_block`
+///      (re-execution; identical to node 0 because the block headers carry
+///      their own fee recipient / state root) and FCUs node 1's canonical to
+///      height `COMMON`.
+///   2. Node 1 forks chain B from height `COMMON` with `salt = 1` and extends
+///      it by 200 blocks, each FCU'd canonical on node 1 only.
+///   3. Node 0 extends chain A by 200 more blocks (heights `COMMON + 1 ..= 300`),
+///      each FCU'd canonical on node 0 only. After this, both nodes have a
+///      300-block canonical chain, divergent past height `COMMON`.
+///   4. Node 0 receives chain B's divergent blocks (`COMMON + 1 ..= 300`) via
+///      `submit_block` only ; no per-block FCU. Each block's parent state has
+///      been committed past on node 0's disk and isn't in node 0's layer cache,
+///      so `engine_newPayload` takes the "parent state not materialized" branch
+///      and stashes the block as ACCEPTED in HEADERS + BODIES without execution.
+///   5. Node 0 FCUs chain B's tip. `apply_fork_choice` sees `head_is_canonical
+///      = false`, `reorg_depth = 200`, and `has_state_root(tip) = false`,
+///      returns `StateNotReachable`, and `reorg_apply_deep` takes over with
+///      `pivot = COMMON`, `side_chain_len = 200`. The replay loop calls
+///      `Blockchain::add_block` 200 times against overlay-backed reads, and the
+///      first commit folds the overlay into disk atomically via the Section 9
+///      reconciliation.
+async fn test_deep_reorg_side_chain_replay(simulator: Arc<Mutex<Simulator>>) {
+    const COMMON: usize = 100;
+    const DIVERGENT: usize = 200;
+
+    let mut simulator = simulator.lock().await;
+    let node0 = simulator.start_node().await;
+    let node1 = simulator.start_node().await;
+
+    // Phase 1: node 0 builds the common prefix canonical.
+    let base_chain = simulator.get_base_chain();
+    let chain_at_common = node0.extend_chain(base_chain.fork(), COMMON).await;
+    info!(common = COMMON, "Common prefix built canonical on node 0");
+
+    // Phase 2: replicate the common prefix onto node 1 without re-building it
+    // (re-building on node 1 would set a different fee_recipient and produce a
+    // different state root, breaking the "shared prefix" invariant). Skip the
+    // genesis block when iterating ; it's implicitly present on every node.
+    for block in chain_at_common.blocks_from(1) {
+        node1.submit_block(block).await;
+    }
+    node1.update_forkchoice(&chain_at_common).await;
+    info!("Common prefix replayed onto node 1 and made canonical");
+
+    // Phase 3: build chain B (salted) on node 1. Each build_payload FCUs
+    // node 1's canonical forward ; this never touches node 0.
+    let chain_b = node1
+        .extend_chain(chain_at_common.fork().with_salt(1), DIVERGENT)
+        .await;
+    info!(
+        tip_height = chain_b.len() - 1,
+        "Chain B built canonical on node 1"
+    );
+
+    // Phase 4: extend chain A on node 0 past the common ancestor. After this,
+    // node 0's canonical is 300 blocks long and node 0's layer cache has
+    // committed the oldest layers (default threshold 128) past height COMMON,
+    // so block COMMON's state is no longer reachable from cache or disk.
+    let chain_a = node0.extend_chain(chain_at_common, DIVERGENT).await;
+    info!(
+        tip_height = chain_a.len() - 1,
+        "Chain A extended canonical on node 0"
+    );
+
+    // Phase 5: feed chain B's divergent suffix into node 0 via newPayload only,
+    // no FCU. Each block stashes as ACCEPTED (parent state not materialized) ;
+    // node 0's HEADERS / BODIES grow with chain B's tail but the layer cache
+    // is untouched.
+    for block in chain_b.blocks_from(COMMON + 1) {
+        node0.submit_block(block).await;
+    }
+    info!(
+        stashed = DIVERGENT,
+        "Chain B divergent suffix stashed on node 0 (no FCU)"
+    );
+
+    // Phase 6: drive the deep-reorg replay. FCU to chain B's tip ; expect
+    // exactly one reorg_apply_deep firing with side_chain_len = DIVERGENT.
+    info!(
+        expected_depth = DIVERGENT,
+        "FCUing node 0 to chain B tip -- expect reorg_apply_deep side_chain_len = 200"
+    );
+    node0.update_forkchoice(&chain_b).await;
+
+    info!(
+        canonical_baseline = chain_a.len() - 1,
+        side_chain_replay = DIVERGENT,
+        "Deep reorg with side-chain replay accepted -- test passed"
+    );
+}
+
+/// State-correctness oracle for the deep-reorg apply path.
+///
+/// The existing `deep_reorg_*` scenarios gate on `forkchoiceUpdated` returning
+/// `VALID` at the deep head, which proves the EL accepted the reorg policy-wise
+/// but does NOT prove that disk state reflects chain B's effects after the
+/// overlay reconciliation. A bug that returns VALID with stale (chain A) or
+/// hybrid state would slip through every existing test.
+///
+/// This scenario seeds *observable* divergent effects in both chains and
+/// asserts via `eth_getStorageAt` / `eth_getBalance` that post-reorg state on
+/// node 0 matches chain B exactly:
+///   - storage slot only chain A writes -> must be zero after reorg
+///   - storage slot only chain B writes -> must be its chain-B value after reorg
+///   - account balance the two chains credit with different amounts -> must
+///     equal chain B's credit after reorg
+///
+/// Depth is 150 so the apply path is the deep-reorg one (legacy cap was 128).
+async fn test_deep_reorg_state_oracle(simulator: Arc<Mutex<Simulator>>) {
+    const COMMON: usize = 10;
+    const DEPTH: usize = 150;
+
+    let mut simulator = simulator.lock().await;
+    let node0 = simulator.start_node().await;
+    let node1 = simulator.start_node().await;
+
+    // Same contract as test_storage_slots_reorg: takes (key, value) calldata and
+    // sets storage[key] = value.
+    let contract_deploy_bytecode = hex::decode("656020355f35555f526006601af3").unwrap().into();
+    let signer: Signer = LocalSigner::new(
+        "941e103320615d394a55708be13e45994c7d93b932b064dbcb2b511fe3254e2e"
+            .parse()
+            .unwrap(),
+    )
+    .into();
+    let recipient = "941e103320615d394a55708be13e45994c7d93b0".parse().unwrap();
+
+    let slot_key_a = U256::from(42);
+    let val_a = U256::from(1163);
+    let slot_key_b = U256::from(25);
+    let val_b = U256::from(7474);
+    let transfer_a: u64 = 1_000;
+    let transfer_b: u64 = 7_777;
+
+    // Phase 1: common prefix. Deploy the contract in block 1 and pad to COMMON
+    // blocks so both nodes share the same canonical head.
+    let mut base_chain = simulator.get_base_chain();
+    let contract_address = node0
+        .send_contract_deploy(&signer, contract_deploy_bytecode)
+        .await;
+    for _ in 0..COMMON {
+        base_chain = node0.build_payload(base_chain).await;
+        node0.notify_new_payload(&base_chain).await;
+        node0.update_forkchoice(&base_chain).await;
+        node1.notify_new_payload(&base_chain).await;
+        node1.update_forkchoice(&base_chain).await;
+    }
+
+    let initial_balance = node0.get_balance(recipient).await;
+    assert_eq!(
+        node0.get_storage_at(contract_address, slot_key_a).await,
+        U256::zero()
+    );
+    assert_eq!(
+        node0.get_storage_at(contract_address, slot_key_b).await,
+        U256::zero()
+    );
+
+    // Phase 2: chain A on node 0 -- set slot_a + transfer_a in the first
+    // divergent block, then pad to DEPTH so the common ancestor's state is
+    // beyond the TrieLayerCache horizon when the reorg fires.
+    let mut chain_a = base_chain.fork();
+    let calldata_a = [slot_key_a.to_big_endian(), val_a.to_big_endian()]
+        .concat()
+        .into();
+    node0.send_call(&signer, contract_address, calldata_a).await;
+    node0
+        .send_eth_transfer(&signer, recipient, transfer_a)
+        .await;
+    chain_a = node0.build_payload(chain_a).await;
+    node0.notify_new_payload(&chain_a).await;
+    node0.update_forkchoice(&chain_a).await;
+    for _ in 1..DEPTH {
+        chain_a = node0.build_payload(chain_a).await;
+        node0.notify_new_payload(&chain_a).await;
+        node0.update_forkchoice(&chain_a).await;
+    }
+    info!(
+        tip = chain_a.len() - 1,
+        "Chain A extended canonical on node 0"
+    );
+
+    // Phase 3: chain B on node 1 (salted so blocks diverge byte-wise from A) --
+    // set slot_b + transfer_b in the first divergent block, then pad to DEPTH.
+    let mut chain_b = base_chain.fork().with_salt(1);
+    let calldata_b = [slot_key_b.to_big_endian(), val_b.to_big_endian()]
+        .concat()
+        .into();
+    node1.send_call(&signer, contract_address, calldata_b).await;
+    node1
+        .send_eth_transfer(&signer, recipient, transfer_b)
+        .await;
+    chain_b = node1.build_payload(chain_b).await;
+    node1.notify_new_payload(&chain_b).await;
+    node1.update_forkchoice(&chain_b).await;
+    for _ in 1..DEPTH {
+        chain_b = node1.build_payload(chain_b).await;
+        node1.notify_new_payload(&chain_b).await;
+        node1.update_forkchoice(&chain_b).await;
+    }
+    info!(
+        tip = chain_b.len() - 1,
+        "Chain B extended canonical on node 1"
+    );
+
+    // Pre-reorg invariants on node 0: chain A's effects are visible, chain B's
+    // are not. (If these fail, the test setup is broken, not the EL.)
+    assert_eq!(
+        node0.get_storage_at(contract_address, slot_key_a).await,
+        val_a,
+        "pre-reorg: chain A's slot must be set on node 0"
+    );
+    assert_eq!(
+        node0.get_storage_at(contract_address, slot_key_b).await,
+        U256::zero(),
+        "pre-reorg: chain B's slot must NOT be set on node 0"
+    );
+    assert_eq!(
+        node0.get_balance(recipient).await,
+        initial_balance + U256::from(transfer_a),
+        "pre-reorg: chain A's transfer must be reflected on node 0"
+    );
+
+    // Phase 4: deep reorg on node 0. Feed chain B's divergent suffix in via
+    // newPayload so node 0 has the headers, then FCU to chain B's tip. Depth =
+    // DEPTH, which is past the legacy 128-block cap.
+    for block in chain_b.blocks_from(COMMON + 1) {
+        node0.submit_block(block).await;
+    }
+    info!(depth = DEPTH, "FCUing node 0 to chain B tip -- deep reorg");
+    node0.update_forkchoice(&chain_b).await;
+
+    // Post-reorg state oracle. This is the load-bearing check: returning VALID
+    // is necessary but not sufficient -- disk state must actually reflect chain
+    // B. Each assertion targets a distinct class of bug:
+    //   - slot_a leaking through means the overlay/reconciliation failed to
+    //     revert chain A's storage writes.
+    //   - slot_b absent means the replay loop or first-commit reconciliation
+    //     dropped chain B's writes.
+    //   - balance mismatch means the same for account state.
+    assert_eq!(
+        node0.get_storage_at(contract_address, slot_key_a).await,
+        U256::zero(),
+        "post-reorg: chain A's slot must be reverted"
+    );
+    assert_eq!(
+        node0.get_storage_at(contract_address, slot_key_b).await,
+        val_b,
+        "post-reorg: chain B's slot must be applied"
+    );
+    assert_eq!(
+        node0.get_balance(recipient).await,
+        initial_balance + U256::from(transfer_b),
+        "post-reorg: balance must reflect chain B's transfer, not chain A's"
+    );
+
+    info!(
+        depth = DEPTH,
+        "Deep reorg state oracle verified -- chain B's storage + balance fully applied"
+    );
 }

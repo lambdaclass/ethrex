@@ -223,7 +223,7 @@ impl BlockProducer {
             .await?;
 
         // Make the new head be part of the canonical chain
-        apply_fork_choice(&self.store, block_hash, block_hash, block_hash).await?;
+        apply_fork_choice(&self.store, block_hash, block_hash, block_hash, None).await?;
 
         // Notify all eth_subscribe("newHeads") subscribers.
         if let Some(ref manager) = self.subscription_manager {

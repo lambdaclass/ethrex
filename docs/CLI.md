@@ -128,6 +128,11 @@ Node options:
           
           [env: ETHREX_PRECOMPUTE_WITNESSES=]
 
+      --max-reorg-depth <MAX_REORG_DEPTH>
+          Optional operator override for the maximum reorg depth. Omit for finality-bounded cap. Set to 0 to disable deep reorgs entirely. Set to d to reject reorgs of depth > d.
+          
+          [env: ETHREX_MAX_REORG_DEPTH=]
+
 P2P options:
       --bootnodes <BOOTNODE_LIST>...
           Comma separated enode URLs for P2P discovery bootstrap.
