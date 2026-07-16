@@ -38,7 +38,7 @@ ff = { version = "0.13", default-features = false, optional = true }
 # git source is fine here — guest-program is not published.
 openvm-kzg = { git = "https://github.com/axiom-crypto/openvm-kzg.git", rev = "530a6ed413def5296b7e4967650ba4fc8fd92ea1", optional = true } # v1.4.1
 # Must match ZISK_VERSION in .github/actions/install-zisk/action.yml.
-ziskos = { git = "https://github.com/0xPolygonHermez/zisk.git", tag = "v0.16.1", optional = true, default-features = false, features = ["inputcpy"] }
+ziskos = { git = "https://github.com/0xPolygonHermez/zisk.git", tag = "v1.0.0-alpha", optional = true, default-features = false, features = ["inputcpy"] }
 
 [build-dependencies]
 hex.workspace = true

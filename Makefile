@@ -162,11 +162,11 @@ run-hive-eels-blobs: ## Run hive EELS Blobs tests
 	$(MAKE) run-hive-eels EELS_SIM=ethereum/eels/execute-blobs
 
 AMSTERDAM_FIXTURES_URL ?= $(shell cat tooling/ef_tests/.fixtures_url_amsterdam)
-AMSTERDAM_FIXTURES_BRANCH ?= devnets/glamsterdam/6
+AMSTERDAM_FIXTURES_BRANCH ?= devnets/glamsterdam/7
 run-hive-eels-amsterdam: build-image setup-hive ## 🧪 Run hive EELS Amsterdam Engine tests
 	- cd hive && ./hive --client-file $(HIVE_CLIENT_FILE) --client ethrex --sim ethereum/eels/consume-engine --sim.limit ".*fork_Amsterdam.*" --sim.parallelism $(SIM_PARALLELISM) --sim.loglevel $(SIM_LOG_LEVEL) --sim.buildarg fixtures=$(AMSTERDAM_FIXTURES_URL) --sim.buildarg branch=$(AMSTERDAM_FIXTURES_BRANCH)
 
-run-hive-eels-bal-quick: build-image setup-hive ## 🧪 Run hive EELS quick tests for the glam-6 EIPs
+run-hive-eels-bal-quick: build-image setup-hive ## 🧪 Run hive EELS quick tests for the glam-7 EIPs
 	- cd hive && ./hive --client-file $(HIVE_CLIENT_FILE) --client ethrex --sim ethereum/eels/consume-engine --sim.limit ".*(8024|7708|7778|7843|7928|7954|8037|8038|2780|7997|7610|8246|8282).*" --sim.parallelism $(SIM_PARALLELISM) --sim.loglevel $(SIM_LOG_LEVEL) --sim.buildarg fixtures=$(AMSTERDAM_FIXTURES_URL) --sim.buildarg branch=$(AMSTERDAM_FIXTURES_BRANCH)
 
 # Block-building simulator (execution-specs PR #2679). Not yet upstream in Hive,
@@ -255,7 +255,8 @@ docs-serve: mermaid-init.js mermaid.min.js ## 📚 Generate and serve the docume
 update-cargo-lock: ## 📦 Update Cargo.lock files
 	cargo tree
 	cargo tree --manifest-path crates/guest-program/bin/sp1/Cargo.toml
-	cargo tree --manifest-path crates/guest-program/bin/risc0/Cargo.toml
+	# risc0 temporarily skipped: c-kzg 2.1.8 floor exceeds the highest risc0 c-kzg fork tag
+	# (v2.1.7-risczero.0), so its lockfile can't resolve. Re-add once a >=2.1.8 tag exists.
 	cargo tree --manifest-path crates/guest-program/bin/zisk/Cargo.toml
 	cargo tree --manifest-path crates/guest-program/bin/openvm/Cargo.toml
 	cargo tree --manifest-path crates/l2/tee/quote-gen/Cargo.toml
@@ -267,7 +268,8 @@ update-cargo-lock: ## 📦 Update Cargo.lock files
 check-cargo-lock: ## 🔍 Check Cargo.lock files are up to date
 	cargo metadata --locked > /dev/null
 	cargo metadata --locked --manifest-path crates/guest-program/bin/sp1/Cargo.toml > /dev/null
-	cargo metadata --locked --manifest-path crates/guest-program/bin/risc0/Cargo.toml > /dev/null
+	# risc0 temporarily skipped: c-kzg 2.1.8 floor exceeds the highest risc0 c-kzg fork tag
+	# (v2.1.7-risczero.0), so its lockfile can't resolve. Re-add once a >=2.1.8 tag exists.
 	# We use metadata so we don't need to have the ZisK toolchain installed and verify compilation
 	# if changes made to the source code CI will run with the toolchain
 	cargo metadata --locked --manifest-path crates/guest-program/bin/zisk/Cargo.toml > /dev/null
