@@ -282,6 +282,17 @@ pub struct ChainConfig {
     )]
     pub hegota_time: Option<u64>,
 
+    /// Optional schedule for installing the EIP-8282 builder deposit/exit
+    /// predeploys, and for activating their empty-code gate, on a chain that
+    /// started before Amsterdam and cannot be re-genesised (the pinned genesis
+    /// never allocated them). When set, both the install and the fail-closed
+    /// gate key off this timestamp instead of `amsterdam_time`, so blocks before
+    /// `T` re-execute unchanged (nothing installed, gate never fires) and the
+    /// predeploys install exactly once at the first block `>= T`. Defaults to
+    /// `amsterdam_time` when unset — see `is_builder_predeploy_activated`.
+    #[serde(default)]
+    pub builder_predeploy_time: Option<u64>,
+
     /// Amount of total difficulty reached by the network that triggers the consensus upgrade.
     #[serde(default, with = "crate::serde_utils::u128::hex_str_opt")]
     pub terminal_total_difficulty: Option<u128>,
@@ -385,6 +396,26 @@ impl ChainConfig {
     pub fn is_amsterdam_activated(&self, block_timestamp: u64) -> bool {
         self.amsterdam_time
             .is_some_and(|time| time <= block_timestamp)
+    }
+
+    /// Whether the EIP-8282 builder deposit/exit predeploys should be installed
+    /// and their empty-code gate enforced at `block_timestamp`. Uses the
+    /// dedicated `builder_predeploy_time` schedule when set (to decouple the
+    /// requirement from an already-past Amsterdam/Hegota activation on a running
+    /// chain), otherwise falls back to `amsterdam_time` so a genesis that ships
+    /// the predeploys behaves exactly as before.
+    pub fn is_builder_predeploy_activated(&self, block_timestamp: u64) -> bool {
+        match self.builder_predeploy_time {
+            // Explicit schedule: decouples the builder predeploys from the fork
+            // ordinal, so a running chain that is already past Amsterdam/Hegota
+            // can install them at a future boundary without a re-genesis.
+            Some(time) => time <= block_timestamp,
+            // No explicit schedule: preserve the exact pre-existing behavior
+            // (builder predeploys required from Amsterdam onward, which on a
+            // Hegota block is true via the fork ordinal), so any chain that does
+            // not opt into the schedule — mainnet, CI, tests — is unaffected.
+            None => self.fork(block_timestamp) >= Fork::Amsterdam,
+        }
     }
 
     pub fn is_bpo5_activated(&self, block_timestamp: u64) -> bool {
@@ -1269,6 +1300,46 @@ mod tests {
 
         let error_message = result.unwrap_err().to_string();
         assert!(error_message.contains("missing field `depositContractAddress`"),);
+    }
+
+    #[test]
+    fn test_builder_predeploy_schedule_decouples_from_amsterdam() {
+        let mut config = ChainConfig {
+            chain_id: 1,
+            deposit_contract_address: Address::default(),
+            ..Default::default()
+        };
+
+        // Fallback (no dedicated schedule): tracks the fork ordinal exactly as
+        // before — active from Amsterdam onward. A genesis that already ships the
+        // predeploys is completely unaffected.
+        config.amsterdam_time = Some(1000);
+        config.builder_predeploy_time = None;
+        assert!(!config.is_builder_predeploy_activated(999));
+        assert!(config.is_builder_predeploy_activated(1000));
+
+        // Fallback preserves the OLD behavior for a Hegota-without-Amsterdam-time
+        // chain too (Hegota > Amsterdam ordinally, so the fork is >= Amsterdam):
+        // chains that do not opt into the schedule see no behavior change.
+        config.amsterdam_time = None;
+        config.hegota_time = Some(1);
+        config.builder_predeploy_time = None;
+        assert!(config.is_builder_predeploy_activated(1));
+
+        // Decoupled: a chain already past Amsterdam (amsterdam_time in the past)
+        // must NOT require the predeploys until the dedicated future schedule T,
+        // so pre-T history re-executes without them. This is the invariant that
+        // lets a running pre-Amsterdam chain upgrade without a re-genesis.
+        config.amsterdam_time = Some(0);
+        config.builder_predeploy_time = Some(5000);
+        assert!(!config.is_builder_predeploy_activated(0));
+        assert!(!config.is_builder_predeploy_activated(4999));
+        assert!(config.is_builder_predeploy_activated(5000));
+        assert!(config.is_builder_predeploy_activated(5001));
+
+        // A zero schedule means active from genesis (matches the fork-time convention).
+        config.builder_predeploy_time = Some(0);
+        assert!(config.is_builder_predeploy_activated(0));
     }
 
     #[test]

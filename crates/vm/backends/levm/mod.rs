@@ -4,7 +4,8 @@ mod tracing;
 use super::{BlockExecutionResult, FrameValidationOutcome, TxGasBreakdown};
 use crate::system_contracts::{
     AMSTERDAM_REQUEST_PREDEPLOYS, BEACON_ROOTS_ADDRESS, BUILDER_DEPOSIT_CONTRACT_ADDRESS,
-    BUILDER_EXIT_CONTRACT_ADDRESS, CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS,
+    BUILDER_DEPOSIT_RUNTIME_BYTECODE, BUILDER_EXIT_CONTRACT_ADDRESS, BUILDER_EXIT_RUNTIME_BYTECODE,
+    CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS,
     EXPIRY_VERIFIER_PREDEPLOY, EXPIRY_VERIFIER_RUNTIME_BYTECODE, HISTORY_STORAGE_ADDRESS,
     PRAGUE_SYSTEM_CONTRACTS, SYSTEM_ADDRESS, WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS,
 };
@@ -2804,6 +2805,60 @@ impl LEVM {
         Ok(())
     }
 
+    /// Install the canonical EIP-8282 builder deposit/exit request predeploys.
+    /// Required on a chain that started before Amsterdam and cannot be
+    /// re-genesised: the pinned genesis never allocated these predeploys, so a
+    /// straight upgrade to Amsterdam code would fail the empty-code gate on
+    /// every block. They are instead installed here at the scheduled boundary
+    /// (`builder_predeploy_time`, else `amsterdam_time`). Idempotent, mirroring
+    /// `install_expiry_verifier_code`: exactly one account update per address at
+    /// the first scheduled block and none afterwards.
+    pub fn install_builder_predeploys_code(
+        db: &mut GeneralizedDatabase,
+        crypto: &dyn Crypto,
+    ) -> Result<(), EvmError> {
+        Self::install_predeploy_code(
+            db,
+            crypto,
+            BUILDER_DEPOSIT_CONTRACT_ADDRESS.address,
+            &BUILDER_DEPOSIT_RUNTIME_BYTECODE,
+        )?;
+        Self::install_predeploy_code(
+            db,
+            crypto,
+            BUILDER_EXIT_CONTRACT_ADDRESS.address,
+            &BUILDER_EXIT_RUNTIME_BYTECODE,
+        )
+    }
+
+    /// Idempotently write `bytecode` + nonce 1 to `address`, recording the BAL
+    /// code/nonce changes so a BAL reconstructor reproduces the same post-state.
+    fn install_predeploy_code(
+        db: &mut GeneralizedDatabase,
+        crypto: &dyn Crypto,
+        address: Address,
+        bytecode: &'static [u8],
+    ) -> Result<(), EvmError> {
+        // Predeploy convention (matches the genesis predeploys 4788/2935/7002/7251).
+        const PREDEPLOY_NONCE: u64 = 1;
+
+        let current = db.get_account_code(address)?;
+        if current.code() == bytecode {
+            return Ok(());
+        }
+        let code = Code::from_bytecode(Bytes::from_static(bytecode), crypto);
+        let code_hash = code.hash;
+        if let Some(recorder) = db.bal_recorder_mut() {
+            recorder.record_code_change(address, code.code_bytes());
+            recorder.record_nonce_change(address, PREDEPLOY_NONCE);
+        }
+        let acc = db.get_account_mut(address).map_err(EvmError::from)?;
+        acc.info.code_hash = code_hash;
+        acc.info.nonce = PREDEPLOY_NONCE;
+        db.codes.entry(code_hash).or_insert(code);
+        Ok(())
+    }
+
     pub(crate) fn read_withdrawal_requests(
         block_header: &BlockHeader,
         db: &mut GeneralizedDatabase,
@@ -2982,6 +3037,15 @@ impl LEVM {
             Self::install_expiry_verifier_code(db, crypto)?;
         }
 
+        // EIP-8282: install the builder deposit/exit predeploys at the scheduled
+        // boundary so a chain that started before Amsterdam (whose genesis never
+        // allocated them) acquires them in state without a re-genesis. Gated on
+        // the same schedule as the empty-code check in extract_all_requests_levm,
+        // so blocks before the boundary neither install nor require them.
+        if chain_config.is_builder_predeploy_activated(block_header.timestamp) {
+            Self::install_builder_predeploys_code(db, crypto)?;
+        }
+
         if block_header.parent_beacon_block_root.is_some() && fork >= Fork::Cancun {
             Self::beacon_root_contract_call(block_header, db, vm_type, crypto)?;
         }
@@ -3052,9 +3116,11 @@ pub fn generic_system_contract_levm(
     // https://github.com/ethereum/EIPs/blob/master/EIPS/eip-7002.md#empty-code-failure
     // https://github.com/ethereum/EIPs/blob/master/EIPS/eip-7251.md#empty-code-failure
     // EIP-8282 applies the same empty-code-failure rule to the builder deposit/exit predeploys.
-    // No extra fork guard is needed here: builder predeploy addresses only reach this function via
-    // extract_all_requests_levm, which gates them on fork >= Amsterdam, so a Prague/Osaka block
-    // never passes a builder address to this check.
+    // No extra guard is needed here: builder predeploy addresses only reach this function via
+    // extract_all_requests_levm, which gates them on the builder-predeploy schedule
+    // (`is_builder_predeploy_activated`), so a block before that schedule (or a Prague/Osaka block)
+    // never passes a builder address to this check. From the scheduled boundary onward prepare_block
+    // has installed the predeploys, so this fail-closed check stays meaningful.
     if PRAGUE_SYSTEM_CONTRACTS
         .iter()
         .chain(AMSTERDAM_REQUEST_PREDEPLOYS.iter())
@@ -3127,9 +3193,13 @@ pub fn extract_all_requests_levm(
     let mut requests = vec![deposits, withdrawals, consolidation];
 
     // EIP-8282 (Amsterdam): builder deposit (0x03) and builder exit (0x04) requests.
-    // Prague (18) < Amsterdam (25), so this needs a separate explicit gate; appending
-    // unconditionally after the Prague early-return above would emit these on Prague/Osaka blocks.
-    if fork >= Fork::Amsterdam {
+    // Gated on the builder-predeploy schedule (`builder_predeploy_time`, else
+    // `amsterdam_time`) rather than plain `fork >= Amsterdam`: on a chain that
+    // activated Amsterdam/Hegota before the predeploys existed in state, this keeps
+    // the builder readers (and the empty-code gate they hit) quiet for pre-schedule
+    // history, so those blocks re-execute to their stored roots. From the scheduled
+    // boundary onward the predeploys are installed (see prepare_block) and this runs.
+    if chain_config.is_builder_predeploy_activated(header.timestamp) {
         // Grow to exactly 5 once, avoiding a realloc on each of the two pushes below.
         requests.reserve_exact(2);
         let builder_deposit_data: Vec<u8> =

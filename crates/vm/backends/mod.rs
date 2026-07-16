@@ -194,6 +194,16 @@ impl Evm {
             LEVM::install_expiry_verifier_code(&mut self.db, self.crypto.as_ref())?;
         }
 
+        // EIP-8282: install the builder deposit/exit predeploys at the scheduled
+        // boundary on the payload-build path (block-import is hooked in
+        // prepare_block), so a pre-Amsterdam chain acquires them without a
+        // re-genesis. Same schedule as the empty-code gate.
+        if chain_config.is_builder_predeploy_activated(block_header.timestamp)
+            && matches!(self.vm_type, VMType::L1)
+        {
+            LEVM::install_builder_predeploys_code(&mut self.db, self.crypto.as_ref())?;
+        }
+
         if block_header.parent_beacon_block_root.is_some() && fork >= Fork::Cancun {
             LEVM::beacon_root_contract_call(
                 block_header,
