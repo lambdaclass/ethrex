@@ -118,8 +118,20 @@ Deploy `NativeRollup.sol` to L1 and generate the L2 genesis:
   --private-key 0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924 \
   --native-rollups \
   --native-rollups.relayer-pk 0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d \
+  --native-rollups.finality-delay 0 \
+  --l2-gas-limit 15000000 \
   --genesis-l2-path fixtures/genesis/native_l2.json
 ```
+
+> **`--l2-gas-limit`**: `advance()` re-executes the whole L2 block inside a single
+> L1 transaction, so this value must stay under the L1 per-transaction gas cap
+> (EIP-7825, 16,777,216) with headroom for the precompile's witness/bookkeeping
+> gas. `15000000` is the tested value; the deployer rejects anything above the cap
+> and the immutable contract enforces the same bound in its constructor.
+>
+> **`--native-rollups.finality-delay 0`**: instant finality, **local demo only**.
+> The value is baked immutably into the contract, has no default, and a production
+> deployment must pass a reorg-safe delay in seconds.
 
 You should see output like:
 

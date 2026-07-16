@@ -1860,6 +1860,22 @@ pub async fn deploy_native_rollup_contracts(
              a production deployment must use a reorg-safe delay."
         );
     }
+    // advance() re-executes the whole L2 block inside one L1 tx via the EXECUTE
+    // precompile, so l2GasLimit can't exceed the L1 per-tx gas cap (EIP-7825) or
+    // every advance() runs out of gas — and l2GasLimit is immutable, so that would
+    // brick the rollup for good. Fail loud here rather than let the CLI's 30M
+    // default (or any oversized value) get baked in. Mirrors the constructor's
+    // MAX_L2_GAS_LIMIT require; deployments should leave headroom for the
+    // precompile's witness/bookkeeping gas (the docs/Makefile use 15000000).
+    if opts.l2_gas_limit > ethrex_common::constants::TX_MAX_GAS_LIMIT_AMSTERDAM {
+        return Err(DeployerError::InternalError(format!(
+            "--l2-gas-limit {} exceeds the native-rollup cap of {} (EIP-7825 per-tx gas limit). \
+             advance() re-executes the L2 block in a single L1 tx, so a larger value bricks the \
+             immutable contract. Use a smaller value (e.g. 15000000).",
+            opts.l2_gas_limit,
+            ethrex_common::constants::TX_MAX_GAS_LIMIT_AMSTERDAM,
+        )));
+    }
     let constructor_args = encode_calldata(
         "constructor(bytes32,bytes32,uint256,uint256,address,uint256)",
         &[

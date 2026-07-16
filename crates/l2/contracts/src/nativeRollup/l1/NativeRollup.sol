@@ -85,6 +85,17 @@ contract NativeRollup {
     // so `sendL1Message` rejects it up front (see the cap there).
     uint256 constant RELAYER_GAS_BODY_ALLOWANCE = 300_000;
 
+    // Upper bound on l2GasLimit. advance() re-executes the entire L2 block inside a
+    // single L1 transaction (the EXECUTE precompile), so the block's gas can never
+    // exceed the L1 per-transaction gas cap (EIP-7825, Amsterdam:
+    // TX_MAX_GAS_LIMIT_AMSTERDAM = 1 << 24 = 16_777_216). A larger l2GasLimit makes
+    // every advance() run out of gas, and since l2GasLimit is baked in immutably
+    // that bricks the rollup for good. Deployments should leave headroom for the
+    // precompile's witness-decode/bookkeeping cost (the Makefile/docs use
+    // 15_000_000). Kept in sync with the Rust constant by
+    // test/tests/l2/native_rollup_sol_offsets.rs.
+    uint256 constant MAX_L2_GAS_LIMIT = 16_777_216;
+
     // SSZ `StatelessValidationResult`: root(32) + successful_validation(1, @32) +
     // chain_config(variable → 4-byte offset @33). chain_config's first field is
     // chain_id (uint64 LE), read at the dereferenced offset.
@@ -140,6 +151,14 @@ contract NativeRollup {
         require(
             _blockGasLimit > RELAYER_GAS_BODY_ALLOWANCE,
             "NativeRollup: l2GasLimit too small"
+        );
+        // Upper bound: the block must be re-executable within one L1 tx (see
+        // MAX_L2_GAS_LIMIT). Rejecting a too-large value here stops a deploy — e.g.
+        // the CLI's 30M default — from baking in an l2GasLimit whose blocks can
+        // never be advanced.
+        require(
+            _blockGasLimit <= MAX_L2_GAS_LIMIT,
+            "NativeRollup: l2GasLimit exceeds single-tx re-execution cap"
         );
         stateRoot = _initialStateRoot;
         blockHash = _initialBlockHash;

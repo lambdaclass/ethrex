@@ -258,3 +258,19 @@ fn sol_relayer_gas_allowance_matches_rust() {
         "RELAYER_GAS_BODY_ALLOWANCE drifted between NativeRollup.sol and block_producer.rs"
     );
 }
+
+/// Drift guard for the `l2GasLimit` upper bound. `advance()` re-executes the L2
+/// block inside a single L1 transaction, so the contract's `MAX_L2_GAS_LIMIT` must
+/// equal the L1 per-transaction gas cap (EIP-7825, `TX_MAX_GAS_LIMIT_AMSTERDAM`).
+/// If the Rust constant changes, this pins the `.sol` copy to it so the two can't
+/// silently drift and let a too-large (unadvanceable) `l2GasLimit` be deployed.
+#[test]
+fn sol_max_l2_gas_limit_matches_rust() {
+    let src = read_contract();
+    let sol = sol_uint_const(&src, "MAX_L2_GAS_LIMIT") as u64;
+    assert_eq!(
+        sol,
+        ethrex_common::constants::TX_MAX_GAS_LIMIT_AMSTERDAM,
+        "MAX_L2_GAS_LIMIT in NativeRollup.sol drifted from TX_MAX_GAS_LIMIT_AMSTERDAM"
+    );
+}
