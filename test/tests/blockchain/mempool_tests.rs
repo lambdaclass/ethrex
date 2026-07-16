@@ -1449,6 +1449,7 @@ async fn mempool_rejects_underfunded_paymaster() {
                 paymaster,
                 reserved_cost: max_cost,
                 is_canonical: false,
+                is_self_pay: false,
                 paymaster_balance: max_cost,
             }),
         )
@@ -2833,6 +2834,7 @@ fn keyed_reannounce_does_not_leak_reservation() {
             paymaster,
             reserved_cost: cost,
             is_canonical: true,
+            is_self_pay: false,
             paymaster_balance: U256::from(4_000u64), // >= 2*cost so the locked re-check passes
         })
     };
