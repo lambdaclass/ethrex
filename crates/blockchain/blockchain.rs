@@ -127,6 +127,9 @@ use ethrex_common::types::BlobsBundle;
 
 const MAX_PAYLOADS: usize = 10;
 const MAX_MEMPOOL_SIZE_DEFAULT: usize = 10_000;
+/// Default mempool occupancy percentage (0-100) at which gapped-nonce
+/// transaction admission is denied. Set to 100 to disable the check.
+pub const DEFAULT_GAP_ADMIT_OCCUPANCY_THRESHOLD: u8 = 90;
 
 /// Background thread for dropping large tree structures off the critical path.
 /// Accepts any `Send` value and drops it on a dedicated thread, avoiding
@@ -303,6 +306,10 @@ pub struct BlockchainOptions {
     /// `--no-bal-parallel-trie`) to fall back to streaming `AccountUpdate`s from
     /// the executor and merkleizing post-execution.
     pub bal_parallel_trie_enabled: bool,
+    /// Mempool occupancy percentage (0-100) at or above which incoming
+    /// transactions with a nonce gap relative to the sender's on-chain nonce
+    /// are rejected. Setting to 100 disables the check.
+    pub gap_admit_occupancy_threshold: u8,
 }
 
 impl Default for BlockchainOptions {
@@ -318,6 +325,7 @@ impl Default for BlockchainOptions {
             bal_parallel_exec_enabled: true,
             bal_prefetch_enabled: true,
             bal_parallel_trie_enabled: true,
+            gap_admit_occupancy_threshold: DEFAULT_GAP_ADMIT_OCCUPANCY_THRESHOLD,
         }
     }
 }
@@ -3430,16 +3438,24 @@ impl Blockchain {
             }
         };
 
+        // Compute the new tx's cost once and reuse for both the single-tx
+        // balance check and the cumulative-balance check below.
+        let tx_cost = tx
+            .cost_without_base_fee()
+            .ok_or(MempoolError::InvalidTxGasvalues)?;
+
         let maybe_sender_acc_info = self.storage.get_account_info(header_no, sender).await?;
-        // Sender's on-chain nonce, threaded out to `add_transaction` so the
-        // per-account queued (future/nonce-gapped) cap is enforced *atomically*
-        // under the insertion write lock (see `QueuedCap`) instead of via a
-        // separate, racy pre-check here. geth `AccountQueue` style: only future
-        // (nonce-gapped) txs count; executable/contiguous txs are never capped,
-        // and replacements pass because the caller removes the old tx first.
+        // Sender's on-chain nonce, used for two things below: (1) threaded out to
+        // `add_transaction` so the per-account queued (future/nonce-gapped) cap is
+        // enforced *atomically* under the insertion write lock (see `QueuedCap`)
+        // instead of via a separate, racy pre-check — geth `AccountQueue` style:
+        // only future (nonce-gapped) txs count, executable/contiguous txs are never
+        // capped, and replacements pass because the caller removes the old tx first;
+        // and (2) excluding obsoleted (already-mined but not-yet-pruned) txs from the
+        // cumulative-balance sum.
         let sender_account_nonce = maybe_sender_acc_info.as_ref().map(|info| info.nonce);
 
-        if let Some(sender_acc_info) = maybe_sender_acc_info {
+        let sender_balance = if let Some(sender_acc_info) = maybe_sender_acc_info {
             if nonce < sender_acc_info.nonce || nonce == u64::MAX {
                 return Err(MempoolError::NonceTooLow);
             }
@@ -3488,16 +3504,12 @@ impl Blockchain {
                 }
             }
 
-            // Skip balance check for frame txs (payer unknown until execution)
-            if !is_frame_tx {
-                let tx_cost = tx
-                    .cost_without_base_fee()
-                    .ok_or(MempoolError::InvalidTxGasvalues)?;
-
-                if tx_cost > sender_acc_info.balance {
-                    return Err(MempoolError::NotEnoughBalance);
-                }
+            // Skip the balance check for frame txs (payer unknown until execution).
+            if !is_frame_tx && tx_cost > sender_acc_info.balance {
+                return Err(MempoolError::NotEnoughBalance);
             }
+
+            sender_acc_info.balance
         } else if !is_frame_tx {
             // An account that is not in the database cannot possibly have enough balance to cover the transaction cost
             return Err(MempoolError::NotEnoughBalance);
@@ -3513,17 +3525,79 @@ impl Blockchain {
             if nonce == u64::MAX {
                 return Err(MempoolError::NonceTooLow);
             }
-        }
+            // Frame txs skip the cumulative balance check below, so this
+            // sentinel is never read; it only satisfies the block's type.
+            U256::zero()
+        };
+
+        // On-chain nonce for the gap-admission check below (0 for a
+        // not-yet-existent sender, matching the implied EIP-8141 nonce).
+        let sender_acc_nonce = sender_account_nonce.unwrap_or(0);
 
         // Check the nonce of pendings TXs in the mempool from the same sender
         // If it exists check if the new tx has higher fees
         let tx_to_replace_hash = self.mempool.find_tx_to_replace(sender, nonce, tx)?;
+
+        // Cumulative balance check across this sender's pending transactions.
+        // Without this, a sender at the per-sender slot cap can have only one
+        // of their N pending txs be fundable, with the other N-1 being
+        // guaranteed-fail spam wasting pool space.
+        //
+        // `sum_cost_for_sender` recomputes the sender total excluding the
+        // tx being replaced (instead of subtracting after the fact) so a
+        // `None`-cost or missing tx can't silently zero the total via
+        // `MAX - MAX = 0`. It also fails closed on any inconsistency so the
+        // gate can't be bypassed by an invariant violation. Obsoleted txs
+        // (nonce below the sender's on-chain nonce — already mined but not yet
+        // pruned) are excluded so they don't inflate the required balance.
+        //
+        // Skipped for frame txs: their payer is unknown until execution, so
+        // (matching the single-tx balance check above) they are not gated on
+        // the sender's balance.
+        if !is_frame_tx {
+            let existing_cost = self.mempool.sum_cost_for_sender(
+                sender,
+                sender_account_nonce.unwrap_or(0),
+                tx_to_replace_hash,
+            )?;
+            let total = existing_cost
+                .checked_add(tx_cost)
+                .ok_or(MempoolError::InvalidTxGasvalues)?;
+            if total > sender_balance {
+                return Err(MempoolError::InsufficientCumulativeBalance {
+                    required: total,
+                    available: sender_balance,
+                });
+            }
+        }
 
         if tx
             .chain_id()
             .is_some_and(|chain_id| chain_id != config.chain_id)
         {
             return Err(MempoolError::InvalidChainId(config.chain_id));
+        }
+
+        // When the mempool is heavily occupied, reject incoming transactions
+        // whose nonce is not contiguous with the sender's on-chain nonce. This
+        // prevents a flood of gapped-nonce spam txs from pinning pool budget
+        // that productive txs could use. Replacements (same nonce as a tx
+        // already in the pool) bypass this rule since they are not gapped.
+        //
+        // Read occupancy once and reuse it for both the gate check and the
+        // error message — taking the read lock twice (a separate check plus a
+        // re-read for the message) would allow TOCTOU drift where the reported
+        // occupancy differs from the value the gate fired on.
+        let threshold = self.options.gap_admit_occupancy_threshold;
+        if tx_to_replace_hash.is_none() && nonce != sender_acc_nonce && threshold < 100 {
+            let occupancy_pct = self.mempool.occupancy_pct()?;
+            if occupancy_pct >= threshold {
+                let nonce_gap = nonce.saturating_sub(sender_acc_nonce);
+                return Err(MempoolError::GapAdmissionDeniedUnderPressure {
+                    occupancy_pct,
+                    nonce_gap,
+                });
+            }
         }
 
         // EIP-8141 §Mempool: run the validation-trace simulation + paymaster

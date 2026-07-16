@@ -971,6 +971,54 @@ impl Mempool {
             .map(|((_address, nonce), _hash)| nonce + 1))
     }
 
+    /// Returns the sum of `cost_without_base_fee()` for every pending
+    /// transaction from `sender` currently in the pool, optionally excluding
+    /// `exclude` (used by the cumulative-balance admission gate to drop the
+    /// cost of a tx that's about to be replaced at the same nonce).
+    ///
+    /// Used at mempool admission to gate a sender's cumulative pending cost
+    /// against their on-chain balance: without this check, a sender at the
+    /// per-sender slot cap can have most of their pending txs be
+    /// guaranteed-fail at execution time and waste pool space.
+    ///
+    /// Fails closed on any inconsistency: if `txs_by_sender_nonce` references
+    /// a hash missing from `transaction_pool`, or if any included tx's cost
+    /// can't be computed, the function returns an error rather than silently
+    /// undercounting (which would let a malformed or invariant-violating tx
+    /// bypass the cumulative check).
+    pub fn sum_cost_for_sender(
+        &self,
+        sender: Address,
+        account_nonce: u64,
+        exclude: Option<H256>,
+    ) -> Result<U256, MempoolError> {
+        let inner = self.read()?;
+        let mut total = U256::zero();
+        // Start at `account_nonce`, not 0, so obsoleted txs (nonce below the
+        // sender's on-chain nonce — already executed but not yet pruned from the
+        // pool) don't count toward the sender's required balance.
+        for (_key, hash) in inner
+            .txs_by_sender_nonce
+            .range((sender, account_nonce)..=(sender, u64::MAX))
+        {
+            if Some(*hash) == exclude {
+                continue;
+            }
+            let tx = inner.transaction_pool.get(hash).ok_or_else(|| {
+                MempoolError::StoreError(StoreError::Custom(format!(
+                    "mempool index/pool inconsistency: hash {hash:?} in sender-nonce index but missing from transaction_pool",
+                )))
+            })?;
+            let cost = tx
+                .cost_without_base_fee()
+                .ok_or(MempoolError::InvalidTxGasvalues)?;
+            total = total
+                .checked_add(cost)
+                .ok_or(MempoolError::InvalidTxGasvalues)?;
+        }
+        Ok(total)
+    }
+
     pub fn get_mempool_size(&self) -> Result<(u64, u64), MempoolError> {
         let txs_size = {
             let pool_lock = &self.read()?.transaction_pool;
@@ -982,6 +1030,25 @@ impl Mempool {
         };
 
         Ok((txs_size as u64, blobs_size as u64))
+    }
+
+    /// Returns the current occupancy of the transaction pool as an integer
+    /// percentage of its configured maximum size, in the range `[0, 100]`.
+    ///
+    /// Returns `0` when the pool has unlimited capacity (`max_mempool_size == 0`)
+    /// to avoid a division by zero and to signal that pressure-gated admission
+    /// rules should treat the pool as empty in that configuration.
+    ///
+    /// The computation uses integer arithmetic (`len * 100 / max`) so threshold
+    /// boundary comparisons are deterministic — float rounding from a prior
+    /// `f64`-based implementation could misclassify near-boundary cases.
+    pub fn occupancy_pct(&self) -> Result<u8, MempoolError> {
+        let inner = self.read()?;
+        if inner.max_mempool_size == 0 {
+            return Ok(0);
+        }
+        let pct = inner.transaction_pool.len().saturating_mul(100) / inner.max_mempool_size;
+        Ok(pct.min(100) as u8)
     }
 
     /// Returns all transactions currently in the pool
@@ -1240,7 +1307,8 @@ pub fn transaction_intrinsic_gas(
     // it the same way (`fork >= Fork::Prague` in the default hook). Applying it
     // pre-Prague would spuriously raise the admission threshold.
     let calldata_floor = if fork >= Fork::Prague {
-        intrinsic_gas_floor(tx, fork).map_err(|e| MempoolError::IntrinsicGasError(e.to_string()))?
+        intrinsic_gas_floor(tx, sender, fork)
+            .map_err(|e| MempoolError::IntrinsicGasError(e.to_string()))?
     } else {
         0
     };
@@ -1250,7 +1318,53 @@ pub fn transaction_intrinsic_gas(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ethrex_common::types::EIP1559Transaction;
+    use ethrex_common::types::{EIP1559Transaction, Transaction, TxKind};
+    use ethrex_common::{Address, Bytes};
+
+    fn dummy_mempool_tx(sender: Address, nonce: u64) -> MempoolTransaction {
+        let tx = Transaction::EIP1559Transaction(EIP1559Transaction {
+            nonce,
+            max_priority_fee_per_gas: 0,
+            max_fee_per_gas: 0,
+            gas_limit: 21_000,
+            to: TxKind::Call(Address::from_low_u64_be(1)),
+            value: U256::zero(),
+            data: Bytes::default(),
+            access_list: Default::default(),
+            ..Default::default()
+        });
+        MempoolTransaction::new(tx, sender)
+    }
+
+    fn fill_mempool(mempool: &Mempool, count: usize) {
+        for i in 0..count {
+            let sender = Address::from_low_u64_be(i as u64 + 1);
+            let hash = H256::from_low_u64_be(i as u64 + 1);
+            mempool
+                .add_transaction(hash, sender, dummy_mempool_tx(sender, 0), None, None)
+                .expect("Failed to add transaction");
+        }
+    }
+
+    #[test]
+    fn occupancy_pct_empty_pool() {
+        let mempool = Mempool::new(100);
+        assert_eq!(mempool.occupancy_pct().unwrap(), 0);
+    }
+
+    #[test]
+    fn occupancy_pct_half_full_pool() {
+        let mempool = Mempool::new(100);
+        fill_mempool(&mempool, 50);
+        assert_eq!(mempool.occupancy_pct().unwrap(), 50);
+    }
+
+    #[test]
+    fn occupancy_pct_full_pool() {
+        let mempool = Mempool::new(100);
+        fill_mempool(&mempool, 100);
+        assert_eq!(mempool.occupancy_pct().unwrap(), 100);
+    }
 
     fn build_tx(nonce: u64) -> Transaction {
         Transaction::EIP1559Transaction(EIP1559Transaction {
