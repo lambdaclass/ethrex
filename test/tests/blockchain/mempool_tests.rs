@@ -2735,12 +2735,13 @@ async fn l1_validate_transaction_rejects_privileged_l2() {
 
 // ==================== Relocated from crates/blockchain/blockchain.rs ====================
 // A pooled frame transaction (EIP-8141) must be served over P2P as a
-// `P2PTransaction::FrameTransaction` instead of being rejected.
+// `PooledTransaction` wrapping `Transaction::FrameTransaction` instead of
+// being rejected.
 mod p2p_serve_tests {
     use ethrex_blockchain::Blockchain;
     use ethrex_common::types::{
         FRAME_SIG_SCHEME_SECP256K1, Frame, FrameMode, FrameSignature, FrameTransaction,
-        MempoolTransaction, P2PTransaction, Transaction,
+        MempoolTransaction, Transaction,
     };
     use ethrex_common::{Address, U256};
     use ethrex_crypto::NativeCrypto;
@@ -2799,7 +2800,9 @@ mod p2p_serve_tests {
         let served = blockchain
             .get_p2p_transaction_by_hash(&hash)
             .expect("frame tx should be served over P2P");
-        assert!(matches!(served, P2PTransaction::FrameTransaction(_)));
+        assert!(matches!(served.tx, Transaction::FrameTransaction(_)));
+        // Frame txs carry no blobs bundle.
+        assert!(served.as_blob().is_none());
         assert_eq!(served.compute_hash(), hash);
     }
 }
