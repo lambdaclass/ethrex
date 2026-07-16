@@ -3,20 +3,20 @@ participants:
     el_image: ethrex:local
     el_extra_params: ["--syncmode", "full"]
     cl_type: lighthouse
-    cl_image: sigp/lighthouse:v8.1.3
+    cl_image: sigp/lighthouse:v8.2.0
     validator_count: 32
     supernode: true
   - el_type: ethrex
     el_image: ethrex:local
     el_extra_params: ["--syncmode", "full"]
     cl_type: lighthouse
-    cl_image: sigp/lighthouse:v8.1.3
+    cl_image: sigp/lighthouse:v8.2.0
     validator_count: 32
   - el_type: ethrex
     el_image: ethrex:local
     el_extra_params: ["--syncmode", "full"]
     cl_type: lighthouse
-    cl_image: sigp/lighthouse:v8.1.3
+    cl_image: sigp/lighthouse:v8.2.0
     validator_count: 32
 
 network_params:
