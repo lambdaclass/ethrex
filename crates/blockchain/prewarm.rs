@@ -15,8 +15,11 @@
 #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
 use crate::PrewarmedEntry;
 use crate::{Blockchain, BlockchainType};
+#[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+use ethrex_common::H256;
 use ethrex_common::types::{BlockHeader, MempoolTransaction, Transaction};
-use ethrex_common::{Address, H256, U256};
+use ethrex_common::{Address, U256};
+#[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
 use ethrex_crypto::NativeCrypto;
 use rustc_hash::FxHashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
