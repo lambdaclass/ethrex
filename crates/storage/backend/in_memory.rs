@@ -224,7 +224,7 @@ impl StorageWriteBatch for InMemoryWriteTx {
         // NOTE: every `put`, `delete`, and `delete_range` above mutates the live
         // `Arc<Database>` immediately under the write lock, so `commit` is a no-op
         // and multi-op sequences (e.g. the journal entry + trie writes in
-        // `commit_trie_layers`, or the `delete_range` + finalized-number update in
+        // `commit_to_disk`, or the `delete_range` + finalized-number update in
         // `forkchoice_update_inner`) are not atomic. That's acceptable here: this
         // backend is RAM-backed (dev/test only), and atomicity only guards crash
         // recovery — a process death loses all in-memory state anyway, so a
