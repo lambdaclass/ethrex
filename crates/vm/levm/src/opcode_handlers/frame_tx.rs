@@ -83,8 +83,13 @@ pub fn apply_approve(
             if ctx.payer_address.is_some() {
                 return Err(ExceptionalHalt::InvalidOpcode.into());
             }
-            // No sender_approved precondition: the spec allows APPROVE_PAYMENT
-            // in any order relative to APPROVE_EXECUTION.
+            // EIP-8141: payment approval must not precede the sender's execution
+            // approval. Per the spec's APPROVE_PAYMENT rules, revert the frame
+            // while sender_approved == false (the sender authorizes execution
+            // first; only then may a payer be bound and the max cost collected).
+            if !ctx.sender_approved {
+                return Err(VMError::RevertOpcode);
+            }
             let tx_cost = compute_tx_max_cost(ctx)?;
             let sender = ctx.tx.sender;
 
