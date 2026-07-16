@@ -2853,7 +2853,7 @@ mod frame_sig_validation_tests {
             signature: Bytes::from(vec![0xAAu8; 10]),
         };
         assert!(validate_frame_signatures(
-            &[sig.clone()],
+            std::slice::from_ref(&sig),
             H256::zero(),
             Address::zero(),
             hegota(),
