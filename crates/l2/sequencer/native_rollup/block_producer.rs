@@ -131,8 +131,11 @@ impl NativeBlockProducer {
 
     /// Produce a single L2 block following the payload_builder.rs pattern.
     async fn produce_block(&mut self) -> Result<(), NativeBlockProducerError> {
-        // 1. Take L1 messages that fit within the block gas limit and build relayer txs
-        let l1_messages = self.take_l1_messages_for_block();
+        // 1. Select (without dequeuing) L1 messages that fit within the block gas
+        //    limit and build relayer txs. They are removed from the queue only after
+        //    the block is stored and made canonical (step 10), so a failure in any
+        //    intermediate step retries them instead of dropping them.
+        let l1_messages = self.select_l1_messages_for_block();
         let relayer_txs = if !l1_messages.is_empty() {
             debug!(
                 "NativeBlockProducer: building relayer txs for {} L1 messages",
@@ -223,6 +226,15 @@ impl NativeBlockProducer {
         // 9. Apply fork choice
         apply_fork_choice(&self.store, block_hash, block_hash, block_hash).await?;
 
+        // 10. The block is stored and canonical, so the L1 messages it consumed are
+        //     now settled — remove exactly those (the front `n` we selected in step 1)
+        //     from the queue. Draining only here, not at selection time, means any
+        //     failure in the steps above leaves the messages queued for retry rather
+        //     than dropping them; dropping would desync the producer from the
+        //     contract's sequential `l1MessageIndex` and wedge the L1→L2 bridge.
+        let consumed = l1_messages.len();
+        self.pending_l1_messages.drain(..consumed);
+
         info!(
             "NativeBlockProducer: produced block {} ({:?}) with {} txs, gas_used={}",
             block_number, block_hash, transactions_count, context.cumulative_gas_spent
@@ -233,37 +245,43 @@ impl NativeBlockProducer {
 
     // -- Helpers --
 
-    /// Take L1 messages from the internal queue that fit within the block gas limit.
+    /// Select (without removing) the L1 messages at the front of the queue that
+    /// fit within the block gas limit.
     ///
-    /// Pops messages one by one, summing the gas each message's *relayer tx*
-    /// consumes (`relayer_tx_gas_limit`), not the raw `msg.gas_limit`: the relayer
-    /// tx is what actually lands in the block, and `fill_transactions` checks each
-    /// relayer tx's full gas limit against the remaining block gas. Budgeting the
-    /// raw `gas_limit` here would select a message whose relayer tx then can't fit,
-    /// which `fill_transactions` treats as a hard error and the message would be
-    /// dropped without being re-queued. Once adding another message would exceed
-    /// `block_gas_limit`, the remaining messages stay in the queue for the next
-    /// block. (`sendL1Message` on L1 caps `gasLimit` so a single message always
-    /// fits, so this can never deadlock on an over-large head-of-queue message.)
-    fn take_l1_messages_for_block(&mut self) -> Vec<L1Message> {
+    /// Budgets each message against the gas its *relayer tx* consumes
+    /// (`relayer_tx_gas_limit`), not the raw `msg.gas_limit`: the relayer tx is what
+    /// actually lands in the block, and `fill_transactions` checks each relayer tx's
+    /// full gas limit against the remaining block gas. Budgeting the raw `gas_limit`
+    /// would select a message whose relayer tx then can't fit, which
+    /// `fill_transactions` treats as a hard error. Once adding another message would
+    /// exceed `block_gas_limit`, selection stops. (`sendL1Message` on L1 caps
+    /// `gasLimit` so a single message always fits, so this can never deadlock on an
+    /// over-large head-of-queue message.)
+    ///
+    /// Messages are peeked (cloned), not popped. `produce_block` removes them from
+    /// the queue only after the block is stored and made canonical (the `drain` at
+    /// the end of `produce_block`). If block production fails at any of its many
+    /// fallible steps, the selected messages stay queued and are retried on the next
+    /// tick instead of being silently dropped — which, given `processL1Message`'s
+    /// sequential-nonce requirement on L2, would otherwise wedge the bridge
+    /// permanently.
+    fn select_l1_messages_for_block(&self) -> Vec<L1Message> {
         let mut selected = Vec::new();
         let mut cumulative_gas: u64 = 0;
 
-        while let Some(msg) = self.pending_l1_messages.front() {
+        for msg in &self.pending_l1_messages {
             let next_gas = cumulative_gas.saturating_add(relayer_tx_gas_limit(msg.gas_limit));
             if next_gas > self.config.block_gas_limit {
                 warn!(
                     "NativeBlockProducer: L1 messages relayer gas ({next_gas}) would exceed \
                      block gas limit ({}), deferring {} remaining messages",
                     self.config.block_gas_limit,
-                    self.pending_l1_messages.len()
+                    self.pending_l1_messages.len() - selected.len()
                 );
                 break;
             }
             cumulative_gas = next_gas;
-            if let Some(msg) = self.pending_l1_messages.pop_front() {
-                selected.push(msg);
-            }
+            selected.push(msg.clone());
         }
 
         selected
