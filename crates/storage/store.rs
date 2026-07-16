@@ -3707,6 +3707,29 @@ impl Store {
         Ok(last_computed_flatkeyvalue.clone())
     }
 
+    /// Returns `true` once the flat-key-value generator has finished its full pass.
+    ///
+    /// Completion is recorded by the 1-byte `[0xff]` sentinel the generator writes to
+    /// `MISC_VALUES["last_written"]` on the final iteration (see `flatkeyvalue_generator`);
+    /// every non-final frontier value is a real nibble path (bytes `0x00..=0x0f`), so the
+    /// sentinel is unambiguous. Reads the durable marker rather than the in-memory frontier,
+    /// which is expanded to `[0xff; 64]`/`[0xff; 131]` and would need length-aware handling.
+    ///
+    /// Used to gate journal-backed deep reorgs: entries journaled while generation is still
+    /// in progress omit past-frontier flat-KV pre-images (see issue #7001).
+    pub fn flatkeyvalue_fully_generated(&self) -> Result<bool, StoreError> {
+        let tx = self.backend.begin_read()?;
+        let marker = tx.get(MISC_VALUES, "last_written".as_bytes())?;
+        Ok(Self::flatkeyvalue_generation_complete(marker.as_deref()))
+    }
+
+    /// Pure completeness test for the durable `last_written` marker: complete iff it is the
+    /// exact 1-byte `[0xff]` sentinel. Any in-progress frontier is a nibble path (bytes
+    /// `0x00..=0x0f`) and an unset marker is absent, so neither matches.
+    fn flatkeyvalue_generation_complete(marker: Option<&[u8]>) -> bool {
+        marker == Some([0xff].as_slice())
+    }
+
     fn flatkeyvalue_computed_with_last_written(account: H256, last_written: &[u8]) -> bool {
         let account_nibbles = Nibbles::from_bytes(account.as_bytes());
         &last_written[0..64] > account_nibbles.as_ref()
@@ -5650,5 +5673,32 @@ mod datadir_tests {
         fs::create_dir(dir.path().join("CURRENT")).unwrap();
         fs::create_dir(dir.path().join("MANIFEST-000001")).unwrap();
         assert!(!dir_contains_legacy_db(dir.path()).unwrap());
+    }
+}
+
+#[cfg(test)]
+mod flatkeyvalue_completeness_tests {
+    use super::*;
+
+    /// The `last_written` marker signals a finished FKV pass ONLY as the exact 1-byte
+    /// `[0xff]` sentinel. This gates journal-backed deep reorgs (issue #7001), so the
+    /// boundary must be exact: an unset marker, the initial all-zero frontier, and any
+    /// mid-generation nibble path must all read as "not complete".
+    #[test]
+    fn only_the_one_byte_ff_sentinel_counts_as_complete() {
+        // Complete: the durable completion sentinel the generator writes.
+        assert!(Store::flatkeyvalue_generation_complete(Some(&[0xff])));
+
+        // Not complete:
+        assert!(!Store::flatkeyvalue_generation_complete(None)); // marker never written
+        assert!(!Store::flatkeyvalue_generation_complete(Some(&[]))); // empty
+        assert!(!Store::flatkeyvalue_generation_complete(Some(&[0u8; 64]))); // initial frontier
+        assert!(!Store::flatkeyvalue_generation_complete(Some(&[0x0a; 64]))); // mid-gen nibble path
+        // The in-memory frontier is expanded to all-0xff (64/131 bytes), but that is never
+        // the durable marker; only the 1-byte form means complete, so these read false.
+        assert!(!Store::flatkeyvalue_generation_complete(Some(&[0xff; 64])));
+        assert!(!Store::flatkeyvalue_generation_complete(Some(&[
+            0xff, 0xff
+        ])));
     }
 }
