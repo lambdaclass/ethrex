@@ -2646,6 +2646,27 @@ mod canonic_encoding {
             buf
         }
 
+        /// Canonical encoded length without allocating (mirrors
+        /// [`P2PTransaction::encode_canonical`]); equals
+        /// `encode_canonical_to_vec().len()`. For the blob variant this includes
+        /// the full sidecar, since `EIP4844TransactionWithBlobs` encodes it.
+        pub fn encode_canonical_len(&self) -> usize {
+            let prefix_len = match self {
+                P2PTransaction::LegacyTransaction(_) => 0,
+                _ => 1,
+            };
+            let inner_len = match self {
+                P2PTransaction::LegacyTransaction(t) => t.length(),
+                P2PTransaction::EIP2930Transaction(t) => t.length(),
+                P2PTransaction::EIP1559Transaction(t) => t.length(),
+                P2PTransaction::EIP4844TransactionWithBlobs(t) => t.length(),
+                P2PTransaction::EIP7702Transaction(t) => t.length(),
+                P2PTransaction::FeeTokenTransaction(t) => t.length(),
+                P2PTransaction::FrameTransaction(t) => t.length(),
+            };
+            prefix_len + inner_len
+        }
+
         pub fn compute_hash(&self) -> H256 {
             match self {
                 P2PTransaction::LegacyTransaction(t) => {

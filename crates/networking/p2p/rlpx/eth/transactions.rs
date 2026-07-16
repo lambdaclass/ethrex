@@ -267,7 +267,7 @@ impl GetPooledTransactions {
             // Cap the response size (geth `softResponseLimit`): stop before a tx would push the
             // response over the budget so we never emit more than a peer's inbound cap accepts.
             // Always serve at least one tx so a lone oversized (blob) tx still goes out.
-            let tx_size = tx.encode_canonical_to_vec().len();
+            let tx_size = tx.encode_canonical_len();
             if !pooled_transactions.is_empty() && bytes_used + tx_size > MAX_POOLED_RESPONSE_BYTES {
                 break;
             }
@@ -464,9 +464,7 @@ mod tests {
                 .map(|t| t.tx_type() as u8)
                 .collect::<Vec<_>>()
                 .into(),
-            txs.iter()
-                .map(|t| t.encode_canonical_to_vec().len())
-                .collect(),
+            txs.iter().map(|t| t.encode_canonical_len()).collect(),
             txs.iter().map(|t| t.compute_hash()).collect(),
         )
     }
