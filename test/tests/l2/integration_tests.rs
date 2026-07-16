@@ -2601,7 +2601,7 @@ async fn test_fee_token(
         data: Bytes::new(),
         ..Default::default()
     });
-    let tx_size = tx.encode_canonical_to_vec().len().try_into().unwrap();
+    let tx_size = tx.encode_canonical_len().try_into().unwrap();
     let transfer_fees = get_fees_details_l2(&transfer_receipt, &l2_client, tx_size).await?;
 
     let sender_fee_token_spent = sender_token_balance_before_transfer
