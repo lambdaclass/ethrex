@@ -1815,9 +1815,11 @@ pub fn build_snap2_bal_response(
         &req.block_hashes
     };
 
-    // Batched BAL fetch (`Store::iter_block_access_lists_by_hashes`). Header
-    // lookup remains per-hash because §100 requires inspecting each header's
-    // `block_access_list_hash` to decide whether to serve the BAL.
+    // Batched BAL fetch (`Store::iter_block_access_lists_by_hashes`). No per-hash
+    // header lookup is needed to satisfy §100: a stored BAL implies the block was
+    // admitted post-Amsterdam (BAL storage is gated on the Amsterdam fork), so a
+    // present entry is served directly. When no BAL is stored — pre-Amsterdam,
+    // pruned, or unknown block — the slot is `None` regardless.
     let raw_bals = storage
         .iter_block_access_lists_by_hashes(hashes)
         .map_err(|e| PeerConnectionError::InternalError(e.to_string()))?;
@@ -1826,30 +1828,17 @@ pub fn build_snap2_bal_response(
         Vec::with_capacity(hashes.len());
     let mut bytes_used: u64 = 0;
 
-    for (hash, raw_bal) in hashes.iter().zip(raw_bals.into_iter()) {
+    for raw_bal in raw_bals.into_iter() {
         // Keep at least one entry then stop once cap is exceeded.
         if !bals.is_empty() && bytes_used >= cap {
             break;
         }
 
-        let header = storage
-            .get_block_header_by_hash(*hash)
-            .map_err(|e| PeerConnectionError::InternalError(e.to_string()))?;
-
-        let slot = match header {
-            // §100: pre-Amsterdam blocks have no block_access_list_hash — return None.
-            Some(h) if h.block_access_list_hash.is_none() => None,
-            // Known post-Amsterdam header — serve whatever the store holds (which may itself be None).
-            Some(_) => raw_bal,
-            // Unknown block hash.
-            None => None,
-        };
-
-        bytes_used += match &slot {
+        bytes_used += match &raw_bal {
             Some(bal) => bal.length() as u64,
             None => 1, // RLP empty string (0x80) = 1 byte
         };
-        bals.push(slot);
+        bals.push(raw_bal);
     }
 
     Ok(Snap2BlockAccessLists { id: req.id, bals })

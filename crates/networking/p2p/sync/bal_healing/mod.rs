@@ -7,6 +7,7 @@ mod apply;
 
 pub use apply::apply_bal;
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use ethrex_common::{
@@ -142,16 +143,20 @@ pub async fn advance_state_via_bals(
 
         let mut batch_filled = vec![false; batch_headers.len()];
         let mut retry_counts: Vec<u32> = vec![0; batch_headers.len()];
+        // Holding buffer for BALs received out of order: a usable BAL whose
+        // prior slots aren't applied yet is kept here (keyed by batch index,
+        // with the peer that served it) instead of being discarded and
+        // re-fetched. Drained in strict ascending order once the gap closes.
+        let mut deferred: HashMap<usize, (BlockAccessList, H256)> = HashMap::new();
 
         while batch_filled.iter().any(|f| !f) {
-            let pending_hashes: Vec<H256> = batch_hashes
-                .iter()
-                .enumerate()
-                .filter(|(idx, _)| !batch_filled[*idx])
-                .map(|(_, h)| *h)
-                .collect();
+            // Request only slots we have neither applied nor already buffered.
             let pending_indices: Vec<usize> = (0..batch_hashes.len())
-                .filter(|idx| !batch_filled[*idx])
+                .filter(|idx| !batch_filled[*idx] && !deferred.contains_key(idx))
+                .collect();
+            let pending_hashes: Vec<H256> = pending_indices
+                .iter()
+                .map(|&idx| batch_hashes[idx])
                 .collect();
 
             {
@@ -180,47 +185,47 @@ pub async fn advance_state_via_bals(
                     return Ok(current_root);
                 }
                 Ok(Some((response_bals, peer_id))) => {
-                    for (bal_opt, &batch_idx) in response_bals.iter().zip(pending_indices.iter()) {
-                        let header = &batch_headers[batch_idx];
-                        let block_hash = batch_hashes[batch_idx];
-
-                        let Some(bal) = bal_opt else {
-                            retry_counts[batch_idx] += 1;
-                            {
-                                let mut diag = diagnostics.write().await;
-                                diag.snap2_validation_failures += 1;
+                    // Buffer every returned BAL by batch index; a missing slot
+                    // bumps its retry count and penalizes the serving peer.
+                    for (bal_opt, &batch_idx) in
+                        response_bals.into_iter().zip(pending_indices.iter())
+                    {
+                        match bal_opt {
+                            Some(bal) => {
+                                deferred.insert(batch_idx, (bal, peer_id));
                             }
-                            if retry_counts[batch_idx] >= BAL_MAX_RETRIES_PER_BLOCK {
-                                let _ = peers.peer_table.record_critical_failure(peer_id);
-                            } else {
-                                let _ = peers.peer_table.record_failure(peer_id);
+                            None => {
+                                retry_counts[batch_idx] += 1;
+                                {
+                                    let mut diag = diagnostics.write().await;
+                                    diag.snap2_validation_failures += 1;
+                                }
+                                if retry_counts[batch_idx] >= BAL_MAX_RETRIES_PER_BLOCK {
+                                    let _ = peers.peer_table.record_critical_failure(peer_id);
+                                } else {
+                                    let _ = peers.peer_table.record_failure(peer_id);
+                                }
                             }
-                            continue;
-                        };
-
-                        // Strict in-batch ordering: defer apply until every prior
-                        // slot has been filled. Without this, an out-of-order
-                        // response could apply BAL[2] against a state that hasn't
-                        // yet had BAL[1] applied — producing the wrong root.
-                        let all_prior_filled = (0..batch_idx).all(|k| batch_filled[k]);
-                        if !all_prior_filled {
-                            continue;
                         }
+                    }
 
-                        let expected_parent = if i == 0 && batch_idx == 0 {
-                            parent_hash
-                        } else if batch_idx > 0 {
-                            batch_headers[batch_idx - 1].hash()
-                        } else {
-                            headers[i - 1].hash()
+                    // Drain buffered BALs in strict ascending order as far as the
+                    // contiguous prefix allows. Applying strictly in order means the
+                    // last applied block's hash (`parent_hash`) is always the correct
+                    // expected parent, and each BAL is validated against the state its
+                    // predecessor produced — never against a gap.
+                    while let Some(next) = batch_filled.iter().position(|filled| !filled) {
+                        let Some((bal, src_peer)) = deferred.remove(&next) else {
+                            break; // next in-order slot not received yet
                         };
+                        let header = &batch_headers[next];
+                        let block_hash = batch_hashes[next];
 
-                        match try_apply_bal_block(store, header, bal, current_root, expected_parent)
-                        {
+                        match try_apply_bal_block(store, header, &bal, current_root, parent_hash) {
                             Ok(new_root) => {
                                 current_root = new_root;
                                 parent_hash = block_hash;
-                                batch_filled[batch_idx] = true;
+                                batch_filled[next] = true;
                                 {
                                     let mut diag = diagnostics.write().await;
                                     diag.snap2_blocks_replayed += 1;
@@ -229,7 +234,7 @@ pub async fn advance_state_via_bals(
                                     "advance_state_via_bals: applied BAL for block {} ({block_hash:?}), new root: {new_root:?}",
                                     header.number
                                 );
-                                let _ = peers.peer_table.record_success(peer_id);
+                                let _ = peers.peer_table.record_success(src_peer);
                             }
                             Err(ApplyBalError::BadParent {
                                 expected_parent,
@@ -247,7 +252,8 @@ pub async fn advance_state_via_bals(
                             Err(ApplyBalError::Internal(e)) => return Err(*e),
                             Err(err) => {
                                 // BadOrdering | BadHash | BadStateRoot — peer-attributable,
-                                // retry from a different peer.
+                                // retry from a different peer. Stop draining: later slots
+                                // stay buffered and apply once this one is re-fetched.
                                 warn!(
                                     "advance_state_via_bals: validation failed for block {} ({block_hash:?}): {err}",
                                     header.number
@@ -259,12 +265,13 @@ pub async fn advance_state_via_bals(
                                         diag.snap2_peer_failures += 1;
                                     }
                                 }
-                                retry_counts[batch_idx] += 1;
-                                if retry_counts[batch_idx] >= BAL_MAX_RETRIES_PER_BLOCK {
-                                    let _ = peers.peer_table.record_critical_failure(peer_id);
+                                retry_counts[next] += 1;
+                                if retry_counts[next] >= BAL_MAX_RETRIES_PER_BLOCK {
+                                    let _ = peers.peer_table.record_critical_failure(src_peer);
                                 } else {
-                                    let _ = peers.peer_table.record_failure(peer_id);
+                                    let _ = peers.peer_table.record_failure(src_peer);
                                 }
+                                break;
                             }
                         }
                     }

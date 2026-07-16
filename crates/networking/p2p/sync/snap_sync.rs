@@ -561,6 +561,16 @@ pub async fn snap_sync(
                         // the node passes its state-root check yet cannot serve those storage slots.
                         // When the download left no incomplete storage (`storage_accounts` empty),
                         // this is a no-op: the work queue is empty and it returns immediately.
+                        //
+                        // Heal against `pivot_header.state_root`, NOT `final_header.state_root`,
+                        // even though BAL replay has advanced state past the pivot. The pivot
+                        // snapshot is the incomplete-storage payload: each `storage_accounts`
+                        // entry's storage_root was captured at pivot time, so completing those
+                        // storage tries must verify against the pivot root. BAL replay only
+                        // moved the *account* trie forward; it does not retroactively fill the
+                        // storage leaves the snap download left missing. Do not "modernize" this
+                        // to `final_header.state_root` — that root commits post-pivot storage_root
+                        // hashes the pivot-time work queue was never built against.
                         healing_done = heal_storage_trie(
                             pivot_header.state_root,
                             &storage_accounts,
