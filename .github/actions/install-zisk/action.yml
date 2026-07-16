@@ -15,12 +15,12 @@ runs:
       # Must match the `ziskos` tag in both crates/guest-program/Cargo.toml
       # and crates/guest-program/bin/zisk/Cargo.toml.
       env:
-        ZISK_VERSION: "0.16.1"
+        ZISK_VERSION: "1.0.0-alpha"
       run: |
         source "$GITHUB_WORKSPACE/.github/scripts/retry.sh"
 
         mkdir -p "$HOME/.zisk/bin"
         retry curl -fsSL "https://raw.githubusercontent.com/0xPolygonHermez/zisk/v${ZISK_VERSION}/ziskup/ziskup" -o "$HOME/.zisk/bin/ziskup"
         chmod +x "$HOME/.zisk/bin/ziskup"
-        retry "$HOME/.zisk/bin/ziskup" -v "${ZISK_VERSION}"
+        retry "$HOME/.zisk/bin/ziskup" -v "${ZISK_VERSION}" -y
         echo "$HOME/.zisk/bin" >> $GITHUB_PATH
