@@ -104,6 +104,8 @@ impl SendRawTransactionRequest {
                         .map(SendRawTransactionRequest::FeeToken),
                     TxType::Privileged => PrivilegedL2Transaction::decode(tx_bytes)
                         .map(SendRawTransactionRequest::PrivilegedL2),
+                    // Never returned by `from_type_byte` (0x00 is rejected); a legacy tx arrives
+                    // as an RLP list on the branch below, not as a typed envelope.
                     TxType::Legacy => Err(RLPDecodeError::Custom(
                         "legacy transactions are not typed envelopes".to_string(),
                     )),

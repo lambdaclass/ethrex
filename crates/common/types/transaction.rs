@@ -139,12 +139,18 @@ impl RLPDecode for P2PTransaction {
                 TxType::FeeToken => {
                     P2PTransaction::FeeTokenTransaction(FeeTokenTransaction::decode(tx_encoding)?)
                 }
-                // Privileged (L2) txs are never gossiped over p2p; legacy never arrives as a
-                // typed envelope (0x00 is rejected by `from_type_byte`).
-                TxType::Privileged | TxType::Legacy => {
-                    return Err(RLPDecodeError::Custom(format!(
-                        "Invalid p2p transaction type: {tx_type}"
-                    )));
+                // Privileged (L2) transactions are never gossiped over p2p.
+                TxType::Privileged => {
+                    return Err(RLPDecodeError::Custom(
+                        "privileged transactions are not sent over p2p".to_string(),
+                    ));
+                }
+                // Never returned by `from_type_byte` (0x00 is rejected); a legacy tx arrives as
+                // an RLP list on the branch below, not as a typed envelope.
+                TxType::Legacy => {
+                    return Err(RLPDecodeError::Custom(
+                        "legacy transactions are not typed envelopes".to_string(),
+                    ));
                 }
             };
             Ok((tx, remainder))
