@@ -2908,7 +2908,7 @@ impl Blockchain {
         // per-sender gate inputs, re-checked atomically inside `add_transaction`,
         // which also removes any same-nonce tx being replaced under the same lock
         // (#6938) — so no separate pre-removal here.
-        let (_tx_to_replace, frame_reservation, sender_admission) =
+        let (frame_reservation, sender_admission) =
             self.validate_transaction(&transaction, sender).await?;
 
         // Add blobs bundle before the transaction so that when add_transaction
@@ -2964,7 +2964,7 @@ impl Blockchain {
         // removal, and the insert are one atomic scope (#6938). For a frame tx
         // the removal happens only after the locked paymaster re-check, so a
         // rejected fee-bump leaves the original pending tx intact.
-        let (_tx_to_replace, frame_reservation, sender_admission) =
+        let (frame_reservation, sender_admission) =
             self.validate_transaction(&transaction, sender).await?;
 
         // Add transaction to storage
@@ -3204,23 +3204,18 @@ impl Blockchain {
     5. Ensure the transactor is able to add a new transaction. The number of transactions sent by an account may be limited by a certain configured value
 
     */
-    /// Returns the hash of the transaction to replace in case the nonce already
-    /// exists, plus the paymaster reservation to apply on insert for frame
-    /// transactions (EIP-8141). The reservation is computed here but applied in
-    /// the locked section of `add_transaction`, so a frame tx that fails any
-    /// later admission check never leaks a reservation.
+    /// Returns the paymaster reservation to apply on insert for frame
+    /// transactions (EIP-8141), plus the per-sender admission guard re-checked
+    /// atomically inside `add_transaction`. The reservation is computed here but
+    /// applied in the locked section of `add_transaction`, so a frame tx that
+    /// fails any later admission check never leaks a reservation. Any same-nonce
+    /// tx being replaced is detected and removed live under that write lock, so
+    /// its hash is not returned here.
     pub async fn validate_transaction(
         &self,
         tx: &Transaction,
         sender: Address,
-    ) -> Result<
-        (
-            Option<H256>,
-            Option<FramePaymasterReservation>,
-            Option<SenderAdmission>,
-        ),
-        MempoolError,
-    > {
+    ) -> Result<(Option<FramePaymasterReservation>, Option<SenderAdmission>), MempoolError> {
         let nonce = tx.nonce();
 
         // On an L1 node, reject L2-only transaction types (FeeToken 0x7d,
@@ -3233,7 +3228,7 @@ impl Blockchain {
         }
 
         if matches!(tx, &Transaction::PrivilegedL2Transaction(_)) {
-            return Ok((None, None, None));
+            return Ok((None, None));
         }
 
         // Frame transactions: skip balance/EOA checks (payer unknown until execution)
@@ -3717,7 +3712,7 @@ impl Blockchain {
             }),
         });
 
-        Ok((tx_to_replace_hash, frame_reservation, sender_admission))
+        Ok((frame_reservation, sender_admission))
     }
 
     /// Marks the node's chain as up to date with the current chain
