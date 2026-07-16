@@ -36,6 +36,7 @@ tokio-util.workspace = true
 [dev-dependencies]
 tokio = { workspace = true, features = ["full"] }
 ethrex-levm.workspace = true
+tempfile.workspace = true
 
 [lib]
 path = "./blockchain.rs"

@@ -1219,21 +1219,44 @@ async fn try_execute_payload(
         return payload_status_for_existing_block(&block, context, make_witness).await;
     }
 
-    // A payload whose parent *state* we don't have yet must be answered with
-    // SYNCING, never INVALID: without the parent state we cannot validate it,
-    // so we must not declare it invalid. This happens after a restart, when
-    // state regeneration hasn't caught up to the CL head, or when the CL sends a
-    // newPayload for a block beyond our current state. Without this guard,
-    // execution fails with `EvmError::DB("state root missing")` and gets mapped
-    // to INVALID below, wrongly poisoning the CL's view of a valid block (and
-    // persisting it via `set_latest_valid_ancestor`). The parent block being
-    // entirely absent is handled as `ParentNotFound` by `add_block` below.
-    if let Some(parent_header) = storage.get_block_header_by_hash(block.header.parent_hash)?
-        && !storage.has_state_root(parent_header.state_root)?
-    {
-        debug!(%block_hash, %block_number, "Parent state missing, returning SYNCING and triggering sync");
-        syncer.sync_to_head(block_hash);
-        return Ok(PayloadStatus::syncing());
+    // A payload whose parent block is known but whose parent *state* is not
+    // reachable (neither on disk nor via the layer cache / overlay) must NOT be
+    // executed here: execution would fail with `EvmError::DB("state root
+    // missing")` and be mapped to INVALID, wrongly poisoning the CL's view of a
+    // valid block. It is handled by the ACCEPTED-stash below, which stores the
+    // block without executing and lets a later forkchoiceUpdated drive the
+    // deep-reorg apply. (Previously a SYNCING guard here short-circuited this
+    // exact case and returned SYNCING *without storing the block*, which
+    // shadowed the stash entirely and left the deep-reorg replay with no blocks
+    // to reorg to. `has_state_root` already cascades through the layer cache, so
+    // that guard fired on precisely the stash's condition.) A parent block that
+    // is entirely absent still falls through to `add_block` below and is
+    // reported as `SYNCING` via `ParentNotFound`.
+
+    // Defer eager execution when the parent block is known but its state is
+    // not currently materialized (parent state neither in the layer cache nor
+    // on disk). Stash the block in HEADERS+BODIES and return ACCEPTED; a later
+    // forkchoiceUpdated pointing at this block (or a descendant) will drive
+    // the deep-reorg apply path. Matches geth's `eth/catalyst/api.go` behavior
+    // with the `HasBlockAndState` predicate. Issue #6685.
+    //
+    // If the parent is itself unknown, fall through to `add_block` which
+    // returns `ChainError::ParentNotFound` and stashes the block; handled
+    // below as `SYNCING`, preserving existing behavior.
+    if let Some(parent_header) = storage.get_block_header_by_hash(block.header.parent_hash)? {
+        let parent_state = parent_header.state_root;
+        let in_cache = storage.is_state_in_layer_cache(parent_state)?;
+        let on_disk = !in_cache && storage.has_state_root(parent_state)?;
+        if !in_cache && !on_disk {
+            debug!(
+                %block_hash,
+                %block_number,
+                parent_hash = %block.header.parent_hash,
+                "Parent state not materialized; stashing payload as ACCEPTED"
+            );
+            storage.add_block(block).await?;
+            return Ok(PayloadStatus::accepted());
+        }
     }
 
     // Execute and store the block

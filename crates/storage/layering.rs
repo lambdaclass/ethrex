@@ -118,21 +118,32 @@ impl TrieLayerCache {
     /// Installs an overlay on this cache. Subsequent reads that miss the layer chain
     /// will consult the overlay before falling through to disk. Replaces any
     /// previously-installed overlay.
-    #[allow(dead_code, reason = "consumed by PR 3 deep-reorg orchestration")]
     pub fn set_overlay(&mut self, overlay: Arc<Overlay>) {
         self.overlay = Some(overlay);
     }
 
     /// Removes any installed overlay. Idempotent.
-    #[allow(dead_code, reason = "consumed by PR 3 reconciliation")]
     pub fn clear_overlay(&mut self) {
         self.overlay = None;
     }
 
     /// Returns a reference to the installed overlay, if any.
-    #[allow(dead_code, reason = "consumed by PR 3 reconciliation")]
     pub fn overlay(&self) -> Option<&Arc<Overlay>> {
         self.overlay.as_ref()
+    }
+
+    /// Whether a reader at `state_root` should consult the installed overlay.
+    ///
+    /// The overlay reconstructs the pivot's state ([`Overlay::serves_root`]); the
+    /// new-chain layers built on top of it during replay live in `self.layers`. Only
+    /// those "consuming" roots may see overlay values ; every other reader (an
+    /// eth_call/getProof at the old cache-edge `D`, or any unrelated historical root)
+    /// must fall through to disk, which still holds that root's canonical state while
+    /// the overlay is alive. Returns `false` when no overlay is installed.
+    pub fn overlay_serves(&self, state_root: H256) -> bool {
+        self.overlay
+            .as_ref()
+            .is_some_and(|o| state_root == o.serves_root() || self.layers.contains_key(&state_root))
     }
 
     /// Looks up `key` in the installed overlay. Three-state return:
@@ -152,17 +163,15 @@ impl TrieLayerCache {
     }
 
     /// Returns true if a layer with the given `state_root` is present in the cache.
-    /// Used by callers (engine API, deep-reorg orchestrator in PR 3) to decide
-    /// whether a parent state is reachable through forward execution or requires
-    /// overlay construction.
-    #[allow(dead_code, reason = "consumed by PR 3 deep-reorg orchestration")]
+    /// Used by callers (engine API, deep-reorg orchestrator) to decide whether a
+    /// parent state is reachable through forward execution or requires overlay
+    /// construction.
     pub fn contains(&self, state_root: H256) -> bool {
         self.layers.contains_key(&state_root)
     }
 
-    /// Returns this cache's commit threshold. Used by the deep-reorg path (PR 3)
-    /// so a freshly-constructed replacement cache inherits the same threshold.
-    #[allow(dead_code, reason = "consumed by PR 3 deep-reorg orchestration")]
+    /// Returns this cache's commit threshold. Used by the deep-reorg path so a
+    /// freshly-constructed replacement cache inherits the same threshold.
     pub fn commit_threshold(&self) -> usize {
         self.commit_threshold
     }
@@ -476,7 +485,14 @@ impl TrieDB for TrieWrapper {
         if let Some(value) = self.inner.get(self.state_root, key.as_ref()) {
             return Ok(Some(value));
         }
-        if let Some(overlay_result) = self.inner.lookup_overlay(key.as_ref()) {
+        // Overlay gate: the overlay reconstructs the pivot's state and the new-chain
+        // layers built on top of it. Only a reader at a consuming root (the pivot or one
+        // of those layer roots) may see it; an eth_call/getProof at the old cache-edge
+        // `D` or an unrelated historical root must fall through to disk, which is
+        // unchanged during the overlay window. See [`TrieLayerCache::overlay_serves`].
+        if self.inner.overlay_serves(self.state_root)
+            && let Some(overlay_result) = self.inner.lookup_overlay(key.as_ref())
+        {
             return Ok(overlay_result);
         }
         self.db.get(key)
@@ -520,7 +536,6 @@ impl OverlayCf {
 }
 
 /// Errors produced while constructing an [`Overlay`] from the on-disk journal.
-#[allow(dead_code, reason = "consumed by PR 3 deep-reorg orchestration")]
 #[derive(Debug, thiserror::Error)]
 pub enum OverlayError {
     #[error("missing journal entry for block {0}")]
@@ -565,6 +580,13 @@ pub struct Overlay {
     from_block: BlockNumber,
     /// Lowest block number covered by the overlay (= `pivot + 1`).
     to_block: BlockNumber,
+    /// State root the overlay reconstructs: the state as of `to_block - 1` (the pivot).
+    /// Captured from the `parent_state_root` of the journal entry at `to_block`. Used by
+    /// the read cascade to gate overlay consultation to the pivot root (and, transitively,
+    /// the new-chain layer roots built on top of it) so unrelated readers of the shared
+    /// cache do not get pivot values in place of the on-disk canonical state.
+    /// `H256::zero()` for a default/empty overlay (never a real reconstructed root).
+    serves_root: H256,
 }
 
 impl fmt::Debug for Overlay {
@@ -592,11 +614,11 @@ impl Default for Overlay {
                 .expected_items(Self::BLOOM_INITIAL_CAPACITY),
             from_block: 0,
             to_block: 0,
+            serves_root: H256::zero(),
         }
     }
 }
 
-#[allow(dead_code, reason = "consumed by PR 3 deep-reorg orchestration")]
 impl Overlay {
     /// Expected-items hint used to size the bloom filter at construction time.
     /// Sized for typical reorg depths (tens to low-hundreds of blocks); the filter
@@ -658,6 +680,11 @@ impl Overlay {
                     found: entry.block_hash,
                 });
             }
+            // The entry at `to_block` unwinds `to_block -> to_block - 1`, so its
+            // `parent_state_root` is the state root the overlay reconstructs (the pivot).
+            if n == to_block {
+                overlay.serves_root = entry.parent_state_root;
+            }
             overlay.absorb(entry);
             if n == to_block {
                 break;
@@ -709,7 +736,9 @@ impl Overlay {
         map.get(key).cloned()
     }
 
-    /// Total number of overlay entries across all four CFs. Mostly for tests/metrics.
+    /// Total number of overlay entries across all four CFs. Used by tests and
+    /// future observability (PR 4).
+    #[allow(dead_code, reason = "consumed by tests; live target for PR 4 metrics")]
     pub fn len(&self) -> usize {
         self.account_trie.len()
             + self.storage_trie.len()
@@ -718,6 +747,7 @@ impl Overlay {
     }
 
     /// Whether the overlay holds any entries.
+    #[allow(dead_code, reason = "consumed by tests; live target for PR 4 metrics")]
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
@@ -729,6 +759,13 @@ impl Overlay {
     )]
     pub fn from_block(&self) -> BlockNumber {
         self.from_block
+    }
+
+    /// State root the overlay reconstructs (the pivot's state, as of `to_block - 1`).
+    /// The read cascade consults the overlay only for this root and the new-chain
+    /// layer roots derived from it; see [`TrieWrapper::get`].
+    pub fn serves_root(&self) -> H256 {
+        self.serves_root
     }
 
     /// Lowest block number covered by the overlay (= `pivot + 1`).
@@ -921,6 +958,86 @@ mod overlay_tests {
             OverlayCf::classify_by_key_length(132),
             OverlayCf::StorageTrie
         );
+    }
+
+    /// `serves_root` is the reconstructed pivot root, taken from the `parent_state_root`
+    /// of the entry at `to_block` (the deepest in-range entry) ; NOT the `from_block`
+    /// entry. Proves the capture picks the right end of the descending walk.
+    #[test]
+    fn from_journal_captures_serves_root_from_to_block_entry() {
+        let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::open().unwrap());
+        let pivot = h(0x77);
+        let mut tx = backend.begin_write().unwrap();
+        for (n, psr) in [(3u64, pivot), (4, h(0x44)), (5, h(0x55))] {
+            let entry = JournalEntry {
+                block_hash: h(n as u8),
+                parent_state_root: psr,
+                account_trie_diff: vec![(vec![n as u8], Some(vec![n as u8]))],
+                storage_trie_diff: vec![],
+                account_flat_diff: vec![],
+                storage_flat_diff: vec![],
+            };
+            tx.put(STATE_HISTORY, &n.to_be_bytes(), &entry.encode())
+                .unwrap();
+        }
+        tx.commit().unwrap();
+        // Range [to_block=3, from_block=5]; serves_root must be entry-3's parent root.
+        let overlay = Overlay::from_journal(backend.as_ref(), 5, 3, |_| None).unwrap();
+        assert_eq!(overlay.serves_root(), pivot);
+    }
+
+    /// The overlay must only be consulted by readers at a "consuming" root ; the pivot
+    /// (`serves_root`) or a new-chain layer root present in the cache. Unrelated roots
+    /// (old-chain edge `D`, historical/RPC reads) must fall through to disk. Regression
+    /// for the #6687 "Overlay Applies Across Roots" P1.
+    #[test]
+    fn overlay_serves_only_consuming_roots() {
+        let pivot = h(0xaa);
+        let new_chain = h(0xbb);
+        let unrelated = h(0xcc);
+        let parent = h(0xa9);
+
+        let mut cache =
+            TrieLayerCache::new_with_safe_commit(128, Arc::new(RwLock::new(H256::zero())));
+
+        // No overlay installed -> never serves.
+        assert!(!cache.overlay_serves(pivot));
+
+        // Register a new-chain layer at `new_chain` (a replay commit).
+        cache.put_batch(
+            parent,
+            new_chain,
+            1,
+            h(0xb1),
+            vec![(Nibbles::from_bytes(&[0x01]), vec![0x02])],
+        );
+
+        // Install an overlay reconstructing the pivot state.
+        let overlay = Overlay {
+            serves_root: pivot,
+            from_block: 5,
+            to_block: 3,
+            ..Default::default()
+        };
+        cache.set_overlay(Arc::new(overlay));
+
+        assert!(
+            cache.overlay_serves(pivot),
+            "pivot root must consume the overlay"
+        );
+        assert!(
+            cache.overlay_serves(new_chain),
+            "new-chain layer root must consume the overlay"
+        );
+        assert!(
+            !cache.overlay_serves(unrelated),
+            "unrelated root must NOT see the overlay (would leak pivot state over disk)"
+        );
+
+        // Clearing the overlay disables consumption for every root.
+        cache.clear_overlay();
+        assert!(!cache.overlay_serves(pivot));
+        assert!(!cache.overlay_serves(new_chain));
     }
 
     /// `lookup_overlay` is the entry point from the read cascade. It must short-circuit
