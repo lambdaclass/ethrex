@@ -2688,6 +2688,72 @@ fn keyed_same_keyset_different_seq_rejected() {
     assert!(matches!(err, MempoolError::FrameTxSenderAlreadyPending));
 }
 
+/// Author feedback #4: pending keyed frame txs are tracked per individual
+/// `(sender, nonce_key)`, NOT by a whole-key-set hash. So a sender's pending
+/// `{1,2}` and an incoming `{2,3}` must NOT both be admitted: the shared key `2`
+/// is already held, so `{2,3}` is rejected. (Under the old set-hash the two sets
+/// hashed differently and both admitted, then whichever mined first consumed key
+/// `2` and silently invalidated the other.)
+#[test]
+fn partially_overlapping_keysets_are_rejected() {
+    let store = Store::new("", EngineType::InMemory).unwrap();
+    let blockchain = Blockchain::default_with_store(store);
+
+    let ab = keyed_frame_tx(vec![U256::one(), U256::from(2)], 0, 30_000_000_000);
+    add_frame(&blockchain, &ab).expect("keyset {1,2} admitted");
+
+    let bc = keyed_frame_tx(vec![U256::from(2), U256::from(3)], 0, 30_000_000_000);
+    let err = add_frame(&blockchain, &bc)
+        .expect_err("keyset {2,3} shares key 2 with the pending {1,2} and must be rejected");
+    assert!(matches!(err, MempoolError::FrameTxSenderAlreadyPending));
+
+    assert!(
+        frame_pooled(&blockchain, &ab),
+        "incumbent must survive the overlap"
+    );
+    assert!(
+        !frame_pooled(&blockchain, &bc),
+        "overlapping tx must not be pooled"
+    );
+    let (_, keyed, ..) = blockchain.mempool.frame_tracking_map_sizes().unwrap();
+    assert_eq!(keyed, 2, "two keys held (1 and 2), from the single pending tx");
+}
+
+/// Two MULTI-key frame txs from one sender on fully disjoint key sets are
+/// independent — both admitted; every key of each is held.
+#[test]
+fn disjoint_multi_keysets_are_both_admitted() {
+    let store = Store::new("", EngineType::InMemory).unwrap();
+    let blockchain = Blockchain::default_with_store(store);
+
+    let ab = keyed_frame_tx(vec![U256::one(), U256::from(2)], 0, 30_000_000_000);
+    let cd = keyed_frame_tx(vec![U256::from(3), U256::from(4)], 0, 30_000_000_000);
+    add_frame(&blockchain, &ab).expect("keyset {1,2} admitted");
+    add_frame(&blockchain, &cd).expect("disjoint keyset {3,4} admitted independently");
+
+    assert!(frame_pooled(&blockchain, &ab) && frame_pooled(&blockchain, &cd));
+    let (_, keyed, ..) = blockchain.mempool.frame_tracking_map_sizes().unwrap();
+    assert_eq!(keyed, 4, "four distinct keys held across the two txs");
+}
+
+/// A fee-bump over a MULTI-key set: same exact key set + same nonce_seq replaces
+/// the predecessor, releasing and re-holding every key (none stranded).
+#[test]
+fn multi_keyset_exact_fee_bump_replaces() {
+    let store = Store::new("", EngineType::InMemory).unwrap();
+    let blockchain = Blockchain::default_with_store(store);
+
+    let a = keyed_frame_tx(vec![U256::one(), U256::from(2)], 0, 30_000_000_000);
+    let b = keyed_frame_tx(vec![U256::one(), U256::from(2)], 0, 60_000_000_000);
+    add_frame(&blockchain, &a).unwrap();
+    add_frame(&blockchain, &b).unwrap();
+
+    assert!(!frame_pooled(&blockchain, &a), "predecessor evicted");
+    assert!(frame_pooled(&blockchain, &b), "replacement kept");
+    let (_, keyed, ..) = blockchain.mempool.frame_tracking_map_sizes().unwrap();
+    assert_eq!(keyed, 2, "both keys held by the replacement, none stranded");
+}
+
 /// Key-0 frame txs keep using the linear plumbing (`pending_frame_tx_by_sender`),
 /// not the keyed map.
 #[test]

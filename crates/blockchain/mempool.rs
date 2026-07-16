@@ -152,18 +152,23 @@ struct MempoolInner {
     /// ambiguity and DoS. Populated on insert; cleared on removal.
     /// Must be kept consistent with `remove_transaction_with_lock`.
     pending_frame_tx_by_sender: FxHashMap<Address, (H256, u64)>,
-    /// Pending NON-ZERO-keyed frame txs (EIP-8250), indexed by
-    /// `(sender, nonce_keys_hash)` so disjoint key sets from one sender are
-    /// tracked independently — the spec permits a policy that "admits multiple
-    /// pending frame transactions for the same sender on disjoint non-zero key
-    /// sets". At most one pending tx per `(sender, keyset)`; replacement is a
-    /// same-keyset fee bump. Value is `(tx_hash, nonce_seq)`. Key-0 frame txs
+    /// Pending NON-ZERO-keyed frame txs (EIP-8250), indexed per individual
+    /// `(sender, nonce_key)`: the hash of the pending tx that currently "holds"
+    /// that key. A keyed frame tx registers EVERY key in its set here on insert
+    /// and releases them all on removal. Disjoint key sets from one sender stay
+    /// independent (the spec permits admitting multiple pending frame txs for a
+    /// sender on disjoint non-zero key sets), but first-seen holds each key: a
+    /// later tx whose key set overlaps a held key — partially (`{b,c}` over a
+    /// pending `{a,b}`) or otherwise, unless it is an exact-set fee-bump of the
+    /// same tx — is rejected. Tracking per key (rather than by a whole-key-set
+    /// hash) is what stops `{a,b}` and `{b,c}` from both being admitted and then
+    /// racing to invalidate each other over the shared key `b`. Key-0 frame txs
     /// stay in the linear plumbing (`txs_by_sender_nonce` /
     /// `pending_frame_tx_by_sender`); keyed txs are deliberately kept OUT of
     /// `txs_by_sender_nonce` so their `nonce_seq` never collides with an
     /// unrelated linear-nonce entry. Populated on insert; cleared on removal.
     /// Must be kept consistent with `remove_transaction_with_lock`.
-    keyed_frame_by_sender_keyset: FxHashMap<(Address, H256), (H256, u64)>,
+    pending_frame_key_holder: FxHashMap<(Address, U256), H256>,
     /// Sum of reserved max-cost (TXPARAM 0x06) per paymaster across all pending
     /// frame txs that paymaster sponsors (EIP-8141). Admission checks a
     /// paymaster's balance against this running total so concurrently-pending
@@ -232,18 +237,20 @@ impl MempoolInner {
                 self.pending_frame_tx_by_sender.remove(&sender);
             }
 
-            // Keyed frame txs (EIP-8250) live in the per-`(sender, keyset)` map.
-            // Recompute the key set from the tx and clear only our own entry.
+            // Keyed frame txs (EIP-8250) hold each of their nonce keys in the
+            // per-`(sender, nonce_key)` map. Release only the keys THIS tx holds
+            // (a concurrent tx may have taken over a key after a race).
             if let Transaction::FrameTransaction(frame_tx) = &*tx
                 && frame_tx.is_keyed()
             {
-                let key = (sender, frame_tx.nonce_keys_hash());
-                if self
-                    .keyed_frame_by_sender_keyset
-                    .get(&key)
-                    .is_some_and(|(h, _)| h == hash)
-                {
-                    self.keyed_frame_by_sender_keyset.remove(&key);
+                for key in &frame_tx.nonce_keys {
+                    if self
+                        .pending_frame_key_holder
+                        .get(&(sender, *key))
+                        .is_some_and(|h| h == hash)
+                    {
+                        self.pending_frame_key_holder.remove(&(sender, *key));
+                    }
                 }
             }
 
@@ -426,38 +433,87 @@ impl MempoolInner {
         }
     }
 
-    /// Per-`(sender, keyset)` analogue of `check_frame_tx_sender_pending` for
-    /// NON-ZERO-keyed frame txs (EIP-8250). Disjoint key sets are independent,
-    /// so only a tx sharing this exact key set can conflict:
+    /// The single pending tx holding any of `keys` for `sender`, if any
+    /// (EIP-8250). In the admission Ok-path a key set overlaps at most one
+    /// pending tx (`check_keyed_frame_pending` rejects multi-tx overlaps), so
+    /// probing the first held key yields that tx — used by the locked
+    /// re-announce / fee-bump removal to release the predecessor before the new
+    /// tx is inserted, mirroring the linear `(sender, nonce_seq)` slot removal.
+    fn keyed_frame_key_holder(&self, sender: Address, keys: &[U256]) -> Option<H256> {
+        keys.iter()
+            .find_map(|k| self.pending_frame_key_holder.get(&(sender, *k)).copied())
+    }
+
+    /// Per-`(sender, nonce_key)` analogue of `check_frame_tx_sender_pending` for
+    /// NON-ZERO-keyed frame txs (EIP-8250). Each key is held by at most one
+    /// pending tx (first seen), so the incoming key set is examined against the
+    /// keys it would claim:
     ///
-    /// - No pending tx for `(sender, keyset)`: permit (`Ok(None)`).
-    /// - Same key set, **same nonce_seq**: fee-bump replacement — return the
-    ///   existing hash (`find_tx_to_replace` validated the price bump).
-    /// - Same key set, **different nonce_seq**: reject
-    ///   (`FrameTxSenderAlreadyPending`); one pending tx per key set.
+    /// - None of the keys held (ignoring the incoming tx's own re-announced
+    ///   keys): permit (`Ok(None)`).
+    /// - All overlapping keys held by ONE tx that is an EXACT key-set match at
+    ///   the **same nonce_seq**: fee-bump replacement — return the existing hash
+    ///   (`find_tx_to_replace` validated the price bump).
+    /// - Any other overlap — keys spanning more than one pending tx, a partial
+    ///   overlap (`{b,c}` over a pending `{a,b}`), or an exact match at a
+    ///   different nonce_seq: reject (`FrameTxSenderAlreadyPending`). A partial
+    ///   overlap must be rejected, not treated as a replacement, so an incoming
+    ///   tx can never evict a pending tx by merely sharing one of its keys.
     ///
     /// Must be called under the mempool write lock (same TOCTOU reasoning as
     /// `check_frame_tx_sender_pending`).
     fn check_keyed_frame_pending(
         &self,
         sender: Address,
-        keyset: H256,
+        keys: &[U256],
         nonce: u64,
         incoming_hash: H256,
     ) -> Result<Option<H256>, MempoolError> {
-        let Some(&(existing_hash, existing_nonce)) =
-            self.keyed_frame_by_sender_keyset.get(&(sender, keyset))
-        else {
+        // The distinct predecessor(s) holding any of the incoming tx's keys,
+        // excluding the incoming tx itself (a re-announce holds its own keys).
+        let mut predecessor: Option<H256> = None;
+        for key in keys {
+            let Some(&holder) = self.pending_frame_key_holder.get(&(sender, *key)) else {
+                continue;
+            };
+            if holder == incoming_hash {
+                continue;
+            }
+            match predecessor {
+                None => predecessor = Some(holder),
+                Some(existing) if existing == holder => {}
+                // The key set spans more than one pending tx — reject.
+                Some(_) => return Err(MempoolError::FrameTxSenderAlreadyPending),
+            }
+        }
+        let Some(existing_hash) = predecessor else {
             return Ok(None);
         };
-        if existing_hash == incoming_hash {
+        // A single predecessor holds some of our keys. It is a legitimate
+        // fee-bump only if it is the SAME logical tx: exact key-set match at the
+        // same nonce_seq. Any other overlap is a distinct tx stepping on a held
+        // key and must be rejected.
+        let Some(existing) = self.transaction_pool.get(&existing_hash) else {
+            // Predecessor vanished (racing removal); no conflict remains.
             return Ok(None);
-        }
-        if existing_nonce == nonce {
+        };
+        if keyed_key_sets_match(existing, keys) && existing.nonce() == nonce {
             Ok(Some(existing_hash))
         } else {
             Err(MempoolError::FrameTxSenderAlreadyPending)
         }
+    }
+}
+
+/// EIP-8250: whether a pending frame tx's nonce-key set equals `keys`. Static
+/// validation guarantees each tx's keys are unique and strictly increasing, so
+/// two txs share a key set iff their `nonce_keys` vectors are equal.
+fn keyed_key_sets_match(existing: &Transaction, keys: &[U256]) -> bool {
+    match existing {
+        Transaction::FrameTransaction(existing_frame) => {
+            existing_frame.nonce_keys.as_slice() == keys
+        }
+        _ => false,
     }
 }
 
@@ -526,13 +582,14 @@ impl Mempool {
         let is_frame = matches!(transaction.tx_type(), TxType::Frame);
         let is_blob = matches!(transaction.tx_type(), TxType::EIP4844);
 
-        // Key-set digest for a NON-ZERO-keyed frame tx (EIP-8250); `None` for
-        // key-0 frame txs and non-frame txs, which use the linear nonce domain.
-        // Keyed frame txs are tracked per `(sender, keyset)` instead of by the
-        // linear `(sender, nonce_seq)` slot so disjoint key sets don't collide.
-        let keyed_keyset: Option<H256> = match &*transaction {
+        // Nonce keys of a NON-ZERO-keyed frame tx (EIP-8250); `None` for key-0
+        // frame txs and non-frame txs, which use the linear nonce domain. Keyed
+        // frame txs are tracked per individual `(sender, nonce_key)` instead of
+        // by the linear `(sender, nonce_seq)` slot so disjoint key sets don't
+        // collide and a partial overlap can't slip in behind a set digest.
+        let keyed_keys: Option<Vec<U256>> = match &*transaction {
             Transaction::FrameTransaction(frame_tx) if frame_tx.is_keyed() => {
-                Some(frame_tx.nonce_keys_hash())
+                Some(frame_tx.nonce_keys.clone())
             }
             _ => None,
         };
@@ -546,8 +603,8 @@ impl Mempool {
             // rejected fee-bump never leaves the sender with neither the old nor
             // the new tx. Price validation already ran in validate_transaction.
             // Keyed frame txs are gated per key set; key-0/linear per sender.
-            let existing_frame_hash = match keyed_keyset {
-                Some(keyset) => inner.check_keyed_frame_pending(sender, keyset, nonce, hash)?,
+            let existing_frame_hash = match &keyed_keys {
+                Some(keys) => inner.check_keyed_frame_pending(sender, keys, nonce, hash)?,
                 None => inner.check_frame_tx_sender_pending(sender, nonce, hash)?,
             };
 
@@ -613,23 +670,22 @@ impl Mempool {
             // so this is equivalent to the previous `existing_frame_hash` removal.
             //
             // Keyed frame txs never occupy the linear `(sender, nonce_seq)` slot
-            // (a different-key-set or regular tx may sit there); they have their
-            // own per-`(sender, keyset)` slot. Remove whatever currently occupies
-            // THAT slot — mirroring the linear branch — rather than only
+            // (a different-key-set or regular tx may sit there); they hold their
+            // own per-`(sender, nonce_key)` entries. Remove whatever tx currently
+            // holds this key set — mirroring the linear branch — rather than only
             // `existing_frame_hash`. This matters for a same-hash re-announce: two
             // concurrent admissions of the same tx both clear the unlocked
             // `contains_tx` pre-filter and reach this locked section;
             // `check_keyed_frame_pending` returns `Ok(None)` for the re-announce
-            // (existing == incoming), so `existing_frame_hash` is `None`. Removing
-            // the slot occupant (the first insertion) before the unconditional
-            // re-insert below keeps the paymaster reservation net-zero, exactly as
-            // the linear slot removal does; keying off `existing_frame_hash` here
-            // would skip the removal and double-count the reservation.
-            match keyed_keyset {
-                Some(keyset) => {
-                    if let Some(&(old_hash, _)) =
-                        inner.keyed_frame_by_sender_keyset.get(&(sender, keyset))
-                    {
+            // (the keys are held by the incoming hash itself), so
+            // `existing_frame_hash` is `None`. Removing the current holder (the
+            // first insertion) before the unconditional re-insert below keeps the
+            // paymaster reservation net-zero, exactly as the linear slot removal
+            // does; keying off `existing_frame_hash` here would skip the removal
+            // and double-count the reservation.
+            match &keyed_keys {
+                Some(keys) => {
+                    if let Some(old_hash) = inner.keyed_frame_key_holder(sender, keys) {
                         inner.remove_transaction_with_lock(&old_hash)?;
                     }
                 }
@@ -670,28 +726,27 @@ impl Mempool {
             inner.txs_order.push_back(hash);
         }
         let tx_nonce = transaction.nonce();
-        // Keyed frame txs are indexed per `(sender, keyset)` below, NOT in the
+        // Keyed frame txs are indexed per `(sender, nonce_key)` below, NOT in the
         // linear `(sender, nonce_seq)` slot — their `nonce_seq` lives in the
         // NONCE_MANAGER key domain and would otherwise collide with an unrelated
         // linear-nonce tx from the same sender.
-        if keyed_keyset.is_none() {
+        if keyed_keys.is_none() {
             inner.txs_by_sender_nonce.insert((sender, tx_nonce), hash);
         }
         inner.transaction_pool.insert(hash, transaction);
         inner.broadcast_pool.insert(hash);
         inner.alternates.remove(&hash);
 
-        // Track the pending frame tx for admission gating. Storing the nonce
-        // alongside the hash keeps the conflict check O(1). Key-0 frame txs use
-        // the per-sender linear map (EIP-8141); keyed frame txs use the
-        // per-`(sender, keyset)` map (EIP-8250) so disjoint key sets are tracked
-        // independently.
+        // Track the pending frame tx for admission gating. Key-0 frame txs use
+        // the per-sender linear map (EIP-8141); keyed frame txs claim each of
+        // their nonce keys in the per-`(sender, nonce_key)` map (EIP-8250) so
+        // disjoint key sets stay independent while overlaps are detectable.
         if is_frame {
-            match keyed_keyset {
-                Some(keyset) => {
-                    inner
-                        .keyed_frame_by_sender_keyset
-                        .insert((sender, keyset), (hash, tx_nonce));
+            match &keyed_keys {
+                Some(keys) => {
+                    for key in keys {
+                        inner.pending_frame_key_holder.insert((sender, *key), hash);
+                    }
                 }
                 None => {
                     inner
@@ -1116,13 +1171,14 @@ impl Mempool {
         nonce: u64,
         tx: &Transaction,
     ) -> Result<Option<H256>, MempoolError> {
-        // Keyed frame txs (EIP-8250) are indexed per `(sender, keyset)`, not by
-        // the linear `(sender, nonce)` slot; find their fee-bump predecessor in
-        // that key set rather than at a nonce slot that may hold an unrelated tx.
+        // Keyed frame txs (EIP-8250) are indexed per `(sender, nonce_key)`, not
+        // by the linear `(sender, nonce)` slot; find their fee-bump predecessor
+        // among the holders of this key set rather than at a nonce slot that may
+        // hold an unrelated tx.
         if let Transaction::FrameTransaction(frame_tx) = tx
             && frame_tx.is_keyed()
         {
-            return self.find_keyed_frame_tx_to_replace(sender, frame_tx.nonce_keys_hash(), tx);
+            return self.find_keyed_frame_tx_to_replace(sender, &frame_tx.nonce_keys, tx);
         }
 
         let Some(tx_in_pool) = self.contains_sender_nonce(sender, nonce, tx.hash(&NativeCrypto))?
@@ -1136,20 +1192,24 @@ impl Mempool {
     }
 
     /// Fee-bump predecessor for a NON-ZERO-keyed frame tx (EIP-8250): the
-    /// pending tx sharing this exact `(sender, keyset)`, if any. Mirrors the
-    /// linear `find_tx_to_replace` path but keyed by the NONCE_MANAGER key set
-    /// instead of the account nonce, and enforces the same fee-bump rule.
+    /// pending tx that holds this EXACT key set, if any. Mirrors the linear
+    /// `find_tx_to_replace` path but keyed by the NONCE_MANAGER key set instead
+    /// of the account nonce, and enforces the same fee-bump rule.
+    ///
+    /// Only an exact key-set match is the same logical tx. A merely PARTIAL
+    /// overlap (`{b,c}` over a pending `{a,b}`) is a distinct tx and is NOT a
+    /// replacement: return `Ok(None)` so the outer admission path does not evict
+    /// the incumbent, leaving the locked `check_keyed_frame_pending` to reject
+    /// the overlap with `FrameTxSenderAlreadyPending`.
     fn find_keyed_frame_tx_to_replace(
         &self,
         sender: Address,
-        keyset: H256,
+        keys: &[U256],
         tx: &Transaction,
     ) -> Result<Option<H256>, MempoolError> {
         let (existing_hash, old_tx) = {
             let inner = self.read()?;
-            let Some(&(existing_hash, _)) =
-                inner.keyed_frame_by_sender_keyset.get(&(sender, keyset))
-            else {
+            let Some(existing_hash) = inner.keyed_frame_key_holder(sender, keys) else {
                 return Ok(None);
             };
             if existing_hash == tx.hash(&NativeCrypto) {
@@ -1160,6 +1220,9 @@ impl Mempool {
             };
             (existing_hash, old_tx)
         };
+        if !keyed_key_sets_match(&old_tx, keys) {
+            return Ok(None);
+        }
         if !Self::is_fee_bump(&old_tx, tx) {
             return Err(MempoolError::UnderpricedReplacement);
         }
@@ -1237,17 +1300,19 @@ impl Mempool {
     }
 
     /// Sizes of the five frame-tx tracking maps:
-    /// `(pending_frame_tx_by_sender, keyed_frame_by_sender_keyset,
+    /// `(pending_frame_tx_by_sender, pending_frame_key_holder,
     /// reserved_pending_cost, noncanonical_paymaster_pending,
     /// frame_tx_paymaster)`. Exposed for tests that assert the maps return to
-    /// empty after add + remove (EIP-8141 / EIP-8250).
+    /// empty after add + remove (EIP-8141 / EIP-8250). The second element counts
+    /// individually HELD KEYS, not pending keyed txs — a keyed tx with an
+    /// N-key set contributes N.
     pub fn frame_tracking_map_sizes(
         &self,
     ) -> Result<(usize, usize, usize, usize, usize), StoreError> {
         let inner = self.read()?;
         Ok((
             inner.pending_frame_tx_by_sender.len(),
-            inner.keyed_frame_by_sender_keyset.len(),
+            inner.pending_frame_key_holder.len(),
             inner.reserved_pending_cost.len(),
             inner.noncanonical_paymaster_pending.len(),
             inner.frame_tx_paymaster.len(),
