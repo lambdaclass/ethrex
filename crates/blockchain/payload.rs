@@ -920,6 +920,25 @@ impl Blockchain {
                 .into());
             }
         };
+        // A blob sidecar is validated against the fork only at mempool insertion; the fork being
+        // built can differ (e.g. Osaka activated since). Re-validate against the payload's fork so
+        // a stale sidecar is skipped rather than served: a pre-Osaka v0 bundle (1 proof/blob) has
+        // no cell-proof upgrade path and is invalid post-Osaka, so including it would make
+        // getPayloadV5 emit a wrong-format BlobsBundleV2. (Explicit builds carry no sidecar, so
+        // `bundle` is `None` and this is a no-op.) Gated on `c-kzg` like the rest of blob
+        // validation — without it there is no sidecar cryptography to validate against.
+        #[cfg(feature = "c-kzg")]
+        if let (Some(bundle), Transaction::EIP4844Transaction(eip4844_tx)) = (&bundle, &*head.tx) {
+            let fork = context
+                .chain_config()
+                .fork(context.payload.header.timestamp);
+            if let Err(e) = bundle.validate_cheap(eip4844_tx, fork) {
+                return Err(EvmError::Custom(format!(
+                    "blob sidecar invalid for fork {fork:?}, skipping tx {tx_hash}: {e}"
+                ))
+                .into());
+            }
+        }
         if context.blobs_bundle.blobs.len() + blob_count > max_blob_number_per_block {
             // This error will only be used for debug tracing
             return Err(EvmError::Custom("max data blobs reached".to_string()).into());
