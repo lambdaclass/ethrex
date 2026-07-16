@@ -690,7 +690,10 @@ fn frame_tx_reservation_maps_clear_after_add_and_remove() {
     let mempool = Mempool::new(MEMPOOL_MAX_SIZE_TEST);
     let frame_tx = minimal_valid_frame_tx();
     let sender = frame_tx.sender;
-    let paymaster = sender; // self-funded self_verify: payer == sender (OQ2)
+    // A distinct third-party paymaster (payer != sender): self-pay reservations
+    // are exempt from the non-canonical counter, so a genuine sponsor is needed
+    // to exercise that map's increment-then-clear lifecycle.
+    let paymaster = Address::from_low_u64_be(0xBEEF);
     let tx = Transaction::FrameTransaction(frame_tx);
     let hash = tx.hash();
 
@@ -705,6 +708,7 @@ fn frame_tx_reservation_maps_clear_after_add_and_remove() {
         paymaster,
         reserved_cost: U256::from(1_000u64),
         is_canonical: false,
+        is_self_pay: false,
         paymaster_balance: U256::from(1_000_000u64),
     };
     mempool
@@ -1669,70 +1673,77 @@ async fn mempool_rejects_underfunded_paymaster() {
 
 #[tokio::test]
 async fn mempool_enforces_noncanonical_paymaster_limit() {
-    // EIP-8141 OQ1: all paymasters are non-canonical; the per-paymaster pending
-    // limit is MAX_PENDING_TXS_USING_NON_CANONICAL_PAYMASTER = 1.
+    // EIP-8141 OQ1: a THIRD-PARTY (non-self-pay) paymaster is non-canonical; the
+    // per-paymaster pending limit is
+    // MAX_PENDING_TXS_USING_NON_CANONICAL_PAYMASTER = 1. Self-paying txs
+    // (payer == sender) are exempt from this limit and are covered separately by
+    // `self_pay_frame_tx_exempt_from_noncanonical_paymaster_limit`.
     //
-    // A distinct paymaster (pay frame targeting P != sender) is now accepted by
+    // A distinct paymaster (pay frame targeting P != sender) is accepted by
     // `validate_prefix_structure` (the pay frame is exempt from the
-    // target==sender rule), so an external paymaster address CAN be shared
-    // between senders. This test still exercises `FrameTxNonCanonicalPaymasterLimit`
-    // the isolated way — pre-filling the paymaster's non-canonical slot via a
-    // direct `Mempool::add_transaction` call (bypassing simulation), then
-    // submitting a real frame tx that names the SAME paymaster via
-    // `add_transaction_to_pool` — so it does not depend on standing up a paymaster
-    // contract in the simulation harness.
+    // target==sender rule), so one external paymaster address CAN be shared
+    // between senders. This test exercises `FrameTxNonCanonicalPaymasterLimit`
+    // the isolated way — filling the paymaster's non-canonical slot via a direct
+    // `Mempool::add_transaction` call, then submitting a second frame tx from a
+    // DIFFERENT sender that names the SAME third-party paymaster — so it does not
+    // depend on standing up a paymaster contract in the simulation harness.
     //
     // Steps:
-    // 1. Directly insert a frame tx from a PHANTOM sender into the mempool,
-    //    carrying a `FramePaymasterReservation` that names FRAME_TX_SELF_SENDER
-    //    as the paymaster. This increments `noncanonical_paymaster_pending[sender]`
-    //    to 1 without going through validation.
-    // 2. Call `add_transaction_to_pool` for a real frame tx from
-    //    FRAME_TX_SELF_SENDER (valid simulation, funded sender, paymaster == self).
-    //    The unlocked pre-filter in `validate_transaction` sees
-    //    `noncanonical_paymaster_pending[sender] == 1 >= 1` and rejects with
+    // 1. Directly insert a frame tx from phantom sender A carrying a
+    //    `FramePaymasterReservation` that names a third-party paymaster P (P != A,
+    //    is_self_pay: false). This increments `noncanonical_paymaster_pending[P]`
+    //    to 1.
+    // 2. Directly insert a frame tx from phantom sender B (B != A, B != P) naming
+    //    the SAME paymaster P. The locked re-check sees
+    //    `noncanonical_paymaster_pending[P] == 1 >= 1` and rejects with
     //    `FrameTxNonCanonicalPaymasterLimit`.
     let funded_balance = U256::from(10u64).pow(U256::from(18u64));
     let store = setup_hegota_store_funded().await;
     let blockchain = Blockchain::default_with_store(store);
 
-    let paymaster = Address::from_low_u64_be(FRAME_TX_SELF_SENDER);
+    // A genuine third-party paymaster: not equal to either phantom sender, so
+    // each phantom's reservation is non-self-pay and consumes a slot.
+    let paymaster = Address::from_low_u64_be(0x9A11_D000);
 
-    // Build a phantom frame tx (nonce=99, different sender so no nonce conflict)
-    // and inject it directly to consume the paymaster's non-canonical slot.
-    let phantom_sender = Address::from_low_u64_be(0xDEAD_BEEF);
-    let phantom_frame_tx = FrameTransaction {
-        chain_id: 0,
-        nonce_keys: vec![U256::zero()],
-        nonce_seq: 99,
-        sender: phantom_sender,
-        frames: vec![Frame {
-            mode: FrameMode::Verify as u8,
-            flags: APPROVE_EXECUTION_AND_PAYMENT,
-            target: Some(phantom_sender),
-            gas_limit: 100,
-            value: U256::zero(),
-            data: Bytes::new(),
-        }],
-        signatures: vec![],
-        max_priority_fee_per_gas: 0,
-        max_fee_per_gas: 0,
-        max_fee_per_blob_gas: U256::zero(),
-        blob_versioned_hashes: vec![],
-        ..Default::default()
+    // A helper to build a phantom (self-verify) frame tx from a given sender.
+    let phantom = |sender: Address, nonce_seq: u64| {
+        let tx = Transaction::FrameTransaction(FrameTransaction {
+            chain_id: 0,
+            nonce_keys: vec![U256::zero()],
+            nonce_seq,
+            sender,
+            frames: vec![Frame {
+                mode: FrameMode::Verify as u8,
+                flags: APPROVE_EXECUTION_AND_PAYMENT,
+                target: Some(sender),
+                gas_limit: 100,
+                value: U256::zero(),
+                data: Bytes::new(),
+            }],
+            signatures: vec![],
+            max_priority_fee_per_gas: 0,
+            max_fee_per_gas: 0,
+            max_fee_per_blob_gas: U256::zero(),
+            blob_versioned_hashes: vec![],
+            ..Default::default()
+        });
+        (tx.hash(), tx)
     };
-    let phantom_tx = Transaction::FrameTransaction(phantom_frame_tx);
-    let phantom_hash = phantom_tx.hash();
+
+    // 1. Fill the paymaster's non-canonical slot with phantom sender A.
+    let sender_a = Address::from_low_u64_be(0xDEAD_BEEF);
+    let (hash_a, tx_a) = phantom(sender_a, 99);
     blockchain
         .mempool
         .add_transaction(
-            phantom_hash,
-            phantom_sender,
-            MempoolTransaction::new(phantom_tx, phantom_sender),
+            hash_a,
+            sender_a,
+            MempoolTransaction::new(tx_a, sender_a),
             Some(FramePaymasterReservation {
-                paymaster, // names FRAME_TX_SELF_SENDER as paymaster
+                paymaster,
                 reserved_cost: U256::from(1u64),
                 is_canonical: false,
+                is_self_pay: false,
                 paymaster_balance: funded_balance,
             }),
         )
@@ -1748,13 +1759,107 @@ async fn mempool_enforces_noncanonical_paymaster_limit() {
         "paymaster slot must be filled after phantom insertion"
     );
 
-    // A real frame tx from FRAME_TX_SELF_SENDER (paymaster == self) must now
-    // be rejected because the noncanonical slot is saturated.
-    let real_tx = Transaction::FrameTransaction(funded_frame_tx(1_000_000_000, 1_000_000_000));
-    let result = blockchain.add_transaction_to_pool(real_tx).await;
+    // 2. A second frame tx from a DIFFERENT sender naming the same third-party
+    //    paymaster must be rejected because the non-canonical slot is saturated.
+    let sender_b = Address::from_low_u64_be(0xDEAD_BEE0);
+    let (hash_b, tx_b) = phantom(sender_b, 7);
+    let result = blockchain.mempool.add_transaction(
+        hash_b,
+        sender_b,
+        MempoolTransaction::new(tx_b, sender_b),
+        Some(FramePaymasterReservation {
+            paymaster,
+            reserved_cost: U256::from(1u64),
+            is_canonical: false,
+            is_self_pay: false,
+            paymaster_balance: funded_balance,
+        }),
+    );
     assert!(
         matches!(result, Err(MempoolError::FrameTxNonCanonicalPaymasterLimit)),
         "frame tx must be rejected when non-canonical paymaster slot is full; got {result:?}"
+    );
+}
+
+#[test]
+fn self_pay_frame_tx_exempt_from_noncanonical_paymaster_limit() {
+    // Author feedback #2: a self-paying frame tx (payer == sender) is recorded as
+    // using a non-canonical paymaster (itself). With keyed nonces, a sender may
+    // have several pending self-paying frame txs under disjoint nonce keys; those
+    // must NOT be capped by MAX_PENDING_TXS_USING_NON_CANONICAL_PAYMASTER, which
+    // exists only to bound exposure to a *third-party* paymaster.
+    //
+    // Drive the mempool directly (as `mempool_enforces_noncanonical_paymaster_limit`
+    // does) so the exemption is exercised right at the reservation gate: inject
+    // two disjoint-keyed self-paying reservations (is_self_pay: true) from the
+    // same sender. Before the fix the second injection was rejected with
+    // `FrameTxNonCanonicalPaymasterLimit`; with the exemption both are admitted
+    // and the sender's non-canonical counter stays at 0.
+    let mempool = Mempool::new(MEMPOOL_MAX_SIZE_TEST);
+    let sender = Address::from_low_u64_be(0x5E1F);
+
+    // A self-paying (payer == sender) keyed self-verify frame tx, first use of
+    // its key so the two are disjoint on the keyed-nonce axis.
+    let self_pay_keyed = |nonce_key: u64| {
+        let tx = Transaction::FrameTransaction(FrameTransaction {
+            chain_id: 0,
+            nonce_keys: vec![U256::from(nonce_key)],
+            nonce_seq: 0,
+            sender,
+            frames: vec![Frame {
+                mode: FrameMode::Verify as u8,
+                flags: APPROVE_EXECUTION_AND_PAYMENT,
+                target: Some(sender),
+                gas_limit: 100,
+                value: U256::zero(),
+                data: Bytes::new(),
+            }],
+            signatures: vec![],
+            max_priority_fee_per_gas: 0,
+            max_fee_per_gas: 0,
+            max_fee_per_blob_gas: U256::zero(),
+            blob_versioned_hashes: vec![],
+            ..Default::default()
+        });
+        (tx.hash(), tx)
+    };
+    // Both reservations are self-pay (paymaster == sender) and non-canonical.
+    let reservation = || FramePaymasterReservation {
+        paymaster: sender,
+        reserved_cost: U256::from(1u64),
+        is_canonical: false,
+        is_self_pay: true,
+        paymaster_balance: U256::from(1_000_000u64),
+    };
+
+    let (h1, t1) = self_pay_keyed(1);
+    mempool
+        .add_transaction(
+            h1,
+            sender,
+            MempoolTransaction::new(t1, sender),
+            Some(reservation()),
+        )
+        .expect("first self-paying keyed frame tx must be admitted");
+
+    let (h2, t2) = self_pay_keyed(2);
+    mempool
+        .add_transaction(
+            h2,
+            sender,
+            MempoolTransaction::new(t2, sender),
+            Some(reservation()),
+        )
+        .expect(
+            "second disjoint-keyed self-paying frame tx must also be admitted \
+             (self-pay is exempt from the non-canonical paymaster limit)",
+        );
+
+    // Self-pay never consumes a non-canonical slot for the sender.
+    assert_eq!(
+        mempool.noncanonical_paymaster_pending(sender).unwrap(),
+        0,
+        "self-paying frame txs must not increment the non-canonical paymaster counter"
     );
 }
 
@@ -2052,6 +2157,7 @@ async fn mempool_fee_bump_rejected_leaves_original_intact() {
                 paymaster,
                 reserved_cost: U256::from(1u64),
                 is_canonical: true,
+                is_self_pay: false,
                 paymaster_balance: balance,
             }),
         )

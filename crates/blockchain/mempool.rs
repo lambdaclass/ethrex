@@ -101,6 +101,12 @@ pub struct FramePaymasterReservation {
     /// against the live reservation map without an async storage read while
     /// holding the write lock.
     pub paymaster_balance: U256,
+    /// True when the payer IS the sender (self-funded). A self-paying frame tx is
+    /// exempt from the non-canonical one-pending-tx COUNT limit: that limit bounds
+    /// third-party paymasters sponsoring many senders, not a sender paying for its
+    /// own (possibly EIP-8250 disjoint-keyed) concurrent txs. The balance
+    /// reservation still applies, so a self-payer cannot overdraw across pending txs.
+    pub is_self_pay: bool,
 }
 
 /// A pending frame transaction's revalidation descriptor: `(hash, sender,
@@ -570,7 +576,7 @@ impl Mempool {
                     .and_then(|old_hash| inner.frame_tx_paymaster.get(old_hash))
                     .filter(|old| old.paymaster == reservation.paymaster);
 
-                if !reservation.is_canonical {
+                if !reservation.is_canonical && !reservation.is_self_pay {
                     let mut pending = inner
                         .noncanonical_paymaster_pending
                         .get(&reservation.paymaster)
@@ -712,7 +718,7 @@ impl Mempool {
                     .reserved_pending_cost
                     .entry(paymaster)
                     .or_insert(U256::zero()) += reservation.reserved_cost;
-                if !reservation.is_canonical {
+                if !reservation.is_canonical && !reservation.is_self_pay {
                     let count = inner
                         .noncanonical_paymaster_pending
                         .entry(paymaster)
