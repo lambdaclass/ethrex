@@ -66,7 +66,7 @@
   "panels": [
     {
       "type": "row",
-      "title": "Notes & caveats  (click to expand)",
+      "title": "What we run & how we measure  (click to expand)",
       "collapsed": true,
       "gridPos": {
         "h": 1,
@@ -77,17 +77,33 @@
       "panels": [
         {
           "type": "text",
-          "title": "Notes / caveats",
+          "title": "What we run",
           "gridPos": {
-            "h": 11,
-            "w": 24,
+            "h": 30,
+            "w": 12,
             "x": 0,
             "y": 1
           },
           "options": {
             "mode": "markdown",
-            "content": "### How to read this dashboard\n\n**Fair block-time (top row) is the reference.** `execution_layer_request_times{method=\"new_payload\"}` is timed by the **same Lighthouse** in front of every EL, so p50/p99 are a true apples-to-apples cross-client comparison (including geth). `forkchoiceUpdated` is shown alongside because clients differ on where state-root / DB-commit happens.\n\n**Per-block panels use NATIVE per-client metrics \u2014 granular, but NOT a fair ranking.** Each client's own metric, normalized to Ggas/s and seconds:\n- **ethrex** \u2014 `gigagas`, `gas_used/(gigagas\u00b71e9)` (total_ms: exec + merkle + store)\n- **reth** \u2014 `\u2026_new_payload_gas_per_second_last`, `\u2026_new_payload_last` (excludes async DB persistence)\n- **nethermind** \u2014 `mgas_per_sec`, `last_block_processing_time_in_ms` (branch exec + state-root)\n- **geth** \u2014 `chain_mgasps`, `chain_inserts` @ `quantile=\"0.5\"` via `last_over_time` (full ProcessBlock; resetting-timer, sparse)\n\nTheir **scopes differ**, so the lines are not directly comparable \u2014 use them for per-client per-block trends, not to rank clients. **X-axis = ethrex head `block_number`** (shared axis; all four follow the same chain at the same head).\n\n**Process & Server Info:** host CPU/RAM from `node_exporter` and per-process CPU / RSS / threads / FDs from **`process-exporter`** (deployed on all 4 nodes, port 9256) \u2014 measured identically for every client **including geth**, on identical hardware (Xeon E-2386G / 62.7 GiB / 2\u00d7NVMe). **Memory (RSS) is a trend, not a leaderboard**: Go/.NET GC lazy-return + Rust/jemalloc arena retention confound steady-state RSS across runtimes.\n\nThe **Client** filter (top-left) applies to every panel; a client missing a given metric is simply skipped for that panel.\n\n> **Fair-panel notes:** the timeseries use a **10-min sliding window**; the *\u2014 range* bargauges aggregate over the **selected time range** \u2014 newPayload fires only ~1/slot (~12s), so a short window would snap the quantile to a single Lighthouse bucket edge (the 50/100/200 ms artifact). Lighthouse buckets are coarse (10/20/50/100/200/500 ms), so **p99 resolution is bucket-limited** (e.g. 151 ms = interpolation inside 100\u2013200). Switching all CLs to **Nimbus** (5/10/25/50/100/250 ms buckets) would sharpen the tail if ever needed."
-          }
+            "content": "### What we run\n\nEach execution client runs its own upstream default. We refresh every client every 2 hours from its main development line and restart it in place, so these numbers track current code. Current versions are in the table below.\n\n| Client | Source (refreshed every 2h) | Sync mode |\n|---|---|---|\n| ethrex | binary from `ghcr.io/lambdaclass/ethrex:main` | snap |\n| reth | binary from `ghcr.io/paradigmxyz/reth:nightly` | full |\n| nethermind | built from `NethermindEth/nethermind` `master` | snap, non-validator |\n| geth | binary from `ethereum/client-go:latest` | snap |\n\nLaunch commands (perf-relevant flags verbatim; `<jwt>` and the metrics bind are infra):\n\n```bash\n# reth\nreth node --full --chain mainnet \\\n  --authrpc.jwtsecret <jwt> --authrpc.port 8551 \\\n  --http --http.api eth,web3,net,debug,trace,txpool \\\n  --db.read-transaction-timeout 0 --rpc.eth-proof-window 100000 \\\n  --metrics :6060\n\n# geth\ngeth --mainnet --syncmode snap \\\n  --authrpc.jwtsecret <jwt> --authrpc.port 8551 \\\n  --http --http.api eth,web3,net,debug,txpool \\\n  --history.chain postprague \\\n  --metrics --metrics.port 6060\n\n# nethermind\nnethermind --config mainnet \\\n  --Sync.SnapSync true --Sync.NonValidatorNode true \\\n  --Sync.DownloadBodiesInFastSync false --Sync.DownloadReceiptsInFastSync false \\\n  --Init.MemoryHint 4294967296 --FlatDb.Enabled true \\\n  --JsonRpc.JwtSecretFile <jwt> --JsonRpc.EnginePort 8551 \\\n  --Metrics.Enabled --Metrics.ExposePort 6060\n\n# ethrex\nethrex --network mainnet --syncmode snap \\\n  --authrpc.jwtsecret <jwt> --authrpc.port 8551 \\\n  --http.addr 0.0.0.0 --http.port 8545 \\\n  --metrics --metrics.port 3701\n```\n\nOne Lighthouse build sits in front of every client, with the same flags and checkpoint-sync:\n\n```bash\nlighthouse bn --network mainnet \\\n  --execution-endpoint http://localhost:8551 --execution-jwt <jwt> \\\n  --checkpoint-sync-url https://mainnet-checkpoint-sync.attestant.io \\\n  --metrics --metrics-port 5054\n```"
+          },
+          "id": 9001
+        },
+        {
+          "type": "text",
+          "title": "How we measure & caveats",
+          "gridPos": {
+            "h": 30,
+            "w": 12,
+            "x": 12,
+            "y": 1
+          },
+          "options": {
+            "mode": "markdown",
+            "content": "### How block time is measured\n\nLighthouse times the top row, the fair comparison, so no client measures itself. It records the wall-clock each block takes to validate through `engine_newPayload` (`execution_layer_request_times{method=\"new_payload\"}`). One observer and one code path front all four clients, so you can compare p50/p99 directly, geth included. `forkchoiceUpdated` sits next to it because clients commit the state root and DB writes at different points.\n\nThe native per-block panels come from each client's own metric. Use them for per-client trends, not to rank clients against each other, because their scopes differ:\n\n- ethrex: `gigagas`, `gas_used/(gigagas\u00b71e9)` (exec + merkle + store)\n- reth: `..._new_payload_gas_per_second_last`, `..._new_payload_last` (excludes async DB persistence)\n- nethermind: `mgas_per_sec`, `last_block_processing_time_in_ms` (branch exec + state root)\n- geth: `chain_mgasps`, `chain_inserts` at `quantile=\"0.5\"` (full ProcessBlock, resetting timer, sparse)\n\nThe x-axis is ethrex head `block_number`. All four follow the same chain at the same head.\n\n### Environment\n\nHeld constant: mainnet, one Lighthouse build with its checkpoint-sync and JWT, and matched hardware (Xeon E-2386G, 62.7 GiB, 2x NVMe). Prometheus scrapes every 5s.\n\nHost CPU and RAM come from `node_exporter`. Per-process CPU, RSS, threads, and FDs come from `process-exporter`, running on all four nodes and measuring geth the same way as the rest. Read RSS as a trend: Go and .NET return freed memory to the OS lazily, and Rust with jemalloc holds onto arena pages, so steady-state RSS reflects the runtime as much as the client.\n\n### Fair-panel details\n\nThe timeseries use a 10-minute sliding window. The range bargauges aggregate over the selected time range. newPayload fires about once per slot (~12s), so a short window snaps the quantile to a single Lighthouse bucket edge, which is where the 50/100/200 ms look-alike readings come from.\n\nLighthouse buckets are coarse (10/20/50/100/200/500 ms), so p99 resolution is bucket-limited. A 151 ms reading is interpolation inside the 100 to 200 ms bucket. Nimbus buckets (5/10/25/50/100/250 ms) would sharpen the tail if we need it.\n\nThe Client filter at top-left applies to every panel. When a client lacks a given metric, that panel skips it."
+          },
+          "id": 9002
         }
       ]
     },
