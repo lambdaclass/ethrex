@@ -3,17 +3,18 @@ use crate::backend::rocksdb::RocksDBBackend;
 use crate::{
     STORE_METADATA_FILENAME, STORE_SCHEMA_VERSION,
     api::{
-        StorageBackend, StorageReadView,
+        StorageBackend, StorageReadView, StorageWriteBatch,
         tables::{
             ACCOUNT_CODE_METADATA, ACCOUNT_CODES, ACCOUNT_FLATKEYVALUE, ACCOUNT_TRIE_NODES,
-            BLOCK_ACCESS_LISTS, BLOCK_NUMBERS, BODIES, CANONICAL_BLOCK_HASHES, CHAIN_DATA,
-            EXECUTION_WITNESSES, FULLSYNC_HEADERS, HEADERS, INVALID_CHAINS, MISC_VALUES,
-            PENDING_BLOCKS, RECEIPTS_V2, SNAP_STATE, STORAGE_FLATKEYVALUE, STORAGE_TRIE_NODES,
-            TRANSACTION_LOCATIONS,
+            BAD_BLOCKS, BLOCK_ACCESS_LISTS, BLOCK_NUMBERS, BODIES, CANONICAL_BLOCK_HASHES,
+            CHAIN_DATA, EXECUTION_WITNESSES, FULLSYNC_HEADERS, HEADERS, INVALID_CHAINS,
+            MISC_VALUES, PENDING_BLOCKS, RECEIPTS_V2, SNAP_STATE, STORAGE_FLATKEYVALUE,
+            STORAGE_TRIE_NODES, TRANSACTION_LOCATIONS,
         },
     },
     apply_prefix,
     backend::in_memory::InMemoryBackend,
+    block_data_buffer::BlockDataBuffer,
     error::StoreError,
     layering::{TrieLayerCache, TrieWrapper},
     rlp::{BlockBodyRLP, BlockHeaderRLP, BlockRLP},
@@ -40,22 +41,22 @@ use ethrex_rlp::{
 use ethrex_trie::{EMPTY_TRIE_HASH, Nibbles, Trie, TrieLogger, TrieNode, TrieWitness};
 use ethrex_trie::{Node, NodeRLP};
 use lru::LruCache;
+use rayon::prelude::*;
 use rustc_hash::FxBuildHasher;
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::{BTreeMap, HashMap, hash_map::Entry},
+    collections::{BTreeMap, HashMap, HashSet, hash_map::Entry},
     fmt::Debug,
     io::Write,
     path::{Path, PathBuf},
     sync::{
-        Arc, Mutex, RwLock,
+        Arc, Condvar, Mutex, RwLock,
+        atomic::{AtomicUsize, Ordering},
         mpsc::{SyncSender, TryRecvError, sync_channel},
     },
     thread::JoinHandle,
 };
-#[cfg(feature = "rocksdb")]
-use tracing::warn;
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, warn};
 
 /// Maximum number of execution witnesses to keep in the database
 pub const MAX_WITNESSES: u64 = 128;
@@ -63,12 +64,14 @@ pub const MAX_WITNESSES: u64 = 128;
 // We use one constant for in-memory and another for on-disk backends.
 // This is due to tests requiring state older than 128 blocks.
 // TODO: unify these
-#[allow(unused)]
-const DB_COMMIT_THRESHOLD: usize = 128;
+pub const DB_COMMIT_THRESHOLD: usize = 128;
 const IN_MEMORY_COMMIT_THRESHOLD: usize = 10000;
 
-/// Commit threshold for batch (full sync) mode. Each batch layer holds ~1024
-/// blocks of trie diffs (~1 GB), so we flush aggressively to bound memory.
+/// Depth-only commit threshold for batch execution (full sync / block import). Each batch
+/// layer holds ~1024 blocks of trie diffs (~1 GB), so we flush after a few layers to bound
+/// memory. The canonical `head - DB_COMMIT_THRESHOLD` safe-commit root never lands on a batch
+/// layer boundary, so batch mode commits by depth instead; this is sound because full sync and
+/// import only ever extend a single canonical chain (no competing forks to mis-commit).
 const BATCH_COMMIT_THRESHOLD: usize = 4;
 
 /// Default size in bytes of the RocksDB shared block cache: 12 GiB.
@@ -88,21 +91,23 @@ pub const DEFAULT_ROCKSDB_BLOCK_CACHE_SIZE_BYTES: usize = 12 * 1024 * 1024 * 102
 /// don't need to override anything should keep calling [`Store::new`] directly.
 #[derive(Debug, Clone, Copy)]
 pub struct StoreConfig {
-    /// Total size in bytes of the RocksDB shared block cache. With
-    /// `cache_index_and_filter_blocks` enabled (the ethrex default), this cache
-    /// stores data blocks AND the per-SST index + bloom-filter blocks, so it is
-    /// the effective ceiling on RocksDB's resident memory. Lowering it below
-    /// the filter + working-set size degrades block-import performance —
-    /// see the `--rocksdb.block-cache-size` CLI flag for guidance.
-    ///
-    /// Ignored when the engine type is in-memory.
+    /// Size in bytes of the RocksDB shared block cache. With
+    /// `cache_index_and_filter_blocks` enabled (the ethrex default), this is
+    /// the effective ceiling on RocksDB's resident memory. Ignored for
+    /// in-memory backends.
     pub rocksdb_block_cache_size: usize,
+    /// Bound on the persist worker's channel: number of staged (acked) live
+    /// messages whose flush may still be in flight. Once full, the next send
+    /// blocks — that is the backpressure that throttles `newPayload`.
+    /// Clamped to `max(1)` at construction (0 would make a rendezvous channel).
+    pub persist_channel_capacity: usize,
 }
 
 impl Default for StoreConfig {
     fn default() -> Self {
         Self {
             rocksdb_block_cache_size: DEFAULT_ROCKSDB_BLOCK_CACHE_SIZE_BYTES,
+            persist_channel_capacity: DEFAULT_PERSIST_CHANNEL_CAPACITY,
         }
     }
 }
@@ -121,6 +126,15 @@ const CODE_CACHE_MAX_SIZE: u64 = 64 * 1024 * 1024;
 // Initial synchronization or requests spanning hundreds of canonical
 // blocks will thrash the cache.
 const BLOCK_HASH_CACHE_SIZE: usize = 256;
+
+/// Key used to persist the `flushed_upto` block number in `MISC_VALUES`.
+const FLUSHED_UPTO_KEY: &[u8] = b"bodies_flushed_upto";
+
+/// Single key under which the bounded list of bad blocks is stored in `BAD_BLOCKS`.
+const BAD_BLOCKS_KEY: &[u8] = b"bad_blocks";
+
+/// Maximum number of bad blocks retained for `debug_getBadBlocks`.
+const MAX_BAD_BLOCKS: usize = 16;
 
 #[derive(Debug)]
 struct CodeCache {
@@ -166,36 +180,9 @@ impl CodeCache {
 
 /// Main storage interface for the ethrex client.
 ///
-/// The `Store` provides a high-level API for all blockchain data operations:
-/// - Block storage and retrieval
-/// - State trie management
-/// - Account and storage queries
-/// - Transaction indexing
-///
-/// # Thread Safety
-///
-/// `Store` is `Clone` and thread-safe. All clones share the same underlying
-/// database connection and caches via `Arc`.
-///
-/// # Caching
-///
-/// The store maintains several caches for performance:
-/// - **Trie Layer Cache**: Recent trie nodes for fast state access
-/// - **Code Cache**: LRU cache for contract bytecode (64MB default)
-/// - **Latest Block Cache**: Cached latest block header for RPC
-///
-/// # Example
-///
-/// ```ignore
-/// let store = Store::new("./data", EngineType::RocksDB)?;
-///
-/// // Add a block
-/// store.add_block(block).await?;
-///
-/// // Query account balance
-/// let info = store.get_account_info(block_number, address)?;
-/// let balance = info.map(|a| a.balance).unwrap_or_default();
-/// ```
+/// `Store` is `Clone` and thread-safe; all clones share the same backend and
+/// caches via `Arc`. Reads consult an in-memory block-data buffer before disk
+/// so not-yet-flushed blocks are always visible.
 #[derive(Debug, Clone)]
 pub struct Store {
     /// Path to the database directory.
@@ -208,15 +195,18 @@ pub struct Store {
     trie_cache: Arc<RwLock<Arc<TrieLayerCache>>>,
     /// Channel for controlling the FlatKeyValue generator background task.
     flatkeyvalue_control_tx: std::sync::mpsc::SyncSender<FKVGeneratorControlMessage>,
-    /// Channel for sending trie updates (and idle pings) to the background worker.
-    trie_update_worker_tx: std::sync::mpsc::SyncSender<TrieMessage>,
-    /// Cached latest canonical block header.
-    ///
-    /// Wrapped in Arc for cheap reads with infrequent writes.
-    /// May be slightly out of date, which is acceptable for:
-    /// - Caching frequently requested headers
-    /// - RPC "latest" block queries (small delay acceptable)
-    /// - Sync operations (must be idempotent anyway)
+    /// In-memory overlay of block data not yet flushed to disk.
+    block_data_buffer: Arc<RwLock<Arc<BlockDataBuffer>>>,
+    /// Channel to the single persist worker (`apply_updates` → `PersistMessage::Block`,
+    /// `wait_for_persistence_idle` → `PersistMessage::Ping`). The worker is the
+    /// sole mutator of `block_data_buffer` in production.
+    persist_tx: std::sync::mpsc::SyncSender<PersistMessage>,
+    /// Roots whose trie diff-layer is being built but not yet installed in
+    /// `trie_cache`. Trie opens block on these so a just-added block's state is
+    /// never read as stale before its layer lands.
+    pending_trie_roots: Arc<PendingTrieRoots>,
+    /// Cached latest canonical block header. May be slightly stale, which is
+    /// acceptable for RPC "latest" queries and sync operations.
     latest_block_header: LatestBlockHeaderCache,
     /// Last computed FlatKeyValue for incremental updates.
     last_computed_flatkeyvalue: Arc<RwLock<Vec<u8>>>,
@@ -240,6 +230,13 @@ pub struct Store {
     /// Serializes concurrent `forkchoice_update` callers so that the cache
     /// update and the DB write transaction remain mutually ordered.
     fcu_lock: Arc<tokio::sync::Mutex<()>>,
+
+    /// Canonical safe-commit state root, computed after each forkchoice update.
+    ///
+    /// Shared with the [`TrieLayerCache`] so that the Store can update the cell without
+    /// replacing the cache Arc. `H256::zero()` means "no safe commit point yet".
+    /// Cloning `Store` shares this cell across all clones, which is required and correct.
+    safe_commit_root: Arc<RwLock<H256>>,
 
     background_threads: Arc<ThreadList>,
 }
@@ -291,9 +288,9 @@ pub struct UpdateBatch {
     pub receipts: Vec<(H256, Vec<Receipt>)>,
     /// Contract code updates (code hash -> bytecode).
     pub code_updates: Vec<(H256, Code)>,
-    /// Whether this batch comes from full sync (batch execution mode).
-    /// When true, uses `BATCH_COMMIT_THRESHOLD` (aggressive) instead of
-    /// `DB_COMMIT_THRESHOLD` to bound memory during bulk block import.
+    /// Whether this batch comes from full sync (batch execution mode). When true,
+    /// the persist worker waits for the disk flush (`wait_for_flush`) to bound
+    /// in-flight batches during bulk import.
     pub batch_mode: bool,
 }
 
@@ -335,37 +332,21 @@ pub(crate) fn encode_tx_location_operand(
 
 /// Merge function for the `TRANSACTION_LOCATIONS` column family.
 ///
-/// The CF is keyed by tx hash and stores `Vec<(BlockNumber, BlockHash, Index)>` —
-/// one entry per block the tx appears in (multiple only on reorgs). Both the
-/// stored value and every merge operand are encoded as this same `Vec` type.
-/// Writers call `merge_cf` with a single-element `Vec` operand per tx; RocksDB
-/// invokes this function on `get_cf` and during compaction to fold the base
-/// value plus pending operands into one `Vec`. Within the fold, a later entry
-/// replaces any earlier entry with the same `block_hash`, preserving the dedupe
-/// semantics of the previous composite-key schema.
+/// The CF stores `Vec<(BlockNumber, BlockHash, Index)>` keyed by tx hash.
+/// Both stored values and operands use this same `Vec` encoding — this
+/// associativity requirement is mandatory: RocksDB folds operands together
+/// during compaction without a base value (PartialMerge), then feeds that
+/// result back into a later merge. A differing format would silently drop
+/// entries. See `encode_tx_location_operand`.
 ///
-/// Associativity: because input operands and the output are the same `Vec`
-/// format, PartialMerge (operand-only folding) produces a valid operand that
-/// can be re-merged later. This is essential for correctness — see
-/// `encode_tx_location_operand`.
+/// Within the fold, a later entry with the same `block_hash` replaces an
+/// earlier one (reorg dedupe). On decode failure the merge returns `None`
+/// so RocksDB surfaces a corruption error rather than silently dropping
+/// locations.
 ///
-/// Used by:
-/// - The RocksDB backend, via `set_merge_operator_associative`.
-/// - The InMemory backend, which dispatches by table name and applies this
-///   inline at `merge()` call time.
-///
-/// Why merge instead of read-modify-write: a per-tx `get_cf` on the write path
-/// is expensive (~5–20 ms/block on mainnet, dominated by the per-tx point
-/// lookup, not fully fixable by a bloom filter). With merge, the write path is
-/// a pure `merge_cf` append (no read), and consolidation is deferred to
-/// compaction or the next read. As a bonus the merge is atomic at the RocksDB
-/// level — no serialized-writer assumption is needed at the application layer.
-///
-/// Failure mode: any RLP decode error (base value or operand) returns `None`,
-/// which makes RocksDB treat the merge as failed and surface a corruption error
-/// on the affected key rather than silently dropping locations. We prefer
-/// failing loud — a corrupt operand signals real DB damage, and a silently
-/// half-populated `Vec` committed at the next compaction would be undetectable.
+/// Merge instead of read-modify-write avoids the ~5–20 ms/block per-tx point
+/// lookup on the write path; consolidation is deferred to compaction or the
+/// next read.
 pub fn tx_locations_merge(
     existing: Option<&[u8]>,
     operands: impl IntoIterator<Item = impl AsRef<[u8]>>,
@@ -414,27 +395,64 @@ pub fn tx_locations_merge(
 }
 
 impl Store {
-    /// Block until the trie-update background worker has drained every prior
-    /// message and is waiting for new work — i.e. Phase 2 (disk write of the
-    /// bottom-most diff layer) and Phase 3 (in-memory layer removal) for all
-    /// previously-applied updates have completed.
+    /// Block until the persist worker has fully processed all previously-sent
+    /// `Block` messages (staged, trie-layer built, flushed, evicted).
     ///
-    /// Implementation: the worker channel is `sync_channel(0)`, so a send only
-    /// returns once the worker calls `recv()` on the next loop iteration.
-    /// `TrieMessage::Ping` carries no work, so the send completing is itself
-    /// the idle signal.
+    /// Uses an ack-based `Ping` rather than a bare send because the channel is
+    /// buffered — a bare send proves nothing about prior message completion. The
+    /// worker is FIFO, so it handles the `Ping` only after every earlier `Block`
+    /// is done.
     ///
-    /// Caller's responsibility: hold off other senders to `trie_update_worker_tx`
-    /// while this is in flight. Under concurrent producers the rendezvous
-    /// guarantee degrades to "the prior message has been drained", not
-    /// "persistence is idle going forward" — a racing `Update` from another
-    /// thread can be in-flight by the time this returns.
+    /// Concurrent-producer caveat: if another thread sends a `Block` after the
+    /// `Ping` is enqueued, that block may not be flushed by the time this returns.
     pub async fn wait_for_persistence_idle(&self) -> Result<(), StoreError> {
-        let tx = self.trie_update_worker_tx.clone();
-        tokio::task::spawn_blocking(move || tx.send(TrieMessage::Ping))
-            .await
-            .map_err(|e| StoreError::Custom(format!("wait_for_persistence_idle join: {e}")))?
-            .map_err(|e| StoreError::Custom(format!("wait_for_persistence_idle send: {e}")))
+        let tx = self.persist_tx.clone();
+        tokio::task::spawn_blocking(move || {
+            let (ack_tx, ack_rx) = sync_channel::<Result<(), StoreError>>(1);
+            tx.send(PersistMessage::Ping(ack_tx))
+                .map_err(|e| StoreError::Custom(format!("wait_for_persistence_idle send: {e}")))?;
+            ack_rx
+                .recv()
+                .map_err(|e| StoreError::Custom(format!("wait_for_persistence_idle ack: {e}")))?
+        })
+        .await
+        .map_err(|e| StoreError::Custom(format!("wait_for_persistence_idle join: {e}")))?
+    }
+
+    /// Flushes all in-memory state to disk for a clean shutdown.
+    ///
+    /// Sends a `Shutdown` handshake to the persist worker, which (being FIFO)
+    /// first drains every queued `Block`, then force-flushes the block-data
+    /// buffer to disk. Once the worker acks, this syncs the backend (memtables +
+    /// WAL) so the next process start needs no WAL recovery.
+    ///
+    /// The in-memory trie diff-layers are intentionally *not* force-committed.
+    /// The on-disk trie is a single-version, path-based store, so folding the
+    /// non-finalized tail into it would leave a post-restart reorg unable to
+    /// reconstruct the overwritten ancestor state (the node would wedge). The
+    /// recent (< `DB_COMMIT_THRESHOLD`) layers are dropped and re-executed on the
+    /// next start from the deep, reorg-safe on-disk base — exactly as after any
+    /// restart today.
+    ///
+    /// After this returns the persist worker has exited; the store must not be
+    /// used for further writes. Idempotent only in the sense that a second call
+    /// errors on the closed channel — call it exactly once, on shutdown.
+    pub async fn shutdown(&self) -> Result<(), StoreError> {
+        let tx = self.persist_tx.clone();
+        let backend = self.backend.clone();
+        tokio::task::spawn_blocking(move || {
+            let (ack_tx, ack_rx) = sync_channel::<Result<(), StoreError>>(1);
+            tx.send(PersistMessage::Shutdown { ack: ack_tx })
+                .map_err(|e| StoreError::Custom(format!("shutdown send: {e}")))?;
+            ack_rx
+                .recv()
+                .map_err(|e| StoreError::Custom(format!("shutdown ack: {e}")))??;
+            // Worker has flushed block data to the WAL/memtables; make it durable
+            // and recovery-free.
+            backend.flush()
+        })
+        .await
+        .map_err(|e| StoreError::Custom(format!("shutdown join: {e}")))?
     }
 
     /// Add a block in a single transaction.
@@ -450,27 +468,14 @@ impl Store {
         tokio::task::spawn_blocking(move || {
             let mut tx = db.begin_write()?;
 
-            // TODO: Same logic in apply_updates
             for block in blocks {
-                let block_number = block.header.number;
-                let block_hash = block.hash();
-                let hash_key = block_hash.encode_to_vec();
-
-                let header_value_rlp = BlockHeaderRLP::from(block.header.clone());
-                tx.put(HEADERS, &hash_key, header_value_rlp.bytes())?;
-
-                let body_value = BlockBodyRLP::from_bytes(block.body.encode_to_vec());
-                tx.put(BODIES, &hash_key, body_value.bytes())?;
-
-                tx.put(BLOCK_NUMBERS, &hash_key, &block_number.to_le_bytes())?;
-
-                for (index, transaction) in block.body.transactions.iter().enumerate() {
-                    tx.merge(
-                        TRANSACTION_LOCATIONS,
-                        transaction.hash(&NativeCrypto).as_bytes(),
-                        &encode_tx_location_operand(block_number, block_hash, index as u64),
-                    )?;
-                }
+                write_block_data(
+                    tx.as_mut(),
+                    block.header.number,
+                    block.hash(),
+                    &block.header,
+                    &block.body,
+                )?;
             }
 
             tx.commit()
@@ -521,7 +526,14 @@ impl Store {
         if block_number == latest.number {
             return Ok(Some((*latest).clone()));
         }
-        self.load_block_header(block_number)
+        // Resolve the canonical hash, then read through the buffer-aware by-hash
+        // path so a canonical-but-still-buffered block is visible (mirrors
+        // `get_block_body`). `load_block_header` is disk-only and would return
+        // `None` for a block whose header has not been flushed yet.
+        let Some(block_hash) = self.get_canonical_block_hash_sync(block_number)? else {
+            return Ok(None);
+        };
+        self.get_block_header_by_hash(block_hash)
     }
 
     /// Add block body
@@ -589,6 +601,7 @@ impl Store {
         to: BlockNumber,
     ) -> Result<Vec<Option<BlockBody>>, StoreError> {
         // TODO: Implement read bulk
+        let buffer = self.buffer()?;
         let backend = self.backend.clone();
         tokio::task::spawn_blocking(move || {
             let numbers: Vec<BlockNumber> = (from..=to).collect();
@@ -604,6 +617,12 @@ impl Store {
                     block_bodies.push(None);
                     continue;
                 };
+                // Consult the in-memory buffer first so a not-yet-flushed body
+                // is not reported as missing (mirrors get_block_bodies_by_hash).
+                if let Some(body) = buffer.get_body(&hash) {
+                    block_bodies.push(Some(body));
+                    continue;
+                }
                 let hash_key = hash.encode_to_vec();
                 let block_body_opt = txn
                     .get(BODIES, &hash_key)?
@@ -625,12 +644,19 @@ impl Store {
         &self,
         hashes: Vec<BlockHash>,
     ) -> Result<Vec<BlockBody>, StoreError> {
+        let buffer = self.buffer()?;
         let backend = self.backend.clone();
         // TODO: Implement read bulk
         tokio::task::spawn_blocking(move || {
             let txn = backend.begin_read()?;
             let mut block_bodies = Vec::new();
             for hash in hashes {
+                // Consult the in-memory buffer first, like the single-hash reader,
+                // so a not-yet-flushed body is not reported as missing.
+                if let Some(body) = buffer.get_body(&hash) {
+                    block_bodies.push(body);
+                    continue;
+                }
                 let hash_key = hash.encode_to_vec();
 
                 let Some(block_body) = txn
@@ -656,6 +682,9 @@ impl Store {
         &self,
         block_hash: BlockHash,
     ) -> Result<Option<BlockBody>, StoreError> {
+        if let Some(b) = self.buffer()?.get_body(&block_hash) {
+            return Ok(Some(b));
+        }
         self.read_async(BODIES, block_hash.encode_to_vec())
             .await?
             .map(|bytes| BlockBodyRLP::from_bytes(bytes).to())
@@ -670,6 +699,9 @@ impl Store {
         let latest = self.latest_block_header.get();
         if block_hash == latest.hash() {
             return Ok(Some((*latest).clone()));
+        }
+        if let Some(h) = self.buffer()?.get_header(&block_hash) {
+            return Ok(Some(h));
         }
         self.load_block_header_by_hash(block_hash)
     }
@@ -707,6 +739,9 @@ impl Store {
         &self,
         block_hash: BlockHash,
     ) -> Result<Option<BlockNumber>, StoreError> {
+        if let Some(n) = self.buffer()?.get_number(&block_hash) {
+            return Ok(Some(n));
+        }
         self.read_async(BLOCK_NUMBERS, block_hash.encode_to_vec())
             .await?
             .map(|bytes| -> Result<BlockNumber, StoreError> {
@@ -756,16 +791,14 @@ impl Store {
         &self,
         transaction_hash: H256,
     ) -> Result<Option<(BlockNumber, BlockHash, Index)>, StoreError> {
+        let buffered = self.buffer()?.get_tx_locations(&transaction_hash);
         let db = self.backend.clone();
         tokio::task::spawn_blocking(move || {
             let tx = db.begin_read()?;
-            let Some(bytes) = tx.get(TRANSACTION_LOCATIONS, transaction_hash.as_bytes())? else {
-                return Ok(None);
-            };
-            let locations = <Vec<(BlockNumber, BlockHash, Index)>>::decode(&bytes)?;
-
-            // In the absence of reorgs, locations has exactly one entry.
-            // If multiple, filter by the canonical chain.
+            let mut locations = buffered;
+            if let Some(bytes) = tx.get(TRANSACTION_LOCATIONS, transaction_hash.as_bytes())? {
+                locations.extend(<Vec<(BlockNumber, BlockHash, Index)>>::decode(&bytes)?);
+            }
             for (block_number, block_hash, index) in locations {
                 let canonical_hash = tx
                     .get(
@@ -774,12 +807,10 @@ impl Store {
                     )?
                     .map(|bytes| H256::decode(bytes.as_slice()))
                     .transpose()?;
-
                 if canonical_hash == Some(block_hash) {
                     return Ok(Some((block_number, block_hash, index)));
                 }
             }
-
             Ok(None)
         })
         .await
@@ -794,7 +825,10 @@ impl Store {
         receipt: Receipt,
     ) -> Result<(), StoreError> {
         let key = receipt_key(&block_hash, index);
-        let value = receipt.encode_to_vec();
+        // Storage codec (NOT wire/consensus): preserves frame-receipt
+        // `succeeded` + aggregated logs; identical to encode_to_vec for
+        // non-frame receipts.
+        let value = receipt.encode_storage();
         self.write_async(RECEIPTS_V2, key, value).await
     }
 
@@ -809,7 +843,7 @@ impl Store {
             .enumerate()
             .map(|(index, receipt)| {
                 let key = receipt_key(&block_hash, index as u64);
-                let value = receipt.encode_to_vec();
+                let value = receipt.encode_storage();
                 (key, value)
             })
             .collect();
@@ -835,19 +869,27 @@ impl Store {
         block_hash: BlockHash,
         index: Index,
     ) -> Result<Option<Receipt>, StoreError> {
+        if let Some(r) = self.buffer()?.get_receipt(&block_hash, index) {
+            return Ok(Some(r));
+        }
         let key = receipt_key(&block_hash, index);
         self.read_async(RECEIPTS_V2, key)
             .await?
-            .map(|bytes| Receipt::decode(bytes.as_slice()))
+            .map(|bytes| Receipt::decode_storage(bytes.as_slice()))
             .transpose()
             .map_err(StoreError::from)
     }
 
     /// Get account code by its hash.
     ///
-    /// Check if the code exists in the cache (attribute `account_code_cache`), if not,
-    /// reads the database, and if it exists, decodes and returns it.
+    /// Checks the in-memory block-data buffer first, then the LRU cache
+    /// (`account_code_cache`), and finally the database.  Code that has been
+    /// inserted via `engine_newPayload` but not yet flushed to disk is therefore
+    /// visible to callers without an explicit flush.
     pub fn get_account_code(&self, code_hash: H256) -> Result<Option<Code>, StoreError> {
+        if let Some(code) = self.buffer()?.get_code(&code_hash) {
+            return Ok(Some(code));
+        }
         // check cache first
         if let Some(code) = self
             .account_code_cache
@@ -886,6 +928,12 @@ impl Store {
     /// RLP decoding and `Code` struct construction (no `jump_targets` deserialization).
     /// Note: The underlying `get()` still reads the value from RocksDB (including blob files).
     pub fn code_exists(&self, code_hash: H256) -> Result<bool, StoreError> {
+        // Code introduced by a not-yet-flushed block lives only in the buffer; check
+        // it first so a contract created in the current block is visible (matches
+        // get_account_code / get_code_metadata).
+        if self.buffer()?.get_code(&code_hash).is_some() {
+            return Ok(true);
+        }
         // Check cache first
         if self
             .account_code_cache
@@ -1300,6 +1348,14 @@ impl Store {
         start_index: u64,
         max_count: Option<usize>,
     ) -> Result<Vec<Receipt>, StoreError> {
+        if let Some(all) = self.buffer()?.get_receipts(block_hash) {
+            let start = start_index as usize;
+            let slice = all.into_iter().skip(start);
+            return Ok(match max_count {
+                Some(max) => slice.take(max).collect(),
+                None => slice.collect(),
+            });
+        }
         let backend = self.backend.clone();
         let block_hash = *block_hash;
 
@@ -1320,7 +1376,7 @@ impl Store {
                 if k.len() != 40 {
                     continue;
                 }
-                receipts.push(Receipt::decode(v.as_ref())?);
+                receipts.push(Receipt::decode_storage(v.as_ref())?);
                 if let Some(max) = max_count
                     && receipts.len() >= max
                 {
@@ -1384,11 +1440,48 @@ impl Store {
             .map_err(StoreError::from)
     }
 
+    /// Records a block that failed validation so it can be served by
+    /// `debug_getBadBlocks`. The list is bounded to [`MAX_BAD_BLOCKS`] entries,
+    /// kept sorted by descending block number, with the oldest dropped once the
+    /// bound is exceeded. Duplicate `(number, hash)` entries are ignored.
+    pub async fn add_bad_block(&self, block: Block) -> Result<(), StoreError> {
+        let mut bad_blocks = self.get_bad_blocks().await?;
+        let block_number = block.header.number;
+        let block_hash = block.hash();
+        if bad_blocks
+            .iter()
+            .any(|b| b.header.number == block_number && b.hash() == block_hash)
+        {
+            return Ok(());
+        }
+        bad_blocks.push(block);
+        bad_blocks.sort_by(|a, b| b.header.number.cmp(&a.header.number));
+        bad_blocks.truncate(MAX_BAD_BLOCKS);
+        self.write_async(
+            BAD_BLOCKS,
+            BAD_BLOCKS_KEY.to_vec(),
+            bad_blocks.encode_to_vec(),
+        )
+        .await
+    }
+
+    /// Returns the recent bad blocks seen by the client, sorted by descending
+    /// block number. Used by `debug_getBadBlocks`.
+    pub async fn get_bad_blocks(&self) -> Result<Vec<Block>, StoreError> {
+        match self.read_async(BAD_BLOCKS, BAD_BLOCKS_KEY.to_vec()).await? {
+            Some(bytes) => Vec::<Block>::decode(&bytes).map_err(StoreError::from),
+            None => Ok(Vec::new()),
+        }
+    }
+
     /// Obtain block number for a given hash
     pub fn get_block_number_sync(
         &self,
         block_hash: BlockHash,
     ) -> Result<Option<BlockNumber>, StoreError> {
+        if let Some(n) = self.buffer()?.get_number(&block_hash) {
+            return Ok(Some(n));
+        }
         let txn = self.backend.begin_read()?;
         txn.get(BLOCK_NUMBERS, &block_hash.encode_to_vec())?
             .map(|bytes| -> Result<BlockNumber, StoreError> {
@@ -1465,6 +1558,15 @@ impl Store {
             .await?;
         self.write_batch_async(ACCOUNT_CODE_METADATA, metadata_batch_items)
             .await
+    }
+
+    /// Returns a snapshot of the current block-data buffer.
+    fn buffer(&self) -> Result<Arc<BlockDataBuffer>, StoreError> {
+        Ok(self
+            .block_data_buffer
+            .read()
+            .map_err(|_| StoreError::LockError)?
+            .clone())
     }
 
     // Helper methods for async operations with spawn_blocking
@@ -1603,8 +1705,11 @@ impl Store {
         self.apply_updates(update_batch)
     }
 
-    fn apply_updates(&self, update_batch: UpdateBatch) -> Result<(), StoreError> {
-        let db = self.backend.clone();
+    /// Compute `(parent_state_root, last_state_root)` for a batch's trie update:
+    /// the state root of the first block's parent and the last block's own state
+    /// root. Used by `apply_updates` for both the live and full-sync paths (which
+    /// share the single persist worker).
+    fn batch_state_roots(&self, update_batch: &UpdateBatch) -> Result<(H256, H256), StoreError> {
         let parent_state_root = self
             .get_block_header_by_hash(
                 update_batch
@@ -1622,78 +1727,74 @@ impl Store {
             .ok_or(StoreError::UpdateBatchNoBlocks)?
             .header
             .state_root;
-        let trie_upd_worker_tx = self.trie_update_worker_tx.clone();
+        Ok((parent_state_root, last_state_root))
+    }
 
-        let is_batch = update_batch.batch_mode;
+    /// Single path for both live (`batch_mode == false`) and full-sync
+    /// (`batch_mode == true`) updates. Both hand the whole unit (block data +
+    /// one aggregate trie diff) to the SINGLE persist worker and wait for its ack;
+    /// `wait_for_flush` (= `batch_mode`) selects when the worker acks.
+    fn apply_updates(&self, update_batch: UpdateBatch) -> Result<(), StoreError> {
+        let (parent_state_root, last_state_root) = self.batch_state_roots(&update_batch)?;
 
         let UpdateBatch {
             account_updates,
             storage_updates,
-            ..
+            blocks,
+            receipts,
+            code_updates,
+            batch_mode,
         } = update_batch;
 
-        // Capacity one ensures sender just notifies and goes on
-        let (notify_tx, notify_rx) = sync_channel(1);
-        let wait_for_new_layer = notify_rx;
-        let trie_update = TrieUpdate {
-            parent_state_root,
-            account_updates,
-            storage_updates,
-            result_sender: notify_tx,
-            child_state_root: last_state_root,
-            is_batch,
+        // Register before handing off to the worker and before this returns, so
+        // any reader opening this root blocks in `gated_snapshot` until the
+        // layer is installed rather than snapshotting a stale cache.
+        self.pending_trie_roots.register(last_state_root)?;
+
+        // Pair blocks with receipts. Single-block fast path avoids a HashMap
+        // allocation; full-sync batch joins by hash.
+        let blocks_with_receipts: Vec<(Block, Vec<Receipt>)> = if blocks.len() == 1 {
+            let block = blocks.into_iter().next().expect("len == 1");
+            let hash = block.hash();
+            let r = receipts
+                .into_iter()
+                .find(|(h, _)| *h == hash)
+                .map(|(_, r)| r)
+                .unwrap_or_default();
+            vec![(block, r)]
+        } else {
+            let mut receipts_by_hash: std::collections::HashMap<BlockHash, Vec<Receipt>> =
+                receipts.into_iter().collect();
+            blocks
+                .into_iter()
+                .map(|b| {
+                    let r = receipts_by_hash.remove(&b.hash()).unwrap_or_default();
+                    (b, r)
+                })
+                .collect()
         };
-        trie_upd_worker_tx
-            .send(TrieMessage::Update(trie_update))
-            .map_err(|e| {
-                StoreError::Custom(format!("failed to read new trie layer notification: {e}"))
-            })?;
-        let mut tx = db.begin_write()?;
 
-        for block in update_batch.blocks {
-            let block_number = block.header.number;
-            let block_hash = block.hash();
-            let hash_key = block_hash.encode_to_vec();
-
-            let header_value_rlp = BlockHeaderRLP::from(block.header.clone());
-            tx.put(HEADERS, &hash_key, header_value_rlp.bytes())?;
-
-            let body_value = BlockBodyRLP::from_bytes(block.body.encode_to_vec());
-            tx.put(BODIES, &hash_key, body_value.bytes())?;
-
-            tx.put(BLOCK_NUMBERS, &hash_key, &block_number.to_le_bytes())?;
-
-            for (index, transaction) in block.body.transactions.iter().enumerate() {
-                tx.merge(
-                    TRANSACTION_LOCATIONS,
-                    transaction.hash(&NativeCrypto).as_bytes(),
-                    &encode_tx_location_operand(block_number, block_hash, index as u64),
-                )?;
-            }
-        }
-
-        for (block_hash, receipts) in update_batch.receipts {
-            for (index, receipt) in receipts.into_iter().enumerate() {
-                let key = receipt_key(&block_hash, index as u64);
-                let value = receipt.encode_to_vec();
-                tx.put(RECEIPTS_V2, &key, &value)?;
-            }
-        }
-
-        for (code_hash, code) in update_batch.code_updates {
-            let buf = encode_code(&code);
-            let metadata_buf = (code.len() as u64).to_be_bytes();
-            tx.put(ACCOUNT_CODES, code_hash.as_ref(), &buf)?;
-            tx.put(ACCOUNT_CODE_METADATA, code_hash.as_ref(), &metadata_buf)?;
-        }
-
-        // Wait for an updated top layer so every caller afterwards sees a consistent view.
-        // Specifically, the next block produced MUST see this upper layer.
-        wait_for_new_layer
+        // Send to the persist worker and wait for its ack.
+        // LIVE (wait_for_flush=false): worker acks after staging; the ack carries
+        //   the PRIOR flush result so a disk error surfaces on the next call.
+        // BATCH (wait_for_flush=true): worker acks after flush, bounding
+        //   in-flight batches to ~1.
+        let (ack_tx, ack_rx) = sync_channel(1);
+        self.persist_tx
+            .send(PersistMessage::Block(BlockPersist {
+                blocks: blocks_with_receipts,
+                codes: code_updates,
+                parent_state_root,
+                child_state_root: last_state_root,
+                account_updates,
+                storage_updates,
+                wait_for_flush: batch_mode,
+                ack: ack_tx,
+            }))
+            .map_err(|e| StoreError::Custom(format!("failed to send block persist: {e}")))?;
+        ack_rx
             .recv()
-            .map_err(|e| StoreError::Custom(format!("recv failed: {e}")))??;
-        // After top-level is added, we can make the rest of the changes visible.
-        tx.commit()?;
+            .map_err(|e| StoreError::Custom(format!("block persist ack failed: {e}")))??;
 
         Ok(())
     }
@@ -1759,7 +1860,12 @@ impl Store {
                     crate::migrations::run_pending_migrations(rocksdb.as_ref(), &db_path, v)?;
                     rocksdb.drop_obsolete_cfs(&path);
                     let backend: Arc<dyn crate::api::StorageBackend> = rocksdb;
-                    return Self::from_backend(backend, db_path, DB_COMMIT_THRESHOLD);
+                    return Self::from_backend(
+                        backend,
+                        db_path,
+                        DB_COMMIT_THRESHOLD,
+                        config.persist_channel_capacity,
+                    );
                 }
                 Some(_) => {
                     // version == STORE_SCHEMA_VERSION, proceed normally.
@@ -1776,11 +1882,21 @@ impl Store {
                 let rocksdb = RocksDBBackend::open(&path, config.rocksdb_block_cache_size)?;
                 rocksdb.drop_obsolete_cfs(&path);
                 let backend: Arc<dyn StorageBackend> = Arc::new(rocksdb);
-                Self::from_backend(backend, db_path, DB_COMMIT_THRESHOLD)
+                Self::from_backend(
+                    backend,
+                    db_path,
+                    DB_COMMIT_THRESHOLD,
+                    config.persist_channel_capacity,
+                )
             }
             EngineType::InMemory => {
                 let backend = Arc::new(InMemoryBackend::open()?);
-                Self::from_backend(backend, db_path, IN_MEMORY_COMMIT_THRESHOLD)
+                Self::from_backend(
+                    backend,
+                    db_path,
+                    IN_MEMORY_COMMIT_THRESHOLD,
+                    config.persist_channel_capacity,
+                )
             }
         }
     }
@@ -1789,31 +1905,47 @@ impl Store {
         backend: Arc<dyn StorageBackend>,
         db_path: PathBuf,
         commit_threshold: usize,
+        persist_channel_capacity: usize,
     ) -> Result<Self, StoreError> {
         debug!("Initializing Store with {commit_threshold} in-memory diff-layers");
         let (fkv_tx, fkv_rx) = std::sync::mpsc::sync_channel(0);
-        let (trie_upd_tx, trie_upd_rx) = std::sync::mpsc::sync_channel(0);
+        let persist_cap = persist_channel_capacity.max(1); // clamp: 0 would be a rendezvous channel
+        let (persist_tx, persist_rx) = std::sync::mpsc::sync_channel(persist_cap);
 
-        let last_written = {
+        let (last_written, initial_flushed_upto) = {
             let tx = backend.begin_read()?;
             let last_written = tx
                 .get(MISC_VALUES, "last_written".as_bytes())?
                 .unwrap_or_else(|| vec![0u8; 64]);
-            if last_written == [0xff] {
+            let last_written = if last_written == [0xff] {
                 vec![0xff; 64]
             } else {
                 last_written
-            }
+            };
+            let initial_flushed_upto = match tx.get(MISC_VALUES, FLUSHED_UPTO_KEY)? {
+                Some(bytes) => decode_flushed_upto(&bytes)?,
+                None => 0,
+            };
+            (last_written, initial_flushed_upto)
         };
+        let mut initial_buffer = BlockDataBuffer::new();
+        initial_buffer.set_flushed_upto(initial_flushed_upto);
+
         let mut background_threads = Vec::new();
+        let safe_commit_root = Arc::new(RwLock::new(H256::zero()));
         let mut store = Self {
             db_path,
             backend,
             chain_config: Default::default(),
             latest_block_header: Default::default(),
-            trie_cache: Arc::new(RwLock::new(Arc::new(TrieLayerCache::new(commit_threshold)))),
+            trie_cache: Arc::new(RwLock::new(Arc::new(TrieLayerCache::new_with_safe_commit(
+                commit_threshold,
+                safe_commit_root.clone(),
+            )))),
             flatkeyvalue_control_tx: fkv_tx,
-            trie_update_worker_tx: trie_upd_tx,
+            block_data_buffer: Arc::new(RwLock::new(Arc::new(initial_buffer))),
+            persist_tx,
+            pending_trie_roots: Arc::new(PendingTrieRoots::default()),
             last_computed_flatkeyvalue: Arc::new(RwLock::new(last_written)),
             account_code_cache: Arc::new(Mutex::new(CodeCache::default())),
             block_hash_cache: Arc::new(Mutex::new(LruCache::with_hasher(
@@ -1823,6 +1955,7 @@ impl Store {
             ))),
             code_metadata_cache: Arc::new(Mutex::new(rustc_hash::FxHashMap::default())),
             fcu_lock: Arc::new(tokio::sync::Mutex::new(())),
+            safe_commit_root,
             background_threads: Default::default(),
         };
         let backend_clone = store.backend.clone();
@@ -1844,51 +1977,124 @@ impl Store {
             let _ = flatkeyvalue_generator(&backend_clone, &last_computed_fkv, &rx)
                 .inspect_err(|err| error!("Error while generating FlatKeyValue: {err}"));
         }));
-        let backend = store.backend.clone();
-        let flatkeyvalue_control_tx = store.flatkeyvalue_control_tx.clone();
-        let trie_cache = store.trie_cache.clone();
-        /*
-            When a block is executed, the write of the bottom-most diff layer to disk is done in the background through this thread.
-            This is to improve block execution times, since it's not necessary when executing the next block to have this layer flushed to disk.
-
-            This background thread receives messages through a channel to apply new trie updates and does three things:
-
-            - First, it updates the top-most in-memory diff layer and notifies the process that sent the message (i.e. the
-            block production thread) so it can continue with block execution (block execution cannot proceed without the
-            diff layers updated, otherwise it would see wrong state when reading from the trie). This section is done in an RCU manner:
-            a shared pointer with the trie is kept behind a lock. This thread first acquires the lock, then copies the pointer and drops the lock;
-            afterwards it makes a deep copy of the trie layer and mutates it, then takes the lock again, replaces the pointer with the updated copy,
-            then drops the lock again.
-
-            - Second, it performs the logic of persisting the bottom-most diff layer to disk. This is the part of the logic that block execution does not
-            need to proceed. What does need to be aware of this section is the process in charge of generating the snapshot (a.k.a. FlatKeyValue).
-            Because of this, this section first sends a message to pause the FlatKeyValue generation, then persists the diff layer to disk, then notifies
-            again for FlatKeyValue generation to continue.
-
-            - Third, it removes the (no longer needed) bottom-most diff layer from the trie layers in the same way as the first step.
-        */
+        // The single persist worker: sole swapper of `block_data_buffer`, sole
+        // builder of trie diff-layers. One DB transaction per `Block` message.
+        let persist_backend = store.backend.clone();
+        let persist_buffer = store.block_data_buffer.clone();
+        let persist_trie_cache = store.trie_cache.clone();
+        let persist_pending_roots = store.pending_trie_roots.clone();
+        let persist_fkv_ctl = store.flatkeyvalue_control_tx.clone();
         background_threads.push(std::thread::spawn(move || {
-            let rx = trie_upd_rx;
+            let rx = persist_rx;
+            // Carries the prior flush result: the live path acks after staging,
+            // so a disk failure surfaces on the next message's ack.
+            let mut last_flush_result: Result<(), StoreError> = Ok(());
             loop {
                 match rx.recv() {
-                    Ok(TrieMessage::Update(trie_update)) => {
-                        // FIXME: what should we do on error?
-                        let _ = apply_trie_updates(
-                            backend.as_ref(),
-                            &flatkeyvalue_control_tx,
-                            &trie_cache,
-                            trie_update,
-                        )
-                        .inspect_err(|err| error!("apply_trie_updates failed: {err}"));
+                    Ok(PersistMessage::Block(bp)) => {
+                        // Stage block data (sole swapper of the buffer; codes
+                        // are batch-level and attributed to the first block).
+                        let staged = mutate_block_buffer(&persist_buffer, move |b| {
+                            let mut codes = Some(bp.codes);
+                            for (block, receipts) in bp.blocks {
+                                b.insert(block, receipts, codes.take().unwrap_or_default());
+                            }
+                        });
+                        if let Err(e) = staged {
+                            // Stage failure is terminal for this message.
+                            // Clear the pending root so gated readers are not
+                            // blocked forever (apply_trie_phase1, which normally
+                            // does this, is skipped when we continue here).
+                            persist_pending_roots.clear(bp.child_state_root);
+                            let _ = bp.ack.send(Err(e));
+                            continue;
+                        }
+                        // LIVE: ack after staging; carries prior flush result.
+                        // NOTE: this acks block validity BEFORE apply_trie_phase1
+                        // installs the trie layer below. A phase-1 failure (only
+                        // reachable via lock poisoning, which is already fatal) is
+                        // therefore deferred to the next block's ack via
+                        // last_flush_result rather than attributed to this block;
+                        // the pending root is still cleared unconditionally, so
+                        // gated readers error rather than hang.
+                        if !bp.wait_for_flush {
+                            let _ = bp
+                                .ack
+                                .send(std::mem::replace(&mut last_flush_result, Ok(())));
+                        }
+                        // Build + install the trie layer; clear the read gate.
+                        if let Err(err) = apply_trie_phase1(
+                            &persist_trie_cache,
+                            &persist_pending_roots,
+                            bp.parent_state_root,
+                            bp.child_state_root,
+                            bp.account_updates,
+                            bp.storage_updates,
+                        ) {
+                            error!("persist worker trie phase-1 failed: {err}");
+                            if bp.wait_for_flush {
+                                let _ = bp.ack.send(Err(err));
+                            } else {
+                                last_flush_result = Err(err);
+                            }
+                            continue;
+                        }
+                        // Flush block data + commit bottom trie layer when due.
+                        let flushed = flush_block_data(persist_backend.as_ref(), &persist_buffer)
+                            .inspect_err(|err| error!("flush_block_data failed: {err}"))
+                            .and_then(|_| {
+                                commit_trie_if_due(
+                                    persist_backend.as_ref(),
+                                    &persist_trie_cache,
+                                    &persist_fkv_ctl,
+                                    bp.parent_state_root,
+                                    bp.wait_for_flush,
+                                )
+                            });
+                        // BATCH: ack after flush (bounds in-flight batches to ~1),
+                        // folding in any prior live-path error. LIVE: stash result.
+                        if bp.wait_for_flush {
+                            let prior = std::mem::replace(&mut last_flush_result, Ok(()));
+                            let _ = bp.ack.send(prior.and(flushed));
+                        } else {
+                            last_flush_result = flushed;
+                        }
                     }
-                    Ok(TrieMessage::Ping) => {
-                        // Rendezvous handshake only — sender just wanted to know
-                        // we were idle and back at recv(). No work to do.
+                    Ok(PersistMessage::Commit(root)) => match persist_trie_cache.read() {
+                        Ok(guard) => {
+                            let trie = guard.clone();
+                            drop(guard);
+                            let _ = commit_to_disk(
+                                persist_backend.as_ref(),
+                                &persist_fkv_ctl,
+                                &persist_trie_cache,
+                                &trie,
+                                root,
+                            )
+                            .inspect_err(|err| error!("commit_to_disk failed: {err}"));
+                        }
+                        Err(_) => error!("trie cache lock poisoned during commit"),
+                    },
+                    Ok(PersistMessage::Ping(ack)) => {
+                        // Idle handshake: reached only after all earlier Block
+                        // messages are fully processed. Carry the pending flush
+                        // result so a live-path failure is not silently dropped.
+                        let _ = ack.send(std::mem::replace(&mut last_flush_result, Ok(())));
                     }
-                    Err(err) => {
-                        debug!("Trie update sender disconnected: {err}");
+                    Ok(PersistMessage::Shutdown { ack }) => {
+                        // Graceful shutdown: drain (already guaranteed by FIFO) and
+                        // force-flush the not-yet-flushed block-data tail. The trie
+                        // diff-layers stay in memory and are dropped on exit: the
+                        // on-disk trie is a single-version path store, so committing
+                        // the non-finalized tail would make a post-restart reorg
+                        // unrecoverable. Those layers re-execute on the next start.
+                        let result = flush_block_data(persist_backend.as_ref(), &persist_buffer);
+                        let prior = std::mem::replace(&mut last_flush_result, Ok(()));
+                        let _ = ack.send(prior.and(result));
+                        // No more work will follow a shutdown request.
                         return;
                     }
+                    Err(_) => return,
                 }
             }
         }));
@@ -2464,12 +2670,12 @@ impl Store {
         // of the genesis file is still authoritative and must be applied.
         self.set_chain_config(&genesis.config).await?;
 
-        // The cache can't be empty
-        if let Some(number) = self.load_latest_block_number().await? {
-            let latest_block_header = self
-                .load_block_header(number)?
-                .ok_or_else(|| StoreError::MissingLatestBlockNumber)?;
-            self.latest_block_header.update(latest_block_header);
+        // The cache can't be empty. Clamp the head to the durable block: after a
+        // crash, `LatestBlockNumber` can be ahead of `flushed_upto` (FCU writes the
+        // head synchronously while block bodies are buffered), so loading the raw
+        // latest header would brick boot when its body was never flushed.
+        if let Some(latest) = self.load_latest_block_number().await? {
+            self.anchor_to_durable_head(latest).await?;
         }
 
         match stored_genesis_header {
@@ -2513,13 +2719,13 @@ impl Store {
 
     pub async fn load_initial_state(&self) -> Result<(), StoreError> {
         info!("Loading initial state from DB");
-        let Some(number) = self.load_latest_block_number().await? else {
+        let Some(latest) = self.load_latest_block_number().await? else {
             return Err(StoreError::MissingLatestBlockNumber);
         };
-        let latest_block_header = self
-            .load_block_header(number)?
-            .ok_or_else(|| StoreError::Custom("latest block header is missing".to_string()))?;
-        self.latest_block_header.update(latest_block_header);
+        // Use the same durable-head clamp as the node boot path so export and the
+        // running node agree on the head. The persisted head is only rewritten when
+        // it actually moved, so a plain export run does not mutate `CHAIN_DATA`.
+        self.anchor_to_durable_head(latest).await?;
         Ok(())
     }
 
@@ -2545,11 +2751,7 @@ impl Store {
 
         // Pre-acquire shared resources once for both trie opens
         let read_view = self.backend.begin_read()?;
-        let cache = self
-            .trie_cache
-            .read()
-            .map_err(|_| StoreError::LockError)?
-            .clone();
+        let cache = self.gated_snapshot(state_root)?;
         let last_written = self.last_written()?;
         let use_fkv = Self::flatkeyvalue_computed_with_last_written(account_hash, &last_written);
 
@@ -2597,11 +2799,7 @@ impl Store {
         storage_key: H256,
     ) -> Result<Option<U256>, StoreError> {
         let read_view = self.backend.begin_read()?;
-        let cache = self
-            .trie_cache
-            .read()
-            .map_err(|_| StoreError::LockError)?
-            .clone();
+        let cache = self.gated_snapshot(state_root)?;
         let last_written = self.last_written()?;
         // When FKV is active the real storage root is in the flatkeyvalue store,
         // not in the account's RLP-encoded storage_root field. Use EMPTY_TRIE_HASH
@@ -2661,7 +2859,7 @@ impl Store {
         // not consider canonical.
         let previous_head = self.latest_block_header.get();
         let new_head = self
-            .load_block_header_by_hash(head_hash)?
+            .get_block_header_by_hash(head_hash)?
             .ok_or_else(|| StoreError::MissingLatestBlockNumber)?;
         self.latest_block_header.update(new_head);
         if let Err(err) = self
@@ -2678,7 +2876,70 @@ impl Store {
             return Err(err);
         }
 
+        // Refresh the canonical safe-commit root now that the canonical tables reflect the new
+        // head. `None` (chain shorter than the threshold, e.g. genesis init at head 0) leaves the
+        // cell unchanged so genesis-on-disk is never gated away.
+        // No `latest_block_header` rollback on error here (unlike the `inner` failure above): the
+        // only error is a poisoned safe-commit `RwLock`, which is an unrecoverable process state.
+        if let Some(root) = self.compute_safe_commit_root(head_number)? {
+            // Advancing the cell alone does not flush: the commit step (Phase 2) only runs
+            // while blocks execute, so an execute-all-then-one-forkchoice flow (e.g. block
+            // import) would accumulate every layer and never persist. When the safe-commit
+            // root advances, poke the worker to flush the now-committable backlog up to it.
+            if self.set_safe_commit_root(root)? {
+                let tx = self.persist_tx.clone();
+                let _ = tokio::task::spawn_blocking(move || tx.send(PersistMessage::Commit(root)))
+                    .await;
+            }
+        }
+
         Ok(())
+    }
+
+    /// Updates the dedicated safe-commit-root cell with the given state root,
+    /// returning `true` if the cell changed (so callers can skip a redundant flush).
+    ///
+    /// This is a plain synchronous function; it touches only the dedicated cell
+    /// and is disjoint from the trie-cache Arc (no cache clone or replacement).
+    /// Crate-private: only `forkchoice_update` (post-canonicalization) may set it,
+    /// preserving the invariant that the cell only ever holds a canonical state root.
+    pub(crate) fn set_safe_commit_root(&self, root: H256) -> Result<bool, StoreError> {
+        let mut guard = self
+            .safe_commit_root
+            .write()
+            .map_err(|_| StoreError::LockError)?;
+        let changed = *guard != root;
+        *guard = root;
+        Ok(changed)
+    }
+
+    /// Computes the canonical safe-commit state root: the state root of the canonical block
+    /// `commit_threshold` layers below `head`.
+    ///
+    /// Returns `Ok(None)` when the chain is shorter than the threshold (underflow), or when the
+    /// target block is not yet canonical / its header is absent. Synchronous getters only; no
+    /// await and no lock guard held across one. The threshold is read from the trie cache to
+    /// avoid duplicating the IN_MEMORY/DB selection that `from_backend` already made.
+    /// Crate-private: only `forkchoice_update` consumes it.
+    pub(crate) fn compute_safe_commit_root(
+        &self,
+        head: BlockNumber,
+    ) -> Result<Option<H256>, StoreError> {
+        let commit_threshold = self
+            .trie_cache
+            .read()
+            .map_err(|_| StoreError::LockError)?
+            .commit_threshold;
+        let Some(target) = head.checked_sub(commit_threshold as u64) else {
+            return Ok(None);
+        };
+        let Some(hash) = self.get_canonical_block_hash_sync(target)? else {
+            return Ok(None);
+        };
+        let Some(header) = self.get_block_header_by_hash(hash)? else {
+            return Ok(None);
+        };
+        Ok(Some(header.state_root))
     }
 
     /// Obtain the storage trie for the given block
@@ -2749,6 +3010,104 @@ impl Store {
             return Ok(None);
         };
         Ok(Some(AccountState::decode(&encoded_state)?))
+    }
+
+    /// Batch lookup of account states by address against a given state root.
+    ///
+    /// Fast path: for addresses whose hashed path falls within the FKV cursor
+    /// (and which are not present in the in-memory diff-layer cache), values
+    /// are fetched in a single `multi_get` on `ACCOUNT_FLATKEYVALUE`. Other
+    /// addresses fall back to per-address trie walks.
+    ///
+    /// Results are returned in the same order as the input addresses.
+    pub fn get_account_states_batch_by_root(
+        &self,
+        state_root: H256,
+        addresses: &[Address],
+    ) -> Result<Vec<Option<AccountState>>, StoreError> {
+        if addresses.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let last_written = self.last_written()?;
+        let trie_cache = self
+            .trie_cache
+            .read()
+            .map_err(|_| StoreError::LockError)?
+            .clone();
+
+        let mut results: Vec<Option<AccountState>> = vec![None; addresses.len()];
+        // Per-address leaf paths (nibbles + leaf flag). Length 65.
+        let leaf_paths: Vec<Vec<u8>> = addresses
+            .iter()
+            .map(|addr| {
+                let hashed = hash_address_fixed(addr);
+                Nibbles::from_bytes(hashed.as_bytes()).into_vec()
+            })
+            .collect();
+
+        let mut fkv_indices: Vec<usize> = Vec::new();
+        let mut trie_indices: Vec<usize> = Vec::new();
+
+        // Match `BackendTrieDB::flatkeyvalue_computed` semantics: a path is
+        // covered by FKV iff `last_written >= path` as raw nibble bytes. This
+        // is the same check `Trie::get` uses; the related helper
+        // `Store::flatkeyvalue_computed_with_last_written` slices `[0..64]`
+        // and is intentionally more conservative — using that here would
+        // unnecessarily fall back to the trie when the cursor sits inside an
+        // account's storage sweep (the account leaf is already in FKV at that
+        // point; see `flatkeyvalue_generator`).
+        let fkv_cursor: &[u8] = last_written.as_slice();
+        for (i, path) in leaf_paths.iter().enumerate() {
+            if let Some(value) = trie_cache.get(state_root, path.as_slice()) {
+                if !value.is_empty() {
+                    results[i] = Some(AccountState::decode(&value)?);
+                }
+                continue;
+            }
+            if fkv_cursor >= path.as_slice() {
+                fkv_indices.push(i);
+            } else {
+                trie_indices.push(i);
+            }
+        }
+
+        if !fkv_indices.is_empty() {
+            let read_view = self.backend.begin_read()?;
+            let keys: Vec<&[u8]> = fkv_indices
+                .iter()
+                .map(|&i| leaf_paths[i].as_slice())
+                .collect();
+            let raw = read_view.multi_get(ACCOUNT_FLATKEYVALUE, &keys);
+            for (slot, res) in fkv_indices.iter().zip(raw.into_iter()) {
+                let Some(encoded) = res? else { continue };
+                if encoded.is_empty() {
+                    continue;
+                }
+                results[*slot] = Some(AccountState::decode(&encoded)?);
+            }
+        }
+
+        if !trie_indices.is_empty() {
+            // Fall back to the regular trie path for any addresses whose path
+            // hasn't been swept by the FKV generator yet. Parallelized to
+            // recover the per-address fan-out the pre-batch `par_iter` path
+            // had, which matters during initial sync when most addresses
+            // miss FKV.
+            let state_trie = self.open_state_trie(state_root)?;
+            let fetched: Result<Vec<(usize, Option<AccountState>)>, StoreError> = trie_indices
+                .par_iter()
+                .map(|&i| {
+                    self.get_account_state_from_trie(&state_trie, addresses[i])
+                        .map(|s| (i, s))
+                })
+                .collect();
+            for (i, s) in fetched? {
+                results[i] = s;
+            }
+        }
+
+        Ok(results)
     }
 
     /// Constructs a merkle proof for the given account address against a given state.
@@ -2939,6 +3298,9 @@ impl Store {
         // Fetch storage trie nodes
         let mut nodes = vec![];
         let mut bytes_used = 0;
+        // The number of sub-paths is bounded upstream by the snap server's per-request lookup
+        // cap (`MAX_SERVE_LOOKUPS`), which truncates the pathset before this call; here the
+        // byte budget only bounds response size.
         for path in paths.iter().skip(1) {
             if bytes_used >= byte_limit {
                 break;
@@ -2950,12 +3312,22 @@ impl Store {
         Ok(nodes)
     }
 
-    /// Creates a new state trie with an empty state root, for testing purposes only
-    pub fn new_state_trie_for_test(&self) -> Result<Trie, StoreError> {
-        self.open_state_trie(*EMPTY_TRIE_HASH)
-    }
-
     // Methods exclusive for trie management during snap-syncing
+
+    /// Snapshot the trie layer cache for reading at `state_root`, blocking until
+    /// that root's diff layer has been installed if it is still in-flight (see
+    /// [`PendingTrieRoots`]). This is the read barrier for deferred layer builds:
+    /// taking it at trie-open time guarantees the snapshot contains the layer, so
+    /// a just-added block's state is never read as stale. Roots that are not
+    /// pending (already installed, historical/committed, genesis) never block.
+    fn gated_snapshot(&self, state_root: H256) -> Result<Arc<TrieLayerCache>, StoreError> {
+        self.pending_trie_roots.wait_until_ready(state_root)?;
+        Ok(self
+            .trie_cache
+            .read()
+            .map_err(|_| StoreError::LockError)?
+            .clone())
+    }
 
     /// Obtain a state trie from the given state root
     /// Doesn't check if the state root is valid
@@ -2963,10 +3335,7 @@ impl Store {
     pub fn open_state_trie(&self, state_root: H256) -> Result<Trie, StoreError> {
         let trie_db = TrieWrapper::new(
             state_root,
-            self.trie_cache
-                .read()
-                .map_err(|_| StoreError::LockError)?
-                .clone(),
+            self.gated_snapshot(state_root)?,
             Box::new(BackendTrieDB::new_for_accounts(
                 self.backend.clone(),
                 self.last_written()?,
@@ -2995,10 +3364,7 @@ impl Store {
     pub fn open_locked_state_trie(&self, state_root: H256) -> Result<Trie, StoreError> {
         let trie_db = TrieWrapper::new(
             state_root,
-            self.trie_cache
-                .read()
-                .map_err(|_| StoreError::LockError)?
-                .clone(),
+            self.gated_snapshot(state_root)?,
             Box::new(state_trie_locked_backend(
                 self.backend.as_ref(),
                 self.last_written()?,
@@ -3018,10 +3384,7 @@ impl Store {
     ) -> Result<Trie, StoreError> {
         let trie_db = TrieWrapper::new(
             state_root,
-            self.trie_cache
-                .read()
-                .map_err(|_| StoreError::LockError)?
-                .clone(),
+            self.gated_snapshot(state_root)?,
             Box::new(BackendTrieDB::new_for_storages(
                 self.backend.clone(),
                 self.last_written()?,
@@ -3104,10 +3467,7 @@ impl Store {
     ) -> Result<Trie, StoreError> {
         let trie_db = TrieWrapper::new(
             state_root,
-            self.trie_cache
-                .read()
-                .map_err(|_| StoreError::LockError)?
-                .clone(),
+            self.gated_snapshot(state_root)?,
             Box::new(state_trie_locked_backend(
                 self.backend.as_ref(),
                 self.last_written()?,
@@ -3237,75 +3597,416 @@ impl Store {
         let account_nibbles = Nibbles::from_bytes(account.as_bytes());
         &last_written[0..64] > account_nibbles.as_ref()
     }
+
+    /// Returns the highest block number durably flushed to disk, or `0` when
+    /// the marker is absent. Use [`Self::read_flushed_upto_opt`] when you need
+    /// to distinguish "absent marker" (legacy DB, everything is durable) from
+    /// "marker present and equal to 0".
+    pub fn read_flushed_upto(&self) -> Result<BlockNumber, StoreError> {
+        Ok(self.read_flushed_upto_opt()?.unwrap_or(0))
+    }
+
+    /// Returns `None` when the marker has never been written — a legacy or fresh
+    /// DB where everything is durable and the head must not be clamped to 0.
+    fn read_flushed_upto_opt(&self) -> Result<Option<BlockNumber>, StoreError> {
+        let tx = self.backend.begin_read()?;
+        match tx.get(MISC_VALUES, FLUSHED_UPTO_KEY)? {
+            Some(bytes) => Ok(Some(decode_flushed_upto(&bytes)?)),
+            None => Ok(None),
+        }
+    }
+
+    /// Insert a block into the in-memory buffer without writing to disk.
+    /// For testing only — gates production code off.
+    #[cfg(any(test, feature = "testing"))]
+    pub fn buffer_block_for_test(&self, block: &Block) {
+        mutate_block_buffer(&self.block_data_buffer, |b| {
+            b.insert(block.clone(), vec![], vec![])
+        })
+        .expect("block_data_buffer lock poisoned");
+    }
+
+    /// Synchronously flush the block data buffer to disk.
+    /// For testing only — gates production code off.
+    #[cfg(any(test, feature = "testing"))]
+    pub fn flush_block_data_for_test(&self) -> Result<(), StoreError> {
+        flush_block_data(self.backend.as_ref(), &self.block_data_buffer)
+    }
+
+    /// Read a raw trie node straight from the on-disk account/storage trie-node
+    /// table by its committed key. For testing only — lets a reopen assert which
+    /// trie diff-layers a shutdown flush did (or did not) commit to disk.
+    #[cfg(any(test, feature = "testing"))]
+    pub fn get_trie_node_for_test(
+        &self,
+        is_account: bool,
+        key: &[u8],
+    ) -> Result<Option<Vec<u8>>, StoreError> {
+        let table = if is_account {
+            ACCOUNT_TRIE_NODES
+        } else {
+            STORAGE_TRIE_NODES
+        };
+        self.backend.begin_read()?.get(table, key)
+    }
+
+    /// Insert a block plus associated codes into the in-memory buffer without
+    /// writing to disk.  For testing only — proves the buffer overlay resolves
+    /// code that has not been persisted yet.
+    #[cfg(any(test, feature = "testing"))]
+    pub fn buffer_block_with_codes_for_test(&self, block: &Block, codes: Vec<(H256, Code)>) {
+        mutate_block_buffer(&self.block_data_buffer, |b| {
+            b.insert(block.clone(), vec![], codes)
+        })
+        .expect("block_data_buffer lock poisoned");
+    }
+
+    /// Mark a state root as in-flight (build pending) without doing a build.
+    /// For testing only — simulates the window where the persist worker has not
+    /// yet installed the layer, so reads at this root must block in
+    /// `gated_snapshot`.
+    #[cfg(any(test, feature = "testing"))]
+    pub fn register_pending_root_for_test(&self, root: H256) -> Result<(), StoreError> {
+        self.pending_trie_roots.register(root)
+    }
+
+    /// Clear an in-flight state root (simulates the worker having installed the
+    /// layer), unblocking readers waiting in `gated_snapshot`. For testing only.
+    #[cfg(any(test, feature = "testing"))]
+    pub fn clear_pending_root_for_test(&self, root: H256) {
+        self.pending_trie_roots.clear(root)
+    }
+
+    /// Boot-time recovery: clamp `latest_block_header` to the durable head.
+    ///
+    /// Durable head = `min(flushed_upto, latest)` when the marker is present
+    /// (buffered blocks past `flushed_upto` may be lost after a crash; the CL
+    /// re-sends them via `newPayload`). When the marker is absent the DB
+    /// predates deferred persistence and everything is on disk — use `latest`
+    /// as-is, never rewind to 0. On first boot the marker is seeded so a later
+    /// crash clamps against it rather than an absent (→ 0) marker.
+    ///
+    /// The marker tracks the max flushed *block number*, not which hash is
+    /// canonical at that height. A tip reorg inside the flush window — `Na` at
+    /// height N is flushed (marker = N), then `newPayload(Nb)` buffers a sibling
+    /// and FCU durably repoints `canonical[N]` to the still-unflushed `Nb` — can
+    /// leave `canonical[head]` resolving to a header that never reached disk if
+    /// we crash before `Nb` flushes. So we walk `head` down to the highest height
+    /// whose canonical hash actually resolves on disk rather than bricking with
+    /// `MissingLatestBlockNumber`. A legacy DB (no marker) is exempt: everything
+    /// there is durable, so a missing header is real corruption and must surface.
+    async fn anchor_to_durable_head(&self, latest: BlockNumber) -> Result<(), StoreError> {
+        let marker = self.read_flushed_upto_opt()?;
+        let start = match marker {
+            Some(flushed) => flushed.min(latest),
+            None => latest,
+        };
+
+        let mut head = start;
+        let latest_block_header = loop {
+            match self.load_block_header(head)? {
+                Some(header) => break header,
+                // Legacy/fresh DB: everything is supposed to be durable, so a
+                // missing header is real corruption — surface it, don't rewind.
+                None if marker.is_none() => return Err(StoreError::MissingLatestBlockNumber),
+                None if head == 0 => return Err(StoreError::MissingLatestBlockNumber),
+                None => {
+                    warn!(
+                        "durable head {head}: canonical hash has no on-disk header \
+                         (reorg inside flush window); rewinding"
+                    );
+                    head -= 1;
+                }
+            }
+        };
+        self.latest_block_header.update(latest_block_header);
+
+        // Re-anchor the persisted head when we moved below `latest`, and (re)write
+        // the marker to the resolved head: an absent marker is seeded to the
+        // durable baseline, and a walked-down head lowers the marker so a later
+        // crash clamps against a hash known to resolve.
+        let reanchor = head != latest;
+        let rewrite_marker = marker != Some(head);
+        if reanchor || rewrite_marker {
+            let mut tx = self.backend.begin_write()?;
+            if reanchor {
+                // Re-anchor the persisted head so `get_latest_block_number` and
+                // every downstream consumer agree with the clamped head.
+                let latest_key = chain_data_key(ChainDataIndex::LatestBlockNumber);
+                tx.put(CHAIN_DATA, &latest_key, &head.to_le_bytes())?;
+            }
+            if rewrite_marker {
+                write_flushed_upto(tx.as_mut(), head)?;
+            }
+            tx.commit()?;
+        }
+        Ok(())
+    }
 }
 
-type TrieNodesUpdate = Vec<(Nibbles, Vec<u8>)>;
+/// Writes the `flushed_upto` block number into an open write batch.
+///
+/// The caller is responsible for committing `tx` afterward.
+pub fn write_flushed_upto(
+    tx: &mut dyn StorageWriteBatch,
+    n: BlockNumber,
+) -> Result<(), StoreError> {
+    tx.put(MISC_VALUES, FLUSHED_UPTO_KEY, &n.to_le_bytes())
+}
 
-struct TrieUpdate {
-    result_sender: std::sync::mpsc::SyncSender<Result<(), StoreError>>,
+/// Decode an 8-byte little-endian `flushed_upto` marker value.
+///
+/// Returns an error for a present-but-malformed value so on-disk corruption is
+/// surfaced loudly rather than silently resetting the durable marker. Single
+/// source of truth for both `from_backend` and [`Store::read_flushed_upto`].
+fn decode_flushed_upto(bytes: &[u8]) -> Result<BlockNumber, StoreError> {
+    let arr: [u8; 8] = bytes
+        .try_into()
+        .map_err(|_| StoreError::Custom("Invalid flushed_upto bytes".to_string()))?;
+    Ok(BlockNumber::from_le_bytes(arr))
+}
+
+/// RCU-swap the block-data buffer. The persist worker is the sole caller in
+/// production (no lost-update race); test helpers also call this on one thread.
+fn mutate_block_buffer(
+    buffer: &Arc<RwLock<Arc<BlockDataBuffer>>>,
+    f: impl FnOnce(&mut BlockDataBuffer),
+) -> Result<(), StoreError> {
+    let mut new_buf = (*buffer.read().map_err(|_| StoreError::LockError)?.clone()).clone();
+    f(&mut new_buf);
+    *buffer.write().map_err(|_| StoreError::LockError)? = Arc::new(new_buf);
+    Ok(())
+}
+
+/// Default for [`StoreConfig::persist_channel_capacity`].
+const DEFAULT_PERSIST_CHANNEL_CAPACITY: usize = 2;
+
+/// One unit of work for the persist worker: stage block(s), build the trie
+/// diff-layer, flush to disk. `wait_for_flush` selects the ack point: `false`
+/// (live) acks after staging carrying the prior flush result; `true` (batch)
+/// acks after flush.
+struct BlockPersist {
+    blocks: Vec<(Block, Vec<Receipt>)>,
+    codes: Vec<(H256, Code)>,
     parent_state_root: H256,
     child_state_root: H256,
     account_updates: TrieNodesUpdate,
     storage_updates: Vec<(H256, TrieNodesUpdate)>,
-    is_batch: bool,
+    wait_for_flush: bool,
+    ack: std::sync::mpsc::SyncSender<Result<(), StoreError>>,
 }
 
-/// Messages handled by the trie-update background worker.
-///
-/// `Ping` is a no-op the worker handles between real updates. Because the
-/// worker channel is `sync_channel(0)` (rendezvous), a successful `Ping` send
-/// proves the worker has finished its previous iteration (Phase 1+2+3) and is
-/// blocked back at `recv()` — i.e. persistence is idle. See
-/// `Store::wait_for_persistence_idle`.
-enum TrieMessage {
-    Update(TrieUpdate),
-    Ping,
+/// Messages for the persist worker. `Ping(ack)` is the idle handshake for
+/// [`Store::wait_for_persistence_idle`]: the FIFO worker handles it only after
+/// all earlier `Block` messages are fully processed.
+enum PersistMessage {
+    Block(BlockPersist),
+    /// Flush the committable layer backlog up to and including this state root, then
+    /// prune the flushed layers. Sent by `forkchoice_update` when the safe-commit root
+    /// advances: the commit step otherwise only runs while blocks execute, so an
+    /// execute-all-then-one-forkchoice flow (e.g. block import) would accumulate every
+    /// layer and never persist anything to disk.
+    Commit(H256),
+    Ping(std::sync::mpsc::SyncSender<Result<(), StoreError>>),
+    /// Graceful-shutdown handshake. Handled only after every earlier `Block`
+    /// (FIFO), so it both drains in-flight work and force-flushes the block-data
+    /// buffer to disk. The trie diff-layers are deliberately left in memory (see
+    /// [`Store::shutdown`]). The worker acks and exits.
+    Shutdown {
+        ack: std::sync::mpsc::SyncSender<Result<(), StoreError>>,
+    },
 }
 
-// NOTE: we don't receive `Store` here to avoid cyclic dependencies
-// with the other end of `fkv_ctl`
-fn apply_trie_updates(
-    backend: &dyn StorageBackend,
-    fkv_ctl: &SyncSender<FKVGeneratorControlMessage>,
-    trie_cache: &Arc<RwLock<Arc<TrieLayerCache>>>,
-    trie_update: TrieUpdate,
+/// Write one block's header, body, number, and tx locations into an open batch.
+/// Shared by [`Store::add_blocks`] (sync import) and [`flush_block_data`]
+/// (deferred flush) so the on-disk encoding stays in lockstep. Receipts and codes
+/// are written by callers that need them (only `flush_block_data` does).
+fn write_block_data(
+    tx: &mut dyn StorageWriteBatch,
+    number: BlockNumber,
+    hash: BlockHash,
+    header: &BlockHeader,
+    body: &BlockBody,
 ) -> Result<(), StoreError> {
-    let TrieUpdate {
-        result_sender,
-        parent_state_root,
-        child_state_root,
-        account_updates,
-        storage_updates,
-        is_batch,
-    } = trie_update;
+    let hash_key = hash.encode_to_vec();
+    tx.put(
+        HEADERS,
+        &hash_key,
+        BlockHeaderRLP::from(header.clone()).bytes(),
+    )?;
+    tx.put(
+        BODIES,
+        &hash_key,
+        BlockBodyRLP::from_bytes(body.encode_to_vec()).bytes(),
+    )?;
+    tx.put(BLOCK_NUMBERS, &hash_key, &number.to_le_bytes())?;
+    for (index, transaction) in body.transactions.iter().enumerate() {
+        tx.merge(
+            TRANSACTION_LOCATIONS,
+            transaction.hash(&NativeCrypto).as_bytes(),
+            &encode_tx_location_operand(number, hash, index as u64),
+        )?;
+    }
+    Ok(())
+}
 
-    // Phase 1: update the in-memory diff-layers only, then notify block production.
-    let new_layer = storage_updates
-        .into_iter()
-        .flat_map(|(account_hash, nodes)| {
-            nodes
-                .into_iter()
-                .map(move |(path, node)| (apply_prefix(Some(account_hash), path), node))
-        })
-        .chain(account_updates)
-        .collect();
-    // Read-Copy-Update the trie cache with a new layer.
+/// Write all unflushed blocks to disk in one tx, advance `flushed_upto`, then
+/// evict. Eviction is gap-safe: blocks stay buffered until the commit succeeds.
+fn flush_block_data(
+    backend: &dyn StorageBackend,
+    buffer: &Arc<RwLock<Arc<BlockDataBuffer>>>,
+) -> Result<(), StoreError> {
+    let snapshot = buffer.read().map_err(|_| StoreError::LockError)?.clone();
+    let to_flush = snapshot.flushable();
+    if to_flush.is_empty() {
+        return Ok(());
+    }
+    let hashes: Vec<_> = to_flush.iter().map(|b| b.header.hash()).collect();
+    let codes = snapshot.codes_for(&hashes);
+    let mut max_number = snapshot.flushed_upto();
+
+    let mut tx = backend.begin_write()?;
+    for b in &to_flush {
+        let hash = b.header.hash();
+        write_block_data(tx.as_mut(), b.number, hash, &b.header, &b.body)?;
+        for (index, receipt) in b.receipts.iter().enumerate() {
+            tx.put(
+                RECEIPTS_V2,
+                &receipt_key(&hash, index as u64),
+                &receipt.encode_to_vec(),
+            )?;
+        }
+        max_number = max_number.max(b.number);
+    }
+    for (code_hash, code) in codes {
+        let buf = encode_code(&code);
+        tx.put(ACCOUNT_CODES, code_hash.as_ref(), &buf)?;
+        tx.put(
+            ACCOUNT_CODE_METADATA,
+            code_hash.as_ref(),
+            &(code.len() as u64).to_be_bytes(),
+        )?;
+    }
+    write_flushed_upto(tx.as_mut(), max_number)?;
+    tx.commit()?;
+
+    // Phase 3: evict only after the commit succeeded (gap safety).
+    mutate_block_buffer(buffer, |b| b.evict_flushed(max_number))
+}
+
+type TrieNodesUpdate = Vec<(Nibbles, Vec<u8>)>;
+
+/// Tracks state roots whose trie diff-layer is in-flight (building but not yet
+/// installed in `trie_cache`). `apply_updates` registers a root *before*
+/// returning; the worker clears it *after* swapping the layer in. This ordering
+/// is mandatory: a reader opening a trie at a pending root blocks until the
+/// layer is installed, preventing stale on-disk reads.
+#[derive(Debug, Default)]
+struct PendingTrieRoots {
+    /// Fast-path: when zero, nothing is in flight and readers skip the lock.
+    count: AtomicUsize,
+    roots: Mutex<HashSet<H256>>,
+    ready: Condvar,
+}
+
+impl PendingTrieRoots {
+    /// Mark `root` as in-flight. MUST be called before the build is handed to
+    /// the worker (so the worker's `clear` always finds it) and before the head
+    /// can advance to `root` (so any reader that can reference it sees it pending).
+    fn register(&self, root: H256) -> Result<(), StoreError> {
+        let mut roots = self.roots.lock().map_err(|_| StoreError::LockError)?;
+        if roots.insert(root) {
+            self.count.fetch_add(1, Ordering::Release);
+        }
+        Ok(())
+    }
+
+    /// Mark `root` as installed and wake any waiting readers. MUST be called only
+    /// after the layer is swapped into `trie_cache`, so a woken reader sees it.
+    /// Best-effort: a poisoned lock means a reader's `wait_until_ready` also errors,
+    /// so no reader deadlocks.
+    fn clear(&self, root: H256) {
+        let Ok(mut roots) = self.roots.lock() else {
+            return;
+        };
+        if roots.remove(&root) {
+            self.count.fetch_sub(1, Ordering::Release);
+            self.ready.notify_all();
+        }
+    }
+
+    /// Block until `root` is no longer in-flight (its layer is installed). Returns
+    /// immediately on the fast path when nothing is pending.
+    fn wait_until_ready(&self, root: H256) -> Result<(), StoreError> {
+        if self.count.load(Ordering::Acquire) == 0 {
+            return Ok(());
+        }
+        let mut roots = self.roots.lock().map_err(|_| StoreError::LockError)?;
+        while roots.contains(&root) {
+            roots = self.ready.wait(roots).map_err(|_| StoreError::LockError)?;
+        }
+        Ok(())
+    }
+}
+
+/// Build the trie diff-layer, RCU-swap it into `trie_cache`, then clear the
+/// pending root. Swap MUST precede the clear so a woken reader sees the layer.
+/// On swap failure the root is still cleared so gated readers error, not deadlock.
+fn apply_trie_phase1(
+    trie_cache: &Arc<RwLock<Arc<TrieLayerCache>>>,
+    pending_roots: &PendingTrieRoots,
+    parent_state_root: H256,
+    child_state_root: H256,
+    account_updates: TrieNodesUpdate,
+    storage_updates: Vec<(H256, TrieNodesUpdate)>,
+) -> Result<(), StoreError> {
+    let build: Result<(), StoreError> = (|| {
+        let new_layer = storage_updates
+            .into_iter()
+            .flat_map(|(account_hash, nodes)| {
+                nodes
+                    .into_iter()
+                    .map(move |(path, node)| (apply_prefix(Some(account_hash), path), node))
+            })
+            .chain(account_updates)
+            .collect();
+        let trie = trie_cache
+            .read()
+            .map_err(|_| StoreError::LockError)?
+            .clone();
+        let mut trie_mut = (*trie).clone();
+        trie_mut.put_batch(parent_state_root, child_state_root, new_layer);
+        *trie_cache.write().map_err(|_| StoreError::LockError)? = Arc::new(trie_mut);
+        Ok(())
+    })();
+    // Always clear the pending root, whether or not the swap succeeded: on success
+    // readers see the installed layer; on failure (poisoning) the lock is poisoned
+    // so gated readers error rather than read stale, and we must not leave them
+    // blocked forever.
+    pending_roots.clear(child_state_root);
+    build
+}
+
+/// Flush and prune the committable trie-layer backlog. No-ops when nothing is committable.
+///
+/// `is_batch` selects the gate: batch execution (full sync / import) commits by depth
+/// (`BATCH_COMMIT_THRESHOLD`), because the canonical `head - 128` safe-commit root never lands
+/// on a batch layer boundary; live block-by-block execution uses the canonical safe-commit gate
+/// (`TrieLayerCache::get_commitable`) so non-canonical `newPayload` state is never persisted.
+fn commit_trie_if_due(
+    backend: &dyn StorageBackend,
+    trie_cache: &Arc<RwLock<Arc<TrieLayerCache>>>,
+    fkv_ctl: &SyncSender<FKVGeneratorControlMessage>,
+    parent_state_root: H256,
+    is_batch: bool,
+) -> Result<(), StoreError> {
     let trie = trie_cache
         .read()
         .map_err(|_| StoreError::LockError)?
         .clone();
-    let mut trie_mut = (*trie).clone();
-    trie_mut.put_batch(parent_state_root, child_state_root, new_layer);
-    let trie = Arc::new(trie_mut);
-    *trie_cache.write().map_err(|_| StoreError::LockError)? = trie.clone();
-    // Update finished, signal block processing.
-    result_sender
-        .send(Ok(()))
-        .map_err(|_| StoreError::LockError)?;
-
-    // Phase 2: update disk layer.
+    // Phase 2 + 3: flush and prune the committable backlog.
     let commitable = if is_batch {
-        trie.get_commitable_with_threshold(parent_state_root, BATCH_COMMIT_THRESHOLD)
+        trie.get_commitable_by_depth(parent_state_root, BATCH_COMMIT_THRESHOLD)
     } else {
         trie.get_commitable(parent_state_root)
     };
@@ -3313,12 +4014,31 @@ fn apply_trie_updates(
         // Nothing to commit to disk, move on.
         return Ok(());
     };
+    commit_to_disk(backend, fkv_ctl, trie_cache, &trie, root)
+}
+
+/// Flush the layer at `root` and all older ancestors to disk, then prune them from the
+/// in-memory cache (Phases 2 and 3 of the persistence pipeline).
+///
+/// `trie` must be the current cache snapshot and `root` a committable layer (as returned
+/// by [`TrieLayerCache::get_commitable`]). A `root` that is not a layer commits nothing.
+///
+/// Reused by both the per-block path ([`commit_trie_if_due`]) and the forkchoice-driven
+/// flush ([`PersistMessage::Commit`]): without the latter, an execute-all-then-one-forkchoice
+/// flow (block import) would never persist, because the commit step only runs while blocks execute.
+fn commit_to_disk(
+    backend: &dyn StorageBackend,
+    fkv_ctl: &SyncSender<FKVGeneratorControlMessage>,
+    trie_cache: &Arc<RwLock<Arc<TrieLayerCache>>>,
+    trie: &Arc<TrieLayerCache>,
+    root: H256,
+) -> Result<(), StoreError> {
     // Stop the flat-key-value generator thread, as the underlying trie is about to change.
     // Ignore the error, if the channel is closed it means there is no worker to notify.
     let _ = fkv_ctl.send(FKVGeneratorControlMessage::Stop);
 
     // RCU to remove the bottom layer: update step needs to happen after disk layer is updated.
-    let mut trie_mut = (*trie).clone();
+    let mut trie_mut = (**trie).clone();
 
     let last_written = backend
         .begin_read()?
@@ -3561,7 +4281,10 @@ impl Iterator for AncestorIterator {
 
     fn next(&mut self) -> Option<Self::Item> {
         let next_hash = self.next_hash;
-        match self.store.load_block_header_by_hash(next_hash) {
+        // Buffer-aware: a not-yet-flushed ancestor (e.g. on a side branch during
+        // a reorg) must be visible here, or a BLOCKHASH opcode resolving through
+        // this walk would wrongly reject a valid block.
+        match self.store.get_block_header_by_hash(next_hash) {
             Ok(Some(header)) => {
                 let ret_hash = self.next_hash;
                 self.next_hash = header.parent_hash;
@@ -4117,7 +4840,7 @@ mod datadir_tests {
     #[test]
     fn dir_with_marker_named_subdirectories_has_no_existing_db() {
         // A *directory* named like a marker file must not be mistaken for a DB;
-        // RocksDB only ever writes these as plain files.
+        // RocksDB only ever visits these as plain files.
         let dir = tempfile::tempdir().unwrap();
         fs::create_dir(dir.path().join("CURRENT")).unwrap();
         fs::create_dir(dir.path().join("MANIFEST-000001")).unwrap();

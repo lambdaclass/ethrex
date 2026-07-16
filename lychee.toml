@@ -1,0 +1,28 @@
+# Configuration for the lychee link checker (Link Check CI job).
+# https://lychee.cli.rs/usage/config/
+
+# Cache per-URL results between runs; persisted across CI runs via actions/cache.
+cache = true
+max_cache_age = "2d"
+
+# Retry transient network failures before declaring a link dead.
+max_retries = 3
+retry_wait_time = 2
+
+# Don't fail the build on rate-limiting / transient upstream errors.
+# 2xx are the successes; 429 (too many requests) and 503 (service
+# unavailable) are almost always flaky hosts rather than broken links.
+accept = ["200..=299", "429", "503"]
+
+# Hosts that are unreliable for automated checking or block bots outright.
+exclude = [
+  "localhost",
+  "medium\\.com",
+  "mirror\\.xyz",
+  "etherscan\\.io",
+]
+
+# SUMMARY.md uses intentional mdBook draft chapters (empty links), which
+# lychee reports as errors. Its structure is already validated by
+# `mdbook build` in the Lint job, so link-checking it is redundant.
+exclude_path = ["docs/SUMMARY.md"]
