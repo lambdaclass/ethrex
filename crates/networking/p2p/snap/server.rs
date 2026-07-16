@@ -12,6 +12,20 @@ use super::constants::MAX_RESPONSE_BYTES;
 use super::error::SnapError;
 use super::proof_to_encodable;
 
+/// Maximum number of item lookups served per snap serving request that walks a peer-supplied
+/// list (`GetByteCodes` hashes, `GetStorageRanges` account hashes, `GetTrieNodes` paths).
+///
+/// Each item is a DB/trie probe (a trie-node lookup traverses several nodes). The response-byte
+/// clamp only advances on a *hit*, so an all-miss/empty request returns almost nothing yet
+/// still probes every item — O(N) disk/CPU work the message-rate limiter (which counts
+/// messages, not items) doesn't catch. Capping the item *count* bounds that walk directly.
+///
+/// Sits comfortably above our own client's request batches (`NODE_BATCH_SIZE` = 500,
+/// `STORAGE_BATCH_SIZE` = 300), and snap responses may be partial, so an honest peer whose
+/// request exceeds the cap simply re-requests the remainder. 1024 is in line with geth's
+/// per-request lookup caps, taken here as a reference point.
+pub const MAX_SERVE_LOOKUPS: usize = 1024;
+
 // Request Processing
 
 pub async fn process_account_range_request(
@@ -60,7 +74,10 @@ pub async fn process_storage_ranges_request(
         let mut proof = vec![];
         let mut bytes_used = 0;
 
-        for hashed_address in request.account_hashes {
+        // Cap the number of accounts probed per request (`MAX_SERVE_LOOKUPS`): each opens a
+        // storage trie, and an all-miss `account_hashes` list returns nothing, so the byte
+        // budget alone wouldn't bound the walk. Partial responses are protocol-legal.
+        for hashed_address in request.account_hashes.into_iter().take(MAX_SERVE_LOOKUPS) {
             let mut account_slots = vec![];
             let mut res_capped = false;
 
@@ -95,6 +112,8 @@ pub async fn process_storage_ranges_request(
                 ));
             }
 
+            // Absent accounts / empty ranges return no slots and aren't included; the
+            // lookup-count cap (not a byte charge) bounds an all-miss `account_hashes` walk.
             if !account_slots.is_empty() {
                 slots.push(account_slots);
             }
@@ -124,8 +143,13 @@ pub async fn process_byte_codes_request(
         let byte_budget = request.bytes.min(MAX_RESPONSE_BYTES);
         let mut codes = vec![];
         let mut bytes_used = 0;
-        for code_hash in request.hashes {
-            if let Some(code) = store.get_account_code(code_hash)?.map(|c| c.code_bytes()) {
+        // Cap the number of bytecodes served per request (`MAX_SERVE_LOOKUPS`), bounding disk
+        // lookups regardless of the byte budget — including an all-miss walk, which returns
+        // almost nothing so the byte budget alone wouldn't stop it. Partial responses are
+        // protocol-legal.
+        for code_hash in request.hashes.into_iter().take(MAX_SERVE_LOOKUPS) {
+            if let Some(code) = store.get_account_code(code_hash)? {
+                let code = code.code_bytes();
                 bytes_used += code.len() as u64;
                 codes.push(code);
             }
@@ -151,21 +175,35 @@ pub async fn process_trie_nodes_request(
         // Clamp the peer-supplied budget so a single request cannot pull an unbounded
         // number of trie nodes into memory.
         let mut byte_budget = request.bytes.min(MAX_RESPONSE_BYTES);
+        // Hard cap on the number of trie-node lookups per request. Each lookup traverses the
+        // trie, so this bounds disk/CPU work directly; the byte budget only caps response size.
+        // Tracked across pathsets and applied *before* the lookup so an oversized pathset can't
+        // blow past it in a single call.
+        let mut remaining_lookups = MAX_SERVE_LOOKUPS;
         for paths in request.paths {
             if paths.is_empty() {
                 return Err(SnapError::BadRequest(
                     "zero-item pathset requested".to_string(),
                 ));
             }
-            let trie_nodes = store.get_trie_nodes(
-                request.root_hash,
-                paths.into_iter().map(|bytes| bytes.to_vec()).collect(),
-                byte_budget,
-            )?;
+            // Every entry in a pathset is a separate trie lookup. Truncate the pathset to the
+            // remaining lookup budget (partial responses are protocol-legal) so the count cap
+            // bounds the work actually done — otherwise a peer could pack many all-miss paths
+            // into a single pathset and probe them all in one call.
+            let paths: Vec<_> = paths
+                .into_iter()
+                .take(remaining_lookups)
+                .map(|bytes| bytes.to_vec())
+                .collect();
+            remaining_lookups -= paths.len();
+            let trie_nodes = store.get_trie_nodes(request.root_hash, paths, byte_budget)?;
+            let returned_bytes = trie_nodes
+                .iter()
+                .fold(0u64, |acc, nodes| acc + nodes.len() as u64);
             nodes.extend(trie_nodes.iter().map(|nodes| Bytes::copy_from_slice(nodes)));
-            byte_budget = byte_budget
-                .saturating_sub(trie_nodes.iter().fold(0, |acc, nodes| acc + nodes.len()) as u64);
-            if byte_budget == 0 {
+            // Byte budget bounds response *size*; the lookup-count cap bounds the walk.
+            byte_budget = byte_budget.saturating_sub(returned_bytes);
+            if byte_budget == 0 || remaining_lookups == 0 {
                 break;
             }
         }

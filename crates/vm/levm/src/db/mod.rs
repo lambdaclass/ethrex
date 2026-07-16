@@ -33,6 +33,18 @@ pub trait Database: Send + Sync {
     fn precompile_cache(&self) -> Option<&PrecompileCache> {
         None
     }
+    /// Batch lookup. Default: loop. Backends with a batched read path (e.g. rocksdb
+    /// `multi_get_cf` on the flat key-value table) should override this and the
+    /// caching layer above will dispatch to it.
+    fn get_account_states_batch(
+        &self,
+        addresses: &[Address],
+    ) -> Result<Vec<AccountState>, DatabaseError> {
+        addresses
+            .iter()
+            .map(|a| self.get_account_state(*a))
+            .collect()
+    }
     /// Prefetch a batch of accounts into the cache. Default: sequential fallback.
     fn prefetch_accounts(&self, addresses: &[Address]) -> Result<(), DatabaseError> {
         for &addr in addresses {
@@ -234,15 +246,25 @@ impl Database for CachingDatabase {
         self.precompile_cache.as_ref()
     }
 
-    #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
     fn prefetch_accounts(&self, addresses: &[Address]) -> Result<(), DatabaseError> {
-        // Fetch from inner in parallel (no lock contention), then single write-lock to populate cache.
-        let fetched: Vec<(Address, AccountState)> = addresses
-            .par_iter()
-            .map(|&addr| self.inner.get_account_state(addr).map(|s| (addr, s)))
-            .collect::<Result<_, _>>()?;
+        // Filter out already-cached addresses before issuing the batch read.
+        let missing: Vec<Address> = {
+            let cache = self.read_accounts()?;
+            addresses
+                .iter()
+                .copied()
+                .filter(|a| !cache.contains_key(a))
+                .collect()
+        };
+        if missing.is_empty() {
+            return Ok(());
+        }
+        // Dispatch to inner's batch path. For the rocksdb-backed StoreVmDatabase
+        // this collapses into a single multi_get on ACCOUNT_FLATKEYVALUE for the
+        // FKV-covered subset; default impl loops for other backends.
+        let states = self.inner.get_account_states_batch(&missing)?;
         let mut cache = self.write_accounts()?;
-        for (addr, state) in fetched {
+        for (addr, state) in missing.into_iter().zip(states.into_iter()) {
             cache.entry(addr).or_insert(state);
         }
         Ok(())
