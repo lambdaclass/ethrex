@@ -12,6 +12,14 @@
 
 ## Perf
 
+### 2026-07-06
+
+- Warm state caches between blocks by speculatively executing top-of-mempool transactions [#6967](https://github.com/lambdaclass/ethrex/pull/6967)
+
+### 2026-07-01
+
+- Precompute the `eth_getLogs` filter's address/topic blooms once instead of re-deriving them per block, removing redundant hashing from the header-bloom prefilter on wide-range queries [#6895](https://github.com/lambdaclass/ethrex/pull/6895)
+
 ### 2026-06-29
 
 - Thread `Arc<BlockAccessList>` through the block pipeline to avoid an O(BAL-size) deep clone of the Block Access List (and its validation index) per block on the parallel execution path [#6829](https://github.com/lambdaclass/ethrex/pull/6829)

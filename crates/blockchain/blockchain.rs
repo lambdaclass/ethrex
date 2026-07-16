@@ -47,6 +47,7 @@ pub mod error;
 pub mod fork_choice;
 pub mod mempool;
 pub mod payload;
+pub mod prewarm;
 pub mod tracing;
 pub mod vm;
 
@@ -126,6 +127,9 @@ use ethrex_common::types::BlobsBundle;
 
 const MAX_PAYLOADS: usize = 10;
 const MAX_MEMPOOL_SIZE_DEFAULT: usize = 10_000;
+/// Default mempool occupancy percentage (0-100) at which gapped-nonce
+/// transaction admission is denied. Set to 100 to disable the check.
+pub const DEFAULT_GAP_ADMIT_OCCUPANCY_THRESHOLD: u8 = 90;
 
 /// Background thread for dropping large tree structures off the critical path.
 /// Accepts any `Send` value and drops it on a dedicated thread, avoiding
@@ -229,6 +233,39 @@ pub struct Blockchain {
     /// production path keeps the original semantics (one fresh pool per call
     /// to `Blockchain::new` / `default_with_store`).
     merkle_pool: Arc<rayon::ThreadPool>,
+    /// Cache handoff slot from the mempool prewarmer to
+    /// `execute_block_pipeline`; see `PrewarmedCache` and `crate::prewarm`.
+    prewarmed: PrewarmedCache,
+}
+
+/// Newtype around the prewarmer's cache-handoff slot so `Blockchain` can keep
+/// deriving `Debug` (`dyn LevmDatabase` has no `Debug` impl).
+///
+/// Alongside the parent hash, the slot carries the fork the prewarmer warmed
+/// under: the precompile cache maps `(address, calldata) -> (output, gas)`
+/// with no fork in the key, and precompile gas/outputs change at forks
+/// (e.g. EIP-7883). A missed slot across a fork activation would otherwise
+/// hand post-fork execution pre-fork entries and reject a valid block.
+#[derive(Default)]
+pub(crate) struct PrewarmedCache(pub(crate) std::sync::Mutex<Option<PrewarmedEntry>>);
+
+/// Contents of the handoff slot.
+pub(crate) struct PrewarmedEntry {
+    /// Parent block the cache was built on.
+    pub(crate) parent_hash: H256,
+    /// Fork the cache was warmed under.
+    pub(crate) fork: Fork,
+    pub(crate) cache: Arc<dyn ethrex_vm::backends::LevmDatabase>,
+}
+
+impl std::fmt::Debug for PrewarmedCache {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let state = match self.0.lock() {
+            Ok(slot) => slot.as_ref().map(|entry| (entry.parent_hash, entry.fork)),
+            Err(_) => None,
+        };
+        f.debug_tuple("PrewarmedCache").field(&state).finish()
+    }
 }
 
 /// Configuration options for the blockchain.
@@ -269,6 +306,10 @@ pub struct BlockchainOptions {
     /// `--no-bal-parallel-trie`) to fall back to streaming `AccountUpdate`s from
     /// the executor and merkleizing post-execution.
     pub bal_parallel_trie_enabled: bool,
+    /// Mempool occupancy percentage (0-100) at or above which incoming
+    /// transactions with a nonce gap relative to the sender's on-chain nonce
+    /// are rejected. Setting to 100 disables the check.
+    pub gap_admit_occupancy_threshold: u8,
 }
 
 impl Default for BlockchainOptions {
@@ -284,6 +325,7 @@ impl Default for BlockchainOptions {
             bal_parallel_exec_enabled: true,
             bal_prefetch_enabled: true,
             bal_parallel_trie_enabled: true,
+            gap_admit_occupancy_threshold: DEFAULT_GAP_ADMIT_OCCUPANCY_THRESHOLD,
         }
     }
 }
@@ -394,6 +436,7 @@ impl Blockchain {
             payloads: Arc::new(TokioMutex::new(Vec::new())),
             options: blockchain_opts,
             merkle_pool: Self::build_merkle_pool(),
+            prewarmed: PrewarmedCache::default(),
         }
     }
 
@@ -414,6 +457,7 @@ impl Blockchain {
             payloads: Arc::new(TokioMutex::new(Vec::new())),
             options: BlockchainOptions::default(),
             merkle_pool: pool,
+            prewarmed: PrewarmedCache::default(),
         }
     }
 
@@ -425,6 +469,7 @@ impl Blockchain {
             payloads: Arc::new(TokioMutex::new(Vec::new())),
             options: BlockchainOptions::default(),
             merkle_pool: Self::build_merkle_pool(),
+            prewarmed: PrewarmedCache::default(),
         }
     }
 
@@ -559,11 +604,34 @@ impl Blockchain {
         let mut max_queue_length = 0;
 
         // Wrap the store with CachingDatabase so both warming and execution
-        // can benefit from shared caching of state lookups
+        // can benefit from shared caching of state lookups. If the mempool
+        // prewarmer published a cache built on this block's parent state,
+        // seed execution with it when the parent hash and fork match (why
+        // both must match: see `PrewarmedCache` and the `CachingDatabase`
+        // invariant). Witness collection must start cold — pre-populated
+        // entries would hide reads from the witness logger beneath the cache.
         let original_store = vm.db.store.clone();
-        let caching_store: Arc<dyn ethrex_vm::backends::LevmDatabase> = Arc::new(
-            CachingDatabase::new(original_store, self.options.precompile_cache_enabled),
-        );
+        let prewarmed = (!collect_witness)
+            .then(|| {
+                self.prewarmed
+                    .0
+                    .lock()
+                    .ok()
+                    .and_then(|mut slot| slot.take())
+            })
+            .flatten()
+            .and_then(|entry| {
+                let block_fork = self.storage.get_chain_config().fork(block.header.timestamp);
+                (entry.parent_hash == block.header.parent_hash && entry.fork == block_fork)
+                    .then_some(entry.cache)
+            });
+        let caching_store: Arc<dyn ethrex_vm::backends::LevmDatabase> = match prewarmed {
+            Some(cache) => cache,
+            None => Arc::new(CachingDatabase::new(
+                original_store,
+                self.options.precompile_cache_enabled,
+            )),
+        };
 
         // Replace the VM's store with the caching version
         vm.db.store = caching_store.clone();
@@ -3175,6 +3243,15 @@ impl Blockchain {
     ) -> Result<(Option<H256>, Option<FramePaymasterReservation>, Option<u64>), MempoolError> {
         let nonce = tx.nonce();
 
+        // On an L1 node, reject L2-only transaction types (FeeToken 0x7d,
+        // PrivilegedL2 0x7e). They are valid only on L2; admitting them to an L1
+        // pool diverges from other L1 clients. The block-import path rejects them
+        // via the same `is_l2_only()` guard (#6752); this is the mempool-ingress
+        // side. Gated on L1 so the shared admission path still serves L2.
+        if matches!(self.options.r#type, BlockchainType::L1) && tx.tx_type().is_l2_only() {
+            return Err(MempoolError::L2OnlyTransactionType);
+        }
+
         if matches!(tx, &Transaction::PrivilegedL2Transaction(_)) {
             return Ok((None, None, None));
         }
@@ -3361,16 +3438,24 @@ impl Blockchain {
             }
         };
 
+        // Compute the new tx's cost once and reuse for both the single-tx
+        // balance check and the cumulative-balance check below.
+        let tx_cost = tx
+            .cost_without_base_fee()
+            .ok_or(MempoolError::InvalidTxGasvalues)?;
+
         let maybe_sender_acc_info = self.storage.get_account_info(header_no, sender).await?;
-        // Sender's on-chain nonce, threaded out to `add_transaction` so the
-        // per-account queued (future/nonce-gapped) cap is enforced *atomically*
-        // under the insertion write lock (see `QueuedCap`) instead of via a
-        // separate, racy pre-check here. geth `AccountQueue` style: only future
-        // (nonce-gapped) txs count; executable/contiguous txs are never capped,
-        // and replacements pass because the caller removes the old tx first.
+        // Sender's on-chain nonce, used for two things below: (1) threaded out to
+        // `add_transaction` so the per-account queued (future/nonce-gapped) cap is
+        // enforced *atomically* under the insertion write lock (see `QueuedCap`)
+        // instead of via a separate, racy pre-check — geth `AccountQueue` style:
+        // only future (nonce-gapped) txs count, executable/contiguous txs are never
+        // capped, and replacements pass because the caller removes the old tx first;
+        // and (2) excluding obsoleted (already-mined but not-yet-pruned) txs from the
+        // cumulative-balance sum.
         let sender_account_nonce = maybe_sender_acc_info.as_ref().map(|info| info.nonce);
 
-        if let Some(sender_acc_info) = maybe_sender_acc_info {
+        let sender_balance = if let Some(sender_acc_info) = maybe_sender_acc_info {
             if nonce < sender_acc_info.nonce || nonce == u64::MAX {
                 return Err(MempoolError::NonceTooLow);
             }
@@ -3419,16 +3504,12 @@ impl Blockchain {
                 }
             }
 
-            // Skip balance check for frame txs (payer unknown until execution)
-            if !is_frame_tx {
-                let tx_cost = tx
-                    .cost_without_base_fee()
-                    .ok_or(MempoolError::InvalidTxGasvalues)?;
-
-                if tx_cost > sender_acc_info.balance {
-                    return Err(MempoolError::NotEnoughBalance);
-                }
+            // Skip the balance check for frame txs (payer unknown until execution).
+            if !is_frame_tx && tx_cost > sender_acc_info.balance {
+                return Err(MempoolError::NotEnoughBalance);
             }
+
+            sender_acc_info.balance
         } else if !is_frame_tx {
             // An account that is not in the database cannot possibly have enough balance to cover the transaction cost
             return Err(MempoolError::NotEnoughBalance);
@@ -3444,17 +3525,79 @@ impl Blockchain {
             if nonce == u64::MAX {
                 return Err(MempoolError::NonceTooLow);
             }
-        }
+            // Frame txs skip the cumulative balance check below, so this
+            // sentinel is never read; it only satisfies the block's type.
+            U256::zero()
+        };
+
+        // On-chain nonce for the gap-admission check below (0 for a
+        // not-yet-existent sender, matching the implied EIP-8141 nonce).
+        let sender_acc_nonce = sender_account_nonce.unwrap_or(0);
 
         // Check the nonce of pendings TXs in the mempool from the same sender
         // If it exists check if the new tx has higher fees
         let tx_to_replace_hash = self.mempool.find_tx_to_replace(sender, nonce, tx)?;
+
+        // Cumulative balance check across this sender's pending transactions.
+        // Without this, a sender at the per-sender slot cap can have only one
+        // of their N pending txs be fundable, with the other N-1 being
+        // guaranteed-fail spam wasting pool space.
+        //
+        // `sum_cost_for_sender` recomputes the sender total excluding the
+        // tx being replaced (instead of subtracting after the fact) so a
+        // `None`-cost or missing tx can't silently zero the total via
+        // `MAX - MAX = 0`. It also fails closed on any inconsistency so the
+        // gate can't be bypassed by an invariant violation. Obsoleted txs
+        // (nonce below the sender's on-chain nonce — already mined but not yet
+        // pruned) are excluded so they don't inflate the required balance.
+        //
+        // Skipped for frame txs: their payer is unknown until execution, so
+        // (matching the single-tx balance check above) they are not gated on
+        // the sender's balance.
+        if !is_frame_tx {
+            let existing_cost = self.mempool.sum_cost_for_sender(
+                sender,
+                sender_account_nonce.unwrap_or(0),
+                tx_to_replace_hash,
+            )?;
+            let total = existing_cost
+                .checked_add(tx_cost)
+                .ok_or(MempoolError::InvalidTxGasvalues)?;
+            if total > sender_balance {
+                return Err(MempoolError::InsufficientCumulativeBalance {
+                    required: total,
+                    available: sender_balance,
+                });
+            }
+        }
 
         if tx
             .chain_id()
             .is_some_and(|chain_id| chain_id != config.chain_id)
         {
             return Err(MempoolError::InvalidChainId(config.chain_id));
+        }
+
+        // When the mempool is heavily occupied, reject incoming transactions
+        // whose nonce is not contiguous with the sender's on-chain nonce. This
+        // prevents a flood of gapped-nonce spam txs from pinning pool budget
+        // that productive txs could use. Replacements (same nonce as a tx
+        // already in the pool) bypass this rule since they are not gapped.
+        //
+        // Read occupancy once and reuse it for both the gate check and the
+        // error message — taking the read lock twice (a separate check plus a
+        // re-read for the message) would allow TOCTOU drift where the reported
+        // occupancy differs from the value the gate fired on.
+        let threshold = self.options.gap_admit_occupancy_threshold;
+        if tx_to_replace_hash.is_none() && nonce != sender_acc_nonce && threshold < 100 {
+            let occupancy_pct = self.mempool.occupancy_pct()?;
+            if occupancy_pct >= threshold {
+                let nonce_gap = nonce.saturating_sub(sender_acc_nonce);
+                return Err(MempoolError::GapAdmissionDeniedUnderPressure {
+                    occupancy_pct,
+                    nonce_gap,
+                });
+            }
         }
 
         // EIP-8141 §Mempool: run the validation-trace simulation + paymaster
