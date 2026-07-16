@@ -1457,9 +1457,11 @@ pub async fn map_engine_requests(
 ) -> Result<Value, RpcErr> {
     match req.method.as_str() {
         "engine_exchangeCapabilities" => ExchangeCapabilitiesRequest::call(req, context).await,
-        // forkchoiceUpdated (with payload attributes) drives payload building and, on
-        // ethrex, the deep-reorg apply path — large futures on par with newPayload. Box
-        // them for the same reason as the newPayload arms below.
+        // The forkchoiceUpdated handlers run `apply_fork_choice`, which since the
+        // state-history work reaches the deep-reorg path (journal prune + a
+        // `PersistMessage::Commit` flush of the committable backlog). That inflated
+        // their futures enough to overflow the stack on its own, so box them for the
+        // same reason as the newPayload arms below.
         "engine_forkchoiceUpdatedV1" => Box::pin(ForkChoiceUpdatedV1::call(req, context)).await,
         "engine_forkchoiceUpdatedV2" => Box::pin(ForkChoiceUpdatedV2::call(req, context)).await,
         "engine_forkchoiceUpdatedV3" => Box::pin(ForkChoiceUpdatedV3::call(req, context)).await,
