@@ -20,7 +20,7 @@ use spawned_concurrency::{
     protocol,
     tasks::{Actor, ActorRef, ActorStart as _, Context, Handler, send_after},
 };
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info};
 
 use super::block_producer::{NativeBlockProducer, native_block_producer_protocol};
 use super::types::L1Message;
@@ -137,8 +137,23 @@ impl NativeL1Watcher {
             match Self::parse_l1_message_recorded(&log) {
                 Ok(msg) => parsed.push(msg),
                 Err(e) => {
-                    warn!("NativeL1Watcher: failed to parse log: {e}");
-                    continue;
+                    // These are `L1MessageRecorded` events emitted by our own
+                    // contract, so a parse failure signals an ABI/schema mismatch or
+                    // a parser bug, not adversarial input. The previous behavior
+                    // dropped the log and let the cursor advance below, silently
+                    // stranding that deposit forever. Instead, abort this scan without
+                    // advancing `last_block_fetched` or enqueuing anything from the
+                    // range: it is re-scanned on the next tick (nothing lost, no
+                    // duplicate enqueue) and the repeated error is loud enough for an
+                    // operator to notice. This deliberately wedges the watcher on a
+                    // permanently-unparseable log — halting loudly beats losing user
+                    // funds silently.
+                    error!(
+                        "NativeL1Watcher: failed to parse L1MessageRecorded log in blocks \
+                         {from_block:#x}..={to_block:#x}: {e}. Not advancing cursor; will retry \
+                         this range."
+                    );
+                    return;
                 }
             }
         }
