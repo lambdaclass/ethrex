@@ -9,6 +9,13 @@ use std::{
 
 use ethrex_trie::{Nibbles, TrieDB, TrieError};
 
+use crate::{
+    api::{StorageBackend, tables::STATE_HISTORY},
+    error::StoreError,
+    journal::{JournalDecodeError, JournalEntry},
+    trie::classify_trie_key,
+};
+
 const BLOOM_SIZE: usize = 1_000_000;
 const FALSE_POSITIVE_RATE: f64 = 0.02;
 
@@ -46,6 +53,10 @@ pub struct TrieLayerCache {
     /// Used to avoid looking up all layers when the given path doesn't exist in any
     /// layer, thus going directly to the database.
     bloom: AtomicBloomFilter<FxBuildHasher>,
+    /// Optional in-memory overlay bridging on-disk state at the cache edge `D` to the
+    /// virtual state at a deep-reorg pivot. When installed, reads that miss the layer
+    /// chain consult the overlay before falling through to disk. `None` in steady state.
+    overlay: Option<Arc<Overlay>>,
     /// The canonical safe-commit state root, computed by the Store after each forkchoice update.
     ///
     /// `H256::zero()` means "no safe commit point yet". Read by
@@ -64,6 +75,7 @@ impl fmt::Debug for TrieLayerCache {
             .field("commit_threshold", &self.commit_threshold)
             .field("layers", &self.layers)
             .field("bloom", &"AtomicBloomFilter")
+            .field("overlay", &self.overlay)
             .field("safe_commit_root", &safe_commit)
             .finish()
     }
@@ -77,6 +89,7 @@ impl Default for TrieLayerCache {
             layers: Default::default(),
             // TODO (issue #6345): this is coupled with DB_COMMIT_THRESHOLD in store.rs — unify them.
             commit_threshold: 128,
+            overlay: None,
             safe_commit_root: Arc::new(RwLock::new(H256::zero())),
         }
     }
@@ -97,8 +110,61 @@ impl TrieLayerCache {
             last_id: 0,
             layers: Default::default(),
             commit_threshold,
+            overlay: None,
             safe_commit_root,
         }
+    }
+
+    /// Installs an overlay on this cache. Subsequent reads that miss the layer chain
+    /// will consult the overlay before falling through to disk. Replaces any
+    /// previously-installed overlay.
+    #[allow(dead_code, reason = "consumed by PR 3 deep-reorg orchestration")]
+    pub fn set_overlay(&mut self, overlay: Arc<Overlay>) {
+        self.overlay = Some(overlay);
+    }
+
+    /// Removes any installed overlay. Idempotent.
+    #[allow(dead_code, reason = "consumed by PR 3 reconciliation")]
+    pub fn clear_overlay(&mut self) {
+        self.overlay = None;
+    }
+
+    /// Returns a reference to the installed overlay, if any.
+    #[allow(dead_code, reason = "consumed by PR 3 reconciliation")]
+    pub fn overlay(&self) -> Option<&Arc<Overlay>> {
+        self.overlay.as_ref()
+    }
+
+    /// Looks up `key` in the installed overlay. Three-state return:
+    /// - `None` ; no overlay installed, or overlay does not contain the key. Caller
+    ///   should fall through to disk.
+    /// - `Some(None)` ; overlay says the key did not exist at the pivot. Caller
+    ///   should treat as missing without consulting disk (disk still holds the OLD
+    ///   chain's value).
+    /// - `Some(Some(v))` ; overlay says the key had value `v` at the pivot. Caller
+    ///   should return `v` without consulting disk.
+    ///
+    /// CF is determined by the key's length, matching `BackendTrieDB::table_for_key`.
+    pub fn lookup_overlay(&self, key: &[u8]) -> Option<Option<Vec<u8>>> {
+        let overlay = self.overlay.as_ref()?;
+        let cf = OverlayCf::classify_by_key_length(key.len());
+        overlay.lookup(cf, key)
+    }
+
+    /// Returns true if a layer with the given `state_root` is present in the cache.
+    /// Used by callers (engine API, deep-reorg orchestrator in PR 3) to decide
+    /// whether a parent state is reachable through forward execution or requires
+    /// overlay construction.
+    #[allow(dead_code, reason = "consumed by PR 3 deep-reorg orchestration")]
+    pub fn contains(&self, state_root: H256) -> bool {
+        self.layers.contains_key(&state_root)
+    }
+
+    /// Returns this cache's commit threshold. Used by the deep-reorg path (PR 3)
+    /// so a freshly-constructed replacement cache inherits the same threshold.
+    #[allow(dead_code, reason = "consumed by PR 3 deep-reorg orchestration")]
+    pub fn commit_threshold(&self) -> usize {
+        self.commit_threshold
     }
 
     fn create_filter(expected_items: usize) -> AtomicBloomFilter<FxBuildHasher> {
@@ -401,8 +467,17 @@ impl TrieDB for TrieWrapper {
             Some(prefix) => prefix.concat(&key),
             None => key,
         };
+        // Read cascade: forward layer cache (new-chain layers above the pivot) ->
+        // overlay (reverse-diff bridge to disk during deep reorgs, if installed) ->
+        // on-disk state. A layer-cache hit pre-empts the overlay because a
+        // side-chain write at this key supersedes the pivot value the overlay holds.
+        // An overlay hit pre-empts disk because disk still reflects the OLD chain's
+        // edge `D`, not the pivot.
         if let Some(value) = self.inner.get(self.state_root, key.as_ref()) {
             return Ok(Some(value));
+        }
+        if let Some(overlay_result) = self.inner.lookup_overlay(key.as_ref()) {
+            return Ok(overlay_result);
         }
         self.db.get(key)
     }
@@ -410,6 +485,612 @@ impl TrieDB for TrieWrapper {
     fn put_batch(&self, _key_values: Vec<(Nibbles, Vec<u8>)>) -> Result<(), TrieError> {
         // TODO: Get rid of this.
         unimplemented!("This function should not be called");
+    }
+}
+
+// ===========================================================================
+// Overlay ; in-memory aggregated reverse-diff used during deep reorgs.
+// ===========================================================================
+
+/// Identifier of which on-disk column family an [`Overlay`] entry targets.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OverlayCf {
+    AccountTrie,
+    StorageTrie,
+    AccountFlat,
+    StorageFlat,
+}
+
+impl OverlayCf {
+    /// Classifies an on-disk key into its CF based on length, matching the rule in
+    /// `BackendTrieDB::table_for_key` / `classify_trie_key`:
+    /// - `len == 65` -> `AccountFlat` (account leaf)
+    /// - `len == 131` -> `StorageFlat` (storage leaf, includes 32-byte account prefix)
+    /// - `len < 65` -> `AccountTrie` (non-leaf state-trie node)
+    /// - otherwise -> `StorageTrie` (non-leaf storage-trie node)
+    pub fn classify_by_key_length(len: usize) -> Self {
+        let (is_leaf, is_account) = classify_trie_key(len);
+        match (is_leaf, is_account) {
+            (true, true) => OverlayCf::AccountFlat,
+            (true, false) => OverlayCf::StorageFlat,
+            (false, true) => OverlayCf::AccountTrie,
+            (false, false) => OverlayCf::StorageTrie,
+        }
+    }
+}
+
+/// Errors produced while constructing an [`Overlay`] from the on-disk journal.
+#[allow(dead_code, reason = "consumed by PR 3 deep-reorg orchestration")]
+#[derive(Debug, thiserror::Error)]
+pub enum OverlayError {
+    #[error("missing journal entry for block {0}")]
+    MissingEntry(BlockNumber),
+    #[error(
+        "journal block_hash mismatch at block {block_number}: expected {expected:?}, found {found:?}"
+    )]
+    HashMismatch {
+        block_number: BlockNumber,
+        expected: H256,
+        found: H256,
+    },
+    #[error("invalid overlay range: from_block ({from_block}) < to_block ({to_block})")]
+    InvalidRange {
+        from_block: BlockNumber,
+        to_block: BlockNumber,
+    },
+    #[error("journal decode error: {0}")]
+    Decode(#[from] JournalDecodeError),
+    #[error("storage error: {0}")]
+    Store(#[from] StoreError),
+}
+
+/// In-memory aggregated reverse-diff bridging the on-disk state at the cache edge `D`
+/// to the virtual state at a deep-reorg pivot `T-1`.
+///
+/// Built once per deep reorg by replaying [`STATE_HISTORY`] entries for blocks
+/// `D, D-1, ..., T` in descending order. Subsequent state reads during side-chain
+/// execution cascade as: new layer cache -> overlay -> on-disk state. On-disk state
+/// is NOT mutated while the overlay is alive; disk stays at `D` until the first
+/// new-chain commit folds the overlay and the new layer together into a single
+/// atomic write (PR 3's reconciliation step).
+pub struct Overlay {
+    account_trie: FxHashMap<Vec<u8>, Option<Vec<u8>>>,
+    storage_trie: FxHashMap<Vec<u8>, Option<Vec<u8>>>,
+    account_flat: FxHashMap<Vec<u8>, Option<Vec<u8>>>,
+    storage_flat: FxHashMap<Vec<u8>, Option<Vec<u8>>>,
+    /// Bloom filter shared across all four CFs. A miss here lets readers skip the
+    /// overlay lookup and fall through to disk without touching any map.
+    bloom: AtomicBloomFilter<FxBuildHasher>,
+    /// Highest block number covered by the overlay (= cache edge `D` at install time).
+    from_block: BlockNumber,
+    /// Lowest block number covered by the overlay (= `pivot + 1`).
+    to_block: BlockNumber,
+}
+
+impl fmt::Debug for Overlay {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Overlay")
+            .field("account_trie_len", &self.account_trie.len())
+            .field("storage_trie_len", &self.storage_trie.len())
+            .field("account_flat_len", &self.account_flat.len())
+            .field("storage_flat_len", &self.storage_flat.len())
+            .field("from_block", &self.from_block)
+            .field("to_block", &self.to_block)
+            .finish()
+    }
+}
+
+impl Default for Overlay {
+    fn default() -> Self {
+        Self {
+            account_trie: FxHashMap::default(),
+            storage_trie: FxHashMap::default(),
+            account_flat: FxHashMap::default(),
+            storage_flat: FxHashMap::default(),
+            bloom: AtomicBloomFilter::with_false_pos(FALSE_POSITIVE_RATE)
+                .hasher(FxBuildHasher)
+                .expected_items(Self::BLOOM_INITIAL_CAPACITY),
+            from_block: 0,
+            to_block: 0,
+        }
+    }
+}
+
+#[allow(dead_code, reason = "consumed by PR 3 deep-reorg orchestration")]
+impl Overlay {
+    /// Expected-items hint used to size the bloom filter at construction time.
+    /// Sized for typical reorg depths (tens to low-hundreds of blocks); the filter
+    /// will still function past this count, just with a higher false-positive rate.
+    const BLOOM_INITIAL_CAPACITY: usize = 64 * 1024;
+
+    /// Builds an overlay by replaying journal entries for blocks `[to_block, from_block]`
+    /// (inclusive both ends) in descending order. Each loaded entry's `block_hash` is
+    /// verified against `expected_hash(n)`; a mismatch aborts with
+    /// [`OverlayError::HashMismatch`].
+    ///
+    /// `expected_hash` is a callback that maps a height to the hash of the canonical
+    /// block at that height on the chain being unwound. Returning `None` skips
+    /// verification at that height (useful for tests).
+    ///
+    /// Within a single key, the OLDEST recorded `prev` value wins ; later inserts
+    /// during the descending walk overwrite earlier ones, so the value at `to_block - 1`
+    /// (whatever the oldest in-range journal entry recorded as the pre-image) is what
+    /// remains after the walk.
+    pub fn from_journal(
+        backend: &dyn StorageBackend,
+        from_block: BlockNumber,
+        to_block: BlockNumber,
+        expected_hash: impl Fn(BlockNumber) -> Option<H256>,
+    ) -> Result<Self, OverlayError> {
+        // Hard guard (not debug-only): swapped arguments would underflow `n -= 1`
+        // below in release builds and loop indefinitely.
+        if from_block < to_block {
+            return Err(OverlayError::InvalidRange {
+                from_block,
+                to_block,
+            });
+        }
+        let mut overlay = Overlay {
+            from_block,
+            to_block,
+            ..Default::default()
+        };
+
+        // SAFETY: `StorageReadView` does not guarantee snapshot isolation on RocksDB.
+        // The only writer to STATE_HISTORY is `forkchoice_update_inner` (finality
+        // pruning); a concurrent FCU `delete_range` between two `.get()` calls below
+        // could cause a spurious `MissingEntry`. PR 3 will install a reorg-in-progress
+        // flag; while it is set, `forkchoice_update_inner` will not enter, preventing
+        // pruning during overlay construction.
+        let read = backend.begin_read()?;
+        let mut n = from_block;
+        loop {
+            let bytes = read
+                .get(STATE_HISTORY, &n.to_be_bytes())?
+                .ok_or(OverlayError::MissingEntry(n))?;
+            let entry = JournalEntry::decode(&bytes)?;
+            if let Some(expected) = expected_hash(n)
+                && entry.block_hash != expected
+            {
+                return Err(OverlayError::HashMismatch {
+                    block_number: n,
+                    expected,
+                    found: entry.block_hash,
+                });
+            }
+            overlay.absorb(entry);
+            if n == to_block {
+                break;
+            }
+            n -= 1;
+        }
+        Ok(overlay)
+    }
+
+    /// Absorbs one journal entry into the overlay. Later inserts overwrite earlier
+    /// ones ; combined with a descending walk in [`Self::from_journal`], this makes
+    /// the OLDEST in-range entry's `prev` value win, which is the correct value at
+    /// the pivot.
+    fn absorb(&mut self, entry: JournalEntry) {
+        for (k, v) in entry.account_trie_diff {
+            self.bloom.insert(&k);
+            self.account_trie.insert(k, v);
+        }
+        for (k, v) in entry.storage_trie_diff {
+            self.bloom.insert(&k);
+            self.storage_trie.insert(k, v);
+        }
+        for (k, v) in entry.account_flat_diff {
+            self.bloom.insert(&k);
+            self.account_flat.insert(k, v);
+        }
+        for (k, v) in entry.storage_flat_diff {
+            self.bloom.insert(&k);
+            self.storage_flat.insert(k, v);
+        }
+    }
+
+    /// Looks up `key` in the overlay's `cf` slot. Three-state return:
+    /// - `None` ; key not in overlay (caller falls through to disk).
+    /// - `Some(None)` ; key was overwritten and previously didn't exist on disk
+    ///   (caller treats as absent ; a rollback would delete it).
+    /// - `Some(Some(v))` ; key was overwritten and previously had value `v` on disk
+    ///   (caller treats as `v` ; a rollback would restore it).
+    pub fn lookup(&self, cf: OverlayCf, key: &[u8]) -> Option<Option<Vec<u8>>> {
+        if !self.bloom.contains(key) {
+            return None;
+        }
+        let map = match cf {
+            OverlayCf::AccountTrie => &self.account_trie,
+            OverlayCf::StorageTrie => &self.storage_trie,
+            OverlayCf::AccountFlat => &self.account_flat,
+            OverlayCf::StorageFlat => &self.storage_flat,
+        };
+        map.get(key).cloned()
+    }
+
+    /// Total number of overlay entries across all four CFs. Mostly for tests/metrics.
+    pub fn len(&self) -> usize {
+        self.account_trie.len()
+            + self.storage_trie.len()
+            + self.account_flat.len()
+            + self.storage_flat.len()
+    }
+
+    /// Whether the overlay holds any entries.
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    /// Highest block number covered by the overlay (= cache edge `D` at install time).
+    #[allow(
+        clippy::wrong_self_convention,
+        reason = "field accessor: name matches struct field"
+    )]
+    pub fn from_block(&self) -> BlockNumber {
+        self.from_block
+    }
+
+    /// Lowest block number covered by the overlay (= `pivot + 1`).
+    pub fn to_block(&self) -> BlockNumber {
+        self.to_block
+    }
+
+    /// Iterates every overlay entry across the four CFs as `(cf, key, value)`. Used
+    /// by PR 3's reconciliation step to fold overlay-only entries into the first
+    /// new-chain commit.
+    pub fn iter_all_entries(
+        &self,
+    ) -> impl Iterator<Item = (OverlayCf, &Vec<u8>, &Option<Vec<u8>>)> {
+        self.account_trie
+            .iter()
+            .map(|(k, v)| (OverlayCf::AccountTrie, k, v))
+            .chain(
+                self.storage_trie
+                    .iter()
+                    .map(|(k, v)| (OverlayCf::StorageTrie, k, v)),
+            )
+            .chain(
+                self.account_flat
+                    .iter()
+                    .map(|(k, v)| (OverlayCf::AccountFlat, k, v)),
+            )
+            .chain(
+                self.storage_flat
+                    .iter()
+                    .map(|(k, v)| (OverlayCf::StorageFlat, k, v)),
+            )
+    }
+}
+
+#[cfg(test)]
+mod overlay_tests {
+    use super::*;
+    use crate::backend::in_memory::InMemoryBackend;
+    use crate::journal::FlatDiff;
+
+    fn h(b: u8) -> H256 {
+        H256::repeat_byte(b)
+    }
+
+    /// Seeds N journal entries directly into STATE_HISTORY so tests can drive overlay
+    /// construction without going through the full block-execution path.
+    fn seed(backend: &Arc<dyn StorageBackend>, per_block: &[(BlockNumber, H256, FlatDiff)]) {
+        let mut tx = backend.begin_write().unwrap();
+        for (n, block_hash, diff) in per_block {
+            let entry = JournalEntry {
+                block_hash: *block_hash,
+                parent_state_root: H256::zero(),
+                account_trie_diff: diff.clone(),
+                storage_trie_diff: vec![],
+                account_flat_diff: vec![],
+                storage_flat_diff: vec![],
+            };
+            tx.put(STATE_HISTORY, &n.to_be_bytes(), &entry.encode())
+                .unwrap();
+        }
+        tx.commit().unwrap();
+    }
+
+    #[test]
+    fn from_journal_loads_descending_range() {
+        let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::open().unwrap());
+        seed(
+            &backend,
+            &[
+                (3, h(0x03), vec![(vec![0xa], Some(vec![0x33]))]),
+                (4, h(0x04), vec![(vec![0xb], Some(vec![0x44]))]),
+                (5, h(0x05), vec![(vec![0xc], Some(vec![0x55]))]),
+            ],
+        );
+        let overlay =
+            Overlay::from_journal(backend.as_ref(), 5, 3, |n| Some(H256::repeat_byte(n as u8)))
+                .unwrap();
+        assert_eq!(overlay.len(), 3);
+        assert_eq!(overlay.from_block(), 5);
+        assert_eq!(overlay.to_block(), 3);
+        assert_eq!(
+            overlay.lookup(OverlayCf::AccountTrie, &[0xa]),
+            Some(Some(vec![0x33]))
+        );
+        assert_eq!(
+            overlay.lookup(OverlayCf::AccountTrie, &[0xb]),
+            Some(Some(vec![0x44]))
+        );
+        assert_eq!(
+            overlay.lookup(OverlayCf::AccountTrie, &[0xc]),
+            Some(Some(vec![0x55]))
+        );
+    }
+
+    /// Block 3 (oldest) recorded K=X. Block 5 (newest) recorded K=Y4. After
+    /// descending walk, the overlay must expose K=X ; the value at the pivot
+    /// (= to_block - 1 = 2).
+    #[test]
+    fn older_entry_wins_when_key_repeats() {
+        let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::open().unwrap());
+        seed(
+            &backend,
+            &[
+                (3, h(0x03), vec![(vec![0xaa], Some(b"X".to_vec()))]),
+                (4, h(0x04), vec![(vec![0xaa], Some(b"Y3".to_vec()))]),
+                (5, h(0x05), vec![(vec![0xaa], Some(b"Y4".to_vec()))]),
+            ],
+        );
+        let overlay =
+            Overlay::from_journal(backend.as_ref(), 5, 3, |n| Some(H256::repeat_byte(n as u8)))
+                .unwrap();
+        assert_eq!(
+            overlay.lookup(OverlayCf::AccountTrie, &[0xaa]),
+            Some(Some(b"X".to_vec())),
+            "oldest reverse-diff value should win after descending walk"
+        );
+    }
+
+    #[test]
+    fn absent_key_passes_through_bloom() {
+        let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::open().unwrap());
+        seed(
+            &backend,
+            &[(3, h(0x03), vec![(vec![0xaa], Some(vec![0x11]))])],
+        );
+        let overlay =
+            Overlay::from_journal(backend.as_ref(), 3, 3, |n| Some(H256::repeat_byte(n as u8)))
+                .unwrap();
+        assert_eq!(overlay.lookup(OverlayCf::AccountTrie, &[0xff]), None);
+    }
+
+    #[test]
+    fn hash_mismatch_aborts() {
+        let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::open().unwrap());
+        seed(&backend, &[(7, h(0x07), vec![(vec![0xaa], None)])]);
+        // Caller supplies the WRONG expected hash for height 7.
+        let err = Overlay::from_journal(backend.as_ref(), 7, 7, |_| Some(h(0xff))).unwrap_err();
+        match err {
+            OverlayError::HashMismatch { block_number, .. } => assert_eq!(block_number, 7),
+            other => panic!("expected HashMismatch, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn missing_entry_aborts() {
+        let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::open().unwrap());
+        // Seed only block 5; ask for [5, 3] ; blocks 4 and 3 are missing.
+        seed(&backend, &[(5, h(0x05), vec![])]);
+        let err = Overlay::from_journal(backend.as_ref(), 5, 3, |_| None).unwrap_err();
+        match err {
+            OverlayError::MissingEntry(n) => assert_eq!(n, 4),
+            other => panic!("expected MissingEntry, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn skip_verification_when_callback_returns_none() {
+        let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::open().unwrap());
+        seed(&backend, &[(7, h(0xab), vec![(vec![0x01], None)])]);
+        let overlay = Overlay::from_journal(backend.as_ref(), 7, 7, |_| None).unwrap();
+        assert_eq!(overlay.lookup(OverlayCf::AccountTrie, &[0x01]), Some(None));
+    }
+
+    #[test]
+    fn classify_by_key_length_matches_backend_table_routing() {
+        // Spot-check the boundaries. These must agree with `classify_trie_key`
+        // (account leaf at 65, storage leaf at 131, anything else routed by length).
+        assert_eq!(OverlayCf::classify_by_key_length(0), OverlayCf::AccountTrie);
+        assert_eq!(
+            OverlayCf::classify_by_key_length(64),
+            OverlayCf::AccountTrie
+        );
+        assert_eq!(
+            OverlayCf::classify_by_key_length(65),
+            OverlayCf::AccountFlat
+        );
+        assert_eq!(
+            OverlayCf::classify_by_key_length(66),
+            OverlayCf::StorageTrie
+        );
+        assert_eq!(
+            OverlayCf::classify_by_key_length(130),
+            OverlayCf::StorageTrie
+        );
+        assert_eq!(
+            OverlayCf::classify_by_key_length(131),
+            OverlayCf::StorageFlat
+        );
+        assert_eq!(
+            OverlayCf::classify_by_key_length(132),
+            OverlayCf::StorageTrie
+        );
+    }
+
+    /// `lookup_overlay` is the entry point from the read cascade. It must short-circuit
+    /// to `None` when no overlay is installed, regardless of key length.
+    #[test]
+    fn overlay_lookup_returns_none_when_no_overlay_installed() {
+        let cache = TrieLayerCache::new_with_safe_commit(1, Arc::new(RwLock::new(H256::zero())));
+        for key_len in [4usize, 65, 67, 131] {
+            let key = vec![0xab; key_len];
+            assert_eq!(
+                cache.lookup_overlay(&key),
+                None,
+                "no overlay installed -> outer None at length {key_len}"
+            );
+        }
+    }
+
+    /// Installs an overlay with one entry per CF (each at the canonical length) and
+    /// confirms `lookup_overlay` routes to the right map.
+    #[test]
+    fn overlay_lookup_classifies_cf_by_key_length() {
+        let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::open().unwrap());
+        let entry = JournalEntry {
+            block_hash: h(0x01),
+            parent_state_root: H256::zero(),
+            account_trie_diff: vec![(vec![0x10; 4], Some(b"acct-trie".to_vec()))],
+            storage_trie_diff: vec![(vec![0x20; 67], Some(b"stor-trie".to_vec()))],
+            account_flat_diff: vec![(vec![0x30; 65], Some(b"acct-flat".to_vec()))],
+            storage_flat_diff: vec![(vec![0x40; 131], None)],
+        };
+        let mut tx = backend.begin_write().unwrap();
+        tx.put(STATE_HISTORY, &1u64.to_be_bytes(), &entry.encode())
+            .unwrap();
+        tx.commit().unwrap();
+        let overlay = Overlay::from_journal(backend.as_ref(), 1, 1, |_| None).unwrap();
+
+        let mut cache =
+            TrieLayerCache::new_with_safe_commit(1, Arc::new(RwLock::new(H256::zero())));
+        cache.set_overlay(Arc::new(overlay));
+
+        assert_eq!(
+            cache.lookup_overlay(&[0x10; 4]),
+            Some(Some(b"acct-trie".to_vec()))
+        );
+        assert_eq!(
+            cache.lookup_overlay(&[0x20; 67]),
+            Some(Some(b"stor-trie".to_vec()))
+        );
+        assert_eq!(
+            cache.lookup_overlay(&[0x30; 65]),
+            Some(Some(b"acct-flat".to_vec()))
+        );
+        assert_eq!(
+            cache.lookup_overlay(&[0x40; 131]),
+            Some(None),
+            "overlay with None means key was absent at pivot"
+        );
+        // Same length but different bytes ; bloom miss.
+        assert_eq!(cache.lookup_overlay(&[0xee; 4]), None);
+    }
+
+    #[test]
+    fn set_and_clear_overlay_round_trips() {
+        let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::open().unwrap());
+        seed(&backend, &[(1, h(0x01), vec![(vec![0xaa], None)])]);
+        let overlay = Overlay::from_journal(backend.as_ref(), 1, 1, |_| None).unwrap();
+
+        let mut cache =
+            TrieLayerCache::new_with_safe_commit(1, Arc::new(RwLock::new(H256::zero())));
+        assert!(cache.overlay().is_none());
+        cache.set_overlay(Arc::new(overlay));
+        assert!(cache.overlay().is_some());
+        cache.clear_overlay();
+        assert!(cache.overlay().is_none());
+        // Idempotent.
+        cache.clear_overlay();
+        assert!(cache.overlay().is_none());
+    }
+
+    /// `from_block == to_block == 0` is a legitimate single-block-at-genesis case
+    /// and must not underflow the descending loop.
+    #[test]
+    fn single_entry_at_genesis() {
+        let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::open().unwrap());
+        seed(
+            &backend,
+            &[(0, h(0x00), vec![(vec![0xaa], Some(vec![0x11]))])],
+        );
+        let overlay = Overlay::from_journal(backend.as_ref(), 0, 0, |_| None).unwrap();
+        assert_eq!(overlay.len(), 1);
+        assert_eq!(overlay.from_block(), 0);
+        assert_eq!(overlay.to_block(), 0);
+        assert_eq!(
+            overlay.lookup(OverlayCf::AccountTrie, &[0xaa]),
+            Some(Some(vec![0x11]))
+        );
+    }
+
+    /// Swapped `from_block < to_block` must be a hard error (not a debug-only
+    /// assert) so a caller mistake fires in release too. Pin the variant to guard
+    /// against future error-text changes.
+    #[test]
+    fn swapped_args_returns_error() {
+        let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::open().unwrap());
+        let err = Overlay::from_journal(backend.as_ref(), 3, 5, |_| None).unwrap_err();
+        match err {
+            OverlayError::InvalidRange {
+                from_block,
+                to_block,
+            } => {
+                assert_eq!(from_block, 3);
+                assert_eq!(to_block, 5);
+            }
+            other => panic!("expected InvalidRange, got {other:?}"),
+        }
+    }
+
+    /// `Some(Some(vec![]))` (an empty-but-present pre-image) must round-trip
+    /// through `absorb`/`lookup` without being confused with `Some(None)`
+    /// (absent at pivot). The journal codec handles this correctly; this test
+    /// guards a future codec change.
+    #[test]
+    fn empty_but_present_round_trips() {
+        let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::open().unwrap());
+        seed(&backend, &[(1, h(0x01), vec![(vec![0xaa], Some(vec![]))])]);
+        let overlay = Overlay::from_journal(backend.as_ref(), 1, 1, |_| None).unwrap();
+        assert_eq!(
+            overlay.lookup(OverlayCf::AccountTrie, &[0xaa]),
+            Some(Some(vec![])),
+            "empty-but-present value must NOT degrade to Some(None)"
+        );
+    }
+
+    #[test]
+    fn iter_all_entries_visits_each_cf() {
+        // Sanity check for PR 3's reconciliation path: every CF an entry was inserted
+        // into must show up in iter_all_entries, with the right CF tag.
+        let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::open().unwrap());
+        let entry = JournalEntry {
+            block_hash: h(0x01),
+            parent_state_root: H256::zero(),
+            account_trie_diff: vec![(vec![0x10; 4], Some(b"at".to_vec()))],
+            storage_trie_diff: vec![(vec![0x20; 67], Some(b"st".to_vec()))],
+            account_flat_diff: vec![(vec![0x30; 65], None)],
+            storage_flat_diff: vec![(vec![0x40; 131], Some(b"sf".to_vec()))],
+        };
+        let mut tx = backend.begin_write().unwrap();
+        tx.put(STATE_HISTORY, &1u64.to_be_bytes(), &entry.encode())
+            .unwrap();
+        tx.commit().unwrap();
+        let overlay = Overlay::from_journal(backend.as_ref(), 1, 1, |_| None).unwrap();
+
+        let mut cfs: Vec<OverlayCf> = overlay.iter_all_entries().map(|(cf, _, _)| cf).collect();
+        cfs.sort_by_key(|cf| match cf {
+            OverlayCf::AccountTrie => 0,
+            OverlayCf::StorageTrie => 1,
+            OverlayCf::AccountFlat => 2,
+            OverlayCf::StorageFlat => 3,
+        });
+        assert_eq!(
+            cfs,
+            vec![
+                OverlayCf::AccountTrie,
+                OverlayCf::StorageTrie,
+                OverlayCf::AccountFlat,
+                OverlayCf::StorageFlat,
+            ]
+        );
+        assert_eq!(overlay.len(), 4);
+        assert!(!overlay.is_empty());
     }
 }
 
