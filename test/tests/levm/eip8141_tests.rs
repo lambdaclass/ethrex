@@ -661,20 +661,18 @@ fn batched_verify_revert_invalidates_tx() {
     assert_db_cache_unchanged(&db, &accounts);
 }
 
-// ==================== I10: APPROVE_PAYMENT may precede APPROVE_EXECUTION ====================
+// ============ I10: APPROVE_PAYMENT reverts while sender_approved == false ============
 
 #[test]
-fn payment_approval_may_precede_execution_approval() {
-    // Frame 0: a paymaster VERIFY frame that calls APPROVE(APPROVE_PAYMENT) — scope 1.
-    // This happens BEFORE the sender has called APPROVE(APPROVE_EXECUTION).
-    // Pre-fix: the sender_approved precondition causes frame 0 to revert ->
-    //          VERIFY revert -> tx invalid (Err).
-    // Post-fix: no such precondition; frame 0 sets payer=paymaster, frame 1 sets
-    //           sender_approved, tx is valid with payer=paymaster.
+fn payment_approval_before_execution_approval_reverts() {
+    // Frame 0: a paymaster VERIFY frame that calls APPROVE(APPROVE_PAYMENT) — scope 1 —
+    // BEFORE the sender has called APPROVE(APPROVE_EXECUTION), i.e. sender_approved == false.
+    // Per EIP-8141, APPROVE_PAYMENT must revert while sender_approved == false. Frame 0 is a
+    // VERIFY frame, and a VERIFY frame that reverts invalidates the entire transaction.
     let paymaster = Address::from_low_u64_be(0x9A);
     let stop_ct = Address::from_low_u64_be(0x9B);
     let tx = frame_tx_with_frames(vec![
-        // frame0: paymaster approves PAYMENT first (scope 1).
+        // frame0: paymaster tries APPROVE_PAYMENT first (scope 1) -> must revert.
         verify_frame(paymaster),
         // frame1: sender approves EXECUTION (scope 2).
         verify_frame(FUNDED_SENDER),
@@ -704,11 +702,9 @@ fn payment_approval_may_precede_execution_approval() {
         (stop_ct, U256::zero(), 0, Bytes::from(vec![0x00u8])), // STOP
     ];
     let (result, _db) = run_frame_tx(&accounts, tx);
-    let report = result.expect("pay-before-verify ordering must be valid");
-    assert_eq!(
-        report.payer_address,
-        Some(paymaster),
-        "paymaster should be the payer"
+    assert!(
+        result.is_err(),
+        "APPROVE_PAYMENT before sender_approved must revert the VERIFY frame and invalidate the tx"
     );
 }
 
@@ -2549,15 +2545,21 @@ mod frame_validation_prefix_tests {
         }
     }
 
-    /// A deploy frame that leaves the sender codeless, followed by a pay frame
-    /// that DOES establish a payer (via a paymaster's APPROVE_PAYMENT code), must
-    /// fail validation with `DeployInstalledNoCode`.
+    /// A validation prefix whose paymaster approves PAYMENT before the sender has
+    /// approved EXECUTION is rejected. Under EIP-8141 the APPROVE_PAYMENT frame reverts
+    /// while sender_approved == false, and a reverting prefix frame fails validation — so
+    /// the prefix is rejected on the ordering revert (which precedes the later
+    /// deploy-installed-no-code check). This is the validation-prefix manifestation of the
+    /// APPROVE_PAYMENT ordering rule fixed in the APPROVE handler.
     #[test]
-    fn deploy_leaving_sender_codeless_fails_validation() {
+    fn prefix_with_payment_before_execution_approval_is_rejected() {
         let sender = addr(0xDEAD01);
         let paymaster = addr(0xBEEF01);
         let frames = vec![
+            // frame0: deploy on the sender (empty data installs no code).
             frame(0, 0x00, sender, 50_000),
+            // frame1: the paymaster calls APPROVE_PAYMENT, but the sender has NOT approved
+            // execution yet, so this reverts (EIP-8141 ordering) and invalidates the prefix.
             frame(1, 0x01, paymaster, 50_000),
         ];
         let tx = frame_tx_prefix(sender, frames);
@@ -2583,12 +2585,12 @@ mod frame_validation_prefix_tests {
         .expect("simulation runs");
         assert!(
             !outcome.passed,
-            "a deploy frame leaving the sender codeless must fail validation"
+            "payment approval before execution approval must fail validation"
         );
         assert_eq!(
             outcome.violation.as_deref(),
-            Some("DeployInstalledNoCode"),
-            "the failure must be DeployInstalledNoCode, got {:?}",
+            Some("validation prefix frame reverted"),
+            "the pay frame must revert on APPROVE_PAYMENT-before-execution, got {:?}",
             outcome.violation
         );
     }
