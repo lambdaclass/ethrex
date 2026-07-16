@@ -130,7 +130,7 @@ Not implemented. Tracked at [#6212].
 - **`debug_getRawBlockAccessList` RPC + `-32001` error code** per [execution-apis#794](https://github.com/ethereum/execution-apis/pull/794) — required for bal-devnet-7 protocol-side; tracked separately.
 - **Debug receipt fields** ([PM #2033](https://github.com/ethereum/pm/issues/2033#issuecomment-4397074196)) — qu0b polling clients on extending `debug_getBlockReceipts` with `regularGasUsed` / `stateGasCharged` / `stateGasRefunded` / `cumulative*`. Cross-client debug aid; not bal-7 scope.
 - **Deferred-on-success state-gas charging** for `CREATE`/`CREATE2`/`CALL*` (misilva73 audit point #3 in [specs#2804](https://github.com/ethereum/execution-specs/issues/2804)) — not landing in bal-7 per Maria Silva on Discord 2026-05-08.
-- **EIP-8025 zkboost fixtures** — RESOLVED: the stateless harness now tracks `tests-zkevm@v0.5.0` (filled against glamsterdam-devnet v6.1.0); all fixtures run with no blanket skip and pass.
+- **EIP-8025 zkboost fixtures** — RESOLVED: the stateless harness now tracks `tests-zkevm@v0.6.1` (filled against glamsterdam-devnet v7.2.0, matching the live Amsterdam bundle); all fixtures run with no blanket or per-fork skip and pass.
 - **Remaining gas repricing EIPs** (2780, 7904, 8038) — no other client has started; revisit if SFI'd at ACDE.
 
 ---
