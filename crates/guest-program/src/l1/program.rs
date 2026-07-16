@@ -210,8 +210,19 @@ fn decode_payload_withdrawals<const MAX_WITHDRAWALS: usize>(
         .collect()
 }
 
-#[cfg(feature = "eip-8025")]
+/// Convert a 32-byte little-endian SSZ `uint256` base-fee field to `u64`.
+///
+/// The upper 24 bytes (`[8..32]`) MUST be zero. They don't affect block validation
+/// (base fee fits in `u64` for any real chain), but they ARE covered by
+/// `NewPayloadRequest::hash_tree_root()`. Silently truncating to the low 8 bytes
+/// would let ~2^192 distinct SSZ inputs reconstruct the *same* block while producing
+/// *different* roots, breaking the "one block ⇒ one root" commitment invariant for
+/// any root-keyed consumer (e.g. a ZK variant or a root-anchored settlement path).
+/// Rejecting non-zero upper bytes closes that malleability.
 fn base_fee_per_gas_from_le_bytes(bytes: &[u8; 32]) -> Result<u64, String> {
+    if bytes[8..].iter().any(|&b| b != 0) {
+        return Err("base_fee_per_gas exceeds u64 (non-zero upper bytes)".to_string());
+    }
     Ok(u64::from_le_bytes(
         bytes[..8]
             .try_into()
@@ -453,13 +464,10 @@ pub fn new_payload_request_to_block(
     let execution_requests = req.execution_requests.to_encoded_requests();
     let requests_hash = compute_requests_hash(&execution_requests);
 
-    // Convert base_fee_per_gas from [u8; 32] LE uint256 to u64
-    // (base_fee fits in u64 for all practical purposes)
-    let base_fee_per_gas = u64::from_le_bytes(
-        payload.base_fee_per_gas[..8]
-            .try_into()
-            .map_err(|_| "base_fee_per_gas conversion")?,
-    );
+    // Convert base_fee_per_gas from [u8; 32] LE uint256 to u64. The helper rejects
+    // non-zero upper bytes so a single block maps to a single hash_tree_root (see
+    // `base_fee_per_gas_from_le_bytes`).
+    let base_fee_per_gas = base_fee_per_gas_from_le_bytes(&payload.base_fee_per_gas)?;
 
     // Build logs_bloom from SszVector<u8, 256>
     let bloom_bytes: Vec<u8> = payload.logs_bloom.iter().copied().collect();
