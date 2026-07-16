@@ -101,7 +101,7 @@
           },
           "options": {
             "mode": "markdown",
-            "content": "### How block time is measured\n\nLighthouse times the top row, the fair comparison, so no client measures itself. It records the wall-clock each block takes to validate through `engine_newPayload` (`execution_layer_request_times{method=\"new_payload\"}`). One observer and one code path front all four clients, so you can compare p50/p99 directly, geth included. `forkchoiceUpdated` sits next to it because clients commit the state root and DB writes at different points.\n\nThe native per-block panels come from each client's own metric. Use them for per-client trends, not to rank clients against each other, because their scopes differ:\n\n- ethrex: `gigagas`, `gas_used/(gigagas\u00b71e9)` (exec + merkle + store)\n- reth: `..._new_payload_gas_per_second_last`, `..._new_payload_last` (excludes async DB persistence)\n- nethermind: `mgas_per_sec`, `last_block_processing_time_in_ms` (branch exec + state root)\n- geth: `chain_mgasps`, `chain_inserts` at `quantile=\"0.5\"` (full ProcessBlock, resetting timer, sparse)\n\nThe x-axis is ethrex head `block_number`. All four follow the same chain at the same head.\n\n### Environment\n\nHeld constant: mainnet, one Lighthouse build with its checkpoint-sync and JWT, and matched hardware (Xeon E-2386G, 62.7 GiB, 2x NVMe). Prometheus scrapes every 5s.\n\nHost CPU and RAM come from `node_exporter`. Per-process CPU, RSS, threads, and FDs come from `process-exporter`, running on all four nodes and measuring geth the same way as the rest. Read RSS as a trend: Go and .NET return freed memory to the OS lazily, and Rust with jemalloc holds onto arena pages, so steady-state RSS reflects the runtime as much as the client.\n\n### Fair-panel details\n\nThe timeseries use a 10-minute sliding window. The range bargauges aggregate over the selected time range. newPayload fires about once per slot (~12s), so a short window snaps the quantile to a single Lighthouse bucket edge, which is where the 50/100/200 ms look-alike readings come from.\n\nLighthouse buckets are coarse (10/20/50/100/200/500 ms), so p99 resolution is bucket-limited. A 151 ms reading is interpolation inside the 100 to 200 ms bucket. Nimbus buckets (5/10/25/50/100/250 ms) would sharpen the tail if we need it.\n\nThe Client filter at top-left applies to every panel. When a client lacks a given metric, that panel skips it."
+            "content": "### How block time is measured\n\nLighthouse times the top row, the fair comparison, so no client measures itself. It records the wall-clock each block takes to validate through `engine_newPayload` (`execution_layer_request_times{method=\"new_payload\"}`). One observer and one code path front all four clients, so you can compare p50/p99 directly, geth included.\n\nThe native per-block panels come from each client's own metric. Use them for per-client trends, not to rank clients against each other, because their scopes differ:\n\n- ethrex: `gigagas`, `gas_used/(gigagas\u00b71e9)` (exec + merkle + store)\n- reth: `..._new_payload_gas_per_second_last`, `..._new_payload_last` (excludes async DB persistence)\n- nethermind: `mgas_per_sec`, `last_block_processing_time_in_ms` (branch exec + state root)\n- geth: `chain_mgasps`, `chain_inserts` at `quantile=\"0.5\"` (full ProcessBlock, resetting timer, sparse)\n\nThe x-axis is ethrex head `block_number`. All four follow the same chain at the same head.\n\n### Environment\n\nHeld constant: mainnet, one Lighthouse build with its checkpoint-sync and JWT, and matched hardware (Xeon E-2386G, 62.7 GiB, 2x NVMe). Prometheus scrapes every 5s.\n\nHost CPU and RAM come from `node_exporter`. Per-process CPU, RSS, threads, and FDs come from `process-exporter`, running on all four nodes and measuring geth the same way as the rest. Read RSS as a trend: Go and .NET return freed memory to the OS lazily, and Rust with jemalloc holds onto arena pages, so steady-state RSS reflects the runtime as much as the client.\n\n### Fair-panel details\n\nThe timeseries use a 10-minute sliding window. The range bargauges aggregate over the selected time range. newPayload fires about once per slot (~12s), so a short window snaps the quantile to a single Lighthouse bucket edge, which is where the 50/100/200 ms look-alike readings come from.\n\nLighthouse buckets are coarse (10/20/50/100/200/500 ms), so p99 resolution is bucket-limited. A 151 ms reading is interpolation inside the 100 to 200 ms bucket. Nimbus buckets (5/10/25/50/100/250 ms) would sharpen the tail if we need it.\n\nThe Client filter at top-left applies to every panel. When a client lacks a given metric, that panel skips it."
           },
           "id": 9002
         }
@@ -1079,10 +1079,10 @@
         "uid": "prom-001"
       },
       "gridPos": {
-        "h": 9,
+        "h": 7,
         "w": 24,
         "x": 0,
-        "y": 28
+        "y": 30
       },
       "fieldConfig": {
         "defaults": {
@@ -2032,7 +2032,7 @@
       },
       "fieldConfig": {
         "defaults": {
-          "unit": "none",
+          "unit": "si:Ggas/s",
           "decimals": 2,
           "min": 0,
           "color": {
@@ -2143,7 +2143,7 @@
       },
       "fieldConfig": {
         "defaults": {
-          "unit": "none",
+          "unit": "si:Ggas/s",
           "decimals": 2,
           "min": 0,
           "color": {
@@ -2254,7 +2254,7 @@
       },
       "fieldConfig": {
         "defaults": {
-          "unit": "none",
+          "unit": "si:Ggas/s",
           "decimals": 2,
           "min": 0,
           "color": {
@@ -2365,7 +2365,7 @@
       },
       "fieldConfig": {
         "defaults": {
-          "unit": "none",
+          "unit": "si:Ggas/s",
           "decimals": 2,
           "min": 0,
           "color": {
