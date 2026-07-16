@@ -718,6 +718,7 @@ pub struct VM<'a> {
 pub fn validate_frame_signatures(
     signatures: &[ethrex_common::types::FrameSignature],
     sig_hash: ethrex_common::H256,
+    sender: ethrex_common::Address,
     fork: Fork,
     crypto: &dyn Crypto,
 ) -> bool {
@@ -774,11 +775,9 @@ pub fn validate_frame_signatures(
                 if recovered == ethrex_common::Address::zero() {
                     return false;
                 }
-                // An empty signer (None) resolves to the recovered key; a pinned
-                // signer must equal it.
-                if let Some(expected) = sig.signer
-                    && recovered != expected
-                {
+                // Per EIP-8141, an absent signer resolves to tx.sender (used for
+                // introspection too); the recovered key must equal the resolved signer.
+                if recovered != sig.signer.unwrap_or(sender) {
                     return false;
                 }
             }
@@ -795,11 +794,9 @@ pub fn validate_frame_signatures(
                 pk.extend_from_slice(qx);
                 pk.extend_from_slice(qy);
                 let h = ethrex_crypto::keccak::keccak_hash(&pk);
-                // An empty signer (None) resolves to the derived key; a pinned
-                // signer must equal it.
-                if let Some(expected) = sig.signer
-                    && ethrex_common::Address::from_slice(&h[12..]) != expected
-                {
+                // Per EIP-8141, an absent signer resolves to tx.sender (used for
+                // introspection too); the derived key must equal the resolved signer.
+                if ethrex_common::Address::from_slice(&h[12..]) != sig.signer.unwrap_or(sender) {
                     return false;
                 }
                 let mut calldata = vec![0u8; 160];
@@ -821,8 +818,8 @@ pub fn validate_frame_signatures(
                 }
             }
             FRAME_SIG_SCHEME_ARBITRARY => {
-                // ARBITRARY: no protocol crypto; the signer must be empty (a
-                // custom verifier consumes the raw bytes via SIGPARAM).
+                // ARBITRARY: no protocol crypto; the signer must be empty. A
+                // custom verifier reads the raw bytes via SIGPARAM 0x04.
                 if sig.signer.is_some() {
                     return false;
                 }
@@ -1637,6 +1634,7 @@ impl<'a> VM<'a> {
         if !validate_frame_signatures(
             &frame_tx.signatures,
             sig_hash,
+            frame_tx.sender,
             self.env.config.fork,
             self.crypto,
         ) {
@@ -2407,6 +2405,7 @@ impl<'a> VM<'a> {
         if !validate_frame_signatures(
             &frame_tx.signatures,
             sig_hash,
+            frame_tx.sender,
             self.env.config.fork,
             self.crypto,
         ) {

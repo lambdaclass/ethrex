@@ -1860,7 +1860,7 @@ impl RLPDecode for Frame {
 /// `scheme`: 0 = ARBITRARY (`signer` MUST be empty; `signature` is arbitrary bytes),
 /// 1 = SECP256K1 (sig = v||r||s, 65 bytes), 2 = P256 (sig = r||s||qx||qy, 128 bytes).
 /// `signer`: `None` (empty) is required for ARBITRARY and allowed for SECP256K1/P256
-/// (empty ⇒ the resolved signer is the recovered/derived key); `Some(addr)` pins it.
+/// (empty ⇒ the resolved signer is `tx.sender`, for introspection too); `Some(addr)` pins it.
 /// `msg`: empty = signs compute_sig_hash(tx); 32 bytes = signs that explicit digest.
 /// Raw `signature` bytes are intentionally not EVM-introspectable.
 #[derive(Clone, Debug, PartialEq, Eq, Default, RSerialize, RDeserialize, Archive)]

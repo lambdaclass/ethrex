@@ -449,35 +449,88 @@ impl OpcodeHandler for OpFrameParamHandler {
     }
 }
 
-/// SIGPARAM (0xB4) -- signature-scoped metadata (EIP-8141, spec commit fe0940cae2).
-/// Stack: [param, signatureIndex] with signatureIndex on top. Gas cost: 2.
-/// Raw `signature` bytes are intentionally NOT exposed.
+/// SIGPARAM (0xB4) -- signature-scoped metadata and data copy (EIP-8141).
+/// Metadata (params 0x00-0x03): stack `[param, signatureIndex]` with
+/// `signatureIndex` on top; gas 2; returns one word (0x00 effective signer,
+/// 0x01 scheme, 0x02 msg, 0x03 len(signature)). Copy (param 0x04): stack
+/// `[memOffset, dataOffset, length, param, signatureIndex]` with `signatureIndex`
+/// on top; CALLDATACOPY gas; copies an ARBITRARY signature's raw bytes into
+/// memory (zero-filled past the end) and pushes nothing — any other scheme halts.
 pub struct OpSigParamHandler;
 impl OpcodeHandler for OpSigParamHandler {
     #[inline(always)]
     fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
         let [signature_index, param] = *vm.current_call_frame.stack.pop()?;
+        let param = u64::try_from(param).map_err(|_| ExceptionalHalt::InvalidOpcode)?;
+        let signature_index =
+            u64::try_from(signature_index).map_err(|_| ExceptionalHalt::InvalidOpcode)?;
+        let idx = index_to_usize(signature_index)?;
 
+        // 0x04: copy the referenced ARBITRARY signature's raw bytes into memory,
+        // CALLDATACOPY-style (see FRAMEDATACOPY). Pops three more operands.
+        if param == 0x04 {
+            let [length, data_offset, mem_offset] = *vm.current_call_frame.stack.pop()?;
+            let (length, mem_offset) = size_offset_to_usize(length, mem_offset)?;
+            let data_offset_opt = u256_to_offset(data_offset);
+
+            let new_memory_size = calculate_memory_size(mem_offset, length)?;
+            let current_memory_size = vm.current_call_frame.memory.len();
+            // Charge memory-expansion gas before the context/scheme guards: the
+            // caller pays for the growth it requested even if the opcode halts.
+            vm.current_call_frame
+                .increase_consumed_gas(gas_cost::framedatacopy(
+                    new_memory_size,
+                    current_memory_size,
+                    length,
+                )?)?;
+
+            let ctx = vm
+                .frame_tx_context
+                .as_ref()
+                .ok_or(ExceptionalHalt::InvalidOpcode)?;
+            let sig = ctx
+                .tx
+                .signatures
+                .get(idx)
+                .ok_or(ExceptionalHalt::InvalidOpcode)?;
+            // 0x04 is only defined for ARBITRARY signatures.
+            if sig.scheme != ethrex_common::types::FRAME_SIG_SCHEME_ARBITRARY {
+                return Err(ExceptionalHalt::InvalidOpcode.into());
+            }
+            if length == 0 {
+                return Ok(OpcodeResult::Continue);
+            }
+            let data = &sig.signature;
+            let mut buf = vec![0u8; length];
+            if let Some(data_offset) = data_offset_opt {
+                let available = data.len().saturating_sub(data_offset);
+                let copy_len = length.min(available);
+                if let (Some(dst), Some(src)) = (
+                    buf.get_mut(..copy_len),
+                    data.get(data_offset..data_offset.saturating_add(copy_len)),
+                ) {
+                    dst.copy_from_slice(src);
+                }
+            }
+            vm.current_call_frame.memory.store_data(mem_offset, &buf)?;
+            return Ok(OpcodeResult::Continue);
+        }
+
+        // Metadata (0x00-0x03): fixed gas, returns one word.
         vm.current_call_frame
             .increase_consumed_gas(gas_cost::SIGPARAM)?;
-
         let ctx = vm
             .frame_tx_context
             .as_ref()
             .ok_or(ExceptionalHalt::InvalidOpcode)?;
-
-        let signature_index =
-            u64::try_from(signature_index).map_err(|_| ExceptionalHalt::InvalidOpcode)?;
-        let idx = index_to_usize(signature_index)?;
         let sig = ctx
             .tx
             .signatures
             .get(idx)
             .ok_or(ExceptionalHalt::InvalidOpcode)?;
-
-        let param = u64::try_from(param).map_err(|_| ExceptionalHalt::InvalidOpcode)?;
         let result = match param {
-            0x00 => sig.signer.map_or(U256::zero(), address_to_u256), // effective signer (0 if empty)
+            // Effective signer: an absent signer resolves to tx.sender (EIP-8141).
+            0x00 => address_to_u256(sig.signer.unwrap_or(ctx.tx.sender)),
             0x01 => U256::from(sig.scheme),
             0x02 => {
                 // msg: 0 when empty (canonical sig_hash case), else the 32-byte digest.
@@ -573,17 +626,18 @@ fn execute_default_verify(
         return Ok((false, 0, Vec::new()));
     }
 
-    // EIP-8141 (spec commit fe0940cae2): the default account approves only if
-    // the outer signature list contains a SECP256K1 signature over the
-    // canonical sig_hash (empty msg) whose signer is the resolved target.
-    // Signatures were already validated in execute_frame_tx, so a match here is
-    // sufficient — no in-frame crypto.
-    let has_sender_sig = ctx.tx.signatures.iter().any(|s| {
+    // EIP-8141: the default account approves only if the signature at INDEX 0
+    // is a SECP256K1 signature over the canonical sig_hash (empty msg) whose
+    // resolved signer is the resolved target. The spec binds this to index 0
+    // specifically (not "anywhere in the list"). An absent signer resolves to
+    // tx.sender. Signatures were already validated in execute_frame_tx, so a
+    // match here is sufficient — no in-frame crypto.
+    let sender_sig_ok = ctx.tx.signatures.first().is_some_and(|s| {
         s.scheme == ethrex_common::types::FRAME_SIG_SCHEME_SECP256K1
             && s.msg.is_empty()
-            && s.signer == Some(target)
+            && s.signer.unwrap_or(ctx.tx.sender) == target
     });
-    if !has_sender_sig {
+    if !sender_sig_ok {
         return Ok((false, 0, Vec::new()));
     }
 

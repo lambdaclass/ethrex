@@ -1354,7 +1354,8 @@ mod frame_tx_opcode_handler_tests {
     fn sigparam_0x02_empty_msg_returns_zero() {
         let signer = Address::from_low_u64_be(0x1234);
         let sig = FrameSignature {
-            scheme: 0x00,
+            // SECP256K1 (scheme 1); scheme 0 is now ARBITRARY (requires empty signer).
+            scheme: 0x01,
             signer: Some(signer),
             msg: Bytes::new(),
             signature: Bytes::from(vec![0xAAu8; 65]),
@@ -2799,6 +2800,7 @@ mod frame_sig_validation_tests {
         assert!(validate_frame_signatures(
             &[],
             H256::zero(),
+            Address::zero(),
             hegota(),
             &ethrex_crypto::NativeCrypto
         ));
@@ -2810,6 +2812,7 @@ mod frame_sig_validation_tests {
         assert!(!validate_frame_signatures(
             &[sig],
             H256::zero(),
+            Address::zero(),
             hegota(),
             &ethrex_crypto::NativeCrypto
         ));
@@ -2821,6 +2824,7 @@ mod frame_sig_validation_tests {
         assert!(!validate_frame_signatures(
             &[sig],
             H256::zero(),
+            Address::zero(),
             hegota(),
             &ethrex_crypto::NativeCrypto
         ));
@@ -2832,6 +2836,7 @@ mod frame_sig_validation_tests {
         assert!(!validate_frame_signatures(
             &[sig],
             H256::zero(),
+            Address::zero(),
             hegota(),
             &ethrex_crypto::NativeCrypto
         ));
@@ -2850,6 +2855,7 @@ mod frame_sig_validation_tests {
         assert!(validate_frame_signatures(
             &[sig.clone()],
             H256::zero(),
+            Address::zero(),
             hegota(),
             &ethrex_crypto::NativeCrypto
         ));
@@ -2868,6 +2874,7 @@ mod frame_sig_validation_tests {
         assert!(!validate_frame_signatures(
             &[sig],
             H256::zero(),
+            Address::zero(),
             hegota(),
             &ethrex_crypto::NativeCrypto
         ));
@@ -2884,6 +2891,7 @@ mod frame_sig_validation_tests {
         assert!(!validate_frame_signatures(
             &[sig],
             H256::zero(),
+            Address::zero(),
             hegota(),
             &ethrex_crypto::NativeCrypto
         ));
@@ -2900,6 +2908,7 @@ mod frame_sig_validation_tests {
         assert!(!validate_frame_signatures(
             &[sig],
             H256::zero(),
+            Address::zero(),
             hegota(),
             &ethrex_crypto::NativeCrypto
         ));
@@ -2952,6 +2961,7 @@ mod frame_sig_validation_tests {
             validate_frame_signatures(
                 std::slice::from_ref(&valid_sig),
                 msg_hash,
+                Address::zero(),
                 hegota(),
                 &ethrex_crypto::NativeCrypto
             ),
@@ -2968,10 +2978,39 @@ mod frame_sig_validation_tests {
             !validate_frame_signatures(
                 &[tampered],
                 msg_hash,
+                Address::zero(),
                 hegota(),
                 &ethrex_crypto::NativeCrypto
             ),
             "wrong signer should fail"
+        );
+
+        // Empty signer (None) resolves to tx.sender: valid iff sender == recovered.
+        let empty_signer_sig = FrameSignature {
+            scheme: FRAME_SIG_SCHEME_SECP256K1,
+            signer: None,
+            msg: Bytes::new(),
+            signature: Bytes::from(sig_bytes.clone()),
+        };
+        assert!(
+            validate_frame_signatures(
+                std::slice::from_ref(&empty_signer_sig),
+                msg_hash,
+                expected_signer,
+                hegota(),
+                &ethrex_crypto::NativeCrypto
+            ),
+            "empty signer must resolve to tx.sender and validate when sender == recovered"
+        );
+        assert!(
+            !validate_frame_signatures(
+                std::slice::from_ref(&empty_signer_sig),
+                msg_hash,
+                wrong_addr,
+                hegota(),
+                &ethrex_crypto::NativeCrypto
+            ),
+            "empty signer resolving to a different tx.sender must fail"
         );
 
         // Wrong hash: valid sig but different sig_hash → invalid
@@ -2980,6 +3019,7 @@ mod frame_sig_validation_tests {
             !validate_frame_signatures(
                 &[valid_sig],
                 other_hash,
+                Address::zero(),
                 hegota(),
                 &ethrex_crypto::NativeCrypto
             ),
@@ -3002,6 +3042,7 @@ mod frame_sig_validation_tests {
             !validate_frame_signatures(
                 &[sig],
                 H256::zero(),
+                Address::zero(),
                 hegota(),
                 &ethrex_crypto::NativeCrypto
             ),
@@ -3080,6 +3121,7 @@ mod frame_sig_validation_tests {
             validate_frame_signatures(
                 std::slice::from_ref(&valid_sig),
                 H256::zero(),
+                Address::zero(),
                 hegota(),
                 &ethrex_crypto::NativeCrypto
             ),
@@ -3097,6 +3139,7 @@ mod frame_sig_validation_tests {
             !validate_frame_signatures(
                 &[tampered_r],
                 H256::zero(),
+                Address::zero(),
                 hegota(),
                 &ethrex_crypto::NativeCrypto
             ),
@@ -3112,6 +3155,7 @@ mod frame_sig_validation_tests {
             !validate_frame_signatures(
                 &[wrong_signer],
                 H256::zero(),
+                Address::zero(),
                 hegota(),
                 &ethrex_crypto::NativeCrypto
             ),
