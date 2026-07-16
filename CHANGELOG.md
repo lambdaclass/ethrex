@@ -12,6 +12,10 @@
 
 ## Perf
 
+### 2026-07-16
+
+- Prewarm each sender's ready transaction prefix so successor txs warm against their predecessors' state [#6999](https://github.com/lambdaclass/ethrex/pull/6999)
+
 ### 2026-07-06
 
 - Warm state caches between blocks by speculatively executing top-of-mempool transactions [#6967](https://github.com/lambdaclass/ethrex/pull/6967)
