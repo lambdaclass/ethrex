@@ -34,7 +34,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-12cda68b.js";
+            window.path_to_searchindex_js = "searchindex-cd2c6951.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-586b7da3.js"></script>
@@ -247,8 +247,8 @@
 <p><strong>Integration Details:</strong></p>
 <ul>
 <li>ethrex supports ZisK for L1 block proving via ethrex-replay</li>
-<li>Most Ethereum precompiles are supported with patches</li>
-<li>P256 verification is not yet available (no patch exists)</li>
+<li>Ethereum precompiles use ZisK’s standardized <code>zkvm_*</code> accelerator interface</li>
+<li>P256 (secp256r1) verification is supported via <code>zkvm_secp256r1_verify</code></li>
 </ul>
 <p><strong>Current Limitations:</strong></p>
 <ul>
