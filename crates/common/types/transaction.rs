@@ -1857,14 +1857,17 @@ impl RLPDecode for Frame {
 }
 
 /// EIP-8141 transaction signature (spec commit fe0940cae2). RLP: `[scheme, signer, msg, signature]`.
-/// `scheme`: 0 = SECP256K1 (sig = v||r||s, 65 bytes), 1 = P256 (sig = r||s||qx||qy, 128 bytes).
+/// `scheme`: 0 = ARBITRARY (`signer` MUST be empty; `signature` is arbitrary bytes),
+/// 1 = SECP256K1 (sig = v||r||s, 65 bytes), 2 = P256 (sig = r||s||qx||qy, 128 bytes).
+/// `signer`: `None` (empty) is required for ARBITRARY and allowed for SECP256K1/P256
+/// (empty ⇒ the resolved signer is the recovered/derived key); `Some(addr)` pins it.
 /// `msg`: empty = signs compute_sig_hash(tx); 32 bytes = signs that explicit digest.
 /// Raw `signature` bytes are intentionally not EVM-introspectable.
 #[derive(Clone, Debug, PartialEq, Eq, Default, RSerialize, RDeserialize, Archive)]
 pub struct FrameSignature {
     pub scheme: u8,
-    #[rkyv(with=crate::rkyv_utils::H160Wrapper)]
-    pub signer: Address,
+    #[rkyv(with=rkyv::with::Map<crate::rkyv_utils::H160Wrapper>)]
+    pub signer: Option<Address>,
     #[rkyv(with=crate::rkyv_utils::BytesWrapper)]
     pub msg: Bytes,
     #[rkyv(with=crate::rkyv_utils::BytesWrapper)]
@@ -1873,9 +1876,15 @@ pub struct FrameSignature {
 
 impl RLPEncode for FrameSignature {
     fn encode(&self, buf: &mut dyn bytes::BufMut) {
+        // `signer` encodes as an address or RLP null (empty) for `None`, mirroring
+        // `Frame.target`; an empty signer is required for ARBITRARY signatures.
+        let signer_kind = match self.signer {
+            Some(addr) => TxKind::Call(addr),
+            None => TxKind::Create,
+        };
         Encoder::new(buf)
             .encode_field(&self.scheme)
-            .encode_field(&self.signer)
+            .encode_field(&signer_kind)
             .encode_field(&self.msg)
             .encode_field(&self.signature)
             .finish();
@@ -1886,7 +1895,11 @@ impl RLPDecode for FrameSignature {
     fn decode_unfinished(rlp: &[u8]) -> Result<(FrameSignature, &[u8]), RLPDecodeError> {
         let decoder = Decoder::new(rlp)?;
         let (scheme, decoder) = decoder.decode_field("scheme")?;
-        let (signer, decoder) = decoder.decode_field("signer")?;
+        let (signer_kind, decoder): (TxKind, _) = decoder.decode_field("signer")?;
+        let signer = match signer_kind {
+            TxKind::Call(addr) => Some(addr),
+            TxKind::Create => None,
+        };
         let (msg, decoder) = decoder.decode_field("msg")?;
         let (signature, decoder) = decoder.decode_field("signature")?;
         Ok((
@@ -1934,9 +1947,10 @@ pub const FRAME_TX_PER_FRAME_COST: u64 = 475;
 pub const FRAME_TX_ENTRY_POINT_U64: u64 = 0xaa;
 /// Maximum number of frames allowed per EIP-8141 frame transaction.
 pub const FRAME_TX_MAX_FRAMES: usize = 64;
-/// EIP-8141 signature schemes (spec commit fe0940cae2).
-pub const FRAME_SIG_SCHEME_SECP256K1: u8 = 0;
-pub const FRAME_SIG_SCHEME_P256: u8 = 1;
+/// EIP-8141 signature schemes (spec commit fe0940cae2): ARBITRARY=0, SECP256K1=1, P256=2.
+pub const FRAME_SIG_SCHEME_ARBITRARY: u8 = 0;
+pub const FRAME_SIG_SCHEME_SECP256K1: u8 = 1;
+pub const FRAME_SIG_SCHEME_P256: u8 = 2;
 /// EIP-8141 §Mempool `MAX_VERIFY_GAS` (spec commit fe0940cae2): the maximum gas
 /// a public-mempool node should expend validating signatures and simulating the
 /// validation prefix. Signature validation counts against this budget (rule #6),
@@ -2016,6 +2030,7 @@ impl FrameTransaction {
         self.signatures
             .iter()
             .map(|s| match s.scheme {
+                FRAME_SIG_SCHEME_ARBITRARY => 0u64,
                 FRAME_SIG_SCHEME_SECP256K1 => 2800u64,
                 FRAME_SIG_SCHEME_P256 => 6700u64,
                 _ => 0,
@@ -2078,8 +2093,20 @@ impl FrameTransaction {
         // EIP-8141 signature list validation (spec commit fe0940cae2): scheme
         // must be a known value; msg must be empty or a non-zero 32-byte digest.
         for (i, sig) in self.signatures.iter().enumerate() {
-            if sig.scheme != FRAME_SIG_SCHEME_SECP256K1 && sig.scheme != FRAME_SIG_SCHEME_P256 {
-                return Err(format!("Signature {i}: unsupported scheme {}", sig.scheme));
+            match sig.scheme {
+                // ARBITRARY (0) carries no recoverable signer; per EIP-8141 the
+                // signer MUST be empty.
+                FRAME_SIG_SCHEME_ARBITRARY => {
+                    if sig.signer.is_some() {
+                        return Err(format!(
+                            "Signature {i}: ARBITRARY signatures must not name a signer"
+                        ));
+                    }
+                }
+                FRAME_SIG_SCHEME_SECP256K1 | FRAME_SIG_SCHEME_P256 => {}
+                other => {
+                    return Err(format!("Signature {i}: unsupported scheme {other}"));
+                }
             }
             match sig.msg.len() {
                 0 => {}
@@ -2823,7 +2850,7 @@ mod serde_impl {
     pub struct SignatureEntry {
         #[serde(with = "crate::serde_utils::u64::hex_str")]
         pub scheme: u64,
-        pub signer: Address,
+        pub signer: Option<Address>,
         #[serde(with = "crate::serde_utils::bytes")]
         pub msg: Bytes,
         #[serde(with = "crate::serde_utils::bytes")]
@@ -4849,7 +4876,7 @@ mod tests {
             ],
             signatures: vec![FrameSignature {
                 scheme: FRAME_SIG_SCHEME_SECP256K1,
-                signer: Address::from_low_u64_be(0xABCD),
+                signer: Some(Address::from_low_u64_be(0xABCD)),
                 msg: Bytes::new(),
                 signature: Bytes::from(vec![0u8; 65]),
             }],
@@ -5095,7 +5122,7 @@ mod tests {
             .as_array()
             .expect("signatures serialized as an array");
         assert_eq!(sigs.len(), tx.signatures.len());
-        assert_eq!(sigs[0].get("scheme").unwrap(), "0x0");
+        assert_eq!(sigs[0].get("scheme").unwrap(), "0x1");
         assert!(sigs[0].get("signer").is_some());
         assert!(sigs[0].get("signature").is_some());
         assert!(sigs[0].get("msg").is_some());
@@ -5399,7 +5426,7 @@ mod tests {
     fn signature_rlp_roundtrip() {
         let sig = FrameSignature {
             scheme: FRAME_SIG_SCHEME_P256,
-            signer: Address::from_low_u64_be(0x1234),
+            signer: Some(Address::from_low_u64_be(0x1234)),
             msg: Bytes::from(vec![7u8; 32]),
             signature: Bytes::from(vec![9u8; 128]),
         };
@@ -5447,11 +5474,33 @@ mod tests {
     #[test]
     fn static_validation_rejects_unknown_scheme() {
         let mut tx = make_test_frame_tx();
-        tx.signatures[0].scheme = 2;
+        tx.signatures[0].scheme = 3;
         assert!(
             tx.validate_static_constraints()
                 .unwrap_err()
                 .contains("unsupported scheme"),
+        );
+    }
+
+    #[test]
+    fn static_validation_accepts_arbitrary_with_empty_signer() {
+        let mut tx = make_test_frame_tx();
+        // ARBITRARY (scheme 0) requires an empty signer and costs no verify gas.
+        tx.signatures[0].scheme = FRAME_SIG_SCHEME_ARBITRARY;
+        tx.signatures[0].signer = None;
+        assert!(tx.validate_static_constraints().is_ok());
+        assert_eq!(tx.signature_verification_cost(), 0);
+    }
+
+    #[test]
+    fn static_validation_rejects_arbitrary_with_signer() {
+        let mut tx = make_test_frame_tx();
+        tx.signatures[0].scheme = FRAME_SIG_SCHEME_ARBITRARY;
+        tx.signatures[0].signer = Some(Address::from_low_u64_be(0xABCD));
+        assert!(
+            tx.validate_static_constraints()
+                .unwrap_err()
+                .contains("ARBITRARY signatures must not name a signer"),
         );
     }
 
@@ -5517,7 +5566,7 @@ mod tests {
         // Add a P256 signature; cost must rise by at least 6700 + its calldata.
         tx.signatures.push(FrameSignature {
             scheme: FRAME_SIG_SCHEME_P256,
-            signer: Address::from_low_u64_be(1),
+            signer: Some(Address::from_low_u64_be(1)),
             msg: Bytes::new(),
             signature: Bytes::from(vec![0u8; 128]),
         });
@@ -5555,7 +5604,7 @@ mod tests {
             ],
             signatures: vec![FrameSignature {
                 scheme: FRAME_SIG_SCHEME_SECP256K1,
-                signer: Address::from_low_u64_be(0xABCD),
+                signer: Some(Address::from_low_u64_be(0xABCD)),
                 msg: Bytes::new(),
                 signature: Bytes::from(vec![0x01u8; 65]),
             }],
@@ -5573,7 +5622,7 @@ mod tests {
         // GOLDEN_RLP: obtained from first run
         assert_eq!(
             rlp_hex,
-            "f8ab010794000000000000000000000000000000000000abcde8ca01038082520880821122dc0280940000000000000000000000000000000000001234829c408080f85cf85a8094000000000000000000000000000000000000abcd80b8410101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101843b9aca008506fc23ac0080c0"
+            "f8ab010794000000000000000000000000000000000000abcde8ca01038082520880821122dc0280940000000000000000000000000000000000001234829c408080f85cf85a0194000000000000000000000000000000000000abcd80b8410101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101843b9aca008506fc23ac0080c0"
         );
 
         // Round-trips losslessly.
@@ -5585,7 +5634,7 @@ mod tests {
         // GOLDEN_SIG_HASH: obtained from first run
         assert_eq!(
             format!("{:#x}", sig_hash),
-            "0x87d1a9ce8a1f242345bb20deab5e5111a41780814ea497fbd20700a60a2ecd8d",
+            "0xe7dc3f33413fc69c09f9c690be154ded294954e497aeea6ce0010ba513f2f26d",
         );
 
         // Elision invariant: changing empty-msg signature bytes must NOT change sig_hash.

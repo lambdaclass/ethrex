@@ -477,7 +477,7 @@ impl OpcodeHandler for OpSigParamHandler {
 
         let param = u64::try_from(param).map_err(|_| ExceptionalHalt::InvalidOpcode)?;
         let result = match param {
-            0x00 => address_to_u256(sig.signer), // effective signer
+            0x00 => sig.signer.map_or(U256::zero(), address_to_u256), // effective signer (0 if empty)
             0x01 => U256::from(sig.scheme),
             0x02 => {
                 // msg: 0 when empty (canonical sig_hash case), else the 32-byte digest.
@@ -581,7 +581,7 @@ fn execute_default_verify(
     let has_sender_sig = ctx.tx.signatures.iter().any(|s| {
         s.scheme == ethrex_common::types::FRAME_SIG_SCHEME_SECP256K1
             && s.msg.is_empty()
-            && s.signer == target
+            && s.signer == Some(target)
     });
     if !has_sender_sig {
         return Ok((false, 0, Vec::new()));

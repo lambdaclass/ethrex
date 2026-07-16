@@ -573,7 +573,7 @@ async fn mempool_rejects_frame_tx_with_invalid_signature() {
     // ecrecover will not recover the claimed signer, so admission must reject it.
     frame_tx.signatures = vec![FrameSignature {
         scheme: FRAME_SIG_SCHEME_SECP256K1,
-        signer: Address::from_low_u64_be(0xABCD),
+        signer: Some(Address::from_low_u64_be(0xABCD)),
         msg: Bytes::new(),
         signature: Bytes::from(vec![0xAB; 65]),
     }];
@@ -750,7 +750,7 @@ async fn mempool_rejects_frame_tx_exceeding_max_verify_gas() {
     frame_tx.signatures = (0..n_sigs)
         .map(|_| FrameSignature {
             scheme: FRAME_SIG_SCHEME_P256,
-            signer: Address::from_low_u64_be(0xABCD),
+            signer: Some(Address::from_low_u64_be(0xABCD)),
             msg: Bytes::new(),
             signature: Bytes::from(vec![0u8; 128]),
         })
@@ -2761,7 +2761,7 @@ mod p2p_serve_tests {
             }],
             signatures: vec![FrameSignature {
                 scheme: FRAME_SIG_SCHEME_SECP256K1,
-                signer: Address::from_low_u64_be(0xABCD),
+                signer: Some(Address::from_low_u64_be(0xABCD)),
                 msg: bytes::Bytes::new(),
                 signature: bytes::Bytes::from(vec![0u8; 65]),
             }],

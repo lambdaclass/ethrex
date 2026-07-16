@@ -1303,7 +1303,7 @@ mod frame_tx_opcode_handler_tests {
         let sig_bytes = Bytes::from(vec![0xFFu8; 65]);
         let sig = FrameSignature {
             scheme: 0x01,
-            signer,
+            signer: Some(signer),
             msg: msg_bytes,
             signature: sig_bytes,
         };
@@ -1325,7 +1325,7 @@ mod frame_tx_opcode_handler_tests {
     fn sigparam_0x00_returns_signer() {
         let ctx = ctx_with_one_signature();
         let sig = ctx.tx.signatures.first().unwrap();
-        let result = address_to_u256(sig.signer);
+        let result = address_to_u256(sig.signer.unwrap());
         let mut expected = [0u8; 32];
         expected[12..].copy_from_slice(Address::from_low_u64_be(0xABCDEF).as_bytes());
         assert_eq!(result, U256::from_big_endian(&expected));
@@ -1355,7 +1355,7 @@ mod frame_tx_opcode_handler_tests {
         let signer = Address::from_low_u64_be(0x1234);
         let sig = FrameSignature {
             scheme: 0x00,
-            signer,
+            signer: Some(signer),
             msg: Bytes::new(),
             signature: Bytes::from(vec![0xAAu8; 65]),
         };
@@ -2697,7 +2697,10 @@ mod frame_sig_validation_tests {
     use ethrex_common::types::Fork;
     use ethrex_common::{
         Address, H256,
-        types::{FRAME_SIG_SCHEME_P256, FRAME_SIG_SCHEME_SECP256K1, FrameSignature},
+        types::{
+            FRAME_SIG_SCHEME_ARBITRARY, FRAME_SIG_SCHEME_P256, FRAME_SIG_SCHEME_SECP256K1,
+            FrameSignature,
+        },
     };
     use ethrex_levm::vm::{frame_signatures_are_low_s, validate_frame_signatures};
 
@@ -2708,7 +2711,7 @@ mod frame_sig_validation_tests {
     fn dummy_sig(scheme: u8, sig_len: usize) -> FrameSignature {
         FrameSignature {
             scheme,
-            signer: Address::from_low_u64_be(0xBEEF),
+            signer: Some(Address::from_low_u64_be(0xBEEF)),
             msg: Bytes::new(),
             signature: Bytes::from(vec![0u8; sig_len]),
         }
@@ -2742,7 +2745,7 @@ mod frame_sig_validation_tests {
         bytes[33..65].copy_from_slice(s);
         FrameSignature {
             scheme: FRAME_SIG_SCHEME_SECP256K1,
-            signer: Address::from_low_u64_be(0xBEEF),
+            signer: Some(Address::from_low_u64_be(0xBEEF)),
             msg: Bytes::new(),
             signature: Bytes::from(bytes),
         }
@@ -2754,7 +2757,7 @@ mod frame_sig_validation_tests {
         bytes[32..64].copy_from_slice(s);
         FrameSignature {
             scheme: FRAME_SIG_SCHEME_P256,
-            signer: Address::from_low_u64_be(0xBEEF),
+            signer: Some(Address::from_low_u64_be(0xBEEF)),
             msg: Bytes::new(),
             signature: Bytes::from(bytes),
         }
@@ -2835,10 +2838,46 @@ mod frame_sig_validation_tests {
     }
 
     #[test]
+    fn arbitrary_empty_signer_is_valid_and_low_s() {
+        // ARBITRARY (scheme 0): no protocol crypto; signer must be empty; any
+        // signature bytes are accepted and low-s malleability does not apply.
+        let sig = FrameSignature {
+            scheme: FRAME_SIG_SCHEME_ARBITRARY,
+            signer: None,
+            msg: Bytes::new(),
+            signature: Bytes::from(vec![0xAAu8; 10]),
+        };
+        assert!(validate_frame_signatures(
+            &[sig.clone()],
+            H256::zero(),
+            hegota(),
+            &ethrex_crypto::NativeCrypto
+        ));
+        assert!(frame_signatures_are_low_s(&[sig]));
+    }
+
+    #[test]
+    fn arbitrary_with_signer_is_invalid() {
+        // Per EIP-8141 an ARBITRARY signature MUST NOT name a signer.
+        let sig = FrameSignature {
+            scheme: FRAME_SIG_SCHEME_ARBITRARY,
+            signer: Some(Address::from_low_u64_be(0xBEEF)),
+            msg: Bytes::new(),
+            signature: Bytes::from(vec![0xAAu8; 10]),
+        };
+        assert!(!validate_frame_signatures(
+            &[sig],
+            H256::zero(),
+            hegota(),
+            &ethrex_crypto::NativeCrypto
+        ));
+    }
+
+    #[test]
     fn explicit_zero_32byte_msg_is_invalid() {
         let sig = FrameSignature {
             scheme: FRAME_SIG_SCHEME_SECP256K1,
-            signer: Address::from_low_u64_be(0xBEEF),
+            signer: Some(Address::from_low_u64_be(0xBEEF)),
             msg: Bytes::from(vec![0u8; 32]),
             signature: Bytes::from(vec![0u8; 65]),
         };
@@ -2854,7 +2893,7 @@ mod frame_sig_validation_tests {
     fn msg_len_not_0_or_32_is_invalid() {
         let sig = FrameSignature {
             scheme: FRAME_SIG_SCHEME_SECP256K1,
-            signer: Address::from_low_u64_be(0xBEEF),
+            signer: Some(Address::from_low_u64_be(0xBEEF)),
             msg: Bytes::from(vec![0xAAu8; 16]),
             signature: Bytes::from(vec![0u8; 65]),
         };
@@ -2903,7 +2942,7 @@ mod frame_sig_validation_tests {
 
         let valid_sig = FrameSignature {
             scheme: FRAME_SIG_SCHEME_SECP256K1,
-            signer: expected_signer,
+            signer: Some(expected_signer),
             msg: Bytes::new(), // empty → use sig_hash
             signature: Bytes::from(sig_bytes.clone()),
         };
@@ -2922,7 +2961,7 @@ mod frame_sig_validation_tests {
         // Tampered signer: wrong address → invalid
         let wrong_addr = Address::from_low_u64_be(0xDEAD);
         let tampered = FrameSignature {
-            signer: wrong_addr,
+            signer: Some(wrong_addr),
             ..valid_sig.clone()
         };
         assert!(
@@ -2954,7 +2993,7 @@ mod frame_sig_validation_tests {
         // The signer derivation check fires before the curve verification.
         let sig = FrameSignature {
             scheme: FRAME_SIG_SCHEME_P256,
-            signer: Address::from_low_u64_be(0xDEAD),
+            signer: Some(Address::from_low_u64_be(0xDEAD)),
             msg: Bytes::new(),
             signature: Bytes::from(vec![0xAAu8; 128]),
         };
@@ -3029,7 +3068,7 @@ mod frame_sig_validation_tests {
 
         let valid_sig = FrameSignature {
             scheme: FRAME_SIG_SCHEME_P256,
-            signer,
+            signer: Some(signer),
             // Explicit 32-byte msg: sig_hash arg to validate_frame_signatures
             // is irrelevant for this entry.
             msg: Bytes::copy_from_slice(&digest),
@@ -3066,7 +3105,7 @@ mod frame_sig_validation_tests {
 
         // Wrong signer: signer-derivation check fires.
         let wrong_signer = FrameSignature {
-            signer: Address::from_low_u64_be(0xDEAD),
+            signer: Some(Address::from_low_u64_be(0xDEAD)),
             ..valid_sig
         };
         assert!(

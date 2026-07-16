@@ -444,7 +444,7 @@ fn prefix_rejection_gas_budget_exceeded() {
     // Ensure exactly one SECP256K1 sig so sig cost = 2800.
     tx.signatures = vec![FrameSignature {
         scheme: FRAME_SIG_SCHEME_SECP256K1,
-        signer: sender_addr(),
+        signer: Some(sender_addr()),
         msg: Bytes::new(),
         signature: Bytes::from(vec![0u8; 65]),
     }];
