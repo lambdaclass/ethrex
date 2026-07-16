@@ -3481,6 +3481,11 @@ impl Blockchain {
                     code_is_canonical || is_canonical_paymaster(&paymaster_code)
                 };
 
+                // Self-pay (payer == sender): exempt from the non-canonical COUNT
+                // limit (see FramePaymasterReservation::is_self_pay). The balance
+                // reservation below still applies so the sender can't overdraw.
+                let is_self_pay = paymaster == sender;
+
                 let paymaster_balance = self
                     .storage
                     .get_account_info(header_no, paymaster)
@@ -3521,8 +3526,9 @@ impl Blockchain {
                         if available < max_cost {
                             return Err(MempoolError::FrameTxPaymasterUnderfunded);
                         }
-                        if self.mempool.noncanonical_paymaster_pending(paymaster)?
-                            >= ethrex_common::types::FRAME_TX_MAX_PENDING_NONCANONICAL_PAYMASTER
+                        if !is_self_pay
+                            && self.mempool.noncanonical_paymaster_pending(paymaster)?
+                                >= ethrex_common::types::FRAME_TX_MAX_PENDING_NONCANONICAL_PAYMASTER
                         {
                             return Err(MempoolError::FrameTxNonCanonicalPaymasterLimit);
                         }
@@ -3538,6 +3544,7 @@ impl Blockchain {
                     reserved_cost: max_cost,
                     is_canonical,
                     paymaster_balance,
+                    is_self_pay,
                 });
             }
         }
