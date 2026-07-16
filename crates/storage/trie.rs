@@ -128,7 +128,7 @@ impl BackendTrieDB {
 /// - `is_leaf = true` iff the key is a flat-KV leaf (account leaf at 65 bytes, storage leaf at 131 bytes).
 /// - `is_account = true` iff the key targets account-space (length <= 65: account trie nodes and account leaves).
 ///
-/// Used by every CF-dispatch site (write loop in `commit_trie_layers`, read dispatch
+/// Used by every CF-dispatch site (write loop in `commit_to_disk`, read dispatch
 /// in `BackendTrieDBLocked::tx_for_key`, table selection in
 /// `BackendTrieDB::table_for_key`). Centralised here so a future change to the key
 /// layout only needs to touch one place.

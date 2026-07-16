@@ -17,7 +17,7 @@ use crate::{
     block_data_buffer::BlockDataBuffer,
     error::StoreError,
     journal::{FlatDiff, JournalEntry},
-    layering::{CommitResult, Overlay, TrieLayerCache, TrieWrapper},
+    layering::{Overlay, TrieLayerCache, TrieWrapper},
     rlp::{BlockBodyRLP, BlockHeaderRLP, BlockRLP},
     trie::{BackendTrieDB, BackendTrieDBLocked, classify_trie_key},
     utils::{ChainDataIndex, SnapStateIndex},
@@ -65,12 +65,14 @@ pub const MAX_WITNESSES: u64 = 128;
 // We use one constant for in-memory and another for on-disk backends.
 // This is due to tests requiring state older than 128 blocks.
 // TODO: unify these
-#[allow(unused)]
-const DB_COMMIT_THRESHOLD: usize = 128;
+pub const DB_COMMIT_THRESHOLD: usize = 128;
 const IN_MEMORY_COMMIT_THRESHOLD: usize = 10000;
 
-/// Commit threshold for batch (full sync) mode. Each batch layer holds ~1024
-/// blocks of trie diffs (~1 GB), so we flush aggressively to bound memory.
+/// Depth-only commit threshold for batch execution (full sync / block import). Each batch
+/// layer holds ~1024 blocks of trie diffs (~1 GB), so we flush after a few layers to bound
+/// memory. The canonical `head - DB_COMMIT_THRESHOLD` safe-commit root never lands on a batch
+/// layer boundary, so batch mode commits by depth instead; this is sound because full sync and
+/// import only ever extend a single canonical chain (no competing forks to mis-commit).
 const BATCH_COMMIT_THRESHOLD: usize = 4;
 
 /// Default size in bytes of the RocksDB shared block cache: 12 GiB.
@@ -219,6 +221,13 @@ pub struct Store {
     /// update and the DB write transaction remain mutually ordered.
     fcu_lock: Arc<tokio::sync::Mutex<()>>,
 
+    /// Canonical safe-commit state root, computed after each forkchoice update.
+    ///
+    /// Shared with the [`TrieLayerCache`] so that the Store can update the cell without
+    /// replacing the cache Arc. `H256::zero()` means "no safe commit point yet".
+    /// Cloning `Store` shares this cell across all clones, which is required and correct.
+    safe_commit_root: Arc<RwLock<H256>>,
+
     background_threads: Arc<ThreadList>,
 }
 
@@ -269,9 +278,9 @@ pub struct UpdateBatch {
     pub receipts: Vec<(H256, Vec<Receipt>)>,
     /// Contract code updates (code hash -> bytecode).
     pub code_updates: Vec<(H256, Code)>,
-    /// Whether this batch comes from full sync (batch execution mode).
-    /// When true, uses `BATCH_COMMIT_THRESHOLD` (aggressive) instead of
-    /// `DB_COMMIT_THRESHOLD` to bound memory during bulk block import.
+    /// Whether this batch comes from full sync (batch execution mode). When true,
+    /// the persist worker waits for the disk flush (`wait_for_flush`) to bound
+    /// in-flight batches during bulk import.
     pub batch_mode: bool,
 }
 
@@ -1906,12 +1915,16 @@ impl Store {
         initial_buffer.set_flushed_upto(initial_flushed_upto);
 
         let mut background_threads = Vec::new();
+        let safe_commit_root = Arc::new(RwLock::new(H256::zero()));
         let mut store = Self {
             db_path,
             backend,
             chain_config: Default::default(),
             latest_block_header: Default::default(),
-            trie_cache: Arc::new(RwLock::new(Arc::new(TrieLayerCache::new(commit_threshold)))),
+            trie_cache: Arc::new(RwLock::new(Arc::new(TrieLayerCache::new_with_safe_commit(
+                commit_threshold,
+                safe_commit_root.clone(),
+            )))),
             flatkeyvalue_control_tx: fkv_tx,
             block_data_buffer: Arc::new(RwLock::new(Arc::new(initial_buffer))),
             persist_tx,
@@ -1920,6 +1933,7 @@ impl Store {
             account_code_cache: Arc::new(Mutex::new(CodeCache::default())),
             code_metadata_cache: Arc::new(Mutex::new(rustc_hash::FxHashMap::default())),
             fcu_lock: Arc::new(tokio::sync::Mutex::new(())),
+            safe_commit_root,
             background_threads: Default::default(),
         };
         let backend_clone = store.backend.clone();
@@ -2027,6 +2041,24 @@ impl Store {
                             last_flush_result = flushed;
                         }
                     }
+                    Ok(PersistMessage::Commit(root)) => match persist_trie_cache.read() {
+                        Ok(guard) => {
+                            let trie = guard.clone();
+                            drop(guard);
+                            // Forkchoice-driven flush is the live (non-batch) path, so
+                            // journaling is enabled: pass `is_batch = false`.
+                            let _ = commit_to_disk(
+                                persist_backend.as_ref(),
+                                &persist_fkv_ctl,
+                                &persist_trie_cache,
+                                &trie,
+                                root,
+                                false,
+                            )
+                            .inspect_err(|err| error!("commit_to_disk failed: {err}"));
+                        }
+                        Err(_) => error!("trie cache lock poisoned during commit"),
+                    },
                     Ok(PersistMessage::Ping(ack)) => {
                         // Idle handshake: reached only after all earlier Block
                         // messages are fully processed. Carry the pending flush
@@ -2828,7 +2860,70 @@ impl Store {
             return Err(err);
         }
 
+        // Refresh the canonical safe-commit root now that the canonical tables reflect the new
+        // head. `None` (chain shorter than the threshold, e.g. genesis init at head 0) leaves the
+        // cell unchanged so genesis-on-disk is never gated away.
+        // No `latest_block_header` rollback on error here (unlike the `inner` failure above): the
+        // only error is a poisoned safe-commit `RwLock`, which is an unrecoverable process state.
+        if let Some(root) = self.compute_safe_commit_root(head_number)? {
+            // Advancing the cell alone does not flush: the commit step (Phase 2) only runs
+            // while blocks execute, so an execute-all-then-one-forkchoice flow (e.g. block
+            // import) would accumulate every layer and never persist. When the safe-commit
+            // root advances, poke the worker to flush the now-committable backlog up to it.
+            if self.set_safe_commit_root(root)? {
+                let tx = self.persist_tx.clone();
+                let _ = tokio::task::spawn_blocking(move || tx.send(PersistMessage::Commit(root)))
+                    .await;
+            }
+        }
+
         Ok(())
+    }
+
+    /// Updates the dedicated safe-commit-root cell with the given state root,
+    /// returning `true` if the cell changed (so callers can skip a redundant flush).
+    ///
+    /// This is a plain synchronous function; it touches only the dedicated cell
+    /// and is disjoint from the trie-cache Arc (no cache clone or replacement).
+    /// Crate-private: only `forkchoice_update` (post-canonicalization) may set it,
+    /// preserving the invariant that the cell only ever holds a canonical state root.
+    pub(crate) fn set_safe_commit_root(&self, root: H256) -> Result<bool, StoreError> {
+        let mut guard = self
+            .safe_commit_root
+            .write()
+            .map_err(|_| StoreError::LockError)?;
+        let changed = *guard != root;
+        *guard = root;
+        Ok(changed)
+    }
+
+    /// Computes the canonical safe-commit state root: the state root of the canonical block
+    /// `commit_threshold` layers below `head`.
+    ///
+    /// Returns `Ok(None)` when the chain is shorter than the threshold (underflow), or when the
+    /// target block is not yet canonical / its header is absent. Synchronous getters only; no
+    /// await and no lock guard held across one. The threshold is read from the trie cache to
+    /// avoid duplicating the IN_MEMORY/DB selection that `from_backend` already made.
+    /// Crate-private: only `forkchoice_update` consumes it.
+    pub(crate) fn compute_safe_commit_root(
+        &self,
+        head: BlockNumber,
+    ) -> Result<Option<H256>, StoreError> {
+        let commit_threshold = self
+            .trie_cache
+            .read()
+            .map_err(|_| StoreError::LockError)?
+            .commit_threshold;
+        let Some(target) = head.checked_sub(commit_threshold as u64) else {
+            return Ok(None);
+        };
+        let Some(hash) = self.get_canonical_block_hash_sync(target)? else {
+            return Ok(None);
+        };
+        let Some(header) = self.get_block_header_by_hash(hash)? else {
+            return Ok(None);
+        };
+        Ok(Some(header.state_root))
     }
 
     /// Obtain the storage trie for the given block
@@ -3495,7 +3590,10 @@ impl Store {
             let current = self.trie_cache.read().map_err(|_| StoreError::LockError)?;
             current.commit_threshold()
         };
-        let mut fresh = TrieLayerCache::new(threshold);
+        // Share the Store's safe-commit-root cell so the canonical commit gate keeps
+        // working after the cache swap (the cell only advances via forkchoice).
+        let mut fresh =
+            TrieLayerCache::new_with_safe_commit(threshold, self.safe_commit_root.clone());
         fresh.set_overlay(Arc::new(overlay));
 
         // Wait for the persist worker to be idle before swapping the cache. That
@@ -3559,7 +3657,10 @@ impl Store {
     pub fn abort_reorg(&self) -> Result<(), StoreError> {
         let mut guard = self.trie_cache.write().map_err(|_| StoreError::LockError)?;
         let threshold = guard.commit_threshold();
-        *guard = Arc::new(TrieLayerCache::new(threshold));
+        *guard = Arc::new(TrieLayerCache::new_with_safe_commit(
+            threshold,
+            self.safe_commit_root.clone(),
+        ));
         Ok(())
     }
 
@@ -3879,6 +3980,12 @@ struct BlockPersist {
 /// all earlier `Block` messages are fully processed.
 enum PersistMessage {
     Block(Box<BlockPersist>),
+    /// Flush the committable layer backlog up to and including this state root, then
+    /// prune the flushed layers. Sent by `forkchoice_update` when the safe-commit root
+    /// advances: the commit step otherwise only runs while blocks execute, so an
+    /// execute-all-then-one-forkchoice flow (e.g. block import) would accumulate every
+    /// layer and never persist anything to disk.
+    Commit(H256),
     Ping(std::sync::mpsc::SyncSender<Result<(), StoreError>>),
     /// Graceful-shutdown handshake. Handled only after every earlier `Block`
     /// (FIFO), so it both drains in-flight work and force-flushes the block-data
@@ -4068,9 +4175,12 @@ fn apply_trie_phase1(
     build
 }
 
-/// When the diff-layer chain is deep enough, flush the bottom layer to disk and
-/// RCU-evict it. `is_batch` selects `BATCH_COMMIT_THRESHOLD` (full sync) over
-/// the default per-block threshold. No-ops when nothing is committable.
+/// Flush and prune the committable trie-layer backlog. No-ops when nothing is committable.
+///
+/// `is_batch` selects the gate: batch execution (full sync / import) commits by depth
+/// (`BATCH_COMMIT_THRESHOLD`), because the canonical `head - 128` safe-commit root never lands
+/// on a batch layer boundary; live block-by-block execution uses the canonical safe-commit gate
+/// (`TrieLayerCache::get_commitable`) so non-canonical `newPayload` state is never persisted.
 fn commit_trie_if_due(
     backend: &dyn StorageBackend,
     trie_cache: &Arc<RwLock<Arc<TrieLayerCache>>>,
@@ -4082,9 +4192,9 @@ fn commit_trie_if_due(
         .read()
         .map_err(|_| StoreError::LockError)?
         .clone();
-    // Phase 2: update disk layer.
+    // Phase 2 + 3: flush and prune the committable backlog.
     let commitable = if is_batch {
-        trie.get_commitable_with_threshold(parent_state_root, BATCH_COMMIT_THRESHOLD)
+        trie.get_commitable_by_depth(parent_state_root, BATCH_COMMIT_THRESHOLD)
     } else {
         trie.get_commitable(parent_state_root)
     };
@@ -4092,17 +4202,22 @@ fn commit_trie_if_due(
         // Nothing to commit to disk, move on.
         return Ok(());
     };
-    commit_trie_layers(backend, trie_cache, fkv_ctl, &trie, root, is_batch)
+    commit_to_disk(backend, fkv_ctl, trie_cache, &trie, root, is_batch)
 }
 
-/// Writes the layer at `root` and all of its ancestors to disk in one tx, then
-/// RCU-evicts them from the cache. Used by the per-block "commit when due" path
-/// ([`commit_trie_if_due`]). `trie` is the caller's snapshot of the cache;
-/// `root` must be one of its layer keys.
-fn commit_trie_layers(
+/// Flush the layer at `root` and all older ancestors to disk, then prune them from the
+/// in-memory cache (Phases 2 and 3 of the persistence pipeline).
+///
+/// `trie` must be the current cache snapshot and `root` a committable layer (as returned
+/// by [`TrieLayerCache::get_commitable`]). A `root` that is not a layer commits nothing.
+///
+/// Reused by both the per-block path ([`commit_trie_if_due`]) and the forkchoice-driven
+/// flush ([`PersistMessage::Commit`]): without the latter, an execute-all-then-one-forkchoice
+/// flow (block import) would never persist, because the commit step only runs while blocks execute.
+fn commit_to_disk(
     backend: &dyn StorageBackend,
-    trie_cache: &Arc<RwLock<Arc<TrieLayerCache>>>,
     fkv_ctl: &SyncSender<FKVGeneratorControlMessage>,
+    trie_cache: &Arc<RwLock<Arc<TrieLayerCache>>>,
     trie: &Arc<TrieLayerCache>,
     root: H256,
     is_batch: bool,
@@ -4120,7 +4235,7 @@ fn commit_trie_layers(
     //
     // NOTE: `StorageReadView` does not currently promise true snapshot isolation
     // (see the trait docs in `api/mod.rs`). What makes the pre-image read safe here
-    // is the single-writer invariant: `commit_trie_layers` is only ever called from
+    // is the single-writer invariant: `commit_to_disk` is only ever called from
     // the single persist worker thread, and `write_tx` is a buffered batch that does
     // not become visible until `write_tx.commit()` at the end of the function. So
     // every `.get()` below sees on-disk state as of the begin_read call. PR 2's
@@ -4136,185 +4251,224 @@ fn commit_trie_layers(
     // Before encoding, accounts have only the account address as their path, while storage keys have
     // the account address (32 bytes) + storage path (up to 32 bytes).
 
-    // Commit removes the bottom layer and returns the committed block's identity plus the
-    // merged k/v. In normal operation this is the block one commit-cadence behind the
-    // just-added block, NOT the just-added block.
+    // `commit` removes the committed layer(s) and returns one `CommittedLayer` per block
+    // in oldest-first order. In normal block-by-block operation this is a single layer,
+    // one commit-cadence behind the just-added block. A forkchoice-driven flush of an
+    // accumulated backlog (e.g. block import) can return several layers at once, so we
+    // write one journal entry per block below rather than merging diffs across blocks.
     //
-    // `root` was returned by `get_commitable` above, which found it by walking
-    // `trie.layers`. `trie_mut` is a `Clone` of `trie`, which preserves the layer
-    // map intact, so `commit(root)` should always return `Some` here. Surface a
-    // hard error if that invariant ever breaks rather than silently writing a
-    // bogus journal entry keyed at block 0.
-    // Snapshot the overlay (if any) BEFORE commit so reconciliation can fold its
-    // entries into this write batch. Issue #6685 Section 9: after a deep reorg,
-    // the first new-chain commit advances disk from the OLD chain's edge `D`
-    // directly to the new chain's tip `T` in a single atomic write; the overlay
-    // supplies the bridge for keys layer_T does not touch. Only meaningful when
-    // `!is_batch` (full sync does not journal).
+    // `root` was returned by a `get_commitable*` gate above, which found it by walking
+    // `trie.layers`. `trie_mut` is a `Clone` of `trie`, which preserves the layer map
+    // intact, so `commit(root)` should always return `Some` here. Surface a hard error
+    // if that invariant ever breaks rather than silently committing nothing.
+    //
+    // Snapshot the overlay (if any) BEFORE commit so reconciliation can fold its entries
+    // into this write batch. Issue #6685 Section 9: after a deep reorg, the first
+    // new-chain commit advances disk from the OLD chain's edge `D` directly to the new
+    // chain's tip `T` in a single atomic write; the overlay supplies the bridge for keys
+    // layer_T does not touch. Only meaningful when `!is_batch` (full sync does not journal).
     let overlay_for_reconciliation = if !is_batch {
         trie.overlay().cloned()
     } else {
         None
     };
 
-    let CommitResult {
-        block_number: committed_block_number,
-        block_hash: committed_block_hash,
-        parent_state_root: committed_parent_state_root,
-        nodes,
-    } = trie_mut.commit(root).ok_or_else(|| {
+    let committed_layers = trie_mut.commit(root).ok_or_else(|| {
         StoreError::Custom(format!(
             "commit({root:?}) returned None; layer cache invariant violated"
         ))
     })?;
 
-    // Reverse-diff accumulators for the journal entry, one per CF. Populated only when
-    // `!is_batch`. Each entry stores the on-disk key as-is, so rollback can apply diffs
-    // directly without further interpretation. For full sync (`is_batch == true`),
-    // no journal entry is written: reorgs aren't supported during full sync, and
-    // journaling would slow it down by adding a read per write.
-    //
-    // PERF: each iteration does one synchronous `read_view.get(table, &key)`. For
-    // large state diffs this is O(N) extra reads on the per-block critical path.
-    // PR 4 can batch these via `multi_get_cf` if profiling shows it's significant.
-    let mut journal_account_trie: FlatDiff = Vec::new();
-    let mut journal_storage_trie: FlatDiff = Vec::new();
-    let mut journal_account_flat: FlatDiff = Vec::new();
-    let mut journal_storage_flat: FlatDiff = Vec::new();
+    // Deep-reorg reconciliation is a single new-chain commit advancing disk to the pivot
+    // tip `T`; it must map to exactly one committed layer. A multi-layer commit with an
+    // overlay installed would mean a backlog accumulated between overlay install and
+    // flush, corrupting the [T, D] delete_range below.
+    debug_assert!(
+        overlay_for_reconciliation.is_none() || committed_layers.len() == 1,
+        "overlay-backed reconciliation must commit exactly one layer (T), got {}",
+        committed_layers.len()
+    );
 
-    // Section 9 reconciliation: build the set of keys layer_T touches so overlay
-    // entries that the new chain has ALSO rewritten can be skipped (layer_T wins,
-    // its value is the post-T state). Overlay-only entries are then appended to
-    // the write loop with `None -> empty Vec` so the downstream `value.is_empty()`
-    // branch deletes them, matching the "absent at pivot" semantics.
-    let layer_keys: rustc_hash::FxHashSet<Vec<u8>> = if overlay_for_reconciliation.is_some() {
-        nodes.iter().map(|(k, _)| k.clone()).collect()
-    } else {
-        rustc_hash::FxHashSet::default()
-    };
+    // Section 9 reconciliation: overlay entries the new chain has NOT rewritten must be
+    // bridged onto disk so disk fully reflects the pivot->T transition. Keys any committed
+    // layer touches are skipped (the layer wins, its value is the post-T state). Overlay-only
+    // entries with `None` become an empty-value write -> deleted on disk, matching the
+    // "absent at pivot" semantics.
     let extra_writes: Vec<(Vec<u8>, Vec<u8>)> = match &overlay_for_reconciliation {
-        Some(overlay) => overlay
-            .iter_all_entries()
-            .filter(|(_, key, _)| !layer_keys.contains(*key))
-            .map(|(_, key, value)| (key.clone(), value.clone().unwrap_or_default()))
-            .collect(),
+        Some(overlay) => {
+            let layer_keys: rustc_hash::FxHashSet<&Vec<u8>> = committed_layers
+                .iter()
+                .flat_map(|l| l.nodes.iter().map(|(k, _)| k))
+                .collect();
+            overlay
+                .iter_all_entries()
+                .filter(|(_, key, _)| !layer_keys.contains(key))
+                .map(|(_, key, value)| (key.clone(), value.clone().unwrap_or_default()))
+                .collect()
+        }
         None => Vec::new(),
     };
-    let combined_writes = nodes.into_iter().chain(extra_writes);
+    // Pivot heights (T, D) for the reconciliation commit; `None` in steady state.
+    let reorg_heights = overlay_for_reconciliation
+        .as_ref()
+        .map(|ov| (ov.to_block(), ov.from_block()));
+
+    // Intra-batch overlay of values already staged in THIS write batch, so each block's
+    // reverse diff records the value as of the *previous* committed block's write, not
+    // just the pre-batch on-disk value. `None` means an earlier block deleted the key.
+    // For the common single-layer commit this stays empty and every pre-image comes
+    // straight from `read_view`. Only consulted/maintained when journaling (`!is_batch`).
+    //
+    // PERF: the first touch of each key does one synchronous `read_view.get(table, &key)`.
+    // For large state diffs this is O(N) extra reads on the per-block critical path.
+    // PR 4 can batch these via `multi_get_cf` if profiling shows it's significant.
+    let mut overlay: HashMap<Vec<u8>, Option<Vec<u8>>> = HashMap::new();
 
     let mut result = Ok(());
-    for (key, value) in combined_writes {
-        let (is_leaf, is_account) = classify_trie_key(key.len());
+    'layers: for layer in &committed_layers {
+        // Reverse-diff accumulators for this block's journal entry, one per CF. Each entry
+        // stores the on-disk key as-is (storage CFs carry their nibble-encoded account-hash
+        // prefix), so a future rollback applies diffs directly without interpretation. For
+        // full sync (`is_batch == true`), no journal entry is written: reorgs aren't
+        // supported during full sync, and journaling would slow it down by a read per write.
+        let mut journal_account_trie: FlatDiff = Vec::new();
+        let mut journal_storage_trie: FlatDiff = Vec::new();
+        let mut journal_account_flat: FlatDiff = Vec::new();
+        let mut journal_storage_flat: FlatDiff = Vec::new();
 
-        // Keys past the flat-KV generator's frontier aren't written to disk yet, so
-        // they must not be journaled either (a `Some(None)` entry recorded here
-        // would cause a rollback to delete a key that was never put). The `continue`
-        // jumps over both the write and the journal push below.
-        if is_leaf && key > last_written {
-            continue;
-        }
-        let table = if is_leaf {
-            if is_account {
-                &ACCOUNT_FLATKEYVALUE
-            } else {
-                &STORAGE_FLATKEYVALUE
-            }
-        } else if is_account {
-            &ACCOUNT_TRIE_NODES
+        // The reconciliation commit is single-layer at `T`; fold the overlay bridge entries
+        // into that layer's writes so they land in T's journal entry. `extra` is empty in
+        // steady state (no overlay) and for any non-T layer.
+        let is_reconciliation_layer = reorg_heights
+            .map(|(t, _)| layer.block_number == t)
+            .unwrap_or(false);
+        let extra: &[(Vec<u8>, Vec<u8>)] = if is_reconciliation_layer {
+            &extra_writes
         } else {
-            &STORAGE_TRIE_NODES
+            &[]
         };
 
-        // Read pre-image from the read view opened before the write batch.
-        // Skipped for batch (full-sync) commits.
-        let prev_value = if !is_batch {
-            match read_view.get(table, &key) {
-                Ok(v) => Some(v),
-                Err(e) => {
-                    result = Err(e);
-                    break;
+        for (key, value) in layer.nodes.iter().chain(extra.iter()) {
+            let (is_leaf, is_account) = classify_trie_key(key.len());
+
+            // Keys past the flat-KV generator's frontier aren't written to disk yet, so
+            // they must not be journaled either (a `Some(None)` entry recorded here
+            // would cause a rollback to delete a key that was never put). The `continue`
+            // jumps over both the write and the journal push below.
+            if is_leaf && key.as_slice() > last_written.as_slice() {
+                continue;
+            }
+            let table = if is_leaf {
+                if is_account {
+                    &ACCOUNT_FLATKEYVALUE
+                } else {
+                    &STORAGE_FLATKEYVALUE
                 }
-            }
-        } else {
-            None
-        };
-
-        if value.is_empty() {
-            result = write_tx.delete(table, &key);
-        } else {
-            result = write_tx.put(table, &key, &value);
-        }
-        if result.is_err() {
-            break;
-        }
-
-        // Record the reverse-diff entry after the put/delete is staged, so a write
-        // error doesn't accumulate state we won't persist. Keys are stored as-is
-        // (storage CFs carry their nibble-encoded account-hash prefix); rollback
-        // applies them directly without interpretation.
-        if let Some(prev) = prev_value {
-            let bucket = match (is_leaf, is_account) {
-                (false, true) => &mut journal_account_trie,
-                (false, false) => &mut journal_storage_trie,
-                (true, true) => &mut journal_account_flat,
-                (true, false) => &mut journal_storage_flat,
+            } else if is_account {
+                &ACCOUNT_TRIE_NODES
+            } else {
+                &STORAGE_TRIE_NODES
             };
-            bucket.push((key, prev));
-        }
-    }
 
-    // Section 9 reconciliation: stage `delete_range` for obsolete OLD-chain
-    // journal entries in `[T, D]` BEFORE the new T entry put, so the put isn't
-    // clobbered by the range delete. T = `overlay.to_block()`, D = `overlay.from_block()`.
-    if result.is_ok()
-        && let Some(overlay) = &overlay_for_reconciliation
-    {
-        let t = overlay.to_block();
-        let d = overlay.from_block();
-        debug_assert_eq!(
-            committed_block_number, t,
-            "first new-chain commit must be at the pivot's T height (overlay.to_block)"
-        );
-        // Only reconcile when the committed block is exactly the pivot height `t`.
-        // The `delete_range` wipes the OLD-chain journal entries `[t, d]` while
-        // this commit writes a single new entry at `committed_block_number`; if
-        // that number is not `t` the range delete would drop new-chain entries
-        // that belong in `[t, d]` and leave gaps that break later reorg recovery.
-        // The debug_assert catches this loudly in tests; in release we skip the
-        // delete (and log) rather than corrupt STATE_HISTORY.
-        if committed_block_number == t {
-            let start = t.to_be_bytes();
-            let end = d.saturating_add(1).to_be_bytes();
-            result = write_tx.delete_range(STATE_HISTORY, &start, &end);
-        } else {
-            error!(
-                committed_block_number,
-                t,
-                d,
-                "deep-reorg reconciliation skipped: first overlay-backed commit not at pivot height; skipping STATE_HISTORY delete_range to avoid history gaps"
+            // Pre-image: the intra-batch overlay wins over disk so multi-layer commits
+            // record each block's true pre-state. Skipped for batch (full-sync) commits.
+            let prev_value = if !is_batch {
+                match overlay.get(key) {
+                    Some(v) => Some(v.clone()),
+                    None => match read_view.get(table, key) {
+                        Ok(v) => Some(v),
+                        Err(e) => {
+                            result = Err(e);
+                            break 'layers;
+                        }
+                    },
+                }
+            } else {
+                None
+            };
+
+            let new_value = if value.is_empty() {
+                result = write_tx.delete(table, key);
+                None
+            } else {
+                result = write_tx.put(table, key, value);
+                Some(value.clone())
+            };
+            if result.is_err() {
+                break 'layers;
+            }
+
+            // Record the reverse-diff entry after the put/delete is staged, so a write
+            // error doesn't accumulate state we won't persist.
+            if let Some(prev) = prev_value {
+                let bucket = match (is_leaf, is_account) {
+                    (false, true) => &mut journal_account_trie,
+                    (false, false) => &mut journal_storage_trie,
+                    (true, true) => &mut journal_account_flat,
+                    (true, false) => &mut journal_storage_flat,
+                };
+                bucket.push((key.clone(), prev));
+                // Advance the overlay so a later block in this same commit sees this
+                // block's write as its pre-image.
+                overlay.insert(key.clone(), new_value);
+            }
+        }
+
+        // Section 9 reconciliation: BEFORE writing this block's journal entry, wipe the
+        // obsolete OLD-chain entries in `[T, D]` so the new T entry (below) isn't clobbered
+        // by the range delete. Fires only for the single reconciliation layer at height T.
+        // T = `overlay.to_block()`, D = `overlay.from_block()`.
+        if !is_batch && let Some((t, d)) = reorg_heights {
+            debug_assert_eq!(
+                layer.block_number, t,
+                "first new-chain commit must be at the pivot's T height (overlay.to_block)"
             );
+            // Only reconcile when this committed layer is exactly the pivot height `t`.
+            // The `delete_range` wipes the OLD-chain journal entries `[t, d]`; if the layer
+            // is not at `t` the range delete would drop new-chain entries that belong in
+            // `[t, d]` and leave gaps that break later reorg recovery. The debug_assert
+            // catches this loudly in tests; in release we skip (and log) rather than corrupt
+            // STATE_HISTORY.
+            if layer.block_number == t {
+                let start = t.to_be_bytes();
+                let end = d.saturating_add(1).to_be_bytes();
+                result = write_tx.delete_range(STATE_HISTORY, &start, &end);
+                if result.is_err() {
+                    break 'layers;
+                }
+            } else {
+                error!(
+                    block_number = layer.block_number,
+                    t,
+                    d,
+                    "deep-reorg reconciliation skipped: committed layer not at pivot height; skipping STATE_HISTORY delete_range to avoid history gaps"
+                );
+            }
         }
-    }
 
-    // Stage the journal entry into the same write batch as the trie/flat-KV overwrites.
-    // `put` is buffered until `commit`, so all CFs land atomically (or none do on commit
-    // failure). The entry is keyed and identified by the COMMITTED block (not the
-    // in-flight block whose insertion triggered this commit): the in-flight block's
-    // own commit happens later when the next block's insertion pushes it past the threshold.
-    if result.is_ok() && !is_batch {
-        let entry = JournalEntry {
-            block_hash: committed_block_hash,
-            parent_state_root: committed_parent_state_root,
-            account_trie_diff: journal_account_trie,
-            storage_trie_diff: journal_storage_trie,
-            account_flat_diff: journal_account_flat,
-            storage_flat_diff: journal_storage_flat,
-        };
-        result = write_tx.put(
-            STATE_HISTORY,
-            &committed_block_number.to_be_bytes(),
-            &entry.encode(),
-        );
+        // Stage this block's journal entry into the same write batch as the trie/flat-KV
+        // overwrites. `put` is buffered until `commit`, so all CFs and every block's entry
+        // land atomically (or none do on commit failure). Each entry is keyed and identified
+        // by its own COMMITTED block, not the in-flight block whose insertion triggered this
+        // commit (that block commits later, one cadence behind).
+        if !is_batch {
+            let entry = JournalEntry {
+                block_hash: layer.block_hash,
+                parent_state_root: layer.parent_state_root,
+                account_trie_diff: journal_account_trie,
+                storage_trie_diff: journal_storage_trie,
+                account_flat_diff: journal_account_flat,
+                storage_flat_diff: journal_storage_flat,
+            };
+            result = write_tx.put(
+                STATE_HISTORY,
+                &layer.block_number.to_be_bytes(),
+                &entry.encode(),
+            );
+            if result.is_err() {
+                break 'layers;
+            }
+        }
     }
 
     if result.is_ok() {
@@ -4823,10 +4977,11 @@ mod state_history_tests {
         }
     }
 
-    /// With `commit_threshold = 1`, the first batch seeds the layer cache and the
-    /// second batch commits the first layer to disk. So pushing N batches produces
-    /// N-1 journal entries. We verify entries for block 1 and block 2 after pushing
-    /// 3 batches.
+    /// Live commits gate on the canonical safe-commit root cell (see `get_commitable`),
+    /// which only advances via forkchoice. We simulate that by calling
+    /// `set_safe_commit_root` to the parent block's state root before storing the next
+    /// block: storing block N+1 then commits block N's layer to disk, producing one
+    /// journal entry per committed block. We verify entries for block 1 and block 2.
     #[test]
     fn journal_entry_written_per_block_in_regular_mode() {
         let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::open().unwrap());
@@ -4853,7 +5008,9 @@ mod state_history_tests {
             })
             .unwrap();
 
-        // Block 2 commits block 1's layer.
+        // Advance the safe-commit root to block 1's state root, then store block 2:
+        // the canonical gate now finds block 1's layer committable and flushes it.
+        store.set_safe_commit_root(state_root_1).unwrap();
         let state_root_2 = H256::repeat_byte(0x22);
         let block2 = make_block(2, block1_hash, state_root_2);
         let block2_hash = block2.hash();
@@ -4878,7 +5035,9 @@ mod state_history_tests {
         assert_eq!(prev, &None, "first-time write means previous value is None");
         assert!(path.len() < 65);
 
-        // Block 3 commits block 2's layer.
+        // Advance the safe-commit root to block 2's state root, then store block 3:
+        // block 2's layer is now committable.
+        store.set_safe_commit_root(state_root_2).unwrap();
         let state_root_3 = H256::repeat_byte(0x33);
         let block3 = make_block(3, block2_hash, state_root_3);
         store
@@ -4981,7 +5140,9 @@ mod state_history_tests {
             })
             .unwrap();
 
-        // Block 2 commits block 1's layer.
+        // Advance the safe-commit root to block 1's state root, then store block 2:
+        // block 1's layer is now committable and flushes to disk.
+        store.set_safe_commit_root(state_root_1).unwrap();
         let state_root_2 = H256::repeat_byte(0x44);
         let block2 = make_block(2, block1_hash, state_root_2);
         store
@@ -5566,7 +5727,7 @@ mod datadir_tests {
     #[test]
     fn dir_with_marker_named_subdirectories_has_no_existing_db() {
         // A *directory* named like a marker file must not be mistaken for a DB;
-        // RocksDB only ever writes these as plain files.
+        // RocksDB only ever visits these as plain files.
         let dir = tempfile::tempdir().unwrap();
         fs::create_dir(dir.path().join("CURRENT")).unwrap();
         fs::create_dir(dir.path().join("MANIFEST-000001")).unwrap();
