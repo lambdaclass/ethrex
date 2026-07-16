@@ -422,6 +422,19 @@ async fn reorg_apply_deep(
 
     let store = blockchain.store();
 
+    // Defer journal-backed deep reorgs while the flat-KV generator is still running.
+    // `commit_to_disk` skips journaling flat-KV leaves past the generator frontier, so
+    // journal entries written during (re)generation are missing those pre-images and the
+    // overlay would serve stale flat-KV values. Until generation completes we return SYNCING
+    // and the CL retries once it finishes.
+    // NOTE: this only closes the common case (reorg *during* generation). Entries written
+    // during generation remain permanently incomplete, so a later reorg that unwinds into
+    // them (before they finalize and are pruned) is still exposed. Full fix tracked in #7001.
+    if !store.flatkeyvalue_fully_generated()? {
+        info!(%head_hash, "deferring deep-reorg apply: flat-KV generation still in progress");
+        return Err(InvalidForkChoice::Syncing);
+    }
+
     let head = store
         .get_block_header_by_hash(head_hash)?
         .ok_or(InvalidForkChoice::Syncing)?;
