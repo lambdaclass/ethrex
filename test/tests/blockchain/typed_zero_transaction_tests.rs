@@ -6,11 +6,13 @@
 //! `0x00` prefix), so ethrex commits `rlp(legacy)` for bytes that were `0x00 || rlp(legacy)` —
 //! a cross-client transactions-root divergence. The decoders must reject the `0x00` type byte.
 use ethrex_common::types::{
-    EIP1559Transaction, LegacyTransaction, P2PTransaction, Transaction, TxKind,
+    Block, BlockBody, BlockHeader, EIP1559Transaction, LegacyTransaction, P2PTransaction,
+    Transaction, TxKind,
 };
 use ethrex_common::{Address, Bytes, U256};
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_rlp::encode::RLPEncode;
+use ethrex_rlp::structs::Encoder;
 
 fn sample_legacy() -> Transaction {
     Transaction::LegacyTransaction(LegacyTransaction {
@@ -89,4 +91,49 @@ fn decode_canonical_still_accepts_a_valid_typed_transaction() {
     assert_eq!(encoded.first(), Some(&0x02u8));
     let decoded = Transaction::decode_canonical(&encoded).expect("valid typed tx must decode");
     assert!(matches!(decoded, Transaction::EIP1559Transaction(_)));
+}
+
+#[test]
+fn block_decode_rejects_body_with_typed_zero_transaction() {
+    // End-to-end: a block whose body carries a 0x00-typed tx must fail to decode (this is the
+    // path P2P block import takes: block RLP -> BlockBody -> Vec<Transaction>). We hand-assemble
+    // the block RLP because the encoders can't *produce* the non-canonical tx — a hostile peer
+    // would. `encode_raw` injects the pre-built transactions list containing the bad tx.
+    let mut txs_list = Vec::new();
+    Encoder::new(&mut txs_list)
+        .encode_raw(&typed_zero_rlp_item())
+        .finish();
+
+    let mut block_rlp = Vec::new();
+    Encoder::new(&mut block_rlp)
+        .encode_field(&BlockHeader::default())
+        .encode_raw(&txs_list) // transactions
+        .encode_field(&Vec::<BlockHeader>::new()) // ommers
+        .finish();
+
+    let decoded = Block::decode(&block_rlp);
+    assert!(
+        decoded.is_err(),
+        "a block whose body carries a 0x00-typed tx must fail to decode, got: {decoded:?}"
+    );
+}
+
+#[test]
+fn block_decode_still_accepts_a_body_with_a_legacy_transaction() {
+    // Control: a well-formed block carrying a genuine legacy tx round-trips through decode.
+    let block = Block::new(
+        BlockHeader::default(),
+        BlockBody {
+            transactions: vec![sample_legacy()],
+            ommers: Vec::new(),
+            withdrawals: None,
+        },
+    );
+    let encoded = block.encode_to_vec();
+    let decoded = Block::decode(&encoded).expect("a valid block must still decode");
+    assert_eq!(decoded.body.transactions.len(), 1);
+    assert!(matches!(
+        decoded.body.transactions[0],
+        Transaction::LegacyTransaction(_)
+    ));
 }
