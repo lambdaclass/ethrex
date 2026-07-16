@@ -142,9 +142,9 @@ impl NewPooledTransactionHashes {
                                 .then_some(tx_blobs_bundle.version),
                             blobs_bundle: tx_blobs_bundle,
                         });
-                    p2p_tx.encode_canonical_to_vec().len()
+                    p2p_tx.encode_canonical_len()
                 }
-                _ => transaction.encode_canonical_to_vec().len(),
+                _ => transaction.encode_canonical_len(),
             };
             transaction_sizes.push(transaction_size);
         }
@@ -363,7 +363,7 @@ impl PooledTransactions {
             // would disconnect geth peers on every v1 blob-tx announcement. Match geth's tx
             // fetcher, which tolerates up to 8 bytes of skew before treating it as a
             // violation (go-ethereum eth/fetcher/tx_fetcher.go).
-            let tx_size = tx.encode_canonical_to_vec().len();
+            let tx_size = tx.encode_canonical_len();
             if tx_size.abs_diff(expected_size) > POOLED_TX_SIZE_TOLERANCE {
                 return Err(MempoolError::InvalidPooledTxSize);
             }
