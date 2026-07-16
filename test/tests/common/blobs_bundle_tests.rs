@@ -1,11 +1,12 @@
 use ethrex_common::types::{
-    BYTES_PER_BLOB, BlobsBundle, BlobsBundleError, Fork, blobs_bundle::blob_from_bytes,
+    BYTES_PER_BLOB, BlobsBundle, BlobsBundleError, CELLS_PER_EXT_BLOB, Fork,
+    blobs_bundle::blob_from_bytes,
 };
 
-/// Helper: create a valid blob bundle with one blob for pre-Osaka (version 0).
+/// Helper: create a valid v1 blob bundle with one blob.
 fn valid_bundle_and_tx() -> (BlobsBundle, ethrex_common::types::EIP4844Transaction) {
     let blobs = vec![blob_from_bytes("Hello, world!".as_bytes().into()).unwrap()];
-    let bundle = BlobsBundle::create_from_blobs(&blobs, None).unwrap();
+    let bundle = BlobsBundle::create_from_blobs(&blobs).unwrap();
     let blob_versioned_hashes = bundle.generate_versioned_hashes();
 
     let tx = ethrex_common::types::EIP4844Transaction {
@@ -36,7 +37,7 @@ fn validate_cheap_rejects_empty_bundle() {
 fn validate_cheap_rejects_wrong_lengths() {
     // Bundle with 1 blob but 2 commitments
     let blobs = vec![blob_from_bytes("data".as_bytes().into()).unwrap()];
-    let mut bundle = BlobsBundle::create_from_blobs(&blobs, None).unwrap();
+    let mut bundle = BlobsBundle::create_from_blobs(&blobs).unwrap();
     let blob_versioned_hashes = bundle.generate_versioned_hashes();
 
     let tx = ethrex_common::types::EIP4844Transaction {
@@ -55,8 +56,27 @@ fn validate_cheap_rejects_wrong_lengths() {
 
 #[test]
 fn validate_cheap_rejects_version_fork_mismatch() {
-    // version-0 bundle on Osaka fork should fail
-    let (bundle, tx) = valid_bundle_and_tx();
+    // v0 bundles are always rejected — only version 1 is valid regardless of fork.
+    let blobs = vec![blob_from_bytes("Hello, world!".as_bytes().into()).unwrap()];
+    let v1_bundle = BlobsBundle::create_from_blobs(&blobs).unwrap();
+    // Manually construct a v0 bundle (single proof per blob).
+    let bundle = BlobsBundle {
+        blobs: v1_bundle.blobs.clone(),
+        commitments: v1_bundle.commitments.clone(),
+        proofs: vec![[0u8; 48]],
+        version: 0,
+    };
+    let blob_versioned_hashes = bundle.generate_versioned_hashes();
+    let tx = ethrex_common::types::EIP4844Transaction {
+        blob_versioned_hashes,
+        ..Default::default()
+    };
+    // Rejected on Prague
+    assert!(matches!(
+        bundle.validate_cheap(&tx, Fork::Prague),
+        Err(BlobsBundleError::InvalidBlobVersionForFork)
+    ));
+    // Also rejected on Osaka
     assert!(matches!(
         bundle.validate_cheap(&tx, Fork::Osaka),
         Err(BlobsBundleError::InvalidBlobVersionForFork)
@@ -77,17 +97,17 @@ fn validate_cheap_rejects_wrong_versioned_hashes() {
 
 #[test]
 fn validate_cheap_passes_with_invalid_kzg_proofs() {
-    // Create a bundle with valid structure but invalid KZG proofs.
-    // validate_cheap() should pass (KZG skipped), validate() should fail.
+    // Create a v1 bundle with valid structure but zeroed-out cell proofs.
+    // validate_cheap() should pass (no KZG check), validate() should fail.
     let blobs = vec![[0u8; BYTES_PER_BLOB]];
-    let valid_bundle = BlobsBundle::create_from_blobs(&blobs, None).unwrap();
+    let valid_bundle = BlobsBundle::create_from_blobs(&blobs).unwrap();
 
-    // Use valid commitments but zero out proofs to make KZG invalid
+    // Use valid commitments (versioned hashes remain correct) but zero all 128 cell proofs.
     let bundle = BlobsBundle {
         blobs: blobs.clone(),
         commitments: valid_bundle.commitments.clone(),
-        proofs: vec![[0u8; 48]], // invalid proof
-        version: 0,
+        proofs: vec![[0u8; 48]; CELLS_PER_EXT_BLOB],
+        version: 1,
     };
 
     let blob_versioned_hashes = bundle.generate_versioned_hashes();
@@ -96,13 +116,13 @@ fn validate_cheap_passes_with_invalid_kzg_proofs() {
         ..Default::default()
     };
 
-    // Cheap validation passes (no KZG check)
+    // Cheap validation passes (correct version, correct lengths, correct hashes).
     assert!(
         bundle.validate_cheap(&tx, Fork::Prague).is_ok(),
         "validate_cheap should pass with structurally valid but KZG-invalid bundle"
     );
 
-    // Full validation fails on KZG proof
+    // Full validation fails on KZG cell proof verification.
     let result = bundle.validate(&tx, Fork::Prague);
     assert!(
         result.is_err(),
@@ -126,7 +146,7 @@ fn validate_cheap_rejects_more_than_six_blobs_per_tx_on_osaka() {
     // Build one valid Osaka (version 1) blob, then replicate it to 7 blobs so the
     // bundle stays structurally valid (matching commitments / cell-proofs / hashes)
     // and the only thing wrong is the per-transaction blob count.
-    let one = BlobsBundle::create_from_blobs(&vec![[0u8; BYTES_PER_BLOB]], Some(1)).unwrap();
+    let one = BlobsBundle::create_from_blobs(&vec![[0u8; BYTES_PER_BLOB]]).unwrap();
     let bundle = BlobsBundle {
         blobs: vec![one.blobs[0]; 7],
         commitments: vec![one.commitments[0]; 7],
@@ -148,7 +168,13 @@ fn validate_cheap_rejects_more_than_six_blobs_per_tx_on_osaka() {
 /// version is 1. A version-2 bundle must be rejected, not merely any non-zero version.
 #[test]
 fn validate_cheap_rejects_noncanonical_wrapper_version_on_osaka() {
-    let bundle = BlobsBundle::create_from_blobs(&vec![[0u8; BYTES_PER_BLOB]], Some(2)).unwrap();
+    // Build a structurally valid v1 bundle then bump version to 2.
+    let blobs = vec![[0u8; BYTES_PER_BLOB]];
+    let v1_bundle = BlobsBundle::create_from_blobs(&blobs).unwrap();
+    let bundle = BlobsBundle {
+        version: 2,
+        ..v1_bundle
+    };
     let tx = ethrex_common::types::EIP4844Transaction {
         blob_versioned_hashes: bundle.generate_versioned_hashes(),
         ..Default::default()

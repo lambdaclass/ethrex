@@ -94,12 +94,12 @@ impl RpcHandler for BlobsV1Request {
             .into_iter()
             .map(|b| {
                 b.and_then(|(blob, _, proofs)| {
-                    // getBlobsV1 serves the single EIP-4844 blob proof. A v0 bundle yields
-                    // exactly one proof here (see `get_blob_tuple_by_index`); a v1 (EIP-7594)
-                    // sidecar yields 128 cell proofs per blob and can now reach a pre-Osaka
-                    // mempool. Cell proofs can't be represented as a single blob proof, so
-                    // report the blob as unavailable (the CL re-fetches it from gossip)
-                    // rather than returning a cell proof in the blob-proof field.
+                    // getBlobsV1 serves the single EIP-4844 blob proof. After the
+                    // v1-only sidecar cleanup (go-ethereum#35191 / #6927), the
+                    // mempool only admits v1 (128 cell proofs per blob), so this
+                    // length check never succeeds for pool-admitted bundles and
+                    // always reports null — matching geth's decline-don't-derive
+                    // behavior.
                     (proofs.len() == 1).then(|| BlobAndProofV1 {
                         blob: *blob,
                         proof: proofs[0],
@@ -350,33 +350,29 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn blobs_v1_returns_v0_proof_before_osaka() {
+    async fn blobs_v1_pool_rejects_v0_injection() {
+        // After #6927 the mempool insert path requires the v1 cell-proof layout.
+        // getBlobsV1 therefore never sees a single-proof sidecar from the pool and
+        // returns null for admitted (v1) bundles — see the next test.
         let context = context_with_chain_config(false).await;
-        let (bundle, hashes) = sample_v0_bundle(1);
-        context
+        let (bundle, _) = sample_v0_bundle(1);
+        let err = context
             .blockchain
             .mempool
-            .add_blobs_bundle(H256::from_low_u64_be(1), bundle.clone())
-            .unwrap();
-
-        let request = BlobsV1Request {
-            blob_versioned_hashes: hashes,
-        };
-
-        let result = request.handle(context).await.unwrap();
-        let expected = serde_json::to_value(vec![Some(BlobAndProofV1 {
-            blob: bundle.blobs[0],
-            proof: bundle.proofs[0],
-        })])
-        .unwrap();
-        assert_eq!(result, expected);
+            .add_blobs_bundle(H256::from_low_u64_be(1), bundle)
+            .expect_err("v0 bundles must not enter the pool");
+        assert!(
+            err.to_string().contains("invalid v1 blob bundle"),
+            "unexpected error: {err}"
+        );
     }
 
     #[tokio::test]
     async fn blobs_v1_returns_null_for_v1_sidecar_before_osaka() {
-        // A v1 (cell-proof) sidecar can reach a pre-Osaka mempool, but getBlobsV1 can only
-        // serve a single EIP-4844 blob proof, so it must report the blob as unavailable
-        // rather than returning a cell proof in the blob-proof field.
+        // Post go-ethereum#35191 / #6927 the mempool is v1-only. getBlobsV1 cannot
+        // convert cell proofs to a single EIP-4844 blob proof, so it reports the
+        // blob unavailable (null) rather than returning a cell proof in the
+        // blob-proof field — matching geth's decline-don't-derive behavior.
         let context = context_with_chain_config(false).await;
         let (bundle, hashes) = sample_bundle(1);
         context

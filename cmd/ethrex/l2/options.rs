@@ -166,6 +166,12 @@ impl TryFrom<SequencerOptions> for SequencerConfig {
     type Error = SequencerOptionsError;
 
     fn try_from(opts: SequencerOptions) -> Result<Self, Self::Error> {
+        if opts.eth_opts.osaka_activation_time.is_some() {
+            tracing::warn!(
+                "--osaka-activation-time / ETHREX_OSAKA_ACTIVATION_TIME is deprecated and ignored; ethrex always uses v1 (EIP-7594) blob sidecars"
+            );
+        }
+
         let committer_signer = parse_signer(
             opts.committer_opts.committer_l1_private_key,
             opts.committer_opts.committer_remote_signer_url,
@@ -212,7 +218,6 @@ impl TryFrom<SequencerOptions> for SequencerConfig {
                 maximum_allowed_max_fee_per_blob_gas: opts
                     .eth_opts
                     .maximum_allowed_max_fee_per_blob_gas,
-                osaka_activation_time: opts.eth_opts.osaka_activation_time,
             },
             l1_watcher: L1WatcherConfig {
                 bridge_address: opts
@@ -315,6 +320,14 @@ impl SequencerOptions {
 #[derive(Parser, Debug)]
 pub struct EthOptions {
     #[arg(
+        long = "osaka-activation-time",
+        value_name = "UINT64",
+        env = "ETHREX_OSAKA_ACTIVATION_TIME",
+        help = "Deprecated compatibility option; v1 blob sidecars are always used.",
+        help_heading = "Eth options"
+    )]
+    pub osaka_activation_time: Option<u64>,
+    #[arg(
         long = "eth.rpc-url",
         value_name = "RPC_URL",
         env = "ETHREX_ETH_RPC_URL",
@@ -371,18 +384,12 @@ pub struct EthOptions {
         help_heading = "Eth options"
     )]
     pub max_retry_delay: u64,
-    #[clap(
-        long,
-        value_name = "UINT64",
-        env = "ETHREX_OSAKA_ACTIVATION_TIME",
-        help = "Block timestamp at which the Osaka fork is activated on L1. If not set, it will assume Osaka is already active."
-    )]
-    pub osaka_activation_time: Option<u64>,
 }
 
 impl Default for EthOptions {
     fn default() -> Self {
         Self {
+            osaka_activation_time: None,
             rpc_url: vec![
                 Url::parse("http://localhost:8545").expect("Unreachable error. URL is hardcoded"),
             ],
@@ -392,7 +399,6 @@ impl Default for EthOptions {
             backoff_factor: BACKOFF_FACTOR,
             min_retry_delay: MIN_RETRY_DELAY,
             max_retry_delay: MAX_RETRY_DELAY,
-            osaka_activation_time: None,
         }
     }
 }

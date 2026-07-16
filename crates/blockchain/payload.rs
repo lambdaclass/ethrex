@@ -924,15 +924,43 @@ impl Blockchain {
             // This error will only be used for debug tracing
             return Err(EvmError::Custom("max data blobs reached".to_string()).into());
         };
+        // Validate sidecar shape before execution so an invalid/corrupt accumulator
+        // is rejected without including the tx. append_v1 still runs after apply as
+        // a fail-closed check; it is expected to succeed after these pre-checks.
+        if let Some(ref blobs_bundle) = bundle {
+            blobs_bundle.validate_v1_structure().map_err(|err| {
+                ChainError::Custom(format!(
+                    "invalid v1 blob bundle while building payload: {err}"
+                ))
+            })?;
+            if !context.blobs_bundle.is_empty() {
+                context
+                    .blobs_bundle
+                    .validate_v1_structure()
+                    .map_err(|err| {
+                        ChainError::Custom(format!(
+                            "corrupt payload blob accumulator while building payload: {err}"
+                        ))
+                    })?;
+            }
+        }
         // Apply transaction
         let receipt = apply_plain_transaction(head, context)?;
-        // Update context with blob data
+        // Append sidecar before bumping blob gas so a defensive append failure
+        // cannot leave inflated blob_gas_used on an excluded tx.
+        if let Some(blobs_bundle) = bundle {
+            context
+                .blobs_bundle
+                .append_v1(blobs_bundle)
+                .map_err(|err| {
+                    ChainError::Custom(format!(
+                        "invalid v1 blob bundle while building payload: {err}"
+                    ))
+                })?;
+        }
         let prev_blob_gas = context.payload.header.blob_gas_used.unwrap_or_default();
         context.payload.header.blob_gas_used =
             Some(prev_blob_gas + (blob_count * GAS_PER_BLOB as usize) as u64);
-        if let Some(blobs_bundle) = bundle {
-            context.blobs_bundle += blobs_bundle;
-        }
         Ok(receipt)
     }
 

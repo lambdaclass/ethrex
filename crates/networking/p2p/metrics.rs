@@ -495,6 +495,12 @@ impl Metrics {
                     .and_modify(|e| *e += 1)
                     .or_insert(1);
             }
+            PeerConnectionError::BlobsBundleError(error) => {
+                failures_grouped_by_reason
+                    .entry(format!("BlobsBundleError - {error}"))
+                    .and_modify(|e| *e += 1)
+                    .or_insert(1);
+            }
             PeerConnectionError::IoError(error) => {
                 failures_grouped_by_reason
                     .entry(format!("IoError - {error}"))

@@ -8,8 +8,8 @@ use crate::store_db::sql::SQLStore;
 use ethrex_common::{
     H256,
     types::{
-        AccountUpdate, Blob, BlobsBundle, BlockNumber, Fork, balance_diff::BalanceDiff,
-        batch::Batch, fee_config::FeeConfig,
+        AccountUpdate, Blob, BlobsBundle, BlockNumber, balance_diff::BalanceDiff, batch::Batch,
+        fee_config::FeeConfig,
     },
 };
 use ethrex_l2_common::prover::{ProverInputData, ProverOutput, ProverType};
@@ -184,11 +184,7 @@ impl Store {
         self.engine.get_last_batch_number().await
     }
 
-    pub async fn get_batch(
-        &self,
-        batch_number: u64,
-        fork: Fork,
-    ) -> Result<Option<Batch>, RollupStoreError> {
+    pub async fn get_batch(&self, batch_number: u64) -> Result<Option<Batch>, RollupStoreError> {
         let Some(blocks) = self.get_block_numbers_by_batch(batch_number).await? else {
             return Ok(None);
         };
@@ -217,8 +213,8 @@ impl Store {
                 .get_blobs_by_batch(batch_number)
                 .await?
                 .unwrap_or_default(),
-                if fork <= Fork::Prague { None } else { Some(1) },
-        ).map_err(|e| {
+        )
+        .map_err(|e| {
             RollupStoreError::Custom(format!("Failed to create blobs bundle from blob while getting batch from database: {e}. This is a bug"))
         })?;
 

@@ -282,7 +282,6 @@ fn monitor_config_from(cfg: &SequencerConfig) -> ExternalMonitorConfig {
         sequencer_registry_address,
         rpc_urls: cfg.eth.rpc_url.clone(),
         is_based: cfg.based.enabled,
-        osaka_activation_time: cfg.eth.osaka_activation_time,
     }
 }
 

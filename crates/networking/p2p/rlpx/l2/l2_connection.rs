@@ -393,6 +393,30 @@ async fn should_process_batch_sealed(
         debug!("Batch {} already sealed, ignoring it", msg.batch.number);
         return Ok(false);
     }
+
+    let blobs_bundle = &msg.batch.blobs_bundle;
+    // Soft-ignore malformed / legacy sidecars so an old sequencer emitting
+    // one-proof-per-blob BatchSealed under based/1 does not tear down the peer.
+    if let Err(err) = blobs_bundle.validate_v1_structure() {
+        warn!(
+            peer=%established.node,
+            batch=msg.batch.number,
+            error=%err,
+            "Ignoring BatchSealed with invalid v1 blob sidecar"
+        );
+        return Ok(false);
+    }
+    // Rollup batches are encoded into one blob; validium batches carry none.
+    if blobs_bundle.blobs.len() > 1 {
+        warn!(
+            peer=%established.node,
+            batch=msg.batch.number,
+            blobs=blobs_bundle.blobs.len(),
+            "Ignoring BatchSealed with unexpected blob count"
+        );
+        return Ok(false);
+    }
+
     let hash = batch_hash(&msg.batch);
 
     let recovered_lead_sequencer = NativeCrypto
@@ -409,6 +433,31 @@ async fn should_process_batch_sealed(
     if !validate_signature(recovered_lead_sequencer) {
         return Ok(false);
     }
+
+    // KZG verification is CPU-heavy, so run it off the connection task after
+    // cheap structure, duplicate, and signer checks. Empty validium bundles
+    // have no proofs to verify.
+    #[cfg(feature = "c-kzg")]
+    if !blobs_bundle.is_empty() {
+        let blobs_bundle = blobs_bundle.clone();
+        let verify_result = tokio::task::spawn_blocking(move || blobs_bundle.verify_kzg_proofs())
+            .await
+            .map_err(|err| {
+                PeerConnectionError::InternalError(format!(
+                    "Blob proof verification task failed: {err}"
+                ))
+            })?;
+        if let Err(err) = verify_result {
+            warn!(
+                peer=%established.node,
+                batch=msg.batch.number,
+                error=%err,
+                "Ignoring BatchSealed with invalid blob KZG proofs"
+            );
+            return Ok(false);
+        }
+    }
+
     l2_state
         .store_rollup
         .store_signature_by_batch(msg.batch.number, msg.signature)
@@ -423,10 +472,7 @@ pub async fn process_blocks_on_queue(
 
     let mut next_block_to_add = l2_state.latest_block_added + 1;
     if let Some(latest_batch_number) = l2_state.store_rollup.get_batch_number().await?
-        && let Some(latest_batch) = l2_state
-            .store_rollup
-            .get_batch(latest_batch_number, ethrex_common::types::Fork::Prague)
-            .await?
+        && let Some(latest_batch) = l2_state.store_rollup.get_batch(latest_batch_number).await?
     {
         next_block_to_add = next_block_to_add.max(latest_batch.last_block + 1);
     }
@@ -514,12 +560,7 @@ pub(crate) async fn send_sealed_batch(
         {
             return Ok(());
         }
-        let l1_fork = established.blockchain.current_fork().await?;
-        let Some(batch) = l2_state
-            .store_rollup
-            .get_batch(next_batch_to_send, l1_fork)
-            .await?
-        else {
+        let Some(batch) = l2_state.store_rollup.get_batch(next_batch_to_send).await? else {
             return Ok(());
         };
         match l2_state

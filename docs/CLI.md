@@ -292,7 +292,8 @@ Commands:
 
 Options:
       --osaka-activation-time <UINT64>
-          Block timestamp at which the Osaka fork is activated on L1. If not set, it will assume Osaka is already active.
+          Deprecated compatibility option; ignored. Ethrex always produces and
+          accepts v1 (EIP-7594 cell-proof) blob sidecars.
 
           [env: ETHREX_OSAKA_ACTIVATION_TIME=]
 

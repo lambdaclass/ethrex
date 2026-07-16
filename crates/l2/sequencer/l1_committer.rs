@@ -16,7 +16,7 @@ use ethrex_common::utils::keccak;
 use ethrex_common::{
     Address, H256, U256,
     types::{
-        BLOB_BASE_FEE_UPDATE_FRACTION, BlobsBundle, Block, BlockNumber, Fork, Genesis,
+        BLOB_BASE_FEE_UPDATE_FRACTION, BlobsBundle, Block, BlockNumber, Genesis,
         MIN_BASE_FEE_PER_BLOB_GAS, TxType, batch::Batch, blobs_bundle, fake_exponential,
         fee_config::FeeConfig,
     },
@@ -37,7 +37,7 @@ use ethrex_l2_common::{
 };
 use ethrex_l2_rpc::signer::{Signer, SignerHealth};
 use ethrex_l2_sdk::{
-    build_generic_tx, calldata::encode_calldata, get_l1_active_fork, get_last_committed_batch,
+    build_generic_tx, calldata::encode_calldata, get_last_committed_batch,
     send_tx_bump_gas_exponential_backoff,
 };
 #[cfg(feature = "metrics")]
@@ -110,8 +110,6 @@ pub struct L1Committer {
     last_committed_batch: u64,
     /// Cancellation token for the next inbound Commit message
     cancellation_token: Option<CancellationToken>,
-    /// Timestamp for Osaka activation on L1. This is used to determine which fork to use when generating blobs proofs.
-    osaka_activation_time: Option<u64>,
     /// Elasticity multiplier for prover input generation
     elasticity_multiplier: u64,
     /// Git commit hash of the build
@@ -218,7 +216,6 @@ impl L1Committer {
             last_committed_batch_timestamp: 0,
             last_committed_batch,
             cancellation_token: None,
-            osaka_activation_time: eth_config.osaka_activation_time,
             elasticity_multiplier: proposer_config.elasticity_multiplier,
             git_commit_hash: get_git_commit_hash(),
             current_checkpoint_store,
@@ -389,7 +386,6 @@ impl L1Committer {
     async fn ensure_checkpoint_for_committed_batch(
         &mut self,
         last_committed_batch: u64,
-        l1_fork: Fork,
     ) -> Result<bool, CommitterError> {
         if last_committed_batch == 0 {
             return Ok(true);
@@ -420,11 +416,7 @@ impl L1Committer {
             return Ok(true);
         }
 
-        let Some(batch) = self
-            .rollup_store
-            .get_batch(last_committed_batch, l1_fork)
-            .await?
-        else {
+        let Some(batch) = self.rollup_store.get_batch(last_committed_batch).await? else {
             warn!(
                 "Missing sealed batch {} in rollup store; cannot rebuild checkpoint yet",
                 last_committed_batch
@@ -455,22 +447,14 @@ impl L1Committer {
             get_last_committed_batch(&self.eth_client, self.on_chain_proposer_address).await?;
         let batch_to_commit = last_committed_batch_number + 1;
 
-        let l1_fork = get_l1_active_fork(&self.eth_client, self.osaka_activation_time)
-            .await
-            .map_err(CommitterError::EthClientError)?;
-
         if !self
-            .ensure_checkpoint_for_committed_batch(last_committed_batch_number, l1_fork)
+            .ensure_checkpoint_for_committed_batch(last_committed_batch_number)
             .await?
         {
             return Ok(());
         }
 
-        let batch = match self
-            .rollup_store
-            .get_batch(batch_to_commit, l1_fork)
-            .await?
-        {
+        let batch = match self.rollup_store.get_batch(batch_to_commit).await? {
             Some(batch) => {
                 // If we have the batch already sealed, we need to ensure the checkpoint
                 // is available.
@@ -1002,10 +986,8 @@ impl L1Committer {
 
                 current_blocks.push(potential_batch_block.clone());
                 current_fee_configs.push(fee_config);
-                let l1_fork =
-                    get_l1_active_fork(&self.eth_client, self.osaka_activation_time).await?;
 
-                generate_blobs_bundle(&current_blocks, &current_fee_configs, l1_fork)
+                generate_blobs_bundle(&current_blocks, &current_fee_configs)
             } else {
                 Ok((BlobsBundle::default(), 0_usize))
             };
@@ -1183,39 +1165,22 @@ impl L1Committer {
             ([0; 48], [0; 48])
         } else {
             let BlobsBundle {
-                commitments,
-                proofs,
-                blobs,
-                ..
+                commitments, blobs, ..
             } = &batch.blobs_bundle;
-
-            let l1_fork = get_l1_active_fork(&self.eth_client, self.osaka_activation_time)
-                .await
-                .map_err(CommitterError::EthClientError)?;
 
             let commitment = commitments
                 .last()
                 .cloned()
                 .ok_or_else(|| CommitterError::MissingBlob(batch.number))?;
 
-            // The prover takes a single proof even for Osaka type proofs, so if
-            // the committer generated Osaka type proofs (cell proofs), we need
-            // to create a BlobsBundle from the blobs specifying a pre-Osaka
-            // fork to get a single proof for the entire blob.
-            // If we are pre-Osaka, we already have a single proof in the
-            // previously generated bundle
-            let proof = if l1_fork < Fork::Osaka {
-                proofs
-                    .first()
-                    .cloned()
-                    .ok_or_else(|| CommitterError::MissingBlob(batch.number))?
-            } else {
-                BlobsBundle::create_from_blobs(blobs, Some(0))?
-                    .proofs
-                    .first()
-                    .cloned()
-                    .ok_or_else(|| CommitterError::MissingBlob(batch.number))?
-            };
+            // The ZK prover verifier (guest program) uses verify_blob_kzg_proof, which
+            // requires a single EIP-4844 KZG proof, not EIP-7594 cell proofs.
+            // Since create_from_blobs now always produces v1 (cell proofs), compute
+            // the KZG proof directly from the blob via the crypto primitive.
+            let last_blob = blobs
+                .last()
+                .ok_or_else(|| CommitterError::MissingBlob(batch.number))?;
+            let proof = blobs_bundle::blob_to_kzg_proof(last_blob)?;
 
             (commitment, proof)
         };
@@ -1489,7 +1454,6 @@ impl L1Committer {
 pub fn generate_blobs_bundle(
     blocks: &[Block],
     fee_configs: &[FeeConfig],
-    fork: Fork,
 ) -> Result<(BlobsBundle, usize), CommitterError> {
     let blocks_len: u64 = blocks.len().try_into()?;
     let fee_configs_len: u64 = fee_configs.len().try_into()?;
@@ -1516,11 +1480,9 @@ pub fn generate_blobs_bundle(
 
     let blob =
         blobs_bundle::blob_from_bytes(Bytes::from(blob_data)).map_err(CommitterError::from)?;
-    let wrapper_version = if fork <= Fork::Prague { None } else { Some(1) };
 
     Ok((
-        BlobsBundle::create_from_blobs(&vec![blob], wrapper_version)
-            .map_err(CommitterError::from)?,
+        BlobsBundle::create_from_blobs(&vec![blob]).map_err(CommitterError::from)?,
         blob_size,
     ))
 }
