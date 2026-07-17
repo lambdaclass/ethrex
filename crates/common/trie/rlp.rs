@@ -166,8 +166,6 @@ fn decode_child(rlp: &[u8]) -> Result<NodeHash, RLPDecodeError> {
         Ok((hash, &[])) if hash.len() == 32 => Ok(NodeHash::from_slice(hash)),
         Ok((&[], &[])) => Ok(NodeHash::default()),
         _ if rlp.len() < 32 => Ok(NodeHash::from_slice(rlp)),
-        _ => Err(RLPDecodeError::Custom(
-            "invalid trie node child reference".to_string(),
-        )),
+        _ => Err(RLPDecodeError::InvalidLength),
     }
 }
