@@ -95,11 +95,13 @@ fn select_warm_set(
     out
 }
 
-/// Per-slot cap on warmed txs per sender. Deep same-sender queues beyond
+/// Per-pass cap on warmed txs per sender. Deep same-sender queues beyond
 /// this depth cannot realistically land in the next block (they sit behind
 /// their own predecessors), so warming them only inflates the warm volume.
+/// This is a per-pass (per-snapshot) cap with no cross-pass accounting — see
+/// [`cap_sender_depth`] — not a slot-level ceiling.
 #[cfg_attr(any(not(feature = "rayon"), feature = "eip-8025"), allow(dead_code))]
-const MAX_WARMED_TXS_PER_SENDER_PER_SLOT: usize = 16;
+const MAX_WARMED_TXS_PER_SENDER_PER_PASS: usize = 16;
 
 /// Keeps only a sender's ready contiguous nonce prefix starting at
 /// `account_nonce`: drops stale txs (nonce below the account, e.g. mined but
@@ -417,7 +419,7 @@ fn run_pass(blockchain: &Blockchain, pool: &rayon::ThreadPool, req: PrewarmReque
             // Keep only each sender's ready contiguous prefix (drops stale +
             // gapped txs that would fail the nonce check and warm nothing).
             let ready = filter_ready(txs_by_sender, cache_dyn.as_ref());
-            let capped = cap_sender_depth(ready, MAX_WARMED_TXS_PER_SENDER_PER_SLOT);
+            let capped = cap_sender_depth(ready, MAX_WARMED_TXS_PER_SENDER_PER_PASS);
             let warm_set = select_warm_set(capped, base_fee, gas_budget);
             if !warm_set.is_empty() {
                 for (tx, _) in &warm_set {
@@ -678,5 +680,99 @@ mod tests {
         // Budget 40k: tx0 (30k) is under, tx1 crosses to 60k and is included, tx2 is not.
         let set = select_warm_set(map, Some(1), 40_000);
         assert_eq!(set.len(), 2);
+    }
+
+    // A `Database` whose `get_account_state` succeeds for one sender (returning
+    // a fixed nonce) and fails for everyone else, to exercise `filter_ready`'s
+    // read-error branch. Every other method is unreachable from `filter_ready`.
+    #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+    struct OneReadableSenderDb {
+        ok_sender: Address,
+        nonce: u64,
+    }
+
+    #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+    impl ethrex_levm::db::Database for OneReadableSenderDb {
+        fn get_account_state(
+            &self,
+            address: Address,
+        ) -> Result<ethrex_common::types::AccountState, ethrex_levm::errors::DatabaseError>
+        {
+            if address == self.ok_sender {
+                Ok(ethrex_common::types::AccountState {
+                    nonce: self.nonce,
+                    balance: U256::zero(),
+                    storage_root: H256::zero(),
+                    code_hash: H256::zero(),
+                })
+            } else {
+                Err(ethrex_levm::errors::DatabaseError::Custom(
+                    "state read failed".into(),
+                ))
+            }
+        }
+        fn get_storage_value(
+            &self,
+            _: Address,
+            _: H256,
+        ) -> Result<U256, ethrex_levm::errors::DatabaseError> {
+            unreachable!("filter_ready only reads account state")
+        }
+        fn get_block_hash(&self, _: u64) -> Result<H256, ethrex_levm::errors::DatabaseError> {
+            unreachable!("filter_ready only reads account state")
+        }
+        fn get_chain_config(
+            &self,
+        ) -> Result<ethrex_common::types::ChainConfig, ethrex_levm::errors::DatabaseError> {
+            unreachable!("filter_ready only reads account state")
+        }
+        fn get_account_code(
+            &self,
+            _: H256,
+        ) -> Result<ethrex_common::types::Code, ethrex_levm::errors::DatabaseError> {
+            unreachable!("filter_ready only reads account state")
+        }
+        fn get_code_metadata(
+            &self,
+            _: H256,
+        ) -> Result<ethrex_common::types::CodeMetadata, ethrex_levm::errors::DatabaseError>
+        {
+            unreachable!("filter_ready only reads account state")
+        }
+    }
+
+    #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+    #[test]
+    fn filter_ready_trims_readable_and_keeps_unreadable_sender() {
+        // Readable sender at account nonce 5: stale (4) dropped, ready (5,6) kept.
+        let (ok, ok4) = make_tx(0xaa, 4, 100, 50, 21_000);
+        let (_, ok5) = make_tx(0xaa, 5, 100, 50, 21_000);
+        let (_, ok6) = make_tx(0xaa, 6, 100, 50, 21_000);
+        // Unreadable sender: state read fails, so its txs must be left unfiltered.
+        let (bad, bad7) = make_tx(0xbb, 7, 100, 50, 21_000);
+        let (_, bad8) = make_tx(0xbb, 8, 100, 50, 21_000);
+
+        let mut map = FxHashMap::default();
+        map.insert(ok, vec![ok4, ok5, ok6]);
+        map.insert(bad, vec![bad7, bad8]);
+
+        let db = OneReadableSenderDb {
+            ok_sender: ok,
+            nonce: 5,
+        };
+        let filtered = filter_ready(map, &db);
+
+        // Readable sender is trimmed to its ready prefix (5, 6).
+        let ok_txs = &filtered[&ok];
+        assert_eq!(ok_txs.len(), 2);
+        assert_eq!(ok_txs[0].transaction().nonce(), 5);
+        assert_eq!(ok_txs[1].transaction().nonce(), 6);
+
+        // Unreadable sender is left untouched: nothing dropped despite the gap
+        // (nonce 7 with no account nonce to validate against).
+        let bad_txs = &filtered[&bad];
+        assert_eq!(bad_txs.len(), 2);
+        assert_eq!(bad_txs[0].transaction().nonce(), 7);
+        assert_eq!(bad_txs[1].transaction().nonce(), 8);
     }
 }
