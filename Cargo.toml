@@ -27,7 +27,13 @@ members = [
   "tooling/repl",
   "test",
 ]
-exclude = ["crates/vm/levm/bench/revm_comparison"]
+# zkevm_bench is a standalone workspace: it hard-depends on zisk (lib-c),
+# which is x86-64-only (nasm + x86 asm) and cannot build on arm/macos. Keeping
+# it out of the root workspace keeps default builds, lint and Docker portable.
+exclude = [
+  "crates/vm/levm/bench/revm_comparison",
+  "tooling/zkevm_bench",
+]
 resolver = "2"
 
 default-members = ["cmd/ethrex"]
@@ -84,7 +90,7 @@ ethrex-l2 = { path = "./crates/l2" }
 ethrex-l2-common = { path = "./crates/l2/common", version = "21.0.0" }
 ethrex-sdk = { path = "./crates/l2/sdk", version = "21.0.0" }
 ethrex-l2-prover = { path = "./crates/l2/prover" }
-ethrex-prover = { path = "./crates/prover" }
+ethrex-prover = { path = "./crates/prover", default-features = false }
 ethrex-guest-program = { path = "./crates/guest-program", default-features = false }
 ethrex-storage-rollup = { path = "./crates/l2/storage", version = "21.0.0" }
 ethrex = { path = "./cmd/ethrex" }

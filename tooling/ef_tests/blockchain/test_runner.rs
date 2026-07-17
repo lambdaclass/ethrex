@@ -11,6 +11,7 @@ use ethrex_blockchain::{
 };
 #[cfg(not(feature = "stateless"))]
 use ethrex_common::types::block_access_list::BlockAccessList;
+use ethrex_common::types::block_execution_witness::ExecutionWitness;
 #[cfg(feature = "stateless")]
 use ethrex_common::types::block_execution_witness::RpcExecutionWitness;
 use ethrex_common::{
@@ -21,6 +22,8 @@ use ethrex_common::{
     },
 };
 use ethrex_guest_program::input::ProgramInput;
+#[cfg(feature = "zisk")]
+use ethrex_prover::BackendError;
 #[cfg(feature = "sp1")]
 use ethrex_prover::Sp1Backend;
 use ethrex_prover::{BackendType, ExecBackend, ProverBackend};
@@ -465,6 +468,79 @@ pub async fn build_store_for_test(test: &TestUnit) -> Store {
     store
 }
 
+/// Builds the blocks and a self-generated execution witness for a blockchain
+/// test, using ethrex's own execution machinery instead of any witness the
+/// fixture might carry. This is the ethrex-native counterpart to the
+/// external eth-act `witness-generator-cli` path: it turns a plain EEST
+/// `blockchain_test` (genesis/`pre` state + blocks, no embedded witness)
+/// into a `(blocks, ExecutionWitness)` pair usable for stateless-execution
+/// benchmarking.
+///
+/// Every block is first driven through `add_block_pipeline` (mirroring
+/// `run()`), so that for multi-block tests the parent state of block
+/// `i > 0` is already committed to the store before
+/// `generate_witness_for_blocks` re-executes every block with a
+/// `TrieLogger`. `generate_witness_for_blocks` only has the state at the
+/// *first* block's parent available for free (from `build_store_for_test`);
+/// its own doc comment notes it otherwise fails on the second block of a
+/// batch.
+///
+/// A test whose blocks include an expected exception (invalid-block test) or
+/// that decodes to zero blocks is rejected with an `Err` rather than
+/// silently producing a partial/incorrect fixture, so batch callers (e.g.
+/// `generate-stress`) can skip it and continue.
+pub async fn blocks_and_witness_for_test(
+    test: &TestUnit,
+) -> Result<(Vec<CoreBlock>, ExecutionWitness), String> {
+    let store = build_store_for_test(test).await;
+    let blockchain = Blockchain::default_with_store_and_pool(store.clone(), merkle_pool());
+
+    let mut blocks: Vec<CoreBlock> = Vec::with_capacity(test.blocks.len());
+    for block_fixture in test.blocks.iter() {
+        if block_fixture.expect_exception.is_some() {
+            return Err(
+                "test has a block expecting an exception; not a witness-generation target"
+                    .to_string(),
+            );
+        }
+        let block_data = block_fixture
+            .block()
+            .ok_or_else(|| "block fixture has no decodable block (RLP-only test)".to_string())?;
+        let block: CoreBlock = block_data.clone().into();
+        let hash = block.hash();
+
+        blockchain
+            .add_block_pipeline(block.clone(), None)
+            .map_err(|e| {
+                format!(
+                    "add_block_pipeline failed for block {}: {e:?}",
+                    block.header.number
+                )
+            })?;
+        apply_fork_choice(&store, hash, hash, hash)
+            .await
+            .map_err(|e| {
+                format!(
+                    "apply_fork_choice failed for block {}: {e:?}",
+                    block.header.number
+                )
+            })?;
+
+        blocks.push(block);
+    }
+
+    if blocks.is_empty() {
+        return Err("no blocks".to_string());
+    }
+
+    let witness = blockchain
+        .generate_witness_for_blocks(&blocks)
+        .await
+        .map_err(|e| format!("witness gen: {e}"))?;
+
+    Ok((blocks, witness))
+}
+
 /// Checks db is correct after setting up initial state
 /// Panics if any comparison fails
 fn check_prestate_against_db(test_key: &str, test: &TestUnit, db: &Store) {
@@ -579,6 +655,10 @@ async fn re_run_stateless(
         BackendType::Exec => ExecBackend::new().execute(program_input),
         #[cfg(feature = "sp1")]
         BackendType::SP1 => Sp1Backend::new().execute(program_input),
+        #[cfg(feature = "zisk")]
+        BackendType::ZisK => Err(BackendError::execution(
+            "zisk backend is not wired into ef_tests-blockchain's stateless re-run",
+        )),
     };
 
     if let Err(e) = execute_result {

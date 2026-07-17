@@ -1,0 +1,154 @@
+# zkEVM execution benchmark workload manifest.
+#
+# Workload sources:
+#  - real-block: committed gzipped ethrex-replay `Cache` fixtures under
+#    fixtures/blocks/ (curated mainnet blocks spanning the AIR-cost spectrum).
+#  - micro: in-repo EEST zkevm fixtures under ../ef_tests/blockchain/vectors_zkevm/
+#    (gitignored downloaded data — run `make zkevm-vectors` in
+#    tooling/ef_tests/blockchain first).
+#  - stress: worst-case EEST benchmark blocks (compute/memory/keccak/state/
+#    precompiles at 150M gas), committed gzipped in `Cache` format under
+#    fixtures/stress/. Generated via `generate-stress` from the
+#    execution-specs `tests-benchmark` release using ethrex's own witness
+#    generation. This committed set is one representative per category group;
+#    the exhaustive set is generated on demand for `--mode slow --stress-dir`.
+#
+# All `source` paths are relative to this manifest file's own directory
+# (tooling/zkevm_bench/fixtures/), not the process cwd — `run` resolves them
+# against wherever `--workloads` points, so the binary can be invoked from
+# any cwd. `tier` sets which run mode includes a workload: quick ⊆ medium ⊆
+# slow; absent `tier` means medium.
+
+# ---- real mainnet blocks (cost spectrum) ----
+[[workload]]
+name = "mainnet_25087668_light"
+type = "real-block"
+category = "light"
+tier = "quick"
+source = "blocks/cache_mainnet_25087668.json.gz"
+
+[[workload]]
+name = "mainnet_25100902_tiny"
+type = "real-block"
+category = "light"
+source = "blocks/cache_mainnet_25100902.json.gz"
+
+[[workload]]
+name = "mainnet_25087647_small"
+type = "real-block"
+category = "small"
+source = "blocks/cache_mainnet_25087647.json.gz"
+
+[[workload]]
+name = "mainnet_25087308_lowmid"
+type = "real-block"
+category = "small"
+source = "blocks/cache_mainnet_25087308.json.gz"
+
+[[workload]]
+name = "mainnet_25087554_typical"
+type = "real-block"
+category = "typical"
+tier = "quick"
+source = "blocks/cache_mainnet_25087554.json.gz"
+
+[[workload]]
+name = "mainnet_25087563_midhigh"
+type = "real-block"
+category = "typical"
+source = "blocks/cache_mainnet_25087563.json.gz"
+
+[[workload]]
+name = "mainnet_25087666_compute"
+type = "real-block"
+category = "compute"
+source = "blocks/cache_mainnet_25087666.json.gz"
+
+[[workload]]
+name = "mainnet_25087667_memory"
+type = "real-block"
+category = "memory"
+source = "blocks/cache_mainnet_25087667.json.gz"
+
+[[workload]]
+name = "mainnet_25087407_txheavy"
+type = "real-block"
+category = "tx-heavy"
+source = "blocks/cache_mainnet_25087407.json.gz"
+
+[[workload]]
+name = "mainnet_25087416_largestate"
+type = "real-block"
+category = "large-state"
+source = "blocks/cache_mainnet_25087416.json.gz"
+
+# ---- EEST micro (needs `make zkevm-vectors`) ----
+# tier = medium (not quick): micro needs `make zkevm-vectors` (a download), so
+# keeping it out of quick lets `--mode quick` run committed-only, zero-setup.
+[[workload]]
+name = "eest_amsterdam_witness_7702_delegation_chain"
+type = "micro"
+category = "witness"
+source = "../../ef_tests/blockchain/vectors_zkevm/eest/for_amsterdam/amsterdam/eip8025_optional_proofs/witness_7702/witness_codes_delegation_chain.json"
+
+# ---- worst-case stress (EEST benchmark @150M gas, ethrex-generated Cache) ----
+[[workload]]
+name = "stress_memory_150M"
+type = "stress"
+category = "worst-memory"
+tier = "quick"
+source = "stress/stress_memory_150M.json.gz"
+
+[[workload]]
+name = "stress_keccak_150M"
+type = "stress"
+category = "worst-keccak"
+tier = "quick"
+source = "stress/stress_keccak_150M.json.gz"
+
+[[workload]]
+name = "stress_storage_150M"
+type = "stress"
+category = "worst-storage"
+source = "stress/stress_storage_150M.json.gz"
+
+[[workload]]
+name = "stress_arithmetic_150M"
+type = "stress"
+category = "worst-arithmetic"
+source = "stress/stress_arithmetic_150M.json.gz"
+
+[[workload]]
+name = "stress_bitwise_150M"
+type = "stress"
+category = "worst-bitwise"
+source = "stress/stress_bitwise_150M.json.gz"
+
+[[workload]]
+name = "stress_mix_operations_150M"
+type = "stress"
+category = "worst-mixed"
+source = "stress/stress_mix_operations_150M.json.gz"
+
+[[workload]]
+name = "stress_modexp_150M"
+type = "stress"
+category = "worst-precompile-modexp"
+source = "stress/stress_modexp_150M.json.gz"
+
+[[workload]]
+name = "stress_alt_bn128_150M"
+type = "stress"
+category = "worst-precompile-bn128"
+source = "stress/stress_alt_bn128_150M.json.gz"
+
+[[workload]]
+name = "stress_ecrecover_150M"
+type = "stress"
+category = "worst-precompile-ecrecover"
+tier = "quick"
+source = "stress/stress_ecrecover_150M.json.gz"
+
+# NOTE: bls12_381 stress fixture is omitted — ethrex host witness generation
+# needs the `blst` feature for the BLS12-381 precompile; add it and regenerate
+# to include a worst-precompile-bls entry.
