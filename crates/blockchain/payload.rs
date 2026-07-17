@@ -921,23 +921,27 @@ impl Blockchain {
             }
         };
         // A blob sidecar is validated against the fork only at mempool insertion; the fork being
-        // built can differ (e.g. Osaka activated since). Re-validate against the payload's fork so
-        // a stale sidecar is skipped rather than served: a pre-Osaka v0 bundle (1 proof/blob) has
-        // no cell-proof upgrade path and is invalid post-Osaka, so including it would make
-        // getPayloadV5 emit a wrong-format BlobsBundleV2. (Explicit builds carry no sidecar, so
-        // `bundle` is `None` and this is a no-op.) Gated on `c-kzg` like the rest of blob
-        // validation — without it there is no sidecar cryptography to validate against.
-        #[cfg(feature = "c-kzg")]
-        if let (Some(bundle), Transaction::EIP4844Transaction(eip4844_tx)) = (&bundle, &*head.tx) {
-            let fork = context
+        // built can differ (e.g. Osaka activated since). A pre-Osaka v0 sidecar (EIP-4844, one
+        // proof per blob) is invalid at Osaka — EIP-7594 requires cell proofs (v1) and there is no
+        // upgrade path — so including it would make getPayloadV5 emit a wrong-format
+        // BlobsBundleV2. That mismatch is deterministic and permanent, so drop the tx from the
+        // pool (like the frame-tx fork gates in `fill_transactions`) rather than skip-and-retry it
+        // every block, where it would also block later nonces from the same sender. Dropping it
+        // also stops other blob reads (P2P pooled-tx serving) from returning the stale sidecar;
+        // the `engine_getBlobsV2/V3` read path is tracked separately (`ethrex-getblobs-v2-legacy-proof`).
+        // The version/Osaka checks are structural (no KZG), so this needs no `c-kzg` feature.
+        // (Explicit builds carry no sidecar, so `bundle` is `None` and this is a no-op.)
+        if let Some(bundle) = &bundle
+            && bundle.version == 0
+            && context
                 .chain_config()
-                .fork(context.payload.header.timestamp);
-            if let Err(e) = bundle.validate_cheap(eip4844_tx, fork) {
-                return Err(EvmError::Custom(format!(
-                    "blob sidecar invalid for fork {fork:?}, skipping tx {tx_hash}: {e}"
-                ))
-                .into());
-            }
+                .is_osaka_activated(context.payload.header.timestamp)
+        {
+            self.remove_transaction_from_pool(&tx_hash)?;
+            return Err(EvmError::Custom(format!(
+                "dropping blob tx {tx_hash}: pre-Osaka (v0) blob sidecar is invalid post-Osaka"
+            ))
+            .into());
         }
         if context.blobs_bundle.blobs.len() + blob_count > max_blob_number_per_block {
             // This error will only be used for debug tracing
