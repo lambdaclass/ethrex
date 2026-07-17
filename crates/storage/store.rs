@@ -39,7 +39,7 @@ use ethrex_rlp::{
     encode::RLPEncode,
 };
 use ethrex_trie::{EMPTY_TRIE_HASH, Nibbles, Trie, TrieLogger, TrieNode, TrieWitness};
-use ethrex_trie::{Node, NodeRLP};
+use ethrex_trie::{Node, NodeRLP, node_deletion_ranges};
 use lru::LruCache;
 use rayon::prelude::*;
 use rustc_hash::FxBuildHasher;
@@ -4432,6 +4432,31 @@ pub fn read_chain_id_from_db(path: &Path) -> Option<u64> {
     }
 }
 
+/// Trigger 1 (prune-on-write) for a healed STATE-trie node. For every provably-
+/// empty key range under `node_path` (from [`node_deletion_ranges`]), delete that
+/// range from the account node/flat CFs and — because storage keys are prefixed by
+/// the account hash — from the storage node/flat CFs over the same range, sweeping
+/// the storage of any account whose subtree was removed (whole-account-gone).
+/// Issued on `batch` so it commits atomically with the healed node write.
+pub fn apply_state_node_deletions(
+    batch: &mut dyn StorageWriteBatch,
+    node: &Node,
+    previous: Option<&Node>,
+    node_path: &Nibbles,
+) -> Result<(), StoreError> {
+    for range in node_deletion_ranges(node, previous, node_path) {
+        if range.is_empty() {
+            continue;
+        }
+        let (from, to) = (range.start.as_ref(), range.end.as_ref());
+        batch.delete_range(ACCOUNT_TRIE_NODES, from, to)?;
+        batch.delete_range(ACCOUNT_FLATKEYVALUE, from, to)?;
+        batch.delete_range(STORAGE_TRIE_NODES, from, to)?;
+        batch.delete_range(STORAGE_FLATKEYVALUE, from, to)?;
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod merge_tests {
     use super::*;
@@ -4594,5 +4619,72 @@ mod datadir_tests {
         fs::create_dir(dir.path().join("CURRENT")).unwrap();
         fs::create_dir(dir.path().join("MANIFEST-000001")).unwrap();
         assert!(!dir_contains_legacy_db(dir.path()).unwrap());
+    }
+}
+
+#[cfg(test)]
+mod state_deletion_tests {
+    use super::*;
+    use ethrex_trie::{BranchNode, Node, NodeHash, NodeRef};
+
+    fn put_row(store: &Store, cf: &'static str, key: &[u8]) {
+        let mut w = store.backend.begin_write().unwrap();
+        w.put(cf, key, b"x").unwrap();
+        w.commit().unwrap();
+    }
+    fn present(store: &Store, cf: &'static str, key: &[u8]) -> bool {
+        store
+            .backend
+            .begin_read()
+            .unwrap()
+            .get(cf, key)
+            .unwrap()
+            .is_some()
+    }
+    fn branch_with(children: &[usize]) -> Node {
+        let mut choices: [NodeRef; 16] = std::array::from_fn(|_| NodeRef::default());
+        for &i in children {
+            choices[i] = NodeRef::Hash(NodeHash::Hashed(H256::from_low_u64_be(i as u64 + 1)));
+        }
+        Node::Branch(Box::new(BranchNode::new(choices)))
+    }
+
+    /// A rewritten state branch that dropped child 1 (kept 7) sweeps the removed
+    /// account subtree from both account CFs AND — via the shared account-hash
+    /// prefix — the removed account's storage from both storage CFs, in one batch.
+    /// The kept child's rows are untouched.
+    #[test]
+    fn state_deletions_sweep_removed_account_and_its_storage() {
+        let store = Store::new("", EngineType::InMemory).unwrap();
+        let node_path = Nibbles::from_hex(vec![3]);
+
+        // Removed child [3,1,..]: account node + flat row + storage node/flat
+        // (storage keyed account-hash-prefix ++ 17-separator ++ slot).
+        put_row(&store, ACCOUNT_TRIE_NODES, &[3, 1]);
+        put_row(&store, ACCOUNT_FLATKEYVALUE, &[3, 1, 9, 9]);
+        put_row(&store, STORAGE_TRIE_NODES, &[3, 1, 9, 9, 17, 0]);
+        put_row(&store, STORAGE_FLATKEYVALUE, &[3, 1, 9, 9, 17, 0]);
+        // Kept child [3,7,..]: must survive.
+        put_row(&store, ACCOUNT_TRIE_NODES, &[3, 7]);
+        put_row(&store, ACCOUNT_FLATKEYVALUE, &[3, 7, 9, 9]);
+        put_row(&store, STORAGE_TRIE_NODES, &[3, 7, 9, 9, 17, 0]);
+        put_row(&store, STORAGE_FLATKEYVALUE, &[3, 7, 9, 9, 17, 0]);
+
+        let previous = branch_with(&[1, 7]);
+        let node = branch_with(&[7]);
+
+        let mut w = store.backend.begin_write().unwrap();
+        apply_state_node_deletions(&mut *w, &node, Some(&previous), &node_path).unwrap();
+        w.commit().unwrap();
+
+        assert!(!present(&store, ACCOUNT_TRIE_NODES, &[3, 1]));
+        assert!(!present(&store, ACCOUNT_FLATKEYVALUE, &[3, 1, 9, 9]));
+        assert!(!present(&store, STORAGE_TRIE_NODES, &[3, 1, 9, 9, 17, 0]));
+        assert!(!present(&store, STORAGE_FLATKEYVALUE, &[3, 1, 9, 9, 17, 0]));
+
+        assert!(present(&store, ACCOUNT_TRIE_NODES, &[3, 7]));
+        assert!(present(&store, ACCOUNT_FLATKEYVALUE, &[3, 7, 9, 9]));
+        assert!(present(&store, STORAGE_TRIE_NODES, &[3, 7, 9, 9, 17, 0]));
+        assert!(present(&store, STORAGE_FLATKEYVALUE, &[3, 7, 9, 9, 17, 0]));
     }
 }

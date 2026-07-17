@@ -29,7 +29,7 @@ pub use self::nibbles::{
 pub use self::threadpool::ThreadPool;
 pub use self::verify_range::verify_range;
 pub use self::{
-    node::{Node, NodeRef, OnceLock, node_deletion_ranges},
+    node::{BranchNode, Node, NodeRef, OnceLock, node_deletion_ranges},
     node_hash::NodeHash,
 };
 
