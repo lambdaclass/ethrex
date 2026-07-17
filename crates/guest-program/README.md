@@ -127,7 +127,7 @@ cargo check -p ethrex-guest-program --features sp1
 | `l2` | Enables L2 (rollup) program mode. Used for L2 provers. Can be combined with one zkVM feature |
 | `sp1-cycles` | Reports cycle counts (SP1 only) |
 | `c-kzg` | Enables KZG precompile support |
-| `ci` | Skip rom-setup for CI builds |
+| `ci` | Skip `cargo-zisk setup` (proving-key generation) for CI builds |
 
 Guest binaries use base features (`sp1`, `risc0`, etc.) to get their `Crypto` implementation without triggering the build script. The prover host uses `-build-elf` features which include the base feature plus build tooling.
 
@@ -145,7 +145,7 @@ Each subdirectory in `bin/` contains a guest implementation for a specific zkVM.
 - **ELF output**: `bin/risc0/out/riscv32im-risc0-elf`
 - **VK output**: `bin/risc0/out/riscv32im-risc0-vk`
 
-### ZisK v0.16.1 (Polygon)
+### ZisK v1.0.0-alpha (Polygon)
 - **Architecture**: RISC-V 64-bit
 - **ELF output**: `bin/zisk/out/riscv64ima-zisk-elf`
 - **Requires**: `cargo-zisk` toolchain installed
@@ -298,7 +298,7 @@ The pattern for output commitment varies by zkVM:
 |------|-------------------|
 | SP1 | `sp1_zkvm::io::commit_slice(&output.encode())` |
 | RISC0 | `risc0_zkvm::guest::env::commit_slice(&output.encode())` |
-| ZisK | Hash with SHA256, then `ziskos::set_output(idx, u32)` for each chunk |
+| ZisK | `ziskos::io::commit_slice(&output.encode())` |
 | OpenVM | Hash with Keccak256, then `openvm::io::reveal_bytes32(hash)` |
 
 #### 3. Add Build Function in `build.rs`

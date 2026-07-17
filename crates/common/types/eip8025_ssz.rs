@@ -28,6 +28,10 @@ const MAX_DEPOSIT_REQUESTS_PER_PAYLOAD: usize = 8192;
 const MAX_WITHDRAWAL_REQUESTS_PER_PAYLOAD: usize = 16;
 /// `MAX_CONSOLIDATION_REQUESTS_PER_PAYLOAD` (Electra).
 const MAX_CONSOLIDATION_REQUESTS_PER_PAYLOAD: usize = 2;
+/// `MAX_BUILDER_DEPOSIT_REQUESTS_PER_PAYLOAD` (EIP-8282, `2**6`).
+const MAX_BUILDER_DEPOSIT_REQUESTS_PER_PAYLOAD: usize = 64;
+/// `MAX_BUILDER_EXIT_REQUESTS_PER_PAYLOAD` (EIP-8282, `2**4`).
+const MAX_BUILDER_EXIT_REQUESTS_PER_PAYLOAD: usize = 16;
 /// `MAX_BLOB_COMMITMENTS_PER_BLOCK` (Electra).
 const MAX_BLOB_COMMITMENTS_PER_BLOCK: usize = 4096;
 /// `MAX_BLOCK_ACCESS_LIST_BYTES` (Amsterdam).
@@ -38,6 +42,8 @@ const MAX_BLOCK_ACCESS_LIST_BYTES: usize = 16777216;
 const DEPOSIT_REQUEST_TYPE: u8 = 0x00;
 const WITHDRAWAL_REQUEST_TYPE: u8 = 0x01;
 const CONSOLIDATION_REQUEST_TYPE: u8 = 0x02;
+const BUILDER_DEPOSIT_REQUEST_TYPE: u8 = 0x03;
+const BUILDER_EXIT_REQUEST_TYPE: u8 = 0x04;
 
 // ── Bytes20 wrapper (address) ──────────────────────────────────────
 //
@@ -145,6 +151,22 @@ pub struct ConsolidationRequest {
     pub target_pubkey: [u8; 48],
 }
 
+/// SSZ `BuilderDepositRequest` container (EIP-8282).
+#[derive(Debug, Clone, PartialEq, Eq, SszEncode, SszDecode, HashTreeRoot)]
+pub struct BuilderDepositRequest {
+    pub pubkey: [u8; 48],
+    pub withdrawal_credentials: [u8; 32],
+    pub amount: u64,
+    pub signature: [u8; 96],
+}
+
+/// SSZ `BuilderExitRequest` container (EIP-8282).
+#[derive(Debug, Clone, PartialEq, Eq, SszEncode, SszDecode, HashTreeRoot)]
+pub struct BuilderExitRequest {
+    pub source_address: Bytes20,
+    pub pubkey: [u8; 48],
+}
+
 // ── ExecutionPayload ───────────────────────────────────────────────
 
 /// SSZ `ExecutionPayload` container matching `ExecutionPayloadElectra` from
@@ -205,13 +227,15 @@ pub struct ExecutionRequests {
     pub deposits: SszList<DepositRequest, MAX_DEPOSIT_REQUESTS_PER_PAYLOAD>,
     pub withdrawals: SszList<WithdrawalRequest, MAX_WITHDRAWAL_REQUESTS_PER_PAYLOAD>,
     pub consolidations: SszList<ConsolidationRequest, MAX_CONSOLIDATION_REQUESTS_PER_PAYLOAD>,
+    pub builder_deposits: SszList<BuilderDepositRequest, MAX_BUILDER_DEPOSIT_REQUESTS_PER_PAYLOAD>,
+    pub builder_exits: SszList<BuilderExitRequest, MAX_BUILDER_EXIT_REQUESTS_PER_PAYLOAD>,
 }
 
 impl ExecutionRequests {
-    /// Produce the EIP-7685 encoded form: three `EncodedRequests` entries,
+    /// Produce the EIP-7685 encoded form: five `EncodedRequests` entries,
     /// one per request type, each `[type_byte] ++ concat(ssz_encode(item))`.
     ///
-    /// The three request types are all fixed-size SSZ containers, so their
+    /// The five request types are all fixed-size SSZ containers, so their
     /// SSZ encoding is byte-for-byte the EL wire concatenation that
     /// `compute_requests_hash` expects.
     pub fn to_encoded_requests(&self) -> Vec<EncodedRequests> {
@@ -233,6 +257,14 @@ impl ExecutionRequests {
             encode(
                 CONSOLIDATION_REQUEST_TYPE,
                 self.consolidations.iter().cloned(),
+            ),
+            encode(
+                BUILDER_DEPOSIT_REQUEST_TYPE,
+                self.builder_deposits.iter().cloned(),
+            ),
+            encode(
+                BUILDER_EXIT_REQUEST_TYPE,
+                self.builder_exits.iter().cloned(),
             ),
         ]
     }
@@ -329,6 +361,8 @@ mod tests {
             deposits: vec![].try_into().expect("empty deposits"),
             withdrawals: vec![].try_into().expect("empty withdrawals"),
             consolidations: vec![].try_into().expect("empty consolidations"),
+            builder_deposits: vec![].try_into().expect("empty builder deposits"),
+            builder_exits: vec![].try_into().expect("empty builder exits"),
         }
     }
 
@@ -388,10 +422,24 @@ mod tests {
             }]
             .try_into()
             .expect("one consolidation fits"),
+            builder_deposits: vec![BuilderDepositRequest {
+                pubkey: [0x99; 48],
+                withdrawal_credentials: [0xAA; 32],
+                amount: 32_000_000_000,
+                signature: [0xBB; 96],
+            }]
+            .try_into()
+            .expect("one builder deposit fits"),
+            builder_exits: vec![BuilderExitRequest {
+                source_address: Bytes20([0xCC; 20]),
+                pubkey: [0xDD; 48],
+            }]
+            .try_into()
+            .expect("one builder exit fits"),
         };
 
         let encoded = requests.to_encoded_requests();
-        assert_eq!(encoded.len(), 3, "must emit 3 EIP-7685 entries");
+        assert_eq!(encoded.len(), 5, "must emit 5 EIP-7685 entries");
 
         // Deposit: [0x00] ++ 192 bytes
         assert_eq!(encoded[0].0[0], DEPOSIT_REQUEST_TYPE);
@@ -404,5 +452,13 @@ mod tests {
         // Consolidation: [0x02] ++ 116 bytes
         assert_eq!(encoded[2].0[0], CONSOLIDATION_REQUEST_TYPE);
         assert_eq!(encoded[2].0.len(), 1 + 116);
+
+        // Builder deposit: [0x03] ++ 184 bytes (48 + 32 + 8 + 96)
+        assert_eq!(encoded[3].0[0], BUILDER_DEPOSIT_REQUEST_TYPE);
+        assert_eq!(encoded[3].0.len(), 1 + 184);
+
+        // Builder exit: [0x04] ++ 68 bytes (20 + 48)
+        assert_eq!(encoded[4].0[0], BUILDER_EXIT_REQUEST_TYPE);
+        assert_eq!(encoded[4].0.len(), 1 + 68);
     }
 }
