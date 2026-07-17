@@ -773,21 +773,24 @@ fn subtree_upper_bound(path: &Nibbles) -> Nibbles {
 /// under `node_path` that are provably empty and must be deleted: everything
 /// before the `node_path ++ prefix` subtree, and everything after it.
 ///
-/// Keys are raw nibble bytes; ranges are `[start, end)`. Both `node_path` and
-/// `prefix` must be non-empty — the empty-`node_path` (root) case is handled by
-/// the caller.
+/// Keys are raw nibble bytes; ranges are `[start, end)`. `prefix` must be
+/// non-empty. An empty `node_path` denotes a root leaf/extension: the "after"
+/// range then extends to the whole-trie upper bound (byte 16).
 pub fn compute_subtree_ranges(
     node_path: &Nibbles,
     prefix: &Nibbles,
 ) -> (SubTreeRange, SubTreeRange) {
-    debug_assert!(
-        !node_path.is_empty(),
-        "node_path is empty (root case handled by caller)"
-    );
     debug_assert!(!prefix.is_empty(), "extension/leaf prefix is empty");
 
     let child = node_path.concat(prefix);
-    let node_upper = subtree_upper_bound(node_path);
+    // Exclusive upper bound of node_path's subtree. An empty node_path is the
+    // whole trie (a root leaf/extension): its end is the byte 16 (0x10), which
+    // sorts after every real key (all start with a nibble 0x00-0x0F).
+    let node_upper = if node_path.is_empty() {
+        Nibbles::from_hex(vec![16])
+    } else {
+        subtree_upper_bound(node_path)
+    };
 
     // Before the child subtree: [node_path ++ 0, child).
     let first = SubTreeRange {
@@ -867,6 +870,10 @@ mod tests {
             (&[15], &[15]),
             (&[1, 14], &[0, 1, 15]),
             (&[0], &[1]),
+            // Empty node_path: root leaf/extension covering the whole trie.
+            (&[], &[1, 14]),
+            (&[], &[15]),
+            (&[], &[0]),
         ];
         for &(np, pfx) in cases {
             let node_path = Nibbles::from_hex(np.to_vec());

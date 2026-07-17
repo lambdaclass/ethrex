@@ -3306,6 +3306,12 @@ impl Store {
                 ACCOUNT_TRIE_NODES
             };
             batch.put(table, key, &node.encode_to_vec())?;
+            // Correct-by-construction emission: a healed account leaf's flat row
+            // is its value keyed by the full leaf path (node_path ++ partial).
+            if let Node::Leaf(leaf) = node {
+                let full = path.concat(&leaf.partial);
+                batch.put(ACCOUNT_FLATKEYVALUE, full.as_ref(), &leaf.value)?;
+            }
         }
         batch.commit()?;
         Ok(())
@@ -3343,6 +3349,12 @@ impl Store {
                     batch.delete(STORAGE_TRIE_NODES, prefix_key.as_ref())?;
                 }
                 batch.put(STORAGE_TRIE_NODES, key.as_ref(), &node.encode_to_vec())?;
+                // Correct-by-construction emission: a healed storage leaf's flat
+                // row is its value keyed by the account-prefixed full slot path.
+                if let Node::Leaf(leaf) = node {
+                    let full = apply_prefix(Some(*account_hash), path.concat(&leaf.partial));
+                    batch.put(STORAGE_FLATKEYVALUE, full.as_ref(), &leaf.value)?;
+                }
             }
         }
         batch.commit()?;
@@ -4971,6 +4983,51 @@ mod state_deletion_tests {
         assert!(
             present(&store, STORAGE_TRIE_NODES, &k_kept),
             "kept slot intact"
+        );
+    }
+
+    /// A healed account leaf emits its flat row: value keyed by the full leaf
+    /// path in ACCOUNT_FLATKEYVALUE (correct-by-construction, Task 6).
+    #[test]
+    fn healed_account_leaf_emits_flat_row() {
+        let store = Store::new("", EngineType::InMemory).unwrap();
+        let h = H256::from_low_u64_be(0x77);
+        let node = account_leaf(h, *EMPTY_TRIE_HASH);
+        let Node::Leaf(leaf) = &node else {
+            unreachable!()
+        };
+        let (full, value) = (leaf.partial.clone(), leaf.value.clone());
+
+        store
+            .write_healed_state_batch(vec![(Nibbles::default(), node.clone())])
+            .unwrap();
+
+        let read = store.backend.begin_read().unwrap();
+        assert_eq!(
+            read.get(ACCOUNT_FLATKEYVALUE, full.as_ref()).unwrap(),
+            Some(value)
+        );
+    }
+
+    /// A healed storage leaf emits its flat row: value keyed by the account-
+    /// prefixed full slot path in STORAGE_FLATKEYVALUE.
+    #[test]
+    fn healed_storage_leaf_emits_flat_row() {
+        let store = Store::new("", EngineType::InMemory).unwrap();
+        let h = H256::from_low_u64_be(0x88);
+        let slot_partial = Nibbles::from_bytes(H256::from_low_u64_be(0x5).as_bytes());
+        let value = vec![0x2a_u8];
+        let node = Node::Leaf(LeafNode::new(slot_partial.clone(), value.clone()));
+        let full = apply_prefix(Some(h), slot_partial);
+
+        store
+            .write_healed_storage_batch(vec![(h, vec![(Nibbles::default(), node)])])
+            .unwrap();
+
+        let read = store.backend.begin_read().unwrap();
+        assert_eq!(
+            read.get(STORAGE_FLATKEYVALUE, full.as_ref()).unwrap(),
+            Some(value)
         );
     }
 }
