@@ -1,3 +1,4 @@
+mod bal_input_tests;
 mod base64_tests;
 #[cfg(feature = "c-kzg")]
 mod blobs_bundle_tests;
