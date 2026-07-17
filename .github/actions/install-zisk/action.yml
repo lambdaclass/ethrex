@@ -22,5 +22,9 @@ runs:
         mkdir -p "$HOME/.zisk/bin"
         retry curl -fsSL "https://raw.githubusercontent.com/0xPolygonHermez/zisk/v${ZISK_VERSION}/ziskup/ziskup" -o "$HOME/.zisk/bin/ziskup"
         chmod +x "$HOME/.zisk/bin/ziskup"
-        retry "$HOME/.zisk/bin/ziskup" -v "${ZISK_VERSION}" -y
+        # ziskup >= v1.0.0-alpha resolves its install dir from XDG_CONFIG_HOME when set
+        # (GitHub runners set it to ~/.config), which would place cargo-zisk outside both
+        # the PATH entry below and cargo-zisk's own $HOME/.zisk runtime fallback. Pin the
+        # install dir so binaries land in $HOME/.zisk/bin.
+        retry env ZISK_DIR="$HOME/.zisk" "$HOME/.zisk/bin/ziskup" -v "${ZISK_VERSION}" -y
         echo "$HOME/.zisk/bin" >> $GITHUB_PATH
