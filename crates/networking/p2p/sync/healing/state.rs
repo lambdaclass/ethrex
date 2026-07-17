@@ -10,14 +10,14 @@
 
 use std::{
     cmp::Ordering as CmpOrdering,
-    collections::{BTreeMap, BinaryHeap, HashMap},
+    collections::{BinaryHeap, HashMap},
     sync::atomic::Ordering,
     time::{Duration, Instant},
 };
 
 use ethrex_common::{H256, constants::EMPTY_KECCAK_HASH, types::AccountState};
 use ethrex_crypto::NativeCrypto;
-use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
+use ethrex_rlp::decode::RLPDecode;
 use ethrex_storage::Store;
 use ethrex_trie::{EMPTY_TRIE_HASH, Nibbles, Node, TrieDB, TrieError};
 use tracing::{debug, trace};
@@ -348,17 +348,12 @@ async fn heal_state_trie(
                 result??;
             }
             db_joinset.spawn_blocking(move || -> Result<(), SyncError> {
-                let mut encoded_to_write = BTreeMap::new();
-                for (path, node) in to_write {
-                    for i in 0..path.len() {
-                        encoded_to_write.insert(path.slice(0, i), vec![]);
-                    }
-                    encoded_to_write.insert(path, node.encode_to_vec());
-                }
-                let trie_db = store.open_direct_state_trie(*EMPTY_TRIE_HASH)?;
-                let db = trie_db.db();
-                // PERF: use put_batch_no_alloc (note that it needs to remove nodes too)
-                db.put_batch(encoded_to_write.into_iter().collect())?;
+                // Writes each healed node (routed to its CF exactly as the trie
+                // DB's put_batch did) plus, atomically in the same batch, the
+                // Trigger-1 prune of every provably-empty range under each node's
+                // path across the account and storage CFs. Reads the previous node
+                // per path to scope deletions to genuine valid→invalid removals.
+                store.write_healed_state_batch(to_write)?;
                 Ok(())
             });
         }
