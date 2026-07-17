@@ -3269,6 +3269,47 @@ impl Store {
     /// Obtain a state trie from the given state root
     /// Doesn't check if the state root is valid
     /// Used for internal store operations
+    /// Persists a batch of healed state-trie nodes and applies Trigger-1
+    /// deletions atomically. For each `(path, node)`: reads the previous node at
+    /// `path` (driving the deletion previous-diff), sweeps every provably-empty
+    /// range under `path` across the account + storage CFs
+    /// ([`apply_state_node_deletions`]), blanks stale ancestor node slots on the
+    /// path, then writes the node — all in one write batch, so the deletes commit
+    /// atomically with the write. Replicates the trie DB's length-based CF routing
+    /// so node placement is unchanged from the previous flush.
+    pub fn write_healed_state_batch(
+        &self,
+        to_write: Vec<(Nibbles, Node)>,
+    ) -> Result<(), StoreError> {
+        let read = self.backend.begin_read()?;
+        let mut batch = self.backend.begin_write()?;
+        for (path, node) in &to_write {
+            let key = path.as_ref();
+            // State-trie node paths are <65 nibbles, so the previous node lives in
+            // ACCOUNT_TRIE_NODES (65/131-length keys are flat values, never
+            // healed-node paths). Reading it from the pre-batch view drives the
+            // deletion previous-diff.
+            let previous = match read.get(ACCOUNT_TRIE_NODES, key)? {
+                Some(enc) => Some(Node::decode(&enc)?),
+                None => None,
+            };
+            apply_state_node_deletions(&mut *batch, node, previous.as_ref(), path)?;
+            // Remove stale intermediate node slots along the path.
+            for i in 0..path.len() {
+                batch.delete(ACCOUNT_TRIE_NODES, path.slice(0, i).as_ref())?;
+            }
+            // Replicate the trie DB's length-based routing for the node write.
+            let table = if key.len() == 65 || key.len() == 131 {
+                ACCOUNT_FLATKEYVALUE
+            } else {
+                ACCOUNT_TRIE_NODES
+            };
+            batch.put(table, key, &node.encode_to_vec())?;
+        }
+        batch.commit()?;
+        Ok(())
+    }
+
     pub fn open_direct_state_trie(&self, state_root: H256) -> Result<Trie, StoreError> {
         Ok(Trie::open(
             Box::new(BackendTrieDB::new_for_accounts(
@@ -4686,5 +4727,53 @@ mod state_deletion_tests {
         assert!(present(&store, ACCOUNT_FLATKEYVALUE, &[3, 7, 9, 9]));
         assert!(present(&store, STORAGE_TRIE_NODES, &[3, 7, 9, 9, 17, 0]));
         assert!(present(&store, STORAGE_FLATKEYVALUE, &[3, 7, 9, 9, 17, 0]));
+    }
+
+    /// The healed-batch writer reads the `previous` node from the DB (driving the
+    /// deletion previous-diff), writes the new node to `ACCOUNT_TRIE_NODES`, and
+    /// atomically sweeps the removed child's subtree (account + storage). Only
+    /// child 1 was removed (7 kept), so only its subtree is pruned.
+    #[test]
+    fn write_healed_state_batch_reads_previous_and_writes_node() {
+        let store = Store::new("", EngineType::InMemory).unwrap();
+        let path = Nibbles::from_hex(vec![3]);
+
+        // Seed the previous branch node at [3] (children {1,7}) plus a stale
+        // subtree under removed child 1 (account node + its storage) and a kept
+        // subtree under child 7.
+        let previous = branch_with(&[1, 7]);
+        {
+            let mut w = store.backend.begin_write().unwrap();
+            w.put(ACCOUNT_TRIE_NODES, path.as_ref(), &previous.encode_to_vec())
+                .unwrap();
+            w.commit().unwrap();
+        }
+        put_row(&store, ACCOUNT_TRIE_NODES, &[3, 1]);
+        put_row(&store, STORAGE_TRIE_NODES, &[3, 1, 9, 17, 0]);
+        put_row(&store, ACCOUNT_TRIE_NODES, &[3, 7]);
+
+        let node = branch_with(&[7]);
+        store
+            .write_healed_state_batch(vec![(path.clone(), node.clone())])
+            .unwrap();
+
+        let read = store.backend.begin_read().unwrap();
+        assert_eq!(
+            read.get(ACCOUNT_TRIE_NODES, path.as_ref()).unwrap(),
+            Some(node.encode_to_vec()),
+            "new node written to the trie-node CF"
+        );
+        assert!(
+            !present(&store, ACCOUNT_TRIE_NODES, &[3, 1]),
+            "removed child pruned"
+        );
+        assert!(
+            !present(&store, STORAGE_TRIE_NODES, &[3, 1, 9, 17, 0]),
+            "removed child's storage swept"
+        );
+        assert!(
+            present(&store, ACCOUNT_TRIE_NODES, &[3, 7]),
+            "kept child intact"
+        );
     }
 }
