@@ -66,8 +66,8 @@ ethrex integrates with multiple zero-knowledge virtual machines (zkVMs), giving 
 
 **Integration Details:**
 - ethrex supports ZisK for L1 block proving via ethrex-replay
-- Most Ethereum precompiles are supported with patches
-- P256 verification is not yet available (no patch exists)
+- Ethereum precompiles use ZisK's standardized `zkvm_*` accelerator interface
+- P256 (secp256r1) verification is supported via `zkvm_secp256r1_verify`
 
 **Current Limitations:**
 - L2 prover integration is not yet complete
