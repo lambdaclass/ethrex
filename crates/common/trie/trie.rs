@@ -29,12 +29,12 @@ pub use self::nibbles::{
 pub use self::threadpool::ThreadPool;
 pub use self::verify_range::verify_range;
 pub use self::{
-    node::{BranchNode, Node, NodeRef, OnceLock, node_deletion_ranges},
+    node::{BranchNode, LeafNode, Node, NodeRef, OnceLock, node_deletion_ranges},
     node_hash::NodeHash,
 };
 
 pub use self::error::{ExtensionNodeErrorData, InconsistentTreeError, TrieError};
-use self::{node::LeafNode, trie_iter::TrieIterator};
+use self::trie_iter::TrieIterator;
 
 use ethrex_rlp::decode::RLPDecode;
 use lazy_static::lazy_static;

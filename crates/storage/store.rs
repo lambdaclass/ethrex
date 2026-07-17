@@ -3294,6 +3294,7 @@ impl Store {
                 None => None,
             };
             apply_state_node_deletions(&mut *batch, node, previous.as_ref(), path)?;
+            apply_storage_clear_cascade(&mut *batch, node, previous.as_ref(), path)?;
             // Remove stale intermediate node slots along the path.
             for i in 0..path.len() {
                 batch.delete(ACCOUNT_TRIE_NODES, path.slice(0, i).as_ref())?;
@@ -4498,6 +4499,46 @@ pub fn apply_state_node_deletions(
     Ok(())
 }
 
+/// Trigger 2 (clear-time cascade). If `node` is an account leaf whose
+/// `storage_root` transitioned nonempty→EMPTY relative to `previous`, range-delete
+/// its entire storage namespace from the storage node/flat CFs. An emptied storage
+/// writes no storage node, so Trigger 1 never fires there; without this the old
+/// storage rows orphan and a later refill resurrects them (the E7 bug). Gated on
+/// the transition so the common empty→empty case (EOAs) issues no tombstone.
+/// The account hash is `node_path ++ leaf.partial`.
+pub fn apply_storage_clear_cascade(
+    batch: &mut dyn StorageWriteBatch,
+    node: &Node,
+    previous: Option<&Node>,
+    node_path: &Nibbles,
+) -> Result<(), StoreError> {
+    let Node::Leaf(leaf) = node else {
+        return Ok(());
+    };
+    if AccountState::decode(&leaf.value)?.storage_root != *EMPTY_TRIE_HASH {
+        return Ok(());
+    }
+    let previously_nonempty = match previous {
+        Some(Node::Leaf(prev)) => {
+            AccountState::decode(&prev.value)?.storage_root != *EMPTY_TRIE_HASH
+        }
+        _ => false,
+    };
+    if !previously_nonempty {
+        return Ok(());
+    }
+
+    let account_hash = H256::from_slice(&node_path.concat(&leaf.partial).to_bytes());
+    let from = apply_prefix(Some(account_hash), Nibbles::default());
+    let mut to = from.as_ref().to_vec();
+    if let Some(last) = to.last_mut() {
+        *last += 1;
+    }
+    batch.delete_range(STORAGE_TRIE_NODES, from.as_ref(), &to)?;
+    batch.delete_range(STORAGE_FLATKEYVALUE, from.as_ref(), &to)?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod merge_tests {
     use super::*;
@@ -4666,7 +4707,8 @@ mod datadir_tests {
 #[cfg(test)]
 mod state_deletion_tests {
     use super::*;
-    use ethrex_trie::{BranchNode, Node, NodeHash, NodeRef};
+    use ethrex_common::utils::keccak;
+    use ethrex_trie::{BranchNode, LeafNode, Node, NodeHash, NodeRef};
 
     fn put_row(store: &Store, cf: &'static str, key: &[u8]) {
         let mut w = store.backend.begin_write().unwrap();
@@ -4774,6 +4816,70 @@ mod state_deletion_tests {
         assert!(
             present(&store, ACCOUNT_TRIE_NODES, &[3, 7]),
             "kept child intact"
+        );
+    }
+
+    fn account_leaf(hash: H256, storage_root: H256) -> Node {
+        let value = AccountState {
+            nonce: 1,
+            balance: U256::zero(),
+            storage_root,
+            code_hash: keccak([]),
+        }
+        .encode_to_vec();
+        Node::Leaf(LeafNode::new(Nibbles::from_bytes(hash.as_bytes()), value))
+    }
+
+    /// Trigger 2: an account whose storage_root goes nonempty→EMPTY has its whole
+    /// storage namespace swept, while an unrelated account's storage survives.
+    #[test]
+    fn storage_clear_cascade_sweeps_storage_on_transition() {
+        let store = Store::new("", EngineType::InMemory).unwrap();
+        let h = H256::from_low_u64_be(0xABCD);
+        let previous = account_leaf(h, H256::from_low_u64_be(0x1234));
+        let node = account_leaf(h, *EMPTY_TRIE_HASH);
+
+        let skey = apply_prefix(Some(h), Nibbles::from_hex(vec![1, 2])).into_vec();
+        put_row(&store, STORAGE_TRIE_NODES, &skey);
+        put_row(&store, STORAGE_FLATKEYVALUE, &skey);
+        let other = apply_prefix(
+            Some(H256::from_low_u64_be(0xBEEF)),
+            Nibbles::from_hex(vec![1]),
+        )
+        .into_vec();
+        put_row(&store, STORAGE_TRIE_NODES, &other);
+
+        let mut w = store.backend.begin_write().unwrap();
+        apply_storage_clear_cascade(&mut *w, &node, Some(&previous), &Nibbles::default()).unwrap();
+        w.commit().unwrap();
+
+        assert!(!present(&store, STORAGE_TRIE_NODES, &skey));
+        assert!(!present(&store, STORAGE_FLATKEYVALUE, &skey));
+        assert!(
+            present(&store, STORAGE_TRIE_NODES, &other),
+            "unrelated account's storage untouched"
+        );
+    }
+
+    /// No transition (previous already empty, e.g. an EOA) ⇒ no cascade, no
+    /// tombstone: a stray storage row is left in place.
+    #[test]
+    fn storage_clear_cascade_noop_without_transition() {
+        let store = Store::new("", EngineType::InMemory).unwrap();
+        let h = H256::from_low_u64_be(0xABCD);
+        let previous = account_leaf(h, *EMPTY_TRIE_HASH);
+        let node = account_leaf(h, *EMPTY_TRIE_HASH);
+
+        let skey = apply_prefix(Some(h), Nibbles::from_hex(vec![1])).into_vec();
+        put_row(&store, STORAGE_TRIE_NODES, &skey);
+
+        let mut w = store.backend.begin_write().unwrap();
+        apply_storage_clear_cascade(&mut *w, &node, Some(&previous), &Nibbles::default()).unwrap();
+        w.commit().unwrap();
+
+        assert!(
+            present(&store, STORAGE_TRIE_NODES, &skey),
+            "no cascade without a nonempty->empty transition"
         );
     }
 }
