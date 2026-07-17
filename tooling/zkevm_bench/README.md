@@ -36,14 +36,14 @@ any invocation directory (see [Running](#running) below).
 
 ## Setup
 
-1. **ZisK toolchain v0.16.1** (Linux only). From the repo root:
+1. **ZisK toolchain v1.0.0-alpha** (Linux only). From the repo root:
 
    ```bash
    make zkevm-bench-setup
    ```
 
-   This installs ZisK's apt build dependencies and runs `ziskup -v 0.16.1`
-   with `SETUP_KEY=none`, which skips downloading the (large) proving key —
+   This installs ZisK's apt build dependencies and runs `ziskup -v 1.0.0-alpha`
+   with `--nokey`, which skips downloading the (large) proving key —
    emulation via `ziskemu` doesn't need it. Afterwards, add `~/.zisk/bin` to
    `PATH` (it provides `ziskemu`):
 
@@ -79,7 +79,7 @@ won't find `ethrex-zkevm-bench` — always invoke cargo from the repo root.
 The `zisk-elf` feature enables `ethrex-guest-program/{zisk-build-elf,ci}`:
 `zisk-build-elf` compiles the guest program to the zisk RISC-V target and
 embeds it into the benchmark binary, and the `ci` sub-feature skips
-`cargo-zisk rom-setup` — a proving-only step that otherwise needs the
+`cargo-zisk setup` — a proving-only step that otherwise needs the
 proving key skipped in Setup above.
 
 ## Running
@@ -154,7 +154,7 @@ AIR-cost breakdown. Used to select which blocks to commit as fixtures (see
 ```json
 {
   "meta": {
-    "zisk_version": "v0.16.1",
+    "zisk_version": "v1.0.0-alpha",
     "guest_elf_sha256": "<sha256 of the built guest ELF>",
     "generated_by": "ethrex-zkevm-bench",
     "git_commit": "<optional, from $GIT_COMMIT>"
@@ -166,14 +166,14 @@ AIR-cost breakdown. Used to select which blocks to commit as fixtures (see
       "category": "light",
       "air_cost": {
         "base": 293601280,
-        "main": 581978408,
-        "opcodes": 129090301,
-        "precompiles": 218288244,
-        "memory": 80012388,
-        "total": 1302970621
+        "main": 583019352,
+        "opcodes": 124468967,
+        "precompiles": 227527215,
+        "memory": 80638696,
+        "total": 1309255510
       },
-      "steps": 8558506,
-      "zkvm_ram_bytes": 7304122,
+      "steps": 8573814,
+      "zkvm_ram_bytes": 3697848,
       "guest_output_ok": true
     }
   ]

@@ -225,14 +225,14 @@ sort-genesis-files:
 bench-rlp: ## ⚡ Bench the RLP decoder/encoder
 	cd ./crates/common/rlp && cargo bench
 
-zkevm-bench-setup: ## Install ZisK v0.16.1 toolchain for the zkEVM benchmark (Linux)
+zkevm-bench-setup: ## Install ZisK v1.0.0-alpha toolchain for the zkEVM benchmark (Linux)
 	sudo apt-get update
 	sudo apt-get install -y xz-utils jq curl build-essential qemu-system libomp-dev libgmp-dev nlohmann-json3-dev protobuf-compiler uuid-dev libgrpc++-dev libsecp256k1-dev libsodium-dev libpqxx-dev nasm libopenmpi-dev openmpi-bin openmpi-common libclang-dev clang gcc-riscv64-unknown-elf
 	mkdir -p $(HOME)/.zisk/bin
-	curl -fsSL "https://raw.githubusercontent.com/0xPolygonHermez/zisk/v0.16.1/ziskup/ziskup" -o $(HOME)/.zisk/bin/ziskup
+	curl -fsSL "https://raw.githubusercontent.com/0xPolygonHermez/zisk/v1.0.0-alpha/ziskup/ziskup" -o $(HOME)/.zisk/bin/ziskup
 	chmod +x $(HOME)/.zisk/bin/ziskup
-	SETUP_KEY=none $(HOME)/.zisk/bin/ziskup -v 0.16.1
-	@echo "Add $(HOME)/.zisk/bin to PATH (e.g. export PATH=$(HOME)/.zisk/bin:$$PATH). SETUP_KEY=none skips the (large) proving key — emulation doesn't need it."
+	$(HOME)/.zisk/bin/ziskup -v 1.0.0-alpha --nokey -y
+	@echo "Add $(HOME)/.zisk/bin to PATH (e.g. export PATH=$(HOME)/.zisk/bin:$$PATH). --nokey skips the (large) proving key — emulation doesn't need it."
 
 # Using & so make calls this recipe only once per run
 mermaid-init.js mermaid.min.js &:

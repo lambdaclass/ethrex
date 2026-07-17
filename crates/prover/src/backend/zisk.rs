@@ -23,6 +23,8 @@ pub struct ZiskProveOutput(pub Vec<u8>);
 /// This backend drives the `cargo-zisk` CLI (ZisK v1.0.0-alpha and later) to
 /// execute and prove programs: `cargo-zisk execute` for a dry run and
 /// `cargo-zisk prove` / `cargo-zisk verify` for proving and verification.
+/// Profiling ([`ZiskBackend::execute_profiled`]) instead uses the `ziskemu`
+/// emulator with `-X`, the only tool that emits the AIR-cost breakdown.
 #[derive(Default)]
 pub struct ZiskBackend;
 

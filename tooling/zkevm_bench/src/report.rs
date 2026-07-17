@@ -64,7 +64,7 @@ mod tests {
     fn report_roundtrips_through_json() {
         let report = Report {
             meta: Meta {
-                zisk_version: "v0.16.1".into(),
+                zisk_version: "v1.0.0-alpha".into(),
                 guest_elf_sha256: "abc123".into(),
                 generated_by: "ethrex-zkevm-bench".into(),
                 git_commit: Some("deadbeef".into()),
@@ -92,6 +92,6 @@ mod tests {
         assert_eq!(back.workloads.len(), 1);
         assert_eq!(back.workloads[0].air_cost.total, 15);
         assert_eq!(back.workloads[0].zkvm_ram_bytes, 7_304_122);
-        assert_eq!(back.meta.zisk_version, "v0.16.1");
+        assert_eq!(back.meta.zisk_version, "v1.0.0-alpha");
     }
 }

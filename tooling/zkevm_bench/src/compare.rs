@@ -151,7 +151,7 @@ mod tests {
     fn rep(items: Vec<WorkloadResult>) -> Report {
         Report {
             meta: Meta {
-                zisk_version: "v0.16.1".into(),
+                zisk_version: "v1.0.0-alpha".into(),
                 guest_elf_sha256: "x".into(),
                 generated_by: "t".into(),
                 git_commit: None,

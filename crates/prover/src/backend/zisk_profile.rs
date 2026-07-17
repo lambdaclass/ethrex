@@ -33,7 +33,9 @@ fn parse_cost_token(token: &str) -> Option<u64> {
 /// skipped, leaving `7,304,122` as the value). This also keeps the parser
 /// immune to the detailed per-opcode tables that follow the summary in the
 /// real output (e.g. lines starting with `OP`, `COST BY OPCODE`, or
-/// `FROPS`), since their first token never matches a summary label.
+/// `FROPS`), since their first token never matches a summary label. It is
+/// likewise order-independent, so the `VARIABLE` line (`= TOTAL - BASE`) that
+/// ZisK v1.0.0-alpha added to the summary is simply ignored.
 pub fn parse_air_cost(stdout: &str) -> Result<ZiskAirCost, BackendError> {
     let mut air_cost = ZiskAirCost::default();
     let mut found_component = false;
@@ -88,22 +90,24 @@ pub fn parse_air_cost(stdout: &str) -> Result<ZiskAirCost, BackendError> {
 mod tests {
     use super::*;
 
-    // The committed real sample from Task 6. Path is relative to this crate.
+    // A committed real ZisK v1.0.0-alpha `ziskemu -X` capture of the
+    // `mainnet_25087668_light` benchmark block. Path is relative to this crate.
     const SAMPLE: &str =
         include_str!("../../../../tooling/zkevm_bench/fixtures/ziskemu_sample.txt");
 
     #[test]
     fn parses_air_cost_from_sample() {
         let ac = parse_air_cost(SAMPLE).unwrap();
-        assert_eq!(ac.steps, 40_007_528);
+        assert_eq!(ac.steps, 8_573_814);
         assert_eq!(ac.base, 293_601_280);
-        assert_eq!(ac.main, 2_720_511_904);
-        assert_eq!(ac.opcodes, 482_648_015);
-        assert_eq!(ac.precompiles, 937_548_926);
-        assert_eq!(ac.memory, 495_887_679);
-        assert_eq!(ac.total, 4_930_197_804);
-        assert_eq!(ac.ram_usage, 7_304_122);
-        // invariant: components sum to total
+        assert_eq!(ac.main, 583_019_352);
+        assert_eq!(ac.opcodes, 124_468_967);
+        assert_eq!(ac.precompiles, 227_527_215);
+        assert_eq!(ac.memory, 80_638_696);
+        assert_eq!(ac.total, 1_309_255_510);
+        assert_eq!(ac.ram_usage, 3_697_848);
+        // invariant: components sum to total (still holds in v1.0.0-alpha; the
+        // added `VARIABLE` line — total minus base — is ignored by the parser).
         assert_eq!(
             ac.total,
             ac.base + ac.main + ac.opcodes + ac.precompiles + ac.memory

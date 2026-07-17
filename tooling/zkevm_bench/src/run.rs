@@ -13,7 +13,7 @@ fn guest_elf_sha256() -> String {
 
 /// zisk version recorded when `ziskemu --version` can't be queried. Kept in
 /// sync with the pinned zisk dependency in `Cargo.toml`.
-const FALLBACK_ZISK_VERSION: &str = "v0.16.1";
+const FALLBACK_ZISK_VERSION: &str = "v1.0.0-alpha";
 
 /// Queries the installed `ziskemu` for its version so reports are attributed to
 /// the emulator actually used, rather than a hardcoded string that drifts on
@@ -26,9 +26,9 @@ fn detect_zisk_version() -> String {
         .ok()
         .filter(|out| out.status.success())
         .and_then(|out| {
-            // Output looks like "ziskemu 0.16.1"; pick the first token that
-            // looks like a version (a leading `v` is optional) and normalize
-            // it to a leading `v`.
+            // Output looks like "ziskemu 1.0.0-alpha ..."; pick the first token
+            // that looks like a version (a leading `v` is optional) and
+            // normalize it to a leading `v`.
             String::from_utf8_lossy(&out.stdout)
                 .split_whitespace()
                 .find(|&t| {
