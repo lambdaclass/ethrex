@@ -134,24 +134,15 @@ pub type PublicKeysList =
     libssz_types::SszList<libssz_types::SszVector<u8, BYTES_PER_PUBLIC_KEY>, MAX_PUBLIC_KEYS>;
 #[cfg(feature = "eip-8025")]
 const MAX_OPTIONAL_FORK_ACTIVATION_VALUES: usize = 1;
-#[cfg(feature = "eip-8025")]
-const MAX_BLOB_SCHEDULES_PER_FORK: usize = 1;
 
 /// Big-endian schema-id prefix on canonical `SszStatelessInput` wire bytes.
+/// Per EELS `stateless_ssz.py`, `schema_id = (fork_index << 8) | revision`.
+/// Amsterdam is fork `0x15`, revision `0x01` (SSZ `SszStatelessInput` payload).
 #[cfg(feature = "eip-8025")]
-pub const STATELESS_INPUT_SCHEMA_ID: u16 = 0x0001;
+pub const STATELESS_INPUT_SCHEMA_ID: u16 = 0x1501;
 /// Byte length of [`STATELESS_INPUT_SCHEMA_ID`] on the wire.
 #[cfg(feature = "eip-8025")]
 pub const STATELESS_INPUT_SCHEMA_ID_SIZE: usize = 2;
-
-/// Mirrors `SszBlobSchedule` from the Amsterdam stateless-validation spec.
-#[cfg(feature = "eip-8025")]
-#[derive(Debug, Clone, PartialEq, Eq, libssz_derive::SszEncode, libssz_derive::SszDecode)]
-pub struct CanonicalBlobSchedule {
-    pub target: u64,
-    pub max: u64,
-    pub base_fee_update_fraction: u64,
-}
 
 /// Mirrors `SszForkActivation` from the Amsterdam stateless-validation spec.
 #[cfg(feature = "eip-8025")]
@@ -162,12 +153,12 @@ pub struct CanonicalForkActivation {
 }
 
 /// Mirrors `SszForkConfig` from the Amsterdam stateless-validation spec.
+/// As of glamsterdam-devnet-7 this carries only `activation`; the earlier
+/// `fork` id and per-fork `blob_schedule` fields were dropped upstream.
 #[cfg(feature = "eip-8025")]
 #[derive(Debug, Clone, PartialEq, Eq, libssz_derive::SszEncode, libssz_derive::SszDecode)]
 pub struct CanonicalForkConfig {
-    pub fork: u64,
     pub activation: CanonicalForkActivation,
-    pub blob_schedule: libssz_types::SszList<CanonicalBlobSchedule, MAX_BLOB_SCHEDULES_PER_FORK>,
 }
 
 /// Mirrors `SszChainConfig` from the Amsterdam stateless-validation spec.

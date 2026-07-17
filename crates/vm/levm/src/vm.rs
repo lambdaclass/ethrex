@@ -554,7 +554,7 @@ impl FrameTxContext {
 /// `inserted_code_hashes` is an append-only `Vec`, so its pre-region length is
 /// enough to identify the region-added tail.
 #[derive(Debug, Default)]
-struct PrepareRegionBackupMarker {
+pub struct PrepareRegionBackupMarker {
     /// Addresses already backed up in `original_accounts_info` before the region.
     accounts: FxHashSet<Address>,
     /// Addresses already backed up in `original_account_storage_slots` before the region.
@@ -691,7 +691,7 @@ pub struct VM<'a> {
     /// EIP-8037: pre-region key-space snapshot of `call_frame_backup`, recorded by
     /// `enter_prepare_region`. Lets `fail_prepare_region` revert only region-added
     /// writes, leaving the sender nonce-bump / fee-deduction entries intact.
-    prep_region_backup_marker: PrepareRegionBackupMarker,
+    pub prep_region_backup_marker: PrepareRegionBackupMarker,
     /// EIP-8037: set by `fail_prepare_region` when an internal OOG rolls back the
     /// atomic prepare region. Consumed by `run_execution`, which turns it into a
     /// full-gas revert `ContextResult` (mirrors EELS depth-0
