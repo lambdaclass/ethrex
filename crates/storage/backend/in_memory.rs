@@ -181,6 +181,25 @@ impl StorageWriteBatch for InMemoryWriteTx {
         Ok(())
     }
 
+    fn delete_range(
+        &mut self,
+        table: &'static str,
+        from: &[u8],
+        to: &[u8],
+    ) -> Result<(), StoreError> {
+        let mut db = self
+            .backend
+            .write()
+            .map_err(|_| StoreError::Custom("Failed to acquire write lock".to_string()))?;
+
+        let db_mut = Arc::make_mut(&mut *db);
+        if let Some(table_ref) = db_mut.get_mut(table) {
+            // Keep keys outside the half-open [from, to) interval.
+            table_ref.retain(|k, _| k.as_slice() < from || k.as_slice() >= to);
+        }
+        Ok(())
+    }
+
     fn merge(&mut self, table: &'static str, key: &[u8], operand: &[u8]) -> Result<(), StoreError> {
         // InMemory has no native merge operator, so apply the merge inline.
         // Only TRANSACTION_LOCATIONS uses merge today; dispatch by table.
@@ -205,5 +224,40 @@ impl StorageWriteBatch for InMemoryWriteTx {
     fn commit(&mut self) -> Result<(), StoreError> {
         // FIXME: in-memory writes aren't atomic
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `delete_range` removes exactly the half-open `[from, to)` interval in the
+    /// target table and leaves out-of-range keys and other tables untouched.
+    #[test]
+    fn delete_range_removes_half_open_interval_only() {
+        let backend = InMemoryBackend::open().unwrap();
+        let (t1, t2): (&'static str, &'static str) = ("t1", "t2");
+
+        let mut w = backend.begin_write().unwrap();
+        for k in 0u8..=5 {
+            w.put(t1, &[k], b"v").unwrap();
+            w.put(t2, &[k], b"v").unwrap();
+        }
+        w.commit().unwrap();
+
+        let mut w = backend.begin_write().unwrap();
+        w.delete_range(t1, &[2], &[4]).unwrap(); // deletes keys 2,3 in t1 only
+        w.commit().unwrap();
+
+        let r = backend.begin_read().unwrap();
+        for k in 0u8..=5 {
+            let present = r.get(t1, &[k]).unwrap().is_some();
+            let expected = k != 2 && k != 3;
+            assert_eq!(
+                present, expected,
+                "t1 key {k}: present={present}, want {expected}"
+            );
+            assert!(r.get(t2, &[k]).unwrap().is_some(), "t2 key {k} must remain");
+        }
     }
 }

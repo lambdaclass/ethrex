@@ -110,6 +110,22 @@ pub trait StorageWriteBatch: Send {
     /// Removes a key-value pair from the specified table.
     fn delete(&mut self, table: &'static str, key: &[u8]) -> Result<(), StoreError>;
 
+    /// Removes every key in the half-open range `[from, to)` from `table`,
+    /// within this transaction (so it commits atomically with the batch's other
+    /// mutations). Byte-lexicographic order. The default errors rather than
+    /// silently no-op, so a backend lacking native range deletion is caught.
+    fn delete_range(
+        &mut self,
+        table: &'static str,
+        from: &[u8],
+        to: &[u8],
+    ) -> Result<(), StoreError> {
+        let _ = (table, from, to);
+        Err(StoreError::Custom(
+            "delete_range not supported by this backend".to_string(),
+        ))
+    }
+
     /// Appends a merge operand for the given key in the specified table.
     ///
     /// The actual combine step is deferred — backends with a registered merge

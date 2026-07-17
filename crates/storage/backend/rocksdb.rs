@@ -472,6 +472,22 @@ impl StorageWriteBatch for RocksDBWriteTx {
         Ok(())
     }
 
+    fn delete_range(
+        &mut self,
+        table: &'static str,
+        from: &[u8],
+        to: &[u8],
+    ) -> Result<(), StoreError> {
+        let cf = self
+            .db
+            .cf_handle(table)
+            .ok_or_else(|| StoreError::Custom(format!("Table {table:?} not found")))?;
+        // Half-open [from, to); accumulated in the batch so it commits atomically
+        // with the batch's other mutations (e.g. the healed node write).
+        self.batch.delete_range_cf(&cf, from, to);
+        Ok(())
+    }
+
     fn merge(&mut self, table: &'static str, key: &[u8], operand: &[u8]) -> Result<(), StoreError> {
         // Only TRANSACTION_LOCATIONS has a merge operator registered. Merging on
         // any other CF would enqueue an operand RocksDB can't resolve, deferring
@@ -537,6 +553,48 @@ mod tests {
     use ethrex_common::H256;
     use ethrex_common::types::{BlockHash, BlockNumber, Index};
     use ethrex_rlp::decode::RLPDecode;
+
+    /// `delete_range` on the real backend removes the half-open `[from, to)`
+    /// interval per CF, and multiple CFs range-deleted in one batch commit
+    /// atomically (the whole-account-gone fan-out, E13).
+    #[test]
+    fn delete_range_spans_cfs_in_one_batch() {
+        use crate::api::tables::{ACCOUNT_TRIE_NODES, STORAGE_TRIE_NODES};
+        let dir = tempfile::tempdir().unwrap();
+        let backend = RocksDBBackend::open(
+            dir.path(),
+            crate::store::DEFAULT_ROCKSDB_BLOCK_CACHE_SIZE_BYTES,
+        )
+        .unwrap();
+
+        let mut w = backend.begin_write().unwrap();
+        for k in 0u8..=5 {
+            w.put(ACCOUNT_TRIE_NODES, &[k], b"a").unwrap();
+            w.put(STORAGE_TRIE_NODES, &[k], b"s").unwrap();
+        }
+        w.commit().unwrap();
+
+        // Same range deleted on two CFs in one atomic batch.
+        let mut w = backend.begin_write().unwrap();
+        w.delete_range(ACCOUNT_TRIE_NODES, &[2], &[4]).unwrap();
+        w.delete_range(STORAGE_TRIE_NODES, &[2], &[4]).unwrap();
+        w.commit().unwrap();
+
+        let r = backend.begin_read().unwrap();
+        for k in 0u8..=5 {
+            let expected = k != 2 && k != 3;
+            assert_eq!(
+                r.get(ACCOUNT_TRIE_NODES, &[k]).unwrap().is_some(),
+                expected,
+                "account_trie_nodes key {k}"
+            );
+            assert_eq!(
+                r.get(STORAGE_TRIE_NODES, &[k]).unwrap().is_some(),
+                expected,
+                "storage_trie_nodes key {k}"
+            );
+        }
+    }
 
     /// End-to-end guard for the associative merge operator at the real RocksDB
     /// layer: write many operands for the same key, each flushed into its own
