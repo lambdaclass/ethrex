@@ -1141,6 +1141,10 @@ async fn insert_accounts(
     db.ingest_external_file_opts(&ingest_opts, file_paths)
         .map_err(|err| SyncError::RocksDBError(err.into_string()))?;
     let iter = db.full_iterator(rocksdb::IteratorMode::Start);
+    // Emit account FKV rows in this same pass (correct-by-construction): the
+    // sorted (hash, rlp) leaves are exactly what the post-sync generator would
+    // re-derive by walking the finished trie.
+    let mut fkv_batch: Vec<(H256, Vec<u8>)> = Vec::with_capacity(100_000);
     for account in iter {
         let account = account.map_err(|err| SyncError::RocksDBError(err.into_string()))?;
         let account_state = AccountState::decode(&account.1).map_err(SyncError::Rlp)?;
@@ -1148,6 +1152,13 @@ async fn insert_accounts(
             code_hash_collector.add(account_state.code_hash);
             code_hash_collector.flush_if_needed().await?;
         }
+        fkv_batch.push((H256::from_slice(&account.0), account.1.to_vec()));
+        if fkv_batch.len() >= 100_000 {
+            store.write_account_flatkeyvalue_batch(std::mem::take(&mut fkv_batch))?;
+        }
+    }
+    if !fkv_batch.is_empty() {
+        store.write_account_flatkeyvalue_batch(fkv_batch)?;
     }
 
     let iter = db.full_iterator(rocksdb::IteratorMode::Start);

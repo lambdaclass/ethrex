@@ -3361,6 +3361,23 @@ impl Store {
         Ok(())
     }
 
+    /// Emits account FKV rows during the snap-sync account build: writes each
+    /// `(account_hash, rlp_value)` to `ACCOUNT_FLATKEYVALUE` keyed by the full
+    /// leaf path (`from_bytes(hash)`), byte-identical to what the post-sync
+    /// generator would derive. Batched by the caller.
+    pub fn write_account_flatkeyvalue_batch(
+        &self,
+        rows: Vec<(H256, Vec<u8>)>,
+    ) -> Result<(), StoreError> {
+        let mut batch = self.backend.begin_write()?;
+        for (hash, value) in rows {
+            let key = Nibbles::from_bytes(hash.as_bytes());
+            batch.put(ACCOUNT_FLATKEYVALUE, key.as_ref(), &value)?;
+        }
+        batch.commit()?;
+        Ok(())
+    }
+
     pub fn open_direct_state_trie(&self, state_root: H256) -> Result<Trie, StoreError> {
         Ok(Trie::open(
             Box::new(BackendTrieDB::new_for_accounts(
@@ -5005,6 +5022,24 @@ mod state_deletion_tests {
         let read = store.backend.begin_read().unwrap();
         assert_eq!(
             read.get(ACCOUNT_FLATKEYVALUE, full.as_ref()).unwrap(),
+            Some(value)
+        );
+    }
+
+    /// `write_account_flatkeyvalue_batch` writes each account's value to
+    /// ACCOUNT_FLATKEYVALUE keyed by its full leaf path (from_bytes(hash)).
+    #[test]
+    fn account_flatkeyvalue_batch_emits_rows_at_full_path() {
+        let store = Store::new("", EngineType::InMemory).unwrap();
+        let h = H256::from_low_u64_be(0x99);
+        let value = vec![1u8, 2, 3];
+        store
+            .write_account_flatkeyvalue_batch(vec![(h, value.clone())])
+            .unwrap();
+        let key = Nibbles::from_bytes(h.as_bytes());
+        let read = store.backend.begin_read().unwrap();
+        assert_eq!(
+            read.get(ACCOUNT_FLATKEYVALUE, key.as_ref()).unwrap(),
             Some(value)
         );
     }
