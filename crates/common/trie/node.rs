@@ -575,3 +575,116 @@ pub enum NodeRemoveResult {
     Mutated,
     New(Node),
 }
+
+/// Whether child nibble `i` had content under `previous` (so a now-empty `i`
+/// could still hold stale data worth deleting). `None` ⇒ nothing was stored at
+/// this path at all, so — by the subtree-completeness invariant — nothing is
+/// stored beneath any child either.
+fn child_was_present(previous: Option<&Node>, i: u8) -> bool {
+    match previous {
+        Some(Node::Branch(b)) => b.choices[i as usize].is_valid(),
+        Some(Node::Extension(e)) => !e.prefix.is_empty() && e.prefix.at(0) as u8 == i,
+        Some(Node::Leaf(l)) => !l.partial.is_empty() && l.partial.at(0) as u8 == i,
+        None => false,
+    }
+}
+
+/// Given the final `node` written at `node_path` during healing and the
+/// `previous` node stored there, returns the key ranges strictly under
+/// `node_path` that are empty in the final trie and must be deleted from the
+/// flat/trie column families.
+///
+/// - Branch: prunes children that went valid→invalid (removed subtrees). Under
+///   the subtree-completeness invariant, a child empty in `previous` has nothing
+///   beneath it, so only valid→invalid transitions can leave stale data; keying
+///   on `previous` also avoids emitting dead range tombstones.
+/// - Extension / leaf: the node's only continuation is `node_path ++ prefix`
+///   (resp. `partial`); every sibling under `node_path` is empty, so it delegates
+///   to [`compute_subtree_ranges`] unconditionally.
+///
+/// `node_path` must be non-empty for the extension/leaf arms (the root case is
+/// handled by the caller).
+pub fn node_deletion_ranges(
+    node: &Node,
+    previous: Option<&Node>,
+    node_path: &Nibbles,
+) -> Vec<crate::SubTreeRange> {
+    match node {
+        Node::Branch(branch) => {
+            let empty_children: Vec<u8> = (0u8..16)
+                .filter(|&i| !branch.choices[i as usize].is_valid())
+                .filter(|&i| child_was_present(previous, i))
+                .collect();
+            crate::get_ranges_to_delete_in_subtree(node_path, &empty_children)
+        }
+        Node::Extension(ext) if !ext.prefix.is_empty() => {
+            let (first, second) = crate::compute_subtree_ranges(node_path, &ext.prefix);
+            vec![first, second]
+        }
+        Node::Leaf(leaf) if !leaf.partial.is_empty() => {
+            let (first, second) = crate::compute_subtree_ranges(node_path, &leaf.partial);
+            vec![first, second]
+        }
+        // Empty prefix/partial: `node_path` is itself the terminal position, so
+        // there are no siblings beneath it to prune.
+        Node::Extension(_) | Node::Leaf(_) => Vec::new(),
+    }
+}
+
+#[cfg(test)]
+mod deletion_ranges_tests {
+    use super::*;
+    use crate::node_hash::NodeHash;
+    use crate::{SubTreeRange, compute_subtree_ranges, get_ranges_to_delete_in_subtree};
+    use ethereum_types::H256;
+
+    fn valid_ref(i: usize) -> NodeRef {
+        NodeRef::Hash(NodeHash::Hashed(H256::from_low_u64_be(i as u64 + 1)))
+    }
+
+    fn branch_with(children: &[usize]) -> Node {
+        let mut choices: [NodeRef; 16] = std::array::from_fn(|_| NodeRef::default());
+        for &i in children {
+            choices[i] = valid_ref(i);
+        }
+        Node::Branch(Box::new(BranchNode::new(choices)))
+    }
+
+    /// A rewritten branch prunes exactly the children that went valid→invalid
+    /// (removed subtrees); children empty in both stay untouched (no dead
+    /// tombstones).
+    #[test]
+    fn branch_deletes_only_removed_children() {
+        let previous = branch_with(&[1, 7, 14]);
+        let node = branch_with(&[7]);
+        let node_path = Nibbles::from_hex(vec![3, 4]);
+
+        let got = node_deletion_ranges(&node, Some(&previous), &node_path);
+        let want: Vec<SubTreeRange> = get_ranges_to_delete_in_subtree(&node_path, &[1, 14]);
+        assert_eq!(got, want);
+    }
+
+    /// With no previous node, the subtree-completeness invariant guarantees
+    /// nothing is stored under any child, so nothing is deleted.
+    #[test]
+    fn branch_with_no_previous_deletes_nothing() {
+        let node = branch_with(&[7]);
+        let node_path = Nibbles::from_hex(vec![3, 4]);
+        assert!(node_deletion_ranges(&node, None, &node_path).is_empty());
+    }
+
+    /// An extension node delegates to `compute_subtree_ranges` (both flanking
+    /// sibling ranges), regardless of `previous`.
+    #[test]
+    fn extension_delegates_to_compute_subtree_ranges() {
+        let node_path = Nibbles::from_hex(vec![3]);
+        let prefix = Nibbles::from_hex(vec![1, 2]);
+        let node = Node::Extension(ExtensionNode {
+            prefix: prefix.clone(),
+            child: NodeRef::default(),
+        });
+        let got = node_deletion_ranges(&node, None, &node_path);
+        let (r1, r2) = compute_subtree_ranges(&node_path, &prefix);
+        assert_eq!(got, vec![r1, r2]);
+    }
+}
