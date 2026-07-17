@@ -796,7 +796,10 @@ pub struct BlockAccessListRecorder {
     /// Per EIP-7928: "If a storage slot's value is changed but its post-transaction value
     /// is equal to its pre-transaction value, the slot MUST NOT be recorded as modified."
     /// Key is (address, slot), value is the pre-transaction value.
-    tx_initial_storage: BTreeMap<(Address, U256), U256>,
+    /// Unordered: the only consumer (`filter_net_zero_storage`) does keyed
+    /// lookups, and parallel BAL validation consumes it as an `FxHashMap`, so
+    /// there is no ordering requirement.
+    tx_initial_storage: FxHashMap<(Address, U256), U256>,
     /// Per-transaction initial code for net-zero filtering.
     /// Per EIP-7928: similar to storage, if code changes but post-transaction code equals
     /// pre-transaction code (e.g., delegate then reset), it MUST NOT be recorded.
@@ -990,14 +993,17 @@ impl BlockAccessListRecorder {
     /// Consumes and returns the per-tx captured start-of-tx storage values as a
     /// `(address, slot) -> pre_value` map. An entry is recorded (first-write-wins,
     /// via `capture_pre_storage`) the first time a slot's value genuinely changes
-    /// during the tx, so `pre_value` is the value at the start of the tx regardless
-    /// of any later reverts.
+    /// during the tx, so `pre_value` is the value at the start of the tx and
+    /// survives any intra-tx call-frame revert (`restore` never touches this map).
+    /// It is cleared only when the whole tx is switched away from or aborted
+    /// (`set_block_access_index` / `tx_restore`), so callers must consume it
+    /// before the tx boundary.
     ///
     /// Parallel BAL validation uses this two ways: its keys are exactly the slots
     /// genuinely written (so `reads - keys` yields the pure reads), and the values
     /// are the start-of-tx seed for those slots — letting the validator reuse a
     /// value the EVM already computed instead of re-reading it from the store.
-    pub fn take_tx_initial_storage(&mut self) -> BTreeMap<(Address, U256), U256> {
+    pub fn take_tx_initial_storage(&mut self) -> FxHashMap<(Address, U256), U256> {
         std::mem::take(&mut self.tx_initial_storage)
     }
 

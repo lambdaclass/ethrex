@@ -307,6 +307,77 @@ async fn parallel_path_rejects_noop_balance_entry() {
     );
 }
 
+// --- pre-exec (index 0) spurious entry: closes the gap @ilitteri flagged ---
+//
+// Index 0 carries the pre-block system calls (EIP-2935 block-hash history,
+// EIP-4788 beacon root). It is validated by neither the per-tx path (indices
+// 1..=n, `validate_tx_execution`) nor the withdrawal path (n+1,
+// `validate_bal_withdrawal_index`). A spurious entry there for an account the
+// pre-exec phase never touched leaves the BAL-derived state root unchanged (a
+// no-op leaf), so before `validate_bal_pre_exec_index` the parallel path
+// accepted it while the sequential/full-rebuild path rejects the same block.
+#[tokio::test]
+async fn parallel_path_rejects_pre_exec_entry_for_untouched_account() {
+    // Untouched, unfunded address — never loaded during the pre-exec system
+    // calls, so its pre-block balance is 0 and a `balance: 0` entry at index 0
+    // is a no-op that does not move the state root.
+    const SPURIOUS_ADDRESS: Address = H160([0x42; 20]);
+
+    let signer: Signer = LocalSigner::new(test_secret_key()).into();
+
+    // Build a valid block (a 0-value transfer) + its canonical BAL, which
+    // carries the genuine EIP-2935/4788 index-0 system-contract changes.
+    let (build_store, chain_id) = setup_store().await;
+    let build_blockchain = parallel_blockchain(build_store.clone());
+    let genesis_header = build_store.get_block_header(0).unwrap().unwrap();
+    let tx = sign(
+        eip1559_tx(
+            chain_id,
+            0,
+            TxKind::Call(RECIPIENT_ADDRESS),
+            U256::zero(),
+            Bytes::new(),
+        ),
+        &signer,
+    )
+    .await;
+    build_blockchain
+        .add_transaction_to_pool(tx)
+        .await
+        .expect("tx should enter pool");
+    let (block, bal, receipts) =
+        build_block_with_txs(&build_store, &build_blockchain, &genesis_header).await;
+    assert!(receipts[0].succeeded, "tx must succeed, got: {receipts:?}");
+
+    // Inject a spurious no-op balance change at the pre-exec index (0) for an
+    // account the pre-exec phase never touched.
+    let mut accounts = bal.accounts().to_vec();
+    accounts.push(
+        AccountChanges::new(SPURIOUS_ADDRESS)
+            .with_balance_changes(vec![BalanceChange::new(0, U256::zero())]),
+    );
+    let mutated_bal = Arc::new(BlockAccessList::from_accounts(accounts));
+
+    // Root unaffected (balance 0 for an empty account is a no-op leaf), so only
+    // the header BAL-hash commitment needs forging.
+    let mut mutated_block = block.clone();
+    mutated_block.header.block_access_list_hash = Some(mutated_bal.compute_hash(&NativeCrypto));
+
+    let (store_par, _) = setup_store().await;
+    let bc_par = parallel_blockchain(store_par);
+    let par = bc_par.add_block_pipeline_bal(mutated_block, Some(mutated_bal));
+    assert_content_rejected(&par, "was not touched by the pre-exec phase");
+
+    // Positive control: the unmutated block must still import.
+    let (store_ok, _) = setup_store().await;
+    let bc_ok = parallel_blockchain(store_ok);
+    let ok = bc_ok.add_block_pipeline_bal(block, Some(Arc::new(bal)));
+    assert!(
+        ok.is_ok(),
+        "parallel path must accept the unmutated block, got: {ok:?}"
+    );
+}
+
 // --- 4.1: no-op nonce entry (Phase 1) ---
 
 #[tokio::test]
