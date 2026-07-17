@@ -12,10 +12,20 @@ runs:
 
     - name: Install ZisK
       shell: bash
-      # Must match the `ziskos` tag in both crates/guest-program/Cargo.toml
+      # ZISK_VERSION must match the `ziskos` tag in both crates/guest-program/Cargo.toml
       # and crates/guest-program/bin/zisk/Cargo.toml.
+      #
+      # ZISK_RUST_TOOLCHAIN pins the Rust toolchain release (0xPolygonHermez/rust tag)
+      # used to build guests. ziskup installs the *latest* toolchain release, which
+      # drifts independently of ZISK_VERSION: the zisk-1.0.0 and zisk-2.0.0 releases
+      # dropped the guest linker script from rustc's riscv64ima-zisk-zkvm-elf target
+      # spec, so guest links fail with undefined _global_pointer / _init_stack_top /
+      # _kernel_heap_* symbols. zisk-0.5.1 is the newest release whose rustc embeds the
+      # script (byte-identical to the one on the fork's default branch). Re-pin when
+      # upstream ships a script-bearing toolchain compatible with ZISK_VERSION.
       env:
         ZISK_VERSION: "1.0.0-alpha"
+        ZISK_RUST_TOOLCHAIN: "zisk-0.5.1"
       run: |
         source "$GITHUB_WORKSPACE/.github/scripts/retry.sh"
 
@@ -23,8 +33,11 @@ runs:
         retry curl -fsSL "https://raw.githubusercontent.com/0xPolygonHermez/zisk/v${ZISK_VERSION}/ziskup/ziskup" -o "$HOME/.zisk/bin/ziskup"
         chmod +x "$HOME/.zisk/bin/ziskup"
         # ziskup >= v1.0.0-alpha resolves its install dir from XDG_CONFIG_HOME when set
-        # (GitHub runners set it to ~/.config), which would place cargo-zisk outside both
-        # the PATH entry below and cargo-zisk's own $HOME/.zisk runtime fallback. Pin the
-        # install dir so binaries land in $HOME/.zisk/bin.
+        # (GitHub runners set it to ~/.config), which would place cargo-zisk outside the
+        # PATH entry below. Pin the install dir so binaries land in $HOME/.zisk/bin.
         retry env ZISK_DIR="$HOME/.zisk" "$HOME/.zisk/bin/ziskup" -v "${ZISK_VERSION}" -y
+        # ziskup just installed the latest toolchain; replace it with the pinned one.
+        # ZISK_HOME roots cargo-zisk's path resolution (also XDG-based by default) at
+        # the same install dir.
+        retry env ZISK_HOME="$HOME/.zisk" "$HOME/.zisk/bin/cargo-zisk" toolchain install -t "${ZISK_RUST_TOOLCHAIN}"
         echo "$HOME/.zisk/bin" >> $GITHUB_PATH
