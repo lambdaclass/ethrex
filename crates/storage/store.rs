@@ -3311,6 +3311,44 @@ impl Store {
         Ok(())
     }
 
+    /// Storage-healing counterpart of [`Self::write_healed_state_batch`]. For each
+    /// account's healed storage nodes: reads the previous node at that path
+    /// (previous-diff), applies the storage-side Trigger-1 prune, then writes the
+    /// node — all in one atomic batch. Storage keys are account-hash-prefixed;
+    /// nodes go to `STORAGE_TRIE_NODES` (matching the prior storage write path).
+    pub fn write_healed_storage_batch(
+        &self,
+        to_write: Vec<(H256, Vec<(Nibbles, Node)>)>,
+    ) -> Result<(), StoreError> {
+        let read = self.backend.begin_read()?;
+        let mut batch = self.backend.begin_write()?;
+        for (account_hash, nodes) in &to_write {
+            for (path, node) in nodes {
+                let key = apply_prefix(Some(*account_hash), path.clone());
+                let previous = match read.get(STORAGE_TRIE_NODES, key.as_ref())? {
+                    Some(enc) => Some(Node::decode(&enc)?),
+                    None => None,
+                };
+                apply_storage_node_deletions(
+                    &mut *batch,
+                    node,
+                    previous.as_ref(),
+                    *account_hash,
+                    path,
+                )?;
+                // Remove stale intermediate storage node slots along the path
+                // (matches the prior storage flush's prefix-blanking).
+                for i in 0..path.len() {
+                    let prefix_key = apply_prefix(Some(*account_hash), path.slice(0, i));
+                    batch.delete(STORAGE_TRIE_NODES, prefix_key.as_ref())?;
+                }
+                batch.put(STORAGE_TRIE_NODES, key.as_ref(), &node.encode_to_vec())?;
+            }
+        }
+        batch.commit()?;
+        Ok(())
+    }
+
     pub fn open_direct_state_trie(&self, state_root: H256) -> Result<Trie, StoreError> {
         Ok(Trie::open(
             Box::new(BackendTrieDB::new_for_accounts(
@@ -4539,6 +4577,30 @@ pub fn apply_storage_clear_cascade(
     Ok(())
 }
 
+/// Storage-side Trigger 1 (prune-on-write) for a healed storage-trie node.
+/// Uses the account-prefixed path as the base for [`node_deletion_ranges`], so
+/// the ranges land directly in storage-CF key space and the storage-root
+/// (empty storage path) case needs no special handling — the prefixed path is
+/// never empty. Deletes the provably-empty ranges from the storage node/flat CFs.
+pub fn apply_storage_node_deletions(
+    batch: &mut dyn StorageWriteBatch,
+    node: &Node,
+    previous: Option<&Node>,
+    account_hash: H256,
+    storage_path: &Nibbles,
+) -> Result<(), StoreError> {
+    let prefixed_path = apply_prefix(Some(account_hash), storage_path.clone());
+    for range in node_deletion_ranges(node, previous, &prefixed_path) {
+        if range.is_empty() {
+            continue;
+        }
+        let (from, to) = (range.start.as_ref(), range.end.as_ref());
+        batch.delete_range(STORAGE_TRIE_NODES, from, to)?;
+        batch.delete_range(STORAGE_FLATKEYVALUE, from, to)?;
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod merge_tests {
     use super::*;
@@ -4880,6 +4942,35 @@ mod state_deletion_tests {
         assert!(
             present(&store, STORAGE_TRIE_NODES, &skey),
             "no cascade without a nonempty->empty transition"
+        );
+    }
+
+    /// Storage-side Trigger 1 (E6): a storage branch that dropped slot-child 1
+    /// (kept 7) sweeps only child 1's subtree from the storage CFs, prefixed by
+    /// the account hash. Works at the storage root (empty storage path).
+    #[test]
+    fn storage_node_deletions_sweep_removed_slot_subtree() {
+        let store = Store::new("", EngineType::InMemory).unwrap();
+        let h = H256::from_low_u64_be(0xAA);
+        let previous = branch_with(&[1, 7]);
+        let node = branch_with(&[7]);
+
+        let k_removed = apply_prefix(Some(h), Nibbles::from_hex(vec![1, 2])).into_vec();
+        let k_kept = apply_prefix(Some(h), Nibbles::from_hex(vec![7, 2])).into_vec();
+        put_row(&store, STORAGE_TRIE_NODES, &k_removed);
+        put_row(&store, STORAGE_FLATKEYVALUE, &k_removed);
+        put_row(&store, STORAGE_TRIE_NODES, &k_kept);
+
+        let mut w = store.backend.begin_write().unwrap();
+        apply_storage_node_deletions(&mut *w, &node, Some(&previous), h, &Nibbles::default())
+            .unwrap();
+        w.commit().unwrap();
+
+        assert!(!present(&store, STORAGE_TRIE_NODES, &k_removed));
+        assert!(!present(&store, STORAGE_FLATKEYVALUE, &k_removed));
+        assert!(
+            present(&store, STORAGE_TRIE_NODES, &k_kept),
+            "kept slot intact"
         );
     }
 }
