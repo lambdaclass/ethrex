@@ -1,4 +1,5 @@
 use crate::authentication::authenticate;
+use crate::debug::bad_blocks::GetBadBlocksRequest;
 use crate::debug::chain_config::ChainConfigRequest;
 use crate::debug::execution_witness::ExecutionWitnessRequest;
 use crate::debug::execution_witness_by_hash::ExecutionWitnessByBlockHashRequest;
@@ -1463,6 +1464,7 @@ pub async fn map_debug_requests(req: &RpcRequest, context: RpcApiContext) -> Res
             ExecutionWitnessByBlockHashRequest::call(req, context).await
         }
         "debug_chainConfig" => ChainConfigRequest::call(req, context).await,
+        "debug_getBadBlocks" => GetBadBlocksRequest::call(req, context).await,
         "debug_setHead" => SetHeadRequest::call(req, context).await,
         "debug_traceTransaction" => TraceTransactionRequest::call(req, context).await,
         "debug_traceBlockByNumber" => TraceBlockByNumberRequest::call(req, context).await,
@@ -1488,10 +1490,10 @@ pub async fn map_engine_requests(
 ) -> Result<Value, RpcErr> {
     match req.method.as_str() {
         "engine_exchangeCapabilities" => ExchangeCapabilitiesRequest::call(req, context).await,
-        "engine_forkchoiceUpdatedV1" => ForkChoiceUpdatedV1::call(req, context).await,
-        "engine_forkchoiceUpdatedV2" => ForkChoiceUpdatedV2::call(req, context).await,
-        "engine_forkchoiceUpdatedV3" => ForkChoiceUpdatedV3::call(req, context).await,
-        "engine_forkchoiceUpdatedV4" => ForkChoiceUpdatedV4::call(req, context).await,
+        "engine_forkchoiceUpdatedV1" => Box::pin(ForkChoiceUpdatedV1::call(req, context)).await,
+        "engine_forkchoiceUpdatedV2" => Box::pin(ForkChoiceUpdatedV2::call(req, context)).await,
+        "engine_forkchoiceUpdatedV3" => Box::pin(ForkChoiceUpdatedV3::call(req, context)).await,
+        "engine_forkchoiceUpdatedV4" => Box::pin(ForkChoiceUpdatedV4::call(req, context)).await,
         // The newPayload handlers carry the largest futures of any engine arm
         // (block execution + optional witness collection). Because this `match`
         // awaits each arm inline, the future of `map_engine_requests` is sized to

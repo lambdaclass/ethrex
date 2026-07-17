@@ -7,7 +7,7 @@ use std::path::Path;
 compile_error!("Only one of `sp1` and `stateless` can be enabled at a time.");
 
 // test-levm / test-sp1 read snobal-devnet-6 + legacy from `vectors/`.
-// test-stateless reads zkevm@v0.5.0 (EIP-8025 canonical bundle) from a separate
+// test-stateless reads zkevm@v0.6.2 (EIP-8025 canonical bundle) from a separate
 // `vectors_zkevm/` so the bundles don't overlay each other.
 #[cfg(feature = "stateless")]
 const TEST_FOLDER: &str = "vectors_zkevm/";
@@ -34,12 +34,18 @@ const EXTRA_SKIPS: &[&str] = &[
     "Return50000",
     "static_Call1MB1024Calldepth",
 ];
-// The stateless run executes the zkevm@v0.5.0 bundle (`vectors_zkevm/`). Unlike the earlier
-// v0.4.1 release (filled against an older glamsterdam devnet, which lagged this client's v6.1.0
-// gas accounting and failed ~2790/2864 with stale gas), v0.5.0 is filled against
-// `tests-glamsterdam-devnet@v6.1.0` — the same base as the live `vectors/` fixtures — so the
-// whole bundle re-executes cleanly and no blanket skip is needed. Per-fixture leniency cases
+// The stateless run executes the zkevm@v0.6.2 bundle (`vectors_zkevm/`), filled against
+// `tests-glamsterdam-devnet@v7.2.0` — the same base as the live `vectors/` fixtures on this
+// branch. v0.6.2 fixes the EIP-8282 fill (PR ethereum/execution-specs#3157): the canonical
+// `SszExecutionRequests` now carries the builder-deposit (0x03) and builder-exit (0x04) request
+// lists, mirrored in `eip8025_ssz::ExecutionRequests`. The whole bundle re-executes cleanly, so
+// no blanket skip and no per-fork skip are needed. Per-fixture leniency cases
 // (`*_extra_unused_*` padding, deliberately-invalid witnesses) are handled in `test_runner.rs`.
+// Amsterdam+ fixtures are skipped in the stateless run by fork (see
+// `parse_and_execute` in `test_runner.rs` and docs/known_issues.md): the
+// tests-zkevm@v0.5.0 bundle predeploys the EIP-8282 builder contracts at the OLD
+// addresses, incompatible with this client's devnet-7 addresses. That skip is
+// fork-based (not name-based), so no per-test entries are needed here.
 #[cfg(feature = "stateless")]
 const EXTRA_SKIPS: &[&str] = &[];
 #[cfg(not(any(feature = "sp1", feature = "stateless")))]
