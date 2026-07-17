@@ -23,7 +23,9 @@ use std::sync::{Arc, Mutex};
 
 pub use self::db::{InMemoryTrieDB, TrieDB};
 pub use self::logger::{TrieLogger, TrieWitness};
-pub use self::nibbles::Nibbles;
+pub use self::nibbles::{
+    Nibbles, SubTreeRange, compute_subtree_ranges, get_ranges_to_delete_in_subtree,
+};
 pub use self::threadpool::ThreadPool;
 pub use self::verify_range::verify_range;
 pub use self::{

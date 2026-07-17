@@ -740,9 +740,197 @@ fn keybytes_to_hex(keybytes: &[u8]) -> Vec<u8> {
     nibbles
 }
 
+/// A `[start, end)` key range over trie/FKV keys (raw nibble bytes, one nibble
+/// per byte, compared lexicographically). `start >= end` denotes an empty range.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SubTreeRange {
+    pub start: Nibbles,
+    pub end: Nibbles,
+}
+
+impl SubTreeRange {
+    /// True when the range holds no keys. Callers must skip empty ranges so no
+    /// useless range tombstone is issued.
+    pub fn is_empty(&self) -> bool {
+        self.start.as_ref() >= self.end.as_ref()
+    }
+}
+
+/// Exclusive upper bound of the key subtree under `path`: `path` with its last
+/// nibble incremented. A last nibble of 15 becomes the byte `16` (`0x10`), which
+/// still sorts strictly after any `0x0F`-continued key, so it is a valid
+/// byte-level bound. `path` must be non-empty.
+fn subtree_upper_bound(path: &Nibbles) -> Nibbles {
+    debug_assert!(!path.is_empty());
+    let last = path.at(path.len() - 1) as u8;
+    let mut bound = path.slice(0, path.len() - 1);
+    bound.append(last + 1);
+    bound
+}
+
+/// For an extension (or leaf) node at `node_path` whose only non-empty
+/// continuation is `node_path ++ prefix`, returns the two key ranges strictly
+/// under `node_path` that are provably empty and must be deleted: everything
+/// before the `node_path ++ prefix` subtree, and everything after it.
+///
+/// Keys are raw nibble bytes; ranges are `[start, end)`. Both `node_path` and
+/// `prefix` must be non-empty — the empty-`node_path` (root) case is handled by
+/// the caller.
+pub fn compute_subtree_ranges(
+    node_path: &Nibbles,
+    prefix: &Nibbles,
+) -> (SubTreeRange, SubTreeRange) {
+    debug_assert!(
+        !node_path.is_empty(),
+        "node_path is empty (root case handled by caller)"
+    );
+    debug_assert!(!prefix.is_empty(), "extension/leaf prefix is empty");
+
+    let child = node_path.concat(prefix);
+    let node_upper = subtree_upper_bound(node_path);
+
+    // Before the child subtree: [node_path ++ 0, child).
+    let first = SubTreeRange {
+        start: node_path.append_new(0),
+        end: child.clone(),
+    };
+
+    // After the child subtree: [upper_bound(child), upper_bound(node_path)).
+    // A last nibble of 15 needs no special carry: upper_bound maps it to the
+    // byte 16 (0x10), which correctly excludes the child subtree while still
+    // admitting higher-nibble siblings under node_path (e.g. child [1,14,15]
+    // must still delete sibling [1,15]).
+    let second = SubTreeRange {
+        start: subtree_upper_bound(&child),
+        end: node_upper,
+    };
+
+    (first, second)
+}
+
+/// For a branch node at `node_path`, returns the key range to delete for each
+/// now-empty child nibble in `empty_children`: `[node_path ++ i, node_path ++ (i+1))`.
+/// A child nibble of 15 yields the byte-16 (`0x10`) upper bound, a valid range
+/// end. Works for an empty `node_path` (root branch): the ranges become
+/// `[[i], [i+1])`.
+pub fn get_ranges_to_delete_in_subtree(
+    node_path: &Nibbles,
+    empty_children: &[u8],
+) -> Vec<SubTreeRange> {
+    empty_children
+        .iter()
+        .map(|&i| SubTreeRange {
+            start: node_path.append_new(i),
+            end: node_path.append_new(i + 1),
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// All nibble strings of length `0..=max_len` over `alphabet`.
+    fn nibble_strings(alphabet: &[u8], max_len: usize) -> Vec<Vec<u8>> {
+        let mut out = vec![vec![]];
+        let mut frontier = vec![vec![]];
+        for _ in 0..max_len {
+            let mut next = Vec::new();
+            for s in &frontier {
+                for &a in alphabet {
+                    let mut v = s.clone();
+                    v.push(a);
+                    next.push(v);
+                }
+            }
+            out.extend_from_slice(&next);
+            frontier = next;
+        }
+        out
+    }
+
+    /// For an extension/leaf at `node_path` whose only non-empty continuation is
+    /// `node_path ++ prefix`, the two returned ranges must delete EXACTLY the keys
+    /// strictly under `node_path` that are not under `node_path ++ prefix`.
+    /// Over-broad = silent state corruption; missed = orphan. Checked exhaustively
+    /// over a boundary-inclusive alphabet (0, 1, 14, 15) so the nibble-15 carry and
+    /// adjacent-sibling cases are exercised.
+    #[test]
+    fn compute_subtree_ranges_deletes_exactly_empty_siblings() {
+        let alphabet = [0u8, 1, 14, 15];
+        let cases: &[(&[u8], &[u8])] = &[
+            (&[1], &[14]),
+            (&[1], &[14, 15]),
+            (&[14], &[15]),
+            (&[1], &[15, 15]),
+            (&[15], &[1]),
+            (&[15], &[15]),
+            (&[1, 14], &[0, 1, 15]),
+            (&[0], &[1]),
+        ];
+        for &(np, pfx) in cases {
+            let node_path = Nibbles::from_hex(np.to_vec());
+            let prefix = Nibbles::from_hex(pfx.to_vec());
+            let child = node_path.concat(&prefix);
+            let (r1, r2) = compute_subtree_ranges(&node_path, &prefix);
+
+            let in_range = |r: &SubTreeRange, k: &[u8]| {
+                !r.is_empty() && r.start.as_ref() <= k && k < r.end.as_ref()
+            };
+
+            let max_len = node_path.len() + prefix.len() + 1;
+            for s in nibble_strings(&alphabet, max_len) {
+                let key = Nibbles::from_hex(s.clone());
+                let k = key.as_ref();
+                let strictly_under_np =
+                    k.len() > node_path.as_ref().len() && k.starts_with(node_path.as_ref());
+                let under_child = k.starts_with(child.as_ref());
+                let should_delete = strictly_under_np && !under_child;
+                let deleted = in_range(&r1, k) || in_range(&r2, k);
+                assert_eq!(
+                    deleted, should_delete,
+                    "np={np:?} pfx={pfx:?} key={s:?}: got deleted={deleted}, want {should_delete}"
+                );
+            }
+        }
+    }
+
+    /// For a branch at `node_path` with a set of now-empty child nibbles, the
+    /// ranges must delete EXACTLY the keys strictly under `node_path` whose first
+    /// nibble past `node_path` is one of those empty children. Includes the
+    /// empty-`node_path` case (root branch, E10) and boundary child nibbles 0/15.
+    #[test]
+    fn get_ranges_to_delete_in_subtree_deletes_exactly_empty_children() {
+        let alphabet = [0u8, 1, 14, 15];
+        let cases: &[(&[u8], &[u8])] = &[
+            (&[], &[0]),
+            (&[], &[15]),
+            (&[], &[0, 1, 14, 15]),
+            (&[1], &[14]),
+            (&[1], &[0, 15]),
+            (&[15], &[15]),
+            (&[1, 14], &[1, 14, 15]),
+        ];
+        for &(np, empty) in cases {
+            let node_path = Nibbles::from_hex(np.to_vec());
+            let ranges = get_ranges_to_delete_in_subtree(&node_path, empty);
+            let nd_len = node_path.as_ref().len();
+            let max_len = nd_len + 2;
+            for s in nibble_strings(&alphabet, max_len) {
+                let key = Nibbles::from_hex(s.clone());
+                let k = key.as_ref();
+                let strictly_under = k.len() > nd_len && k.starts_with(node_path.as_ref());
+                let should_delete = strictly_under && empty.contains(&k[nd_len]);
+                let deleted = ranges
+                    .iter()
+                    .any(|r| !r.is_empty() && r.start.as_ref() <= k && k < r.end.as_ref());
+                assert_eq!(
+                    deleted, should_delete,
+                    "np={np:?} empty={empty:?} key={s:?}: got {deleted}, want {should_delete}"
+                );
+            }
+        }
+    }
 
     /// Scalar reference for expand_bytes_to_nibbles (no SIMD).
     fn expand_bytes_scalar_ref(bytes: &[u8]) -> Vec<u8> {
