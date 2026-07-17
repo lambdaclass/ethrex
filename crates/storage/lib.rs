@@ -68,6 +68,7 @@ pub mod api;
 pub mod backend;
 pub mod block_data_buffer;
 pub mod error;
+pub mod journal;
 mod layering;
 pub mod migrations;
 pub mod rlp;

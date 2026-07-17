@@ -1,4 +1,4 @@
-use ethrex_common::H256;
+use ethrex_common::{H256, types::BlockNumber};
 use fastbloom::AtomicBloomFilter;
 use rayon::prelude::*;
 use rustc_hash::{FxBuildHasher, FxHashMap};
@@ -17,6 +17,12 @@ struct TrieLayer {
     nodes: FxHashMap<Vec<u8>, Vec<u8>>,
     parent: H256,
     id: usize,
+    /// Number of the block whose post-state this layer represents. Used by the
+    /// journal write path so a commit can record the entry under the correct
+    /// block number (not the in-flight block whose insertion triggered the commit).
+    block_number: BlockNumber,
+    /// Hash of the block whose post-state this layer represents.
+    block_hash: H256,
 }
 
 /// In-memory cache of trie diff-layers, one per block (or batch in full sync), forming a
@@ -216,6 +222,8 @@ impl TrieLayerCache {
         &mut self,
         parent: H256,
         state_root: H256,
+        block_number: BlockNumber,
+        block_hash: H256,
         key_values: Vec<(Nibbles, Vec<u8>)>,
     ) {
         if parent == state_root && key_values.is_empty() {
@@ -247,6 +255,8 @@ impl TrieLayerCache {
             nodes,
             parent,
             id: self.last_id,
+            block_number,
+            block_hash,
         };
         self.layers.insert(state_root, Arc::new(entry));
     }
@@ -271,13 +281,24 @@ impl TrieLayerCache {
         self.bloom = filter;
     }
 
-    /// Removes the layer at `state_root` (a key returned by [`get_commitable`](Self::get_commitable))
-    /// and all older ancestors, returning their merged diffs oldest-first for sequential disk write.
-    /// Returns `None` if `state_root` is not a layer.
+    /// Removes the layer at `state_root` and all its ancestors from the cache, returning
+    /// one [`CommittedLayer`] per removed layer in oldest-first order (suitable for
+    /// sequential disk write and per-block journaling).
     ///
-    /// The `retain(id > top_layer_id)` step keeps every layer newer than `state_root` in memory, so
-    /// speculative not-yet-canonical state is never dropped; the bloom filter is then rebuilt.
-    pub fn commit(&mut self, state_root: H256) -> Option<Vec<(Vec<u8>, Vec<u8>)>> {
+    /// `state_root` must be a key in `self.layers` (as returned by
+    /// [`get_commitable`](Self::get_commitable) /
+    /// [`get_commitable_with_threshold`](Self::get_commitable_with_threshold)).
+    /// If it isn't, the walk exits immediately and returns `None`.
+    ///
+    /// After removal, any orphaned layers (older than the committed ones) are pruned, and
+    /// the bloom filter is rebuilt to remove stale entries.
+    ///
+    /// Normal block-by-block sync commits exactly one layer per call. Multi-layer commits
+    /// are legitimate for the forkchoice-driven flush of an accumulated backlog (e.g. block
+    /// import, which executes many blocks and then advances the safe-commit root once): each
+    /// committed layer keeps its own block identity and `parent_state_root`, so the caller can
+    /// write one journal entry per block rather than merging diffs across blocks.
+    pub fn commit(&mut self, state_root: H256) -> Option<Vec<CommittedLayer>> {
         let mut layers_to_commit = vec![];
         let mut current_state_root = state_root;
         while let Some(layer) = self.layers.remove(&current_state_root) {
@@ -285,17 +306,39 @@ impl TrieLayerCache {
             current_state_root = layer.parent;
             layers_to_commit.push(layer);
         }
+        // `layers_to_commit` is built by walking parent links from `state_root`,
+        // so `.first()` is the newest layer (the one at `state_root` itself).
         let top_layer_id = layers_to_commit.first()?.id;
         // older layers are useless
         self.layers.retain(|_, item| item.id > top_layer_id);
         self.rebuild_bloom(); // layers removed, rebuild global bloom filter.
-        let nodes_to_commit = layers_to_commit
+        // Oldest-first: apply/journal in block order so per-block reverse diffs are
+        // correct and newer writes overwrite older ones on disk.
+        let committed = layers_to_commit
             .into_iter()
             .rev()
-            .flat_map(|layer| layer.nodes)
+            .map(|layer| CommittedLayer {
+                block_number: layer.block_number,
+                block_hash: layer.block_hash,
+                parent_state_root: layer.parent,
+                nodes: layer.nodes.into_iter().collect(),
+            })
             .collect();
-        Some(nodes_to_commit)
+        Some(committed)
     }
+}
+
+/// One committed layer produced by [`TrieLayerCache::commit`]: a single block's identity plus
+/// the trie/flat-KV node diffs it wrote. Returned oldest-first so callers apply them in block
+/// order and journal each block separately.
+///
+/// `parent_state_root` is the state we'd return to on rollback (this block's pre-state).
+#[derive(Debug)]
+pub struct CommittedLayer {
+    pub block_number: BlockNumber,
+    pub block_hash: H256,
+    pub parent_state_root: H256,
+    pub nodes: Vec<(Vec<u8>, Vec<u8>)>,
 }
 
 /// [`TrieDB`] adapter that checks in-memory diff-layers ([`TrieLayerCache`]) first,
@@ -399,7 +442,7 @@ mod tests {
         let mut parent = H256::zero();
         for i in 1..=n {
             let root = h256(i);
-            cache.put_batch(parent, root, vec![(key(i), vec![i])]);
+            cache.put_batch(parent, root, i as u64, root, vec![(key(i), vec![i])]);
             roots.push(root);
             parent = root;
         }
@@ -460,8 +503,8 @@ mod tests {
         let (mut cache, _cell) = cache_with_cell(4, h256(99));
         // Insert C (parent B) then B (parent C); neither key pre-exists, so both insert,
         // forming the cycle B <-> C. The safe root (h256(99)) is absent on purpose.
-        cache.put_batch(b, c, vec![(key(21), vec![21])]);
-        cache.put_batch(c, b, vec![(key(20), vec![20])]);
+        cache.put_batch(b, c, 21, c, vec![(key(21), vec![21])]);
+        cache.put_batch(c, b, 20, b, vec![(key(20), vec![20])]);
         // Walking from C must terminate (start-of-walk + bounded-walk guards) and yield None.
         assert_eq!(cache.get_commitable(c), None);
     }

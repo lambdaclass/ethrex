@@ -110,6 +110,22 @@ pub trait StorageWriteBatch: Send {
     /// Removes a key-value pair from the specified table.
     fn delete(&mut self, table: &'static str, key: &[u8]) -> Result<(), StoreError>;
 
+    /// Removes every key in `[start, end)` from the specified table.
+    ///
+    /// Half-open range; `end` is exclusive. Equivalent to enumerating each key
+    /// in the range and calling [`delete`], but backends with native range-delete
+    /// support (e.g. RocksDB's `delete_range_cf`) can implement it more efficiently.
+    ///
+    /// Lexicographic byte order is used for the range bounds — callers using
+    /// numeric keys must encode them in a representation whose lex order matches
+    /// numeric order (e.g. `u64::to_be_bytes()`).
+    fn delete_range(
+        &mut self,
+        table: &'static str,
+        start: &[u8],
+        end: &[u8],
+    ) -> Result<(), StoreError>;
+
     /// Appends a merge operand for the given key in the specified table.
     ///
     /// The actual combine step is deferred — backends with a registered merge
