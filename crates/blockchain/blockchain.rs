@@ -69,11 +69,11 @@ use ethrex_common::types::block_execution_witness::ExecutionWitness;
 use ethrex_common::types::fee_config::FeeConfig;
 use ethrex_common::types::{
     AccountInfo, AccountState, AccountUpdate, BalSynthesisItem, Block, BlockHash, BlockHeader,
-    BlockNumber, ChainConfig, Code, Receipt, Transaction, WrappedEIP4844Transaction,
-    synthesize_bal_updates, validate_block_body,
+    BlockNumber, ChainConfig, Code, Receipt, Transaction, synthesize_bal_updates,
+    validate_block_body,
 };
 use ethrex_common::types::{EIP7702_DELEGATED_CODE_LEN, is_eip7702_delegation};
-use ethrex_common::types::{ELASTICITY_MULTIPLIER, P2PTransaction};
+use ethrex_common::types::{ELASTICITY_MULTIPLIER, PooledTransaction};
 use ethrex_common::types::{Fork, MempoolTransaction};
 use ethrex_common::utils::keccak;
 use ethrex_common::{Address, H256, TrieLogger, U256};
@@ -3743,30 +3743,26 @@ impl Blockchain {
         self.is_synced.load(Ordering::Relaxed)
     }
 
-    pub fn get_p2p_transaction_by_hash(&self, hash: &H256) -> Result<P2PTransaction, StoreError> {
+    pub fn get_p2p_transaction_by_hash(
+        &self,
+        hash: &H256,
+    ) -> Result<PooledTransaction, StoreError> {
         let Some(tx) = self.mempool.get_transaction_by_hash(*hash)? else {
             return Err(StoreError::Custom(format!(
                 "Hash {hash} not found in the mempool",
             )));
         };
-        let result = match tx {
-            Transaction::LegacyTransaction(itx) => P2PTransaction::LegacyTransaction(itx),
-            Transaction::EIP2930Transaction(itx) => P2PTransaction::EIP2930Transaction(itx),
-            Transaction::EIP1559Transaction(itx) => P2PTransaction::EIP1559Transaction(itx),
-            Transaction::EIP4844Transaction(itx) => {
+        let blobs_bundle = match &tx {
+            // Blob transactions are served in wrapped form: attach the sidecar
+            // stored alongside the tx in the mempool.
+            Transaction::EIP4844Transaction(_) => {
                 let Some(bundle) = self.mempool.get_blobs_bundle(*hash)? else {
                     return Err(StoreError::Custom(format!(
                         "Blob transaction present without its bundle: hash {hash}",
                     )));
                 };
-
-                P2PTransaction::EIP4844TransactionWithBlobs(WrappedEIP4844Transaction {
-                    tx: itx,
-                    wrapper_version: (bundle.version != 0).then_some(bundle.version),
-                    blobs_bundle: bundle,
-                })
+                Some(bundle)
             }
-            Transaction::EIP7702Transaction(itx) => P2PTransaction::EIP7702Transaction(itx),
             // Exclude privileged transactions as they are only created
             // by the lead sequencer. In the future, they might get gossiped
             // like the rest.
@@ -3775,13 +3771,12 @@ impl Blockchain {
                     "Privileged Transactions are not supported in P2P".to_string(),
                 ));
             }
-            Transaction::FeeTokenTransaction(itx) => P2PTransaction::FeeTokenTransaction(itx),
-            // Frame transactions (EIP-8141) have no blobs bundle, so no bundle
-            // lookup is needed; they are served on request like other typed txs.
-            Transaction::FrameTransaction(itx) => P2PTransaction::FrameTransaction(itx),
+            // Every other type (including EIP-8141 frame txs) has no blobs
+            // bundle and is served on request like any typed tx.
+            _ => None,
         };
 
-        Ok(result)
+        PooledTransaction::new(tx, blobs_bundle).map_err(|e| StoreError::Custom(e.to_string()))
     }
 
     pub fn new_evm(&self, vm_db: StoreVmDatabase) -> Result<Evm, EvmError> {
