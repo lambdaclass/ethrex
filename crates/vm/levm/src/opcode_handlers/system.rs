@@ -730,17 +730,19 @@ impl OpcodeHandler for OpSelfDestructHandler {
         // ensures the beneficiary is recorded in BAL even when the full
         // selfdestruct cost (with NEW_ACCOUNT) would cause OOG.
         if vm.env.config.fork >= Fork::Amsterdam {
-            // State access: record BAL tracking between the two gas phases
-            let accessed_slots = vm.substate.get_accessed_storage_slots(&to);
+            // State access: record BAL tracking between the two gas phases.
+            // Only the touched addresses (and initial balance) are recorded
+            // here; storage slots are NOT. Per EIP-7928 the BAL records a slot
+            // read only on an actual `get_storage` access (spec state_tracker
+            // `get_storage`), which ethrex already captures on SLOAD/SSTORE via
+            // `record_storage_slot_to_bal`. Recording the whole warm access set
+            // here would inject prewarmed-but-unread (EIP-2930) slots as reads,
+            // diverging the block_access_list_hash from conformant clients.
             if let Some(recorder) = vm.db.bal_recorder.as_mut() {
                 recorder.record_touched_address(beneficiary);
                 recorder.record_touched_address(to);
                 if balance > U256::zero() {
                     recorder.set_initial_balance(to, balance);
-                }
-                for key in &accessed_slots {
-                    let slot = U256::from_big_endian(key.as_bytes());
-                    recorder.record_storage_read(to, slot);
                 }
             }
 
@@ -766,17 +768,15 @@ impl OpcodeHandler for OpSelfDestructHandler {
                     vm.env.config.fork,
                 )?)?;
 
-            // Record beneficiary and destroyed account for BAL per EIP-7928
-            let accessed_slots = vm.substate.get_accessed_storage_slots(&to);
+            // Record beneficiary and destroyed account for BAL per EIP-7928.
+            // Storage slots are intentionally not recorded here (see the
+            // Amsterdam branch above): reads are captured on actual SLOAD/SSTORE
+            // access, never from the warm access-list set.
             if let Some(recorder) = vm.db.bal_recorder.as_mut() {
                 recorder.record_touched_address(beneficiary);
                 recorder.record_touched_address(to);
                 if balance > U256::zero() {
                     recorder.set_initial_balance(to, balance);
-                }
-                for key in &accessed_slots {
-                    let slot = U256::from_big_endian(key.as_bytes());
-                    recorder.record_storage_read(to, slot);
                 }
             }
         }

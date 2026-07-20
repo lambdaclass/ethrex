@@ -705,8 +705,13 @@ pub mod block_access_list {
             D: Deserializer<'de>,
         {
             let value = String::deserialize(d)?;
-            let bytes = hex::decode(value.trim_start_matches("0x"))
-                .map_err(|e| D::Error::custom(e.to_string()))?;
+            // EIP-7928 blockAccessList is a DATA field (`^0x[0-9a-f]*$`): the `0x`
+            // prefix is mandatory. Require it rather than silently trimming, so an
+            // unprefixed (schema-invalid) value is rejected as strict clients do.
+            let hex_body = value
+                .strip_prefix("0x")
+                .ok_or_else(|| D::Error::custom("blockAccessList must be 0x-prefixed"))?;
+            let bytes = hex::decode(hex_body).map_err(|e| D::Error::custom(e.to_string()))?;
             BlockAccessList::decode(&bytes)
                 .map_err(|_| D::Error::custom("Failed to RLP decode BAL"))
         }
@@ -733,19 +738,24 @@ pub mod block_access_list {
         {
             let value = Option::<String>::deserialize(d)?;
             match value {
-                // An empty hex string ("0x") encodes the absence of a BAL, not an
-                // empty list. Treat it as None so pre-Amsterdam newPayload calls
-                // (which send "0x") deserialize instead of failing RLP decode.
-                Some(s) if !s.trim_start_matches("0x").is_empty() => {
-                    hex::decode(s.trim_start_matches("0x"))
-                        .map_err(|e| D::Error::custom(e.to_string()))
-                        .and_then(|b| {
-                            BlockAccessList::decode(&b)
-                                .map_err(|_| D::Error::custom("Failed to RLP decode BAL"))
-                        })
+                Some(s) => {
+                    // EIP-7928 blockAccessList is a DATA field: the `0x` prefix is
+                    // mandatory. An empty hex string ("0x") encodes the absence of a
+                    // BAL (not an empty list), so pre-Amsterdam newPayload calls that
+                    // send "0x" deserialize to None instead of failing RLP decode.
+                    let hex_body = s
+                        .strip_prefix("0x")
+                        .ok_or_else(|| D::Error::custom("blockAccessList must be 0x-prefixed"))?;
+                    if hex_body.is_empty() {
+                        return Ok(None);
+                    }
+                    let bytes =
+                        hex::decode(hex_body).map_err(|e| D::Error::custom(e.to_string()))?;
+                    BlockAccessList::decode(&bytes)
                         .map(Some)
+                        .map_err(|_| D::Error::custom("Failed to RLP decode BAL"))
                 }
-                _ => Ok(None),
+                None => Ok(None),
             }
         }
 
