@@ -1,3 +1,4 @@
+mod amsterdam_header_tests;
 mod bal_input_tests;
 mod base64_tests;
 #[cfg(feature = "c-kzg")]
