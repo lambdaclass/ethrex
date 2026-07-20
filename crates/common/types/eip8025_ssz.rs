@@ -34,8 +34,6 @@ const MAX_BUILDER_DEPOSIT_REQUESTS_PER_PAYLOAD: usize = 64;
 const MAX_BUILDER_EXIT_REQUESTS_PER_PAYLOAD: usize = 16;
 /// `MAX_BLOB_COMMITMENTS_PER_BLOCK` (Electra).
 const MAX_BLOB_COMMITMENTS_PER_BLOCK: usize = 4096;
-/// `MAX_BLOCK_ACCESS_LIST_BYTES` (Amsterdam).
-const MAX_BLOCK_ACCESS_LIST_BYTES: usize = 16777216;
 
 // ── EIP-7685 request type prefixes ─────────────────────────────────
 
@@ -214,7 +212,7 @@ pub struct ExecutionPayloadV4 {
     pub withdrawals: SszList<Withdrawal, MAX_WITHDRAWALS_PER_PAYLOAD>,
     pub blob_gas_used: u64,
     pub excess_blob_gas: u64,
-    pub block_access_list: SszList<u8, MAX_BLOCK_ACCESS_LIST_BYTES>,
+    pub block_access_list: SszList<u8, MAX_BYTES_PER_TRANSACTION>,
     pub slot_number: u64,
 }
 
