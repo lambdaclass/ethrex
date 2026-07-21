@@ -203,7 +203,7 @@ impl Syncer {
     /// Performs the sync cycle described in `start_sync`, returns an error if the sync fails at any given step and aborts all active processes
     async fn sync_cycle(&mut self, sync_head: H256, store: Store) -> Result<(), SyncError> {
         // Take picture of the current sync mode, we will update the original value when we need to
-        if self.snap_enabled.load(Ordering::Relaxed) {
+        if self.snap_enabled.load(Ordering::Acquire) {
             METRICS.enable().await;
             // We validate that we have the folders that are being used empty, as we currently assume
             // they are. If they are not empty we empty the folder

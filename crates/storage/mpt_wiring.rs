@@ -80,10 +80,21 @@ const MPT_STORAGE_LEAF_KEY_LEN: usize = 131;
 ///
 /// Leaf nodes whose key is greater than `last_written` are skipped because
 /// the flat-key-value generator will produce them separately.
+/// Commits MPT trie nodes (and FKV leaves) to disk.
+///
+/// `last_written` is the FKV generator cursor: leaves whose key is past the
+/// cursor are SKIPPED here because the still-running FKV generator will
+/// rewrite them as it advances. Set `bypass_fkv_cursor = true` when the
+/// caller has stopped the FKV generator permanently (e.g. during the binary
+/// transition activation freeze) so all leaves are written unconditionally.
+/// Skipping them in that context drops the data: the layer cache has already
+/// removed the layer (via `commit()`), and FKV will not run again to
+/// rewrite the leaf — the update is silently lost. Bug 3 v3 (hoodi 2026-05-05).
 pub(crate) fn mpt_commit_nodes_to_disk(
     backend: &dyn StorageBackend,
     nodes: Vec<(Vec<u8>, Vec<u8>)>,
     last_written: Vec<u8>,
+    bypass_fkv_cursor: bool,
 ) -> Result<(), StoreError> {
     let mut write_tx = backend.begin_write()?;
     let mut result = Ok(());
@@ -92,7 +103,7 @@ pub(crate) fn mpt_commit_nodes_to_disk(
             key.len() == MPT_ACCOUNT_LEAF_KEY_LEN || key.len() == MPT_STORAGE_LEAF_KEY_LEN;
         let is_account = key.len() <= MPT_ACCOUNT_LEAF_KEY_LEN;
 
-        if is_leaf && key > last_written {
+        if !bypass_fkv_cursor && is_leaf && key > last_written {
             continue;
         }
         let table = if is_leaf {
@@ -145,9 +156,11 @@ pub(crate) fn build_mpt_cache_layer(
 ///
 /// Created by [`Store::make_trie_provider`] and passed to
 /// [`ethrex_trie::MptMerkleizer::new`] and `MptBackend::new_with_db`.
-struct StoreTrieProvider {
-    store: Store,
-    parent_state_root: H256,
+/// Made `pub(crate)` so `transition_wiring` can construct a frozen-MPT
+/// `MptBackend` for `TransitionBackend::base` without duplicating the provider.
+pub(crate) struct StoreTrieProvider {
+    pub(crate) store: Store,
+    pub(crate) parent_state_root: H256,
 }
 
 impl TrieProvider for StoreTrieProvider {

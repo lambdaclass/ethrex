@@ -41,6 +41,18 @@ To sync with hoodi
 ethrex --network hoodi
 ```
 
+### Binary trie transition mode (research preview)
+
+ethrex supports an opt-in MPT→binary-trie transition (EIP-7864), L1 follower only. Enable with `--binary-transition`:
+
+```
+ethrex --network hoodi --syncmode snap --binary-transition
+```
+
+The node snap-syncs against MPT, then once snap completes and the follower has caught up to finalized head, the transition activator self-fires: it persists the transition metadata, hot-swaps the in-memory backend kind to Transition, and logs "Node continues running in Transition mode." No restart is required; the node continues block execution in Transition mode immediately.
+
+This mode does **not** verify state roots post-switch; receipts, gas, transactions root, withdrawals root, and logs bloom remain fully verified. There is no RPC support yet for querying the binary state. See `docs/binary-trie/operational.md` for the full operator runbook.
+
 Once started, you should be able to check the sync status with:
 
 ```sh

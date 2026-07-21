@@ -145,34 +145,69 @@ pub fn init_metrics(opts: &Options, network: &Network, tracker: TaskTracker) {
 
 /// Opens a new or pre-existing Store and loads the initial state provided by the network
 pub async fn init_store(datadir: impl AsRef<Path>, genesis: Genesis) -> Result<Store, StoreError> {
-    let mut store = open_store(datadir.as_ref())?;
+    let mut store = open_store(datadir.as_ref(), BackendKind::Mpt)?;
+    store.add_initial_state(genesis).await?;
+    Ok(store)
+}
+
+/// Opens or creates a Store with the given `BackendKind` and loads initial state.
+///
+/// Used by `init_l1` when `--binary-transition` requires opening the DB in
+/// `Transition` mode (format byte 2 already written).
+async fn open_store_with_backend_kind(
+    datadir: &Path,
+    genesis: Genesis,
+    backend_kind: BackendKind,
+) -> Result<Store, StoreError> {
+    let mut store = open_store(datadir, backend_kind)?;
     store.add_initial_state(genesis).await?;
     Ok(store)
 }
 
 /// Initializes a pre-existing Store
 pub async fn load_store(datadir: &Path) -> Result<Store, StoreError> {
-    let store = open_store(datadir)?;
+    let store = open_store(datadir, BackendKind::Mpt)?;
     store.load_initial_state().await?;
     Ok(store)
 }
 
 /// Opens a pre-existing Store or creates a new one
-pub fn open_store(datadir: &Path) -> Result<Store, StoreError> {
+pub fn open_store(datadir: &Path, backend_kind: BackendKind) -> Result<Store, StoreError> {
     if is_memory_datadir(datadir) {
-        Store::new(datadir, EngineType::InMemory, BackendKind::Mpt)
+        Store::new(datadir, EngineType::InMemory, backend_kind)
     } else {
         #[cfg(feature = "rocksdb")]
         let engine_type = EngineType::RocksDB;
         #[cfg(feature = "metrics")]
         ethrex_metrics::process::set_datadir_path(datadir.to_path_buf());
-        Store::new(datadir, engine_type, BackendKind::Mpt)
+        Store::new(datadir, engine_type, backend_kind)
     }
 }
 
 pub fn init_blockchain(store: Store, blockchain_opts: BlockchainOptions) -> Arc<Blockchain> {
     info!("Initiating blockchain with levm");
     Blockchain::new(store, blockchain_opts).into()
+}
+
+/// Reads the on-disk `STATE_BACKEND_FORMAT_KEY` byte from a datadir without
+/// opening the full Store.  Returns `None` for fresh / in-memory paths.
+///
+/// Used by `init_l1` to pick the right `BackendKind` when `--binary-transition`
+/// is set, so the Store is opened with the correct variant from the start.
+fn peek_backend_format_byte(datadir: &Path) -> Option<u8> {
+    if is_memory_datadir(datadir) {
+        return None;
+    }
+    #[cfg(feature = "rocksdb")]
+    {
+        Store::peek_backend_format_byte(datadir, EngineType::RocksDB)
+            .ok()
+            .flatten()
+    }
+    #[cfg(not(feature = "rocksdb"))]
+    {
+        None
+    }
 }
 
 #[expect(clippy::too_many_arguments)]
@@ -184,30 +219,13 @@ pub async fn init_rpc_api(
     local_node_record: NodeRecord,
     store: Store,
     blockchain: Arc<Blockchain>,
-    cancel_token: CancellationToken,
     tracker: TaskTracker,
     log_filter_handler: Option<reload::Handle<EnvFilter, Registry>>,
+    syncer: SyncManager,
 ) {
     if !is_memory_datadir(datadir) {
         init_datadir(datadir);
     }
-
-    let syncmode = if opts.dev {
-        &SyncMode::Full
-    } else {
-        &opts.syncmode
-    };
-
-    // Create SyncManager
-    let syncer = SyncManager::new(
-        peer_handler.clone(),
-        syncmode,
-        cancel_token,
-        blockchain.clone(),
-        store.clone(),
-        datadir.to_path_buf(),
-    )
-    .await;
 
     let ws_socket_opts = if opts.ws_enabled {
         Some(get_ws_socket_addr(opts))
@@ -494,7 +512,23 @@ pub async fn init_l1(
     debug!("Preloading KZG trusted setup");
     ethrex_crypto::kzg::warm_up_trusted_setup();
 
-    let store = match init_store(&datadir, genesis).await {
+    // When --binary-transition is set, peek at the on-disk format byte to pick
+    // the right BackendKind.  Format byte 2 means the DB was already transitioned
+    // and we must open it as BackendKind::Transition.  Otherwise use Mpt (the
+    // activator will fire later when preconditions are met).
+    let backend_kind = if opts.binary_transition {
+        match peek_backend_format_byte(&datadir) {
+            Some(2) => {
+                info!("Detected transitioned DB (format byte 2); opening in Transition mode.");
+                BackendKind::Transition
+            }
+            _ => BackendKind::Mpt,
+        }
+    } else {
+        BackendKind::Mpt
+    };
+
+    let store = match open_store_with_backend_kind(&datadir, genesis, backend_kind).await {
         Ok(store) => store,
         Err(err @ StoreError::IncompatibleDBVersion { .. })
         | Err(err @ StoreError::NotFoundDBVersion) => {
@@ -562,6 +596,34 @@ pub async fn init_l1(
 
     let peer_handler = PeerHandler::new(peer_table.clone(), initiator);
 
+    let syncmode = if opts.dev {
+        &SyncMode::Full
+    } else {
+        &opts.syncmode
+    };
+
+    let syncer = SyncManager::new(
+        peer_handler.clone(),
+        syncmode,
+        cancel_token.clone(),
+        blockchain.clone(),
+        store.clone(),
+        datadir.to_path_buf(),
+    )
+    .await;
+
+    // When --binary-transition is enabled and the DB is still in MPT mode,
+    // construct a TransitionActivator and install it on the blockchain so it
+    // ticks after each successful block commit.
+    if opts.binary_transition && backend_kind == BackendKind::Mpt {
+        use ethrex_blockchain::transition_activator::TransitionActivator;
+        let activator = TransitionActivator::new(syncer.snap_enabled(), syncer.caught_up());
+        blockchain.set_transition_activator(activator);
+        info!(
+            "Binary trie transition activator installed; will fire when snap sync completes and follower catches up."
+        );
+    }
+
     init_rpc_api(
         &opts,
         &datadir,
@@ -570,9 +632,9 @@ pub async fn init_l1(
         local_node_record.clone(),
         store.clone(),
         blockchain.clone(),
-        cancel_token.clone(),
         tracker.clone(),
         log_filter_handler,
+        syncer,
     )
     .await;
 

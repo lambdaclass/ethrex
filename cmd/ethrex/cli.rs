@@ -367,6 +367,14 @@ pub struct Options {
         env = "ETHREX_PRECOMPUTE_WITNESSES"
     )]
     pub precompute_witnesses: bool,
+    #[arg(
+        long = "binary-transition",
+        action = ArgAction::SetTrue,
+        help = "Enable opt-in MPT→binary trie transition (research preview; L1 follower only). Activates automatically once snap sync completes and the follower catches up to finalized head.",
+        help_heading = "Node options",
+        env = "ETHREX_BINARY_TRANSITION"
+    )]
+    pub binary_transition: bool,
 }
 
 impl Options {
@@ -452,6 +460,7 @@ impl Default for Options {
             max_blobs_per_block: None,
             precompute_witnesses: false,
             no_migrate: false,
+            binary_transition: false,
         }
     }
 }

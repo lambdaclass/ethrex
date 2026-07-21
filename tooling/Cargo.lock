@@ -3251,11 +3251,30 @@ dependencies = [
 ]
 
 [[package]]
+name = "ethrex-binary-trie"
+version = "10.0.0"
+dependencies = [
+ "blake3",
+ "bytes",
+ "ethrex-common 10.0.0",
+ "ethrex-crypto",
+ "ethrex-state-backend",
+ "fastbloom",
+ "hex",
+ "lru 0.16.3",
+ "rayon",
+ "rustc-hash 2.1.2",
+ "serde",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "ethrex-blockchain"
 version = "10.0.0"
 dependencies = [
  "bytes",
  "crossbeam",
+ "ethrex-binary-trie",
  "ethrex-common 10.0.0",
  "ethrex-crypto",
  "ethrex-metrics",
@@ -3815,6 +3834,7 @@ version = "10.0.0"
 dependencies = [
  "anyhow",
  "bytes",
+ "ethrex-binary-trie",
  "ethrex-common 10.0.0",
  "ethrex-crypto",
  "ethrex-rlp 10.0.0",

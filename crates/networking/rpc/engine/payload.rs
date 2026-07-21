@@ -1100,6 +1100,9 @@ async fn try_execute_payload(
         }
         Ok(()) => {
             debug!("Block with hash {block_hash} executed and added to storage successfully");
+            // Update the caught_up latch: if the committed block number is at or
+            // beyond the last CL-reported finalized block, the follower is caught up.
+            syncer.check_and_latch_caught_up(block_number);
             Ok(PayloadStatus::valid_with_hash(block_hash))
         }
     }

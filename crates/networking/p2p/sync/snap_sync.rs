@@ -222,7 +222,7 @@ pub async fn sync_cycle_snap(
         if head_found || head_close_to_0 {
             // Too few blocks for a snap sync, switching to full sync
             info!("Sync head is found, switching to FullSync");
-            snap_enabled.store(false, Ordering::Relaxed);
+            snap_enabled.store(false, Ordering::Release);
             // Disable snap metrics so the progress display stops
             METRICS.disable().await;
             return super::full::sync_cycle_full(
@@ -261,7 +261,7 @@ pub async fn sync_cycle_snap(
     snap_sync(peers, &store, &mut block_sync_state, datadir, diagnostics).await?;
 
     store.clear_snap_state().await?;
-    snap_enabled.store(false, Ordering::Relaxed);
+    snap_enabled.store(false, Ordering::Release);
 
     Ok(())
 }

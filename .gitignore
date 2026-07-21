@@ -138,3 +138,9 @@ core.*
 *.log
 
 __pycache__/
+
+# rustc default output (from bare `rustc src/main.rs` invocations)
+rust_out
+
+# Generated EIP-7864 binary-trie test vectors (regenerate with `make binary-trie-vectors`)
+crates/common/binary-trie/testgen/*.json
