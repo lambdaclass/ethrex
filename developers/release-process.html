@@ -34,7 +34,7 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "../searchindex-cd2c6951.js";
+            window.path_to_searchindex_js = "../searchindex-2ebdcff1.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-586b7da3.js"></script>
@@ -260,7 +260,6 @@ git push origin &lt;release_version&gt;
 <li><input disabled="" type="checkbox"> Upgrade <code>ethrex-ethdocker-mainnet</code></li>
 <li><input disabled="" type="checkbox"> Upgrade <code>ethrex-mainnet-1</code></li>
 <li><input disabled="" type="checkbox"> Upgrade <code>ethrex-prysm</code></li>
-<li><input disabled="" type="checkbox"> Upgrade <code>ethrex-lodestar</code></li>
 <li><input disabled="" type="checkbox"> Upgrade <code>ethrex-teku</code></li>
 <li><input disabled="" type="checkbox"> Upgrade <code>ethrex-grandine</code></li>
 <li><input disabled="" type="checkbox"> Launch multisync on <code>ethrex-multisync-main</code></li>
@@ -279,8 +278,8 @@ nano .env
 </code></pre>
 <h4 id="ethrex-mainnet-1"><a class="header" href="#ethrex-mainnet-1"><code>ethrex-mainnet-1</code></a></h4>
 <!-- TODO: document the upgrade procedure for this host -->
-<h4 id="ethrex-prysm-ethrex-lodestar-ethrex-teku-ethrex-grandine"><a class="header" href="#ethrex-prysm-ethrex-lodestar-ethrex-teku-ethrex-grandine"><code>ethrex-prysm</code>, <code>ethrex-lodestar</code>, <code>ethrex-teku</code>, <code>ethrex-grandine</code></a></h4>
-<p>These are ethrex mainnet nodes paired with different consensus clients (Prysm, Lodestar, Teku, Grandine); the ethrex (EL) upgrade procedure is the same across them.</p>
+<h4 id="ethrex-prysm-ethrex-teku-ethrex-grandine"><a class="header" href="#ethrex-prysm-ethrex-teku-ethrex-grandine"><code>ethrex-prysm</code>, <code>ethrex-teku</code>, <code>ethrex-grandine</code></a></h4>
+<p>These are ethrex mainnet nodes paired with different consensus clients (Prysm, Teku, Grandine); the ethrex (EL) upgrade procedure is the same across them.</p>
 <p>They run the ethrex binary downloaded from the release in a tmux session, the consensus also runs in its own tmux session.</p>
 <pre><code class="language-bash">tmux ls
 # gracefully stop ethrex
@@ -387,7 +386,14 @@ tmux new-session -d -s sync "make multisync-loop-auto MULTISYNC_BRANCH=release/v
 <li>crates.io ownership of the crate names (the first publish under the token claims them).</li>
 </ul>
 <p>The workflow is idempotent: a crate version already on crates.io is skipped, so re-running after a partial failure is safe. To validate without publishing, run it manually from the Actions tab (the <code>workflow_dispatch</code> trigger) with the dry-run input checked — it lists each crate’s package contents instead of publishing.</p>
-<h2 id="5th---update-homebrew"><a class="header" href="#5th---update-homebrew">5th - Update Homebrew</a></h2>
+<h2 id="5th---release-the-rex-counterpart"><a class="header" href="#5th---release-the-rex-counterpart">5th - Release the rex counterpart</a></h2>
+<p>Every ethrex release has a matching <a href="https://github.com/lambdaclass/rex">rex</a> release with the same <code>X.Y.Z</code> version. Once the ethrex release is fully promoted, release the counterpart:</p>
+<ol>
+<li>In <code>lambdaclass/rex</code>, bump every <code>ethrex-*</code> dependency pin in <code>Cargo.toml</code> to <code>X.Y.Z</code> and refresh the lockfile (<a href="https://github.com/lambdaclass/rex/commit/84099c31">example bump</a>). This step must come <strong>after</strong> the promotion: the pins resolve against crates.io, so the ethrex crates have to be published first.</li>
+<li>Create and push a <code>vX.Y.Z-rc.W</code> tag. The <code>Rex Release</code> workflow builds the binaries and creates a pre-release, mirroring ethrex’s flow.</li>
+<li>Verify the pre-release, then promote it to <code>vX.Y.Z</code> the same way as the ethrex release: rename the tag on the tested commit and untick <em>pre-release</em> in a single <em>Update release</em> edit.</li>
+</ol>
+<h2 id="6th---update-homebrew"><a class="header" href="#6th---update-homebrew">6th - Update Homebrew</a></h2>
 <p>Disclaimer: We should automate this</p>
 <p>Set the released version once, then the commands below are copy/paste:</p>
 <pre><code class="language-bash">export V=X.Y.Z   # replace with the released version, no `v` prefix (e.g. 3.0.0)
@@ -430,7 +436,7 @@ shasum -a 256 "ethrex-$V.arm64_sonoma.bottle.tar.gz"
 <p>Create a new release with tag <code>v$V</code> in homebrew-tap. <strong>IMPORTANT</strong>: attach the <code>ethrex-$V.arm64_sonoma.bottle.tar.gz</code> to the release.</p>
 </li>
 </ol>
-<h2 id="6th---merge-the-release-branch-via-pr"><a class="header" href="#6th---merge-the-release-branch-via-pr">6th - Merge the release branch via PR</a></h2>
+<h2 id="7th---merge-the-release-branch-via-pr"><a class="header" href="#7th---merge-the-release-branch-via-pr">7th - Merge the release branch via PR</a></h2>
 <p>Once the release is verified, <strong>merge the branch via PR</strong>.</p>
 <h2 id="dealing-with-hotfixes"><a class="header" href="#dealing-with-hotfixes">Dealing with hotfixes</a></h2>
 <p>If hotfixes are needed before the final release, commit them to <code>release/vX.Y.Z</code>, push, and create a new pre-release tag. The final tag <code>vX.Y.Z</code> should always point to the exact commit you will merge via PR.</p>
