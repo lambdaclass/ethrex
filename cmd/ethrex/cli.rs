@@ -1384,6 +1384,15 @@ mod tests {
     }
 
     #[test]
+    fn http_api_parses_ethrex_namespace() {
+        let cli = CLI::parse_from(["ethrex", "--http.api", "eth,ethrex"]);
+        assert_eq!(
+            cli.opts.http_api,
+            vec![RpcNamespace::Eth, RpcNamespace::Ethrex]
+        );
+    }
+
+    #[test]
     fn http_api_rejects_engine_namespace() {
         let result = CLI::try_parse_from(["ethrex", "--http.api", "eth,engine"]);
         assert!(result.is_err(), "engine must not be allowed on --http.api");
