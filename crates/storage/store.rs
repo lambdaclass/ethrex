@@ -72,7 +72,7 @@ const IN_MEMORY_COMMIT_THRESHOLD: usize = 10000;
 /// memory. The canonical `head - DB_COMMIT_THRESHOLD` safe-commit root never lands on a batch
 /// layer boundary, so batch mode commits by depth instead; this is sound because full sync and
 /// import only ever extend a single canonical chain (no competing forks to mis-commit).
-const BATCH_COMMIT_THRESHOLD: usize = 4;
+pub const BATCH_COMMIT_THRESHOLD: usize = 4;
 
 /// Default size in bytes of the RocksDB shared block cache: 12 GiB.
 ///
@@ -277,10 +277,15 @@ pub struct UpdateBatch {
     pub receipts: Vec<(H256, Vec<Receipt>)>,
     /// Contract code updates (code hash -> bytecode).
     pub code_updates: Vec<(H256, Code)>,
-    /// Whether this batch comes from full sync (batch execution mode). When true,
-    /// the persist worker waits for the disk flush (`wait_for_flush`) to bound
-    /// in-flight batches during bulk import.
-    pub batch_mode: bool,
+    /// Commit strategy for this batch's trie layers.
+    ///
+    /// - `None`: live path (`newPayload`). The persist worker commits by the canonical
+    ///   `head - DB_COMMIT_THRESHOLD` safe-commit root and does not wait for the disk flush.
+    /// - `Some(depth)`: single-canonical-chain execution (batch import, full sync, startup
+    ///   state regeneration). The persist worker commits every layer deeper than `depth`
+    ///   (see [`Trie::get_commitable_by_depth`]) and waits for the flush to bound in-flight
+    ///   memory during bulk import.
+    pub commit_depth: Option<usize>,
 }
 
 /// Storage trie updates grouped by account address hash.
@@ -1656,10 +1661,10 @@ impl Store {
         Ok((parent_state_root, last_state_root))
     }
 
-    /// Single path for both live (`batch_mode == false`) and full-sync
-    /// (`batch_mode == true`) updates. Both hand the whole unit (block data +
+    /// Single path for both live (`commit_depth == None`) and single-canonical-chain
+    /// (`commit_depth == Some(_)`) updates. Both hand the whole unit (block data +
     /// one aggregate trie diff) to the SINGLE persist worker and wait for its ack;
-    /// `wait_for_flush` (= `batch_mode`) selects when the worker acks.
+    /// `commit_depth.is_some()` selects when the worker acks.
     fn apply_updates(&self, update_batch: UpdateBatch) -> Result<(), StoreError> {
         let (parent_state_root, last_state_root) = self.batch_state_roots(&update_batch)?;
 
@@ -1669,7 +1674,7 @@ impl Store {
             blocks,
             receipts,
             code_updates,
-            batch_mode,
+            commit_depth,
         } = update_batch;
 
         // Register before handing off to the worker and before this returns, so
@@ -1701,9 +1706,9 @@ impl Store {
         };
 
         // Send to the persist worker and wait for its ack.
-        // LIVE (wait_for_flush=false): worker acks after staging; the ack carries
+        // LIVE (commit_depth=None): worker acks after staging; the ack carries
         //   the PRIOR flush result so a disk error surfaces on the next call.
-        // BATCH (wait_for_flush=true): worker acks after flush, bounding
+        // DEPTH-GATED (commit_depth=Some): worker acks after flush, bounding
         //   in-flight batches to ~1.
         let (ack_tx, ack_rx) = sync_channel(1);
         self.persist_tx
@@ -1714,7 +1719,7 @@ impl Store {
                 child_state_root: last_state_root,
                 account_updates,
                 storage_updates,
-                wait_for_flush: batch_mode,
+                commit_depth,
                 ack: ack_tx,
             }))
             .map_err(|e| StoreError::Custom(format!("failed to send block persist: {e}")))?;
@@ -1938,7 +1943,7 @@ impl Store {
                         // last_flush_result rather than attributed to this block;
                         // the pending root is still cleared unconditionally, so
                         // gated readers error rather than hang.
-                        if !bp.wait_for_flush {
+                        if bp.commit_depth.is_none() {
                             let _ = bp
                                 .ack
                                 .send(std::mem::replace(&mut last_flush_result, Ok(())));
@@ -1953,7 +1958,7 @@ impl Store {
                             bp.storage_updates,
                         ) {
                             error!("persist worker trie phase-1 failed: {err}");
-                            if bp.wait_for_flush {
+                            if bp.commit_depth.is_some() {
                                 let _ = bp.ack.send(Err(err));
                             } else {
                                 last_flush_result = Err(err);
@@ -1969,12 +1974,12 @@ impl Store {
                                     &persist_trie_cache,
                                     &persist_fkv_ctl,
                                     bp.parent_state_root,
-                                    bp.wait_for_flush,
+                                    bp.commit_depth,
                                 )
                             });
-                        // BATCH: ack after flush (bounds in-flight batches to ~1),
+                        // DEPTH-GATED: ack after flush (bounds in-flight batches to ~1),
                         // folding in any prior live-path error. LIVE: stash result.
-                        if bp.wait_for_flush {
+                        if bp.commit_depth.is_some() {
                             let prior = std::mem::replace(&mut last_flush_result, Ok(()));
                             let _ = bp.ack.send(prior.and(flushed));
                         } else {
@@ -3703,9 +3708,10 @@ fn mutate_block_buffer(
 const DEFAULT_PERSIST_CHANNEL_CAPACITY: usize = 2;
 
 /// One unit of work for the persist worker: stage block(s), build the trie
-/// diff-layer, flush to disk. `wait_for_flush` selects the ack point: `false`
-/// (live) acks after staging carrying the prior flush result; `true` (batch)
-/// acks after flush.
+/// diff-layer, flush to disk. `commit_depth` selects both the commit gate and the
+/// ack point: `None` (live) commits by the canonical safe-commit root and acks after
+/// staging carrying the prior flush result; `Some(depth)` (depth-gated) commits every
+/// layer deeper than `depth` and acks after flush.
 struct BlockPersist {
     blocks: Vec<(Block, Vec<Receipt>)>,
     codes: Vec<(H256, Code)>,
@@ -3713,7 +3719,7 @@ struct BlockPersist {
     child_state_root: H256,
     account_updates: TrieNodesUpdate,
     storage_updates: Vec<(H256, TrieNodesUpdate)>,
-    wait_for_flush: bool,
+    commit_depth: Option<usize>,
     ack: std::sync::mpsc::SyncSender<Result<(), StoreError>>,
 }
 
@@ -3910,26 +3916,27 @@ fn apply_trie_phase1(
 
 /// Flush and prune the committable trie-layer backlog. No-ops when nothing is committable.
 ///
-/// `is_batch` selects the gate: batch execution (full sync / import) commits by depth
-/// (`BATCH_COMMIT_THRESHOLD`), because the canonical `head - 128` safe-commit root never lands
-/// on a batch layer boundary; live block-by-block execution uses the canonical safe-commit gate
-/// (`TrieLayerCache::get_commitable`) so non-canonical `newPayload` state is never persisted.
+/// `commit_depth` selects the gate. `Some(depth)`: single-canonical-chain execution (batch
+/// import, full sync, startup regeneration) commits by depth, because the canonical `head - 128`
+/// safe-commit root never lands on a batch layer boundary; sound because these paths only ever
+/// extend a single canonical chain (no competing forks to mis-commit). `None`: live block-by-block
+/// execution uses the canonical safe-commit gate (`TrieLayerCache::get_commitable`) so non-canonical
+/// `newPayload` state is never persisted.
 fn commit_trie_if_due(
     backend: &dyn StorageBackend,
     trie_cache: &Arc<RwLock<Arc<TrieLayerCache>>>,
     fkv_ctl: &SyncSender<FKVGeneratorControlMessage>,
     parent_state_root: H256,
-    is_batch: bool,
+    commit_depth: Option<usize>,
 ) -> Result<(), StoreError> {
     let trie = trie_cache
         .read()
         .map_err(|_| StoreError::LockError)?
         .clone();
     // Phase 2 + 3: flush and prune the committable backlog.
-    let commitable = if is_batch {
-        trie.get_commitable_by_depth(parent_state_root, BATCH_COMMIT_THRESHOLD)
-    } else {
-        trie.get_commitable(parent_state_root)
+    let commitable = match commit_depth {
+        Some(depth) => trie.get_commitable_by_depth(parent_state_root, depth),
+        None => trie.get_commitable(parent_state_root),
     };
     let Some(root) = commitable else {
         // Nothing to commit to disk, move on.

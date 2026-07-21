@@ -2,7 +2,7 @@ use ethrex_common::{
     H256,
     types::{Block, BlockBody, BlockHeader, BlockNumber},
 };
-use ethrex_storage::{EngineType, Store, UpdateBatch};
+use ethrex_storage::{BATCH_COMMIT_THRESHOLD, EngineType, Store, UpdateBatch};
 
 #[tokio::test]
 async fn flushed_upto_defaults_to_zero() {
@@ -78,12 +78,12 @@ fn minimal_batch(number: BlockNumber, parent_hash: H256) -> (Block, UpdateBatch)
         receipts: vec![(block.hash(), vec![])],
         blocks: vec![block.clone()],
         code_updates: vec![],
-        batch_mode: false,
+        commit_depth: None,
     };
     (block, batch)
 }
 
-/// Drive several sequential store_block_updates (batch_mode: false) through the
+/// Drive several sequential store_block_updates (commit_depth: None) through the
 /// live path and assert every block is readable (buffer or disk) and
 /// read_flushed_upto advances monotonically with no gaps.
 ///
@@ -156,7 +156,7 @@ async fn poll_flushed_upto_reaches(store: &Store, target: BlockNumber) {
 }
 
 /// Live path routed through the single persist worker: several sequential
-/// `store_block_updates` (batch_mode: false) must each stage their block and
+/// `store_block_updates` (commit_depth: None) must each stage their block and
 /// the worker must flush them, advancing the durable `flushed_upto` marker to
 /// the full block count. Same invariant as `sequential_live_updates_no_lost_inserts`
 /// but a minimal smoke test that the unified persist worker stages + flushes.
@@ -441,7 +441,7 @@ async fn boot_on_legacy_db_without_marker_keeps_head() {
 /// live → full-sync → restart sequence the marker lagged and the boot clamp
 /// silently rewound the head.
 ///
-/// RED (pre-fix): `apply_updates_synchronous` runs for `batch_mode: true` and never
+/// RED (pre-fix): `apply_updates_synchronous` runs for the batch path and never
 /// touches the marker, so `read_flushed_upto()` stays 0 and this FAILS.
 /// GREEN (post-fix): the batch path routes through the single persist worker, whose
 /// `flush_block_data` drains all staged blocks in one tx and writes the max block
@@ -463,7 +463,7 @@ async fn batch_path_advances_flushed_upto() {
     let mut store = Store::new(path, EngineType::RocksDB).expect("store");
     store.add_initial_state(genesis).await.expect("genesis");
 
-    // Build a single batch_mode=true UpdateBatch carrying blocks 1..=3 (the
+    // Build a single depth-gated UpdateBatch carrying blocks 1..=3 (the
     // full-sync shape: many blocks, one aggregate trie diff, one fsync). The
     // first block's parent is genesis so `batch_state_roots` resolves a parent
     // state root.
@@ -488,7 +488,7 @@ async fn batch_path_advances_flushed_upto() {
         receipts,
         blocks,
         code_updates: vec![],
-        batch_mode: true,
+        commit_depth: Some(BATCH_COMMIT_THRESHOLD),
     };
 
     store
@@ -1059,7 +1059,7 @@ async fn shutdown_does_not_force_commit_trie_layers() {
             receipts: vec![(hash_a, vec![])],
             blocks: vec![block_a],
             code_updates: vec![],
-            batch_mode: false,
+            commit_depth: None,
         };
         store.store_block_updates(batch_a).expect("store A");
 
@@ -1078,5 +1078,110 @@ async fn shutdown_does_not_force_commit_trie_layers() {
         store.get_trie_node_for_test(true, &key_a).expect("read A"),
         None,
         "shutdown must not force-commit the in-memory trie diff-layer"
+    );
+}
+
+/// Regression: startup state regeneration (and full-sync / import block-by-block)
+/// must bound the in-memory trie-layer backlog so a large gap does not OOM.
+///
+/// These paths re-execute a SINGLE canonical chain one block per `UpdateBatch`, each
+/// producing one trie diff-layer. Before the fix they used the canonical safe-commit
+/// gate (`commit_depth: None`); at startup nothing has been canonicalized, so
+/// `safe_commit_root` is zero and NO layer ever commits — the backlog grows with the
+/// gap until the process runs out of memory. The fix routes them through the depth
+/// gate (`commit_depth: Some(depth)`), which commits by depth regardless of the
+/// safe-commit cell, keeping ~`depth` layers resident.
+///
+/// This drives that exact per-block shape and asserts both properties end-to-end:
+/// (a) BOUNDED — layers older than `depth` from the tip are flushed to disk, so
+///     memory does not grow with the number of re-executed blocks; and
+/// (b) WINDOW RETAINED — the most recent `depth` layers stay in memory (not
+///     prematurely flushed), preserving the recent state window that snap sync and
+///     historical-balance queries depend on.
+#[cfg(feature = "rocksdb")]
+#[tokio::test]
+async fn depth_gated_per_block_path_bounds_memory_and_retains_window() {
+    use ethrex_common::types::Genesis;
+    use ethrex_trie::Nibbles;
+
+    const GENESIS_KURTOSIS: &str = include_str!("../../../fixtures/genesis/kurtosis.json");
+    let genesis: Genesis =
+        serde_json::from_str(GENESIS_KURTOSIS).expect("deserialize kurtosis.json");
+    let genesis_hash = genesis.get_block().hash();
+
+    // A distinct, short account-trie key per block (len 4, <= 65 and not 65/131 so it
+    // routes to ACCOUNT_TRIE_NODES as a non-leaf node), mirroring the shutdown test.
+    let key_for = |n: BlockNumber| -> Vec<u8> { vec![0xB0, n as u8, 0, 1] };
+
+    let dir = tempfile::tempdir().expect("tmp");
+    let path = dir.path().to_str().unwrap();
+
+    let mut store = Store::new(path, EngineType::RocksDB).expect("store");
+    store.add_initial_state(genesis).await.expect("genesis");
+
+    // Re-execute N single-block batches on one canonical chain, one layer each, all
+    // through the depth gate. N comfortably exceeds DEPTH so the gate must fire.
+    const DEPTH: usize = 4;
+    const N: BlockNumber = 12;
+    let mut parent_hash = genesis_hash;
+    for n in 1..=N {
+        let header = BlockHeader {
+            number: n,
+            parent_hash,
+            // A distinct, non-zero state root per block: it is the layer's cache key.
+            state_root: H256::from_low_u64_be(n),
+            ..Default::default()
+        };
+        let block = Block::new(header, BlockBody::default());
+        parent_hash = block.hash();
+        let batch = UpdateBatch {
+            account_updates: vec![(Nibbles::from_hex(key_for(n)), vec![n as u8])],
+            storage_updates: vec![],
+            receipts: vec![(block.hash(), vec![])],
+            blocks: vec![block],
+            code_updates: vec![],
+            commit_depth: Some(DEPTH),
+        };
+        // The depth path acks only after flush + commit, so on return the commit for
+        // this block (if any was due) is already durable — no polling needed.
+        store.store_block_updates(batch).expect("store block");
+    }
+
+    // After storing block N, the gate committed the layer DEPTH deep from block N's
+    // parent and every older layer, so blocks 1..=N-DEPTH are on disk. Memory retains
+    // exactly the top DEPTH layers (N-DEPTH+1 ..= N).
+    let last_committed = N - DEPTH as BlockNumber; // 8
+
+    // (a) BOUNDED: the oldest and the deepest-committed layers were flushed to disk.
+    assert_eq!(
+        store
+            .get_trie_node_for_test(true, &key_for(1))
+            .expect("read block 1"),
+        Some(vec![1u8]),
+        "oldest layer must be committed to disk (memory backlog is bounded, not growing with the gap)"
+    );
+    assert_eq!(
+        store
+            .get_trie_node_for_test(true, &key_for(last_committed))
+            .expect("read deepest committed"),
+        Some(vec![last_committed as u8]),
+        "layer at the depth boundary must be committed to disk"
+    );
+
+    // (b) WINDOW RETAINED: the most recent DEPTH layers stayed in memory (not on disk),
+    // so the recent-state window snap/historical queries need is preserved intact.
+    assert_eq!(
+        store
+            .get_trie_node_for_test(true, &key_for(last_committed + 1))
+            .expect("read window start"),
+        None,
+        "start of the retained window must NOT be flushed to disk"
+    );
+    assert_eq!(
+        store
+            .get_trie_node_for_test(true, &key_for(N))
+            .expect("read tip"),
+        None,
+        "tip layer must stay in memory, not be prematurely flushed"
     );
 }
