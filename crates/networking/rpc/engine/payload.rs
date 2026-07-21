@@ -313,7 +313,12 @@ impl RpcHandler for NewPayloadV5Request {
                 let hex_str = v
                     .as_str()
                     .ok_or(RpcErr::WrongParam("blockAccessList".to_string()))?;
-                let bytes = hex::decode(hex_str.trim_start_matches("0x"))
+                // EIP-7928 blockAccessList is a DATA field: the `0x` prefix is
+                // mandatory. Reject an unprefixed value rather than trimming it.
+                let hex_body = hex_str
+                    .strip_prefix("0x")
+                    .ok_or(RpcErr::WrongParam("blockAccessList".to_string()))?;
+                let bytes = hex::decode(hex_body)
                     .map_err(|_| RpcErr::WrongParam("blockAccessList".to_string()))?;
                 Ok::<_, RpcErr>(ethrex_common::utils::keccak(bytes))
             })
