@@ -29,7 +29,7 @@ use ethrex_common::{
     },
 };
 use ethrex_l2_rpc::signer::{LocalSigner, Signable, Signer};
-use ethrex_storage::{EngineType, Store};
+use ethrex_storage::{DB_COMMIT_THRESHOLD, EngineType, Store};
 use secp256k1::SecretKey;
 
 /// Test private key from fixtures/keys/private_keys_tests.txt.
@@ -300,6 +300,158 @@ async fn forkchoice_flushes_committable_backlog_and_prunes_genesis() {
             .has_state_root(head_state_root)
             .expect("has_state_root head post-fcu"),
         "recent (head) state must remain serveable after the flush"
+    );
+
+    drop(blockchain);
+    drop(store);
+    remove_test_db(&path);
+}
+
+/// Regression (OOM): startup state regeneration, full-sync block-by-block, and block
+/// import re-execute a SINGLE canonical chain via `add_block_pipeline_bounded`, WITHOUT
+/// issuing a forkchoice_update as they go. Before the fix these used the canonical
+/// safe-commit gate: with `safe_commit_root` stuck at zero (nothing canonicalized),
+/// `get_commitable` returned None and NO layer ever committed, so the in-memory
+/// trie-layer backlog grew with the re-execution gap until the process ran out of memory
+/// (~60 GB on an ~11k-block regen). The fix routes these paths through the depth gate
+/// (`add_block_pipeline_bounded(.., DB_COMMIT_THRESHOLD)`), which commits by depth
+/// regardless of the safe-commit cell, keeping ~128 layers resident.
+///
+/// This drives that exact shape — >128 blocks through the bounded path, no FCU — and
+/// asserts both properties end-to-end on real execution:
+///   (a) BOUNDED: with NO forkchoice_update the backlog is still flushed forward, so the
+///       genesis root is pruned/clobbered off disk. Under the buggy canonical gate
+///       nothing flushes without an FCU, so genesis would survive — this assertion fails
+///       if a re-exec path is reverted to `add_block_pipeline` (the canonical gate).
+///   (b) WINDOW RETAINED, NO CLOBBER: the recent `DB_COMMIT_THRESHOLD` layers stay in
+///       memory and serve CORRECT historical state — a balance query at a mid-window root
+///       returns that block's value, not the latest/disk root's (the historical-window
+///       clobber the retained window guards against).
+///
+/// RocksDB-only: it is the backend whose disk commit path-clobbers older roots, which is
+/// what makes (a)'s `has_state_root(genesis) == false` load-bearing.
+#[cfg(feature = "rocksdb")]
+#[tokio::test]
+async fn bounded_reexec_without_fcu_bounds_memory_and_serves_window() {
+    // Comfortably above DB_COMMIT_THRESHOLD (128) so the depth gate fires, the flush
+    // boundary lands well past genesis (~head-128), and a mid-window block stays resident.
+    const BLOCKS: u64 = 135;
+
+    let sk = test_secret_key();
+    let sender = sender_from_key(&sk);
+    let signer: Signer = LocalSigner::new(sk).into();
+    let recipient = Address::from_low_u64_be(0xBEEF); // transfer_tx sends 1 wei/block here
+
+    let path = format!("bounded-reexec-test-db-{:x}", H256::random());
+    remove_test_db(&path); // clean any stale dir from a previous failed run
+
+    let (genesis, chain_id) = load_funded_genesis(sender);
+    let mut store = Store::new(&path, EngineType::RocksDB).expect("Failed to build RocksDB store");
+    store
+        .add_initial_state(genesis)
+        .await
+        .expect("Failed to add genesis state");
+    let blockchain = Blockchain::default_with_store(store.clone());
+
+    let genesis_header = store.get_block_header(0).unwrap().unwrap();
+    let genesis_state_root = genesis_header.state_root;
+    assert!(
+        store
+            .has_state_root(genesis_state_root)
+            .expect("has_state_root genesis"),
+        "precondition: genesis state must be present after add_initial_state"
+    );
+
+    // Re-execute a single canonical chain through the BOUNDED path, block by block, with
+    // NO forkchoice_update — exactly what regenerate_head_state / run_blocks_pipeline /
+    // import do. Record each block's state root to query the retained window later.
+    let mut parent_header = genesis_header;
+    let mut roots: Vec<H256> = Vec::with_capacity(BLOCKS as usize); // roots[N-1] == block N
+    for nonce in 0..BLOCKS {
+        let tx = transfer_tx(chain_id, nonce, &signer).await;
+        blockchain
+            .add_transaction_to_pool(tx)
+            .await
+            .expect("tx should enter pool");
+
+        let block = build_block(&store, &blockchain, &parent_header).await;
+        blockchain
+            .add_block_pipeline_bounded(block.clone(), None, DB_COMMIT_THRESHOLD)
+            .expect("block should import via the bounded re-exec path");
+        blockchain
+            .remove_block_transactions_from_pool(&block)
+            .expect("remove block txs from pool");
+        roots.push(block.header.state_root);
+        parent_header = block.header;
+    }
+    let head_state_root = parent_header.state_root;
+
+    // The bounded path acks after flush; make sure the worker has drained the backlog.
+    store
+        .wait_for_persistence_idle()
+        .await
+        .expect("wait_for_persistence_idle");
+
+    // No FCU ever ran: the canonical head is still genesis, so the safe-commit cell stayed
+    // zero — the canonical gate would have committed nothing.
+    assert_eq!(
+        store.get_latest_block_number().await.unwrap(),
+        0,
+        "precondition: no forkchoice_update was issued, canonical head stays at genesis"
+    );
+
+    // (a) BOUNDED — the depth gate flushed the backlog forward WITHOUT any FCU, clobbering
+    // the genesis root off disk. This is the discriminator: the buggy canonical gate would
+    // flush nothing here (safe_commit_root == 0), leaving genesis serveable and memory
+    // growing without bound.
+    assert!(
+        !store
+            .has_state_root(genesis_state_root)
+            .expect("has_state_root genesis post-import"),
+        "depth gate must flush the backlog without an FCU (regression: canonical gate \
+         leaves safe_commit_root at zero, nothing commits, and memory grows to OOM)"
+    );
+
+    // (b) WINDOW RETAINED + NO CLOBBER — the recent window stays resident and serves the
+    // correct historical state. A mid-window block sits well inside the retained ~128
+    // layers (mid > BLOCKS - DB_COMMIT_THRESHOLD).
+    let mid = BLOCKS - 40; // block number
+    let mid_root = roots[(mid - 1) as usize];
+    assert!(
+        store
+            .has_state_root(mid_root)
+            .expect("has_state_root mid-window"),
+        "a mid-window layer must stay resident in memory"
+    );
+    assert!(
+        store
+            .has_state_root(head_state_root)
+            .expect("has_state_root head"),
+        "the head layer must stay resident in memory"
+    );
+
+    // The recipient receives exactly 1 wei per block, so its balance at block N's root is
+    // N. Distinct, correct per-root balances prove the window is not clobbered to the
+    // latest/disk root.
+    let mid_balance = store
+        .get_account_state_by_root(mid_root, recipient)
+        .expect("read recipient at mid-window root")
+        .expect("recipient account exists at mid-window root")
+        .balance;
+    assert_eq!(
+        mid_balance,
+        U256::from(mid),
+        "mid-window root must serve that block's balance, not the latest root's"
+    );
+    let head_balance = store
+        .get_account_state_by_root(head_state_root, recipient)
+        .expect("read recipient at head root")
+        .expect("recipient account exists at head root")
+        .balance;
+    assert_eq!(
+        head_balance,
+        U256::from(BLOCKS),
+        "head root must serve the full accrued transfers"
     );
 
     drop(blockchain);
