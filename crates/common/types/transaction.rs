@@ -408,25 +408,15 @@ pub enum EnvelopeTxType {
 impl EnvelopeTxType {
     /// Resolve a typed-transaction **envelope** type byte (EIP-2718) to its type.
     ///
-    /// Single source of truth for which envelope type bytes a transaction decoder accepts.
-    /// **Rejects `0x00`**: per EIP-2718 a legacy transaction is a bare RLP list, never a
-    /// `0x00`-typed envelope, so `0x00 || rlp(..)` is non-canonical and must be rejected
-    /// (matching go-ethereum) rather than silently decoded as legacy. Unassigned type bytes
-    /// are rejected too. (Contrast [`TxType::from_u8`], which keeps mapping `0x00 -> Legacy`
-    /// for contexts where the type is already known valid, e.g. receipts.)
+    /// Reuses [`TxType::from_u8`] for the byte mapping (single source of truth) and
+    /// [`TxType::as_envelope`] to reject non-envelope types. **Rejects `0x00`**: per EIP-2718
+    /// a legacy transaction is a bare RLP list, never a `0x00`-typed envelope, so
+    /// `0x00 || rlp(..)` is non-canonical and must be rejected (matching go-ethereum) rather
+    /// than silently decoded as legacy. Unassigned type bytes are rejected too.
     pub fn from_type_byte(byte: u8) -> Result<Self, RLPDecodeError> {
-        match byte {
-            0x01 => Ok(Self::EIP2930),
-            0x02 => Ok(Self::EIP1559),
-            0x03 => Ok(Self::EIP4844),
-            0x04 => Ok(Self::EIP7702),
-            0x06 => Ok(Self::Frame),
-            0x7d => Ok(Self::FeeToken),
-            0x7e => Ok(Self::Privileged),
-            other => Err(RLPDecodeError::Custom(format!(
-                "Invalid transaction type: {other}"
-            ))),
-        }
+        TxType::from_u8(byte)
+            .and_then(TxType::as_envelope)
+            .ok_or_else(|| RLPDecodeError::Custom(format!("Invalid transaction type: {byte}")))
     }
 }
 
@@ -1686,6 +1676,23 @@ impl TxType {
             0x7d => Some(Self::FeeToken),
             0x7e => Some(Self::Privileged),
             _ => None,
+        }
+    }
+
+    /// The typed-envelope form of this transaction type, or `None` for [`TxType::Legacy`]
+    /// (a bare RLP list, not a `0x{type} || payload` envelope). Exhaustive over `TxType`
+    /// with no wildcard, so adding a new variant won't compile until it's classified here —
+    /// keeping envelope decoding in step with the transaction-type set.
+    pub fn as_envelope(self) -> Option<EnvelopeTxType> {
+        match self {
+            TxType::EIP2930 => Some(EnvelopeTxType::EIP2930),
+            TxType::EIP1559 => Some(EnvelopeTxType::EIP1559),
+            TxType::EIP4844 => Some(EnvelopeTxType::EIP4844),
+            TxType::EIP7702 => Some(EnvelopeTxType::EIP7702),
+            TxType::Frame => Some(EnvelopeTxType::Frame),
+            TxType::FeeToken => Some(EnvelopeTxType::FeeToken),
+            TxType::Privileged => Some(EnvelopeTxType::Privileged),
+            TxType::Legacy => None,
         }
     }
 
