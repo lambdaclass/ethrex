@@ -24,23 +24,8 @@ impl MetricsProcess {
         MetricsProcess
     }
 
-    /// The Process collector gathers standard process metrics (CPU time, RSS, VSZ, FDs, threads, start_time).
-    /// But it only works on Linux. This is an initial implementation.
     pub fn gather_metrics(&self) -> Result<String, MetricsError> {
         let r = Registry::new();
-
-        // Register Prometheus' built-in Linux process metrics
-        #[cfg(target_os = "linux")]
-        {
-            use prometheus::process_collector::ProcessCollector;
-            r.register(Box::new(ProcessCollector::for_self()))
-                .map_err(|e| {
-                    MetricsError::PrometheusErr(format!(
-                        "Failed to register process collector: {}",
-                        e
-                    ))
-                })?;
-        }
 
         if let Some(path) = DATADIR_PATH.get()
             && let Ok(size) = directory_size(path)
