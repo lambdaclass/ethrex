@@ -2651,17 +2651,19 @@ impl Blockchain {
 
     /// Adds multiple consecutive blocks in a batch during full sync.
     ///
-    /// DRAFT (perf/l1-unify-batch-block-import): each block is routed through the same optimized,
-    /// per-block-validated pipeline used for live blocks (`add_block_pipeline_bal`) instead of the
-    /// bespoke "execute all, apply once, validate only the last state root" path. This:
-    ///   - closes the intermediate-state-root gap (every block's state root is now validated),
-    ///   - reuses the pipeline's BAL-driven parallel execution + precompile cache, and its
-    ///     per-block BAL persistence for eth/71 serving, and
-    ///   - deletes the duplicated `execute_block_from_state`, manual-VM/BLOCKHASH-cache, and
-    ///     peer-BAL-persistence code.
-    /// Trade-off under evaluation: it drops the single-trie-materialization amortization (one root
-    /// for the whole batch) for per-block roots. A full-sync A/B benchmark must confirm this is not
-    /// a throughput regression before it lands.
+    /// Each block is routed through the same per-block-validated pipeline used for live blocks
+    /// (`add_block_pipeline_bounded`) instead of the bespoke "execute all, apply once, validate
+    /// only the last state root" path. This:
+    ///
+    /// - closes the intermediate-state-root gap (every block's state root is validated),
+    /// - reuses the pipeline's BAL-driven parallel execution + precompile cache and its per-block
+    ///   BAL persistence for eth/71 serving, and
+    /// - deletes the duplicated `execute_block_from_state`, manual VM/BLOCKHASH cache, and
+    ///   peer-BAL-persistence code.
+    ///
+    /// This trades the single-trie-materialization amortization (one root for the whole batch) for
+    /// per-block roots; trie layers commit by depth (`DB_COMMIT_THRESHOLD`) so the in-memory layer
+    /// backlog stays bounded during bulk sync.
     ///
     /// If an error occurs, returns a tuple containing:
     /// - The error type ([`ChainError`]).
