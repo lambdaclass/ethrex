@@ -526,49 +526,10 @@ fn validate_canonical_chain_config(
         )));
     }
 
-    // TODO: `fork` is not compared. EELS and ethrex number forks differently, and
-    // the spec stores the fork id for canonical-root determinism rather than
-    // verifier cross-checking. The blob-schedule check below is a partial proxy
-    // and misses forks with identical blob parameters.
-
-    // Single-entry check is sound because `MAX_BLOB_SCHEDULES_PER_FORK = 1`.
-    let canonical_schedule = canonical.active_fork.blob_schedule.iter().next();
-    let expected_schedule = expected.get_fork_blob_schedule(block_timestamp);
-    match (canonical_schedule, expected_schedule) {
-        (Some(c), Some(e)) => {
-            if c.target != e.target as u64
-                || c.max != e.max as u64
-                || c.base_fee_update_fraction != e.base_fee_update_fraction
-            {
-                return Err(ExecutionError::Internal(format!(
-                    "blob_schedule mismatch: canonical \
-                     (target={}, max={}, base_fee_update_fraction={}) \
-                     vs chain config (target={}, max={}, base_fee_update_fraction={})",
-                    c.target,
-                    c.max,
-                    c.base_fee_update_fraction,
-                    e.target,
-                    e.max,
-                    e.base_fee_update_fraction
-                )));
-            }
-        }
-        (Some(_), None) => {
-            return Err(ExecutionError::Internal(
-                "blob_schedule mismatch: canonical input includes a schedule but \
-                 chain config has none at the block's timestamp"
-                    .to_string(),
-            ));
-        }
-        (None, Some(_)) => {
-            return Err(ExecutionError::Internal(
-                "blob_schedule mismatch: canonical input omits the schedule but \
-                 chain config has one at the block's timestamp"
-                    .to_string(),
-            ));
-        }
-        (None, None) => {}
-    }
+    // As of glamsterdam-devnet-7, `SszForkConfig` carries only `activation` — the
+    // `fork` id and per-fork `blob_schedule` fields were dropped from the canonical
+    // input, so there is nothing further to cross-check against `expected` here
+    // beyond the chain id and activation already validated above.
 
     Ok(())
 }
