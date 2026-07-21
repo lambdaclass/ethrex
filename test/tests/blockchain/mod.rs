@@ -12,4 +12,5 @@ mod mempool_tests;
 mod payload_tests;
 mod smoke_tests;
 mod storage_sharding_tests;
+mod typed_zero_transaction_tests;
 mod wrong_chain_id_tests;
