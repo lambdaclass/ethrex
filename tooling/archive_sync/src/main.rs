@@ -1,7 +1,3 @@
-lazy_static::lazy_static! {
-    static ref CLIENT: reqwest::Client = reqwest::Client::new();
-}
-
 use clap::{ArgGroup, Parser};
 use ethrex::initializers::open_store;
 use ethrex::utils::{default_datadir, init_datadir};
@@ -23,12 +19,15 @@ use std::collections::HashMap;
 use std::fs::File;
 use std::io::{self, Read, Write};
 use std::path::PathBuf;
+use std::sync::LazyLock;
 use std::time::Instant;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::UnixStream;
 use tokio::task::JoinSet;
 use tracing::{debug, info};
 use tracing_subscriber::FmtSubscriber;
+
+static CLIENT: LazyLock<reqwest::Client> = LazyLock::new(reqwest::Client::new);
 
 /// Max account dumps to ask for in a single request. The current value matches geth's maximum output.
 const MAX_ACCOUNTS: usize = 256;
