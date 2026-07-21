@@ -123,6 +123,7 @@ fn assert_parity(fork: Fork, block_gas_limit: u64, tx: &Transaction) {
         LevmCallTracer::disabled(),
         VMType::L1,
         &NativeCrypto,
+        None,
     )
     .expect("VM::new");
     let intrinsic = vm.get_intrinsic_gas().expect("get_intrinsic_gas");
@@ -251,6 +252,7 @@ fn test_intrinsic_parity_eip7702_auth_list() {
         LevmCallTracer::disabled(),
         VMType::L1,
         &NativeCrypto,
+        None,
     )
     .expect("VM::new");
     let intrinsic = vm.get_intrinsic_gas().expect("get_intrinsic_gas");
@@ -430,6 +432,7 @@ fn run_exec(
         LevmCallTracer::disabled(),
         VMType::L1,
         &NativeCrypto,
+        None,
     )
     .expect("VM::new");
     vm.execute().expect("execute")
@@ -580,6 +583,7 @@ fn test_state_gas_sstore_existing_slot_amsterdam() {
         LevmCallTracer::disabled(),
         VMType::L1,
         &NativeCrypto,
+        None,
     )
     .expect("VM::new");
     let report = vm.execute().expect("execute");
@@ -623,6 +627,7 @@ fn test_state_gas_sstore_existing_slot_osaka_control() {
         LevmCallTracer::disabled(),
         VMType::L1,
         &NativeCrypto,
+        None,
     )
     .expect("VM::new");
     let report = vm.execute().expect("execute");
@@ -682,6 +687,7 @@ fn test_state_gas_create_fresh_address_amsterdam() {
         LevmCallTracer::disabled(),
         VMType::L1,
         &NativeCrypto,
+        None,
     )
     .expect("VM::new");
     let report = vm.execute().expect("execute");
@@ -716,6 +722,7 @@ fn test_state_gas_create_fresh_address_osaka_control() {
         LevmCallTracer::disabled(),
         VMType::L1,
         &NativeCrypto,
+        None,
     )
     .expect("VM::new");
     let report = vm.execute().expect("execute");
@@ -784,6 +791,7 @@ fn test_state_gas_create_to_alive_target_amsterdam() {
         LevmCallTracer::disabled(),
         VMType::L1,
         &NativeCrypto,
+        None,
     )
     .expect("VM::new");
     let report = vm.execute().expect("execute");
@@ -831,6 +839,7 @@ fn test_state_gas_create_to_alive_target_osaka_control() {
         LevmCallTracer::disabled(),
         VMType::L1,
         &NativeCrypto,
+        None,
     )
     .expect("VM::new");
     let report = vm.execute().expect("execute");
@@ -879,6 +888,7 @@ fn test_state_gas_create_constructor_reverts_amsterdam() {
         LevmCallTracer::disabled(),
         VMType::L1,
         &NativeCrypto,
+        None,
     )
     .expect("VM::new");
     let report = vm.execute().expect("execute");
@@ -912,6 +922,7 @@ fn test_state_gas_create_constructor_reverts_osaka_control() {
         LevmCallTracer::disabled(),
         VMType::L1,
         &NativeCrypto,
+        None,
     )
     .expect("VM::new");
     let report = vm.execute().expect("execute");
@@ -1277,6 +1288,7 @@ fn test_state_gas_create_then_selfdestruct_to_self_amsterdam() {
         LevmCallTracer::disabled(),
         VMType::L1,
         &NativeCrypto,
+        None,
     )
     .expect("VM::new");
     let report = vm.execute().expect("execute");
@@ -1327,6 +1339,7 @@ fn test_state_gas_create_then_selfdestruct_to_self_osaka_control() {
         LevmCallTracer::disabled(),
         VMType::L1,
         &NativeCrypto,
+        None,
     )
     .expect("VM::new");
     let report = vm.execute().expect("execute");
@@ -1432,6 +1445,7 @@ fn test_state_gas_eip7702_invalid_auth_refilled_amsterdam() {
         LevmCallTracer::disabled(),
         VMType::L1,
         &NativeCrypto,
+        None,
     )
     .expect("VM::new");
 
@@ -1493,6 +1507,7 @@ fn test_state_gas_eip7702_invalid_auth_refilled_osaka_control() {
         LevmCallTracer::disabled(),
         VMType::L1,
         &NativeCrypto,
+        None,
     )
     .expect("VM::new");
     let report = vm.execute().expect("execute");
@@ -1544,6 +1559,7 @@ fn test_state_gas_gas_opcode_excludes_reservoir_amsterdam() {
         LevmCallTracer::disabled(),
         VMType::L1,
         &NativeCrypto,
+        None,
     )
     .expect("VM::new");
     let report = vm.execute().expect("execute");
@@ -1581,6 +1597,7 @@ fn test_state_gas_gas_opcode_excludes_reservoir_osaka_control() {
         LevmCallTracer::disabled(),
         VMType::L1,
         &NativeCrypto,
+        None,
     )
     .expect("VM::new");
     let report = vm.execute().expect("execute");
@@ -1743,6 +1760,7 @@ fn test_auth_new_account_over_budget_full_gas_revert_amsterdam() {
         LevmCallTracer::disabled(),
         VMType::L1,
         &NativeCrypto,
+        None,
     )
     .expect("VM::new");
     let report = vm
@@ -1838,6 +1856,7 @@ fn test_self_sponsored_auth_region_oog_rolls_back_sender_amsterdam() {
         LevmCallTracer::disabled(),
         VMType::L1,
         &NativeCrypto,
+        None,
     )
     .expect("VM::new");
     let report = vm
@@ -1917,6 +1936,7 @@ fn test_unified_region_rollback_delegation_resolve_over_budget_amsterdam() {
         LevmCallTracer::disabled(),
         VMType::L1,
         &NativeCrypto,
+        None,
     )
     .expect("VM::new");
     let report = vm
@@ -1978,6 +1998,7 @@ fn run_set_code(
         LevmCallTracer::disabled(),
         VMType::L1,
         &NativeCrypto,
+        None,
     )
     .expect("VM::new");
     vm.execute().expect("execute")
@@ -2085,6 +2106,7 @@ fn test_set_delegation_self_sponsored_no_account_write_amsterdam() {
             LevmCallTracer::disabled(),
             VMType::L1,
             &NativeCrypto,
+            None,
         )
         .expect("VM::new");
         vm.execute().expect("execute")

@@ -172,6 +172,7 @@ fn run_frame_tx(
             LevmCallTracer::disabled(),
             VMType::L1,
             &NativeCrypto,
+            None,
         )
         .expect("VM::new should succeed for a frame tx");
         vm.execute()
@@ -213,6 +214,7 @@ fn run_frame_tx_with_fees(
             LevmCallTracer::disabled(),
             VMType::L1,
             &NativeCrypto,
+            None,
         )
         .expect("VM::new should succeed for a frame tx");
         vm.execute()
@@ -1140,6 +1142,7 @@ fn frame_tx_below_base_blob_fee_is_rejected() {
         LevmCallTracer::disabled(),
         VMType::L1,
         &NativeCrypto,
+        None,
     )
     .expect("VM::new should succeed for a frame tx");
     let result = vm.execute();
@@ -2083,6 +2086,7 @@ mod validation_observer_tests {
             LevmCallTracer::disabled(),
             VMType::L1,
             &ethrex_crypto::NativeCrypto,
+            None,
         )
         .unwrap();
         let result = vm
@@ -2148,6 +2152,7 @@ mod validation_observer_tests {
             LevmCallTracer::disabled(),
             VMType::L1,
             &ethrex_crypto::NativeCrypto,
+            None,
         )
         .unwrap();
         let _ = vm.run_frame_validation_prefix(&[0], None, None).unwrap();
@@ -2285,6 +2290,7 @@ mod validation_observer_tests {
             LevmCallTracer::disabled(),
             VMType::L1,
             &ethrex_crypto::NativeCrypto,
+            None,
         )
         .unwrap();
         let result = vm.run_frame_validation_prefix(&[0], Some(0), None).unwrap();
@@ -2319,6 +2325,7 @@ mod validation_observer_tests {
             LevmCallTracer::disabled(),
             VMType::L1,
             &ethrex_crypto::NativeCrypto,
+            None,
         )
         .unwrap();
         vm.validation_observer = ValidationObserver::new(sender, None, frame_tx_expiry_verifier());
@@ -2349,6 +2356,7 @@ mod validation_observer_tests {
             LevmCallTracer::disabled(),
             VMType::L1,
             &ethrex_crypto::NativeCrypto,
+            None,
         )
         .unwrap();
         vm.validation_observer = ValidationObserver::new(sender, None, frame_tx_expiry_verifier());

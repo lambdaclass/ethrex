@@ -77,8 +77,16 @@ pub async fn run_test(test: &Test, test_case: &TestCase) -> Result<(), RunnerErr
 
     let (mut db, initial_block_hash, store, _genesis) =
         load_initial_state(test, &test_case.fork, false).await;
-    let mut vm = VM::new(env.clone(), &mut db, &tx, tracer, VMType::L1, &NativeCrypto)
-        .map_err(RunnerError::VMError)?;
+    let mut vm = VM::new(
+        env.clone(),
+        &mut db,
+        &tx,
+        tracer,
+        VMType::L1,
+        &NativeCrypto,
+        None,
+    )
+    .map_err(RunnerError::VMError)?;
     let execution_result = vm.execute();
 
     let (receipts, gas_used) = match execution_result {
@@ -176,6 +184,7 @@ pub async fn run_test(test: &Test, test_case: &TestCase) -> Result<(), RunnerErr
         requests_hash,
         block_access_list_hash: None,
         slot_number: None,
+        burned_fees: None,
     };
     let block = Block::new(header, body);
 

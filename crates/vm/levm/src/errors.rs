@@ -215,6 +215,14 @@ pub enum PrecompileError {
     ModExpModulusTooLarge,
     #[error("Coordinate Exceeds Field Modulus")]
     CoordinateExceedsFieldModulus,
+    /// EXECUTE precompile: the L1-submitted block failed stateless validation.
+    /// Attacker-controllable: tx continues, forwarded gas is consumed, tx is includable.
+    #[error("EXECUTE: stateless validation failed")]
+    ExecuteValidationFailed,
+    /// EXECUTE precompile: the calldata is malformed or violates L2 constraints.
+    /// Attacker-controllable input: treat as CALL-level failure, not an internal invariant.
+    #[error("EXECUTE: invalid input for native-rollup execution")]
+    ExecuteInvalidInput,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error, Serialize, Deserialize)]

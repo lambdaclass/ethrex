@@ -102,10 +102,21 @@ jobs:
       - name: Run cargo check
         run: cargo check --workspace --features l2,l2-sql
 
+      - name: Run cargo check (eip-8025 SSZ guest path)
+        run: cargo check --workspace --features eip-8025
+
       - name: Run cargo clippy
         run: |
           cargo clippy --workspace --features l2,l2-sql -- -D warnings
           make lint
+
+      - name: Run native rollup unit tests
+        run: cargo test -p ethrex-l2 --lib native_rollup
+
+      - name: Run native rollup integration tests (merkle + ssz)
+        run: |
+          cargo test -p ethrex-test --features l2 --test ethrex_tests l2::native_rollup_l1_messages_root
+          cargo test -p ethrex-test --features l2 --test ethrex_tests l2::ssz_round_trip
 
       - name: Run cargo fmt
         run: |

@@ -37,11 +37,11 @@ ethereum-types.workspace = true
 rkyv.workspace = true
 rand.workspace = true
 secp256k1.workspace = true
+k256.workspace = true
 proptest = "1.0.0"
 cita_trie = "4.0.0"
 hasher = "0.1.4"
 p256 = { version = "0.13.2", default-features = false, features = ["ecdsa", "arithmetic"] }
-k256.workspace = true
 tokio = { workspace = true, features = ["full", "test-util"] }
 aes-gcm = "0.10.3"
 lazy_static.workspace = true
@@ -59,6 +59,9 @@ ethrex-l2.workspace = true
 ethrex-l2-rpc.workspace = true
 reqwest.workspace = true
 tokio-util.workspace = true
+ethrex-guest-program = { workspace = true, default-features = false }
+libssz.workspace = true
+ethrex-crypto.workspace = true
 
 [[test]]
 name = "ethrex_tests"

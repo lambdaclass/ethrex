@@ -406,6 +406,7 @@ fn run_sstore(fork: Fork, body: Vec<u8>, body_pushes: u64, slot_original: U256) 
             LevmCallTracer::disabled(),
             VMType::L1,
             &NativeCrypto,
+            None,
         )
         .expect("VM::new (probe)");
         let report = vm.execute().expect("probe execute");
@@ -426,6 +427,7 @@ fn run_sstore(fork: Fork, body: Vec<u8>, body_pushes: u64, slot_original: U256) 
         LevmCallTracer::disabled(),
         VMType::L1,
         &NativeCrypto,
+        None,
     )
     .expect("VM::new");
     let report = vm.execute().expect("execute");
@@ -701,6 +703,7 @@ fn test_sstore_cold_access_boundary_amsterdam_no_bal_read_on_oog() {
             LevmCallTracer::disabled(),
             VMType::L1,
             &NativeCrypto,
+            None,
         )
         .expect("VM::new (intrinsic probe)");
         let report = vm.execute().expect("probe execute");
@@ -747,6 +750,7 @@ fn test_sstore_cold_access_boundary_amsterdam_no_bal_read_on_oog() {
         LevmCallTracer::disabled(),
         VMType::L1,
         &NativeCrypto,
+        None,
     )
     .expect("VM::new");
     let report = vm.execute().expect("execute");
@@ -978,6 +982,7 @@ fn run_call(
         LevmCallTracer::disabled(),
         VMType::L1,
         &NativeCrypto,
+        None,
     )
     .expect("VM::new");
     vm.execute().expect("execute")
@@ -1040,6 +1045,7 @@ fn test_call_with_value_forwards_stipend_full_vm() {
             LevmCallTracer::disabled(),
             VMType::L1,
             &NativeCrypto,
+            None,
         )
         .expect("VM::new");
         let report = vm.execute().expect("execute");

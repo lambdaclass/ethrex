@@ -162,6 +162,7 @@ fn main() {
         LevmCallTracer::disabled(),
         VMType::L1,
         &NativeCrypto,
+        None,
     )
     .expect("Failed to initialize VM");
 

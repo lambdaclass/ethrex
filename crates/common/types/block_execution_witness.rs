@@ -6,12 +6,13 @@ use rustc_hash::FxHashMap;
 use crate::rkyv_utils::H256Wrapper;
 use crate::serde_utils;
 use crate::types::{Block, Code, CodeMetadata};
+use crate::utils::keccak;
 use crate::{
     constants::EMPTY_KECCAK_HASH,
     types::{AccountState, AccountUpdate, BlockHeader, ChainConfig},
 };
 use ethereum_types::{Address, H256, U256};
-use ethrex_crypto::Crypto;
+use ethrex_crypto::{Crypto, NativeCrypto};
 use ethrex_rlp::error::RLPDecodeError;
 use ethrex_rlp::structs::{Decoder, Encoder};
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
@@ -276,6 +277,110 @@ impl RpcExecutionWitness {
             storage_trie_roots,
         })
     }
+}
+
+impl ExecutionWitness {
+    /// Build an `ExecutionWitness` from an SSZ stateless input. Used by the
+    /// stateless validator (EXECUTE precompile and zkVM guest program).
+    ///
+    /// `first_block_number` is taken from the payload's block number, and
+    /// `initial_state_root` is recovered by finding the parent header
+    /// (`number == first_block_number - 1`) among the witness headers — same
+    /// convention as `RpcExecutionWitness::into_execution_witness`.
+    ///
+    /// The `ChainConfig` is derived from the SSZ `active_fork` via
+    /// `ssz_chain_config_to_internal` — every fork up to the active one is
+    /// activated at timestamp 0 (native-L2 genesis activation).
+    pub fn from_ssz(
+        input: &crate::types::stateless_ssz::SszStatelessInput,
+    ) -> Result<Self, GuestProgramStateError> {
+        let first_block_number = input.new_payload_request.execution_payload.block_number;
+
+        let mut initial_state_root = None;
+        for h in input.witness.headers.iter() {
+            let header_bytes: Vec<u8> = h.iter().copied().collect();
+            let header = BlockHeader::decode(&header_bytes)?;
+            if header.number == first_block_number.saturating_sub(1) {
+                initial_state_root = Some(header.state_root);
+                break;
+            }
+        }
+        let initial_state_root = initial_state_root.ok_or_else(|| {
+            GuestProgramStateError::Custom(format!(
+                "header for block {} not found",
+                first_block_number.saturating_sub(1)
+            ))
+        })?;
+
+        let (state_trie_root, storage_trie_roots) =
+            rebuild_state_and_storage_tries(input.witness.state_as_vecs(), initial_state_root)?;
+
+        Ok(Self {
+            codes: input.witness.codes_as_vecs(),
+            block_headers_bytes: input.witness.headers_as_vecs(),
+            first_block_number,
+            chain_config: ssz_chain_config_to_internal(&input.chain_config)?,
+            state_trie_root,
+            storage_trie_roots,
+        })
+    }
+}
+
+/// Rebuild the embedded state trie and per-account storage tries from a flat
+/// list of trie-node preimages (same format as `debug_executionWitness.state`
+/// and SSZ `ExecutionWitness.state`).
+fn rebuild_state_and_storage_tries<I, B>(
+    state_bytes: I,
+    initial_state_root: H256,
+) -> Result<(Option<Node>, BTreeMap<H256, Node>), GuestProgramStateError>
+where
+    I: IntoIterator<Item = B>,
+    B: AsRef<[u8]>,
+{
+    let nodes: BTreeMap<H256, Node> = state_bytes
+        .into_iter()
+        .filter_map(|b| {
+            let bytes = b.as_ref();
+            // Some implementations of debug_executionWitness emit a `Null`
+            // node (single byte 0x80) which would fail RLP decode here.
+            if bytes == [0x80] {
+                return None;
+            }
+            let hash = keccak(bytes);
+            Some(Node::decode(bytes).map(|node| (hash, node)))
+        })
+        .collect::<Result<_, RLPDecodeError>>()?;
+
+    // Get state trie root with the rest of the trie embedded into it.
+    let state_trie_root = if let NodeRef::Node(state_trie_root, _) =
+        Trie::get_embedded_root(&nodes, initial_state_root)?
+    {
+        Some((*state_trie_root).clone())
+    } else {
+        None
+    };
+
+    // Walk the state trie to discover accounts and their storage roots,
+    // instead of relying on the keys field which is being removed from the
+    // RPC spec.
+    let mut storage_trie_roots = BTreeMap::new();
+    if let Some(root) = &state_trie_root {
+        let accounts = collect_accounts_from_embedded_trie(root, &nodes, &NativeCrypto);
+        for (hashed_address, storage_root_hash) in accounts {
+            if storage_root_hash == *EMPTY_TRIE_HASH || !nodes.contains_key(&storage_root_hash) {
+                continue;
+            }
+            let node = Trie::get_embedded_root(&nodes, storage_root_hash)?;
+            let NodeRef::Node(node, _) = node else {
+                return Err(GuestProgramStateError::Custom(
+                    "execution witness does not contain non-empty storage trie".to_string(),
+                ));
+            };
+            storage_trie_roots.insert(hashed_address, (*node).clone());
+        }
+    }
+
+    Ok((state_trie_root, storage_trie_roots))
 }
 
 /// RLP-decode the raw header byte slices into a `Vec<BlockHeader>`.
@@ -805,6 +910,92 @@ impl GuestProgramState {
     }
 }
 
+/// Walk an embedded state trie and collect `(hashed_address, storage_root)` pairs
+/// from leaf nodes. Resolves `NodeRef::Hash` references using the flat `nodes` map.
+///
+/// BTreeMap-based counterpart of the `FxHashMap`-based `collect_accounts_from_trie`
+/// used by `into_execution_witness`; this one backs the SSZ `from_ssz` path.
+pub fn collect_accounts_from_embedded_trie(
+    root: &Node,
+    nodes: &BTreeMap<H256, Node>,
+    crypto: &dyn Crypto,
+) -> Vec<(H256, H256)> {
+    let mut accounts = Vec::new();
+    collect_accounts_from_node(root, Nibbles::default(), &mut accounts, nodes, crypto);
+    accounts
+}
+
+fn collect_accounts_from_node(
+    node: &Node,
+    path: ethrex_trie::Nibbles,
+    accounts: &mut Vec<(H256, H256)>,
+    nodes: &BTreeMap<H256, Node>,
+    crypto: &dyn Crypto,
+) {
+    use ethrex_trie::NodeRef;
+
+    match node {
+        Node::Branch(branch) => {
+            for (i, child) in branch.choices.iter().enumerate() {
+                let child_node: Option<&Node> = match child {
+                    NodeRef::Node(n, _) => Some(n),
+                    NodeRef::Hash(hash) if hash.is_valid() => nodes.get(&hash.finalize(crypto)),
+                    _ => None,
+                };
+                if let Some(child_node) = child_node {
+                    collect_accounts_from_node(
+                        child_node,
+                        path.append_new(i as u8),
+                        accounts,
+                        nodes,
+                        crypto,
+                    );
+                }
+            }
+        }
+        Node::Extension(ext) => {
+            let child_node: Option<&Node> = match &ext.child {
+                NodeRef::Node(n, _) => Some(n),
+                NodeRef::Hash(hash) if hash.is_valid() => nodes.get(&hash.finalize(crypto)),
+                _ => None,
+            };
+            if let Some(child_node) = child_node {
+                collect_accounts_from_node(
+                    child_node,
+                    path.concat(&ext.prefix),
+                    accounts,
+                    nodes,
+                    crypto,
+                );
+            }
+        }
+        Node::Leaf(leaf) => {
+            let full_path = path.concat(&leaf.partial);
+            let path_bytes = full_path.to_bytes();
+            if path_bytes.len() == 32 {
+                let hashed_address = H256::from_slice(&path_bytes);
+                match AccountState::decode(&leaf.value) {
+                    Ok(account_state) => {
+                        accounts.push((hashed_address, account_state.storage_root));
+                    }
+                    Err(e) => {
+                        tracing::debug!(
+                            ?hashed_address,
+                            error = %e,
+                            "Skipping leaf with un-decodable account state"
+                        );
+                    }
+                }
+            } else {
+                tracing::debug!(
+                    path_len = path_bytes.len(),
+                    "Skipping leaf with unexpected path length (expected 32)"
+                );
+            }
+        }
+    }
+}
+
 fn hash_address(address: &Address, crypto: &dyn Crypto) -> H256 {
     H256(crypto.keccak256(&address.to_fixed_bytes()))
 }
@@ -826,4 +1017,171 @@ fn set_hash_or_validate(header: &BlockHeader, hash: H256) -> Result<(), GuestPro
         )));
     }
     Ok(())
+}
+
+/// Map an ethrex `Fork` to its spec `PROTOCOL_FORKS` index (execution-specs 85fc20ca).
+fn fork_to_spec_index(fork: crate::types::genesis::Fork) -> Result<u64, GuestProgramStateError> {
+    use crate::types::genesis::Fork;
+    Ok(match fork {
+        Fork::Cancun => 16,
+        Fork::Prague => 17,
+        Fork::Osaka => 18,
+        Fork::Amsterdam => 24,
+        other => {
+            return Err(GuestProgramStateError::Custom(format!(
+                "fork {other:?} has no stateless spec fork index (native rollups run Cancun+)"
+            )));
+        }
+    })
+}
+
+/// Encode an ethrex `ChainConfig` into the SSZ `SszChainConfig` (with `active_fork`).
+/// The active fork is resolved at `block_timestamp`; the native L2 activates its
+/// forks at genesis, so `activation.timestamp = [0]`.
+pub fn chain_config_to_ssz(
+    cfg: &ChainConfig,
+    block_timestamp: u64,
+) -> Result<crate::types::stateless_ssz::SszChainConfig, GuestProgramStateError> {
+    use crate::types::stateless_ssz::{
+        SszBlobSchedule, SszChainConfig, SszForkActivation, SszForkConfig, SszOptionalBlobSchedule,
+        SszOptionalForkActivationValue,
+    };
+
+    let fork = cfg.get_fork(block_timestamp);
+    let fork_index = fork_to_spec_index(fork)?;
+
+    let mut timestamp: SszOptionalForkActivationValue = SszOptionalForkActivationValue::new();
+    timestamp
+        .push(0u64)
+        .map_err(|e| GuestProgramStateError::Custom(format!("activation ts push: {e:?}")))?;
+
+    let mut blob_schedule: SszOptionalBlobSchedule = SszOptionalBlobSchedule::new();
+    if let Some(bs) = cfg.get_fork_blob_schedule(block_timestamp) {
+        blob_schedule
+            .push(SszBlobSchedule {
+                target: bs.target as u64,
+                max: bs.max as u64,
+                base_fee_update_fraction: bs.base_fee_update_fraction,
+            })
+            .map_err(|e| GuestProgramStateError::Custom(format!("blob_schedule push: {e:?}")))?;
+    }
+
+    Ok(SszChainConfig {
+        chain_id: cfg.chain_id,
+        active_fork: SszForkConfig {
+            fork: fork_index,
+            activation: SszForkActivation {
+                block_number: SszOptionalForkActivationValue::new(),
+                timestamp,
+            },
+            blob_schedule,
+        },
+    })
+}
+
+/// Decode an `SszChainConfig` into an ethrex `ChainConfig`. Activates every fork
+/// up to and including the SSZ `active_fork` at timestamp 0 (native-L2 genesis
+/// activation). `blob_schedule` is left `Default` — L2 blocks carry no blobs, so
+/// it does not affect execution.
+pub fn ssz_chain_config_to_internal(
+    scc: &crate::types::stateless_ssz::SszChainConfig,
+) -> Result<ChainConfig, GuestProgramStateError> {
+    use crate::types::genesis::Fork;
+    let fork = match scc.active_fork.fork {
+        16 => Fork::Cancun,
+        17 => Fork::Prague,
+        18 => Fork::Osaka,
+        24 => Fork::Amsterdam,
+        other => {
+            return Err(GuestProgramStateError::Custom(format!(
+                "unknown/unsupported spec fork index {other}"
+            )));
+        }
+    };
+    Ok(ChainConfig {
+        chain_id: scc.chain_id,
+        homestead_block: Some(0),
+        eip150_block: Some(0),
+        eip155_block: Some(0),
+        eip158_block: Some(0),
+        byzantium_block: Some(0),
+        constantinople_block: Some(0),
+        petersburg_block: Some(0),
+        istanbul_block: Some(0),
+        berlin_block: Some(0),
+        london_block: Some(0),
+        terminal_total_difficulty: Some(0),
+        terminal_total_difficulty_passed: true,
+        shanghai_time: (fork >= Fork::Shanghai).then_some(0),
+        cancun_time: (fork >= Fork::Cancun).then_some(0),
+        prague_time: (fork >= Fork::Prague).then_some(0),
+        osaka_time: (fork >= Fork::Osaka).then_some(0),
+        amsterdam_time: (fork >= Fork::Amsterdam).then_some(0),
+        ..Default::default()
+    })
+}
+
+#[cfg(test)]
+mod active_fork_tests {
+    use super::*;
+    use crate::types::genesis::{ChainConfig, Fork};
+
+    fn prague_l2_config() -> ChainConfig {
+        ChainConfig {
+            chain_id: 1,
+            homestead_block: Some(0),
+            eip150_block: Some(0),
+            eip155_block: Some(0),
+            eip158_block: Some(0),
+            byzantium_block: Some(0),
+            constantinople_block: Some(0),
+            petersburg_block: Some(0),
+            istanbul_block: Some(0),
+            berlin_block: Some(0),
+            london_block: Some(0),
+            terminal_total_difficulty: Some(0),
+            terminal_total_difficulty_passed: true,
+            shanghai_time: Some(0),
+            cancun_time: Some(0),
+            prague_time: Some(0),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn active_fork_round_trips_prague() {
+        let cfg = prague_l2_config();
+        let ssz = chain_config_to_ssz(&cfg, 0).expect("encode");
+        // Encodes the spec Prague index (17) at genesis activation.
+        assert_eq!(ssz.active_fork.fork, 17);
+        assert_eq!(ssz.chain_id, 1);
+        let back = ssz_chain_config_to_internal(&ssz).expect("decode");
+        // Fork rules reproduce: Prague active, Osaka/Amsterdam inactive.
+        assert_eq!(back.get_fork(0), Fork::Prague);
+        assert_eq!(back.chain_id, 1);
+        assert!(back.osaka_time.is_none());
+        assert!(back.amsterdam_time.is_none());
+    }
+
+    #[test]
+    fn active_fork_round_trips_cancun() {
+        let mut cfg = prague_l2_config();
+        cfg.prague_time = None; // Cancun-only L2
+        let ssz = chain_config_to_ssz(&cfg, 0).expect("encode");
+        assert_eq!(ssz.active_fork.fork, 16);
+        let back = ssz_chain_config_to_internal(&ssz).expect("decode");
+        assert_eq!(back.get_fork(0), Fork::Cancun);
+        assert!(back.prague_time.is_none());
+    }
+
+    #[test]
+    fn active_fork_round_trips_amsterdam() {
+        let mut cfg = prague_l2_config();
+        cfg.osaka_time = Some(0);
+        cfg.amsterdam_time = Some(0);
+        let ssz = chain_config_to_ssz(&cfg, 0).expect("encode");
+        assert_eq!(ssz.active_fork.fork, 24); // spec Amsterdam index
+        let back = ssz_chain_config_to_internal(&ssz).expect("decode");
+        assert_eq!(back.get_fork(0), Fork::Amsterdam);
+    }
 }

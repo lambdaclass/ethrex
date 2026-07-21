@@ -111,5 +111,6 @@ fn init_vm<'a>(
         LevmCallTracer::disabled(),
         VMType::L1,
         &NativeCrypto,
+        None,
     )
 }

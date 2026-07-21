@@ -23,6 +23,8 @@ strum = { version = "0.27.1", features = ["derive"] }
 rustc-hash.workspace = true
 rayon = { workspace = true, optional = true }
 
+libssz = { workspace = true }
+
 [dev-dependencies]
 # Used by EIP-8141 frame-signature tests to mint real secp256k1/P-256 signatures.
 k256.workspace = true

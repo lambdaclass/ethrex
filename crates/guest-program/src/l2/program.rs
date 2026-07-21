@@ -36,6 +36,8 @@ pub fn execution_program(
         last_block_hash,
         non_privileged_count,
         chain_id,
+        burned_fees: _,
+        bals: _,
     } = execute_blocks(
         &blocks,
         execution_witness,

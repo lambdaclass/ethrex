@@ -155,6 +155,13 @@ pub struct BlockHeader {
         default = "Option::default"
     )]
     pub slot_number: Option<u64>,
+    // LStar fork fields (EIP-8079)
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        with = "crate::serde_utils::u64::hex_str_opt",
+        default = "Option::default"
+    )]
+    pub burned_fees: Option<u64>,
 }
 
 // Needs a explicit impl due to the hash OnceLock.
@@ -185,6 +192,7 @@ impl PartialEq for BlockHeader {
             requests_hash,
             block_access_list_hash,
             slot_number,
+            burned_fees,
         } = self;
 
         parent_hash == &other.parent_hash
@@ -208,6 +216,7 @@ impl PartialEq for BlockHeader {
             && requests_hash == &other.requests_hash
             && block_access_list_hash == &other.block_access_list_hash
             && slot_number == &other.slot_number
+            && burned_fees == &other.burned_fees
             && logs_bloom == &other.logs_bloom
             && extra_data == &other.extra_data
     }
@@ -239,6 +248,7 @@ impl RLPEncode for BlockHeader {
             .encode_optional_field(&self.requests_hash)
             .encode_optional_field(&self.block_access_list_hash)
             .encode_optional_field(&self.slot_number)
+            .encode_optional_field(&self.burned_fees)
             .finish();
     }
 }
@@ -270,6 +280,7 @@ impl RLPDecode for BlockHeader {
         let (requests_hash, decoder) = decoder.decode_optional_field();
         let (block_access_list_hash, decoder) = decoder.decode_optional_field();
         let (slot_number, decoder) = decoder.decode_optional_field();
+        let (burned_fees, decoder) = decoder.decode_optional_field();
 
         Ok((
             BlockHeader {
@@ -297,6 +308,7 @@ impl RLPDecode for BlockHeader {
                 requests_hash,
                 block_access_list_hash,
                 slot_number,
+                burned_fees,
             },
             decoder.finish()?,
         ))
@@ -432,6 +444,19 @@ impl BlockHeader {
         *self
             .hash
             .get_or_init(|| self.compute_block_hash(&NativeCrypto))
+    }
+
+    /// Returns `self` with `burned_fees` set and the hash cache cleared.
+    ///
+    /// After `execute_blocks`, the header's `OnceCell` may already hold a stale
+    /// hash that was computed before `burned_fees` was known (e.g. during
+    /// `initialize_block_header_hashes`).  Taking ownership and clearing the
+    /// cache guarantees that the next call to `hash()` reflects the injected
+    /// value — without any extra `once_cell` dependency at the call site.
+    pub fn into_with_burned_fees(mut self, burned_fees: Option<u64>) -> Self {
+        self.burned_fees = burned_fees;
+        let _ = self.hash.take(); // clear stale cached hash
+        self
     }
 }
 
@@ -1164,5 +1189,128 @@ mod test {
         );
         // With u64 this overflows
         assert!(thing.is_ok());
+    }
+
+    #[test]
+    fn burned_fees_header_roundtrip_and_hash() {
+        // For a correct round-trip, all preceding optional fields must be Some so the
+        // positional/trailing RLP decoder can attribute burned_fees correctly.
+        // This mirrors a real LStar-era block header.
+        let h = BlockHeader {
+            base_fee_per_gas: Some(7),
+            withdrawals_root: Some(H256::zero()),
+            blob_gas_used: Some(0),
+            excess_blob_gas: Some(0),
+            parent_beacon_block_root: Some(H256::zero()),
+            requests_hash: Some(H256::zero()),
+            block_access_list_hash: Some(H256::zero()),
+            slot_number: Some(1),
+            burned_fees: Some(12345),
+            ..Default::default()
+        };
+        let encoded = h.encode_to_vec();
+        let decoded = BlockHeader::decode(&encoded).expect("decode");
+        assert_eq!(decoded.burned_fees, Some(12345));
+        // None round-trips as None (pre-LStar).
+        let h_none = BlockHeader {
+            burned_fees: None,
+            ..Default::default()
+        };
+        assert_eq!(
+            BlockHeader::decode(&h_none.encode_to_vec())
+                .unwrap()
+                .burned_fees,
+            None
+        );
+        // burned_fees participates in the block hash: same base state, only burned_fees differs.
+        let h_with = BlockHeader {
+            base_fee_per_gas: Some(7),
+            withdrawals_root: Some(H256::zero()),
+            blob_gas_used: Some(0),
+            excess_blob_gas: Some(0),
+            parent_beacon_block_root: Some(H256::zero()),
+            requests_hash: Some(H256::zero()),
+            block_access_list_hash: Some(H256::zero()),
+            slot_number: Some(1),
+            burned_fees: Some(12345),
+            ..Default::default()
+        };
+        let h_without = BlockHeader {
+            base_fee_per_gas: Some(7),
+            withdrawals_root: Some(H256::zero()),
+            blob_gas_used: Some(0),
+            excess_blob_gas: Some(0),
+            parent_beacon_block_root: Some(H256::zero()),
+            requests_hash: Some(H256::zero()),
+            block_access_list_hash: Some(H256::zero()),
+            slot_number: Some(1),
+            burned_fees: None,
+            ..Default::default()
+        };
+        assert_ne!(h_with.hash(), h_without.hash());
+    }
+
+    /// Verify that `into_with_burned_fees` clears the OnceCell so the resulting
+    /// hash reflects the injected value and not any previously cached hash.
+    ///
+    /// This is the TDD anchor for the Task-4 verify-flow reorder: after
+    /// `execute_blocks` caches the block hash (burned_fees=None), we must be
+    /// able to inject the recomputed `burned_fees` and still get the correct hash.
+    #[test]
+    fn into_with_burned_fees_clears_stale_cache() {
+        use crate::NativeCrypto;
+
+        // Build a default header (burned_fees = None).
+        let header_none = BlockHeader::default();
+
+        // Force the hash cache to populate with burned_fees=None value.
+        let hash_stale = header_none.hash();
+
+        // Build a reference header with burned_fees=Some(42) from scratch (fresh OnceCell).
+        let header_some_fresh = BlockHeader {
+            burned_fees: Some(42),
+            ..BlockHeader::default()
+        };
+        let hash_expected = header_some_fresh.compute_block_hash(&NativeCrypto);
+
+        // The two hashes must differ — burned_fees is RLP-encoded in the header.
+        assert_ne!(
+            hash_stale, hash_expected,
+            "burned_fees=None and burned_fees=Some(42) must produce different block hashes"
+        );
+
+        // Now inject Some(42) via into_with_burned_fees, starting from the stale-cached header.
+        let fresh_header = header_none.into_with_burned_fees(Some(42));
+        let hash_fresh = fresh_header.hash();
+
+        // Must match the reference hash, NOT the stale one.
+        assert_eq!(
+            hash_fresh, hash_expected,
+            "into_with_burned_fees must yield a hash identical to building a fresh header with the same burned_fees"
+        );
+        assert_ne!(
+            hash_fresh, hash_stale,
+            "OnceCell must have been cleared: fresh hash must differ from the stale cached hash"
+        );
+    }
+
+    /// Verify the Amsterdam (pre-LStar) no-op: injecting None into a header
+    /// whose hash was cached with burned_fees=None yields the same hash.
+    ///
+    /// This is the primary correctness requirement for Task 4: the reordered
+    /// verify-flow must not regress the current Amsterdam path.
+    #[test]
+    fn into_with_burned_fees_none_is_idempotent() {
+        let header = BlockHeader::default();
+        let hash_before = header.hash(); // populate cache with burned_fees=None
+
+        // Inject None (Amsterdam: burned_fees is None both before and after execution).
+        let header_after = header.into_with_burned_fees(None);
+        let hash_after = header_after.hash();
+
+        assert_eq!(
+            hash_before, hash_after,
+            "injecting None must not change the block hash (Amsterdam no-op)"
+        );
     }
 }

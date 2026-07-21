@@ -26,7 +26,7 @@ use ethrex_common::{
 
 use ethrex_crypto::NativeCrypto;
 use ethrex_crypto::keccak::Keccak256;
-use ethrex_vm::{Evm, EvmError, check_2d_gas_allowance};
+use ethrex_vm::{Evm, EvmError, check_2d_gas_allowance, compute_burned_fees};
 
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_storage::{Store, error::StoreError};
@@ -993,6 +993,39 @@ impl Blockchain {
             .map(|bal| bal.compute_hash(&NativeCrypto));
         context.block_access_list = block_access_list;
 
+        // EIP-8079 (LStar+): compute and set burned_fees in block header.
+        // Uses the same helper and identical inputs as the verification path
+        // (backends/mod.rs compute_burned_fees) so production == verification.
+        if context
+            .chain_config()
+            .is_lstar_activated(context.payload.header.timestamp)
+        {
+            let base_fee_per_gas = context.payload.header.base_fee_per_gas.unwrap_or(0);
+            // Post-refund Σ gas_spent: last receipt's cumulative_gas_used (per EIP-8079).
+            // Do NOT use header.gas_used — that is pre-refund for Amsterdam+ per EIP-7778.
+            let gas_spent = context
+                .receipts
+                .last()
+                .map(|r| r.cumulative_gas_used)
+                .unwrap_or(0);
+            let blob_base_fee: u64 = context.base_fee_per_blob_gas.try_into().unwrap_or(u64::MAX);
+            let blob_gas_used = context.payload.header.blob_gas_used.unwrap_or(0);
+            // RLP trailing-optional contiguity: slot_number and burned_fees are adjacent
+            // positional optionals decoded greedily.  A block with slot_number=None but
+            // burned_fees=Some would be mis-decoded (silent corruption).  At LStar both
+            // must be Some.
+            debug_assert!(
+                context.payload.header.slot_number.is_some(),
+                "LStar block sets burned_fees=Some so slot_number must be Some (RLP trailing-optional contiguity)"
+            );
+            context.payload.header.burned_fees = Some(compute_burned_fees(
+                base_fee_per_gas,
+                gas_spent,
+                blob_base_fee,
+                blob_gas_used,
+            ));
+        }
+
         let mut logs = vec![];
         for receipt in context.receipts.iter().cloned() {
             for log in receipt.logs {
@@ -1240,6 +1273,117 @@ impl Ord for HeadTransaction {
 impl PartialOrd for HeadTransaction {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         Some(self.cmp(other))
+    }
+}
+
+/// Tests for EIP-8079 burned_fees production (LStar-gated) in finalize_payload.
+#[cfg(test)]
+mod burned_fees_payload_tests {
+    use super::*;
+    use ethrex_common::types::{DEFAULT_BUILDER_GAS_CEIL, ELASTICITY_MULTIPLIER, Genesis};
+    use ethrex_storage::EngineType;
+    use ethrex_vm::compute_burned_fees;
+    use std::path::Path;
+
+    /// Load the execution-api genesis (has all Prague system contracts deployed) and
+    /// override the chain config to add Amsterdam / LStar activation timestamps.
+    fn load_genesis_with_forks(amsterdam: bool, lstar: bool) -> Genesis {
+        let path = Path::new(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../fixtures/genesis/execution-api.json"
+        ));
+        let mut genesis = Genesis::try_from(path).expect("Failed to load execution-api genesis");
+        // Patch the fork timestamps.
+        genesis.config.amsterdam_time = amsterdam.then_some(0);
+        genesis.config.lstar_time = lstar.then_some(0);
+        // Amsterdam/LStar require slot_number in the genesis header; set it here.
+        if amsterdam || lstar {
+            genesis.slot_number = Some(0);
+        }
+        genesis
+    }
+
+    /// Build one empty payload on top of genesis and return the produced block.
+    /// `slot_number` must be `Some` when LStar is active (RLP contiguity invariant).
+    async fn build_empty_payload(genesis: Genesis, slot_number: Option<u64>) -> Block {
+        let mut store =
+            Store::new("store.db", EngineType::InMemory).expect("Failed to create in-memory store");
+        store
+            .add_initial_state(genesis)
+            .await
+            .expect("Failed to add genesis");
+        let blockchain = Blockchain::default_with_store(store.clone());
+        let genesis_header = store.get_block_header(0).unwrap().unwrap();
+        let args = BuildPayloadArgs {
+            parent: genesis_header.hash(),
+            timestamp: 1,
+            fee_recipient: Address::zero(),
+            random: H256::zero(),
+            withdrawals: Some(Vec::new()),
+            beacon_root: Some(H256::zero()),
+            slot_number,
+            version: 1,
+            elasticity_multiplier: ELASTICITY_MULTIPLIER,
+            gas_ceil: DEFAULT_BUILDER_GAS_CEIL,
+        };
+        let block_template =
+            create_payload(&args, &store, Bytes::new()).expect("create_payload failed");
+        blockchain
+            .build_payload(block_template)
+            .expect("build_payload failed")
+            .payload
+    }
+
+    /// LStar block must have burned_fees = Some(compute_burned_fees(base_fee, gas_spent,
+    /// blob_base_fee, blob_gas_used)) where gas_spent is post-refund (last receipt's
+    /// cumulative_gas_used), matching the verification path.
+    #[tokio::test]
+    async fn lstar_block_produces_burned_fees() {
+        let genesis = load_genesis_with_forks(true, true);
+        let config = genesis.config;
+        // slot_number=Some(1): required by the RLP trailing-optional contiguity invariant
+        // when burned_fees is Some (LStar+).
+        let block = build_empty_payload(genesis, Some(1)).await;
+        let header = &block.header;
+
+        // Compute expected using the same helper + same-basis inputs as finalize_payload.
+        // Empty block: no receipts → gas_spent = 0; no blobs → blob_gas_used = 0.
+        let blob_base_fee: u64 = calculate_base_fee_per_blob_gas(
+            header.excess_blob_gas.unwrap_or(0),
+            config
+                .get_fork_blob_schedule(header.timestamp)
+                .map(|s| s.base_fee_update_fraction)
+                .unwrap_or(0),
+        )
+        .try_into()
+        .unwrap_or(u64::MAX);
+
+        let expected = compute_burned_fees(
+            header.base_fee_per_gas.unwrap_or(0),
+            0, // gas_spent = 0 (no transactions → no receipts)
+            blob_base_fee,
+            header.blob_gas_used.unwrap_or(0),
+        );
+
+        assert_eq!(
+            header.burned_fees,
+            Some(expected),
+            "LStar: burned_fees must equal compute_burned_fees(base_fee={}, gas_spent=0, blob_base_fee={}, blob_gas_used={})",
+            header.base_fee_per_gas.unwrap_or(0),
+            blob_base_fee,
+            header.blob_gas_used.unwrap_or(0),
+        );
+    }
+
+    /// Pre-LStar (Amsterdam) blocks must leave burned_fees = None.
+    #[tokio::test]
+    async fn amsterdam_block_does_not_set_burned_fees() {
+        let genesis = load_genesis_with_forks(true, false); // Amsterdam only, no LStar
+        let block = build_empty_payload(genesis, None).await;
+        assert_eq!(
+            block.header.burned_fees, None,
+            "Amsterdam (pre-LStar): burned_fees must be None"
+        );
     }
 }
 

@@ -13,6 +13,8 @@ pub use input::{
 pub use input::{ProgramInputDecodeError, ProgramInputEncodeError};
 pub use output::ProgramOutput;
 pub use program::execution_program;
+pub use program::new_payload_request_to_block;
+pub use program::verify_stateless_block;
 #[cfg(feature = "eip-8025")]
 pub use program::{
     execute_decoded, validate_eip8025_canonical_execution, validate_eip8025_execution,

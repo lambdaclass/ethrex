@@ -10,3 +10,5 @@ pub use sequencer::configs::{
     L1WatcherConfig, ProofCoordinatorConfig, SequencerConfig, StateUpdaterConfig,
 };
 pub use sequencer::start_l2;
+
+pub use sequencer::native_rollup::{NativeRollupConfig, start_native_rollup_l2};

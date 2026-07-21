@@ -90,7 +90,7 @@ pub const EIP8025_VERSION_CANONICAL: u8 = 0x01;
 /// Returns an error if rkyv serialization of the execution witness fails.
 #[cfg(feature = "eip-8025")]
 pub fn encode_eip8025(
-    new_payload_request: &ethrex_common::types::eip8025_ssz::NewPayloadRequest,
+    new_payload_request: &ethrex_common::types::stateless_ssz::NewPayloadRequest,
     execution_witness: &ExecutionWitness,
 ) -> Result<Vec<u8>, ProgramInputEncodeError> {
     use libssz::SszEncode;

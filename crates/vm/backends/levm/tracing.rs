@@ -7,6 +7,7 @@ use ethrex_common::{
     types::BlockHeader,
 };
 use ethrex_crypto::Crypto;
+use ethrex_levm::StatelessValidator;
 use ethrex_levm::account::{AccountStatus, LevmAccount};
 use ethrex_levm::db::gen_db::CacheDB;
 use ethrex_levm::vm::VMType;
@@ -27,6 +28,7 @@ impl LEVM {
         stop_index: Option<usize>,
         vm_type: VMType,
         crypto: &dyn Crypto,
+        stateless_validator: Option<&dyn StatelessValidator>,
     ) -> Result<(), EvmError> {
         Self::prepare_block(block, db, vm_type, crypto)?;
 
@@ -42,7 +44,15 @@ impl LEVM {
                 break;
             }
 
-            Self::execute_tx(tx, sender, &block.header, db, vm_type, crypto)?;
+            Self::execute_tx(
+                tx,
+                sender,
+                &block.header,
+                db,
+                vm_type,
+                crypto,
+                stateless_validator,
+            )?;
         }
 
         // Process withdrawals only if the whole block has been executed.
@@ -74,7 +84,15 @@ impl LEVM {
             .sender(crypto)
             .map_err(|e| EvmError::Transaction(format!("Couldn't recover sender: {e}")))?;
         let env = Self::setup_env(tx, sender, block_header, db, vm_type)?;
-        let mut vm = VM::new(env, db, tx, LevmCallTracer::disabled(), vm_type, crypto)?;
+        let mut vm = VM::new(
+            env,
+            db,
+            tx,
+            LevmCallTracer::disabled(),
+            vm_type,
+            crypto,
+            None,
+        )?;
         vm.execute()?;
 
         preload_touched_codes(&pre_snapshot, db)?;
@@ -117,13 +135,22 @@ impl LEVM {
             db,
             vm_type,
         )?;
-        let mut vm = VM::new(env, db, tx, LevmCallTracer::disabled(), vm_type, crypto)?;
+        let mut vm = VM::new(
+            env,
+            db,
+            tx,
+            LevmCallTracer::disabled(),
+            vm_type,
+            crypto,
+            None,
+        )?;
         vm.opcode_tracer = LevmOpcodeTracer::new(cfg);
         vm.execute()?;
         Ok(vm.opcode_tracer.take_result())
     }
 
     /// Run transaction with callTracer activated.
+    #[expect(clippy::too_many_arguments)]
     pub fn trace_tx_calls(
         db: &mut GeneralizedDatabase,
         block_header: &BlockHeader,
@@ -132,6 +159,7 @@ impl LEVM {
         with_log: bool,
         vm_type: VMType,
         crypto: &dyn Crypto,
+        stateless_validator: Option<&dyn StatelessValidator>,
     ) -> Result<CallTrace, EvmError> {
         let env = Self::setup_env(
             tx,
@@ -149,6 +177,7 @@ impl LEVM {
             LevmCallTracer::new(only_top_call, with_log),
             vm_type,
             crypto,
+            stateless_validator,
         )?;
 
         vm.execute()?;

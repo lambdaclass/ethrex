@@ -24,7 +24,10 @@ impl ExecBackend {
     /// Core execution - runs the guest program directly.
     fn execute_core(input: ProgramInput) -> Result<ProgramOutput, BackendError> {
         let crypto = Arc::new(NativeCrypto);
-        #[cfg(feature = "eip-8025")]
+        // L1 EIP-8025 `execution_program` takes raw bytes, not `ProgramInput`.
+        // When `l2` is also on, the re-exported types are the L2 shape and the
+        // standard `execution_program(input, crypto)` path applies instead.
+        #[cfg(all(feature = "eip-8025", not(feature = "l2")))]
         {
             let output = ethrex_guest_program::l1::execute_decoded(input, crypto)
                 .map_err(BackendError::execution)?;
@@ -37,7 +40,7 @@ impl ExecBackend {
             }
             Ok(output)
         }
-        #[cfg(not(feature = "eip-8025"))]
+        #[cfg(any(not(feature = "eip-8025"), feature = "l2"))]
         {
             ethrex_guest_program::execution::execution_program(input, crypto)
                 .map_err(BackendError::execution)
@@ -83,7 +86,9 @@ impl ProverBackend for ExecBackend {
         // The `Direct` variant returns a zero `new_payload_request_root` sentinel
         // that callers must not interpret as a real commitment. `execute()` is
         // fine (discards the output) but `prove()` exposes it.
-        #[cfg(feature = "eip-8025")]
+        // Only the L1 EIP-8025 `ProgramInput` carries the `Direct` variant; when
+        // `l2` is also on, `ProgramInput` is the L2 shape and this guard is inert.
+        #[cfg(all(feature = "eip-8025", not(feature = "l2")))]
         if matches!(input, ProgramInput::Direct { .. }) {
             return Err(BackendError::execution(
                 "ExecBackend::prove does not accept ProgramInput::Direct (test-only path)",

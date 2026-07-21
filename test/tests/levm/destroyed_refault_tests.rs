@@ -154,6 +154,7 @@ fn sload_after_flush_returns_committed_value_for_destroyed_modified() {
         LevmCallTracer::disabled(),
         VMType::L1,
         &NativeCrypto,
+        None,
     )
     .expect("VM::new");
 
@@ -197,6 +198,7 @@ fn sload_unwritten_slot_on_destroyed_modified_reads_zero_not_stale_initial() {
         LevmCallTracer::disabled(),
         VMType::L1,
         &NativeCrypto,
+        None,
     )
     .expect("VM::new");
 

@@ -24,6 +24,10 @@ serde_json = { workspace = true, optional = true }
 url = { workspace = true, optional = true }
 reqwest = { workspace = true, optional = true }
 spawned-concurrency = { workspace = true, optional = true }
+ethrex-guest-program = { workspace = true, default-features = false }
+libssz = { workspace = true }
+libssz-merkle = { workspace = true }
+ethrex-prover = { workspace = true, optional = true }
 thiserror.workspace = true
 tracing.workspace = true
 bytes.workspace = true
@@ -46,7 +50,7 @@ rayon = ["ethrex-vm/rayon"]
 secp256k1 = ["ethrex-common/secp256k1", "ethrex-vm/secp256k1", "rayon"]
 c-kzg = ["ethrex-common/c-kzg", "ethrex-vm/c-kzg"]
 metrics = ["ethrex-metrics/transactions"]
-eip-8025 = ["ethrex-common/eip-8025"]
+eip-8025 = ["ethrex-common/eip-8025", "ethrex-vm/eip-8025"]
 testing = []
 
 [lints.clippy]
