@@ -4,7 +4,7 @@ use directories::ProjectDirs;
 use ethrex_common::types::{Block, Genesis};
 use ethrex_p2p::{
     peer_table::{PeerTable, PeerTableServerProtocol as _},
-    sync::SyncMode,
+    sync::{HistoryChain, SyncMode},
     types::{Node, NodeRecord},
 };
 use hex::FromHexError;
@@ -93,6 +93,17 @@ pub fn parse_sync_mode(s: &str) -> eyre::Result<SyncMode> {
         "snap" => Ok(SyncMode::Snap),
         other => Err(eyre::eyre!(
             "Invalid syncmode {other:?} expected either snap or full",
+        )),
+    }
+}
+
+pub fn parse_history_chain(s: &str) -> eyre::Result<HistoryChain> {
+    match s {
+        "off" => Ok(HistoryChain::Off),
+        "postmerge" => Ok(HistoryChain::PostMerge),
+        "all" => Ok(HistoryChain::All),
+        other => Err(eyre::eyre!(
+            "Invalid history.chain {other:?} expected one of off, postmerge, all",
         )),
     }
 }

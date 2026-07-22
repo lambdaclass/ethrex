@@ -655,6 +655,15 @@ pub async fn snap_sync(
             None,
         )
         .await?;
+
+    // Snap sync stores bodies only from the pivot onward; every block below the
+    // pivot is headers-only. Record the pivot as the earliest block with full
+    // chain data so RPC (`earliest` tag, feeHistory) reflects what is actually
+    // available instead of genesis. Historical backfill, when enabled, lowers
+    // this frontier further as it fills bodies/receipts downward.
+    store
+        .update_earliest_block_number(pivot_header.number)
+        .await?;
     Ok(())
 }
 

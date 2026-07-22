@@ -20,6 +20,7 @@ use ethrex_p2p::{
     peer_handler::PeerHandler,
     peer_table::PeerTableServer,
     rlpx::{initiator::RLPxInitiator, l2::l2_connection::P2PBasedContext},
+    sync::{BackfillConfig, HistoryChain},
     sync_manager::SyncManager,
     types::{Node, NodeRecord},
 };
@@ -325,6 +326,11 @@ pub async fn init_l2(
             blockchain.clone(),
             store.clone(),
             opts.node_opts.datadir.clone(),
+            // L2 nodes do not backfill L1 historical chain data.
+            BackfillConfig {
+                mode: HistoryChain::Off,
+                tx_index_horizon: 0,
+            },
         )
         .await;
 

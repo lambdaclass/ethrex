@@ -18,7 +18,7 @@ use tracing::{debug, error, info, warn};
 
 use crate::{
     peer_handler::PeerHandler,
-    sync::{SyncDiagnostics, SyncMode, Syncer},
+    sync::{BackfillConfig, HistoryChain, SyncDiagnostics, SyncMode, Syncer, run_history_backfill},
 };
 
 /// Abstraction to interact with the active sync process without disturbing it
@@ -41,8 +41,14 @@ impl SyncManager {
         blockchain: Arc<Blockchain>,
         store: Store,
         datadir: PathBuf,
+        backfill_config: BackfillConfig,
     ) -> Self {
         let snap_enabled = Arc::new(AtomicBool::new(matches!(sync_mode, SyncMode::Snap)));
+
+        // Clone the shared handles the optional backfill task needs before
+        // `peer_handler`/`cancel_token` are moved into the Syncer below.
+        let backfill_peers = peer_handler.clone();
+        let backfill_cancel = cancel_token.clone();
 
         // Fetch checkpoint once to avoid duplicate DB reads
         let has_checkpoint = store
@@ -86,6 +92,21 @@ impl SyncManager {
             datadir,
             diagnostics.clone(),
         )));
+
+        // Spawn the optional historical-chain backfill task. It idles until
+        // initial sync finishes, then fills bodies/receipts below the pivot down
+        // to the configured floor, resuming across restarts via the persisted
+        // frontier. A no-op when `--history.chain off`.
+        if backfill_config.mode != HistoryChain::Off {
+            tokio::spawn(run_history_backfill(
+                backfill_peers,
+                store.clone(),
+                backfill_config,
+                snap_enabled.clone(),
+                backfill_cancel,
+                diagnostics.clone(),
+            ));
+        }
         let sync_manager = Self {
             snap_enabled,
             syncer,
