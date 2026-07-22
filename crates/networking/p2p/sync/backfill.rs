@@ -6,7 +6,6 @@
 //! reverse-fills bodies + receipts from peers down to that floor, one bounded,
 //! validated batch at a time, persisting progress so it resumes across restarts.
 
-use std::collections::HashMap;
 use std::sync::{
     Arc,
     atomic::{AtomicBool, Ordering},
@@ -14,8 +13,6 @@ use std::sync::{
 
 use ethrex_common::types::{BlockHeader, BlockNumber};
 use ethrex_storage::{BackfilledBlock, Store};
-use futures::future::BoxFuture;
-use futures::stream::{FuturesUnordered, StreamExt};
 use tokio::time::{Duration, sleep};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
@@ -155,21 +152,28 @@ impl Default for BackfillConfig {
     }
 }
 
-/// The result of one range fetch: `(lo, hi, blocks-or-error)`.
-type FetchOutcome = (u64, u64, Result<Vec<BackfilledBlock>, SyncError>);
+/// Outcome of a single backfill step, used to pace the loop.
+enum BackfillProgress {
+    /// A batch was written; the frontier advanced.
+    Advanced,
+    /// Nothing left to fill (frontier reached the floor, or the chain has not
+    /// merged for `postmerge`).
+    Complete,
+    /// Cannot make progress right now (initial sync running, or no peer/response).
+    Waiting,
+}
 
 /// Background task that backfills historical block bodies and receipts below the
 /// snap-sync pivot, down to the floor implied by `config.mode`.
 ///
-/// It fills in reverse (pivot → floor), driving the frontier
-/// (`earliest_block_number`) downward and persisting it after each batch so the
-/// work resumes across restarts. It is best-effort and lower priority than
-/// head-following sync: it waits while initial sync runs and yields between
-/// batches. With `--history.backfill-parallelism > 1` it keeps several fetches in
-/// flight at once (see [`run_pipeline`]).
+/// It fills in reverse (pivot → floor), one bounded batch at a time, driving the
+/// frontier (`earliest_block_number`) downward and persisting it after each
+/// batch so the work resumes across restarts. It is best-effort and lower
+/// priority than head-following sync: it waits while initial sync runs, sleeps
+/// between batches, and never advances the frontier past a hole.
 ///
-/// Runs until the token is cancelled; a fatal error stops the task (logged) but
-/// never crashes the node, and progress already persisted is safe to resume.
+/// Runs until the token is cancelled; errors are logged and retried rather than
+/// propagated, since this is a non-critical background process.
 pub async fn run_history_backfill(
     peers: PeerHandler,
     store: Store,
@@ -181,101 +185,82 @@ pub async fn run_history_backfill(
     if config.mode == HistoryChain::Off {
         return;
     }
-    info!(
-        mode = ?config.mode,
-        horizon = config.tx_index_horizon,
-        parallelism = config.parallelism,
-        "Historical chain backfill enabled"
-    );
+    info!(mode = ?config.mode, horizon = config.tx_index_horizon, "Historical chain backfill enabled");
 
-    // Don't compete with initial sync; wait until it has finished.
-    while snap_enabled.load(Ordering::Relaxed) {
+    // One-time frontier reconciliation guard (see `backfill_step`).
+    let mut reconciled = false;
+    loop {
+        if cancel_token.is_cancelled() {
+            return;
+        }
+        let delay = match backfill_step(
+            &peers,
+            &store,
+            &config,
+            &snap_enabled,
+            &diagnostics,
+            &mut reconciled,
+        )
+        .await
+        {
+            Ok(BackfillProgress::Advanced) => config.batch_interval,
+            Ok(BackfillProgress::Complete | BackfillProgress::Waiting) => BACKFILL_IDLE_INTERVAL,
+            Err(e) => {
+                warn!("History backfill step failed (will retry): {e}");
+                BACKFILL_IDLE_INTERVAL
+            }
+        };
         tokio::select! {
-            _ = sleep(BACKFILL_IDLE_INTERVAL) => {}
+            _ = sleep(delay) => {}
             _ = cancel_token.cancelled() => return,
         }
     }
-
-    // One-time correction of `earliest_block_number` for nodes that synced before
-    // this feature existed (left at genesis) or otherwise drifted from the true
-    // lowest-full-data block. Without this, backfill would see `frontier == 0`
-    // and conclude there is nothing to do.
-    if let Err(e) = reconcile_once(&store).await {
-        warn!("History backfill frontier reconciliation failed: {e}");
-        return;
-    }
-
-    // Resolve the floor once; it is constant for a given mode/network.
-    let floor = match config.mode {
-        HistoryChain::Off => return,
-        HistoryChain::All => 0,
-        HistoryChain::PostMerge => match resolve_postmerge_floor(&store).await {
-            Ok(Some(floor)) => floor,
-            Ok(None) => return, // chain has not merged: nothing to backfill
-            Err(e) => {
-                warn!("History backfill could not resolve the post-merge floor: {e}");
-                return;
-            }
-        },
-    };
-
-    if let Err(e) = run_pipeline(
-        &peers,
-        &store,
-        &config,
-        floor,
-        &snap_enabled,
-        &cancel_token,
-        &diagnostics,
-    )
-    .await
-    {
-        warn!("History backfill stopped on a fatal error: {e}");
-    }
 }
 
-/// One-time correction of the frontier to the lowest block with full chain data.
-async fn reconcile_once(store: &Store) -> Result<(), SyncError> {
-    let recorded = store.get_earliest_block_number().await?;
-    let actual = reconcile_frontier(store).await?;
-    if recorded != actual {
-        info!(
-            recorded,
-            actual, "Reconciled backfill frontier to the lowest block with full chain data"
-        );
-        store.update_earliest_block_number(actual).await?;
-    }
-    Ok(())
-}
-
-/// The batch `[lo, hi)` immediately below `hi`, clamped to `floor`. `None` once
-/// `hi` has reached the floor.
-fn range_below(hi: u64, floor: u64, batch: u64) -> Option<(u64, u64)> {
-    (hi > floor).then(|| (hi.saturating_sub(batch).max(floor), hi))
-}
-
-/// Reverse-fills bodies + receipts from the frontier down to `floor`, keeping up
-/// to `config.parallelism` fetches in flight and committing each batch the moment
-/// it becomes contiguous with the frontier — so a slow peer never stalls the
-/// others (unlike a per-round barrier).
-///
-/// Only **full** batches are committed; short/empty/failed fetches are retried,
-/// which keeps the frontier on a fixed grid and the persisted `[earliest, head]`
-/// hole-free (preserving the crash-resume/reconcile guarantees). At most
-/// `parallelism` ranges are outstanding (in flight + buffered), bounding memory.
-async fn run_pipeline(
+/// Performs one backfill step: resolve the floor, read the next batch of
+/// (already-canonical) headers just below the frontier, fetch and validate their
+/// bodies and receipts, persist them, and lower the frontier.
+async fn backfill_step(
     peers: &PeerHandler,
     store: &Store,
     config: &BackfillConfig,
-    floor: u64,
     snap_enabled: &AtomicBool,
-    cancel_token: &CancellationToken,
     diagnostics: &Arc<tokio::sync::RwLock<SyncDiagnostics>>,
-) -> Result<(), SyncError> {
-    let parallelism = config.parallelism.max(1);
-    let head = store.get_latest_block_number().await?;
-    let mut frontier = store.get_earliest_block_number().await?;
+    reconciled: &mut bool,
+) -> Result<BackfillProgress, SyncError> {
+    // Don't compete with initial sync; wait until it has finished.
+    if snap_enabled.load(Ordering::Relaxed) {
+        return Ok(BackfillProgress::Waiting);
+    }
 
+    // One-time correction of `earliest_block_number` for nodes that synced
+    // before this feature existed (where it was left at genesis) or otherwise
+    // drifted from the true lowest-full-data block. Without this, backfill would
+    // see `frontier == 0` and conclude there is nothing to do.
+    if !*reconciled {
+        let recorded = store.get_earliest_block_number().await?;
+        let actual = reconcile_frontier(store).await?;
+        if recorded != actual {
+            info!(
+                recorded,
+                actual, "Reconciled backfill frontier to the lowest block with full chain data"
+            );
+            store.update_earliest_block_number(actual).await?;
+        }
+        *reconciled = true;
+    }
+
+    let floor = match config.mode {
+        HistoryChain::Off => return Ok(BackfillProgress::Complete),
+        HistoryChain::All => 0,
+        HistoryChain::PostMerge => match resolve_postmerge_floor(store).await? {
+            Some(floor) => floor,
+            // Chain has not merged: there is no post-merge segment to backfill.
+            None => return Ok(BackfillProgress::Complete),
+        },
+    };
+
+    let frontier = store.get_earliest_block_number().await?;
     {
         let mut diag = diagnostics.write().await;
         diag.backfill_mode = Some(format!("{:?}", config.mode));
@@ -283,122 +268,116 @@ async fn run_pipeline(
         diag.backfill_frontier = Some(frontier);
         diag.backfill_complete = frontier <= floor;
     }
+    if frontier <= floor {
+        return Ok(BackfillProgress::Complete);
+    }
 
-    // Builds a boxed fetch future so initial dispatch and retry push the same
-    // (nameable) type into the `FuturesUnordered`.
-    let make_fetch = |lo: u64, hi: u64| -> BoxFuture<'static, FetchOutcome> {
-        let (peers, store, config) = (peers.clone(), store.clone(), config.clone());
-        Box::pin(async move {
-            let r = fetch_range(peers, &store, &config, lo, hi, head).await;
-            (lo, hi, r)
-        })
-    };
+    // Dispatch up to `parallelism` disjoint batches stacked below the frontier,
+    // fetch them concurrently, then commit the contiguous prefix in order so the
+    // on-disk `[earliest, head]` never has a hole (see `plan_backfill_commit`).
+    let ranges = plan_backfill_ranges(frontier, floor, BACKFILL_BATCH_SIZE, config.parallelism);
+    let head = store.get_latest_block_number().await?;
+    let results = futures::future::join_all(
+        ranges
+            .iter()
+            .map(|&(lo, hi)| fetch_range(peers.clone(), store, config, lo, hi, head)),
+    )
+    .await;
 
-    // `dispatch_lo` = top of the next range to dispatch (ranges march down from
-    // the frontier). `buffer` holds full batches that arrived before their turn
-    // at the frontier, keyed by `hi`.
-    let mut dispatch_lo = frontier;
-    let mut in_flight: FuturesUnordered<BoxFuture<'static, FetchOutcome>> =
-        FuturesUnordered::new();
-    let mut buffer: HashMap<u64, Vec<BackfilledBlock>> = HashMap::new();
-    let mut idle_streak = 0usize;
+    let filled: Vec<Option<u64>> = results
+        .iter()
+        .map(|r| r.as_ref().ok().filter(|b| !b.is_empty()).map(|b| b.len() as u64))
+        .collect();
+    let (commit_count, new_frontier) = plan_backfill_commit(frontier, &ranges, &filled);
 
-    loop {
-        if cancel_token.is_cancelled() {
-            return Ok(());
-        }
-        if frontier <= floor {
-            info!(floor, "Historical chain backfill complete");
-            return Ok(());
-        }
-        // Yield entirely to initial sync if it somehow restarts.
-        if snap_enabled.load(Ordering::Relaxed) {
-            tokio::select! {
-                _ = sleep(BACKFILL_IDLE_INTERVAL) => {}
-                _ = cancel_token.cancelled() => return Ok(()),
-            }
-            continue;
-        }
-
-        // Keep up to `parallelism` ranges outstanding (in flight + buffered).
-        while in_flight.len() + buffer.len() < parallelism {
-            let Some((lo, hi)) = range_below(dispatch_lo, floor, BACKFILL_BATCH_SIZE) else {
-                break; // reached the floor; drain what is already outstanding
-            };
-            dispatch_lo = lo;
-            in_flight.push(make_fetch(lo, hi));
-        }
-
-        let Some((lo, hi, res)) = in_flight.next().await else {
-            // Nothing outstanding and nothing left to dispatch: we are done.
-            info!(floor, "Historical chain backfill complete");
-            return Ok(());
-        };
-
-        let mut committed = false;
-        match res {
-            // Full batch: hold it for in-order commit.
-            Ok(blocks) if blocks.len() as u64 == hi - lo => {
-                buffer.insert(hi, blocks);
-            }
-            // Frontier-adjacent short batch: commit the partial to guarantee
-            // progress even if no peer fully serves this range, then realign —
-            // the buffered lower ranges are no longer contiguous with the new
-            // (off-grid) frontier, so drop them and re-dispatch from here.
-            Ok(blocks) if hi == frontier && !blocks.is_empty() => {
+    // Write the committed prefix in ascending index (descending block) order,
+    // each range lowering the frontier. Surface a hard fetch error only when the
+    // round made no progress at all; otherwise the persisted progress stands and
+    // the failed lower ranges are simply retried next round.
+    for (i, result) in results.into_iter().enumerate() {
+        match result {
+            Ok(blocks) if i < commit_count => {
+                let (_, hi) = ranges[i];
                 let batch_earliest = hi - blocks.len() as u64;
                 store.add_backfilled_blocks(blocks, batch_earliest).await?;
-                frontier = batch_earliest;
-                buffer.clear();
-                in_flight.clear();
-                dispatch_lo = frontier;
-                committed = true;
             }
-            // Short (not yet at the frontier) or empty: retry the range.
-            Ok(_) => {
-                in_flight.push(make_fetch(lo, hi));
-                idle_streak += 1;
-            }
-            // Hard error: retry the range (peer actors recover; transient DB).
-            Err(e) => {
-                warn!("History backfill fetch error for [{lo}, {hi}) (retrying): {e}");
-                in_flight.push(make_fetch(lo, hi));
-                idle_streak += 1;
-            }
-        }
-
-        // Commit every buffered batch now contiguous with the frontier.
-        while let Some(blocks) = buffer.remove(&frontier) {
-            let batch_earliest = frontier - blocks.len() as u64;
-            store.add_backfilled_blocks(blocks, batch_earliest).await?;
-            frontier = batch_earliest;
-            committed = true;
-        }
-        if committed {
-            idle_streak = 0;
-            {
-                let mut diag = diagnostics.write().await;
-                diag.backfill_frontier = Some(frontier);
-                diag.backfill_complete = frontier <= floor;
-            }
-            debug!(frontier, floor, "History backfill advanced");
-            // Politeness pause so backfill yields to head-following sync.
-            tokio::select! {
-                _ = sleep(config.batch_interval) => {}
-                _ = cancel_token.cancelled() => return Ok(()),
-            }
-        }
-
-        // Back off when the whole outstanding window churned without progress
-        // (e.g. no peer is serving history right now), so we don't spin.
-        if idle_streak >= parallelism {
-            idle_streak = 0;
-            tokio::select! {
-                _ = sleep(BACKFILL_IDLE_INTERVAL) => {}
-                _ = cancel_token.cancelled() => return Ok(()),
-            }
+            Err(e) if new_frontier == frontier => return Err(e),
+            _ => {}
         }
     }
+
+    {
+        let mut diag = diagnostics.write().await;
+        diag.backfill_frontier = Some(new_frontier);
+        diag.backfill_complete = new_frontier <= floor;
+    }
+
+    if new_frontier == frontier {
+        Ok(BackfillProgress::Waiting) // nothing fetched this round
+    } else if new_frontier <= floor {
+        info!(floor, "Historical chain backfill complete");
+        Ok(BackfillProgress::Complete)
+    } else {
+        debug!(new_earliest = new_frontier, floor, "History backfill advanced");
+        Ok(BackfillProgress::Advanced)
+    }
+}
+
+/// Builds up to `parallelism` disjoint batches of at most `batch` blocks each,
+/// stacked below `frontier` down to `floor`. Ranges are `[lo, hi)` in descending
+/// order, contiguous (`ranges[i].hi == ranges[i-1].lo`), with `ranges[0].hi ==
+/// frontier`; the last is clamped so no range dips below `floor`.
+fn plan_backfill_ranges(
+    frontier: u64,
+    floor: u64,
+    batch: u64,
+    parallelism: usize,
+) -> Vec<(u64, u64)> {
+    let parallelism = parallelism.max(1);
+    let mut ranges = Vec::with_capacity(parallelism);
+    let mut hi = frontier;
+    while ranges.len() < parallelism && hi > floor {
+        let lo = hi.saturating_sub(batch).max(floor);
+        ranges.push((lo, hi));
+        hi = lo;
+    }
+    ranges
+}
+
+/// Decides how many of the dispatched `ranges` to commit this round and the
+/// resulting frontier, given how many blocks each range actually returned
+/// (`filled[i]`: `Some(n)` fetched, `None` = failed/empty).
+///
+/// Commits the maximal contiguous prefix — starting at the frontier — of ranges
+/// that came back **full**, plus the first partial range if any, then stops.
+/// This guarantees the committed blocks are contiguous with the frontier, so the
+/// persisted `[earliest, head]` never gains a hole (which would break the
+/// crash-resume/reconcile bisect). Returns `(commit_count, new_frontier)`.
+fn plan_backfill_commit(
+    frontier: u64,
+    ranges: &[(u64, u64)],
+    filled: &[Option<u64>],
+) -> (usize, u64) {
+    let mut new_frontier = frontier;
+    let mut commit_count = 0;
+    for (i, &(lo, hi)) in ranges.iter().enumerate() {
+        // Contiguity: this range must sit directly below what we've committed.
+        if hi != new_frontier {
+            break;
+        }
+        let Some(n) = filled.get(i).copied().flatten() else {
+            break; // range failed or returned nothing
+        };
+        if n == 0 {
+            break;
+        }
+        new_frontier = hi - n;
+        commit_count = i + 1;
+        if n < hi - lo {
+            break; // truncated response: hole below, stop after committing this one
+        }
+    }
+    (commit_count, new_frontier)
 }
 
 /// Fetches bodies and receipts for the canonical range `[lo, hi)` concurrently
@@ -577,43 +556,93 @@ mod tests {
         assert_eq!(reconcile_frontier(&store).await.unwrap(), 0);
     }
 
-    // ---- range_below ----
+    // ---- plan_backfill_ranges ----
 
     #[test]
-    fn range_below_is_a_full_batch_when_room_allows() {
-        // A full 128-block batch directly below `hi`.
-        assert_eq!(range_below(1000, 0, 128), Some((872, 1000)));
-    }
-
-    #[test]
-    fn range_below_clamps_to_the_floor() {
-        // Fewer than `batch` blocks left above the floor: clamp `lo` to the floor.
-        assert_eq!(range_below(200, 100, 128), Some((100, 200)));
-        assert!(range_below(200, 100, 128).unwrap().0 >= 100);
-    }
-
-    #[test]
-    fn range_below_is_none_at_or_below_the_floor() {
-        assert_eq!(range_below(100, 100, 128), None);
-        assert_eq!(range_below(50, 100, 128), None);
-    }
-
-    #[test]
-    fn range_below_marches_down_on_a_fixed_grid() {
-        // Chaining `range_below` from the frontier yields contiguous, descending
-        // batches — the grid the pipeline dispatches and commits on.
-        let (floor, batch) = (0, 128);
-        let mut hi = 1000;
-        let mut seen = vec![];
-        while let Some((lo, got_hi)) = range_below(hi, floor, batch) {
-            assert_eq!(got_hi, hi); // each batch's top is the previous bottom
-            seen.push((lo, got_hi));
-            hi = lo;
+    fn ranges_are_contiguous_and_descending_from_the_frontier() {
+        let r = plan_backfill_ranges(1000, 0, 128, 4);
+        assert_eq!(r, vec![(872, 1000), (744, 872), (616, 744), (488, 616)]);
+        // contiguous: each hi == previous lo, top == frontier
+        assert_eq!(r[0].1, 1000);
+        for w in r.windows(2) {
+            assert_eq!(w[0].0, w[1].1);
         }
-        assert_eq!(seen[0], (872, 1000));
-        for w in seen.windows(2) {
-            assert_eq!(w[0].0, w[1].1); // contiguous
-        }
-        assert_eq!(hi, floor); // marched exactly to the floor
+    }
+
+    #[test]
+    fn ranges_clamp_to_the_floor_and_never_dip_below_it() {
+        // Only 100 blocks above the floor but room for 4×128: one clamped range.
+        let r = plan_backfill_ranges(200, 100, 128, 4);
+        assert_eq!(r, vec![(100, 200)]);
+        assert!(r.iter().all(|&(lo, _)| lo >= 100));
+    }
+
+    #[test]
+    fn ranges_parallelism_one_is_a_single_batch() {
+        assert_eq!(plan_backfill_ranges(1000, 0, 128, 1), vec![(872, 1000)]);
+        // parallelism 0 is treated as 1 rather than yielding no work.
+        assert_eq!(plan_backfill_ranges(1000, 0, 128, 0), vec![(872, 1000)]);
+    }
+
+    #[test]
+    fn ranges_empty_when_frontier_at_floor() {
+        assert!(plan_backfill_ranges(100, 100, 128, 4).is_empty());
+    }
+
+    // ---- plan_backfill_commit ----
+
+    // Helper: full-size ranges stacked below `frontier`.
+    fn ranges(frontier: u64, n: usize) -> Vec<(u64, u64)> {
+        plan_backfill_ranges(frontier, 0, 128, n)
+    }
+
+    #[test]
+    fn commit_all_full_ranges_advances_by_the_whole_wave() {
+        let r = ranges(1000, 3);
+        let (count, frontier) = plan_backfill_commit(1000, &r, &[Some(128), Some(128), Some(128)]);
+        assert_eq!((count, frontier), (3, 1000 - 3 * 128));
+    }
+
+    #[test]
+    fn commit_stops_at_a_partial_range_but_keeps_it() {
+        // Second range truncated: commit range 0 fully + range 1 partially, stop.
+        let r = ranges(1000, 3);
+        let (count, frontier) = plan_backfill_commit(1000, &r, &[Some(128), Some(50), Some(128)]);
+        assert_eq!(count, 2);
+        assert_eq!(frontier, 1000 - 128 - 50);
+    }
+
+    #[test]
+    fn commit_stops_before_an_empty_or_failed_range() {
+        let r = ranges(1000, 3);
+        // Range 1 returned nothing: only range 0 commits, range 2 is not reached
+        // (committing it would leave a hole at range 1).
+        assert_eq!(
+            plan_backfill_commit(1000, &r, &[Some(128), Some(0), Some(128)]),
+            (1, 872)
+        );
+        // A failed (None) range behaves the same as empty.
+        assert_eq!(
+            plan_backfill_commit(1000, &r, &[Some(128), None, Some(128)]),
+            (1, 872)
+        );
+    }
+
+    #[test]
+    fn commit_nothing_when_the_first_range_is_empty() {
+        let r = ranges(1000, 3);
+        assert_eq!(plan_backfill_commit(1000, &r, &[None, Some(128)]), (0, 1000));
+        assert_eq!(
+            plan_backfill_commit(1000, &r, &[Some(0), Some(128)]),
+            (0, 1000)
+        );
+    }
+
+    #[test]
+    fn commit_reaches_the_floor() {
+        // frontier 200, floor 100: a single clamped 100-block range, filled full.
+        let r = plan_backfill_ranges(200, 100, 128, 4);
+        assert_eq!(r, vec![(100, 200)]);
+        assert_eq!(plan_backfill_commit(200, &r, &[Some(100)]), (1, 100));
     }
 }
