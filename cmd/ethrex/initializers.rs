@@ -359,8 +359,6 @@ pub async fn init_rpc_api(
             opts.history_chain.clone()
         },
         tx_index_horizon: opts.history_transactions,
-        parallelism: opts.history_backfill_parallelism,
-        batch_interval: std::time::Duration::from_millis(opts.history_backfill_interval_ms),
     };
 
     // Create SyncManager

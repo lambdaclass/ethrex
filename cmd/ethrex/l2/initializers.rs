@@ -330,7 +330,6 @@ pub async fn init_l2(
             BackfillConfig {
                 mode: HistoryChain::Off,
                 tx_index_horizon: 0,
-                ..Default::default()
             },
         )
         .await;
