@@ -9,6 +9,7 @@ mod explicit_blob_tx_tests;
 mod l1_tx_type_tests;
 mod logs_bloom_tests;
 mod mempool_tests;
+mod payload_build_loop_tests;
 mod payload_tests;
 mod smoke_tests;
 mod storage_sharding_tests;
