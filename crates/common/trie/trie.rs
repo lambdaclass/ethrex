@@ -1,5 +1,21 @@
+#![cfg_attr(not(feature = "std"), no_std)]
+// In no_std builds the per-node hash cache (`OnceLock`) is a non-atomic, `!Sync`
+// cell (see `node::OnceLock`), which makes `Node` `!Sync` and trips
+// `arc_with_non_send_sync` on the `Arc<Node>` in `NodeRef`. The `Arc` is
+// deliberate: the type is shared with the std build, where `Node` is `Send + Sync`
+// and nodes are handed across rayon workers during parallel merkleization. The
+// single-threaded no_std consumer (the zkVM guest) never shares across threads, so
+// the atomic refcount is harmless here and keeps a single unified node type across
+// both builds.
+#![cfg_attr(not(feature = "std"), allow(clippy::arc_with_non_send_sync))]
+
+#[macro_use]
+extern crate alloc;
+
 pub mod db;
 pub mod error;
+// Witness recording (Arc<Mutex>) is host-only; the guest verifies against a witness.
+#[cfg(feature = "std")]
 pub mod logger;
 mod nibbles;
 pub mod node;
@@ -8,22 +24,41 @@ pub mod rkyv_utils;
 mod rlp;
 #[cfg(test)]
 mod test_utils;
+// Parallel merkleization (std threads + crossbeam) is host-only.
+#[cfg(feature = "std")]
 pub mod threadpool;
 mod trie_iter;
+#[cfg(feature = "std")]
 pub mod trie_sorted;
 mod verify_range;
+
+use alloc::collections::BTreeMap;
+use alloc::sync::Arc;
+#[cfg(not(feature = "std"))]
+use alloc::{boxed::Box, vec::Vec};
 use ethereum_types::H256;
-use ethrex_crypto::keccak::keccak_hash;
 use ethrex_crypto::{Crypto, NativeCrypto};
 use ethrex_rlp::constants::RLP_NULL;
 use ethrex_rlp::encode::RLPEncode;
-use rustc_hash::{FxHashMap, FxHashSet};
-use std::collections::BTreeMap;
-use std::sync::{Arc, Mutex};
+
+#[cfg(feature = "std")]
+use rustc_hash::FxHashSet;
+// `FxHashMap` is part of the public API (`get_embedded_root_committed`). Its concrete
+// type is build-dependent, so callers that build this crate `no_std` (e.g. the guest
+// via `ethrex-common`) must name it through this re-export to stay type-compatible.
+#[cfg(feature = "std")]
+pub use rustc_hash::FxHashMap;
+// rustc-hash's map/set aliases require std; use hashbrown with the Fx hasher otherwise.
+#[cfg(not(feature = "std"))]
+pub type FxHashMap<K, V> = hashbrown::HashMap<K, V, rustc_hash::FxBuildHasher>;
+#[cfg(not(feature = "std"))]
+type FxHashSet<K> = hashbrown::HashSet<K, rustc_hash::FxBuildHasher>;
 
 pub use self::db::{InMemoryTrieDB, TrieDB};
+#[cfg(feature = "std")]
 pub use self::logger::{TrieLogger, TrieWitness};
 pub use self::nibbles::Nibbles;
+#[cfg(feature = "std")]
 pub use self::threadpool::ThreadPool;
 pub use self::verify_range::verify_range;
 pub use self::{
@@ -35,14 +70,15 @@ pub use self::error::{ExtensionNodeErrorData, InconsistentTreeError, TrieError};
 use self::{node::LeafNode, trie_iter::TrieIterator};
 
 use ethrex_rlp::decode::RLPDecode;
-use lazy_static::lazy_static;
 
-lazy_static! {
-    // Hash value for an empty trie, equal to keccak(RLP_NULL)
-    pub static ref EMPTY_TRIE_HASH: H256 = H256(
-        keccak_hash([RLP_NULL]),
-    );
-}
+/// Hash of an empty trie: `keccak256(RLP_NULL)`, a well-known Ethereum constant.
+/// Hardcoded so it needs no lazy initialization, works in `const` contexts, and
+/// pulls no lazy-cell dependency into `no_std` builds. The
+/// `empty_trie_hash_matches_keccak` test pins it to the computed value.
+pub const EMPTY_TRIE_HASH: H256 = H256([
+    0x56, 0xe8, 0x1f, 0x17, 0x1b, 0xcc, 0x55, 0xa6, 0xff, 0x83, 0x45, 0xe6, 0x92, 0xc0, 0xf8, 0x6e,
+    0x5b, 0x48, 0xe0, 0x1b, 0x99, 0x6c, 0xad, 0xc0, 0x01, 0x62, 0x2f, 0xb5, 0xe3, 0x63, 0xb4, 0x21,
+]);
 
 /// RLP-encoded trie path
 pub type PathRLP = Vec<u8>;
@@ -61,6 +97,7 @@ pub struct Trie {
     dirty: FxHashSet<Nibbles>,
 }
 
+// `Default` builds an in-memory (InMemoryTrieDB) trie.
 impl Default for Trie {
     fn default() -> Self {
         Self::new_temp()
@@ -82,7 +119,7 @@ impl Trie {
     pub fn open(db: Box<dyn TrieDB>, root: H256) -> Self {
         Self {
             db,
-            root: if root != *EMPTY_TRIE_HASH {
+            root: if root != EMPTY_TRIE_HASH {
                 NodeHash::from(root).into()
             } else {
                 Default::default()
@@ -196,7 +233,7 @@ impl Trie {
                 .compute_hash_no_alloc(&mut buf, crypto)
                 .finalize(crypto)
         } else {
-            *EMPTY_TRIE_HASH
+            EMPTY_TRIE_HASH
         }
     }
 
@@ -247,7 +284,7 @@ impl Trie {
         if self.root.is_valid() {
             self.root.commit(Nibbles::default(), &mut acc, crypto);
         }
-        if self.root.compute_hash(crypto) == NodeHash::Hashed(*EMPTY_TRIE_HASH) {
+        if self.root.compute_hash(crypto) == NodeHash::Hashed(EMPTY_TRIE_HASH) {
             acc.push((Nibbles::default(), vec![RLP_NULL]))
         }
         acc.extend(self.pending_removal.drain().map(|nib| (nib, vec![])));
@@ -309,10 +346,11 @@ impl Trie {
         }
     }
 
+    #[cfg(feature = "std")]
     pub fn empty_in_memory() -> Self {
-        Self::new(Box::new(InMemoryTrieDB::new(Arc::new(Mutex::new(
-            BTreeMap::new(),
-        )))))
+        Self::new(Box::new(InMemoryTrieDB::new(Arc::new(
+            std::sync::Mutex::new(BTreeMap::new()),
+        ))))
     }
 
     /// Gets node with embedded references to child nodes, all in just one `Node`.
@@ -321,7 +359,7 @@ impl Trie {
         root_hash: H256,
     ) -> Result<NodeRef, TrieError> {
         // If the root hash is of the empty trie then we can get away by setting the NodeRef to default
-        if root_hash == *EMPTY_TRIE_HASH {
+        if root_hash == EMPTY_TRIE_HASH {
             return Ok(NodeRef::default());
         }
 
@@ -379,7 +417,7 @@ impl Trie {
         crypto: &dyn Crypto,
     ) -> Result<NodeRef, TrieError> {
         // If the root hash is of the empty trie then we can get away by setting the NodeRef to default
-        if root_hash == *EMPTY_TRIE_HASH {
+        if root_hash == EMPTY_TRIE_HASH {
             return Ok(NodeRef::default());
         }
 
@@ -452,6 +490,7 @@ impl Trie {
     ///   `Trie::remove`) to return `Err(InconsistentTrie)`.
     /// Note: This method will ignore any dangling nodes. All nodes that are not accessible from the
     ///   root node are considered dangling.
+    #[cfg(feature = "std")]
     pub fn from_nodes(
         root_hash: H256,
         state_nodes: &BTreeMap<H256, Node>,
@@ -653,6 +692,7 @@ impl Trie {
 
     /// Validate the trie structure in parallel by splitting at the root branch node.
     /// Each of the root's 16 subtrees is validated independently using rayon.
+    #[cfg(feature = "std")]
     pub fn validate_parallel(self) -> Result<(), TrieError> {
         use rayon::prelude::*;
 
@@ -693,6 +733,7 @@ impl Trie {
 
 /// Validate a subtree rooted at `start_ref`, checking that all referenced nodes exist
 /// and their hashes match.
+#[cfg(feature = "std")]
 fn validate_subtree(
     db: &dyn TrieDB,
     start_path: Nibbles,
@@ -775,5 +816,18 @@ impl ProofTrie {
 impl From<Trie> for ProofTrie {
     fn from(value: Trie) -> Self {
         Self(value)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ethrex_crypto::keccak::keccak_hash;
+
+    // Pins the hardcoded `EMPTY_TRIE_HASH` to `keccak256(RLP_NULL)` so a typo in the
+    // byte literal can't silently diverge from the computed value.
+    #[test]
+    fn empty_trie_hash_matches_keccak() {
+        assert_eq!(EMPTY_TRIE_HASH, H256(keccak_hash([RLP_NULL])));
     }
 }

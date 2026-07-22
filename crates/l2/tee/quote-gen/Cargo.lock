@@ -1278,11 +1278,12 @@ dependencies = [
  "ethereum-types",
  "ethrex-crypto",
  "ethrex-rlp",
- "lazy_static",
+ "hashbrown 0.15.5",
  "rayon",
  "rkyv",
  "rustc-hash",
  "serde 1.0.228",
+ "spin",
  "thiserror 2.0.18",
 ]
 
@@ -3587,6 +3588,12 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
 ]
+
+[[package]]
+name = "spin"
+version = "0.9.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6980e8d7511241f8acf4aebddbb1ff938df5eebe98691418c4468d0b72a96a67"
 
 [[package]]
 name = "spki"
