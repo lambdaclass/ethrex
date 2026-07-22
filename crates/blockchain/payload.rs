@@ -467,7 +467,20 @@ impl Blockchain {
         // an in-progress rebuild via `run_until_cancelled`, and (b) the slot-
         // timeout `select!` arm winning over a simultaneous `tx_added`
         // notification near the slot boundary.
-        if self.mempool.tx_seq() > last_built_seq {
+        //
+        // When the loop was cancelled, `engine_getPayload` is blocked on this
+        // task and must answer within the Engine API deadline (1s), while a
+        // full rebuild of a large block can exceed that deadline on its own —
+        // under sustained mempool inflow `tx_seq() > last_built_seq` is true
+        // on essentially every call, so an unconditional rebuild here puts one
+        // whole extra block build on the proposal critical path. In that case
+        // only rebuild when the payload we hold is empty: returning a slightly
+        // stale block is fine (geth/reth return best-so-far too), but
+        // proposing an empty block while the mempool has transactions is not
+        // (race (a) with no completed rebuild yet).
+        if self.mempool.tx_seq() > last_built_seq
+            && (!cancel_token.is_cancelled() || res.payload.body.transactions.is_empty())
+        {
             let blockchain = self.clone();
             match tokio::task::spawn_blocking(move || blockchain.build_payload(payload)).await {
                 Ok(Ok(final_res)) => res = final_res,
