@@ -7,12 +7,14 @@ use std::cmp::min;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use ethrex_blockchain::{BatchBlockProcessingFailure, Blockchain, error::ChainError};
+use ethrex_blockchain::{
+    BatchBlockProcessingFailure, Blockchain, error::ChainError, fork_choice::SyncCommitMode,
+};
 use ethrex_common::{
     H256,
     types::{Block, BlockBody, BlockHeader, block_access_list::BlockAccessList},
 };
-use ethrex_storage::{DB_COMMIT_THRESHOLD, Store};
+use ethrex_storage::Store;
 use tokio::sync::RwLock;
 use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
@@ -191,11 +193,16 @@ pub async fn sync_cycle_full(
                 pending_blocks.first().ok_or(SyncError::NoBlocks)?.hash(),
                 pending_blocks.last().ok_or(SyncError::NoBlocks)?.hash()
             );
+            let sync_target = pending_blocks
+                .last()
+                .map(|b| b.header.number)
+                .unwrap_or_default();
             add_blocks_in_batch(
                 blockchain.clone(),
                 cancel_token.clone(),
                 pending_blocks,
                 true,
+                sync_target,
                 store.clone(),
                 peers,
             )
@@ -525,6 +532,12 @@ pub async fn sync_cycle_full(
     // whether we executed the final batch; if body downloads gave up early (the task
     // returns without sending the final batch), it stays false so we don't falsely report
     // catching up to the consensus head below.
+    // Highest block this cycle will reach: the newest pending block if the consensus client
+    // delivered any, else the newest downloaded header. Drives the per-block commit mode.
+    let sync_target = pending_blocks
+        .last()
+        .map(|b| b.header.number)
+        .unwrap_or(end_block_number);
     let mut reached_target = false;
     while let Some(result) = body_rx.recv().await {
         let (blocks, final_batch) = result?;
@@ -539,6 +552,7 @@ pub async fn sync_cycle_full(
             cancel_token.clone(),
             blocks,
             final_batch,
+            sync_target,
             store.clone(),
             peers,
         )
@@ -582,6 +596,7 @@ pub async fn sync_cycle_full(
                 cancel_token.clone(),
                 pending_blocks,
                 true,
+                sync_target,
                 store.clone(),
                 peers,
             )
@@ -616,6 +631,7 @@ async fn add_blocks_in_batch(
     cancel_token: CancellationToken,
     blocks: Vec<Block>,
     final_batch: bool,
+    sync_target: u64,
     store: Store,
     peers: &mut PeerHandler,
 ) -> Result<(), SyncError> {
@@ -657,8 +673,15 @@ async fn add_blocks_in_batch(
         }
     };
     // Run the batch
-    if let Err((err, batch_failure)) =
-        add_blocks(blockchain.clone(), blocks, bals, final_batch, cancel_token).await
+    if let Err((err, batch_failure)) = add_blocks(
+        blockchain.clone(),
+        blocks,
+        bals,
+        final_batch,
+        sync_target,
+        cancel_token,
+    )
+    .await
     {
         if let Some(batch_failure) = batch_failure {
             warn!("Failed to add block during FullSync: {err}");
@@ -720,13 +743,14 @@ async fn add_blocks(
     blocks: Vec<Block>,
     bals: Vec<Option<BlockAccessList>>,
     sync_head_found: bool,
+    sync_target: u64,
     cancel_token: CancellationToken,
 ) -> Result<(), (ChainError, Option<BatchBlockProcessingFailure>)> {
     if sync_head_found {
-        return run_blocks_pipeline(blockchain, blocks, bals).await;
+        return run_blocks_pipeline(blockchain, blocks, bals, sync_target).await;
     }
     blockchain
-        .add_blocks_in_batch(blocks, &bals, cancel_token)
+        .add_blocks_in_batch(blocks, &bals, cancel_token, sync_target)
         .await
 }
 
@@ -734,13 +758,16 @@ async fn run_blocks_pipeline(
     blockchain: Arc<Blockchain>,
     blocks: Vec<Block>,
     bals: Vec<Option<BlockAccessList>>,
+    sync_target: u64,
 ) -> Result<(), (ChainError, Option<BatchBlockProcessingFailure>)> {
     tokio::task::spawn_blocking(move || {
         let mut last_valid_hash = H256::default();
         for (block, bal) in blocks.into_iter().zip(bals.into_iter()) {
             let block_hash = block.hash();
+            let commit_depth =
+                SyncCommitMode::for_block(block.header.number, sync_target).commit_depth();
             blockchain
-                .add_block_pipeline_bounded(block, bal.map(Arc::new), DB_COMMIT_THRESHOLD)
+                .add_block_pipeline_bounded(block, bal.map(Arc::new), commit_depth)
                 .map(|_| ())
                 .map_err(|e| {
                     (

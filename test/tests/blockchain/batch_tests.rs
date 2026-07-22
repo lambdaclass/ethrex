@@ -236,8 +236,14 @@ async fn batch_selfdestruct_created_account_no_spurious_state() {
     let (store_b, _) = setup_store(sender).await;
     let blockchain_b = Blockchain::default_with_store(store_b);
 
+    let sync_target = block2.header.number;
     let result = blockchain_b
-        .add_blocks_in_batch(vec![block1, block2], &[], CancellationToken::new())
+        .add_blocks_in_batch(
+            vec![block1, block2],
+            &[],
+            CancellationToken::new(),
+            sync_target,
+        )
         .await;
 
     assert!(
@@ -384,8 +390,14 @@ async fn batch_cross_batch_blockhash_regression() {
     let (store_b, _) = setup_store(sender).await;
     let blockchain_b = Blockchain::default_with_store(store_b);
 
+    let sync_target = block2.header.number;
     let result1 = blockchain_b
-        .add_blocks_in_batch(vec![block1, block2], &[], CancellationToken::new())
+        .add_blocks_in_batch(
+            vec![block1, block2],
+            &[],
+            CancellationToken::new(),
+            sync_target,
+        )
         .await;
     assert!(
         result1.is_ok(),
@@ -393,8 +405,9 @@ async fn batch_cross_batch_blockhash_regression() {
         result1.err()
     );
 
+    let sync_target = block3.header.number;
     let result2 = blockchain_b
-        .add_blocks_in_batch(vec![block3], &[], CancellationToken::new())
+        .add_blocks_in_batch(vec![block3], &[], CancellationToken::new(), sync_target)
         .await;
     assert!(
         result2.is_ok(),
@@ -440,8 +453,9 @@ async fn batch_single_block_selfdestruct() {
     let (store_b, _) = setup_store(sender).await;
     let blockchain_b = Blockchain::default_with_store(store_b);
 
+    let sync_target = block1.header.number;
     let result = blockchain_b
-        .add_blocks_in_batch(vec![block1], &[], CancellationToken::new())
+        .add_blocks_in_batch(vec![block1], &[], CancellationToken::new(), sync_target)
         .await;
 
     assert!(

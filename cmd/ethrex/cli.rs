@@ -923,6 +923,11 @@ pub async fn import_blocks(
             .iter()
             .map(|b| (b.header.number, b.hash()))
             .collect::<Vec<_>>();
+        // Highest block in this chain: the sync target for the distance-gated batch commit.
+        let import_target = numbers_and_hashes
+            .last()
+            .map(|(n, _)| *n)
+            .unwrap_or_default();
         // Execute block by block
         let mut last_progress_log = Instant::now();
         for (index, block) in blocks.into_iter().enumerate() {
@@ -960,6 +965,7 @@ pub async fn import_blocks(
                             mem::take(&mut block_batch),
                             &[],
                             CancellationToken::new(),
+                            import_target,
                         )
                         .await
                         .map_err(|(err, _)| err)?;

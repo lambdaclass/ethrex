@@ -458,3 +458,173 @@ async fn bounded_reexec_without_fcu_bounds_memory_and_serves_window() {
     drop(store);
     remove_test_db(&path);
 }
+
+/// Build and store a linear canonical chain of `n` blocks (one 1-wei transfer to the 0xBEEF
+/// recipient each) in `store`, returning them in order. Used to generate a chain to replay
+/// through `add_blocks_in_batch` on a fresh store.
+async fn build_stored_chain(
+    store: &Store,
+    blockchain: &Blockchain,
+    chain_id: u64,
+    signer: &Signer,
+    n: u64,
+) -> Vec<Block> {
+    let mut parent_header = store.get_block_header(0).unwrap().unwrap();
+    let mut blocks = Vec::with_capacity(n as usize);
+    for nonce in 0..n {
+        let tx = transfer_tx(chain_id, nonce, signer).await;
+        blockchain
+            .add_transaction_to_pool(tx)
+            .await
+            .expect("tx should enter pool");
+        let block = build_block(store, blockchain, &parent_header).await;
+        blockchain
+            .add_block(block.clone())
+            .expect("store scratch block");
+        blockchain
+            .remove_block_transactions_from_pool(&block)
+            .expect("remove block txs from pool");
+        parent_header = block.header.clone();
+        blocks.push(block);
+    }
+    blocks
+}
+
+/// Distance-gated sync commit — SAFETY: the reorg window stays resident.
+///
+/// `add_blocks_in_batch` must never commit a block within `REORG_DEPTH_LIMIT` of the sync target
+/// to the path-keyed disk — doing so would clobber the recent-state window that reorg handling and
+/// snap/historical queries read from. Replaying a chain with the target at its tip, every block in
+/// the reorg window must stay serveable from memory, while bulk blocks far behind are written
+/// through and clobbered off disk.
+#[cfg(feature = "rocksdb")]
+#[tokio::test]
+async fn distance_gated_sync_keeps_reorg_window_resident() {
+    use ethrex_blockchain::fork_choice::REORG_DEPTH_LIMIT;
+    use tokio_util::sync::CancellationToken;
+
+    // Past the warmup (2 * REORG_DEPTH_LIMIT) so the chain has a genuine write-through zone.
+    let target: u64 = 2 * REORG_DEPTH_LIMIT + 24;
+
+    let sk = test_secret_key();
+    let sender = sender_from_key(&sk);
+    let signer: Signer = LocalSigner::new(sk).into();
+    let recipient = Address::from_low_u64_be(0xBEEF);
+
+    // Generate the canonical chain on a scratch store.
+    let (gen_store, chain_id) = setup_store(sender).await;
+    let gen_bc = Blockchain::default_with_store(gen_store.clone());
+    let blocks = build_stored_chain(&gen_store, &gen_bc, chain_id, &signer, target).await;
+    let root_of = |n: u64| blocks[(n - 1) as usize].header.state_root;
+
+    // Replay the whole chain through the distance-gated batch path on a fresh RocksDB store.
+    let path = format!("dist-gate-window-{:x}", H256::random());
+    remove_test_db(&path);
+    let (genesis, _) = load_funded_genesis(sender);
+    let mut store = Store::new(&path, EngineType::RocksDB).expect("rocksdb store");
+    store.add_initial_state(genesis).await.expect("genesis");
+    let blockchain = Blockchain::default_with_store(store.clone());
+    blockchain
+        .add_blocks_in_batch(blocks.clone(), &[], CancellationToken::new(), target)
+        .await
+        .expect("add_blocks_in_batch");
+    store
+        .wait_for_persistence_idle()
+        .await
+        .expect("wait_for_persistence_idle");
+
+    // (safety) every block within REORG_DEPTH_LIMIT of the target must stay resident; if the
+    // disk floor advanced into this range it would have clobbered these roots.
+    for n in (target - REORG_DEPTH_LIMIT + 1)..=target {
+        assert!(
+            store
+                .has_state_root(root_of(n))
+                .expect("has_state_root window"),
+            "block {n} is within REORG_DEPTH_LIMIT of the target and must stay resident, not committed to disk"
+        );
+    }
+    // a bulk block far behind the target must be committed and clobbered off disk (bounded memory).
+    assert!(
+        !store
+            .has_state_root(root_of(50))
+            .expect("has_state_root bulk"),
+        "a bulk block far behind the target must be committed+clobbered off disk"
+    );
+    // the resident window serves correct historical state (recipient accrues 1 wei/block).
+    let mid = target - 64;
+    let bal = store
+        .get_account_state_by_root(root_of(mid), recipient)
+        .expect("read recipient")
+        .expect("recipient exists")
+        .balance;
+    assert_eq!(
+        bal,
+        U256::from(mid),
+        "mid-window root must serve that block's balance"
+    );
+
+    drop(blockchain);
+    drop(store);
+    remove_test_db(&path);
+}
+
+/// Distance-gated sync commit — BEHAVIOR: blocks far from the target write straight through.
+///
+/// With the target set far ahead (every block beyond `SYNC_RETAIN_WARMUP`), the batch path writes
+/// each layer straight to disk instead of retaining a `DB_COMMIT_THRESHOLD` window: a block a few
+/// back from the tip is committed and clobbered, where a full window would keep it resident.
+/// Together with the window test above this pins the gate from both sides — neither an
+/// always-write-through nor an always-retain implementation passes both.
+#[cfg(feature = "rocksdb")]
+#[tokio::test]
+async fn distance_gated_sync_writes_through_far_from_target() {
+    use ethrex_blockchain::fork_choice::SYNC_RETAIN_WARMUP;
+    use tokio_util::sync::CancellationToken;
+
+    let n: u64 = 150;
+    // Target far ahead so every processed block is beyond the warmup -> all write-through.
+    let far_target = n + SYNC_RETAIN_WARMUP + 100;
+
+    let sk = test_secret_key();
+    let sender = sender_from_key(&sk);
+    let signer: Signer = LocalSigner::new(sk).into();
+
+    let (gen_store, chain_id) = setup_store(sender).await;
+    let gen_bc = Blockchain::default_with_store(gen_store.clone());
+    let blocks = build_stored_chain(&gen_store, &gen_bc, chain_id, &signer, n).await;
+    let root_of = |b: u64| blocks[(b - 1) as usize].header.state_root;
+
+    let path = format!("dist-gate-writethrough-{:x}", H256::random());
+    remove_test_db(&path);
+    let (genesis, _) = load_funded_genesis(sender);
+    let mut store = Store::new(&path, EngineType::RocksDB).expect("rocksdb store");
+    store.add_initial_state(genesis).await.expect("genesis");
+    let blockchain = Blockchain::default_with_store(store.clone());
+    blockchain
+        .add_blocks_in_batch(blocks.clone(), &[], CancellationToken::new(), far_target)
+        .await
+        .expect("add_blocks_in_batch");
+    store
+        .wait_for_persistence_idle()
+        .await
+        .expect("wait_for_persistence_idle");
+
+    // Write-through keeps ~1 layer resident: the tip is serveable, but a block a few back is
+    // committed and clobbered -- a DB_COMMIT_THRESHOLD window would have kept it resident.
+    assert!(
+        store
+            .has_state_root(root_of(n))
+            .expect("has_state_root tip"),
+        "the tip must be serveable"
+    );
+    assert!(
+        !store
+            .has_state_root(root_of(n - 10))
+            .expect("has_state_root back"),
+        "far from the target, blocks must be written straight through (a full window would retain this)"
+    );
+
+    drop(blockchain);
+    drop(store);
+    remove_test_db(&path);
+}
