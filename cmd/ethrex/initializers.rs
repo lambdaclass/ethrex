@@ -145,6 +145,56 @@ pub fn init_metrics(opts: &Options, network: &Network, tracker: TaskTracker) {
     spawn_logged(&tracker, "metrics server", metrics_api);
 }
 
+/// Interval between RocksDB observability samples. Property reads are cheap
+/// metadata lookups, so a tight-ish cadence gives responsive Grafana panels
+/// without measurable overhead.
+const DB_METRICS_SAMPLE_INTERVAL: std::time::Duration = std::time::Duration::from_secs(15);
+
+/// Periodically exports RocksDB observability metrics: per-column-family sizes,
+/// key/file counts and compaction debt, plus DB-wide block-cache usage and the
+/// history-backfill frontier. Populates the gauges surfaced by the metrics API.
+///
+/// A no-op for non-RocksDB backends (`rocksdb_stats()` returns `None`). Spawned
+/// only when metrics are enabled.
+fn spawn_rocksdb_metrics_collector(store: Store, tracker: &TaskTracker) {
+    use ethrex_metrics::db::METRICS_DB;
+
+    tracker.spawn(async move {
+        loop {
+            if let Some(stats) = store.rocksdb_stats() {
+                let mut total_live_sst = 0u64;
+                for cf in &stats.cfs {
+                    METRICS_DB.set_cf(
+                        &cf.name,
+                        cf.live_sst_bytes,
+                        cf.total_sst_bytes,
+                        cf.live_data_bytes,
+                        cf.num_keys,
+                        cf.num_files,
+                        cf.blob_bytes,
+                        cf.pending_compaction_bytes,
+                        cf.memtable_bytes,
+                    );
+                    total_live_sst += cf.live_sst_bytes;
+                }
+                METRICS_DB.set_global(
+                    total_live_sst,
+                    stats.block_cache_usage_bytes,
+                    stats.block_cache_capacity_bytes,
+                    stats.block_cache_pinned_bytes,
+                    stats.running_compactions,
+                    stats.block_cache_hits,
+                    stats.block_cache_misses,
+                );
+            }
+            if let Ok(frontier) = store.get_earliest_block_number().await {
+                METRICS_DB.set_backfill_frontier(frontier);
+            }
+            tokio::time::sleep(DB_METRICS_SAMPLE_INTERVAL).await;
+        }
+    });
+}
+
 /// Opens a new or pre-existing Store with default tunables and loads the initial
 /// state provided by the network. See [`init_store_with_config`] for the variant
 /// that lets production callers thread CLI-provided storage tunables through.
@@ -851,6 +901,7 @@ pub async fn init_l1(
 
     if opts.metrics_enabled {
         init_metrics(&opts, &network, tracker.clone());
+        spawn_rocksdb_metrics_collector(store.clone(), &tracker);
     }
 
     if opts.dev {
