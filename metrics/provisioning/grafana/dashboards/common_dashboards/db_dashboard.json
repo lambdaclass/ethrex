@@ -389,7 +389,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "ethrex_db_cf_size_bytes{instance=~\"$instance\"}",
+          "expr": "sort_desc(ethrex_db_cf_size_bytes{instance=~\"$instance\"})",
           "refId": "A",
           "legendFormat": "{{cf}}"
         }
@@ -923,7 +923,7 @@
         "uid": "${DS_PROMETHEUS}"
       },
       "gridPos": {
-        "h": 8,
+        "h": 4,
         "w": 6,
         "x": 0,
         "y": 49
@@ -966,22 +966,185 @@
             "lastNotNull"
           ]
         }
-      }
+      },
+      "description": "Lowest block with full chain data on disk; descends toward the floor."
+    },
+    {
+      "type": "stat",
+      "title": "Backfill Speed",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 6,
+        "y": 49
+      },
+      "id": 19,
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "-deriv(ethrex_db_backfill_frontier_block{instance=~\"$instance\"}[10m])",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "steps": [
+              {
+                "color": "blue",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "center",
+        "textMode": "value_and_name",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        }
+      },
+      "description": "Blocks per second, from the 10m rate of change of the frontier. 0 = idle/stalled."
+    },
+    {
+      "type": "stat",
+      "title": "ETA to Merge Floor",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 12,
+        "y": 49
+      },
+      "id": 20,
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "(ethrex_db_backfill_frontier_block{instance=~\"$instance\"} - 15537394) / clamp_min(-deriv(ethrex_db_backfill_frontier_block{instance=~\"$instance\"}[30m]), 0.0001)",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "steps": [
+              {
+                "color": "blue",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "textMode": "value_and_name",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        }
+      },
+      "description": "Blocks remaining divided by the current 30m rate. Shoots up when the rate drops toward 0."
+    },
+    {
+      "type": "stat",
+      "title": "Backfill Data on Disk",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 18,
+        "y": 49
+      },
+      "id": 21,
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "sum by (instance)(ethrex_db_cf_size_bytes{instance=~\"$instance\", cf=~\"bodies|receipts_v2|transaction_locations\"})",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes",
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "steps": [
+              {
+                "color": "blue",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "center",
+        "textMode": "value_and_name",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        }
+      },
+      "description": "Live SST across bodies + receipts_v2 + transaction_locations \u2014 what the backfilled history occupies so far (plus a small post-pivot tail)."
     },
     {
       "type": "timeseries",
-      "title": "Backfill Frontier Over Time (\u2192 merge floor)",
+      "title": "Backfill Frontier \u2192 Merge Floor",
       "datasource": {
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
       "gridPos": {
         "h": 8,
-        "w": 18,
-        "x": 6,
-        "y": 49
+        "w": 12,
+        "x": 0,
+        "y": 53
       },
-      "id": 19,
+      "id": 22,
       "targets": [
         {
           "datasource": {
@@ -1033,6 +1196,61 @@
     },
     {
       "type": "timeseries",
+      "title": "Backfill Speed (blocks/s)",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 53
+      },
+      "id": 23,
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "-deriv(ethrex_db_backfill_frontier_block{instance=~\"$instance\"}[10m])",
+          "refId": "A",
+          "legendFormat": "blocks/s"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            }
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "calcs": []
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "description": "Sustained fill rate. Multiply by ~138 KB/block for bandwidth."
+    },
+    {
+      "type": "timeseries",
       "title": "Backfilled Column Families (bodies / receipts / tx locations)",
       "datasource": {
         "type": "prometheus",
@@ -1040,11 +1258,11 @@
       },
       "gridPos": {
         "h": 8,
-        "w": 24,
+        "w": 12,
         "x": 0,
-        "y": 57
+        "y": 61
       },
-      "id": 20,
+      "id": 24,
       "targets": [
         {
           "datasource": {
@@ -1087,6 +1305,60 @@
       "description": "Live SST of the column families the backfill writes into."
     },
     {
+      "type": "timeseries",
+      "title": "Backfill Disk Growth",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 61
+      },
+      "id": 25,
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "sum by (instance)(deriv(ethrex_db_cf_size_bytes{instance=~\"$instance\", cf=~\"bodies|receipts_v2|transaction_locations\"}[30m]))",
+          "refId": "A",
+          "legendFormat": "growth"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "Bps",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "calcs": []
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "description": "Rate the backfilled CFs grow on disk (30m derivative). Negative during compaction/space reclaim."
+    },
+    {
       "type": "row",
       "title": "Read / Performance Internals",
       "collapsed": false,
@@ -1094,9 +1366,9 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 65
+        "y": 69
       },
-      "id": 21,
+      "id": 26,
       "panels": []
     },
     {
@@ -1110,9 +1382,9 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 66
+        "y": 70
       },
-      "id": 22,
+      "id": 27,
       "targets": [
         {
           "datasource": {
@@ -1182,9 +1454,9 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 66
+        "y": 70
       },
-      "id": 23,
+      "id": 28,
       "targets": [
         {
           "datasource": {
@@ -1237,9 +1509,9 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 74
+        "y": 78
       },
-      "id": 24,
+      "id": 29,
       "targets": [
         {
           "datasource": {
@@ -1291,9 +1563,9 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 74
+        "y": 78
       },
-      "id": 25,
+      "id": 30,
       "targets": [
         {
           "datasource": {
@@ -1345,9 +1617,9 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 82
+        "y": 86
       },
-      "id": 26,
+      "id": 31,
       "targets": [
         {
           "datasource": {
@@ -1399,9 +1671,9 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 82
+        "y": 86
       },
-      "id": 27,
+      "id": 32,
       "targets": [
         {
           "datasource": {
