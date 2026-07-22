@@ -14,6 +14,9 @@ mod snap_sync;
 #[cfg(feature = "test-utils")]
 pub use full::{first_resume_point_in_batch, is_resume_point};
 
+/// Re-exported for the sync manager's pre-cycle heal wait and for integration tests.
+pub use full::sync_head_executed;
+
 use crate::metrics::METRICS;
 use crate::peer_handler::{BlockRequestOrder, HeaderFetchOutcome, PeerHandler, PeerHandlerError};
 use crate::snap::constants::{EXECUTE_BATCH_SIZE_DEFAULT, MIN_FULL_BLOCKS};
@@ -69,6 +72,10 @@ pub struct SyncDiagnostics {
     /// this rather than the canonical pointer so the node isn't shown as near-synced
     /// while it has no state up to the tip.
     pub executed_head: u64,
+    /// Number of sync cycles actually started (after any pre-cycle heal wait).
+    /// A synced node following the tip should see this stay flat; steady growth
+    /// means forkchoice heads keep arriving that we cannot resolve locally.
+    pub sync_cycles_started: u64,
     pub pivot_block_number: Option<u64>,
     pub pivot_timestamp: Option<u64>,
     pub pivot_age_seconds: Option<u64>,
