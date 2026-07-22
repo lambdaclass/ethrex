@@ -18,7 +18,9 @@ use ethrex_common::types::{Block, DEFAULT_BUILDER_GAS_CEIL, Genesis, validate_bl
 use ethrex_p2p::{
     discovery::INITIAL_LOOKUP_INTERVAL_MS,
     peer_table::TARGET_PEERS,
-    sync::{HistoryChain, SyncMode},
+    sync::{
+        DEFAULT_BACKFILL_BATCH_INTERVAL_MS, DEFAULT_BACKFILL_PARALLELISM, HistoryChain, SyncMode,
+    },
     tx_broadcaster::BROADCAST_INTERVAL_MS,
     types::Node,
 };
@@ -151,6 +153,24 @@ pub struct Options {
         env = "ETHREX_HISTORY_TRANSACTIONS"
     )]
     pub history_transactions: u64,
+    #[arg(
+        long = "history.backfill-parallelism",
+        default_value_t = DEFAULT_BACKFILL_PARALLELISM,
+        value_name = "N",
+        help = "Historical backfill batches fetched concurrently from different peers (1 = one at a time). Higher = faster, using more peers/bandwidth.",
+        help_heading = "P2P options",
+        env = "ETHREX_HISTORY_BACKFILL_PARALLELISM"
+    )]
+    pub history_backfill_parallelism: usize,
+    #[arg(
+        long = "history.backfill-interval-ms",
+        default_value_t = DEFAULT_BACKFILL_BATCH_INTERVAL_MS,
+        value_name = "MS",
+        help = "Pause in milliseconds between successful historical backfill batches (lower = faster/less polite).",
+        help_heading = "P2P options",
+        env = "ETHREX_HISTORY_BACKFILL_INTERVAL_MS"
+    )]
+    pub history_backfill_interval_ms: u64,
     #[arg(
         long = "metrics.addr",
         value_name = "ADDRESS",
@@ -564,6 +584,8 @@ impl Default for Options {
             syncmode: Default::default(),
             history_chain: Default::default(),
             history_transactions: Default::default(),
+            history_backfill_parallelism: DEFAULT_BACKFILL_PARALLELISM,
+            history_backfill_interval_ms: DEFAULT_BACKFILL_BATCH_INTERVAL_MS,
             metrics_addr: "0.0.0.0".to_owned(),
             metrics_port: Default::default(),
             metrics_enabled: Default::default(),

@@ -35,7 +35,7 @@ Node options:
           Base directory for the database. For public networks a subdirectory named after the network is appended (e.g. ~/.local/share/ethrex/mainnet). If the value is `memory`, the InMemory Engine is used instead.
           
           [env: ETHREX_DATADIR=]
-          [default: /home/runner/.local/share/ethrex]
+          [default: "/Users/ivanlitteri/Library/Application Support/ethrex"]
 
       --force
           Delete the database without confirmation.
@@ -113,13 +113,13 @@ Node options:
 
       --mempool.gap-admit-occupancy-threshold <PERCENTAGE>
           Mempool occupancy percentage (0-100) at or above which incoming transactions with a nonce gap relative to the sender's on-chain nonce are rejected. Setting to 100 disables the check.
-
+          
           [env: ETHREX_MEMPOOL_GAP_ADMIT_OCCUPANCY_THRESHOLD=]
           [default: 90]
 
       --mempool.max-queued-txs-per-account <MAX_QUEUED_TXS_PER_ACCOUNT>
           Maximum number of queued (future/nonce-gapped) transactions a single sender may hold in the mempool. Executable (contiguous-nonce) txs are not capped (geth AccountQueue-style).
-
+          
           [env: ETHREX_MEMPOOL_MAX_QUEUED_TXS_PER_ACCOUNT=]
           [default: 64]
 
@@ -139,6 +139,30 @@ P2P options:
           
           [env: ETHREX_SYNCMODE=]
           [default: snap]
+
+      --history.chain <HISTORY_CHAIN>
+          Optionally backfill historical block bodies and receipts after snap sync so the node can serve historical block, transaction, receipt and log queries. One of "off" (default: headers-only below the pivot), "postmerge" (backfill down to the merge block), or "all" (down to genesis, best-effort as many peers no longer serve pre-merge history). Enabling this adds substantial disk usage. It does not enable historical state queries (this is not an archive node).
+          
+          [env: ETHREX_HISTORY_CHAIN=]
+          [default: off]
+
+      --history.transactions <BLOCKS>
+          Blocks of backfilled history to keep the transaction index for (0 = the entire backfilled range).
+          
+          [env: ETHREX_HISTORY_TRANSACTIONS=]
+          [default: 0]
+
+      --history.backfill-parallelism <N>
+          Historical backfill batches fetched concurrently from different peers (1 = one at a time). Higher = faster, using more peers/bandwidth.
+          
+          [env: ETHREX_HISTORY_BACKFILL_PARALLELISM=]
+          [default: 1]
+
+      --history.backfill-interval-ms <MS>
+          Pause in milliseconds between successful historical backfill batches (lower = faster/less polite).
+          
+          [env: ETHREX_HISTORY_BACKFILL_INTERVAL_MS=]
+          [default: 500]
 
       --p2p.disabled
           [env: ETHREX_P2P_DISABLED=]

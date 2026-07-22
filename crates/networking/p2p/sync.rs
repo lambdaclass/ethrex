@@ -10,7 +10,10 @@ mod full;
 mod healing;
 mod snap_sync;
 
-pub use backfill::{BackfillConfig, resolve_postmerge_floor, run_history_backfill};
+pub use backfill::{
+    BackfillConfig, DEFAULT_BACKFILL_BATCH_INTERVAL_MS, DEFAULT_BACKFILL_PARALLELISM,
+    resolve_postmerge_floor, run_history_backfill,
+};
 
 /// Test-only re-export of the full-sync resume-point predicate so integration tests can
 /// assert that canonical-but-stateless blocks are not treated as already-executed.
