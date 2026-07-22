@@ -60,7 +60,9 @@ async fn build_valid_amsterdam_block(store: &Store) -> (Block, BlockAccessList) 
         random: H256::zero(),
         withdrawals: Some(Vec::new()),
         beacon_root: Some(H256::zero()),
-        slot_number: None,
+        // EIP-7843: Amsterdam headers must carry a slot_number, else header
+        // validation rejects the block before the BAL-hash check under test.
+        slot_number: Some(1),
         version: 1,
         elasticity_multiplier: ELASTICITY_MULTIPLIER,
         gas_ceil: DEFAULT_BUILDER_GAS_CEIL,
