@@ -116,35 +116,44 @@ impl RLPDecode for P2PTransaction {
     fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
         let (is_list, payload, remainder) = decode_rlp_item(rlp)?;
         if !is_list {
-            let tx_type = payload.first().ok_or(RLPDecodeError::InvalidLength)?;
-            let tx_encoding = &payload.get(1..).ok_or(RLPDecodeError::InvalidLength)?;
-            // Look at the first byte to check if it corresponds to a TransactionType
-            match *tx_type {
-                // Legacy
-                0x0 => LegacyTransaction::decode(tx_encoding)
-                    .map(|tx| (P2PTransaction::LegacyTransaction(tx), remainder)), // TODO: check if this is a real case scenario
-                // EIP2930
-                0x1 => EIP2930Transaction::decode(tx_encoding)
-                    .map(|tx| (P2PTransaction::EIP2930Transaction(tx), remainder)),
-                // EIP1559
-                0x2 => EIP1559Transaction::decode(tx_encoding)
-                    .map(|tx| (P2PTransaction::EIP1559Transaction(tx), remainder)),
-                // EIP4844
-                0x3 => WrappedEIP4844Transaction::decode(tx_encoding)
-                    .map(|tx| (P2PTransaction::EIP4844TransactionWithBlobs(tx), remainder)),
-                // EIP7702
-                0x4 => EIP7702Transaction::decode(tx_encoding)
-                    .map(|tx| (P2PTransaction::EIP7702Transaction(tx), remainder)),
-                // FeeToken
-                0x7d => FeeTokenTransaction::decode(tx_encoding)
-                    .map(|tx| (P2PTransaction::FeeTokenTransaction(tx), remainder)),
-                // Frame (EIP-8141)
-                0x06 => FrameTransaction::decode(tx_encoding)
-                    .map(|tx| (P2PTransaction::FrameTransaction(tx), remainder)),
-                ty => Err(RLPDecodeError::Custom(format!(
-                    "Invalid transaction type: {ty}"
-                ))),
-            }
+            let tx_type = *payload.first().ok_or(RLPDecodeError::InvalidLength)?;
+            let tx_encoding = payload.get(1..).ok_or(RLPDecodeError::InvalidLength)?;
+            // `from_type_byte` is the single gate for valid envelope types: it rejects 0x00
+            // (legacy is the bare-list branch below) and any unassigned type byte.
+            let tx = match TxType::from_type_byte(tx_type)? {
+                TxType::EIP2930 => {
+                    P2PTransaction::EIP2930Transaction(EIP2930Transaction::decode(tx_encoding)?)
+                }
+                TxType::EIP1559 => {
+                    P2PTransaction::EIP1559Transaction(EIP1559Transaction::decode(tx_encoding)?)
+                }
+                TxType::EIP4844 => P2PTransaction::EIP4844TransactionWithBlobs(
+                    WrappedEIP4844Transaction::decode(tx_encoding)?,
+                ),
+                TxType::EIP7702 => {
+                    P2PTransaction::EIP7702Transaction(EIP7702Transaction::decode(tx_encoding)?)
+                }
+                TxType::Frame => {
+                    P2PTransaction::FrameTransaction(FrameTransaction::decode(tx_encoding)?)
+                }
+                TxType::FeeToken => {
+                    P2PTransaction::FeeTokenTransaction(FeeTokenTransaction::decode(tx_encoding)?)
+                }
+                // Privileged (L2) transactions are never gossiped over p2p.
+                TxType::Privileged => {
+                    return Err(RLPDecodeError::Custom(
+                        "privileged transactions are not sent over p2p".to_string(),
+                    ));
+                }
+                // Never returned by `from_type_byte` (0x00 is rejected); a legacy tx arrives as
+                // an RLP list on the branch below, not as a typed envelope.
+                TxType::Legacy => {
+                    return Err(RLPDecodeError::Custom(
+                        "legacy transactions are not typed envelopes".to_string(),
+                    ));
+                }
+            };
+            Ok((tx, remainder))
         } else {
             // LegacyTransaction
             LegacyTransaction::decode_unfinished(rlp)
@@ -534,38 +543,42 @@ impl RLPDecode for Transaction {
     fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
         let (is_list, payload, remainder) = decode_rlp_item(rlp)?;
         if !is_list {
-            let tx_type = payload.first().ok_or(RLPDecodeError::InvalidLength)?;
-            let tx_encoding = &payload.get(1..).ok_or(RLPDecodeError::InvalidLength)?;
-            // Look at the first byte to check if it corresponds to a TransactionType
-            match *tx_type {
-                // Legacy
-                0x0 => LegacyTransaction::decode(tx_encoding)
-                    .map(|tx| (Transaction::LegacyTransaction(tx), remainder)), // TODO: check if this is a real case scenario
-                // EIP2930
-                0x1 => EIP2930Transaction::decode(tx_encoding)
-                    .map(|tx| (Transaction::EIP2930Transaction(tx), remainder)),
-                // EIP1559
-                0x2 => EIP1559Transaction::decode(tx_encoding)
-                    .map(|tx| (Transaction::EIP1559Transaction(tx), remainder)),
-                // EIP4844
-                0x3 => EIP4844Transaction::decode(tx_encoding)
-                    .map(|tx| (Transaction::EIP4844Transaction(tx), remainder)),
-                // EIP7702
-                0x4 => EIP7702Transaction::decode(tx_encoding)
-                    .map(|tx| (Transaction::EIP7702Transaction(tx), remainder)),
-                // FeeToken
-                0x7d => FeeTokenTransaction::decode(tx_encoding)
-                    .map(|tx| (Transaction::FeeTokenTransaction(tx), remainder)),
-                // Frame (EIP-8141)
-                0x6 => FrameTransaction::decode(tx_encoding)
-                    .map(|tx| (Transaction::FrameTransaction(tx), remainder)),
-                // PrivilegedL2
-                0x7e => PrivilegedL2Transaction::decode(tx_encoding)
-                    .map(|tx| (Transaction::PrivilegedL2Transaction(tx), remainder)),
-                ty => Err(RLPDecodeError::Custom(format!(
-                    "Invalid transaction type: {ty}"
-                ))),
-            }
+            let tx_type = *payload.first().ok_or(RLPDecodeError::InvalidLength)?;
+            let tx_encoding = payload.get(1..).ok_or(RLPDecodeError::InvalidLength)?;
+            // `from_type_byte` is the single gate for valid envelope types: it rejects 0x00
+            // (a legacy tx is a bare RLP list, handled below, not a typed envelope) and any
+            // unassigned type byte.
+            let tx = match TxType::from_type_byte(tx_type)? {
+                TxType::EIP2930 => {
+                    Transaction::EIP2930Transaction(EIP2930Transaction::decode(tx_encoding)?)
+                }
+                TxType::EIP1559 => {
+                    Transaction::EIP1559Transaction(EIP1559Transaction::decode(tx_encoding)?)
+                }
+                TxType::EIP4844 => {
+                    Transaction::EIP4844Transaction(EIP4844Transaction::decode(tx_encoding)?)
+                }
+                TxType::EIP7702 => {
+                    Transaction::EIP7702Transaction(EIP7702Transaction::decode(tx_encoding)?)
+                }
+                TxType::Frame => {
+                    Transaction::FrameTransaction(FrameTransaction::decode(tx_encoding)?)
+                }
+                TxType::FeeToken => {
+                    Transaction::FeeTokenTransaction(FeeTokenTransaction::decode(tx_encoding)?)
+                }
+                TxType::Privileged => Transaction::PrivilegedL2Transaction(
+                    PrivilegedL2Transaction::decode(tx_encoding)?,
+                ),
+                // Never returned by `from_type_byte` (0x00 is rejected); a legacy tx arrives as
+                // an RLP list on the branch below, not as a typed envelope.
+                TxType::Legacy => {
+                    return Err(RLPDecodeError::Custom(
+                        "legacy transactions are not typed envelopes".to_string(),
+                    ));
+                }
+            };
+            Ok((tx, remainder))
         } else {
             // LegacyTransaction
             LegacyTransaction::decode_unfinished(rlp)
@@ -1649,6 +1662,29 @@ impl TxType {
         }
     }
 
+    /// Resolve a typed-transaction **envelope** type byte (EIP-2718) to its [`TxType`].
+    ///
+    /// Single source of truth for which envelope type bytes a transaction decoder accepts.
+    /// Unlike [`TxType::from_u8`], this **rejects `0x00`**: per EIP-2718 a legacy transaction is
+    /// a bare RLP list, never a `0x00`-typed envelope, so `0x00 || rlp(..)` is non-canonical and
+    /// must be rejected (matching go-ethereum) rather than silently decoded as legacy. Unassigned
+    /// type bytes are rejected too. (`from_u8` keeps mapping `0x00 -> Legacy` for contexts where
+    /// the type is already known valid, e.g. receipts.)
+    pub fn from_type_byte(byte: u8) -> Result<Self, RLPDecodeError> {
+        match byte {
+            0x01 => Ok(Self::EIP2930),
+            0x02 => Ok(Self::EIP1559),
+            0x03 => Ok(Self::EIP4844),
+            0x04 => Ok(Self::EIP7702),
+            0x06 => Ok(Self::Frame),
+            0x7d => Ok(Self::FeeToken),
+            0x7e => Ok(Self::Privileged),
+            other => Err(RLPDecodeError::Custom(format!(
+                "Invalid transaction type: {other}"
+            ))),
+        }
+    }
+
     /// Transaction types that only exist on the L2 rollup and must never appear in
     /// an L1 block (`FeeToken` 0x7d, `Privileged` 0x7e). Privileged transactions in
     /// particular take their sender from an unsigned, caller-chosen `from` field.
@@ -2505,38 +2541,29 @@ mod canonic_encoding {
             match bytes.first() {
                 // First byte is a valid TransactionType
                 Some(tx_type) if *tx_type < 0x7f => {
-                    // Decode tx based on type
+                    // Decode tx based on type. `from_type_byte` is the single gate for valid
+                    // envelope types: it rejects 0x00 (legacy is the bare-list branch below) and
+                    // any unassigned type byte.
                     let tx_bytes = &bytes[1..];
-                    match *tx_type {
-                        // Legacy
-                        0x0 => {
-                            LegacyTransaction::decode(tx_bytes).map(Transaction::LegacyTransaction)
-                        } // TODO: check if this is a real case scenario
-                        // EIP2930
-                        0x1 => EIP2930Transaction::decode(tx_bytes)
+                    match TxType::from_type_byte(*tx_type)? {
+                        TxType::EIP2930 => EIP2930Transaction::decode(tx_bytes)
                             .map(Transaction::EIP2930Transaction),
-                        // EIP1559
-                        0x2 => EIP1559Transaction::decode(tx_bytes)
+                        TxType::EIP1559 => EIP1559Transaction::decode(tx_bytes)
                             .map(Transaction::EIP1559Transaction),
-                        // EIP4844
-                        0x3 => EIP4844Transaction::decode(tx_bytes)
+                        TxType::EIP4844 => EIP4844Transaction::decode(tx_bytes)
                             .map(Transaction::EIP4844Transaction),
-                        // EIP7702
-                        0x4 => EIP7702Transaction::decode(tx_bytes)
+                        TxType::EIP7702 => EIP7702Transaction::decode(tx_bytes)
                             .map(Transaction::EIP7702Transaction),
-                        // Frame (EIP-8141)
-                        0x6 => {
+                        TxType::Frame => {
                             FrameTransaction::decode(tx_bytes).map(Transaction::FrameTransaction)
                         }
-                        // FeeTokenTransaction
-                        0x7d => FeeTokenTransaction::decode(tx_bytes)
+                        TxType::FeeToken => FeeTokenTransaction::decode(tx_bytes)
                             .map(Transaction::FeeTokenTransaction),
-                        // PrivilegedL2Transaction
-                        0x7e => PrivilegedL2Transaction::decode(tx_bytes)
+                        TxType::Privileged => PrivilegedL2Transaction::decode(tx_bytes)
                             .map(Transaction::PrivilegedL2Transaction),
-                        ty => Err(RLPDecodeError::Custom(format!(
-                            "Invalid transaction type: {ty}"
-                        ))),
+                        TxType::Legacy => Err(RLPDecodeError::Custom(
+                            "legacy transactions are not typed envelopes".to_string(),
+                        )),
                     }
                 }
                 // LegacyTransaction

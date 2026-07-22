@@ -11,7 +11,7 @@ repository.workspace = true
 [dependencies]
 ethrex-common = { workspace = true, default-features = false }
 ethrex-crypto.workspace = true
-ethrex-levm = { path = "./levm", version = "21.0.0", default-features = false }
+ethrex-levm = { path = "./levm", version = "22.0.0", default-features = false }
 ethrex-rlp.workspace = true
 
 derive_more = { version = "1.0.0", features = ["full"] }
