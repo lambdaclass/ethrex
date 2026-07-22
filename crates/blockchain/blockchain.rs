@@ -2651,9 +2651,9 @@ impl Blockchain {
 
     /// Adds multiple consecutive blocks in a batch during full sync.
     ///
-    /// Each block is routed through the same per-block-validated pipeline used for live blocks
-    /// (`add_block_pipeline_bounded`) instead of the bespoke "execute all, apply once, validate
-    /// only the last state root" path. This:
+    /// Each block is routed through the same per-block-validated pipeline that live blocks use
+    /// (via [`add_block_pipeline_bounded`], the depth-gated entry point) instead of the bespoke
+    /// "execute all, apply once, validate only the last state root" path. This:
     ///
     /// - closes the intermediate-state-root gap (every block's state root is validated),
     /// - reuses the pipeline's BAL-driven parallel execution + precompile cache and its per-block
