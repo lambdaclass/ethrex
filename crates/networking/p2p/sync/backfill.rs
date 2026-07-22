@@ -115,9 +115,15 @@ async fn reconcile_frontier(store: &Store) -> Result<BlockNumber, SyncError> {
 
 /// Blocks fetched per backfill batch, bounded by the eth `GetBlockBodies` limit.
 const BACKFILL_BATCH_SIZE: u64 = MAX_BLOCK_BODIES_TO_REQUEST as u64;
-/// Pause between successful batches so backfill yields peers/bandwidth to
-/// head-following sync rather than saturating them.
-const BACKFILL_BATCH_INTERVAL: Duration = Duration::from_millis(500);
+/// Default pause between successful batches (`--history.backfill-interval-ms`).
+/// A short pause yields peers/bandwidth to head-following sync; lowering it
+/// speeds up backfill on well-connected nodes, raising it is more polite.
+pub const DEFAULT_BACKFILL_BATCH_INTERVAL_MS: u64 = 500;
+/// Default number of batches fetched concurrently (`--history.backfill-parallelism`).
+/// `1` = one batch at a time (conservative). Higher values fetch that many
+/// disjoint ranges from different peers at once, scaling throughput roughly
+/// linearly until the peer set / bandwidth is the limit.
+pub const DEFAULT_BACKFILL_PARALLELISM: usize = 1;
 /// Backoff when a batch makes no progress (no peers, incomplete response) or
 /// while initial sync is still running.
 const BACKFILL_IDLE_INTERVAL: Duration = Duration::from_secs(10);
@@ -129,6 +135,21 @@ pub struct BackfillConfig {
     /// `--history.transactions`: maintain the transaction-lookup index for the
     /// most recent `N` backfilled blocks (`0` = the entire backfilled range).
     pub tx_index_horizon: u64,
+    /// `--history.backfill-interval-ms`: pause between successful batches.
+    pub batch_interval: Duration,
+    /// `--history.backfill-parallelism`: batches fetched concurrently per round.
+    pub parallelism: usize,
+}
+
+impl Default for BackfillConfig {
+    fn default() -> Self {
+        Self {
+            mode: HistoryChain::Off,
+            tx_index_horizon: 0,
+            batch_interval: Duration::from_millis(DEFAULT_BACKFILL_BATCH_INTERVAL_MS),
+            parallelism: DEFAULT_BACKFILL_PARALLELISM,
+        }
+    }
 }
 
 /// Outcome of a single backfill step, used to pace the loop.
@@ -154,7 +175,7 @@ enum BackfillProgress {
 /// Runs until the token is cancelled; errors are logged and retried rather than
 /// propagated, since this is a non-critical background process.
 pub async fn run_history_backfill(
-    mut peers: PeerHandler,
+    peers: PeerHandler,
     store: Store,
     config: BackfillConfig,
     snap_enabled: Arc<AtomicBool>,
@@ -173,7 +194,7 @@ pub async fn run_history_backfill(
             return;
         }
         let delay = match backfill_step(
-            &mut peers,
+            &peers,
             &store,
             &config,
             &snap_enabled,
@@ -182,7 +203,7 @@ pub async fn run_history_backfill(
         )
         .await
         {
-            Ok(BackfillProgress::Advanced) => BACKFILL_BATCH_INTERVAL,
+            Ok(BackfillProgress::Advanced) => config.batch_interval,
             Ok(BackfillProgress::Complete | BackfillProgress::Waiting) => BACKFILL_IDLE_INTERVAL,
             Err(e) => {
                 warn!("History backfill step failed (will retry): {e}");
@@ -200,7 +221,7 @@ pub async fn run_history_backfill(
 /// (already-canonical) headers just below the frontier, fetch and validate their
 /// bodies and receipts, persist them, and lower the frontier.
 async fn backfill_step(
-    peers: &mut PeerHandler,
+    peers: &PeerHandler,
     store: &Store,
     config: &BackfillConfig,
     snap_enabled: &AtomicBool,
@@ -251,40 +272,159 @@ async fn backfill_step(
         return Ok(BackfillProgress::Complete);
     }
 
-    // Next batch is [batch_lo, frontier - 1]. Read headers top-down (highest
-    // first): the peer returns bodies/receipts in request order, so a truncated
-    // response still yields a contiguous run adjacent to the frontier, letting us
-    // lower the frontier without leaving a hole.
-    let batch_lo = frontier.saturating_sub(BACKFILL_BATCH_SIZE).max(floor);
-    let mut headers: Vec<BlockHeader> = Vec::with_capacity((frontier - batch_lo) as usize);
-    for number in (batch_lo..frontier).rev() {
-        let header = store
-            .get_block_header(number)?
-            .ok_or(SyncError::CorruptDB)?;
-        headers.push(header);
+    // Dispatch up to `parallelism` disjoint batches stacked below the frontier,
+    // fetch them concurrently, then commit the contiguous prefix in order so the
+    // on-disk `[earliest, head]` never has a hole (see `plan_backfill_commit`).
+    let ranges = plan_backfill_ranges(frontier, floor, BACKFILL_BATCH_SIZE, config.parallelism);
+    let head = store.get_latest_block_number().await?;
+    let results = futures::future::join_all(
+        ranges
+            .iter()
+            .map(|&(lo, hi)| fetch_range(peers.clone(), store, config, lo, hi, head)),
+    )
+    .await;
+
+    let filled: Vec<Option<u64>> = results
+        .iter()
+        .map(|r| r.as_ref().ok().filter(|b| !b.is_empty()).map(|b| b.len() as u64))
+        .collect();
+    let (commit_count, new_frontier) = plan_backfill_commit(frontier, &ranges, &filled);
+
+    // Write the committed prefix in ascending index (descending block) order,
+    // each range lowering the frontier. Surface a hard fetch error only when the
+    // round made no progress at all; otherwise the persisted progress stands and
+    // the failed lower ranges are simply retried next round.
+    for (i, result) in results.into_iter().enumerate() {
+        match result {
+            Ok(blocks) if i < commit_count => {
+                let (_, hi) = ranges[i];
+                let batch_earliest = hi - blocks.len() as u64;
+                store.add_backfilled_blocks(blocks, batch_earliest).await?;
+            }
+            Err(e) if new_frontier == frontier => return Err(e),
+            _ => {}
+        }
     }
 
-    // Bodies and receipts are each validated against the headers inside the peer
-    // request (block-body validation; receipts-root recomputed from logs, which
-    // reconstructs eth/69's omitted bloom).
-    let Some(bodies) = peers.request_block_bodies(&headers).await? else {
-        return Ok(BackfillProgress::Waiting);
-    };
-    let Some(receipts) = peers.request_receipts(&headers).await? else {
-        return Ok(BackfillProgress::Waiting);
+    {
+        let mut diag = diagnostics.write().await;
+        diag.backfill_frontier = Some(new_frontier);
+        diag.backfill_complete = new_frontier <= floor;
+    }
+
+    if new_frontier == frontier {
+        Ok(BackfillProgress::Waiting) // nothing fetched this round
+    } else if new_frontier <= floor {
+        info!(floor, "Historical chain backfill complete");
+        Ok(BackfillProgress::Complete)
+    } else {
+        debug!(new_earliest = new_frontier, floor, "History backfill advanced");
+        Ok(BackfillProgress::Advanced)
+    }
+}
+
+/// Builds up to `parallelism` disjoint batches of at most `batch` blocks each,
+/// stacked below `frontier` down to `floor`. Ranges are `[lo, hi)` in descending
+/// order, contiguous (`ranges[i].hi == ranges[i-1].lo`), with `ranges[0].hi ==
+/// frontier`; the last is clamped so no range dips below `floor`.
+fn plan_backfill_ranges(
+    frontier: u64,
+    floor: u64,
+    batch: u64,
+    parallelism: usize,
+) -> Vec<(u64, u64)> {
+    let parallelism = parallelism.max(1);
+    let mut ranges = Vec::with_capacity(parallelism);
+    let mut hi = frontier;
+    while ranges.len() < parallelism && hi > floor {
+        let lo = hi.saturating_sub(batch).max(floor);
+        ranges.push((lo, hi));
+        hi = lo;
+    }
+    ranges
+}
+
+/// Decides how many of the dispatched `ranges` to commit this round and the
+/// resulting frontier, given how many blocks each range actually returned
+/// (`filled[i]`: `Some(n)` fetched, `None` = failed/empty).
+///
+/// Commits the maximal contiguous prefix — starting at the frontier — of ranges
+/// that came back **full**, plus the first partial range if any, then stops.
+/// This guarantees the committed blocks are contiguous with the frontier, so the
+/// persisted `[earliest, head]` never gains a hole (which would break the
+/// crash-resume/reconcile bisect). Returns `(commit_count, new_frontier)`.
+fn plan_backfill_commit(
+    frontier: u64,
+    ranges: &[(u64, u64)],
+    filled: &[Option<u64>],
+) -> (usize, u64) {
+    let mut new_frontier = frontier;
+    let mut commit_count = 0;
+    for (i, &(lo, hi)) in ranges.iter().enumerate() {
+        // Contiguity: this range must sit directly below what we've committed.
+        if hi != new_frontier {
+            break;
+        }
+        let Some(n) = filled.get(i).copied().flatten() else {
+            break; // range failed or returned nothing
+        };
+        if n == 0 {
+            break;
+        }
+        new_frontier = hi - n;
+        commit_count = i + 1;
+        if n < hi - lo {
+            break; // truncated response: hole below, stop after committing this one
+        }
+    }
+    (commit_count, new_frontier)
+}
+
+/// Fetches bodies and receipts for the canonical range `[lo, hi)` concurrently
+/// from peers and returns the contiguous run — from `hi - 1` downward — for
+/// which BOTH were obtained and validated against the stored headers. An empty
+/// vec means no peer served the range this round (a soft miss the caller retries
+/// later); errors are reserved for hard failures (DB corruption, peer actor).
+async fn fetch_range(
+    peers: PeerHandler,
+    store: &Store,
+    config: &BackfillConfig,
+    lo: u64,
+    hi: u64,
+    head: BlockNumber,
+) -> Result<Vec<BackfilledBlock>, SyncError> {
+    // Read headers top-down (highest first): peers return bodies/receipts in
+    // request order, so a truncated response still yields a run contiguous with
+    // the top of the range.
+    let mut headers: Vec<BlockHeader> = Vec::with_capacity((hi - lo) as usize);
+    for number in (lo..hi).rev() {
+        headers.push(store.get_block_header(number)?.ok_or(SyncError::CorruptDB)?);
+    }
+
+    // Fetch bodies and receipts concurrently (each from its own peer) to halve
+    // per-range latency. Both are validated against the headers inside the
+    // request (block-body validation; receipts root recomputed from logs, which
+    // reconstructs eth/69's omitted bloom). PeerHandler is a cheap Arc-backed
+    // handle, so cloning it to hold two requests at once is fine.
+    let (mut peers_bodies, mut peers_receipts) = (peers.clone(), peers);
+    let (bodies_res, receipts_res) = tokio::join!(
+        peers_bodies.request_block_bodies(&headers),
+        peers_receipts.request_receipts(&headers),
+    );
+    let (Some(bodies), Some(receipts)) = (bodies_res?, receipts_res?) else {
+        return Ok(Vec::new());
     };
 
-    // Only take blocks that have BOTH a body and receipts; because both responses
-    // are prefixes of the top-down header list, their common prefix is contiguous
-    // from the frontier downward.
+    // Only blocks with BOTH a body and receipts count; since both responses are
+    // prefixes of the top-down header list, their common prefix is contiguous
+    // from the top of the range downward.
     let filled = bodies.len().min(receipts.len());
     if filled == 0 {
-        return Ok(BackfillProgress::Waiting);
+        return Ok(Vec::new());
     }
 
-    let head = store.get_latest_block_number().await?;
     let horizon = config.tx_index_horizon;
-    let blocks: Vec<BackfilledBlock> = headers
+    Ok(headers
         .into_iter()
         .zip(bodies)
         .zip(receipts)
@@ -298,23 +438,7 @@ async fn backfill_step(
                 index_transactions,
             }
         })
-        .collect();
-
-    let new_earliest = frontier - filled as u64;
-    store.add_backfilled_blocks(blocks, new_earliest).await?;
-    {
-        let mut diag = diagnostics.write().await;
-        diag.backfill_frontier = Some(new_earliest);
-        diag.backfill_complete = new_earliest <= floor;
-    }
-
-    if new_earliest <= floor {
-        info!(floor, "Historical chain backfill complete");
-        Ok(BackfillProgress::Complete)
-    } else {
-        debug!(new_earliest, floor, "History backfill advanced");
-        Ok(BackfillProgress::Advanced)
-    }
+        .collect())
 }
 
 #[cfg(test)]
@@ -430,5 +554,95 @@ mod tests {
     async fn reconcile_frontier_is_genesis_on_a_full_node() {
         let store = store_with_bodies_from(1, 100).await;
         assert_eq!(reconcile_frontier(&store).await.unwrap(), 0);
+    }
+
+    // ---- plan_backfill_ranges ----
+
+    #[test]
+    fn ranges_are_contiguous_and_descending_from_the_frontier() {
+        let r = plan_backfill_ranges(1000, 0, 128, 4);
+        assert_eq!(r, vec![(872, 1000), (744, 872), (616, 744), (488, 616)]);
+        // contiguous: each hi == previous lo, top == frontier
+        assert_eq!(r[0].1, 1000);
+        for w in r.windows(2) {
+            assert_eq!(w[0].0, w[1].1);
+        }
+    }
+
+    #[test]
+    fn ranges_clamp_to_the_floor_and_never_dip_below_it() {
+        // Only 100 blocks above the floor but room for 4×128: one clamped range.
+        let r = plan_backfill_ranges(200, 100, 128, 4);
+        assert_eq!(r, vec![(100, 200)]);
+        assert!(r.iter().all(|&(lo, _)| lo >= 100));
+    }
+
+    #[test]
+    fn ranges_parallelism_one_is_a_single_batch() {
+        assert_eq!(plan_backfill_ranges(1000, 0, 128, 1), vec![(872, 1000)]);
+        // parallelism 0 is treated as 1 rather than yielding no work.
+        assert_eq!(plan_backfill_ranges(1000, 0, 128, 0), vec![(872, 1000)]);
+    }
+
+    #[test]
+    fn ranges_empty_when_frontier_at_floor() {
+        assert!(plan_backfill_ranges(100, 100, 128, 4).is_empty());
+    }
+
+    // ---- plan_backfill_commit ----
+
+    // Helper: full-size ranges stacked below `frontier`.
+    fn ranges(frontier: u64, n: usize) -> Vec<(u64, u64)> {
+        plan_backfill_ranges(frontier, 0, 128, n)
+    }
+
+    #[test]
+    fn commit_all_full_ranges_advances_by_the_whole_wave() {
+        let r = ranges(1000, 3);
+        let (count, frontier) = plan_backfill_commit(1000, &r, &[Some(128), Some(128), Some(128)]);
+        assert_eq!((count, frontier), (3, 1000 - 3 * 128));
+    }
+
+    #[test]
+    fn commit_stops_at_a_partial_range_but_keeps_it() {
+        // Second range truncated: commit range 0 fully + range 1 partially, stop.
+        let r = ranges(1000, 3);
+        let (count, frontier) = plan_backfill_commit(1000, &r, &[Some(128), Some(50), Some(128)]);
+        assert_eq!(count, 2);
+        assert_eq!(frontier, 1000 - 128 - 50);
+    }
+
+    #[test]
+    fn commit_stops_before_an_empty_or_failed_range() {
+        let r = ranges(1000, 3);
+        // Range 1 returned nothing: only range 0 commits, range 2 is not reached
+        // (committing it would leave a hole at range 1).
+        assert_eq!(
+            plan_backfill_commit(1000, &r, &[Some(128), Some(0), Some(128)]),
+            (1, 872)
+        );
+        // A failed (None) range behaves the same as empty.
+        assert_eq!(
+            plan_backfill_commit(1000, &r, &[Some(128), None, Some(128)]),
+            (1, 872)
+        );
+    }
+
+    #[test]
+    fn commit_nothing_when_the_first_range_is_empty() {
+        let r = ranges(1000, 3);
+        assert_eq!(plan_backfill_commit(1000, &r, &[None, Some(128)]), (0, 1000));
+        assert_eq!(
+            plan_backfill_commit(1000, &r, &[Some(0), Some(128)]),
+            (0, 1000)
+        );
+    }
+
+    #[test]
+    fn commit_reaches_the_floor() {
+        // frontier 200, floor 100: a single clamped 100-block range, filled full.
+        let r = plan_backfill_ranges(200, 100, 128, 4);
+        assert_eq!(r, vec![(100, 200)]);
+        assert_eq!(plan_backfill_commit(200, &r, &[Some(100)]), (1, 100));
     }
 }
