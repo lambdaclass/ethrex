@@ -5,6 +5,9 @@ core::arch::global_asm!(include_str!("keccak1600-armv8-macho.s"), options(raw));
 #[cfg(target_arch = "x86_64")]
 core::arch::global_asm!(include_str!("keccak1600-x86_64.s"), options(att_syntax));
 
+mod batch;
+
+pub use batch::keccak256_batch;
 pub use imp::*;
 
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
@@ -51,7 +54,7 @@ mod imp {
         }
 
         #[inline]
-        pub fn update(&mut self, data: impl AsRef<[u8]>) -> Self {
+        pub fn update(&mut self, data: impl AsRef<[u8]>) -> &mut Self {
             let mut data = data.as_ref();
             unsafe {
                 // partial block
@@ -62,7 +65,7 @@ mod imp {
                         self.tail_buf[self.tail_len..self.tail_len + data.len()]
                             .copy_from_slice(data);
                         self.tail_len += data.len();
-                        return self.clone();
+                        return self;
                     }
 
                     // complete block
@@ -100,7 +103,7 @@ mod imp {
                     }
                 },
             }
-            self.clone()
+            self
         }
 
         #[inline]
@@ -161,12 +164,12 @@ mod imp {
         }
 
         #[inline]
-        pub fn update(&mut self, data: impl AsRef<[u8]>) -> Self {
+        pub fn update(&mut self, data: impl AsRef<[u8]>) -> &mut Self {
             let d = data.as_ref();
             if !d.is_empty() {
                 self.h.update(d);
             }
-            self.clone()
+            self
         }
 
         #[inline]

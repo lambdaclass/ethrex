@@ -1180,7 +1180,7 @@ impl Blockchain {
 
             let collapsed = self.collapse_root_node(parent_header, None, root)?;
             let state_trie_hash = if let Some(root) = collapsed {
-                let mut root = NodeRef::from(root);
+                let root = NodeRef::from(root);
                 let hash = root.commit(Nibbles::default(), &mut state_updates, &NativeCrypto);
                 let _ = DROP_SENDER.send(Box::new(root));
                 hash.finalize(&NativeCrypto)
@@ -1517,7 +1517,7 @@ impl Blockchain {
         // === Stage D: Finalize root ===
         let state_trie_hash =
             if let Some(root) = self.collapse_root_node(parent_header, None, root)? {
-                let mut root = NodeRef::from(root);
+                let root = NodeRef::from(root);
                 let hash = root.commit(Nibbles::default(), &mut state_updates, &NativeCrypto);
                 let _ = DROP_SENDER.send(Box::new(root));
                 hash.finalize(&NativeCrypto)
@@ -4209,7 +4209,7 @@ fn handle_subtrie(
                         let collapsed =
                             collapse_root_node(&storage, parent_state_root, Some(prefix), *root)?;
                         if let Some(root) = collapsed {
-                            let mut root = NodeRef::from(root);
+                            let root = NodeRef::from(root);
                             let hash =
                                 root.commit(Nibbles::default(), &mut state.nodes, &NativeCrypto);
                             let _ = DROP_SENDER.send(Box::new(root));
@@ -4544,7 +4544,7 @@ pub fn compute_sharded_storage_root(
         );
     };
 
-    let mut root_ref = NodeRef::from(root_node);
+    let root_ref = NodeRef::from(root_node);
     let root_hash = root_ref.commit(Nibbles::default(), &mut nodes, &NativeCrypto);
     let _ = DROP_SENDER.send(Box::new(root_ref));
 
