@@ -13,6 +13,7 @@ use crate::{
                 BLOCK_HEADER_LIMIT, BlockBodies, BlockHeaders, GetBlockBodies, GetBlockHeaders,
                 HashOrNumber,
             },
+            receipts::GetReceipts,
         },
         message::Message as RLPxMessage,
         p2p::{Capability, SUPPORTED_ETH_CAPABILITIES},
@@ -20,7 +21,10 @@ use crate::{
 };
 use ethrex_common::{
     H256,
-    types::{BlockBody, BlockHeader, block_access_list::BlockAccessList, validate_block_body},
+    types::{
+        BlockBody, BlockHeader, Receipt, block_access_list::BlockAccessList, compute_receipts_root,
+        validate_block_body,
+    },
 };
 use ethrex_crypto::NativeCrypto;
 use spawned_concurrency::{error::ActorError, tasks::ActorRef};
@@ -622,6 +626,110 @@ impl PeerHandler {
             // Retry on validation failure
             if validation_success {
                 return Ok(Some(res));
+            }
+        }
+        Ok(None)
+    }
+
+    /// Internal method to request receipts for the given block hashes from a
+    /// random eth/68 or eth/69 peer.
+    ///
+    /// Returns the per-block receipt lists (aligned with the leading
+    /// `block_hashes`) and the responding peer id, or `None` if there is no
+    /// suitable peer or the response is missing/empty/oversized.
+    ///
+    /// This sends the simple (non-paginated) `GetReceipts` form, which eth/68,
+    /// eth/69, and eth/71 all use — eth/71 (EIP-8159) builds on eth/69's receipt
+    /// format, so the only version with a different (paginated) form is eth/70,
+    /// which was skipped by eth/71 and is effectively undeployed. A peer whose
+    /// negotiated version happens to be eth/70 would fail to decode this and is
+    /// handled as a harmless miss/retry.
+    async fn request_receipts_inner(
+        &mut self,
+        block_hashes: &[H256],
+    ) -> Result<Option<(Vec<Vec<Receipt>>, H256)>, PeerHandlerError> {
+        let block_hashes_len = block_hashes.len();
+        let request_id = rand::random();
+        // `GetReceipts68`/`GetReceipts69` are the same wire type; the outgoing
+        // code is derived from the connection's negotiated version, so this is
+        // decoded correctly by eth/68, eth/69, and eth/71 peers alike.
+        let request =
+            RLPxMessage::GetReceipts68(GetReceipts::new(request_id, block_hashes.to_vec()));
+        match self
+            .get_random_peer(&[
+                Capability::eth(68),
+                Capability::eth(69),
+                Capability::eth(71),
+            ])
+            .await?
+        {
+            None => Ok(None),
+            Some((peer_id, mut connection, permit)) => {
+                let response = connection
+                    .outgoing_request(request, PEER_REPLY_TIMEOUT)
+                    .await;
+                drop(permit);
+                // The peer replies with the `Receipts` variant matching its own
+                // negotiated eth version; both decode to `Vec<Vec<Receipt>>`.
+                let receipts = match response {
+                    Ok(RLPxMessage::Receipts68(msg)) if msg.get_id() == request_id => msg.receipts,
+                    Ok(RLPxMessage::Receipts69(msg)) if msg.get_id() == request_id => msg.receipts,
+                    _ => {
+                        debug!("Didn't receive receipts from peer, penalizing peer {peer_id}");
+                        self.peer_table.record_failure(peer_id)?;
+                        let _ = self.peer_table.set_disposable(peer_id);
+                        return Ok(None);
+                    }
+                };
+                // Non-empty and not more block-lists than requested.
+                if !receipts.is_empty() && receipts.len() <= block_hashes_len {
+                    self.peer_table.record_success(peer_id)?;
+                    return Ok(Some((receipts, peer_id)));
+                }
+                debug!("Received empty/oversized receipts from peer {peer_id}, penalizing");
+                self.peer_table.record_failure(peer_id)?;
+                let _ = self.peer_table.set_disposable(peer_id);
+                Ok(None)
+            }
+        }
+    }
+
+    /// Requests receipts for the given block headers from an eth/68 or eth/69
+    /// peer and validates them against each header's `receipts_root`.
+    ///
+    /// Returns the per-block receipts (aligned with the leading `block_headers`,
+    /// possibly a shorter prefix if the peer truncated the response) or `None` if
+    /// no peer returned a valid, root-matching response within the retry limit.
+    ///
+    /// The root is recomputed from the receipts' logs, so the omitted per-receipt
+    /// bloom is reconstructed as part of validation. Works with eth/68, eth/69,
+    /// and eth/71 peers (see `request_receipts_inner`).
+    pub async fn request_receipts(
+        &mut self,
+        block_headers: &[BlockHeader],
+    ) -> Result<Option<Vec<Vec<Receipt>>>, PeerHandlerError> {
+        let block_hashes: Vec<H256> = block_headers.iter().map(|h| h.hash()).collect();
+
+        for _ in 0..REQUEST_RETRY_ATTEMPTS {
+            let Some((receipts, peer_id)) = self.request_receipts_inner(&block_hashes).await?
+            else {
+                continue; // retry on no-peer / empty response
+            };
+            let mut validation_success = true;
+            for (header, block_receipts) in block_headers[..receipts.len()].iter().zip(&receipts) {
+                let computed = compute_receipts_root(block_receipts, &NativeCrypto);
+                if computed != header.receipts_root {
+                    debug!(
+                        "Invalid receipts root for block {} (computed {computed:?}, expected {:?}), discarding peer {peer_id} and retrying",
+                        header.number, header.receipts_root
+                    );
+                    validation_success = false;
+                    self.peer_table.record_critical_failure(peer_id)?;
+                    break;
+                }
+            }
+            if validation_success {
+                return Ok(Some(receipts));
             }
         }
         Ok(None)

@@ -20,7 +20,7 @@ use ethrex_p2p::{
     network::P2PContext,
     peer_handler::PeerHandler,
     peer_table::{PeerTable, PeerTableServer},
-    sync::SyncMode,
+    sync::{BackfillConfig, HistoryChain, SyncMode},
     sync_manager::SyncManager,
     types::{NetworkConfig, Node, NodeRecord},
     utils::public_key_from_signing_key,
@@ -299,6 +299,18 @@ pub async fn init_rpc_api(
         &opts.syncmode
     };
 
+    // Historical-chain backfill is opt-in via `--history.chain`; it is
+    // meaningless in dev mode (single-node chain, full state from genesis), so
+    // force it off there like syncmode.
+    let backfill_config = BackfillConfig {
+        mode: if opts.dev {
+            HistoryChain::Off
+        } else {
+            opts.history_chain.clone()
+        },
+        tx_index_horizon: opts.history_transactions,
+    };
+
     // Create SyncManager
     let syncer = SyncManager::new(
         peer_handler.clone(),
@@ -307,6 +319,7 @@ pub async fn init_rpc_api(
         blockchain.clone(),
         store.clone(),
         datadir.to_path_buf(),
+        backfill_config,
     )
     .await;
 
