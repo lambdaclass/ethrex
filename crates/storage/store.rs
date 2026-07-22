@@ -611,6 +611,13 @@ impl Store {
         .map_err(|e| StoreError::Custom(format!("Backfill write task panicked: {e}")))?
     }
 
+    /// RocksDB observability snapshot (per-column-family sizes/keys/files, block
+    /// cache, compaction). `None` for the in-memory backend. Read by the metrics
+    /// collector; cheap (RocksDB property reads).
+    pub fn rocksdb_stats(&self) -> Option<crate::api::RocksDbStats> {
+        self.backend.db_stats()
+    }
+
     /// Obtain canonical block body
     pub async fn get_block_body(
         &self,
