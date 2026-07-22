@@ -146,7 +146,10 @@ async fn fcu_before_newpayload_race_starts_no_sync_cycle() {
 
     // Give the manager time to notice the heal (poll interval is 500ms).
     tokio::time::sleep(Duration::from_secs(3)).await;
-    let cycles = sync_manager.get_sync_diagnostics().await.sync_cycles_started;
+    let cycles = sync_manager
+        .get_sync_diagnostics()
+        .await
+        .sync_cycles_started;
     assert_eq!(
         cycles, 0,
         "a head that arrived via engine_newPayload must not cost a sync cycle"
@@ -166,7 +169,12 @@ async fn cold_node_starts_sync_cycle_without_heal_delay() {
     // Well under NEWPAYLOAD_HEAL_WAIT: the cycle must already have started.
     let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
     loop {
-        if sync_manager.get_sync_diagnostics().await.sync_cycles_started >= 1 {
+        if sync_manager
+            .get_sync_diagnostics()
+            .await
+            .sync_cycles_started
+            >= 1
+        {
             break;
         }
         assert!(
@@ -189,7 +197,12 @@ async fn missing_head_still_starts_sync_cycle_after_heal_wait() {
     // NEWPAYLOAD_HEAL_WAIT is 15s; poll a little past it.
     let deadline = tokio::time::Instant::now() + Duration::from_secs(20);
     loop {
-        if sync_manager.get_sync_diagnostics().await.sync_cycles_started >= 1 {
+        if sync_manager
+            .get_sync_diagnostics()
+            .await
+            .sync_cycles_started
+            >= 1
+        {
             break;
         }
         assert!(
