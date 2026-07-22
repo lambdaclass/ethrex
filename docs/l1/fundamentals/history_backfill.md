@@ -19,8 +19,6 @@ pivot.
 | --- | --- | --- | --- |
 | `--history.chain` | `ETHREX_HISTORY_CHAIN` | `off`, `postmerge`, `all` | `off` |
 | `--history.transactions` | `ETHREX_HISTORY_TRANSACTIONS` | number of blocks (`0` = whole backfilled range) | `0` |
-| `--history.backfill-parallelism` | `ETHREX_HISTORY_BACKFILL_PARALLELISM` | batches fetched concurrently | `1` |
-| `--history.backfill-interval-ms` | `ETHREX_HISTORY_BACKFILL_INTERVAL_MS` | pause between batches (ms) | `500` |
 
 - **`off`** (default): headers-only below the pivot — current behavior.
 - **`postmerge`**: backfill down to the network's merge (Paris) activation block.
@@ -54,11 +52,10 @@ command is needed.
 
 ## How it works
 
-Backfill fills in reverse — from the pivot downward toward a floor — in bounded
-batches of 128 blocks. It runs at lower priority than following the chain head:
-it waits until initial sync finishes, sleeps between batches, and never lets the
-tip fall behind. By default it fetches one batch at a time; see
-[Tuning throughput](#tuning-throughput) to fetch several concurrently.
+Backfill fills in reverse — from the pivot downward toward a floor — one bounded
+batch (128 blocks) at a time. It runs at lower priority than following the chain
+head: it waits until initial sync finishes, sleeps between batches, and never
+lets the tip fall behind.
 
 ```mermaid
 flowchart TD
@@ -91,35 +88,10 @@ receipt's logs bloom is recomputed from its logs, which reconstructs the bloom
 that eth/69 omits, so backfill works with eth/68, eth/69, and eth/71 peers alike.
 (Only the rare, skipped eth/70 — whose `GetReceipts` is paginated — is unused.)
 
-## Tuning throughput
-
-At the default `--history.backfill-parallelism 1`, backfill fetches one 128-block
-batch at a time. On mainnet the per-batch latency (bodies + receipts fetched from
-peers, plus retries on peers that no longer serve history) dominates, so a single
-pipeline sustains only a few blocks per second — a full post-merge backfill then
-takes weeks.
-
-Raising `--history.backfill-parallelism N` fetches `N` disjoint batches
-concurrently, each from its own peer, scaling throughput close to linearly until
-the peer set or bandwidth becomes the limit:
-
-- **`N` is the throttle.** Each pipeline borrows a peer request slot and inbound
-  bandwidth; `N` bounds both. It stays well under what snap sync uses, and yields
-  to head-following (backfill only runs once initial sync is done).
-- **Bandwidth** is ~138 KB/block, so e.g. 40 blocks/s ≈ ~44 Mbps inbound —
-  comfortable on a datacenter link, worth checking on a constrained one.
-- **The real ceiling is peers.** Only some peers serve post-merge bodies *and*
-  receipts after the 2025 history-expiry rollout; `N` cannot exceed the number of
-  those the node is connected to. If they are scarce, throughput caps below `N ×
-  single-pipeline`, no matter how high `N` is set.
-
-`--history.backfill-interval-ms` (default `500`) is the pause after each
-successful round; lower it to squeeze out the last bit of pacing on a
-well-connected node, raise it to be gentler.
-
-Regardless of `N`, completed batches are always committed **in order, contiguous
-with the frontier** — a batch that finishes out of order waits, so the persisted
-`[earliest, head]` never gains a hole and the resume guarantees below still hold.
+Backfill throughput is bounded by how fast peers serve historical bodies and
+receipts. After the 2025 history-expiry rollout only a subset of peers still
+serve pre-merge/pre-pivot data, so on mainnet a full post-merge backfill runs on
+the order of weeks.
 
 ## Durability and restarts
 
