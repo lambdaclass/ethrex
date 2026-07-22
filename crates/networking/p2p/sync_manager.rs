@@ -16,10 +16,30 @@ use tokio::{
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
 
+use std::time::{SystemTime, UNIX_EPOCH};
+
 use crate::{
     peer_handler::PeerHandler,
-    sync::{SyncDiagnostics, SyncMode, Syncer},
+    sync::{SyncDiagnostics, SyncMode, Syncer, sync_head_executed},
 };
+
+/// How long to wait for a forkchoice head to arrive via `engine_newPayload` before
+/// starting a peer-download sync cycle, when the node was recently at the chain tip.
+/// Post-ePBS consensus clients move their forkchoice head to a payload hash learned
+/// from a bid before the payload itself is delivered to the EL; measured on
+/// glamsterdam-devnet-7 the payload consistently follows within 10-13s (about one
+/// slot), and peers cannot serve the block earlier either — it has not propagated
+/// anywhere yet. Waiting is strictly cheaper than cycling against peers.
+const NEWPAYLOAD_HEAL_WAIT: Duration = Duration::from_secs(15);
+
+/// Poll interval while waiting for the forkchoice head to become locally executed.
+const NEWPAYLOAD_HEAL_POLL: Duration = Duration::from_millis(500);
+
+/// A node whose latest executed block is at most this old was following the chain tip
+/// moments ago; only then is the pre-cycle heal wait applied. Nodes that are cold,
+/// restarting, or genuinely behind (older executed tip) start their sync cycle
+/// immediately, so initial sync and catch-up latency are unaffected.
+const RECENT_TIP_MAX_AGE_SECS: u64 = 30;
 
 /// Abstraction to interact with the active sync process without disturbing it
 #[derive(Debug)]
@@ -196,7 +216,8 @@ impl SyncManager {
     fn start_sync(&self) {
         let syncer = self.syncer.clone();
         let store = self.store.clone();
-        let sync_head = self.last_fcu_head.clone();
+        let last_fcu_head = self.last_fcu_head.clone();
+        let diagnostics = self.diagnostics.clone();
 
         tokio::spawn(async move {
             // If we can't get hold of the syncer, then it means that there is an active sync in process
@@ -204,10 +225,11 @@ impl SyncManager {
                 return;
             };
             let mut waiting_for_fcu_logged = false;
+            let mut heal_wait_done = false;
             loop {
                 let sync_head = {
                     // Read latest fcu head without holding the lock for longer than needed
-                    let Ok(sync_head) = sync_head.try_lock() else {
+                    let Ok(sync_head) = last_fcu_head.try_lock() else {
                         error!("Failed to read latest fcu head, unable to sync");
                         return;
                     };
@@ -228,7 +250,23 @@ impl SyncManager {
                     sleep(Duration::from_secs(5)).await;
                     continue;
                 }
+                // A node that was following the tip and is asked to sync to an unknown
+                // head is almost always seeing the FCU/newPayload ordering race: the
+                // payload behind that head simply has not reached us (or anyone) yet.
+                // Give `engine_newPayload` a bounded window to deliver it before paying
+                // for a peer-download sync cycle.
+                if !heal_wait_done && was_recently_at_tip(&store).await {
+                    heal_wait_done = true;
+                    if wait_for_newpayload_heal(&store, &last_fcu_head).await {
+                        return;
+                    }
+                    // The wait expired: re-read the latest head (it may have advanced
+                    // while we waited) and start a real cycle.
+                    continue;
+                }
+                heal_wait_done = true;
                 // Start the sync cycle
+                diagnostics.write().await.sync_cycles_started += 1;
                 syncer.start_sync(sync_head, store.clone()).await;
                 // Continue to the next sync cycle if we have an ongoing snap sync (aka if we still have snap sync checkpoints stored)
                 if store
@@ -247,4 +285,58 @@ impl SyncManager {
     pub fn get_last_fcu_head(&self) -> Result<H256, tokio::sync::TryLockError> {
         Ok(*self.last_fcu_head.try_lock()?)
     }
+}
+
+/// True when the latest executed block is recent enough that this node was following the
+/// chain tip moments ago — as opposed to being cold, restarting, or mid-sync. Only then
+/// is a missing forkchoice head likely to be a payload that has not reached us through
+/// `engine_newPayload` yet rather than a real gap to download.
+async fn was_recently_at_tip(store: &Store) -> bool {
+    let latest = match store.get_latest_block_number().await {
+        Ok(number) if number > 0 => number,
+        _ => return false,
+    };
+    let Ok(Some(header)) = store.get_block_header(latest) else {
+        return false;
+    };
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    now.saturating_sub(header.timestamp) <= RECENT_TIP_MAX_AGE_SECS
+}
+
+/// Polls for up to `NEWPAYLOAD_HEAL_WAIT` for the latest forkchoice head to become locally
+/// executed (delivered via `engine_newPayload`). Returns true if it did, in which case a
+/// sync cycle would be wasted work. Re-reads the head on every poll so newer FCUs arriving
+/// during the wait are accounted for.
+async fn wait_for_newpayload_heal(store: &Store, last_fcu_head: &Arc<Mutex<H256>>) -> bool {
+    let deadline = tokio::time::Instant::now() + NEWPAYLOAD_HEAL_WAIT;
+    while tokio::time::Instant::now() < deadline {
+        let head = match last_fcu_head.try_lock() {
+            Ok(head) => *head,
+            Err(_) => H256::zero(),
+        };
+        if !head.is_zero() {
+            match sync_head_executed(store, head) {
+                Ok(true) => {
+                    info!(
+                        ?head,
+                        "Forkchoice head arrived via engine_newPayload while waiting; skipping sync cycle"
+                    );
+                    return true;
+                }
+                Ok(false) => {}
+                Err(error) => {
+                    warn!(
+                        %error,
+                        "Failed to check local state for forkchoice head; starting sync cycle"
+                    );
+                    return false;
+                }
+            }
+        }
+        sleep(NEWPAYLOAD_HEAL_POLL).await;
+    }
+    false
 }
