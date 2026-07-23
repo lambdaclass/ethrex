@@ -158,3 +158,13 @@ libssz-derive = "0.2.2"
 
 [workspace.lints.clippy]
 redundant_clone = "warn"
+
+# Unify crates that otherwise appear in Cargo.lock from both crates.io and git
+# with the same name and version (registry copies pulled in transitively by
+# openvm-kzg, halo2-axiom, and slop-bn254). Duplicate sources break vendoring
+# tools such as `cargo vendor` and Nix's `importCargoLock`. The git refs below
+# must match the ones already used by the direct/transitive git dependencies.
+[patch.crates-io]
+bls12_381 = { git = "https://github.com/lambdaclass/bls12_381", branch = "expose-affine-constructors" }
+halo2curves-axiom = { git = "https://github.com/axiom-crypto/halo2curves.git", tag = "v0.7.2" }
+zkhash = { git = "https://github.com/HorizenLabs/poseidon2.git", rev = "bb476b9" }
