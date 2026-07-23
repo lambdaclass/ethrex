@@ -243,25 +243,23 @@ impl Message {
                 GetReceipts68::CODE if matches!(eth_version, EthCapVersion::V68) => {
                     Ok(Message::GetReceipts68(GetReceipts68::decode(data)?))
                 }
-                // eth/71 (EIP-8159) builds on eth/69, not eth/70 — it uses the
-                // same receipt format as eth/69.
-                GetReceipts69::CODE
-                    if matches!(eth_version, EthCapVersion::V69 | EthCapVersion::V71) =>
-                {
+                GetReceipts69::CODE if matches!(eth_version, EthCapVersion::V69) => {
                     Ok(Message::GetReceipts69(GetReceipts69::decode(data)?))
                 }
-                GetReceipts70::CODE if matches!(eth_version, EthCapVersion::V70) => {
+                GetReceipts70::CODE
+                    if matches!(eth_version, EthCapVersion::V70 | EthCapVersion::V71) =>
+                {
                     Ok(Message::GetReceipts70(GetReceipts70::decode(data)?))
                 }
                 Receipts68::CODE if matches!(eth_version, EthCapVersion::V68) => {
                     Ok(Message::Receipts68(Receipts68::decode(data)?))
                 }
-                Receipts69::CODE
-                    if matches!(eth_version, EthCapVersion::V69 | EthCapVersion::V71) =>
-                {
+                Receipts69::CODE if matches!(eth_version, EthCapVersion::V69) => {
                     Ok(Message::Receipts69(Receipts69::decode(data)?))
                 }
-                Receipts70::CODE if matches!(eth_version, EthCapVersion::V70) => {
+                Receipts70::CODE
+                    if matches!(eth_version, EthCapVersion::V70 | EthCapVersion::V71) =>
+                {
                     Ok(Message::Receipts70(Receipts70::decode(data)?))
                 }
                 BlockRangeUpdate::CODE => {
@@ -492,5 +490,54 @@ impl Display for Message {
                 L2Message::NewBlock(_) => "based:NewBlock".fmt(f),
             },
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{EthCapVersion, Message, RLPxMessage};
+    use crate::rlpx::eth::receipts::{GetReceipts70, Receipts70};
+    use ethrex_common::types::BlockHash;
+
+    #[test]
+    fn decodes_eth71_get_receipts_with_eth70_format() {
+        let request = GetReceipts70::new(7, 3, vec![BlockHash::from([1; 32])]);
+        let mut encoded = Vec::new();
+        request.encode(&mut encoded).unwrap();
+
+        let decoded = Message::decode(
+            EthCapVersion::V71.eth_capability_offset() + GetReceipts70::CODE,
+            &encoded,
+            EthCapVersion::V71,
+        )
+        .unwrap();
+
+        let Message::GetReceipts70(decoded) = decoded else {
+            panic!("expected eth/70 GetReceipts message");
+        };
+        assert_eq!(decoded.id, 7);
+        assert_eq!(decoded.first_block_receipt_index, 3);
+        assert_eq!(decoded.block_hashes, vec![BlockHash::from([1; 32])]);
+    }
+
+    #[test]
+    fn decodes_eth71_receipts_with_eth70_format() {
+        let response = Receipts70::new(7, true, vec![]);
+        let mut encoded = Vec::new();
+        response.encode(&mut encoded).unwrap();
+
+        let decoded = Message::decode(
+            EthCapVersion::V71.eth_capability_offset() + Receipts70::CODE,
+            &encoded,
+            EthCapVersion::V71,
+        )
+        .unwrap();
+
+        let Message::Receipts70(decoded) = decoded else {
+            panic!("expected eth/70 Receipts message");
+        };
+        assert_eq!(decoded.id, 7);
+        assert!(decoded.last_block_incomplete);
+        assert!(decoded.receipts.is_empty());
     }
 }
