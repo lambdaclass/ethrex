@@ -3,8 +3,8 @@ use ethrex_common::{
     Address, H256, serde_utils,
     types::{
         BlockHash, BlockNumber, EIP1559Transaction, EIP2930Transaction, EIP7702Transaction,
-        FeeTokenTransaction, FrameTransaction, LegacyTransaction, PrivilegedL2Transaction,
-        Transaction, TxType, WrappedEIP4844Transaction,
+        EnvelopeTxType, FeeTokenTransaction, FrameTransaction, LegacyTransaction,
+        PrivilegedL2Transaction, Transaction, WrappedEIP4844Transaction,
     },
 };
 use ethrex_crypto::NativeCrypto;
@@ -85,30 +85,25 @@ impl SendRawTransactionRequest {
 
                 // `from_type_byte` is the single gate for valid envelope types: it rejects 0x00
                 // (legacy is the bare-list branch below) and any unassigned type byte.
-                match TxType::from_type_byte(*tx_type)? {
-                    TxType::EIP2930 => {
+                match EnvelopeTxType::from_type_byte(*tx_type)? {
+                    EnvelopeTxType::EIP2930 => {
                         EIP2930Transaction::decode(tx_bytes).map(SendRawTransactionRequest::EIP2930)
                     }
-                    TxType::EIP1559 => {
+                    EnvelopeTxType::EIP1559 => {
                         EIP1559Transaction::decode(tx_bytes).map(SendRawTransactionRequest::EIP1559)
                     }
-                    TxType::EIP4844 => WrappedEIP4844Transaction::decode(tx_bytes)
+                    EnvelopeTxType::EIP4844 => WrappedEIP4844Transaction::decode(tx_bytes)
                         .map(SendRawTransactionRequest::EIP4844),
-                    TxType::EIP7702 => {
+                    EnvelopeTxType::EIP7702 => {
                         EIP7702Transaction::decode(tx_bytes).map(SendRawTransactionRequest::EIP7702)
                     }
-                    TxType::Frame => {
+                    EnvelopeTxType::Frame => {
                         FrameTransaction::decode(tx_bytes).map(SendRawTransactionRequest::Frame)
                     }
-                    TxType::FeeToken => FeeTokenTransaction::decode(tx_bytes)
+                    EnvelopeTxType::FeeToken => FeeTokenTransaction::decode(tx_bytes)
                         .map(SendRawTransactionRequest::FeeToken),
-                    TxType::Privileged => PrivilegedL2Transaction::decode(tx_bytes)
+                    EnvelopeTxType::Privileged => PrivilegedL2Transaction::decode(tx_bytes)
                         .map(SendRawTransactionRequest::PrivilegedL2),
-                    // Never returned by `from_type_byte` (0x00 is rejected); a legacy tx arrives
-                    // as an RLP list on the branch below, not as a typed envelope.
-                    TxType::Legacy => Err(RLPDecodeError::Custom(
-                        "legacy transactions are not typed envelopes".to_string(),
-                    )),
                 }
             }
             // LegacyTransaction
