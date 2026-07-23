@@ -39,7 +39,7 @@ use std::{
     net::{IpAddr, Ipv4Addr, SocketAddr},
     path::{Path, PathBuf},
     sync::Arc,
-    time::{SystemTime, UNIX_EPOCH},
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 use tokio_util::{sync::CancellationToken, task::TaskTracker};
 use tracing::{Level, debug, error, info, warn};
@@ -858,6 +858,11 @@ pub async fn init_l1(
         info!("P2P is disabled");
     }
 
+    // Background inverted-log-index builder for eth_getLogs. Runs off the
+    // block-import path and only indexes sections buried beyond the reorg
+    // depth, so it never blocks block processing and needs no reorg handling.
+    tracker.spawn(run_log_indexer(store.clone(), cancel_token.clone()));
+
     Ok((
         datadir.clone(),
         cancel_token,
@@ -865,6 +870,41 @@ pub async fn init_l1(
         local_node_record,
         store,
     ))
+}
+
+/// Background task that builds the inverted log index (`address -> blocks`) used
+/// by `eth_getLogs`. Polls periodically and indexes any newly-buried section;
+/// on first run it backfills the retained range. Indexing runs on a blocking
+/// thread and only touches finalized (buried) sections, so it never interferes
+/// with block import.
+async fn run_log_indexer(store: Store, cancel_token: CancellationToken) {
+    // Poll cadence; indexing only does work once a fresh section is buried.
+    const POLL_INTERVAL: Duration = Duration::from_secs(12);
+    // Stay well clear of the 128-block reorg depth limit so indexed sections
+    // are immutable.
+    const CONFIRMATION_DEPTH: u64 = 256;
+
+    let mut interval = tokio::time::interval(POLL_INTERVAL);
+    loop {
+        tokio::select! {
+            _ = cancel_token.cancelled() => break,
+            _ = interval.tick() => {
+                let store = store.clone();
+                match tokio::task::spawn_blocking(move || {
+                    store.index_pending_log_sections(CONFIRMATION_DEPTH)
+                })
+                .await
+                {
+                    Ok(Ok(indexed)) if indexed > 0 => {
+                        info!("log index: indexed {indexed} new section(s)");
+                    }
+                    Ok(Ok(_)) => {}
+                    Ok(Err(err)) => warn!("log indexer error: {err}"),
+                    Err(err) => warn!("log indexer task failed: {err}"),
+                }
+            }
+        }
+    }
 }
 
 /// Migrates data from a pre-suffix datadir layout to the new network-specific

@@ -115,13 +115,18 @@ pub const EXECUTION_WITNESSES: &str = "execution_witnesses";
 /// - [`Vec<u8>`] = RLP-encoded `BlockAccessList`
 pub const BLOCK_ACCESS_LISTS: &str = "block_access_lists";
 
+/// Inverted log index column family: `address (20B) || section (8B BE)` =>
+/// big-endian `u16` in-section block offsets where the address emitted a log.
+/// Populated off the block-import path by a background indexer (see `log_index`).
+pub const LOG_ADDRESS_INDEX: &str = "log_address_index";
+
 /// Bad blocks column family: single-keyed list of the most recent bad blocks
 /// seen by the client, served by `debug_getBadBlocks`.
 /// - [`Vec<u8>`] = [`BAD_BLOCKS_KEY`]
 /// - [`Vec<u8>`] = RLP-encoded `Vec<Block>` (sorted by descending block number)
 pub const BAD_BLOCKS: &str = "bad_blocks";
 
-pub const TABLES: [&str; 21] = [
+pub const TABLES: [&str; 22] = [
     CHAIN_DATA,
     ACCOUNT_CODES,
     ACCOUNT_CODE_METADATA,
@@ -142,5 +147,6 @@ pub const TABLES: [&str; 21] = [
     MISC_VALUES,
     EXECUTION_WITNESSES,
     BLOCK_ACCESS_LISTS,
+    LOG_ADDRESS_INDEX,
     BAD_BLOCKS,
 ];

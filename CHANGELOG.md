@@ -12,6 +12,10 @@
 
 ## Perf
 
+### 2026-07-08
+
+- Add an inverted address→blocks log index (background-built, off the import path) to narrow `eth_getLogs` candidate blocks, making mainnet log queries competitive with indexed clients (on par with / faster than geth on recent ranges) [#6884](https://github.com/lambdaclass/ethrex/pull/6884)
+
 ### 2026-07-06
 
 - Warm state caches between blocks by speculatively executing top-of-mempool transactions [#6967](https://github.com/lambdaclass/ethrex/pull/6967)

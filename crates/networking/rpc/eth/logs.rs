@@ -148,12 +148,20 @@ pub(crate) async fn fetch_logs_with_filter(
     // every address and topic for each block in the range.
     let bloom_matcher = BloomFilterMatcher::new(&address_filter, &filter.topics);
 
+    // Narrow to candidate blocks via the inverted log index when the filter has
+    // an address and the range is indexed; otherwise scan the whole range (the
+    // per-block header-bloom prefilter below still applies). Every visited block
+    // is exact-filtered, so extra candidates are harmless.
+    let index_addresses: Vec<H160> = filter
+        .address_filters
+        .as_ref()
+        .map(|f| f.as_ref().to_vec())
+        .unwrap_or_default();
+    let block_numbers = storage.get_candidate_blocks_by_address(&index_addresses, from, to)?;
+
     let mut logs: Vec<RpcLog> = Vec::new();
-    // The idea here is to fetch every log and filter by address, if given.
-    // For that, we'll need each block in range, and its transactions,
-    // and for each transaction, we'll need its receipts, which
-    // contain the actual logs we want.
-    for block_num in from..=to {
+    // For each candidate block, load its receipts (bulk) and collect matching logs.
+    for block_num in block_numbers {
         // The block header carries a bloom filter over every (address, topic)
         // pair logged in the block. If it can't possibly contain a log matching
         // this filter, skip the block without loading its body or receipts.
