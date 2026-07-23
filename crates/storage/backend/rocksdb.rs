@@ -356,13 +356,8 @@ impl StorageBackend for RocksDBBackend {
     fn db_stats(&self) -> Option<crate::api::RocksDbStats> {
         use crate::api::{CfStats, RocksDbStats, tables::TABLES};
 
-        let db_int = |name: &str| -> u64 {
-            self.db
-                .property_int_value(name)
-                .ok()
-                .flatten()
-                .unwrap_or(0)
-        };
+        let db_int =
+            |name: &str| -> u64 { self.db.property_int_value(name).ok().flatten().unwrap_or(0) };
 
         let mut cfs = Vec::with_capacity(TABLES.len());
         for &name in TABLES.iter() {
