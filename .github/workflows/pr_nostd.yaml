@@ -48,3 +48,15 @@ jobs:
             -p ethrex-rlp -p ethrex-crypto --no-default-features --target "$TARGET"
           cargo +nightly-2026-06-29 -Z json-target-spec -Z build-std=core,alloc check \
             -p ethrex-crypto --no-default-features --features kzg-rs --target "$TARGET"
+
+  crypto-backend-test:
+    name: ethrex-crypto test (no default features)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Setup Rust Environment
+        uses: ./.github/actions/setup-rust
+
+      - name: Test ethrex-crypto without secp256k1
+        run: cargo test -p ethrex-crypto --no-default-features --features std,kzg-rs
