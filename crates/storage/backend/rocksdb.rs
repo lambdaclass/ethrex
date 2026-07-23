@@ -8,6 +8,7 @@ use crate::api::{
     tables::TABLES,
 };
 use crate::error::StoreError;
+use crate::store::DEFAULT_ROCKSDB_BLOCK_CACHE_SIZE_BYTES;
 use rocksdb::DBWithThreadMode;
 use rocksdb::checkpoint::Checkpoint;
 use rocksdb::{
@@ -30,15 +31,60 @@ fn tx_locations_merge_op(
     tx_locations_merge(existing, operands)
 }
 
+/// Open-time options for [`RocksDBBackend::open`].
+///
+/// Only `block_cache_size` affects production opens; `use_direct_reads` and
+/// `enable_statistics` are bench-oriented knobs that default to `false`, so the
+/// production open path is byte-for-byte unchanged unless a caller opts in.
+#[derive(Debug, Clone, Copy)]
+pub struct RocksDbOpenOpts {
+    /// Size in bytes of the RocksDB shared block cache.
+    pub block_cache_size: usize,
+    /// Open with `O_DIRECT` reads (bypass the OS page cache). Bench-only.
+    pub use_direct_reads: bool,
+    /// Enable RocksDB internal statistics (cache hit/miss counters). Bench-only.
+    pub enable_statistics: bool,
+}
+
+impl RocksDbOpenOpts {
+    /// Production defaults: the given cache size, no direct reads, no statistics.
+    pub fn new(block_cache_size: usize) -> Self {
+        Self {
+            block_cache_size,
+            use_direct_reads: false,
+            enable_statistics: false,
+        }
+    }
+}
+
+impl Default for RocksDbOpenOpts {
+    fn default() -> Self {
+        Self::new(DEFAULT_ROCKSDB_BLOCK_CACHE_SIZE_BYTES)
+    }
+}
+
 /// RocksDB backend
-#[derive(Debug)]
 pub struct RocksDBBackend {
     /// Optimistric transaction database
     db: Arc<DBWithThreadMode<MultiThreaded>>,
+    /// Retained open `Options` when statistics are enabled, so
+    /// [`RocksDBBackend::statistics_string`] can read the live counters. `None`
+    /// in production (statistics disabled). `Options` shares the statistics
+    /// object with the open DB, so reads are live.
+    stats_opts: Option<Options>,
+}
+
+impl std::fmt::Debug for RocksDBBackend {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RocksDBBackend")
+            .field("db", &self.db)
+            .finish_non_exhaustive()
+    }
 }
 
 impl RocksDBBackend {
-    pub fn open(path: impl AsRef<Path>, block_cache_size: usize) -> Result<Self, StoreError> {
+    pub fn open(path: impl AsRef<Path>, open_opts: RocksDbOpenOpts) -> Result<Self, StoreError> {
+        let block_cache_size = open_opts.block_cache_size;
         // Rocksdb optimizations options
         let mut opts = Options::default();
         opts.create_if_missing(true);
@@ -74,6 +120,15 @@ impl RocksDBBackend {
         opts.set_compaction_readahead_size(4 * 1024 * 1024); // 4MB
         opts.set_advise_random_on_open(false);
         opts.set_compression_type(rocksdb::DBCompressionType::None);
+
+        // Bench-only knobs. Inert unless the caller opts in, so production opens
+        // are unchanged.
+        if open_opts.use_direct_reads {
+            opts.set_use_direct_reads(true);
+        }
+        if open_opts.enable_statistics {
+            opts.enable_statistics();
+        }
 
         let compressible_tables = [
             BLOCK_NUMBERS,
@@ -256,7 +311,34 @@ impl RocksDBBackend {
         )
         .map_err(|e| StoreError::Custom(format!("Failed to open RocksDB with all CFs: {}", e)))?;
 
-        Ok(Self { db: Arc::new(db) })
+        // Retain the open Options only when statistics are enabled; it shares the
+        // statistics object with the DB, so `statistics_string` reads live counters.
+        let stats_opts = open_opts.enable_statistics.then_some(opts);
+
+        Ok(Self {
+            db: Arc::new(db),
+            stats_opts,
+        })
+    }
+
+    /// Returns the RocksDB internal statistics as a string, or `None` when
+    /// statistics were not enabled at open time (the production default).
+    pub fn statistics_string(&self) -> Option<String> {
+        self.stats_opts
+            .as_ref()
+            .and_then(|opts| opts.get_statistics())
+    }
+
+    /// Returns the string value of a RocksDB property (e.g.
+    /// `rocksdb.total-sst-files-size`, `rocksdb.compaction-pending`,
+    /// `rocksdb.actual-delayed-write-rate`) for the given column family, or
+    /// `None` if the CF doesn't exist or the property lookup fails.
+    pub fn cf_property(&self, cf: &str, property: &str) -> Option<String> {
+        let cf_handle = self.db.cf_handle(cf)?;
+        self.db
+            .property_value_cf(&cf_handle, property)
+            .ok()
+            .flatten()
     }
 
     /// Drops column families that exist on disk but are no longer listed in
@@ -367,6 +449,14 @@ impl StorageBackend for RocksDBBackend {
         self.db
             .flush_wal(true)
             .map_err(|e| StoreError::Custom(format!("RocksDB flush_wal failed: {e}")))
+    }
+
+    fn statistics_string(&self) -> Option<String> {
+        Self::statistics_string(self)
+    }
+
+    fn cf_property(&self, cf: &'static str, property: &str) -> Option<String> {
+        Self::cf_property(self, cf, property)
     }
 }
 
@@ -546,11 +636,7 @@ mod tests {
     #[test]
     fn merge_operator_survives_flush_and_compaction() {
         let dir = tempfile::tempdir().unwrap();
-        let backend = RocksDBBackend::open(
-            dir.path(),
-            crate::store::DEFAULT_ROCKSDB_BLOCK_CACHE_SIZE_BYTES,
-        )
-        .unwrap();
+        let backend = RocksDBBackend::open(dir.path(), RocksDbOpenOpts::default()).unwrap();
         let cf = backend.db.cf_handle(TRANSACTION_LOCATIONS).unwrap();
 
         let tx_hash = H256::from_low_u64_be(0xabcd);
@@ -593,11 +679,7 @@ mod tests {
     #[test]
     fn merge_operator_dedupes_across_compaction() {
         let dir = tempfile::tempdir().unwrap();
-        let backend = RocksDBBackend::open(
-            dir.path(),
-            crate::store::DEFAULT_ROCKSDB_BLOCK_CACHE_SIZE_BYTES,
-        )
-        .unwrap();
+        let backend = RocksDBBackend::open(dir.path(), RocksDbOpenOpts::default()).unwrap();
         let cf = backend.db.cf_handle(TRANSACTION_LOCATIONS).unwrap();
 
         let tx_hash = H256::from_low_u64_be(0x1234);
