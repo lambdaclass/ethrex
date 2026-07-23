@@ -23,6 +23,7 @@
   - [Block Execution Pipeline](./l1/architecture/block_execution.md)
   - [Sync State Machine](./l1/architecture/sync_state_machine.md)
   - [Crate Map](./l1/architecture/crate_map.md)
+  - [Mempool](./l1/architecture/mempool.md)
 - [Fundamentals](./l1/fundamentals/README.md)
   - [Metrics]()
   - [Logs]()
