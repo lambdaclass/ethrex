@@ -754,7 +754,22 @@ impl Blockchain {
                     // whole tx) EXCEPT nonce mismatches, which are transient
                     // queue-ordering artifacts — keep those pooled for a later
                     // block, mirroring how regular txs are treated.
-                    if is_frame && !is_nonce_mismatch(&e) {
+                    //
+                    // Regular txs are likewise kept pooled on failure, since the
+                    // usual cause is a transient queue-ordering/nonce/balance
+                    // artifact that a later block resolves. But a
+                    // DETERMINISTICALLY-invalid regular tx (intrinsic gas below
+                    // the minimum or the calldata floor, or initcode over the
+                    // size cap) can never become valid at its nonce; keeping it
+                    // pooled lets it re-occupy the sender's queue head on every
+                    // build and starve that sender's other txs indefinitely.
+                    // Evict those too.
+                    let evict = if is_frame {
+                        !is_nonce_mismatch(&e)
+                    } else {
+                        is_deterministic_invalid(&e)
+                    };
+                    if evict {
                         self.remove_transaction_from_pool(&tx_hash)?;
                     }
                     txs.pop()
@@ -1042,6 +1057,25 @@ fn is_nonce_mismatch(e: &ChainError) -> bool {
     e.to_string().contains("Nonce mismatch")
 }
 
+/// Whether a tx failed with an error that recurs at the same nonce no matter
+/// what else changes in the block or pool — i.e. it is intrinsically invalid,
+/// not merely mis-ordered. Covers the levm intrinsic-gas checks (gas limit
+/// below the minimum intrinsic cost or below the EIP-7623 calldata floor) and
+/// the EIP-3860/7907 initcode size cap. There is no typed variant at the
+/// `ChainError` level, so it is detected by the stable Display substrings; the
+/// `deterministic_invalid_detected_from_chain_error` test pins them through the
+/// real conversion path so a reworded error breaks the test, not eviction.
+///
+/// Such a tx must be evicted rather than kept pooled: otherwise it re-occupies
+/// its sender's queue head on every payload build and starves that sender's
+/// other transactions (a payload-inclusion stall).
+fn is_deterministic_invalid(e: &ChainError) -> bool {
+    let msg = e.to_string();
+    msg.contains("gas limit lower than the minimum gas cost")
+        || msg.contains("gas cost floor for calldata tokens")
+        || msg.contains("Initcode size exceeded")
+}
+
 /// Runs a plain (non blob) transaction, updates the gas count and returns the receipt
 pub fn apply_plain_transaction(
     head: &HeadTransaction,
@@ -1298,5 +1332,64 @@ mod tests {
             !is_nonce_mismatch(&other),
             "is_nonce_mismatch must not match unrelated errors; got: {other}"
         );
+    }
+
+    #[test]
+    fn deterministic_invalid_detected_from_chain_error() {
+        // Pin `is_deterministic_invalid`'s Display substrings through the REAL
+        // production conversion path (same rationale as the nonce-mismatch pin
+        // test above): a reworded levm error must break this test, not silently
+        // stop evicting doomed txs.
+        use ethrex_levm::errors::{TxValidationError, VMError};
+        let to_chain = |e: TxValidationError| -> ChainError {
+            EvmError::from(VMError::TxValidation(e)).into()
+        };
+
+        // Intrinsically invalid at this nonce forever -> must be evicted.
+        for (err, name) in [
+            (TxValidationError::IntrinsicGasTooLow, "IntrinsicGasTooLow"),
+            (
+                TxValidationError::IntrinsicGasBelowFloorGasCost,
+                "IntrinsicGasBelowFloorGasCost",
+            ),
+            (
+                TxValidationError::InitcodeSizeExceeded {
+                    max_size: 1,
+                    actual_size: 2,
+                },
+                "InitcodeSizeExceeded",
+            ),
+        ] {
+            let e = to_chain(err);
+            assert!(
+                is_deterministic_invalid(&e),
+                "is_deterministic_invalid must match {name}; got: {e}"
+            );
+        }
+
+        // Transient failures (nonce gap, balance, fees) must NOT be evicted.
+        for (err, name) in [
+            (
+                TxValidationError::NonceMismatch {
+                    expected: 5,
+                    actual: 7,
+                },
+                "NonceMismatch",
+            ),
+            (
+                TxValidationError::InsufficientAccountFunds,
+                "InsufficientAccountFunds",
+            ),
+            (
+                TxValidationError::InsufficientMaxFeePerGas,
+                "InsufficientMaxFeePerGas",
+            ),
+        ] {
+            let e = to_chain(err);
+            assert!(
+                !is_deterministic_invalid(&e),
+                "is_deterministic_invalid must NOT match transient {name}; got: {e}"
+            );
+        }
     }
 }
