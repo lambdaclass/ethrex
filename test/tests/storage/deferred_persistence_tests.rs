@@ -79,6 +79,7 @@ fn minimal_batch(number: BlockNumber, parent_hash: H256) -> (Block, UpdateBatch)
         blocks: vec![block.clone()],
         code_updates: vec![],
         commit_depth: None,
+        wait_for_flush: false,
     };
     (block, batch)
 }
@@ -489,6 +490,7 @@ async fn batch_path_advances_flushed_upto() {
         blocks,
         code_updates: vec![],
         commit_depth: Some(BATCH_COMMIT_THRESHOLD),
+        wait_for_flush: true,
     };
 
     store
@@ -1060,6 +1062,7 @@ async fn shutdown_does_not_force_commit_trie_layers() {
             blocks: vec![block_a],
             code_updates: vec![],
             commit_depth: None,
+            wait_for_flush: false,
         };
         store.store_block_updates(batch_a).expect("store A");
 

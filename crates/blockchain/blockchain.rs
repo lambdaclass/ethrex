@@ -2195,6 +2195,9 @@ impl Blockchain {
             blocks: vec![block],
             code_updates: account_updates_list.code_updates,
             commit_depth,
+            // Per-block path: ack after staging so the next block's execution overlaps this
+            // block's flush. Memory is bounded by `commit_depth` and the persist channel.
+            wait_for_flush: false,
         };
 
         self.storage
@@ -2862,6 +2865,9 @@ impl Blockchain {
             receipts: all_receipts,
             code_updates,
             commit_depth: Some(BATCH_COMMIT_THRESHOLD),
+            // Bespoke batch: one message carries ~1024 blocks (~1 GB of diff), so ack after
+            // flush to keep in-flight work to ~1 batch.
+            wait_for_flush: true,
         };
 
         self.storage

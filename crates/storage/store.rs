@@ -277,15 +277,25 @@ pub struct UpdateBatch {
     pub receipts: Vec<(H256, Vec<Receipt>)>,
     /// Contract code updates (code hash -> bytecode).
     pub code_updates: Vec<(H256, Code)>,
-    /// Commit strategy for this batch's trie layers.
+    /// Commit gate for this batch's trie layers (independent of `wait_for_flush`).
     ///
     /// - `None`: live path (`newPayload`). The persist worker commits by the canonical
-    ///   `head - DB_COMMIT_THRESHOLD` safe-commit root and does not wait for the disk flush.
+    ///   `head - DB_COMMIT_THRESHOLD` safe-commit root.
     /// - `Some(depth)`: single-canonical-chain execution (batch import, full sync, startup
     ///   state regeneration). The persist worker commits every layer deeper than `depth`
-    ///   (see [`Trie::get_commitable_by_depth`]) and waits for the flush to bound in-flight
-    ///   memory during bulk import.
+    ///   (see [`Trie::get_commitable_by_depth`]), which bounds resident trie layers to ~`depth`.
     pub commit_depth: Option<usize>,
+    /// When the persist worker acks (independent of `commit_depth`).
+    ///
+    /// - `false`: ack after staging, so the caller's next-block execution overlaps this
+    ///   block's disk flush. Used by the live path and the per-block re-execution paths
+    ///   (regen / full-sync fallback / import tail) — their memory is already bounded by
+    ///   `commit_depth`'s depth gate and the persist channel capacity, so waiting per block
+    ///   would only serialize CPU and I/O for no benefit.
+    /// - `true`: ack after flush, bounding in-flight work to ~1 message. Used by the bespoke
+    ///   batch path, where a single message carries ~1024 blocks (~1 GB of trie diff) and two
+    ///   in flight would be a real memory cost.
+    pub wait_for_flush: bool,
 }
 
 /// Storage trie updates grouped by account address hash.
@@ -1661,10 +1671,9 @@ impl Store {
         Ok((parent_state_root, last_state_root))
     }
 
-    /// Single path for both live (`commit_depth == None`) and single-canonical-chain
-    /// (`commit_depth == Some(_)`) updates. Both hand the whole unit (block data +
-    /// one aggregate trie diff) to the SINGLE persist worker and wait for its ack;
-    /// `commit_depth.is_some()` selects when the worker acks.
+    /// Single path for all updates: hand the whole unit (block data + one aggregate trie
+    /// diff) to the SINGLE persist worker and wait for its ack. `commit_depth` selects the
+    /// commit gate; `wait_for_flush` selects when the worker acks (see [`UpdateBatch`]).
     fn apply_updates(&self, update_batch: UpdateBatch) -> Result<(), StoreError> {
         let (parent_state_root, last_state_root) = self.batch_state_roots(&update_batch)?;
 
@@ -1675,6 +1684,7 @@ impl Store {
             receipts,
             code_updates,
             commit_depth,
+            wait_for_flush,
         } = update_batch;
 
         // Register before handing off to the worker and before this returns, so
@@ -1706,10 +1716,9 @@ impl Store {
         };
 
         // Send to the persist worker and wait for its ack.
-        // LIVE (commit_depth=None): worker acks after staging; the ack carries
-        //   the PRIOR flush result so a disk error surfaces on the next call.
-        // DEPTH-GATED (commit_depth=Some): worker acks after flush, bounding
-        //   in-flight batches to ~1.
+        // wait_for_flush=false: worker acks after staging; the ack carries the PRIOR flush
+        //   result so a disk error surfaces on the next call.
+        // wait_for_flush=true: worker acks after flush, bounding in-flight work to ~1.
         let (ack_tx, ack_rx) = sync_channel(1);
         self.persist_tx
             .send(PersistMessage::Block(BlockPersist {
@@ -1720,6 +1729,7 @@ impl Store {
                 account_updates,
                 storage_updates,
                 commit_depth,
+                wait_for_flush,
                 ack: ack_tx,
             }))
             .map_err(|e| StoreError::Custom(format!("failed to send block persist: {e}")))?;
@@ -1935,7 +1945,7 @@ impl Store {
                             let _ = bp.ack.send(Err(e));
                             continue;
                         }
-                        // LIVE: ack after staging; carries prior flush result.
+                        // ACK-AFTER-STAGING: ack now, carrying the prior flush result.
                         // NOTE: this acks block validity BEFORE apply_trie_phase1
                         // installs the trie layer below. A phase-1 failure (only
                         // reachable via lock poisoning, which is already fatal) is
@@ -1943,7 +1953,7 @@ impl Store {
                         // last_flush_result rather than attributed to this block;
                         // the pending root is still cleared unconditionally, so
                         // gated readers error rather than hang.
-                        if bp.commit_depth.is_none() {
+                        if !bp.wait_for_flush {
                             let _ = bp
                                 .ack
                                 .send(std::mem::replace(&mut last_flush_result, Ok(())));
@@ -1958,7 +1968,7 @@ impl Store {
                             bp.storage_updates,
                         ) {
                             error!("persist worker trie phase-1 failed: {err}");
-                            if bp.commit_depth.is_some() {
+                            if bp.wait_for_flush {
                                 let _ = bp.ack.send(Err(err));
                             } else {
                                 last_flush_result = Err(err);
@@ -1977,9 +1987,9 @@ impl Store {
                                     bp.commit_depth,
                                 )
                             });
-                        // DEPTH-GATED: ack after flush (bounds in-flight batches to ~1),
-                        // folding in any prior live-path error. LIVE: stash result.
-                        if bp.commit_depth.is_some() {
+                        // ACK-AFTER-FLUSH: ack now (bounds in-flight work to ~1), folding in
+                        // any prior deferred error. ACK-AFTER-STAGING: stash for the next ack.
+                        if bp.wait_for_flush {
                             let prior = std::mem::replace(&mut last_flush_result, Ok(()));
                             let _ = bp.ack.send(prior.and(flushed));
                         } else {
@@ -3707,11 +3717,11 @@ fn mutate_block_buffer(
 /// Default for [`StoreConfig::persist_channel_capacity`].
 const DEFAULT_PERSIST_CHANNEL_CAPACITY: usize = 2;
 
-/// One unit of work for the persist worker: stage block(s), build the trie
-/// diff-layer, flush to disk. `commit_depth` selects both the commit gate and the
-/// ack point: `None` (live) commits by the canonical safe-commit root and acks after
-/// staging carrying the prior flush result; `Some(depth)` (depth-gated) commits every
-/// layer deeper than `depth` and acks after flush.
+/// One unit of work for the persist worker: stage block(s), build the trie diff-layer,
+/// flush to disk. `commit_depth` selects the commit gate (`None` = canonical safe-commit
+/// root, `Some(depth)` = commit layers deeper than `depth`). `wait_for_flush` selects the
+/// ack point independently: `false` acks after staging (carrying the prior flush result),
+/// `true` acks after flush.
 struct BlockPersist {
     blocks: Vec<(Block, Vec<Receipt>)>,
     codes: Vec<(H256, Code)>,
@@ -3720,6 +3730,7 @@ struct BlockPersist {
     account_updates: TrieNodesUpdate,
     storage_updates: Vec<(H256, TrieNodesUpdate)>,
     commit_depth: Option<usize>,
+    wait_for_flush: bool,
     ack: std::sync::mpsc::SyncSender<Result<(), StoreError>>,
 }
 
