@@ -162,7 +162,9 @@ impl MetricsDB {
             .set(live_data_bytes as i64);
         self.cf_num_keys.with_label_values(l).set(num_keys as i64);
         self.cf_num_files.with_label_values(l).set(num_files as i64);
-        self.cf_blob_bytes.with_label_values(l).set(blob_bytes as i64);
+        self.cf_blob_bytes
+            .with_label_values(l)
+            .set(blob_bytes as i64);
         self.cf_pending_compaction_bytes
             .with_label_values(l)
             .set(pending_compaction_bytes as i64);
