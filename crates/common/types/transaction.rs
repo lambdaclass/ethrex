@@ -1786,16 +1786,21 @@ pub enum FrameMode {
     Default = 0,
     Verify = 1,
     Sender = 2,
+    /// EIP-7906: `POST_TX` — a STATICCALL-executed trailing-suffix frame whose
+    /// revert reverts the whole tx body. Required context for TXTRACE /
+    /// EVENTDATACOPY / TXDIFF. (EIP-8288's deferred DEP_VERIFY moves to mode 4.)
+    PostTx = 3,
 }
 
 impl FrameMode {
     /// Convert from the lower 8 bits of the mode field.
-    /// Returns None for reserved values (3-255).
+    /// Returns None for reserved values (4-255).
     pub fn from_u8(val: u8) -> Option<Self> {
         match val {
             0 => Some(FrameMode::Default),
             1 => Some(FrameMode::Verify),
             2 => Some(FrameMode::Sender),
+            3 => Some(FrameMode::PostTx),
             _ => None,
         }
     }
@@ -1807,6 +1812,7 @@ impl From<FrameMode> for u8 {
             FrameMode::Default => 0,
             FrameMode::Verify => 1,
             FrameMode::Sender => 2,
+            FrameMode::PostTx => 3,
         }
     }
 }
@@ -2148,9 +2154,17 @@ impl FrameTransaction {
         // bound below rejects tx-level totals that don't fit in signed i64.
         let mut total_frame_gas: u128 = 0;
         let mut expiry_frame_count: usize = 0;
+        // EIP-7906: POST_TX (mode 3) frames must form a contiguous trailing suffix —
+        // once any frame is POST_TX, every later frame must be POST_TX too.
+        let post_tx = FrameMode::PostTx as u8;
+        if let Some(first) = self.frames.iter().position(|f| f.mode == post_tx)
+            && self.frames[first..].iter().any(|f| f.mode != post_tx)
+        {
+            return Err("POST_TX frames must form a contiguous trailing suffix".to_string());
+        }
         for (i, frame) in self.frames.iter().enumerate() {
-            // Reject reserved execution modes (3-255)
-            if frame.mode >= 3 {
+            // Reject reserved execution modes (4-255); POST_TX (3) is admitted (EIP-7906).
+            if frame.mode >= 4 {
                 return Err(format!("Frame {i}: reserved execution mode {}", frame.mode));
             }
             // Reserved flag bits 3-7 must be zero

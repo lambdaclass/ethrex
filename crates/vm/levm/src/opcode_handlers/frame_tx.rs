@@ -22,7 +22,7 @@ use crate::{
 use ethrex_common::{Address, U256, types::FrameMode, types::Log};
 
 /// Convert a u64 index to usize, returning InvalidOpcode on overflow.
-fn index_to_usize(val: u64) -> Result<usize, VMError> {
+pub(crate) fn index_to_usize(val: u64) -> Result<usize, VMError> {
     usize::try_from(val).map_err(|_| ExceptionalHalt::InvalidOpcode.into())
 }
 
@@ -193,6 +193,17 @@ impl OpcodeHandler for OpApproveHandler {
             .frames
             .get(ctx.current_frame_index)
             .ok_or(ExceptionalHalt::InvalidOpcode)?;
+
+        // EIP-7906: APPROVE is forbidden inside a POST_TX frame. A POST_TX frame
+        // runs as a read-only assertion (dispatched as a STATICCALL); the spec
+        // disallows all state manipulation there and explicitly forbids APPROVE.
+        // Gate on the POST_TX mode specifically rather than on `is_static`: VERIFY
+        // frames are also static, but APPROVE is precisely how they grant sender /
+        // payer approval, so they must keep working.
+        if current_frame.execution_mode() == FrameMode::PostTx {
+            return Err(ExceptionalHalt::InvalidOpcode.into());
+        }
+
         let frame_target = current_frame.target.unwrap_or(ctx.tx.sender);
         if vm.current_call_frame.to != frame_target {
             return Err(VMError::RevertOpcode);
@@ -548,7 +559,8 @@ pub fn execute_default_code(
         // ETH transfer to an EOA work (spec §EOA support / Example 1).
         // Consumes no execution gas (the frame's value transfer is handled by
         // the caller's deferred transfer).
-        FrameMode::Sender | FrameMode::Default => Ok((true, 0, Vec::new())),
+        // EIP-7906: POST_TX default-code is handled like SENDER/DEFAULT.
+        FrameMode::Sender | FrameMode::Default | FrameMode::PostTx => Ok((true, 0, Vec::new())),
     }
 }
 

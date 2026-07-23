@@ -1764,6 +1764,9 @@ impl<'a> VM<'a> {
                     }
                     (sender, false)
                 }
+                // EIP-7906: POST_TX runs as a STATICCALL with ENTRY_POINT as caller
+                // (like VERIFY, but it is a post-execution assertion, not auth).
+                FrameMode::PostTx => (entry_point, true),
             };
 
             // Set env.origin for this frame (ORIGIN opcode reads this)
@@ -2069,7 +2072,12 @@ impl<'a> VM<'a> {
                 // inside an atomic batch. The batch unroll above already rolled
                 // back state/approvals; validity is a tx-level decision. (The
                 // failing `frame` here is the one that triggered the revert.)
-                if frame.execution_mode() == FrameMode::Verify {
+                // EIP-7906: a reverted POST_TX frame overrides atomic-batch
+                // unrolling and invalidates the whole tx, same as a reverted VERIFY.
+                if matches!(
+                    frame.execution_mode(),
+                    FrameMode::Verify | FrameMode::PostTx
+                ) {
                     tx_invalid = true;
                     break;
                 }
@@ -2099,7 +2107,19 @@ impl<'a> VM<'a> {
             // verifier frame). A reverted VERIFY frame invalidates the tx;
             // batched VERIFY reverts are handled in the atomic-batch-revert
             // branch above (which also sets tx_invalid).
-            if frame.execution_mode() == FrameMode::Verify && !frame_success {
+            // EIP-7906: a reverted POST_TX assertion frame likewise invalidates the
+            // entire transaction (spec: "unconditionally invalidates the entire
+            // transaction, including any gas payment already approved"). ethrex's
+            // consensus path reverts the whole tx via tx_level_backup (tx excluded).
+            // NOTE: the spec also states the validation prefix is not reverted in a
+            // mempool-compatible way; the precise included-reverted-vs-excluded and
+            // prefix-payment semantics are flagged for devnet/spec confirmation —
+            // see docs/eip-7906.md.
+            if matches!(
+                frame.execution_mode(),
+                FrameMode::Verify | FrameMode::PostTx
+            ) && !frame_success
+            {
                 tx_invalid = true;
                 break;
             }
@@ -2480,6 +2500,13 @@ impl<'a> VM<'a> {
                     // Structural rules exclude SENDER frames from the prefix.
                     return Err(VMError::Internal(InternalError::Custom(
                         "SENDER frame in validation prefix".to_string(),
+                    )));
+                }
+                FrameMode::PostTx => {
+                    // EIP-7906: POST_TX frames are a trailing execution-body suffix,
+                    // never part of the validation prefix.
+                    return Err(VMError::Internal(InternalError::Custom(
+                        "POST_TX frame in validation prefix".to_string(),
                     )));
                 }
             };
