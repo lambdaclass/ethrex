@@ -15,7 +15,7 @@ use ethrex_common::{
     H256,
     types::{Block, BlockBody, BlockHeader, block_access_list::BlockAccessList},
 };
-use ethrex_storage::Store;
+use ethrex_storage::{DB_COMMIT_THRESHOLD, Store};
 use tokio::sync::RwLock;
 use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
@@ -790,7 +790,8 @@ async fn run_blocks_pipeline(
         for (block, bal) in blocks.into_iter().zip(bals.into_iter()) {
             let block_hash = block.hash();
             blockchain
-                .add_block_pipeline(block, bal.map(Arc::new))
+                .add_block_pipeline_bounded(block, bal.map(Arc::new), DB_COMMIT_THRESHOLD)
+                .map(|_| ())
                 .map_err(|e| {
                     (
                         e,

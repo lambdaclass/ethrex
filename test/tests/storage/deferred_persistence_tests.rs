@@ -2,7 +2,7 @@ use ethrex_common::{
     H256,
     types::{Block, BlockBody, BlockHeader, BlockNumber},
 };
-use ethrex_storage::{EngineType, Store, UpdateBatch};
+use ethrex_storage::{BATCH_COMMIT_THRESHOLD, EngineType, Store, UpdateBatch};
 
 #[tokio::test]
 async fn flushed_upto_defaults_to_zero() {
@@ -78,12 +78,13 @@ fn minimal_batch(number: BlockNumber, parent_hash: H256) -> (Block, UpdateBatch)
         receipts: vec![(block.hash(), vec![])],
         blocks: vec![block.clone()],
         code_updates: vec![],
-        batch_mode: false,
+        commit_depth: None,
+        wait_for_flush: false,
     };
     (block, batch)
 }
 
-/// Drive several sequential store_block_updates (batch_mode: false) through the
+/// Drive several sequential store_block_updates (commit_depth: None) through the
 /// live path and assert every block is readable (buffer or disk) and
 /// read_flushed_upto advances monotonically with no gaps.
 ///
@@ -156,7 +157,7 @@ async fn poll_flushed_upto_reaches(store: &Store, target: BlockNumber) {
 }
 
 /// Live path routed through the single persist worker: several sequential
-/// `store_block_updates` (batch_mode: false) must each stage their block and
+/// `store_block_updates` (commit_depth: None) must each stage their block and
 /// the worker must flush them, advancing the durable `flushed_upto` marker to
 /// the full block count. Same invariant as `sequential_live_updates_no_lost_inserts`
 /// but a minimal smoke test that the unified persist worker stages + flushes.
@@ -441,7 +442,7 @@ async fn boot_on_legacy_db_without_marker_keeps_head() {
 /// live → full-sync → restart sequence the marker lagged and the boot clamp
 /// silently rewound the head.
 ///
-/// RED (pre-fix): `apply_updates_synchronous` runs for `batch_mode: true` and never
+/// RED (pre-fix): `apply_updates_synchronous` runs for the batch path and never
 /// touches the marker, so `read_flushed_upto()` stays 0 and this FAILS.
 /// GREEN (post-fix): the batch path routes through the single persist worker, whose
 /// `flush_block_data` drains all staged blocks in one tx and writes the max block
@@ -463,7 +464,7 @@ async fn batch_path_advances_flushed_upto() {
     let mut store = Store::new(path, EngineType::RocksDB).expect("store");
     store.add_initial_state(genesis).await.expect("genesis");
 
-    // Build a single batch_mode=true UpdateBatch carrying blocks 1..=3 (the
+    // Build a single depth-gated UpdateBatch carrying blocks 1..=3 (the
     // full-sync shape: many blocks, one aggregate trie diff, one fsync). The
     // first block's parent is genesis so `batch_state_roots` resolves a parent
     // state root.
@@ -488,7 +489,8 @@ async fn batch_path_advances_flushed_upto() {
         receipts,
         blocks,
         code_updates: vec![],
-        batch_mode: true,
+        commit_depth: Some(BATCH_COMMIT_THRESHOLD),
+        wait_for_flush: true,
     };
 
     store
@@ -1059,7 +1061,8 @@ async fn shutdown_does_not_force_commit_trie_layers() {
             receipts: vec![(hash_a, vec![])],
             blocks: vec![block_a],
             code_updates: vec![],
-            batch_mode: false,
+            commit_depth: None,
+            wait_for_flush: false,
         };
         store.store_block_updates(batch_a).expect("store A");
 

@@ -87,7 +87,8 @@ use ethrex_rlp::constants::RLP_NULL;
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_storage::{
-    AccountUpdatesList, Store, UpdateBatch, error::StoreError, hash_address, hash_key,
+    AccountUpdatesList, BATCH_COMMIT_THRESHOLD, Store, UpdateBatch, error::StoreError,
+    hash_address, hash_key,
 };
 use ethrex_trie::node::{BranchNode, ExtensionNode, LeafNode};
 use ethrex_trie::{Nibbles, Node, NodeRef, Trie, TrieError, TrieNode};
@@ -2166,6 +2167,24 @@ impl Blockchain {
         account_updates_list: AccountUpdatesList,
         execution_result: BlockExecutionResult,
     ) -> Result<(), ChainError> {
+        // Live path: commit by the canonical safe-commit gate (see `commit_depth`).
+        self.store_block_with_depth(block, account_updates_list, execution_result, None)
+    }
+
+    /// Like [`Self::store_block`] but with an explicit trie-layer commit strategy.
+    ///
+    /// `commit_depth`:
+    /// - `None`: live block-by-block execution (`newPayload`); commit by the canonical
+    ///   `head - DB_COMMIT_THRESHOLD` safe-commit root so non-canonical state is never persisted.
+    /// - `Some(depth)`: single-canonical-chain execution (batch import, full sync, startup
+    ///   state regeneration); commit every layer deeper than `depth`, bounding in-memory layers.
+    pub fn store_block_with_depth(
+        &self,
+        block: Block,
+        account_updates_list: AccountUpdatesList,
+        execution_result: BlockExecutionResult,
+        commit_depth: Option<usize>,
+    ) -> Result<(), ChainError> {
         // Check state root matches the one in block header
         validate_state_root(&block.header, account_updates_list.state_trie_hash)?;
 
@@ -2175,7 +2194,10 @@ impl Blockchain {
             receipts: vec![(block.hash(), execution_result.receipts)],
             blocks: vec![block],
             code_updates: account_updates_list.code_updates,
-            batch_mode: false,
+            commit_depth,
+            // Per-block path: ack after staging so the next block's execution overlaps this
+            // block's flush. Memory is bounded by `commit_depth` and the persist channel.
+            wait_for_flush: false,
         };
 
         self.storage
@@ -2225,8 +2247,27 @@ impl Blockchain {
         block: Block,
         bal: Option<Arc<BlockAccessList>>,
     ) -> Result<(), ChainError> {
-        let (_, _, result) = self.add_block_pipeline_inner(block, bal, false)?;
+        let (_, _, result) = self.add_block_pipeline_inner(block, bal, false, None)?;
         result
+    }
+
+    /// Same as [`add_block_pipeline`] but for single-canonical-chain re-execution
+    /// (startup state regeneration, full-sync block-by-block, block import): commits
+    /// trie layers by depth (`commit_depth`) instead of the canonical safe-commit gate,
+    /// bounding in-memory layers to ~`commit_depth`. Only sound because these paths extend
+    /// a single canonical chain with no competing forks. Must NOT be used for live
+    /// `newPayload`. Returns the BAL produced during execution (see
+    /// [`add_block_pipeline_bal`]).
+    pub fn add_block_pipeline_bounded(
+        &self,
+        block: Block,
+        bal: Option<Arc<BlockAccessList>>,
+        commit_depth: usize,
+    ) -> Result<Option<BlockAccessList>, ChainError> {
+        let (produced_bal, _, result) =
+            self.add_block_pipeline_inner(block, bal, false, Some(commit_depth))?;
+        result?;
+        Ok(produced_bal)
     }
 
     /// Same as [`add_block_pipeline`] but also returns the BAL produced during execution.
@@ -2240,7 +2281,7 @@ impl Blockchain {
         block: Block,
         bal: Option<Arc<BlockAccessList>>,
     ) -> Result<Option<BlockAccessList>, ChainError> {
-        let (produced_bal, _, result) = self.add_block_pipeline_inner(block, bal, false)?;
+        let (produced_bal, _, result) = self.add_block_pipeline_inner(block, bal, false, None)?;
         result?;
         Ok(produced_bal)
     }
@@ -2252,7 +2293,7 @@ impl Blockchain {
         block: Block,
         bal: Option<Arc<BlockAccessList>>,
     ) -> Result<ExecutionWitness, ChainError> {
-        let (_, witness, result) = self.add_block_pipeline_inner(block, bal, true)?;
+        let (_, witness, result) = self.add_block_pipeline_inner(block, bal, true, None)?;
         result?;
         witness.ok_or_else(|| {
             ChainError::WitnessGeneration(
@@ -2274,6 +2315,7 @@ impl Blockchain {
         block: Block,
         bal: Option<Arc<BlockAccessList>>,
         force_witness: bool,
+        commit_depth: Option<usize>,
     ) -> Result<AddBlockPipelineInnerResult, ChainError> {
         // Validate if it can be the new head and find the parent
         let Ok(parent_header) = find_parent_header(&block.header, &self.storage) else {
@@ -2374,7 +2416,7 @@ impl Blockchain {
             warn!("Failed to store block access list for block {block_hash}: {err}");
         }
 
-        let result = self.store_block(block, account_updates_list, res);
+        let result = self.store_block_with_depth(block, account_updates_list, res, commit_depth);
 
         let stored = Instant::now();
 
@@ -2822,7 +2864,10 @@ impl Blockchain {
             blocks,
             receipts: all_receipts,
             code_updates,
-            batch_mode: true,
+            commit_depth: Some(BATCH_COMMIT_THRESHOLD),
+            // Bespoke batch: one message carries ~1024 blocks (~1 GB of diff), so ack after
+            // flush to keep in-flight work to ~1 batch.
+            wait_for_flush: true,
         };
 
         self.storage

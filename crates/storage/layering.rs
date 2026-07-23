@@ -178,17 +178,18 @@ impl TrieLayerCache {
         None
     }
 
-    /// Depth-only commit gate for batch execution (full sync / block import).
+    /// Depth-only commit gate for single-canonical-chain re-execution (full sync, block
+    /// import, startup state regeneration).
     ///
     /// Walks the parent chain from `state_root`, counting layers, and returns the state root of
     /// the layer that is `threshold` layers deep — committing purely by depth, ignoring the
     /// canonical [`safe_commit_root`](Self::safe_commit_root) cell.
     ///
-    /// Used only in batch mode, where the node extends a single canonical chain (full sync and
-    /// `import` never execute competing forks), so the non-canonical-commit hazard that the
-    /// canonical gate guards against cannot occur. The canonical gate keys on the `head - 128`
-    /// safe-commit root, which never lands on a batch layer boundary (~1024 blocks apart), so it
-    /// would never flush during batch execution; this depth gate bounds memory instead.
+    /// Used only where the node extends a single canonical chain (these paths never execute
+    /// competing forks), so the non-canonical-commit hazard that the canonical gate guards
+    /// against cannot occur. The canonical gate keys on the `head - 128` safe-commit root, which
+    /// these paths never advance (nothing is canonicalized until a later forkchoice update), so
+    /// it would never flush during re-execution; this depth gate bounds memory instead.
     pub(crate) fn get_commitable_by_depth(
         &self,
         mut state_root: H256,

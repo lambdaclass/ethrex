@@ -72,7 +72,7 @@ const IN_MEMORY_COMMIT_THRESHOLD: usize = 10000;
 /// memory. The canonical `head - DB_COMMIT_THRESHOLD` safe-commit root never lands on a batch
 /// layer boundary, so batch mode commits by depth instead; this is sound because full sync and
 /// import only ever extend a single canonical chain (no competing forks to mis-commit).
-const BATCH_COMMIT_THRESHOLD: usize = 4;
+pub const BATCH_COMMIT_THRESHOLD: usize = 4;
 
 /// Default size in bytes of the RocksDB shared block cache: 12 GiB.
 ///
@@ -277,10 +277,25 @@ pub struct UpdateBatch {
     pub receipts: Vec<(H256, Vec<Receipt>)>,
     /// Contract code updates (code hash -> bytecode).
     pub code_updates: Vec<(H256, Code)>,
-    /// Whether this batch comes from full sync (batch execution mode). When true,
-    /// the persist worker waits for the disk flush (`wait_for_flush`) to bound
-    /// in-flight batches during bulk import.
-    pub batch_mode: bool,
+    /// Commit gate for this batch's trie layers (independent of `wait_for_flush`).
+    ///
+    /// - `None`: live path (`newPayload`). The persist worker commits by the canonical
+    ///   `head - DB_COMMIT_THRESHOLD` safe-commit root.
+    /// - `Some(depth)`: single-canonical-chain execution (batch import, full sync, startup
+    ///   state regeneration). The persist worker commits every layer deeper than `depth`
+    ///   (see [`Trie::get_commitable_by_depth`]), which bounds resident trie layers to ~`depth`.
+    pub commit_depth: Option<usize>,
+    /// When the persist worker acks (independent of `commit_depth`).
+    ///
+    /// - `false`: ack after staging, so the caller's next-block execution overlaps this
+    ///   block's disk flush. Used by the live path and the per-block re-execution paths
+    ///   (regen / full-sync fallback / import tail) — their memory is already bounded by
+    ///   `commit_depth`'s depth gate and the persist channel capacity, so waiting per block
+    ///   would only serialize CPU and I/O for no benefit.
+    /// - `true`: ack after flush, bounding in-flight work to ~1 message. Used by the bespoke
+    ///   batch path, where a single message carries ~1024 blocks (~1 GB of trie diff) and two
+    ///   in flight would be a real memory cost.
+    pub wait_for_flush: bool,
 }
 
 /// Storage trie updates grouped by account address hash.
@@ -1656,10 +1671,9 @@ impl Store {
         Ok((parent_state_root, last_state_root))
     }
 
-    /// Single path for both live (`batch_mode == false`) and full-sync
-    /// (`batch_mode == true`) updates. Both hand the whole unit (block data +
-    /// one aggregate trie diff) to the SINGLE persist worker and wait for its ack;
-    /// `wait_for_flush` (= `batch_mode`) selects when the worker acks.
+    /// Single path for all updates: hand the whole unit (block data + one aggregate trie
+    /// diff) to the SINGLE persist worker and wait for its ack. `commit_depth` selects the
+    /// commit gate; `wait_for_flush` selects when the worker acks (see [`UpdateBatch`]).
     fn apply_updates(&self, update_batch: UpdateBatch) -> Result<(), StoreError> {
         let (parent_state_root, last_state_root) = self.batch_state_roots(&update_batch)?;
 
@@ -1669,7 +1683,8 @@ impl Store {
             blocks,
             receipts,
             code_updates,
-            batch_mode,
+            commit_depth,
+            wait_for_flush,
         } = update_batch;
 
         // Register before handing off to the worker and before this returns, so
@@ -1701,10 +1716,9 @@ impl Store {
         };
 
         // Send to the persist worker and wait for its ack.
-        // LIVE (wait_for_flush=false): worker acks after staging; the ack carries
-        //   the PRIOR flush result so a disk error surfaces on the next call.
-        // BATCH (wait_for_flush=true): worker acks after flush, bounding
-        //   in-flight batches to ~1.
+        // wait_for_flush=false: worker acks after staging; the ack carries the PRIOR flush
+        //   result so a disk error surfaces on the next call.
+        // wait_for_flush=true: worker acks after flush, bounding in-flight work to ~1.
         let (ack_tx, ack_rx) = sync_channel(1);
         self.persist_tx
             .send(PersistMessage::Block(BlockPersist {
@@ -1714,7 +1728,8 @@ impl Store {
                 child_state_root: last_state_root,
                 account_updates,
                 storage_updates,
-                wait_for_flush: batch_mode,
+                commit_depth,
+                wait_for_flush,
                 ack: ack_tx,
             }))
             .map_err(|e| StoreError::Custom(format!("failed to send block persist: {e}")))?;
@@ -1930,7 +1945,7 @@ impl Store {
                             let _ = bp.ack.send(Err(e));
                             continue;
                         }
-                        // LIVE: ack after staging; carries prior flush result.
+                        // ACK-AFTER-STAGING: ack now, carrying the prior flush result.
                         // NOTE: this acks block validity BEFORE apply_trie_phase1
                         // installs the trie layer below. A phase-1 failure (only
                         // reachable via lock poisoning, which is already fatal) is
@@ -1969,11 +1984,11 @@ impl Store {
                                     &persist_trie_cache,
                                     &persist_fkv_ctl,
                                     bp.parent_state_root,
-                                    bp.wait_for_flush,
+                                    bp.commit_depth,
                                 )
                             });
-                        // BATCH: ack after flush (bounds in-flight batches to ~1),
-                        // folding in any prior live-path error. LIVE: stash result.
+                        // ACK-AFTER-FLUSH: ack now (bounds in-flight work to ~1), folding in
+                        // any prior deferred error. ACK-AFTER-STAGING: stash for the next ack.
                         if bp.wait_for_flush {
                             let prior = std::mem::replace(&mut last_flush_result, Ok(()));
                             let _ = bp.ack.send(prior.and(flushed));
@@ -3702,10 +3717,11 @@ fn mutate_block_buffer(
 /// Default for [`StoreConfig::persist_channel_capacity`].
 const DEFAULT_PERSIST_CHANNEL_CAPACITY: usize = 2;
 
-/// One unit of work for the persist worker: stage block(s), build the trie
-/// diff-layer, flush to disk. `wait_for_flush` selects the ack point: `false`
-/// (live) acks after staging carrying the prior flush result; `true` (batch)
-/// acks after flush.
+/// One unit of work for the persist worker: stage block(s), build the trie diff-layer,
+/// flush to disk. `commit_depth` selects the commit gate (`None` = canonical safe-commit
+/// root, `Some(depth)` = commit layers deeper than `depth`). `wait_for_flush` selects the
+/// ack point independently: `false` acks after staging (carrying the prior flush result),
+/// `true` acks after flush.
 struct BlockPersist {
     blocks: Vec<(Block, Vec<Receipt>)>,
     codes: Vec<(H256, Code)>,
@@ -3713,6 +3729,7 @@ struct BlockPersist {
     child_state_root: H256,
     account_updates: TrieNodesUpdate,
     storage_updates: Vec<(H256, TrieNodesUpdate)>,
+    commit_depth: Option<usize>,
     wait_for_flush: bool,
     ack: std::sync::mpsc::SyncSender<Result<(), StoreError>>,
 }
@@ -3910,26 +3927,27 @@ fn apply_trie_phase1(
 
 /// Flush and prune the committable trie-layer backlog. No-ops when nothing is committable.
 ///
-/// `is_batch` selects the gate: batch execution (full sync / import) commits by depth
-/// (`BATCH_COMMIT_THRESHOLD`), because the canonical `head - 128` safe-commit root never lands
-/// on a batch layer boundary; live block-by-block execution uses the canonical safe-commit gate
-/// (`TrieLayerCache::get_commitable`) so non-canonical `newPayload` state is never persisted.
+/// `commit_depth` selects the gate. `Some(depth)`: single-canonical-chain execution (batch
+/// import, full sync, startup regeneration) commits by depth, because the canonical `head - 128`
+/// safe-commit root never lands on a batch layer boundary; sound because these paths only ever
+/// extend a single canonical chain (no competing forks to mis-commit). `None`: live block-by-block
+/// execution uses the canonical safe-commit gate (`TrieLayerCache::get_commitable`) so non-canonical
+/// `newPayload` state is never persisted.
 fn commit_trie_if_due(
     backend: &dyn StorageBackend,
     trie_cache: &Arc<RwLock<Arc<TrieLayerCache>>>,
     fkv_ctl: &SyncSender<FKVGeneratorControlMessage>,
     parent_state_root: H256,
-    is_batch: bool,
+    commit_depth: Option<usize>,
 ) -> Result<(), StoreError> {
     let trie = trie_cache
         .read()
         .map_err(|_| StoreError::LockError)?
         .clone();
     // Phase 2 + 3: flush and prune the committable backlog.
-    let commitable = if is_batch {
-        trie.get_commitable_by_depth(parent_state_root, BATCH_COMMIT_THRESHOLD)
-    } else {
-        trie.get_commitable(parent_state_root)
+    let commitable = match commit_depth {
+        Some(depth) => trie.get_commitable_by_depth(parent_state_root, depth),
+        None => trie.get_commitable(parent_state_root),
     };
     let Some(root) = commitable else {
         // Nothing to commit to disk, move on.
