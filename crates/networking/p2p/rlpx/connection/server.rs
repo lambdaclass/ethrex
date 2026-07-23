@@ -25,13 +25,14 @@ use crate::{
             transactions::{GetPooledTransactions, NewPooledTransactionHashes},
             update::BlockRangeUpdate,
         },
-        message::EthCapVersion,
+        message::{EthCapVersion, SnapCapVersion},
         p2p::{
             self, Capability, DisconnectMessage, DisconnectReason, PingMessage, PongMessage,
             SUPPORTED_ETH_CAPABILITIES, SUPPORTED_SNAP_CAPABILITIES,
         },
-        snap::TrieNodes,
+        snap::{Snap2BlockAccessLists, Snap2GetBlockAccessLists, TrieNodes},
     },
+    snap::constants::{BAL_MAX_REQUEST_HASHES, BAL_RESPONSE_SOFT_CAP_BYTES},
     snap::{
         process_account_range_request, process_byte_codes_request, process_storage_ranges_request,
         process_trie_nodes_request,
@@ -358,9 +359,11 @@ pub struct PeerConnectionServer {
 impl PeerConnectionServer {
     #[started]
     async fn started(&mut self, ctx: &Context<Self>) {
-        // Set a default eth version that we can update after we negotiate peer capabilities
+        // Set a default eth version that we can update after we negotiate peer capabilities.
         // This eth version will only be used to encode & decode the initial `Hello` messages.
         let eth_version = Arc::new(RwLock::new(EthCapVersion::default()));
+        // snap_version starts as None; set after hello-exchange to the negotiated snap version.
+        let snap_version: Arc<RwLock<Option<SnapCapVersion>>> = Arc::new(RwLock::new(None));
         // Take ownership of the state, replacing with HandshakeFailed as placeholder
         let state = std::mem::replace(&mut self.state, ConnectionState::HandshakeFailed);
         // Bound the handshake: a peer that opens TCP and then stalls must not park this
@@ -368,7 +371,7 @@ impl PeerConnectionServer {
         // target). On timeout the handshake future is dropped, closing the socket.
         let handshake_result = match tokio::time::timeout(
             HANDSHAKE_TIMEOUT,
-            handshake::perform(state, eth_version.clone()),
+            handshake::perform(state, eth_version.clone(), snap_version.clone()),
         )
         .await
         {
@@ -383,8 +386,14 @@ impl PeerConnectionServer {
         match handshake_result {
             Ok((mut established_state, stream)) => {
                 trace!(peer=%established_state.node, "Starting RLPx connection");
-                if let Err(reason) =
-                    initialize_connection(ctx, &mut established_state, stream, eth_version).await
+                if let Err(reason) = initialize_connection(
+                    ctx,
+                    &mut established_state,
+                    stream,
+                    eth_version,
+                    snap_version,
+                )
+                .await
                 {
                     match &reason {
                         PeerConnectionError::NoMatchingCapabilities
@@ -788,6 +797,7 @@ async fn initialize_connection<S>(
     state: &mut Established,
     mut stream: S,
     eth_version: Arc<RwLock<EthCapVersion>>,
+    snap_version: Arc<RwLock<Option<SnapCapVersion>>>,
 ) -> Result<(), PeerConnectionError>
 where
     S: Unpin + Send + Stream<Item = Result<Message, PeerConnectionError>> + 'static,
@@ -798,7 +808,7 @@ where
     }
     exchange_hello_messages(state, &mut stream).await?;
 
-    // Update eth capability version to the negotiated version for further message decoding
+    // Update eth capability version to the negotiated version for further message decoding.
     let version = match &state.negotiated_eth_capability {
         Some(cap) if cap == &Capability::eth(68) => EthCapVersion::V68,
         Some(cap) if cap == &Capability::eth(69) => EthCapVersion::V69,
@@ -809,6 +819,16 @@ where
     *eth_version
         .write()
         .map_err(|err| PeerConnectionError::InternalError(err.to_string()))? = version;
+
+    // Update snap capability version to the negotiated version.
+    let snap_ver = match &state.negotiated_snap_capability {
+        Some(cap) if cap == &Capability::snap(1) => Some(SnapCapVersion::V1),
+        Some(cap) if cap == &Capability::snap(2) => Some(SnapCapVersion::V2),
+        _ => None,
+    };
+    *snap_version
+        .write()
+        .map_err(|err| PeerConnectionError::InternalError(err.to_string()))? = snap_ver;
 
     init_capabilities(state, &mut stream).await?;
 
@@ -1313,6 +1333,7 @@ async fn handle_incoming_message(
             | Message::GetStorageRanges(_)
             | Message::GetByteCodes(_)
             | Message::GetTrieNodes(_)
+            | Message::Snap2GetBlockAccessLists(_)
     );
     if is_data_request && !check_serve_request_rate(state) {
         debug!(
@@ -1715,6 +1736,27 @@ async fn handle_incoming_message(
                 Err(_) => send(state, Message::TrieNodes(TrieNodes { id, nodes: vec![] })).await?,
             }
         }
+        Message::Snap2GetBlockAccessLists(req) => {
+            // Defense-in-depth: only serve if the peer negotiated snap/2.
+            if state.negotiated_snap_capability != Some(Capability::snap(2)) {
+                warn!(
+                    peer = %state.node,
+                    "Received Snap2GetBlockAccessLists from peer that did not negotiate snap/2; disconnecting"
+                );
+                send_disconnect_message(state, Some(DisconnectReason::ProtocolError)).await;
+                return Err(PeerConnectionError::DisconnectSent(
+                    DisconnectReason::ProtocolError,
+                ));
+            }
+            // Offload synchronous storage/RLP work off the connection task
+            // so other peers/messages keep flowing on this tokio worker.
+            let storage = state.storage.clone();
+            let response =
+                tokio::task::spawn_blocking(move || build_snap2_bal_response(req, &storage))
+                    .await
+                    .map_err(|e| PeerConnectionError::InternalError(e.to_string()))??;
+            send(state, Message::Snap2BlockAccessLists(response)).await?
+        }
         #[cfg(feature = "l2")]
         Message::L2(req) if peer_supports_l2 => {
             handle_based_capability_message(state, req).await?;
@@ -1729,7 +1771,8 @@ async fn handle_incoming_message(
         | message @ Message::Receipts68(_)
         | message @ Message::Receipts69(_)
         | message @ Message::Receipts70(_)
-        | message @ Message::BlockAccessLists(_) => {
+        | message @ Message::BlockAccessLists(_)
+        | message @ Message::Snap2BlockAccessLists(_) => {
             if let Some((_, tx)) = message
                 .request_id()
                 .and_then(|id| state.current_requests.remove(&id))
@@ -1744,6 +1787,61 @@ async fn handle_incoming_message(
         message => return Err(PeerConnectionError::MessageNotHandled(format!("{message}"))),
     };
     Ok(())
+}
+
+/// Build a `Snap2BlockAccessLists` response for a `Snap2GetBlockAccessLists` request.
+///
+/// Per EIP-8189:
+/// - §50: always respond; push `None` for unknown/pruned/pre-Amsterdam blocks.
+/// - §51: truncate from tail (preserve order) once the byte budget is exceeded.
+/// - §52: orphaned blocks are served the same way as canonical blocks (keyed by hash).
+/// - §60: enforce `min(response_bytes, 2 MiB)`; `0` means 2 MiB.
+/// - §100: push `None` for blocks whose header has `block_access_list_hash == None`.
+pub fn build_snap2_bal_response(
+    req: Snap2GetBlockAccessLists,
+    storage: &ethrex_storage::Store,
+) -> Result<Snap2BlockAccessLists, PeerConnectionError> {
+    let cap = if req.response_bytes == 0 {
+        BAL_RESPONSE_SOFT_CAP_BYTES
+    } else {
+        req.response_bytes.min(BAL_RESPONSE_SOFT_CAP_BYTES)
+    };
+
+    // Defend against tiny-BAL flood DoS: truncate hash list before doing any
+    // storage work. Matches go-ethereum's `maxAccessListLookups`.
+    let hashes: &[H256] = if req.block_hashes.len() > BAL_MAX_REQUEST_HASHES {
+        &req.block_hashes[..BAL_MAX_REQUEST_HASHES]
+    } else {
+        &req.block_hashes
+    };
+
+    // Batched BAL fetch (`Store::iter_block_access_lists_by_hashes`). No per-hash
+    // header lookup is needed to satisfy §100: a stored BAL implies the block was
+    // admitted post-Amsterdam (BAL storage is gated on the Amsterdam fork), so a
+    // present entry is served directly. When no BAL is stored — pre-Amsterdam,
+    // pruned, or unknown block — the slot is `None` regardless.
+    let raw_bals = storage
+        .iter_block_access_lists_by_hashes(hashes)
+        .map_err(|e| PeerConnectionError::InternalError(e.to_string()))?;
+
+    let mut bals: Vec<Option<ethrex_common::types::block_access_list::BlockAccessList>> =
+        Vec::with_capacity(hashes.len());
+    let mut bytes_used: u64 = 0;
+
+    for raw_bal in raw_bals.into_iter() {
+        // Keep at least one entry then stop once cap is exceeded.
+        if !bals.is_empty() && bytes_used >= cap {
+            break;
+        }
+
+        bytes_used += match &raw_bal {
+            Some(bal) => bal.length() as u64,
+            None => 1, // RLP empty string (0x80) = 1 byte
+        };
+        bals.push(raw_bal);
+    }
+
+    Ok(Snap2BlockAccessLists { id: req.id, bals })
 }
 
 async fn handle_outgoing_message(

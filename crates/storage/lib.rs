@@ -78,7 +78,8 @@ pub mod utils;
 pub use layering::apply_prefix;
 pub use store::{
     AccountUpdatesList, DB_COMMIT_THRESHOLD, DEFAULT_ROCKSDB_BLOCK_CACHE_SIZE_BYTES, EngineType,
-    Store, StoreConfig, UpdateBatch, has_valid_db, hash_address, hash_key, read_chain_id_from_db,
+    Store, StoreConfig, UpdateBatch, encode_code, has_valid_db, hash_address, hash_key,
+    read_chain_id_from_db,
 };
 
 /// Store Schema Version, must be updated on any breaking change.
