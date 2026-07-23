@@ -64,6 +64,10 @@
 - Lazy BAL cursor for per-tx parallel execution [#6669](https://github.com/lambdaclass/ethrex/pull/6669)
 - Move per-tx BAL validation into the rayon par_iter closure on the parallel execution path [#6677](https://github.com/lambdaclass/ethrex/pull/6677)
 
+### 2026-05-18
+
+- O(1) BAL recorder checkpoint via journal snapshots [#6667](https://github.com/lambdaclass/ethrex/pull/6667)
+
 ### 2026-05-15
 
 - Replace synchronous disk I/O with async operations in snap sync [#6113](https://github.com/lambdaclass/ethrex/pull/6113)

@@ -748,19 +748,21 @@ impl RLPDecode for BlockAccessList {
 /// addresses must be included." This checkpoint captures the state change data
 /// (storage, balance, nonce, code changes) but NOT touched_addresses, which persist
 /// across reverts.
+///
+/// Implementation: each push to `balance_changes` / `nonce_changes` / `code_changes`
+/// / `storage_writes` / `reads_promoted_to_writes` also appends a (addr, prev_len)
+/// entry to a parallel journal Vec on the recorder. A checkpoint is an O(1) snapshot
+/// of those journal lengths. Restore walks `journal[checkpoint_len..]` in reverse,
+/// truncating each affected per-address Vec back to its `prev_len`. Cost is
+/// O(reverted_entries), not O(total_writes_in_block) as the previous BTreeMap-clone
+/// design.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct BlockAccessListCheckpoint {
-    /// Number of promoted reads per address at checkpoint time.
-    /// Reads that became writes are tracked in a Vec for ordered truncation.
-    reads_promoted_len: BTreeMap<Address, usize>,
-    /// For each address+slot, the number of writes at checkpoint time.
-    storage_writes_len: BTreeMap<Address, BTreeMap<U256, usize>>,
-    /// Number of balance changes per address at checkpoint time.
-    balance_changes_len: BTreeMap<Address, usize>,
-    /// Number of nonce changes per address at checkpoint time.
-    nonce_changes_len: BTreeMap<Address, usize>,
-    /// Number of code changes per address at checkpoint time.
-    code_changes_len: BTreeMap<Address, usize>,
+    balance_changes_journal_len: usize,
+    nonce_changes_journal_len: usize,
+    code_changes_journal_len: usize,
+    storage_writes_journal_len: usize,
+    reads_promoted_journal_len: usize,
 }
 
 /// Tx-level checkpoint for fully undoing a rejected transaction during block building.
@@ -778,6 +780,32 @@ pub struct TxCheckpoint {
     addresses_with_initial_code_len: usize,
 }
 
+/// Containers that support length-based truncation. Lets `walk_journal_simple`
+/// work for both `Vec<_>` (change lists) and `IndexSet<_>` (promoted-reads
+/// dedup set) without duplicating the journal walk.
+trait TruncatableEmpty {
+    fn truncate(&mut self, len: usize);
+    fn is_empty(&self) -> bool;
+}
+
+impl<T> TruncatableEmpty for Vec<T> {
+    fn truncate(&mut self, len: usize) {
+        Vec::truncate(self, len);
+    }
+    fn is_empty(&self) -> bool {
+        Vec::is_empty(self)
+    }
+}
+
+impl<T: std::hash::Hash + Eq> TruncatableEmpty for IndexSet<T> {
+    fn truncate(&mut self, len: usize) {
+        IndexSet::truncate(self, len);
+    }
+    fn is_empty(&self) -> bool {
+        IndexSet::is_empty(self)
+    }
+}
+
 /// Records state accesses during block execution to build a Block Access List (EIP-7928).
 ///
 /// The recorder accumulates all storage reads/writes, balance changes, nonce changes,
@@ -787,6 +815,9 @@ pub struct TxCheckpoint {
 /// - 0: System contracts (pre-execution phase)
 /// - 1..n: Transaction indices (1-indexed)
 /// - n+1: Post-execution phase (withdrawals)
+// Per-(address, slot) ordered list of writes recorded during execution.
+type StorageWritesMap = BTreeMap<Address, BTreeMap<U256, Vec<(u32, U256)>>>;
+
 #[derive(Debug, Default, Clone)]
 pub struct BlockAccessListRecorder {
     /// Current block access index per EIP-7928 spec (uint32).
@@ -799,7 +830,7 @@ pub struct BlockAccessListRecorder {
     /// IndexMap/IndexSet for length-based tx-level checkpoint/restore.
     storage_reads: IndexMap<Address, IndexSet<U256>>,
     /// Storage writes per address (slot -> list of (index, post_value) pairs).
-    storage_writes: BTreeMap<Address, BTreeMap<U256, Vec<(u32, U256)>>>,
+    storage_writes: StorageWritesMap,
     /// Initial balances for detecting balance round-trips.
     /// IndexMap for length-based tx-level checkpoint/restore.
     initial_balances: IndexMap<Address, U256>,
@@ -826,12 +857,30 @@ pub struct BlockAccessListRecorder {
     addresses_with_initial_code: IndexSet<Address>,
     /// Tracks reads that were promoted to writes, in insertion order per address.
     /// Used for efficient checkpoint/restore without cloning storage_reads.
-    /// On restore, we truncate this Vec and the slots go back to being reads.
-    reads_promoted_to_writes: BTreeMap<Address, Vec<U256>>,
+    /// On restore, we truncate this set and the slots go back to being reads.
+    /// `IndexSet` gives O(1) membership for the dedup check in
+    /// `record_storage_write` while keeping insertion-ordered truncation.
+    reads_promoted_to_writes: BTreeMap<Address, IndexSet<U256>>,
     /// When true, SYSTEM_ADDRESS balance/nonce/touch changes are filtered out.
     /// Set during system contract calls (EIP-2935, EIP-4788, etc.) where the
     /// system address account is backed up and restored, so changes are transient.
     in_system_call: bool,
+
+    // Journals supporting O(1) checkpoint() / O(reverted_entries) restore().
+    // Each push to a change map appends one entry recording the address (and slot,
+    // for storage_writes) plus the length of that per-address vec BEFORE the push,
+    // so restore can walk the journal in reverse and truncate each affected vec.
+    //
+    // Journals are cleared in `set_block_access_index` between txs because
+    // `filter_net_zero_*` mutates the change maps at that boundary, which would
+    // make outstanding journal entries stale. No checkpoint can outlive a tx
+    // boundary in practice — checkpoints are taken on CALL/CREATE frames and
+    // `tx_checkpoint` is consumed (or not) before the next index advance.
+    balance_changes_journal: Vec<(Address, usize)>,
+    nonce_changes_journal: Vec<(Address, usize)>,
+    code_changes_journal: Vec<(Address, usize)>,
+    storage_writes_journal: Vec<(Address, U256, usize)>,
+    reads_promoted_journal: Vec<(Address, usize)>,
 }
 
 impl BlockAccessListRecorder {
@@ -853,6 +902,17 @@ impl BlockAccessListRecorder {
             self.filter_net_zero_code();
             self.tx_initial_storage.clear();
             self.tx_initial_code.clear();
+            // Clear restore journals: filter_net_zero_* mutates the change maps so
+            // any outstanding journal entries are now stale. This is safe because no
+            // checkpoint can outlive a tx boundary: inner-call `checkpoint`s are
+            // consumed within the tx (success commits them, revert restores them);
+            // `tx_checkpoint`s are consumed before the next `set_block_access_index`
+            // call (success commits the tx, failure calls `tx_restore`).
+            self.balance_changes_journal.clear();
+            self.nonce_changes_journal.clear();
+            self.code_changes_journal.clear();
+            self.storage_writes_journal.clear();
+            self.reads_promoted_journal.clear();
         }
         self.current_index = index;
     }
@@ -1072,10 +1132,12 @@ impl BlockAccessListRecorder {
             .get(&address)
             .is_some_and(|reads| reads.contains(&slot))
         {
-            // Only track promotion if not already tracked
+            // Only track promotion if not already tracked. `IndexSet::insert`
+            // returns true iff the slot is new, giving us O(1) dedup.
             let promoted = self.reads_promoted_to_writes.entry(address).or_default();
-            if !promoted.contains(&slot) {
-                promoted.push(slot);
+            let prev_len = promoted.len();
+            if promoted.insert(slot) {
+                self.reads_promoted_journal.push((address, prev_len));
             }
         }
 
@@ -1090,7 +1152,9 @@ impl BlockAccessListRecorder {
             .entry(slot)
             .or_default();
 
+        let prev_len = changes.len();
         changes.push((self.current_index, post_value));
+        self.storage_writes_journal.push((address, slot, prev_len));
         // Mark address as touched (include SYSTEM_ADDRESS for actual state changes)
         self.touched_addresses.insert(address);
     }
@@ -1127,7 +1191,9 @@ impl BlockAccessListRecorder {
         // Always push new entries to support checkpoint/restore.
         // The last entry for each transaction will be used in build().
         let changes = self.balance_changes.entry(address).or_default();
+        let prev_len = changes.len();
         changes.push((self.current_index, post_balance));
+        self.balance_changes_journal.push((address, prev_len));
 
         // Mark address as touched
         self.touched_addresses.insert(address);
@@ -1157,10 +1223,10 @@ impl BlockAccessListRecorder {
         if address == SYSTEM_ADDRESS && self.in_system_call {
             return;
         }
-        self.nonce_changes
-            .entry(address)
-            .or_default()
-            .push((self.current_index, post_nonce));
+        let changes = self.nonce_changes.entry(address).or_default();
+        let prev_len = changes.len();
+        changes.push((self.current_index, post_nonce));
+        self.nonce_changes_journal.push((address, prev_len));
         // Mark address as touched
         self.touched_addresses.insert(address);
     }
@@ -1197,10 +1263,10 @@ impl BlockAccessListRecorder {
             return;
         }
 
-        self.code_changes
-            .entry(address)
-            .or_default()
-            .push((self.current_index, new_code));
+        let changes = self.code_changes.entry(address).or_default();
+        let prev_len = changes.len();
+        changes.push((self.current_index, new_code));
+        self.code_changes_journal.push((address, prev_len));
         // Mark address as touched (include SYSTEM_ADDRESS for actual state changes)
         self.touched_addresses.insert(address);
     }
@@ -1263,7 +1329,7 @@ impl BlockAccessListRecorder {
                 let writes = self.storage_writes.get(address);
                 let mut sorted_reads: Vec<_> = reads
                     .iter()
-                    .filter(|slot| !promoted.is_some_and(|p| p.contains(slot)))
+                    .filter(|slot| !promoted.is_some_and(|p| p.contains(*slot)))
                     .filter(|slot| !writes.is_some_and(|w| w.contains_key(slot)))
                     .copied()
                     .collect();
@@ -1360,41 +1426,15 @@ impl BlockAccessListRecorder {
     /// Per EIP-7928: "State changes from reverted calls are discarded, but all accessed
     /// addresses must be included." The checkpoint captures state change data so it can
     /// be restored on revert, while touched_addresses are preserved.
+    ///
+    /// O(1): just snapshots the current journal lengths.
     pub fn checkpoint(&self) -> BlockAccessListCheckpoint {
         BlockAccessListCheckpoint {
-            reads_promoted_len: self
-                .reads_promoted_to_writes
-                .iter()
-                .map(|(addr, promoted)| (*addr, promoted.len()))
-                .collect(),
-            storage_writes_len: self
-                .storage_writes
-                .iter()
-                .map(|(addr, slots)| {
-                    (
-                        *addr,
-                        slots
-                            .iter()
-                            .map(|(slot, changes)| (*slot, changes.len()))
-                            .collect(),
-                    )
-                })
-                .collect(),
-            balance_changes_len: self
-                .balance_changes
-                .iter()
-                .map(|(addr, changes)| (*addr, changes.len()))
-                .collect(),
-            nonce_changes_len: self
-                .nonce_changes
-                .iter()
-                .map(|(addr, changes)| (*addr, changes.len()))
-                .collect(),
-            code_changes_len: self
-                .code_changes
-                .iter()
-                .map(|(addr, changes)| (*addr, changes.len()))
-                .collect(),
+            balance_changes_journal_len: self.balance_changes_journal.len(),
+            nonce_changes_journal_len: self.nonce_changes_journal.len(),
+            code_changes_journal_len: self.code_changes_journal.len(),
+            storage_writes_journal_len: self.storage_writes_journal.len(),
+            reads_promoted_journal_len: self.reads_promoted_journal.len(),
         }
     }
 
@@ -1405,89 +1445,138 @@ impl BlockAccessListRecorder {
     /// - Storage reads from reverted calls PERSIST (reads are accesses, not state changes)
     /// - Storage writes from reverted calls become READS (slot was accessed but value unchanged)
     /// - Balance/nonce/code changes are discarded
+    ///
+    /// Walks each journal in reverse from its current length down to the checkpoint's
+    /// recorded length, truncating each affected per-address Vec back to its `prev_len`.
+    /// Storage-write slots that become empty (fresh writes, `prev_len == 0`) are
+    /// promoted to `storage_reads` to preserve the access for EIP-7928.
     pub fn restore(&mut self, checkpoint: BlockAccessListCheckpoint) {
-        // Step 1: Truncate reads_promoted_to_writes (undo promotions after checkpoint)
-        // Reads are never removed from storage_reads, so truncating promotions
-        // means those slots will be treated as reads again in build().
-        self.reads_promoted_to_writes.retain(|addr, promoted| {
-            if let Some(&len) = checkpoint.reads_promoted_len.get(addr) {
-                promoted.truncate(len);
-                len > 0
+        // Same invariant as `tx_restore`: journals can only grow between
+        // checkpoint and restore. `set_block_access_index` clears them, so
+        // inner-call checkpoints can never span a tx boundary.
+        debug_assert!(
+            self.balance_changes_journal.len() >= checkpoint.balance_changes_journal_len
+                && self.nonce_changes_journal.len() >= checkpoint.nonce_changes_journal_len
+                && self.code_changes_journal.len() >= checkpoint.code_changes_journal_len
+                && self.storage_writes_journal.len() >= checkpoint.storage_writes_journal_len
+                && self.reads_promoted_journal.len() >= checkpoint.reads_promoted_journal_len,
+            "BAL recorder journal shrank between checkpoint and restore — \
+             likely a set_block_access_index call in between"
+        );
+        // reads_promoted_to_writes: walk in reverse, truncate. No read-promotion concern.
+        Self::walk_journal_simple(
+            &mut self.reads_promoted_journal,
+            checkpoint.reads_promoted_journal_len,
+            &mut self.reads_promoted_to_writes,
+        );
+
+        // storage_writes: walk in reverse. When a slot's vec becomes empty, the
+        // entry was a fresh write since the checkpoint — promote to storage_reads.
+        while self.storage_writes_journal.len() > checkpoint.storage_writes_journal_len {
+            // SAFETY: while-condition guarantees non-empty.
+            let (addr, slot, prev_len) = self
+                .storage_writes_journal
+                .pop()
+                .expect("checked non-empty");
+            let Some(slots) = self.storage_writes.get_mut(&addr) else {
+                continue;
+            };
+            let promote_to_read = if let Some(changes) = slots.get_mut(&slot) {
+                changes.truncate(prev_len);
+                changes.is_empty()
             } else {
                 false
+            };
+            if promote_to_read {
+                slots.remove(&slot);
+                self.storage_reads.entry(addr).or_default().insert(slot);
             }
-        });
-
-        // Step 2: Find slots that were written after checkpoint but were NOT reads
-        // (fresh writes need to become reads on revert)
-        for (addr, slots) in &self.storage_writes {
-            let checkpoint_lens = checkpoint.storage_writes_len.get(addr);
-            for (slot, changes) in slots {
-                let checkpoint_len = checkpoint_lens
-                    .and_then(|m| m.get(slot))
-                    .copied()
-                    .unwrap_or(0);
-                if changes.len() > checkpoint_len && checkpoint_len == 0 {
-                    // This slot was freshly written after checkpoint (no prior writes).
-                    // Convert to a read since the write is being reverted.
-                    // If checkpoint_len > 0, the slot already has writes from a prior
-                    // transaction and is already represented in storage_changes — adding
-                    // it to storage_reads would violate the invariant that a slot appears
-                    // in at most one of the two lists.
-                    self.storage_reads.entry(*addr).or_default().insert(*slot);
-                }
+            if slots.is_empty() {
+                self.storage_writes.remove(&addr);
             }
         }
 
-        // Step 3: Truncate storage_writes (keep only writes from before checkpoint)
-        self.storage_writes.retain(|addr, slots| {
-            if let Some(slot_lens) = checkpoint.storage_writes_len.get(addr) {
-                slots.retain(|slot, changes| {
-                    if let Some(&len) = slot_lens.get(slot) {
-                        changes.truncate(len);
-                        len > 0
-                    } else {
-                        false
-                    }
-                });
-                !slots.is_empty()
-            } else {
-                false
-            }
-        });
-
-        // Restore balance_changes: truncate change vectors
-        self.balance_changes.retain(|addr, changes| {
-            if let Some(&len) = checkpoint.balance_changes_len.get(addr) {
-                changes.truncate(len);
-                len > 0
-            } else {
-                false
-            }
-        });
-
-        // Restore nonce_changes: truncate change vectors
-        self.nonce_changes.retain(|addr, changes| {
-            if let Some(&len) = checkpoint.nonce_changes_len.get(addr) {
-                changes.truncate(len);
-                len > 0
-            } else {
-                false
-            }
-        });
-
-        // Restore code_changes: truncate change vectors
-        self.code_changes.retain(|addr, changes| {
-            if let Some(&len) = checkpoint.code_changes_len.get(addr) {
-                changes.truncate(len);
-                len > 0
-            } else {
-                false
-            }
-        });
+        Self::walk_journal_simple(
+            &mut self.balance_changes_journal,
+            checkpoint.balance_changes_journal_len,
+            &mut self.balance_changes,
+        );
+        Self::walk_journal_simple(
+            &mut self.nonce_changes_journal,
+            checkpoint.nonce_changes_journal_len,
+            &mut self.nonce_changes,
+        );
+        Self::walk_journal_simple(
+            &mut self.code_changes_journal,
+            checkpoint.code_changes_journal_len,
+            &mut self.code_changes,
+        );
 
         // Note: touched_addresses is intentionally NOT restored - per EIP-7928,
         // accessed addresses must be included even from reverted calls
+    }
+
+    /// Walk a per-address journal in reverse from its current length down to
+    /// `target_len`, truncating each affected `map[addr]` container to its
+    /// `prev_len`. Removes addresses whose container becomes empty.
+    ///
+    /// Used by `restore` / `tx_restore` for `balance_changes`, `nonce_changes`,
+    /// `code_changes`, and `reads_promoted_to_writes` (which all key on `Address`
+    /// alone, unlike `storage_writes` which keys on `(Address, U256)`). The
+    /// `TruncatableEmpty` bound lets the helper work for both `Vec<_>` (the
+    /// change-list maps) and `IndexSet<U256>` (`reads_promoted_to_writes`).
+    fn walk_journal_simple<C: TruncatableEmpty>(
+        journal: &mut Vec<(Address, usize)>,
+        target_len: usize,
+        map: &mut BTreeMap<Address, C>,
+    ) {
+        while journal.len() > target_len {
+            // SAFETY: while-condition guarantees non-empty.
+            let (addr, prev_len) = journal.pop().expect("checked non-empty");
+            let remove = if let Some(changes) = map.get_mut(&addr) {
+                changes.truncate(prev_len);
+                changes.is_empty()
+            } else {
+                false
+            };
+            if remove {
+                map.remove(&addr);
+            }
+        }
+    }
+
+    /// Like the storage_writes walk in `restore`, but does NOT promote
+    /// emptied slots to `storage_reads`. Used by `tx_restore` where a rejected
+    /// tx should leave no trace at all.
+    ///
+    /// Cleanup of `reads_promoted_to_writes` for the rejected tx is delegated
+    /// to the caller (`tx_restore` walks `reads_promoted_journal` separately
+    /// before invoking this helper).
+    fn walk_storage_writes_journal_no_promote(
+        journal: &mut Vec<(Address, U256, usize)>,
+        target_len: usize,
+        storage_writes: &mut StorageWritesMap,
+    ) {
+        while journal.len() > target_len {
+            let (addr, slot, prev_len) = journal.pop().expect("checked non-empty");
+            // Address may already have been removed by a prior iteration of
+            // this same loop (last slot emptied → address entry pruned below).
+            let Some(slots) = storage_writes.get_mut(&addr) else {
+                continue;
+            };
+            let remove_slot = if let Some(changes) = slots.get_mut(&slot) {
+                changes.truncate(prev_len);
+                changes.is_empty()
+            } else {
+                false
+            };
+            if remove_slot {
+                slots.remove(&slot);
+            }
+            if slots.is_empty() {
+                storage_writes.remove(&addr);
+            }
+        }
     }
 
     /// Creates a tx-level checkpoint that captures the full recorder state.
@@ -1517,6 +1606,20 @@ impl BlockAccessListRecorder {
     /// this completely removes all traces of the rejected tx — addresses, reads, writes, and
     /// all state changes.
     pub fn tx_restore(&mut self, checkpoint: TxCheckpoint) {
+        // Invariant: `tx_checkpoint` must be called AFTER `set_block_access_index`,
+        // not before. `set_block_access_index` clears all journals; if a caller
+        // checkpoints at journal_len=N and then advances the index, the cleared
+        // journal can never grow back to N, so the walk-back-to-N becomes a no-op
+        // and post-advance pushes aren't undone. This assert catches that misuse.
+        debug_assert!(
+            self.balance_changes_journal.len() >= checkpoint.inner.balance_changes_journal_len
+                && self.nonce_changes_journal.len() >= checkpoint.inner.nonce_changes_journal_len
+                && self.code_changes_journal.len() >= checkpoint.inner.code_changes_journal_len
+                && self.storage_writes_journal.len() >= checkpoint.inner.storage_writes_journal_len
+                && self.reads_promoted_journal.len() >= checkpoint.inner.reads_promoted_journal_len,
+            "BAL recorder journal shrank between tx_checkpoint and tx_restore — \
+             likely a set_block_access_index call in between"
+        );
         self.current_index = checkpoint.current_index;
 
         // Truncate append-only IndexSet/IndexMap fields to their checkpoint lengths
@@ -1547,62 +1650,47 @@ impl BlockAccessListRecorder {
         self.tx_initial_storage.clear();
         self.tx_initial_code.clear();
 
-        // Truncate writes/changes using the inner checkpoint (without the
-        // "promote writes to reads" step from inner-call restore, since rejected
-        // txs should leave no trace).
-        self.reads_promoted_to_writes.retain(|addr, promoted| {
-            if let Some(&len) = checkpoint.inner.reads_promoted_len.get(addr) {
-                promoted.truncate(len);
-                len > 0
-            } else {
-                false
-            }
-        });
-        self.storage_writes.retain(|addr, slots| {
-            if let Some(slot_lens) = checkpoint.inner.storage_writes_len.get(addr) {
-                slots.retain(|slot, changes| {
-                    if let Some(&len) = slot_lens.get(slot) {
-                        changes.truncate(len);
-                        len > 0
-                    } else {
-                        false
-                    }
-                });
-                !slots.is_empty()
-            } else {
-                false
-            }
-        });
-        self.balance_changes.retain(|addr, changes| {
-            if let Some(&len) = checkpoint.inner.balance_changes_len.get(addr) {
-                changes.truncate(len);
-                len > 0
-            } else {
-                false
-            }
-        });
-        self.nonce_changes.retain(|addr, changes| {
-            if let Some(&len) = checkpoint.inner.nonce_changes_len.get(addr) {
-                changes.truncate(len);
-                len > 0
-            } else {
-                false
-            }
-        });
-        self.code_changes.retain(|addr, changes| {
-            if let Some(&len) = checkpoint.inner.code_changes_len.get(addr) {
-                changes.truncate(len);
-                len > 0
-            } else {
-                false
-            }
-        });
+        // Truncate writes/changes via journal walks. Rejected txs leave no trace,
+        // so storage_writes does NOT promote emptied slots to storage_reads.
+        Self::walk_journal_simple(
+            &mut self.reads_promoted_journal,
+            checkpoint.inner.reads_promoted_journal_len,
+            &mut self.reads_promoted_to_writes,
+        );
+        Self::walk_storage_writes_journal_no_promote(
+            &mut self.storage_writes_journal,
+            checkpoint.inner.storage_writes_journal_len,
+            &mut self.storage_writes,
+        );
+        Self::walk_journal_simple(
+            &mut self.balance_changes_journal,
+            checkpoint.inner.balance_changes_journal_len,
+            &mut self.balance_changes,
+        );
+        Self::walk_journal_simple(
+            &mut self.nonce_changes_journal,
+            checkpoint.inner.nonce_changes_journal_len,
+            &mut self.nonce_changes,
+        );
+        Self::walk_journal_simple(
+            &mut self.code_changes_journal,
+            checkpoint.inner.code_changes_journal_len,
+            &mut self.code_changes,
+        );
     }
 
     /// Handles BAL cleanup for a self-destructed account per EIP-7928/EIP-6780.
     /// Called after destroy_account for contracts created and destroyed in the same tx.
     /// Removes nonce/code changes, converts storage writes to reads.
     /// Matches EELS `track_selfdestruct` in state_tracker.py:315.
+    ///
+    /// INVARIANT: must be called only at top-level tx finalization, with no
+    /// outstanding `checkpoint()` pending restore. The `retain` calls below
+    /// mutate the change maps WITHOUT pushing journal entries, so any later
+    /// `restore()` against an older checkpoint would observe a journal whose
+    /// `prev_len`s no longer match the underlying map and silently produce
+    /// incorrect results. Caller is `LEVM::finalize_execution`, which runs
+    /// after every nested call frame has already committed or restored.
     pub fn track_selfdestruct(&mut self, address: Address, preserve_balance: bool) {
         let idx = self.current_index;
 
@@ -2124,5 +2212,295 @@ mod synthesize_tests {
         assert!(item.code_hash.is_none());
         assert!(item.code.is_none());
         assert!(item.added_storage.is_empty());
+    }
+}
+
+#[cfg(test)]
+mod checkpoint_restore_tests {
+    //! Tests for the journal-based checkpoint/restore implementation.
+    //!
+    //! The semantics under test:
+    //! - `restore()` undoes balance/nonce/code/storage_write pushes after a
+    //!   checkpoint, leaving `touched_addresses` and `storage_reads` intact.
+    //!   Storage writes whose vec becomes empty (fresh writes since checkpoint)
+    //!   are promoted to `storage_reads` per EIP-7928.
+    //! - `tx_restore()` undoes the same plus `touched_addresses` /
+    //!   `storage_reads` / `initial_balances` / `addresses_with_initial_code`.
+    //!   Does NOT promote emptied writes to reads.
+    //! - `set_block_access_index` clears journals on advance (filter_net_zero
+    //!   mutates change maps; outstanding journal entries would be stale).
+
+    use super::*;
+    use bytes::Bytes;
+    use ethereum_types::Address;
+
+    fn addr(b: u8) -> Address {
+        let mut a = Address::zero();
+        a.0[19] = b;
+        a
+    }
+
+    #[test]
+    fn checkpoint_then_restore_with_no_changes_is_noop() {
+        let mut r = BlockAccessListRecorder::new();
+        r.set_block_access_index(1);
+        r.record_balance_change(addr(1), U256::from(100));
+        let cp = r.checkpoint();
+        r.restore(cp);
+        // Pre-checkpoint change still present.
+        assert_eq!(r.balance_changes.get(&addr(1)).map(|v| v.len()), Some(1));
+    }
+
+    #[test]
+    fn restore_undoes_balance_pushed_after_checkpoint() {
+        let mut r = BlockAccessListRecorder::new();
+        r.set_block_access_index(1);
+        r.record_balance_change(addr(1), U256::from(100));
+        let cp = r.checkpoint();
+        r.record_balance_change(addr(1), U256::from(200));
+        r.record_balance_change(addr(2), U256::from(50));
+        assert_eq!(r.balance_changes[&addr(1)].len(), 2);
+        assert_eq!(r.balance_changes[&addr(2)].len(), 1);
+        r.restore(cp);
+        assert_eq!(r.balance_changes[&addr(1)].len(), 1);
+        assert_eq!(r.balance_changes[&addr(1)][0].1, U256::from(100));
+        assert!(
+            !r.balance_changes.contains_key(&addr(2)),
+            "addr(2)'s vec became empty → addr removed"
+        );
+        // touched_addresses NOT restored — both still present
+        assert!(r.touched_addresses.contains(&addr(1)));
+        assert!(r.touched_addresses.contains(&addr(2)));
+    }
+
+    #[test]
+    fn restore_undoes_nonce_and_code_changes() {
+        let mut r = BlockAccessListRecorder::new();
+        r.set_block_access_index(1);
+        let cp = r.checkpoint();
+        r.record_nonce_change(addr(1), 5);
+        // Need addresses_with_initial_code to keep non-empty record_code_change semantics
+        r.capture_initial_code_presence(addr(2), true);
+        r.record_code_change(addr(2), Bytes::from_static(b"\x60\x00"));
+        assert!(r.nonce_changes.contains_key(&addr(1)));
+        assert!(r.code_changes.contains_key(&addr(2)));
+        r.restore(cp);
+        assert!(!r.nonce_changes.contains_key(&addr(1)));
+        assert!(!r.code_changes.contains_key(&addr(2)));
+    }
+
+    #[test]
+    fn restore_promotes_fresh_storage_write_to_read() {
+        let mut r = BlockAccessListRecorder::new();
+        r.set_block_access_index(1);
+        let cp = r.checkpoint();
+        r.record_storage_write(addr(1), U256::from(7), U256::from(42));
+        assert!(r.storage_writes.contains_key(&addr(1)));
+        r.restore(cp);
+        // Write reverted; slot promoted to reads per EIP-7928.
+        assert!(!r.storage_writes.contains_key(&addr(1)));
+        assert!(r.storage_reads[&addr(1)].contains(&U256::from(7)));
+    }
+
+    #[test]
+    fn restore_keeps_prior_writes_does_not_promote() {
+        let mut r = BlockAccessListRecorder::new();
+        r.set_block_access_index(1);
+        // Pre-checkpoint write to the slot.
+        r.record_storage_write(addr(1), U256::from(7), U256::from(11));
+        let cp = r.checkpoint();
+        // Post-checkpoint write to the same slot.
+        r.record_storage_write(addr(1), U256::from(7), U256::from(22));
+        assert_eq!(r.storage_writes[&addr(1)][&U256::from(7)].len(), 2);
+        r.restore(cp);
+        // Slot still has the pre-checkpoint write; NOT promoted to reads.
+        assert_eq!(r.storage_writes[&addr(1)][&U256::from(7)].len(), 1);
+        assert_eq!(
+            r.storage_writes[&addr(1)][&U256::from(7)][0].1,
+            U256::from(11)
+        );
+        assert!(
+            r.storage_reads
+                .get(&addr(1))
+                .map(|s| !s.contains(&U256::from(7)))
+                .unwrap_or(true),
+            "slot must not appear in both writes and reads"
+        );
+    }
+
+    #[test]
+    fn restore_keeps_promotion_when_second_write_after_checkpoint() {
+        // Slot is read, then promoted by a pre-checkpoint write. A second
+        // write to the same slot after the checkpoint must NOT add a new
+        // promotion-journal entry (IndexSet dedup is the whole point of the
+        // O(1) change). On restore the pre-checkpoint write must remain and
+        // the slot must stay in `reads_promoted_to_writes` so `build()`
+        // continues to filter it out of the BAL `storage_reads` section.
+        let mut r = BlockAccessListRecorder::new();
+        r.set_block_access_index(1);
+        r.record_storage_read(addr(1), U256::from(5));
+        r.record_storage_write(addr(1), U256::from(5), U256::from(11));
+        assert!(r.reads_promoted_to_writes[&addr(1)].contains(&U256::from(5)));
+        assert_eq!(r.reads_promoted_journal.len(), 1);
+
+        let cp = r.checkpoint();
+        // Second write to the already-promoted slot — `IndexSet::insert`
+        // returns false, so no new journal entry.
+        r.record_storage_write(addr(1), U256::from(5), U256::from(22));
+        assert_eq!(r.storage_writes[&addr(1)][&U256::from(5)].len(), 2);
+        assert_eq!(r.reads_promoted_journal.len(), 1, "dedup: no new entry");
+
+        r.restore(cp);
+        // Pre-checkpoint write survives; promotion is preserved.
+        assert_eq!(r.storage_writes[&addr(1)][&U256::from(5)].len(), 1);
+        assert_eq!(
+            r.storage_writes[&addr(1)][&U256::from(5)][0].1,
+            U256::from(11)
+        );
+        assert!(r.reads_promoted_to_writes[&addr(1)].contains(&U256::from(5)));
+        // `storage_reads` still carries the original read entry — the dedup
+        // happens at `build()` time via the `reads_promoted_to_writes` and
+        // `storage_writes` filters, not by mutating `storage_reads` here.
+    }
+
+    #[test]
+    fn restore_handles_multiple_writes_same_slot_after_checkpoint() {
+        let mut r = BlockAccessListRecorder::new();
+        r.set_block_access_index(1);
+        let cp = r.checkpoint();
+        r.record_storage_write(addr(1), U256::from(7), U256::from(1));
+        r.record_storage_write(addr(1), U256::from(7), U256::from(2));
+        r.record_storage_write(addr(1), U256::from(7), U256::from(3));
+        assert_eq!(r.storage_writes[&addr(1)][&U256::from(7)].len(), 3);
+        r.restore(cp);
+        assert!(!r.storage_writes.contains_key(&addr(1)));
+        assert!(r.storage_reads[&addr(1)].contains(&U256::from(7)));
+    }
+
+    #[test]
+    fn nested_checkpoints_restore_innermost_only() {
+        let mut r = BlockAccessListRecorder::new();
+        r.set_block_access_index(1);
+        r.record_balance_change(addr(1), U256::from(10));
+        let outer = r.checkpoint();
+        r.record_balance_change(addr(1), U256::from(20));
+        let inner = r.checkpoint();
+        r.record_balance_change(addr(1), U256::from(30));
+        assert_eq!(r.balance_changes[&addr(1)].len(), 3);
+        r.restore(inner);
+        assert_eq!(r.balance_changes[&addr(1)].len(), 2);
+        assert_eq!(r.balance_changes[&addr(1)][1].1, U256::from(20));
+        // Outer restore still works after inner restore.
+        r.restore(outer);
+        assert_eq!(r.balance_changes[&addr(1)].len(), 1);
+        assert_eq!(r.balance_changes[&addr(1)][0].1, U256::from(10));
+    }
+
+    #[test]
+    fn read_promoted_to_write_unpromoted_on_restore() {
+        let mut r = BlockAccessListRecorder::new();
+        r.set_block_access_index(1);
+        // First, slot is read.
+        r.record_storage_read(addr(1), U256::from(5));
+        assert!(r.storage_reads[&addr(1)].contains(&U256::from(5)));
+        let cp = r.checkpoint();
+        // Then it's promoted to a write.
+        r.record_storage_write(addr(1), U256::from(5), U256::from(99));
+        assert!(r.reads_promoted_to_writes[&addr(1)].contains(&U256::from(5)));
+        r.restore(cp);
+        // Promotion undone — slot still in reads, no longer in writes.
+        assert!(r.storage_reads[&addr(1)].contains(&U256::from(5)));
+        assert!(!r.reads_promoted_to_writes.contains_key(&addr(1)));
+        assert!(!r.storage_writes.contains_key(&addr(1)));
+    }
+
+    #[test]
+    fn tx_restore_undoes_everything_including_touched_addresses() {
+        let mut r = BlockAccessListRecorder::new();
+        // Tx 1 commits.
+        r.set_block_access_index(1);
+        r.record_balance_change(addr(99), U256::from(5));
+        // Tx 2 starts: real flow is set_bal_index THEN tx_checkpoint, so the
+        // checkpoint sees empty journals (set_bal_index just cleared them).
+        r.set_block_access_index(2);
+        let tx_cp = r.tx_checkpoint();
+        r.record_balance_change(addr(1), U256::from(100));
+        r.record_storage_write(addr(2), U256::from(7), U256::from(42));
+        r.record_nonce_change(addr(1), 1);
+        r.record_storage_read(addr(3), U256::from(0));
+        assert!(r.touched_addresses.contains(&addr(1)));
+        assert!(r.touched_addresses.contains(&addr(2)));
+        assert!(r.touched_addresses.contains(&addr(3)));
+        r.tx_restore(tx_cp);
+        // All traces of tx 2 removed.
+        assert!(!r.balance_changes.contains_key(&addr(1)));
+        assert!(!r.nonce_changes.contains_key(&addr(1)));
+        assert!(!r.storage_writes.contains_key(&addr(2)));
+        // Fresh writes NOT promoted to reads on tx_restore.
+        assert!(
+            r.storage_reads
+                .get(&addr(2))
+                .map(|s| !s.contains(&U256::from(7)))
+                .unwrap_or(true)
+        );
+        // touched_addresses truncated back.
+        assert!(!r.touched_addresses.contains(&addr(1)));
+        assert!(!r.touched_addresses.contains(&addr(2)));
+        assert!(!r.touched_addresses.contains(&addr(3)));
+        // Tx 1's committed change preserved.
+        assert!(r.balance_changes.contains_key(&addr(99)));
+        // current_index rewound to tx 2's start (= tx 2's index).
+        assert_eq!(r.current_index, 2);
+    }
+
+    #[test]
+    fn set_block_access_index_clears_journals() {
+        let mut r = BlockAccessListRecorder::new();
+        r.set_block_access_index(1);
+        r.record_balance_change(addr(1), U256::from(10));
+        assert_eq!(r.balance_changes_journal.len(), 1);
+        r.set_block_access_index(2);
+        // Journal cleared on advance — stale entries would point past filter_net_zero
+        // mutations.
+        assert_eq!(r.balance_changes_journal.len(), 0);
+        assert_eq!(r.storage_writes_journal.len(), 0);
+        assert_eq!(r.nonce_changes_journal.len(), 0);
+        assert_eq!(r.code_changes_journal.len(), 0);
+        assert_eq!(r.reads_promoted_journal.len(), 0);
+    }
+
+    #[test]
+    fn checkpoint_after_set_block_access_index_isolates_tx() {
+        let mut r = BlockAccessListRecorder::new();
+        r.set_block_access_index(1);
+        r.record_balance_change(addr(1), U256::from(10)); // committed tx 1
+        r.set_block_access_index(2);
+        let cp = r.checkpoint();
+        r.record_balance_change(addr(2), U256::from(20));
+        r.restore(cp);
+        // Tx 1's change preserved, tx 2's change reverted.
+        assert!(r.balance_changes.contains_key(&addr(1)));
+        assert!(!r.balance_changes.contains_key(&addr(2)));
+    }
+
+    #[test]
+    fn restore_walks_journal_in_correct_order() {
+        // Stress: multiple addresses interleaved.
+        let mut r = BlockAccessListRecorder::new();
+        r.set_block_access_index(1);
+        r.record_balance_change(addr(1), U256::from(10));
+        r.record_balance_change(addr(2), U256::from(20));
+        let cp = r.checkpoint();
+        r.record_balance_change(addr(1), U256::from(11));
+        r.record_balance_change(addr(2), U256::from(21));
+        r.record_balance_change(addr(3), U256::from(30));
+        r.record_balance_change(addr(1), U256::from(12));
+        r.restore(cp);
+        // Each address restored to exactly its pre-checkpoint state.
+        assert_eq!(r.balance_changes[&addr(1)].len(), 1);
+        assert_eq!(r.balance_changes[&addr(1)][0].1, U256::from(10));
+        assert_eq!(r.balance_changes[&addr(2)].len(), 1);
+        assert_eq!(r.balance_changes[&addr(2)][0].1, U256::from(20));
+        assert!(!r.balance_changes.contains_key(&addr(3)));
     }
 }
