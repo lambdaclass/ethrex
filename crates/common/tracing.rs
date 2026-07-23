@@ -55,27 +55,37 @@ pub struct CallTraceFrame {
     pub call_type: CallType,
     /// Address that initiated the call
     pub from: Address,
-    /// Address that received the call
-    pub to: Address,
-    /// Amount transfered
-    pub value: U256,
+    /// Address that received the call. Omitted when absent (geth's `to,omitempty`),
+    /// e.g. nil'd for a failed CREATE/CREATE2.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub to: Option<Address>,
+    /// Amount transferred. Omitted when absent (geth's `value,omitempty`) — notably
+    /// `STATICCALL`, which geth traces with a nil value.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub value: Option<U256>,
     /// Gas provided for the call
     #[serde(with = "crate::serde_utils::u64::hex_str")]
     pub gas: u64,
     /// Gas used by the call
     #[serde(with = "crate::serde_utils::u64::hex_str")]
     pub gas_used: u64,
-    /// Call data
+    /// Call data (always present, matching geth's non-optional `input`)
     #[serde(with = "crate::serde_utils::bytes")]
     pub input: Bytes,
-    /// Return data
-    #[serde(with = "crate::serde_utils::bytes")]
+    /// Return data. Omitted when empty (geth's `output,omitempty`).
+    #[serde(
+        with = "crate::serde_utils::bytes",
+        skip_serializing_if = "Bytes::is_empty"
+    )]
     pub output: Bytes,
-    /// Error returned if the call failed
+    /// Error returned if the call failed. Omitted when absent (geth's `error,omitempty`).
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
-    /// Revert reason if the call reverted
+    /// Revert reason if the call reverted. Omitted when absent (geth's `revertReason,omitempty`).
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub revert_reason: Option<String>,
-    /// List of nested sub-calls
+    /// List of nested sub-calls. Omitted when empty (geth's `calls,omitempty`).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
     pub calls: Vec<CallTraceFrame>,
     /// Logs (if enabled)
     #[serde(skip_serializing_if = "Vec::is_empty")]
@@ -101,6 +111,10 @@ pub struct CallLog {
     pub topics: Vec<H256>,
     #[serde(with = "crate::serde_utils::bytes")]
     pub data: Bytes,
+    /// Block-absolute log index, matching geth's `log.Index` (a counter running across
+    /// every tx in the block). Seeded per tx from the preceding txs' log count.
+    pub index: u64,
+    /// Position of this log relative to the subcalls of the enclosing frame.
     pub position: u64,
 }
 

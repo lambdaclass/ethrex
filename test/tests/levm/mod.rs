@@ -25,3 +25,4 @@ mod precompile_tests;
 mod prestate_tracer_tests;
 mod requests_eip8282_extraction_tests;
 mod stack_tests;
+mod trace_call_tests;

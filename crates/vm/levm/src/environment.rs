@@ -44,6 +44,11 @@ pub struct Environment {
     /// When true, skip balance deduction in `deduct_caller`. Used by the prewarmer
     /// to avoid early reverts on insufficient balance so that warming touches more storage.
     pub disable_balance_check: bool,
+    /// When true, skip the sender nonce-mismatch check. Used by `debug_traceCall`
+    /// (geth's `ToMessage(_, skipNonceCheck=true)`): the synthetic call may run on
+    /// top of a mid-block state (`txIndex`) whose nonce differs from the value the
+    /// caller supplied, so enforcing the check would spuriously reject the trace.
+    pub disable_nonce_check: bool,
     /// When true, the tx is a pre-execution system contract call (EIP-2935, EIP-4788,
     /// EIP-7002, EIP-7251 etc.). Skips the block-level gas-allowance check since system
     /// calls are allowed to exceed `block_gas_limit` (their 30M cap is a separate rule).

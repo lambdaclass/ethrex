@@ -49,7 +49,9 @@ use crate::eth::{
 };
 use crate::subscription_manager::{SubscriptionManager, SubscriptionManagerProtocol};
 use crate::testing::BuildBlockV1Request;
-use crate::tracing::{TraceBlockByNumberRequest, TraceTransactionRequest};
+use crate::tracing::{
+    TraceBlockByHashRequest, TraceBlockByNumberRequest, TraceCallRequest, TraceTransactionRequest,
+};
 use crate::types::transaction::SendRawTransactionRequest;
 use crate::utils::{
     RpcErr, RpcErrorMetadata, RpcErrorResponse, RpcNamespace, RpcRequest, RpcRequestId,
@@ -1419,7 +1421,7 @@ pub async fn map_testing_requests(
 /// Handles debugging and introspection methods:
 /// - Raw data: `debug_getRawHeader`, `debug_getRawBlock`, `debug_getRawTransaction`, `debug_getRawReceipts`
 /// - Execution witness: `debug_executionWitness` (for stateless validation)
-/// - Tracing: `debug_traceTransaction`, `debug_traceBlockByNumber`
+/// - Tracing: `debug_traceTransaction`, `debug_traceBlockByNumber`, `debug_traceBlockByHash`, `debug_traceCall`
 pub async fn map_debug_requests(req: &RpcRequest, context: RpcApiContext) -> Result<Value, RpcErr> {
     match req.method.as_str() {
         "debug_getRawHeader" => GetRawHeaderRequest::call(req, context).await,
@@ -1435,6 +1437,8 @@ pub async fn map_debug_requests(req: &RpcRequest, context: RpcApiContext) -> Res
         "debug_setHead" => SetHeadRequest::call(req, context).await,
         "debug_traceTransaction" => TraceTransactionRequest::call(req, context).await,
         "debug_traceBlockByNumber" => TraceBlockByNumberRequest::call(req, context).await,
+        "debug_traceBlockByHash" => TraceBlockByHashRequest::call(req, context).await,
+        "debug_traceCall" => TraceCallRequest::call(req, context).await,
         unknown_debug_method => Err(RpcErr::MethodNotFound(unknown_debug_method.to_owned())),
     }
 }

@@ -2942,6 +2942,7 @@ impl LEVM {
             is_privileged: matches!(tx, Transaction::PrivilegedL2Transaction(_)),
             fee_token: tx.fee_token(),
             disable_balance_check: false,
+            disable_nonce_check: false,
             is_system_call: false,
         };
 
@@ -3805,6 +3806,7 @@ fn env_from_generic(
         is_privileged: false,
         fee_token: tx.fee_token,
         disable_balance_check: false,
+        disable_nonce_check: false,
         is_system_call: false,
     })
 }
