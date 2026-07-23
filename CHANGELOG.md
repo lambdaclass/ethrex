@@ -14,6 +14,7 @@
 
 ### 2026-07-22
 
+- Distance-gate full-sync trie-layer commit: blocks beyond reorg range are written straight through to disk (shallow layer cache) while the recent 128-block window near the sync target stays resident, avoiding the per-read layer-walk cost of a deep in-memory stack during bulk sync (~18% faster on mainnet full sync) [#7023](https://github.com/lambdaclass/ethrex/pull/7023)
 - Unify full-sync batch import onto the per-block execution pipeline, validating every block's state root and reusing the pipeline's BAL-driven parallel execution instead of the bespoke "execute all, apply once" batch path [#7008](https://github.com/lambdaclass/ethrex/pull/7008)
 
 ### 2026-07-06

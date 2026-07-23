@@ -37,6 +37,64 @@ const _: () = assert!(
     "committed layers must stay outside reorg-depth protection"
 );
 
+/// Distance ahead of the sync target at which full sync switches from writing trie layers
+/// straight to disk to retaining the in-memory window. Set to `2 * REORG_DEPTH_LIMIT`.
+///
+/// Full sync extends a single canonical chain toward the target. A block more than
+/// `REORG_DEPTH_LIMIT` behind it can never be reverted (`apply_fork_choice` rejects deeper
+/// reorgs), so its state commits straight to the path-keyed disk, keeping the layer stack shallow
+/// and reads cheap. Within `REORG_DEPTH_LIMIT` of the target the recent `DB_COMMIT_THRESHOLD`
+/// blocks must stay resident, for reorg handling and snap/historical serving.
+///
+/// The `2 * REORG_DEPTH_LIMIT` margin makes the window fully warm before the tip reaches the
+/// reorg-able region: retention starts at `target - 2*REORG_DEPTH_LIMIT` and, at one layer per
+/// block, reaches `REORG_DEPTH_LIMIT` resident layers exactly when the tip hits
+/// `target - REORG_DEPTH_LIMIT`.
+///
+/// Known caveat — early-stopped cycle: if a sync cycle stops before reaching its target (peers
+/// stop serving, cancellation, invalid block), the executed tail has no resident window until
+/// sync resumes and advances past it. This is acceptable: for the tail to be written through, it
+/// must sit more than `SYNC_RETAIN_WARMUP` behind the target, i.e. deep in finalized territory
+/// of the real chain, where no honest consensus client can fork; and if such a forkchoice ever
+/// arrived anyway, `apply_fork_choice`'s `has_state_root` guard rejects it and the node falls
+/// back to a re-sync rather than corrupting state.
+pub const SYNC_RETAIN_WARMUP: u64 = 2 * REORG_DEPTH_LIMIT;
+
+/// How a single-canonical-chain sync block's trie layer is committed, chosen by the block's
+/// distance from the sync target (see `SYNC_RETAIN_WARMUP`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SyncCommitMode {
+    /// More than `SYNC_RETAIN_WARMUP` behind the target and unreorgable: commit straight to disk
+    /// (shallow ~1-layer cache).
+    WriteThrough,
+    /// Within `SYNC_RETAIN_WARMUP` of the target: retain the recent `DB_COMMIT_THRESHOLD`-layer
+    /// window so reorgs and snap/historical queries can be served.
+    RetainWindow,
+}
+
+impl SyncCommitMode {
+    /// Picks the mode for `block_number` given the highest block this sync reaches
+    /// (`sync_target`). Saturating arithmetic means a target at or below the block (which should
+    /// not happen) safely falls to `RetainWindow`, never to an unsafe write-through.
+    pub fn for_block(block_number: u64, sync_target: u64) -> Self {
+        if sync_target.saturating_sub(block_number) > SYNC_RETAIN_WARMUP {
+            SyncCommitMode::WriteThrough
+        } else {
+            SyncCommitMode::RetainWindow
+        }
+    }
+
+    /// `commit_depth` for `add_block_pipeline_bounded`: `WriteThrough` keeps ~1 layer;
+    /// `RetainWindow` keeps `DB_COMMIT_THRESHOLD`, so the on-disk floor never passes
+    /// `target - DB_COMMIT_THRESHOLD` (the floor the live path also commits at).
+    pub fn commit_depth(self) -> usize {
+        match self {
+            SyncCommitMode::WriteThrough => 1,
+            SyncCommitMode::RetainWindow => ethrex_storage::DB_COMMIT_THRESHOLD,
+        }
+    }
+}
+
 /// Applies new fork choice data to the current blockchain. It performs validity checks:
 /// - The finalized, safe and head hashes must correspond to already saved blocks.
 /// - The saved blocks should be in the correct order (finalized <= safe <= head).

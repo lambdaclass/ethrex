@@ -87,8 +87,7 @@ use ethrex_rlp::constants::RLP_NULL;
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_storage::{
-    AccountUpdatesList, DB_COMMIT_THRESHOLD, Store, UpdateBatch, error::StoreError, hash_address,
-    hash_key,
+    AccountUpdatesList, Store, UpdateBatch, error::StoreError, hash_address, hash_key,
 };
 use ethrex_trie::node::{BranchNode, ExtensionNode, LeafNode};
 use ethrex_trie::{Nibbles, Node, NodeRef, Trie, TrieError, TrieNode};
@@ -2661,9 +2660,10 @@ impl Blockchain {
     /// - deletes the duplicated `execute_block_from_state`, manual VM/BLOCKHASH cache, and
     ///   peer-BAL-persistence code.
     ///
-    /// This trades the single-trie-materialization amortization (one root for the whole batch) for
-    /// per-block roots; trie layers commit by depth (`DB_COMMIT_THRESHOLD`) so the in-memory layer
-    /// backlog stays bounded during bulk sync.
+    /// This trades single-trie-materialization amortization for per-block roots. Layers commit by
+    /// each block's distance from `sync_target` (see `SyncCommitMode`): blocks beyond reorg range
+    /// write straight through to disk, while the recent `DB_COMMIT_THRESHOLD`-block window near the
+    /// target stays resident.
     ///
     /// If an error occurs, returns a tuple containing:
     /// - The error type ([`ChainError`]).
@@ -2673,11 +2673,15 @@ impl Blockchain {
     /// `bals` holds the per-block Block Access Lists fetched during sync, aligned by index with
     /// `blocks`. Pass an empty slice when no BALs are available (e.g. block import from RLP); the
     /// pipeline then rebuilds each BAL. Only a BAL matching its block's header commitment is used.
+    ///
+    /// `sync_target` is the highest block number this sync cycle will reach; it drives the
+    /// per-block commit mode (see `SyncCommitMode`). Pass the newest block being synced to.
     pub async fn add_blocks_in_batch(
         &self,
         blocks: Vec<Block>,
         bals: &[Option<BlockAccessList>],
         cancellation_token: CancellationToken,
+        sync_target: u64,
     ) -> Result<(), (ChainError, Option<BatchBlockProcessingFailure>)> {
         debug_assert!(
             bals.is_empty() || bals.len() == blocks.len(),
@@ -2718,11 +2722,12 @@ impl Blockchain {
                 .cloned()
                 .map(Arc::new);
 
-            // Single canonical chain: commit trie layers by depth so the in-memory backlog
-            // stays bounded (~DB_COMMIT_THRESHOLD) instead of growing with the sync range.
-            // The now per-block granularity is why this uses DB_COMMIT_THRESHOLD (128), not
-            // the batch-layer threshold.
-            if let Err(err) = self.add_block_pipeline_bounded(block, bal, DB_COMMIT_THRESHOLD) {
+            // Commit each block's trie layer by its distance from `sync_target` (see
+            // `SyncCommitMode`): far blocks write straight through, the recent window stays resident.
+            let commit_depth =
+                crate::fork_choice::SyncCommitMode::for_block(block_number, sync_target)
+                    .commit_depth();
+            if let Err(err) = self.add_block_pipeline_bounded(block, bal, commit_depth) {
                 return Err((
                     err,
                     Some(BatchBlockProcessingFailure {
