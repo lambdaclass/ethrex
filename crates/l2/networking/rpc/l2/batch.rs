@@ -93,12 +93,7 @@ impl RpcHandler for GetBatchByBatchNumberRequest {
 
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
         debug!("Requested batch with number: {}", self.batch_number);
-        let l1_fork = context.l1_ctx.blockchain.current_fork().await?;
-        let Some(batch) = context
-            .rollup_store
-            .get_batch(self.batch_number, l1_fork)
-            .await?
-        else {
+        let Some(batch) = context.rollup_store.get_batch(self.batch_number).await? else {
             return Ok(Value::Null);
         };
         let rpc_batch = RpcBatch::build(batch, self.block_hashes, &context.l1_ctx.storage)?;
@@ -126,8 +121,6 @@ impl RpcHandler for GetBatchByBatchBlockNumberRequest {
 
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
         debug!("Requested batch with block: {}", self.block);
-        let l1_fork = context.l1_ctx.blockchain.current_fork().await?;
-
         let block_number = self
             .block
             .resolve_block_number(&context.l1_ctx.storage)
@@ -147,11 +140,7 @@ impl RpcHandler for GetBatchByBatchBlockNumberRequest {
             _ => return Ok(Value::Null),
         };
 
-        let Some(batch) = context
-            .rollup_store
-            .get_batch(batch_number, l1_fork)
-            .await?
-        else {
+        let Some(batch) = context.rollup_store.get_batch(batch_number).await? else {
             return Err(RpcErr::Internal(format!(
                 "Batch not found for batch number: {}",
                 batch_number

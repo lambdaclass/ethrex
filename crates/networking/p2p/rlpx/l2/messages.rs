@@ -168,7 +168,10 @@ impl RLPxMessage for BatchSealed {
                 blobs,
                 commitments,
                 proofs,
-                version: 0,
+                // `based/1` predates the sidecar version field, so keep its wire
+                // schema unchanged for rolling upgrades. New nodes are v1-only
+                // and validate the proof shape before accepting the batch.
+                version: 1,
             },
             commit_tx,
             verify_tx,
@@ -202,5 +205,91 @@ impl From<NewBlock> for crate::rlpx::message::Message {
 impl From<L2Message> for crate::rlpx::message::Message {
     fn from(value: L2Message) -> Self {
         Message::L2(value)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ethrex_common::types::BlobsBundle;
+
+    #[test]
+    fn batch_sealed_keeps_the_based_1_wire_schema() {
+        let batch = Batch {
+            number: 7,
+            first_block: 11,
+            last_block: 13,
+            blobs_bundle: BlobsBundle {
+                version: 1,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let message = BatchSealed::new(batch, Signature::from_slice(&[0; 65]));
+
+        let mut actual = Vec::new();
+        message.encode(&mut actual).expect("encode BatchSealed");
+
+        // Encode the original based/1 field list explicitly. A version field
+        // must not be appended because older peers reject trailing RLP data.
+        let mut legacy_payload = Vec::new();
+        Encoder::new(&mut legacy_payload)
+            .encode_field(&message.batch.number)
+            .encode_field(&message.batch.first_block)
+            .encode_field(&message.batch.last_block)
+            .encode_field(&message.batch.state_root)
+            .encode_field(&message.batch.l1_in_messages_rolling_hash)
+            .encode_field(&message.batch.l2_in_message_rolling_hashes)
+            .encode_field(&message.batch.non_privileged_transactions)
+            .encode_field(&message.batch.l1_out_message_hashes)
+            .encode_field(&message.batch.blobs_bundle.blobs)
+            .encode_field(&message.batch.blobs_bundle.commitments)
+            .encode_field(&message.batch.blobs_bundle.proofs)
+            .encode_optional_field(&message.batch.commit_tx)
+            .encode_optional_field(&message.batch.verify_tx)
+            .encode_field(&message.signature)
+            .encode_field(&message.batch.balance_diffs)
+            .finish();
+        let expected = snappy_compress(legacy_payload).expect("compress based/1 message");
+
+        assert_eq!(actual, expected);
+
+        let decoded = BatchSealed::decode(&actual).expect("decode based/1 message");
+        assert_eq!(decoded.batch.blobs_bundle.version, 1);
+    }
+
+    #[test]
+    fn batch_sealed_rejects_legacy_v0_proof_shape() {
+        use ethrex_common::types::{BYTES_PER_BLOB, CELLS_PER_EXT_BLOB};
+
+        // Wire format has no version field. Decode stamps version=1, then the
+        // proof-count invariant must reject a legacy one-proof-per-blob sidecar.
+        let batch = Batch {
+            number: 9,
+            first_block: 1,
+            last_block: 2,
+            blobs_bundle: BlobsBundle {
+                blobs: vec![[7u8; BYTES_PER_BLOB]],
+                commitments: vec![[8u8; 48]],
+                proofs: vec![[9u8; 48]], // v0 shape: one proof
+                version: 1,
+            },
+            ..Default::default()
+        };
+        let message = BatchSealed::new(batch, Signature::from_slice(&[0; 65]));
+
+        let mut encoded = Vec::new();
+        message.encode(&mut encoded).expect("encode");
+        let decoded = BatchSealed::decode(&encoded).expect("decode stamps version 1");
+        assert_eq!(decoded.batch.blobs_bundle.version, 1);
+        assert_ne!(
+            decoded.batch.blobs_bundle.proofs.len(),
+            CELLS_PER_EXT_BLOB,
+            "fixture must use the legacy one-proof layout"
+        );
+        assert!(
+            decoded.batch.blobs_bundle.validate_v1_structure().is_err(),
+            "followers must reject legacy v0-shaped BatchSealed proofs"
+        );
     }
 }

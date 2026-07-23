@@ -3,7 +3,6 @@ use calldata::encode_calldata;
 use ethereum_types::{H160, H256, U256};
 use ethrex_common::types::EIP7702Transaction;
 use ethrex_common::types::FeeTokenTransaction;
-use ethrex_common::types::Fork;
 use ethrex_common::utils::keccak;
 use ethrex_common::{
     Address,
@@ -1306,26 +1305,6 @@ pub async fn get_pending_l2_messages(
         .await?;
 
     from_hex_string_to_h256_array(&response)
-}
-
-// TODO: This is a work around for now, issue: https://github.com/lambdaclass/ethrex/issues/4828
-pub async fn get_l1_active_fork(
-    client: &EthClient,
-    activation_time: Option<u64>,
-) -> Result<Fork, EthClientError> {
-    let Some(osaka_activation_time) = activation_time else {
-        return Ok(Fork::Osaka);
-    };
-    let current_timestamp = client
-        .get_block_by_number(BlockIdentifier::Tag(BlockTag::Latest), false)
-        .await?
-        .header
-        .timestamp;
-    if current_timestamp < osaka_activation_time {
-        Ok(Fork::Prague)
-    } else {
-        Ok(Fork::Osaka)
-    }
 }
 
 async fn _generic_call(

@@ -15,19 +15,31 @@ use ethrex_crypto::NativeCrypto;
 use rustc_hash::FxHashMap;
 
 use ethrex_common::types::{
-    APPROVE_EXECUTION_AND_PAYMENT, AuthorizationTuple, BYTES_PER_BLOB, BlobsBundle, Block,
-    BlockBody, BlockHeader, ChainConfig, EIP1559Transaction, EIP4844Transaction,
-    EIP7702Transaction, FRAME_SIG_SCHEME_P256, FRAME_SIG_SCHEME_SECP256K1,
-    FRAME_TX_EXPIRY_DATA_LENGTH, FRAME_TX_MAX_VERIFY_GAS, FeeTokenTransaction, Frame, FrameMode,
-    FrameSignature, FrameTransaction, Genesis, GenesisAccount, MAX_TX_SIZE, MempoolTransaction,
-    PrivilegedL2Transaction, Transaction, TxKind, frame_tx_expiry_verifier,
-    kzg_commitment_to_versioned_hash,
+    APPROVE_EXECUTION_AND_PAYMENT, AuthorizationTuple, BYTES_PER_BLOB, BlobsBundle,
+    BlobsBundleError, Block, BlockBody, BlockHeader, CELLS_PER_EXT_BLOB, ChainConfig,
+    EIP1559Transaction, EIP4844Transaction, EIP7702Transaction, FRAME_SIG_SCHEME_P256,
+    FRAME_SIG_SCHEME_SECP256K1, FRAME_TX_EXPIRY_DATA_LENGTH, FRAME_TX_MAX_VERIFY_GAS,
+    FeeTokenTransaction, Frame, FrameMode, FrameSignature, FrameTransaction, Genesis,
+    GenesisAccount, MAX_TX_SIZE, MempoolTransaction, PrivilegedL2Transaction, Transaction, TxKind,
+    blobs_bundle::blob_from_bytes, frame_tx_expiry_verifier, kzg_commitment_to_versioned_hash,
 };
 use ethrex_common::{Address, Bytes, H160, H256, U256};
 use ethrex_storage::error::StoreError;
 use ethrex_storage::{EngineType, Store};
 
 const MEMPOOL_MAX_SIZE_TEST: usize = 10_000;
+
+/// Structurally valid v1 dummy sidecar for mempool bookkeeping tests.
+/// Proofs are not cryptographically valid; admission via
+/// `add_blob_transaction_to_pool` still requires full KZG verification.
+fn dummy_v1_bundle(blob_count: usize, fill: u8) -> BlobsBundle {
+    BlobsBundle {
+        blobs: vec![[fill; BYTES_PER_BLOB]; blob_count],
+        commitments: vec![[fill; 48]; blob_count],
+        proofs: vec![[fill; 48]; blob_count * CELLS_PER_EXT_BLOB],
+        version: 1,
+    }
+}
 
 async fn setup_storage(config: ChainConfig, header: BlockHeader) -> Result<Store, StoreError> {
     let mut store = Store::new("test", EngineType::InMemory)?;
@@ -461,22 +473,83 @@ fn test_filter_mempool_transactions() {
     );
 }
 
+#[tokio::test]
+async fn add_blob_transaction_to_pool_rejects_v0_sidecar() {
+    let config = ChainConfig {
+        cancun_time: Some(0),
+        prague_time: Some(0),
+        ..Default::default()
+    };
+    let header = BlockHeader {
+        number: 5,
+        timestamp: 5,
+        gas_limit: 100_000_000,
+        ..Default::default()
+    };
+    let store = setup_storage(config, header).await.expect("Storage setup");
+    let blockchain = Blockchain::default_with_store(store);
+
+    let blobs = vec![blob_from_bytes("Hello, world!".as_bytes().into()).unwrap()];
+    let v1 = BlobsBundle::create_from_blobs(&blobs).expect("create v1 bundle");
+    let blob_versioned_hashes = v1.generate_versioned_hashes();
+    let v0 = BlobsBundle {
+        blobs: v1.blobs,
+        commitments: v1.commitments,
+        proofs: vec![[0u8; 48]; blob_versioned_hashes.len()],
+        version: 0,
+    };
+    let tx = EIP4844Transaction {
+        blob_versioned_hashes,
+        gas: 21_000,
+        to: Address::from_low_u64_be(1),
+        ..Default::default()
+    };
+
+    let err = blockchain
+        .add_blob_transaction_to_pool(tx, v0)
+        .await
+        .expect_err("v0 sidecars must be rejected at admission");
+    assert!(
+        matches!(
+            err,
+            MempoolError::BlobsBundleError(BlobsBundleError::InvalidBlobVersionForFork)
+        ),
+        "unexpected admission error: {err:?}"
+    );
+    assert_eq!(
+        blockchain.mempool.blob_txs().expect("read blob txs").len(),
+        0,
+        "rejected v0 sidecar must leave the pool empty"
+    );
+}
+
+#[test]
+fn add_blobs_bundle_rejects_v0_structural_layout() {
+    let mempool = Mempool::new(MEMPOOL_MAX_SIZE_TEST);
+    let v0 = BlobsBundle {
+        blobs: vec![[0u8; BYTES_PER_BLOB]],
+        commitments: vec![[0u8; 48]],
+        proofs: vec![[0u8; 48]],
+        version: 0,
+    };
+    let err = mempool
+        .add_blobs_bundle(H256::random(), v0)
+        .expect_err("direct inserts must also enforce v1 layout");
+    assert!(
+        err.to_string().contains("invalid v1 blob bundle"),
+        "unexpected error: {err}"
+    );
+}
+
 #[test]
 fn blobs_bundle_loadtest() {
-    // Write a bundle of 6 blobs 10 times
-    // If this test fails please adjust the max_size in the DB config
+    // Write a bundle of 6 blobs 300 times.
+    // If this test fails please adjust the max_size in the DB config.
     let mempool = Mempool::new(MEMPOOL_MAX_SIZE_TEST);
     for i in 0..300 {
-        let blobs = [[i as u8; BYTES_PER_BLOB]; 6];
-        let commitments = [[i as u8; 48]; 6];
-        let proofs = [[i as u8; 48]; 6];
-        let bundle = BlobsBundle {
-            blobs: blobs.to_vec(),
-            commitments: commitments.to_vec(),
-            proofs: proofs.to_vec(),
-            version: 0,
-        };
-        mempool.add_blobs_bundle(H256::random(), bundle).unwrap();
+        mempool
+            .add_blobs_bundle(H256::random(), dummy_v1_bundle(6, i as u8))
+            .unwrap();
     }
 }
 
@@ -978,20 +1051,16 @@ fn blobs_bundle_insert_and_remove() {
     // Then remove one bundle making sure that blob-version-hash to tx-hash cache still points to
     // the other txn. And finally remove second bundle as well.
     let mempool = Mempool::new(MEMPOOL_MAX_SIZE_TEST);
-    let (blob, commitment, proof) = ([255u8; BYTES_PER_BLOB], [255u8; 48], [255u8; 48]);
+    let (blob, commitment) = ([255u8; BYTES_PER_BLOB], [255u8; 48]);
     let versioned_hash = kzg_commitment_to_versioned_hash(&commitment);
     let mut txn_hash = vec![];
 
     for i in 1..=2 {
-        let blobs = [blob, [i as u8; BYTES_PER_BLOB]];
-        let commitments = [commitment, [i as u8; 48]];
-        let proofs = [proof, [i as u8; 48]];
-        let bundle = BlobsBundle {
-            blobs: blobs.to_vec(),
-            commitments: commitments.to_vec(),
-            proofs: proofs.to_vec(),
-            version: 0,
-        };
+        let mut bundle = dummy_v1_bundle(2, i as u8);
+        // Share one commitment/blob across both txs so the versioned-hash index
+        // must keep pointing at the remaining txn after the first is removed.
+        bundle.blobs[0] = blob;
+        bundle.commitments[0] = commitment;
         let tx = EIP4844Transaction {
             nonce: 3,
             max_priority_fee_per_gas: 0,
@@ -1060,12 +1129,7 @@ fn blob_txs_are_not_evicted_by_regular_tx_flood() {
     let blob_count = regular_cap + 2;
     let mut blob_hashes = Vec::new();
     for i in 0..blob_count {
-        let bundle = BlobsBundle {
-            blobs: vec![[i as u8; BYTES_PER_BLOB]],
-            commitments: vec![[i as u8; 48]],
-            proofs: vec![[i as u8; 48]],
-            version: 0,
-        };
+        let bundle = dummy_v1_bundle(1, i as u8);
         let blob_tx = Transaction::EIP4844Transaction(EIP4844Transaction {
             gas: 21_000,
             to: Address::from_low_u64_be(1),
@@ -1132,15 +1196,10 @@ fn blob_txs_are_not_evicted_by_regular_tx_flood() {
     }
 }
 
-// Inserts a 1-blob tx straight into the pool (bypassing validation) with the
+// Inserts a 1-blob tx straight into the pool (bypassing crypto validation) with the
 // given nonce and blob fee; returns its hash.
 fn add_blob_tx(mempool: &Mempool, nonce: u64, blob_fee: u64) -> H256 {
-    let bundle = BlobsBundle {
-        blobs: vec![[0u8; BYTES_PER_BLOB]],
-        commitments: vec![[0u8; 48]],
-        proofs: vec![[0u8; 48]],
-        version: 0,
-    };
+    let bundle = dummy_v1_bundle(1, 0);
     let tx = Transaction::EIP4844Transaction(EIP4844Transaction {
         nonce,
         gas: 21_000,
@@ -1165,12 +1224,7 @@ fn add_blob_tx(mempool: &Mempool, nonce: u64, blob_fee: u64) -> H256 {
 
 // Like `add_blob_tx` but with an explicit sender; returns its hash.
 fn add_blob_tx_with_sender(mempool: &Mempool, sender: Address, nonce: u64) -> H256 {
-    let bundle = BlobsBundle {
-        blobs: vec![[0u8; BYTES_PER_BLOB]],
-        commitments: vec![[0u8; 48]],
-        proofs: vec![[0u8; 48]],
-        version: 0,
-    };
+    let bundle = dummy_v1_bundle(1, 0);
     let tx = Transaction::EIP4844Transaction(EIP4844Transaction {
         nonce,
         gas: 21_000,

@@ -73,6 +73,8 @@ pub enum PeerConnectionError {
     SendMessage(String),
     #[error("Error when inserting transaction in the mempool: {0}")]
     MempoolError(#[from] MempoolError),
+    #[error("Invalid blob bundle: {0}")]
+    BlobsBundleError(#[from] ethrex_common::types::BlobsBundleError),
     #[error("Error when adding a block to the blockchain: {0}")]
     BlockchainError(#[from] ChainError),
     #[error("Io Error: {0}")]

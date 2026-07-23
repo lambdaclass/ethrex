@@ -3753,11 +3753,11 @@ mod serde_impl {
                 })
                 .collect();
 
-            let wrapper_version = value.wrapper_version;
+            let blobs_bundle = BlobsBundle::create_from_blobs(&blobs)?;
             Ok(Self {
                 tx: value.try_into()?,
-                wrapper_version,
-                blobs_bundle: BlobsBundle::create_from_blobs(&blobs, wrapper_version)?,
+                wrapper_version: Some(blobs_bundle.version),
+                blobs_bundle,
             })
         }
     }

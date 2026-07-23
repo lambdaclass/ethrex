@@ -69,7 +69,6 @@ pub struct EthrexMonitorWidget {
     pub last_scroll: Instant,
     pub overview_selected_widget: usize,
 
-    pub osaka_activation_time: Option<u64>,
     pub mouse_captured: bool,
 }
 
@@ -221,7 +220,6 @@ impl EthrexMonitorWidget {
             rollup_store,
             last_scroll: Instant::now(),
             overview_selected_widget: 0,
-            osaka_activation_time: cfg.osaka_activation_time,
             mouse_captured: true,
         };
         monitor_widget.selected_table().selected(true);
@@ -346,11 +344,7 @@ impl EthrexMonitorWidget {
             .await?;
         self.mempool.on_tick(&self.rollup_client).await?;
         self.batches_table
-            .on_tick(
-                &self.eth_client,
-                &self.rollup_store,
-                self.osaka_activation_time,
-            )
+            .on_tick(&self.eth_client, &self.rollup_store)
             .await?;
         self.blocks_table.on_tick(&self.store).await?;
         self.l1_to_l2_messages

@@ -149,7 +149,7 @@ pub enum Command {
         #[arg(
             short = 'o',
             long,
-            help = "Whether Osaka fork is activated or not. If None, it assumes it is active."
+            help = "Deprecated compatibility option; v1 blob sidecars are always used."
         )]
         osaka_activated: Option<bool>,
     },
@@ -381,6 +381,11 @@ impl Command {
                 store_path,
                 osaka_activated,
             } => {
+                if osaka_activated.is_some() {
+                    tracing::warn!(
+                        "--osaka-activated / -o is deprecated and ignored; ethrex always uses v1 (EIP-7594) blob sidecars"
+                    );
+                }
                 #[cfg(feature = "rocksdb")]
                 let store_type = EngineType::RocksDB;
 
@@ -501,16 +506,7 @@ impl Command {
                     let blob = blobs_bundle::blob_from_bytes(Bytes::copy_from_slice(&blob))
                         .expect("Failed to create blob from bytes; blob was just read from file");
 
-                    let wrapper_version = if let Some(activated) = osaka_activated
-                        && !activated
-                    {
-                        None
-                    } else {
-                        Some(1)
-                    };
-
-                    let blobs_bundle =
-                        BlobsBundle::create_from_blobs(&vec![blob], wrapper_version)?;
+                    let blobs_bundle = BlobsBundle::create_from_blobs(&vec![blob])?;
 
                     let batch = get_batch(
                         &store,

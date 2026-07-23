@@ -121,8 +121,7 @@ impl NewPooledTransactionHashes {
                     let p2p_tx =
                         P2PTransaction::EIP4844TransactionWithBlobs(WrappedEIP4844Transaction {
                             tx: eip4844_tx,
-                            wrapper_version: (tx_blobs_bundle.version != 0)
-                                .then_some(tx_blobs_bundle.version),
+                            wrapper_version: Some(tx_blobs_bundle.version),
                             blobs_bundle: tx_blobs_bundle,
                         });
                     p2p_tx.encode_canonical_to_vec().len()

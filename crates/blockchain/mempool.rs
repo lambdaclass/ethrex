@@ -715,12 +715,19 @@ impl Mempool {
             .collect())
     }
 
-    /// Add a blobs bundle to the pool by its blob transaction hash
+    /// Add a blobs bundle to the pool by its blob transaction hash.
+    ///
+    /// Enforces the v1 cell-proof layout so direct inserts cannot weaken the
+    /// pool invariant enforced by `add_blob_transaction_to_pool`. Callers that
+    /// need synthetic fixtures must supply structurally valid v1 bundles.
     pub fn add_blobs_bundle(
         &self,
         tx_hash: H256,
         blobs_bundle: BlobsBundle,
     ) -> Result<(), StoreError> {
+        blobs_bundle
+            .validate_v1_structure()
+            .map_err(|err| StoreError::Custom(format!("invalid v1 blob bundle: {err}")))?;
         let mut mempool = self.write()?;
         for (i, c) in blobs_bundle.commitments.iter().enumerate() {
             let versioned_hash = kzg_commitment_to_versioned_hash(c);
