@@ -2942,6 +2942,7 @@ impl LEVM {
             is_privileged: matches!(tx, Transaction::PrivilegedL2Transaction(_)),
             fee_token: tx.fee_token(),
             disable_balance_check: false,
+            disable_nonce_check: false,
             is_system_call: false,
         };
 
@@ -3805,6 +3806,12 @@ fn env_from_generic(
         is_privileged: false,
         fee_token: tx.fee_token,
         disable_balance_check: false,
+        // Every `env_from_generic` caller is a simulation RPC (eth_call,
+        // eth_estimateGas, eth_createAccessList). Those run relaxed messages
+        // with no nonce enforcement: a call object without `nonce` defaults
+        // `tx_nonce` to 0 above, which the hook would otherwise reject for
+        // any sender whose nonce is nonzero.
+        disable_nonce_check: true,
         is_system_call: false,
     })
 }

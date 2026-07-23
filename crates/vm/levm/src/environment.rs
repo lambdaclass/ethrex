@@ -44,6 +44,11 @@ pub struct Environment {
     /// When true, skip balance deduction in `deduct_caller`. Used by the prewarmer
     /// to avoid early reverts on insufficient balance so that warming touches more storage.
     pub disable_balance_check: bool,
+    /// When true, skip the sender nonce-mismatch validation. Used by the simulation
+    /// RPCs (eth_call, eth_estimateGas, eth_createAccessList): call objects may omit
+    /// the nonce, and no client enforces it there. The account nonce still increments
+    /// during execution.
+    pub disable_nonce_check: bool,
     /// When true, the tx is a pre-execution system contract call (EIP-2935, EIP-4788,
     /// EIP-7002, EIP-7251 etc.). Skips the block-level gas-allowance check since system
     /// calls are allowed to exceed `block_gas_limit` (their 30M cap is a separate rule).
