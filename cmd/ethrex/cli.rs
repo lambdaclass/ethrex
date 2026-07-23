@@ -112,7 +112,9 @@ pub struct Options {
                      A sweep on a synced mainnet node (32 GiB cap) found 8-16 GiB all keep up with \
                      head-following (filters resident, disk near-idle, no slow blocks); larger gives \
                      no gain because the OS page cache backstops the uncompressed state CFs, and \
-                     ~8 GiB is the floor where the filter set starts to thrash.\n\
+                     ~8 GiB is the floor where the filter set starts to thrash. (That sweep \
+                     predates the 4KB block size on the trie-node/flat-KV CFs, which raises their \
+                     index/filter block count ~4x, so the floor is likely now somewhat above 8 GiB.)\n\
                      \n\
                      Lower only on memory-constrained hosts, accepting reduced throughput. \
                      ETHREX_ROCKSDB_BLOCK_CACHE_SIZE sets the same value.",
