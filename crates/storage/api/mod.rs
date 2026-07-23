@@ -26,6 +26,43 @@ pub mod tables;
 /// Type alias for the result of a prefix iterator.
 pub type PrefixResult = Result<(Box<[u8]>, Box<[u8]>), StoreError>;
 
+/// Per-column-family on-disk statistics, for DB observability.
+#[derive(Debug, Clone, Default)]
+pub struct CfStats {
+    pub name: String,
+    /// Live SST bytes on disk for this CF.
+    pub live_sst_bytes: u64,
+    /// Total SST bytes incl. not-yet-compacted/obsolete (for space amplification).
+    pub total_sst_bytes: u64,
+    /// Estimated live (logical) data size.
+    pub live_data_bytes: u64,
+    /// Estimated number of keys.
+    pub num_keys: u64,
+    /// Live SST file count.
+    pub num_files: u64,
+    /// Live blob file bytes (only ACCOUNT_CODES uses blobs).
+    pub blob_bytes: u64,
+    /// Estimated pending compaction bytes (write-debt indicator).
+    pub pending_compaction_bytes: u64,
+    /// Current memtable bytes for this CF.
+    pub memtable_bytes: u64,
+}
+
+/// Snapshot of RocksDB observability stats: per-CF sizes plus DB-wide block-cache
+/// counters. Read from RocksDB properties (+ statistics, when enabled).
+#[derive(Debug, Clone, Default)]
+pub struct RocksDbStats {
+    pub cfs: Vec<CfStats>,
+    pub block_cache_usage_bytes: u64,
+    pub block_cache_capacity_bytes: u64,
+    pub block_cache_pinned_bytes: u64,
+    pub running_compactions: u64,
+    /// Cumulative block-cache hits (0 unless RocksDB statistics are enabled).
+    pub block_cache_hits: u64,
+    /// Cumulative block-cache misses (0 unless RocksDB statistics are enabled).
+    pub block_cache_misses: u64,
+}
+
 /// This trait provides a minimal set of operations required from a database backend.
 /// Implementations should focus on providing efficient access to the underlying storage
 /// without implementing business logic.
@@ -57,6 +94,12 @@ pub trait StorageBackend: Debug + Send + Sync {
     /// no-op for backends that are already durable or purely in-memory.
     fn flush(&self) -> Result<(), StoreError> {
         Ok(())
+    }
+
+    /// Returns per-column-family and DB-wide RocksDB observability stats, or
+    /// `None` for backends that don't expose them (e.g. in-memory).
+    fn db_stats(&self) -> Option<RocksDbStats> {
+        None
     }
 }
 

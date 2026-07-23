@@ -4,10 +4,13 @@
 //! between full sync mode (all blocks executed) and snap sync mode (state fetched
 //! via snap protocol).
 
+mod backfill;
 mod code_collector;
 mod full;
 mod healing;
 mod snap_sync;
+
+pub use backfill::{BackfillConfig, resolve_postmerge_floor, run_history_backfill};
 
 /// Test-only re-export of the full-sync resume-point predicate so integration tests can
 /// assert that canonical-but-stateless blocks are not treated as already-executed.
@@ -58,6 +61,23 @@ pub enum SyncMode {
     Snap,
 }
 
+/// Controls optional backfill of historical chain data (block bodies + receipts)
+/// for blocks below the snap-sync pivot. Snap sync itself only stores headers
+/// below the pivot; when enabled, a background task fills bodies and receipts
+/// down to a floor so the node can serve historical block/tx/receipt/log queries.
+/// Off by default (opt-in via `--history.chain`).
+#[derive(Debug, PartialEq, Clone, Default)]
+pub enum HistoryChain {
+    /// No backfill — headers-only below the pivot (current behavior).
+    #[default]
+    Off,
+    /// Backfill down to the merge (Paris) activation block.
+    PostMerge,
+    /// Backfill down to genesis. Best-effort: many peers no longer serve
+    /// pre-merge history after the 2025 history-expiry rollout.
+    All,
+}
+
 /// Diagnostic snapshot of the sync state, used by admin RPC endpoints.
 #[derive(Debug, Clone, Default, serde::Serialize)]
 pub struct SyncDiagnostics {
@@ -76,6 +96,15 @@ pub struct SyncDiagnostics {
     pub phase_progress: std::collections::HashMap<String, u64>,
     pub recent_pivot_changes: std::collections::VecDeque<PivotChangeEvent>,
     pub recent_errors: std::collections::VecDeque<SyncErrorEvent>,
+    /// `--history.chain` mode, present only when historical backfill is enabled.
+    pub backfill_mode: Option<String>,
+    /// Lowest block the backfill will fill down to (merge block or genesis).
+    pub backfill_floor: Option<u64>,
+    /// Lowest block currently holding full chain data (the backfill frontier,
+    /// equal to `earliest_block_number`); decreases toward `backfill_floor`.
+    pub backfill_frontier: Option<u64>,
+    /// Whether backfill has reached its floor (nothing left to fill).
+    pub backfill_complete: bool,
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
