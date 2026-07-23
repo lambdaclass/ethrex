@@ -76,7 +76,7 @@ pub fn snappy_compress(encoded_data: Vec<u8>) -> Result<Vec<u8>, RLPEncodeError>
 /// Maximum decompressed size accepted for a snappy-compressed RLPx message. Matches the
 /// compressed-frame cap (`MAX_MESSAGE_SIZE` = `0xFFFFFF`, ~16 MiB, in `connection/codec.rs`)
 /// and go-ethereum, which likewise bounds `snappy.DecodedLen` at maxUint24 before allocating.
-pub const MAX_SNAPPY_DECOMPRESSED_LEN: usize = 0xFF_FFFF;
+const MAX_SNAPPY_DECOMPRESSED_LEN: usize = 0xFF_FFFF;
 
 pub fn snappy_decompress(msg_data: &[u8]) -> Result<Vec<u8>, RLPDecodeError> {
     snappy_decompress_bounded(msg_data, MAX_SNAPPY_DECOMPRESSED_LEN)
@@ -84,14 +84,10 @@ pub fn snappy_decompress(msg_data: &[u8]) -> Result<Vec<u8>, RLPDecodeError> {
 
 /// Like [`snappy_decompress`] but rejects a declared decompressed length above `max_len` before
 /// allocating, for messages with a tighter natural bound than the global frame cap. `max_len` is
-/// clamped to [`MAX_SNAPPY_DECOMPRESSED_LEN`] so it can never exceed the global limit.
+/// clamped to `MAX_SNAPPY_DECOMPRESSED_LEN` so it can never exceed the global limit.
 ///
 /// RLPx uses *raw* (block) snappy, which is one-shot: the block header declares the full
-/// decompressed length and `decompress_vec` produces the whole buffer in a single allocation —
-/// there is no output stream to wrap in a `Read::take(max_len)`. So the bound is enforced here,
-/// at the one point the format exposes the decoded size (the header), rather than by limiting a
-/// stream. A true streaming `.take()` bound would require snappy *frame* format, which is a
-/// different wire encoding and would break peer interop — don't "upgrade" this into one.
+/// decompressed length and `decompress_vec` produces the whole buffer in a single allocation.
 pub fn snappy_decompress_bounded(
     msg_data: &[u8],
     max_len: usize,
