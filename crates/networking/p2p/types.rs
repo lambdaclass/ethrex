@@ -15,11 +15,26 @@ use std::{
     fmt::Display,
     net::{IpAddr, Ipv4Addr, SocketAddr},
     str::FromStr,
-    sync::OnceLock,
+    sync::{Arc, OnceLock, RwLock},
 };
 use thiserror::Error;
 
 use crate::utils::node_id;
+
+/// Holds the live, mutable copy of the local node identity.
+///
+/// Updated in-place whenever the IP predictor learns the public external IP
+/// (via discv4/discv5 PONG voting). All reads must clone the needed values
+/// out and drop the guard before any `.await`.
+#[derive(Debug, Clone)]
+pub struct LocalNode {
+    pub node: Node,
+    pub record: NodeRecord,
+}
+
+/// Shared, live local-node identity. Guards are `!Send`, so callers must
+/// clone out values and drop the guard before crossing any `.await` point.
+pub type SharedLocalNode = Arc<RwLock<LocalNode>>;
 
 /// Holds the local node's network addressing configuration, separating the
 /// socket bind address from the externally-announced address.
@@ -434,9 +449,14 @@ impl NodeRecord {
             udp_port: Some(node.udp_port),
             ..Default::default()
         };
-        match node.ip.to_canonical() {
-            IpAddr::V4(ip) => pairs.ip = Some(ip),
-            IpAddr::V6(ip) => pairs.ip6 = Some(ip),
+        // Per EIP-778: a record without endpoint information is still valid.
+        // When the IP is unspecified (not yet known), omit the ip/ip6 key entirely
+        // rather than advertising 0.0.0.0, which peers would cache as unreachable.
+        if !node.ip.is_unspecified() {
+            match node.ip.to_canonical() {
+                IpAddr::V4(ip) => pairs.ip = Some(ip),
+                IpAddr::V6(ip) => pairs.ip6 = Some(ip),
+            }
         }
 
         let mut record = NodeRecord {
@@ -580,5 +600,62 @@ impl RLPEncode for Node {
             .encode_field(&self.tcp_port)
             .encode_field(&self.public_key)
             .finish();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use secp256k1::SecretKey;
+
+    fn test_signer() -> SecretKey {
+        SecretKey::new(&mut rand::rngs::OsRng)
+    }
+
+    fn test_pubkey() -> H512 {
+        let signer = test_signer();
+        let pubkey = secp256k1::PublicKey::from_secret_key(secp256k1::SECP256K1, &signer);
+        let encoded = pubkey.serialize_uncompressed();
+        H512::from_slice(&encoded[1..])
+    }
+
+    /// A NodeRecord built from a Node with an unspecified IP must omit the `ip` key entirely.
+    /// Per EIP-778, this produces a valid endpoint-less ENR rather than advertising 0.0.0.0.
+    #[test]
+    fn node_record_from_unspecified_node_omits_ip_key() {
+        let pubkey = test_pubkey();
+        let node = Node::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 30303, 30303, pubkey);
+        let signer = test_signer();
+        let record = NodeRecord::from_node(&node, 1, &signer).unwrap();
+        assert!(
+            record.pairs().ip.is_none(),
+            "ip key must be absent for unspecified address"
+        );
+        assert!(
+            record.pairs().ip6.is_none(),
+            "ip6 key must also be absent for unspecified address"
+        );
+        // The record must still have a valid signature (endpoint-less ENR is valid per EIP-778).
+        assert!(
+            record.verify_signature(),
+            "endpoint-less ENR must have valid signature"
+        );
+    }
+
+    /// A NodeRecord built from a Node with a public IP must include the `ip` key.
+    #[test]
+    fn node_record_from_public_node_includes_ip_key() {
+        let pubkey = test_pubkey();
+        let node = Node::new("1.2.3.4".parse().unwrap(), 30303, 30303, pubkey);
+        let signer = test_signer();
+        let record = NodeRecord::from_node(&node, 1, &signer).unwrap();
+        assert!(
+            record.pairs().ip.is_some(),
+            "ip key must be present for a public address"
+        );
+        assert!(
+            record.verify_signature(),
+            "ENR with public IP must have valid signature"
+        );
     }
 }
