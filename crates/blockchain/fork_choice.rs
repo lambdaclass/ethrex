@@ -50,6 +50,14 @@ const _: () = assert!(
 /// reorg-able region: retention starts at `target - 2*REORG_DEPTH_LIMIT` and, at one layer per
 /// block, reaches `REORG_DEPTH_LIMIT` resident layers exactly when the tip hits
 /// `target - REORG_DEPTH_LIMIT`.
+///
+/// Known caveat — early-stopped cycle: if a sync cycle stops before reaching its target (peers
+/// stop serving, cancellation, invalid block), the executed tail has no resident window until
+/// sync resumes and advances past it. This is acceptable: for the tail to be written through, it
+/// must sit more than `SYNC_RETAIN_WARMUP` behind the target, i.e. deep in finalized territory
+/// of the real chain, where no honest consensus client can fork; and if such a forkchoice ever
+/// arrived anyway, `apply_fork_choice`'s `has_state_root` guard rejects it and the node falls
+/// back to a re-sync rather than corrupting state.
 pub const SYNC_RETAIN_WARMUP: u64 = 2 * REORG_DEPTH_LIMIT;
 
 /// How a single-canonical-chain sync block's trie layer is committed, chosen by the block's
