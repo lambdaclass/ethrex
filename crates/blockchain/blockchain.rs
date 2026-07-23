@@ -97,8 +97,8 @@ use ethrex_vm::backends::levm::LEVM;
 use ethrex_vm::backends::levm::db::DatabaseLogger;
 use ethrex_vm::{BlockExecutionResult, DynVmDatabase, Evm, EvmError, VmDatabase};
 use mempool::{
-    FRAME_CANONICAL_PAYMASTER_CODE_HASH, FramePaymasterReservation, Mempool, QueuedCap,
-    is_canonical_paymaster,
+    BalanceCheck, FRAME_CANONICAL_PAYMASTER_CODE_HASH, FramePaymasterReservation, Mempool,
+    SenderAdmission, is_canonical_paymaster,
 };
 use payload::PayloadOrTask;
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -2904,22 +2904,12 @@ impl Blockchain {
 
         let sender = transaction.sender(&NativeCrypto)?;
 
-        // Validate transaction
-        let (tx_to_replace, frame_reservation, sender_account_nonce) =
+        // Validate transaction. The returned `sender_admission` carries the
+        // per-sender gate inputs, re-checked atomically inside `add_transaction`,
+        // which also removes any same-nonce tx being replaced under the same lock
+        // (#6938) — so no separate pre-removal here.
+        let (frame_reservation, sender_admission) =
             self.validate_transaction(&transaction, sender).await?;
-        // A replacement (same `(sender, nonce)`) doesn't grow the queue, so it's
-        // exempt from the queued cap (check find_tx_to_replace first, review fix).
-        let queued_cap = if tx_to_replace.is_some() {
-            None
-        } else {
-            sender_account_nonce.map(|account_nonce| QueuedCap {
-                account_nonce,
-                max: self.options.max_queued_txs_per_account,
-            })
-        };
-        if let Some(tx_to_replace) = tx_to_replace {
-            self.remove_transaction_from_pool(&tx_to_replace)?;
-        }
 
         // Add blobs bundle before the transaction so that when add_transaction
         // notifies payload builders the blob data is already available.
@@ -2933,7 +2923,7 @@ impl Blockchain {
             sender,
             MempoolTransaction::new(transaction, sender),
             frame_reservation,
-            queued_cap,
+            sender_admission,
         ) {
             let _ = self.mempool.remove_blobs_bundle(&hash);
             return Err(e);
@@ -2967,32 +2957,15 @@ impl Blockchain {
             return Ok(hash);
         }
         let sender = transaction.sender(&NativeCrypto)?;
-        // Validate transaction
-        let (tx_to_replace, frame_reservation, sender_account_nonce) =
+        // Validate transaction. The returned `sender_admission` carries the
+        // per-sender gate inputs, re-checked atomically inside `add_transaction`,
+        // which also removes whatever occupies the sender's nonce slot (any tx
+        // type) under the same lock, so replacement detection, the gates, the
+        // removal, and the insert are one atomic scope (#6938). For a frame tx
+        // the removal happens only after the locked paymaster re-check, so a
+        // rejected fee-bump leaves the original pending tx intact.
+        let (frame_reservation, sender_admission) =
             self.validate_transaction(&transaction, sender).await?;
-        // For a frame tx, the same-nonce predecessor must NOT be removed here:
-        // `add_transaction` removes it only AFTER the locked paymaster re-check
-        // passes, so a rejected fee-bump leaves the original pending tx intact
-        // (atomic replacement, review fix 2). `add_transaction` removes whatever
-        // occupies the sender's nonce slot (any tx type), which is the same
-        // same-nonce hash `find_tx_to_replace` returns, so the success path is
-        // unchanged — including when the predecessor is a non-frame tx.
-        let is_frame = matches!(transaction, Transaction::FrameTransaction(_));
-        // A replacement (same `(sender, nonce)`) doesn't grow the queue, so it's
-        // exempt from the queued cap (check find_tx_to_replace first, review fix).
-        let queued_cap = if tx_to_replace.is_some() {
-            None
-        } else {
-            sender_account_nonce.map(|account_nonce| QueuedCap {
-                account_nonce,
-                max: self.options.max_queued_txs_per_account,
-            })
-        };
-        if let Some(tx_to_replace) = tx_to_replace
-            && !is_frame
-        {
-            self.remove_transaction_from_pool(&tx_to_replace)?;
-        }
 
         // Add transaction to storage
         self.mempool.add_transaction(
@@ -3000,7 +2973,7 @@ impl Blockchain {
             sender,
             MempoolTransaction::new(transaction, sender),
             frame_reservation,
-            queued_cap,
+            sender_admission,
         )?;
 
         Ok(hash)
@@ -3231,16 +3204,18 @@ impl Blockchain {
     5. Ensure the transactor is able to add a new transaction. The number of transactions sent by an account may be limited by a certain configured value
 
     */
-    /// Returns the hash of the transaction to replace in case the nonce already
-    /// exists, plus the paymaster reservation to apply on insert for frame
-    /// transactions (EIP-8141). The reservation is computed here but applied in
-    /// the locked section of `add_transaction`, so a frame tx that fails any
-    /// later admission check never leaks a reservation.
+    /// Returns the paymaster reservation to apply on insert for frame
+    /// transactions (EIP-8141), plus the per-sender admission guard re-checked
+    /// atomically inside `add_transaction`. The reservation is computed here but
+    /// applied in the locked section of `add_transaction`, so a frame tx that
+    /// fails any later admission check never leaks a reservation. Any same-nonce
+    /// tx being replaced is detected and removed live under that write lock, so
+    /// its hash is not returned here.
     pub async fn validate_transaction(
         &self,
         tx: &Transaction,
         sender: Address,
-    ) -> Result<(Option<H256>, Option<FramePaymasterReservation>, Option<u64>), MempoolError> {
+    ) -> Result<(Option<FramePaymasterReservation>, Option<SenderAdmission>), MempoolError> {
         let nonce = tx.nonce();
 
         // On an L1 node, reject L2-only transaction types (FeeToken 0x7d,
@@ -3253,7 +3228,7 @@ impl Blockchain {
         }
 
         if matches!(tx, &Transaction::PrivilegedL2Transaction(_)) {
-            return Ok((None, None, None));
+            return Ok((None, None));
         }
 
         // Frame transactions: skip balance/EOA checks (payer unknown until execution)
@@ -3445,13 +3420,12 @@ impl Blockchain {
             .ok_or(MempoolError::InvalidTxGasvalues)?;
 
         let maybe_sender_acc_info = self.storage.get_account_info(header_no, sender).await?;
-        // Sender's on-chain nonce, used for two things below: (1) threaded out to
-        // `add_transaction` so the per-account queued (future/nonce-gapped) cap is
-        // enforced *atomically* under the insertion write lock (see `QueuedCap`)
-        // instead of via a separate, racy pre-check — geth `AccountQueue` style:
-        // only future (nonce-gapped) txs count, executable/contiguous txs are never
-        // capped, and replacements pass because the caller removes the old tx first;
-        // and (2) excluding obsoleted (already-mined but not-yet-pruned) txs from the
+        // Sender's on-chain nonce, used for three things below: (1) folded into
+        // the `SenderAdmission` guard so the per-account queued cap, gapped-nonce,
+        // and cumulative-balance gates are re-checked *atomically* under the
+        // insertion write lock (see `SenderAdmission`) rather than only via the
+        // racy pre-filters here; (2) telling executable txs from future ones; and
+        // (3) excluding obsoleted (already-mined but not-yet-pruned) txs from the
         // cumulative-balance sum.
         let sender_account_nonce = maybe_sender_acc_info.as_ref().map(|info| info.nonce);
 
@@ -3721,7 +3695,24 @@ impl Blockchain {
             }
         }
 
-        Ok((tx_to_replace_hash, frame_reservation, sender_account_nonce))
+        // Build the per-sender admission guard so `add_transaction` can re-run
+        // the queued-cap (#6603), gapped-nonce (#6609), and cumulative-balance
+        // (#6606) gates atomically under the insertion write lock — the checks
+        // above are an unlocked pre-filter (issue #6938). `None` when the sender
+        // has no account (only frame txs reach here in that case, and they are
+        // not per-sender rate-limited on nonce/balance).
+        let sender_admission = sender_account_nonce.map(|account_nonce| SenderAdmission {
+            account_nonce,
+            queued_max: self.options.max_queued_txs_per_account,
+            gap_threshold: self.options.gap_admit_occupancy_threshold,
+            // Frame txs are not balance-gated (payer unknown until execution).
+            balance_check: (!is_frame_tx).then_some(BalanceCheck {
+                tx_cost,
+                sender_balance,
+            }),
+        });
+
+        Ok((frame_reservation, sender_admission))
     }
 
     /// Marks the node's chain as up to date with the current chain
