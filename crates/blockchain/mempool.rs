@@ -1018,10 +1018,17 @@ impl Mempool {
 
         let mut inner = self.write()?;
 
+        // `seen` dedups within this announcement: `in_flight_txs` isn't updated until after the
+        // filter runs, so a duplicated hash (e.g. `[h, h]`) would otherwise be returned twice and
+        // requested twice — an honest responder then echoes the tx twice, which the response-side
+        // duplicate guard (`PooledTransactions::validate_requested`) would wrongly treat as a fault.
+        let mut seen = FxHashSet::default();
         let unknown: Vec<H256> = hashes
             .iter()
             .filter(|hash| {
-                !inner.in_flight_txs.contains(hash) && !inner.transaction_pool.contains_key(hash)
+                seen.insert(**hash)
+                    && !inner.in_flight_txs.contains(hash)
+                    && !inner.transaction_pool.contains_key(hash)
             })
             .copied()
             .collect();
@@ -1850,6 +1857,23 @@ mod tests {
         assert!(
             pool.contains_tx(original).unwrap(),
             "a rejected fee-bump must leave the original same-nonce tx in the pool"
+        );
+    }
+
+    #[test]
+    fn reserve_unknown_hashes_dedups_within_announcement() {
+        // A duplicated hash in one announcement must be reserved (and thus requested) only once,
+        // otherwise an honest responder echoes the tx twice and trips the response-side dup guard.
+        let pool = Mempool::new(64);
+        let h = H256::from_low_u64_be(0xabc);
+        let announcer = H256::from_low_u64_be(1);
+        let unknown = pool
+            .reserve_unknown_hashes(&[h, h], &[0, 0], &[100, 100], announcer)
+            .unwrap();
+        assert_eq!(
+            unknown,
+            vec![h],
+            "duplicate announced hash must be reserved once"
         );
     }
 }

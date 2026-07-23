@@ -264,15 +264,24 @@ impl PacketTrait for Ordinary {
 }
 
 impl Ordinary {
-    pub fn decode(packet: &Packet, decrypt_key: &[u8]) -> Result<Ordinary, PacketCodecError> {
+    /// Extracts the 32-byte source node id from an ordinary packet's authdata.
+    ///
+    /// The authdata length is peer-controlled, so this is length-checked: an ordinary packet
+    /// carries exactly the 32-byte src-id as authdata, and anything else is rejected rather
+    /// than panicking in `H256::from_slice`. Callers that need the src-id before decrypting
+    /// (e.g. to look up the session key) must go through here, not `H256::from_slice` directly.
+    pub fn src_id(packet: &Packet) -> Result<H256, PacketCodecError> {
         if packet.header.authdata.len() != 32 {
             return Err(PacketCodecError::InvalidSize);
         }
+        Ok(H256::from_slice(&packet.header.authdata))
+    }
+
+    pub fn decode(packet: &Packet, decrypt_key: &[u8]) -> Result<Ordinary, PacketCodecError> {
+        let src_id = Self::src_id(packet)?;
 
         let mut message = packet.encrypted_message.to_vec();
         decrypt_message(decrypt_key, packet, &mut message)?;
-
-        let src_id = H256::from_slice(&packet.header.authdata);
 
         let message = Message::decode(&message).map_err(|_e| {
             PacketCodecError::InvalidMessage(message.first().copied().unwrap_or(0))
@@ -341,7 +350,13 @@ impl PacketTrait for WhoAreYou {
 
 impl WhoAreYou {
     pub fn decode(packet: &Packet) -> Result<WhoAreYou, PacketCodecError> {
-        let authdata = packet.header.authdata.clone();
+        // A peer controls the authdata length. WHOAREYOU authdata is exactly a 16-byte
+        // id-nonce followed by an 8-byte enr-seq; reject anything else before slicing so a
+        // short authdata can't panic on `authdata[..16]`.
+        let authdata = &packet.header.authdata;
+        if authdata.len() != 24 {
+            return Err(PacketCodecError::InvalidSize);
+        }
         let id_nonce = u128::from_be_bytes(authdata[..16].try_into()?);
         let enr_seq = u64::from_be_bytes(authdata[16..].try_into()?);
 
@@ -814,5 +829,75 @@ impl RLPDecode for TicketMessage {
             },
             decoder.finish()?,
         ))
+    }
+}
+
+#[cfg(test)]
+mod authdata_tests {
+    use super::*;
+
+    fn packet_with_authdata(flag: u8, authdata: Vec<u8>) -> Packet {
+        Packet {
+            masking_iv: [0u8; IV_MASKING_SIZE],
+            header: PacketHeader {
+                static_header: [0u8; STATIC_HEADER_SIZE],
+                flag,
+                nonce: [0u8; 12],
+                authdata,
+                header_end_offset: 0,
+            },
+            encrypted_message: Vec::new(),
+        }
+    }
+
+    /// A WHOAREYOU packet needs 24 authdata bytes (16-byte id-nonce + 8-byte enr-seq). A peer
+    /// can forge a shorter one; decoding must return an error, not panic on `authdata[..16]`.
+    #[test]
+    fn who_are_you_decode_rejects_short_authdata() {
+        let packet = packet_with_authdata(WhoAreYou::TYPE_FLAG, vec![0u8; 8]);
+        assert!(
+            matches!(
+                WhoAreYou::decode(&packet),
+                Err(PacketCodecError::InvalidSize)
+            ),
+            "short WHOAREYOU authdata must be rejected, not panic"
+        );
+    }
+
+    /// The length check is exact (`!= 24`), so over-length authdata is rejected too — a peer
+    /// can't smuggle trailing bytes past `authdata[16..]`.
+    #[test]
+    fn who_are_you_decode_rejects_over_length_authdata() {
+        let packet = packet_with_authdata(WhoAreYou::TYPE_FLAG, vec![0u8; 32]);
+        assert!(
+            matches!(
+                WhoAreYou::decode(&packet),
+                Err(PacketCodecError::InvalidSize)
+            ),
+            "over-length WHOAREYOU authdata must be rejected"
+        );
+    }
+
+    /// The ordinary-packet handler reads the 32-byte source id straight from `authdata` before
+    /// the session lookup; a peer can send authdata of any length, so extracting the id must be
+    /// length-checked rather than panicking in `H256::from_slice`.
+    #[test]
+    fn ordinary_src_id_rejects_short_authdata() {
+        let packet = packet_with_authdata(Ordinary::TYPE_FLAG, vec![0u8; 8]);
+        assert!(
+            matches!(
+                Ordinary::src_id(&packet),
+                Err(PacketCodecError::InvalidSize)
+            ),
+            "short ordinary authdata must be rejected, not panic"
+        );
+    }
+
+    /// A well-formed 32-byte ordinary authdata still yields the src id.
+    #[test]
+    fn ordinary_src_id_accepts_32_byte_authdata() {
+        let packet = packet_with_authdata(Ordinary::TYPE_FLAG, vec![7u8; 32]);
+        let src_id = Ordinary::src_id(&packet).expect("32-byte authdata must decode");
+        assert_eq!(src_id, H256::from_slice(&[7u8; 32]));
     }
 }

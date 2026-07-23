@@ -68,7 +68,10 @@ impl DiscoveryServer {
         packet: Packet,
         addr: SocketAddr,
     ) -> Result<(), DiscoveryServerError> {
-        let src_id = H256::from_slice(&packet.header.authdata);
+        // Length-checked: a peer can send an ordinary packet with authdata of any length, and
+        // reading the src-id before the session lookup must not panic on a short/empty authdata
+        // (an unauthenticated single-packet DoS of the discv5 actor).
+        let src_id = Ordinary::src_id(&packet)?;
 
         let decrypt_key = self
             .peer_table
