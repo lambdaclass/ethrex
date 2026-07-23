@@ -1,0 +1,53 @@
+name: PR External Contributor
+
+# Runs on pull_request_target (not pull_request) so the token keeps write
+# access when the PR comes from a fork. Safe because it never checks out or
+# executes PR code; it only calls the GitHub API.
+on:
+  pull_request_target:
+    types: [opened, reopened]
+
+permissions:
+  pull-requests: write
+
+# Keyed on PR number: head_ref alone collides across forks with same-named
+# branches, and cancel-in-progress would skip labeling one of them.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  label-external:
+    name: Label External Contributor
+    if: github.event.pull_request.user.type != 'Bot'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Label PR if author has no write access
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const author = context.payload.pull_request.user.login;
+            // The endpoint 404s only for nonexistent accounts; treat that as
+            // no access instead of failing the job.
+            let permission = 'none';
+            try {
+              const { data } = await github.rest.repos.getCollaboratorPermissionLevel({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                username: author,
+              });
+              permission = data.permission;
+            } catch (error) {
+              if (error.status !== 404) throw error;
+            }
+            // This legacy field maps maintain -> "write" and triage -> "read",
+            // so anyone with push access is exempted.
+            if (permission === 'admin' || permission === 'write') {
+              return;
+            }
+            await github.rest.issues.addLabels({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              labels: ['external-contributor'],
+            });
