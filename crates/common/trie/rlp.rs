@@ -1,5 +1,3 @@
-use std::array;
-
 // Contains RLP encoding and decoding implementations for Trie Nodes
 // This encoding is only used to store the nodes in the DB, it is not the encoding used for hash computation
 use ethrex_rlp::{
@@ -12,7 +10,7 @@ use ethrex_rlp::{
 
 use ethrex_crypto::NativeCrypto;
 
-use super::node::{BranchNode, ExtensionNode, LeafNode, Node};
+use super::node::{BranchNode, ExtensionNode, LeafNode, Node, NodeRef};
 use crate::{Nibbles, NodeHash};
 
 // SAFETY: `NativeCrypto` is used here instead of a `&dyn Crypto` parameter because
@@ -132,7 +130,7 @@ impl RLPDecode for Node {
                     // Decode as Extension
                     ExtensionNode {
                         prefix: path,
-                        child: decode_child(rlp_items[1].expect("we already checked the length"))
+                        child: decode_child(rlp_items[1].expect("we already checked the length"))?
                             .into(),
                     }
                     .into()
@@ -140,9 +138,11 @@ impl RLPDecode for Node {
             }
             // Branch Node
             17 => {
-                let choices = array::from_fn(|i| {
-                    decode_child(rlp_items[i].expect("we already checked the length")).into()
-                });
+                let mut choices: [NodeRef; 16] = Default::default();
+                for (i, choice) in choices.iter_mut().enumerate() {
+                    *choice =
+                        decode_child(rlp_items[i].expect("we already checked the length"))?.into();
+                }
                 let (value, _) =
                     decode_bytes(rlp_items[16].expect("we already checked the length"))?;
                 BranchNode {
@@ -161,10 +161,11 @@ impl RLPDecode for Node {
     }
 }
 
-fn decode_child(rlp: &[u8]) -> NodeHash {
+fn decode_child(rlp: &[u8]) -> Result<NodeHash, RLPDecodeError> {
     match decode_bytes(rlp) {
-        Ok((hash, &[])) if hash.len() == 32 => NodeHash::from_slice(hash),
-        Ok((&[], &[])) => NodeHash::default(),
-        _ => NodeHash::from_slice(rlp),
+        Ok((hash, &[])) if hash.len() == 32 => Ok(NodeHash::from_slice(hash)),
+        Ok((&[], &[])) => Ok(NodeHash::default()),
+        _ if rlp.len() < 32 => Ok(NodeHash::from_slice(rlp)),
+        _ => Err(RLPDecodeError::InvalidLength),
     }
 }
