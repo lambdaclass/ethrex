@@ -505,8 +505,12 @@ mod tests {
         let mut encoded = Vec::new();
         request.encode(&mut encoded).unwrap();
 
-        let decoded =
-            Message::decode(0x10 + GetReceipts70::CODE, &encoded, EthCapVersion::V71).unwrap();
+        let decoded = Message::decode(
+            EthCapVersion::V71.eth_capability_offset() + GetReceipts70::CODE,
+            &encoded,
+            EthCapVersion::V71,
+        )
+        .unwrap();
 
         let Message::GetReceipts70(decoded) = decoded else {
             panic!("expected eth/70 GetReceipts message");
@@ -522,8 +526,12 @@ mod tests {
         let mut encoded = Vec::new();
         response.encode(&mut encoded).unwrap();
 
-        let decoded =
-            Message::decode(0x10 + Receipts70::CODE, &encoded, EthCapVersion::V71).unwrap();
+        let decoded = Message::decode(
+            EthCapVersion::V71.eth_capability_offset() + Receipts70::CODE,
+            &encoded,
+            EthCapVersion::V71,
+        )
+        .unwrap();
 
         let Message::Receipts70(decoded) = decoded else {
             panic!("expected eth/70 Receipts message");
