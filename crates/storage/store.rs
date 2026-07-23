@@ -74,6 +74,20 @@ const IN_MEMORY_COMMIT_THRESHOLD: usize = 10000;
 /// import only ever extend a single canonical chain (no competing forks to mis-commit).
 const BATCH_COMMIT_THRESHOLD: usize = 4;
 
+/// Sorted, sharded `multi_get` tuning, shared by the account, storage, and
+/// trie-node batch read paths. A single `multi_get` runs at queue depth 1
+/// (async_io is off), so cold batches are split into contiguous sorted shards
+/// read on separate blocking threads. `KEYS_PER_SHARD` targets shard size,
+/// `MAX_SHARDS` caps concurrency; scattered keys make 64 the sweet spot (128
+/// over-fragments; coldbench).
+const KEYS_PER_SHARD: usize = 256;
+const MAX_SHARDS: usize = 64;
+
+/// Shard count for a sorted, sharded `multi_get` over `n` keys.
+fn shard_count(n: usize) -> usize {
+    n.div_ceil(KEYS_PER_SHARD).clamp(1, MAX_SHARDS)
+}
+
 /// Default size in bytes of the RocksDB shared block cache: 12 GiB.
 ///
 /// This cache holds both data blocks AND the index/bloom-filter blocks for every
@@ -2994,12 +3008,45 @@ impl Store {
         }
 
         if !fkv_indices.is_empty() {
+            // Sort by the prefixed (hashed-order) key so adjacent accounts land
+            // in the same RocksDB data blocks, then read the sorted keys in
+            // contiguous shards concurrently. A single `multi_get` runs the whole
+            // batch at queue depth 1 (async_io is off), which on a cold account-
+            // heavy block serializes thousands of random reads (coldbench: ~13x
+            // slower than this sharded path). Mirrors the storage FKV batch.
+            fkv_indices.sort_unstable_by(|&a, &b| leaf_paths[a].cmp(&leaf_paths[b]));
             let read_view = self.backend.begin_read()?;
             let keys: Vec<&[u8]> = fkv_indices
                 .iter()
                 .map(|&i| leaf_paths[i].as_slice())
                 .collect();
-            let raw = read_view.multi_get(ACCOUNT_FLATKEYVALUE, &keys);
+            let shards = shard_count(keys.len());
+            let raw: Vec<Result<Option<Vec<u8>>, StoreError>> = if shards <= 1 {
+                read_view.multi_get(ACCOUNT_FLATKEYVALUE, &keys)
+            } else {
+                let chunk = keys.len().div_ceil(shards);
+                let rv = read_view.as_ref();
+                std::thread::scope(|scope| {
+                    let handles: Vec<_> = keys
+                        .chunks(chunk)
+                        .map(|ck| scope.spawn(move || rv.multi_get(ACCOUNT_FLATKEYVALUE, ck)))
+                        .collect();
+                    handles
+                        .into_iter()
+                        // A panicked shard yields one Err element rather than
+                        // re-panicking the whole node; the consumer's `?` below
+                        // then surfaces it and the best-effort prefetch caller
+                        // swallows it (the slots are simply left uncached).
+                        .flat_map(|h| {
+                            h.join().unwrap_or_else(|_| {
+                                vec![Err(StoreError::Custom(
+                                    "account prefetch shard panicked".into(),
+                                ))]
+                            })
+                        })
+                        .collect()
+                })
+            };
             for (slot, res) in fkv_indices.iter().zip(raw.into_iter()) {
                 let Some(encoded) = res? else { continue };
                 if encoded.is_empty() {
@@ -3029,6 +3076,290 @@ impl Store {
         }
 
         Ok(results)
+    }
+
+    /// Batch lookup of storage slot values against a given state root.
+    ///
+    /// Each input tuple is `(account_hash, storage_root, slot)` where
+    /// `account_hash` is the keccak hash of the account address and `slot` is
+    /// the raw (un-hashed) storage key, matching the inputs available to
+    /// [`Self::get_storage_at_root_with_known_storage_root`].
+    ///
+    /// Fast path: for slots whose prefixed FKV leaf path falls within the FKV
+    /// cursor (and which are not present in the in-memory diff-layer cache),
+    /// values are fetched in a single `multi_get` on `STORAGE_FLATKEYVALUE`.
+    /// The batch is sorted by the prefixed FKV key (hashed order) before the
+    /// `multi_get` so that adjacent slots share RocksDB data blocks, removing
+    /// the random-order read amplification of per-slot lookups. Slots not yet
+    /// swept by the FKV generator fall back to per-slot trie walks via
+    /// [`Self::get_storage_at_root_with_known_storage_root`], which preserves the
+    /// exact FKV / trie / diff-cache ordering of the single-slot path.
+    ///
+    /// Results are returned in the same order as the input slots. A missing slot
+    /// (deleted or never written) yields `None`, identical to the single-get path.
+    pub fn get_storage_values_batch_by_root(
+        &self,
+        state_root: H256,
+        slots: &[(H256, H256, H256)],
+    ) -> Result<Vec<Option<U256>>, StoreError> {
+        if slots.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let last_written = self.last_written()?;
+        let trie_cache = self
+            .trie_cache
+            .read()
+            .map_err(|_| StoreError::LockError)?
+            .clone();
+
+        let mut results: Vec<Option<U256>> = vec![None; slots.len()];
+        // Per-slot prefixed FKV leaf paths, length 131: 64 account-hash nibbles
+        // + 1 (account leaf flag) + 1 (separator) + 64 hashed-slot nibbles + 1
+        // (storage leaf flag). This is the exact key
+        // `BackendTrieDB::flatkeyvalue_computed` / `Trie::get` use for a storage
+        // leaf (see `apply_prefix`).
+        let leaf_paths: Vec<Vec<u8>> = slots
+            .iter()
+            .map(|(account_hash, _storage_root, slot)| {
+                let hashed_slot = hash_key_fixed(slot);
+                apply_prefix(Some(*account_hash), Nibbles::from_bytes(&hashed_slot)).into_vec()
+            })
+            .collect();
+
+        let mut fkv_indices: Vec<usize> = Vec::new();
+        let mut trie_indices: Vec<usize> = Vec::new();
+
+        // Same watermark check as the account batch and `BackendTrieDB`: a path
+        // is covered by FKV iff `last_written >= prefixed_path` compared as raw
+        // nibble bytes. `Nibbles` orders by its inner `data` vec, so the raw
+        // slice comparison is byte-identical to the `Nibbles >= Nibbles` check
+        // in `BackendTrieDB::flatkeyvalue_computed`.
+        let fkv_cursor: &[u8] = last_written.as_slice();
+        for (i, path) in leaf_paths.iter().enumerate() {
+            // Diff-layer cache holds the authoritative latest value for this
+            // key at this state root, overriding both FKV and trie. Mirror the
+            // cache-first semantics of `TrieWrapper::get` / the account batch:
+            // an empty cached value means the slot was deleted -> None.
+            if let Some(value) = trie_cache.get(state_root, path.as_slice()) {
+                if !value.is_empty() {
+                    results[i] = Some(U256::decode(&value).map_err(StoreError::RLPDecode)?);
+                }
+                continue;
+            }
+            if fkv_cursor >= path.as_slice() {
+                fkv_indices.push(i);
+            } else {
+                trie_indices.push(i);
+            }
+        }
+
+        if !fkv_indices.is_empty() {
+            // Sort the FKV batch by the prefixed (hashed-order) key so adjacent
+            // slots land in the same 4KB RocksDB data blocks. This is the whole
+            // point of the batch: it removes the random-order amplification of
+            // issuing one point lookup per slot in execution order.
+            fkv_indices.sort_unstable_by(|&a, &b| leaf_paths[a].cmp(&leaf_paths[b]));
+            let read_view = self.backend.begin_read()?;
+            let keys: Vec<&[u8]> = fkv_indices
+                .iter()
+                .map(|&i| leaf_paths[i].as_slice())
+                .collect();
+            // Sharded parallel multi_get. A single `multi_get` runs the whole
+            // batch serially inside RocksDB (async_io is OFF in our build, so
+            // no io_uring => queue depth ~= 1), which on a cold NVMe is purely
+            // read-latency-bound: it touches few blocks (sorted) but serializes
+            // them. Splitting the SORTED keys into contiguous shards read by
+            // separate blocking threads keeps the per-shard block sharing while
+            // issuing the shards concurrently, so effective queue depth ~= shard
+            // count. On a bloated-account cold read this is ~4.7x a single
+            // multi_get and ~4.6x the per-slot `par_iter` baseline (coldbench).
+            // Shard count scales with batch size and is capped; small batches
+            // run a single in-line multi_get (no thread spawn). All shards share
+            // one read view (one snapshot) so the reads stay consistent.
+            let shards = shard_count(keys.len());
+            let raw: Vec<Result<Option<Vec<u8>>, StoreError>> = if shards <= 1 {
+                read_view.multi_get(STORAGE_FLATKEYVALUE, &keys)
+            } else {
+                let chunk = keys.len().div_ceil(shards);
+                let rv = read_view.as_ref();
+                std::thread::scope(|scope| {
+                    let handles: Vec<_> = keys
+                        .chunks(chunk)
+                        .map(|ck| scope.spawn(move || rv.multi_get(STORAGE_FLATKEYVALUE, ck)))
+                        .collect();
+                    handles
+                        .into_iter()
+                        // A panicked shard yields one Err element rather than
+                        // re-panicking the whole node; the consumer's `?` below
+                        // then surfaces it and the best-effort prefetch caller
+                        // swallows it (the slots are simply left uncached).
+                        .flat_map(|h| {
+                            h.join().unwrap_or_else(|_| {
+                                vec![Err(StoreError::Custom(
+                                    "storage prefetch shard panicked".into(),
+                                ))]
+                            })
+                        })
+                        .collect()
+                })
+            };
+            for (slot_idx, res) in fkv_indices.iter().zip(raw.into_iter()) {
+                let Some(encoded) = res? else { continue };
+                if encoded.is_empty() {
+                    continue;
+                }
+                results[*slot_idx] = Some(U256::decode(&encoded).map_err(StoreError::RLPDecode)?);
+            }
+        }
+
+        if !trie_indices.is_empty() {
+            // Fall back to the regular single-slot path for any slot whose path
+            // hasn't been swept by the FKV generator yet. Reusing
+            // `get_storage_at_root_with_known_storage_root` guarantees the
+            // trie-walk fallback is byte-identical to the unbatched read,
+            // including its own per-slot FKV / EMPTY_TRIE_HASH handling.
+            // Parallelized to recover the per-slot fan-out the pre-batch
+            // `par_iter` prefetch path had.
+            let fetched: Result<Vec<(usize, Option<U256>)>, StoreError> = trie_indices
+                .par_iter()
+                .map(|&i| {
+                    let (account_hash, storage_root, slot) = slots[i];
+                    self.get_storage_at_root_with_known_storage_root(
+                        state_root,
+                        account_hash,
+                        storage_root,
+                        slot,
+                    )
+                    .map(|v| (i, v))
+                })
+                .collect();
+            for (i, v) in fetched? {
+                results[i] = v;
+            }
+        }
+
+        Ok(results)
+    }
+
+    /// Best-effort warming of the MPT *internal* nodes the merkleizer will walk,
+    /// driven entirely by the BAL working set. The merkle phase reads trie nodes
+    /// from `STORAGE_TRIE_NODES` / `ACCOUNT_TRIE_NODES` (see `BackendTrieDB::get`)
+    /// by nibble path; the existing flat-KV prefetch warms only the leaf-value
+    /// CFs that *execution* reads, so every merkle-walk node read is otherwise
+    /// cold. This pulls those node blocks into the page/block cache up front so
+    /// the subsequent walk runs warm.
+    ///
+    /// The keys are not discovered by walking (a walk is QD1 and serial): the
+    /// internal nodes on the path to a leaf are all at *prefixes* of that leaf's
+    /// nibble path, so for every BAL leaf we speculatively probe every prefix up
+    /// to `MAX_PREFETCH_DEPTH`. Prefixes that are not real nodes are rejected by
+    /// the CF bloom filter in RAM (no disk read; measured ~free), and the shallow
+    /// prefixes collapse on dedup. This turns the cold merkle node reads into one
+    /// sorted, sharded, high-queue-depth `multi_get` per CF — the same lever that
+    /// fixed the flat-KV `sload` path, applied to the trie-node CFs.
+    ///
+    /// Results are discarded. Missing a node (e.g. one deeper than the probe
+    /// band) is harmless: the merkleizer just cold-reads it. Run this
+    /// synchronously up front (mirroring the flat-KV prefetch) so it never races
+    /// the merkleizer; it touches different CFs than execution, so it does not
+    /// contend with the executor either.
+    /// Returns the number of probed keys that hit a real stored node (warmed).
+    /// On the warm/no-op path this still reports coverage; a near-zero hit count
+    /// against a non-empty working set signals a key-encoding mismatch (the
+    /// effectiveness test asserts on this).
+    pub fn prefetch_trie_nodes(
+        &self,
+        storage_slots: &[(Address, H256)],
+        accounts: &[Address],
+    ) -> Result<usize, StoreError> {
+        // Probe band: nodes live at depth <= ~ceil(log16(trie_size)). 8 nibbles
+        // covers tries up to ~16^8 entries near-fully; any deeper node is simply
+        // cold-read by the walk, so under-covering only loses a little warming,
+        // never correctness. Tunable.
+        const MAX_PREFETCH_DEPTH: usize = 8;
+
+        // STORAGE_TRIE_NODES: prefixes of apply_prefix(hashed_addr, hashed_slot).
+        // Each input pushes MAX_PREFETCH_DEPTH+1 prefixes (depths 0..=max_d).
+        let mut storage_keys: Vec<Vec<u8>> =
+            Vec::with_capacity(storage_slots.len() * (MAX_PREFETCH_DEPTH + 1));
+        for (address, slot) in storage_slots {
+            let hashed_address = hash_address_fixed(address);
+            let hashed_slot = hash_key_fixed(slot);
+            let slot_nibbles = Nibbles::from_bytes(&hashed_slot);
+            let max_d = MAX_PREFETCH_DEPTH.min(slot_nibbles.len());
+            for d in 0..=max_d {
+                let prefix = apply_prefix(Some(hashed_address), slot_nibbles.slice(0, d));
+                storage_keys.push(prefix.into_vec());
+            }
+        }
+
+        // ACCOUNT_TRIE_NODES: prefixes of the hashed address (no account prefix).
+        let mut account_keys: Vec<Vec<u8>> =
+            Vec::with_capacity(accounts.len() * (MAX_PREFETCH_DEPTH + 1));
+        for address in accounts {
+            let hashed_address = hash_address_fixed(address);
+            let addr_nibbles = Nibbles::from_bytes(hashed_address.as_bytes());
+            let max_d = MAX_PREFETCH_DEPTH.min(addr_nibbles.len());
+            for d in 0..=max_d {
+                account_keys.push(addr_nibbles.slice(0, d).into_vec());
+            }
+        }
+
+        let hits = self.warm_trie_node_keys(STORAGE_TRIE_NODES, storage_keys)?
+            + self.warm_trie_node_keys(ACCOUNT_TRIE_NODES, account_keys)?;
+        Ok(hits)
+    }
+
+    /// Sorted, sharded, high-queue-depth `multi_get` over `keys` in `table`,
+    /// discarding results. Sorting makes adjacent keys share RocksDB data blocks;
+    /// sharding across blocking threads issues the reads at queue depth ~= shard
+    /// count (async_io is off, so a single multi_get runs at QD1). Mirrors the
+    /// storage flat-KV batch path. Dedups first so shared shallow prefixes are
+    /// read once.
+    fn warm_trie_node_keys(
+        &self,
+        table: &'static str,
+        mut keys: Vec<Vec<u8>>,
+    ) -> Result<usize, StoreError> {
+        if keys.is_empty() {
+            return Ok(0);
+        }
+        keys.sort_unstable();
+        keys.dedup();
+
+        let shards = shard_count(keys.len());
+        let read_view = self.backend.begin_read()?;
+        let count_hits = |res: Vec<Result<Option<Vec<u8>>, StoreError>>| {
+            res.into_iter().filter(|r| matches!(r, Ok(Some(_)))).count()
+        };
+        if shards <= 1 {
+            let refs: Vec<&[u8]> = keys.iter().map(|k| k.as_slice()).collect();
+            return Ok(count_hits(read_view.multi_get(table, &refs)));
+        }
+        let chunk = keys.len().div_ceil(shards);
+        let rv = read_view.as_ref();
+        let hits = std::thread::scope(|scope| {
+            let handles: Vec<_> = keys
+                .chunks(chunk)
+                .map(|ck| {
+                    scope.spawn(move || {
+                        let refs: Vec<&[u8]> = ck.iter().map(|k| k.as_slice()).collect();
+                        // Warm-only: keep cache population, just tally the hits.
+                        count_hits(rv.multi_get(table, &refs))
+                    })
+                })
+                .collect();
+            handles
+                .into_iter()
+                // Best-effort warming: a panicked shard contributes 0 hits rather
+                // than re-panicking. The caller treats this prefetch as best-effort
+                // (missing nodes are just cold-read by the walk), so a shard hiccup
+                // must not unwind block processing.
+                .map(|h| h.join().unwrap_or(0))
+                .sum::<usize>()
+        });
+        Ok(hits)
     }
 
     /// Constructs a merkle proof for the given account address against a given state.

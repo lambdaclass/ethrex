@@ -12,6 +12,10 @@
 
 ## Perf
 
+### 2026-07-08
+
+- Batch BAL prefetch for storage-heavy blocks via sorted, sharded parallel rocksdb `multi_get` reads. The keys are sorted so adjacent entries share data blocks, then split into contiguous shards read concurrently, recovering the cold-read throughput a single serial `multi_get` loses (it runs at queue depth 1 since `async_io` is off). Applied to storage-slot prefetch (flat key-value table), account-state prefetch, and a complementary trie-node prefetch that warms the merkle node CFs concurrently with execution. Each path is gated on the count of missing (cold) slots/accounts (>= 16384, ~34M gas of cold reads), so warm and normal blocks keep the per-slot parallel point-gets while genuinely storage-heavy blocks take the sharded path, which also hardens against storage-bloat DoS [#6980](https://github.com/lambdaclass/ethrex/pull/6980)
+
 ### 2026-07-06
 
 - Warm state caches between blocks by speculatively executing top-of-mempool transactions [#6967](https://github.com/lambdaclass/ethrex/pull/6967)
