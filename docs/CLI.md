@@ -82,22 +82,22 @@ Node options:
 
       --no-precompile-cache
           Disable the per-block precompile result cache (benchmarking only).
-          
+
           [env: ETHREX_NO_PRECOMPILE_CACHE=]
 
       --no-bal-parallel-exec
           Disable BAL-driven parallel transaction execution on Amsterdam+ blocks (falls back to sequential).
-          
+
           [env: ETHREX_NO_BAL_PARALLEL_EXEC=]
 
       --no-bal-prefetch
           Disable the BAL-driven state prefetch warmer thread on Amsterdam+ blocks.
-          
+
           [env: ETHREX_NO_BAL_PREFETCH=]
 
       --no-bal-parallel-trie
           Disable BAL-driven optimistic trie merkleization on Amsterdam+ blocks (falls back to streaming AccountUpdates from the executor).
-          
+
           [env: ETHREX_NO_BAL_PARALLEL_TRIE=]
 
       --log.dir <LOG_DIR>
@@ -194,6 +194,16 @@ P2P options:
           
           [env: ETHREX_P2P_LOOKUP_INTERVAL=]
           [default: 100]
+
+      --blob-sampling
+          Enable EIP-8070 PeerDAS blob sampling (sampler/provider state machine). Disabled by default; when off the node always acts as provider (p=1.0).
+
+          [env: ETHREX_BLOB_SAMPLING=]
+
+      --blob-eager-provider
+          EIP-8070: always act as provider (p=1.0) for every blob tx, bypassing the pseudo-random role decision. Block builders should enable this (EIP-8070 N8). Implies --blob-sampling.
+
+          [env: ETHREX_BLOB_EAGER_PROVIDER=]
 
 Storage options:
       --rocksdb.block-cache-size <BYTES>

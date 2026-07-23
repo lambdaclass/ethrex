@@ -1,9 +1,11 @@
 pub mod block_access_lists;
 pub mod blocks;
+pub mod cells;
 pub mod eth68;
 mod eth69;
 mod eth70;
 mod eth71;
+pub mod eth72;
 pub mod receipts;
 pub(crate) mod status;
 pub mod transactions;
