@@ -649,20 +649,18 @@ fn batched_verify_revert_invalidates_tx() {
     assert_db_cache_unchanged(&db, &accounts);
 }
 
-// ==================== I10: APPROVE_PAYMENT may precede APPROVE_EXECUTION ====================
+// ============== I10: APPROVE_PAYMENT must NOT precede APPROVE_EXECUTION ==============
 
 #[test]
-fn payment_approval_may_precede_execution_approval() {
-    // Frame 0: a paymaster VERIFY frame that calls APPROVE(APPROVE_PAYMENT) — scope 1.
-    // This happens BEFORE the sender has called APPROVE(APPROVE_EXECUTION).
-    // Pre-fix: the sender_approved precondition causes frame 0 to revert ->
-    //          VERIFY revert -> tx invalid (Err).
-    // Post-fix: no such precondition; frame 0 sets payer=paymaster, frame 1 sets
-    //           sender_approved, tx is valid with payer=paymaster.
+fn payment_approval_before_execution_approval_reverts() {
+    // EIP-8141: APPROVE_PAYMENT (scope 1) must revert the frame while
+    // sender_approved == false. Frame 0 is a paymaster VERIFY frame calling
+    // APPROVE(APPROVE_PAYMENT) BEFORE the sender has approved execution -> the
+    // frame reverts -> the VERIFY prefix reverts -> the tx is invalid.
     let paymaster = Address::from_low_u64_be(0x9A);
     let stop_ct = Address::from_low_u64_be(0x9B);
     let tx = frame_tx_with_frames(vec![
-        // frame0: paymaster approves PAYMENT first (scope 1).
+        // frame0: paymaster approves PAYMENT first (scope 1) -> must revert.
         verify_frame(paymaster),
         // frame1: sender approves EXECUTION (scope 2).
         verify_frame(FUNDED_SENDER),
@@ -691,13 +689,18 @@ fn payment_approval_may_precede_execution_approval() {
         ),
         (stop_ct, U256::zero(), 0, Bytes::from(vec![0x00u8])), // STOP
     ];
-    let (result, _db) = run_frame_tx(&accounts, tx);
-    let report = result.expect("pay-before-verify ordering must be valid");
-    assert_eq!(
-        report.payer_address,
-        Some(paymaster),
-        "paymaster should be the payer"
+    let (result, db) = run_frame_tx(&accounts, tx);
+    assert!(
+        matches!(
+            result,
+            Err(VMError::TxValidation(
+                ethrex_levm::errors::TxValidationError::InvalidFrameTransaction
+            ))
+        ),
+        "APPROVE_PAYMENT before the sender's execution approval must revert the \
+         frame and invalidate the tx; got {result:?}"
     );
+    assert_db_cache_unchanged(&db, &accounts);
 }
 
 // ==================== SENDER/DEFAULT default code returns success ====================
@@ -1303,7 +1306,7 @@ mod frame_tx_opcode_handler_tests {
         let sig_bytes = Bytes::from(vec![0xFFu8; 65]);
         let sig = FrameSignature {
             scheme: 0x01,
-            signer,
+            signer: Some(signer),
             msg: msg_bytes,
             signature: sig_bytes,
         };
@@ -1325,7 +1328,7 @@ mod frame_tx_opcode_handler_tests {
     fn sigparam_0x00_returns_signer() {
         let ctx = ctx_with_one_signature();
         let sig = ctx.tx.signatures.first().unwrap();
-        let result = address_to_u256(sig.signer);
+        let result = address_to_u256(sig.signer.unwrap());
         let mut expected = [0u8; 32];
         expected[12..].copy_from_slice(Address::from_low_u64_be(0xABCDEF).as_bytes());
         assert_eq!(result, U256::from_big_endian(&expected));
@@ -1354,8 +1357,9 @@ mod frame_tx_opcode_handler_tests {
     fn sigparam_0x02_empty_msg_returns_zero() {
         let signer = Address::from_low_u64_be(0x1234);
         let sig = FrameSignature {
-            scheme: 0x00,
-            signer,
+            // SECP256K1 (scheme 1); scheme 0 is now ARBITRARY (requires empty signer).
+            scheme: 0x01,
+            signer: Some(signer),
             msg: Bytes::new(),
             signature: Bytes::from(vec![0xAAu8; 65]),
         };
@@ -2514,11 +2518,13 @@ mod frame_validation_prefix_tests {
         }
     }
 
-    /// A deploy frame that leaves the sender codeless, followed by a pay frame
-    /// that DOES establish a payer (via a paymaster's APPROVE_PAYMENT code), must
-    /// fail validation with `DeployInstalledNoCode`.
+    /// A deploy-only+pay prefix (no sender execution approval) whose pay frame
+    /// calls APPROVE_PAYMENT while `sender_approved == false` must fail
+    /// validation: EIP-8141 reverts the premature payment approval, so the prefix
+    /// is rejected with "validation prefix frame reverted" — this fires before the
+    /// deploy-leaves-sender-codeless check is reached.
     #[test]
-    fn deploy_leaving_sender_codeless_fails_validation() {
+    fn prefix_with_payment_before_execution_approval_is_rejected() {
         let sender = addr(0xDEAD01);
         let paymaster = addr(0xBEEF01);
         let frames = vec![
@@ -2548,12 +2554,12 @@ mod frame_validation_prefix_tests {
         .expect("simulation runs");
         assert!(
             !outcome.passed,
-            "a deploy frame leaving the sender codeless must fail validation"
+            "a pay frame approving payment before the sender approves execution must fail validation"
         );
         assert_eq!(
             outcome.violation.as_deref(),
-            Some("DeployInstalledNoCode"),
-            "the failure must be DeployInstalledNoCode, got {:?}",
+            Some("validation prefix frame reverted"),
+            "the failure must be the payment-ordering revert, got {:?}",
             outcome.violation
         );
     }
@@ -2697,7 +2703,10 @@ mod frame_sig_validation_tests {
     use ethrex_common::types::Fork;
     use ethrex_common::{
         Address, H256,
-        types::{FRAME_SIG_SCHEME_P256, FRAME_SIG_SCHEME_SECP256K1, FrameSignature},
+        types::{
+            FRAME_SIG_SCHEME_ARBITRARY, FRAME_SIG_SCHEME_P256, FRAME_SIG_SCHEME_SECP256K1,
+            FrameSignature,
+        },
     };
     use ethrex_levm::vm::{frame_signatures_are_low_s, validate_frame_signatures};
 
@@ -2708,7 +2717,7 @@ mod frame_sig_validation_tests {
     fn dummy_sig(scheme: u8, sig_len: usize) -> FrameSignature {
         FrameSignature {
             scheme,
-            signer: Address::from_low_u64_be(0xBEEF),
+            signer: Some(Address::from_low_u64_be(0xBEEF)),
             msg: Bytes::new(),
             signature: Bytes::from(vec![0u8; sig_len]),
         }
@@ -2742,7 +2751,7 @@ mod frame_sig_validation_tests {
         bytes[33..65].copy_from_slice(s);
         FrameSignature {
             scheme: FRAME_SIG_SCHEME_SECP256K1,
-            signer: Address::from_low_u64_be(0xBEEF),
+            signer: Some(Address::from_low_u64_be(0xBEEF)),
             msg: Bytes::new(),
             signature: Bytes::from(bytes),
         }
@@ -2754,7 +2763,7 @@ mod frame_sig_validation_tests {
         bytes[32..64].copy_from_slice(s);
         FrameSignature {
             scheme: FRAME_SIG_SCHEME_P256,
-            signer: Address::from_low_u64_be(0xBEEF),
+            signer: Some(Address::from_low_u64_be(0xBEEF)),
             msg: Bytes::new(),
             signature: Bytes::from(bytes),
         }
@@ -2796,6 +2805,7 @@ mod frame_sig_validation_tests {
         assert!(validate_frame_signatures(
             &[],
             H256::zero(),
+            Address::zero(),
             hegota(),
             &ethrex_crypto::NativeCrypto
         ));
@@ -2807,6 +2817,7 @@ mod frame_sig_validation_tests {
         assert!(!validate_frame_signatures(
             &[sig],
             H256::zero(),
+            Address::zero(),
             hegota(),
             &ethrex_crypto::NativeCrypto
         ));
@@ -2818,6 +2829,7 @@ mod frame_sig_validation_tests {
         assert!(!validate_frame_signatures(
             &[sig],
             H256::zero(),
+            Address::zero(),
             hegota(),
             &ethrex_crypto::NativeCrypto
         ));
@@ -2829,6 +2841,45 @@ mod frame_sig_validation_tests {
         assert!(!validate_frame_signatures(
             &[sig],
             H256::zero(),
+            Address::zero(),
+            hegota(),
+            &ethrex_crypto::NativeCrypto
+        ));
+    }
+
+    #[test]
+    fn arbitrary_empty_signer_is_valid_and_low_s() {
+        // ARBITRARY (scheme 0): no protocol crypto; signer must be empty; any
+        // signature bytes are accepted and low-s malleability does not apply.
+        let sig = FrameSignature {
+            scheme: FRAME_SIG_SCHEME_ARBITRARY,
+            signer: None,
+            msg: Bytes::new(),
+            signature: Bytes::from(vec![0xAAu8; 10]),
+        };
+        assert!(validate_frame_signatures(
+            std::slice::from_ref(&sig),
+            H256::zero(),
+            Address::zero(),
+            hegota(),
+            &ethrex_crypto::NativeCrypto
+        ));
+        assert!(frame_signatures_are_low_s(&[sig]));
+    }
+
+    #[test]
+    fn arbitrary_with_signer_is_invalid() {
+        // Per EIP-8141 an ARBITRARY signature MUST NOT name a signer.
+        let sig = FrameSignature {
+            scheme: FRAME_SIG_SCHEME_ARBITRARY,
+            signer: Some(Address::from_low_u64_be(0xBEEF)),
+            msg: Bytes::new(),
+            signature: Bytes::from(vec![0xAAu8; 10]),
+        };
+        assert!(!validate_frame_signatures(
+            &[sig],
+            H256::zero(),
+            Address::zero(),
             hegota(),
             &ethrex_crypto::NativeCrypto
         ));
@@ -2838,13 +2889,14 @@ mod frame_sig_validation_tests {
     fn explicit_zero_32byte_msg_is_invalid() {
         let sig = FrameSignature {
             scheme: FRAME_SIG_SCHEME_SECP256K1,
-            signer: Address::from_low_u64_be(0xBEEF),
+            signer: Some(Address::from_low_u64_be(0xBEEF)),
             msg: Bytes::from(vec![0u8; 32]),
             signature: Bytes::from(vec![0u8; 65]),
         };
         assert!(!validate_frame_signatures(
             &[sig],
             H256::zero(),
+            Address::zero(),
             hegota(),
             &ethrex_crypto::NativeCrypto
         ));
@@ -2854,13 +2906,14 @@ mod frame_sig_validation_tests {
     fn msg_len_not_0_or_32_is_invalid() {
         let sig = FrameSignature {
             scheme: FRAME_SIG_SCHEME_SECP256K1,
-            signer: Address::from_low_u64_be(0xBEEF),
+            signer: Some(Address::from_low_u64_be(0xBEEF)),
             msg: Bytes::from(vec![0xAAu8; 16]),
             signature: Bytes::from(vec![0u8; 65]),
         };
         assert!(!validate_frame_signatures(
             &[sig],
             H256::zero(),
+            Address::zero(),
             hegota(),
             &ethrex_crypto::NativeCrypto
         ));
@@ -2903,7 +2956,7 @@ mod frame_sig_validation_tests {
 
         let valid_sig = FrameSignature {
             scheme: FRAME_SIG_SCHEME_SECP256K1,
-            signer: expected_signer,
+            signer: Some(expected_signer),
             msg: Bytes::new(), // empty → use sig_hash
             signature: Bytes::from(sig_bytes.clone()),
         };
@@ -2913,6 +2966,7 @@ mod frame_sig_validation_tests {
             validate_frame_signatures(
                 std::slice::from_ref(&valid_sig),
                 msg_hash,
+                Address::zero(),
                 hegota(),
                 &ethrex_crypto::NativeCrypto
             ),
@@ -2922,17 +2976,46 @@ mod frame_sig_validation_tests {
         // Tampered signer: wrong address → invalid
         let wrong_addr = Address::from_low_u64_be(0xDEAD);
         let tampered = FrameSignature {
-            signer: wrong_addr,
+            signer: Some(wrong_addr),
             ..valid_sig.clone()
         };
         assert!(
             !validate_frame_signatures(
                 &[tampered],
                 msg_hash,
+                Address::zero(),
                 hegota(),
                 &ethrex_crypto::NativeCrypto
             ),
             "wrong signer should fail"
+        );
+
+        // Empty signer (None) resolves to tx.sender: valid iff sender == recovered.
+        let empty_signer_sig = FrameSignature {
+            scheme: FRAME_SIG_SCHEME_SECP256K1,
+            signer: None,
+            msg: Bytes::new(),
+            signature: Bytes::from(sig_bytes.clone()),
+        };
+        assert!(
+            validate_frame_signatures(
+                std::slice::from_ref(&empty_signer_sig),
+                msg_hash,
+                expected_signer,
+                hegota(),
+                &ethrex_crypto::NativeCrypto
+            ),
+            "empty signer must resolve to tx.sender and validate when sender == recovered"
+        );
+        assert!(
+            !validate_frame_signatures(
+                std::slice::from_ref(&empty_signer_sig),
+                msg_hash,
+                wrong_addr,
+                hegota(),
+                &ethrex_crypto::NativeCrypto
+            ),
+            "empty signer resolving to a different tx.sender must fail"
         );
 
         // Wrong hash: valid sig but different sig_hash → invalid
@@ -2941,6 +3024,7 @@ mod frame_sig_validation_tests {
             !validate_frame_signatures(
                 &[valid_sig],
                 other_hash,
+                Address::zero(),
                 hegota(),
                 &ethrex_crypto::NativeCrypto
             ),
@@ -2954,7 +3038,7 @@ mod frame_sig_validation_tests {
         // The signer derivation check fires before the curve verification.
         let sig = FrameSignature {
             scheme: FRAME_SIG_SCHEME_P256,
-            signer: Address::from_low_u64_be(0xDEAD),
+            signer: Some(Address::from_low_u64_be(0xDEAD)),
             msg: Bytes::new(),
             signature: Bytes::from(vec![0xAAu8; 128]),
         };
@@ -2963,6 +3047,7 @@ mod frame_sig_validation_tests {
             !validate_frame_signatures(
                 &[sig],
                 H256::zero(),
+                Address::zero(),
                 hegota(),
                 &ethrex_crypto::NativeCrypto
             ),
@@ -3029,7 +3114,7 @@ mod frame_sig_validation_tests {
 
         let valid_sig = FrameSignature {
             scheme: FRAME_SIG_SCHEME_P256,
-            signer,
+            signer: Some(signer),
             // Explicit 32-byte msg: sig_hash arg to validate_frame_signatures
             // is irrelevant for this entry.
             msg: Bytes::copy_from_slice(&digest),
@@ -3041,6 +3126,7 @@ mod frame_sig_validation_tests {
             validate_frame_signatures(
                 std::slice::from_ref(&valid_sig),
                 H256::zero(),
+                Address::zero(),
                 hegota(),
                 &ethrex_crypto::NativeCrypto
             ),
@@ -3058,6 +3144,7 @@ mod frame_sig_validation_tests {
             !validate_frame_signatures(
                 &[tampered_r],
                 H256::zero(),
+                Address::zero(),
                 hegota(),
                 &ethrex_crypto::NativeCrypto
             ),
@@ -3066,13 +3153,14 @@ mod frame_sig_validation_tests {
 
         // Wrong signer: signer-derivation check fires.
         let wrong_signer = FrameSignature {
-            signer: Address::from_low_u64_be(0xDEAD),
+            signer: Some(Address::from_low_u64_be(0xDEAD)),
             ..valid_sig
         };
         assert!(
             !validate_frame_signatures(
                 &[wrong_signer],
                 H256::zero(),
+                Address::zero(),
                 hegota(),
                 &ethrex_crypto::NativeCrypto
             ),

@@ -3333,6 +3333,7 @@ impl Blockchain {
             if !ethrex_vm::validate_frame_signatures(
                 &frame_tx.signatures,
                 sig_hash,
+                frame_tx.sender,
                 config.fork(header.timestamp),
                 &NativeCrypto,
             ) {

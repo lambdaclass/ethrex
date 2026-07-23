@@ -718,10 +718,13 @@ pub struct VM<'a> {
 pub fn validate_frame_signatures(
     signatures: &[ethrex_common::types::FrameSignature],
     sig_hash: ethrex_common::H256,
+    sender: ethrex_common::Address,
     fork: Fork,
     crypto: &dyn Crypto,
 ) -> bool {
-    use ethrex_common::types::{FRAME_SIG_SCHEME_P256, FRAME_SIG_SCHEME_SECP256K1};
+    use ethrex_common::types::{
+        FRAME_SIG_SCHEME_ARBITRARY, FRAME_SIG_SCHEME_P256, FRAME_SIG_SCHEME_SECP256K1,
+    };
     for sig in signatures {
         // Resolve the signed message.
         let msg: [u8; 32] = match sig.msg.len() {
@@ -769,7 +772,12 @@ pub fn validate_frame_signatures(
                     return false;
                 }
                 let recovered = ethrex_common::Address::from_slice(&result[12..]);
-                if recovered == ethrex_common::Address::zero() || recovered != sig.signer {
+                if recovered == ethrex_common::Address::zero() {
+                    return false;
+                }
+                // Per EIP-8141, an absent signer resolves to tx.sender (used for
+                // introspection too); the recovered key must equal the resolved signer.
+                if recovered != sig.signer.unwrap_or(sender) {
                     return false;
                 }
             }
@@ -786,7 +794,9 @@ pub fn validate_frame_signatures(
                 pk.extend_from_slice(qx);
                 pk.extend_from_slice(qy);
                 let h = ethrex_crypto::keccak::keccak_hash(&pk);
-                if ethrex_common::Address::from_slice(&h[12..]) != sig.signer {
+                // Per EIP-8141, an absent signer resolves to tx.sender (used for
+                // introspection too); the derived key must equal the resolved signer.
+                if ethrex_common::Address::from_slice(&h[12..]) != sig.signer.unwrap_or(sender) {
                     return false;
                 }
                 let mut calldata = vec![0u8; 160];
@@ -804,6 +814,13 @@ pub fn validate_frame_signatures(
                     return false;
                 };
                 if result.len() != 32 || result[31] != 1 {
+                    return false;
+                }
+            }
+            FRAME_SIG_SCHEME_ARBITRARY => {
+                // ARBITRARY: no protocol crypto; the signer must be empty. A
+                // custom verifier reads the raw bytes via SIGPARAM 0x04.
+                if sig.signer.is_some() {
                     return false;
                 }
             }
@@ -832,7 +849,9 @@ pub fn validate_frame_signatures(
     reason = "signature length is checked before each fixed-offset slice"
 )]
 pub fn frame_signatures_are_low_s(signatures: &[ethrex_common::types::FrameSignature]) -> bool {
-    use ethrex_common::types::{FRAME_SIG_SCHEME_P256, FRAME_SIG_SCHEME_SECP256K1};
+    use ethrex_common::types::{
+        FRAME_SIG_SCHEME_ARBITRARY, FRAME_SIG_SCHEME_P256, FRAME_SIG_SCHEME_SECP256K1,
+    };
     // secp256k1n/2 = 0x7fffffffffffffffffffffffffffffff5d576e7357a4501ddfe92f46681b20a0
     const SECP256K1_N_HALF: [u8; 32] = [
         0x7f, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
@@ -863,6 +882,8 @@ pub fn frame_signatures_are_low_s(signatures: &[ethrex_common::types::FrameSigna
                     return false;
                 }
             }
+            // ARBITRARY carries no ECDSA `s`, so low-s malleability does not apply.
+            FRAME_SIG_SCHEME_ARBITRARY => {}
             _ => return false,
         }
     }
@@ -1613,6 +1634,7 @@ impl<'a> VM<'a> {
         if !validate_frame_signatures(
             &frame_tx.signatures,
             sig_hash,
+            frame_tx.sender,
             self.env.config.fork,
             self.crypto,
         ) {
@@ -2383,6 +2405,7 @@ impl<'a> VM<'a> {
         if !validate_frame_signatures(
             &frame_tx.signatures,
             sig_hash,
+            frame_tx.sender,
             self.env.config.fork,
             self.crypto,
         ) {
