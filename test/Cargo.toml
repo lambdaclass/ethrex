@@ -59,10 +59,24 @@ ethrex-l2.workspace = true
 ethrex-l2-rpc.workspace = true
 reqwest.workspace = true
 tokio-util.workspace = true
+criterion = { version = "0.5.1", features = ["html_reports"] }
 
 [[test]]
 name = "ethrex_tests"
 path = "tests/tests.rs"
+
+# Temporary keccak/trie perf benches (see issue #6947). Kept here rather than in
+# the production crates so they don't add a criterion dev-dep to ethrex-crypto /
+# ethrex-trie.
+[[bench]]
+name = "keccak"
+path = "benches/keccak.rs"
+harness = false
+
+[[bench]]
+name = "trie_root"
+path = "benches/trie_root.rs"
+harness = false
 
 [lints]
 workspace = true

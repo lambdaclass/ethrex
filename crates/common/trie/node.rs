@@ -264,39 +264,33 @@ impl NodeRef {
         }
     }
 
+    /// Hash every dirty node of the subtrie rooted here and collect their
+    /// `(path, encoding)` entries (plus leaf flat key/values) into `acc`.
+    ///
+    /// Dirty nodes are hashed in level order, deepest first, batching each depth
+    /// through [`Crypto::keccak256_batch`] so the 4-way SIMD lanes fill across
+    /// the whole level (see [`batch_commit_subtrie`]). To keep that batching
+    /// cache-resident regardless of trie size, the work is bounded by
+    /// [`commit_dirty`]: subtrees larger than a cache-sized cap are split by
+    /// recursing into children first, so a huge trie is committed as many small
+    /// cache-resident batched subtries rather than one level-order sweep over
+    /// the whole heap. A node whose hash is already memoized is clean and is
+    /// skipped — the memoized `OnceLock` is the dirtiness marker.
     pub fn commit(
-        &mut self,
+        &self,
         path: Nibbles,
         acc: &mut Vec<(Nibbles, Vec<u8>)>,
         crypto: &dyn Crypto,
     ) -> NodeHash {
-        match *self {
-            NodeRef::Node(ref mut node, ref mut hash) => {
+        match self {
+            NodeRef::Node(_, hash) => {
                 if let Some(hash) = hash.get() {
                     return *hash;
                 }
-                match Arc::make_mut(node) {
-                    Node::Branch(node) => {
-                        for (choice, node) in &mut node.choices.iter_mut().enumerate() {
-                            node.commit(path.append_new(choice as u8), acc, crypto);
-                        }
-                    }
-                    Node::Extension(node) => {
-                        node.child.commit(path.concat(&node.prefix), acc, crypto);
-                    }
-                    Node::Leaf(_) => {}
-                }
-                let mut buf = Vec::new();
-                node.encode(&mut buf);
-                let hash = *hash.get_or_init(|| NodeHash::from_encoded(&buf, crypto));
-                if let Node::Leaf(leaf) = node.as_ref() {
-                    acc.push((path.concat(&leaf.partial), leaf.value.clone()));
-                }
-                acc.push((path, buf));
-
-                hash
+                commit_dirty(self, path, acc, crypto, BATCH_SUBTREE_CAP);
+                *hash.get().expect("commit_dirty hashes the root node")
             }
-            NodeRef::Hash(hash) => hash,
+            NodeRef::Hash(hash) => *hash,
         }
     }
 
@@ -530,16 +524,16 @@ impl Node {
 
     /// Recursively memoizes the hashes of all nodes of the subtrie that has
     /// `self` as root (post-order traversal)
+    /// Recursively memoizes the hashes of all descendant nodes of `self`.
+    ///
+    /// Nodes are hashed in level order, deepest first: every node at a given
+    /// depth is mutually independent (a node's hash depends only on its
+    /// children, which are strictly deeper), so a whole level is hashed in one
+    /// batched keccak call. This fills the 4-way SIMD lanes far better than
+    /// hashing a single branch's ≤16 children, and reuses `buf` as a single
+    /// encoding arena so there is no per-node allocation.
     pub fn memoize_hashes(&self, buf: &mut Vec<u8>, crypto: &dyn Crypto) {
-        match self {
-            Node::Branch(n) => {
-                for child in &n.choices {
-                    child.memoize_hashes(buf, crypto);
-                }
-            }
-            Node::Extension(n) => n.child.memoize_hashes(buf, crypto),
-            _ => {}
-        }
+        batch_memoize_subtrie(self, buf, crypto);
     }
 
     /// Recursively encodes all embedded nodes of the subtrie that has
@@ -565,6 +559,284 @@ impl Node {
 
         encoded.push(self.encode_to_vec());
         Ok(())
+    }
+}
+
+/// Group every unhashed descendant `NodeRef::Node` of `node` by depth
+/// (`node`'s direct children are depth 0). Subtrees whose root already carries a
+/// memoized hash are skipped entirely.
+fn collect_unhashed_by_depth<'a>(
+    node: &'a Node,
+    depth: usize,
+    by_depth: &mut Vec<Vec<&'a NodeRef>>,
+) {
+    let children: &[NodeRef] = match node {
+        Node::Branch(n) => &n.choices,
+        Node::Extension(n) => std::slice::from_ref(&n.child),
+        Node::Leaf(_) => return,
+    };
+    if by_depth.len() <= depth {
+        by_depth.resize_with(depth + 1, Vec::new);
+    }
+    for child in children {
+        if let NodeRef::Node(child_node, hash) = child
+            && hash.get().is_none()
+        {
+            by_depth[depth].push(child);
+            collect_unhashed_by_depth(child_node, depth + 1, by_depth);
+        }
+    }
+}
+
+/// Memoize the hashes of all descendants of `root` in level order, deepest
+/// first, batching each level through [`Crypto::keccak256_batch`].
+///
+/// Correctness relies on the depth ordering: when a level is encoded, every
+/// child hash it embeds was memoized by an earlier (deeper) level, so
+/// `BranchNode`/`ExtensionNode` encoding reads cached hashes and never triggers
+/// a fallback keccak. Encodings under 32 bytes inline exactly as
+/// [`NodeHash::from_encoded`] would.
+fn batch_memoize_subtrie(root: &Node, buf: &mut Vec<u8>, crypto: &dyn Crypto) {
+    let mut by_depth: Vec<Vec<&NodeRef>> = Vec::new();
+    collect_unhashed_by_depth(root, 0, &mut by_depth);
+
+    let mut ranges: Vec<(usize, usize)> = Vec::new();
+    for level in by_depth.iter().rev() {
+        buf.clear();
+        ranges.clear();
+        for &node_ref in level {
+            if let NodeRef::Node(node, _) = node_ref {
+                let start = buf.len();
+                node.encode(buf);
+                ranges.push((start, buf.len() - start));
+            }
+        }
+
+        // Hash the 32+ byte encodings as one batch; shorter ones inline.
+        let batch_inputs: Vec<&[u8]> = ranges
+            .iter()
+            .filter(|&&(_, len)| len >= 32)
+            .map(|&(start, len)| &buf[start..start + len])
+            .collect();
+        let mut hashed = crypto.keccak256_batch(&batch_inputs).into_iter();
+
+        for (&node_ref, &(start, len)) in level.iter().zip(ranges.iter()) {
+            if let NodeRef::Node(_, hash) = node_ref {
+                let node_hash = if len >= 32 {
+                    NodeHash::from_slice(&hashed.next().expect("one hash per 32+ byte encoding"))
+                } else {
+                    NodeHash::from_slice(&buf[start..start + len])
+                };
+                let _ = hash.set(node_hash);
+            }
+        }
+    }
+}
+
+/// Group every dirty (unhashed) node of the subtrie rooted at `node_ref` by
+/// depth (the root is depth 0), recording each node's trie path. Subtrees whose
+/// root already carries a memoized hash are clean and skipped; child paths are
+/// only built for nodes actually descended into.
+fn collect_dirty_by_depth<'a>(
+    node_ref: &'a NodeRef,
+    path: Nibbles,
+    depth: usize,
+    by_depth: &mut Vec<Vec<(Nibbles, &'a NodeRef)>>,
+) {
+    let NodeRef::Node(node, hash) = node_ref else {
+        return;
+    };
+    if hash.get().is_some() {
+        return;
+    }
+    if by_depth.len() <= depth {
+        by_depth.resize_with(depth + 1, Vec::new);
+    }
+    match node.as_ref() {
+        Node::Branch(branch) => {
+            for (choice, child) in branch.choices.iter().enumerate() {
+                if matches!(child, NodeRef::Node(_, h) if h.get().is_none()) {
+                    collect_dirty_by_depth(
+                        child,
+                        path.append_new(choice as u8),
+                        depth + 1,
+                        by_depth,
+                    );
+                }
+            }
+        }
+        Node::Extension(ext) => {
+            if matches!(&ext.child, NodeRef::Node(_, h) if h.get().is_none()) {
+                collect_dirty_by_depth(&ext.child, path.concat(&ext.prefix), depth + 1, by_depth);
+            }
+        }
+        Node::Leaf(_) => {}
+    }
+    by_depth[depth].push((path, node_ref));
+}
+
+/// Dirty subtrees with at most this many nodes are committed as one batched
+/// level-order sweep ([`batch_commit_subtrie`]); larger ones are split. The cap
+/// keeps each sweep's working set (the `by_depth` collection, the encoding
+/// arena, the batch buffers) cache-resident, so a large trie is committed as
+/// many small batched subtries instead of one heap-wide sweep whose cache
+/// misses would erode the SIMD win. Sized (empirically) above typical per-block
+/// / per-shard commits so those are batched whole and unaffected, while very
+/// large tries (e.g. a monolithic state-trie rebuild) are split to bound the
+/// working set.
+const BATCH_SUBTREE_CAP: usize = 16384;
+
+/// Commit the dirty subtrie rooted at `node_ref`, keeping each batched sweep
+/// cache-resident: if the subtree is small enough, batch it wholesale;
+/// otherwise recurse into its dirty children first (each a smaller subtree) and
+/// then hash `node_ref` itself as a single node.
+fn commit_dirty(
+    node_ref: &NodeRef,
+    path: Nibbles,
+    acc: &mut Vec<(Nibbles, Vec<u8>)>,
+    crypto: &dyn Crypto,
+    cap: usize,
+) {
+    let NodeRef::Node(node, hash) = node_ref else {
+        return;
+    };
+    if hash.get().is_some() {
+        return;
+    }
+    if dirty_subtree_within(node_ref, cap) {
+        batch_commit_subtrie(node_ref, path, acc, crypto);
+        return;
+    }
+
+    // Subtree too large to batch cache-resident: split it. A leaf is a size-1
+    // subtree so it is always batched above; only branches/extensions reach here.
+    match node.as_ref() {
+        Node::Branch(branch) => {
+            for (choice, child) in branch.choices.iter().enumerate() {
+                if matches!(child, NodeRef::Node(_, h) if h.get().is_none()) {
+                    commit_dirty(child, path.append_new(choice as u8), acc, crypto, cap);
+                }
+            }
+        }
+        Node::Extension(ext) => {
+            if matches!(&ext.child, NodeRef::Node(_, h) if h.get().is_none()) {
+                commit_dirty(&ext.child, path.concat(&ext.prefix), acc, crypto, cap);
+            }
+        }
+        Node::Leaf(_) => {}
+    }
+
+    // Children are now hashed; hash and emit this node (single, scalar).
+    let mut buf = Vec::new();
+    node.encode(&mut buf);
+    let node_hash = NodeHash::from_encoded(&buf, crypto);
+    let _ = hash.set(node_hash);
+    if let Node::Leaf(leaf) = node.as_ref() {
+        acc.push((path.concat(&leaf.partial), leaf.value.clone()));
+    }
+    acc.push((path, buf));
+}
+
+/// True if the dirty subtree rooted at `node_ref` has at most `cap` nodes.
+/// Walks at most `cap + 1` nodes (stops as soon as the budget is exceeded), so
+/// it is cheap even for very large subtrees.
+fn dirty_subtree_within(node_ref: &NodeRef, cap: usize) -> bool {
+    fn walk(node_ref: &NodeRef, budget: &mut usize) -> bool {
+        let NodeRef::Node(node, hash) = node_ref else {
+            return true;
+        };
+        if hash.get().is_some() {
+            return true;
+        }
+        if *budget == 0 {
+            return false;
+        }
+        *budget -= 1;
+        match node.as_ref() {
+            Node::Branch(branch) => {
+                for child in branch.choices.iter() {
+                    if !walk(child, budget) {
+                        return false;
+                    }
+                }
+            }
+            Node::Extension(ext) => {
+                if !walk(&ext.child, budget) {
+                    return false;
+                }
+            }
+            Node::Leaf(_) => {}
+        }
+        true
+    }
+    let mut budget = cap;
+    walk(node_ref, &mut budget)
+}
+
+/// Commit the subtrie rooted at `root_ref`: hash every dirty node in level
+/// order, deepest first, batching each level through [`Crypto::keccak256_batch`],
+/// and push each node's `(path, encoding)` (and, for leaves, the flat
+/// key/value) into `acc`.
+///
+/// Deepest-first ordering guarantees a node's children are memoized before it
+/// is encoded, so `BranchNode`/`ExtensionNode` encoding reads cached child
+/// hashes and never triggers a fallback keccak. Node encodings live in a single
+/// reused `arena` (offset/len ranges), and each `acc` entry is an exact-size
+/// copy — no per-node growth reallocation.
+fn batch_commit_subtrie(
+    root_ref: &NodeRef,
+    root_path: Nibbles,
+    acc: &mut Vec<(Nibbles, Vec<u8>)>,
+    crypto: &dyn Crypto,
+) {
+    let mut by_depth: Vec<Vec<(Nibbles, &NodeRef)>> = Vec::new();
+    collect_dirty_by_depth(root_ref, root_path, 0, &mut by_depth);
+
+    // Process each level in bounded windows so the transient arena / batch
+    // buffers stay cache-resident: a full leaf level of a large trie would
+    // otherwise make multi-MB temporaries and thrash cache, erasing the win.
+    const WINDOW: usize = 512;
+    let mut arena: Vec<u8> = Vec::new();
+    let mut ranges: Vec<(usize, usize)> = Vec::new();
+    // Consume `by_depth` so each node's collected path is *moved* into `acc`
+    // rather than cloned — one `Nibbles` allocation per node, matching the
+    // scalar commit (the extra clone was the main source of run-to-run jitter).
+    for mut level in by_depth.into_iter().rev() {
+        for window in level.chunks_mut(WINDOW) {
+            arena.clear();
+            ranges.clear();
+            for (_, node_ref) in window.iter() {
+                if let NodeRef::Node(node, _) = node_ref {
+                    let start = arena.len();
+                    node.encode(&mut arena);
+                    ranges.push((start, arena.len() - start));
+                }
+            }
+
+            let batch_inputs: Vec<&[u8]> = ranges
+                .iter()
+                .filter(|&&(_, len)| len >= 32)
+                .map(|&(start, len)| &arena[start..start + len])
+                .collect();
+            let mut hashed = crypto.keccak256_batch(&batch_inputs).into_iter();
+
+            for ((node_path, node_ref), &(start, len)) in window.iter_mut().zip(ranges.iter()) {
+                let NodeRef::Node(node, hash) = *node_ref else {
+                    continue;
+                };
+                let encoding = &arena[start..start + len];
+                let node_hash = if len >= 32 {
+                    NodeHash::from_slice(&hashed.next().expect("one hash per 32+ byte encoding"))
+                } else {
+                    NodeHash::from_slice(encoding)
+                };
+                let _ = hash.set(node_hash);
+                if let Node::Leaf(leaf) = node.as_ref() {
+                    acc.push((node_path.concat(&leaf.partial), leaf.value.clone()));
+                }
+                acc.push((std::mem::take(node_path), encoding.to_vec()));
+            }
+        }
     }
 }
 
