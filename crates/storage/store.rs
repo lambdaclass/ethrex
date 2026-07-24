@@ -5071,10 +5071,12 @@ mod state_history_tests {
         assert!(!entry.account_trie_diff.is_empty());
     }
 
-    /// `batch_mode = true` SHALL skip the journal entirely. To actually exercise the
-    /// gating we push enough batches to trigger a commit under
-    /// `BATCH_COMMIT_THRESHOLD = 4`, then verify no STATE_HISTORY entry materializes
-    /// despite the commit happening.
+    /// `batch_mode = true` SHALL skip the journal entirely. To exercise the gating
+    /// (rather than pass vacuously because nothing commits) we drive a real commit
+    /// the same way `journal_entry_written_per_block_in_regular_mode` does — advance
+    /// the canonical safe-commit root so block 1's layer becomes committable, then
+    /// store block 2 — but with `batch_mode = true`. The commit fires, yet no
+    /// STATE_HISTORY entry may materialize for the committed block.
     #[test]
     fn journal_skipped_in_batch_mode() {
         let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::open().unwrap());
@@ -5087,27 +5089,39 @@ mod state_history_tests {
         )
         .unwrap();
 
-        let mut prev_hash = H256::zero();
-        for n in 1..=5u64 {
-            let state_root = H256::repeat_byte(0xa0 | (n as u8));
-            let block = make_block(n, prev_hash, state_root);
-            prev_hash = block.hash();
-            store
-                .store_block_updates(UpdateBatch {
-                    account_updates: vec![(
-                        Nibbles::from_raw(&[n as u8], false),
-                        vec![0xde, 0xad, n as u8],
-                    )],
-                    storage_updates: vec![],
-                    blocks: vec![block],
-                    receipts: vec![],
-                    code_updates: vec![],
-                    batch_mode: true,
-                })
-                .unwrap();
-        }
+        let state_root_1 = H256::repeat_byte(0x11);
+        let block1 = make_block(1, H256::zero(), state_root_1);
+        let block1_hash = block1.hash();
+        store
+            .store_block_updates(UpdateBatch {
+                account_updates: vec![(Nibbles::from_raw(&[0x00, 0x01], false), vec![0xab, 0xcd])],
+                storage_updates: vec![],
+                blocks: vec![block1],
+                receipts: vec![],
+                code_updates: vec![],
+                batch_mode: true,
+            })
+            .unwrap();
 
-        for n in 1..=5u64 {
+        // Advance the safe-commit root to block 1's state root, then store block 2 in
+        // batch mode: the canonical gate finds block 1's layer committable and flushes
+        // it (batch mode acks after the flush, so the commit has happened on return).
+        store.set_safe_commit_root(state_root_1).unwrap();
+        let state_root_2 = H256::repeat_byte(0x22);
+        let block2 = make_block(2, block1_hash, state_root_2);
+        store
+            .store_block_updates(UpdateBatch {
+                account_updates: vec![(Nibbles::from_raw(&[0x00, 0x02], false), vec![0xef, 0x11])],
+                storage_updates: vec![],
+                blocks: vec![block2],
+                receipts: vec![],
+                code_updates: vec![],
+                batch_mode: true,
+            })
+            .unwrap();
+
+        // The commit fired, but batch mode gates the journal: no entry for any block.
+        for n in 1..=2u64 {
             assert_no_journal_entry(&backend, n);
         }
     }
