@@ -72,6 +72,7 @@ pub mod testing;
 mod tracing;
 
 pub mod clients;
+pub mod engine_rest;
 pub mod types;
 pub mod utils;
 pub use clients::{EngineClient, EthClient};

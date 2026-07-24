@@ -11,7 +11,12 @@ repository.workspace = true
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-axum = { features = ["ws"], workspace = true }
+# "http2" is required so `axum::serve` serves HTTP/2 cleartext (h2c) on the
+# authrpc port: the engine REST/SSZ API (execution-apis #793) mandates HTTP/2,
+# and CLs like consensoor connect with h2c prior-knowledge and do NOT fall back
+# to HTTP/1.1. Without this feature h2c serving would only work incidentally via
+# reqwest's feature unification — declare it explicitly so it can't regress.
+axum = { features = ["ws", "http2"], workspace = true }
 tower-http.workspace = true
 serde.workspace = true
 serde_json = "1.0.117"
@@ -47,9 +52,14 @@ spawned-concurrency.workspace = true
 # Used by test_utils to share a single merkleization pool across test contexts.
 rayon.workspace = true
 
-# EIP-8025 dependencies (optional)
-libssz-merkle = { workspace = true, optional = true }
-libssz-types = { workspace = true, optional = true }
+# EIP-8025 dependencies
+libssz = { workspace = true }
+# libssz-merkle provides the `HashTreeRoot` trait used by the SSZ derives
+# in engine_rest/types/. The libssz-derive macros expand to impls that
+# reference this trait, so it must be a direct unconditional dep.
+libssz-merkle = { workspace = true }
+libssz-derive = { workspace = true }
+libssz-types = { workspace = true }
 
 # Clients
 envy = "0.4.2"
@@ -58,8 +68,13 @@ secp256k1.workspace = true
 uuid.workspace = true
 hex-literal = "0.4.1"
 
+http-body-util = "0.1"
+
 [dev-dependencies]
 hex-literal = "0.4.1"
+tower = "0.5"
+criterion = { version = "0.5", features = ["html_reports"] }
+rand = "0.8"
 
 [lib]
 path = "./lib.rs"
@@ -74,3 +89,7 @@ eip-8025 = ["ethrex-blockchain/eip-8025", "ethrex-common/eip-8025"]
 # Exposes the `test_utils` module (test scaffolding) to other crates' test
 # builds. Off by default so it is excluded from the published library.
 test-utils = []
+
+[[bench]]
+name = "engine_transport"
+harness = false
