@@ -217,6 +217,7 @@ impl Trie {
     /// # Returns
     ///
     /// A tuple containing the hash and the list of changes.
+    #[cfg_attr(feature = "hotpath", hotpath::measure(impl_type = "Trie"))]
     pub fn collect_changes_since_last_hash(
         &mut self,
         crypto: &dyn Crypto,

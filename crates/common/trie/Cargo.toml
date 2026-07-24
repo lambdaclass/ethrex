@@ -22,10 +22,12 @@ crossbeam.workspace = true
 rayon.workspace = true
 rustc-hash.workspace = true
 rkyv.workspace = true
+hotpath = { workspace = true, optional = true }
 
 [features]
 default = []
 eip-8025 = []
+hotpath = ["dep:hotpath", "hotpath/hotpath"]
 
 [lib]
 path = "./trie.rs"

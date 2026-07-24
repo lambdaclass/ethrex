@@ -55,6 +55,7 @@ itertools = "0.14.0"
 url.workspace = true
 tracing-appender = "0.2"
 pprof = { version = "0.15", features = ["cpp", "prost-codec", "frame-pointer"], optional = true }
+hotpath = { workspace = true, optional = true }
 
 spawned-rt.workspace = true
 spawned-concurrency.workspace = true
@@ -128,6 +129,13 @@ eip-8025 = ["ethrex-blockchain/eip-8025", "ethrex-rpc/eip-8025"]
 
 perf_opcode_timings = ["ethrex-vm/perf_opcode_timings"]
 cpu_profiling = ["dep:pprof"]
+hotpath = [
+  "dep:hotpath",
+  "hotpath/hotpath",
+  "ethrex-blockchain/hotpath",
+  "ethrex-vm/hotpath",
+]
+hotpath-alloc = ["hotpath", "hotpath/hotpath-alloc"]
 
 [build-dependencies]
 vergen-git2 = { version = "9.1", features = ["rustc"] }

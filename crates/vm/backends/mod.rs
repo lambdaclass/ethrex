@@ -93,6 +93,7 @@ impl Evm {
     ///
     /// Also records and returns the Block Access List (EIP-7928) for Amsterdam+ forks.
     /// The BAL will be `None` for pre-Amsterdam forks.
+    #[cfg_attr(feature = "hotpath", hotpath::measure(impl_type = "Evm"))]
     pub fn execute_block(
         &mut self,
         block: &Block,
@@ -217,6 +218,7 @@ impl Evm {
 
     /// Wraps the [LEVM::get_state_transitions] which gathers the information from a [CacheDB].
     /// The output is `Vec<AccountUpdate>`.
+    #[cfg_attr(feature = "hotpath", hotpath::measure(impl_type = "Evm"))]
     pub fn get_state_transitions(&mut self) -> Result<Vec<AccountUpdate>, EvmError> {
         LEVM::get_state_transitions(&mut self.db)
     }

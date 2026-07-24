@@ -1443,6 +1443,7 @@ impl<'a> VM<'a> {
     }
 
     /// Executes a whole external transaction. Performing validations at the beginning.
+    #[cfg_attr(feature = "hotpath", hotpath::measure(impl_type = "VM"))]
     pub fn execute(&mut self) -> Result<ExecutionReport, VMError> {
         // Detect frame transaction and branch to specialized execution
         if self.tx.tx_type() == TxType::Frame {

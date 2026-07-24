@@ -24,6 +24,7 @@ serde_json = { workspace = true, optional = true }
 url = { workspace = true, optional = true }
 reqwest = { workspace = true, optional = true }
 spawned-concurrency = { workspace = true, optional = true }
+hotpath = { workspace = true, optional = true }
 thiserror.workspace = true
 tracing.workspace = true
 bytes.workspace = true
@@ -47,6 +48,7 @@ secp256k1 = ["ethrex-common/secp256k1", "ethrex-vm/secp256k1", "rayon"]
 c-kzg = ["ethrex-common/c-kzg", "ethrex-vm/c-kzg"]
 metrics = ["ethrex-metrics/transactions"]
 eip-8025 = ["ethrex-common/eip-8025"]
+hotpath = ["dep:hotpath", "hotpath/hotpath", "ethrex-storage/hotpath"]
 testing = []
 
 [lints.clippy]
