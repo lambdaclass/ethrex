@@ -2022,6 +2022,7 @@ impl Store {
                                     &persist_trie_cache,
                                     &persist_fkv_ctl,
                                     bp.parent_state_root,
+                                    bp.wait_for_flush,
                                 )
                             });
                         // BATCH: ack after flush (bounds in-flight batches to ~1),
@@ -4193,11 +4194,16 @@ fn apply_trie_phase1(
 /// Flush and prune the committable trie-layer backlog, bounded by the canonical
 /// safe-commit root (`TrieLayerCache::get_commitable`). No-ops when nothing is
 /// committable (e.g. the safe-commit root has not advanced past the on-disk root).
+///
+/// `is_batch` does not select the commit gate here (this branch always uses the
+/// canonical gate); it is only forwarded to `commit_to_disk`, which journals
+/// state history for live (non-batch) commits exclusively.
 fn commit_trie_if_due(
     backend: &dyn StorageBackend,
     trie_cache: &Arc<RwLock<Arc<TrieLayerCache>>>,
     fkv_ctl: &SyncSender<FKVGeneratorControlMessage>,
     parent_state_root: H256,
+    is_batch: bool,
 ) -> Result<(), StoreError> {
     let trie = trie_cache
         .read()
