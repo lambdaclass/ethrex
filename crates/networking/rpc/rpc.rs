@@ -27,7 +27,7 @@ use crate::eth::client::Config;
 use crate::eth::{
     account::{
         GetBalanceRequest, GetCodeRequest, GetProofRequest, GetStorageAtRequest,
-        GetTransactionCountRequest,
+        GetStorageValuesRequest, GetTransactionCountRequest,
     },
     block::{
         BlockNumberRequest, GetBlobBaseFee, GetBlockByHashRequest, GetBlockByNumberRequest,
@@ -1356,6 +1356,7 @@ pub async fn map_eth_requests(req: &RpcRequest, context: RpcApiContext) -> Resul
         "eth_getBalance" => GetBalanceRequest::call(req, context).await,
         "eth_getCode" => GetCodeRequest::call(req, context).await,
         "eth_getStorageAt" => GetStorageAtRequest::call(req, context).await,
+        "eth_getStorageValues" => GetStorageValuesRequest::call(req, context).await,
         "eth_getBlockTransactionCountByNumber" => {
             GetBlockTransactionCountRequest::call(req, context).await
         }
