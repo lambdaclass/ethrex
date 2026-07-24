@@ -449,6 +449,14 @@ pub struct Options {
         env = "ETHREX_PRECOMPUTE_WITNESSES"
     )]
     pub precompute_witnesses: bool,
+    #[arg(
+        long = "max-reorg-depth",
+        value_name = "MAX_REORG_DEPTH",
+        help = "Optional operator override for the maximum reorg depth. Omit for finality-bounded cap. Set to 0 to disable deep reorgs entirely. Set to d to reject reorgs of depth > d.",
+        help_heading = "Node options",
+        env = "ETHREX_MAX_REORG_DEPTH"
+    )]
+    pub max_reorg_depth: Option<u64>,
 }
 
 impl Options {
@@ -542,6 +550,7 @@ impl Default for Options {
             no_bal_parallel_exec: false,
             no_bal_prefetch: false,
             no_bal_parallel_trie: false,
+            max_reorg_depth: None,
         }
     }
 }
