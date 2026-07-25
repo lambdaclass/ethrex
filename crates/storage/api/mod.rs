@@ -58,6 +58,22 @@ pub trait StorageBackend: Debug + Send + Sync {
     fn flush(&self) -> Result<(), StoreError> {
         Ok(())
     }
+
+    /// Bench-only diagnostic: RocksDB's internal statistics string (cache
+    /// hit/miss counters, compaction stats, etc.), or `None` if the backend
+    /// isn't RocksDB or statistics weren't enabled at open time. Defaults to
+    /// `None` for backends without such statistics (e.g. in-memory).
+    fn statistics_string(&self) -> Option<String> {
+        None
+    }
+
+    /// Bench-only diagnostic: the string value of a RocksDB property (e.g.
+    /// `rocksdb.total-sst-files-size`) for the given column family, or `None`
+    /// if the backend isn't RocksDB or the CF/property doesn't exist. Defaults
+    /// to `None` for backends without per-CF properties (e.g. in-memory).
+    fn cf_property(&self, _cf: &'static str, _property: &str) -> Option<String> {
+        None
+    }
 }
 
 /// Read-only transaction interface.

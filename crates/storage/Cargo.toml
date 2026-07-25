@@ -33,6 +33,9 @@ lru.workspace = true
 default = []
 rocksdb = ["dep:rocksdb"]
 testing = []
+# Bench-only surface (extra Store/backend hooks for the cold_state_bench harness).
+# Deliberately does NOT enable `rocksdb`; the harness passes both explicitly.
+bench-harness = []
 
 [dev-dependencies]
 tempfile.workspace = true
