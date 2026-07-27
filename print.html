@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-1b62f9ec.js";
+            window.path_to_searchindex_js = "searchindex-8fab1a8a.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-586b7da3.js"></script>
@@ -393,15 +393,15 @@ chmod +x ethrex
 <pre><code class="language-sh">curl -L https://github.com/lambdaclass/ethrex/releases/latest/download/ethrex-linux-x86_64 -o ethrex
 </code></pre>
 <h4 id="linux-x86_64-with-gpu-support-for-l2-prover"><a class="header" href="#linux-x86_64-with-gpu-support-for-l2-prover">Linux x86_64 with GPU support (for L2 prover)</a></h4>
-<p>If you want to run an L2 prover with GPU acceleration, download the GPU-enabled binary:</p>
-<pre><code class="language-sh">curl -L https://github.com/lambdaclass/ethrex/releases/latest/download/ethrex-linux-x86_64-gpu -o ethrex
+<p>If you want to run an L2 prover with GPU acceleration, download the GPU-enabled L2 binary:</p>
+<pre><code class="language-sh">curl -L https://github.com/lambdaclass/ethrex/releases/latest/download/ethrex-l2-linux-x86_64-gpu -o ethrex
 </code></pre>
 <h3 id="linux-arm-aarch64"><a class="header" href="#linux-arm-aarch64">Linux ARM (aarch64)</a></h3>
 <pre><code class="language-sh">curl -L https://github.com/lambdaclass/ethrex/releases/latest/download/ethrex-linux-aarch64 -o ethrex
 </code></pre>
 <h4 id="linux-arm-aarch64-with-gpu-support-for-l2-prover"><a class="header" href="#linux-arm-aarch64-with-gpu-support-for-l2-prover">Linux ARM (aarch64) with GPU support (for L2 prover)</a></h4>
-<p>If you want to run an L2 prover with GPU acceleration, download the GPU-enabled binary:</p>
-<pre><code class="language-sh">curl -L https://github.com/lambdaclass/ethrex/releases/latest/download/ethrex-linux-aarch64-gpu -o ethrex
+<p>If you want to run an L2 prover with GPU acceleration, download the GPU-enabled L2 binary:</p>
+<pre><code class="language-sh">curl -L https://github.com/lambdaclass/ethrex/releases/latest/download/ethrex-l2-linux-aarch64-gpu -o ethrex
 </code></pre>
 <h3 id="macos-apple-silicon-aarch64"><a class="header" href="#macos-apple-silicon-aarch64">macOS (Apple Silicon, aarch64)</a></h3>
 <pre><code class="language-sh">curl -L https://github.com/lambdaclass/ethrex/releases/latest/download/ethrex-macos-aarch64 -o ethrex
@@ -577,22 +577,19 @@ cd ethrex
 <tbody>
 <tr><td>mainnet</td><td>1</td><td>snap</td></tr>
 <tr><td>sepolia</td><td>11155111</td><td>snap</td></tr>
-<tr><td>holesky</td><td>17000</td><td>full, snap</td></tr>
 <tr><td>hoodi</td><td>560048</td><td>full, snap</td></tr>
 </tbody>
 </table>
 </div>
-<p>For more information about sync modes please read the <a href="#sync-modes-2">sync modes document</a>. Full syncing is the default, to switch to snap sync use the flag <code>--syncmode snap</code></p>
+<p>These are the only names <code>--network</code> accepts. Any other value is treated as a path to a genesis file, so a network without a preset must be started with <code>--network &lt;genesis.json&gt; --bootnodes &lt;enode,...&gt;</code>.</p>
+<p>For more information about sync modes please read the <a href="#sync-modes-2">sync modes document</a>. Snap syncing is the default; to switch to full sync use the flag <code>--syncmode full</code>. Full sync is not possible on a fresh mainnet or sepolia database, since ethrex only executes post-merge blocks.</p>
 <h2 id="run-an-ethereum-node"><a class="header" href="#run-an-ethereum-node">Run an Ethereum node</a></h2>
 <p>This guide will assume that you already <a href="getting-started/installation">installed ethrex</a> and you know how to set up a <a href="#connecting-to-a-consensus-client">consensus client</a> to communicate with ethrex.</p>
 <p>To sync with mainnet</p>
-<pre><code>ethrex --syncmode snap
+<pre><code>ethrex
 </code></pre>
 <p>To sync with sepolia</p>
-<pre><code>ethrex --network sepolia --syncmode snap
-</code></pre>
-<p>To sync with holesky</p>
-<pre><code>ethrex --network holesky
+<pre><code>ethrex --network sepolia
 </code></pre>
 <p>To sync with hoodi</p>
 <pre><code>ethrex --network hoodi
@@ -625,11 +622,11 @@ docker compose up
 <h2 id="sync-modes"><a class="header" href="#sync-modes">Sync Modes</a></h2>
 <p>Ethrex supports different sync modes for node operation:</p>
 <ul>
+<li><strong>snap</strong> (default): Fast sync using state snapshots (recommended for most users).</li>
 <li><strong>full</strong>: Downloads and verifies the entire chain.</li>
-<li><strong>snap</strong>: Fast sync using state snapshots (recommended for most users).</li>
 </ul>
 <p>Set the sync mode with:</p>
-<pre><code class="language-sh">ethrex --sync &lt;mode&gt;
+<pre><code class="language-sh">ethrex --syncmode &lt;mode&gt;
 </code></pre>
 <h2 id="file-locations"><a class="header" href="#file-locations">File Locations</a></h2>
 <p>By default, ethrex stores its data in:</p>
@@ -2723,7 +2720,7 @@ COMPILE_CONTRACTS=true cargo install --locked --path cmd/ethrex --bin ethrex --f
 </blockquote>
 <div style="break-before: page; page-break-before: always;"></div><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.4/dist/katex.min.css">
 <h1 id="deploying-a-vanilla-ethrex-l2"><a class="header" href="#deploying-a-vanilla-ethrex-l2">Deploying a vanilla ethrex L2</a></h1>
-<p>In this section, we’ll cover how to deploy a vanilla ethrex L2 on a public network such as Holesky, Sepolia, or Mainnet.</p>
+<p>In this section, we’ll cover how to deploy a vanilla ethrex L2 on a public network such as Hoodi, Sepolia, or Mainnet.</p>
 <h2 id="prerequisites-4"><a class="header" href="#prerequisites-4">Prerequisites</a></h2>
 <p>This guide assumes that you have ethrex installed and available in your PATH. If you haven’t installed it yet, follow one of the methods in the Installation Guide. If you want to build the binary from source, refer to the <a href="#building-from-source-skip-if-ethrex-is-already-installed">Building from source</a> section and select the appropriate build option.</p>
 <h2 id="1-deploy-the-contracts"><a class="header" href="#1-deploy-the-contracts">1. Deploy the Contracts</a></h2>
@@ -2821,7 +2818,7 @@ COMPILE_CONTRACTS=true cargo install --locked --path cmd/ethrex --bin ethrex --f
 <p>That’s it! You now have a vanilla ethrex L2 up and running. However, one key component is still missing: state proving. The L2 state is considered final only after a batch execution ZK proof is successfully verified on-chain. Generating these proofs requires running a dedicated prover, which is covered in the Run an ethrex L2 Prover section.</p>
 <div style="break-before: page; page-break-before: always;"></div><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.4/dist/katex.min.css">
 <h1 id="deploying-a-validium-ethrex-l2"><a class="header" href="#deploying-a-validium-ethrex-l2">Deploying a validium ethrex L2</a></h1>
-<p>In this section, we’ll cover how to deploy a validium ethrex L2 on a public network such as Holesky, Sepolia, or Mainnet.</p>
+<p>In this section, we’ll cover how to deploy a validium ethrex L2 on a public network such as Hoodi, Sepolia, or Mainnet.</p>
 <h2 id="prerequisites-5"><a class="header" href="#prerequisites-5">Prerequisites</a></h2>
 <p>This guide assumes that you have ethrex installed and available in your PATH. If you haven’t installed it yet, follow one of the methods in the Installation Guide. If you want to build the binary from source, refer to the <a href="#building-from-source-skip-if-ethrex-is-already-installed">Building from source</a> section and select the appropriate build option.</p>
 <h2 id="1-deploy-the-contracts-1"><a class="header" href="#1-deploy-the-contracts-1">1. Deploy the Contracts</a></h2>
@@ -8473,7 +8470,7 @@ docker build -t ethrex --build-arg PROFILE="release-with-debug-assertions" --bui
 ethrex --network fixtures/genesis/perf-ci.json import  fixtures/blockchain/l2-1k-erc20.rlp
 </code></pre>
 <ul>
-<li>The network argument is common to all ethrex commands. It specifies the genesis file, or a public network like holesky. This is the starting state of the blockchain.</li>
+<li>The network argument is common to all ethrex commands. It specifies the genesis file, or a public network like hoodi. This is the starting state of the blockchain.</li>
 <li>The import command means that this node will not start rpc endpoints or peer to peer communication. It will just read a file, parse the blocks, execute them, and save the EVM state (accounts info and storage) after each execution.</li>
 <li>The file is an RLP encoded file with a list of blocks.</li>
 </ul>
@@ -8842,7 +8839,7 @@ cargo build -p ethrex --release --features cpu_profiling
 <ol>
 <li>
 <p>Start the node as usual:</p>
-<pre><code class="language-bash">./target/release/ethrex --authrpc.jwtsecret ./secrets/jwt.hex --network holesky
+<pre><code class="language-bash">./target/release/ethrex --authrpc.jwtsecret ./secrets/jwt.hex --network hoodi
 </code></pre>
 <p>You should see this log line near startup:</p>
 <pre><code>CPU profiling enabled (1000 Hz), will write profile.pb at shutdown
@@ -11282,7 +11279,7 @@ Options:
 
 Node options:
       --network &lt;GENESIS_FILE_PATH&gt;
-          Alternatively, the name of a known network can be provided instead to use its preset genesis file and include its preset bootnodes. The networks currently supported include holesky, sepolia, hoodi and mainnet. If not specified, defaults to mainnet.
+          Alternatively, the name of a known network can be provided instead to use its preset genesis file and include its preset bootnodes. The networks currently supported include sepolia, hoodi and mainnet. If not specified, defaults to mainnet.
 
           [env: ETHREX_NETWORK=]
 

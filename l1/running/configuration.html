@@ -34,7 +34,7 @@
             const path_to_root = "../../";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "../../searchindex-1b62f9ec.js";
+            window.path_to_searchindex_js = "../../searchindex-8fab1a8a.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../../toc-586b7da3.js"></script>
@@ -182,11 +182,11 @@
 <h2 id="sync-modes"><a class="header" href="#sync-modes">Sync Modes</a></h2>
 <p>Ethrex supports different sync modes for node operation:</p>
 <ul>
+<li><strong>snap</strong> (default): Fast sync using state snapshots (recommended for most users).</li>
 <li><strong>full</strong>: Downloads and verifies the entire chain.</li>
-<li><strong>snap</strong>: Fast sync using state snapshots (recommended for most users).</li>
 </ul>
 <p>Set the sync mode with:</p>
-<pre><code class="language-sh">ethrex --sync &lt;mode&gt;
+<pre><code class="language-sh">ethrex --syncmode &lt;mode&gt;
 </code></pre>
 <h2 id="file-locations"><a class="header" href="#file-locations">File Locations</a></h2>
 <p>By default, ethrex stores its data in:</p>

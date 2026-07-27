@@ -34,7 +34,7 @@
             const path_to_root = "../../";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "../../searchindex-1b62f9ec.js";
+            window.path_to_searchindex_js = "../../searchindex-8fab1a8a.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../../toc-586b7da3.js"></script>
@@ -188,22 +188,19 @@
 <tbody>
 <tr><td>mainnet</td><td>1</td><td>snap</td></tr>
 <tr><td>sepolia</td><td>11155111</td><td>snap</td></tr>
-<tr><td>holesky</td><td>17000</td><td>full, snap</td></tr>
 <tr><td>hoodi</td><td>560048</td><td>full, snap</td></tr>
 </tbody>
 </table>
 </div>
-<p>For more information about sync modes please read the <a href="../fundamentals/sync_modes.html">sync modes document</a>. Full syncing is the default, to switch to snap sync use the flag <code>--syncmode snap</code></p>
+<p>These are the only names <code>--network</code> accepts. Any other value is treated as a path to a genesis file, so a network without a preset must be started with <code>--network &lt;genesis.json&gt; --bootnodes &lt;enode,...&gt;</code>.</p>
+<p>For more information about sync modes please read the <a href="../fundamentals/sync_modes.html">sync modes document</a>. Snap syncing is the default; to switch to full sync use the flag <code>--syncmode full</code>. Full sync is not possible on a fresh mainnet or sepolia database, since ethrex only executes post-merge blocks.</p>
 <h2 id="run-an-ethereum-node"><a class="header" href="#run-an-ethereum-node">Run an Ethereum node</a></h2>
 <p>This guide will assume that you already <a href="../../getting-started/installation/">installed ethrex</a> and you know how to set up a <a href="./consensus_client.html">consensus client</a> to communicate with ethrex.</p>
 <p>To sync with mainnet</p>
-<pre><code>ethrex --syncmode snap
+<pre><code>ethrex
 </code></pre>
 <p>To sync with sepolia</p>
-<pre><code>ethrex --network sepolia --syncmode snap
-</code></pre>
-<p>To sync with holesky</p>
-<pre><code>ethrex --network holesky
+<pre><code>ethrex --network sepolia
 </code></pre>
 <p>To sync with hoodi</p>
 <pre><code>ethrex --network hoodi
