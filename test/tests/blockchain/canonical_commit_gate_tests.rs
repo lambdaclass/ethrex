@@ -29,7 +29,12 @@ use ethrex_common::{
     },
 };
 use ethrex_l2_rpc::signer::{LocalSigner, Signable, Signer};
-use ethrex_storage::{DB_COMMIT_THRESHOLD, EngineType, Store};
+use ethrex_storage::{EngineType, Store};
+// Only the `rocksdb`-gated tests below reference the commit threshold; the InMemory
+// backend does not use it. Keep the import on the same cfg as its call sites so a
+// build without `rocksdb` does not leave it unused.
+#[cfg(feature = "rocksdb")]
+use ethrex_storage::DB_COMMIT_THRESHOLD;
 use secp256k1::SecretKey;
 
 /// Test private key from fixtures/keys/private_keys_tests.txt.

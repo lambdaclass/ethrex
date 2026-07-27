@@ -2,7 +2,12 @@ use ethrex_common::{
     H256,
     types::{Block, BlockBody, BlockHeader, BlockNumber},
 };
-use ethrex_storage::{BATCH_COMMIT_THRESHOLD, EngineType, Store, UpdateBatch};
+use ethrex_storage::{EngineType, Store, UpdateBatch};
+// Only the `rocksdb`-gated batch test below references the commit threshold. Keep the
+// import on the same cfg as its call site so a build without `rocksdb` does not leave
+// it unused.
+#[cfg(feature = "rocksdb")]
+use ethrex_storage::BATCH_COMMIT_THRESHOLD;
 
 #[tokio::test]
 async fn flushed_upto_defaults_to_zero() {
