@@ -94,7 +94,7 @@ jobs:
       - name: Build test
         # if: ${{ always() && github.event_name == 'merge_group' }}
         run: |
-          cargo test -p ethrex-test l2_integration_test --no-run --release
+          cargo test -p ethrex-test l2_integration_test --no-run --release --features l2
 
       - name: Start L1
         run: |

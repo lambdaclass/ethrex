@@ -58,9 +58,20 @@ jobs:
       - name: Install solc
         uses: ./.github/actions/install-solc
 
+      # Both binaries are built up front, in their own steps: a compile error
+      # fails the job here instead of after the wait loop below times out, the
+      # step timings show build time separately from node startup, and the test
+      # binary is not compiled while the node and prover are competing for the
+      # runner's cores.
+      - name: Build ethrex
+        run: COMPILE_CONTRACTS=1 cargo build --profile release-fast --bin ethrex -F l2,l2-sql
+
+      - name: Build integration test binary
+        run: cargo test -p ethrex-test l2_integration_test --profile release-fast --features l2 --no-run
+
       - name: Start ethrex
         run: |
-          COMPILE_CONTRACTS=1 cargo run --release --bin ethrex -F l2,l2-sql -- l2 --dev \
+          target/release-fast/ethrex l2 --dev \
           --block-producer.base-fee-vault-address 0x000c0d6b7c4516a5b274c51ea331a9410fe69127 \
           --block-producer.operator-fee-vault-address 0xd5d2a85751b6F158e5b9B8cD509206A865672362 \
           --block-producer.l1-fee-vault-address 0x45681AE1768a8936FB87aB11453B4755e322ceec \
@@ -70,20 +81,20 @@ jobs:
 
       - name: Wait for ethrex L2
         run: |
-          for i in {1..100}; do
+          for i in {1..120}; do
             echo "Checking if ethrex L2 is ready... (attempt $i)"
             if nc -z localhost 3900; then
               echo "ProofCoordinator ready!"
               exit 0
             fi
-            sleep 15
+            sleep 5
           done
           echo "ProofCoordinator not ready in time"
           exit 1
 
       - name: Init prover
         run: |
-          target/release/ethrex l2 prover --proof-coordinators http://localhost:3900 2>&1 | tee /tmp/prover.log &
+          target/release-fast/ethrex l2 prover --proof-coordinators http://localhost:3900 2>&1 | tee /tmp/prover.log &
 
       - name: Show ENVs
         run: |
@@ -96,4 +107,4 @@ jobs:
           tail -n +1 -f /tmp/ethrex.log &
           tail -n +1 -f /tmp/prover.log &
           PROPOSER_COINBASE_ADDRESS=0x0007a881CD95B1484fca47615B64803dad620C8d \
-          cargo test -p ethrex-test l2_integration_test --release --features l2 -- --nocapture --test-threads=1
+          cargo test -p ethrex-test l2_integration_test --profile release-fast --features l2 -- --nocapture --test-threads=1
