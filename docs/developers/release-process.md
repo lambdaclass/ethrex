@@ -93,7 +93,6 @@ Before publishing the release, run through the following checks using the pre-re
 - [ ] Upgrade `ethrex-ethdocker-mainnet`
 - [ ] Upgrade `ethrex-mainnet-1`
 - [ ] Upgrade `ethrex-prysm`
-- [ ] Upgrade `ethrex-lodestar`
 - [ ] Upgrade `ethrex-teku`
 - [ ] Upgrade `ethrex-grandine`
 - [ ] Launch multisync on `ethrex-multisync-main`
@@ -118,9 +117,9 @@ nano .env
 
 <!-- TODO: document the upgrade procedure for this host -->
 
-#### `ethrex-prysm`, `ethrex-lodestar`, `ethrex-teku`, `ethrex-grandine`
+#### `ethrex-prysm`, `ethrex-teku`, `ethrex-grandine`
 
-These are ethrex mainnet nodes paired with different consensus clients (Prysm, Lodestar, Teku, Grandine); the ethrex (EL) upgrade procedure is the same across them.
+These are ethrex mainnet nodes paired with different consensus clients (Prysm, Teku, Grandine); the ethrex (EL) upgrade procedure is the same across them.
 
 They run the ethrex binary downloaded from the release in a tmux session, the consensus also runs in its own tmux session.
 
@@ -247,7 +246,15 @@ This requires a one-time organizational setup before the first release that publ
 
 The workflow is idempotent: a crate version already on crates.io is skipped, so re-running after a partial failure is safe. To validate without publishing, run it manually from the Actions tab (the `workflow_dispatch` trigger) with the dry-run input checked — it lists each crate's package contents instead of publishing.
 
-## 5th - Update Homebrew
+## 5th - Release the rex counterpart
+
+Every ethrex release has a matching [rex](https://github.com/lambdaclass/rex) release with the same `X.Y.Z` version. Once the ethrex release is fully promoted, release the counterpart:
+
+1. In `lambdaclass/rex`, bump every `ethrex-*` dependency pin in `Cargo.toml` to `X.Y.Z` and refresh the lockfile ([example bump](https://github.com/lambdaclass/rex/commit/84099c31)). This step must come **after** the promotion: the pins resolve against crates.io, so the ethrex crates have to be published first.
+2. Create and push a `vX.Y.Z-rc.W` tag. The `Rex Release` workflow builds the binaries and creates a pre-release, mirroring ethrex's flow.
+3. Verify the pre-release, then promote it to `vX.Y.Z` the same way as the ethrex release: rename the tag on the tested commit and untick *pre-release* in a single *Update release* edit.
+
+## 6th - Update Homebrew
 
 Disclaimer: We should automate this
 
@@ -289,7 +296,7 @@ export V=X.Y.Z   # replace with the released version, no `v` prefix (e.g. 3.0.0)
 2. Push the commit.
 3. Create a new release with tag `v$V` in homebrew-tap. **IMPORTANT**: attach the `ethrex-$V.arm64_sonoma.bottle.tar.gz` to the release.
 
-## 6th - Merge the release branch via PR
+## 7th - Merge the release branch via PR
 
 Once the release is verified, **merge the branch via PR**.
 
