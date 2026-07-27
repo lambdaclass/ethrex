@@ -1,3 +1,58 @@
+//! # ethrex-trie
+//!
+//! Merkle Patricia Trie implementation for the ethrex Ethereum client.
+//!
+//! This crate provides the core data structure used by Ethereum for storing
+//! account state, contract storage, and transaction/receipt trees. It implements
+//! the Modified Merkle Patricia Trie as specified in the Ethereum Yellow Paper.
+//!
+//! ## Quick Start
+//!
+//! ```rust
+//! use ethrex_trie::{Trie, EMPTY_TRIE_HASH};
+//!
+//! // Create an in-memory trie
+//! let mut trie = Trie::new_temp();
+//!
+//! // Insert key-value pairs
+//! trie.insert(b"key".to_vec(), b"value".to_vec())?;
+//!
+//! // Compute root hash
+//! let root = trie.hash()?;
+//!
+//! // Retrieve value
+//! let value = trie.get(&b"key".to_vec())?;
+//! # Ok::<(), ethrex_trie::TrieError>(())
+//! ```
+//!
+//! ## Core Types
+//!
+//! - [`Trie`]: Main trie data structure with insert, get, remove, and hash operations
+//! - [`Node`]: Enum of trie node types (Branch, Extension, Leaf)
+//! - [`NodeRef`]: Smart reference to nodes with lazy hash caching
+//! - [`NodeHash`]: Efficient hash representation (inline for small nodes)
+//! - [`Nibbles`]: Half-byte path representation for trie traversal
+//!
+//! ## Storage Backend
+//!
+//! - [`TrieDB`]: Trait defining the storage interface
+//! - [`InMemoryTrieDB`]: In-memory implementation for testing
+//!
+//! ## Modules
+//!
+//! - [`db`]: Database backend trait and in-memory implementation
+//! - [`node`]: Node types (Branch, Extension, Leaf) and NodeRef
+//! - [`error`]: Error types for trie operations
+//! - [`logger`]: Access logging for witness generation
+//! - [`trie_sorted`]: Efficient batch insertion from sorted data
+//! - [`rkyv_utils`]: Serialization utilities for zkVM
+//!
+//! ## Proofs and Verification
+//!
+//! - [`Trie::get_proof`]: Generate Merkle proof for a path
+//! - [`Trie::get_proofs`]: Generate proofs for multiple paths
+//! - [`verify_range`]: Verify key-value ranges for state sync
+
 pub mod db;
 pub mod error;
 pub mod logger;
