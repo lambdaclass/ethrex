@@ -29,10 +29,12 @@ use super::{HistoryChain, SyncDiagnostics, SyncError};
 /// 1. use `merge_netsplit_block` when the network configures it (netsplit
 ///    testnets, and PoS-from-genesis nets that set it to `0`);
 /// 2. otherwise bisect the header chain for the first block with
-///    `difficulty == 0` — the PoW→PoS boundary. This reuses the same
-///    proof-of-stake discriminator the block validator and genesis loader
-///    already use, needs no maintained per-network constant table, and works on
-///    custom devnets. On mainnet it yields 15_537_394.
+///    `difficulty == 0` — the PoW→PoS boundary. EIP-3675 pins `difficulty` to the
+///    constant `0` from `TRANSITION_BLOCK` onward and makes a non-zero value a
+///    validity failure, so on any TTD-merged chain the predicate is monotonic *by
+///    consensus* and the bisect precondition holds by rule, not by convention. It
+///    also needs no maintained per-network constant table and works on custom
+///    devnets. On mainnet it yields 15_537_394.
 ///
 /// Returns `Ok(None)` when the chain has not merged (head is still PoW), meaning
 /// there is no post-merge segment to backfill.
@@ -79,6 +81,46 @@ where
     Ok(Some(lo))
 }
 
+/// Resolve the lowest block backfill should fill down to for `mode`.
+///
+/// The result is clamped at the Byzantium fork block. Before Byzantium
+/// (EIP-658), a receipt's first field is a 32-byte post-state root rather than a
+/// status flag, which [`ethrex_common::types::Receipt`] has no representation for
+/// and cannot decode — so pre-Byzantium receipts can never be fetched, and
+/// descending below that block would only fail every request and penalize peers
+/// that answered correctly.
+///
+/// `Ok(None)` means there is nothing to backfill right now: the feature is off,
+/// or `PostMerge` was requested on a chain that has not merged yet.
+async fn resolve_floor(
+    store: &Store,
+    mode: &HistoryChain,
+) -> Result<Option<BlockNumber>, SyncError> {
+    // A chain with no Byzantium block configured is post-Byzantium from genesis
+    // (e.g. PoS-from-genesis devnets), so genesis is a valid floor there.
+    let byzantium = store.get_chain_config().byzantium_block.unwrap_or(0);
+    let requested = match mode {
+        HistoryChain::Off => return Ok(None),
+        HistoryChain::All => byzantium,
+        HistoryChain::Block(floor) => *floor,
+        HistoryChain::PostMerge => match resolve_postmerge_floor(store).await? {
+            Some(floor) => floor,
+            None => return Ok(None),
+        },
+    };
+    if requested < byzantium {
+        warn!(
+            requested,
+            byzantium,
+            "Requested history floor is below the Byzantium fork; clamping to it. \
+             Pre-Byzantium receipts use the pre-EIP-658 post-state-root format, \
+             which ethrex cannot represent."
+        );
+        return Ok(Some(byzantium));
+    }
+    Ok(Some(requested))
+}
+
 /// Recompute the true backfill frontier: the lowest block in the head-contiguous
 /// run of stored bodies. That is the snap pivot on a snap-synced node (everything
 /// below it is headers-only), or genesis on a full-synced node.
@@ -113,8 +155,19 @@ async fn reconcile_frontier(store: &Store) -> Result<BlockNumber, SyncError> {
     Ok(lo)
 }
 
-/// Blocks fetched per backfill batch, bounded by the eth `GetBlockBodies` limit.
-const BACKFILL_BATCH_SIZE: u64 = MAX_BLOCK_BODIES_TO_REQUEST as u64;
+/// Blocks fetched per backfill batch.
+///
+/// Receipts, not bodies, are the binding constraint: a block's receipts are much
+/// larger on the wire than its body (each receipt carries a 256-byte bloom before
+/// eth/69), so a full `MAX_BLOCK_BODIES_TO_REQUEST` batch of mainnet receipts runs
+/// past EIP-7975's 10 MiB soft response limit and comes back truncated — paying a
+/// large request to receive a handful of blocks. This is sized to stay under that
+/// limit for recent mainnet blocks.
+const BACKFILL_BATCH_SIZE: u64 = 64;
+const _: () = assert!(
+    BACKFILL_BATCH_SIZE <= MAX_BLOCK_BODIES_TO_REQUEST as u64,
+    "batch must not exceed the eth GetBlockBodies limit"
+);
 /// Pause between successful batches so backfill yields peers/bandwidth to
 /// head-following sync rather than saturating them.
 const BACKFILL_BATCH_INTERVAL: Duration = Duration::from_millis(500);
@@ -135,11 +188,28 @@ pub struct BackfillConfig {
 enum BackfillProgress {
     /// A batch was written; the frontier advanced.
     Advanced,
-    /// Nothing left to fill (frontier reached the floor, or the chain has not
-    /// merged for `postmerge`).
+    /// The frontier reached the floor. Nothing will ever be left to fill, so the
+    /// task can stop rather than idle.
     Complete,
-    /// Cannot make progress right now (initial sync running, or no peer/response).
+    /// Cannot make progress right now, but the situation can change: initial sync
+    /// is running, no peer answered, or `postmerge` was requested on a chain that
+    /// has not merged yet.
     Waiting,
+}
+
+/// Values resolved once per run, after initial sync has finished, rather than on
+/// every batch.
+struct BackfillPlan {
+    /// Lowest block to fill down to. Fixed for the run: the merge and Byzantium
+    /// blocks don't move, and re-deriving the merge block costs a header bisect.
+    floor: BlockNumber,
+    /// Chain head when the run started, used as the fixed reference for the
+    /// `--history.transactions` window. Re-reading the live head each batch would
+    /// let the cutoff drift by tens of thousands of blocks over a run that takes
+    /// weeks, so the indexed range would not correspond to any single head.
+    head: BlockNumber,
+    /// `Debug` rendering of the mode for diagnostics; never changes.
+    mode_label: String,
 }
 
 /// Background task that backfills historical block bodies and receipts below the
@@ -168,6 +238,8 @@ pub async fn run_history_backfill(
 
     // One-time frontier reconciliation guard (see `backfill_step`).
     let mut reconciled = false;
+    // Resolved on the first step that runs after initial sync (see `BackfillPlan`).
+    let mut plan: Option<BackfillPlan> = None;
     loop {
         if cancel_token.is_cancelled() {
             return;
@@ -179,11 +251,15 @@ pub async fn run_history_backfill(
             &snap_enabled,
             &diagnostics,
             &mut reconciled,
+            &mut plan,
         )
         .await
         {
             Ok(BackfillProgress::Advanced) => BACKFILL_BATCH_INTERVAL,
-            Ok(BackfillProgress::Complete | BackfillProgress::Waiting) => BACKFILL_IDLE_INTERVAL,
+            // Nothing left to fill, ever: stop instead of waking every 10s to
+            // re-check a frontier and floor that cannot change.
+            Ok(BackfillProgress::Complete) => return,
+            Ok(BackfillProgress::Waiting) => BACKFILL_IDLE_INTERVAL,
             Err(e) => {
                 warn!("History backfill step failed (will retry): {e}");
                 BACKFILL_IDLE_INTERVAL
@@ -206,6 +282,7 @@ async fn backfill_step(
     snap_enabled: &AtomicBool,
     diagnostics: &Arc<tokio::sync::RwLock<SyncDiagnostics>>,
     reconciled: &mut bool,
+    plan: &mut Option<BackfillPlan>,
 ) -> Result<BackfillProgress, SyncError> {
     // Don't compete with initial sync; wait until it has finished.
     if snap_enabled.load(Ordering::Relaxed) {
@@ -229,25 +306,34 @@ async fn backfill_step(
         *reconciled = true;
     }
 
-    let floor = match config.mode {
-        HistoryChain::Off => return Ok(BackfillProgress::Complete),
-        HistoryChain::All => 0,
-        HistoryChain::PostMerge => match resolve_postmerge_floor(store).await? {
-            Some(floor) => floor,
-            // Chain has not merged: there is no post-merge segment to backfill.
-            None => return Ok(BackfillProgress::Complete),
-        },
+    // Resolve the floor and the tx-index reference head once per run.
+    let plan = match plan {
+        Some(plan) => plan,
+        None => {
+            let Some(floor) = resolve_floor(store, &config.mode).await? else {
+                // `postmerge` on a chain that has not merged yet — keep idling,
+                // since that can change.
+                return Ok(BackfillProgress::Waiting);
+            };
+            plan.insert(BackfillPlan {
+                floor,
+                head: store.get_latest_block_number().await?,
+                mode_label: format!("{:?}", config.mode),
+            })
+        }
     };
+    let floor = plan.floor;
 
     let frontier = store.get_earliest_block_number().await?;
     {
         let mut diag = diagnostics.write().await;
-        diag.backfill_mode = Some(format!("{:?}", config.mode));
+        diag.backfill_mode = Some(plan.mode_label.clone());
         diag.backfill_floor = Some(floor);
         diag.backfill_frontier = Some(frontier);
         diag.backfill_complete = frontier <= floor;
     }
     if frontier <= floor {
+        info!(floor, "Historical chain backfill complete");
         return Ok(BackfillProgress::Complete);
     }
 
@@ -266,11 +352,16 @@ async fn backfill_step(
 
     // Bodies and receipts are each validated against the headers inside the peer
     // request (block-body validation; receipts-root recomputed from logs, which
-    // reconstructs eth/69's omitted bloom).
-    let Some(bodies) = peers.request_block_bodies(&headers).await? else {
+    // reconstructs the bloom omitted from eth/69 onward).
+    //
+    // Receipts are requested first because they are the likelier of the two to come
+    // back short or not at all (they are far larger on the wire and fewer peers
+    // retain them), and whatever the other request returned would be discarded and
+    // re-fetched next round.
+    let Some(receipts) = peers.request_receipts(&headers).await? else {
         return Ok(BackfillProgress::Waiting);
     };
-    let Some(receipts) = peers.request_receipts(&headers).await? else {
+    let Some(bodies) = peers.request_block_bodies(&headers).await? else {
         return Ok(BackfillProgress::Waiting);
     };
 
@@ -282,7 +373,7 @@ async fn backfill_step(
         return Ok(BackfillProgress::Waiting);
     }
 
-    let head = store.get_latest_block_number().await?;
+    let head = plan.head;
     let horizon = config.tx_index_horizon;
     let blocks: Vec<BackfilledBlock> = headers
         .into_iter()
@@ -308,13 +399,10 @@ async fn backfill_step(
         diag.backfill_complete = new_earliest <= floor;
     }
 
-    if new_earliest <= floor {
-        info!(floor, "Historical chain backfill complete");
-        Ok(BackfillProgress::Complete)
-    } else {
-        debug!(new_earliest, floor, "History backfill advanced");
-        Ok(BackfillProgress::Advanced)
-    }
+    debug!(new_earliest, floor, "History backfill advanced");
+    // The `frontier <= floor` check at the top of the next step logs completion and
+    // stops the task; reporting `Advanced` here keeps that in one place.
+    Ok(BackfillProgress::Advanced)
 }
 
 #[cfg(test)]
@@ -430,5 +518,169 @@ mod tests {
     async fn reconcile_frontier_is_genesis_on_a_full_node() {
         let store = store_with_bodies_from(1, 100).await;
         assert_eq!(reconcile_frontier(&store).await.unwrap(), 0);
+    }
+
+    /// A store still at genesis has nothing to reconcile against, and must not
+    /// bisect an empty range.
+    #[tokio::test]
+    async fn reconcile_frontier_at_genesis_head_is_zero() {
+        let store = Store::new("", EngineType::InMemory).expect("in-memory store");
+        assert_eq!(reconcile_frontier(&store).await.unwrap(), 0);
+    }
+
+    /// If the head itself has no body the node isn't synced to the tip, so there is
+    /// no contiguous run to measure; the frontier stays at the head rather than
+    /// reporting a bogus lower value.
+    #[tokio::test]
+    async fn reconcile_frontier_without_a_body_at_head_returns_head() {
+        // Headers 0..=100 canonical, but no bodies stored above genesis.
+        let store = Store::new("", EngineType::InMemory).expect("in-memory store");
+        let headers: Vec<BlockHeader> = (0..=100)
+            .map(|number| BlockHeader {
+                number,
+                ..Default::default()
+            })
+            .collect();
+        store.add_block_headers(headers.clone()).await.unwrap();
+        let canonical: Vec<_> = headers.iter().map(|h| (h.number, h.hash())).collect();
+        store
+            .forkchoice_update(canonical, 100, headers[100].hash(), None, None)
+            .await
+            .unwrap();
+        assert_eq!(reconcile_frontier(&store).await.unwrap(), 100);
+    }
+
+    // --- resolve_floor: how each mode picks the block to stop at ---
+
+    /// An explicit block number is used verbatim, so an operator can keep just a
+    /// recent slice of history instead of the whole post-merge range.
+    #[tokio::test]
+    async fn resolve_floor_honours_an_explicit_block() {
+        let store = store_with_bodies_from(90, 100).await;
+        let floor = resolve_floor(&store, &HistoryChain::Block(22_000_000))
+            .await
+            .unwrap();
+        assert_eq!(floor, Some(22_000_000));
+    }
+
+    /// An explicit floor below the merge block is still honoured (best-effort),
+    /// not silently clamped up to the merge block.
+    #[tokio::test]
+    async fn resolve_floor_honours_a_pre_merge_block() {
+        let store = store_with_bodies_from(90, 100).await;
+        let floor = resolve_floor(&store, &HistoryChain::Block(5))
+            .await
+            .unwrap();
+        assert_eq!(floor, Some(5));
+    }
+
+    #[tokio::test]
+    async fn resolve_floor_is_genesis_for_all_and_none_for_off() {
+        let store = store_with_bodies_from(90, 100).await;
+        assert_eq!(
+            resolve_floor(&store, &HistoryChain::All).await.unwrap(),
+            Some(0)
+        );
+        assert_eq!(
+            resolve_floor(&store, &HistoryChain::Off).await.unwrap(),
+            None
+        );
+    }
+
+    /// Builds an in-memory store whose chain config comes from `genesis`, so
+    /// config-driven paths (`merge_netsplit_block`, `byzantium_block`) can be
+    /// exercised.
+    async fn store_with_config(
+        configure: impl FnOnce(&mut ethrex_common::types::Genesis),
+    ) -> Store {
+        let mut store = Store::new("", EngineType::InMemory).expect("in-memory store");
+        let mut genesis = ethrex_common::types::Genesis::default();
+        configure(&mut genesis);
+        store
+            .add_initial_state(genesis)
+            .await
+            .expect("load genesis");
+        store
+    }
+
+    /// The `merge_netsplit_block` short-circuit, not the bisect: this is the branch
+    /// networks that configure a merge block (e.g. Sepolia, Hoodi) actually take,
+    /// and it must be used verbatim without touching headers.
+    #[tokio::test]
+    async fn resolve_postmerge_floor_uses_configured_merge_block() {
+        let store = store_with_config(|g| {
+            g.config.merge_netsplit_block = Some(1_735_371);
+            g.config.byzantium_block = Some(0);
+        })
+        .await;
+        assert_eq!(
+            resolve_postmerge_floor(&store).await.unwrap(),
+            Some(1_735_371),
+            "a configured merge block must short-circuit the bisect"
+        );
+    }
+
+    /// Pre-Byzantium receipts carry a post-state root instead of a status flag and
+    /// cannot be decoded, so a floor below Byzantium is clamped up to it rather
+    /// than driving requests that can only fail.
+    #[tokio::test]
+    async fn resolve_floor_clamps_below_byzantium() {
+        let store = store_with_config(|g| g.config.byzantium_block = Some(4_370_000)).await;
+        assert_eq!(
+            resolve_floor(&store, &HistoryChain::Block(1_000_000))
+                .await
+                .unwrap(),
+            Some(4_370_000),
+            "an explicit pre-Byzantium floor must be clamped"
+        );
+        assert_eq!(
+            resolve_floor(&store, &HistoryChain::All).await.unwrap(),
+            Some(4_370_000),
+            "`all` must stop at Byzantium, not genesis"
+        );
+        // A floor above Byzantium is untouched.
+        assert_eq!(
+            resolve_floor(&store, &HistoryChain::Block(22_000_000))
+                .await
+                .unwrap(),
+            Some(22_000_000)
+        );
+    }
+
+    /// A chain with no Byzantium block configured is post-Byzantium from genesis,
+    /// so `all` may legitimately reach block 0.
+    #[tokio::test]
+    async fn resolve_floor_allows_genesis_without_byzantium_config() {
+        let store = store_with_config(|_| {}).await;
+        assert_eq!(
+            resolve_floor(&store, &HistoryChain::All).await.unwrap(),
+            Some(0)
+        );
+    }
+
+    /// `postmerge` on a chain that never merged (all headers carry PoW
+    /// difficulty) has no post-merge segment, so there is nothing to fill.
+    #[tokio::test]
+    async fn resolve_floor_is_none_for_postmerge_on_an_unmerged_chain() {
+        let store = Store::new("", EngineType::InMemory).expect("in-memory store");
+        let headers: Vec<BlockHeader> = (0..=10)
+            .map(|number| BlockHeader {
+                number,
+                difficulty: ethrex_common::U256::from(1_000_000u64),
+                ..Default::default()
+            })
+            .collect();
+        store.add_block_headers(headers.clone()).await.unwrap();
+        let canonical: Vec<_> = headers.iter().map(|h| (h.number, h.hash())).collect();
+        store
+            .forkchoice_update(canonical, 10, headers[10].hash(), None, None)
+            .await
+            .unwrap();
+        assert_eq!(
+            resolve_floor(&store, &HistoryChain::PostMerge)
+                .await
+                .unwrap(),
+            None
+        );
     }
 }

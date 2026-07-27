@@ -22,7 +22,7 @@ use crate::peer_handler::{BlockRequestOrder, HeaderFetchOutcome, PeerHandler, Pe
 use crate::snap::constants::{EXECUTE_BATCH_SIZE_DEFAULT, MIN_FULL_BLOCKS};
 use crate::utils::delete_leaves_folder;
 use ethrex_blockchain::{Blockchain, error::ChainError};
-use ethrex_common::H256;
+use ethrex_common::{H256, types::BlockNumber};
 use ethrex_rlp::error::RLPDecodeError;
 use ethrex_storage::{Store, error::StoreError};
 use ethrex_trie::TrieError;
@@ -76,6 +76,11 @@ pub enum HistoryChain {
     /// Backfill down to genesis. Best-effort: many peers no longer serve
     /// pre-merge history after the 2025 history-expiry rollout.
     All,
+    /// Backfill down to an explicit block number, for operators who want only a
+    /// recent slice of history rather than everything back to the merge. A value
+    /// below the merge block is honoured but is best-effort for the same reason
+    /// as [`HistoryChain::All`].
+    Block(BlockNumber),
 }
 
 /// Diagnostic snapshot of the sync state, used by admin RPC endpoints.

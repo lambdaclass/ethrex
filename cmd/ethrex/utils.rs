@@ -102,9 +102,13 @@ pub fn parse_history_chain(s: &str) -> eyre::Result<HistoryChain> {
         "off" => Ok(HistoryChain::Off),
         "postmerge" => Ok(HistoryChain::PostMerge),
         "all" => Ok(HistoryChain::All),
-        other => Err(eyre::eyre!(
-            "Invalid history.chain {other:?} expected one of off, postmerge, all",
-        )),
+        // A bare block number backfills down to that block, for operators who
+        // want only a recent slice of history.
+        other => other.parse::<u64>().map(HistoryChain::Block).map_err(|_| {
+            eyre::eyre!(
+                "Invalid history.chain {other:?}, expected one of off, postmerge, all, or a block number",
+            )
+        }),
     }
 }
 
