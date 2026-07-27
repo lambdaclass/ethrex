@@ -115,7 +115,13 @@ pub const EXECUTION_WITNESSES: &str = "execution_witnesses";
 /// - [`Vec<u8>`] = RLP-encoded `BlockAccessList`
 pub const BLOCK_ACCESS_LISTS: &str = "block_access_lists";
 
-pub const TABLES: [&str; 20] = [
+/// Bad blocks column family: single-keyed list of the most recent bad blocks
+/// seen by the client, served by `debug_getBadBlocks`.
+/// - [`Vec<u8>`] = [`BAD_BLOCKS_KEY`]
+/// - [`Vec<u8>`] = RLP-encoded `Vec<Block>` (sorted by descending block number)
+pub const BAD_BLOCKS: &str = "bad_blocks";
+
+pub const TABLES: [&str; 21] = [
     CHAIN_DATA,
     ACCOUNT_CODES,
     ACCOUNT_CODE_METADATA,
@@ -136,4 +142,5 @@ pub const TABLES: [&str; 20] = [
     MISC_VALUES,
     EXECUTION_WITNESSES,
     BLOCK_ACCESS_LISTS,
+    BAD_BLOCKS,
 ];

@@ -1,6 +1,8 @@
+use std::collections::HashSet;
+
 use crate::rlpx::{
     message::RLPxMessage,
-    utils::{snappy_compress, snappy_decompress},
+    utils::{snappy_compress, snappy_decompress, snappy_decompress_bounded},
 };
 use crate::types::Node;
 use bytes::BufMut;
@@ -25,6 +27,21 @@ use tracing::debug;
 /// version byte), so we tolerate a few bytes before treating it as a protocol violation.
 /// Matches go-ethereum's tx fetcher (`eth/fetcher/tx_fetcher.go`).
 const POOLED_TX_SIZE_TOLERANCE: usize = 8;
+
+/// Upper bound on the decompressed size of a `PooledTransactions` response, enforced before
+/// decompression so an oversized reply is rejected without materializing it. Tighter than the
+/// global frame/snappy cap (`MAX_SNAPPY_DECOMPRESSED_LEN`, ~16 MiB): go-ethereum soft-limits a
+/// response to `softResponseLimit` (2 MiB) and stops after the first tx that crosses it, so a
+/// well-behaved reply is at most ~2 MiB plus one max-size tx (~1 MiB blob wrapper). 4 MiB clears
+/// that with margin while staying 4× below the frame cap.
+const MAX_POOLED_TRANSACTIONS_BYTES: usize = 4 * 1024 * 1024;
+
+/// Target maximum size of a `PooledTransactions` response we *serve*, matching go-ethereum's
+/// `softResponseLimit` (2 MiB). We stop before a transaction would push the response over this,
+/// so what we emit stays well under any peer's inbound decode cap
+/// ([`MAX_POOLED_TRANSACTIONS_BYTES`]). Partial responses are protocol-legal — the requester
+/// re-requests whatever it still needs.
+const MAX_POOLED_RESPONSE_BYTES: usize = 2 * 1024 * 1024;
 
 // https://github.com/ethereum/devp2p/blob/master/caps/eth.md#transactions-0x02
 // Broadcast message
@@ -125,9 +142,9 @@ impl NewPooledTransactionHashes {
                                 .then_some(tx_blobs_bundle.version),
                             blobs_bundle: tx_blobs_bundle,
                         });
-                    p2p_tx.encode_canonical_to_vec().len()
+                    p2p_tx.encode_canonical_len()
                 }
-                _ => transaction.encode_canonical_to_vec().len(),
+                _ => transaction.encode_canonical_len(),
             };
             transaction_sizes.push(transaction_size);
         }
@@ -231,18 +248,36 @@ impl GetPooledTransactions {
 
     pub fn handle(&self, blockchain: &Blockchain) -> Result<PooledTransactions, StoreError> {
         // TODO(#1615): get transactions in batch instead of iterating over them.
-        let txs = self
-            .transaction_hashes
-            .iter()
+        let mut pooled_transactions = Vec::new();
+        let mut seen = HashSet::with_capacity(self.transaction_hashes.len());
+        let mut bytes_used = 0usize;
+        for hash in &self.transaction_hashes {
+            // Serve each requested hash at most once: a peer padding the request with duplicates
+            // must not amplify the response or force repeated mempool lookups (the lookup is
+            // skipped for a repeat, so an all-duplicate request costs one probe, not N).
+            if !seen.insert(*hash) {
+                continue;
+            }
             // As per the spec, skipping unavailable transactions is perfectly acceptable,
             // for example if a transaction was taken out of the mempool due to payload
             // building after being advertised.
-            .filter_map(|hash| blockchain.get_p2p_transaction_by_hash(hash).ok())
-            .collect::<Vec<_>>();
+            let Ok(tx) = blockchain.get_p2p_transaction_by_hash(hash) else {
+                continue;
+            };
+            // Cap the response size (geth `softResponseLimit`): stop before a tx would push the
+            // response over the budget so we never emit more than a peer's inbound cap accepts.
+            // Always serve at least one tx so a lone oversized (blob) tx still goes out.
+            let tx_size = tx.encode_canonical_len();
+            if !pooled_transactions.is_empty() && bytes_used + tx_size > MAX_POOLED_RESPONSE_BYTES {
+                break;
+            }
+            bytes_used += tx_size;
+            pooled_transactions.push(tx);
+        }
 
         Ok(PooledTransactions {
             id: self.id,
-            pooled_transactions: txs,
+            pooled_transactions,
         })
     }
 }
@@ -294,11 +329,21 @@ impl PooledTransactions {
         requested: &NewPooledTransactionHashes,
         fork: Fork,
     ) -> Result<(), MempoolError> {
+        // A well-formed response contains each requested tx at most once. Track seen hashes so
+        // a peer can't send duplicates (or more txs than requested) — each would otherwise pass
+        // the per-tx checks below, letting a response balloon to the frame cap regardless of
+        // how little we asked for.
+        let mut seen = HashSet::with_capacity(self.pooled_transactions.len());
         for tx in &self.pooled_transactions {
+            // Reject duplicates before any per-tx work (blob validation, hash lookup) so a peer
+            // echoing the same tx N times can't force N rounds of that work — fail fast.
+            let tx_hash = tx.compute_hash();
+            if !seen.insert(tx_hash) {
+                return Err(MempoolError::DuplicatePooledTx);
+            }
             if let P2PTransaction::EIP4844TransactionWithBlobs(itx) = tx {
                 itx.blobs_bundle.validate_cheap(&itx.tx, fork)?;
             }
-            let tx_hash = tx.compute_hash();
             let Some(pos) = requested
                 .transaction_hashes
                 .iter()
@@ -318,7 +363,7 @@ impl PooledTransactions {
             // would disconnect geth peers on every v1 blob-tx announcement. Match geth's tx
             // fetcher, which tolerates up to 8 bytes of skew before treating it as a
             // violation (go-ethereum eth/fetcher/tx_fetcher.go).
-            let tx_size = tx.encode_canonical_to_vec().len();
+            let tx_size = tx.encode_canonical_len();
             if tx_size.abs_diff(expected_size) > POOLED_TX_SIZE_TOLERANCE {
                 return Err(MempoolError::InvalidPooledTxSize);
             }
@@ -388,12 +433,63 @@ impl RLPxMessage for PooledTransactions {
     }
 
     fn decode(msg_data: &[u8]) -> Result<Self, RLPDecodeError> {
-        let decompressed_data = snappy_decompress(msg_data)?;
+        // Reject an oversized response by its declared decompressed length before allocating and
+        // materializing the transaction list (which for blob txs pulls large sidecars into
+        // memory). See `MAX_POOLED_TRANSACTIONS_BYTES`.
+        let decompressed_data = snappy_decompress_bounded(msg_data, MAX_POOLED_TRANSACTIONS_BYTES)?;
         let decoder = Decoder::new(&decompressed_data)?;
         let (id, decoder): (u64, _) = decoder.decode_field("request-id")?;
         let (pooled_transactions, _): (Vec<P2PTransaction>, _) =
             decoder.decode_field("pooledTransactions")?;
 
         Ok(Self::new(id, pooled_transactions))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ethrex_common::types::EIP1559Transaction;
+
+    fn p2p_tx(nonce: u64) -> P2PTransaction {
+        P2PTransaction::EIP1559Transaction(EIP1559Transaction {
+            nonce,
+            ..Default::default()
+        })
+    }
+
+    fn announcement_for(txs: &[P2PTransaction]) -> NewPooledTransactionHashes {
+        NewPooledTransactionHashes::from_raw(
+            txs.iter()
+                .map(|t| t.tx_type() as u8)
+                .collect::<Vec<_>>()
+                .into(),
+            txs.iter().map(|t| t.encode_canonical_len()).collect(),
+            txs.iter().map(|t| t.compute_hash()).collect(),
+        )
+    }
+
+    #[test]
+    fn validate_requested_accepts_each_requested_tx_once() {
+        let txs = vec![p2p_tx(0), p2p_tx(1)];
+        let announced = announcement_for(&txs);
+        let response = PooledTransactions::new(0, txs);
+        assert!(
+            response
+                .validate_requested(&announced, Fork::Cancun)
+                .is_ok()
+        );
+    }
+
+    #[test]
+    fn validate_requested_rejects_duplicate_tx() {
+        // We requested one tx; the peer echoes it twice. Both copies pass the per-tx type/size
+        // checks, so without the duplicate guard the response could balloon past what we asked.
+        let announced = announcement_for(&[p2p_tx(0)]);
+        let response = PooledTransactions::new(0, vec![p2p_tx(0), p2p_tx(0)]);
+        assert!(matches!(
+            response.validate_requested(&announced, Fork::Cancun),
+            Err(MempoolError::DuplicatePooledTx)
+        ));
     }
 }

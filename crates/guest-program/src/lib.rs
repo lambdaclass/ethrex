@@ -51,7 +51,7 @@ pub const ZKVM_RISC0_PROGRAM_VK: &str = "";
 
 #[cfg(all(not(clippy), feature = "zisk-build-elf"))]
 pub static ZKVM_ZISK_PROGRAM_ELF: &[u8] =
-    include_bytes!("../bin/zisk/target/riscv64ima-zisk-zkvm-elf/release/ethrex-guest-zisk");
+    include_bytes!("../bin/zisk/target/elf/riscv64ima-zisk-zkvm-elf/release/ethrex-guest-zisk");
 #[cfg(any(clippy, not(feature = "zisk-build-elf")))]
 pub const ZKVM_ZISK_PROGRAM_ELF: &[u8] = &[];
 

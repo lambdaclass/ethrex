@@ -117,6 +117,13 @@ jobs:
           echo "fixtures=$(yq -r '.fixtures' .github/config/hive/amsterdam.yaml)" >> "$GITHUB_OUTPUT"
           echo "eels_commit=$(yq -r '.eels_commit' .github/config/hive/amsterdam.yaml)" >> "$GITHUB_OUTPUT"
 
+      - name: Load mainnet config
+        id: mainnet-config
+        shell: bash
+        run: |
+          echo "fixtures=$(yq -r '.fixtures' .github/config/hive/mainnet.yaml)" >> "$GITHUB_OUTPUT"
+          echo "eels_commit=$(yq -r '.eels_commit' .github/config/hive/mainnet.yaml)" >> "$GITHUB_OUTPUT"
+
       - name: Determine hive flags
         id: hive-flags
         shell: bash
@@ -125,6 +132,8 @@ jobs:
           SIM_LIMIT: ${{ matrix.test.limit || '' }}
           AMSTERDAM_FIXTURES: ${{ steps.amsterdam-config.outputs.fixtures }}
           AMSTERDAM_EELS_COMMIT: ${{ steps.amsterdam-config.outputs.eels_commit }}
+          MAINNET_FIXTURES: ${{ steps.mainnet-config.outputs.fixtures }}
+          MAINNET_EELS_COMMIT: ${{ steps.mainnet-config.outputs.eels_commit }}
         run: |
           FLAGS="--sim.parallelism ${{ matrix.test.parallelism || 4 }} --sim.loglevel 1"
           if [[ "$SIMULATION" == "ethereum/eels/consume-engine" || "$SIMULATION" == "ethereum/eels/consume-rlp" ]]; then
@@ -134,10 +143,12 @@ jobs:
               FLAGS+=" --sim.buildarg fixtures=$AMSTERDAM_FIXTURES"
               FLAGS+=" --sim.buildarg branch=$AMSTERDAM_EELS_COMMIT"
             else
-              # All other forks (Prague, Osaka, Cancun, Shanghai, Paris) use fixtures_develop
-              # which includes comprehensive test coverage including static tests
-              FLAGS+=" --sim.buildarg fixtures=https://github.com/ethereum/execution-spec-tests/releases/download/v5.4.0/fixtures_develop.tar.gz"
-              FLAGS+=" --sim.buildarg branch=forks/amsterdam"
+              # All other forks (Prague, Osaka, Cancun, Shanghai, Paris) use the
+              # mainnet bundle (execution-specs tests@v20.0.0), which includes
+              # comprehensive coverage including ported static tests.
+              # Config loaded from .github/config/hive/mainnet.yaml
+              FLAGS+=" --sim.buildarg fixtures=$MAINNET_FIXTURES"
+              FLAGS+=" --sim.buildarg branch=$MAINNET_EELS_COMMIT"
             fi
             FLAGS+=" --client.checktimelimit=180s"
           fi
