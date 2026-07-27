@@ -119,15 +119,15 @@ impl MetricsDB {
             )
             .expect("Failed to create ethrex_db_running_compactions"),
             block_cache_hits: register_int_gauge!(
-                "ethrex_db_block_cache_hits_total",
+                "ethrex_db_block_cache_hits",
                 "Cumulative RocksDB block cache hits (requires statistics enabled)"
             )
-            .expect("Failed to create ethrex_db_block_cache_hits_total"),
+            .expect("Failed to create ethrex_db_block_cache_hits"),
             block_cache_misses: register_int_gauge!(
-                "ethrex_db_block_cache_misses_total",
+                "ethrex_db_block_cache_misses",
                 "Cumulative RocksDB block cache misses (requires statistics enabled)"
             )
-            .expect("Failed to create ethrex_db_block_cache_misses_total"),
+            .expect("Failed to create ethrex_db_block_cache_misses"),
             backfill_frontier_block: register_int_gauge!(
                 "ethrex_db_backfill_frontier_block",
                 "Lowest block with full chain data on disk (history-backfill frontier)"

@@ -156,12 +156,28 @@ const DB_METRICS_SAMPLE_INTERVAL: std::time::Duration = std::time::Duration::fro
 ///
 /// A no-op for non-RocksDB backends (`rocksdb_stats()` returns `None`). Spawned
 /// only when metrics are enabled.
-fn spawn_rocksdb_metrics_collector(store: Store, tracker: &TaskTracker) {
+fn spawn_rocksdb_metrics_collector(
+    store: Store,
+    tracker: &TaskTracker,
+    cancel_token: CancellationToken,
+) {
     use ethrex_metrics::db::METRICS_DB;
 
     tracker.spawn(async move {
         loop {
-            if let Some(stats) = store.rocksdb_stats() {
+            // Each sample reads several RocksDB properties per column family;
+            // keep that off the async runtime like the rest of the storage layer.
+            let stats = {
+                let store = store.clone();
+                match tokio::task::spawn_blocking(move || store.rocksdb_stats()).await {
+                    Ok(stats) => stats,
+                    Err(e) => {
+                        warn!("RocksDB metrics sample panicked: {e}");
+                        None
+                    }
+                }
+            };
+            if let Some(stats) = stats {
                 let mut total_live_sst = 0u64;
                 for cf in &stats.cfs {
                     METRICS_DB.set_cf(
@@ -190,7 +206,10 @@ fn spawn_rocksdb_metrics_collector(store: Store, tracker: &TaskTracker) {
             if let Ok(frontier) = store.get_earliest_block_number().await {
                 METRICS_DB.set_backfill_frontier(frontier);
             }
-            tokio::time::sleep(DB_METRICS_SAMPLE_INTERVAL).await;
+            tokio::select! {
+                _ = tokio::time::sleep(DB_METRICS_SAMPLE_INTERVAL) => {}
+                _ = cancel_token.cancelled() => return,
+            }
         }
     });
 }
@@ -901,7 +920,7 @@ pub async fn init_l1(
 
     if opts.metrics_enabled {
         init_metrics(&opts, &network, tracker.clone());
-        spawn_rocksdb_metrics_collector(store.clone(), &tracker);
+        spawn_rocksdb_metrics_collector(store.clone(), &tracker, cancel_token.clone());
     }
 
     if opts.dev {

@@ -21,6 +21,11 @@ use tracing::{info, warn};
 
 use crate::store::tx_locations_merge;
 
+/// Number of LSM levels to poll for per-level file counts. RocksDB's default
+/// `num_levels` is 7 and we don't override it; a larger configured value would
+/// otherwise be silently undercounted.
+const ROCKSDB_NUM_LEVELS: usize = 7;
+
 /// Adapter wrapping `tx_locations_merge` to match RocksDB's expected signature.
 fn tx_locations_merge_op(
     _new_key: &[u8],
@@ -103,7 +108,13 @@ impl RocksDBBackend {
         // observability. Off by default to avoid the per-operation counter
         // overhead; enable with ETHREX_ROCKSDB_STATISTICS=1 on observability
         // nodes. Per-CF size/key/file properties below need no statistics.
-        let stats_enabled = std::env::var("ETHREX_ROCKSDB_STATISTICS").is_ok();
+        // Parse the value rather than testing presence, so `=0` disables instead of
+        // enabling. Documented as `ETHREX_ROCKSDB_STATISTICS=1`; a non-numeric value
+        // is treated as off.
+        let stats_enabled = std::env::var("ETHREX_ROCKSDB_STATISTICS")
+            .ok()
+            .and_then(|value| value.trim().parse::<u64>().ok())
+            .is_some_and(|value| value != 0);
         if stats_enabled {
             opts.enable_statistics();
         }
@@ -371,7 +382,7 @@ impl StorageBackend for RocksDBBackend {
                     .flatten()
                     .unwrap_or(0)
             };
-            let num_files = (0..=6)
+            let num_files = (0..ROCKSDB_NUM_LEVELS)
                 .map(|lvl| cf_int(&format!("rocksdb.num-files-at-level{lvl}")))
                 .sum();
             cfs.push(CfStats {
