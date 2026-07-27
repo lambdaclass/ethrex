@@ -2776,7 +2776,14 @@ impl Store {
         let read_view = self.backend.begin_read()?;
         let cache = self.gated_snapshot(state_root)?;
         let last_written = self.last_written()?;
-        let use_fkv = Self::flatkeyvalue_computed_with_last_written(account_hash, &last_written);
+        // While a deep-reorg overlay serves this root (#7001), flat-KV reads must
+        // go through the trie: journal entries written while the FKV generator was
+        // running lack pre-images for keys past the generator frontier, so disk
+        // flat-KV may hold the generator's stale values. `TrieWrapper` already
+        // forces the trie-node read path in this window; mirror the gate here so
+        // the EMPTY_TRIE_HASH shortcut doesn't bypass it.
+        let use_fkv = Self::flatkeyvalue_computed_with_last_written(account_hash, &last_written)
+            && !cache.overlay_serves(state_root);
 
         let storage_root = if use_fkv {
             // We will use FKVs, we don't need the root
@@ -2826,9 +2833,14 @@ impl Store {
         let last_written = self.last_written()?;
         // When FKV is active the real storage root is in the flatkeyvalue store,
         // not in the account's RLP-encoded storage_root field. Use EMPTY_TRIE_HASH
-        // so open_storage_trie_shared falls through to the FKV path.
+        // so open_storage_trie_shared falls through to the FKV path. While a
+        // deep-reorg overlay serves this root (#7001), keep the real root instead:
+        // disk flat-KV may hold stale generator values, so reads must go through
+        // the trie (see `TrieWrapper::flatkeyvalue_computed`).
         let storage_root =
-            if Self::flatkeyvalue_computed_with_last_written(account_hash, &last_written) {
+            if Self::flatkeyvalue_computed_with_last_written(account_hash, &last_written)
+                && !cache.overlay_serves(state_root)
+            {
                 EMPTY_TRIE_HASH
             } else {
                 storage_root
@@ -3080,6 +3092,14 @@ impl Store {
         // unnecessarily fall back to the trie when the cursor sits inside an
         // account's storage sweep (the account leaf is already in FKV at that
         // point; see `flatkeyvalue_generator`).
+        //
+        // While a deep-reorg overlay serves this root (#7001), skip the FKV fast
+        // path entirely: this function never consults the overlay, and disk
+        // flat-KV may hold values the generator computed against the chain being
+        // reorged away (journal entries written during generation lack
+        // past-frontier flat-KV pre-images). The per-address trie fallback goes
+        // through `TrieWrapper`, which routes reads through the overlay.
+        let overlay_active = trie_cache.overlay_serves(state_root);
         let fkv_cursor: &[u8] = last_written.as_slice();
         for (i, path) in leaf_paths.iter().enumerate() {
             if let Some(value) = trie_cache.get(state_root, path.as_slice()) {
@@ -3088,7 +3108,7 @@ impl Store {
                 }
                 continue;
             }
-            if fkv_cursor >= path.as_slice() {
+            if !overlay_active && fkv_cursor >= path.as_slice() {
                 fkv_indices.push(i);
             } else {
                 trie_indices.push(i);
@@ -5784,6 +5804,141 @@ mod state_history_tests {
         // Calling again is still a no-op.
         store.clear_reorg_overlay().unwrap();
         assert!(store.trie_cache.read().unwrap().overlay().is_none());
+    }
+
+    /// Regression test for #7001: journal entries written while the FKV generator
+    /// was running lack flat-KV pre-images for keys past the generator frontier,
+    /// and the generator's own flat-KV writes are never journaled. While an
+    /// overlay serves the read's state root, every flat-KV fast path must be
+    /// disabled so reads fall back to the (always journaled) trie nodes;
+    /// otherwise they serve the generator's stale values for the chain being
+    /// reorged away. Roots the overlay does not serve must keep the fast path.
+    #[tokio::test]
+    async fn deep_reorg_overlay_disables_flat_kv_fast_paths() {
+        let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::open().unwrap());
+
+        // Simulate a finished FKV generation BEFORE the Store boots, so its
+        // in-memory frontier starts at [0xff; 64] and every path counts as
+        // "computed" (the Store expands the durable [0xff] sentinel at open).
+        {
+            let mut tx = backend.begin_write().unwrap();
+            tx.put(MISC_VALUES, "last_written".as_bytes(), &[0xff])
+                .unwrap();
+            tx.commit().unwrap();
+        }
+
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::from_backend(
+            backend.clone(),
+            dir.path().to_path_buf(),
+            1,
+            DEFAULT_PERSIST_CHANNEL_CAPACITY,
+        )
+        .unwrap();
+
+        // The pivot state is empty, so the correct value for every read at the
+        // pivot root is None. The old chain created the account/slot after the
+        // pivot; the generator then wrote their flat-KV leaves against the old
+        // chain — writes that are never journaled.
+        let address = Address::from_low_u64_be(0xbeef);
+        let account_hash = hash_address_fixed(&address);
+        let slot = H256::from_low_u64_be(1);
+        let slot_hash = hash_key_fixed(&slot);
+        let generator_account = AccountState {
+            nonce: 7,
+            balance: U256::from(999u64),
+            storage_root: H256::zero(),
+            code_hash: H256::zero(),
+        };
+        let generator_slot_value = U256::from(42u64);
+        {
+            let mut tx = backend.begin_write().unwrap();
+            tx.put(
+                ACCOUNT_FLATKEYVALUE,
+                &Nibbles::from_bytes(account_hash.as_bytes()).into_vec(),
+                &generator_account.encode_to_vec(),
+            )
+            .unwrap();
+            tx.put(
+                STORAGE_FLATKEYVALUE,
+                &apply_prefix(Some(account_hash), Nibbles::from_bytes(&slot_hash)).into_vec(),
+                &generator_slot_value.encode_to_vec(),
+            )
+            .unwrap();
+            tx.commit().unwrap();
+        }
+
+        // Journal entries for blocks 10 and 11 above the pivot (block 9), as
+        // written DURING generation: flat diffs are empty because the keys were
+        // past the frontier at commit time (the #7001 hole). The pivot's state
+        // root is the empty trie.
+        let pivot_root = EMPTY_TRIE_HASH;
+        {
+            let mut tx = backend.begin_write().unwrap();
+            for (n, parent_root) in [(10u64, pivot_root), (11, H256::repeat_byte(0x10))] {
+                let entry = JournalEntry {
+                    block_hash: H256::repeat_byte(n as u8),
+                    parent_state_root: parent_root,
+                    account_trie_diff: vec![],
+                    storage_trie_diff: vec![],
+                    account_flat_diff: vec![],
+                    storage_flat_diff: vec![],
+                };
+                tx.put(STATE_HISTORY, &n.to_be_bytes(), &entry.encode())
+                    .unwrap();
+            }
+            tx.commit().unwrap();
+        }
+
+        store
+            .install_overlay_for_reorg(11, 10, |_| None)
+            .expect("overlay install must succeed");
+
+        // Reads at the pivot root must return the pivot state (account and slot
+        // absent), NOT the generator's stale flat-KV values.
+        let accounts = store
+            .get_account_states_batch_by_root(pivot_root, &[address])
+            .unwrap();
+        assert_eq!(
+            accounts,
+            vec![None],
+            "batch account read must not serve the generator's stale flat-KV value (#7001)"
+        );
+
+        let slot_value = store
+            .get_storage_at_root(pivot_root, address, slot)
+            .unwrap();
+        assert_eq!(
+            slot_value, None,
+            "storage read must not serve the generator's stale flat-KV value (#7001)"
+        );
+
+        let state_trie = store.open_state_trie(pivot_root).unwrap();
+        assert_eq!(
+            state_trie.get(account_hash.as_bytes()).unwrap(),
+            None,
+            "trie read must not serve the generator's stale flat-KV value (#7001)"
+        );
+
+        // Outside the overlay window the fast paths are untouched: a root the
+        // overlay does not serve still reads flat-KV straight from disk.
+        let unserved_root = H256::repeat_byte(0x99);
+        let accounts = store
+            .get_account_states_batch_by_root(unserved_root, &[address])
+            .unwrap();
+        assert_eq!(
+            accounts,
+            vec![Some(generator_account)],
+            "unserved roots must keep the flat-KV fast path"
+        );
+        let slot_value = store
+            .get_storage_at_root(unserved_root, address, slot)
+            .unwrap();
+        assert_eq!(
+            slot_value,
+            Some(generator_slot_value),
+            "unserved roots must keep the flat-KV fast path"
+        );
     }
 }
 
