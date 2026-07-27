@@ -767,7 +767,7 @@ impl Blockchain {
                     let evict = if is_frame {
                         !is_nonce_mismatch(&e)
                     } else {
-                        is_deterministic_invalid(&e)
+                        is_deterministic_invalid(&e, &self.options.r#type)
                     };
                     if evict {
                         self.remove_transaction_from_pool(&tx_hash)?;
@@ -1046,9 +1046,19 @@ fn is_nonce_mismatch(e: &ChainError) -> bool {
 /// Such a tx must be evicted rather than kept pooled: otherwise it re-occupies
 /// its sender's queue head on every payload build and starves that sender's
 /// other transactions (a payload-inclusion stall).
-fn is_deterministic_invalid(e: &ChainError) -> bool {
+pub(crate) fn is_deterministic_invalid(e: &ChainError, chain_type: &BlockchainType) -> bool {
     let msg = e.to_string();
-    msg.contains("gas limit lower than the minimum gas cost")
+    // `IntrinsicGasTooLow` is only deterministic on L1. The L2 hook raises the SAME
+    // variant from `reserve_l1_gas` when gas_limit cannot cover `floor + l1_gas`, and
+    // `l1_gas` is derived from the L1 fee config and the block's gas price — so a tx
+    // can fail it in one block purely because L1 data availability was expensive and
+    // succeed in the next. Both paths stringify identically, so the only safe reading
+    // on L2 is "transient": keep the tx pooled. The other arms below have no such
+    // second producer (only `default_hook` raises them, from the tx's own bytes), so
+    // they stay deterministic on both chain types.
+    let intrinsic_gas_too_low = matches!(chain_type, BlockchainType::L1)
+        && msg.contains("gas limit lower than the minimum gas cost");
+    intrinsic_gas_too_low
         || msg.contains("gas cost floor for calldata tokens")
         || msg.contains("Initcode size exceeded")
 }
@@ -1339,7 +1349,7 @@ mod tests {
         ] {
             let e = to_chain(err);
             assert!(
-                is_deterministic_invalid(&e),
+                is_deterministic_invalid(&e, &BlockchainType::L1),
                 "is_deterministic_invalid must match {name}; got: {e}"
             );
         }
@@ -1364,8 +1374,54 @@ mod tests {
         ] {
             let e = to_chain(err);
             assert!(
-                !is_deterministic_invalid(&e),
+                !is_deterministic_invalid(&e, &BlockchainType::L1),
                 "is_deterministic_invalid must NOT match transient {name}; got: {e}"
+            );
+        }
+    }
+
+    #[test]
+    fn intrinsic_gas_too_low_is_not_deterministic_on_l2() {
+        // The L2 hook raises `IntrinsicGasTooLow` from `reserve_l1_gas` for a
+        // TRANSIENT condition (gas_limit vs `floor + l1_gas`, where l1_gas tracks
+        // L1 fees and the block gas price), indistinguishable by string from the
+        // genuine per-tx check. Evicting on it would drop txs that succeed a block
+        // later, so on L2 it must read as transient. The other two arms have only
+        // one producer each and stay deterministic.
+        use ethrex_levm::errors::{TxValidationError, VMError};
+        let to_chain = |e: TxValidationError| -> ChainError {
+            EvmError::from(VMError::TxValidation(e)).into()
+        };
+
+        let l2 = BlockchainType::L2(Default::default());
+        let intrinsic = to_chain(TxValidationError::IntrinsicGasTooLow);
+        assert!(
+            is_deterministic_invalid(&intrinsic, &BlockchainType::L1),
+            "IntrinsicGasTooLow is deterministic on L1; got: {intrinsic}"
+        );
+        assert!(
+            !is_deterministic_invalid(&intrinsic, &l2),
+            "IntrinsicGasTooLow must NOT be treated as deterministic on L2: the L2 \
+             hook reuses it for a transient l1_gas condition; got: {intrinsic}"
+        );
+
+        for (err, name) in [
+            (
+                TxValidationError::IntrinsicGasBelowFloorGasCost,
+                "IntrinsicGasBelowFloorGasCost",
+            ),
+            (
+                TxValidationError::InitcodeSizeExceeded {
+                    max_size: 1,
+                    actual_size: 2,
+                },
+                "InitcodeSizeExceeded",
+            ),
+        ] {
+            let e = to_chain(err);
+            assert!(
+                is_deterministic_invalid(&e, &l2),
+                "{name} has a single producer and stays deterministic on L2; got: {e}"
             );
         }
     }
