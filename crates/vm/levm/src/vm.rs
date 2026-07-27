@@ -1,5 +1,6 @@
 use crate::{
     TransientStorage,
+    account::LevmAccount,
     call_frame::{CallFrame, Stack},
     db::gen_db::GeneralizedDatabase,
     debug::DebugMode,
@@ -9,8 +10,8 @@ use crate::{
         VMError,
     },
     gas_cost::{
-        STATE_BYTES_PER_AUTH_BASE, STATE_BYTES_PER_AUTH_TOTAL, STATE_BYTES_PER_NEW_ACCOUNT,
-        STATE_BYTES_PER_STORAGE_SET, cost_per_state_byte as compute_cost_per_state_byte,
+        STATE_BYTES_PER_AUTH_BASE, STATE_BYTES_PER_NEW_ACCOUNT, STATE_BYTES_PER_STORAGE_SET,
+        cost_per_state_byte as compute_cost_per_state_byte,
     },
     hooks::{
         backup_hook::BackupHook,
@@ -31,7 +32,7 @@ use ethrex_common::{
     tracing::CallType,
     types::{
         AccessListEntry, Code, Fork, Frame, FrameMode, Log, Transaction, TxType,
-        fee_config::FeeConfig,
+        block_access_list::BlockAccessListCheckpoint, fee_config::FeeConfig,
     },
 };
 use ethrex_crypto::Crypto;
@@ -543,6 +544,37 @@ impl FrameTxContext {
     }
 }
 
+/// Snapshot of `call_frame_backup`'s key-space taken by [`VM::enter_prepare_region`]
+/// at the start of the atomic prepare region (EIP-8037 auth + prepare-dispatch
+/// charges). `original_accounts_info` / `original_account_storage_slots` are
+/// first-write-wins maps keyed by address, so a plain entry-count marker can't
+/// tell which keys are region-added; recording the pre-region key sets lets
+/// [`VM::fail_prepare_region`] revert exactly the region's writes while leaving
+/// the earlier sender nonce-bump / fee-deduction backup entries intact.
+/// `inserted_code_hashes` is an append-only `Vec`, so its pre-region length is
+/// enough to identify the region-added tail.
+#[derive(Debug, Default)]
+pub struct PrepareRegionBackupMarker {
+    /// Addresses already backed up in `original_accounts_info` before the region.
+    accounts: FxHashSet<Address>,
+    /// Addresses already backed up in `original_account_storage_slots` before the region.
+    storage: FxHashSet<Address>,
+    /// Length of `inserted_code_hashes` before the region.
+    code_hashes_len: usize,
+    /// Region-entry state of every account already backed up before the region
+    /// (notably the sender, post-fee/post-nonce). The marker excludes these from
+    /// the region rollback to preserve their pre-region writes, but first-write-wins
+    /// backup means an in-region write to one of them (e.g. a self-sponsored EIP-7702
+    /// authorization on the sender) leaves no new backup entry. `fail_prepare_region`
+    /// restores these to the captured state, reverting the in-region write while
+    /// keeping the pre-region nonce bump / fee deduction.
+    entry_state: FxHashMap<Address, LevmAccount>,
+    /// BAL recorder checkpoint at region entry, so an applied-then-reverted
+    /// delegation's code/nonce changes are discarded (demoted to an access-only
+    /// touch) rather than leaking into the block access list.
+    bal_checkpoint: Option<BlockAccessListCheckpoint>,
+}
+
 /// Result of [`VM::simulate_validation_prefix`] (EIP-8141 mempool simulation).
 #[derive(Debug, Clone)]
 pub struct PrefixSimResult {
@@ -621,46 +653,51 @@ pub struct VM<'a> {
     pub cost_per_state_byte: u64,
     /// EIP-8037: State gas for new account creation (STATE_BYTES_PER_NEW_ACCOUNT * cost_per_state_byte).
     pub state_gas_new_account: u64,
-    /// EIP-2780 top-frame new-account state gas pending for the top-level value
-    /// transfer to an empty recipient. Captured in `prepare_execution` (before the
-    /// value transfer, while the recipient is still empty) and charged at the start
-    /// of `run_execution` so an OOG reverts the tx (EELS charges it inside
-    /// `process_message`) instead of invalidating the block.
-    pub pending_top_frame_state_gas: u64,
-    /// EIP-2780 top-frame regular gas pending for a 7702-delegated recipient (the
-    /// extra COLD_ACCOUNT_ACCESS to resolve the delegation). Deferred to
-    /// `run_execution` for the same revert-not-invalidate reason as the state charge.
-    pub pending_top_frame_regular_gas: u64,
     /// EIP-8037: State gas for storage slot creation (STATE_BYTES_PER_STORAGE_SET * cost_per_state_byte).
     pub state_gas_storage_set: u64,
-    /// EIP-8037: State gas for EIP-7702 auth total (STATE_BYTES_PER_AUTH_TOTAL * cost_per_state_byte).
-    pub state_gas_auth_total: u64,
     /// EIP-8037: State gas for the 23-byte EIP-7702 delegation indicator
-    /// (STATE_BYTES_PER_AUTH_BASE * cost_per_state_byte). Refunded by
-    /// `set_delegation` when no new delegation indicator bytes are written —
-    /// either the authority's code slot already holds an indicator or the
-    /// auth clears against an empty authority.
+    /// (STATE_BYTES_PER_AUTH_BASE * cost_per_state_byte). Charged in-region by
+    /// `eip7702_set_access_code` (EELS `set_delegation`) once per authority when a
+    /// net-new delegation indicator is written, and never credited back.
     pub state_gas_auth_base: u64,
-    /// EIP-8037: state-gas refund channel.
-    /// Mirrors EELS `MessageCallOutput.state_refund` — a separate, monotonic accumulator
-    /// for refunds that bypass per-frame `state_gas_used` accounting. Populated by
-    /// `set_delegation` for existing-authority refunds, subtracted from block-level
-    /// state-gas at the end of `refund_sender`. Survives revert/halt/OOG since it lives
-    /// on the VM, not in any call-frame backup.
-    pub state_refund: u64,
     /// EIP-8037: intrinsic state gas (`tx_env.intrinsic_state_gas` in EELS). Captured at
     /// `add_intrinsic_gas` time. ethrex lumps intrinsic + execution into `state_gas_used`,
     /// so on top-level error this field is what we leave behind when refunding the
     /// execution portion to the reservoir — block accounting then bills the intrinsic
     /// (matches EELS `tx_state_gas = intrinsic_state_gas + tx_output.state_gas_used`).
     pub intrinsic_state_gas: u64,
-    /// EIP-8037 (#3002): whether a top-level CREATE transaction targeted an
-    /// already-alive account (existed and non-empty) at tx start, captured in
-    /// `handle_create_transaction` before any state mutation. Mirrors EELS
-    /// `MessageCallOutput.created_target_alive`. Extends the create-tx
-    /// new-account refund in `finalize_execution` to also fire on success when
-    /// the target was alive (no new account leaf created). Default false.
-    pub created_target_alive: bool,
+    /// EIP-8037: set by `prepare_execution` when the in-region value-to-not-alive
+    /// `NEW_ACCOUNT` charge fires (a value-bearing call to a not-yet-alive
+    /// recipient). Consumed once, at the top of `run_execution`, to decide
+    /// whether an Amsterdam precompile-halt must roll the charge back (the
+    /// recipient never materializes on halt).
+    pub value_new_account_charged: bool,
+    /// EIP-8037: `current_call_frame.state_gas_used_at_entry` captured by
+    /// `enter_prepare_region` right before the atomic prepare region (EIP-7702
+    /// auth + prepare-dispatch charges) begins. `fail_prepare_region` rewinds the
+    /// frame's `state_gas_used` back to this pre-region baseline on an internal OOG,
+    /// mirroring EELS `restore_tx_state(prep_snapshot)`.
+    pub prep_baseline_state_gas: i64,
+    /// EIP-8037: `state_gas_reservoir` captured by `enter_prepare_region`. The
+    /// `set_delegation` auth lock-in zeroes the frame spill, so `fail_prepare_region`
+    /// cannot reconstruct the pre-region reservoir from `refill_frame_state_gas`
+    /// arithmetic; it restores this captured value directly (EELS
+    /// `message.state_gas_reservoir = prep_reservoir`).
+    pub prep_baseline_reservoir: u64,
+    /// EIP-8037: cumulative `state_gas_spill` captured by `enter_prepare_region`, so
+    /// `fail_prepare_region` restores block-accounting spill to its pre-region value
+    /// (the region's spilled state gas is fully rolled back / burned as regular).
+    pub prep_baseline_state_gas_spill: u64,
+    /// EIP-8037: pre-region key-space snapshot of `call_frame_backup`, recorded by
+    /// `enter_prepare_region`. Lets `fail_prepare_region` revert only region-added
+    /// writes, leaving the sender nonce-bump / fee-deduction entries intact.
+    pub prep_region_backup_marker: PrepareRegionBackupMarker,
+    /// EIP-8037: set by `fail_prepare_region` when an internal OOG rolls back the
+    /// atomic prepare region. Consumed by `run_execution`, which turns it into a
+    /// full-gas revert `ContextResult` (mirrors EELS depth-0
+    /// `except ExceptionalHalt: evm.regular_gas_used += evm.gas_left; evm.gas_left = 0`)
+    /// instead of a tx-level rejection `Err` that would wrongly invalidate the block.
+    pub pending_prep_oog: bool,
     /// The opcode table mapping opcodes to opcode handlers for fast lookup.
     /// A shared `&'static` reference to a per-fork table that is `const`-built once for the
     /// whole process (immutable), so each VM holds only a pointer instead of a 2 KB inline copy.
@@ -974,24 +1011,18 @@ impl<'a> VM<'a> {
             clippy::arithmetic_side_effects,
             reason = "byte-count constants are small (<200) and cpsb is bounded by block_gas_limit/year formula"
         )]
-        let (
-            cpsb,
-            state_gas_new_account,
-            state_gas_storage_set,
-            state_gas_auth_total,
-            state_gas_auth_base,
-        ) = if fork >= Fork::Amsterdam {
-            let cpsb = compute_cost_per_state_byte(env.block_gas_limit);
-            (
-                cpsb,
-                STATE_BYTES_PER_NEW_ACCOUNT * cpsb,
-                STATE_BYTES_PER_STORAGE_SET * cpsb,
-                STATE_BYTES_PER_AUTH_TOTAL * cpsb,
-                STATE_BYTES_PER_AUTH_BASE * cpsb,
-            )
-        } else {
-            (0, 0, 0, 0, 0)
-        };
+        let (cpsb, state_gas_new_account, state_gas_storage_set, state_gas_auth_base) =
+            if fork >= Fork::Amsterdam {
+                let cpsb = compute_cost_per_state_byte(env.block_gas_limit);
+                (
+                    cpsb,
+                    STATE_BYTES_PER_NEW_ACCOUNT * cpsb,
+                    STATE_BYTES_PER_STORAGE_SET * cpsb,
+                    STATE_BYTES_PER_AUTH_BASE * cpsb,
+                )
+            } else {
+                (0, 0, 0, 0)
+            };
 
         // Derive whether the top-level backup must be preserved from the installed hooks rather
         // than from `vm_type`. The flag's real meaning is "a hook reads the top-level backup in
@@ -1025,14 +1056,15 @@ impl<'a> VM<'a> {
             state_gas_spill: 0,
             cost_per_state_byte: cpsb,
             state_gas_new_account,
-            pending_top_frame_state_gas: 0,
-            pending_top_frame_regular_gas: 0,
             state_gas_storage_set,
-            state_gas_auth_total,
             state_gas_auth_base,
-            state_refund: 0,
             intrinsic_state_gas: 0,
-            created_target_alive: false,
+            value_new_account_charged: false,
+            prep_baseline_state_gas: 0,
+            prep_baseline_reservoir: 0,
+            prep_baseline_state_gas_spill: 0,
+            prep_region_backup_marker: PrepareRegionBackupMarker::default(),
+            pending_prep_oog: false,
             current_call_frame: CallFrame::new(
                 env.origin,
                 callee,
@@ -1263,6 +1295,153 @@ impl<'a> VM<'a> {
         Ok(())
     }
 
+    /// EIP-8037: enters the atomic prepare region (EELS `interpreter.py`'s depth-0
+    /// `try` around `set_delegation` + `prepare_dispatch`, `interpreter.py:353-375`).
+    /// Must be called in `prepare_execution`, after the sender nonce bump and fee
+    /// deduction (those survive a region rollback) but before the type-4 auth
+    /// handling (the first region charge). Captures the pre-region state-gas
+    /// baseline and the `call_frame_backup` key-space so `fail_prepare_region` can
+    /// later undo exactly the region's writes.
+    pub fn enter_prepare_region(&mut self) {
+        self.prep_baseline_state_gas = self.current_call_frame.state_gas_used_at_entry;
+        self.prep_baseline_reservoir = self.state_gas_reservoir;
+        self.prep_baseline_state_gas_spill = self.state_gas_spill;
+        let backup = &self.current_call_frame.call_frame_backup;
+        let accounts: FxHashSet<Address> = backup.original_accounts_info.keys().copied().collect();
+        let storage: FxHashSet<Address> = backup
+            .original_account_storage_slots
+            .keys()
+            .copied()
+            .collect();
+        let code_hashes_len = backup.inserted_code_hashes.len();
+        // Capture the region-entry state of every already-backed-up account so a
+        // self-sponsored EIP-7702 authorization (or any in-region write to a
+        // pre-region-touched account) can be reverted without disturbing its
+        // pre-region nonce/fee writes. See `PrepareRegionBackupMarker::entry_state`.
+        let entry_state: FxHashMap<Address, LevmAccount> = accounts
+            .iter()
+            .filter_map(|address| {
+                self.db
+                    .current_accounts_state
+                    .get(address)
+                    .map(|account| (*address, account.clone()))
+            })
+            .collect();
+        let bal_checkpoint = self.db.bal_recorder.as_ref().map(|r| r.checkpoint());
+        self.prep_region_backup_marker = PrepareRegionBackupMarker {
+            accounts,
+            storage,
+            code_hashes_len,
+            entry_state,
+            bal_checkpoint,
+        };
+    }
+
+    /// EIP-8037: rolls back the atomic prepare region on an internal OOG from any of
+    /// its charges (7702 auth, CREATE/value `NEW_ACCOUNT`, recipient delegation-resolve).
+    /// Restores every `call_frame_backup` entry added since `enter_prepare_region`
+    /// (leaving the earlier sender nonce-bump / fee-deduction entries untouched),
+    /// refills the frame's state gas back to the pre-region baseline, and sets
+    /// `pending_prep_oog` so `run_execution` turns this into a full-gas revert
+    /// instead of a tx-level rejection `Err` (which would wrongly invalidate the
+    /// block). Mirrors EELS `restore_tx_state(prep_snapshot)` + `refill_frame_state_gas`
+    /// (`interpreter.py:366-374`).
+    pub fn fail_prepare_region(&mut self) {
+        let marker = std::mem::take(&mut self.prep_region_backup_marker);
+        let mut backup = std::mem::take(&mut self.current_call_frame.call_frame_backup);
+
+        // Restore + drop every account backup entry added during the region.
+        let region_accounts: Vec<Address> = backup
+            .original_accounts_info
+            .keys()
+            .filter(|address| !marker.accounts.contains(*address))
+            .copied()
+            .collect();
+        for address in region_accounts {
+            if let Some(account) = backup.original_accounts_info.remove(&address)
+                && let Some(current_account) = self.db.current_accounts_state.get_mut(&address)
+            {
+                current_account.info = account.info;
+                current_account.status = account.status;
+                current_account.has_storage = account.has_storage;
+                current_account.exists = account.exists;
+            }
+        }
+
+        // Restore + drop every storage backup entry added during the region.
+        let region_storage: Vec<Address> = backup
+            .original_account_storage_slots
+            .keys()
+            .filter(|address| !marker.storage.contains(*address))
+            .copied()
+            .collect();
+        for address in region_storage {
+            if let Some(slots) = backup.original_account_storage_slots.remove(&address)
+                && let Some(current_account) = self.db.current_accounts_state.get_mut(&address)
+            {
+                for (key, value) in slots {
+                    current_account.storage.insert(key, value);
+                }
+            }
+        }
+
+        // Evict codes the region inserted, mirroring `restore_cache_state`: a stale
+        // by-hash cache entry would hide a later read of the same hash from the store.
+        for code_hash in backup
+            .inserted_code_hashes
+            .split_off(marker.code_hashes_len)
+        {
+            self.db.codes.remove(&code_hash);
+        }
+
+        self.current_call_frame.call_frame_backup = backup;
+
+        // Revert in-region writes to accounts that were already backed up before the
+        // region (the marker filter above leaves these untouched to preserve their
+        // pre-region nonce/fee writes, but first-write-wins backup means an in-region
+        // write — e.g. a self-sponsored EIP-7702 authorization writing the sender's
+        // delegation code + auth nonce bump — created no new backup entry). Restoring
+        // to the region-entry snapshot undoes the in-region write while keeping the
+        // pre-region writes baked into that snapshot. Mirrors EELS `restore_tx_state`.
+        for (address, entry_account) in marker.entry_state {
+            if let Some(current) = self.db.current_accounts_state.get_mut(&address) {
+                current.info = entry_account.info;
+                current.status = entry_account.status;
+                current.has_storage = entry_account.has_storage;
+                current.exists = entry_account.exists;
+            }
+        }
+
+        // Roll back the BAL recorder to region entry so an applied-then-reverted
+        // delegation's code/nonce changes are discarded (demoted to an access-only
+        // touch, matching EELS `restore_tx_state`). `restore` preserves touched
+        // addresses — including the pre-charge authority touches recorded during
+        // `set_delegation` — so a reverted authority still appears as an access.
+        if let Some(checkpoint) = marker.bal_checkpoint
+            && let Some(recorder) = self.db.bal_recorder.as_mut()
+        {
+            recorder.restore(checkpoint);
+        }
+
+        // Rewind the state-gas machinery to the pre-region snapshot. The
+        // `set_delegation` auth lock-in re-seeds `state_gas_used_at_entry` and zeroes
+        // the frame spill, so `refill_frame_state_gas` (which derives the reservoir
+        // credit from the frame spill) would leave the reservoir over-credited by the
+        // locked-in auth state gas. Restore `state_gas_used`, the reservoir, and the
+        // cumulative spill to the values captured by `enter_prepare_region`, and clear
+        // the frame spill — this fully reverts the region's state charges (auth +
+        // prepare-dispatch) regardless of the lock-in. Mirrors EELS
+        // `restore_tx_state(prep_snapshot)` + `message.state_gas_reservoir = prep_reservoir`
+        // (`interpreter.py:365-369`). `gas_remaining` is left as-is: the failing charge
+        // already drove it negative, so `run_execution` burns all gas (EELS
+        // `evm.regular_gas_used += evm.gas_left; evm.gas_left = 0`).
+        self.state_gas_used = self.prep_baseline_state_gas;
+        self.state_gas_reservoir = self.prep_baseline_reservoir;
+        self.state_gas_spill = self.prep_baseline_state_gas_spill;
+        self.current_call_frame.frame_state_gas_spilled = 0;
+        self.pending_prep_oog = true;
+    }
+
     /// Executes a whole external transaction. Performing validations at the beginning.
     pub fn execute(&mut self) -> Result<ExecutionReport, VMError> {
         // Detect frame transaction and branch to specialized execution
@@ -1315,7 +1494,12 @@ impl<'a> VM<'a> {
         self.current_call_frame.call_frame_backup.bal_checkpoint =
             self.db.bal_recorder.as_ref().map(|r| r.checkpoint());
 
-        if self.is_create()? {
+        // EIP-8037: skip the CREATE nonce bump / endowment / collision check when the
+        // atomic prepare region OOG'd (`pending_prep_oog`). EELS raises in
+        // `prepare_dispatch` before `process_create_message` runs, so the contract is
+        // never created — `run_execution` below emits the full-gas revert. Bumping the
+        // nonce here would leave a phantom nonce=1 the region rollback can't reach.
+        if !self.pending_prep_oog && self.is_create()? {
             // Create contract, reverting the Tx if address is already occupied.
             if let Some(context_result) = self.handle_create_transaction()? {
                 let report = self.finalize_execution(context_result)?;
@@ -2092,14 +2276,8 @@ impl<'a> VM<'a> {
         // `state_gas_used` here lets the block-level regular/state split
         // (regular = gas_used - state_gas_used) attribute it to the state dimension
         // instead of billing the whole amount as regular gas.
-        let state_refund_signed =
-            i64::try_from(self.state_refund).map_err(|_| InternalError::Overflow)?;
-        let state_gas_used = u64::try_from(
-            self.state_gas_used
-                .saturating_sub(state_refund_signed)
-                .max(0),
-        )
-        .map_err(|_| InternalError::Overflow)?;
+        let state_gas_used =
+            u64::try_from(self.state_gas_used.max(0)).map_err(|_| InternalError::Overflow)?;
 
         // Unused frame gas in GAS UNITS for the report — distinct from the wei
         // refund above (which also returns the max-vs-effective fee delta).
@@ -2452,9 +2630,6 @@ impl<'a> VM<'a> {
     fn is_simple_transfer_fast_path(&self) -> bool {
         !self.current_call_frame.is_create
             && self.current_call_frame.bytecode.is_empty()
-            // A pending EIP-2780 top-frame charge must be applied via run_execution.
-            && self.pending_top_frame_state_gas == 0
-            && self.pending_top_frame_regular_gas == 0
             // Privileged L2 txs can leave gas negative; let the slow path surface that as OOG.
             && self.current_call_frame.gas_remaining >= 0
             && self.tx.authorization_list().is_none()
@@ -2480,35 +2655,27 @@ impl<'a> VM<'a> {
             });
         }
 
-        // A pending top-frame NEW_ACCOUNT charge means the recipient was an EIP-161-empty
-        // account receiving value. If the recipient is a precompile that then exceptionally
-        // halts/reverts, the account is never materialized, so the charge is rolled back in
-        // the precompile branch below (mirrors EELS `refill_frame_state_gas`).
-        let top_frame_new_account_charged = self.pending_top_frame_state_gas > 0;
-
-        // EIP-2780 top-frame new-account state charge (deferred from prepare_execution):
-        // charged from the state-gas reservoir at the top of the frame, mirroring EELS
-        // `process_message`. If it cannot be covered the tx reverts (consuming all gas),
-        // rather than being rejected as an invalid transaction.
-        if self.pending_top_frame_state_gas > 0 || self.pending_top_frame_regular_gas > 0 {
-            let pending_state = std::mem::take(&mut self.pending_top_frame_state_gas);
-            let pending_regular = std::mem::take(&mut self.pending_top_frame_regular_gas);
-            // State charge first, then the 7702-delegation regular cold-access (EELS order).
-            let charged = (pending_state == 0 || self.increase_state_gas(pending_state).is_ok())
-                && (pending_regular == 0
-                    || self
-                        .current_call_frame
-                        .increase_consumed_gas(pending_regular)
-                        .is_ok());
-            if !charged {
-                return Ok(ContextResult {
-                    result: TxResult::Revert(ExceptionalHalt::OutOfGas.into()),
-                    gas_used: self.current_call_frame.gas_limit,
-                    gas_spent: self.current_call_frame.gas_limit,
-                    output: Bytes::new(),
-                });
-            }
+        // EIP-8037: the atomic prepare region rolled back (one of its charges — 7702
+        // auth, CREATE/value NEW_ACCOUNT, recipient delegation-resolve — OOG'd).
+        // Burn all gas and revert the tx rather than rejecting it as invalid (which
+        // would wrongly invalidate the block). Mirrors EELS depth-0
+        // `except ExceptionalHalt: evm.regular_gas_used += evm.gas_left; evm.gas_left = 0`
+        // (`interpreter.py:366-374`).
+        if self.pending_prep_oog {
+            return Ok(ContextResult {
+                result: TxResult::Revert(ExceptionalHalt::OutOfGas.into()),
+                gas_used: self.current_call_frame.gas_limit,
+                gas_spent: self.current_call_frame.gas_limit,
+                output: Bytes::new(),
+            });
         }
+
+        // A charged value-to-not-alive NEW_ACCOUNT means the recipient was not yet alive
+        // at tx start and the tx transfers value. If the recipient is a precompile that
+        // then exceptionally halts/reverts, the account is never materialized, so the
+        // charge is rolled back in the precompile branch below (mirrors EELS
+        // `refill_frame_state_gas`). Set in-region by `prepare_execution`.
+        let top_frame_new_account_charged = self.value_new_account_charged;
 
         #[expect(clippy::as_conversions, reason = "remaining gas conversion")]
         if precompiles::is_precompile(
@@ -2518,11 +2685,12 @@ impl<'a> VM<'a> {
         ) {
             // `execute_precompile` itself never touches state gas (it only mutates
             // `gas_remaining`; it has no access to `state_gas_used` / `state_gas_reservoir` /
-            // `state_gas_spill`) — the assert below guards that. The EIP-2780 top-frame
-            // NEW_ACCOUNT charge applied above, however, IS frame state gas, and on an
-            // exceptional halt/revert it must be rolled back (see below). `self` is borrowed
-            // by field rather than via `&mut self.current_call_frame` so the refund call,
-            // which needs `&mut self`, can run after `execute_precompile`.
+            // `state_gas_spill`) — the assert below guards that. The in-region EIP-2780
+            // value-to-not-alive NEW_ACCOUNT charge (`prepare_execution`),
+            // however, IS frame state gas, and on an exceptional halt/revert it must be
+            // rolled back (see below). `self` is borrowed by field rather than via
+            // `&mut self.current_call_frame` so the refund call, which needs `&mut self`,
+            // can run after `execute_precompile`.
             let state_gas_used_before_precompile = self.state_gas_used;
             let code_address = self.current_call_frame.code_address;
             let precompile_gas_limit = self.current_call_frame.gas_limit;
@@ -2549,7 +2717,7 @@ impl<'a> VM<'a> {
             // untouched forwarded amount — under Amsterdam that would make the block
             // report only the intrinsic portion. Zero it so the block matches the
             // `gas_used = gas_limit` contract from `handle_precompile_result`, and roll
-            // back the top-frame NEW_ACCOUNT charge (the recipient is never materialized
+            // back the in-region value NEW_ACCOUNT charge (the recipient is never materialized
             // on halt) so the burned gas counts entirely as regular gas, matching EELS
             // `refill_frame_state_gas`. Pre-Amsterdam reads `ctx_result.gas_used` directly
             // and is unaffected by this path either way.
@@ -2988,37 +3156,18 @@ impl<'a> VM<'a> {
         // the top-frame `refill_frame_state_gas` (seeded at the post-intrinsic baseline in
         // `add_intrinsic_gas` and fired on revert/halt in `handle_opcode_error` /
         // `handle_opcode_result`). The intrinsic portion stays in `state_gas_used` so block
-        // accounting bills it. No reservoir-move is performed here. Collision returns before
-        // any execution state gas is charged, so it has nothing to refill (see the create
-        // collision branch in `handle_create_transaction`).
+        // accounting bills it. No reservoir-move is performed here. A create-tx collision
+        // rolls its own in-region `NEW_ACCOUNT` charge (if any) back to the frame's entry
+        // baseline inside `handle_create_transaction`'s collision branch, so there is
+        // nothing left to refill here either (see that function).
         //
-        // EIP-8037 (#3002): the create-tx NEW_ACCOUNT refund fires for every top-level
-        // CREATE-tx failure (revert / halt / OOG / collision), AND on success when the
-        // target was already alive (`created_target_alive`) — no new account leaf created.
-        // EELS reference: fork.py::process_transaction:
-        //   if isinstance(tx.to, Bytes0) and (
-        //       tx_output.error is not None or tx_output.created_target_alive
-        //   ):
-        //       new_account_refund = STATE_BYTES_PER_NEW_ACCOUNT * COST_PER_STATE_BYTE
-        //       tx_output.state_gas_left += new_account_refund
-        //       tx_output.state_refund   += new_account_refund
-        // The `created_target_alive` term only ever holds on the success path: on
-        // collision `handle_create_transaction` returns before setting it, so the
-        // collision refund still fires exactly once via `!is_success`.
-        if self.env.config.fork >= Fork::Amsterdam
-            && self.is_create()?
-            && (!ctx_result.is_success() || self.created_target_alive)
-        {
-            let new_account_refund = self.state_gas_new_account;
-            self.state_gas_reservoir = self
-                .state_gas_reservoir
-                .checked_add(new_account_refund)
-                .ok_or(InternalError::Overflow)?;
-            self.state_refund = self
-                .state_refund
-                .checked_add(new_account_refund)
-                .ok_or(InternalError::Overflow)?;
-        }
+        // EIP-8037: there is no longer a separate create-failure `NEW_ACCOUNT`
+        // refund here. The charge itself (`prepare_execution`) is now
+        // conditioned on `get_pre_state_account(created_addr) == EMPTY_ACCOUNT`, so it
+        // simply never fires for an already-alive target (positive balance implies
+        // non-empty pre-state) and is rolled back by `handle_create_transaction` on
+        // collision — matching EELS v7, which drops the created-target-alive output flag
+        // entirely because `prepare_dispatch` never runs for a colliding create.
 
         // See `prepare_execution`: per-hook `Rc::clone` avoids the `self.hooks.clone()` realloc.
         for i in 0..self.hooks.len() {
@@ -3049,18 +3198,13 @@ impl<'a> VM<'a> {
             Vec::new()
         };
 
-        // EIP-8037: `state_gas_used` is already net (signed; credits
-        // decrement it inline). Subtract `state_refund` (EIP-7702 tx-level channel) and
-        // clamp at zero for block accounting — `state_gas_used` may be negative when inline
-        // refunds exceed gross charges.
-        let state_refund_signed =
-            i64::try_from(self.state_refund).map_err(|_| InternalError::Overflow)?;
-        let net_state_gas_used: u64 = u64::try_from(
-            self.state_gas_used
-                .saturating_sub(state_refund_signed)
-                .max(0),
-        )
-        .map_err(|_| InternalError::Overflow)?;
+        // EIP-8037: `state_gas_used` is already net (signed; credits decrement it
+        // inline), so `tx_state_gas = intrinsic_state_gas + state_gas_used` exactly
+        // (EELS `fork.py::process_transaction`, which no longer carries a separate
+        // tx-level refund channel). Clamp at zero — `state_gas_used` may be negative when
+        // inline refunds exceed gross charges.
+        let net_state_gas_used: u64 =
+            u64::try_from(self.state_gas_used.max(0)).map_err(|_| InternalError::Overflow)?;
 
         let report = ExecutionReport {
             result: ctx_result.result.clone(),
@@ -3280,14 +3424,15 @@ impl<'a> VM<'a> {
             state_gas_spill: 0,
             cost_per_state_byte: 0,
             state_gas_new_account: 0,
-            pending_top_frame_state_gas: 0,
-            pending_top_frame_regular_gas: 0,
             state_gas_storage_set: 0,
-            state_gas_auth_total: 0,
             state_gas_auth_base: 0,
-            state_refund: 0,
             intrinsic_state_gas: 0,
-            created_target_alive: false,
+            value_new_account_charged: false,
+            prep_baseline_state_gas: 0,
+            prep_baseline_reservoir: 0,
+            prep_baseline_state_gas_spill: 0,
+            prep_region_backup_marker: PrepareRegionBackupMarker::default(),
+            pending_prep_oog: false,
             opcode_table: VM::build_opcode_table(fork),
             crypto,
             validation_observer: ValidationObserver::disabled(),

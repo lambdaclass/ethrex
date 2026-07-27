@@ -13,7 +13,7 @@ path = "./lib.rs"
 
 [dependencies]
 # TODO(#1102): Move to Lambdaworks in the future
-c-kzg = { version = "2.1.1", default-features = false, optional = true }
+c-kzg = { version = "2.1.8", default-features = false, optional = true }
 kzg-rs = { workspace = true, optional = true }
 ethereum-types = { version = "0.15.1", default-features = false }
 thiserror = { version = "2.0.9", default-features = false }

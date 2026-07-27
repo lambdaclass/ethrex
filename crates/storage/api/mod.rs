@@ -51,6 +51,13 @@ pub trait StorageBackend: Debug + Send + Sync {
     // TODO: remove this and provide historic data via diff-layers
     /// Creates a checkpoint of the current database state at the specified path.
     fn create_checkpoint(&self, path: &Path) -> Result<(), StoreError>;
+
+    /// Durably persists all buffered writes to disk, so a subsequent process
+    /// start needs no crash recovery. Called on graceful shutdown. Defaults to a
+    /// no-op for backends that are already durable or purely in-memory.
+    fn flush(&self) -> Result<(), StoreError> {
+        Ok(())
+    }
 }
 
 /// Read-only transaction interface.
@@ -58,6 +65,21 @@ pub trait StorageBackend: Debug + Send + Sync {
 pub trait StorageReadView: Send + Sync {
     /// Retrieves a value by key from the specified table.
     fn get(&self, table: &'static str, key: &[u8]) -> Result<Option<Vec<u8>>, StoreError>;
+
+    /// Retrieves multiple values by key from the specified table.
+    /// Returns results in the same order as the input keys.
+    /// Backends that support batched reads (e.g. RocksDB `multi_get_cf`)
+    /// should override this for better throughput. Callers should not
+    /// assume `multi_get` is asymptotically faster than `get`; on backends
+    /// without a batched read primitive (e.g. the in-memory backend) the
+    /// default impl below is equivalent to N independent `get` calls.
+    fn multi_get(
+        &self,
+        table: &'static str,
+        keys: &[&[u8]],
+    ) -> Vec<Result<Option<Vec<u8>>, StoreError>> {
+        keys.iter().map(|k| self.get(table, k)).collect()
+    }
 
     /// Returns an iterator over all key-value pairs with the given prefix.
     fn prefix_iterator(
