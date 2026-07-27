@@ -1047,7 +1047,7 @@ fn is_nonce_mismatch(e: &ChainError) -> bool {
 /// Such a tx must be evicted rather than kept pooled: otherwise it re-occupies
 /// its sender's queue head on every payload build and starves that sender's
 /// other transactions (a payload-inclusion stall).
-pub(crate) fn is_deterministic_invalid(e: &ChainError, chain_type: &BlockchainType) -> bool {
+pub fn is_deterministic_invalid(e: &ChainError, chain_type: &BlockchainType) -> bool {
     let msg = e.to_string();
     // `IntrinsicGasTooLow` is only deterministic on L1. The L2 hook raises the SAME
     // variant from `reserve_l1_gas` when gas_limit cannot cover `floor + l1_gas`, and

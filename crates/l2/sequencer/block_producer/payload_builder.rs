@@ -2,7 +2,10 @@ use crate::sequencer::errors::BlockProducerError;
 use ethrex_blockchain::{
     Blockchain,
     constants::TX_GAS_COST,
-    payload::{PayloadBuildContext, PayloadBuildResult, TransactionQueue, apply_plain_transaction},
+    payload::{
+        PayloadBuildContext, PayloadBuildResult, TransactionQueue, apply_plain_transaction,
+        is_deterministic_invalid,
+    },
 };
 use ethrex_common::NativeCrypto;
 use ethrex_common::{
@@ -288,6 +291,16 @@ pub async fn fill_transactions(
                     (context.vm.db.bal_recorder_mut(), bal_checkpoint)
                 {
                     recorder.tx_restore(checkpoint);
+                }
+                // A deterministically-invalid tx would otherwise re-occupy its
+                // sender's queue head on every build and starve that sender's
+                // other txs, exactly as on the L1 path. `is_deterministic_invalid`
+                // is chain-type aware, so on L2 it deliberately does NOT treat
+                // `IntrinsicGasTooLow` as permanent: the L2 hook reuses that
+                // variant for a transient `l1_gas` condition.
+                if is_deterministic_invalid(&e, &blockchain.options.r#type) {
+                    debug!("Evicting deterministically-invalid transaction {tx_hash}: {e}");
+                    blockchain.remove_transaction_from_pool(&tx_hash)?;
                 }
                 // Ignore following txs from sender
                 txs.pop();
