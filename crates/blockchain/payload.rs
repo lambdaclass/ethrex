@@ -1035,9 +1035,17 @@ fn is_nonce_mismatch(e: &ChainError) -> bool {
     e.to_string().contains("Nonce mismatch")
 }
 
-/// Whether a tx failed with an error that recurs at the same nonce no matter
-/// what else changes in the block or pool — i.e. it is intrinsically invalid,
-/// not merely mis-ordered. Covers the levm intrinsic-gas checks (gas limit
+/// Whether a tx failed with an error that recurs at the same nonce for as long as
+/// the active fork's rules hold — i.e. it is intrinsically invalid, not merely
+/// mis-ordered.
+///
+/// "For as long as the fork's rules hold" is the honest bound, not "forever": a
+/// fork can relax the very limit that failed. Amsterdam raises the initcode cap
+/// (`AMSTERDAM_INIT_CODE_MAX_SIZE` vs `INIT_CODE_MAX_SIZE`), lowers the intrinsic
+/// base cost, and removes the per-tx gas cap. A tx evicted just before such a fork
+/// would have become includable just after. The window is one fork boundary and the
+/// sender can resubmit, which is a better trade than starving that sender's queue on
+/// every build until then. Covers the levm intrinsic-gas checks (gas limit
 /// below the minimum intrinsic cost or below the EIP-7623 calldata floor) and
 /// the EIP-3860/7907 initcode size cap. There is no typed variant at the
 /// `ChainError` level, so it is detected by the stable Display substrings; the
