@@ -7,12 +7,12 @@ This page covers the basic configuration options for running an L1 node with eth
 Ethrex supports different sync modes for node operation:
 
 - **full**: Downloads and verifies the entire chain.
-- **snap**: Fast sync using state snapshots (recommended for most users).
+- **snap**: Fast sync using state snapshots (default, recommended for most users).
 
 Set the sync mode with:
 
 ```sh
-ethrex --sync <mode>
+ethrex --syncmode <mode>
 ```
 
 ## File Locations
