@@ -1055,6 +1055,28 @@ fn is_nonce_mismatch(e: &ChainError) -> bool {
 /// Such a tx must be evicted rather than kept pooled: otherwise it re-occupies
 /// its sender's queue head on every payload build and starves that sender's
 /// other transactions (a payload-inclusion stall).
+///
+/// The matched set is deliberately narrow, and smaller than the abstract class of
+/// "invalid given the tx bytes and sender" — most of that class cannot reach here,
+/// because mempool admission (`Blockchain::validate_transaction`) already rejects
+/// it. A tx whose priority fee exceeds its max fee per gas is refused there
+/// (`TxTipAboveFeeCapError`), as is `nonce == u64::MAX` (`NonceTooLow`, in both the
+/// existing-account and fresh-sender branches), the initcode cap, and the per-tx
+/// gas cap. Blob-tx structural faults are caught by `BlobsBundle::validate`. So a
+/// variant being absent below usually means it never makes it into the pool, not
+/// that it was overlooked.
+///
+/// `SenderNotEOA` is excluded on purpose for a different reason: an EIP-7702
+/// delegation can be revoked, so that failure is transient, not permanent.
+///
+/// Note for anyone extending this: the substrings are load-bearing. They are
+/// matched against `Display` output because the typed variant does not survive the
+/// trip to `ChainError` — `impl From<VMError> for EvmError` collapses it into
+/// `EvmError::Transaction(String)`. Reworded LEVM errors must therefore break the
+/// pinning test rather than silently disable eviction, which is what that test is
+/// for. Before adding an arm, check it has exactly one producer: a variant raised
+/// from two places with different determinism (as `IntrinsicGasTooLow` is) cannot
+/// be classified by string at all.
 pub fn is_deterministic_invalid(e: &ChainError, chain_type: &BlockchainType) -> bool {
     let msg = e.to_string();
     // `IntrinsicGasTooLow` is only deterministic on L1. The L2 hook raises the SAME
