@@ -28,8 +28,8 @@ use rustc_hash::FxHashMap;
 use std::sync::Arc;
 
 const SENDER: Address = Address::repeat_byte(0xAA);
-/// Holds `SLOTNUM_READER`, so calling it returns the slot the environment was
-/// built with. Asserting on that value is what distinguishes a slot that
+/// Holds `SLOTNUM_READER_CODE`, so calling it returns the slot the environment
+/// was built with. Asserting on that value is what distinguishes a slot that
 /// actually reached the environment from one that was silently dropped.
 const SLOTNUM_READER: Address = Address::repeat_byte(0xBB);
 
@@ -39,20 +39,20 @@ const SLOTNUM_READER_CODE: [u8; 7] = [0x4B, 0x5F, 0x52, 0x60, 0x20, 0x5F, 0xF3];
 
 fn amsterdam_db_and_header(slot_number: Option<u64>) -> (GeneralizedDatabase, BlockHeader) {
     let mut store = Store::new("", EngineType::InMemory).unwrap();
-    let mut chain_config = ChainConfig::default();
     // Activate everything up to Amsterdam from genesis.
-    chain_config.shanghai_time = Some(0);
-    chain_config.cancun_time = Some(0);
-    chain_config.prague_time = Some(0);
-    chain_config.osaka_time = Some(0);
-    chain_config.amsterdam_time = Some(0);
+    let chain_config = ChainConfig {
+        shanghai_time: Some(0),
+        cancun_time: Some(0),
+        prague_time: Some(0),
+        osaka_time: Some(0),
+        amsterdam_time: Some(0),
+        ..Default::default()
+    };
     // Set the config on the SAME store the VM reads (the field is a per-Store
     // in-memory copy, so setting it on a clone would not propagate).
-    tokio::runtime::Runtime::new()
-        .unwrap()
-        .block_on(async {
-            store.set_chain_config(&chain_config).await.unwrap();
-        });
+    tokio::runtime::Runtime::new().unwrap().block_on(async {
+        store.set_chain_config(&chain_config).await.unwrap();
+    });
 
     let header = BlockHeader {
         number: 1,
@@ -92,7 +92,7 @@ fn amsterdam_db_and_header(slot_number: Option<u64>) -> (GeneralizedDatabase, Bl
 
 fn read_slot_number() -> GenericTransaction {
     GenericTransaction {
-        from: SENDER.into(),
+        from: SENDER,
         to: ethrex_common::types::TxKind::Call(SLOTNUM_READER),
         ..Default::default()
     }
