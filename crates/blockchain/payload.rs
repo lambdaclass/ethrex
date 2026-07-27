@@ -770,7 +770,11 @@ impl Blockchain {
                         is_deterministic_invalid(&e)
                     };
                     if evict {
-                        debug!("Evicting deterministically-invalid transaction {tx_hash}: {e}");
+                        // Neutral wording on purpose: the two branches evict for
+                        // different reasons (a frame tx for any non-nonce-mismatch
+                        // failure, a regular tx only for a deterministic one), so
+                        // naming either reason here would mislabel the other.
+                        debug!("Evicting transaction {tx_hash} from the pool: {e}");
                         self.remove_transaction_from_pool(&tx_hash)?;
                     }
                     txs.pop()
