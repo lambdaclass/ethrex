@@ -141,7 +141,7 @@ P2P options:
           [default: snap]
 
       --history.chain <HISTORY_CHAIN>
-          Optionally backfill historical block bodies and receipts after snap sync so the node can serve historical block, transaction, receipt and log queries. One of "off" (default: headers-only below the pivot), "postmerge" (backfill down to the merge block), or "all" (down to genesis, best-effort as many peers no longer serve pre-merge history). Enabling this adds substantial disk usage. It does not enable historical state queries (this is not an archive node).
+          Optionally backfill historical block bodies and receipts after snap sync so the node can serve historical block, transaction, receipt and log queries. One of "off" (default: headers-only below the pivot), "postmerge" (backfill down to the merge block), "all" (down to genesis, best-effort as many peers no longer serve pre-merge history), or an explicit BLOCK NUMBER to backfill down to only that block — use this to keep a recent slice of history instead of everything back to the merge. A block number below the merge block is honoured but is best-effort like "all". Enabling this adds substantial disk usage. It does not enable historical state queries (this is not an archive node).
           
           [env: ETHREX_HISTORY_CHAIN=]
           [default: off]
