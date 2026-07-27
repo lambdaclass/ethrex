@@ -1,4 +1,6 @@
-use std::mem;
+#[cfg(not(feature = "std"))]
+use alloc::{string::ToString, vec::Vec};
+use core::mem;
 
 use ethrex_crypto::Crypto;
 use ethrex_rlp::encode::RLPEncode;
