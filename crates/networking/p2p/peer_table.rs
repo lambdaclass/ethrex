@@ -381,21 +381,30 @@ impl PeerData {
     /// violation. `now` is injected rather than read from the clock so the transitions
     /// stay unit-testable.
     ///
-    /// Latency only feeds the EWMA on `Served`: a timeout's elapsed time is just
-    /// `PEER_REPLY_TIMEOUT`, and folding that in would swamp the average.
-    fn apply_request_outcome(&mut self, outcome: RequestOutcome, latency_ms: u64, now: u64) {
+    /// Latency only feeds the EWMA on `Served`, and only when the call site actually
+    /// measured it: a timeout's elapsed time is just `PEER_REPLY_TIMEOUT`, and folding
+    /// that in would swamp the average. `None` means "not measured here" (batched or
+    /// post-hoc call sites), which is why it is an `Option` rather than a `0`.
+    fn apply_request_outcome(
+        &mut self,
+        outcome: RequestOutcome,
+        latency_ms: Option<u64>,
+        now: u64,
+    ) {
         match outcome {
             RequestOutcome::Served => {
                 self.score = (self.score + 1).min(MAX_SCORE);
                 self.served += 1;
                 self.last_response_time = Some(now);
-                self.ewma_latency_ms = Some(match self.ewma_latency_ms {
-                    Some(prev) => {
-                        (1.0 - Self::LATENCY_EWMA_ALPHA) * prev
-                            + Self::LATENCY_EWMA_ALPHA * (latency_ms as f64)
-                    }
-                    None => latency_ms as f64,
-                });
+                if let Some(latency_ms) = latency_ms {
+                    self.ewma_latency_ms = Some(match self.ewma_latency_ms {
+                        Some(prev) => {
+                            (1.0 - Self::LATENCY_EWMA_ALPHA) * prev
+                                + Self::LATENCY_EWMA_ALPHA * (latency_ms as f64)
+                        }
+                        None => latency_ms as f64,
+                    });
+                }
             }
             RequestOutcome::Empty => {
                 self.score = (self.score - 1).max(MIN_SCORE);
@@ -506,14 +515,11 @@ pub trait PeerTableServerProtocol: Send + Sync {
     fn dec_requests(&self, node_id: H256) -> Result<(), ActorError>;
     fn set_unwanted(&self, node_id: H256) -> Result<(), ActorError>;
     fn set_is_fork_id_valid(&self, node_id: H256, valid: bool) -> Result<(), ActorError>;
-    fn record_success(&self, node_id: H256) -> Result<(), ActorError>;
-    fn record_failure(&self, node_id: H256) -> Result<(), ActorError>;
-    fn record_critical_failure(&self, node_id: H256) -> Result<(), ActorError>;
     fn record_request_outcome(
         &self,
         node_id: H256,
         outcome: RequestOutcome,
-        latency_ms: u64,
+        latency_ms: Option<u64>,
     ) -> Result<(), ActorError>;
     fn record_ping_sent(&self, node_id: H256, ping_id: Bytes) -> Result<(), ActorError>;
     fn record_pong_received(&self, node_id: H256, ping_id: Bytes) -> Result<(), ActorError>;
@@ -725,47 +731,6 @@ impl PeerTableServer {
         if let Some(contact) = self.get_contact_mut(&msg.node_id) {
             contact.is_fork_id_valid = Some(msg.valid);
         }
-    }
-
-    #[send_handler]
-    async fn handle_record_success(
-        &mut self,
-        msg: peer_table_server_protocol::RecordSuccess,
-        _ctx: &Context<Self>,
-    ) {
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs();
-        self.peers.entry(msg.node_id).and_modify(|peer_data| {
-            peer_data.score = (peer_data.score + 1).min(MAX_SCORE);
-            peer_data.last_response_time = Some(now);
-        });
-    }
-
-    #[send_handler]
-    async fn handle_record_failure(
-        &mut self,
-        msg: peer_table_server_protocol::RecordFailure,
-        _ctx: &Context<Self>,
-    ) {
-        self.peers
-            .entry(msg.node_id)
-            .and_modify(|peer_data| peer_data.score = (peer_data.score - 1).max(MIN_SCORE));
-    }
-
-    // TODO(#6805): this is now equivalent to `record_request_outcome(_, Invalid, _)`.
-    // Once the snap and healing paths migrate to outcome recording it has no callers
-    // left and should be removed along with `record_success`/`record_failure`.
-    #[send_handler]
-    async fn handle_record_critical_failure(
-        &mut self,
-        msg: peer_table_server_protocol::RecordCriticalFailure,
-        _ctx: &Context<Self>,
-    ) {
-        self.peers
-            .entry(msg.node_id)
-            .and_modify(|peer_data| peer_data.score = MIN_SCORE_CRITICAL);
     }
 
     #[send_handler]
@@ -1745,7 +1710,7 @@ mod tests {
     #[test]
     fn served_outcome_raises_score_and_records_latency() {
         let mut peer = dummy_peer_data();
-        peer.apply_request_outcome(RequestOutcome::Served, 40, 1_000);
+        peer.apply_request_outcome(RequestOutcome::Served, Some(40), 1_000);
         assert_eq!(peer.score, 1);
         assert_eq!(peer.served, 1);
         assert_eq!(peer.last_response_time, Some(1_000));
@@ -1756,8 +1721,8 @@ mod tests {
     #[test]
     fn ewma_weights_the_recent_sample() {
         let mut peer = dummy_peer_data();
-        peer.apply_request_outcome(RequestOutcome::Served, 100, 1);
-        peer.apply_request_outcome(RequestOutcome::Served, 200, 2);
+        peer.apply_request_outcome(RequestOutcome::Served, Some(100), 1);
+        peer.apply_request_outcome(RequestOutcome::Served, Some(200), 2);
         // 0.8 * 100 + 0.2 * 200
         assert_eq!(peer.ewma_latency_ms, Some(120.0));
     }
@@ -1769,12 +1734,24 @@ mod tests {
     fn outcome_penalties_are_severity_ordered() {
         let penalty = |outcome| {
             let mut peer = dummy_peer_data();
-            peer.apply_request_outcome(outcome, 10, 1);
+            peer.apply_request_outcome(outcome, Some(10), 1);
             peer.score
         };
         assert_eq!(penalty(RequestOutcome::Empty), -1);
         assert_eq!(penalty(RequestOutcome::Timeout), -2);
         assert_eq!(penalty(RequestOutcome::Invalid), MIN_SCORE_CRITICAL);
+    }
+
+    /// A served response from a call site that didn't measure latency still counts and
+    /// still scores; it just can't contribute to the EWMA.
+    #[test]
+    fn served_without_measured_latency_leaves_ewma_unset() {
+        let mut peer = dummy_peer_data();
+        peer.apply_request_outcome(RequestOutcome::Served, None, 7);
+        assert_eq!(peer.score, 1);
+        assert_eq!(peer.served, 1);
+        assert_eq!(peer.last_response_time, Some(7));
+        assert_eq!(peer.ewma_latency_ms, None);
     }
 
     #[test]
@@ -1787,7 +1764,7 @@ mod tests {
             let mut peer = dummy_peer_data();
             // A timed-out request's elapsed time is just PEER_REPLY_TIMEOUT; folding it
             // into the EWMA would swamp the served-latency average.
-            peer.apply_request_outcome(outcome, 5_000, 1);
+            peer.apply_request_outcome(outcome, Some(5_000), 1);
             assert_eq!(peer.ewma_latency_ms, None, "{outcome:?} must not set EWMA");
             assert_eq!(
                 peer.last_response_time, None,
@@ -1800,14 +1777,14 @@ mod tests {
     fn score_saturates_at_both_bounds() {
         let mut peer = dummy_peer_data();
         for _ in 0..(MAX_SCORE + 10) {
-            peer.apply_request_outcome(RequestOutcome::Served, 1, 1);
+            peer.apply_request_outcome(RequestOutcome::Served, Some(1), 1);
         }
         assert_eq!(peer.score, MAX_SCORE);
 
         // Empty/timeout clamp at MIN_SCORE, they never reach the critical floor.
         let mut peer = dummy_peer_data();
         for _ in 0..(MAX_SCORE + 10) {
-            peer.apply_request_outcome(RequestOutcome::Timeout, 1, 1);
+            peer.apply_request_outcome(RequestOutcome::Timeout, None, 1);
         }
         assert_eq!(peer.score, MIN_SCORE);
         assert!(peer.score > MIN_SCORE_CRITICAL);
@@ -1816,11 +1793,11 @@ mod tests {
     #[test]
     fn counters_accumulate_per_outcome() {
         let mut peer = dummy_peer_data();
-        peer.apply_request_outcome(RequestOutcome::Served, 1, 1);
-        peer.apply_request_outcome(RequestOutcome::Served, 1, 1);
-        peer.apply_request_outcome(RequestOutcome::Empty, 1, 1);
-        peer.apply_request_outcome(RequestOutcome::Timeout, 1, 1);
-        peer.apply_request_outcome(RequestOutcome::Invalid, 1, 1);
+        peer.apply_request_outcome(RequestOutcome::Served, Some(1), 1);
+        peer.apply_request_outcome(RequestOutcome::Served, Some(1), 1);
+        peer.apply_request_outcome(RequestOutcome::Empty, None, 1);
+        peer.apply_request_outcome(RequestOutcome::Timeout, None, 1);
+        peer.apply_request_outcome(RequestOutcome::Invalid, None, 1);
         assert_eq!(
             (peer.served, peer.empty, peer.timeouts, peer.invalid),
             (2, 1, 1, 1)

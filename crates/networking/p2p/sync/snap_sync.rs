@@ -25,8 +25,8 @@ use rayon::iter::{ParallelBridge, ParallelIterator};
 use tracing::{debug, error, info, warn};
 
 use crate::metrics::{CurrentStepValue, METRICS};
-use crate::peer_handler::PeerHandler;
-use crate::peer_table::PeerTableServerProtocol as _;
+use crate::peer_handler::{PeerHandler, elapsed_ms, request_kind};
+use crate::peer_table::{PeerTableServerProtocol as _, RequestOutcome};
 use crate::rlpx::p2p::SUPPORTED_ETH_CAPABILITIES;
 use crate::snap::{
     async_fs,
@@ -799,13 +799,20 @@ pub async fn update_pivot(
 
         // One attempt per peer per rotation. A peer that fails is excluded for
         // this rotation and will be retried (with backoff) in the next one.
+        let started = std::time::Instant::now();
         let outcome = peers
             .get_block_header(&mut connection, permit, new_pivot_block_number)
             .await;
+        let latency_ms = Some(elapsed_ms(started));
 
         match outcome {
             Ok(Some(pivot)) => {
-                peers.peer_table.record_success(peer_id)?;
+                peers.record_peer_request(
+                    peer_id,
+                    request_kind::PIVOT_HEADER,
+                    RequestOutcome::Served,
+                    latency_ms,
+                )?;
                 #[cfg(feature = "metrics")]
                 ethrex_metrics::sync::METRICS_SYNC.inc_pivot_update("success");
                 info!("Snap sync pivot updated to block {}", pivot.number);
@@ -838,7 +845,13 @@ pub async fn update_pivot(
                 return Ok(pivot);
             }
             Ok(None) => {
-                peers.peer_table.record_failure(peer_id)?;
+                // Responded, just doesn't have the block: spec-valid, so Empty.
+                peers.record_peer_request(
+                    peer_id,
+                    request_kind::PIVOT_HEADER,
+                    RequestOutcome::Empty,
+                    latency_ms,
+                )?;
                 let peer_score = peers.peer_table.get_score(peer_id).await?;
                 debug!(
                     "update_pivot: peer {peer_id} returned None (score: {peer_score}), excluding for this rotation"
@@ -848,7 +861,12 @@ pub async fn update_pivot(
                 excluded_peers.push(peer_id);
             }
             Err(e) if e.is_recoverable() => {
-                peers.peer_table.record_failure(peer_id)?;
+                peers.record_peer_request(
+                    peer_id,
+                    request_kind::PIVOT_HEADER,
+                    RequestOutcome::Timeout,
+                    latency_ms,
+                )?;
                 debug!("update_pivot: peer {peer_id} failed with {e}, excluding for this rotation");
                 #[cfg(feature = "metrics")]
                 ethrex_metrics::sync::METRICS_SYNC.inc_pivot_update("peer_error");

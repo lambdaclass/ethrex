@@ -54,10 +54,24 @@ pub enum BlockRequestOrder {
     NewToOld,
 }
 
+/// Request-family labels for [`PeerHandler::record_peer_request`]. Kept as constants so
+/// every call site spells a family the same way and the Prometheus `kind` label set stays
+/// closed; a typo here would silently create a new time series.
+pub mod request_kind {
+    pub const HEADERS: &str = "headers";
+    pub const BODIES: &str = "bodies";
+    pub const BLOCK_ACCESS_LISTS: &str = "block_access_lists";
+    pub const PIVOT_HEADER: &str = "pivot_header";
+    pub const TRIE_NODES: &str = "trie_nodes";
+    pub const ACCOUNT_RANGE: &str = "account_range";
+    pub const STORAGE_RANGES: &str = "storage_ranges";
+    pub const BYTECODES: &str = "bytecodes";
+}
+
 /// Milliseconds elapsed since `started`, saturating instead of wrapping. `as_millis`
 /// returns a `u128`, so a plain `as u64` would silently truncate; saturating keeps a
 /// pathological reading large rather than turning it into a small one.
-fn elapsed_ms(started: std::time::Instant) -> u64 {
+pub(crate) fn elapsed_ms(started: std::time::Instant) -> u64 {
     u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX)
 }
 
@@ -158,30 +172,39 @@ impl PeerHandler {
             .await?)
     }
 
-    /// Records a block-request outcome in one place: the peer's score and counters in
-    /// the peer table, plus the aggregate Prometheus counter and latency histogram when
-    /// metrics are enabled.
+    /// Records a peer data-request outcome in one place: the peer's score and counters
+    /// in the peer table, plus the aggregate Prometheus counter and latency histogram
+    /// when metrics are enabled.
     ///
-    /// `kind` is the request family (`"headers"` or `"bodies"`) used as a metric label.
-    /// Every call site goes through here so the score delta and the metric label can't
-    /// disagree about what happened.
+    /// `kind` is the request family used as a metric label, one of the
+    /// [`request_kind`] constants. Every request path goes through here so the score
+    /// delta and the metric label can't disagree about what happened.
+    ///
+    /// `latency_ms` is `Some` only where the call site measured the round trip; batched
+    /// and post-hoc paths pass `None` rather than a fake `0`, which would drag the
+    /// latency histogram down.
     // `kind` is only read by the metrics labels below.
     #[cfg_attr(not(feature = "metrics"), allow(unused_variables))]
-    fn record_block_request(
+    pub fn record_peer_request(
         &self,
         peer_id: H256,
         kind: &'static str,
         outcome: RequestOutcome,
-        latency_ms: u64,
-    ) -> Result<(), PeerHandlerError> {
+        latency_ms: Option<u64>,
+    ) -> Result<(), ActorError> {
+        // Returns `ActorError` rather than `PeerHandlerError` so the snap and healing
+        // paths, whose error types already convert from `ActorError`, can call this
+        // directly with `?`.
         self.peer_table
             .record_request_outcome(peer_id, outcome, latency_ms)?;
         #[cfg(feature = "metrics")]
         {
             use ethrex_metrics::sync::METRICS_SYNC;
             let label = outcome.as_metric_label();
-            METRICS_SYNC.inc_block_request(kind, label);
-            METRICS_SYNC.observe_block_request_latency(kind, label, latency_ms as f64);
+            METRICS_SYNC.inc_peer_request(kind, label);
+            if let Some(latency_ms) = latency_ms {
+                METRICS_SYNC.observe_peer_request_latency(kind, label, latency_ms as f64);
+            }
         }
         Ok(())
     }
@@ -306,8 +329,12 @@ impl PeerHandler {
         let mut downloaded_count = 0_u64;
 
         // channel to send the tasks to the peers
+        // The trailing `u64` is the chunk's measured round-trip latency, carried back so
+        // the success path can feed the peer's latency EWMA.
         let (task_sender, mut task_receiver) =
-            tokio::sync::mpsc::channel::<(Vec<BlockHeader>, H256, PeerConnection, u64, u64)>(1000);
+            tokio::sync::mpsc::channel::<(Vec<BlockHeader>, H256, PeerConnection, u64, u64, u64)>(
+                1000,
+            );
 
         let mut current_show = 0;
 
@@ -320,12 +347,27 @@ impl PeerHandler {
         let mut logged_no_free_peers_count = 0;
 
         loop {
-            if let Ok((headers, peer_id, _connection, startblock, previous_chunk_limit)) =
-                task_receiver.try_recv()
+            if let Ok((
+                headers,
+                peer_id,
+                _connection,
+                startblock,
+                previous_chunk_limit,
+                latency_ms,
+            )) = task_receiver.try_recv()
             {
                 trace!("We received a download chunk from peer");
                 if headers.is_empty() {
-                    self.peer_table.record_failure(peer_id)?;
+                    // Empty rather than Timeout: `download_chunk_from_peer` maps every
+                    // failure to an empty vec, and a peer that simply lacks the range is
+                    // the common case here. Charging the timeout penalty would punish
+                    // spec-conformant peers.
+                    self.record_peer_request(
+                        peer_id,
+                        request_kind::HEADERS,
+                        RequestOutcome::Empty,
+                        Some(latency_ms),
+                    )?;
 
                     debug!("Failed to download chunk from peer. Downloader {peer_id} freed");
 
@@ -367,7 +409,12 @@ impl PeerHandler {
                     tasks_queue_not_started.push_back((new_start, new_chunk_limit));
                 }
 
-                self.peer_table.record_success(peer_id)?;
+                self.record_peer_request(
+                    peer_id,
+                    request_kind::HEADERS,
+                    RequestOutcome::Served,
+                    Some(latency_ms),
+                )?;
                 debug!("Downloader {peer_id} freed");
             }
             let Some((peer_id, mut connection, permit)) = self
@@ -411,6 +458,7 @@ impl PeerHandler {
                 trace!(
                     "Sync Log 5: Requesting block headers from peer {peer_id}, chunk_limit: {chunk_limit}"
                 );
+                let started = std::time::Instant::now();
                 let headers = Self::download_chunk_from_peer(
                     peer_id,
                     &mut connection,
@@ -421,12 +469,20 @@ impl PeerHandler {
                 .await
                 .inspect_err(|err| trace!("Sync Log 6: {peer_id} failed to download chunk: {err}"))
                 .unwrap_or_default();
+                let latency_ms = elapsed_ms(started);
 
-                tx.send((headers, peer_id, connection, startblock, chunk_limit))
-                    .await
-                    .inspect_err(|err| {
-                        error!("Failed to send headers result through channel. Error: {err}")
-                    })
+                tx.send((
+                    headers,
+                    peer_id,
+                    connection,
+                    startblock,
+                    chunk_limit,
+                    latency_ms,
+                ))
+                .await
+                .inspect_err(|err| {
+                    error!("Failed to send headers result through channel. Error: {err}")
+                })
             });
         }
 
@@ -503,7 +559,7 @@ impl PeerHandler {
                 {
                     if block_headers.is_empty() {
                         // Empty response is valid per eth spec (peer may not have these blocks),
-                        // so apply only a soft score penalty (`record_failure`) rather than
+                        // so apply only a soft score penalty (`RequestOutcome::Empty`) rather than
                         // ejecting the peer (`set_disposable`): a spec-conformant peer that simply
                         // lacks a fork's blocks shouldn't be permanently dropped from rotation.
                         // Genuine misbehavior below (unchained / wrong-chain-start) uses the same
@@ -511,11 +567,11 @@ impl PeerHandler {
                         debug!(
                             "[SYNCING] Received empty headers from peer {peer_id}, trying another"
                         );
-                        self.record_block_request(
+                        self.record_peer_request(
                             peer_id,
-                            "headers",
+                            request_kind::HEADERS,
                             RequestOutcome::Empty,
-                            latency_ms,
+                            Some(latency_ms),
                         )?;
                         return Ok(HeaderFetchOutcome::PeerFailed);
                     }
@@ -534,19 +590,19 @@ impl PeerHandler {
                             warn!(
                                 "[SYNCING] Peer {peer_id} returned headers not starting at the requested hash {start:#x}, penalizing peer"
                             );
-                            self.record_block_request(
+                            self.record_peer_request(
                                 peer_id,
-                                "headers",
+                                request_kind::HEADERS,
                                 RequestOutcome::Invalid,
-                                latency_ms,
+                                Some(latency_ms),
                             )?;
                             return Ok(HeaderFetchOutcome::PeerFailed);
                         }
-                        self.record_block_request(
+                        self.record_peer_request(
                             peer_id,
-                            "headers",
+                            request_kind::HEADERS,
                             RequestOutcome::Served,
-                            latency_ms,
+                            Some(latency_ms),
                         )?;
                         return Ok(HeaderFetchOutcome::Headers(block_headers));
                     }
@@ -554,11 +610,11 @@ impl PeerHandler {
                     debug!(
                         "Received invalid (unchained) headers from peer, penalizing peer {peer_id}"
                     );
-                    self.record_block_request(
+                    self.record_peer_request(
                         peer_id,
-                        "headers",
+                        request_kind::HEADERS,
                         RequestOutcome::Invalid,
-                        latency_ms,
+                        Some(latency_ms),
                     )?;
                     return Ok(HeaderFetchOutcome::PeerFailed);
                 }
@@ -567,7 +623,12 @@ impl PeerHandler {
                 // network it is high-volume. The `outcome="timeout"` counter added here
                 // is the signal to alert on instead.
                 debug!("Didn't receive block headers from peer, penalizing peer {peer_id}");
-                self.record_block_request(peer_id, "headers", RequestOutcome::Timeout, latency_ms)?;
+                self.record_peer_request(
+                    peer_id,
+                    request_kind::HEADERS,
+                    RequestOutcome::Timeout,
+                    Some(latency_ms),
+                )?;
                 Ok(HeaderFetchOutcome::PeerFailed)
             }
         }
@@ -657,7 +718,7 @@ impl PeerHandler {
                     }
                     _ => (None, RequestOutcome::Timeout),
                 };
-                self.record_block_request(peer_id, "bodies", outcome, latency_ms)?;
+                self.record_peer_request(peer_id, request_kind::BODIES, outcome, Some(latency_ms))?;
                 if let Some(block_bodies) = bodies {
                     return Ok(Some((block_bodies, peer_id)));
                 }
@@ -702,7 +763,15 @@ impl PeerHandler {
                 if let Err(e) = validate_block_body(header, &body, &NativeCrypto) {
                     debug!("Invalid block body error {e}, discarding peer {peer_id} and retrying");
                     validation_success = false;
-                    self.peer_table.record_critical_failure(peer_id)?;
+                    // Validation runs after `request_block_bodies_inner` already recorded
+                    // the Served outcome, so this is a post-hoc downgrade and has no
+                    // round trip of its own to report.
+                    self.record_peer_request(
+                        peer_id,
+                        request_kind::BODIES,
+                        RequestOutcome::Invalid,
+                        None,
+                    )?;
                     break;
                 }
                 res.push(body);
@@ -731,21 +800,33 @@ impl PeerHandler {
         match self.get_random_peer(&[Capability::eth(71)]).await? {
             None => Ok(None),
             Some((peer_id, mut connection, permit)) => {
+                let started = std::time::Instant::now();
                 let response = connection
                     .outgoing_request(request, PEER_REPLY_TIMEOUT)
                     .await;
+                let latency_ms = elapsed_ms(started);
                 drop(permit);
                 match response {
                     Ok(RLPxMessage::BlockAccessLists(BlockAccessLists {
                         id,
                         block_access_lists,
                     })) if id == request_id => {
-                        self.peer_table.record_success(peer_id)?;
+                        self.record_peer_request(
+                            peer_id,
+                            request_kind::BLOCK_ACCESS_LISTS,
+                            RequestOutcome::Served,
+                            Some(latency_ms),
+                        )?;
                         Ok(Some(block_access_lists))
                     }
                     _ => {
                         debug!("Didn't receive block access lists from peer {peer_id}");
-                        self.peer_table.record_failure(peer_id)?;
+                        self.record_peer_request(
+                            peer_id,
+                            request_kind::BLOCK_ACCESS_LISTS,
+                            RequestOutcome::Timeout,
+                            Some(latency_ms),
+                        )?;
                         Ok(None)
                     }
                 }
