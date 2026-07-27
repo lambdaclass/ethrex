@@ -314,9 +314,12 @@ impl TrieLayerCache {
         if safe_root.is_zero() {
             return None;
         }
-        // (c) The executed parent IS the safe-commit root; commit immediately.
+        // (c) The executed parent IS the safe-commit root. Still requires a layer: a
+        // canonical root need not have one (`put_batch` skips blocks whose state root equals
+        // their parent's, which on L2 is every empty block). Branch (d) gets this for free
+        // by walking `layers`.
         if parent_state_root == safe_root {
-            return Some(safe_root);
+            return self.has_layer(safe_root).then_some(safe_root);
         }
         // (d) Walk the layer parent-chain from parent_state_root looking for safe_root.
         let mut current = parent_state_root;
@@ -439,6 +442,19 @@ impl TrieLayerCache {
         });
 
         self.bloom = filter;
+    }
+
+    /// Whether `state_root` has a diff layer. Not every canonical root does: [`Self::put_batch`]
+    /// skips blocks whose state root equals their parent's, and flushed roots are pruned. Callers
+    /// holding a root from outside the cache must check this before treating it as committable.
+    pub fn has_layer(&self, state_root: H256) -> bool {
+        self.layers.contains_key(&state_root)
+    }
+
+    /// Number of diff layers held in memory. Diagnostic only: distinguishes a pruned root from
+    /// an empty cache.
+    pub fn layer_count(&self) -> usize {
+        self.layers.len()
     }
 
     /// Removes the layer at `state_root` and all its ancestors from the cache, returning
@@ -1394,6 +1410,42 @@ mod tests {
         let (mut cache, _cell) = cache_with_cell(4, l3);
         build_chain(&mut cache, 3);
         assert_eq!(cache.get_commitable(l3), Some(l3));
+    }
+
+    /// (c2) Regression: `parent_state_root == safe_root` but that root has no layer, the steady
+    /// state on L2 where empty blocks keep their parent's root. Branch (c) used to match on the
+    /// root value alone and hand `commit_to_disk` something it could not commit.
+    #[test]
+    fn parent_equals_safe_root_without_layer_yields_none() {
+        let orphan = h256(7);
+        let (mut cache, _cell) = cache_with_cell(4, orphan);
+        // An empty block: parent == state_root, so `put_batch` inserts nothing.
+        cache.put_batch(orphan, orphan, 7, orphan, vec![]);
+        assert!(
+            !cache.has_layer(orphan),
+            "empty-block root must not create a layer"
+        );
+        assert_eq!(
+            cache.get_commitable(orphan),
+            None,
+            "a safe root with no layer is not committable, even when it equals the parent"
+        );
+    }
+
+    /// (c3) A flushed root is pruned by `commit`, so it must not be offered again.
+    #[test]
+    fn already_committed_safe_root_yields_none() {
+        let safe = h256(2);
+        let (mut cache, _cell) = cache_with_cell(4, safe);
+        build_chain(&mut cache, 3);
+        assert_eq!(cache.get_commitable(safe), Some(safe));
+        cache.commit(safe).expect("first commit flushes the layer");
+        assert!(!cache.has_layer(safe), "commit prunes the flushed layer");
+        assert_eq!(
+            cache.get_commitable(safe),
+            None,
+            "re-committing an already-flushed root must not be offered again"
+        );
     }
 
     /// (d) Safe root not an ancestor (never inserted as a layer) -> None, regardless of depth.

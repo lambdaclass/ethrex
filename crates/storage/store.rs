@@ -2262,7 +2262,7 @@ impl Store {
                 None => AccountState::default(),
             };
             if update.removed_storage {
-                account_state.storage_root = *EMPTY_TRIE_HASH;
+                account_state.storage_root = EMPTY_TRIE_HASH;
             }
             if let Some(info) = &update.info {
                 account_state.nonce = info.nonce;
@@ -2338,7 +2338,7 @@ impl Store {
             };
 
             if update.removed_storage {
-                account_state.storage_root = *EMPTY_TRIE_HASH;
+                account_state.storage_root = EMPTY_TRIE_HASH;
             }
 
             if let Some(info) = &update.info {
@@ -2408,7 +2408,7 @@ impl Store {
         genesis_accounts: BTreeMap<Address, GenesisAccount>,
     ) -> Result<H256, StoreError> {
         let mut storage_trie_nodes = vec![];
-        let mut genesis_state_trie = self.open_direct_state_trie(*EMPTY_TRIE_HASH)?;
+        let mut genesis_state_trie = self.open_direct_state_trie(EMPTY_TRIE_HASH)?;
         for (address, account) in genesis_accounts {
             let hashed_address = hash_address(&address);
             let h256_hashed_address = H256::from_slice(&hashed_address);
@@ -2420,7 +2420,7 @@ impl Store {
 
             // Store the account's storage in a clean storage trie and compute its root
             let mut storage_trie =
-                self.open_direct_storage_trie(h256_hashed_address, *EMPTY_TRIE_HASH)?;
+                self.open_direct_storage_trie(h256_hashed_address, EMPTY_TRIE_HASH)?;
             for (storage_key, storage_value) in account.storage {
                 if !storage_value.is_zero() {
                     let hashed_key = hash_key(&H256(storage_key.to_big_endian()));
@@ -2741,7 +2741,7 @@ impl Store {
 
         let storage_root = if use_fkv {
             // We will use FKVs, we don't need the root
-            *EMPTY_TRIE_HASH
+            EMPTY_TRIE_HASH
         } else {
             let state_trie = self.open_state_trie_shared(
                 state_root,
@@ -2790,7 +2790,7 @@ impl Store {
         // so open_storage_trie_shared falls through to the FKV path.
         let storage_root =
             if Self::flatkeyvalue_computed_with_last_written(account_hash, &last_written) {
-                *EMPTY_TRIE_HASH
+                EMPTY_TRIE_HASH
             } else {
                 storage_root
             };
@@ -3463,7 +3463,7 @@ impl Store {
 
     pub fn has_state_root(&self, state_root: H256) -> Result<bool, StoreError> {
         // Empty state trie is always available
-        if state_root == *EMPTY_TRIE_HASH {
+        if state_root == EMPTY_TRIE_HASH {
             return Ok(true);
         }
         let trie = self.open_state_trie(state_root)?;
@@ -4245,6 +4245,20 @@ fn commit_to_disk(
     root: H256,
     is_batch: bool,
 ) -> Result<(), StoreError> {
+    // `root` need not have a layer: the forkchoice `PersistMessage::Commit(root)` path
+    // forwards the safe-commit root without consulting the cache, and `put_batch` skips
+    // blocks whose state root equals their parent's. Bail before the side effects below.
+    if !trie.has_layer(root) {
+        debug!(
+            root = ?root,
+            layers = trie.layer_count(),
+            is_batch,
+            "Skipping trie commit: state root has no in-memory layer. Expected when the block \
+             did not change the state root (empty L2 blocks) or the root was already flushed."
+        );
+        return Ok(());
+    }
+
     // Stop the flat-key-value generator thread, as the underlying trie is about to change.
     // Ignore the error, if the channel is closed it means there is no worker to notify.
     let _ = fkv_ctl.send(FKVGeneratorControlMessage::Stop);
@@ -4274,17 +4288,6 @@ fn commit_to_disk(
     // Before encoding, accounts have only the account address as their path, while storage keys have
     // the account address (32 bytes) + storage path (up to 32 bytes).
 
-    // `commit` removes the committed layer(s) and returns one `CommittedLayer` per block
-    // in oldest-first order. In normal block-by-block operation this is a single layer,
-    // one commit-cadence behind the just-added block. A forkchoice-driven flush of an
-    // accumulated backlog (e.g. block import) can return several layers at once, so we
-    // write one journal entry per block below rather than merging diffs across blocks.
-    //
-    // `root` was returned by a `get_commitable*` gate above, which found it by walking
-    // `trie.layers`. `trie_mut` is a `Clone` of `trie`, which preserves the layer map
-    // intact, so `commit(root)` should always return `Some` here. Surface a hard error
-    // if that invariant ever breaks rather than silently committing nothing.
-    //
     // Snapshot the overlay (if any) BEFORE commit so reconciliation can fold its entries
     // into this write batch. Issue #6685 Section 9: after a deep reorg, the first
     // new-chain commit advances disk from the OLD chain's edge `D` directly to the new
@@ -4296,9 +4299,21 @@ fn commit_to_disk(
         None
     };
 
+    // `commit` removes the committed layer(s) and returns one `CommittedLayer` per block
+    // in oldest-first order. In normal block-by-block operation this is a single layer,
+    // one commit-cadence behind the just-added block. A forkchoice-driven flush of an
+    // accumulated backlog (e.g. block import) can return several layers at once, so we
+    // write one journal entry per block below rather than merging diffs across blocks.
+    //
+    // `has_layer` above established `root` is a layer and `trie_mut` is a `Clone` that
+    // preserves the map, so this must be `Some`. Reaching the error means the clone lost the
+    // map, which is corruption, not the ordinary no-op handled above.
     let committed_layers = trie_mut.commit(root).ok_or_else(|| {
         StoreError::Custom(format!(
-            "commit({root:?}) returned None; layer cache invariant violated"
+            "trie layer for state root {root:?} disappeared between the has_layer check and \
+             commit (layers={}, is_batch={is_batch}): the TrieLayerCache clone lost the layer \
+             map, so this block's state was not written",
+            trie.layer_count(),
         ))
     })?;
 
