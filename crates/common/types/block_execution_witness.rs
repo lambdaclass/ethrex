@@ -1,7 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use bytes::Bytes;
-use rustc_hash::FxHashMap;
 
 use crate::rkyv_utils::H256Wrapper;
 use crate::serde_utils;
@@ -15,7 +14,7 @@ use ethrex_crypto::Crypto;
 use ethrex_rlp::error::RLPDecodeError;
 use ethrex_rlp::structs::{Decoder, Encoder};
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
-use ethrex_trie::{EMPTY_TRIE_HASH, Nibbles, Node, NodeRef, Trie, TrieError};
+use ethrex_trie::{EMPTY_TRIE_HASH, FxHashMap, Nibbles, Node, NodeRef, Trie, TrieError};
 use rkyv::with::{Identity, MapKV};
 use serde::{Deserialize, Serialize};
 
@@ -251,7 +250,7 @@ impl RpcExecutionWitness {
             );
 
             for (hashed_address, storage_root_hash) in accounts {
-                if storage_root_hash == *EMPTY_TRIE_HASH {
+                if storage_root_hash == EMPTY_TRIE_HASH {
                     continue;
                 }
                 if !nodes.contains_key(&storage_root_hash) {
@@ -523,7 +522,7 @@ impl GuestProgramState {
                     None => AccountState::default(),
                 };
                 if update.removed_storage {
-                    account_state.storage_root = *EMPTY_TRIE_HASH;
+                    account_state.storage_root = EMPTY_TRIE_HASH;
                 }
                 if let Some(info) = &update.info {
                     account_state.nonce = info.nonce;
@@ -791,7 +790,7 @@ impl GuestProgramState {
                 return Ok(None);
             };
             let storage_trie = match self.storage_tries.get(&hashed_address) {
-                None if storage_root == *EMPTY_TRIE_HASH => return Ok(None),
+                None if storage_root == EMPTY_TRIE_HASH => return Ok(None),
                 Some(trie) if trie.hash_no_commit(crypto) == storage_root => trie,
                 _ => {
                     return Err(GuestProgramStateError::Custom(format!(
