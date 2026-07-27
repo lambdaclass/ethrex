@@ -360,6 +360,12 @@ pub struct RequestPermit {
     peer_id: H256,
 }
 
+/// A peer picked for one request: its node id, a live connection, the permit
+/// holding its request slot, and the capabilities it advertised — the last so
+/// callers can derive the negotiated protocol version where the wire format
+/// depends on it (receipts differ between eth/69 and eth/70).
+pub type SelectedPeer = (H256, PeerConnection, RequestPermit, Vec<Capability>);
+
 impl RequestPermit {
     pub(crate) fn new(peer_table: PeerTable, peer_id: H256) -> Self {
         Self {
@@ -461,10 +467,7 @@ pub trait PeerTableServerProtocol: Send + Sync {
     fn get_closest_nodes(&self, node_id: H256) -> Response<Vec<Node>>;
     fn get_nodes_at_distances(&self, distances: Vec<u32>) -> Response<Vec<NodeRecord>>;
     fn get_peers_data(&self) -> Response<Vec<PeerData>>;
-    fn get_random_peer(
-        &self,
-        capabilities: Vec<Capability>,
-    ) -> Response<Option<(H256, PeerConnection, RequestPermit)>>;
+    fn get_random_peer(&self, capabilities: Vec<Capability>) -> Response<Option<SelectedPeer>>;
     fn get_session_info(&self, node_id: H256) -> Response<Option<Session>>;
     fn get_peer_diagnostics(&self) -> Response<Vec<PeerDiagnostics>>;
     fn get_peer_connection(&self, peer_id: H256) -> Response<Option<PeerConnection>>;
@@ -1006,13 +1009,18 @@ impl PeerTableServer {
         &mut self,
         msg: peer_table_server_protocol::GetRandomPeer,
         ctx: &Context<Self>,
-    ) -> Option<(H256, PeerConnection, RequestPermit)> {
-        let (peer_id, conn) = self.do_get_random_peer(msg.capabilities)?;
+    ) -> Option<SelectedPeer> {
+        let (peer_id, conn, capabilities) = self.do_get_random_peer(msg.capabilities)?;
         self.peers
             .get_mut(&peer_id)
             .expect("peer returned by do_get_random_peer must be present in self.peers")
             .requests += 1;
-        Some((peer_id, conn, RequestPermit::new(ctx.actor_ref(), peer_id)))
+        Some((
+            peer_id,
+            conn,
+            RequestPermit::new(ctx.actor_ref(), peer_id),
+            capabilities,
+        ))
     }
 
     #[request_handler]
@@ -1531,8 +1539,15 @@ impl PeerTableServer {
             .count()
     }
 
-    fn do_get_random_peer(&self, capabilities: Vec<Capability>) -> Option<(H256, PeerConnection)> {
-        let peers: Vec<(H256, &PeerConnection, i64)> = self
+    /// Picks a random connected peer advertising any of `capabilities`, weighted by
+    /// score. Also returns the peer's advertised capabilities so callers can derive
+    /// the negotiated protocol version (needed where the wire format differs between
+    /// versions, e.g. receipts across eth/69 and eth/70).
+    fn do_get_random_peer(
+        &self,
+        capabilities: Vec<Capability>,
+    ) -> Option<(H256, PeerConnection, Vec<Capability>)> {
+        let peers: Vec<(H256, &PeerConnection, i64, &Vec<Capability>)> = self
             .peers
             .iter()
             .filter_map(|(node_id, peer_data)| {
@@ -1542,10 +1557,14 @@ impl PeerTableServer {
                 {
                     return None;
                 }
-                peer_data
-                    .connection
-                    .as_ref()
-                    .map(|connection| (*node_id, connection, peer_data.score))
+                peer_data.connection.as_ref().map(|connection| {
+                    (
+                        *node_id,
+                        connection,
+                        peer_data.score,
+                        &peer_data.supported_capabilities,
+                    )
+                })
             })
             .collect();
         if peers.is_empty() {
@@ -1554,11 +1573,13 @@ impl PeerTableServer {
         // Weight by score: maps [-150, 50] to [1, 201] so bad peers are unlikely but not excluded
         let weights: Vec<u64> = peers
             .iter()
-            .map(|(_, _, score)| (score.max(&MIN_SCORE_CRITICAL) - MIN_SCORE_CRITICAL + 1) as u64)
+            .map(|(_, _, score, _)| {
+                (score.max(&MIN_SCORE_CRITICAL) - MIN_SCORE_CRITICAL + 1) as u64
+            })
             .collect();
         let dist = WeightedIndex::new(&weights).ok()?;
         let idx = dist.sample(&mut rand::rngs::OsRng);
-        Some((peers[idx].0, peers[idx].1.clone()))
+        Some((peers[idx].0, peers[idx].1.clone(), peers[idx].3.clone()))
     }
 
     fn is_validation_needed(contact: &Contact, revalidation_interval: Duration) -> bool {
