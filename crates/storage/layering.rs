@@ -154,12 +154,10 @@ impl TrieLayerCache {
         if safe_root.is_zero() {
             return None;
         }
-        // (c) The executed parent IS the safe-commit root; commit immediately, but only if
-        // it is actually a layer. A canonical state root need not have one: `put_batch`
-        // skips blocks whose state root equals their parent's, which on L2 is every empty
-        // block (no system contract calls), and genesis is on disk without ever being a
-        // layer. Returning a non-layer root here would hand `commit_to_disk` something it
-        // cannot commit. Branch (d) below gets this for free by walking `layers`.
+        // (c) The executed parent IS the safe-commit root. Still requires a layer: a
+        // canonical root need not have one (`put_batch` skips blocks whose state root equals
+        // their parent's, which on L2 is every empty block). Branch (d) gets this for free
+        // by walking `layers`.
         if parent_state_root == safe_root {
             return self.has_layer(safe_root).then_some(safe_root);
         }
@@ -286,19 +284,15 @@ impl TrieLayerCache {
         self.bloom = filter;
     }
 
-    /// Whether `state_root` currently has a diff layer in the cache.
-    ///
-    /// Not every canonical state root does: [`Self::put_batch`] skips blocks whose state
-    /// root equals their parent's, and roots already flushed to disk are pruned. Callers
-    /// that obtained a root from outside the cache (e.g. the canonical safe-commit root)
-    /// must check this before treating it as committable.
+    /// Whether `state_root` has a diff layer. Not every canonical root does: [`Self::put_batch`]
+    /// skips blocks whose state root equals their parent's, and flushed roots are pruned. Callers
+    /// holding a root from outside the cache must check this before treating it as committable.
     pub fn has_layer(&self, state_root: H256) -> bool {
         self.layers.contains_key(&state_root)
     }
 
-    /// Number of diff layers currently held in memory. Diagnostic only: pairs with
-    /// [`Self::has_layer`] to distinguish "this root was pruned / never inserted" from
-    /// "the cache is empty".
+    /// Number of diff layers held in memory. Diagnostic only: distinguishes a pruned root from
+    /// an empty cache.
     pub fn layer_count(&self) -> usize {
         self.layers.len()
     }
@@ -508,14 +502,9 @@ mod tests {
         assert_eq!(cache.get_commitable(l3), Some(l3));
     }
 
-    /// (c2) Regression: `parent_state_root == safe_root` but that root has NO layer.
-    ///
-    /// This is the steady state on L2, which runs no system contracts, so an empty block
-    /// keeps its parent's state root and `put_batch` skips it. Once the canonical
-    /// safe-commit root (`head - threshold`) lands on such a block, the executed parent
-    /// equals the safe root while nothing is committable. Branch (c) used to return
-    /// `Some(safe_root)` on the name match alone, handing `commit_to_disk` a root it could
-    /// not commit; on L2 dev CI that turned into a permanent block-producer failure.
+    /// (c2) Regression: `parent_state_root == safe_root` but that root has no layer, the steady
+    /// state on L2 where empty blocks keep their parent's root. Branch (c) used to match on the
+    /// root value alone and hand `commit_to_disk` something it could not commit.
     #[test]
     fn parent_equals_safe_root_without_layer_yields_none() {
         let orphan = h256(7);
@@ -533,9 +522,7 @@ mod tests {
         );
     }
 
-    /// (c3) The same root becomes non-committable again after it has been flushed, since
-    /// `commit` prunes it. A second `Commit(root)` for an unchanged safe-commit cell must
-    /// therefore be a no-op rather than an error.
+    /// (c3) A flushed root is pruned by `commit`, so it must not be offered again.
     #[test]
     fn already_committed_safe_root_yields_none() {
         let safe = h256(2);

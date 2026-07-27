@@ -4035,23 +4035,16 @@ fn commit_to_disk(
     root: H256,
     is_batch: bool,
 ) -> Result<(), StoreError> {
-    // Nothing to flush unless `root` actually has a layer. It legitimately may not: the
-    // forkchoice-driven `PersistMessage::Commit(root)` path forwards the canonical
-    // safe-commit root without consulting the cache, and `put_batch` never creates a layer
-    // for a block whose state root equals its parent's (every empty L2 block, since L2 runs
-    // no system contracts) nor for genesis. Bail before the side effects below so a
-    // no-op commit doesn't stop the flat-key-value generator or open an empty write batch.
+    // `root` need not have a layer: the forkchoice `PersistMessage::Commit(root)` path
+    // forwards the safe-commit root without consulting the cache, and `put_batch` skips
+    // blocks whose state root equals their parent's. Bail before the side effects below.
     if !trie.has_layer(root) {
-        // Name the expected cause, so a reader can tell this apart from real corruption
-        // without going spelunking. `layers = 0` alongside this means the cache is simply
-        // empty; a non-zero count means this particular root was pruned or never inserted.
         debug!(
             root = ?root,
             layers = trie.layer_count(),
             is_batch,
-            "Skipping trie commit: state root has no in-memory layer. Expected when the \
-             block did not change the state root (empty L2 blocks, which run no system \
-             contracts) or when the root was already flushed to disk."
+            "Skipping trie commit: state root has no in-memory layer. Expected when the block \
+             did not change the state root (empty L2 blocks) or the root was already flushed."
         );
         return Ok(());
     }
@@ -4091,18 +4084,14 @@ fn commit_to_disk(
     // accumulated backlog (e.g. block import) can return several layers at once, so we
     // write one journal entry per block below rather than merging diffs across blocks.
     //
-    // The `has_layer` pre-check above already established that `root` is a layer, and
-    // `trie_mut` is a `Clone` of `trie` which preserves the layer map intact, so
-    // `commit(root)` must return `Some` here. Unlike the "root isn't a layer" case (a
-    // normal no-op, handled above), reaching this means the clone lost the map, so
-    // surface a hard error rather than silently committing nothing.
+    // `has_layer` above established `root` is a layer and `trie_mut` is a `Clone` that
+    // preserves the map, so this must be `Some`. Reaching the error means the clone lost the
+    // map, which is corruption, not the ordinary no-op handled above.
     let committed_layers = trie_mut.commit(root).ok_or_else(|| {
         StoreError::Custom(format!(
             "trie layer for state root {root:?} disappeared between the has_layer check and \
-             commit (layers={}, is_batch={is_batch}). This is not the ordinary \
-             \"root has no layer\" case, which is handled as a no-op above; it means the \
-             TrieLayerCache clone did not preserve the layer map, so the persistence \
-             pipeline is corrupt and this block's state was not written.",
+             commit (layers={}, is_batch={is_batch}): the TrieLayerCache clone lost the layer \
+             map, so this block's state was not written",
             trie.layer_count(),
         ))
     })?;
