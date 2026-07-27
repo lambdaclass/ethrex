@@ -696,7 +696,7 @@ impl Blockchain {
             // if inclusion of the transaction puts the block size over the size limit
             // we don't add any more txs to the payload.
             let potential_rlp_block_size =
-                context.payload_size + head_tx.encode_canonical_to_vec().len() as u64;
+                context.payload_size + head_tx.encode_canonical_len() as u64;
             if context
                 .chain_config()
                 .is_osaka_activated(context.payload.header.timestamp)
@@ -920,6 +920,29 @@ impl Blockchain {
                 .into());
             }
         };
+        // A blob sidecar is validated against the fork only at mempool insertion; the fork being
+        // built can differ (e.g. Osaka activated since). A pre-Osaka v0 sidecar (EIP-4844, one
+        // proof per blob) is invalid at Osaka — EIP-7594 requires cell proofs (v1) and there is no
+        // upgrade path — so including it would make getPayloadV5 emit a wrong-format
+        // BlobsBundleV2. That mismatch is deterministic and permanent, so drop the tx from the
+        // pool (like the frame-tx fork gates in `fill_transactions`) rather than skip-and-retry it
+        // every block, where it would also block later nonces from the same sender. Dropping it
+        // also stops other blob reads (P2P pooled-tx serving) from returning the stale sidecar;
+        // the `engine_getBlobsV2/V3` read path is tracked separately (`ethrex-getblobs-v2-legacy-proof`).
+        // The version/Osaka checks are structural (no KZG), so this needs no `c-kzg` feature.
+        // (Explicit builds carry no sidecar, so `bundle` is `None` and this is a no-op.)
+        if let Some(bundle) = &bundle
+            && bundle.version == 0
+            && context
+                .chain_config()
+                .is_osaka_activated(context.payload.header.timestamp)
+        {
+            self.remove_transaction_from_pool(&tx_hash)?;
+            return Err(EvmError::Custom(format!(
+                "dropping blob tx {tx_hash}: pre-Osaka (v0) blob sidecar is invalid post-Osaka"
+            ))
+            .into());
+        }
         if context.blobs_bundle.blobs.len() + blob_count > max_blob_number_per_block {
             // This error will only be used for debug tracing
             return Err(EvmError::Custom("max data blobs reached".to_string()).into());
