@@ -478,6 +478,17 @@ impl Blockchain {
         // stale block is fine (geth/reth return best-so-far too), but
         // proposing an empty block while the mempool has transactions is not
         // (race (a) with no completed rebuild yet).
+        //
+        // TODO(#5011): two paths below can still put a full build on the
+        // critical path, so this narrows the exposure rather than removing it.
+        // First, the empty-payload case still rebuilds over the whole mempool;
+        // that has to stay correct (it is the race this guard exists for), but
+        // a large mempool of txs that never make it into a block — low-fee or
+        // nonce-gapped — can make even that approach the deadline. Second, this
+        // rebuild is not cancellable: unlike the in-loop build it runs as a
+        // plain `spawn_blocking(..).await`, so a `getPayload` arriving while a
+        // slot-timeout rebuild is in flight waits for it to finish. Bounding
+        // either needs a time-boxed or partial build, not a guard here.
         if self.mempool.tx_seq() > last_built_seq
             && (!cancel_token.is_cancelled() || res.payload.body.transactions.is_empty())
         {
