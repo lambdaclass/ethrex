@@ -1203,8 +1203,6 @@ mod test {
             withdrawals: None,
             ..BlockBody::empty()
         };
-        assert!(
-            validate_block_body(&pre_shanghai_header, &body_no_withdrawals, &crypto).is_ok()
-        );
+        assert!(validate_block_body(&pre_shanghai_header, &body_no_withdrawals, &crypto).is_ok());
     }
 }
