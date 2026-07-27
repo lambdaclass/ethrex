@@ -4035,6 +4035,16 @@ fn commit_to_disk(
     root: H256,
     is_batch: bool,
 ) -> Result<(), StoreError> {
+    // Nothing to flush unless `root` actually has a layer. It legitimately may not: the
+    // forkchoice-driven `PersistMessage::Commit(root)` path forwards the canonical
+    // safe-commit root without consulting the cache, and `put_batch` never creates a layer
+    // for a block whose state root equals its parent's (every empty L2 block, since L2 runs
+    // no system contracts) nor for genesis. Bail before the side effects below so a
+    // no-op commit doesn't stop the flat-key-value generator or open an empty write batch.
+    if !trie.has_layer(root) {
+        return Ok(());
+    }
+
     // Stop the flat-key-value generator thread, as the underlying trie is about to change.
     // Ignore the error, if the channel is closed it means there is no worker to notify.
     let _ = fkv_ctl.send(FKVGeneratorControlMessage::Stop);
@@ -4070,10 +4080,11 @@ fn commit_to_disk(
     // accumulated backlog (e.g. block import) can return several layers at once, so we
     // write one journal entry per block below rather than merging diffs across blocks.
     //
-    // `root` was returned by a `get_commitable*` gate above, which found it by walking
-    // `trie.layers`. `trie_mut` is a `Clone` of `trie`, which preserves the layer map
-    // intact, so `commit(root)` should always return `Some` here. Surface a hard error
-    // if that invariant ever breaks rather than silently committing nothing.
+    // The `has_layer` pre-check above already established that `root` is a layer, and
+    // `trie_mut` is a `Clone` of `trie` which preserves the layer map intact, so
+    // `commit(root)` must return `Some` here. Unlike the "root isn't a layer" case (a
+    // normal no-op, handled above), reaching this means the clone lost the map, so
+    // surface a hard error rather than silently committing nothing.
     let committed_layers = trie_mut.commit(root).ok_or_else(|| {
         StoreError::Custom(format!(
             "commit({root:?}) returned None; layer cache invariant violated"

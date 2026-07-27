@@ -154,9 +154,14 @@ impl TrieLayerCache {
         if safe_root.is_zero() {
             return None;
         }
-        // (c) The executed parent IS the safe-commit root; commit immediately.
+        // (c) The executed parent IS the safe-commit root; commit immediately, but only if
+        // it is actually a layer. A canonical state root need not have one: `put_batch`
+        // skips blocks whose state root equals their parent's, which on L2 is every empty
+        // block (no system contract calls), and genesis is on disk without ever being a
+        // layer. Returning a non-layer root here would hand `commit_to_disk` something it
+        // cannot commit. Branch (d) below gets this for free by walking `layers`.
         if parent_state_root == safe_root {
-            return Some(safe_root);
+            return self.has_layer(safe_root).then_some(safe_root);
         }
         // (d) Walk the layer parent-chain from parent_state_root looking for safe_root.
         let mut current = parent_state_root;
@@ -279,6 +284,16 @@ impl TrieLayerCache {
         });
 
         self.bloom = filter;
+    }
+
+    /// Whether `state_root` currently has a diff layer in the cache.
+    ///
+    /// Not every canonical state root does: [`Self::put_batch`] skips blocks whose state
+    /// root equals their parent's, and roots already flushed to disk are pruned. Callers
+    /// that obtained a root from outside the cache (e.g. the canonical safe-commit root)
+    /// must check this before treating it as committable.
+    pub fn has_layer(&self, state_root: H256) -> bool {
+        self.layers.contains_key(&state_root)
     }
 
     /// Removes the layer at `state_root` and all its ancestors from the cache, returning
@@ -484,6 +499,49 @@ mod tests {
         let (mut cache, _cell) = cache_with_cell(4, l3);
         build_chain(&mut cache, 3);
         assert_eq!(cache.get_commitable(l3), Some(l3));
+    }
+
+    /// (c2) Regression: `parent_state_root == safe_root` but that root has NO layer.
+    ///
+    /// This is the steady state on L2, which runs no system contracts, so an empty block
+    /// keeps its parent's state root and `put_batch` skips it. Once the canonical
+    /// safe-commit root (`head - threshold`) lands on such a block, the executed parent
+    /// equals the safe root while nothing is committable. Branch (c) used to return
+    /// `Some(safe_root)` on the name match alone, handing `commit_to_disk` a root it could
+    /// not commit; on L2 dev CI that turned into a permanent block-producer failure.
+    #[test]
+    fn parent_equals_safe_root_without_layer_yields_none() {
+        let orphan = h256(7);
+        let (mut cache, _cell) = cache_with_cell(4, orphan);
+        // An empty block: parent == state_root, so `put_batch` inserts nothing.
+        cache.put_batch(orphan, orphan, 7, orphan, vec![]);
+        assert!(
+            !cache.has_layer(orphan),
+            "empty-block root must not create a layer"
+        );
+        assert_eq!(
+            cache.get_commitable(orphan),
+            None,
+            "a safe root with no layer is not committable, even when it equals the parent"
+        );
+    }
+
+    /// (c3) The same root becomes non-committable again after it has been flushed, since
+    /// `commit` prunes it. A second `Commit(root)` for an unchanged safe-commit cell must
+    /// therefore be a no-op rather than an error.
+    #[test]
+    fn already_committed_safe_root_yields_none() {
+        let safe = h256(2);
+        let (mut cache, _cell) = cache_with_cell(4, safe);
+        build_chain(&mut cache, 3);
+        assert_eq!(cache.get_commitable(safe), Some(safe));
+        cache.commit(safe).expect("first commit flushes the layer");
+        assert!(!cache.has_layer(safe), "commit prunes the flushed layer");
+        assert_eq!(
+            cache.get_commitable(safe),
+            None,
+            "re-committing an already-flushed root must not be offered again"
+        );
     }
 
     /// (d) Safe root not an ancestor (never inserted as a layer) -> None, regardless of depth.
