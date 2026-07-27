@@ -296,6 +296,13 @@ impl TrieLayerCache {
         self.layers.contains_key(&state_root)
     }
 
+    /// Number of diff layers currently held in memory. Diagnostic only: pairs with
+    /// [`Self::has_layer`] to distinguish "this root was pruned / never inserted" from
+    /// "the cache is empty".
+    pub fn layer_count(&self) -> usize {
+        self.layers.len()
+    }
+
     /// Removes the layer at `state_root` and all its ancestors from the cache, returning
     /// one [`CommittedLayer`] per removed layer in oldest-first order (suitable for
     /// sequential disk write and per-block journaling).

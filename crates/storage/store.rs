@@ -4042,6 +4042,17 @@ fn commit_to_disk(
     // no system contracts) nor for genesis. Bail before the side effects below so a
     // no-op commit doesn't stop the flat-key-value generator or open an empty write batch.
     if !trie.has_layer(root) {
+        // Name the expected cause, so a reader can tell this apart from real corruption
+        // without going spelunking. `layers = 0` alongside this means the cache is simply
+        // empty; a non-zero count means this particular root was pruned or never inserted.
+        debug!(
+            root = ?root,
+            layers = trie.layer_count(),
+            is_batch,
+            "Skipping trie commit: state root has no in-memory layer. Expected when the \
+             block did not change the state root (empty L2 blocks, which run no system \
+             contracts) or when the root was already flushed to disk."
+        );
         return Ok(());
     }
 
@@ -4087,7 +4098,12 @@ fn commit_to_disk(
     // surface a hard error rather than silently committing nothing.
     let committed_layers = trie_mut.commit(root).ok_or_else(|| {
         StoreError::Custom(format!(
-            "commit({root:?}) returned None; layer cache invariant violated"
+            "trie layer for state root {root:?} disappeared between the has_layer check and \
+             commit (layers={}, is_batch={is_batch}). This is not the ordinary \
+             \"root has no layer\" case, which is handled as a no-op above; it means the \
+             TrieLayerCache clone did not preserve the layer map, so the persistence \
+             pipeline is corrupt and this block's state was not written.",
+            trie.layer_count(),
         ))
     })?;
 
