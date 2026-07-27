@@ -17,23 +17,40 @@ pivot.
 
 | Flag | Env | Values | Default |
 | --- | --- | --- | --- |
-| `--history.chain` | `ETHREX_HISTORY_CHAIN` | `off`, `postmerge`, `all` | `off` |
+| `--history.chain` | `ETHREX_HISTORY_CHAIN` | `off`, `postmerge`, `all`, or a block number | `off` |
 | `--history.transactions` | `ETHREX_HISTORY_TRANSACTIONS` | number of blocks (`0` = whole backfilled range) | `0` |
 
 - **`off`** (default): headers-only below the pivot — current behavior.
 - **`postmerge`**: backfill down to the network's merge (Paris) activation block.
   This is the recommended value: post-merge history is what the peer set reliably
   serves, and it is what most applications need.
-- **`all`**: backfill down to genesis. **Best-effort** — after the 2025 history
-  expiry rollout many peers no longer serve pre-merge bodies/receipts, so this can
-  stall at a block it cannot fetch (it reports the stall rather than failing the
-  node).
+- **`all`**: backfill as far back as receipts exist in a decodable form, i.e.
+  down to the **Byzantium** block (mainnet `4,370,000`), not genesis. Before
+  Byzantium (EIP-658) a receipt's first field is a post-state root rather than a
+  status flag, a form ethrex does not represent, so those receipts can never be
+  fetched. **Best-effort** — after the 2025 history expiry rollout many peers no
+  longer serve pre-merge bodies/receipts, so this can stall at a block it cannot
+  fetch (it reports the stall rather than failing the node).
+- **a block number** (e.g. `22000000`): backfill down to exactly that block and
+  stop there. Use this to keep a recent slice of history instead of the whole
+  post-merge range — far less disk and far less time than `postmerge`, which on
+  mainnet is ~10M blocks. A value between the merge and Byzantium blocks is
+  honoured on the same best-effort basis as `all`; anything below Byzantium is
+  clamped up to it, with a warning, for the reason given above.
 
 `--history.transactions` controls how far back the transaction-lookup index
 (`eth_getTransactionByHash`) is kept, independently of the block/receipt data,
 mirroring geth's flag of the same name. `0` (the default) indexes the entire
 backfilled range; a non-zero `N` indexes only blocks within `N` of the chain head
-and stores bodies/receipts for the rest without a tx-hash index.
+as it stood when the run started, and stores bodies/receipts for the rest without a
+tx-hash index.
+
+Two differences from geth's flag are worth knowing. It only governs what backfill
+*writes*: nothing already indexed is ever un-indexed, and blocks above the sync
+pivot are indexed unconditionally by normal block import, so an `N` smaller than
+`head - pivot` has no effect on the range where the index is actually large. And
+the window is pinned to the head at task start rather than tracking the live head,
+so the boundary stays put over a run that can take weeks.
 
 ### Example
 
@@ -50,10 +67,40 @@ ethrex \
 Backfill starts on its own once initial sync finishes — no restart or second
 command is needed.
 
+### Upgrading an existing node
+
+**An already-synced node does not need to resync.** Add `--history.chain` and
+restart: backfill starts from the history the node already has and fills
+downward. There is no migration and no reindex — the feature writes to existing
+column families and does not change the store schema version, so an existing
+database opens unchanged.
+
+On the first startup after the upgrade, a one-time reconciliation corrects
+`earliest_block_number`, which on a node synced before this feature existed was
+left at genesis. Without it, backfill would compare that stale value against the
+floor and conclude there was nothing to do, so the correction runs *before* that
+check:
+
+```
+INFO Historical chain backfill enabled mode=PostMerge horizon=0
+INFO Reconciled backfill frontier to the lowest block with full chain data recorded=0 actual=25530850
+DEBUG History backfill advanced
+```
+
+The reconciliation bisects the database for the lowest block with a contiguous
+body (~25 reads on mainnet), which is the node's original snap pivot. A node that
+full-synced from genesis reconciles to `0` and completes immediately, since it
+already holds all history.
+
+Note that the reconciliation only runs when backfill is enabled. An upgraded node
+left at `--history.chain off` keeps the stale `earliest_block_number`, so the
+`earliest` block tag still reports genesis even though pre-pivot bodies are
+absent. Enabling backfill (or a fresh snap sync) sets it correctly.
+
 ## How it works
 
 Backfill fills in reverse — from the pivot downward toward a floor — one bounded
-batch (128 blocks) at a time. It runs at lower priority than following the chain
+batch (64 blocks) at a time. It runs at lower priority than following the chain
 head: it waits until initial sync finishes, sleeps between batches, and never
 lets the tip fall behind.
 
@@ -65,8 +112,8 @@ flowchart TD
     reconcile --> floor{"Resolve floor for mode"}
     floor --> done0{"frontier ≤ floor?"}
     done0 -- yes --> complete([Complete])
-    done0 -- no --> read["Read 128 canonical headers just below the frontier"]
-    read --> fetch["Request bodies + receipts from eth/68, eth/69, eth/71 peers"]
+    done0 -- no --> read["Read 64 canonical headers just below the frontier"]
+    read --> fetch["Request receipts + bodies from an eth peer (form per negotiated version)"]
     fetch --> validate["Validate tx and receipts roots vs. headers; rebuild logs bloom"]
     validate --> commit["Atomic write: bodies + receipts + tx index + new frontier"]
     commit --> done0
@@ -75,8 +122,17 @@ flowchart TD
 **Floor.** `postmerge` resolves the floor to the network's Paris activation
 block — `merge_netsplit_block` when the chain config sets one, otherwise the
 first proof-of-stake block found by difficulty bisection (block `15,537,394` on
-mainnet). `all` uses genesis (`0`). If the chain never merged, there is no
-post-merge segment and backfill completes immediately.
+mainnet). `all` uses the Byzantium block, and an explicit block number is used as
+the floor directly. Every mode is clamped so the floor never falls below Byzantium.
+If the chain never merged there is no post-merge segment, so `postmerge` keeps
+idling until it does.
+
+The floor is resolved once per run, not per batch, since neither the merge nor the
+Byzantium block moves. Changing it therefore takes a restart: lowering it resumes
+filling from wherever the frontier now sits, and raising it stops further filling
+while keeping everything already stored. Backfill stops as soon as the frontier
+reaches the floor, so a block number at or above the current frontier completes
+with nothing to do.
 
 **Frontier.** Progress is tracked in `earliest_block_number` (the lowest block
 with full data). Each batch reads the canonical headers just below the frontier,
@@ -85,8 +141,13 @@ fetches their bodies and receipts, and — on success — lowers the frontier.
 **Validation.** Bodies and receipts are validated against the already-synced
 header chain (transactions root and receipts root) before being stored. A
 receipt's logs bloom is recomputed from its logs, which reconstructs the bloom
-that eth/69 omits, so backfill works with eth/68, eth/69, and eth/71 peers alike.
-(Only the rare, skipped eth/70 — whose `GetReceipts` is paginated — is unused.)
+that eth/69 onward omits, so backfill works with peers on any supported eth
+version. The request form follows the version the connection negotiated: eth/68
+and eth/69 take the original `GetReceipts`, while eth/70 (EIP-7975) replaced it
+with a paginated form that eth/71 (EIP-8159, `requires: [7928, 7975]`) also uses.
+When a paginated response ends in a partial block, that trailing block is dropped
+and the response treated as a shorter prefix, so every stored block stays
+root-verified.
 
 Backfill throughput is bounded by how fast peers serve historical bodies and
 receipts. After the 2025 history-expiry rollout only a subset of peers still
@@ -165,19 +226,37 @@ return the full block and its receipts.
 - **`eth_getLogs` becomes correct, not fast.** Backfill lets historical log
   queries return results instead of failing, but there is no log/bloom index, so
   wide historical ranges are still served by a linear per-block bloom scan.
-- **`all` is best-effort.** Many peers no longer serve pre-merge bodies/receipts;
-  `all` can stall at a block it cannot fetch. It reports the stall and keeps
-  retrying rather than failing the node.
+- **`all` is best-effort, and stops at Byzantium.** Pre-Byzantium receipts use the
+  pre-EIP-658 post-state-root form, which ethrex cannot represent, so no mode
+  descends below that block. Above it, many peers no longer serve pre-merge
+  bodies/receipts, so `all` can stall at a block it cannot fetch; it reports the
+  stall and keeps retrying rather than failing the node.
+- **`--history.transactions` does not prune.** It bounds what backfill indexes, but
+  never removes existing index entries, and blocks above the sync pivot are always
+  indexed by normal import. Shrinking it on an already-indexed node frees nothing.
 
 ## Cost
 
-Enabling backfill adds a substantial amount of disk usage — on the order of
-hundreds of GB for mainnet `postmerge` — since it stores the bodies and receipts
-a headers-only node omits. The [DB observability](../../developers/l1/db-observability.md)
-dashboard breaks this growth down per column family (`bodies`, `receipts_v2`,
+Enabling backfill adds a substantial amount of disk usage, since it stores the
+bodies and receipts a headers-only node omits. On mainnet the measured cost is
+**~125 KiB per block** filled, at a rate of ~600 k blocks/day (~70 GiB/day), so
+the full `postmerge` range needs on the order of **0.7–1.2 TB of history on top of
+state**. See [Hardware requirements](../../getting-started/hardware_requirements.md#with-historical-chain-backfill-enabled)
+for the current figures and recommended disk sizes (the `postmerge` numbers are
+provisional while the reference run completes; `all` is not yet measured).
+
+Because backfill walks from the pivot downward, the earliest blocks it fills are
+the most recent and largest; per-block cost drops as it reaches older blocks, so
+throughput in blocks/day rises over the course of a run.
+
+The [DB observability](../../developers/l1/db-observability.md) dashboard breaks
+this growth down per column family (`bodies`, `receipts_v2`,
 `transaction_locations`). While filling, it uses spare network and CPU in the
 background; it is rate-limited and yields to chain-head following, so it does not
 slow down block processing.
+
+State size is unaffected: backfill adds chain history only, and does not change
+how much state the node keeps.
 
 ## References
 
