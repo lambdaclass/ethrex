@@ -1047,7 +1047,7 @@ fn is_nonce_mismatch(e: &ChainError) -> bool {
 /// sender can resubmit, which is a better trade than starving that sender's queue on
 /// every build until then. Covers the levm intrinsic-gas checks (gas limit
 /// below the minimum intrinsic cost or below the EIP-7623 calldata floor) and
-/// the EIP-3860/7907 initcode size cap. There is no typed variant at the
+/// the EIP-3860/7954 initcode size cap. There is no typed variant at the
 /// `ChainError` level, so it is detected by the stable Display substrings; the
 /// `deterministic_invalid_detected_from_chain_error` test pins them through the
 /// real conversion path so a reworded error breaks the test, not eviction.
