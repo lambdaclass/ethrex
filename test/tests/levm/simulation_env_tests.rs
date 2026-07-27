@@ -22,12 +22,20 @@ use ethrex_crypto::NativeCrypto;
 use ethrex_levm::db::gen_db::GeneralizedDatabase;
 use ethrex_levm::vm::VMType;
 use ethrex_storage::{EngineType, Store};
-use ethrex_vm::DynVmDatabase;
 use ethrex_vm::backends::levm::LEVM;
+use ethrex_vm::{DynVmDatabase, ExecutionResult};
 use rustc_hash::FxHashMap;
 use std::sync::Arc;
 
 const SENDER: Address = Address::repeat_byte(0xAA);
+/// Holds `SLOTNUM_READER`, so calling it returns the slot the environment was
+/// built with. Asserting on that value is what distinguishes a slot that
+/// actually reached the environment from one that was silently dropped.
+const SLOTNUM_READER: Address = Address::repeat_byte(0xBB);
+
+/// `SLOTNUM; PUSH0; MSTORE; PUSH1 0x20; PUSH0; RETURN` — returns the slot
+/// number as a 32-byte word.
+const SLOTNUM_READER_CODE: [u8; 7] = [0x4B, 0x5F, 0x52, 0x60, 0x20, 0x5F, 0xF3];
 
 fn amsterdam_db_and_header(slot_number: Option<u64>) -> (GeneralizedDatabase, BlockHeader) {
     let mut store = Store::new("", EngineType::InMemory).unwrap();
@@ -67,18 +75,44 @@ fn amsterdam_db_and_header(slot_number: Option<u64>) -> (GeneralizedDatabase, Bl
             FxHashMap::default(),
         ),
     );
+    cache.insert(
+        SLOTNUM_READER,
+        Account::new(
+            U256::zero(),
+            Code::from_bytecode(Bytes::from_static(&SLOTNUM_READER_CODE), &NativeCrypto),
+            0,
+            FxHashMap::default(),
+        ),
+    );
     (
         GeneralizedDatabase::new_with_account_state(Arc::new(vm_db), cache),
         header,
     )
 }
 
-fn plain_transfer() -> GenericTransaction {
+fn read_slot_number() -> GenericTransaction {
     GenericTransaction {
         from: SENDER.into(),
-        to: ethrex_common::types::TxKind::Call(Address::repeat_byte(0xBB)),
-        value: U256::one(),
+        to: ethrex_common::types::TxKind::Call(SLOTNUM_READER),
         ..Default::default()
+    }
+}
+
+/// Simulates a call to `SLOTNUM_READER` on an Amsterdam header carrying
+/// `slot_number` and returns the slot the environment ended up with.
+fn simulated_slot_number(slot_number: Option<u64>) -> U256 {
+    let (mut db, header) = amsterdam_db_and_header(slot_number);
+    let result = LEVM::simulate_tx_from_generic(
+        &read_slot_number(),
+        &header,
+        &mut db,
+        VMType::L1,
+        &NativeCrypto,
+    )
+    .expect("simulation must not error");
+    match result {
+        ExecutionResult::Success { output, .. } => U256::from_big_endian(&output),
+        other => panic!("expected SLOTNUM call to succeed, got {other:?}"),
     }
 }
 
@@ -86,20 +120,20 @@ fn plain_transfer() -> GenericTransaction {
 fn simulation_tolerates_missing_slot_number_on_amsterdam() {
     // This used to fail with "slot_number must be present in Amsterdam+
     // blocks" while the execution env builder defaulted the same header's slot
-    // to zero and ran the transaction.
-    let (mut db, header) = amsterdam_db_and_header(None);
-    let result =
-        LEVM::simulate_tx_from_generic(&plain_transfer(), &header, &mut db, VMType::L1, &NativeCrypto);
-    assert!(
-        result.is_ok(),
-        "simulation must tolerate a missing slot_number like execution does; got {result:?}"
+    // to zero and ran the transaction. Asserting on the value read by SLOTNUM
+    // pins simulation to that same zero default, not merely to "not an error".
+    assert_eq!(
+        simulated_slot_number(None),
+        U256::zero(),
+        "a missing slot_number must reach SLOTNUM as zero, like execution does"
     );
 }
 
 #[test]
 fn simulation_uses_the_slot_number_when_present() {
-    let (mut db, header) = amsterdam_db_and_header(Some(1234));
-    let result =
-        LEVM::simulate_tx_from_generic(&plain_transfer(), &header, &mut db, VMType::L1, &NativeCrypto);
-    assert!(result.is_ok(), "got {result:?}");
+    assert_eq!(
+        simulated_slot_number(Some(1234)),
+        U256::from(1234u64),
+        "SLOTNUM must read the header's slot_number"
+    );
 }
