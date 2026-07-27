@@ -69,8 +69,8 @@ use ethrex_common::types::block_execution_witness::ExecutionWitness;
 use ethrex_common::types::fee_config::FeeConfig;
 use ethrex_common::types::{
     AccountInfo, AccountState, AccountUpdate, BalSynthesisItem, Block, BlockHash, BlockHeader,
-    BlockNumber, ChainConfig, Code, Receipt, Transaction, WrappedEIP4844Transaction,
-    synthesize_bal_updates, validate_block_body,
+    BlockNumber, Code, Transaction, WrappedEIP4844Transaction, synthesize_bal_updates,
+    validate_block_body,
 };
 use ethrex_common::types::{EIP7702_DELEGATED_CODE_LEN, is_eip7702_delegation};
 use ethrex_common::types::{ELASTICITY_MULTIPLIER, P2PTransaction};
@@ -87,8 +87,8 @@ use ethrex_rlp::constants::RLP_NULL;
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_storage::{
-    AccountUpdatesList, BATCH_COMMIT_THRESHOLD, Store, UpdateBatch, error::StoreError,
-    hash_address, hash_key,
+    AccountUpdatesList, DB_COMMIT_THRESHOLD, Store, UpdateBatch, error::StoreError, hash_address,
+    hash_key,
 };
 use ethrex_trie::node::{BranchNode, ExtensionNode, LeafNode};
 use ethrex_trie::{Nibbles, Node, NodeRef, Trie, TrieError, TrieNode};
@@ -1544,47 +1544,6 @@ impl Blockchain {
         collapse_root_node(&self.storage, parent_header.state_root, prefix, root)
     }
 
-    /// Executes a block from a given vm instance an does not clear its state
-    fn execute_block_from_state(
-        &self,
-        parent_header: &BlockHeader,
-        block: &Block,
-        chain_config: &ChainConfig,
-        vm: &mut Evm,
-    ) -> Result<BlockExecutionResult, ChainError> {
-        // Validate the block pre-execution
-        validate_block_pre_execution(block, parent_header, chain_config, ELASTICITY_MULTIPLIER)?;
-        self.validate_l1_transaction_types(block)?;
-        let (execution_result, bal) = vm.execute_block(block)?;
-        // Validate execution went alright
-        if let Err(e) = validate_gas_used(execution_result.block_gas_used, &block.header) {
-            ethrex_vm::log_gas_used_mismatch(
-                &execution_result.tx_gas_breakdowns,
-                block.header.number,
-                execution_result.block_gas_used,
-                block.header.gas_used,
-            );
-            return Err(e.into());
-        }
-        validate_receipts_root_and_logs_bloom(
-            &block.header,
-            &execution_result.receipts,
-            &NativeCrypto,
-        )?;
-        validate_requests_hash(&block.header, chain_config, &execution_result.requests)?;
-        if let Some(bal) = &bal {
-            validate_block_access_list_hash(
-                &block.header,
-                chain_config,
-                bal,
-                block.body.transactions.len(),
-                &NativeCrypto,
-            )?;
-        }
-
-        Ok(execution_result)
-    }
-
     pub async fn generate_witness_for_blocks(
         &self,
         blocks: &[Block],
@@ -2690,28 +2649,36 @@ impl Blockchain {
         );
     }
 
-    /// Adds multiple blocks in a batch.
+    /// Adds multiple consecutive blocks in a batch during full sync.
+    ///
+    /// Each block is routed through the same per-block-validated pipeline that live blocks use
+    /// (via [`add_block_pipeline_bounded`], the depth-gated entry point) instead of the bespoke
+    /// "execute all, apply once, validate only the last state root" path. This:
+    ///
+    /// - closes the intermediate-state-root gap (every block's state root is validated),
+    /// - reuses the pipeline's BAL-driven parallel execution + precompile cache and its per-block
+    ///   BAL persistence for eth/71 serving, and
+    /// - deletes the duplicated `execute_block_from_state`, manual VM/BLOCKHASH cache, and
+    ///   peer-BAL-persistence code.
+    ///
+    /// This trades the single-trie-materialization amortization (one root for the whole batch) for
+    /// per-block roots; trie layers commit by depth (`DB_COMMIT_THRESHOLD`) so the in-memory layer
+    /// backlog stays bounded during bulk sync.
     ///
     /// If an error occurs, returns a tuple containing:
     /// - The error type ([`ChainError`]).
-    /// - [`BatchProcessingFailure`] (if the error was caused by block processing).
+    /// - [`BatchBlockProcessingFailure`] (if the error was caused by block processing), carrying
+    ///   the failed block hash and the last successfully-imported block hash.
     ///
-    /// Note: only the last block's state trie is stored in the db
-    /// `bals` holds the per-block Block Access Lists fetched during sync, aligned
-    /// by index with `blocks`. Pass an empty slice when no BALs are available
-    /// (e.g. block import from RLP); the persistence step then stores none. Only
-    /// BALs matching their block's header commitment are persisted.
+    /// `bals` holds the per-block Block Access Lists fetched during sync, aligned by index with
+    /// `blocks`. Pass an empty slice when no BALs are available (e.g. block import from RLP); the
+    /// pipeline then rebuilds each BAL. Only a BAL matching its block's header commitment is used.
     pub async fn add_blocks_in_batch(
         &self,
         blocks: Vec<Block>,
         bals: &[Option<BlockAccessList>],
         cancellation_token: CancellationToken,
     ) -> Result<(), (ChainError, Option<BatchBlockProcessingFailure>)> {
-        let mut last_valid_hash = H256::default();
-
-        // `bals` is either empty (no BALs available) or index-aligned with `blocks`.
-        // Guard the contract so a wrong-length slice can't silently drop/ignore BALs
-        // via the `zip` in the persistence step below.
         debug_assert!(
             bals.is_empty() || bals.len() == blocks.len(),
             "bals must be empty or aligned with blocks (bals={}, blocks={})",
@@ -2719,173 +2686,65 @@ impl Blockchain {
             blocks.len(),
         );
 
-        let Some(first_block_header) = blocks.first().map(|e| e.header.clone()) else {
-            return Err((ChainError::Custom("First block not found".into()), None));
-        };
-
-        let chain_config: ChainConfig = self.storage.get_chain_config();
-
-        // Cache block hashes for the full batch so we can access them during
-        // execution without having to store the blocks beforehand.
-        let mut block_hash_cache: BTreeMap<BlockNumber, BlockHash> =
-            blocks.iter().map(|b| (b.header.number, b.hash())).collect();
-
-        let parent_header = self
-            .storage
-            .get_block_header_by_hash(first_block_header.parent_hash)
-            .map_err(|e| (ChainError::StoreError(e), None))?
-            .ok_or((ChainError::ParentNotFound, None))?;
-
-        // Walk the parent chain to cache the last 256 block hashes so that
-        // BLOCKHASH can resolve references to blocks from previous batches
-        // (they may not be canonical yet during import).
-        block_hash_cache
-            .entry(parent_header.number)
-            .or_insert_with(|| parent_header.hash());
-        let mut hash = parent_header.parent_hash;
-        let mut number = parent_header.number.saturating_sub(1);
-        let lookback = first_block_header.number.saturating_sub(256);
-        while number > lookback {
-            block_hash_cache.entry(number).or_insert(hash);
-            match self.storage.get_block_header_by_hash(hash) {
-                Ok(Some(header)) => {
-                    hash = header.parent_hash;
-                    number = number.saturating_sub(1);
-                }
-                Ok(None) => break,
-                Err(e) => {
-                    warn!("Failed to fetch block header by hash during BLOCKHASH cache walk: {e}");
-                    break;
-                }
-            }
-        }
-        let vm_db = StoreVmDatabase::new_with_block_hash_cache(
-            self.storage.clone(),
-            parent_header,
-            block_hash_cache,
-        )
-        .map_err(|e| (ChainError::EvmError(e), None))?;
-        let mut vm = self.new_evm(vm_db).map_err(|e| (e.into(), None))?;
-
+        let mut last_valid_hash = H256::default();
         let blocks_len = blocks.len();
-        let mut all_receipts: Vec<(BlockHash, Vec<Receipt>)> = Vec::with_capacity(blocks_len);
-        let mut total_gas_used = 0;
-        let mut transactions_count = 0;
-
+        let mut total_gas_used = 0u64;
+        let mut transactions_count = 0usize;
+        let mut last_block_number = 0u64;
+        let mut last_block_gas_limit = 0u64;
         let interval = Instant::now();
-        for (i, block) in blocks.iter().enumerate() {
+
+        for (i, block) in blocks.into_iter().enumerate() {
             if cancellation_token.is_cancelled() {
                 info!("Received shutdown signal, aborting");
                 return Err((ChainError::Custom(String::from("shutdown signal")), None));
             }
-            // for the first block, we need to query the store
-            let parent_header = if i == 0 {
-                find_parent_header(&block.header, &self.storage).map_err(|err| {
-                    (
-                        err,
-                        Some(BatchBlockProcessingFailure {
-                            failed_block_hash: block.hash(),
-                            last_valid_hash,
-                        }),
-                    )
-                })?
-            } else {
-                // for the subsequent ones, the parent is the previous block
-                blocks[i - 1].header.clone()
-            };
 
-            let BlockExecutionResult { receipts, .. } = self
-                .execute_block_from_state(&parent_header, block, &chain_config, &mut vm)
-                .map_err(|err| {
-                    (
-                        err,
-                        Some(BatchBlockProcessingFailure {
-                            failed_block_hash: block.hash(),
-                            last_valid_hash,
-                        }),
-                    )
-                })?;
-            debug!("Executed block with hash {}", block.hash());
-            last_valid_hash = block.hash();
-            total_gas_used += block.header.gas_used;
-            transactions_count += block.body.transactions.len();
-            all_receipts.push((block.hash(), receipts));
+            let block_hash = block.hash();
+            let block_number = block.header.number;
+            let block_gas_limit = block.header.gas_limit;
+            let block_gas_used = block.header.gas_used;
+            let block_tx_count = block.body.transactions.len();
 
-            // Conversion is safe because EXECUTE_BATCH_SIZE=1024
+            // Pass the peer-provided BAL only if it matches the header commitment: on the pipeline
+            // path a matching BAL drives parallel execution and is persisted for eth/71 serving.
+            // A missing/mismatched BAL yields `None`, and the pipeline rebuilds it.
+            let bal = bals
+                .get(i)
+                .and_then(|bal| bal.as_ref())
+                .filter(|bal| {
+                    bal.matches_commitment(block.header.block_access_list_hash, &NativeCrypto)
+                })
+                .cloned()
+                .map(Arc::new);
+
+            // Single canonical chain: commit trie layers by depth so the in-memory backlog
+            // stays bounded (~DB_COMMIT_THRESHOLD) instead of growing with the sync range.
+            // The now per-block granularity is why this uses DB_COMMIT_THRESHOLD (128), not
+            // the batch-layer threshold.
+            if let Err(err) = self.add_block_pipeline_bounded(block, bal, DB_COMMIT_THRESHOLD) {
+                return Err((
+                    err,
+                    Some(BatchBlockProcessingFailure {
+                        failed_block_hash: block_hash,
+                        last_valid_hash,
+                    }),
+                ));
+            }
+
+            last_valid_hash = block_hash;
+            last_block_number = block_number;
+            last_block_gas_limit = block_gas_limit;
+            total_gas_used += block_gas_used;
+            transactions_count += block_tx_count;
+
             log_batch_progress(blocks_len as u32, i as u32);
             tokio::task::yield_now().await;
         }
 
-        let account_updates = vm
-            .get_state_transitions()
-            .map_err(|err| (ChainError::EvmError(err), None))?;
-
-        let last_block = blocks
-            .last()
-            .ok_or_else(|| (ChainError::Custom("Last block not found".into()), None))?;
-
-        let last_block_number = last_block.header.number;
-        let last_block_gas_limit = last_block.header.gas_limit;
-
-        // Apply the account updates over all blocks and compute the new state root
-        let account_updates_list = self
-            .storage
-            .apply_account_updates_batch(first_block_header.parent_hash, &account_updates)
-            .map_err(|e| (e.into(), None))?
-            .ok_or((ChainError::ParentStateNotFound, None))?;
-
-        let new_state_root = account_updates_list.state_trie_hash;
-        let state_updates = account_updates_list.state_updates;
-        let accounts_updates = account_updates_list.storage_updates;
-        let code_updates = account_updates_list.code_updates;
-
-        // Check state root matches the one in block header
-        validate_state_root(&last_block.header, new_state_root).map_err(|e| (e, None))?;
-
-        // EIP-8159: persist the per-block BAL fetched during sync so peers can
-        // later request it over eth/71 without re-execution (the batch path
-        // doesn't record BALs, so without this they'd fall back to regenerating
-        // against possibly-pruned parent state). Only persist a BAL that matches
-        // its header commitment; a wrong/empty peer BAL is dropped here, and the
-        // serve path guards again. Captured before `blocks` is moved below.
-        let bals_to_store: Vec<(BlockHash, BlockAccessList)> = blocks
-            .iter()
-            .zip(bals.iter())
-            .filter_map(|(block, bal)| {
-                let bal = bal.as_ref()?;
-                bal.matches_commitment(block.header.block_access_list_hash, &NativeCrypto)
-                    .then(|| (block.hash(), bal.clone()))
-            })
-            .collect();
-
-        let update_batch = UpdateBatch {
-            account_updates: state_updates,
-            storage_updates: accounts_updates,
-            blocks,
-            receipts: all_receipts,
-            code_updates,
-            commit_depth: Some(BATCH_COMMIT_THRESHOLD),
-            // Bespoke batch: one message carries ~1024 blocks (~1 GB of diff), so ack after
-            // flush to keep in-flight work to ~1 batch.
-            wait_for_flush: true,
-        };
-
-        self.storage
-            .store_block_updates(update_batch)
-            .map_err(|e| (e.into(), None))?;
-
-        for (block_hash, bal) in &bals_to_store {
-            if let Err(err) = self.storage.store_block_access_list(*block_hash, bal) {
-                warn!(
-                    "Failed to persist block access list for {block_hash} during batch sync: {err}"
-                );
-            }
-        }
-
         let elapsed_seconds = interval.elapsed().as_secs_f64();
         let throughput = if elapsed_seconds > 0.0 && total_gas_used != 0 {
-            let as_gigas = (total_gas_used as f64) / 1e9;
-            as_gigas / elapsed_seconds
+            (total_gas_used as f64 / 1e9) / elapsed_seconds
         } else {
             0.0
         };
@@ -2893,14 +2752,17 @@ impl Blockchain {
         metrics!(
             METRICS_BLOCKS.set_block_number(last_block_number);
             METRICS_BLOCKS.set_latest_block_gas_limit(last_block_gas_limit as f64);
-            // Set the latest gas used as the average gas used per block in the batch
-            METRICS_BLOCKS.set_latest_gas_used(total_gas_used as f64 / blocks_len as f64);
+            METRICS_BLOCKS.set_latest_gas_used(if blocks_len > 0 {
+                total_gas_used as f64 / blocks_len as f64
+            } else {
+                0.0
+            });
             METRICS_BLOCKS.set_latest_gigagas(throughput);
         );
 
         if self.options.perf_logs_enabled {
             info!(
-                "[METRICS] Executed and stored: Range: {}, Last block num: {}, Last block gas limit: {}, Total transactions: {}, Total Gas: {}, Throughput: {} Gigagas/s",
+                "[METRICS] Executed and stored (unified pipeline): Range: {}, Last block num: {}, Last block gas limit: {}, Total transactions: {}, Total Gas: {}, Throughput: {} Gigagas/s",
                 blocks_len,
                 last_block_number,
                 last_block_gas_limit,
