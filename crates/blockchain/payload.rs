@@ -770,6 +770,7 @@ impl Blockchain {
                         is_deterministic_invalid(&e, &self.options.r#type)
                     };
                     if evict {
+                        debug!("Evicting deterministically-invalid transaction {tx_hash}: {e}");
                         self.remove_transaction_from_pool(&tx_hash)?;
                     }
                     txs.pop()
