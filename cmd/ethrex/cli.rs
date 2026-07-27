@@ -23,7 +23,7 @@ use ethrex_p2p::{
     types::Node,
 };
 use ethrex_rlp::encode::RLPEncode;
-use ethrex_storage::{error::StoreError, has_valid_db};
+use ethrex_storage::{DB_COMMIT_THRESHOLD, error::StoreError, has_valid_db};
 use tokio_util::sync::CancellationToken;
 use tracing::{Level, error, info, warn};
 
@@ -1001,7 +1001,7 @@ pub async fn import_blocks(
             } else {
                 // We need to have the state of the latest 128 blocks
                 blockchain
-                .add_block_pipeline(block, None)
+                .add_block_pipeline_bounded(block, None, DB_COMMIT_THRESHOLD)
                 .inspect_err(|err| match err {
                     // Block number 1's parent not found, the chain must not belong to the same network as the genesis file
                     ChainError::ParentNotFound if number == 1 => warn!("The chain file is not compatible with the genesis file. Are you sure you selected the correct network?"),
@@ -1174,7 +1174,7 @@ pub async fn import_blocks_bench(
             if export_bal_path.is_some() {
                 // Sequential path: execute and capture the produced BAL
                 let produced_bal = blockchain
-                    .add_block_pipeline_bal(block, None)
+                    .add_block_pipeline_bounded(block, None, DB_COMMIT_THRESHOLD)
                     .inspect_err(|err| match err {
                         ChainError::ParentNotFound if number == 1 => warn!("The chain file is not compatible with the genesis file. Are you sure you selected the correct network?"),
                         _ => warn!("Failed to add block {number} with hash {hash:#x}"),
@@ -1186,7 +1186,7 @@ pub async fn import_blocks_bench(
             } else {
                 // Normal path (or parallel if BAL was loaded)
                 blockchain
-                    .add_block_pipeline(block, bal)
+                    .add_block_pipeline_bounded(block, bal, DB_COMMIT_THRESHOLD)
                     .inspect_err(|err| match err {
                         ChainError::ParentNotFound if number == 1 => warn!("The chain file is not compatible with the genesis file. Are you sure you selected the correct network?"),
                         _ => warn!("Failed to add block {number} with hash {hash:#x}"),
