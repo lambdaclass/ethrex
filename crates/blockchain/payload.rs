@@ -1061,10 +1061,10 @@ fn is_nonce_mismatch(e: &ChainError) -> bool {
 /// because mempool admission (`Blockchain::validate_transaction`) already rejects
 /// it. A tx whose priority fee exceeds its max fee per gas is refused there
 /// (`TxTipAboveFeeCapError`), as is `nonce == u64::MAX` (`NonceTooLow`, in both the
-/// existing-account and fresh-sender branches), the initcode cap, and the per-tx
-/// gas cap. Blob-tx structural faults are caught by `BlobsBundle::validate`. So a
-/// variant being absent below usually means it never makes it into the pool, not
-/// that it was overlooked.
+/// existing-account and fresh-sender branches), the initcode cap, and — only while
+/// Osaka is active and Amsterdam is not — the per-tx gas cap. Blob-tx structural
+/// faults are caught by `BlobsBundle::validate`. So a variant being absent below
+/// usually means it never makes it into the pool, not that it was overlooked.
 ///
 /// `SenderNotEOA` is excluded on purpose for a different reason: an EIP-7702
 /// delegation can be revoked, so that failure is transient, not permanent.
@@ -1077,9 +1077,11 @@ fn is_nonce_mismatch(e: &ChainError) -> bool {
 /// for. Before adding an arm, check that EVERY site raising that variant is
 /// deterministic: string matching cannot separate two producers of one variant, so
 /// a variant raised from both a permanent and a transient condition is
-/// unclassifiable here. `TxValidationError::L1GasReservationTooLow` exists for
-/// exactly that reason — the L2 hook's transient `l1_gas` shortfall would otherwise
-/// be indistinguishable from `IntrinsicGasTooLow`.
+/// unclassifiable here. Note that "every site" means both hooks — several of these
+/// variants are raised from `l2_hook` as well as `default_hook`, and the count is
+/// what matters, not the file. `TxValidationError::L1GasReservationTooLow` exists
+/// for exactly that reason: the L2 hook's transient `l1_gas` shortfall would
+/// otherwise be indistinguishable from `IntrinsicGasTooLow`.
 pub fn is_deterministic_invalid(e: &ChainError) -> bool {
     let msg = e.to_string();
     // Every producer of `IntrinsicGasTooLow` is deterministic given the tx's bytes
@@ -1090,9 +1092,17 @@ pub fn is_deterministic_invalid(e: &ChainError) -> bool {
     msg.contains("gas limit lower than the minimum gas cost")
         || msg.contains("gas cost floor for calldata tokens")
         || msg.contains("Initcode size exceeded")
-        // EIP-7825 / EIP-8037 per-tx gas cap. Admission rejects this too, but only
-        // at insertion and only against the fork active then, so a tx admitted
-        // before Osaka activates survives in the pool and then fails every build.
+        // EIP-7825 / EIP-8037 per-tx gas cap. Three producers — `default_hook` plus
+        // two in the L2 hook's fee-token path — and all three compare `gas_limit`
+        // against a fork constant, so every one of them is deterministic.
+        //
+        // Admission rejects the cap too, but only at insertion and only while
+        // `is_osaka_activated && !is_amsterdam_activated`, so this arm is
+        // load-bearing in two ways. On L1: a tx admitted before Osaka survives in
+        // the pool and then fails every build once Osaka is live. On L2: the hook
+        // applies the cap from PRAGUE onward, ahead of admission's Osaka gate, so a
+        // fee-token tx over the cap is admitted and then rejected on every build
+        // with no fork boundary involved at all.
         || msg.contains("gas limit exceeds maximum")
 }
 
