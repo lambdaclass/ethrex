@@ -661,8 +661,13 @@ pub async fn snap_sync(
     // chain data so RPC (`earliest` tag, feeHistory) reflects what is actually
     // available instead of genesis. Historical backfill, when enabled, lowers
     // this frontier further as it fills bodies/receipts downward.
+    // Lower-bound only: a later snap cycle must not push the frontier above
+    // blocks that already have bodies (reachable on chains where the
+    // already-synced auto-switch can't fire, and the backfill reconciliation is a
+    // once-per-process latch that wouldn't correct it until restart).
+    let recorded_earliest = store.get_earliest_block_number().await.unwrap_or(u64::MAX);
     store
-        .update_earliest_block_number(pivot_header.number)
+        .update_earliest_block_number(recorded_earliest.min(pivot_header.number))
         .await?;
     Ok(())
 }
