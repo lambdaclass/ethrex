@@ -42,8 +42,11 @@ pub struct MetricsSync {
     // --- Block request efficiency metrics ---
     /// Total block requests by kind ("headers"|"bodies") and outcome ("served"|"empty"|"timeout"|"invalid").
     pub block_requests: IntCounterVec,
-    /// Histogram of block request round-trip latency in milliseconds, by kind.
-    /// Only observed on Served outcomes (latency is meaningful only when a response arrived).
+    /// Histogram of block request round-trip latency in milliseconds, by kind and outcome.
+    /// Observed for every outcome, not just served: "empty responses come back instantly"
+    /// and "empty responses come back slow" are different failure modes, and splitting by
+    /// outcome keeps timeouts (which all sit at `PEER_REPLY_TIMEOUT`) out of the
+    /// served-latency distribution.
     pub block_request_latency_ms: HistogramVec,
 }
 
@@ -179,8 +182,8 @@ impl MetricsSync {
             .expect("Failed to create ethrex_sync_block_requests_total"),
             block_request_latency_ms: register_histogram_vec!(
                 "ethrex_sync_block_request_latency_ms",
-                "Round-trip latency in milliseconds for block requests that received a response, by kind",
-                &["kind"],
+                "Round-trip latency in milliseconds for block requests, by kind and outcome",
+                &["kind", "outcome"],
                 vec![1.0, 5.0, 10.0, 25.0, 50.0, 100.0, 250.0, 500.0, 1000.0, 2500.0, 5000.0]
             )
             .expect("Failed to create ethrex_sync_block_request_latency_ms"),
@@ -229,9 +232,9 @@ impl MetricsSync {
             .inc();
     }
 
-    pub fn observe_block_request_latency(&self, kind: &str, ms: f64) {
+    pub fn observe_block_request_latency(&self, kind: &str, outcome: &str, ms: f64) {
         self.block_request_latency_ms
-            .with_label_values(&[kind])
+            .with_label_values(&[kind, outcome])
             .observe(ms);
     }
 }

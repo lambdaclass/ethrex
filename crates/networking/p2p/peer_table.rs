@@ -179,6 +179,26 @@ pub enum RequestOutcome {
     Invalid,
 }
 
+impl RequestOutcome {
+    /// Stable Prometheus label value for this outcome. Kept next to the variants so
+    /// the metric label set can't drift from the enum.
+    pub fn as_metric_label(&self) -> &'static str {
+        match self {
+            RequestOutcome::Served => "served",
+            RequestOutcome::Empty => "empty",
+            RequestOutcome::Timeout => "timeout",
+            RequestOutcome::Invalid => "invalid",
+        }
+    }
+
+    /// Whether this outcome is a protocol-level offense rather than a peer simply
+    /// not having the data. Empty responses are valid per the eth spec, so they are
+    /// not offenses; see the empty-headers note in `peer_handler.rs`.
+    pub fn is_offense(&self) -> bool {
+        matches!(self, RequestOutcome::Timeout | RequestOutcome::Invalid)
+    }
+}
+
 /// Identifies which discovery protocol was used to find a contact.
 /// This allows protocol-specific lookups to only query compatible contacts.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -348,6 +368,49 @@ impl PeerData {
             ewma_latency_ms: None,
         }
     }
+
+    /// New-sample weight for the response-latency EWMA. Recent samples dominate so a
+    /// peer that degrades is reflected within a few requests.
+    const LATENCY_EWMA_ALPHA: f64 = 0.2;
+
+    /// Applies a request outcome to this peer's score and counters.
+    ///
+    /// Score deltas are severity-ordered: a served response earns +1, an empty one
+    /// (valid per spec, just unhelpful) costs -1, a timeout costs -2, and an invalid
+    /// response drops straight to `MIN_SCORE_CRITICAL` since it is a protocol
+    /// violation. `now` is injected rather than read from the clock so the transitions
+    /// stay unit-testable.
+    ///
+    /// Latency only feeds the EWMA on `Served`: a timeout's elapsed time is just
+    /// `PEER_REPLY_TIMEOUT`, and folding that in would swamp the average.
+    fn apply_request_outcome(&mut self, outcome: RequestOutcome, latency_ms: u64, now: u64) {
+        match outcome {
+            RequestOutcome::Served => {
+                self.score = (self.score + 1).min(MAX_SCORE);
+                self.served += 1;
+                self.last_response_time = Some(now);
+                self.ewma_latency_ms = Some(match self.ewma_latency_ms {
+                    Some(prev) => {
+                        (1.0 - Self::LATENCY_EWMA_ALPHA) * prev
+                            + Self::LATENCY_EWMA_ALPHA * (latency_ms as f64)
+                    }
+                    None => latency_ms as f64,
+                });
+            }
+            RequestOutcome::Empty => {
+                self.score = (self.score - 1).max(MIN_SCORE);
+                self.empty += 1;
+            }
+            RequestOutcome::Timeout => {
+                self.score = (self.score - 2).max(MIN_SCORE);
+                self.timeouts += 1;
+            }
+            RequestOutcome::Invalid => {
+                self.score = MIN_SCORE_CRITICAL;
+                self.invalid += 1;
+            }
+        }
+    }
 }
 
 /// Diagnostic snapshot of a peer's state, used by admin RPC endpoints.
@@ -362,6 +425,16 @@ pub struct PeerDiagnostics {
     pub client_version: String,
     pub connection_direction: String,
     pub last_response_time: Option<u64>,
+    /// Per-outcome block-request counters for this peer (see [`RequestOutcome`]).
+    /// Aggregate versions are in Prometheus; these are the per-peer breakdown needed
+    /// to tell "this peer isn't serving" from "the network isn't serving".
+    pub served: u64,
+    pub empty: u64,
+    pub timeouts: u64,
+    pub invalid: u64,
+    /// EWMA of response latency in ms over served responses; `None` until this peer
+    /// has served at least one.
+    pub ewma_latency_ms: Option<f64>,
 }
 
 /// Result of contact validation.
@@ -681,6 +754,9 @@ impl PeerTableServer {
             .and_modify(|peer_data| peer_data.score = (peer_data.score - 1).max(MIN_SCORE));
     }
 
+    // TODO(#6805): this is now equivalent to `record_request_outcome(_, Invalid, _)`.
+    // Once the snap and healing paths migrate to outcome recording it has no callers
+    // left and should be removed along with `record_success`/`record_failure`.
     #[send_handler]
     async fn handle_record_critical_failure(
         &mut self,
@@ -704,29 +780,7 @@ impl PeerTableServer {
             .as_secs();
         self.peers
             .entry(msg.node_id)
-            .and_modify(|p| match msg.outcome {
-                RequestOutcome::Served => {
-                    p.score = (p.score + 1).min(MAX_SCORE);
-                    p.served += 1;
-                    p.last_response_time = Some(now);
-                    p.ewma_latency_ms = Some(match p.ewma_latency_ms {
-                        Some(prev) => 0.8 * prev + 0.2 * (msg.latency_ms as f64),
-                        None => msg.latency_ms as f64,
-                    });
-                }
-                RequestOutcome::Empty => {
-                    p.score = (p.score - 1).max(MIN_SCORE);
-                    p.empty += 1;
-                }
-                RequestOutcome::Timeout => {
-                    p.score = (p.score - 2).max(MIN_SCORE);
-                    p.timeouts += 1;
-                }
-                RequestOutcome::Invalid => {
-                    p.score = MIN_SCORE_CRITICAL;
-                    p.invalid += 1;
-                }
-            });
+            .and_modify(|p| p.apply_request_outcome(msg.outcome, msg.latency_ms, now));
     }
 
     #[send_handler]
@@ -1138,6 +1192,11 @@ impl PeerTableServer {
                     "outbound".to_string()
                 },
                 last_response_time: peer_data.last_response_time,
+                served: peer_data.served,
+                empty: peer_data.empty,
+                timeouts: peer_data.timeouts,
+                invalid: peer_data.invalid,
+                ewma_latency_ms: peer_data.ewma_latency_ms,
             })
             .collect()
     }
@@ -1673,6 +1732,117 @@ mod tests {
         let node_id = node.node_id();
         let contact = Contact::new(node, DiscoveryProtocol::Discv4);
         (node_id, contact)
+    }
+
+    // --- PeerData::apply_request_outcome ---
+
+    /// Helper: a fresh `PeerData` with a default (zero) score.
+    fn dummy_peer_data() -> PeerData {
+        let (_, contact) = dummy_contact(1);
+        PeerData::new(contact.node, None, None, vec![])
+    }
+
+    #[test]
+    fn served_outcome_raises_score_and_records_latency() {
+        let mut peer = dummy_peer_data();
+        peer.apply_request_outcome(RequestOutcome::Served, 40, 1_000);
+        assert_eq!(peer.score, 1);
+        assert_eq!(peer.served, 1);
+        assert_eq!(peer.last_response_time, Some(1_000));
+        // First sample seeds the EWMA directly.
+        assert_eq!(peer.ewma_latency_ms, Some(40.0));
+    }
+
+    #[test]
+    fn ewma_weights_the_recent_sample() {
+        let mut peer = dummy_peer_data();
+        peer.apply_request_outcome(RequestOutcome::Served, 100, 1);
+        peer.apply_request_outcome(RequestOutcome::Served, 200, 2);
+        // 0.8 * 100 + 0.2 * 200
+        assert_eq!(peer.ewma_latency_ms, Some(120.0));
+    }
+
+    /// Severity ordering is the whole point of the outcome split: an empty response is
+    /// spec-valid and cheaper than a timeout, and neither is as bad as a protocol
+    /// violation.
+    #[test]
+    fn outcome_penalties_are_severity_ordered() {
+        let penalty = |outcome| {
+            let mut peer = dummy_peer_data();
+            peer.apply_request_outcome(outcome, 10, 1);
+            peer.score
+        };
+        assert_eq!(penalty(RequestOutcome::Empty), -1);
+        assert_eq!(penalty(RequestOutcome::Timeout), -2);
+        assert_eq!(penalty(RequestOutcome::Invalid), MIN_SCORE_CRITICAL);
+    }
+
+    #[test]
+    fn non_served_outcomes_leave_latency_untouched() {
+        for outcome in [
+            RequestOutcome::Empty,
+            RequestOutcome::Timeout,
+            RequestOutcome::Invalid,
+        ] {
+            let mut peer = dummy_peer_data();
+            // A timed-out request's elapsed time is just PEER_REPLY_TIMEOUT; folding it
+            // into the EWMA would swamp the served-latency average.
+            peer.apply_request_outcome(outcome, 5_000, 1);
+            assert_eq!(peer.ewma_latency_ms, None, "{outcome:?} must not set EWMA");
+            assert_eq!(
+                peer.last_response_time, None,
+                "{outcome:?} is not a response"
+            );
+        }
+    }
+
+    #[test]
+    fn score_saturates_at_both_bounds() {
+        let mut peer = dummy_peer_data();
+        for _ in 0..(MAX_SCORE + 10) {
+            peer.apply_request_outcome(RequestOutcome::Served, 1, 1);
+        }
+        assert_eq!(peer.score, MAX_SCORE);
+
+        // Empty/timeout clamp at MIN_SCORE, they never reach the critical floor.
+        let mut peer = dummy_peer_data();
+        for _ in 0..(MAX_SCORE + 10) {
+            peer.apply_request_outcome(RequestOutcome::Timeout, 1, 1);
+        }
+        assert_eq!(peer.score, MIN_SCORE);
+        assert!(peer.score > MIN_SCORE_CRITICAL);
+    }
+
+    #[test]
+    fn counters_accumulate_per_outcome() {
+        let mut peer = dummy_peer_data();
+        peer.apply_request_outcome(RequestOutcome::Served, 1, 1);
+        peer.apply_request_outcome(RequestOutcome::Served, 1, 1);
+        peer.apply_request_outcome(RequestOutcome::Empty, 1, 1);
+        peer.apply_request_outcome(RequestOutcome::Timeout, 1, 1);
+        peer.apply_request_outcome(RequestOutcome::Invalid, 1, 1);
+        assert_eq!(
+            (peer.served, peer.empty, peer.timeouts, peer.invalid),
+            (2, 1, 1, 1)
+        );
+    }
+
+    #[test]
+    fn metric_labels_match_variants() {
+        assert_eq!(RequestOutcome::Served.as_metric_label(), "served");
+        assert_eq!(RequestOutcome::Empty.as_metric_label(), "empty");
+        assert_eq!(RequestOutcome::Timeout.as_metric_label(), "timeout");
+        assert_eq!(RequestOutcome::Invalid.as_metric_label(), "invalid");
+    }
+
+    /// Empty is spec-valid, so it must not be treated as an offense (that gate is what
+    /// keeps honest peers that simply lack a range from being ejected).
+    #[test]
+    fn only_timeout_and_invalid_are_offenses() {
+        assert!(!RequestOutcome::Served.is_offense());
+        assert!(!RequestOutcome::Empty.is_offense());
+        assert!(RequestOutcome::Timeout.is_offense());
+        assert!(RequestOutcome::Invalid.is_offense());
     }
 
     // --- KBucket::insert ---

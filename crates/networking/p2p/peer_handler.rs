@@ -54,6 +54,13 @@ pub enum BlockRequestOrder {
     NewToOld,
 }
 
+/// Milliseconds elapsed since `started`, saturating instead of wrapping. `as_millis`
+/// returns a `u128`, so a plain `as u64` would silently truncate; saturating keeps a
+/// pathological reading large rather than turning it into a small one.
+fn elapsed_ms(started: std::time::Instant) -> u64 {
+    u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX)
+}
+
 /// Result of a block-header request, distinguishing why no headers came back so sync
 /// diagnostics can tell a connectivity problem from peers withholding data.
 #[derive(Debug)]
@@ -149,6 +156,34 @@ impl PeerHandler {
             .peer_table
             .get_random_peer(capabilities.to_vec())
             .await?)
+    }
+
+    /// Records a block-request outcome in one place: the peer's score and counters in
+    /// the peer table, plus the aggregate Prometheus counter and latency histogram when
+    /// metrics are enabled.
+    ///
+    /// `kind` is the request family (`"headers"` or `"bodies"`) used as a metric label.
+    /// Every call site goes through here so the score delta and the metric label can't
+    /// disagree about what happened.
+    // `kind` is only read by the metrics labels below.
+    #[cfg_attr(not(feature = "metrics"), allow(unused_variables))]
+    fn record_block_request(
+        &self,
+        peer_id: H256,
+        kind: &'static str,
+        outcome: RequestOutcome,
+        latency_ms: u64,
+    ) -> Result<(), PeerHandlerError> {
+        self.peer_table
+            .record_request_outcome(peer_id, outcome, latency_ms)?;
+        #[cfg(feature = "metrics")]
+        {
+            use ethrex_metrics::sync::METRICS_SYNC;
+            let label = outcome.as_metric_label();
+            METRICS_SYNC.inc_block_request(kind, label);
+            METRICS_SYNC.observe_block_request_latency(kind, label, latency_ms as f64);
+        }
+        Ok(())
     }
 
     /// Number of peers known to the table that advertise the eth capabilities used for sync.
@@ -459,7 +494,7 @@ impl PeerHandler {
                 let response = connection
                     .outgoing_request(request, PEER_REPLY_TIMEOUT)
                     .await;
-                let latency_ms = started.elapsed().as_millis() as u64;
+                let latency_ms = elapsed_ms(started);
                 drop(permit);
                 if let Ok(RLPxMessage::BlockHeaders(BlockHeaders {
                     id: _,
@@ -476,16 +511,12 @@ impl PeerHandler {
                         debug!(
                             "[SYNCING] Received empty headers from peer {peer_id}, trying another"
                         );
-                        self.peer_table.record_request_outcome(
+                        self.record_block_request(
                             peer_id,
+                            "headers",
                             RequestOutcome::Empty,
                             latency_ms,
                         )?;
-                        #[cfg(feature = "metrics")]
-                        {
-                            use ethrex_metrics::sync::METRICS_SYNC;
-                            METRICS_SYNC.inc_block_request("headers", "empty");
-                        }
                         return Ok(HeaderFetchOutcome::PeerFailed);
                     }
                     if are_block_headers_chained(&block_headers, &order) {
@@ -503,62 +534,40 @@ impl PeerHandler {
                             warn!(
                                 "[SYNCING] Peer {peer_id} returned headers not starting at the requested hash {start:#x}, penalizing peer"
                             );
-                            self.peer_table.record_request_outcome(
+                            self.record_block_request(
                                 peer_id,
+                                "headers",
                                 RequestOutcome::Invalid,
                                 latency_ms,
                             )?;
-                            #[cfg(feature = "metrics")]
-                            {
-                                use ethrex_metrics::sync::METRICS_SYNC;
-                                METRICS_SYNC.inc_block_request("headers", "invalid");
-                            }
                             return Ok(HeaderFetchOutcome::PeerFailed);
                         }
-                        self.peer_table.record_request_outcome(
+                        self.record_block_request(
                             peer_id,
+                            "headers",
                             RequestOutcome::Served,
                             latency_ms,
                         )?;
-                        #[cfg(feature = "metrics")]
-                        {
-                            use ethrex_metrics::sync::METRICS_SYNC;
-                            METRICS_SYNC.inc_block_request("headers", "served");
-                            METRICS_SYNC
-                                .observe_block_request_latency("headers", latency_ms as f64);
-                        }
                         return Ok(HeaderFetchOutcome::Headers(block_headers));
                     }
                     // Non-empty but unchained headers is a protocol violation
                     debug!(
                         "Received invalid (unchained) headers from peer, penalizing peer {peer_id}"
                     );
-                    self.peer_table.record_request_outcome(
+                    self.record_block_request(
                         peer_id,
+                        "headers",
                         RequestOutcome::Invalid,
                         latency_ms,
                     )?;
-                    #[cfg(feature = "metrics")]
-                    {
-                        use ethrex_metrics::sync::METRICS_SYNC;
-                        METRICS_SYNC.inc_block_request("headers", "invalid");
-                    }
                     return Ok(HeaderFetchOutcome::PeerFailed);
                 }
-                // Timeout or invalid response - penalize peer
-                warn!(
-                    "[SYNCING] Didn't receive block headers from peer, penalizing peer {peer_id}..."
-                );
-                self.peer_table.record_request_outcome(
-                    peer_id,
-                    RequestOutcome::Timeout,
-                    latency_ms,
-                )?;
-                #[cfg(feature = "metrics")]
-                {
-                    use ethrex_metrics::sync::METRICS_SYNC;
-                    METRICS_SYNC.inc_block_request("headers", "timeout");
-                }
+                // No response, or a response that wasn't BlockHeaders at all. Stays at
+                // `debug!`: this fires once per timed-out request, so on a degraded
+                // network it is high-volume. The `outcome="timeout"` counter added here
+                // is the signal to alert on instead.
+                debug!("Didn't receive block headers from peer, penalizing peer {peer_id}");
+                self.record_block_request(peer_id, "headers", RequestOutcome::Timeout, latency_ms)?;
                 Ok(HeaderFetchOutcome::PeerFailed)
             }
         }
@@ -624,43 +633,47 @@ impl PeerHandler {
                 let response = connection
                     .outgoing_request(request, PEER_REPLY_TIMEOUT)
                     .await;
-                let latency_ms = started.elapsed().as_millis() as u64;
+                let latency_ms = elapsed_ms(started);
                 drop(permit);
-                if let Ok(RLPxMessage::BlockBodies(BlockBodies {
-                    id: _,
-                    block_bodies,
-                })) = response
-                {
-                    // Check that the response is not empty and does not contain more bodies than the ones requested
-                    if !block_bodies.is_empty() && block_bodies.len() <= block_hashes_len {
-                        self.peer_table.record_request_outcome(
-                            peer_id,
-                            RequestOutcome::Served,
-                            latency_ms,
-                        )?;
-                        #[cfg(feature = "metrics")]
-                        {
-                            use ethrex_metrics::sync::METRICS_SYNC;
-                            METRICS_SYNC.inc_block_request("bodies", "served");
-                            METRICS_SYNC.observe_block_request_latency("bodies", latency_ms as f64);
+                // Classify before scoring, mirroring the headers path. Collapsing these
+                // into one outcome would make both the score delta and the
+                // `outcome=` metric label wrong: an empty reply is valid per the eth
+                // spec (the peer just doesn't have the blocks) and must not be charged
+                // the timeout penalty, while a reply with more bodies than we asked for
+                // is a protocol violation and must not be charged merely the timeout
+                // penalty either.
+                let (bodies, outcome) = match response {
+                    Ok(RLPxMessage::BlockBodies(BlockBodies {
+                        id: _,
+                        block_bodies,
+                    })) => {
+                        if block_bodies.is_empty() {
+                            (None, RequestOutcome::Empty)
+                        } else if block_bodies.len() > block_hashes_len {
+                            (None, RequestOutcome::Invalid)
+                        } else {
+                            (Some(block_bodies), RequestOutcome::Served)
                         }
-                        return Ok(Some((block_bodies, peer_id)));
                     }
+                    _ => (None, RequestOutcome::Timeout),
+                };
+                self.record_block_request(peer_id, "bodies", outcome, latency_ms)?;
+                if let Some(block_bodies) = bodies {
+                    return Ok(Some((block_bodies, peer_id)));
                 }
-                warn!(
-                    "[SYNCING] Didn't receive block bodies from peer, penalizing peer {peer_id}..."
+                debug!(
+                    ?outcome,
+                    "Didn't get usable block bodies from peer, penalizing peer {peer_id}"
                 );
-                self.peer_table.record_request_outcome(
-                    peer_id,
-                    RequestOutcome::Timeout,
-                    latency_ms,
-                )?;
-                #[cfg(feature = "metrics")]
-                {
-                    use ethrex_metrics::sync::METRICS_SYNC;
-                    METRICS_SYNC.inc_block_request("bodies", "timeout");
+                // Only eject on a protocol-level offense. An empty response is
+                // spec-conformant, so it gets the score penalty alone and the peer stays
+                // in rotation, matching how the headers path treats empty responses.
+                // TODO(#6807): eviction policy for chronically non-serving peers is
+                // unified there; this keeps the pre-existing bodies behavior for
+                // offenses in the meantime.
+                if outcome.is_offense() {
+                    let _ = self.peer_table.set_disposable(peer_id);
                 }
-                let _ = self.peer_table.set_disposable(peer_id);
                 Ok(None)
             }
         }
