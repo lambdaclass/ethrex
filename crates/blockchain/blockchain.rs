@@ -51,7 +51,11 @@ pub mod prewarm;
 pub mod tracing;
 pub mod vm;
 
-use ::tracing::{debug, error, info, instrument, warn};
+use ::tracing::{error, info, instrument, warn};
+// Every `debug!` call site lives in the rayon warmer path, so the import is
+// unused in any configuration that compiles that path out.
+#[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+use ::tracing::debug;
 use constants::{AMSTERDAM_MAX_INITCODE_SIZE, MAX_INITCODE_SIZE, POST_OSAKA_GAS_LIMIT_CAP};
 use error::MempoolError;
 use error::{ChainError, InvalidBlockError};
