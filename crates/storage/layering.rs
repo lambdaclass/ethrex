@@ -23,6 +23,15 @@ struct TrieLayer {
     block_number: BlockNumber,
     /// Hash of the block whose post-state this layer represents.
     block_hash: H256,
+    /// How many blocks this layer's diff aggregates. One on every per-block path; the
+    /// bespoke batch path inserts a single layer for a whole batch (~1024 blocks).
+    ///
+    /// A journal entry describes exactly one block, so the journal write path uses this
+    /// to refuse layers that aggregate several (see `commit_to_disk`). Without it a
+    /// batch layer looks like a single block: it carries only its LAST block's number
+    /// and hash, so an entry written for it would claim to undo one block while
+    /// actually undoing the whole batch.
+    block_count: u64,
 }
 
 /// In-memory cache of trie diff-layers, one per block (or batch in full sync), forming a
@@ -227,6 +236,7 @@ impl TrieLayerCache {
         state_root: H256,
         block_number: BlockNumber,
         block_hash: H256,
+        block_count: u64,
         key_values: Vec<(Nibbles, Vec<u8>)>,
     ) {
         if parent == state_root && key_values.is_empty() {
@@ -260,6 +270,7 @@ impl TrieLayerCache {
             id: self.last_id,
             block_number,
             block_hash,
+            block_count,
         };
         self.layers.insert(state_root, Arc::new(entry));
     }
@@ -336,6 +347,7 @@ impl TrieLayerCache {
             .map(|layer| CommittedLayer {
                 block_number: layer.block_number,
                 block_hash: layer.block_hash,
+                block_count: layer.block_count,
                 parent_state_root: layer.parent,
                 nodes: layer.nodes.into_iter().collect(),
             })
@@ -353,6 +365,10 @@ impl TrieLayerCache {
 pub struct CommittedLayer {
     pub block_number: BlockNumber,
     pub block_hash: H256,
+    /// How many blocks this layer's diff aggregates; see [`TrieLayerCache::put_batch`].
+    /// Only a layer with `block_count == 1` may be journaled, since a journal entry
+    /// describes exactly one block.
+    pub block_count: u64,
     pub parent_state_root: H256,
     pub nodes: Vec<(Vec<u8>, Vec<u8>)>,
 }
@@ -458,7 +474,7 @@ mod tests {
         let mut parent = H256::zero();
         for i in 1..=n {
             let root = h256(i);
-            cache.put_batch(parent, root, i as u64, root, vec![(key(i), vec![i])]);
+            cache.put_batch(parent, root, i as u64, root, 1, vec![(key(i), vec![i])]);
             roots.push(root);
             parent = root;
         }
@@ -510,7 +526,7 @@ mod tests {
         let orphan = h256(7);
         let (mut cache, _cell) = cache_with_cell(4, orphan);
         // An empty block: parent == state_root, so `put_batch` inserts nothing.
-        cache.put_batch(orphan, orphan, 7, orphan, vec![]);
+        cache.put_batch(orphan, orphan, 7, orphan, 1, vec![]);
         assert!(
             !cache.has_layer(orphan),
             "empty-block root must not create a layer"
@@ -555,8 +571,8 @@ mod tests {
         let (mut cache, _cell) = cache_with_cell(4, h256(99));
         // Insert C (parent B) then B (parent C); neither key pre-exists, so both insert,
         // forming the cycle B <-> C. The safe root (h256(99)) is absent on purpose.
-        cache.put_batch(b, c, 21, c, vec![(key(21), vec![21])]);
-        cache.put_batch(c, b, 20, b, vec![(key(20), vec![20])]);
+        cache.put_batch(b, c, 21, c, 1, vec![(key(21), vec![21])]);
+        cache.put_batch(c, b, 20, b, 1, vec![(key(20), vec![20])]);
         // Walking from C must terminate (start-of-walk + bounded-walk guards) and yield None.
         assert_eq!(cache.get_commitable(c), None);
     }

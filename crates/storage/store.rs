@@ -1754,6 +1754,7 @@ impl Store {
                 })
                 .collect()
         };
+        let block_count = blocks_with_receipts.len();
 
         // Send to the persist worker and wait for its ack.
         // LIVE (wait_for_flush=false): worker acks after staging; the ack carries
@@ -1772,6 +1773,7 @@ impl Store {
                 wait_for_flush: batch_mode,
                 block_number: last_block_number,
                 block_hash: last_block_hash,
+                block_count: block_count as u64,
                 ack: ack_tx,
             })))
             .map_err(|e| StoreError::Custom(format!("failed to send block persist: {e}")))?;
@@ -2009,6 +2011,7 @@ impl Store {
                             bp.child_state_root,
                             bp.block_number,
                             bp.block_hash,
+                            bp.block_count,
                             bp.account_updates,
                             bp.storage_updates,
                         ) {
@@ -3779,12 +3782,17 @@ struct BlockPersist {
     wait_for_flush: bool,
     /// Number of the block whose layer this update represents (the last block in
     /// the batch, matching `child_state_root`). Threaded into the trie layer so
-    /// the committed-layer identity is available for the journal write path;
-    /// harmless for batch updates, since journal writes are skipped when
-    /// `wait_for_flush` (batch mode) is set.
+    /// the committed-layer identity is available for the journal write path.
     block_number: BlockNumber,
     /// Hash of the block whose layer this update represents (see `block_number`).
     block_hash: H256,
+    /// How many blocks this message carries. Threaded into the trie layer so the
+    /// journal write path can tell a single-block layer from a batch layer: the two
+    /// fields above name only the LAST block, so on a batch layer they are not a
+    /// usable entry identity. `wait_for_flush` cannot stand in for this — it says
+    /// when THIS message acks, not how many blocks the layer that a later commit
+    /// happens to sweep was built from.
+    block_count: u64,
     ack: std::sync::mpsc::SyncSender<Result<(), StoreError>>,
 }
 
@@ -3952,6 +3960,7 @@ fn apply_trie_phase1(
     child_state_root: H256,
     block_number: BlockNumber,
     block_hash: H256,
+    block_count: u64,
     account_updates: TrieNodesUpdate,
     storage_updates: Vec<(H256, TrieNodesUpdate)>,
 ) -> Result<(), StoreError> {
@@ -3975,6 +3984,7 @@ fn apply_trie_phase1(
             child_state_root,
             block_number,
             block_hash,
+            block_count,
             new_layer,
         );
         *trie_cache.write().map_err(|_| StoreError::LockError)? = Arc::new(trie_mut);
@@ -4109,10 +4119,23 @@ fn commit_to_disk(
 
     let mut result = Ok(());
     'layers: for layer in &committed_layers {
+        // Whether THIS layer gets a journal entry. Decided per layer, not per message:
+        // `commit` sweeps the target layer and every ancestor, so one non-batch message
+        // can commit layers that an earlier batch message created.
+        //
+        // A journal entry describes exactly one block, so a layer aggregating several
+        // cannot have one: it carries only its LAST block's number and hash, so the entry
+        // would be keyed at block N while its reverse diff undoes N-1023..N. The
+        // `block_hash` check in the rollback consumer does not catch that, because a batch
+        // layer's hash IS the canonical hash at that key. Skipping instead leaves a gap,
+        // which the consumer detects and refuses to unwind across — wrong-but-plausible
+        // becomes fail-closed.
+        let journal_this_layer = !is_batch && layer.block_count == 1;
+
         // Reverse-diff accumulators for this block's journal entry, one per CF. Each entry
         // stores the on-disk key as-is (storage CFs carry their nibble-encoded account-hash
-        // prefix), so a future rollback applies diffs directly without interpretation. For
-        // full sync (`is_batch == true`), no journal entry is written: reorgs aren't
+        // prefix), so a future rollback applies diffs directly without interpretation.
+        // The bespoke batch path (`is_batch`) journals nothing at all: reorgs aren't
         // supported during full sync, and journaling would slow it down by a read per write.
         let mut journal_account_trie: FlatDiff = Vec::new();
         let mut journal_storage_trie: FlatDiff = Vec::new();
@@ -4143,7 +4166,7 @@ fn commit_to_disk(
 
             // Pre-image: the intra-batch overlay wins over disk so multi-layer commits
             // record each block's true pre-state. Skipped for batch (full-sync) commits.
-            let prev_value = if !is_batch {
+            let prev_value = if journal_this_layer {
                 match overlay.get(key) {
                     Some(v) => Some(v.clone()),
                     None => match read_view.get(table, key) {
@@ -4190,7 +4213,7 @@ fn commit_to_disk(
         // land atomically (or none do on commit failure). Each entry is keyed and identified
         // by its own COMMITTED block, not the in-flight block whose insertion triggered this
         // commit (that block commits later, one cadence behind).
-        if !is_batch {
+        if journal_this_layer {
             let entry = JournalEntry {
                 block_hash: layer.block_hash,
                 parent_state_root: layer.parent_state_root,
@@ -4785,6 +4808,73 @@ mod state_history_tests {
         assert_eq!(entry.block_hash, block2_hash);
         assert_eq!(entry.parent_state_root, state_root_1);
         assert!(!entry.account_trie_diff.is_empty());
+    }
+
+    /// A layer that aggregates several blocks SHALL NOT be journaled, even when the
+    /// commit that sweeps it is not in batch mode.
+    ///
+    /// `commit` removes the target layer and every ancestor, so a per-block message can
+    /// commit layers an earlier batch message created. A batch layer carries only its LAST
+    /// block's number and hash, so journaling it would write one entry keyed at block N
+    /// whose reverse diff actually undoes the whole batch — and the consumer's `block_hash`
+    /// check cannot catch that, because a batch layer's hash IS the canonical hash at N.
+    #[test]
+    fn aggregate_batch_layer_is_not_journaled_by_a_per_block_commit() {
+        let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::open().unwrap());
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::from_backend(
+            backend.clone(),
+            dir.path().to_path_buf(),
+            1,
+            DEFAULT_PERSIST_CHANNEL_CAPACITY,
+        )
+        .unwrap();
+
+        let k = |n: u8| Nibbles::from_raw(&[0xd0, n], false);
+        let mut prev = H256::zero();
+
+        // Two batch messages, three blocks each: one aggregate layer per batch, each
+        // carrying only its LAST block's number (3 and 6).
+        for batch in 0..2u64 {
+            let mut blocks = vec![];
+            let mut updates = vec![];
+            for n in (batch * 3 + 1)..=(batch * 3 + 3) {
+                let b = make_block(n, prev, H256::repeat_byte(0xe0 | (n as u8)));
+                prev = b.hash();
+                blocks.push(b);
+                updates.push((k(n as u8), vec![n as u8]));
+            }
+            store
+                .store_block_updates(UpdateBatch {
+                    account_updates: updates,
+                    storage_updates: vec![],
+                    blocks,
+                    receipts: vec![],
+                    code_updates: vec![],
+                    batch_mode: true,
+                })
+                .unwrap();
+        }
+
+        // A per-block message whose commit gate reaches back into those batch layers.
+        // `batch_mode: false` means journaling is on for this message.
+        store.set_safe_commit_root(H256::repeat_byte(0xe3)).unwrap();
+        let b7 = make_block(7, prev, H256::repeat_byte(0xe7));
+        store
+            .store_block_updates(UpdateBatch {
+                account_updates: vec![(k(7), vec![7])],
+                storage_updates: vec![],
+                blocks: vec![b7],
+                receipts: vec![],
+                code_updates: vec![],
+                batch_mode: false,
+            })
+            .unwrap();
+
+        // Blocks 3 and 6 are batch boundaries. Before the fix an entry appeared at 3
+        // spanning three blocks' keys.
+        assert_no_journal_entry(&backend, 3);
+        assert_no_journal_entry(&backend, 6);
     }
 
     /// `batch_mode = true` SHALL skip the journal entirely. To actually exercise the
