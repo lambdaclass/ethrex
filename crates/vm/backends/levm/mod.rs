@@ -3761,14 +3761,19 @@ fn env_from_generic(
     let block_excess_blob_gas = header.excess_blob_gas;
     let config = EVMConfig::new_from_chain_config(&chain_config, header);
 
-    // slot_number: tolerate a missing value exactly like the block-execution
-    // path does (see the Environment construction in `run_execution`'s caller).
-    // Headers legitimately carry None even on Amsterdam+ chains when the CL
-    // drives a pre-V4 engine API (the slot only arrives in
-    // PayloadAttributesV4), and blocks with None import and execute fine with
-    // SLOTNUM reading 0. Simulation (eth_call / eth_estimateGas) must never be
-    // stricter than execution — erroring here made every simulation fail on
-    // such chains. For L2 chains, slot_number is always 0.
+    // slot_number: default a missing value to zero exactly like
+    // `setup_env_with_config` (the block-execution env builder) does, rather
+    // than erroring on Amsterdam+. A canonical Amsterdam header always carries
+    // a slot — `validate_prague_header_fields` rejects one that doesn't, the
+    // genesis builder fills in Some(0), and engine_newPayloadV5 requires the
+    // field — so this branch is not reachable on a well-formed chain. It is
+    // defense in depth, and it belongs on the execution side (where a missing
+    // slot would be a consensus fault) rather than in simulation, whose job is
+    // to predict what execution does: a header the executor would happily run
+    // with SLOTNUM reading 0 must not make eth_call fail. That divergence is
+    // reachable if a devnet's fork timestamps are moved so that Amsterdam
+    // retroactively covers already-stored pre-Amsterdam headers.
+    // For L2 chains, slot_number is always 0.
     let slot_number = if let VMType::L2(_) = vm_type {
         U256::zero()
     } else {

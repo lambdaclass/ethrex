@@ -1,12 +1,18 @@
 //! eth_call / eth_estimateGas environment construction.
 //!
-//! Simulation must never be stricter than execution: a header without a
-//! `slot_number` imports and executes fine (the execution env defaults the
-//! slot to zero), so simulating on top of it must work the same way. Headers
-//! legitimately lack the slot on Amsterdam+ chains whose consensus client
-//! drives a pre-V4 engine API (the slot only arrives in
-//! `PayloadAttributesV4`) — including ethrex's own `--dev` mode, which
-//! produces blocks via `engine_forkchoiceUpdatedV3`.
+//! Simulation must never be stricter than execution: it predicts what
+//! execution does, so a header the executor would run with `SLOTNUM` reading
+//! zero must not make `eth_call` fail. The simulation env builder used to
+//! reject a header whose `slot_number` was `None` under Amsterdam+ rules while
+//! the execution env builder defaulted it to zero; these tests pin the two to
+//! the same behavior.
+//!
+//! A canonical Amsterdam header always carries a slot — header validation
+//! rejects one that doesn't, the genesis builder fills in `Some(0)`, and
+//! `engine_newPayloadV5` requires the field — so the divergence is not
+//! reachable through normal block import. It is reachable when a devnet's fork
+//! timestamps are moved so that Amsterdam retroactively covers headers already
+//! stored under earlier rules.
 
 use bytes::Bytes;
 use ethrex_blockchain::vm::StoreVmDatabase;
@@ -78,10 +84,9 @@ fn plain_transfer() -> GenericTransaction {
 
 #[test]
 fn simulation_tolerates_missing_slot_number_on_amsterdam() {
-    // Regression: this used to fail with "slot_number must be present in
-    // Amsterdam+ blocks", breaking every eth_call / eth_estimateGas on chains
-    // whose headers carry no slot — while execution of the same blocks
-    // succeeded (its env defaults the slot to zero).
+    // This used to fail with "slot_number must be present in Amsterdam+
+    // blocks" while the execution env builder defaulted the same header's slot
+    // to zero and ran the transaction.
     let (mut db, header) = amsterdam_db_and_header(None);
     let result =
         LEVM::simulate_tx_from_generic(&plain_transfer(), &header, &mut db, VMType::L1, &NativeCrypto);
