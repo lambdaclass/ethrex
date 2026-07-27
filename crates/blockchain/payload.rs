@@ -1061,6 +1061,10 @@ pub(crate) fn is_deterministic_invalid(e: &ChainError, chain_type: &BlockchainTy
     intrinsic_gas_too_low
         || msg.contains("gas cost floor for calldata tokens")
         || msg.contains("Initcode size exceeded")
+        // EIP-7825 / EIP-8037 per-tx gas cap. Admission rejects this too, but only
+        // at insertion and only against the fork active then, so a tx admitted
+        // before Osaka activates survives in the pool and then fails every build.
+        || msg.contains("gas limit exceeds maximum")
 }
 
 /// Runs a plain (non blob) transaction, updates the gas count and returns the receipt
@@ -1345,6 +1349,13 @@ mod tests {
                     actual_size: 2,
                 },
                 "InitcodeSizeExceeded",
+            ),
+            (
+                TxValidationError::TxMaxGasLimitExceeded {
+                    tx_hash: H256::zero(),
+                    tx_gas_limit: 1,
+                },
+                "TxMaxGasLimitExceeded",
             ),
         ] {
             let e = to_chain(err);
