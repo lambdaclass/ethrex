@@ -294,11 +294,10 @@ pub async fn fill_transactions(
                 }
                 // A deterministically-invalid tx would otherwise re-occupy its
                 // sender's queue head on every build and starve that sender's
-                // other txs, exactly as on the L1 path. `is_deterministic_invalid`
-                // is chain-type aware, so on L2 it deliberately does NOT treat
-                // `IntrinsicGasTooLow` as permanent: the L2 hook reuses that
-                // variant for a transient `l1_gas` condition.
-                if is_deterministic_invalid(&e, &blockchain.options.r#type) {
+                // other txs, exactly as on the L1 path. The L2-specific transient
+                // failure (gas limit vs the reserved `l1_gas`) is a distinct levm
+                // variant, so it is not mistaken for a permanent one here.
+                if is_deterministic_invalid(&e) {
                     debug!("Evicting deterministically-invalid transaction {tx_hash}: {e}");
                     blockchain.remove_transaction_from_pool(&tx_hash)?;
                 }

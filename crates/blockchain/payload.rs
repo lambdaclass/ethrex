@@ -767,7 +767,7 @@ impl Blockchain {
                     let evict = if is_frame {
                         !is_nonce_mismatch(&e)
                     } else {
-                        is_deterministic_invalid(&e, &self.options.r#type)
+                        is_deterministic_invalid(&e)
                     };
                     if evict {
                         debug!("Evicting deterministically-invalid transaction {tx_hash}: {e}");
@@ -1074,22 +1074,20 @@ fn is_nonce_mismatch(e: &ChainError) -> bool {
 /// trip to `ChainError` — `impl From<VMError> for EvmError` collapses it into
 /// `EvmError::Transaction(String)`. Reworded LEVM errors must therefore break the
 /// pinning test rather than silently disable eviction, which is what that test is
-/// for. Before adding an arm, check it has exactly one producer: a variant raised
-/// from two places with different determinism (as `IntrinsicGasTooLow` is) cannot
-/// be classified by string at all.
-pub fn is_deterministic_invalid(e: &ChainError, chain_type: &BlockchainType) -> bool {
+/// for. Before adding an arm, check that EVERY site raising that variant is
+/// deterministic: string matching cannot separate two producers of one variant, so
+/// a variant raised from both a permanent and a transient condition is
+/// unclassifiable here. `TxValidationError::L1GasReservationTooLow` exists for
+/// exactly that reason — the L2 hook's transient `l1_gas` shortfall would otherwise
+/// be indistinguishable from `IntrinsicGasTooLow`.
+pub fn is_deterministic_invalid(e: &ChainError) -> bool {
     let msg = e.to_string();
-    // `IntrinsicGasTooLow` is only deterministic on L1. The L2 hook raises the SAME
-    // variant from `reserve_l1_gas` when gas_limit cannot cover `floor + l1_gas`, and
-    // `l1_gas` is derived from the L1 fee config and the block's gas price — so a tx
-    // can fail it in one block purely because L1 data availability was expensive and
-    // succeed in the next. Both paths stringify identically, so the only safe reading
-    // on L2 is "transient": keep the tx pooled. The other arms below have no such
-    // second producer (only `default_hook` raises them, from the tx's own bytes), so
-    // they stay deterministic on both chain types.
-    let intrinsic_gas_too_low = matches!(chain_type, BlockchainType::L1)
-        && msg.contains("gas limit lower than the minimum gas cost");
-    intrinsic_gas_too_low
+    // Every producer of `IntrinsicGasTooLow` is deterministic given the tx's bytes
+    // and the active fork: `validate_min_gas_limit`'s `gas_limit < intrinsic` check,
+    // its EIP-8037 `regular.max(floor) > TX_MAX_GAS_LIMIT` cap, and the equivalent
+    // budget check in `VM::add_intrinsic_gas`. The L2 hook's transient `l1_gas`
+    // shortfall raises `L1GasReservationTooLow` instead, so it does not reach here.
+    msg.contains("gas limit lower than the minimum gas cost")
         || msg.contains("gas cost floor for calldata tokens")
         || msg.contains("Initcode size exceeded")
         // EIP-7825 / EIP-8037 per-tx gas cap. Admission rejects this too, but only
@@ -1391,7 +1389,7 @@ mod tests {
         ] {
             let e = to_chain(err);
             assert!(
-                is_deterministic_invalid(&e, &BlockchainType::L1),
+                is_deterministic_invalid(&e),
                 "is_deterministic_invalid must match {name}; got: {e}"
             );
         }
@@ -1416,55 +1414,45 @@ mod tests {
         ] {
             let e = to_chain(err);
             assert!(
-                !is_deterministic_invalid(&e, &BlockchainType::L1),
+                !is_deterministic_invalid(&e),
                 "is_deterministic_invalid must NOT match transient {name}; got: {e}"
             );
         }
     }
 
     #[test]
-    fn intrinsic_gas_too_low_is_not_deterministic_on_l2() {
-        // The L2 hook raises `IntrinsicGasTooLow` from `reserve_l1_gas` for a
-        // TRANSIENT condition (gas_limit vs `floor + l1_gas`, where l1_gas tracks
-        // L1 fees and the block gas price), indistinguishable by string from the
-        // genuine per-tx check. Evicting on it would drop txs that succeed a block
-        // later, so on L2 it must read as transient. The other two arms have only
-        // one producer each and stay deterministic.
+    fn l1_gas_reservation_too_low_is_not_deterministic() {
+        // The L2 hook's `reserve_l1_gas` rejects a tx whose gas limit cannot cover
+        // the reserved `l1_gas`, which tracks the L1 fee config and the block's gas
+        // price — so the same tx can succeed a block later. That failure MUST stay
+        // pooled, which is why it has its own variant instead of reusing
+        // `IntrinsicGasTooLow`. If the two are ever merged again, this test fails
+        // and eviction stops silently dropping recoverable L2 txs.
         use ethrex_levm::errors::{TxValidationError, VMError};
         let to_chain = |e: TxValidationError| -> ChainError {
             EvmError::from(VMError::TxValidation(e)).into()
         };
 
-        let l2 = BlockchainType::L2(Default::default());
-        let intrinsic = to_chain(TxValidationError::IntrinsicGasTooLow);
+        let transient = to_chain(TxValidationError::L1GasReservationTooLow);
         assert!(
-            is_deterministic_invalid(&intrinsic, &BlockchainType::L1),
-            "IntrinsicGasTooLow is deterministic on L1; got: {intrinsic}"
-        );
-        assert!(
-            !is_deterministic_invalid(&intrinsic, &l2),
-            "IntrinsicGasTooLow must NOT be treated as deterministic on L2: the L2 \
-             hook reuses it for a transient l1_gas condition; got: {intrinsic}"
+            !is_deterministic_invalid(&transient),
+            "L1GasReservationTooLow is transient (l1_gas varies per block) and must \
+             NOT be evicted; got: {transient}"
         );
 
-        for (err, name) in [
-            (
-                TxValidationError::IntrinsicGasBelowFloorGasCost,
-                "IntrinsicGasBelowFloorGasCost",
-            ),
-            (
-                TxValidationError::InitcodeSizeExceeded {
-                    max_size: 1,
-                    actual_size: 2,
-                },
-                "InitcodeSizeExceeded",
-            ),
-        ] {
-            let e = to_chain(err);
-            assert!(
-                is_deterministic_invalid(&e, &l2),
-                "{name} has a single producer and stays deterministic on L2; got: {e}"
-            );
-        }
+        // The distinction is only meaningful if the two stringify differently: a
+        // reworded `L1GasReservationTooLow` that drifted into containing the
+        // intrinsic-gas substring would start being evicted.
+        let permanent = to_chain(TxValidationError::IntrinsicGasTooLow);
+        assert!(
+            is_deterministic_invalid(&permanent),
+            "IntrinsicGasTooLow must still be evicted; got: {permanent}"
+        );
+        assert_ne!(
+            transient.to_string(),
+            permanent.to_string(),
+            "L1GasReservationTooLow and IntrinsicGasTooLow must not share a Display \
+             string, or the transient case becomes unclassifiable"
+        );
     }
 }
