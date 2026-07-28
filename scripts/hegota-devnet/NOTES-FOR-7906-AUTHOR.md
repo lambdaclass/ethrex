@@ -220,7 +220,42 @@ Two consequences:
   simulated prefix, the account's refusals came back as immediate rejections at
   submission, rather than a silent non-inclusion.
 
-### 5. Suggested additional PoC: allowance *elimination*, not just detection
+### 5. Block building and simulation disagree on the transaction's storage-change set, which makes deny-by-default assertions unusable
+
+This is the finding we would flag most urgently, because it silently breaks one of the
+natural assertion shapes.
+
+For a frame transaction whose body performs a single ERC-20 transfer,
+`ethrex_simulateFrameTransaction` reports **2** storage-slot changes via
+`TXTRACE(0x01)`, while **block building observes 5**. Measured directly: a probe
+guard asserting an exact count was submitted for counts 2, 3, 4 and 5; simulation
+accepted only the assertion of 2, and only the assertion of **5** was ever
+included in a block.
+
+The consequence for assertion authors is severe. A deny-by-default guard — "every
+slot this transaction wrote must be one I expected", which is the natural form
+whenever the adversarial slot is a mapping entry keyed by an attacker-chosen
+address and so cannot be enumerated in advance — **passes simulation and then
+reverts during block building**. Combined with finding 4, the transaction is
+admitted, silently dropped, and never mined. Worse, it *looks* like the assertion
+worked: the malicious transaction did not land. Only a negative control reveals
+that the identical guard also rejects the honest transaction.
+
+We found this exactly that way. An earlier version of our hidden-side-effect
+scenario used a deny-by-default guard and appeared to defend correctly; its
+negative control showed it was rejecting every transaction, including the
+legitimate one. The scenario now uses a targeted assertion over a named slot
+instead, at the cost of having to know the exfiltration address in advance.
+
+Two asks: (a) treat the divergence as a bug to reconcile, so that what an
+assertion observes during block building is what simulation reports; and (b)
+consider saying in the EIP which state changes are in scope for the transaction
+diff — the frame-transaction machinery's own writes (keyed nonces, payer
+accounting, predeploy bookkeeping) are plausibly the extra three, and whether
+assertion authors should see them at all is a specification question, not just an
+implementation one.
+
+### 6. Suggested additional PoC: allowance *elimination*, not just detection
 
 Item 1 catches a malicious `approve(MAX_UINT)` the user never intended. It cannot
 help the victims of the arbitrary-external-call router drains (two aggregators in

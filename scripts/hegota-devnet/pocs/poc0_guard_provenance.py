@@ -77,7 +77,7 @@ def main():
 
     print("\n  [A] honest body + correct guard -> should mine")
     o = submit(frame_tx(account, b, [verify_frame(account), honest_body, good_guard]),
-               "A honest + correct guard")
+               "A honest + correct guard", expect_mine=True)
     if not o.mined:
         raise RuntimeError(f"the correctly guarded honest transaction must mine: {o.simulation}")
     cases.append(("A honest body + correct guard", "mines", o.mined, o.txhash))

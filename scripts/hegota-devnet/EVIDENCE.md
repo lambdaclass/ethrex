@@ -141,6 +141,203 @@ cannot be used to identify which assertion tripped.
 - Phase B: the assertion fired on the approval itself, so the transaction was invalidated before any allowance existed. The attacker's later sweep then had nothing to spend.
 - Negative control: the same guard permitted a deliberate approval to an allowlisted spender, so it discriminates rather than blocking everything.
 
+## poc3_hidden_side_effect — A transaction that does one extra thing
+
+- **Models:** Malicious multicalls and one-click drains, where the displayed intent is a subset of what the transaction actually executes
+- **Defense kind:** reverts the attack
+- **Chain id:** 3151908 · **from block:** 371114
+
+| contract | address |
+|---|---|
+| shim | `0xfee0bc0139650cfa1c53d1e8d666740111bf74ae` |
+| guard | `0x2e48430f689c49bcc48c475189b3e58fd6eadb49` |
+| token | `0xa22fb31951b05b431aa6a7616395d4d7953f6974` |
+| intended_payee | `0x5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e` |
+| attacker | `0xbabababababababababababababababababababa` |
+
+**phase a**
+
+```json
+{
+  "victim": "0xb916c8c8a44e9cbdE461C6F6E851375AA8e62ff7",
+  "tx": "0x1431a24e3410c53b9ef61b0dc697887d8ef65a0b3fd295da883e1876ecdc1885",
+  "block": 371120,
+  "intended_to_payee": 100,
+  "hidden_to_attacker": 50
+}
+```
+
+**phase b**
+
+```json
+{
+  "victim": "0xbAA5487C513240D5FD5ee40a86EF61E239DA4308",
+  "mined": false,
+  "attacker_delta": 0,
+  "assertion": "the exfiltration address's balance slot is unchanged within this transaction"
+}
+```
+
+**extra**
+
+```json
+{
+  "negative_control": {
+    "description": "with the hidden transfer removed, the identical guard permits the transaction the victim actually intended",
+    "mined": true,
+    "tx": "0xa3965b9c3be026da9cff1a64b583cc1354d8a1fd683da7107f925df4f01b974a",
+    "block": 371136
+  },
+  "deny_by_default_limitation": {
+    "simulation_slot_change_count": 2,
+    "block_building_slot_change_count": 5,
+    "consequence": "deny-by-default assertions over TXTRACE's slot-change enumeration are currently unusable: they pass simulation and revert during block building, so the transaction is admitted and silently dropped",
+    "measured_by": "AssertSlotChangeCount probe asserting counts 2..5; only 5 was included"
+  }
+}
+```
+
+**Findings**
+
+- Phase A: both transfers executed; only one was displayed.
+- Phase B: the hidden transfer moved the attacker's balance slot inside the transaction, so the differential assertion fired and the transaction was invalidated.
+- Negative control: the same guard permitted the intended transfer on its own, so it discriminates between the displayed intent and the extra effect.
+- This control is what exposed the simulation/block-building divergence on the transaction's storage-change set. An earlier version of this scenario used a deny-by-default assertion over all written slots; it appeared to defend phase B, but the control revealed it was rejecting every transaction — including legitimate ones — because block building observes 5 slot changes where simulation reports 2. A defense that also blocks the honest case is not a defense, and only the control could tell the two apart.
+
+## poc4_sandwich — Sandwiched swap — the fill is worse than the quote
+
+- **Models:** Value extracted from a user's own swap by trading ahead of it; the victim's transaction is honest and their wallet is uncompromised
+- **Defense kind:** reverts the attack
+- **Chain id:** 3151908 · **from block:** 370896
+
+| contract | address |
+|---|---|
+| shim | `0xdba30a69923eee03290094bc2e3b18cf92503559` |
+| guard | `0xaa7739a56a37ec58b54eb0c89a1c8805a5b4329f` |
+| tokenA | `0xae247504439a9c1ba49d12ea545f8336682b66c3` |
+| tokenB | `0x1d35e305d2ec02c97d60dc07ab2ba4eb27488465` |
+| amm | `0x10907c92c5d7606c079e4f84ab3c177d6b2cb380` |
+
+**phase a**
+
+```json
+{
+  "victim": "0xA168d5E33e81B19c6438DE801b4b3cECDbBda0af",
+  "tx": "0x3b37a4a70b7b9bb806dfb7284dfe590c8673088ca2fa70fab50676b01e8e079e",
+  "block": 370906,
+  "received": 5065,
+  "quoted": 9900,
+  "shortfall_pct": 49
+}
+```
+
+**phase b**
+
+```json
+{
+  "victim": "0x35DfC492ada96E094b24B18b5C241fD9277c72AC",
+  "min_committed": 9801,
+  "mined": false,
+  "token_delta": 0,
+  "eth_spent_wei": 0
+}
+```
+
+**extra**
+
+```json
+{
+  "quote": {
+    "amount_in": 10000,
+    "quoted_out": 9900
+  },
+  "after_frontrun": {
+    "quoted_out": 5065,
+    "pct_of_original": 51
+  },
+  "negative_control": {
+    "description": "the assertion is a bound, not a blanket refusal: a minimum the moved pool can satisfy still fills",
+    "min_committed": 4558,
+    "received": 4994,
+    "tx": "0x3c40bd63862c379478c0bbff5f49c1fd5df717afae73a47967427c0b7deb56f2",
+    "mined": true
+  }
+}
+```
+
+**Findings**
+
+- Phase A: the victim received 5065 against a quote of 9900 — a 49% shortfall.
+- Phase B: the transaction was excluded and the victim spent 0 wei — the approved gas payment is rolled back with the body, so a defended transaction costs its sender nothing.
+- That zero-cost exclusion cuts both ways: it removes the usual revert-and-still-pay-gas penalty for the user, and it leaves a builder bearing uncompensated execution cost — the anti-denial-of-service question open in docs/eip-7906.md, and a plausible incentive to deprioritize guarded traffic.
+- Negative control: with an achievable minimum of 4558 the same guard allowed the swap, which returned 4994.
+
+## poc5_oracle_toctou — Price moved between the quote and execution
+
+- **Models:** A victim's own trade filling at a price that changed after they were shown a quote. Distinct from attacker-signed oracle-manipulation exploits, which a sender-authored assertion cannot reach.
+- **Defense kind:** reverts the attack
+- **Chain id:** 3151908 · **from block:** 370841
+
+| contract | address |
+|---|---|
+| shim | `0x4ffff3480dc4d089a9fdc7d667f5326c820c7572` |
+| token | `0x44561957e793ce1255e439edb130fd5783c38941` |
+| oracle | `0x196b3fce1339b626452794372aa7d3f1a34294c4` |
+| desk | `0x547c474177f5a952b96e4025ea48a65abf356781` |
+| guard_differential | `0xfc9010e21552c41f06d16952d27b3e1f43e8e63f` |
+| guard_absolute | `0xee7e3d18ce8fee29282a97129dcc8fd93321bb22` |
+| guard_net_effect | `0x9516f6075b90aa49ce8d71da8cfe44499ba3909b` |
+
+**phase a**
+
+```json
+{
+  "victim": "0x35dCAD0140F58076e9b4901258c11b08b190d67A",
+  "tx": "0x665c3b89a083f6c9c145b7bdc5268213be9e9eed9ccfc293203733a9713d05c4",
+  "paid": 100,
+  "received": 50,
+  "expected_at_quote": 100
+}
+```
+
+**phase b**
+
+```json
+{
+  "variant_1_differential": {
+    "mined": true,
+    "received": 50,
+    "verdict": "TRAP \u2014 the oracle moved in a PRIOR transaction, so before == after inside the guarded transaction and the assertion passes"
+  },
+  "variant_2_absolute_price": {
+    "mined": false,
+    "verdict": "CORRECT \u2014 compares the live oracle slot against the price quoted at signing time"
+  },
+  "variant_3_net_effect": {
+    "mined": false,
+    "verdict": "CORRECT \u2014 bounds the realized output directly, so it needs no knowledge of the oracle's storage layout"
+  }
+}
+```
+
+**extra**
+
+```json
+{
+  "price_move": {
+    "quoted": 1000000000000000000,
+    "at_execution": 2000000000000000000,
+    "slot": 0
+  }
+}
+```
+
+**Findings**
+
+- Phase A: the victim paid 100 and received 50, against ~100 at the price they were shown.
+- The differential form is invalid for this scenario for the same reason as in the implementation-swap scenario: the adverse change happened in an earlier transaction, where TXDIFF reads the same value before and after.
+- The net-effect bound is the more practical of the two working forms: it defends the divergence the user actually cares about without needing to name any counterparty's storage layout.
+
 ## poc6_proxy_swap — Implementation swapped before inclusion — and two assertion traps
 
 - **Models:** A user transacting into an upgradeable contract whose implementation was replaced after they were shown a quote; the CPIMP class (~$1M, 2025) is the clean fit, where a malicious implementation was inserted to intercept user calls

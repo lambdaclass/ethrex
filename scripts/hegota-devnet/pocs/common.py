@@ -321,11 +321,30 @@ class Outcome:
     simulation: dict = field(default_factory=dict)
 
 
-def submit(tx: FrameTx, label: str, sim: bool = True) -> Outcome:
+def submit(tx: FrameTx, label: str, sim: bool = True, expect_mine: bool = False,
+           attempts: int = 3) -> Outcome:
+    """Submit a frame transaction and report what happened.
+
+    `expect_mine` exists because frame-transaction gossip is unreliable: a transaction can
+    be admitted, be entirely valid, and still not be included if no execution client that
+    holds it proposes before it ages out. When inclusion is the expected outcome we
+    re-broadcast a few times before concluding anything. Cases that expect NON-inclusion get
+    a single patient wait, so a defended transaction is never reported as defended merely
+    because gossip dropped it.
+    """
     raw = "0x" + tx.raw().hex()
     simulation = simulate(raw) if sim else {}
-    h, errs = broadcast(raw)
-    r = wait_receipt(h, tries=12, delay=3) if h else None
+    tries = attempts if expect_mine else 1
+    h, errs, r = None, [], None
+    for attempt in range(tries):
+        h2, errs2 = broadcast(raw)
+        h = h or h2
+        errs = errs2
+        r = wait_receipt(h, tries=12, delay=3) if h else None
+        if r or not expect_mine:
+            break
+        if attempt + 1 < tries:
+            print(f"      (not included yet — re-broadcasting, attempt {attempt + 2}/{tries})")
     o = Outcome(
         label=label, submitted=h is not None, txhash=h, mined=r is not None,
         block=int(r["blockNumber"], 16) if r else None,

@@ -1,0 +1,48 @@
+{
+  "scenario": "poc3_hidden_side_effect",
+  "title": "A transaction that does one extra thing",
+  "models": "Malicious multicalls and one-click drains, where the displayed intent is a subset of what the transaction actually executes",
+  "defense_kind": "reverts the attack",
+  "chain_id": 3151908,
+  "started_block": 371114,
+  "notes": [
+    "Phase A: both transfers executed; only one was displayed.",
+    "Phase B: the hidden transfer moved the attacker's balance slot inside the transaction, so the differential assertion fired and the transaction was invalidated.",
+    "Negative control: the same guard permitted the intended transfer on its own, so it discriminates between the displayed intent and the extra effect.",
+    "This control is what exposed the simulation/block-building divergence on the transaction's storage-change set. An earlier version of this scenario used a deny-by-default assertion over all written slots; it appeared to defend phase B, but the control revealed it was rejecting every transaction \u2014 including legitimate ones \u2014 because block building observes 5 slot changes where simulation reports 2. A defense that also blocks the honest case is not a defense, and only the control could tell the two apart."
+  ],
+  "addresses": {
+    "shim": "0xfee0bc0139650cfa1c53d1e8d666740111bf74ae",
+    "guard": "0x2e48430f689c49bcc48c475189b3e58fd6eadb49",
+    "token": "0xa22fb31951b05b431aa6a7616395d4d7953f6974",
+    "intended_payee": "0x5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e",
+    "attacker": "0xbabababababababababababababababababababa"
+  },
+  "phase_a": {
+    "victim": "0xb916c8c8a44e9cbdE461C6F6E851375AA8e62ff7",
+    "tx": "0x1431a24e3410c53b9ef61b0dc697887d8ef65a0b3fd295da883e1876ecdc1885",
+    "block": 371120,
+    "intended_to_payee": 100,
+    "hidden_to_attacker": 50
+  },
+  "phase_b": {
+    "victim": "0xbAA5487C513240D5FD5ee40a86EF61E239DA4308",
+    "mined": false,
+    "attacker_delta": 0,
+    "assertion": "the exfiltration address's balance slot is unchanged within this transaction"
+  },
+  "extra": {
+    "negative_control": {
+      "description": "with the hidden transfer removed, the identical guard permits the transaction the victim actually intended",
+      "mined": true,
+      "tx": "0xa3965b9c3be026da9cff1a64b583cc1354d8a1fd683da7107f925df4f01b974a",
+      "block": 371136
+    },
+    "deny_by_default_limitation": {
+      "simulation_slot_change_count": 2,
+      "block_building_slot_change_count": 5,
+      "consequence": "deny-by-default assertions over TXTRACE's slot-change enumeration are currently unusable: they pass simulation and revert during block building, so the transaction is admitted and silently dropped",
+      "measured_by": "AssertSlotChangeCount probe asserting counts 2..5; only 5 was included"
+    }
+  }
+}

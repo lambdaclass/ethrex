@@ -125,7 +125,7 @@ def main():
         verify_frame(account),
         sender_frame(token, data=encode_call("approve(address,uint256)", drainer, 100)),
         guard_frame(guard, allow_data),
-    ]), "intended approve(100) to an allowlisted spender")
+    ]), "intended approve(100) to an allowlisted spender", expect_mine=True)
     if not o2.mined:
         raise RuntimeError(f"the guard rejected a legitimate, allowlisted approval: {o2.simulation}")
     ev.extra["negative_control"] = {

@@ -37,14 +37,14 @@ user was shown and what executes**. Those are what these scenarios demonstrate.
 | **P1** | [Hidden approval + delayed drain](pocs/poc1_approval_drain.py) | A harmless-looking action that secretly grants an unlimited allowance | **built** |
 | **P6** | [Implementation swap](pocs/poc6_proxy_swap.py) | A prior-transaction upgrade, and the two assertion forms that silently fail to catch it | **built** |
 | **P7** | [Allowance elimination](pocs/poc7_allowance_elimination.py) | Removing the standing-allowance surface entirely | **built** |
+| **P3** | [Hidden side effect](pocs/poc3_hidden_side_effect.py) | A transaction that also moves value to an address the user never saw | **built** |
+| **P4** | [Sandwiched swap](pocs/poc4_sandwich.py) | A committed minimum output asserted against the realized fill | **built** |
+| **P5** | [Oracle time-of-check/time-of-use](pocs/poc5_oracle_toctou.py) | A price moved between the quote and execution | **built** |
 | P2 | Multisig control-plane takeover | Real Safe contracts, real owner signatures; a routine-looking transfer that rewrites the control plane | not yet built |
-| P3 | Hidden multicall side effect | A transaction presented as a swap that also moves value elsewhere | not yet built |
-| P4 | MEV sandwich | A committed `minOut` asserted against the realized fill | not yet built |
-| P5 | Oracle time-of-check/time-of-use | A price moved between the quote and execution | not yet built |
 
-P1 and P6 correspond to items 1 and 6 of the published proof-of-concept note; P7 is an
-addition; P0 addresses a gap that note does not cover. The four unbuilt scenarios are
-specified in `openspec/changes/eip7906-defi-attack-pocs/`.
+P1, P3, P4, P5 and P6 correspond to items 1, 3, 4, 5 and 6 of the published proof-of-concept
+note; P7 is an addition; P0 addresses a gap that note does not cover. P2 is specified in
+`openspec/changes/eip7906-defi-attack-pocs/` and remains to be built.
 
 ### P0 — guard provenance
 
@@ -95,6 +95,51 @@ interaction becomes a single frame transaction bundling approve-exactly-N, use, 
 assertion that no allowance survives, so the attacker's identical later drain finds nothing.
 Surface removal rather than attack blocking; the distinction is stated in the scenario and in
 its evidence record.
+
+### P3 — a transaction that does one extra thing
+
+The victim is shown a transfer; the transaction also moves tokens to an address they never
+saw. The assertion targets the exfiltration address's balance slot, and the differential form
+is correct here — unlike P5 and P6 — because the adversarial write happens *inside* the
+guarded transaction.
+
+The general form, deny-by-default over every slot written, would not require knowing the
+exfiltration address in advance and is what you would reach for first. It is currently
+unusable: block building and simulation disagree on the transaction's storage-change set (5
+versus 2), so such a guard passes simulation and reverts during block building. It then
+*appears* to defend, because the malicious transaction does not land — and only the negative
+control reveals that it rejects the honest transaction too. That is how the divergence was
+found; see [pocs/GATE-RESULTS.md](pocs/GATE-RESULTS.md).
+
+### P4 — sandwiched swap
+
+The pool is moved against the victim before their swap lands, and the assertion carries the
+minimum output they committed to at signing time. Two results worth noting:
+
+- The defended transaction is excluded **and the approved gas payment is rolled back, so the
+  victim pays nothing** — measured at 0 wei. Today the choice is between eating a bad fill and
+  reverting on slippage while still burning gas. The attacker's own trades still execute, so a
+  searcher who moved the pool can be left holding the position.
+- That same property leaves a builder bearing uncompensated execution cost, which is the
+  anti-denial-of-service question already open in `docs/eip-7906.md` and a plausible incentive
+  to deprioritize guarded traffic.
+
+The pool is moved in an earlier transaction rather than by winning a same-block ordering race.
+The economics the victim experiences are identical, and it avoids making the result depend on
+beating the builder's ordering, which frame-transaction gossip makes unreliable. The strict
+same-block variant is not claimed here.
+
+### P5 — oracle time-of-check/time-of-use
+
+The victim's own trade fills at a price that moved after they were shown a quote. Worth
+keeping a naming collision straight: "oracle manipulation" as a *hack class* — a flash-loaned
+pool skewed to drain a lending market — is attacker-signed and outside EIP-7906's reach
+entirely. This is the different thing wearing the same name.
+
+Same three-way comparison as P6: the differential assertion passes and the bad fill lands,
+while both an absolute price-band assertion and a net-effect bound on the realized output stop
+it. The net-effect bound is the more practical of the two, since it needs no knowledge of the
+counterparty's storage layout.
 
 ## Running
 

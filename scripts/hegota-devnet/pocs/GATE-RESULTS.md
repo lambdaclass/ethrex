@@ -100,3 +100,24 @@ only unstrippability but an actionable rejection at submission time.
 over-billing documented in `docs/eip-7906.md` has a counterpart on the ordinary
 transaction path: any storage-writing call needs a generous budget. Scenario helpers
 budget accordingly and record why at each call site.
+
+## Later finding — block building and simulation disagree on the storage-change set
+
+Found by a negative control while building the hidden-side-effect scenario, not by a gate,
+but it belongs with the gate results because it constrains which assertion shapes are usable.
+
+For a frame transaction whose body performs one ERC-20 transfer, `TXTRACE(0x01)` reports **2**
+storage-slot changes under `ethrex_simulateFrameTransaction` and **5** during block building.
+Measured with a probe guard asserting an exact count for 2, 3, 4 and 5: simulation accepted
+only the assertion of 2, and only the assertion of **5** was ever included in a block.
+
+**Consequence.** Deny-by-default assertions over the slot-change enumeration — the natural
+form when the adversarial slot is a mapping entry keyed by an attacker-chosen address — pass
+simulation and then revert during block building. Combined with the admitted-then-silently-
+dropped behaviour above, such a guard *appears* to work: the malicious transaction does not
+land. Only a negative control shows that the identical guard also rejects the honest
+transaction, which means it is not a defense at all.
+
+Until the two paths agree, only targeted assertions over explicitly named slots are
+dependable. This is why the hidden-side-effect scenario asserts a single named balance slot
+rather than enumerating everything the transaction wrote.

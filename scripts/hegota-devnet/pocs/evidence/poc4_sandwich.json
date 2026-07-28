@@ -1,0 +1,53 @@
+{
+  "scenario": "poc4_sandwich",
+  "title": "Sandwiched swap \u2014 the fill is worse than the quote",
+  "models": "Value extracted from a user's own swap by trading ahead of it; the victim's transaction is honest and their wallet is uncompromised",
+  "defense_kind": "reverts the attack",
+  "chain_id": 3151908,
+  "started_block": 370896,
+  "notes": [
+    "Phase A: the victim received 5065 against a quote of 9900 \u2014 a 49% shortfall.",
+    "Phase B: the transaction was excluded and the victim spent 0 wei \u2014 the approved gas payment is rolled back with the body, so a defended transaction costs its sender nothing.",
+    "That zero-cost exclusion cuts both ways: it removes the usual revert-and-still-pay-gas penalty for the user, and it leaves a builder bearing uncompensated execution cost \u2014 the anti-denial-of-service question open in docs/eip-7906.md, and a plausible incentive to deprioritize guarded traffic.",
+    "Negative control: with an achievable minimum of 4558 the same guard allowed the swap, which returned 4994."
+  ],
+  "addresses": {
+    "shim": "0xdba30a69923eee03290094bc2e3b18cf92503559",
+    "guard": "0xaa7739a56a37ec58b54eb0c89a1c8805a5b4329f",
+    "tokenA": "0xae247504439a9c1ba49d12ea545f8336682b66c3",
+    "tokenB": "0x1d35e305d2ec02c97d60dc07ab2ba4eb27488465",
+    "amm": "0x10907c92c5d7606c079e4f84ab3c177d6b2cb380"
+  },
+  "phase_a": {
+    "victim": "0xA168d5E33e81B19c6438DE801b4b3cECDbBda0af",
+    "tx": "0x3b37a4a70b7b9bb806dfb7284dfe590c8673088ca2fa70fab50676b01e8e079e",
+    "block": 370906,
+    "received": 5065,
+    "quoted": 9900,
+    "shortfall_pct": 49
+  },
+  "phase_b": {
+    "victim": "0x35DfC492ada96E094b24B18b5C241fD9277c72AC",
+    "min_committed": 9801,
+    "mined": false,
+    "token_delta": 0,
+    "eth_spent_wei": 0
+  },
+  "extra": {
+    "quote": {
+      "amount_in": 10000,
+      "quoted_out": 9900
+    },
+    "after_frontrun": {
+      "quoted_out": 5065,
+      "pct_of_original": 51
+    },
+    "negative_control": {
+      "description": "the assertion is a bound, not a blanket refusal: a minimum the moved pool can satisfy still fills",
+      "min_committed": 4558,
+      "received": 4994,
+      "tx": "0x3c40bd63862c379478c0bbff5f49c1fd5df717afae73a47967427c0b7deb56f2",
+      "mined": true
+    }
+  }
+}

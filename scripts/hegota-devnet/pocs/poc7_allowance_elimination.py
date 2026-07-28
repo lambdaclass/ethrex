@@ -90,7 +90,7 @@ def main():
         sender_frame(router, data=encode_call("swap(address,address,uint256)", token, token, 100)),
         guard_frame(g_zero, guard_data),
     ])
-    ok = submit(tx, "approve(exact 100) + swap + assert allowance == 0")
+    ok = submit(tx, "approve(exact 100) + swap + assert allowance == 0", expect_mine=True)
     if not ok.mined:
         raise RuntimeError(f"phase B bundle should have mined: {ok.simulation}")
 

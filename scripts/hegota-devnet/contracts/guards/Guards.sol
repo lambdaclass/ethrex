@@ -217,3 +217,15 @@ contract AssertNoUnexpectedWrites {
         }
     }
 }
+
+/// @notice Diagnostic: asserts the exact number of storage slots the transaction wrote.
+///         Used to compare what block building observes against what simulation reports;
+///         see POC-GUIDE.md on the deny-by-default limitation this uncovered.
+contract AssertSlotChangeCount {
+    error CountWas(uint256 got, uint256 expected);
+
+    function assertCount(ITxIntrospection shim, uint256 expected) external view {
+        uint256 n = shim.txtrace(P.SLOT_CHANGE_COUNT, 0);
+        if (n != expected) revert CountWas(n, expected);
+    }
+}

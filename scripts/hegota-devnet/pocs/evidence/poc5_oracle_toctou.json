@@ -1,0 +1,51 @@
+{
+  "scenario": "poc5_oracle_toctou",
+  "title": "Price moved between the quote and execution",
+  "models": "A victim's own trade filling at a price that changed after they were shown a quote. Distinct from attacker-signed oracle-manipulation exploits, which a sender-authored assertion cannot reach.",
+  "defense_kind": "reverts the attack",
+  "chain_id": 3151908,
+  "started_block": 370841,
+  "notes": [
+    "Phase A: the victim paid 100 and received 50, against ~100 at the price they were shown.",
+    "The differential form is invalid for this scenario for the same reason as in the implementation-swap scenario: the adverse change happened in an earlier transaction, where TXDIFF reads the same value before and after.",
+    "The net-effect bound is the more practical of the two working forms: it defends the divergence the user actually cares about without needing to name any counterparty's storage layout."
+  ],
+  "addresses": {
+    "shim": "0x4ffff3480dc4d089a9fdc7d667f5326c820c7572",
+    "token": "0x44561957e793ce1255e439edb130fd5783c38941",
+    "oracle": "0x196b3fce1339b626452794372aa7d3f1a34294c4",
+    "desk": "0x547c474177f5a952b96e4025ea48a65abf356781",
+    "guard_differential": "0xfc9010e21552c41f06d16952d27b3e1f43e8e63f",
+    "guard_absolute": "0xee7e3d18ce8fee29282a97129dcc8fd93321bb22",
+    "guard_net_effect": "0x9516f6075b90aa49ce8d71da8cfe44499ba3909b"
+  },
+  "phase_a": {
+    "victim": "0x35dCAD0140F58076e9b4901258c11b08b190d67A",
+    "tx": "0x665c3b89a083f6c9c145b7bdc5268213be9e9eed9ccfc293203733a9713d05c4",
+    "paid": 100,
+    "received": 50,
+    "expected_at_quote": 100
+  },
+  "phase_b": {
+    "variant_1_differential": {
+      "mined": true,
+      "received": 50,
+      "verdict": "TRAP \u2014 the oracle moved in a PRIOR transaction, so before == after inside the guarded transaction and the assertion passes"
+    },
+    "variant_2_absolute_price": {
+      "mined": false,
+      "verdict": "CORRECT \u2014 compares the live oracle slot against the price quoted at signing time"
+    },
+    "variant_3_net_effect": {
+      "mined": false,
+      "verdict": "CORRECT \u2014 bounds the realized output directly, so it needs no knowledge of the oracle's storage layout"
+    }
+  },
+  "extra": {
+    "price_move": {
+      "quoted": 1000000000000000000,
+      "at_execution": 2000000000000000000,
+      "slot": 0
+    }
+  }
+}
