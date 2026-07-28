@@ -3340,9 +3340,9 @@ impl Blockchain {
                 return Err(MempoolError::InvalidFrameSignature);
             }
 
-            // Local anti-malleability policy (NOT consensus): reject high-s
-            // signatures at admission. EIP-8141 accepts high-s at block execution
-            // (`signer == ecrecover`), but the raw signature bytes are committed to
+            // Anti-malleability policy (now also consensus): reject high-s
+            // signatures early at admission. EIP-8141 `verify_signature` (spec commit
+            // fc016d59c5) now rejects high-s too, and the raw signature bytes are committed to
             // the tx identity hash while elided from the sig hash, so a malleated
             // `(v,r,s) -> (v^1, r, n-s)` form would produce a second valid tx hash
             // for the same logical tx and bypass pool dedup.

@@ -1158,6 +1158,92 @@ fn frame_tx_below_base_blob_fee_is_rejected() {
 }
 
 #[test]
+#[expect(
+    clippy::indexing_slicing,
+    reason = "fixed-size 65-byte signature buffers with well-known bounds in test code"
+)]
+fn frame_tx_high_s_signature_is_rejected_at_block_validation() {
+    use ethrex_common::types::{FRAME_SIG_SCHEME_SECP256K1, FrameSignature};
+    use k256::ecdsa::SigningKey;
+
+    const SECP256K1_N: [u8; 32] =
+        hex_literal::hex!("fffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd0364141");
+    const SIGNER_KEY: [u8; 32] =
+        hex_literal::hex!("4c0883a69102937d6231471b5dbb6204fe5129617082792ae468d01a3f362318");
+
+    let signing_key = SigningKey::from_bytes(&SIGNER_KEY.into()).unwrap();
+    let uncompressed = signing_key.verifying_key().to_encoded_point(false);
+    let pub_hash = ethrex_crypto::keccak::keccak_hash(&uncompressed.as_bytes()[1..]);
+    let signer = Address::from_slice(&pub_hash[12..]);
+
+    // The sig hash elides the raw signature bytes (EIP-8141), so a placeholder
+    // signature is enough to derive the digest that gets signed.
+    let build_tx = |signature: Vec<u8>| {
+        let mut tx = frame_tx_with_frames(vec![verify_frame(FUNDED_SENDER)]);
+        tx.signatures = vec![FrameSignature {
+            scheme: FRAME_SIG_SCHEME_SECP256K1,
+            signer: Some(signer),
+            msg: Bytes::new(),
+            signature: Bytes::from(signature),
+        }];
+        tx
+    };
+
+    let sig_hash = build_tx(vec![0u8; 65]).compute_sig_hash();
+    let (raw_sig, recovery_id) = signing_key
+        .sign_prehash_recoverable(sig_hash.as_bytes())
+        .unwrap();
+    assert!(recovery_id.to_byte() < 2);
+
+    let mut low_s = vec![0u8; 65];
+    low_s[0] = recovery_id.to_byte();
+    low_s[1..65].copy_from_slice(&raw_sig.to_bytes());
+
+    let mut high_s = low_s.clone();
+    high_s[0] = recovery_id.to_byte() ^ 1;
+    let s = U256::from_big_endian(&low_s[33..65]);
+    let n = U256::from_big_endian(&SECP256K1_N);
+    high_s[33..65].copy_from_slice(&(n - s).to_big_endian());
+
+    let low_tx = build_tx(low_s);
+    let high_tx = build_tx(high_s);
+    assert_eq!(low_tx.compute_sig_hash(), high_tx.compute_sig_hash());
+    assert_ne!(
+        Transaction::FrameTransaction(low_tx.clone()).hash(&NativeCrypto),
+        Transaction::FrameTransaction(high_tx.clone()).hash(&NativeCrypto)
+    );
+    assert!(ethrex_levm::vm::validate_frame_signatures(
+        &high_tx.signatures,
+        high_tx.compute_sig_hash(),
+        high_tx.sender,
+        Fork::Hegota,
+        &NativeCrypto
+    ));
+
+    let accounts = [(
+        FUNDED_SENDER,
+        AUTO_SEED_SENDER_BALANCE,
+        0u64,
+        Bytes::from(APPROVE_BOTH_CODE.to_vec()),
+    )];
+
+    let (low_result, _db) = run_frame_tx(&accounts, low_tx);
+    low_result.expect("canonical low-s frame tx must be accepted at block validation");
+
+    let (high_result, high_db) = run_frame_tx(&accounts, high_tx);
+    assert!(
+        matches!(
+            high_result,
+            Err(VMError::TxValidation(
+                ethrex_levm::errors::TxValidationError::InvalidFrameTransaction
+            ))
+        ),
+        "high-s frame signature must be rejected at block validation, got {high_result:?}"
+    );
+    assert_db_cache_unchanged(&high_db, &accounts);
+}
+
+#[test]
 fn state_gas_reservoir_does_not_leak_across_frames() {
     // Frame A creates then clears a slot (0 -> 5 -> 0), which credits the EIP-8037
     // state-gas reservoir. Frame B then creates a fresh slot. Because frames are
@@ -2947,10 +3033,8 @@ mod frame_sig_validation_tests {
         let pub_hash = ethrex_crypto::keccak::keccak_hash(&uncompressed.as_bytes()[1..]);
         let expected_signer = Address::from_slice(&pub_hash[12..]);
 
-        // Build the outer signature: v || r || s  (65 bytes).
-        // EVM ecrecover expects v ∈ {27, 28}, so add 27 to the raw recovery id.
         let mut sig_bytes = vec![0u8; 65];
-        sig_bytes[0] = 27 + recovery_id.to_byte();
+        sig_bytes[0] = recovery_id.to_byte();
         sig_bytes[1..33].copy_from_slice(&raw_sig.to_bytes()[..32]); // r
         sig_bytes[33..65].copy_from_slice(&raw_sig.to_bytes()[32..]); // s
 

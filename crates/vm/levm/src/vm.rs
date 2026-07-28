@@ -706,7 +706,7 @@ pub struct VM<'a> {
     pub crypto: &'a dyn Crypto,
 }
 
-/// Validate every EIP-8141 outer signature (spec commit fe0940cae2) against
+/// Validate every EIP-8141 outer signature (spec commit fc016d59c5) against
 /// the canonical `sig_hash`. Returns false if any signature is malformed or
 /// invalid. Verification gas is intrinsic (already in `total_gas_limit`), so a
 /// scratch budget is used for the crypto precompiles and their deduction is
@@ -726,7 +726,6 @@ pub fn validate_frame_signatures(
         FRAME_SIG_SCHEME_ARBITRARY, FRAME_SIG_SCHEME_P256, FRAME_SIG_SCHEME_SECP256K1,
     };
     for sig in signatures {
-        // Resolve the signed message.
         let msg: [u8; 32] = match sig.msg.len() {
             0 => sig_hash.0,
             32 => {
@@ -746,18 +745,21 @@ pub fn validate_frame_signatures(
                     return false;
                 }
                 let v = sig.signature[0];
+                if v > 1 {
+                    return false;
+                }
                 let r = &sig.signature[1..33];
                 let s = &sig.signature[33..65];
                 // EIP-8141 defines verification as `signer == ecrecover(msg, v, r, s)`
-                // and does NOT mandate EIP-2 low-s, so a high-s frame signature is
-                // spec-valid and MUST be accepted here (this is the consensus
-                // block-execution path). Anti-malleability (low-s) is enforced as
-                // local mempool policy in `frame_signatures_are_low_s`, never at
-                // consensus — rejecting high-s here would diverge from a conformant
-                // client that accepts it.
+                // and now also mandates EIP-2 low-s (spec commit fc016d59c5:
+                // `verify_signature` rejects s > n/2). The consensus low-s check
+                // lives in `frame_signatures_are_low_s`, which mempool admission
+                // also applies as an early reject.
+                // EIP-8141 encodes v as the recovery id (0 or 1), while the
+                // ECRECOVER precompile expects 27 or 28.
                 let mut calldata = vec![0u8; 128];
                 calldata[..32].copy_from_slice(&msg);
-                calldata[63] = v;
+                calldata[63] = v.saturating_add(27);
                 calldata[64..96].copy_from_slice(r);
                 calldata[96..128].copy_from_slice(s);
                 let Ok(result) = crate::precompiles::ecrecover(
@@ -830,17 +832,17 @@ pub fn validate_frame_signatures(
     true
 }
 
-/// Local mempool anti-malleability policy (NOT consensus): returns `false` if any
-/// frame signature is high-s (`s > n/2`).
+/// Consensus anti-malleability rule (spec commit fc016d59c5): returns `false` if
+/// any frame signature is high-s (`s > n/2`).
 ///
-/// EIP-8141 verification is `signer == ecrecover(msg, v, r, s)` and does not
-/// mandate EIP-2 low-s, so a high-s signature is spec-valid and is accepted on the
-/// consensus block-execution path. But the raw signature bytes are committed to the
+/// EIP-8141 verification is `signer == ecrecover(msg, v, r, s)` and now
+/// mandates EIP-2 low-s for SECP256K1 and P256, so a high-s signature is
+/// rejected on the consensus block-execution path. The raw signature bytes are committed to the
 /// transaction identity hash while being elided from the sig hash, so the malleated
-/// form `(v, r, s) -> (v^1, r, n-s)` (and the P256 `s -> n-s`) yields a second valid
-/// tx hash for the same logical transaction — a mempool dedup bypass. Admission
-/// rejects high-s so a malleated duplicate never occupies a pool slot; this gates
-/// only what this node admits/relays, never what it accepts in a block.
+/// form `(v, r, s) -> (v^1, r, n-s)` (and the P256 `s -> n-s`) would yield a second
+/// valid tx hash for the same logical transaction, a mempool dedup bypass;
+/// admission rejects high-s early so a malleated duplicate never occupies a pool
+/// slot.
 ///
 /// Signatures are assumed already structurally validated by
 /// [`validate_frame_signatures`]; malformed inputs conservatively return `false`.
@@ -1629,7 +1631,7 @@ impl<'a> VM<'a> {
             total_gas_limit,
         });
 
-        // EIP-8141 (spec commit fe0940cae2): every outer signature must validate
+        // EIP-8141 (spec commit fc016d59c5): every outer signature must validate
         // before any frame executes; otherwise the whole transaction is invalid.
         if !validate_frame_signatures(
             &frame_tx.signatures,
@@ -1638,6 +1640,12 @@ impl<'a> VM<'a> {
             self.env.config.fork,
             self.crypto,
         ) {
+            return Err(VMError::TxValidation(
+                crate::errors::TxValidationError::InvalidFrameTransaction,
+            ));
+        }
+
+        if !frame_signatures_are_low_s(&frame_tx.signatures) {
             return Err(VMError::TxValidation(
                 crate::errors::TxValidationError::InvalidFrameTransaction,
             ));
