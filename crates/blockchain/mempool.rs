@@ -706,7 +706,8 @@ impl Mempool {
     }
 
     /// Create a mempool with blob sampling enabled and eager-provider mode on.
-    /// Block builders should use this so they always act as providers (EIP-8070 N8).
+    /// Block builders should use this so they always act as providers (EIP-8070,
+    /// "Execution clients :: Local block builders").
     pub fn new_with_eager_provider(max_mempool_size: usize) -> Self {
         Mempool {
             blob_sampling_enabled: true,

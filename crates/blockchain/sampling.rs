@@ -22,7 +22,8 @@ use crate::mempool::PROVIDER_PROBABILITY_PCT;
 ///
 /// `epoch_seed` = `head_block_number / 32`.
 ///
-/// When `eager` is `true` (local block builders; EIP-8070 N8), always return `true`.
+/// When `eager` is `true` (local block builders; EIP-8070, "Execution clients ::
+/// Local block builders"), always return `true`.
 pub fn is_provider_role(local_node_id: H256, tx_hash: H256, epoch_seed: u64, eager: bool) -> bool {
     if eager {
         return true;

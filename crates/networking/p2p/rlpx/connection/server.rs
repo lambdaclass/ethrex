@@ -711,7 +711,7 @@ impl PeerConnectionServer {
             {
                 warn!(error = %e, "prune_alternates failed during sweep");
             }
-            // EIP-8070 (FU-1): when the custody set changed (Engine API FCU v4),
+            // EIP-8070: when the custody set changed (Engine API FCU v4),
             // re-sample pending blob txs for the newly-custodied columns this
             // peer can serve. Inert unless sampling is enabled.
             if state.blockchain.mempool.blob_sampling_enabled {
@@ -2512,8 +2512,6 @@ async fn flush_pending_cell_requests(state: &mut Established) -> Result<(), Peer
         let chunk_masks = &all_masks[offset..offset + chunk_len];
         // Merge masks for this chunk.
         let merged_mask = chunk_masks.iter().fold(0u128, |acc, &m| acc | m);
-        // devp2p `caps/eth.md` recommends a soft limit of 64 hashes per GetCells
-        // request; `MAX_HASHES_PER_REQUEST` above is chunked to stay within it.
         let id = random();
         let request = GetCells::new(id, chunk.to_vec(), merged_mask);
         send(state, Message::GetCells(request)).await?;

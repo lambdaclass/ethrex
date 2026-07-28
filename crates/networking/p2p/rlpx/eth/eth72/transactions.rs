@@ -117,7 +117,8 @@ impl NewPooledTransactionHashes72 {
             transaction_sizes.push(transaction_size);
         }
 
-        // cell_mask MUST be nil when no type-3 tx is announced (EIP-8070 N1).
+        // cell_mask MUST be nil when no type-3 tx is announced (EIP-8070, devp2p
+        // changes to `NewPooledTransactionHashes`).
         // When blob txs are present, compute the AND of available_cell_mask over
         // every type-3 hash: this is the set of columns available for ALL of them,
         // so receivers know we can serve every requested column for the whole batch.

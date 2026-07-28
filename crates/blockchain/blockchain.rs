@@ -338,8 +338,9 @@ pub struct BlockchainOptions {
     /// When false (default), the node always acts as provider (p=1.0).
     pub blob_sampling_enabled: bool,
     /// EIP-8070: when true, always act as provider (p=1.0) regardless of role
-    /// randomization. Block builders SHOULD enable this (EIP-8070 N8).
-    /// Enabled via `--blob-eager-provider`. Only meaningful when
+    /// randomization, as block builders SHOULD (EIP-8070, "Execution clients ::
+    /// Local block builders"). Enabled via `--blob-eager-provider`; a node that
+    /// builds payloads latches it at runtime regardless. Only meaningful when
     /// `blob_sampling_enabled` is also true.
     pub blob_eager_provider: bool,
     /// Optional operator override for the maximum reorg depth. `None` ; cap is purely
