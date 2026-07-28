@@ -224,7 +224,7 @@ pub struct Blockchain {
     /// Set to true after initial sync completes, never reset to false.
     /// Does not reflect whether an ongoing sync is in progress.
     is_synced: AtomicBool,
-    /// Set while a deep-reorg apply pass is in flight (issue #6685). Concurrent
+    /// Set while a deep-reorg apply pass is in flight. Concurrent
     /// FCUs from the engine API short-circuit to SYNCING while this is set,
     /// and journal pruning in `forkchoice_update_inner` defers until the apply
     /// pass clears it. Managed via [`enter_reorg`](Self::enter_reorg) which

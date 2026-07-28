@@ -274,7 +274,7 @@ impl PayloadStatus {
     }
 
     /// Creates a PayloadStatus with `ACCEPTED` status. Used by the deep-reorg
-    /// path (issue #6685) when a payload's parent state is not currently
+    /// path when a payload's parent state is not currently
     /// materialized: the block is stored but execution is deferred until a
     /// later forkchoiceUpdated drives the deep-reorg apply.
     pub fn accepted() -> Self {

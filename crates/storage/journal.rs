@@ -57,7 +57,7 @@ use ethrex_common::H256;
 /// other version with [`JournalDecodeError::VersionMismatch`]: a v(N) binary
 /// will refuse to interpret v(N+1) entries (forward safety) and will also
 /// refuse to read v(N-1) entries written by a previous binary (no implicit
-/// fallback). The plan for the rollback consumer (PR 2/3/4) is to drain
+/// fallback). The plan for the rollback consumer (the deep-reorg overlay) is to drain
 /// the journal at a finality boundary on upgrade, so the v(N) journal
 /// starts empty after the bump; a future bump that needs to keep history
 /// across the upgrade should introduce per-version `decode_vN` arms here

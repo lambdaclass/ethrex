@@ -351,7 +351,7 @@ async fn unfinalized_reorg_deeper_than_32_is_allowed() {
 }
 
 // ---------------------------------------------------------------------------
-// Finality-bounded reorg cap tests (issue #6685, Phase 2).
+// Reorg cap tests (physical ceiling = retention + journal reach).
 // ---------------------------------------------------------------------------
 
 /// Stores a fake (empty, EVM-less) block header whose state_root is the empty
@@ -412,8 +412,8 @@ async fn reorg_with_finalized_set_within_reach_is_allowed() {
     assert!(is_canonical(&store, 10, head_b_hash).await.unwrap());
 }
 
-/// Regression (PR #6724 CI, Hive Paris engine re-org tests): with no finalized block
-/// and an empty journal (case 3 of `compute_reorg_ceiling`), a shallow reorg the node
+/// Regression (Hive Paris engine re-org tests): with no finalized block
+/// and an empty journal (journal reach is zero, so the retention floor rules), a shallow reorg the node
 /// can serve straight from its in-memory layer cache must be allowed. The former
 /// `unwrap_or(0)` ceiling rejected every reorg on short, unfinalized chains with
 /// `TooDeepReorg { limit: 0 }`, which is exactly what the Hive `N Block Re-Org (Paris)`
@@ -440,7 +440,7 @@ async fn unfinalized_shallow_reorg_with_empty_journal_is_allowed() {
         .unwrap();
     assert!(
         store.lowest_state_history_block_number().unwrap().is_none(),
-        "journal must be empty (in-memory threshold not reached) to exercise case 3"
+        "journal must be empty (in-memory threshold not reached) to exercise the empty-journal ceiling"
     );
 
     // Chain B diverges at block 4; link = block 3 (real, live state).
@@ -455,11 +455,11 @@ async fn unfinalized_shallow_reorg_with_empty_journal_is_allowed() {
     }
     apply_fork_choice(&store, head_b, H256::zero(), H256::zero(), None)
         .await
-        .expect("depth-5 unfinalized reorg with empty journal must be allowed (case-3 physical ceiling), not TooDeepReorg");
+        .expect("depth-5 unfinalized reorg with empty journal must be allowed (retention-floor ceiling), not TooDeepReorg");
     assert!(is_canonical(&store, 8, head_b).await.unwrap());
 }
 
-/// Task 2.7b: A reorg of depth 129 succeeds under the physical ceiling
+/// A reorg of depth 129 succeeds under the physical ceiling
 /// (in-memory retention floor 10000 dominates), proving the old hardcoded
 /// 128-block cap is gone.
 #[tokio::test]
@@ -508,8 +508,8 @@ async fn deep_reorg_beyond_legacy_128_cap_succeeds() {
         .expect("depth-129 reorg should succeed under the physical ceiling (old 128 cap lifted)");
 }
 
-/// Task 2.8: When no finalized block is known and the journal is empty (case 3 of
-/// `compute_reorg_ceiling`), the ceiling is the operator-configured `max_reorg_depth`
+/// When no finalized block is known and the journal is empty (journal reach is zero),
+/// the ceiling is the operator-configured `max_reorg_depth`
 /// (or 0 if unset). This test uses the operator override to simulate the pre-merge /
 /// fresh-node scenario where the ceiling must be set explicitly.
 ///
@@ -526,7 +526,7 @@ async fn reorg_depth_bounded_by_journal_extent_pre_merge() {
 
     // Build 10 real blocks on chain A (latest = 10). No finalized block (zero hash).
     // Journal is empty (InMemory threshold = 10 000 >> 10 blocks).
-    // With max_reorg_depth = Some(7), ceiling = 7 (case 3: no journal, no finalized).
+    // With max_reorg_depth = Some(7), ceiling = 7 (empty journal: journal reach is zero).
     let blockchain = Blockchain::default_with_store(store.clone());
     let mut parent = genesis_header.clone();
     let mut chain_a: Vec<(u64, H256)> = Vec::new();
@@ -590,7 +590,7 @@ async fn reorg_depth_bounded_by_journal_extent_pre_merge() {
     );
 }
 
-/// Task 3.9: Verifies that `deep_reorg_attempts_total` increments when
+/// Verifies that `deep_reorg_attempts_total` increments when
 /// `reorg_apply_deep` is entered. The InMemory store has an empty journal
 /// (threshold = 10_000 >> blocks in test), so the deep path exits early with
 /// `StateNotReachable` — but the attempt counter fires unconditionally at the
@@ -638,8 +638,8 @@ async fn metrics_emitted_during_deep_reorg() {
 
     let before = METRICS_REORG.deep_reorg_attempts_total.get();
 
-    // max_reorg_depth = Some(100) so the ceiling check (case 3: no finalized,
-    // no journal) uses 100 instead of 0 and passes the depth-1 reorg.
+    // max_reorg_depth = Some(100) so the ceiling check (no finalized,
+    // no journal — journal reach is zero) uses 100 instead of 0 and passes the depth-1 reorg.
     let blockchain = Blockchain::new(
         store.clone(),
         BlockchainOptions {
@@ -719,7 +719,7 @@ async fn store_block_l2_style(store: &Store, parent: &BlockHeader) -> H256 {
     block_hash
 }
 
-/// Regression for PR #6724 review (ElFantasma, blocking): the L2 sequencer
+/// Regression for the reorg-cap-lift review (ElFantasma, blocking): the L2 sequencer
 /// canonicalizes every freshly produced block with
 /// `apply_fork_choice(hash, hash, hash, None)` after `store_block` (which does
 /// not touch `CANONICAL_BLOCK_HASHES`). That is a depth-1 canonical extend; the

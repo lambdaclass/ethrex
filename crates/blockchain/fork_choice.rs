@@ -330,12 +330,12 @@ async fn find_link_with_canonical_chain(
 }
 
 // ===========================================================================
-// Deep-reorg apply path (issue #6685, PR 3 orchestration).
+// Deep-reorg apply path.
 // ===========================================================================
 
 /// Entry point for engine-API fork-choice updates; handles both shallow and deep reorgs.
 ///
-/// ## Deep-reorg apply flow (issue #6685)
+/// ## Deep-reorg apply flow
 ///
 /// 1. **Operator / CL submits FCU.** `apply_fork_choice_with_deep_reorg` is the
 ///    single entry point. It first attempts a normal (shallow) `apply_fork_choice`.
@@ -357,7 +357,7 @@ async fn find_link_with_canonical_chain(
 ///    disk (unchanged old-chain state).
 /// 6. **First commit folds the overlay atomically.**
 ///    The first new-chain block that triggers a layer commit (via the reconciliation
-///    path added in PR #6689) writes the overlay entries plus the new layer together
+///    path in `commit_to_disk`) writes the overlay entries plus the new layer together
 ///    in a single RocksDB write batch, then clears the overlay.
 /// 7. **`AbortReorgGuard` resets cache on any failure.**
 ///    An `AbortReorgGuard` is armed immediately after overlay install. On any error
@@ -371,8 +371,6 @@ async fn find_link_with_canonical_chain(
 /// The reorg depth ceiling is physical (layer-cache retention plus journal reach); see
 /// [`compute_reorg_ceiling`]. The operator can further restrict depth via
 /// `--max-reorg-depth` (`BlockchainOptions::max_reorg_depth`).
-///
-/// Tracking issue: #6685. Merged PRs: #6686, #6687, #6689, and this PR.
 pub async fn apply_fork_choice_with_deep_reorg(
     blockchain: &Blockchain,
     head_hash: H256,
@@ -409,7 +407,7 @@ pub async fn apply_fork_choice_with_deep_reorg(
 /// 4. Install the overlay; layer cache is reset and reads cascade through it.
 /// 5. Execute the side-chain blocks `[pivot+1 .. head]` (inclusive of head)
 ///    in chain order via `Blockchain::add_block`. The first such block's
-///    commit triggers the Section 9 reconciliation that folds overlay +
+///    commit triggers the reconciliation that folds overlay +
 ///    layer_T into a single atomic disk write.
 /// 6. Update `CANONICAL_BLOCK_HASHES` via `forkchoice_update`.
 #[tracing::instrument(level = "info", skip_all, fields(namespace = "deep_reorg"))]
@@ -442,8 +440,9 @@ async fn reorg_apply_deep(
     // overlay would serve stale flat-KV values. Until generation completes we return SYNCING
     // and the CL retries once it finishes.
     // NOTE: this only closes the common case (reorg *during* generation). Entries written
-    // during generation remain permanently incomplete, so a later reorg that unwinds into
-    // them (before they finalize and are pruned) is still exposed. Full fix tracked in #7001.
+    // during generation remain permanently incomplete, but reads while an overlay is
+    // installed fall back to the (always journaled) trie nodes, so a later reorg that
+    // unwinds into them is still served correct state.
     if !store.flatkeyvalue_fully_generated()? {
         info!(%head_hash, "deferring deep-reorg apply: flat-KV generation still in progress");
         return Err(InvalidForkChoice::Syncing);
@@ -572,7 +571,7 @@ async fn reorg_apply_deep(
             }
         };
         let parent_hash = block.header.parent_hash;
-        // The first add_block triggers the Section 9 reconciliation that folds the
+        // The first add_block triggers the reconciliation that folds the
         // overlay into the first new-chain disk commit. Time just the add_block
         // window so the histogram isolates the reconcile path (overlay-fold +
         // commit) rather than the bulk side-chain replay.

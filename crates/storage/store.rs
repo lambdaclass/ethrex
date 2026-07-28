@@ -2775,7 +2775,7 @@ impl Store {
         let read_view = self.backend.begin_read()?;
         let cache = self.gated_snapshot(state_root)?;
         let last_written = self.last_written()?;
-        // While a deep-reorg overlay serves this root (#7001), flat-KV reads must
+        // While a deep-reorg overlay serves this root, flat-KV reads must
         // go through the trie: journal entries written while the FKV generator was
         // running lack pre-images for keys past the generator frontier, so disk
         // flat-KV may hold the generator's stale values. `TrieWrapper` already
@@ -2833,7 +2833,7 @@ impl Store {
         // When FKV is active the real storage root is in the flatkeyvalue store,
         // not in the account's RLP-encoded storage_root field. Use EMPTY_TRIE_HASH
         // so open_storage_trie_shared falls through to the FKV path. While a
-        // deep-reorg overlay serves this root (#7001), keep the real root instead:
+        // deep-reorg overlay serves this root, keep the real root instead:
         // disk flat-KV may hold stale generator values, so reads must go through
         // the trie (see `TrieWrapper::flatkeyvalue_computed`).
         let storage_root =
@@ -3092,7 +3092,7 @@ impl Store {
         // account's storage sweep (the account leaf is already in FKV at that
         // point; see `flatkeyvalue_generator`).
         //
-        // While a deep-reorg overlay serves this root (#7001), skip the FKV fast
+        // While a deep-reorg overlay serves this root, skip the FKV fast
         // path entirely: this function never consults the overlay, and disk
         // flat-KV may hold values the generator computed against the chain being
         // reorged away (journal entries written during generation lack
@@ -3536,7 +3536,7 @@ impl Store {
     }
 
     // ===========================================================================
-    // Deep-reorg primitives (issue #6685, PR 3 storage side).
+    // Deep-reorg primitives (storage side).
     // ===========================================================================
 
     /// Returns `true` if the in-memory layer cache currently has a layer with
@@ -3709,7 +3709,7 @@ impl Store {
     }
 
     /// Removes any installed overlay from the layer cache. Called by the
-    /// reconciliation path (Section 9) after the first new-chain commit folds
+    /// reconciliation path after the first new-chain commit folds
     /// the overlay into disk. Idempotent.
     pub fn clear_reorg_overlay(&self) -> Result<(), StoreError> {
         let mut guard = self.trie_cache.write().map_err(|_| StoreError::LockError)?;
@@ -3851,7 +3851,7 @@ impl Store {
     /// which is expanded to `[0xff; 64]`/`[0xff; 131]` and would need length-aware handling.
     ///
     /// Used to gate journal-backed deep reorgs: entries journaled while generation is still
-    /// in progress omit past-frontier flat-KV pre-images (see issue #7001).
+    /// in progress omit past-frontier flat-KV pre-images.
     pub fn flatkeyvalue_fully_generated(&self) -> Result<bool, StoreError> {
         let tx = self.backend.begin_read()?;
         let marker = tx.get(MISC_VALUES, "last_written".as_bytes())?;
@@ -4369,12 +4369,13 @@ fn commit_to_disk(
     //
     // NOTE: `StorageReadView` does not currently promise true snapshot isolation
     // (see the trait docs in `api/mod.rs`). What makes the pre-image read safe here
-    // is the single-writer invariant: `commit_to_disk` is only ever called from
-    // the single persist worker thread, and `write_tx` is a buffered batch that does
-    // not become visible until `write_tx.commit()` at the end of the function. So
-    // every `.get()` below sees on-disk state as of the begin_read call. PR 2's
-    // overlay work will need to revisit this if other write paths to trie CFs are
-    // introduced.
+    // is that `commit_to_disk` only ever runs on the single persist worker thread,
+    // `write_tx` is a buffered batch that does not become visible until
+    // `write_tx.commit()` at the end of the function, and the other writers to
+    // these CFs touch disjoint key space: the flat-KV generator only writes keys
+    // strictly past the committed `last_written` frontier, and snap-sync healing
+    // completes before block execution commits layers. So every `.get()` below
+    // sees on-disk state as of the begin_read call.
     let read_view = backend.begin_read()?;
     let last_written = read_view
         .get(MISC_VALUES, "last_written".as_bytes())?
@@ -4386,7 +4387,7 @@ fn commit_to_disk(
     // the account address (32 bytes) + storage path (up to 32 bytes).
 
     // Snapshot the overlay (if any) BEFORE commit so reconciliation can fold its entries
-    // into this write batch. Issue #6685 Section 9: after a deep reorg, the first
+    // into this write batch. After a deep reorg, the first
     // new-chain commit advances disk from the OLD chain's edge `D` directly to the new
     // chain's tip `T` in a single atomic write; the overlay supplies the bridge for keys
     // layer_T does not touch. Only meaningful when `!is_batch` (full sync does not journal).
@@ -4397,7 +4398,7 @@ fn commit_to_disk(
     };
 
     // While an overlay is installed, commit only the bottom layer per pass. The
-    // Section 9 reconciliation below is defined for a single layer at the pivot
+    // The reconciliation below is defined for a single layer at the pivot
     // tip `T`: bridge entries are folded into that layer's writes, [T, D] is
     // delete_ranged, and T's journal entry records pre-images against the
     // old-chain disk state. A multi-layer sweep would journal upper layers'
@@ -4439,7 +4440,7 @@ fn commit_to_disk(
         committed_layers.len()
     );
 
-    // Section 9 reconciliation: overlay entries the new chain has NOT rewritten must be
+    // Reconciliation: overlay entries the new chain has NOT rewritten must be
     // bridged onto disk so disk fully reflects the pivot->T transition. Keys any committed
     // layer touches are skipped (the layer wins, its value is the post-T state). Overlay-only
     // entries with `None` become an empty-value write -> deleted on disk, matching the
@@ -4471,7 +4472,7 @@ fn commit_to_disk(
     //
     // PERF: the first touch of each key does one synchronous `read_view.get(table, &key)`.
     // For large state diffs this is O(N) extra reads on the per-block critical path.
-    // PR 4 can batch these via `multi_get_cf` if profiling shows it's significant.
+    // A follow-up could batch these via `multi_get_cf` if profiling shows it's significant.
     let mut overlay: HashMap<Vec<u8>, Option<Vec<u8>>> = HashMap::new();
 
     let mut result = Ok(());
@@ -4569,7 +4570,7 @@ fn commit_to_disk(
             }
         }
 
-        // Section 9 reconciliation: BEFORE writing this block's journal entry, wipe the
+        // Reconciliation: BEFORE writing this block's journal entry, wipe the
         // obsolete OLD-chain entries in `[T, D]` so the new T entry (below) isn't clobbered
         // by the range delete. Fires only for the single reconciliation layer at height T.
         // T = `overlay.to_block()`, D = `overlay.from_block()`.
@@ -4633,7 +4634,7 @@ fn commit_to_disk(
     let _ = fkv_ctl.send(FKVGeneratorControlMessage::Continue);
     result?;
 
-    // Section 9 reconciliation succeeded: drop the overlay from the cache. Subsequent
+    // Reconciliation succeeded: drop the overlay from the cache. Subsequent
     // commits revert to the normal one-block path.
     if overlay_for_reconciliation.is_some() {
         trie_mut.clear_overlay();
@@ -5566,7 +5567,7 @@ mod state_history_tests {
     }
 
     // -----------------------------------------------------------------------
-    // Deep-reorg primitive tests (issue #6685, PR 3).
+    // Deep-reorg primitive tests.
     // -----------------------------------------------------------------------
 
     /// `highest_state_history_block_number` SHALL return the max key present in
@@ -5810,7 +5811,7 @@ mod state_history_tests {
         assert!(store.trie_cache.read().unwrap().overlay().is_none());
     }
 
-    /// Regression test for #7001: journal entries written while the FKV generator
+    /// Regression test: journal entries written while the FKV generator
     /// was running lack flat-KV pre-images for keys past the generator frontier,
     /// and the generator's own flat-KV writes are never journaled. While an
     /// overlay serves the read's state root, every flat-KV fast path must be
@@ -5874,7 +5875,7 @@ mod state_history_tests {
 
         // Journal entries for blocks 10 and 11 above the pivot (block 9), as
         // written DURING generation: flat diffs are empty because the keys were
-        // past the frontier at commit time (the #7001 hole). The pivot's state
+        // past the frontier at commit time (the incomplete-journal hole). The pivot's state
         // root is the empty trie.
         let pivot_root = EMPTY_TRIE_HASH;
         {
@@ -5906,7 +5907,7 @@ mod state_history_tests {
         assert_eq!(
             accounts,
             vec![None],
-            "batch account read must not serve the generator's stale flat-KV value (#7001)"
+            "batch account read must not serve the generator's stale flat-KV value"
         );
 
         let slot_value = store
@@ -5914,14 +5915,14 @@ mod state_history_tests {
             .unwrap();
         assert_eq!(
             slot_value, None,
-            "storage read must not serve the generator's stale flat-KV value (#7001)"
+            "storage read must not serve the generator's stale flat-KV value"
         );
 
         let state_trie = store.open_state_trie(pivot_root).unwrap();
         assert_eq!(
             state_trie.get(account_hash.as_bytes()).unwrap(),
             None,
-            "trie read must not serve the generator's stale flat-KV value (#7001)"
+            "trie read must not serve the generator's stale flat-KV value"
         );
 
         // Outside the overlay window the fast paths are untouched: a root the
@@ -6052,11 +6053,7 @@ mod state_history_tests {
             .unwrap()
             .expect("journal entry for block 10");
         let entry = JournalEntry::decode(&entry_bytes).unwrap();
-        let diff_keys: Vec<&Vec<u8>> = entry
-            .account_trie_diff
-            .iter()
-            .map(|(k, _)| k)
-            .collect();
+        let diff_keys: Vec<&Vec<u8>> = entry.account_trie_diff.iter().map(|(k, _)| k).collect();
         assert!(
             diff_keys.contains(&&vec![0x00, 10]) && diff_keys.contains(&&vec![0x00, 11]),
             "bridge keys from the overlay must be folded into T's journal entry, got {diff_keys:?}"
@@ -6296,7 +6293,7 @@ mod flatkeyvalue_completeness_tests {
     use super::*;
 
     /// The `last_written` marker signals a finished FKV pass ONLY as the exact 1-byte
-    /// `[0xff]` sentinel. This gates journal-backed deep reorgs (issue #7001), so the
+    /// `[0xff]` sentinel. This gates journal-backed deep reorgs, so the
     /// boundary must be exact: an unset marker, the initial all-zero frontier, and any
     /// mid-generation nibble path must all read as "not complete".
     #[test]

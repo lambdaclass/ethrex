@@ -1282,7 +1282,7 @@ async fn try_execute_payload(
     // on disk). Stash the block in HEADERS+BODIES and return ACCEPTED; a later
     // forkchoiceUpdated pointing at this block (or a descendant) will drive
     // the deep-reorg apply path. Matches geth's `eth/catalyst/api.go` behavior
-    // with the `HasBlockAndState` predicate. Issue #6685.
+    // with the `HasBlockAndState` predicate.
     //
     // If the parent is itself unknown, fall through to `add_block` which
     // returns `ChainError::ParentNotFound` and stashes the block; handled

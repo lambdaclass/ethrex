@@ -75,13 +75,6 @@
 //! On the first commit the reconciliation step folds the overlay entries and
 //! the new layer together into a single atomic RocksDB write batch, then
 //! clears the overlay.
-//!
-//! ## Merged PRs
-//!
-//! - PR #6686 — initial journal + overlay foundation
-//! - PR #6687 — overlay construction from journal
-//! - PR #6689 — deep-reorg orchestration (overlay install, side-chain replay)
-//! - PR #6685 (tracking) — lift the 128-block reorg cap; this PR
 
 use ethrex_common::{H256, types::BlockNumber};
 use fastbloom::AtomicBloomFilter;
@@ -463,7 +456,7 @@ impl TrieLayerCache {
     /// `root` unchanged if it has no layer.
     ///
     /// Used to force single-layer commits while a deep-reorg overlay is installed: the
-    /// Section 9 reconciliation in `commit_to_disk` is defined for exactly one layer at
+    /// The reconciliation in `commit_to_disk` is defined for exactly one layer at
     /// the pivot tip `T`, and a multi-layer sweep would journal upper layers' pre-images
     /// against the old-chain disk state instead of the new-chain/bridge state.
     pub(crate) fn bottom_layer_root(&self, root: H256) -> H256 {
@@ -595,8 +588,8 @@ impl TrieDB for TrieWrapper {
     fn flatkeyvalue_computed(&self, key: Nibbles) -> bool {
         // While a deep-reorg overlay serves this root, flat-KV leaf reads must not
         // trust disk: journal entries written while the FKV generator was running
-        // are permanently missing pre-images for keys past the generator frontier
-        // (#7001), and disk flat-KV may hold the generator's value for the chain
+        // are permanently missing pre-images for keys past the generator frontier,
+        // and disk flat-KV may hold the generator's value for the chain
         // being reorged away. Force the trie-node read path instead — trie nodes
         // are always journaled, so the overlay reconstructs them completely.
         if self.inner.overlay_serves(self.state_root) {
@@ -711,7 +704,7 @@ pub enum OverlayError {
 /// execution cascade as: new layer cache -> overlay -> on-disk state. On-disk state
 /// is NOT mutated while the overlay is alive; disk stays at `D` until the first
 /// new-chain commit folds the overlay and the new layer together into a single
-/// atomic write (PR 3's reconciliation step).
+/// atomic write (the reconciliation step in `commit_to_disk`).
 pub struct Overlay {
     account_trie: FxHashMap<Vec<u8>, Option<Vec<u8>>>,
     storage_trie: FxHashMap<Vec<u8>, Option<Vec<u8>>>,
@@ -805,9 +798,11 @@ impl Overlay {
         // SAFETY: `StorageReadView` does not guarantee snapshot isolation on RocksDB.
         // The only writer to STATE_HISTORY is `forkchoice_update_inner` (finality
         // pruning); a concurrent FCU `delete_range` between two `.get()` calls below
-        // could cause a spurious `MissingEntry`. PR 3 will install a reorg-in-progress
-        // flag; while it is set, `forkchoice_update_inner` will not enter, preventing
-        // pruning during overlay construction.
+        // could cause a spurious `MissingEntry`. This is prevented by the
+        // reorg-in-progress guard: `Blockchain::enter_reorg` holds
+        // `Store::set_journal_pruning_paused(true)` for the whole apply pass, so
+        // pruning is deferred while the overlay is constructed (it catches up on
+        // the next finality advance after the pass).
         let read = backend.begin_read()?;
         let mut n = from_block;
         loop {
@@ -931,8 +926,8 @@ impl Overlay {
     }
 
     /// Iterates every overlay entry across the four CFs as `(cf, key, value)`. Used
-    /// by PR 3's reconciliation step to fold overlay-only entries into the first
-    /// new-chain commit.
+    /// by the reconciliation step in `commit_to_disk` to fold overlay-only entries
+    /// into the first new-chain commit.
     pub fn iter_all_entries(
         &self,
     ) -> impl Iterator<Item = (OverlayCf, &Vec<u8>, &Option<Vec<u8>>)> {
@@ -1146,7 +1141,7 @@ mod overlay_tests {
     /// The overlay must only be consulted by readers at a "consuming" root ; the pivot
     /// (`serves_root`) or a new-chain layer root present in the cache. Unrelated roots
     /// (old-chain edge `D`, historical/RPC reads) must fall through to disk. Regression
-    /// for the #6687 "Overlay Applies Across Roots" P1.
+    /// for the review finding "Overlay Applies Across Roots".
     #[test]
     fn overlay_serves_only_consuming_roots() {
         let pivot = h(0xaa);
@@ -1197,7 +1192,7 @@ mod overlay_tests {
         assert!(!cache.overlay_serves(new_chain));
     }
 
-    /// #7001: while an overlay serves the read's state root, `flatkeyvalue_computed`
+    /// While an overlay serves the read's state root, `flatkeyvalue_computed`
     /// must return false so `Trie::get` walks the (always journaled) trie nodes
     /// instead of trusting disk flat-KV, which may hold the generator's stale,
     /// unjournaled values. Roots the overlay does not serve must be unaffected.
@@ -1231,7 +1226,7 @@ mod overlay_tests {
         let served = TrieWrapper::new(pivot, cache.clone(), Box::new(AlwaysComputedDb), None);
         assert!(
             !served.flatkeyvalue_computed(key.clone()),
-            "served root must not trust disk flat-KV (#7001)"
+            "served root must not trust disk flat-KV"
         );
 
         let unserved = TrieWrapper::new(unrelated, cache.clone(), Box::new(AlwaysComputedDb), None);
@@ -1245,7 +1240,7 @@ mod overlay_tests {
             TrieWrapper::new(pivot, cache, Box::new(AlwaysComputedDb), Some(h(0x01)));
         assert!(
             !served_storage.flatkeyvalue_computed(key),
-            "served storage root must not trust disk flat-KV (#7001)"
+            "served storage root must not trust disk flat-KV"
         );
     }
 
@@ -1382,7 +1377,7 @@ mod overlay_tests {
 
     #[test]
     fn iter_all_entries_visits_each_cf() {
-        // Sanity check for PR 3's reconciliation path: every CF an entry was inserted
+        // Sanity check for the reconciliation path: every CF an entry was inserted
         // into must show up in iter_all_entries, with the right CF tag.
         let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::open().unwrap());
         let entry = JournalEntry {
