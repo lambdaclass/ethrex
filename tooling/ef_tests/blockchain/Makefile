@@ -16,7 +16,7 @@ AMSTERDAM_FIXTURES_FILE := ../.fixtures_url_amsterdam
 AMSTERDAM_ARTIFACT := amsterdam-tests.tar.gz
 AMSTERDAM_URL := $(shell cat $(AMSTERDAM_FIXTURES_FILE))
 
-# zkevm@v0.6.1 is filled against glamsterdam-devnet v7.2.0 (the same base as the
+# zkevm@v0.6.2 is filled against glamsterdam-devnet v7.2.0 (the same base as the
 # Amsterdam bundle) but additionally carries the EIP-8025 stateless witness
 # fields (executionWitness / statelessInputBytes / statelessOutputBytes). Both
 # bundles extract a `for_amsterdam/` subtree, so we keep the zkevm bundle in a

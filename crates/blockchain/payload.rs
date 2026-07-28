@@ -467,7 +467,31 @@ impl Blockchain {
         // an in-progress rebuild via `run_until_cancelled`, and (b) the slot-
         // timeout `select!` arm winning over a simultaneous `tx_added`
         // notification near the slot boundary.
-        if self.mempool.tx_seq() > last_built_seq {
+        //
+        // When the loop was cancelled, `engine_getPayload` is blocked on this
+        // task and must answer within the Engine API deadline (1s), while a
+        // full rebuild of a large block can exceed that deadline on its own —
+        // under sustained mempool inflow `tx_seq() > last_built_seq` is true
+        // on essentially every call, so an unconditional rebuild here puts one
+        // whole extra block build on the proposal critical path. In that case
+        // only rebuild when the payload we hold is empty: returning a slightly
+        // stale block is fine (geth/reth return best-so-far too), but
+        // proposing an empty block while the mempool has transactions is not
+        // (race (a) with no completed rebuild yet).
+        //
+        // TODO(#5011): two paths below can still put a full build on the
+        // critical path, so this narrows the exposure rather than removing it.
+        // First, the empty-payload case still rebuilds over the whole mempool;
+        // that has to stay correct (it is the race this guard exists for), but
+        // a large mempool of txs that never make it into a block — low-fee or
+        // nonce-gapped — can make even that approach the deadline. Second, this
+        // rebuild is not cancellable: unlike the in-loop build it runs as a
+        // plain `spawn_blocking(..).await`, so a `getPayload` arriving while a
+        // slot-timeout rebuild is in flight waits for it to finish. Bounding
+        // either needs a time-boxed or partial build, not a guard here.
+        if self.mempool.tx_seq() > last_built_seq
+            && (!cancel_token.is_cancelled() || res.payload.body.transactions.is_empty())
+        {
             let blockchain = self.clone();
             match tokio::task::spawn_blocking(move || blockchain.build_payload(payload)).await {
                 Ok(Ok(final_res)) => res = final_res,
@@ -696,7 +720,7 @@ impl Blockchain {
             // if inclusion of the transaction puts the block size over the size limit
             // we don't add any more txs to the payload.
             let potential_rlp_block_size =
-                context.payload_size + head_tx.encode_canonical_to_vec().len() as u64;
+                context.payload_size + head_tx.encode_canonical_len() as u64;
             if context
                 .chain_config()
                 .is_osaka_activated(context.payload.header.timestamp)
@@ -754,7 +778,27 @@ impl Blockchain {
                     // whole tx) EXCEPT nonce mismatches, which are transient
                     // queue-ordering artifacts — keep those pooled for a later
                     // block, mirroring how regular txs are treated.
-                    if is_frame && !is_nonce_mismatch(&e) {
+                    //
+                    // Regular txs are likewise kept pooled on failure, since the
+                    // usual cause is a transient queue-ordering/nonce/balance
+                    // artifact that a later block resolves. But a
+                    // DETERMINISTICALLY-invalid regular tx (intrinsic gas below
+                    // the minimum or the calldata floor, or initcode over the
+                    // size cap) can never become valid at its nonce; keeping it
+                    // pooled lets it re-occupy the sender's queue head on every
+                    // build and starve that sender's other txs indefinitely.
+                    // Evict those too.
+                    let evict = if is_frame {
+                        !is_nonce_mismatch(&e)
+                    } else {
+                        is_deterministic_invalid(&e)
+                    };
+                    if evict {
+                        // Neutral wording on purpose: the two branches evict for
+                        // different reasons (a frame tx for any non-nonce-mismatch
+                        // failure, a regular tx only for a deterministic one), so
+                        // naming either reason here would mislabel the other.
+                        debug!("Evicting transaction {tx_hash} from the pool: {e}");
                         self.remove_transaction_from_pool(&tx_hash)?;
                     }
                     txs.pop()
@@ -920,6 +964,29 @@ impl Blockchain {
                 .into());
             }
         };
+        // A blob sidecar is validated against the fork only at mempool insertion; the fork being
+        // built can differ (e.g. Osaka activated since). A pre-Osaka v0 sidecar (EIP-4844, one
+        // proof per blob) is invalid at Osaka — EIP-7594 requires cell proofs (v1) and there is no
+        // upgrade path — so including it would make getPayloadV5 emit a wrong-format
+        // BlobsBundleV2. That mismatch is deterministic and permanent, so drop the tx from the
+        // pool (like the frame-tx fork gates in `fill_transactions`) rather than skip-and-retry it
+        // every block, where it would also block later nonces from the same sender. Dropping it
+        // also stops other blob reads (P2P pooled-tx serving) from returning the stale sidecar;
+        // the `engine_getBlobsV2/V3` read path is tracked separately (`ethrex-getblobs-v2-legacy-proof`).
+        // The version/Osaka checks are structural (no KZG), so this needs no `c-kzg` feature.
+        // (Explicit builds carry no sidecar, so `bundle` is `None` and this is a no-op.)
+        if let Some(bundle) = &bundle
+            && bundle.version == 0
+            && context
+                .chain_config()
+                .is_osaka_activated(context.payload.header.timestamp)
+        {
+            self.remove_transaction_from_pool(&tx_hash)?;
+            return Err(EvmError::Custom(format!(
+                "dropping blob tx {tx_hash}: pre-Osaka (v0) blob sidecar is invalid post-Osaka"
+            ))
+            .into());
+        }
         if context.blobs_bundle.blobs.len() + blob_count > max_blob_number_per_block {
             // This error will only be used for debug tracing
             return Err(EvmError::Custom("max data blobs reached".to_string()).into());
@@ -1017,6 +1084,77 @@ impl Blockchain {
 /// account nonce, so the tx becomes valid once earlier nonces are included.
 fn is_nonce_mismatch(e: &ChainError) -> bool {
     e.to_string().contains("Nonce mismatch")
+}
+
+/// Whether a tx failed with an error that recurs at the same nonce for as long as
+/// the active fork's rules hold — i.e. it is intrinsically invalid, not merely
+/// mis-ordered.
+///
+/// "For as long as the fork's rules hold" is the honest bound, not "forever": a
+/// fork can relax the very limit that failed. Amsterdam raises the initcode cap
+/// (`AMSTERDAM_INIT_CODE_MAX_SIZE` vs `INIT_CODE_MAX_SIZE`), lowers the intrinsic
+/// base cost, and removes the per-tx gas cap. A tx evicted just before such a fork
+/// would have become includable just after. The window is one fork boundary and the
+/// sender can resubmit, which is a better trade than starving that sender's queue on
+/// every build until then. Covers the levm intrinsic-gas checks (gas limit
+/// below the minimum intrinsic cost or below the EIP-7623 calldata floor) and
+/// the EIP-3860/7954 initcode size cap. There is no typed variant at the
+/// `ChainError` level, so it is detected by the stable Display substrings; the
+/// `deterministic_invalid_detected_from_chain_error` test pins them through the
+/// real conversion path so a reworded error breaks the test, not eviction.
+///
+/// Such a tx must be evicted rather than kept pooled: otherwise it re-occupies
+/// its sender's queue head on every payload build and starves that sender's
+/// other transactions (a payload-inclusion stall).
+///
+/// The matched set is deliberately narrow, and smaller than the abstract class of
+/// "invalid given the tx bytes and sender" — most of that class cannot reach here,
+/// because mempool admission (`Blockchain::validate_transaction`) already rejects
+/// it. A tx whose priority fee exceeds its max fee per gas is refused there
+/// (`TxTipAboveFeeCapError`), as is `nonce == u64::MAX` (`NonceTooLow`, in both the
+/// existing-account and fresh-sender branches), the initcode cap, and — only while
+/// Osaka is active and Amsterdam is not — the per-tx gas cap. Blob-tx structural
+/// faults are caught by `BlobsBundle::validate`. So a variant being absent below
+/// usually means it never makes it into the pool, not that it was overlooked.
+///
+/// `SenderNotEOA` is excluded on purpose for a different reason: an EIP-7702
+/// delegation can be revoked, so that failure is transient, not permanent.
+///
+/// Note for anyone extending this: the substrings are load-bearing. They are
+/// matched against `Display` output because the typed variant does not survive the
+/// trip to `ChainError` — `impl From<VMError> for EvmError` collapses it into
+/// `EvmError::Transaction(String)`. Reworded LEVM errors must therefore break the
+/// pinning test rather than silently disable eviction, which is what that test is
+/// for. Before adding an arm, check that EVERY site raising that variant is
+/// deterministic: string matching cannot separate two producers of one variant, so
+/// a variant raised from both a permanent and a transient condition is
+/// unclassifiable here. Note that "every site" means both hooks — several of these
+/// variants are raised from `l2_hook` as well as `default_hook`, and the count is
+/// what matters, not the file. `TxValidationError::L1GasReservationTooLow` exists
+/// for exactly that reason: the L2 hook's transient `l1_gas` shortfall would
+/// otherwise be indistinguishable from `IntrinsicGasTooLow`.
+pub fn is_deterministic_invalid(e: &ChainError) -> bool {
+    let msg = e.to_string();
+    // Every producer of `IntrinsicGasTooLow` is deterministic given the tx's bytes
+    // and the active fork: `validate_min_gas_limit`'s `gas_limit < intrinsic` check,
+    // its EIP-8037 `regular.max(floor) > TX_MAX_GAS_LIMIT` cap, and the equivalent
+    // budget check in `VM::add_intrinsic_gas`. The L2 hook's transient `l1_gas`
+    // shortfall raises `L1GasReservationTooLow` instead, so it does not reach here.
+    msg.contains("gas limit lower than the minimum gas cost")
+        || msg.contains("gas cost floor for calldata tokens")
+        || msg.contains("Initcode size exceeded")
+        // EIP-7825 / EIP-8037 per-tx gas cap. Three producers — `default_hook` plus
+        // two in the L2 hook's fee-token path — and all three compare `gas_limit`
+        // against a fork constant, so every one of them is deterministic.
+        //
+        // Admission rejects the cap too, but only at insertion and only while
+        // `is_osaka_activated && !is_amsterdam_activated`, so this arm is
+        // load-bearing in two ways. On L1: a tx admitted before Osaka survives in
+        // the pool and then fails every build once Osaka is live. On L2: the hook
+        // applies the cap from PRAGUE onward, ahead of admission's Osaka gate, so a
+        // fee-token tx over the cap is admitted and then rejected on every build
+        // with no fork boundary involved at all.
+        || msg.contains("gas limit exceeds maximum")
 }
 
 /// Runs a plain (non blob) transaction, updates the gas count and returns the receipt
@@ -1274,6 +1412,108 @@ mod tests {
         assert!(
             !is_nonce_mismatch(&other),
             "is_nonce_mismatch must not match unrelated errors; got: {other}"
+        );
+    }
+
+    #[test]
+    fn deterministic_invalid_detected_from_chain_error() {
+        // Pin `is_deterministic_invalid`'s Display substrings through the REAL
+        // production conversion path (same rationale as the nonce-mismatch pin
+        // test above): a reworded levm error must break this test, not silently
+        // stop evicting doomed txs.
+        use ethrex_levm::errors::{TxValidationError, VMError};
+        let to_chain = |e: TxValidationError| -> ChainError {
+            EvmError::from(VMError::TxValidation(e)).into()
+        };
+
+        // Intrinsically invalid at this nonce forever -> must be evicted.
+        for (err, name) in [
+            (TxValidationError::IntrinsicGasTooLow, "IntrinsicGasTooLow"),
+            (
+                TxValidationError::IntrinsicGasBelowFloorGasCost,
+                "IntrinsicGasBelowFloorGasCost",
+            ),
+            (
+                TxValidationError::InitcodeSizeExceeded {
+                    max_size: 1,
+                    actual_size: 2,
+                },
+                "InitcodeSizeExceeded",
+            ),
+            (
+                TxValidationError::TxMaxGasLimitExceeded {
+                    tx_hash: H256::zero(),
+                    tx_gas_limit: 1,
+                },
+                "TxMaxGasLimitExceeded",
+            ),
+        ] {
+            let e = to_chain(err);
+            assert!(
+                is_deterministic_invalid(&e),
+                "is_deterministic_invalid must match {name}; got: {e}"
+            );
+        }
+
+        // Transient failures (nonce gap, balance, fees) must NOT be evicted.
+        for (err, name) in [
+            (
+                TxValidationError::NonceMismatch {
+                    expected: 5,
+                    actual: 7,
+                },
+                "NonceMismatch",
+            ),
+            (
+                TxValidationError::InsufficientAccountFunds,
+                "InsufficientAccountFunds",
+            ),
+            (
+                TxValidationError::InsufficientMaxFeePerGas,
+                "InsufficientMaxFeePerGas",
+            ),
+        ] {
+            let e = to_chain(err);
+            assert!(
+                !is_deterministic_invalid(&e),
+                "is_deterministic_invalid must NOT match transient {name}; got: {e}"
+            );
+        }
+    }
+
+    #[test]
+    fn l1_gas_reservation_too_low_is_not_deterministic() {
+        // The L2 hook's `reserve_l1_gas` rejects a tx whose gas limit cannot cover
+        // the reserved `l1_gas`, which tracks the L1 fee config and the block's gas
+        // price — so the same tx can succeed a block later. That failure MUST stay
+        // pooled, which is why it has its own variant instead of reusing
+        // `IntrinsicGasTooLow`. If the two are ever merged again, this test fails
+        // and eviction stops silently dropping recoverable L2 txs.
+        use ethrex_levm::errors::{TxValidationError, VMError};
+        let to_chain = |e: TxValidationError| -> ChainError {
+            EvmError::from(VMError::TxValidation(e)).into()
+        };
+
+        let transient = to_chain(TxValidationError::L1GasReservationTooLow);
+        assert!(
+            !is_deterministic_invalid(&transient),
+            "L1GasReservationTooLow is transient (l1_gas varies per block) and must \
+             NOT be evicted; got: {transient}"
+        );
+
+        // The distinction is only meaningful if the two stringify differently: a
+        // reworded `L1GasReservationTooLow` that drifted into containing the
+        // intrinsic-gas substring would start being evicted.
+        let permanent = to_chain(TxValidationError::IntrinsicGasTooLow);
+        assert!(
+            is_deterministic_invalid(&permanent),
+            "IntrinsicGasTooLow must still be evicted; got: {permanent}"
+        );
+        assert_ne!(
+            transient.to_string(),
+            permanent.to_string(),
+            "L1GasReservationTooLow and IntrinsicGasTooLow must not share a Display \
+             string, or the transient case becomes unclassifiable"
         );
     }
 }
