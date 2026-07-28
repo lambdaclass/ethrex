@@ -4489,9 +4489,14 @@ fn commit_to_disk(
         // The reconciliation commit is single-layer at `T`; fold the overlay bridge entries
         // into that layer's writes so they land in T's journal entry. `extra` is empty in
         // steady state (no overlay) and for any non-T layer.
-        let is_reconciliation_layer = reorg_heights
-            .map(|(t, _)| layer.block_number == t)
-            .unwrap_or(false);
+        // With the bottom-layer-only rule above, a commit made while the overlay
+        // is installed always contains exactly this one (bottom) layer, so it is
+        // the reconciliation layer by construction. Matching by block number
+        // (`layer.block_number == to_block`) would be fragile: root-preserving
+        // blocks create no layer (L2 empty blocks), so the bottom layer can sit
+        // above `to_block` and the bridge entries would be neither written nor
+        // journaled before the overlay is cleared.
+        let is_reconciliation_layer = overlay_for_reconciliation.is_some();
         let extra: &[(Vec<u8>, Vec<u8>)] = if is_reconciliation_layer {
             &extra_writes
         } else {
@@ -5938,6 +5943,186 @@ mod state_history_tests {
             Some(generator_slot_value),
             "unserved roots must keep the flat-KV fast path"
         );
+    }
+
+    /// Adversarial regression for the multi-layer reconciliation finding: with an
+    /// overlay installed, a commit targeting a root SEVERAL layers above the pivot
+    /// must commit ONLY the bottom layer (the pivot tip `T`) per pass. Before the
+    /// fix this swept every layer at once: the `debug_assert!(len == 1)` panicked in
+    /// debug builds, and in release the upper layers' journal entries recorded
+    /// pre-images against the OLD-chain disk state instead of the new-chain/bridge
+    /// state — silent corruption for a future unwind.
+    #[tokio::test]
+    async fn overlay_backed_commit_only_commits_bottom_layer_per_pass() {
+        let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::open().unwrap());
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::from_backend(
+            backend.clone(),
+            dir.path().to_path_buf(),
+            4,
+            DEFAULT_PERSIST_CHANNEL_CAPACITY,
+        )
+        .unwrap();
+
+        // Pivot at block 9's root; journal entries for blocks 10 and 11 (the old
+        // chain above the pivot). The overlay serves the pivot root.
+        let pivot_root = H256::repeat_byte(0x09);
+        {
+            let mut tx = backend.begin_write().unwrap();
+            for (n, parent_root) in [(10u64, pivot_root), (11, H256::repeat_byte(0x0a))] {
+                let entry = JournalEntry {
+                    block_hash: H256::repeat_byte(n as u8),
+                    parent_state_root: parent_root,
+                    account_trie_diff: vec![(vec![0x00, n as u8], None)],
+                    storage_trie_diff: vec![],
+                    account_flat_diff: vec![],
+                    storage_flat_diff: vec![],
+                };
+                tx.put(STATE_HISTORY, &n.to_be_bytes(), &entry.encode())
+                    .unwrap();
+            }
+            tx.commit().unwrap();
+        }
+        store.install_overlay_for_reorg(11, 10, |_| None).unwrap();
+
+        // Three new-chain layers above the pivot: blocks 10, 11, 12.
+        let roots: Vec<H256> = (10..=12u8).map(H256::repeat_byte).collect();
+        {
+            let mut guard = store.trie_cache.write().unwrap();
+            let mut updated = (**guard).clone();
+            let mut parent = pivot_root;
+            for (i, root) in roots.iter().enumerate() {
+                let n = 10 + i as u64;
+                updated.put_batch(
+                    parent,
+                    *root,
+                    n,
+                    H256::repeat_byte(n as u8),
+                    vec![(Nibbles::from_raw(&[0x01, n as u8], false), vec![n as u8])],
+                );
+                parent = *root;
+            }
+            *guard = Arc::new(updated);
+        }
+
+        // Commit targeting the TOP layer (3 deep). With the overlay installed this
+        // MUST reduce to the bottom layer only.
+        let trie = store.trie_cache.read().unwrap().clone();
+        commit_to_disk(
+            store.backend.as_ref(),
+            &store.flatkeyvalue_control_tx,
+            &store.trie_cache,
+            &trie,
+            roots[2],
+            false,
+        )
+        .expect("bottom-layer commit must succeed (no debug_assert panic)");
+
+        // Only the bottom layer (block 10) is committed and pruned; 11 and 12 stay resident.
+        assert!(
+            !store.is_state_in_layer_cache(roots[0]).unwrap(),
+            "bottom layer must be committed and pruned"
+        );
+        assert!(
+            store.is_state_in_layer_cache(roots[1]).unwrap()
+                && store.is_state_in_layer_cache(roots[2]).unwrap(),
+            "upper layers must remain resident after the bottom-layer-only commit"
+        );
+        // The overlay was consumed by the reconciliation commit.
+        assert!(
+            store.trie_cache.read().unwrap().overlay().is_none(),
+            "reconciliation must clear the overlay"
+        );
+        // Journal: an entry exists for block 10, none yet for 11/12.
+        assert!(
+            journal_entry_exists(&backend, 10),
+            "bottom layer T must be journaled"
+        );
+        assert!(!journal_entry_exists(&backend, 11));
+        assert!(!journal_entry_exists(&backend, 12));
+
+        // The reconciliation fold MUST land in the bottom layer's journal entry:
+        // the overlay's bridge keys (untouched by the layer) appear with their
+        // old-chain pre-images. This is what block-number-keyed reconciliation
+        // matching loses when the bottom layer sits above `to_block`.
+        let entry_bytes = backend
+            .begin_read()
+            .unwrap()
+            .get(STATE_HISTORY, &10u64.to_be_bytes())
+            .unwrap()
+            .expect("journal entry for block 10");
+        let entry = JournalEntry::decode(&entry_bytes).unwrap();
+        let diff_keys: Vec<&Vec<u8>> = entry
+            .account_trie_diff
+            .iter()
+            .map(|(k, _)| k)
+            .collect();
+        assert!(
+            diff_keys.contains(&&vec![0x00, 10]) && diff_keys.contains(&&vec![0x00, 11]),
+            "bridge keys from the overlay must be folded into T's journal entry, got {diff_keys:?}"
+        );
+
+        // Second pass: with the overlay gone the remaining backlog commits normally.
+        let trie = store.trie_cache.read().unwrap().clone();
+        commit_to_disk(
+            store.backend.as_ref(),
+            &store.flatkeyvalue_control_tx,
+            &store.trie_cache,
+            &trie,
+            roots[2],
+            false,
+        )
+        .unwrap();
+        assert!(!store.is_state_in_layer_cache(roots[1]).unwrap());
+        assert!(!store.is_state_in_layer_cache(roots[2]).unwrap());
+        assert!(journal_entry_exists(&backend, 11));
+        assert!(journal_entry_exists(&backend, 12));
+    }
+
+    /// Adversarial regression for the journal-pruning race: while a deep-reorg
+    /// apply pass holds the pause flag, a finality advance must NOT prune
+    /// STATE_HISTORY (a concurrent `Overlay::from_journal` reads entries with no
+    /// snapshot isolation). Pruning must catch up once the pause is released.
+    #[tokio::test]
+    async fn journal_pruning_pauses_during_reorg_and_catches_up_after() {
+        let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::open().unwrap());
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::from_backend(
+            backend.clone(),
+            dir.path().to_path_buf(),
+            1,
+            DEFAULT_PERSIST_CHANNEL_CAPACITY,
+        )
+        .unwrap();
+
+        seed_journal_entries(&backend, &(1..=5).collect::<Vec<_>>());
+
+        // Paused: finality advance to 3 must not prune anything.
+        store.set_journal_pruning_paused(true);
+        store
+            .forkchoice_update_inner(vec![], 100, H256::zero(), None, Some(3))
+            .await
+            .unwrap();
+        for n in 1..=5 {
+            assert!(
+                journal_entry_exists(&backend, n),
+                "entry {n} must survive pruning while the reorg pause is held"
+            );
+        }
+
+        // Released: the next advance prunes cumulatively from zero.
+        store.set_journal_pruning_paused(false);
+        store
+            .forkchoice_update_inner(vec![], 100, H256::zero(), None, Some(4))
+            .await
+            .unwrap();
+        for n in 1..=4 {
+            assert!(
+                !journal_entry_exists(&backend, n),
+                "entry {n} must be pruned once the pause is released"
+            );
+        }
+        assert!(journal_entry_exists(&backend, 5));
     }
 }
 
