@@ -2757,6 +2757,139 @@ mod frame_sig_validation_tests {
         }
     }
 
+    /// Sign `msg_hash` with a fixed devnet key and return
+    /// `(recovery_id, r || s, signer)`. `sign_prehash_recoverable` normalizes
+    /// `s` to low-s, so every vector produced here is canonical per EIP-8141.
+    #[expect(
+        clippy::indexing_slicing,
+        reason = "fixed-size buffers with well-known bounds in test code"
+    )]
+    fn secp256k1_vector(msg_hash: H256) -> (u8, [u8; 64], Address) {
+        use k256::ecdsa::SigningKey;
+
+        let pk_hex = "4c0883a69102937d6231471b5dbb6204fe5129617082792ae468d01a3f362318";
+        let pk_bytes: Vec<u8> = (0..pk_hex.len())
+            .step_by(2)
+            .map(|i| u8::from_str_radix(&pk_hex[i..i + 2], 16).unwrap())
+            .collect();
+        let private_key: [u8; 32] = pk_bytes.try_into().unwrap();
+        let signing_key = SigningKey::from_bytes(&private_key.into()).unwrap();
+
+        let (raw_sig, recovery_id) = signing_key
+            .sign_prehash_recoverable(msg_hash.as_bytes())
+            .unwrap();
+
+        // Signer address = keccak(uncompressed pubkey without the 0x04 tag)[12..].
+        let uncompressed = signing_key.verifying_key().to_encoded_point(false);
+        let pub_hash = ethrex_crypto::keccak::keccak_hash(&uncompressed.as_bytes()[1..]);
+        let signer = Address::from_slice(&pub_hash[12..]);
+
+        let mut rs = [0u8; 64];
+        rs.copy_from_slice(&raw_sig.to_bytes());
+        (recovery_id.to_byte(), rs, signer)
+    }
+
+    /// The `[v | r | s]` frame signature for [`secp256k1_vector`] over
+    /// `msg_hash`, with `signature[0]` forced to `v_byte` so the encoding of
+    /// that single byte is the only variable under test.
+    #[expect(
+        clippy::indexing_slicing,
+        reason = "fixed-size buffers with well-known bounds in test code"
+    )]
+    fn secp_frame_sig(msg_hash: H256, v_byte: u8, signer: Option<Address>) -> FrameSignature {
+        let (_, rs, _) = secp256k1_vector(msg_hash);
+        let mut bytes = vec![0u8; 65];
+        bytes[0] = v_byte;
+        bytes[1..65].copy_from_slice(&rs);
+        FrameSignature {
+            scheme: FRAME_SIG_SCHEME_SECP256K1,
+            signer,
+            msg: Bytes::new(), // empty -> the signature is over `sig_hash`
+            signature: Bytes::from(bytes),
+        }
+    }
+
+    /// Deterministically pick a prehash whose RFC-6979 signature has the
+    /// requested recovery id, so both `v = 0` and `v = 1` are exercised with
+    /// real signatures rather than one arbitrary parity.
+    fn msg_hash_with_recovery_id(want: u8) -> H256 {
+        (1u64..64)
+            .map(H256::from_low_u64_be)
+            .find(|h| secp256k1_vector(*h).0 == want)
+            .expect("no prehash in range yields the requested recovery id")
+    }
+
+    #[test]
+    fn secp256k1_spec_recovery_id_is_accepted() {
+        // EIP-8141 (spec commit fe0940cae2) Signature Validation: `signature[0]`
+        // is the recovery id `0`/`1`, matching EIP-2718 typed transactions, not
+        // the EVM `ecrecover` `v` (`27`/`28`). A conformant, canonical low-s
+        // signature must authenticate on the block-validation path.
+        for want_v in [0u8, 1u8] {
+            let msg_hash = msg_hash_with_recovery_id(want_v);
+            let (v, _, signer) = secp256k1_vector(msg_hash);
+            assert_eq!(v, want_v, "vector must have the requested recovery id");
+            let sig = secp_frame_sig(msg_hash, want_v, Some(signer));
+            assert!(
+                frame_signatures_are_low_s(std::slice::from_ref(&sig)),
+                "k256 normalizes to low-s; v = {want_v} vector must be canonical"
+            );
+            assert!(
+                validate_frame_signatures(
+                    &[sig],
+                    msg_hash,
+                    Address::zero(),
+                    hegota(),
+                    &ethrex_crypto::NativeCrypto
+                ),
+                "spec-encoded recovery id v = {want_v} must be accepted"
+            );
+        }
+    }
+
+    #[test]
+    fn secp256k1_evm_v_encoding_is_rejected() {
+        // `27`/`28` is the EVM `ecrecover` encoding. EIP-8141 rejects any
+        // `v > 1`, so the legacy encoding must never authenticate a frame tx,
+        // otherwise this client accepts blocks a conformant client rejects.
+        for v in [27u8, 28u8] {
+            let msg_hash = msg_hash_with_recovery_id(v - 27);
+            let (_, _, signer) = secp256k1_vector(msg_hash);
+            let sig = secp_frame_sig(msg_hash, v, Some(signer));
+            assert!(
+                !validate_frame_signatures(
+                    &[sig],
+                    msg_hash,
+                    Address::zero(),
+                    hegota(),
+                    &ethrex_crypto::NativeCrypto
+                ),
+                "EVM ecrecover encoding v = {v} must be rejected"
+            );
+        }
+    }
+
+    #[test]
+    fn secp256k1_out_of_range_v_is_rejected() {
+        // Everything else above the recovery-id range is invalid too: the
+        // neighbours of `27`/`28`, the EIP-155 chain-id forms, and 0xFF.
+        let msg_hash = msg_hash_with_recovery_id(0);
+        let (_, _, signer) = secp256k1_vector(msg_hash);
+        for v in [2u8, 3, 26, 29, 35, 36, 0xFF] {
+            let sig = secp_frame_sig(msg_hash, v, Some(signer));
+            assert!(
+                !validate_frame_signatures(
+                    &[sig],
+                    msg_hash,
+                    Address::zero(),
+                    hegota(),
+                    &ethrex_crypto::NativeCrypto
+                ),
+                "out-of-range v = {v} must be rejected"
+            );
+        }
+    }
+
     fn p256_sig_with_s(s: &[u8; 32]) -> FrameSignature {
         // [r(32) | s(32) | qx(32) | qy(32)]
         let mut bytes = vec![0u8; 128];
@@ -2920,46 +3053,14 @@ mod frame_sig_validation_tests {
     }
 
     #[test]
-    #[expect(
-        clippy::indexing_slicing,
-        reason = "fixed-size buffers with well-known bounds in test code"
-    )]
     fn secp256k1_positive_and_tampered() {
-        // Build a real secp256k1 signature vector using k256.
-        use k256::ecdsa::SigningKey;
-
-        let pk_hex = "4c0883a69102937d6231471b5dbb6204fe5129617082792ae468d01a3f362318";
-        let pk_bytes: Vec<u8> = (0..pk_hex.len())
-            .step_by(2)
-            .map(|i| u8::from_str_radix(&pk_hex[i..i + 2], 16).unwrap())
-            .collect();
-        let private_key: [u8; 32] = pk_bytes.try_into().unwrap();
-        let signing_key = SigningKey::from_bytes(&private_key.into()).unwrap();
-
+        // Build a real secp256k1 signature vector using k256. The outer
+        // signature is `v || r || s` (65 bytes) where `v` is the EIP-8141
+        // recovery id (0/1), NOT the EVM ecrecover `v` (27/28).
         let msg_hash: H256 = H256::from_low_u64_be(0xDEADBEEF_CAFEBABE);
+        let (recovery_id, _, expected_signer) = secp256k1_vector(msg_hash);
 
-        let (raw_sig, recovery_id) = signing_key
-            .sign_prehash_recoverable(msg_hash.as_bytes())
-            .unwrap();
-
-        // Derive the expected signer address
-        let uncompressed = signing_key.verifying_key().to_encoded_point(false);
-        let pub_hash = ethrex_crypto::keccak::keccak_hash(&uncompressed.as_bytes()[1..]);
-        let expected_signer = Address::from_slice(&pub_hash[12..]);
-
-        // Build the outer signature: v || r || s  (65 bytes).
-        // EVM ecrecover expects v ∈ {27, 28}, so add 27 to the raw recovery id.
-        let mut sig_bytes = vec![0u8; 65];
-        sig_bytes[0] = 27 + recovery_id.to_byte();
-        sig_bytes[1..33].copy_from_slice(&raw_sig.to_bytes()[..32]); // r
-        sig_bytes[33..65].copy_from_slice(&raw_sig.to_bytes()[32..]); // s
-
-        let valid_sig = FrameSignature {
-            scheme: FRAME_SIG_SCHEME_SECP256K1,
-            signer: Some(expected_signer),
-            msg: Bytes::new(), // empty → use sig_hash
-            signature: Bytes::from(sig_bytes.clone()),
-        };
+        let valid_sig = secp_frame_sig(msg_hash, recovery_id, Some(expected_signer));
 
         // Positive: correct signer → valid
         assert!(
@@ -2991,12 +3092,7 @@ mod frame_sig_validation_tests {
         );
 
         // Empty signer (None) resolves to tx.sender: valid iff sender == recovered.
-        let empty_signer_sig = FrameSignature {
-            scheme: FRAME_SIG_SCHEME_SECP256K1,
-            signer: None,
-            msg: Bytes::new(),
-            signature: Bytes::from(sig_bytes.clone()),
-        };
+        let empty_signer_sig = secp_frame_sig(msg_hash, recovery_id, None);
         assert!(
             validate_frame_signatures(
                 std::slice::from_ref(&empty_signer_sig),

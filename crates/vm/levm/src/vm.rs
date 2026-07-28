@@ -748,6 +748,16 @@ pub fn validate_frame_signatures(
                 let v = sig.signature[0];
                 let r = &sig.signature[1..33];
                 let s = &sig.signature[33..65];
+                // EIP-8141 defines `signature[0]` as the RECOVERY ID (0 or 1),
+                // matching EIP-2718 typed transactions - not the EVM `ecrecover`
+                // `v` (27/28). Anything above 1 is invalid, so reject it here
+                // rather than letting the precompile's own 27/28 mapping decide:
+                // forwarding the byte verbatim both rejected conformant 0/1
+                // signatures and accepted non-conformant 27/28 ones, which is a
+                // consensus split against a spec-conformant client.
+                if v > 1 {
+                    return false;
+                }
                 // EIP-8141 defines verification as `signer == ecrecover(msg, v, r, s)`
                 // and does NOT mandate EIP-2 low-s, so a high-s frame signature is
                 // spec-valid and MUST be accepted here (this is the consensus
@@ -757,7 +767,13 @@ pub fn validate_frame_signatures(
                 // client that accepts it.
                 let mut calldata = vec![0u8; 128];
                 calldata[..32].copy_from_slice(&msg);
-                calldata[63] = v;
+                // Translate the recovery id to the EVM `ecrecover` `v` only at
+                // the precompile boundary. `v` is 0 or 1 (checked above), so
+                // this mapping is total and exact.
+                calldata[63] = match v {
+                    0 => 27,
+                    _ => 28,
+                };
                 calldata[64..96].copy_from_slice(r);
                 calldata[96..128].copy_from_slice(s);
                 let Ok(result) = crate::precompiles::ecrecover(
