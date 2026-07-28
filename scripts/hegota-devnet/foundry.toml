@@ -1,0 +1,18 @@
+# Offline unit tests for the assertion guards. The devnet scenarios in pocs/ cover the real
+# opcodes end to end; these cover guard logic against a scripted introspection source, which
+# no local EVM could otherwise exercise (it does not implement the EIP-7906 opcodes).
+[profile.default]
+src = "contracts"
+test = "contracts/test"
+out = "contracts/out"
+libs = ["contracts/lib"]
+auto_detect_solc = false
+optimizer = true
+# The two Yul artifacts are built by the scenario harness with solc --strict-assembly;
+# forge cannot batch-compile Yul alongside Solidity.
+skip = ["*.yul"]
+
+# Note: run with `forge test --use $(which solc)`. The solc version is intentionally not
+# pinned here — some foundry builds carry a solc registry whose checksum for the pinned
+# release does not match, and downloading a second compiler just for these tests would risk
+# testing against a different one than the scenarios deploy with.
