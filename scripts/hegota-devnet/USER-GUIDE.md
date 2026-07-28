@@ -237,6 +237,8 @@ transaction is invalidated — including the already-approved gas payment. `APPR
 is forbidden inside them. `TXTRACE`/`TXDIFF` let assertion code inspect the
 transaction's own execution.
 
+Worked attack reproductions — a drainer-style hidden approval, a swapped proxy implementation, standing-allowance elimination, and an account that makes the assertion unstrippable — are in [POC-GUIDE.md](POC-GUIDE.md), with results in [EVIDENCE.md](EVIDENCE.md).
+
 ## EIP-8272: Recent Roots
 
 **Write:** call `RECENT_ROOT_ADDRESS` (`0x…8272`) with exactly 64 bytes of calldata

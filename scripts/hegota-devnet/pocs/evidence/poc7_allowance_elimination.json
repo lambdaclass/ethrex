@@ -1,0 +1,42 @@
+{
+  "scenario": "poc7_allowance_elimination",
+  "title": "Standing-allowance elimination",
+  "models": "Unvalidated arbitrary-call routers abusing standing ERC-20 allowances (two aggregator drains Jan 2026, ~$13.4M and ~$3.67M; a helper-contract drain 2025, ~$5M)",
+  "defense_kind": "removes the attack surface",
+  "chain_id": 3151908,
+  "started_block": 370631,
+  "notes": [
+    "Phase A: an unlimited standing allowance let the attacker's own later transaction move the victim's tokens.",
+    "Phase B: the victim approved exactly what was consumed and the POST_TX frame proved no allowance survived, so the attacker's identical transaction had nothing to take.",
+    "The attacker's transaction is never reverted by EIP-7906. What changed is that the standing allowance it depended on no longer exists.",
+    "Negative control: an over-approving bundle was invalidated, and no allowance was left behind (residual 0)."
+  ],
+  "addresses": {
+    "shim": "0x865a2b06adcef9c7f1fdcc765f96b53f372c9f9d",
+    "guard": "0xc194f53bd3db1b3b7f92dcb14f6741102b3327bb",
+    "token": "0xb3de3dba4ef8dde6180aff74183102dca4a9e631",
+    "router": "0x73ac88b1ec5e39e5893a7fed9482d3cf385f97b7",
+    "drainer": "0x4c77c7608a4f5b1eb178811b60bef020ce829073"
+  },
+  "phase_a": {
+    "victim": "0x749180e9500995BB66F2a7b588D4bcaa757d03b3",
+    "unlimited_allowance": true,
+    "attacker_stole": 400,
+    "victim_remaining": 600
+  },
+  "phase_b": {
+    "victim": "0x8432c520525ff10da58F3CcD4D8Fc081082A7006",
+    "bundle_tx": "0xaa4fe9dfbc5b70dc00c2980e2e0181e809fe4ee7510afdfd6d3ec96d81c6d7e3",
+    "bundle_block": 370647,
+    "residual_allowance": 0,
+    "attack_reverted": true,
+    "attacker_delta": 0
+  },
+  "extra": {
+    "negative_control": {
+      "description": "over-approving leaves a residual allowance, so the guard invalidates the victim's own transaction rather than letting a drainable allowance persist",
+      "mined": false,
+      "residual_after_rejection": 0
+    }
+  }
+}

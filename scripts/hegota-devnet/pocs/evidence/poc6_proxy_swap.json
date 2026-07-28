@@ -1,0 +1,56 @@
+{
+  "scenario": "poc6_proxy_swap",
+  "title": "Implementation swapped before inclusion \u2014 and two assertion traps",
+  "models": "A user transacting into an upgradeable contract whose implementation was replaced after they were shown a quote; the CPIMP class (~$1M, 2025) is the clean fit, where a malicious implementation was inserted to intercept user calls",
+  "defense_kind": "reverts the attack",
+  "chain_id": 3151908,
+  "started_block": 370717,
+  "notes": [
+    "Phase A: the victim's deposit was diverted by the implementation that had already been swapped in.",
+    "Trap 1 confirmed on-chain: a differential assertion over the implementation slot passed while the implementation HAD been swapped, because TXDIFF's before/after is scoped to the guarded transaction.",
+    "Trap 2 confirmed on-chain: asserting the PROXY's code hash passed for the same reason an upgrade is invisible to it \u2014 proxy bytecode is unchanged; only the implementation slot moves.",
+    "Consequence for wallets: detecting a prior-transaction change requires an ABSOLUTE assertion against a value captured at signing time, so the signer must commit to expected environment values, not merely request a diff check."
+  ],
+  "addresses": {
+    "shim": "0x75fc0c2b9ca08dbf141476c03d7c0a66f7ecb36c",
+    "proxy": "0xa0b18433e004ec0b7149255af41f293a5b200499",
+    "benign_impl": "0x2279f01259c6e6c85145e534cc5ae5da7fd176d3",
+    "hostile_impl": "0x6150c34660eb7b20ed073e7a30843eec35a3d175",
+    "token": "0xafcd21937f9cd974bb54d39fda2c4a5a60c71977",
+    "guard_differential": "0xa64b45394a339c906d35c27f0472fc0514adadb3",
+    "guard_absolute": "0x319454a7c4c211aa54d76b731a0d32c791bd0dc9"
+  },
+  "phase_a": {
+    "victim": "0x4F63217459ed92519037AAA5458BfcACb0ab514E",
+    "tx": "0x42473e3fc2fa8efd444e6670414baad5a3b1d9b993bdf7d8e68bd2a38a87709e",
+    "block": 370725,
+    "stolen": 100
+  },
+  "phase_b": {
+    "variant_1_differential": {
+      "guard": "assertUnchanged(implementation slot)",
+      "mined": true,
+      "stolen": 100,
+      "verdict": "TRAP \u2014 passes because TXDIFF before/after is scoped to this transaction and the upgrade happened in a prior one"
+    },
+    "variant_2_proxy_codehash": {
+      "guard": "assertCodeHashEquals(proxy)",
+      "mined": true,
+      "stolen": 100,
+      "verdict": "TRAP \u2014 passes because an upgrade does not change the proxy's bytecode"
+    },
+    "variant_3_absolute": {
+      "guard": "assertSlotEquals(implementation slot, committed value)",
+      "mined": false,
+      "stolen": 0,
+      "verdict": "CORRECT \u2014 the only form that detects a change made by an earlier transaction"
+    }
+  },
+  "extra": {
+    "upgrade": {
+      "from": "0x2279f01259c6e6c85145e534cc5ae5da7fd176d3",
+      "to": "0x6150c34660eb7b20ed073e7a30843eec35a3d175",
+      "slot": "0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc"
+    }
+  }
+}

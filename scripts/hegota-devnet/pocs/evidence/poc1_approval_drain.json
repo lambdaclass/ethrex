@@ -1,0 +1,41 @@
+{
+  "scenario": "poc1_approval_drain",
+  "title": "Hidden unlimited approval with a delayed drain",
+  "models": "The wallet-drainer pattern behind the 2025-2026 frontend and registrar hijacks (a DNS hijack in Nov 2025, ~$1M+; a registrar takeover in Apr 2026, ~$1.2M), where phishing interfaces prompted unlimited-approval signatures",
+  "defense_kind": "reverts the attack",
+  "chain_id": 3151908,
+  "started_block": 370765,
+  "notes": [
+    "Phase A: nothing moved when the victim signed, which is exactly why the pattern works \u2014 the loss happened later, in a transaction the victim never saw.",
+    "Phase B: the assertion fired on the approval itself, so the transaction was invalidated before any allowance existed. The attacker's later sweep then had nothing to spend.",
+    "Negative control: the same guard permitted a deliberate approval to an allowlisted spender, so it discriminates rather than blocking everything."
+  ],
+  "addresses": {
+    "shim": "0x648cd1c5411cdb2d1f34bc8358b4c97ab679a2fb",
+    "guard": "0x19ae6a90f36e621afca594a6fe082c83b51d9ac1",
+    "token": "0xaed6ad79ccb5e03b1a27adaf97d193bbfed67bb8",
+    "drainer": "0xf4f312b7f67ba409d3518361a46c35e4b0cadea1",
+    "attacker": "0xbabababababababababababababababababababa"
+  },
+  "phase_a": {
+    "victim": "0x1792EBEEfaD38EA723d24770359DE9aa72E9C93A",
+    "allowance_unlimited": true,
+    "tokens_moved_at_signing": 0,
+    "stolen_later": 1000
+  },
+  "phase_b": {
+    "account": "0xe7bb498aabffaeb19e8d923bad62e7ebbff3a121",
+    "guarded_tx_mined": false,
+    "residual_allowance": 0,
+    "attacker_sweep_reverted": true,
+    "attacker_delta": 0
+  },
+  "extra": {
+    "negative_control": {
+      "description": "the guard is not a blanket ban: an approval to a spender the owner allowlisted in the committed policy is permitted",
+      "mined": true,
+      "tx": "0xd6a0d6c92b8698702ec5ba02192457b67ef17e3fb99e632460c2002a43a3a718",
+      "allowance_after": 100
+    }
+  }
+}

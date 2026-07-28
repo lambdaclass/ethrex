@@ -134,3 +134,114 @@ succeed) and a reverting POST_TX excludes the whole transaction with the body
 transfer rolled back. The APPROVE-in-POST_TX rejection and the
 trailing-suffix structural rule are covered by unit tests
 (`test/tests/levm/eip7906_tests.rs` and the frame-tx suites).
+
+## C. Findings from building the proof-of-concept scenarios
+
+We built attack reproductions for the published PoC list against the live devnet
+(see [POC-GUIDE.md](POC-GUIDE.md), results in [EVIDENCE.md](EVIDENCE.md)). Four
+findings came out of it. The first two would each cause a PoC written the
+intuitive way to silently demonstrate nothing, so they are the ones we would most
+like reflected in the note.
+
+### 1. `TXDIFF`'s before/after is intra-transaction, so the oracle-TOCTOU and proxy-swap PoCs need *absolute* assertions
+
+`*_before` reads the transaction prestate and `*_after` the live post-body state,
+so a key the transaction never wrote reads the **same value both ways**. But in
+the oracle-TOCTOU and proxy/implementation-swap scenarios the adverse change
+happens in a **prior** transaction. A differential assertion ("this slot did not
+change") therefore passes while the attack succeeds.
+
+Confirmed on-chain rather than argued: in scenario P6 the implementation was
+swapped in an earlier block, and a differential guard over the implementation slot
+**mined, with the victim's deposit diverted**. Only an absolute assertion
+(`slot_after == value committed at signing time`) stopped it.
+
+This implies a wallet-side requirement worth stating in the note: for those two
+scenarios the signer must **capture and commit expected environment values at
+signing time**. A guard that merely asks for a diff check cannot work. If that
+pattern is expected to be common, a standard encoding for "expected environment"
+may belong in the EIP rather than in each guard's ad-hoc calldata.
+
+### 2. For the proxy PoC, asserting the proxy's code hash never detects an upgrade
+
+An upgrade does not change a proxy's bytecode — only the storage slot holding the
+implementation address. Also confirmed on-chain in P6: a guard asserting the
+proxy's code hash **mined, with the deposit diverted**. The assertion has to
+target the implementation slot (or the implementation address's code hash).
+
+### 3. Guard provenance is unaddressed in the PoC list, and it is load-bearing for items 1-3
+
+Every scenario in the note assumes the POST_TX assertion is present on the
+victim's transaction. Under EIP-8141 whoever composes the transaction composes the
+frame list — so in the threat models items 1-3 describe (a phishing frontend, a
+compromised Safe interface) the adversary simply ships a **guardless** frame
+transaction, or one whose guard truthfully blesses the drain, and the honest
+wallet signs it. Item 2 in particular, as written, is prevented only if the
+assertion cannot be omitted.
+
+**The good news: this is closable today with primitives EIP-8141 already ships, and
+needs no spec change.** A VERIFY frame can read `TXPARAM(0x09)` for the frame
+count, `FRAMEPARAM` for each frame's mode and resolved target, and
+`FRAMEDATACOPY` for its calldata; and a reverting VERIFY frame invalidates the
+transaction. An account can therefore *require* a correctly parameterized POST_TX
+assertion and refuse to transact without one.
+
+We built that account and ran six attempts at the same malicious intent: an
+honest transaction mined, while guard-omitted, guard-substituted-with-a-no-op,
+guard-present-but-weakened, and non-owner-signed were all refused before the body
+ran; with the correct guard present the assertion itself fired. The VERIFY frame
+reads only its own storage and makes no external calls, so it stayed admissible
+through the public mempool under the ERC-7562 validation observer.
+
+We would suggest the note say explicitly whether the guard is expected to be
+attached by the wallet or mandated by the account, because the two give very
+different security properties.
+
+### 4. A POST_TX-reverting transaction is admitted and then silently never mined — wallets get no failure signal
+
+Mempool validation simulates only the validation prefix, and POST_TX is body,
+never prefix. So a transaction whose assertion will fire is **accepted by
+`eth_sendRawTransaction`**, never mined, produces no receipt, and costs no gas.
+From the submitter's side it is indistinguishable from a transaction that was
+simply dropped.
+
+Two consequences:
+
+- **Diagnostics misattribute the cause.** `ethrex_simulateFrameTransaction`
+  reports `VERIFY frame did not call APPROVE or payer not approved` with
+  `frames: null` for a POST_TX revert, even when the VERIFY frame is byte-identical
+  to one that succeeds — the revert rolls back the APPROVE and the error surfaces
+  against the wrong frame. A developer would debug the wrong frame, and simulation
+  cannot be used to identify *which* assertion failed. We are treating this as an
+  ethrex-side diagnostic bug, but the underlying ambiguity is worth a spec note on
+  what a client should report.
+- **Mandating the guard at the account has strictly better failure UX**, which is a
+  second, independent argument for finding 3. Because VERIFY frames *are* in the
+  simulated prefix, the account's refusals came back as immediate rejections at
+  submission, rather than a silent non-inclusion.
+
+### 5. Suggested additional PoC: allowance *elimination*, not just detection
+
+Item 1 catches a malicious `approve(MAX_UINT)` the user never intended. It cannot
+help the victims of the arbitrary-external-call router drains (two aggregators in
+January 2026, ~$13.4M and ~$3.67M; a helper contract in 2025, ~$5M) — those users
+**intended** their approvals and were drained weeks later through them.
+
+That class needs the allowance not to survive the transaction at all: one frame
+transaction bundling `approve(exact)`, the use, and a POST_TX assertion that the
+allowance slot is zero afterwards. We built it as scenario P7: the attacker's
+identical drain then finds nothing to take. Worth noting honestly that this does
+*not* revert the attacker's transaction — it removes the surface — and that
+detection and elimination together cover the class where either alone leaves half
+of it exposed.
+
+### Scope note on where EIP-7906 does and does not reach
+
+We classified 81 documented 2025-2026 incidents against "would a POST_TX assertion
+have prevented this". 72 were not defendable: attacker-signed protocol-logic bugs
+(reentrancy, oracle manipulation, arithmetic, access control), key compromise, and
+bridge/cross-chain message forgery — all cases where the losing transaction is
+signed by the attacker or by a legitimate key holder, so a sender-authored
+postcondition cannot reach it. We think that is a feature worth stating plainly in
+the EIP: it defends transaction-intent integrity precisely, and a narrower claim is
+much harder to refute than a broad one.
