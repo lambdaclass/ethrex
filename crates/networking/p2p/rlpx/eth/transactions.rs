@@ -341,8 +341,14 @@ impl PooledTransactions {
             if !seen.insert(tx_hash) {
                 return Err(MempoolError::DuplicatePooledTx);
             }
-            if let P2PTransaction::EIP4844TransactionWithBlobs(itx) = tx {
-                itx.blobs_bundle.validate_cheap(&itx.tx, fork)?;
+            match tx {
+                P2PTransaction::EIP4844TransactionWithBlobs(itx) => itx
+                    .blobs_bundle
+                    .validate_cheap(&itx.tx.blob_versioned_hashes, fork)?,
+                P2PTransaction::FrameTransactionWithBlobs(itx) => itx
+                    .blobs_bundle
+                    .validate_cheap(&itx.tx.blob_versioned_hashes, fork)?,
+                _ => {}
             }
             let Some(pos) = requested
                 .transaction_hashes
@@ -379,40 +385,54 @@ impl PooledTransactions {
         is_l2_mode: bool,
     ) -> Result<(), MempoolError> {
         for tx in self.pooled_transactions {
-            if let P2PTransaction::EIP4844TransactionWithBlobs(itx) = tx {
-                if is_l2_mode {
-                    debug!(
-                        peer=%node,
-                        "Rejecting blob transaction in L2 mode - blob transactions are not supported in L2",
-                    );
-                    continue;
+            // Blob-carrying transactions arrive with their sidecar and take the
+            // blob pool path; EIP-4844 and EIP-8141 frame transactions both do.
+            // `Err` carries the transaction plus its sidecar back out, `Ok` the
+            // plain transaction.
+            let split = match tx {
+                P2PTransaction::EIP4844TransactionWithBlobs(itx) => {
+                    Err((Transaction::EIP4844Transaction(itx.tx), itx.blobs_bundle))
                 }
-                if let Err(e) = blockchain
-                    .add_blob_transaction_to_pool(itx.tx, itx.blobs_bundle)
-                    .await
-                {
-                    if matches!(e, MempoolError::BlobsBundleError(_)) {
-                        return Err(e);
+                P2PTransaction::FrameTransactionWithBlobs(itx) => {
+                    Err((Transaction::FrameTransaction(itx.tx), itx.blobs_bundle))
+                }
+                plain => Ok(plain),
+            };
+            let (blob_tx, blobs_bundle) = match split {
+                Ok(plain) => {
+                    let regular_tx = plain
+                        .try_into()
+                        .map_err(|error| MempoolError::StoreError(StoreError::Custom(error)))?;
+                    if let Err(e) = blockchain.add_transaction_to_pool(regular_tx).await {
+                        debug!(
+                            peer=%node,
+                            error=%e,
+                            "Error adding transaction"
+                        );
                     }
-                    debug!(
-                        peer=%node,
-                        error=%e,
-                        "Error adding transaction"
-                    );
                     continue;
                 }
-            } else {
-                let regular_tx = tx
-                    .try_into()
-                    .map_err(|error| MempoolError::StoreError(StoreError::Custom(error)))?;
-                if let Err(e) = blockchain.add_transaction_to_pool(regular_tx).await {
-                    debug!(
-                        peer=%node,
-                        error=%e,
-                        "Error adding transaction"
-                    );
-                    continue;
+                Err(with_sidecar) => with_sidecar,
+            };
+            if is_l2_mode {
+                debug!(
+                    peer=%node,
+                    "Rejecting blob transaction in L2 mode - blob transactions are not supported in L2",
+                );
+                continue;
+            }
+            if let Err(e) = blockchain
+                .add_blob_transaction_to_pool(blob_tx, blobs_bundle)
+                .await
+            {
+                if matches!(e, MempoolError::BlobsBundleError(_)) {
+                    return Err(e);
                 }
+                debug!(
+                    peer=%node,
+                    error=%e,
+                    "Error adding transaction"
+                );
             }
         }
         Ok(())

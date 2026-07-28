@@ -938,6 +938,13 @@ impl Blockchain {
     ) -> Result<Receipt, ChainError> {
         match **head {
             Transaction::EIP4844Transaction(_) => self.apply_blob_transaction(head, context),
+            // A frame transaction (EIP-8141) carrying blobs needs the same
+            // blob-gas accounting and sidecar handling as an EIP-4844 one; the
+            // blob path reads only the hash, the versioned hashes and the bundle,
+            // so it is already type-agnostic.
+            Transaction::FrameTransaction(ref tx) if !tx.blob_versioned_hashes.is_empty() => {
+                self.apply_blob_transaction(head, context)
+            }
             _ => apply_plain_transaction(head, context),
         }
     }

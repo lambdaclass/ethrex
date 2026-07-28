@@ -64,8 +64,6 @@ use ethrex_common::constants::{EMPTY_KECCAK_HASH, EMPTY_TRIE_HASH, MIN_BASE_FEE_
 use crossbeam::channel::{self as cb, TryRecvError, select};
 // Re-export stateless validation functions for backwards compatibility
 #[cfg(feature = "c-kzg")]
-use ethrex_common::types::EIP4844Transaction;
-#[cfg(feature = "c-kzg")]
 use ethrex_common::types::MAX_BLOB_TX_SIZE;
 use ethrex_common::types::MAX_TX_SIZE;
 use ethrex_common::types::block_access_list::BlockAccessList;
@@ -74,7 +72,8 @@ use ethrex_common::types::fee_config::FeeConfig;
 use ethrex_common::types::{
     AccountInfo, AccountState, AccountUpdate, BalSynthesisItem, Block, BlockHash, BlockHeader,
     BlockNumber, Code, FRAME_TX_MAX_VERIFY_GAS, FrameTransaction, Transaction,
-    WrappedEIP4844Transaction, synthesize_bal_updates, validate_block_body,
+    WrappedEIP4844Transaction, WrappedFrameTransaction, synthesize_bal_updates,
+    validate_block_body,
 };
 use ethrex_common::types::{EIP7702_DELEGATED_CODE_LEN, is_eip7702_delegation};
 use ethrex_common::types::{ELASTICITY_MULTIPLIER, P2PTransaction};
@@ -2858,14 +2857,16 @@ impl Blockchain {
 
     /// Add a blob transaction and its blobs bundle to the mempool checking that the transaction is valid
     #[cfg(feature = "c-kzg")]
+    /// Admit a blob-carrying transaction together with its sidecar. Takes any
+    /// `Transaction` that declares blobs, since EIP-4844 and EIP-8141 frame
+    /// transactions both do.
     pub async fn add_blob_transaction_to_pool(
         &self,
-        transaction: EIP4844Transaction,
+        transaction: Transaction,
         blobs_bundle: BlobsBundle,
     ) -> Result<H256, MempoolError> {
         let fork = self.current_fork().await?;
 
-        let transaction = Transaction::EIP4844Transaction(transaction);
         let hash = transaction.hash(&NativeCrypto);
         if self.mempool.contains_tx(hash)? {
             return Ok(hash);
@@ -2886,9 +2887,7 @@ impl Blockchain {
         }
 
         // Validate blobs bundle after checking if it's already added.
-        if let Transaction::EIP4844Transaction(transaction) = &transaction {
-            blobs_bundle.validate(transaction, fork)?;
-        }
+        blobs_bundle.validate(&transaction.blob_versioned_hashes(), fork)?;
 
         let sender = transaction.sender(&NativeCrypto)?;
 
@@ -2925,8 +2924,13 @@ impl Blockchain {
         &self,
         transaction: Transaction,
     ) -> Result<H256, MempoolError> {
-        // Blob transactions should be submitted via add_blob_transaction along with the corresponding blobs bundle
-        if matches!(transaction, Transaction::EIP4844Transaction(_)) {
+        // Blob-carrying transactions must be submitted via
+        // `add_blob_transaction_to_pool` with their sidecar, or the pool would hold
+        // a transaction it cannot serve over p2p or build a block from. This covers
+        // EIP-4844 and blob-carrying EIP-8141 frame transactions alike.
+        if matches!(transaction, Transaction::EIP4844Transaction(_))
+            || !transaction.blob_versioned_hashes().is_empty()
+        {
             return Err(MempoolError::BlobTxNoBlobsBundle);
         }
         // Wire size cap: run before sender recovery so oversized txs don't
@@ -3385,18 +3389,6 @@ impl Blockchain {
             frame_tx
                 .validate_static_constraints()
                 .map_err(MempoolError::InvalidFrameTransaction)?;
-
-            // Interim policy: no sidecar transport exists for frame-tx blobs
-            // yet, so a blob-carrying frame tx could never be included with data
-            // availability. Reject at admission (local policy). Block IMPORT does
-            // account for frame blobs (verify_blob_gas_usage counts them), but the
-            // BUILD path does not yet add them to header.blob_gas_used — so this
-            // admission gate is also what keeps the builder from ever producing
-            // such a block. If this gate is lifted, the builder must route frame
-            // blobs through blob accounting first (see payload.rs apply_transaction).
-            if !frame_tx.blob_versioned_hashes.is_empty() {
-                return Err(MempoolError::FrameTxBlobsUnsupported);
-            }
 
             // Frame `data` size is bounded by the wire-size cap below
             // (MAX_TX_SIZE over encode_canonical_len), which covers the
@@ -3947,9 +3939,24 @@ impl Blockchain {
                 ));
             }
             Transaction::FeeTokenTransaction(itx) => P2PTransaction::FeeTokenTransaction(itx),
-            // Frame transactions (EIP-8141) have no blobs bundle, so no bundle
-            // lookup is needed; they are served on request like other typed txs.
-            Transaction::FrameTransaction(itx) => P2PTransaction::FrameTransaction(itx),
+            // A frame transaction (EIP-8141) carrying blobs is served wrapped with
+            // its sidecar, exactly like an EIP-4844 transaction; one without blobs
+            // is served as the plain payload.
+            Transaction::FrameTransaction(itx) if itx.blob_versioned_hashes.is_empty() => {
+                P2PTransaction::FrameTransaction(itx)
+            }
+            Transaction::FrameTransaction(itx) => {
+                let Some(bundle) = self.mempool.get_blobs_bundle(*hash)? else {
+                    return Err(StoreError::Custom(format!(
+                        "Blob-carrying frame transaction present without its bundle: hash {hash}",
+                    )));
+                };
+                P2PTransaction::FrameTransactionWithBlobs(WrappedFrameTransaction {
+                    tx: itx,
+                    wrapper_version: (bundle.version != 0).then_some(bundle.version),
+                    blobs_bundle: bundle,
+                })
+            }
         };
 
         Ok(result)
