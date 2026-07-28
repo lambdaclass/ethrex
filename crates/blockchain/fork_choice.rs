@@ -13,31 +13,52 @@ use crate::{
     is_canonical,
 };
 
-/// Maximum number of canonical blocks ethrex can revert in a single forkchoice update.
+/// Computes the maximum reorg depth ethrex will accept for a given fork-choice update.
 ///
-/// This is an implementation cap, not a spec policy. ethrex's state-history retention
-/// keeps the last ~128 blocks of state diffs, so reorgs deeper than this cannot be
-/// undone regardless of finalization status — the data simply isn't there.
+/// `-38006 TooDeepReorg` reflects what the node can PHYSICALLY reconstruct, not a
+/// finality barrier. Finality is deliberately NOT an input: geth, nethermind and reth
+/// do not reject reorgs by finality (they trust the CL's fork choice), and the engine
+/// API tests reorg across the CL's `finalized` on purpose. Rejecting those was an
+/// over-strict reading of `-38006`.
 ///
-/// The spec (execution-apis PR 786, "engine: Restrict no-reorg to the prefix of known
-/// finalized") only forbids reorging past the finalized prefix. The finalized check is
-/// applied first; this cap is a secondary guard for the implementation limit.
+/// The node can serve a reorg down to whichever is deeper:
+/// - the oldest in-memory diff-layer it retains (`Store::reorg_retention`), or
+/// - the oldest journal entry, whose reverse-diff overlay reconstructs deeper state.
+///   Entry at block N unwinds N -> N-1, so the deepest reachable pivot is `lowest - 1`,
+///   giving a journal reach of `latest - (lowest - 1)`.
+///
+/// The ceiling is the deeper of the two, capped at `latest` (cannot reorg below genesis)
+/// and by the operator override `max_reorg_depth` when set (`Some(0)` disables reorgs).
 ///
 /// Reference values across ELs (devnet branches, 2026-04-30):
 /// - besu (main): 90_000 — effectively unlimited
 /// - erigon (glamsterdam-devnet-0): 96, env-configurable via `MAX_REORG_DEPTH`
 /// - geth / nethermind / reth: no engine-API rejection; trust the CL's fork choice
-pub const REORG_DEPTH_LIMIT: u64 = 128;
+async fn compute_reorg_ceiling(
+    store: &Store,
+    latest: u64,
+    max_reorg_depth: Option<u64>,
+) -> Result<u64, InvalidForkChoice> {
+    // Layer-cache reach: every retained in-memory diff-layer can be unwound directly.
+    let retention = store.reorg_retention()?;
 
-// Compile-time guard: the committed block must be at least as deep as the maximum reorg.
-// We commit the canonical block at `head - DB_COMMIT_THRESHOLD`; if DB_COMMIT_THRESHOLD were
-// smaller than REORG_DEPTH_LIMIT, a reorg the engine API still accepts (up to REORG_DEPTH_LIMIT
-// deep) could revert an already-committed block, corrupting on-disk state.
-// ethrex-blockchain depends on ethrex-storage (one-way), so the assertion lives here.
-const _: () = assert!(
-    ethrex_storage::DB_COMMIT_THRESHOLD as u64 >= REORG_DEPTH_LIMIT,
-    "committed layers must stay outside reorg-depth protection"
-);
+    // Journal reach: the reverse-diff overlay reconstructs state back to `lowest - 1`.
+    // `lowest.saturating_sub(1)` is safe: entries are written by commit and genesis is
+    // never committed, so `lowest >= 1` whenever an entry exists; saturating is defensive.
+    let journal_reach = match store.lowest_state_history_block_number()? {
+        Some(lowest) => latest.saturating_sub(lowest.saturating_sub(1)),
+        None => 0,
+    };
+
+    // Deeper of the two physical reaches, never past genesis.
+    let physical = latest.min(retention.max(journal_reach));
+
+    // Operator override is an explicit cap (e.g. `Some(0)` disables reorgs entirely).
+    Ok(match max_reorg_depth {
+        Some(d) => physical.min(d),
+        None => physical,
+    })
+}
 
 /// Applies new fork choice data to the current blockchain. It performs validity checks:
 /// - The finalized, safe and head hashes must correspond to already saved blocks.
@@ -48,11 +69,16 @@ const _: () = assert!(
 /// and itself are made canonical.
 ///
 /// If the fork choice state is applied correctly, the head block header is returned.
+///
+/// `max_reorg_depth` is the operator-configured cap (`BlockchainOptions::max_reorg_depth`).
+/// Pass `None` for the physical default (layer-cache + journal reach). See
+/// [`compute_reorg_ceiling`].
 pub async fn apply_fork_choice(
     store: &Store,
     head_hash: H256,
     safe_hash: H256,
     finalized_hash: H256,
+    max_reorg_depth: Option<u64>,
 ) -> Result<BlockHeader, InvalidForkChoice> {
     if head_hash.is_zero() {
         return Err(InvalidForkChoice::InvalidHeadHash);
@@ -122,6 +148,39 @@ pub async fn apply_fork_choice(
         None => (head.number, head_hash),
     };
 
+    // execution-apis PR 786 point 6: -38006 TooDeepReorg is returned when the reorg
+    // depth exceeds the limitation specific to the client software. ethrex's limit is
+    // physical: how far back it can reconstruct state (layer-cache retention plus the
+    // reverse-diff journal), capped by the operator-configured `max_reorg_depth` if set.
+    // Finality is NOT a limit here, matching geth/nethermind/reth. See
+    // `compute_reorg_ceiling`.
+    //
+    // This check is intentionally placed before the finalized/safe connectivity
+    // checks so that an over-depth reorg is rejected without those further reads. The CL is
+    // authoritative on fork choice and the EL must honor what the CL sends if it
+    // physically can.
+    //
+    // The shared canonical ancestor is `head` itself when head is canonical (the
+    // FCU truncates the canonical chain), or one below the lowest sidechain block
+    // in `new_canonical_blocks` otherwise.
+    let canonical_link_height = if head_is_canonical {
+        head.number
+    } else {
+        new_canonical_blocks
+            .last()
+            .map(|(n, _)| *n)
+            .unwrap_or(head.number)
+            .saturating_sub(1)
+    };
+    let reorg_depth = latest.saturating_sub(canonical_link_height);
+    let ceiling = compute_reorg_ceiling(store, latest, max_reorg_depth).await?;
+    if reorg_depth > ceiling {
+        return Err(InvalidForkChoice::TooDeepReorg {
+            reorg_depth,
+            limit: ceiling,
+        });
+    }
+
     // Check that finalized and safe blocks are part of the new canonical chain.
     if let Some(ref finalized) = finalized_res
         && !((is_canonical(store, finalized.number, finalized_hash).await?
@@ -145,35 +204,6 @@ pub async fn apply_fork_choice(
             error::ForkChoiceElement::Head,
             error::ForkChoiceElement::Safe,
         ));
-    }
-
-    // execution-apis PR 786 point 6: -38006 TooDeepReorg is returned when the reorg
-    // depth exceeds the limitation specific to the client software. ethrex's limit
-    // is its state-history retention: we keep the last REORG_DEPTH_LIMIT blocks of
-    // state diffs, so reorgs deeper than that cannot be unwound. We do not reject
-    // reorgs that would cross the finalized prefix — the spec's only requirement on
-    // finalized is point 2 (skip-when-ancestor-of-finalized, handled above) and
-    // point 5 (-38002 for disconnected safe/finalized). The CL is authoritative on
-    // fork choice and an EL must honor what the CL sends if it physically can.
-    //
-    // The shared canonical ancestor is `head` itself when head is canonical (the
-    // FCU truncates the canonical chain), or one below the lowest sidechain block
-    // in `new_canonical_blocks` otherwise.
-    let canonical_link_height = if head_is_canonical {
-        head.number
-    } else {
-        new_canonical_blocks
-            .last()
-            .map(|(n, _)| *n)
-            .unwrap_or(head.number)
-            .saturating_sub(1)
-    };
-    let reorg_depth = latest.saturating_sub(canonical_link_height);
-    if reorg_depth > REORG_DEPTH_LIMIT {
-        return Err(InvalidForkChoice::TooDeepReorg {
-            reorg_depth,
-            limit: REORG_DEPTH_LIMIT,
-        });
     }
 
     let Some(link_header) = store.get_block_header_by_hash(link_block_hash)? else {
@@ -289,15 +319,46 @@ async fn find_link_with_canonical_chain(
 // Deep-reorg apply path (issue #6685, PR 3 orchestration).
 // ===========================================================================
 
-/// Wrapper around [`apply_fork_choice`] that handles the deep-reorg case:
-/// when the head's state is not reachable from the on-disk trie (the link
-/// block's state has been flushed past the layer-cache edge), build an
-/// in-memory overlay from the journal, replay the side chain against it,
-/// and atomically reconcile on the first new-chain commit.
+/// Entry point for engine-API fork-choice updates; handles both shallow and deep reorgs.
 ///
-/// For shallow reorgs and no-op cases the call falls through to
-/// `apply_fork_choice` and behaves identically. The 128-block
-/// [`REORG_DEPTH_LIMIT`] cap is left in place; PR 4 lifts it.
+/// ## Deep-reorg apply flow (issue #6685)
+///
+/// 1. **Operator / CL submits FCU.** `apply_fork_choice_with_deep_reorg` is the
+///    single entry point. It first attempts a normal (shallow) `apply_fork_choice`.
+/// 2. **`StateNotReachable` triggers the deep path.** If the pivot block's state was
+///    flushed past the layer-cache edge `D`, `apply_fork_choice` returns
+///    `StateNotReachable` and `reorg_apply_deep` takes over.
+/// 3. **`ReorgGuard` flag set; concurrent FCUs short-circuit to `SYNCING`.**
+///    `blockchain.enter_reorg()` sets the in-progress flag for the lifetime of this
+///    call. Any concurrent FCU sees the flag and returns `InvalidForkChoice::Syncing`
+///    immediately, preventing a second reorg from racing the first.
+/// 4. **`install_overlay_for_reorg` builds the overlay and swaps the cache.**
+///    Journal entries `[T, D]` (inclusive, where `T = pivot+1`) are replayed in
+///    descending order to produce an `Overlay` that exposes the virtual state at
+///    `pivot`. The layer cache is atomically replaced with a fresh empty cache
+///    carrying the overlay. Reads now cascade: layer cache -> overlay -> disk.
+/// 5. **Side-chain blocks `[T .. new_head]` are executed via the normal path.**
+///    `Blockchain::add_block` is called for each block in ascending order. Reads
+///    hit the layer cache (new-chain diffs) then the overlay (pivot baseline) then
+///    disk (unchanged old-chain state).
+/// 6. **First commit folds the overlay atomically.**
+///    The first new-chain block that triggers a layer commit (via the reconciliation
+///    path added in PR #6689) writes the overlay entries plus the new layer together
+///    in a single RocksDB write batch, then clears the overlay.
+/// 7. **`AbortReorgGuard` resets cache on any failure.**
+///    An `AbortReorgGuard` is armed immediately after overlay install. On any error
+///    (side-chain execution failure, missing block body, fork-choice update error,
+///    or panic via unwinding) the guard calls `Store::abort_reorg`, discarding the
+///    overlay and any partial new-chain layers so the next FCU starts clean.
+///
+/// For shallow reorgs and no-op cases the call falls through to `apply_fork_choice`
+/// and behaves identically.
+///
+/// The reorg depth ceiling is physical (layer-cache retention plus journal reach); see
+/// [`compute_reorg_ceiling`]. The operator can further restrict depth via
+/// `--max-reorg-depth` (`BlockchainOptions::max_reorg_depth`).
+///
+/// Tracking issue: #6685. Merged PRs: #6686, #6687, #6689, and this PR.
 pub async fn apply_fork_choice_with_deep_reorg(
     blockchain: &Blockchain,
     head_hash: H256,
@@ -312,7 +373,8 @@ pub async fn apply_fork_choice_with_deep_reorg(
     }
 
     let store = blockchain.store();
-    match apply_fork_choice(store, head_hash, safe_hash, finalized_hash).await {
+    let max_reorg_depth = blockchain.options.max_reorg_depth;
+    match apply_fork_choice(store, head_hash, safe_hash, finalized_hash, max_reorg_depth).await {
         Ok(header) => Ok(header),
         Err(InvalidForkChoice::StateNotReachable) => {
             info!(%head_hash, "head state not reachable from disk; attempting deep-reorg apply");
@@ -336,6 +398,7 @@ pub async fn apply_fork_choice_with_deep_reorg(
 ///    commit triggers the Section 9 reconciliation that folds overlay +
 ///    layer_T into a single atomic disk write.
 /// 6. Update `CANONICAL_BLOCK_HASHES` via `forkchoice_update`.
+#[tracing::instrument(level = "info", skip_all, fields(namespace = "deep_reorg"))]
 async fn reorg_apply_deep(
     blockchain: &Blockchain,
     head_hash: H256,
@@ -351,6 +414,11 @@ async fn reorg_apply_deep(
     let Some(_reorg_guard) = blockchain.enter_reorg() else {
         return Err(InvalidForkChoice::Syncing);
     };
+
+    metrics!(
+        use ethrex_metrics::reorg::METRICS_REORG;
+        METRICS_REORG.deep_reorg_attempts_total.inc();
+    );
 
     let store = blockchain.store();
 
@@ -396,6 +464,12 @@ async fn reorg_apply_deep(
         None => head.number.saturating_sub(1),
     };
 
+    metrics!(
+        use ethrex_metrics::reorg::METRICS_REORG;
+        let reorg_depth = head.number.saturating_sub(pivot_number);
+        METRICS_REORG.reorg_depth_hist.observe(reorg_depth as f64);
+    );
+
     // Overlay range is `[pivot+1, edge]` where `edge` is the highest committed
     // block (= highest journal entry).
     let edge = store
@@ -429,6 +503,14 @@ async fn reorg_apply_deep(
             InvalidForkChoice::StateNotReachable
         })?;
 
+    // Emit overlay size metrics (O(N) over entries, but only once at install time).
+    metrics!(
+        use ethrex_metrics::reorg::METRICS_REORG;
+        let (ov_entries, ov_bytes) = store.reorg_overlay_size_hint().unwrap_or((0, 0));
+        METRICS_REORG.overlay_entries.set(ov_entries as i64);
+        METRICS_REORG.overlay_bytes.set(ov_bytes as i64);
+    );
+
     // From this point on, any error must reset the layer cache to a fresh
     // empty state; a half-installed overlay + partial new-chain layers would
     // leak into subsequent FCU evaluations. The guard fires `abort_reorg`
@@ -454,6 +536,8 @@ async fn reorg_apply_deep(
             .collect()
     };
 
+    #[cfg(feature = "metrics")]
+    let mut first_block = true;
     for (number, block_hash) in replay_iter {
         let block = match store.get_block_by_hash(block_hash).await? {
             Some(b) => b,
@@ -463,6 +547,12 @@ async fn reorg_apply_deep(
             }
         };
         let parent_hash = block.header.parent_hash;
+        // The first add_block triggers the Section 9 reconciliation that folds the
+        // overlay into the first new-chain disk commit. Time just the add_block
+        // window so the histogram isolates the reconcile path (overlay-fold +
+        // commit) rather than the bulk side-chain replay.
+        #[cfg(feature = "metrics")]
+        let reconcile_start = first_block.then(std::time::Instant::now);
         if let Err(e) = blockchain.add_block(block) {
             error!(%number, %block_hash, error = %e, "deep-reorg: side-chain block execution failed");
             // `parent_hash` is the last block we replayed successfully (or the
@@ -470,6 +560,16 @@ async fn reorg_apply_deep(
             // on the new chain ; the correct `latestValidHash` for an INVALID
             // response.
             return Err(map_chain_error_for_fcu(e, parent_hash));
+        }
+        #[cfg(feature = "metrics")]
+        if let Some(start) = reconcile_start {
+            first_block = false;
+            metrics!(
+                use ethrex_metrics::reorg::METRICS_REORG;
+                METRICS_REORG
+                    .reconcile_duration_hist
+                    .observe(start.elapsed().as_secs_f64());
+            );
         }
     }
 
@@ -501,6 +601,22 @@ async fn reorg_apply_deep(
     metrics!(
         use ethrex_metrics::blocks::METRICS_BLOCKS;
         METRICS_BLOCKS.set_head_height(head.number);
+    );
+    metrics!(
+        use ethrex_metrics::reorg::METRICS_REORG;
+        METRICS_REORG.deep_reorg_success_total.inc();
+        // Overlay has been folded into disk by reconciliation; reset gauges.
+        METRICS_REORG.overlay_entries.set(0);
+        METRICS_REORG.overlay_bytes.set(0);
+        // Emit updated journal length (O(1) via first_key / last_key).
+        let journal_len = match (
+            store.lowest_state_history_block_number(),
+            store.highest_state_history_block_number(),
+        ) {
+            (Ok(Some(lo)), Ok(Some(hi))) => hi.saturating_sub(lo).saturating_add(1) as i64,
+            _ => 0,
+        };
+        METRICS_REORG.journal_length.set(journal_len);
     );
 
     info!(
@@ -538,10 +654,16 @@ impl<'a> AbortReorgGuard<'a> {
 
 impl Drop for AbortReorgGuard<'_> {
     fn drop(&mut self) {
-        if self.armed
-            && let Err(e) = self.store.abort_reorg()
-        {
-            error!(error = %e, "AbortReorgGuard: abort_reorg failed during cleanup");
+        if self.armed {
+            metrics!(
+                use ethrex_metrics::reorg::METRICS_REORG;
+                METRICS_REORG.deep_reorg_aborts_total.inc();
+                METRICS_REORG.overlay_entries.set(0);
+                METRICS_REORG.overlay_bytes.set(0);
+            );
+            if let Err(e) = self.store.abort_reorg() {
+                error!(error = %e, "AbortReorgGuard: abort_reorg failed during cleanup");
+            }
         }
     }
 }
