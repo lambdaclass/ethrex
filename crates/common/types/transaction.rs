@@ -50,7 +50,8 @@ use ethrex_rlp::{
 #[cfg(all(feature = "eip-8025", target_arch = "riscv64"))]
 use super::eip8025_cell::OnceCell;
 use crate::types::{
-    AccessList, AuthorizationList, BlobsBundle, constants::VERSIONED_HASH_VERSION_KZG,
+    AccessList, AuthorizationList, BlobsBundle,
+    constants::{MAX_BLOBS_PER_TX, VERSIONED_HASH_VERSION_KZG},
 };
 #[cfg(not(all(feature = "eip-8025", target_arch = "riscv64")))]
 use once_cell::sync::OnceCell;
@@ -2265,6 +2266,17 @@ impl FrameTransaction {
             if hash.0.first() != Some(&VERSIONED_HASH_VERSION_KZG) {
                 return Err(format!("Blob versioned hash {i}: wrong version byte"));
             }
+        }
+        // The EIP-7594 per-transaction blob limit applies to frame transactions
+        // unchanged (EIP-8141 §Blob-carrying frame transactions). No fork gate is
+        // needed: frame transactions exist only from forks where EIP-7594 is
+        // active. Enforced here rather than on the sidecar so it also binds on
+        // the execution path, which has no sidecar to check.
+        if self.blob_versioned_hashes.len() > MAX_BLOBS_PER_TX {
+            return Err(format!(
+                "Blob count must not exceed {MAX_BLOBS_PER_TX}, got {}",
+                self.blob_versioned_hashes.len()
+            ));
         }
         if self.blob_versioned_hashes.is_empty() && !self.max_fee_per_blob_gas.is_zero() {
             return Err(
