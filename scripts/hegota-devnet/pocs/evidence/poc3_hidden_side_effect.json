@@ -4,7 +4,7 @@
   "models": "Malicious multicalls and one-click drains, where the displayed intent is a subset of what the transaction actually executes",
   "defense_kind": "reverts the attack",
   "chain_id": 3151908,
-  "started_block": 371114,
+  "started_block": 371702,
   "notes": [
     "Phase A: both transfers executed; only one was displayed.",
     "Phase B: the hidden transfer moved the attacker's balance slot inside the transaction, so the differential assertion fired and the transaction was invalidated.",
@@ -12,21 +12,21 @@
     "This control is what exposed the simulation/block-building divergence on the transaction's storage-change set. An earlier version of this scenario used a deny-by-default assertion over all written slots; it appeared to defend phase B, but the control revealed it was rejecting every transaction \u2014 including legitimate ones \u2014 because block building observes 5 slot changes where simulation reports 2. A defense that also blocks the honest case is not a defense, and only the control could tell the two apart."
   ],
   "addresses": {
-    "shim": "0xfee0bc0139650cfa1c53d1e8d666740111bf74ae",
-    "guard": "0x2e48430f689c49bcc48c475189b3e58fd6eadb49",
-    "token": "0xa22fb31951b05b431aa6a7616395d4d7953f6974",
+    "shim": "0x8a1fd8da404cebfe35ee9b17ea71a182fc6917af",
+    "guard": "0x22e80986afd49956e83dde993165681cdb437993",
+    "token": "0xea86981f809c2da01b6fedcb2662e59ab33bbbd9",
     "intended_payee": "0x5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e",
     "attacker": "0xbabababababababababababababababababababa"
   },
   "phase_a": {
-    "victim": "0xb916c8c8a44e9cbdE461C6F6E851375AA8e62ff7",
-    "tx": "0x1431a24e3410c53b9ef61b0dc697887d8ef65a0b3fd295da883e1876ecdc1885",
-    "block": 371120,
+    "victim": "0xDD29bCC94A26C4d8324ecEe9A11cdAe5D6C3311b",
+    "tx": "0x99b3e64680b801812c94f49f8c8c54e76439c9b505f3f3b6e69f828820550c39",
+    "block": 371708,
     "intended_to_payee": 100,
     "hidden_to_attacker": 50
   },
   "phase_b": {
-    "victim": "0xbAA5487C513240D5FD5ee40a86EF61E239DA4308",
+    "victim": "0x81C5b94204e7aB6824e52d02698D4f2003677206",
     "mined": false,
     "attacker_delta": 0,
     "assertion": "the exfiltration address's balance slot is unchanged within this transaction"
@@ -35,8 +35,8 @@
     "negative_control": {
       "description": "with the hidden transfer removed, the identical guard permits the transaction the victim actually intended",
       "mined": true,
-      "tx": "0xa3965b9c3be026da9cff1a64b583cc1354d8a1fd683da7107f925df4f01b974a",
-      "block": 371136
+      "tx": "0xea0da57319f40513336fef8ccfee6a016ba422020a39c828d32516b0bba7f8f9",
+      "block": 371723
     },
     "deny_by_default_limitation": {
       "simulation_slot_change_count": 2,

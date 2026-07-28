@@ -4,7 +4,7 @@
   "models": "A user transacting into an upgradeable contract whose implementation was replaced after they were shown a quote; the CPIMP class (~$1M, 2025) is the clean fit, where a malicious implementation was inserted to intercept user calls",
   "defense_kind": "reverts the attack",
   "chain_id": 3151908,
-  "started_block": 370717,
+  "started_block": 371828,
   "notes": [
     "Phase A: the victim's deposit was diverted by the implementation that had already been swapped in.",
     "Trap 1 confirmed on-chain: a differential assertion over the implementation slot passed while the implementation HAD been swapped, because TXDIFF's before/after is scoped to the guarded transaction.",
@@ -12,18 +12,18 @@
     "Consequence for wallets: detecting a prior-transaction change requires an ABSOLUTE assertion against a value captured at signing time, so the signer must commit to expected environment values, not merely request a diff check."
   ],
   "addresses": {
-    "shim": "0x75fc0c2b9ca08dbf141476c03d7c0a66f7ecb36c",
-    "proxy": "0xa0b18433e004ec0b7149255af41f293a5b200499",
-    "benign_impl": "0x2279f01259c6e6c85145e534cc5ae5da7fd176d3",
-    "hostile_impl": "0x6150c34660eb7b20ed073e7a30843eec35a3d175",
-    "token": "0xafcd21937f9cd974bb54d39fda2c4a5a60c71977",
-    "guard_differential": "0xa64b45394a339c906d35c27f0472fc0514adadb3",
-    "guard_absolute": "0x319454a7c4c211aa54d76b731a0d32c791bd0dc9"
+    "shim": "0x6a1738cff3fe3bc68a4a565ed0d66ee884d5f64f",
+    "proxy": "0x0e6d3b035d2fd6878938d4dc260acbec30b3ced5",
+    "benign_impl": "0x3ad0514e0bc78f512e26b2342236b11fa6f1ad53",
+    "hostile_impl": "0xb41816795b5af35fc2fa7b6714ab349202cfa628",
+    "token": "0x168e3efd2866d49f0584a97e1937aa944ce9b466",
+    "guard_differential": "0x1750fd538645d9bcdcafed771b95699e663b5d70",
+    "guard_absolute": "0x19caa9146e5ad8556838e3ec15d535ea409157a9"
   },
   "phase_a": {
-    "victim": "0x4F63217459ed92519037AAA5458BfcACb0ab514E",
-    "tx": "0x42473e3fc2fa8efd444e6670414baad5a3b1d9b993bdf7d8e68bd2a38a87709e",
-    "block": 370725,
+    "victim": "0x1C7D0EdF6d23c2235EA70dbB37fed23b77962365",
+    "tx": "0x5ca36b471d4abbad9e337e5b689e03f0e46d7bf7777ad71dd2439cefc2b5e82d",
+    "block": 371836,
     "stolen": 100
   },
   "phase_b": {
@@ -48,8 +48,8 @@
   },
   "extra": {
     "upgrade": {
-      "from": "0x2279f01259c6e6c85145e534cc5ae5da7fd176d3",
-      "to": "0x6150c34660eb7b20ed073e7a30843eec35a3d175",
+      "from": "0x3ad0514e0bc78f512e26b2342236b11fa6f1ad53",
+      "to": "0xb41816795b5af35fc2fa7b6714ab349202cfa628",
       "slot": "0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc"
     }
   }

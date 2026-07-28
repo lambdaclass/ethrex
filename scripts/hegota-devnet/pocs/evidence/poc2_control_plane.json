@@ -4,7 +4,7 @@
   "models": "The largest documented loss in the incident record (~$1.46B, Feb 2025): signers approved what was presented as a routine transfer, and the transaction rewrote the account's control plane",
   "defense_kind": "reverts the attack",
   "chain_id": 3151908,
-  "started_block": 371473,
+  "started_block": 371661,
   "notes": [
     "Phase A: two of three owners signed what was presented as a routine transfer, and the transaction replaced the Safe's singleton pointer. The account now runs code the attacker chose.",
     "Phase B: the owners' EIP-712 signatures were valid and the Safe would have accepted them \u2014 the transaction was invalidated because its EFFECTS violated the executor's frozen policy, not because authorization failed.",
@@ -13,32 +13,32 @@
     "Contrast: a real Safe Transaction Guard was installed and the identical attack still succeeded, because an application-level precondition sees intent rather than effect. A guard written to reject delegatecall targets would have caught it; the postcondition caught it without being told what to look for."
   ],
   "addresses": {
-    "safe_singleton": "0x1dc67f9822a0ea943fc8880018fa0c93e43bddea",
-    "safe_factory": "0x598d6880b8026dba4594d2f1a3bbd75f64abdda8",
+    "safe_singleton": "0xdfea3aad366769d82934ef92aff8ffdcc8225b2d",
+    "safe_factory": "0xb6937e2ab31617ca8d707fc0912c9eaf74158491",
     "fallback_handler": "none (address(0))",
-    "shim": "0x9930cd33da119a2a5b76b476c01c69853df01397",
-    "guard": "0xcd04913177265a8746fc2635ac42d38b1fbd758c",
-    "singleton_overwriter": "0xc06765285fac9e14bc4d1e7ba5d796fe2fcc1e53",
-    "hostile_singleton": "0x953ad459adc7f462b8c3f7ab236281e94b270339",
+    "shim": "0x46ce3d8bdbcb474be101375e43dd289c154404cb",
+    "guard": "0x7aff1daaf87ce6c7b7b86a3c86eefeba5edaacc2",
+    "singleton_overwriter": "0xe834753f301380440006c36d8ce7d0b131572939",
+    "hostile_singleton": "0x05a0b5296e8e361392515a473f936789d614d5a3",
     "owners": [
-      "0x161650b318E01b3C7c0AEbd75159b431FAB0c03e",
-      "0x30740fFaEB3fF6F731d5e319B5fa4F8Efe638ef3",
-      "0x8c43c537B34aaE070B4C1a086Ad6c1Eb05420E12"
+      "0x0223A4C0c8952859a3C78a9c9B2938a4888124f0",
+      "0x3798d6dF6c08F3Cbc1B11F7535612E9c4b09426A",
+      "0xcc2A634305A7696e56bdc8029AF07DDefA0eAFfe"
     ]
   },
   "phase_a": {
-    "safe": "0x127345887f1e817dBC029922aF2A96aEB4Edb19c",
-    "singleton_before": "0x1dc67f9822a0ea943fc8880018fa0c93e43bddea",
-    "singleton_after": "0x953ad459adc7f462b8c3f7ab236281e94b270339",
-    "hostile_singleton": "0x953ad459adc7f462b8c3f7ab236281e94b270339",
+    "safe": "0x991e6c4BcdEC88e382bFfC1627F4B7721E089917",
+    "singleton_before": "0xdfea3aad366769d82934ef92aff8ffdcc8225b2d",
+    "singleton_after": "0x05a0b5296e8e361392515a473f936789d614d5a3",
+    "hostile_singleton": "0x05a0b5296e8e361392515a473f936789d614d5a3",
     "hijacked": true
   },
   "phase_b": {
-    "safe": "0x0B1A3BE57eeC33fA559a62e995cfd5042adF3778",
-    "executor": "0x2dfca44847d55b574ff9919b12b225c594245392",
+    "safe": "0x06717f1a5abF0aD11bbDEdA5dee0D49b3f33d7E1",
+    "executor": "0x8bc4861c50b3261759702b512b032353a2b9ab36",
     "mined": false,
-    "singleton_before": "0x1dc67f9822a0ea943fc8880018fa0c93e43bddea",
-    "singleton_after": "0x1dc67f9822a0ea943fc8880018fa0c93e43bddea",
+    "singleton_before": "0xdfea3aad366769d82934ef92aff8ffdcc8225b2d",
+    "singleton_after": "0xdfea3aad366769d82934ef92aff8ffdcc8225b2d",
     "owner_signatures_valid": true
   },
   "extra": {
@@ -51,15 +51,15 @@
     "negative_control": {
       "description": "the executor's policy forbids control-plane changes, not ordinary activity: a genuine owner-approved transfer still executes",
       "mined": true,
-      "tx": "0x6f9ba90a5c21dde782ea2f0d8edf8a9a45f923a7e6a0833597687272f0689cd9",
+      "tx": "0x9d2dea1f71ae035794b101b358f60e5041e4b04c409d5eaa752a1a2ce26d8b12",
       "wei_moved": 1000000000000000
     },
     "safe_guard_contrast": {
-      "safe": "0x2Cf68eCDBaE93a9Bd0a39E92fa3A387FE14A9077",
-      "safe_transaction_guard": "0xbd45d456ba7feb493dcd947dc6c53c5e8260628d",
+      "safe": "0x0a2f9FFa00D99FDBa5168658Cf6Cebfd3484D619",
+      "safe_transaction_guard": "0x771efa9fa9199146fa922e730c87bdfe2bea4f55",
       "attack_blocked_by_safe_guard": false,
-      "singleton_before": "0x1dc67f9822a0ea943fc8880018fa0c93e43bddea",
-      "singleton_after": "0x953ad459adc7f462b8c3f7ab236281e94b270339",
+      "singleton_before": "0xdfea3aad366769d82934ef92aff8ffdcc8225b2d",
+      "singleton_after": "0x05a0b5296e8e361392515a473f936789d614d5a3",
       "reading": "checkTransaction admitted the transaction because it inspects only the proposed target, value, calldata and operation \u2014 a precondition must anticipate the dangerous shape. The POST_TX assertion in phase B needed no such foresight because it reads actual effects.",
       "honest_caveat": "a Safe Guard that specifically rejected DelegateCall, or allowlisted its targets, WOULD have blocked this attack. The difference demonstrated is one of reach and of what must be known in advance, not that Safe Guards are ineffective."
     }

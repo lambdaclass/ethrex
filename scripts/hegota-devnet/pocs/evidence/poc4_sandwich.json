@@ -4,7 +4,7 @@
   "models": "Value extracted from a user's own swap by trading ahead of it; the victim's transaction is honest and their wallet is uncompromised",
   "defense_kind": "reverts the attack",
   "chain_id": 3151908,
-  "started_block": 370896,
+  "started_block": 371734,
   "notes": [
     "Phase A: the victim received 5065 against a quote of 9900 \u2014 a 49% shortfall.",
     "Phase B: the transaction was excluded and the victim spent 0 wei \u2014 the approved gas payment is rolled back with the body, so a defended transaction costs its sender nothing.",
@@ -12,22 +12,22 @@
     "Negative control: with an achievable minimum of 4558 the same guard allowed the swap, which returned 4994."
   ],
   "addresses": {
-    "shim": "0xdba30a69923eee03290094bc2e3b18cf92503559",
-    "guard": "0xaa7739a56a37ec58b54eb0c89a1c8805a5b4329f",
-    "tokenA": "0xae247504439a9c1ba49d12ea545f8336682b66c3",
-    "tokenB": "0x1d35e305d2ec02c97d60dc07ab2ba4eb27488465",
-    "amm": "0x10907c92c5d7606c079e4f84ab3c177d6b2cb380"
+    "shim": "0x737ffc6cdb2099f7bec5e8e2a3f7b1f139a03536",
+    "guard": "0x2ae4c4489dda1f4f4b00271ba35d43d9d5960c9c",
+    "tokenA": "0xb70c5310a19d6bf8d071f4a9b421b759d96a8b88",
+    "tokenB": "0xc3a9cf9616d7aaaf389285efa5ad20a9f25d27ec",
+    "amm": "0x602deabfd724b49a6d3dc73fd88b9ff0b648ed5b"
   },
   "phase_a": {
-    "victim": "0xA168d5E33e81B19c6438DE801b4b3cECDbBda0af",
-    "tx": "0x3b37a4a70b7b9bb806dfb7284dfe590c8673088ca2fa70fab50676b01e8e079e",
-    "block": 370906,
+    "victim": "0xfD3BC58c94f703197bb2F1A8f16F62Da6972B4b0",
+    "tx": "0x3120b13de7dda1a3b10987d31ddc7a1a12a533060faea458597be4fe129d8e4e",
+    "block": 371744,
     "received": 5065,
     "quoted": 9900,
     "shortfall_pct": 49
   },
   "phase_b": {
-    "victim": "0x35DfC492ada96E094b24B18b5C241fD9277c72AC",
+    "victim": "0x63E37352e4Ebb5d0F9B774e7c99A12A8B486F74c",
     "min_committed": 9801,
     "mined": false,
     "token_delta": 0,
@@ -46,7 +46,7 @@
       "description": "the assertion is a bound, not a blanket refusal: a minimum the moved pool can satisfy still fills",
       "min_committed": 4558,
       "received": 4994,
-      "tx": "0x3c40bd63862c379478c0bbff5f49c1fd5df717afae73a47967427c0b7deb56f2",
+      "tx": "0x7540c4f21104cb2f7f9f9a4bb6a2a81e48cd62a76c63e98a2fb730e875eb8a44",
       "mined": true
     }
   }

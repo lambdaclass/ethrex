@@ -4,17 +4,17 @@
   "models": "The structural gap in every published EIP-7906 proof-of-concept: the transaction composer controls the frame list, so a hostile composer can omit the assertion",
   "defense_kind": "reverts the attack",
   "chain_id": 3151908,
-  "started_block": 370683,
+  "started_block": 371605,
   "notes": [
     "Guard provenance is closable on-chain with primitives EIP-8141 already ships: TXPARAM(0x09) for the frame count, FRAMEPARAM for each frame's mode and target, FRAMEDATACOPY for its calldata, and a reverting VERIFY frame to invalidate the transaction. No specification change is required.",
     "Cases B-E were refused at MEMPOOL ADMISSION, because VERIFY frames run in the validation prefix that admission simulates. A bare POST_TX assertion is instead admitted and then silently never mined, so mandating the guard at the account also converts a silent failure into an immediate, actionable rejection.",
     "The account's VERIFY frame reads only its own storage and makes no external calls, so it stays admissible through the public mempool under the ERC-7562 validation observer rather than requiring builder-direct inclusion."
   ],
   "addresses": {
-    "shim": "0xea013fc7402e15d9cab772e45b2329c668e0346d",
-    "guard": "0x70b3746ea843c787e5e345965438b3daf16cb955",
-    "token": "0x1a30a3d794c8cfe7ba7c47f27c7740130892f7df",
-    "account": "0x21621fbd81cee243003d0c7f7cd9aec4a979f95b",
+    "shim": "0x1142d9535c588945b9f4860013164608698e4c5c",
+    "guard": "0x12dfd8ac4dae921544cc6ad46429f34766781305",
+    "token": "0xaaba0474fb0b3718dfc509183aaa92df2bcdbb74",
+    "account": "0x7c312821a4140b8701a04a3975c505e54d18fee6",
     "attacker": "0xbabababababababababababababababababababa"
   },
   "phase_a": {
@@ -24,7 +24,7 @@
         "case": "A honest body + correct guard",
         "expected": "mines",
         "mined": true,
-        "tx": "0xa252d60e07aacc29fe56e4327de5883c3f4c1a50c60c52a5f4cec49ea48504f0"
+        "tx": "0x7f6c63668a5242991695de7a7be925fd446c6590052d57b1af899c07d20174de"
       },
       {
         "case": "B malicious body, guard omitted",
@@ -60,7 +60,7 @@
   },
   "phase_b": {
     "attacker_allowance_after_all_attempts": 0,
-    "honest_transaction_mined": "0xa252d60e07aacc29fe56e4327de5883c3f4c1a50c60c52a5f4cec49ea48504f0"
+    "honest_transaction_mined": "0x7f6c63668a5242991695de7a7be925fd446c6590052d57b1af899c07d20174de"
   },
   "extra": {}
 }

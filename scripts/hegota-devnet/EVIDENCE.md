@@ -14,14 +14,14 @@ cannot be used to identify which assertion tripped.
 
 - **Models:** The structural gap in every published EIP-7906 proof-of-concept: the transaction composer controls the frame list, so a hostile composer can omit the assertion
 - **Defense kind:** reverts the attack
-- **Chain id:** 3151908 · **from block:** 370683
+- **Chain id:** 3151908 · **from block:** 371605
 
 | contract | address |
 |---|---|
-| shim | `0xea013fc7402e15d9cab772e45b2329c668e0346d` |
-| guard | `0x70b3746ea843c787e5e345965438b3daf16cb955` |
-| token | `0x1a30a3d794c8cfe7ba7c47f27c7740130892f7df` |
-| account | `0x21621fbd81cee243003d0c7f7cd9aec4a979f95b` |
+| shim | `0x1142d9535c588945b9f4860013164608698e4c5c` |
+| guard | `0x12dfd8ac4dae921544cc6ad46429f34766781305` |
+| token | `0xaaba0474fb0b3718dfc509183aaa92df2bcdbb74` |
+| account | `0x7c312821a4140b8701a04a3975c505e54d18fee6` |
 | attacker | `0xbabababababababababababababababababababa` |
 
 **phase a**
@@ -34,7 +34,7 @@ cannot be used to identify which assertion tripped.
       "case": "A honest body + correct guard",
       "expected": "mines",
       "mined": true,
-      "tx": "0xa252d60e07aacc29fe56e4327de5883c3f4c1a50c60c52a5f4cec49ea48504f0"
+      "tx": "0x7f6c63668a5242991695de7a7be925fd446c6590052d57b1af899c07d20174de"
     },
     {
       "case": "B malicious body, guard omitted",
@@ -75,7 +75,7 @@ cannot be used to identify which assertion tripped.
 ```json
 {
   "attacker_allowance_after_all_attempts": 0,
-  "honest_transaction_mined": "0xa252d60e07aacc29fe56e4327de5883c3f4c1a50c60c52a5f4cec49ea48504f0"
+  "honest_transaction_mined": "0x7f6c63668a5242991695de7a7be925fd446c6590052d57b1af899c07d20174de"
 }
 ```
 
@@ -89,21 +89,21 @@ cannot be used to identify which assertion tripped.
 
 - **Models:** The wallet-drainer pattern behind the 2025-2026 frontend and registrar hijacks (a DNS hijack in Nov 2025, ~$1M+; a registrar takeover in Apr 2026, ~$1.2M), where phishing interfaces prompted unlimited-approval signatures
 - **Defense kind:** reverts the attack
-- **Chain id:** 3151908 · **from block:** 370765
+- **Chain id:** 3151908 · **from block:** 371625
 
 | contract | address |
 |---|---|
-| shim | `0x648cd1c5411cdb2d1f34bc8358b4c97ab679a2fb` |
-| guard | `0x19ae6a90f36e621afca594a6fe082c83b51d9ac1` |
-| token | `0xaed6ad79ccb5e03b1a27adaf97d193bbfed67bb8` |
-| drainer | `0xf4f312b7f67ba409d3518361a46c35e4b0cadea1` |
+| shim | `0x9af5f4762606541c728f79167b48a81b35dbcb37` |
+| guard | `0xa8e2b2b37399821e5fb58aabbee7de2adbfdb210` |
+| token | `0x25642659ad5e36115a7a36e3ae416ae65c02ebe7` |
+| drainer | `0xab28c0dbc6492eada940907e8b226bc8dbeb8d9f` |
 | attacker | `0xbabababababababababababababababababababa` |
 
 **phase a**
 
 ```json
 {
-  "victim": "0x1792EBEEfaD38EA723d24770359DE9aa72E9C93A",
+  "victim": "0xa0146013FaCC62ed62a7ff0035244d4CcbEf9094",
   "allowance_unlimited": true,
   "tokens_moved_at_signing": 0,
   "stolen_later": 1000
@@ -114,7 +114,7 @@ cannot be used to identify which assertion tripped.
 
 ```json
 {
-  "account": "0xe7bb498aabffaeb19e8d923bad62e7ebbff3a121",
+  "account": "0x28f10e830c998ed7eedd0b44a0af764e642cfcbb",
   "guarded_tx_mined": false,
   "residual_allowance": 0,
   "attacker_sweep_reverted": true,
@@ -129,7 +129,7 @@ cannot be used to identify which assertion tripped.
   "negative_control": {
     "description": "the guard is not a blanket ban: an approval to a spender the owner allowlisted in the committed policy is permitted",
     "mined": true,
-    "tx": "0xd6a0d6c92b8698702ec5ba02192457b67ef17e3fb99e632460c2002a43a3a718",
+    "tx": "0x86f0d924fa002ffbad46d5df3a744bfd7391048952d823942fb19ca3d0dd535b",
     "allowance_after": 100
   }
 }
@@ -145,27 +145,27 @@ cannot be used to identify which assertion tripped.
 
 - **Models:** The largest documented loss in the incident record (~$1.46B, Feb 2025): signers approved what was presented as a routine transfer, and the transaction rewrote the account's control plane
 - **Defense kind:** reverts the attack
-- **Chain id:** 3151908 · **from block:** 371473
+- **Chain id:** 3151908 · **from block:** 371661
 
 | contract | address |
 |---|---|
-| safe_singleton | `0x1dc67f9822a0ea943fc8880018fa0c93e43bddea` |
-| safe_factory | `0x598d6880b8026dba4594d2f1a3bbd75f64abdda8` |
+| safe_singleton | `0xdfea3aad366769d82934ef92aff8ffdcc8225b2d` |
+| safe_factory | `0xb6937e2ab31617ca8d707fc0912c9eaf74158491` |
 | fallback_handler | `none (address(0))` |
-| shim | `0x9930cd33da119a2a5b76b476c01c69853df01397` |
-| guard | `0xcd04913177265a8746fc2635ac42d38b1fbd758c` |
-| singleton_overwriter | `0xc06765285fac9e14bc4d1e7ba5d796fe2fcc1e53` |
-| hostile_singleton | `0x953ad459adc7f462b8c3f7ab236281e94b270339` |
-| owners | `['0x161650b318E01b3C7c0AEbd75159b431FAB0c03e', '0x30740fFaEB3fF6F731d5e319B5fa4F8Efe638ef3', '0x8c43c537B34aaE070B4C1a086Ad6c1Eb05420E12']` |
+| shim | `0x46ce3d8bdbcb474be101375e43dd289c154404cb` |
+| guard | `0x7aff1daaf87ce6c7b7b86a3c86eefeba5edaacc2` |
+| singleton_overwriter | `0xe834753f301380440006c36d8ce7d0b131572939` |
+| hostile_singleton | `0x05a0b5296e8e361392515a473f936789d614d5a3` |
+| owners | `['0x0223A4C0c8952859a3C78a9c9B2938a4888124f0', '0x3798d6dF6c08F3Cbc1B11F7535612E9c4b09426A', '0xcc2A634305A7696e56bdc8029AF07DDefA0eAFfe']` |
 
 **phase a**
 
 ```json
 {
-  "safe": "0x127345887f1e817dBC029922aF2A96aEB4Edb19c",
-  "singleton_before": "0x1dc67f9822a0ea943fc8880018fa0c93e43bddea",
-  "singleton_after": "0x953ad459adc7f462b8c3f7ab236281e94b270339",
-  "hostile_singleton": "0x953ad459adc7f462b8c3f7ab236281e94b270339",
+  "safe": "0x991e6c4BcdEC88e382bFfC1627F4B7721E089917",
+  "singleton_before": "0xdfea3aad366769d82934ef92aff8ffdcc8225b2d",
+  "singleton_after": "0x05a0b5296e8e361392515a473f936789d614d5a3",
+  "hostile_singleton": "0x05a0b5296e8e361392515a473f936789d614d5a3",
   "hijacked": true
 }
 ```
@@ -174,11 +174,11 @@ cannot be used to identify which assertion tripped.
 
 ```json
 {
-  "safe": "0x0B1A3BE57eeC33fA559a62e995cfd5042adF3778",
-  "executor": "0x2dfca44847d55b574ff9919b12b225c594245392",
+  "safe": "0x06717f1a5abF0aD11bbDEdA5dee0D49b3f33d7E1",
+  "executor": "0x8bc4861c50b3261759702b512b032353a2b9ab36",
   "mined": false,
-  "singleton_before": "0x1dc67f9822a0ea943fc8880018fa0c93e43bddea",
-  "singleton_after": "0x1dc67f9822a0ea943fc8880018fa0c93e43bddea",
+  "singleton_before": "0xdfea3aad366769d82934ef92aff8ffdcc8225b2d",
+  "singleton_after": "0xdfea3aad366769d82934ef92aff8ffdcc8225b2d",
   "owner_signatures_valid": true
 }
 ```
@@ -196,15 +196,15 @@ cannot be used to identify which assertion tripped.
   "negative_control": {
     "description": "the executor's policy forbids control-plane changes, not ordinary activity: a genuine owner-approved transfer still executes",
     "mined": true,
-    "tx": "0x6f9ba90a5c21dde782ea2f0d8edf8a9a45f923a7e6a0833597687272f0689cd9",
+    "tx": "0x9d2dea1f71ae035794b101b358f60e5041e4b04c409d5eaa752a1a2ce26d8b12",
     "wei_moved": 1000000000000000
   },
   "safe_guard_contrast": {
-    "safe": "0x2Cf68eCDBaE93a9Bd0a39E92fa3A387FE14A9077",
-    "safe_transaction_guard": "0xbd45d456ba7feb493dcd947dc6c53c5e8260628d",
+    "safe": "0x0a2f9FFa00D99FDBa5168658Cf6Cebfd3484D619",
+    "safe_transaction_guard": "0x771efa9fa9199146fa922e730c87bdfe2bea4f55",
     "attack_blocked_by_safe_guard": false,
-    "singleton_before": "0x1dc67f9822a0ea943fc8880018fa0c93e43bddea",
-    "singleton_after": "0x953ad459adc7f462b8c3f7ab236281e94b270339",
+    "singleton_before": "0xdfea3aad366769d82934ef92aff8ffdcc8225b2d",
+    "singleton_after": "0x05a0b5296e8e361392515a473f936789d614d5a3",
     "reading": "checkTransaction admitted the transaction because it inspects only the proposed target, value, calldata and operation \u2014 a precondition must anticipate the dangerous shape. The POST_TX assertion in phase B needed no such foresight because it reads actual effects.",
     "honest_caveat": "a Safe Guard that specifically rejected DelegateCall, or allowlisted its targets, WOULD have blocked this attack. The difference demonstrated is one of reach and of what must be known in advance, not that Safe Guards are ineffective."
   }
@@ -223,13 +223,13 @@ cannot be used to identify which assertion tripped.
 
 - **Models:** Malicious multicalls and one-click drains, where the displayed intent is a subset of what the transaction actually executes
 - **Defense kind:** reverts the attack
-- **Chain id:** 3151908 · **from block:** 371114
+- **Chain id:** 3151908 · **from block:** 371702
 
 | contract | address |
 |---|---|
-| shim | `0xfee0bc0139650cfa1c53d1e8d666740111bf74ae` |
-| guard | `0x2e48430f689c49bcc48c475189b3e58fd6eadb49` |
-| token | `0xa22fb31951b05b431aa6a7616395d4d7953f6974` |
+| shim | `0x8a1fd8da404cebfe35ee9b17ea71a182fc6917af` |
+| guard | `0x22e80986afd49956e83dde993165681cdb437993` |
+| token | `0xea86981f809c2da01b6fedcb2662e59ab33bbbd9` |
 | intended_payee | `0x5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e` |
 | attacker | `0xbabababababababababababababababababababa` |
 
@@ -237,9 +237,9 @@ cannot be used to identify which assertion tripped.
 
 ```json
 {
-  "victim": "0xb916c8c8a44e9cbdE461C6F6E851375AA8e62ff7",
-  "tx": "0x1431a24e3410c53b9ef61b0dc697887d8ef65a0b3fd295da883e1876ecdc1885",
-  "block": 371120,
+  "victim": "0xDD29bCC94A26C4d8324ecEe9A11cdAe5D6C3311b",
+  "tx": "0x99b3e64680b801812c94f49f8c8c54e76439c9b505f3f3b6e69f828820550c39",
+  "block": 371708,
   "intended_to_payee": 100,
   "hidden_to_attacker": 50
 }
@@ -249,7 +249,7 @@ cannot be used to identify which assertion tripped.
 
 ```json
 {
-  "victim": "0xbAA5487C513240D5FD5ee40a86EF61E239DA4308",
+  "victim": "0x81C5b94204e7aB6824e52d02698D4f2003677206",
   "mined": false,
   "attacker_delta": 0,
   "assertion": "the exfiltration address's balance slot is unchanged within this transaction"
@@ -263,8 +263,8 @@ cannot be used to identify which assertion tripped.
   "negative_control": {
     "description": "with the hidden transfer removed, the identical guard permits the transaction the victim actually intended",
     "mined": true,
-    "tx": "0xa3965b9c3be026da9cff1a64b583cc1354d8a1fd683da7107f925df4f01b974a",
-    "block": 371136
+    "tx": "0xea0da57319f40513336fef8ccfee6a016ba422020a39c828d32516b0bba7f8f9",
+    "block": 371723
   },
   "deny_by_default_limitation": {
     "simulation_slot_change_count": 2,
@@ -286,23 +286,23 @@ cannot be used to identify which assertion tripped.
 
 - **Models:** Value extracted from a user's own swap by trading ahead of it; the victim's transaction is honest and their wallet is uncompromised
 - **Defense kind:** reverts the attack
-- **Chain id:** 3151908 · **from block:** 370896
+- **Chain id:** 3151908 · **from block:** 371734
 
 | contract | address |
 |---|---|
-| shim | `0xdba30a69923eee03290094bc2e3b18cf92503559` |
-| guard | `0xaa7739a56a37ec58b54eb0c89a1c8805a5b4329f` |
-| tokenA | `0xae247504439a9c1ba49d12ea545f8336682b66c3` |
-| tokenB | `0x1d35e305d2ec02c97d60dc07ab2ba4eb27488465` |
-| amm | `0x10907c92c5d7606c079e4f84ab3c177d6b2cb380` |
+| shim | `0x737ffc6cdb2099f7bec5e8e2a3f7b1f139a03536` |
+| guard | `0x2ae4c4489dda1f4f4b00271ba35d43d9d5960c9c` |
+| tokenA | `0xb70c5310a19d6bf8d071f4a9b421b759d96a8b88` |
+| tokenB | `0xc3a9cf9616d7aaaf389285efa5ad20a9f25d27ec` |
+| amm | `0x602deabfd724b49a6d3dc73fd88b9ff0b648ed5b` |
 
 **phase a**
 
 ```json
 {
-  "victim": "0xA168d5E33e81B19c6438DE801b4b3cECDbBda0af",
-  "tx": "0x3b37a4a70b7b9bb806dfb7284dfe590c8673088ca2fa70fab50676b01e8e079e",
-  "block": 370906,
+  "victim": "0xfD3BC58c94f703197bb2F1A8f16F62Da6972B4b0",
+  "tx": "0x3120b13de7dda1a3b10987d31ddc7a1a12a533060faea458597be4fe129d8e4e",
+  "block": 371744,
   "received": 5065,
   "quoted": 9900,
   "shortfall_pct": 49
@@ -313,7 +313,7 @@ cannot be used to identify which assertion tripped.
 
 ```json
 {
-  "victim": "0x35DfC492ada96E094b24B18b5C241fD9277c72AC",
+  "victim": "0x63E37352e4Ebb5d0F9B774e7c99A12A8B486F74c",
   "min_committed": 9801,
   "mined": false,
   "token_delta": 0,
@@ -337,7 +337,7 @@ cannot be used to identify which assertion tripped.
     "description": "the assertion is a bound, not a blanket refusal: a minimum the moved pool can satisfy still fills",
     "min_committed": 4558,
     "received": 4994,
-    "tx": "0x3c40bd63862c379478c0bbff5f49c1fd5df717afae73a47967427c0b7deb56f2",
+    "tx": "0x7540c4f21104cb2f7f9f9a4bb6a2a81e48cd62a76c63e98a2fb730e875eb8a44",
     "mined": true
   }
 }
@@ -354,24 +354,24 @@ cannot be used to identify which assertion tripped.
 
 - **Models:** A victim's own trade filling at a price that changed after they were shown a quote. Distinct from attacker-signed oracle-manipulation exploits, which a sender-authored assertion cannot reach.
 - **Defense kind:** reverts the attack
-- **Chain id:** 3151908 · **from block:** 370841
+- **Chain id:** 3151908 · **from block:** 371776
 
 | contract | address |
 |---|---|
-| shim | `0x4ffff3480dc4d089a9fdc7d667f5326c820c7572` |
-| token | `0x44561957e793ce1255e439edb130fd5783c38941` |
-| oracle | `0x196b3fce1339b626452794372aa7d3f1a34294c4` |
-| desk | `0x547c474177f5a952b96e4025ea48a65abf356781` |
-| guard_differential | `0xfc9010e21552c41f06d16952d27b3e1f43e8e63f` |
-| guard_absolute | `0xee7e3d18ce8fee29282a97129dcc8fd93321bb22` |
-| guard_net_effect | `0x9516f6075b90aa49ce8d71da8cfe44499ba3909b` |
+| shim | `0x6d62bf0e4b021fdd300a86d8cb213fcb0ae1ee39` |
+| token | `0xae815d7cf9732ae9a6eb5eaef2770447377e618c` |
+| oracle | `0x1057cf18c349cba759414419d66ae6393f0c27fe` |
+| desk | `0x7b3ee16d52e7dc7345d24d61adb4bb1db194cbf2` |
+| guard_differential | `0xa634d63ac82ae1ee6d46c57ed52f3e9e6b9a3daa` |
+| guard_absolute | `0x00177c7f50b20213e62894ce3c1f487d9e2f4a1d` |
+| guard_net_effect | `0xf2f1c998545f144f6d8b7b22bce6f04319dc9801` |
 
 **phase a**
 
 ```json
 {
-  "victim": "0x35dCAD0140F58076e9b4901258c11b08b190d67A",
-  "tx": "0x665c3b89a083f6c9c145b7bdc5268213be9e9eed9ccfc293203733a9713d05c4",
+  "victim": "0x203F2195B0Db68fD4a8cEFd1D73EAFe8FC1E745F",
+  "tx": "0xfe39332dba5b38c348ab21dfc51ca26dc3df6fbd06d35d1ffb1c677f5e48a31c",
   "paid": 100,
   "received": 50,
   "expected_at_quote": 100
@@ -420,25 +420,25 @@ cannot be used to identify which assertion tripped.
 
 - **Models:** A user transacting into an upgradeable contract whose implementation was replaced after they were shown a quote; the CPIMP class (~$1M, 2025) is the clean fit, where a malicious implementation was inserted to intercept user calls
 - **Defense kind:** reverts the attack
-- **Chain id:** 3151908 · **from block:** 370717
+- **Chain id:** 3151908 · **from block:** 371828
 
 | contract | address |
 |---|---|
-| shim | `0x75fc0c2b9ca08dbf141476c03d7c0a66f7ecb36c` |
-| proxy | `0xa0b18433e004ec0b7149255af41f293a5b200499` |
-| benign_impl | `0x2279f01259c6e6c85145e534cc5ae5da7fd176d3` |
-| hostile_impl | `0x6150c34660eb7b20ed073e7a30843eec35a3d175` |
-| token | `0xafcd21937f9cd974bb54d39fda2c4a5a60c71977` |
-| guard_differential | `0xa64b45394a339c906d35c27f0472fc0514adadb3` |
-| guard_absolute | `0x319454a7c4c211aa54d76b731a0d32c791bd0dc9` |
+| shim | `0x6a1738cff3fe3bc68a4a565ed0d66ee884d5f64f` |
+| proxy | `0x0e6d3b035d2fd6878938d4dc260acbec30b3ced5` |
+| benign_impl | `0x3ad0514e0bc78f512e26b2342236b11fa6f1ad53` |
+| hostile_impl | `0xb41816795b5af35fc2fa7b6714ab349202cfa628` |
+| token | `0x168e3efd2866d49f0584a97e1937aa944ce9b466` |
+| guard_differential | `0x1750fd538645d9bcdcafed771b95699e663b5d70` |
+| guard_absolute | `0x19caa9146e5ad8556838e3ec15d535ea409157a9` |
 
 **phase a**
 
 ```json
 {
-  "victim": "0x4F63217459ed92519037AAA5458BfcACb0ab514E",
-  "tx": "0x42473e3fc2fa8efd444e6670414baad5a3b1d9b993bdf7d8e68bd2a38a87709e",
-  "block": 370725,
+  "victim": "0x1C7D0EdF6d23c2235EA70dbB37fed23b77962365",
+  "tx": "0x5ca36b471d4abbad9e337e5b689e03f0e46d7bf7777ad71dd2439cefc2b5e82d",
+  "block": 371836,
   "stolen": 100
 }
 ```
@@ -473,8 +473,8 @@ cannot be used to identify which assertion tripped.
 ```json
 {
   "upgrade": {
-    "from": "0x2279f01259c6e6c85145e534cc5ae5da7fd176d3",
-    "to": "0x6150c34660eb7b20ed073e7a30843eec35a3d175",
+    "from": "0x3ad0514e0bc78f512e26b2342236b11fa6f1ad53",
+    "to": "0xb41816795b5af35fc2fa7b6714ab349202cfa628",
     "slot": "0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc"
   }
 }
@@ -491,21 +491,21 @@ cannot be used to identify which assertion tripped.
 
 - **Models:** Unvalidated arbitrary-call routers abusing standing ERC-20 allowances (two aggregator drains Jan 2026, ~$13.4M and ~$3.67M; a helper-contract drain 2025, ~$5M)
 - **Defense kind:** removes the attack surface
-- **Chain id:** 3151908 · **from block:** 371233
+- **Chain id:** 3151908 · **from block:** 371870
 
 | contract | address |
 |---|---|
-| shim | `0x7683b18ed8f26bac67a83c39624f14ba2fca66ed` |
-| guard | `0xa9e81edde83940b4b737eb2a73cc4338ec0be4e9` |
-| token | `0xc16388e6962a222c5be631f5a208e72f44ab2390` |
-| router | `0x6ae693a329f0371346711cbdd7ed6b8509b537de` |
-| drainer | `0x36a0537e63977c162ffc42f7208f67fd871bc8c0` |
+| shim | `0x012997a4e1db8855823205ff53ae4a2cb4e54419` |
+| guard | `0x9d0098dd535867d514665fdb9239e9b604f4d254` |
+| token | `0xbe6b42b45eaf2125b16bced25dff60da70c9abf5` |
+| router | `0xac418661d0d9c8de8b115ac46f76229977bcca98` |
+| drainer | `0x52e464a81f624a8f04727d7f8615238a22818467` |
 
 **phase a**
 
 ```json
 {
-  "victim": "0x87C10D0d79f298301eDfc171124B95AE8C8FC276",
+  "victim": "0x71Fd533c28c5AB0110a08eB29122c114E10E45F5",
   "unlimited_allowance": true,
   "attacker_stole": 400,
   "victim_remaining": 600
@@ -516,9 +516,9 @@ cannot be used to identify which assertion tripped.
 
 ```json
 {
-  "victim": "0x6e008813314e81c998E1550d9b5F087CD474aF1B",
-  "bundle_tx": "0x09e67ec04bc1d064d312bbdb5370a2a381efb09241c9444293118777ac679194",
-  "bundle_block": 371248,
+  "victim": "0x423BF8500495E52eEF6310f1B403Fedc3cB97aC0",
+  "bundle_tx": "0x385e934ec0e32523dad4889cab146c7c04efb99fecfc44e66f5979f496d12d1f",
+  "bundle_block": 371885,
   "residual_allowance": 0,
   "attack_reverted": true,
   "attacker_delta": 0

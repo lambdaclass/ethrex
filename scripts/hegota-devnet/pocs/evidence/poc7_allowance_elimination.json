@@ -4,7 +4,7 @@
   "models": "Unvalidated arbitrary-call routers abusing standing ERC-20 allowances (two aggregator drains Jan 2026, ~$13.4M and ~$3.67M; a helper-contract drain 2025, ~$5M)",
   "defense_kind": "removes the attack surface",
   "chain_id": 3151908,
-  "started_block": 371233,
+  "started_block": 371870,
   "notes": [
     "Phase A: an unlimited standing allowance let the attacker's own later transaction move the victim's tokens.",
     "Phase B: the victim approved exactly what was consumed and the POST_TX frame proved no allowance survived, so the attacker's identical transaction had nothing to take.",
@@ -12,22 +12,22 @@
     "Negative control: an over-approving bundle was invalidated, and no allowance was left behind (residual 0)."
   ],
   "addresses": {
-    "shim": "0x7683b18ed8f26bac67a83c39624f14ba2fca66ed",
-    "guard": "0xa9e81edde83940b4b737eb2a73cc4338ec0be4e9",
-    "token": "0xc16388e6962a222c5be631f5a208e72f44ab2390",
-    "router": "0x6ae693a329f0371346711cbdd7ed6b8509b537de",
-    "drainer": "0x36a0537e63977c162ffc42f7208f67fd871bc8c0"
+    "shim": "0x012997a4e1db8855823205ff53ae4a2cb4e54419",
+    "guard": "0x9d0098dd535867d514665fdb9239e9b604f4d254",
+    "token": "0xbe6b42b45eaf2125b16bced25dff60da70c9abf5",
+    "router": "0xac418661d0d9c8de8b115ac46f76229977bcca98",
+    "drainer": "0x52e464a81f624a8f04727d7f8615238a22818467"
   },
   "phase_a": {
-    "victim": "0x87C10D0d79f298301eDfc171124B95AE8C8FC276",
+    "victim": "0x71Fd533c28c5AB0110a08eB29122c114E10E45F5",
     "unlimited_allowance": true,
     "attacker_stole": 400,
     "victim_remaining": 600
   },
   "phase_b": {
-    "victim": "0x6e008813314e81c998E1550d9b5F087CD474aF1B",
-    "bundle_tx": "0x09e67ec04bc1d064d312bbdb5370a2a381efb09241c9444293118777ac679194",
-    "bundle_block": 371248,
+    "victim": "0x423BF8500495E52eEF6310f1B403Fedc3cB97aC0",
+    "bundle_tx": "0x385e934ec0e32523dad4889cab146c7c04efb99fecfc44e66f5979f496d12d1f",
+    "bundle_block": 371885,
     "residual_allowance": 0,
     "attack_reverted": true,
     "attacker_delta": 0

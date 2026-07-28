@@ -4,24 +4,24 @@
   "models": "A victim's own trade filling at a price that changed after they were shown a quote. Distinct from attacker-signed oracle-manipulation exploits, which a sender-authored assertion cannot reach.",
   "defense_kind": "reverts the attack",
   "chain_id": 3151908,
-  "started_block": 370841,
+  "started_block": 371776,
   "notes": [
     "Phase A: the victim paid 100 and received 50, against ~100 at the price they were shown.",
     "The differential form is invalid for this scenario for the same reason as in the implementation-swap scenario: the adverse change happened in an earlier transaction, where TXDIFF reads the same value before and after.",
     "The net-effect bound is the more practical of the two working forms: it defends the divergence the user actually cares about without needing to name any counterparty's storage layout."
   ],
   "addresses": {
-    "shim": "0x4ffff3480dc4d089a9fdc7d667f5326c820c7572",
-    "token": "0x44561957e793ce1255e439edb130fd5783c38941",
-    "oracle": "0x196b3fce1339b626452794372aa7d3f1a34294c4",
-    "desk": "0x547c474177f5a952b96e4025ea48a65abf356781",
-    "guard_differential": "0xfc9010e21552c41f06d16952d27b3e1f43e8e63f",
-    "guard_absolute": "0xee7e3d18ce8fee29282a97129dcc8fd93321bb22",
-    "guard_net_effect": "0x9516f6075b90aa49ce8d71da8cfe44499ba3909b"
+    "shim": "0x6d62bf0e4b021fdd300a86d8cb213fcb0ae1ee39",
+    "token": "0xae815d7cf9732ae9a6eb5eaef2770447377e618c",
+    "oracle": "0x1057cf18c349cba759414419d66ae6393f0c27fe",
+    "desk": "0x7b3ee16d52e7dc7345d24d61adb4bb1db194cbf2",
+    "guard_differential": "0xa634d63ac82ae1ee6d46c57ed52f3e9e6b9a3daa",
+    "guard_absolute": "0x00177c7f50b20213e62894ce3c1f487d9e2f4a1d",
+    "guard_net_effect": "0xf2f1c998545f144f6d8b7b22bce6f04319dc9801"
   },
   "phase_a": {
-    "victim": "0x35dCAD0140F58076e9b4901258c11b08b190d67A",
-    "tx": "0x665c3b89a083f6c9c145b7bdc5268213be9e9eed9ccfc293203733a9713d05c4",
+    "victim": "0x203F2195B0Db68fD4a8cEFd1D73EAFe8FC1E745F",
+    "tx": "0xfe39332dba5b38c348ab21dfc51ca26dc3df6fbd06d35d1ffb1c677f5e48a31c",
     "paid": 100,
     "received": 50,
     "expected_at_quote": 100

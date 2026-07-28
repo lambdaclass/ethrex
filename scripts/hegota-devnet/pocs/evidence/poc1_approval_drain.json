@@ -4,27 +4,27 @@
   "models": "The wallet-drainer pattern behind the 2025-2026 frontend and registrar hijacks (a DNS hijack in Nov 2025, ~$1M+; a registrar takeover in Apr 2026, ~$1.2M), where phishing interfaces prompted unlimited-approval signatures",
   "defense_kind": "reverts the attack",
   "chain_id": 3151908,
-  "started_block": 370765,
+  "started_block": 371625,
   "notes": [
     "Phase A: nothing moved when the victim signed, which is exactly why the pattern works \u2014 the loss happened later, in a transaction the victim never saw.",
     "Phase B: the assertion fired on the approval itself, so the transaction was invalidated before any allowance existed. The attacker's later sweep then had nothing to spend.",
     "Negative control: the same guard permitted a deliberate approval to an allowlisted spender, so it discriminates rather than blocking everything."
   ],
   "addresses": {
-    "shim": "0x648cd1c5411cdb2d1f34bc8358b4c97ab679a2fb",
-    "guard": "0x19ae6a90f36e621afca594a6fe082c83b51d9ac1",
-    "token": "0xaed6ad79ccb5e03b1a27adaf97d193bbfed67bb8",
-    "drainer": "0xf4f312b7f67ba409d3518361a46c35e4b0cadea1",
+    "shim": "0x9af5f4762606541c728f79167b48a81b35dbcb37",
+    "guard": "0xa8e2b2b37399821e5fb58aabbee7de2adbfdb210",
+    "token": "0x25642659ad5e36115a7a36e3ae416ae65c02ebe7",
+    "drainer": "0xab28c0dbc6492eada940907e8b226bc8dbeb8d9f",
     "attacker": "0xbabababababababababababababababababababa"
   },
   "phase_a": {
-    "victim": "0x1792EBEEfaD38EA723d24770359DE9aa72E9C93A",
+    "victim": "0xa0146013FaCC62ed62a7ff0035244d4CcbEf9094",
     "allowance_unlimited": true,
     "tokens_moved_at_signing": 0,
     "stolen_later": 1000
   },
   "phase_b": {
-    "account": "0xe7bb498aabffaeb19e8d923bad62e7ebbff3a121",
+    "account": "0x28f10e830c998ed7eedd0b44a0af764e642cfcbb",
     "guarded_tx_mined": false,
     "residual_allowance": 0,
     "attacker_sweep_reverted": true,
@@ -34,7 +34,7 @@
     "negative_control": {
       "description": "the guard is not a blanket ban: an approval to a spender the owner allowlisted in the committed policy is permitted",
       "mined": true,
-      "tx": "0xd6a0d6c92b8698702ec5ba02192457b67ef17e3fb99e632460c2002a43a3a718",
+      "tx": "0x86f0d924fa002ffbad46d5df3a744bfd7391048952d823942fb19ca3d0dd535b",
       "allowance_after": 100
     }
   }
