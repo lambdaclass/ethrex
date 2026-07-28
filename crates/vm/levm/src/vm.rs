@@ -2166,15 +2166,14 @@ impl<'a> VM<'a> {
             )))?;
         let payer = ctx.payer_address.unwrap_or(sender);
 
-        // Gas refunds: the payer was debited the transaction's MAXIMUM cost at
-        // APPROVE (max_fee-based gas + max-rate blob cost, `compute_tx_max_cost`,
-        // spec line 387). What the payer owes is the effective-rate cost of the
-        // gas actually used plus the base-rate blob burn (EIP-4844 semantics);
-        // everything above that is returned here. Intrinsic gas is inside
-        // `total_gas_used`, so it stays non-refundable. When max_fee ==
-        // effective_gas_price and max_fee_per_blob_gas == base_blob_fee this
-        // reduces exactly to the old unused-frame-gas refund:
-        // max·T + B − e·U − B = e·(T − U).
+        // EIP-8141: substate checkpoints discard refund deltas from reverted frames and batches.
+        let applied_refund = self
+            .substate
+            .refunded_gas
+            .min(total_gas_used / crate::hooks::default_hook::MAX_REFUND_QUOTIENT);
+        let charged_gas_used = total_gas_used.saturating_sub(applied_refund);
+
+        // Gas refunds: the payer was debited the transaction's maximum cost at APPROVE.
         let effective_gas_price = self.env.gas_price;
         let charged = crate::opcode_handlers::frame_tx::compute_tx_max_cost(&ctx)
             .map_err(|_| VMError::Internal(InternalError::Overflow))?;
@@ -2183,12 +2182,13 @@ impl<'a> VM<'a> {
             self.env.base_blob_fee_per_gas,
         )?;
         let owed = effective_gas_price
-            .checked_mul(U256::from(total_gas_used))
+            .checked_mul(U256::from(charged_gas_used))
             .and_then(|gas_owed| gas_owed.checked_add(blob_burn))
             .ok_or(VMError::Internal(InternalError::Overflow))?;
         // charged >= owed always: effective <= max_fee (by construction of the
         // effective price), base_blob <= max_blob (blob-fee validity check), and
-        // total_gas_used <= total_gas_limit (frames are bounded by their limits).
+        // charged_gas_used <= total_gas_used <= total_gas_limit (frames are
+        // bounded by their limits).
         let refund_amount = charged
             .checked_sub(owed)
             .ok_or(VMError::Internal(InternalError::Underflow))?;
@@ -2204,7 +2204,7 @@ impl<'a> VM<'a> {
         // effective gas price), unlike a system call.
         let priority_fee = effective_gas_price.saturating_sub(self.env.base_fee_per_gas);
         let coinbase_fee = priority_fee
-            .checked_mul(U256::from(total_gas_used))
+            .checked_mul(U256::from(charged_gas_used))
             .ok_or(VMError::Internal(InternalError::Overflow))?;
         if !effective_gas_price.is_zero()
             && let Some(recorder) = self.db.bal_recorder.as_mut()
@@ -2301,16 +2301,11 @@ impl<'a> VM<'a> {
         let state_gas_used =
             u64::try_from(self.state_gas_used.max(0)).map_err(|_| InternalError::Overflow)?;
 
-        // Unused frame gas in GAS UNITS for the report — distinct from the wei
-        // refund above (which also returns the max-vs-effective fee delta).
-        let frame_gas_used = total_gas_used.saturating_sub(intrinsic_gas);
-        let gas_refund = sum_frame_gas_limits.saturating_sub(frame_gas_used);
-
         let report = ExecutionReport {
             result,
-            gas_used: total_gas_used,
-            gas_spent: total_gas_used,
-            gas_refunded: gas_refund,
+            gas_used: charged_gas_used,
+            gas_spent: charged_gas_used,
+            gas_refunded: applied_refund,
             state_gas_used,
             output: Bytes::new(),
             logs: all_logs,

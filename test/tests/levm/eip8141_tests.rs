@@ -1212,6 +1212,266 @@ fn state_gas_reservoir_does_not_leak_across_frames() {
     );
 }
 
+const SSTORE_SET_THEN_CLEAR_CODE: &[u8] = &[
+    0x60, 0x01, 0x60, 0x00, 0x55, 0x60, 0x00, 0x60, 0x00, 0x55, 0x00,
+];
+const SSTORE_SET_THEN_CLEAR_THEN_REVERT_CODE: &[u8] = &[
+    0x60, 0x01, 0x60, 0x00, 0x55, 0x60, 0x00, 0x60, 0x00, 0x55, 0x60, 0x00, 0x60, 0x00, 0xFD,
+];
+const SSTORE_RESTORE_EMPTY_REFUND: u64 = 10_000;
+
+fn cold_sload_burner(slots: std::ops::Range<u8>) -> Vec<u8> {
+    let mut code = Vec::new();
+    for slot in slots {
+        code.extend_from_slice(&[0x60, slot, 0x54, 0x50]);
+    }
+    code
+}
+
+fn default_frame(target: Address, flags: u8, gas_limit: u64) -> Frame {
+    Frame {
+        mode: u8::from(FrameMode::Default),
+        flags,
+        target: Some(target),
+        gas_limit,
+        value: U256::zero(),
+        data: Bytes::new(),
+    }
+}
+
+fn gross_gas_used(tx: &FrameTransaction, report: &ExecutionReport) -> u64 {
+    let sum_frame_limits: u64 = tx.frames.iter().map(|f| f.gas_limit).sum();
+    let frame_gas: u64 = report
+        .frame_results
+        .as_ref()
+        .expect("frame tx report must carry per-frame results")
+        .iter()
+        .map(|(_, gas, _)| *gas)
+        .sum();
+    tx.total_gas_limit() - sum_frame_limits + frame_gas
+}
+
+#[test]
+fn successful_frame_refund_nets_payer_and_block_gas() {
+    let wallet = Address::from_low_u64_be(0x3529);
+    let writer = Address::from_low_u64_be(0x352A);
+    let wallet_initial = U256::from(10u64).pow(U256::from(18u64));
+    let mut writer_code = cold_sload_burner(0x10..0x28);
+    writer_code.extend_from_slice(SSTORE_SET_THEN_CLEAR_CODE);
+    let mut tx = frame_tx_with_frames(vec![
+        verify_frame(FUNDED_SENDER),
+        verify_frame(wallet),
+        Frame {
+            mode: u8::from(FrameMode::Sender),
+            flags: 0,
+            target: Some(writer),
+            gas_limit: 300_000,
+            value: U256::zero(),
+            data: Bytes::new(),
+        },
+    ]);
+    tx.max_fee_per_gas = 100_000_000_000;
+    tx.max_priority_fee_per_gas = 2_000_000_000;
+    let (result, db) = run_frame_tx_with_fees(
+        &[
+            (
+                FUNDED_SENDER,
+                AUTO_SEED_SENDER_BALANCE,
+                0,
+                Bytes::from(APPROVE_EXECUTION_CODE.to_vec()),
+            ),
+            (
+                wallet,
+                wallet_initial,
+                0,
+                Bytes::from(APPROVE_PAYMENT_CODE.to_vec()),
+            ),
+            (writer, U256::zero(), 0, Bytes::from(writer_code)),
+        ],
+        tx.clone(),
+        10_000_000_000,
+    );
+    let report = result.expect("valid frame tx (sender approved, payer set)");
+    assert!(matches!(report.result, TxResult::Success));
+    let gross = gross_gas_used(&tx, &report);
+    assert!(
+        gross / 5 > SSTORE_RESTORE_EMPTY_REFUND,
+        "test setup must keep the refund cap non-binding (gross = {gross})"
+    );
+    let net = gross - SSTORE_RESTORE_EMPTY_REFUND;
+    assert_eq!(report.gas_used, net, "gas_used must be net of the refund");
+    assert_eq!(report.gas_spent, net, "gas_spent must be net of the refund");
+    let effective = U256::from(12_000_000_000u64);
+    let payer_delta = wallet_initial - balance_of(&db, wallet);
+    assert_eq!(
+        payer_delta,
+        effective * U256::from(net),
+        "payer must be charged for net (post-refund) gas"
+    );
+    let coinbase_gain = balance_of(&db, COINBASE_ADDR);
+    let base_burn = U256::from(10_000_000_000u64) * U256::from(net);
+    assert_eq!(
+        payer_delta,
+        coinbase_gain + base_burn,
+        "coinbase fee must be paid on net (post-refund) gas"
+    );
+}
+
+#[test]
+fn reverted_frame_refund_contribution_is_discarded() {
+    let writer_ok = Address::from_low_u64_be(0x352B);
+    let writer_rev = Address::from_low_u64_be(0x352C);
+    let mut ok_code = cold_sload_burner(0x10..0x28);
+    ok_code.extend_from_slice(SSTORE_SET_THEN_CLEAR_CODE);
+    let tx = frame_tx_with_frames(vec![
+        verify_frame(FUNDED_SENDER),
+        default_frame(writer_ok, 0x00, 300_000),
+        default_frame(writer_rev, 0x00, 300_000),
+    ]);
+    let (result, _db) = run_frame_tx(
+        &[
+            (
+                FUNDED_SENDER,
+                AUTO_SEED_SENDER_BALANCE,
+                0,
+                Bytes::from(APPROVE_BOTH_CODE.to_vec()),
+            ),
+            (writer_ok, U256::zero(), 0, Bytes::from(ok_code)),
+            (
+                writer_rev,
+                U256::zero(),
+                0,
+                Bytes::from(SSTORE_SET_THEN_CLEAR_THEN_REVERT_CODE.to_vec()),
+            ),
+        ],
+        tx.clone(),
+    );
+    let report = result.expect("valid frame tx (reverted DEFAULT frame, payer approved)");
+    let fr = report
+        .frame_results
+        .as_ref()
+        .expect("frame results present");
+    assert_eq!(
+        fr[2].0,
+        ethrex_common::types::FRAME_RECEIPT_STATUS_FAILURE,
+        "the reverting frame must be reported as failed"
+    );
+    let gross = gross_gas_used(&tx, &report);
+    assert!(
+        gross / 5 > SSTORE_RESTORE_EMPTY_REFUND,
+        "test setup must keep the refund cap non-binding (gross = {gross})"
+    );
+    assert_eq!(
+        report.gas_used,
+        gross - SSTORE_RESTORE_EMPTY_REFUND,
+        "only the successful frame's refund may be applied"
+    );
+}
+
+#[test]
+fn reverted_atomic_batch_refund_contributions_are_discarded() {
+    let writer_ok = Address::from_low_u64_be(0x352D);
+    let writer_batched = Address::from_low_u64_be(0x352E);
+    let reverter = Address::from_low_u64_be(0x352F);
+    let mut ok_code = cold_sload_burner(0x10..0x28);
+    ok_code.extend_from_slice(SSTORE_SET_THEN_CLEAR_CODE);
+    let tx = frame_tx_with_frames(vec![
+        verify_frame(FUNDED_SENDER),
+        default_frame(writer_ok, 0x00, 300_000),
+        default_frame(writer_batched, 0x04, 200_000),
+        default_frame(reverter, 0x00, 30_000),
+    ]);
+    let (result, _db) = run_frame_tx(
+        &[
+            (
+                FUNDED_SENDER,
+                AUTO_SEED_SENDER_BALANCE,
+                0,
+                Bytes::from(APPROVE_BOTH_CODE.to_vec()),
+            ),
+            (writer_ok, U256::zero(), 0, Bytes::from(ok_code)),
+            (
+                writer_batched,
+                U256::zero(),
+                0,
+                Bytes::from(SSTORE_SET_THEN_CLEAR_CODE.to_vec()),
+            ),
+            (
+                reverter,
+                U256::zero(),
+                0,
+                Bytes::from(PURE_REVERT_CODE.to_vec()),
+            ),
+        ],
+        tx.clone(),
+    );
+    let report = result.expect("valid frame tx (failed batch, payer approved)");
+    let fr = report
+        .frame_results
+        .as_ref()
+        .expect("frame results present");
+    assert_eq!(
+        (fr[2].0, fr[2].1),
+        (ethrex_common::types::FRAME_RECEIPT_STATUS_FAILURE, 200_000),
+        "batched frame must be failed and charged its full gas_limit"
+    );
+    assert_eq!(
+        (fr[3].0, fr[3].1),
+        (ethrex_common::types::FRAME_RECEIPT_STATUS_FAILURE, 30_000),
+        "batch terminator must be failed and charged its full gas_limit"
+    );
+    let gross = gross_gas_used(&tx, &report);
+    assert!(
+        gross / 5 > SSTORE_RESTORE_EMPTY_REFUND,
+        "test setup must keep the refund cap non-binding (gross = {gross})"
+    );
+    assert_eq!(
+        report.gas_used,
+        gross - SSTORE_RESTORE_EMPTY_REFUND,
+        "the reverted batch's refund contributions must be discarded"
+    );
+}
+
+#[test]
+fn refund_capped_at_one_fifth_of_gross_gas() {
+    let writer = Address::from_low_u64_be(0x3530);
+    let mut writer_code = Vec::new();
+    for slot in 0u8..20 {
+        writer_code.extend_from_slice(&[0x60, 0x01, 0x60, slot, 0x55]);
+        writer_code.extend_from_slice(&[0x60, 0x00, 0x60, slot, 0x55]);
+    }
+    writer_code.push(0x00);
+    let tx = frame_tx_with_frames(vec![
+        verify_frame(FUNDED_SENDER),
+        default_frame(writer, 0x00, 1_000_000),
+    ]);
+    let (result, _db) = run_frame_tx(
+        &[
+            (
+                FUNDED_SENDER,
+                AUTO_SEED_SENDER_BALANCE,
+                0,
+                Bytes::from(APPROVE_BOTH_CODE.to_vec()),
+            ),
+            (writer, U256::zero(), 0, Bytes::from(writer_code)),
+        ],
+        tx.clone(),
+    );
+    let report = result.expect("valid frame tx (payer approved)");
+    assert!(matches!(report.result, TxResult::Success));
+    let gross = gross_gas_used(&tx, &report);
+    assert!(
+        20 * SSTORE_RESTORE_EMPTY_REFUND > gross / 5,
+        "test setup must make the refund counter exceed the cap (gross = {gross})"
+    );
+    assert_eq!(
+        report.gas_used,
+        gross - gross / 5,
+        "the applied refund must be capped at gross/5"
+    );
+    assert_eq!(report.gas_spent, report.gas_used);
+}
+
 // ==================== frame_tx opcode handler unit tests ====================
 // (migrated from crates/vm/levm/src/opcode_handlers/frame_tx.rs)
 
