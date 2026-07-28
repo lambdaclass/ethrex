@@ -504,6 +504,52 @@ async fn batch_path_advances_flushed_upto() {
     );
 }
 
+#[tokio::test]
+async fn frame_receipt_survives_deferred_flush_and_eviction() {
+    use ethrex_common::types::{Receipt, TxType};
+
+    let store = Store::new("", EngineType::InMemory).expect("store");
+    let header = BlockHeader {
+        number: 7,
+        ..Default::default()
+    };
+    let block = Block::new(header, BlockBody::default());
+    let hash = block.hash();
+
+    let receipt = Receipt {
+        tx_type: TxType::Frame,
+        succeeded: true,
+        cumulative_gas_used: 21_000,
+        logs: vec![],
+        payer: None,
+        frame_receipts: Some(vec![]),
+    };
+
+    store.buffer_block_with_receipts_for_test(&block, vec![receipt.clone()]);
+
+    let buffered = store
+        .get_receipts_for_block(&hash)
+        .await
+        .expect("receipt must be readable from the buffer before flush");
+    assert_eq!(
+        buffered,
+        vec![receipt.clone()],
+        "buffered receipt must match what was inserted"
+    );
+
+    store.flush_block_data_for_test().expect("flush");
+
+    let after_flush = store
+        .get_receipts_for_block(&hash)
+        .await
+        .expect("receipt must decode from disk after flush without MalformedBoolean");
+    assert_eq!(
+        after_flush,
+        vec![receipt],
+        "frame receipt must round-trip through the deferred flush unchanged"
+    );
+}
+
 // ── configurable backpressure cap ─────────────────────────────────────────────
 
 /// The `StoreConfig` default must keep the production-tuned capacity of 2.
