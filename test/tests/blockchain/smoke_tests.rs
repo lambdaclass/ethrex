@@ -293,10 +293,11 @@ async fn latest_block_number_should_always_be_the_canonical_head() {
 #[tokio::test]
 async fn unfinalized_reorg_deeper_than_32_is_allowed() {
     // Per execution-apis PR 786 point 6, -38006 TooDeepReorg fires when the reorg
-    // depth exceeds the implementation-specific limit. ethrex's limit is
-    // finality-bounded: ceiling = latest - finalized_number. With finalized at
-    // genesis (block 0) and latest at 33, ceiling = 33. A depth-33 reorg exactly
-    // hits the ceiling (33 > 33 is false), so the reorg must succeed.
+    // depth exceeds the implementation-specific limit. ethrex's limit is physical:
+    // ceiling = min(latest, max(layer-cache retention, journal reach)). Here the
+    // in-memory retention floor (10000) dominates, so ceiling = latest = 33.
+    // A depth-33 reorg exactly hits the ceiling (33 > 33 is false), so the reorg
+    // must succeed.
 
     let store = test_store().await;
     let genesis_header = store.get_block_header(0).unwrap().unwrap();
@@ -458,8 +459,9 @@ async fn unfinalized_shallow_reorg_with_empty_journal_is_allowed() {
     assert!(is_canonical(&store, 8, head_b).await.unwrap());
 }
 
-/// Task 2.7b: A reorg of depth 129 succeeds when finality ceiling is 129,
-/// proving the old hardcoded 128-block cap is gone.
+/// Task 2.7b: A reorg of depth 129 succeeds under the physical ceiling
+/// (in-memory retention floor 10000 dominates), proving the old hardcoded
+/// 128-block cap is gone.
 #[tokio::test]
 async fn deep_reorg_beyond_legacy_128_cap_succeeds() {
     let store = test_store().await;
@@ -484,7 +486,7 @@ async fn deep_reorg_beyond_legacy_128_cap_succeeds() {
     }
     let (_, head_a_hash) = *canonical_blocks.last().unwrap();
     // Set canonical chain A (latest = 130, finalized = block 1).
-    // ceiling = 130 - 1 = 129.
+    // ceiling = min(130, max(retention=10000, journal reach)) = 130.
     store
         .forkchoice_update(canonical_blocks.clone(), 130, head_a_hash, None, Some(1))
         .await
@@ -492,7 +494,7 @@ async fn deep_reorg_beyond_legacy_128_cap_succeeds() {
 
     // Chain B diverges at block 2 (parent = block 1 = A1).
     // new_canonical_blocks.last() = (2, hash_B2), canonical_link_height = 1,
-    // reorg_depth = 130 - 1 = 129. ceiling = 129. 129 > 129 is false: SUCCEED.
+    // reorg_depth = 130 - 1 = 129. ceiling = 130. 129 > 130 is false: SUCCEED.
     // The old hardcoded cap of 128 would have rejected this (129 > 128).
     let mut parent_hash_b = hash_a1;
     let mut head_b_hash = hash_a1;
@@ -503,7 +505,7 @@ async fn deep_reorg_beyond_legacy_128_cap_succeeds() {
     }
     apply_fork_choice(&store, head_b_hash, hash_a1, hash_a1, None)
         .await
-        .expect("depth-129 reorg should succeed with finality ceiling 129 (old 128 cap lifted)");
+        .expect("depth-129 reorg should succeed under the physical ceiling (old 128 cap lifted)");
 }
 
 /// Task 2.8: When no finalized block is known and the journal is empty (case 3 of
@@ -720,11 +722,11 @@ async fn store_block_l2_style(store: &Store, parent: &BlockHeader) -> H256 {
 /// Regression for PR #6724 review (ElFantasma, blocking): the L2 sequencer
 /// canonicalizes every freshly produced block with
 /// `apply_fork_choice(hash, hash, hash, None)` after `store_block` (which does
-/// not touch `CANONICAL_BLOCK_HASHES`). That is a depth-1 canonical extend, but
-/// passing the new block as its own `finalized` makes the finality ceiling
-/// `latest - finalized = 0`. Without the floor-of-1 in `compute_reorg_ceiling`
-/// the FCU is rejected with `TooDeepReorg { reorg_depth: 1, limit: 0 }` and every
-/// sequencer block fails to canonicalize. This asserts the extend is allowed.
+/// not touch `CANONICAL_BLOCK_HASHES`). That is a depth-1 canonical extend; the
+/// physical ceiling (dominated by the in-memory retention floor) admits it.
+/// With a finality-based ceiling `latest - finalized = 0` this FCU would have
+/// been rejected with `TooDeepReorg { reorg_depth: 1, limit: 0 }` and every
+/// sequencer block would fail to canonicalize. This asserts the extend is allowed.
 #[tokio::test]
 async fn self_finalized_canonical_extend_is_allowed() {
     let store = test_store().await;

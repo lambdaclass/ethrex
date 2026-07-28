@@ -493,8 +493,8 @@ async fn test_storage_slots_reorg(simulator: Arc<Mutex<Simulator>>) {
 ///      `build_payload` on B issues `FCU(head = genesis)`, which lands in
 ///      `apply_fork_choice` with `latest = 150`, `canonical_link_height = 0`,
 ///      hence `reorg_depth = 150`. The old `REORG_DEPTH_LIMIT = 128` would
-///      have returned `TooDeepReorg`; PR 4's finality-bounded ceiling
-///      (`latest - finalized_number = 150`) accepts it.
+///      have returned `TooDeepReorg`; PR 4's physical ceiling (journal reach
+///      covers the full 150-block chain, retention floor 10000) accepts it.
 ///
 /// Chain B is salted (`with_salt(1)`) so its blocks diverge from chain A's
 /// from block 1 onward. Without the salt the two chains would produce

@@ -334,10 +334,11 @@ pub struct BlockchainOptions {
     /// the executor and merkleizing post-execution.
     pub bal_parallel_trie_enabled: bool,
     /// Optional operator override for the maximum reorg depth. `None` ; cap is purely
-    /// finality-bounded (the natural physical ceiling). `Some(d)` ; reject reorgs of
-    /// depth `> d` before the deep-reorg fallback even runs. `Some(0)` disables deep
-    /// reorgs entirely (the pre-PR-4 behaviour, but with the cap fully under operator
-    /// control).
+    /// physical (layer-cache retention plus journal reach; bounded indirectly by finality
+    /// because finality advances prune the journal). `Some(d)` ; reject reorgs of
+    /// depth `> d` with `-38006 TooDeepReorg`. WARNING: `Some(0)` rejects EVERY reorg,
+    /// including routine 1-2 block reorgs on a healthy network — it is NOT the old
+    /// 128-block cap. Use a small positive value to approximate the pre-stack behavior.
     pub max_reorg_depth: Option<u64>,
     /// Mempool occupancy percentage (0-100) at or above which incoming
     /// transactions with a nonce gap relative to the sender's on-chain nonce

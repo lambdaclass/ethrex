@@ -1245,6 +1245,7 @@ impl Store {
     ) -> Result<(), StoreError> {
         let latest = self.load_latest_block_number().await?.unwrap_or(0);
         let db = self.backend.clone();
+        let journal_pruning_paused = self.journal_pruning_paused.clone();
         tokio::task::spawn_blocking(move || {
             let mut txn = db.begin_write()?;
 
@@ -1317,9 +1318,7 @@ impl Store {
                 // still lands; pruning catches up on the next advance after the
                 // pass ends because `delete_range` is cumulative from zero.
                 if finalized > prev_finalized
-                    && !self
-                        .journal_pruning_paused
-                        .load(std::sync::atomic::Ordering::Acquire)
+                    && !journal_pruning_paused.load(std::sync::atomic::Ordering::Acquire)
                 {
                     let start = 0u64.to_be_bytes();
                     let end = finalized.saturating_add(1).to_be_bytes();

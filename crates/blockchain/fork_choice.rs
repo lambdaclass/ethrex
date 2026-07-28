@@ -243,6 +243,20 @@ pub async fn apply_fork_choice(
         METRICS_BLOCKS.set_head_height(head.number);
     );
 
+    // Keep the journal-length gauge current in steady state (it shrinks as
+    // finality pruning runs), not just after deep reorgs. O(1) via first/last key.
+    metrics!(
+        use ethrex_metrics::reorg::METRICS_REORG;
+        let journal_len = match (
+            store.lowest_state_history_block_number(),
+            store.highest_state_history_block_number(),
+        ) {
+            (Ok(Some(lo)), Ok(Some(hi))) => hi.saturating_sub(lo).saturating_add(1) as i64,
+            _ => 0,
+        };
+        METRICS_REORG.journal_length.set(journal_len);
+    );
+
     Ok(head)
 }
 
