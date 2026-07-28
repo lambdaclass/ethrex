@@ -138,10 +138,11 @@ trailing-suffix structural rule are covered by unit tests
 ## C. Findings from building the proof-of-concept scenarios
 
 We built attack reproductions for the published PoC list against the live devnet
-(see [POC-GUIDE.md](POC-GUIDE.md), results in [EVIDENCE.md](EVIDENCE.md)). Four
-findings came out of it. The first two would each cause a PoC written the
-intuitive way to silently demonstrate nothing, so they are the ones we would most
-like reflected in the note.
+(see [POC-GUIDE.md](POC-GUIDE.md), results in [EVIDENCE.md](EVIDENCE.md)). All eight
+scenarios run, including the multisig one against the real Safe contracts. Six
+findings came out of the work. The first two, and the fifth, would each cause a PoC
+written the intuitive way to silently demonstrate nothing, so those are the ones we
+would most like reflected in the note.
 
 ### 1. `TXDIFF`'s before/after is intra-transaction, so the oracle-TOCTOU and proxy-swap PoCs need *absolute* assertions
 
@@ -255,41 +256,38 @@ accounting, predeploy bookkeeping) are plausibly the extra three, and whether
 assertion authors should see them at all is a specification question, not just an
 implementation one.
 
-### 6. EIP-8037 state gas and EIP-7825's transaction gas cap together make production-sized contracts undeployable
+### 6. EIP-8037 state gas and EIP-7825's transaction gas cap leave almost no room for real-world contract sizes
 
-Not an EIP-7906 issue, but it blocked the proof-of-concept that carries the largest loss
-figure in the incident record, so it is worth surfacing to whoever owns the fork's
-configuration.
+Not an EIP-7906 issue, but it very nearly blocked the proof-of-concept carrying the
+largest loss figure in the incident record, so it is worth surfacing to whoever owns
+the fork's configuration.
 
-We wrote the multisig control-plane scenario against the **real Safe** contracts —
-real v1.3.0 source, a real three-owner set with threshold 2, real EIP-712 signatures,
-real `execTransaction`, the real `delegatecall`-overwrites-slot-0 mechanism — because
-mock fidelity would have been the weakest link in that claim. The scenario cannot run:
-the Safe singleton cannot be deployed on the devnet at all.
+EIP-8037 charges state gas on the code deposit, and EIP-7825 caps a single transaction
+at 2^24 = 16,777,216 gas. Together, for the real Safe v1.3.0 singleton:
 
-Measured:
+- the default build (12,056 bytes of initcode) **cannot be deployed at all**.
+  `eth_estimateGas` answers `execution halted: reason=Out Of Gas, gas_used=16495696`
+  rather than returning an estimate, and a deployment at exactly the cap reverts;
+- raising the transaction limit is not available: a 30,000,000-gas transaction is
+  refused at admission with `Transaction gas limit exceeds maximum`;
+- a size-optimized build (`--via-ir --optimize-runs 1`, 10,353 bytes) **does** deploy,
+  at **16,278,183 gas — about 3% under the cap**;
+- for calibration, a 2,460-byte contract cost 4,017,964 gas, i.e. roughly 1,600 gas per
+  byte of deployed code.
 
-- the singleton's initcode is ~12KB (11,805 bytes size-optimized);
-- `eth_estimateGas` answers `execution halted: reason=Out Of Gas, gas_used=16495696`
-  instead of returning an estimate;
-- a deployment at exactly EIP-7825's cap of 2^24 = 16,777,216 gas **reverts**, reporting
-  `gasUsed` 16,495,696;
-- recompiling 251 bytes smaller reverts with the **identical** reported `gasUsed`, so this
-  is a ceiling rather than a size-proportional cost;
-- raising the transaction gas limit is not an option: a 30,000,000-gas transaction is
-  rejected at admission with `Transaction gas limit exceeds maximum`.
+So the ceiling sits at roughly 10.5KB of deployed code, and only reachable with
+aggressive size optimization. A production Safe fits with 3% to spare; anything
+moderately larger — many router, vault and lending-pool implementations — does not fit
+at all. That is a sharp practical limit on how realistic integration or interop testing
+on such a chain can be, and the failure mode is unhelpful: an out-of-gas from
+`eth_estimateGas` rather than a clear "code too large for one transaction".
 
-EIP-8037 charges state gas on the code deposit, and that pushes a 12KB deployment past what
-a single transaction is permitted to spend. The consequence is broad: **contracts the size of
-a production Safe, a Uniswap router, or most real protocol deployments cannot be put on a
-Hegotá-configured chain**, which sharply limits how realistic any integration or
-interop testing on it can be. Two things would help — a higher transaction gas cap on
-devnets, or state gas not applying to code deposit — but the first question is whether this
-interaction was intended.
+Worth confirming whether charging state gas on code deposit at this rate, against this
+cap, is intended.
 
-Also worth noting alongside finding 4: throughout this work the *reported* `gasUsed` did not
-account for the state-gas portion. A two-`SSTORE` call reported 102,080 while
-`eth_estimateGas` correctly required 232,455, and the deployment above reports a constant
+Also worth noting alongside finding 4: throughout this work the *reported* `gasUsed` did
+not account for the state-gas portion. A two-`SSTORE` call reported 102,080 while
+`eth_estimateGas` correctly required 232,455, and failed deployments reported a constant
 16,495,696 regardless of actual size. Anyone budgeting gas from receipts rather than from
 `eth_estimateGas` will get it wrong.
 

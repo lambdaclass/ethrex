@@ -20,6 +20,7 @@ OUT = os.path.abspath(os.path.join(HERE, "..", "EVIDENCE.md"))
 SCENARIOS = [
     ("poc0_guard_provenance.py", "P0", "Guard provenance — the assertion cannot be stripped"),
     ("poc1_approval_drain.py", "P1", "Hidden unlimited approval with a delayed drain"),
+    ("poc2_control_plane.py", "P2", "Multisig control-plane takeover against a real Safe"),
     ("poc3_hidden_side_effect.py", "P3", "A transaction that does one extra thing"),
     ("poc4_sandwich.py", "P4", "Sandwiched swap"),
     ("poc5_oracle_toctou.py", "P5", "Oracle time-of-check/time-of-use"),

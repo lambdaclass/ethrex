@@ -121,3 +121,20 @@ transaction, which means it is not a defense at all.
 Until the two paths agree, only targeted assertions over explicitly named slots are
 dependable. This is why the hidden-side-effect scenario asserts a single named balance slot
 rather than enumerating everything the transaction wrote.
+
+## Later finding — deployable contract size is capped near 10.5KB
+
+EIP-8037 charges state gas on the code deposit and EIP-7825 caps a transaction at
+2^24 = 16,777,216 gas. Measured while bringing up the real-Safe scenario:
+
+| build | initcode | outcome |
+|---|---|---|
+| Safe singleton, `--optimize` | 12,056 B | **cannot deploy** — reverts at the cap; `eth_estimateGas` answers Out Of Gas at 16,495,696 |
+| Safe singleton, `--optimize-runs 1` | 11,805 B | cannot deploy — reverts with an *identical* reported gasUsed |
+| Safe singleton, `--via-ir --optimize-runs 1` | 10,353 B | **deploys**, 16,278,183 gas (~3% under the cap) |
+| GnosisSafeProxyFactory | 2,488 B | deploys, 4,017,964 gas |
+
+Roughly 1,600 gas per byte of deployed code, so the practical ceiling is about 10.5KB and
+only with aggressive size optimization. A 30,000,000-gas transaction is refused at admission.
+The scenario therefore compiles Safe with `--via-ir --optimize-runs 1`; reverting to default
+optimizer settings makes the singleton undeployable again.

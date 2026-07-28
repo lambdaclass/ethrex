@@ -192,9 +192,18 @@ def safe_sources() -> str:
 
 
 def compile_safe(rel_path: str, name: str) -> bytes:
+    """Compile a Safe contract, size-optimized.
+
+    `--via-ir --optimize-runs 1` is not a style preference: EIP-8037 charges state gas on the
+    code deposit, so the singleton's default build (12,056 bytes) needs more than EIP-7825's
+    2**24 per-transaction ceiling and cannot be deployed. The size-optimized build is 10,353
+    bytes and lands at 16,278,183 gas — about 3% under the cap. Reverting to the default
+    optimizer settings makes the singleton undeployable again.
+    """
     src = safe_sources()
     out = subprocess.run(
-        ["solc", "--optimize", "--bin", "--allow-paths", src, os.path.join(src, rel_path)],
+        ["solc", "--optimize", "--optimize-runs", "1", "--via-ir", "--bin",
+         "--allow-paths", src, os.path.join(src, rel_path)],
         capture_output=True, text=True, check=True, cwd=src,
     ).stdout
     blocks = out.split("=======")

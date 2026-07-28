@@ -141,6 +141,84 @@ cannot be used to identify which assertion tripped.
 - Phase B: the assertion fired on the approval itself, so the transaction was invalidated before any allowance existed. The attacker's later sweep then had nothing to spend.
 - Negative control: the same guard permitted a deliberate approval to an allowlisted spender, so it discriminates rather than blocking everything.
 
+## poc2_control_plane — Multisig control-plane takeover against a real Safe
+
+- **Models:** The largest documented loss in the incident record (~$1.46B, Feb 2025): signers approved what was presented as a routine transfer, and the transaction rewrote the account's control plane
+- **Defense kind:** reverts the attack
+- **Chain id:** 3151908 · **from block:** 371473
+
+| contract | address |
+|---|---|
+| safe_singleton | `0x1dc67f9822a0ea943fc8880018fa0c93e43bddea` |
+| safe_factory | `0x598d6880b8026dba4594d2f1a3bbd75f64abdda8` |
+| fallback_handler | `none (address(0))` |
+| shim | `0x9930cd33da119a2a5b76b476c01c69853df01397` |
+| guard | `0xcd04913177265a8746fc2635ac42d38b1fbd758c` |
+| singleton_overwriter | `0xc06765285fac9e14bc4d1e7ba5d796fe2fcc1e53` |
+| hostile_singleton | `0x953ad459adc7f462b8c3f7ab236281e94b270339` |
+| owners | `['0x161650b318E01b3C7c0AEbd75159b431FAB0c03e', '0x30740fFaEB3fF6F731d5e319B5fa4F8Efe638ef3', '0x8c43c537B34aaE070B4C1a086Ad6c1Eb05420E12']` |
+
+**phase a**
+
+```json
+{
+  "safe": "0x127345887f1e817dBC029922aF2A96aEB4Edb19c",
+  "singleton_before": "0x1dc67f9822a0ea943fc8880018fa0c93e43bddea",
+  "singleton_after": "0x953ad459adc7f462b8c3f7ab236281e94b270339",
+  "hostile_singleton": "0x953ad459adc7f462b8c3f7ab236281e94b270339",
+  "hijacked": true
+}
+```
+
+**phase b**
+
+```json
+{
+  "safe": "0x0B1A3BE57eeC33fA559a62e995cfd5042adF3778",
+  "executor": "0x2dfca44847d55b574ff9919b12b225c594245392",
+  "mined": false,
+  "singleton_before": "0x1dc67f9822a0ea943fc8880018fa0c93e43bddea",
+  "singleton_after": "0x1dc67f9822a0ea943fc8880018fa0c93e43bddea",
+  "owner_signatures_valid": true
+}
+```
+
+**extra**
+
+```json
+{
+  "fidelity": {
+    "contracts": "real Safe v1.3.0 source",
+    "deployment": "plain CREATE at non-canonical addresses (Safe Singleton Factory deliberately not used; it buys cross-chain address determinism, which is irrelevant on one devnet)",
+    "compiler": "the pinned solc (pragma >=0.7.0 <0.9.0 permits it); the official v1.3.0 release used 0.7.6, so bytecode is not byte-identical to canonical",
+    "owner_set": "3 owners, threshold 2, real EIP-712 signatures, real execTransaction"
+  },
+  "negative_control": {
+    "description": "the executor's policy forbids control-plane changes, not ordinary activity: a genuine owner-approved transfer still executes",
+    "mined": true,
+    "tx": "0x6f9ba90a5c21dde782ea2f0d8edf8a9a45f923a7e6a0833597687272f0689cd9",
+    "wei_moved": 1000000000000000
+  },
+  "safe_guard_contrast": {
+    "safe": "0x2Cf68eCDBaE93a9Bd0a39E92fa3A387FE14A9077",
+    "safe_transaction_guard": "0xbd45d456ba7feb493dcd947dc6c53c5e8260628d",
+    "attack_blocked_by_safe_guard": false,
+    "singleton_before": "0x1dc67f9822a0ea943fc8880018fa0c93e43bddea",
+    "singleton_after": "0x953ad459adc7f462b8c3f7ab236281e94b270339",
+    "reading": "checkTransaction admitted the transaction because it inspects only the proposed target, value, calldata and operation \u2014 a precondition must anticipate the dangerous shape. The POST_TX assertion in phase B needed no such foresight because it reads actual effects.",
+    "honest_caveat": "a Safe Guard that specifically rejected DelegateCall, or allowlisted its targets, WOULD have blocked this attack. The difference demonstrated is one of reach and of what must be known in advance, not that Safe Guards are ineffective."
+  }
+}
+```
+
+**Findings**
+
+- Phase A: two of three owners signed what was presented as a routine transfer, and the transaction replaced the Safe's singleton pointer. The account now runs code the attacker chose.
+- Phase B: the owners' EIP-712 signatures were valid and the Safe would have accepted them — the transaction was invalidated because its EFFECTS violated the executor's frozen policy, not because authorization failed.
+- The differential assertion is the correct form here, unlike in the implementation-swap and oracle scenarios: the control-plane write happens INSIDE the guarded transaction, so before and after genuinely differ.
+- Negative control: the same mandated assertion let a genuine owner-approved transfer through, so it discriminates on effects rather than blocking the account.
+- Contrast: a real Safe Transaction Guard was installed and the identical attack still succeeded, because an application-level precondition sees intent rather than effect. A guard written to reject delegatecall targets would have caught it; the postcondition caught it without being told what to look for.
+
 ## poc3_hidden_side_effect — A transaction that does one extra thing
 
 - **Models:** Malicious multicalls and one-click drains, where the displayed intent is a subset of what the transaction actually executes

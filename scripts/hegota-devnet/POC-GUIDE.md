@@ -40,34 +40,52 @@ user was shown and what executes**. Those are what these scenarios demonstrate.
 | **P3** | [Hidden side effect](pocs/poc3_hidden_side_effect.py) | A transaction that also moves value to an address the user never saw | **built** |
 | **P4** | [Sandwiched swap](pocs/poc4_sandwich.py) | A committed minimum output asserted against the realized fill | **built** |
 | **P5** | [Oracle time-of-check/time-of-use](pocs/poc5_oracle_toctou.py) | A price moved between the quote and execution | **built** |
-| P2 | [Multisig control-plane takeover](pocs/poc2_control_plane.py) | Real Safe contracts; a routine-looking transfer that rewrites the control plane | **written, blocked** — see below |
+| **P2** | [Multisig control-plane takeover](pocs/poc2_control_plane.py) | **Real Safe** contracts; a routine-looking transfer that rewrites the control plane | **built** |
 
-P1, P3, P4, P5 and P6 correspond to items 1, 3, 4, 5 and 6 of the published proof-of-concept
-note; P7 is an addition; P0 addresses a gap that note does not cover. P2 is fully written but
-cannot execute on this chain — see below.
+P1 through P6 correspond to items 1 through 6 of the published proof-of-concept note; P7 is an
+addition; P0 addresses a gap that note does not cover.
 
-### P2 — blocked by a chain-level constraint, not by the scenario
+### P2 — multisig control-plane takeover, against a real Safe
 
-The scenario is implemented against the **real Safe** contracts: real v1.3.0 source, a real
-three-owner set with threshold 2, real EIP-712 signatures, real `execTransaction`, the real
-`delegatecall`-overwrites-slot-0 mechanism, a guarded executor, and a real Safe Transaction
-Guard for the precondition-versus-postcondition contrast. What it cannot do is deploy the Safe.
+Reproduces the mechanism behind the largest documented loss in the incident record, against
+the **real Safe contracts** rather than a mock: real v1.3.0 source, a real three-owner set at
+threshold 2, real EIP-712 signatures, real `execTransaction`, and the real
+`delegatecall`-overwrites-slot-0 mechanism. Phase A shows two owners approving what is
+presented as a routine transfer and the Safe's singleton pointer being replaced — the account
+then answers `hijacked() == true`. Phase B submits the identical owner-signed payload through
+a guard-mandating executor and it cannot be included.
 
-The Safe singleton's initcode is ~12KB, and EIP-8037 charges state gas on the code deposit,
-which pushes the deployment past EIP-7825's per-transaction ceiling of 2**24 gas. Measured on
-this devnet:
+The shape matters: a real Safe separates signing from submission, so the frame transaction's
+sender is the **executor**, whose policy is frozen independently of whatever composed the
+payload. The owners' signatures are valid in both phases. What changes is that the transaction
+violates the executor's invariant, which is why this demonstrates a defense operating on
+transaction **effects** rather than on authorization. The differential assertion is correct
+here — unlike P5 and P6 — because the control-plane write happens inside the guarded
+transaction.
 
-- `eth_estimateGas` answers `Out Of Gas, gas_used=16495696` instead of returning an estimate
-- a deploy at exactly the 2**24 cap (16,777,216) reverts, `gasUsed` 16,495,696
-- recompiling for size (`--optimize-runs 1`, 251 bytes smaller) reverts with the **identical**
-  `gasUsed`, so this is a ceiling rather than a size-proportional cost
-- a 30,000,000-gas transaction is rejected outright: `Transaction gas limit exceeds maximum`
+**The Safe Transaction Guard contrast.** Safe already ships `setGuard`, so the obvious question
+is why an application-level guard did not prevent this class. A real permissive Safe Guard is
+installed on a third Safe and the identical attack still succeeds. A Safe Guard is a
+*precondition*: `checkTransaction` runs before execution and sees only the proposed target,
+value, calldata and operation, so it must anticipate the dangerous shape in advance. A POST_TX
+assertion is a *postcondition* over actual effects and needs no such foresight. The honest
+caveat, stated in the scenario too: a Safe Guard that specifically rejected `DelegateCall` or
+allowlisted its targets **would** have blocked this attack. The demonstrated difference is one
+of reach and of what has to be known ahead of time, not that Safe Guards are ineffective.
 
-**This matters far beyond P2.** Contracts the size of a production Safe — or a Uniswap router,
-or most real protocol deployments — cannot be deployed on a Hegotá-configured chain at all,
-which limits what any realistic integration testing can cover. It is reported as a finding in
-[NOTES-FOR-7906-AUTHOR.md](NOTES-FOR-7906-AUTHOR.md). The scenario will run unchanged once a
-chain permits the deployment.
+**Deployment notes.** The Safe contracts are deployed with plain `CREATE` at non-canonical
+addresses; the Safe Singleton Factory exists for cross-chain address determinism, which is
+irrelevant on one devnet. They are compiled with the pinned solc rather than the 0.7.6 used
+for the official v1.3.0 release, so bytecode is not byte-identical to canonical even though
+the source is the real thing. `CompatibilityFallbackHandler` is omitted: it does not compile
+under solc 0.8.x, and nothing this scenario touches lives there.
+
+**The singleton only just fits.** EIP-8037 charges state gas on the code deposit, so the
+default build (12,056 bytes) needs more than EIP-7825's per-transaction ceiling of 2**24 gas
+and **cannot be deployed**. The size-optimized build (`--via-ir --optimize-runs 1`, 10,353
+bytes) lands at 16,278,183 gas — roughly 3% under the cap. That headroom is the whole margin:
+contracts moderately larger than a Safe singleton cannot be deployed on a Hegotá-configured
+chain in a single transaction. See [NOTES-FOR-7906-AUTHOR.md](NOTES-FOR-7906-AUTHOR.md).
 
 ### P0 — guard provenance
 
