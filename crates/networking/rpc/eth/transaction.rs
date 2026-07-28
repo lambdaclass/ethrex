@@ -610,7 +610,9 @@ impl RpcHandler for SendRawTransactionRequest {
             context
                 .blockchain
                 .add_blob_transaction_to_pool(
-                    wrapped_blob_tx.tx.clone(),
+                    ethrex_common::types::Transaction::EIP4844Transaction(
+                        wrapped_blob_tx.tx.clone(),
+                    ),
                     wrapped_blob_tx.blobs_bundle.clone(),
                 )
                 .await

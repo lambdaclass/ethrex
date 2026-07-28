@@ -1621,11 +1621,19 @@ async fn handle_incoming_message(
             }
             // If we receive a blob transaction without blobs or with blobs that don't match the versioned hashes we must disconnect from the peer
             for tx in &msg.pooled_transactions {
-                if let P2PTransaction::EIP4844TransactionWithBlobs(itx) = tx
-                    && (itx.blobs_bundle.is_empty()
-                        || itx
-                            .blobs_bundle
-                            .validate_blob_commitment_hashes(&itx.tx.blob_versioned_hashes)
+                let sidecar = match tx {
+                    P2PTransaction::EIP4844TransactionWithBlobs(itx) => {
+                        Some((&itx.blobs_bundle, &itx.tx.blob_versioned_hashes))
+                    }
+                    P2PTransaction::FrameTransactionWithBlobs(itx) => {
+                        Some((&itx.blobs_bundle, &itx.tx.blob_versioned_hashes))
+                    }
+                    _ => None,
+                };
+                if let Some((bundle, versioned_hashes)) = sidecar
+                    && (bundle.is_empty()
+                        || bundle
+                            .validate_blob_commitment_hashes(versioned_hashes)
                             .is_err())
                 {
                     debug!(
