@@ -461,6 +461,13 @@ async fn reorg_apply_deep(
 
     let pivot_number = match new_canonical_blocks.last() {
         Some((n, _)) => n.saturating_sub(1),
+        // Case 1 (head already canonical): the fix is unwinding the blocks ABOVE
+        // head, so the pivot is head itself — the overlay range [head+1, edge]
+        // captures `serves_root = head.state_root`, making head's state readable
+        // again. Using head - 1 here would serve head's PARENT root while head is
+        // never re-executed, leaving head's state unreachable forever.
+        None if head_is_canonical => head.number,
+        // Case 2 (parent canonical, head not): serve the parent's root and replay head.
         None => head.number.saturating_sub(1),
     };
 

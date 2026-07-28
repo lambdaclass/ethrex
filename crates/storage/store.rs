@@ -17,7 +17,7 @@ use crate::{
     block_data_buffer::BlockDataBuffer,
     error::StoreError,
     journal::{FlatDiff, JournalEntry},
-    layering::{Overlay, TrieLayerCache, TrieWrapper},
+    layering::{Overlay, OverlayCf, TrieLayerCache, TrieWrapper},
     rlp::{BlockBodyRLP, BlockHeaderRLP, BlockRLP},
     trie::{BackendTrieDB, BackendTrieDBLocked, classify_trie_key},
     utils::{ChainDataIndex, SnapStateIndex},
@@ -4514,6 +4514,20 @@ fn commit_to_disk(
     root: H256,
     is_batch: bool,
 ) -> Result<(), StoreError> {
+    // `root` need not have a layer: the forkchoice `PersistMessage::Commit(root)` path
+    // forwards the safe-commit root without consulting the cache, and `put_batch` skips
+    // blocks whose state root equals their parent's. Bail before the side effects below.
+    if !trie.has_layer(root) {
+        debug!(
+            root = ?root,
+            layers = trie.layer_count(),
+            is_batch,
+            "Skipping trie commit: state root has no in-memory layer. Expected when the block \
+             did not change the state root (empty L2 blocks) or the root was already flushed."
+        );
+        return Ok(());
+    }
+
     // Stop the flat-key-value generator thread, as the underlying trie is about to change.
     // Ignore the error, if the channel is closed it means there is no worker to notify.
     let _ = fkv_ctl.send(FKVGeneratorControlMessage::Stop);
@@ -4549,10 +4563,12 @@ fn commit_to_disk(
     // accumulated backlog (e.g. block import) can return several layers at once, so we
     // write one journal entry per block below rather than merging diffs across blocks.
     //
-    // `root` was returned by a `get_commitable*` gate above, which found it by walking
-    // `trie.layers`. `trie_mut` is a `Clone` of `trie`, which preserves the layer map
-    // intact, so `commit(root)` should always return `Some` here. Surface a hard error
-    // if that invariant ever breaks rather than silently committing nothing.
+    // `root` was resolved against this same `trie` snapshot by the caller's gate
+    // (`get_commitable` on the per-block path, `commitable_safe_root` on the
+    // forkchoice-driven flush), so it names a resident layer. `trie_mut` is a `Clone` of
+    // `trie`, which preserves the layer map intact, so `commit(root)` should always return
+    // `Some` here. Surface a hard error if that invariant ever breaks rather than silently
+    // committing nothing.
     //
     // Snapshot the overlay (if any) BEFORE commit so reconciliation can fold its entries
     // into this write batch. Issue #6685 Section 9: after a deep reorg, the first
@@ -4640,6 +4656,17 @@ fn commit_to_disk(
             &[]
         };
 
+        // Pre-images for the reconciliation layer must be taken at the pivot, not at the
+        // old chain's edge `D`. `T`'s journal entry has to reverse disk back to the pivot
+        // state, but this batch is built while disk still holds `D`, so `read_view` yields
+        // `D`'s values for every key the old chain rewrote in `[T, D]`. The overlay *is*
+        // the pivot-vs-`D` difference, so it wins over `read_view` for any key it carries.
+        // `None` in the overlay means "absent at the pivot", which is exactly the journal's
+        // "delete on rollback" entry.
+        let pivot_overlay = is_reconciliation_layer
+            .then_some(overlay_for_reconciliation.as_ref())
+            .flatten();
+
         for (key, value) in layer.nodes.iter().chain(extra.iter()) {
             let (is_leaf, is_account) = classify_trie_key(key.len());
 
@@ -4662,17 +4689,23 @@ fn commit_to_disk(
                 &STORAGE_TRIE_NODES
             };
 
-            // Pre-image: the intra-batch overlay wins over disk so multi-layer commits
-            // record each block's true pre-state. Skipped for batch (full-sync) commits.
+            // Pre-image: the intra-batch overlay wins over the pivot overlay, which wins
+            // over disk, so multi-layer commits record each block's true pre-state and the
+            // reconciliation layer records the pivot's. Skipped for batch (full-sync) commits.
             let prev_value = if !is_batch {
                 match overlay.get(key) {
                     Some(v) => Some(v.clone()),
-                    None => match read_view.get(table, key) {
-                        Ok(v) => Some(v),
-                        Err(e) => {
-                            result = Err(e);
-                            break 'layers;
-                        }
+                    None => match pivot_overlay
+                        .and_then(|ov| ov.lookup(OverlayCf::classify_by_key_length(key.len()), key))
+                    {
+                        Some(v) => Some(v),
+                        None => match read_view.get(table, key) {
+                            Ok(v) => Some(v),
+                            Err(e) => {
+                                result = Err(e);
+                                break 'layers;
+                            }
+                        },
                     },
                 }
             } else {
