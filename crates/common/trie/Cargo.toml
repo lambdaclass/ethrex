@@ -9,22 +9,45 @@ description = "Ethereum Merkle Patricia Trie for the ethrex Ethereum execution c
 repository.workspace = true
 
 [dependencies]
-ethrex-crypto.workspace = true
+ethrex-crypto = { workspace = true, default-features = false }
 ethrex-rlp.workspace = true
 
-ethereum-types.workspace = true
-anyhow = "1.0.86"
-bytes.workspace = true
-thiserror.workspace = true
-serde.workspace = true
-lazy_static.workspace = true
-crossbeam.workspace = true
-rayon.workspace = true
-rustc-hash.workspace = true
-rkyv.workspace = true
+# Inlined with explicit versions instead of `workspace = true`: Cargo ignores
+# (with a warning) a member setting `default-features = false` unless the workspace
+# declaration also disables them, and these are declared with defaults on for the
+# rest of the workspace. Disabling defaults is required for no_std; the `std` feature below
+# re-enables each. Keep these versions in sync with the workspace root.
+ethereum-types = { version = "0.15.1", default-features = false, features = ["serialize"] }
+anyhow = { version = "1.0.86", default-features = false }
+bytes = { version = "1.6.0", default-features = false, features = ["serde"] }
+thiserror = { version = "2.0.9", default-features = false }
+serde = { version = "1.0.203", default-features = false, features = ["derive", "rc", "alloc"] }
+rustc-hash = { version = "2.1.1", default-features = false }
+rkyv = { version = "0.8.10", default-features = false, features = ["alloc", "unaligned", "bytecheck"] }
+
+# no_std HashMap/HashSet, only compiled when `std` is off (replaces the std-only rustc-hash aliases)
+hashbrown = { version = "0.15", default-features = false }
+# no_std `Mutex` for `InMemoryTrieDB` (replaces `std::sync::Mutex` when `std` is off)
+spin = { version = "0.9.8", default-features = false, features = ["mutex", "spin_mutex"] }
+
+# std-only: parallel merkleization (threadpool / trie_sorted / validate_parallel)
+crossbeam = { workspace = true, optional = true }
+rayon = { workspace = true, optional = true }
 
 [features]
-default = []
+default = ["std"]
+std = [
+    "ethrex-crypto/std",
+    "ethereum-types/std",
+    "anyhow/std",
+    "bytes/std",
+    "thiserror/std",
+    "serde/std",
+    "rustc-hash/std",
+    "rkyv/std",
+    "dep:crossbeam",
+    "dep:rayon",
+]
 eip-8025 = []
 
 [lib]

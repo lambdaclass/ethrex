@@ -129,7 +129,7 @@ fn check_gas_limit(
 /// capped at `TX_MAX_GAS_LIMIT`); intrinsic underfunding is rejected separately
 /// in transaction validation, not here. Mirrors
 /// `src/ethereum/forks/amsterdam/fork.py` `check_transaction` at the
-/// `tests-glamsterdam-devnet@v6.1.1` spec.
+/// `tests-glamsterdam-devnet@v7.1.0` spec.
 ///
 /// Note: `block_gas_used_regular` here equals EELS's `block_output.block_gas_used`
 /// because our `report.gas_used` already reflects `max(raw_regular, calldata_floor)`
@@ -173,9 +173,12 @@ pub fn check_2d_gas_allowance(
 
 /// Error type for BAL validation failures, distinguishing state mismatches
 /// from database errors.
+///
+/// Public so [`LEVM::validate_tx_execution`] is directly callable (and its
+/// error variants inspectable) from unit tests outside this crate.
 #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
 #[derive(Debug, thiserror::Error)]
-enum BalValidationError {
+pub enum BalValidationError {
     #[error("{0}")]
     Mismatch(String),
     #[error("{0}")]
@@ -269,12 +272,11 @@ impl LEVM {
                 let bal_index = u32::try_from(tx_idx + 1).unwrap_or(u32::MAX);
                 db.set_bal_index(bal_index);
 
-                // Record tx sender and recipient for BAL
+                // Record tx sender for BAL. The recipient is recorded when the prepare
+                // region loads it (default_hook), per the EIP-7928 v7.1.0 update: an
+                // EIP-7702 auth halt before the recipient load must exclude it.
                 if let Some(recorder) = db.bal_recorder_mut() {
                     recorder.record_touched_address(tx_sender);
-                    if let TxKind::Call(to) = tx.to() {
-                        recorder.record_touched_address(to);
-                    }
                 }
             }
 
@@ -468,6 +470,14 @@ impl LEVM {
 
             // Build validation index once — shared across parallel execution and post-exec seeding.
             let validation_index = Arc::new(bal.build_validation_index());
+
+            // Validate supplied-BAL entries at the pre-execution index (0). The
+            // per-tx (`validate_tx_execution`) and withdrawal
+            // (`validate_bal_withdrawal_index`) validators never reach index 0,
+            // so a spurious no-op entry there would otherwise pass the parallel
+            // path (it leaves the state root unchanged). Must run before
+            // `get_state_transitions_tx` drains `current_accounts_state`.
+            Self::validate_bal_pre_exec_index(db, &bal, &validation_index)?;
 
             // Drain system call state and snapshot for per-tx db seeding
             LEVM::get_state_transitions_tx(db)?;
@@ -683,12 +693,11 @@ impl LEVM {
                 let bal_index = u32::try_from(tx_idx + 1).unwrap_or(u32::MAX);
                 db.set_bal_index(bal_index);
 
-                // Record tx sender and recipient for BAL
+                // Record tx sender for BAL. The recipient is recorded when the prepare
+                // region loads it (default_hook), per the EIP-7928 v7.1.0 update: an
+                // EIP-7702 auth halt before the recipient load must exclude it.
                 if let Some(recorder) = db.bal_recorder_mut() {
                     recorder.record_touched_address(tx_sender);
-                    if let TxKind::Call(to) = tx.to() {
-                        recorder.record_touched_address(to);
-                    }
                 }
             }
 
@@ -1185,11 +1194,11 @@ impl LEVM {
                 tx_db.enable_bal_recording();
                 let bal_index = u32::try_from(tx_idx + 1).unwrap_or(u32::MAX);
                 tx_db.set_bal_index(bal_index);
+                // Record tx sender for BAL. The recipient is recorded when the prepare
+                // region loads it (default_hook), per the EIP-7928 v7.1.0 update: an
+                // EIP-7702 auth halt before the recipient load must exclude it.
                 if let Some(recorder) = tx_db.bal_recorder_mut() {
                     recorder.record_touched_address(*sender);
-                    if let TxKind::Call(to) = tx.to() {
-                        recorder.record_touched_address(to);
-                    }
                 }
 
                 let report = LEVM::execute_tx_in_block(
@@ -1209,18 +1218,48 @@ impl LEVM {
 
                 let current_state = std::mem::take(&mut tx_db.current_accounts_state);
                 let codes = std::mem::take(&mut tx_db.codes);
-                let tracked = tx_db.accessed_accounts.take().unwrap_or_default();
-                let (shadow_touched, shadow_reads) = tx_db
+                let mut tracked = tx_db.accessed_accounts.take().unwrap_or_default();
+                // `tx_initial` maps each genuinely-written slot to its start-of-tx
+                // value (see `take_tx_initial_storage`). It serves the storage checks two
+                // ways: its keys are the written slots, and its values are the seeded
+                // pre-state the validator would otherwise re-read from the store. The
+                // recorder already stores it as an `FxHashMap`, so it is moved out here
+                // (no per-tx rebuild).
+                let (shadow_touched, shadow_reads, tx_initial) = tx_db
                     .bal_recorder
                     .take()
-                    .map(|mut r| (r.take_touched_addresses(), r.take_storage_reads()))
+                    .map(|mut r| {
+                        (
+                            r.take_touched_addresses(),
+                            r.take_storage_reads(),
+                            r.take_tx_initial_storage(),
+                        )
+                    })
                     .unwrap_or_default();
+                // Genuine pure reads = observed reads minus written slots. A slot read
+                // then written stays in `shadow_reads` (the recorder promotes it only in
+                // `build()`, which the shadow path skips) and SSTORE always records an
+                // implicit read — so this subtraction is required for correctness, not
+                // just efficiency: without it a written slot would be treated as a pure
+                // read and its BAL entry skipped. The execution->BAL check skips the
+                // DB-backed seeded lookup for genuine reads: a read never diverges from
+                // its pre-tx value, so there is nothing to validate.
+                let pure_reads: FxHashSet<(Address, U256)> = shadow_reads
+                    .iter()
+                    .copied()
+                    .filter(|k| !tx_initial.contains_key(k))
+                    .collect();
 
                 // Precompute the per-tx inputs the serial pass uses to update
                 // the shared unread_storage_reads set. Selfdestruct clears
-                // storage from the final state, so destroyed accounts
-                // satisfy ALL their BAL storage_reads regardless of which
-                // slots remain in `current_state`.
+                // storage from the final state, so a destroyed account's
+                // slots are no longer visible in `current_state`. That does
+                // NOT mean every BAL storage_reads entry for the account is
+                // legitimate: a phantom (never-read) declared read must
+                // still be rejected. Only slots the shadow recorder actually
+                // observed (`shadow_reads`, the EIP-7928 access authority)
+                // are folded into `reads_satisfied` below, once `destroyed`
+                // is populated.
                 // Rough avg storage slots per touched account; over-allocation
                 // is cheap compared to 2-3 reallocations on the hot path.
                 let mut reads_satisfied: Vec<(Address, H256)> =
@@ -1241,6 +1280,18 @@ impl LEVM {
                         }
                     }
                 }
+                // A destroyed account's genuinely-read slots (per the shadow
+                // recorder) still satisfy their BAL storage_reads entry even
+                // though the storage itself is gone from `current_state`. A
+                // slot the BAL merely *declares* as read but this tx never
+                // actually touched is deliberately left unsatisfied here: it
+                // stays in `unread_storage_reads` and is rejected by the
+                // leftover-reads check as a phantom read.
+                for (addr, slot) in &shadow_reads {
+                    if destroyed.contains(addr) {
+                        reads_satisfied.push((*addr, ethrex_common::utils::u256_to_h256(*slot)));
+                    }
+                }
 
                 // Run BAL validation inline. Errors are DEFERRED: stored in
                 // Option<EvmError> so the serial gas-limit check below still
@@ -1259,9 +1310,19 @@ impl LEVM {
                         &arc_idx,
                         &system_seed,
                         &store,
+                        &pure_reads,
+                        &tx_initial,
                     )
-                    .map_err(|e| {
-                        EvmError::Custom(format!("BAL validation failed for tx {tx_idx}: {e}"))
+                    .map_err(|e| match e {
+                        // A store failure during validation is infrastructure, not a
+                        // consensus mismatch — surface it as EvmError::DB so it isn't
+                        // mislabelled "BAL validation failed".
+                        BalValidationError::Database(msg) => {
+                            EvmError::DB(format!("BAL validation for tx {tx_idx}: {msg}"))
+                        }
+                        BalValidationError::Mismatch(msg) => EvmError::Custom(format!(
+                            "BAL validation failed for tx {tx_idx}: {msg}"
+                        )),
                     })?;
 
                     // EIP-7928 (Group B): missing-access detection via shadow recorder.
@@ -1283,7 +1344,17 @@ impl LEVM {
                             .storage_changes
                             .binary_search_by(|sc| sc.slot.cmp(slot))
                             .is_ok();
-                        let in_reads = acct.storage_reads.contains(slot);
+                        // storage_reads is validated strictly-ascending, so binary search
+                        // (matches storage_changes above) instead of a linear scan. The
+                        // import path doesn't call `validate_ordering`, so assert the
+                        // precondition in debug builds; `binary_search` fails closed on
+                        // an unsorted list (it can only miss a present slot -> over-reject,
+                        // never accept a missing one), so release stays sound regardless.
+                        debug_assert!(
+                            acct.storage_reads.windows(2).all(|w| w[0] < w[1]),
+                            "storage_reads must be strictly ascending for binary_search"
+                        );
+                        let in_reads = acct.storage_reads.binary_search(slot).is_ok();
                         if !in_changes && !in_reads {
                             return Err(EvmError::Custom(format!(
                                 "BAL validation failed for tx {tx_idx}: storage slot {slot} of \
@@ -1298,6 +1369,16 @@ impl LEVM {
 
                 drop(current_state);
                 drop(codes);
+
+                // The shadow BAL recorder's touched addresses are ethrex's exact
+                // EELS `account_reads` analog: an address is recorded here iff EELS
+                // would add it to `account_reads` (e.g. a CREATE target read by
+                // `is_account_alive` before an OOG state-gas charge). The coarse
+                // `accessed_accounts` tracker only sees `load_account` calls, which
+                // can miss such a target when the frame OOGs before materializing it.
+                // Fold the recorder touches into `tracked` so the pure-access
+                // checklist is reduced by everything ethrex legitimately accessed.
+                tracked.extend(shadow_touched.iter().copied());
 
                 Ok((
                     tx_idx,
@@ -1370,13 +1451,16 @@ impl LEVM {
             }
         }
 
-        // 5. Apply per-tx reads_satisfied / destroyed / tracked to the shared
-        //    sets (cheap hash-set ops; preserves prior semantics).
-        for (_, _, _, tracked_accounts, reads_satisfied, destroyed, _) in &exec_results {
+        // 5. Apply per-tx reads_satisfied / tracked to the shared sets (cheap
+        //    hash-set ops; preserves prior semantics). Note: this does NOT
+        //    blanket-clear a destroyed account's entries — only slots it
+        //    genuinely read (already folded into reads_satisfied above,
+        //    including destroyed-account reads via shadow_reads) are
+        //    removed. A phantom storage_reads entry declared on a destroyed
+        //    account (never actually read) stays in unread_storage_reads and
+        //    is rejected by the leftover-reads check below.
+        for (_, _, _, tracked_accounts, reads_satisfied, _, _) in &exec_results {
             if !unread_storage_reads.is_empty() {
-                for addr in destroyed {
-                    unread_storage_reads.retain(|&(a, _)| a != *addr);
-                }
                 for pair in reads_satisfied {
                     unread_storage_reads.remove(pair);
                 }
@@ -1448,6 +1532,40 @@ impl LEVM {
         }
     }
 
+    /// Gets the seeded code hash for an account at `seed_idx` from BAL, falling
+    /// back to system_seed/store if no BAL entry exists before that index.
+    #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+    fn seeded_code_hash(
+        seed_idx: u32,
+        acct: &ethrex_common::types::block_access_list::AccountChanges,
+        system_seed: &CacheDB,
+        store: &Arc<dyn Database>,
+    ) -> Result<H256, BalValidationError> {
+        let pos = acct
+            .code_changes
+            .partition_point(|c| c.block_access_index <= seed_idx);
+        if pos > 0 {
+            let seeded_code = &acct.code_changes[pos - 1].new_code;
+            Ok(if seeded_code.is_empty() {
+                *EMPTY_KECCAK_HASH
+            } else {
+                ethrex_common::utils::keccak(seeded_code)
+            })
+        } else if let Some(a) = system_seed.get(&acct.address) {
+            Ok(a.info.code_hash)
+        } else {
+            store
+                .get_account_state(acct.address)
+                .map(|a| a.code_hash)
+                .map_err(|e| {
+                    BalValidationError::Database(format!(
+                        "DB error reading account state for {:?}: {e}",
+                        acct.address
+                    ))
+                })
+        }
+    }
+
     /// Gets the seeded nonce for an account at `seed_idx` from BAL, falling
     /// back to system_seed/store if no BAL entry exists before that index.
     #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
@@ -1477,6 +1595,141 @@ impl LEVM {
         }
     }
 
+    /// Start-of-tx `(balance, nonce, code_hash)` for `acct`: each field resolves
+    /// from its own BAL change history at or before `seed_idx`, then the
+    /// pre-system-call snapshot, then a single shared store read for whatever
+    /// remains. Semantically identical to calling `seeded_balance` +
+    /// `seeded_nonce` + `seeded_code_hash`, but reads the store at most once — the
+    /// PART A no-op checks need all three for the same account, and an account
+    /// with no BAL history before this tx would otherwise read it three times.
+    #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+    fn seeded_account_triple(
+        seed_idx: u32,
+        acct: &ethrex_common::types::block_access_list::AccountChanges,
+        system_seed: &CacheDB,
+        store: &Arc<dyn Database>,
+    ) -> Result<(U256, u64, H256), BalValidationError> {
+        let bpos = acct
+            .balance_changes
+            .partition_point(|c| c.block_access_index <= seed_idx);
+        let npos = acct
+            .nonce_changes
+            .partition_point(|c| c.block_access_index <= seed_idx);
+        let cpos = acct
+            .code_changes
+            .partition_point(|c| c.block_access_index <= seed_idx);
+
+        let mut balance = (bpos > 0).then(|| acct.balance_changes[bpos - 1].post_balance);
+        let mut nonce = (npos > 0).then(|| acct.nonce_changes[npos - 1].post_nonce);
+        let mut code_hash = (cpos > 0).then(|| {
+            let c = &acct.code_changes[cpos - 1].new_code;
+            if c.is_empty() {
+                *EMPTY_KECCAK_HASH
+            } else {
+                ethrex_common::utils::keccak(c)
+            }
+        });
+
+        // Fields with no BAL history fall back to the pre-system-call snapshot.
+        if let Some(a) = system_seed.get(&acct.address) {
+            balance.get_or_insert(a.info.balance);
+            nonce.get_or_insert(a.info.nonce);
+            code_hash.get_or_insert(a.info.code_hash);
+        }
+
+        // Anything still unresolved comes from the store (read once).
+        if balance.is_none() || nonce.is_none() || code_hash.is_none() {
+            let s = store.get_account_state(acct.address).map_err(|e| {
+                BalValidationError::Database(format!(
+                    "DB error reading account state for {:?}: {e}",
+                    acct.address
+                ))
+            })?;
+            balance.get_or_insert(s.balance);
+            nonce.get_or_insert(s.nonce);
+            code_hash.get_or_insert(s.code_hash);
+        }
+
+        Ok((
+            balance.unwrap_or_default(),
+            nonce.unwrap_or_default(),
+            code_hash.unwrap_or(*EMPTY_KECCAK_HASH),
+        ))
+    }
+
+    /// Start-of-tx value for a slot with no BAL `slot_changes` history to consult:
+    /// the recorder's `tx_initial` fast-path (a slot the EVM genuinely wrote this
+    /// tx), else the pre-tx state (system_seed, then store). Used by the
+    /// execution->BAL check for a slot absent from `storage_changes`.
+    #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+    fn seeded_storage_pre_value(
+        addr: Address,
+        key: H256,
+        slot: U256,
+        system_seed: &CacheDB,
+        store: &Arc<dyn Database>,
+        tx_initial: &FxHashMap<(Address, U256), U256>,
+    ) -> Result<U256, BalValidationError> {
+        if let Some(v) = tx_initial.get(&(addr, slot)) {
+            return Ok(*v);
+        }
+        Self::storage_from_seed_or_store(addr, key, slot, system_seed, store)
+    }
+
+    /// Pre-tx value for a slot from the in-memory snapshot, falling back to the
+    /// store. Shared tail of the two `seeded_storage*` helpers.
+    #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+    fn storage_from_seed_or_store(
+        addr: Address,
+        key: H256,
+        slot: U256,
+        system_seed: &CacheDB,
+        store: &Arc<dyn Database>,
+    ) -> Result<U256, BalValidationError> {
+        if let Some(v) = system_seed
+            .get(&addr)
+            .and_then(|a| a.storage.get(&key))
+            .copied()
+        {
+            Ok(v)
+        } else {
+            store.get_storage_value(addr, key).map_err(|e| {
+                BalValidationError::Database(format!(
+                    "DB error reading storage for {addr:?} slot {slot}: {e}"
+                ))
+            })
+        }
+    }
+
+    /// Gets the seeded value for a storage slot at `seed_idx` from BAL, falling
+    /// back to system_seed/store if no BAL entry exists before that index.
+    ///
+    /// Fast path: for a slot the EVM genuinely wrote this tx, `tx_initial` already
+    /// holds the start-of-tx value it captured during execution — identical to what
+    /// this function would otherwise recompute — so return it and skip the lookup.
+    #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+    fn seeded_storage(
+        seed_idx: u32,
+        sc: &ethrex_common::types::block_access_list::SlotChange,
+        addr: Address,
+        key: H256,
+        system_seed: &CacheDB,
+        store: &Arc<dyn Database>,
+        tx_initial: &FxHashMap<(Address, U256), U256>,
+    ) -> Result<U256, BalValidationError> {
+        if let Some(v) = tx_initial.get(&(addr, sc.slot)) {
+            return Ok(*v);
+        }
+        let pos = sc
+            .slot_changes
+            .partition_point(|c| c.block_access_index <= seed_idx);
+        if pos > 0 {
+            Ok(sc.slot_changes[pos - 1].post_value)
+        } else {
+            Self::storage_from_seed_or_store(addr, key, sc.slot, system_seed, store)
+        }
+    }
+
     /// Validates that a tx's post-execution state matches BAL claims.
     ///
     /// Replaces the previous snapshot->diff->validate approach:
@@ -1492,9 +1745,21 @@ impl LEVM {
     /// `index`: pre-built validation index
     /// `system_seed`: pre-system-call state snapshot (for extraneous entry detection)
     /// `store`: database (fallback for pre-state lookups)
+    /// `pure_reads`: slots the shadow recorder observed as pure reads (never
+    ///   written); the execution->BAL check skips the seeded pre-state lookup for these since a
+    ///   genuine read cannot diverge from its pre-tx value. Pass an empty set to
+    ///   validate every slot unconditionally (e.g. from unit tests).
+    /// `tx_initial`: start-of-tx storage values the EVM already captured for
+    ///   written slots (`(addr, slot) -> pre_value`); used as the storage seed
+    ///   fast-path so `seeded_storage` avoids a store read. Pass an empty map to
+    ///   force the store fallback (e.g. from unit tests).
+    ///
+    /// Exposed as `pub` (rather than crate-private) solely so the direct
+    /// `validate_tx_execution` unit tests in the `ethrex-test` crate
+    /// (`test/tests/blockchain/bal_validate_tx_execution_tests.rs`) can call it.
     #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
     #[allow(clippy::too_many_arguments)]
-    fn validate_tx_execution(
+    pub fn validate_tx_execution(
         bal_idx: u32,
         seed_idx: u32,
         current_state: &FxHashMap<Address, LevmAccount>,
@@ -1503,19 +1768,45 @@ impl LEVM {
         index: &BalAddressIndex,
         system_seed: &CacheDB,
         store: &Arc<dyn Database>,
+        pure_reads: &FxHashSet<(Address, U256)>,
+        tx_initial: &FxHashMap<(Address, U256), U256>,
     ) -> Result<(), BalValidationError> {
-        // PART A: For each BAL account with changes at bal_idx,
-        //         verify execution produced matching post-state.
+        // BAL -> execution: for each BAL account with changes at bal_idx,
+        // verify execution produced the matching post-state (and that no
+        // claimed change is a no-op equal to the start-of-tx value).
         if let Some(active_accounts) = index.tx_to_accounts.get(&bal_idx) {
             for &acct_inner_idx in active_accounts {
                 let acct = &bal.accounts()[acct_inner_idx];
                 let addr = acct.address;
                 let actual = current_state.get(&addr);
+                // Start-of-tx (balance, nonce, code_hash), computed once per account
+                // and shared by the balance/nonce/code no-op checks below so an
+                // account with no BAL history isn't read from the store three times.
+                let mut seeded_info: Option<(U256, u64, H256)> = None;
 
                 // Balance
                 if let Some(expected) = find_exact_change_balance(&acct.balance_changes, bal_idx) {
                     match actual {
-                        Some(a) if a.info.balance == expected => {}
+                        Some(a) if a.info.balance == expected => {
+                            // No-op check: a BAL balance change is only canonical if
+                            // it actually differs from the start-of-tx seeded balance
+                            // (the builder MUST NOT record round-tripped balances).
+                            if seeded_info.is_none() {
+                                seeded_info = Some(Self::seeded_account_triple(
+                                    seed_idx,
+                                    acct,
+                                    system_seed,
+                                    store,
+                                )?);
+                            }
+                            let seeded = seeded_info.unwrap_or_default().0;
+                            if expected == seeded {
+                                return Err(BalValidationError::Mismatch(format!(
+                                    "account {addr:?} has spurious no-op BAL balance change \
+                                     at index {bal_idx}: post==pre=={expected}"
+                                )));
+                            }
+                        }
                         Some(a) => {
                             return Err(BalValidationError::Mismatch(format!(
                                 "account {addr:?} balance mismatch at index {bal_idx}: BAL={expected}, exec={} (diff={})",
@@ -1524,44 +1815,51 @@ impl LEVM {
                             )));
                         }
                         None => {
-                            // Account not in execution state. Check if the BAL entry
-                            // is extraneous (claimed post-balance == pre-state balance,
-                            // i.e., a no-op recorded by the builder). The state root
-                            // will catch any true discrepancy.
+                            // Account absent from execution state, yet the BAL declares a
+                            // balance change for it at this tx. Never canonical: either it
+                            // differs from the start-of-tx seeded balance (a real mismatch)
+                            // or equals it (a spurious no-op the builder must not record).
+                            // Reject both to match the sequential path; the state root does
+                            // NOT catch the no-op case (post==pre leaves the root unchanged).
                             let seeded = Self::seeded_balance(seed_idx, acct, system_seed, store)?;
-                            if expected != seeded {
-                                // Dump full BAL entry for diagnosis
-                                let all_bal_indices: Vec<u32> = acct
-                                    .balance_changes
-                                    .iter()
-                                    .map(|c| c.block_access_index)
-                                    .collect();
-                                let all_nonce_indices: Vec<u32> = acct
-                                    .nonce_changes
-                                    .iter()
-                                    .map(|c| c.block_access_index)
-                                    .collect();
-                                let all_storage_indices: Vec<(u32, u64)> = acct
-                                    .storage_changes
-                                    .iter()
-                                    .flat_map(|sc| {
-                                        sc.slot_changes
-                                            .iter()
-                                            .map(|c| (c.block_access_index, sc.slot.low_u64()))
-                                    })
-                                    .collect();
-                                let code_indices: Vec<u32> = acct
-                                    .code_changes
-                                    .iter()
-                                    .map(|c| c.block_access_index)
-                                    .collect();
+                            if expected == seeded {
                                 return Err(BalValidationError::Mismatch(format!(
-                                    "account {addr:?} has BAL balance change at {bal_idx} \
-                                     but not in execution state (expected={expected}, pre={seeded}, \
-                                     all_bal_idx={all_bal_indices:?}, nonce_idx={all_nonce_indices:?}, \
-                                     storage_idx={all_storage_indices:?}, code_idx={code_indices:?})"
+                                    "account {addr:?} has spurious no-op BAL balance change \
+                                     at index {bal_idx} for an account absent from execution \
+                                     state: post==pre=={expected}"
                                 )));
                             }
+                            // Dump full BAL entry for diagnosis
+                            let all_bal_indices: Vec<u32> = acct
+                                .balance_changes
+                                .iter()
+                                .map(|c| c.block_access_index)
+                                .collect();
+                            let all_nonce_indices: Vec<u32> = acct
+                                .nonce_changes
+                                .iter()
+                                .map(|c| c.block_access_index)
+                                .collect();
+                            let all_storage_indices: Vec<(u32, u64)> = acct
+                                .storage_changes
+                                .iter()
+                                .flat_map(|sc| {
+                                    sc.slot_changes
+                                        .iter()
+                                        .map(|c| (c.block_access_index, sc.slot.low_u64()))
+                                })
+                                .collect();
+                            let code_indices: Vec<u32> = acct
+                                .code_changes
+                                .iter()
+                                .map(|c| c.block_access_index)
+                                .collect();
+                            return Err(BalValidationError::Mismatch(format!(
+                                "account {addr:?} has BAL balance change at {bal_idx} \
+                                 but not in execution state (expected={expected}, pre={seeded}, \
+                                 all_bal_idx={all_bal_indices:?}, nonce_idx={all_nonce_indices:?}, \
+                                 storage_idx={all_storage_indices:?}, code_idx={code_indices:?})"
+                            )));
                         }
                     }
                 }
@@ -1569,7 +1867,27 @@ impl LEVM {
                 // Nonce
                 if let Some(expected) = find_exact_change_nonce(&acct.nonce_changes, bal_idx) {
                     match actual {
-                        Some(a) if a.info.nonce == expected => {}
+                        Some(a) if a.info.nonce == expected => {
+                            // No-op check: nonces are only ever recorded via a strict
+                            // increment (or a one-time fixed-value predeploy install
+                            // that also strictly increases), so a canonical BAL nonce
+                            // change can never equal the start-of-tx seeded nonce.
+                            if seeded_info.is_none() {
+                                seeded_info = Some(Self::seeded_account_triple(
+                                    seed_idx,
+                                    acct,
+                                    system_seed,
+                                    store,
+                                )?);
+                            }
+                            let seeded = seeded_info.unwrap_or_default().1;
+                            if expected == seeded {
+                                return Err(BalValidationError::Mismatch(format!(
+                                    "account {addr:?} has spurious no-op BAL nonce change \
+                                     at index {bal_idx}: post==pre=={expected}"
+                                )));
+                            }
+                        }
                         Some(a) => {
                             return Err(BalValidationError::Mismatch(format!(
                                 "account {addr:?} nonce mismatch at index {bal_idx}: BAL={expected}, exec={}",
@@ -1577,13 +1895,21 @@ impl LEVM {
                             )));
                         }
                         None => {
+                            // Account absent from execution state, yet the BAL declares a
+                            // nonce change: reject the no-op (post==pre) and the mismatch
+                            // alike (see the balance arm rationale).
                             let seeded = Self::seeded_nonce(seed_idx, acct, system_seed, store)?;
-                            if expected != seeded {
+                            if expected == seeded {
                                 return Err(BalValidationError::Mismatch(format!(
-                                    "account {addr:?} has BAL nonce change at {bal_idx} \
-                                     but not in execution state (expected={expected}, pre={seeded})"
+                                    "account {addr:?} has spurious no-op BAL nonce change \
+                                     at index {bal_idx} for an account absent from execution \
+                                     state: post==pre=={expected}"
                                 )));
                             }
+                            return Err(BalValidationError::Mismatch(format!(
+                                "account {addr:?} has BAL nonce change at {bal_idx} \
+                                 but not in execution state (expected={expected}, pre={seeded})"
+                            )));
                         }
                     }
                 }
@@ -1605,6 +1931,23 @@ impl LEVM {
                             if actual_code != *expected_code {
                                 return Err(BalValidationError::Mismatch(format!(
                                     "account {addr:?} code mismatch at index {bal_idx}"
+                                )));
+                            }
+                            // No-op check: a BAL code change is only canonical if
+                            // it actually differs from the start-of-tx seeded code.
+                            if seeded_info.is_none() {
+                                seeded_info = Some(Self::seeded_account_triple(
+                                    seed_idx,
+                                    acct,
+                                    system_seed,
+                                    store,
+                                )?);
+                            }
+                            let seeded_hash = seeded_info.unwrap_or_default().2;
+                            if a.info.code_hash == seeded_hash {
+                                return Err(BalValidationError::Mismatch(format!(
+                                    "account {addr:?} has spurious no-op BAL code change \
+                                     at index {bal_idx}"
                                 )));
                             }
                         }
@@ -1635,12 +1978,19 @@ impl LEVM {
                                 })?;
                                 c.code_bytes()
                             };
-                            if *expected_code != pre_code {
+                            if *expected_code == pre_code {
+                                // Spurious no-op: BAL code change equals pre-state code
+                                // for an account absent from execution state. Reject to
+                                // match the sequential path (the state root won't catch it).
                                 return Err(BalValidationError::Mismatch(format!(
-                                    "account {addr:?} has BAL code change at {bal_idx} \
-                                     but not in execution state"
+                                    "account {addr:?} has spurious no-op BAL code change \
+                                     at index {bal_idx} for an account absent from execution state"
                                 )));
                             }
+                            return Err(BalValidationError::Mismatch(format!(
+                                "account {addr:?} has BAL code change at {bal_idx} \
+                                 but not in execution state"
+                            )));
                         }
                     }
                 }
@@ -1653,17 +2003,28 @@ impl LEVM {
                         let key = ethrex_common::utils::u256_to_h256(sc.slot);
                         let actual_value = actual.and_then(|a| a.storage.get(&key)).copied();
                         if actual_value != Some(expected_value) {
-                            // If account not in execution state, check pre-state
+                            // Slot absent from execution state. Compare against the
+                            // start-of-tx seeded value: an entry equal to it is a
+                            // spurious no-op (post==pre) that the builder must not
+                            // record. Reject it to match the sequential path — the
+                            // state root won't catch it since the value is unchanged.
                             if actual.is_none() || actual_value.is_none() {
-                                let pre_value =
-                                    store.get_storage_value(addr, key).map_err(|e| {
-                                        BalValidationError::Database(format!(
-                                            "DB error reading storage for {addr:?} slot {}: {e}",
-                                            sc.slot
-                                        ))
-                                    })?;
-                                if expected_value == pre_value {
-                                    continue; // Extraneous entry
+                                let seeded = Self::seeded_storage(
+                                    seed_idx,
+                                    sc,
+                                    addr,
+                                    key,
+                                    system_seed,
+                                    store,
+                                    tx_initial,
+                                )?;
+                                if expected_value == seeded {
+                                    return Err(BalValidationError::Mismatch(format!(
+                                        "account {addr:?} has spurious no-op BAL storage \
+                                         change for slot {} at index {bal_idx} for a slot \
+                                         absent from execution state: post==pre=={expected_value}",
+                                        sc.slot
+                                    )));
                                 }
                             }
                             return Err(BalValidationError::Mismatch(format!(
@@ -1672,13 +2033,32 @@ impl LEVM {
                                 sc.slot
                             )));
                         }
+                        // Matching arm: slot present in execution state and equal
+                        // to expected. Reject spurious no-op entries (post == the
+                        // start-of-tx seeded value).
+                        let seeded = Self::seeded_storage(
+                            seed_idx,
+                            sc,
+                            addr,
+                            key,
+                            system_seed,
+                            store,
+                            tx_initial,
+                        )?;
+                        if expected_value == seeded {
+                            return Err(BalValidationError::Mismatch(format!(
+                                "account {addr:?} has spurious no-op BAL storage change for \
+                                 slot {} at index {bal_idx}",
+                                sc.slot
+                            )));
+                        }
                     }
                 }
             }
         }
 
-        // PART B: For each modified account in execution state,
-        //         verify no unexpected mutations (changes not claimed by BAL).
+        // execution -> BAL: for each account modified by execution, verify every
+        // mutation it produced is claimed by the BAL (no unrecorded change).
         for (addr, account) in current_state {
             if account.is_unmodified() {
                 continue;
@@ -1715,23 +2095,7 @@ impl LEVM {
 
             // Balance: if BAL has no change at bal_idx, execution must not have changed it
             if !has_exact_change_balance(&acct.balance_changes, bal_idx) {
-                let seeded_pos = acct
-                    .balance_changes
-                    .partition_point(|c| c.block_access_index <= seed_idx);
-                let seeded = if seeded_pos > 0 {
-                    acct.balance_changes[seeded_pos - 1].post_balance
-                } else {
-                    // No BAL balance entry before this tx — value came from system_seed or store.
-                    system_seed
-                        .get(addr)
-                        .map(|a| a.info.balance)
-                        .unwrap_or_else(|| {
-                            store
-                                .get_account_state(*addr)
-                                .map(|a| a.balance)
-                                .unwrap_or_default()
-                        })
-                };
+                let seeded = Self::seeded_balance(seed_idx, acct, system_seed, store)?;
                 if account.info.balance != seeded {
                     return Err(BalValidationError::Mismatch(format!(
                         "account {addr:?} balance changed by execution ({}) but BAL has no \
@@ -1743,22 +2107,7 @@ impl LEVM {
 
             // Nonce: same pattern
             if !has_exact_change_nonce(&acct.nonce_changes, bal_idx) {
-                let seeded_pos = acct
-                    .nonce_changes
-                    .partition_point(|c| c.block_access_index <= seed_idx);
-                let seeded = if seeded_pos > 0 {
-                    acct.nonce_changes[seeded_pos - 1].post_nonce
-                } else {
-                    system_seed
-                        .get(addr)
-                        .map(|a| a.info.nonce)
-                        .unwrap_or_else(|| {
-                            store
-                                .get_account_state(*addr)
-                                .map(|a| a.nonce)
-                                .unwrap_or_default()
-                        })
-                };
+                let seeded = Self::seeded_nonce(seed_idx, acct, system_seed, store)?;
                 if account.info.nonce != seeded {
                     return Err(BalValidationError::Mismatch(format!(
                         "account {addr:?} nonce changed by execution ({}) but BAL has no \
@@ -1772,28 +2121,7 @@ impl LEVM {
             // avoid reconstructing a full Code object (seed_db_from_bal already
             // did that work; here we only need the hash for comparison).
             if !has_exact_change_code(&acct.code_changes, bal_idx) {
-                let seeded_pos = acct
-                    .code_changes
-                    .partition_point(|c| c.block_access_index <= seed_idx);
-                let seeded_hash = if seeded_pos > 0 {
-                    let seeded_code = &acct.code_changes[seeded_pos - 1].new_code;
-                    if seeded_code.is_empty() {
-                        *EMPTY_KECCAK_HASH
-                    } else {
-                        ethrex_common::utils::keccak(seeded_code)
-                    }
-                } else {
-                    // No BAL code entry before this tx — value came from system_seed or store.
-                    system_seed
-                        .get(addr)
-                        .map(|a| a.info.code_hash)
-                        .unwrap_or_else(|| {
-                            store
-                                .get_account_state(*addr)
-                                .map(|a| a.code_hash)
-                                .unwrap_or(*EMPTY_KECCAK_HASH)
-                        })
-                };
+                let seeded_hash = Self::seeded_code_hash(seed_idx, acct, system_seed, store)?;
                 if account.info.code_hash != seeded_hash {
                     return Err(BalValidationError::Mismatch(format!(
                         "account {addr:?} code changed by execution but BAL has no \
@@ -1812,23 +2140,63 @@ impl LEVM {
                 if pos < acct.storage_changes.len() && acct.storage_changes[pos].slot == slot_u256 {
                     let sc = &acct.storage_changes[pos];
                     if !has_exact_change_storage(&sc.slot_changes, bal_idx) {
-                        let seeded_pos = sc
-                            .slot_changes
-                            .partition_point(|c| c.block_access_index <= seed_idx);
-                        if seeded_pos > 0 {
-                            let seeded = sc.slot_changes[seeded_pos - 1].post_value;
-                            if value != seeded {
-                                return Err(BalValidationError::Mismatch(format!(
-                                    "account {addr:?} storage slot {slot_u256} changed by \
-                                     execution ({value}) but BAL has no change at index \
-                                     {bal_idx} (seeded={seeded})"
-                                )));
-                            }
+                        // Compare against the start-of-tx value. `seeded_storage` falls
+                        // back to system_seed -> store when the slot has no BAL change
+                        // at or before this tx (seeded_pos == 0), so a write at this tx
+                        // whose BAL entry was omitted is still caught rather than skipped.
+                        let seeded = Self::seeded_storage(
+                            seed_idx,
+                            sc,
+                            *addr,
+                            *key_h256,
+                            system_seed,
+                            store,
+                            tx_initial,
+                        )?;
+                        if value != seeded {
+                            return Err(BalValidationError::Mismatch(format!(
+                                "account {addr:?} storage slot {slot_u256} changed by \
+                                 execution ({value}) but BAL has no change at index \
+                                 {bal_idx} (seeded={seeded})"
+                            )));
                         }
                     }
                 }
-                // Slot not in BAL storage_changes: was loaded from store during execution.
-                // Skip — can't verify cheaply.
+                // Slot not in BAL storage_changes (a slot is in at most one of
+                // storage_changes/storage_reads per EIP-7928 ordering rules). A value
+                // that diverges from the start-of-tx baseline means execution WROTE the
+                // slot but the write was not recorded in storage_changes — non-canonical.
+                // A genuine read leaves value == pre_value and passes. This catches both
+                // an entirely-absent slot AND a real write mis-declared under
+                // storage_reads: the shadow-reads check in execute_block_parallel only
+                // verifies the slot is present in *some* list, never that a changed value
+                // was recorded in the correct one.
+                //
+                // Fast path: the recorder proved this slot a pure read (writes are
+                // excluded from `pure_reads`), so its value equals the pre-tx value by
+                // construction — skip the DB-backed seeded lookup entirely.
+                else if !pure_reads.contains(&(*addr, slot_u256)) {
+                    // This slot has no `storage_changes` entry, so there is no BAL
+                    // slot history to seed from; take the start-of-tx value straight
+                    // from the recorder fast-path / pre-tx state. A written slot hits
+                    // `tx_initial` and skips the store read.
+                    let pre_value = Self::seeded_storage_pre_value(
+                        *addr,
+                        *key_h256,
+                        slot_u256,
+                        system_seed,
+                        store,
+                        tx_initial,
+                    )?;
+                    if value != pre_value {
+                        let declared_as_read = acct.storage_reads.contains(&slot_u256);
+                        return Err(BalValidationError::Mismatch(format!(
+                            "account {addr:?} storage slot {slot_u256} was written by \
+                             execution ({value}) but has no storage_changes entry at index \
+                             {bal_idx} (pre_value={pre_value}, declared_as_read={declared_as_read})"
+                        )));
+                    }
+                }
             }
         }
 
@@ -1840,8 +2208,8 @@ impl LEVM {
     /// After `process_withdrawals` + `extract_all_requests_levm` run on the BAL-seeded
     /// DB, `current_accounts_state` reflects the actual state. Validation is bidirectional:
     ///
-    /// Part A (BAL -> DB): every BAL claim at the withdrawal index must match the DB.
-    /// Part B (DB -> BAL): every account modified during the withdrawal/request phase
+    /// BAL -> DB: every BAL claim at the withdrawal index must match the DB.
+    /// DB -> BAL: every account modified during the withdrawal/request phase
     ///         must have a corresponding BAL entry. Without this reverse check, a
     ///         malicious builder could omit a withdrawal recipient from the BAL,
     ///         causing the BAL-derived state root to exclude the withdrawal balance
@@ -1853,7 +2221,7 @@ impl LEVM {
         withdrawal_idx: u32,
         index: &BalAddressIndex,
     ) -> Result<(), EvmError> {
-        // Part A: For each BAL account with changes at the withdrawal index,
+        // BAL -> DB: For each BAL account with changes at the withdrawal index,
         //         verify the DB matches.
         for acct in bal.accounts() {
             let addr = acct.address;
@@ -1947,7 +2315,7 @@ impl LEVM {
             }
         }
 
-        // Part B: For each account modified during the withdrawal/request phase,
+        // DB -> BAL: For each account modified during the withdrawal/request phase,
         //         verify it has a corresponding BAL entry claiming the change.
         for (addr, account) in &db.current_accounts_state {
             if account.is_unmodified() {
@@ -2135,12 +2503,174 @@ impl LEVM {
         Ok(())
     }
 
-    /// Pre-warms state by executing all transactions in parallel, grouped by sender.
+    /// Validates supplied-BAL entries at the pre-execution index (0) on the
+    /// parallel import path. `validate_tx_execution` covers indices `1..=n` and
+    /// `validate_bal_withdrawal_index` covers `n+1`, but index 0 — the pre-block
+    /// system calls (EIP-2935 block-hash history, EIP-4788 beacon root) — had no
+    /// validator. A spurious no-op entry at index 0 (`post == pre-block value`,
+    /// e.g. a `balance: 0` change for an untouched empty account) leaves the
+    /// BAL-derived state root unchanged, so it slipped past both the downstream
+    /// `validate_state_root` check and content validation: the parallel path
+    /// accepted a block the sequential/full-rebuild path rejects.
     ///
-    /// Transactions from the same sender are executed sequentially within their group
-    /// to ensure correct nonce and balance propagation. Different sender groups run
-    /// in parallel. This approach (inspired by Nethermind's per-sender prewarmer)
-    /// improves warmup accuracy by avoiding nonce mismatches within sender groups.
+    /// Must run right after `prepare_block`, while `current_accounts_state` still
+    /// holds the pre-exec changes (`get_state_transitions_tx` drains it). The
+    /// check is BAL -> DB only: an index-0 entry for an account the pre-exec
+    /// phase never touched, whose value diverges from the post-`prepare_block`
+    /// state, or whose value equals the pre-block value (a no-op), is rejected.
+    /// Omissions and genuine divergences change the state root and are already
+    /// caught by `validate_state_root`; the no-op case is the one this closes.
+    #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+    fn validate_bal_pre_exec_index(
+        db: &GeneralizedDatabase,
+        bal: &BlockAccessList,
+        index: &BalAddressIndex,
+    ) -> Result<(), EvmError> {
+        const PRE_EXEC_IDX: u32 = 0;
+        let Some(active_accounts) = index.tx_to_accounts.get(&PRE_EXEC_IDX) else {
+            return Ok(());
+        };
+
+        // Pre-block seed: index-0 changes have no BAL history before them, so the
+        // start-of-block value comes straight from the store, which on the import
+        // path is still the unmodified parent state. Returns (balance, nonce,
+        // code_hash); absent accounts default to (0, 0, EMPTY_KECCAK_HASH).
+        let pre_account = |addr: Address| -> Result<(U256, u64, H256), EvmError> {
+            let s = db.store.get_account_state(addr).map_err(|e| {
+                EvmError::Custom(format!(
+                    "BAL validation failed for pre-exec: db error reading account {addr:?}: {e}"
+                ))
+            })?;
+            Ok((s.balance, s.nonce, s.code_hash))
+        };
+
+        for &acct_inner_idx in active_accounts {
+            let acct = &bal.accounts()[acct_inner_idx];
+            let addr = acct.address;
+            let actual = db.current_accounts_state.get(&addr);
+
+            // Balance
+            if let Some(expected) = find_exact_change_balance(&acct.balance_changes, PRE_EXEC_IDX) {
+                match actual {
+                    Some(a) if a.info.balance == expected => {
+                        if expected == pre_account(addr)?.0 {
+                            return Err(EvmError::Custom(format!(
+                                "BAL validation failed for pre-exec: account {addr:?} has spurious \
+                                 no-op balance change at index 0: post==pre=={expected}"
+                            )));
+                        }
+                    }
+                    Some(a) => {
+                        return Err(EvmError::Custom(format!(
+                            "BAL validation failed for pre-exec: account {addr:?} balance mismatch \
+                             at index 0: BAL={expected}, actual={}",
+                            a.info.balance
+                        )));
+                    }
+                    None => {
+                        return Err(EvmError::Custom(format!(
+                            "BAL validation failed for pre-exec: account {addr:?} has balance \
+                             change at index 0 but was not touched by the pre-exec phase"
+                        )));
+                    }
+                }
+            }
+
+            // Nonce
+            if let Some(expected) = find_exact_change_nonce(&acct.nonce_changes, PRE_EXEC_IDX) {
+                match actual {
+                    Some(a) if a.info.nonce == expected => {
+                        if expected == pre_account(addr)?.1 {
+                            return Err(EvmError::Custom(format!(
+                                "BAL validation failed for pre-exec: account {addr:?} has spurious \
+                                 no-op nonce change at index 0: post==pre=={expected}"
+                            )));
+                        }
+                    }
+                    Some(a) => {
+                        return Err(EvmError::Custom(format!(
+                            "BAL validation failed for pre-exec: account {addr:?} nonce mismatch \
+                             at index 0: BAL={expected}, actual={}",
+                            a.info.nonce
+                        )));
+                    }
+                    None => {
+                        return Err(EvmError::Custom(format!(
+                            "BAL validation failed for pre-exec: account {addr:?} has nonce \
+                             change at index 0 but was not touched by the pre-exec phase"
+                        )));
+                    }
+                }
+            }
+
+            // Code
+            if let Some(expected_code) = find_exact_change_code(&acct.code_changes, PRE_EXEC_IDX) {
+                let expected_hash = if expected_code.is_empty() {
+                    *EMPTY_KECCAK_HASH
+                } else {
+                    ethrex_common::utils::keccak(expected_code)
+                };
+                match actual {
+                    Some(a) if a.info.code_hash == expected_hash => {
+                        if expected_hash == pre_account(addr)?.2 {
+                            return Err(EvmError::Custom(format!(
+                                "BAL validation failed for pre-exec: account {addr:?} has spurious \
+                                 no-op code change at index 0"
+                            )));
+                        }
+                    }
+                    Some(_) => {
+                        return Err(EvmError::Custom(format!(
+                            "BAL validation failed for pre-exec: account {addr:?} code mismatch \
+                             at index 0"
+                        )));
+                    }
+                    None => {
+                        return Err(EvmError::Custom(format!(
+                            "BAL validation failed for pre-exec: account {addr:?} has code \
+                             change at index 0 but was not touched by the pre-exec phase"
+                        )));
+                    }
+                }
+            }
+
+            // Storage
+            for sc in &acct.storage_changes {
+                let Some(expected_value) =
+                    find_exact_change_storage(&sc.slot_changes, PRE_EXEC_IDX)
+                else {
+                    continue;
+                };
+                let key = ethrex_common::utils::u256_to_h256(sc.slot);
+                let actual_value = actual.and_then(|a| a.storage.get(&key)).copied();
+                if actual_value != Some(expected_value) {
+                    return Err(EvmError::Custom(format!(
+                        "BAL validation failed for pre-exec: account {addr:?} storage slot {} \
+                         mismatch at index 0: BAL={expected_value}, actual={actual_value:?}",
+                        sc.slot
+                    )));
+                }
+                let pre_value = db.store.get_storage_value(addr, key).map_err(|e| {
+                    EvmError::Custom(format!(
+                        "BAL validation failed for pre-exec: db error reading storage {addr:?} \
+                         slot {}: {e}",
+                        sc.slot
+                    ))
+                })?;
+                if expected_value == pre_value {
+                    return Err(EvmError::Custom(format!(
+                        "BAL validation failed for pre-exec: account {addr:?} has spurious no-op \
+                         storage change for slot {} at index 0: post==pre=={expected_value}",
+                        sc.slot
+                    )));
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Pre-warms state by executing all transactions in parallel, grouped by sender.
     ///
     /// The `store` parameter should be a `CachingDatabase`-wrapped store so that
     /// parallel workers can benefit from shared caching. The same cache should
@@ -2153,8 +2683,6 @@ impl LEVM {
         crypto: &dyn Crypto,
         cancelled: &AtomicBool,
     ) -> Result<(), EvmError> {
-        let mut db = GeneralizedDatabase::new(store.clone());
-
         let txs_with_sender = block
             .body
             .get_transactions_with_sender(crypto)
@@ -2162,55 +2690,16 @@ impl LEVM {
                 EvmError::Transaction(format!("Couldn't recover addresses with error: {error}"))
             })?;
 
-        // Group transactions by sender for sequential execution within groups
-        let mut sender_groups: FxHashMap<Address, Vec<&Transaction>> = FxHashMap::default();
-        for (tx, sender) in &txs_with_sender {
-            sender_groups.entry(*sender).or_default().push(tx);
-        }
+        Self::warm_txs(
+            &txs_with_sender,
+            &block.header,
+            store.clone(),
+            vm_type,
+            crypto,
+            &|| cancelled.load(Ordering::Relaxed),
+        )?;
 
-        // Block-invariant EVM config + chain id, computed once and shared (by copy)
-        // across the parallel warming workers.
-        let chain_config = store.get_chain_config()?;
-        let evm_config = EVMConfig::new_from_chain_config(&chain_config, &block.header);
-        let chain_id = chain_config.chain_id;
-        // Block-invariant base blob fee, computed once and shared across workers.
-        let base_blob_fee_per_gas =
-            get_base_fee_per_blob_gas(block.header.excess_blob_gas, &evm_config)?;
-
-        // Parallel across sender groups, sequential within each group. The stack pool is reused
-        // across all groups a worker handles (it is `Send`).
-        sender_groups.into_par_iter().for_each_with(
-            Vec::with_capacity(STACK_LIMIT),
-            |stack_pool, (sender, txs)| {
-                if cancelled.load(Ordering::Relaxed) {
-                    return;
-                }
-                // Memory holds an `Rc` (not `Send`), so its pool can't ride the `for_each_with`
-                // init; keep it local to this group's run, where it still amortizes the buffer
-                // alloc across the group's txs.
-                let mut memory_pool = Vec::with_capacity(1);
-                // Each sender group gets its own db instance for state propagation
-                let mut group_db = GeneralizedDatabase::new(store.clone());
-                // Execute transactions sequentially within sender group
-                // This ensures nonce and balance changes from tx[N] are visible to tx[N+1]
-                for tx in txs {
-                    let _ = Self::execute_tx_in_block(
-                        tx,
-                        sender,
-                        &block.header,
-                        &mut group_db,
-                        vm_type,
-                        base_blob_fee_per_gas,
-                        stack_pool,
-                        &mut memory_pool,
-                        true,
-                        crypto,
-                        evm_config,
-                        chain_id,
-                    );
-                }
-            },
-        );
+        let mut db = GeneralizedDatabase::new(store.clone());
 
         if cancelled.load(Ordering::Relaxed) {
             return Ok(());
@@ -2230,6 +2719,75 @@ impl LEVM {
                 ))
             })?;
         }
+        Ok(())
+    }
+
+    /// Speculatively executes an arbitrary transaction set against `header`'s
+    /// parent state to warm shared caches (used by the mempool prewarmer and
+    /// `warm_block`). Sequential within a sender group, parallel across groups.
+    /// `should_stop` is polled before each sender group and again before each
+    /// transaction, so cancellation latency is bounded by one transaction's
+    /// execution. Execution results are discarded — only cache population
+    /// matters.
+    #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+    pub fn warm_txs(
+        txs_with_sender: &[(&Transaction, Address)],
+        header: &BlockHeader,
+        store: Arc<dyn Database>,
+        vm_type: VMType,
+        crypto: &dyn Crypto,
+        should_stop: &(dyn Fn() -> bool + Sync),
+    ) -> Result<(), EvmError> {
+        // Group by sender so nonce/balance changes propagate within a group
+        // (inspired by Nethermind's per-sender prewarmer).
+        let mut sender_groups: FxHashMap<Address, Vec<&Transaction>> = FxHashMap::default();
+        for (tx, sender) in txs_with_sender {
+            sender_groups.entry(*sender).or_default().push(tx);
+        }
+
+        // Block-invariant EVM config + chain id, computed once and shared (by copy)
+        // across the parallel warming workers.
+        let chain_config = store.get_chain_config()?;
+        let evm_config = EVMConfig::new_from_chain_config(&chain_config, header);
+        let chain_id = chain_config.chain_id;
+        // Block-invariant base blob fee, computed once and shared across workers.
+        let base_blob_fee_per_gas = get_base_fee_per_blob_gas(header.excess_blob_gas, &evm_config)?;
+
+        // Parallel across sender groups, sequential within each group. The stack pool is reused
+        // across all groups a worker handles (it is `Send`).
+        sender_groups.into_par_iter().for_each_with(
+            Vec::with_capacity(STACK_LIMIT),
+            |stack_pool, (sender, txs)| {
+                if should_stop() {
+                    return;
+                }
+                // Memory holds an `Rc` (not `Send`), so its pool can't ride the `for_each_with`
+                // init; keep it local to this group's run, where it still amortizes the buffer
+                // alloc across the group's txs.
+                let mut memory_pool = Vec::with_capacity(1);
+                // Each sender group gets its own db instance for state propagation
+                let mut group_db = GeneralizedDatabase::new(store.clone());
+                for tx in txs {
+                    if should_stop() {
+                        return;
+                    }
+                    let _ = Self::execute_tx_in_block(
+                        tx,
+                        sender,
+                        header,
+                        &mut group_db,
+                        vm_type,
+                        base_blob_fee_per_gas,
+                        stack_pool,
+                        &mut memory_pool,
+                        true,
+                        crypto,
+                        evm_config,
+                        chain_id,
+                    );
+                }
+            },
+        );
         Ok(())
     }
 
@@ -3204,20 +3762,22 @@ fn env_from_generic(
     let block_excess_blob_gas = header.excess_blob_gas;
     let config = EVMConfig::new_from_chain_config(&chain_config, header);
 
-    // Validate slot_number for Amsterdam+ blocks
-    // For L2 chains, slot_number is always 0
+    // slot_number: default a missing value to zero exactly like
+    // `setup_env_with_config` (the block-execution env builder) does, rather
+    // than erroring on Amsterdam+. A canonical Amsterdam header always carries
+    // a slot — `validate_prague_header_fields` rejects one that doesn't, the
+    // genesis builder fills in Some(0), and engine_newPayloadV5 requires the
+    // field — so this branch is not reachable on a well-formed chain. It is
+    // defense in depth, and it belongs on the execution side (where a missing
+    // slot would be a consensus fault) rather than in simulation, whose job is
+    // to predict what execution does: a header the executor would happily run
+    // with SLOTNUM reading 0 must not make eth_call fail. That divergence is
+    // reachable if a devnet's fork timestamps are moved so that Amsterdam
+    // retroactively covers already-stored pre-Amsterdam headers.
+    // For L2 chains, slot_number is always 0.
     let slot_number = if let VMType::L2(_) = vm_type {
         U256::zero()
-    } else if config.fork >= Fork::Amsterdam {
-        header
-            .slot_number
-            .map(U256::from)
-            .ok_or(VMError::Internal(InternalError::Custom(
-                "slot_number must be present in Amsterdam+ blocks".to_string(),
-            )))?
     } else {
-        // Pre-Amsterdam: slot_number should be None, default to zero
-        // This value should never be used since SLOTNUM opcode doesn't exist pre-Amsterdam
         header.slot_number.map(U256::from).unwrap_or(U256::zero())
     };
 
@@ -3248,7 +3808,12 @@ fn env_from_generic(
         is_privileged: false,
         fee_token: tx.fee_token,
         disable_balance_check: false,
-        disable_nonce_check: false,
+        // Every `env_from_generic` caller is a simulation RPC (eth_call,
+        // eth_estimateGas, eth_createAccessList, debug_traceCall). Those run
+        // relaxed messages with no nonce enforcement: a call object without
+        // `nonce` defaults `tx_nonce` to 0 above, which the hook would otherwise
+        // reject for any sender whose nonce is nonzero.
+        disable_nonce_check: true,
         is_system_call: false,
     })
 }
