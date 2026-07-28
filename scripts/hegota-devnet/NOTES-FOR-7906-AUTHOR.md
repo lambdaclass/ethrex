@@ -255,7 +255,45 @@ accounting, predeploy bookkeeping) are plausibly the extra three, and whether
 assertion authors should see them at all is a specification question, not just an
 implementation one.
 
-### 6. Suggested additional PoC: allowance *elimination*, not just detection
+### 6. EIP-8037 state gas and EIP-7825's transaction gas cap together make production-sized contracts undeployable
+
+Not an EIP-7906 issue, but it blocked the proof-of-concept that carries the largest loss
+figure in the incident record, so it is worth surfacing to whoever owns the fork's
+configuration.
+
+We wrote the multisig control-plane scenario against the **real Safe** contracts —
+real v1.3.0 source, a real three-owner set with threshold 2, real EIP-712 signatures,
+real `execTransaction`, the real `delegatecall`-overwrites-slot-0 mechanism — because
+mock fidelity would have been the weakest link in that claim. The scenario cannot run:
+the Safe singleton cannot be deployed on the devnet at all.
+
+Measured:
+
+- the singleton's initcode is ~12KB (11,805 bytes size-optimized);
+- `eth_estimateGas` answers `execution halted: reason=Out Of Gas, gas_used=16495696`
+  instead of returning an estimate;
+- a deployment at exactly EIP-7825's cap of 2^24 = 16,777,216 gas **reverts**, reporting
+  `gasUsed` 16,495,696;
+- recompiling 251 bytes smaller reverts with the **identical** reported `gasUsed`, so this
+  is a ceiling rather than a size-proportional cost;
+- raising the transaction gas limit is not an option: a 30,000,000-gas transaction is
+  rejected at admission with `Transaction gas limit exceeds maximum`.
+
+EIP-8037 charges state gas on the code deposit, and that pushes a 12KB deployment past what
+a single transaction is permitted to spend. The consequence is broad: **contracts the size of
+a production Safe, a Uniswap router, or most real protocol deployments cannot be put on a
+Hegotá-configured chain**, which sharply limits how realistic any integration or
+interop testing on it can be. Two things would help — a higher transaction gas cap on
+devnets, or state gas not applying to code deposit — but the first question is whether this
+interaction was intended.
+
+Also worth noting alongside finding 4: throughout this work the *reported* `gasUsed` did not
+account for the state-gas portion. A two-`SSTORE` call reported 102,080 while
+`eth_estimateGas` correctly required 232,455, and the deployment above reports a constant
+16,495,696 regardless of actual size. Anyone budgeting gas from receipts rather than from
+`eth_estimateGas` will get it wrong.
+
+### 7. Suggested additional PoC: allowance *elimination*, not just detection
 
 Item 1 catches a malicious `approve(MAX_UINT)` the user never intended. It cannot
 help the victims of the arbitrary-external-call router drains (two aggregators in

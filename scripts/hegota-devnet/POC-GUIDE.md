@@ -40,11 +40,34 @@ user was shown and what executes**. Those are what these scenarios demonstrate.
 | **P3** | [Hidden side effect](pocs/poc3_hidden_side_effect.py) | A transaction that also moves value to an address the user never saw | **built** |
 | **P4** | [Sandwiched swap](pocs/poc4_sandwich.py) | A committed minimum output asserted against the realized fill | **built** |
 | **P5** | [Oracle time-of-check/time-of-use](pocs/poc5_oracle_toctou.py) | A price moved between the quote and execution | **built** |
-| P2 | Multisig control-plane takeover | Real Safe contracts, real owner signatures; a routine-looking transfer that rewrites the control plane | not yet built |
+| P2 | [Multisig control-plane takeover](pocs/poc2_control_plane.py) | Real Safe contracts; a routine-looking transfer that rewrites the control plane | **written, blocked** — see below |
 
 P1, P3, P4, P5 and P6 correspond to items 1, 3, 4, 5 and 6 of the published proof-of-concept
-note; P7 is an addition; P0 addresses a gap that note does not cover. P2 is specified in
-`openspec/changes/eip7906-defi-attack-pocs/` and remains to be built.
+note; P7 is an addition; P0 addresses a gap that note does not cover. P2 is fully written but
+cannot execute on this chain — see below.
+
+### P2 — blocked by a chain-level constraint, not by the scenario
+
+The scenario is implemented against the **real Safe** contracts: real v1.3.0 source, a real
+three-owner set with threshold 2, real EIP-712 signatures, real `execTransaction`, the real
+`delegatecall`-overwrites-slot-0 mechanism, a guarded executor, and a real Safe Transaction
+Guard for the precondition-versus-postcondition contrast. What it cannot do is deploy the Safe.
+
+The Safe singleton's initcode is ~12KB, and EIP-8037 charges state gas on the code deposit,
+which pushes the deployment past EIP-7825's per-transaction ceiling of 2**24 gas. Measured on
+this devnet:
+
+- `eth_estimateGas` answers `Out Of Gas, gas_used=16495696` instead of returning an estimate
+- a deploy at exactly the 2**24 cap (16,777,216) reverts, `gasUsed` 16,495,696
+- recompiling for size (`--optimize-runs 1`, 251 bytes smaller) reverts with the **identical**
+  `gasUsed`, so this is a ceiling rather than a size-proportional cost
+- a 30,000,000-gas transaction is rejected outright: `Transaction gas limit exceeds maximum`
+
+**This matters far beyond P2.** Contracts the size of a production Safe — or a Uniswap router,
+or most real protocol deployments — cannot be deployed on a Hegotá-configured chain at all,
+which limits what any realistic integration testing can cover. It is reported as a finding in
+[NOTES-FOR-7906-AUTHOR.md](NOTES-FOR-7906-AUTHOR.md). The scenario will run unchanged once a
+chain permits the deployment.
 
 ### P0 — guard provenance
 

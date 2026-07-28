@@ -50,7 +50,12 @@ SCOPE_BOTH = 0x03
 # Storage writes carry EIP-8037 state gas on top of the execution cost — roughly 98k per
 # cold SSTORE. Budgets here are deliberately generous; see GATE-RESULTS.md, where a
 # two-SSTORE call needed 232k against a naive 200k budget. Do not "optimize" these down.
-GAS_DEPLOY = 3_000_000
+# EIP-7825 caps a single transaction at 2**24 gas, and EIP-8037 state gas applies to code
+# deposit — so a 12KB deployment needs ~16.5M and only just fits under the cap. Deploys are
+# therefore budgeted at the cap; contracts much larger than the Safe singleton cannot be
+# deployed in one transaction on this chain at all.
+EIP7825_TX_GAS_CAP = 16_777_216
+GAS_DEPLOY = EIP7825_TX_GAS_CAP
 GAS_WRITE_CALL = 900_000
 GAS_VERIFY_FRAME = 250_000
 GAS_BODY_FRAME = 900_000
@@ -159,6 +164,49 @@ def compile_sol(rel_path: str, name: str) -> bytes:
     raise RuntimeError(f"{name} bytecode not found in {rel_path}")
 
 
+SAFE_REPO = "https://github.com/safe-global/safe-smart-account.git"
+SAFE_TAG = "v1.3.0-libs.0"
+SAFE_SRC = os.environ.get("SAFE_SRC", os.path.expanduser("~/.cache/poc7906-safe-src"))
+
+
+def safe_sources() -> str:
+    """Real Safe contract sources, cloned on first use.
+
+    The canonical deployment route is the Safe Singleton Factory, which exists to give
+    identical addresses across chains and requires an upstream request plus a biweekly
+    processing cycle to onboard a new one. Address determinism buys nothing for reproducing
+    an attack on a single devnet, so these are deployed with plain CREATE at non-canonical
+    addresses. Bytecode and logic fidelity is what the claim rests on, and both are preserved.
+
+    Note the compiler: Safe v1.3.0's pragma is `>=0.7.0 <0.9.0`, so the pinned solc used
+    everywhere else here compiles it. The official v1.3.0 release was built with 0.7.6, so the
+    resulting bytecode is not byte-identical to the canonical deployment even though the
+    source is the real thing. Scenario documentation says so rather than implying otherwise.
+    """
+    if not os.path.isdir(os.path.join(SAFE_SRC, "contracts")):
+        os.makedirs(os.path.dirname(SAFE_SRC), exist_ok=True)
+        print(f"    cloning Safe {SAFE_TAG} -> {SAFE_SRC}")
+        subprocess.run(["git", "clone", "--quiet", "--depth", "1", "--branch", SAFE_TAG,
+                        SAFE_REPO, SAFE_SRC], check=True)
+    return SAFE_SRC
+
+
+def compile_safe(rel_path: str, name: str) -> bytes:
+    src = safe_sources()
+    out = subprocess.run(
+        ["solc", "--optimize", "--bin", "--allow-paths", src, os.path.join(src, rel_path)],
+        capture_output=True, text=True, check=True, cwd=src,
+    ).stdout
+    blocks = out.split("=======")
+    for i, b in enumerate(blocks):
+        if b.strip().endswith(f":{name}"):
+            for line in blocks[i + 1].splitlines():
+                s = line.strip()
+                if s and all(c in "0123456789abcdefABCDEF" for c in s) and len(s) > 20:
+                    return bytes.fromhex(s)
+    raise RuntimeError(f"{name} bytecode not found in {rel_path}")
+
+
 def selector(signature: str) -> bytes:
     return keccak(text=signature)[:4]
 
@@ -220,6 +268,20 @@ class Signer:
         }
         if to:
             tx["to"] = to_checksum_address(to)
+        # Prefer the node's own estimate when it exceeds the caller's budget. EIP-8037 state
+        # gas makes storage-heavy calls and large deployments cost far more than their
+        # execution gas suggests — a Safe singleton deployment needs well over 3M — and
+        # estimateGas accounts for it correctly where a hand-picked constant will not.
+        # Deliberately omit `gas` and `nonce` from the estimate call: supplying a gas cap makes
+        # the node estimate against that ceiling instead of reporting what the call needs.
+        est_call = {"from": self.address, "value": hex(value), "data": "0x" + data.hex()}
+        if to:
+            est_call["to"] = to_checksum_address(to)
+        try:
+            est = int(rpc("eth_estimateGas", [est_call]), 16)
+            tx["gas"] = min(max(gas, int(est * 1.3)), EIP7825_TX_GAS_CAP)
+        except Exception as e:
+            print(f"      (gas estimate unavailable: {str(e)[:80]})")
         signed = Account.from_key(self.pk.to_bytes()).sign_transaction(tx)
         h = rpc("eth_sendRawTransaction", ["0x" + signed.raw_transaction.hex().removeprefix("0x")])
         r = wait_receipt(h)

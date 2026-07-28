@@ -413,21 +413,21 @@ cannot be used to identify which assertion tripped.
 
 - **Models:** Unvalidated arbitrary-call routers abusing standing ERC-20 allowances (two aggregator drains Jan 2026, ~$13.4M and ~$3.67M; a helper-contract drain 2025, ~$5M)
 - **Defense kind:** removes the attack surface
-- **Chain id:** 3151908 · **from block:** 370631
+- **Chain id:** 3151908 · **from block:** 371233
 
 | contract | address |
 |---|---|
-| shim | `0x865a2b06adcef9c7f1fdcc765f96b53f372c9f9d` |
-| guard | `0xc194f53bd3db1b3b7f92dcb14f6741102b3327bb` |
-| token | `0xb3de3dba4ef8dde6180aff74183102dca4a9e631` |
-| router | `0x73ac88b1ec5e39e5893a7fed9482d3cf385f97b7` |
-| drainer | `0x4c77c7608a4f5b1eb178811b60bef020ce829073` |
+| shim | `0x7683b18ed8f26bac67a83c39624f14ba2fca66ed` |
+| guard | `0xa9e81edde83940b4b737eb2a73cc4338ec0be4e9` |
+| token | `0xc16388e6962a222c5be631f5a208e72f44ab2390` |
+| router | `0x6ae693a329f0371346711cbdd7ed6b8509b537de` |
+| drainer | `0x36a0537e63977c162ffc42f7208f67fd871bc8c0` |
 
 **phase a**
 
 ```json
 {
-  "victim": "0x749180e9500995BB66F2a7b588D4bcaa757d03b3",
+  "victim": "0x87C10D0d79f298301eDfc171124B95AE8C8FC276",
   "unlimited_allowance": true,
   "attacker_stole": 400,
   "victim_remaining": 600
@@ -438,9 +438,9 @@ cannot be used to identify which assertion tripped.
 
 ```json
 {
-  "victim": "0x8432c520525ff10da58F3CcD4D8Fc081082A7006",
-  "bundle_tx": "0xaa4fe9dfbc5b70dc00c2980e2e0181e809fe4ee7510afdfd6d3ec96d81c6d7e3",
-  "bundle_block": 370647,
+  "victim": "0x6e008813314e81c998E1550d9b5F087CD474aF1B",
+  "bundle_tx": "0x09e67ec04bc1d064d312bbdb5370a2a381efb09241c9444293118777ac679194",
+  "bundle_block": 371248,
   "residual_allowance": 0,
   "attack_reverted": true,
   "attacker_delta": 0
