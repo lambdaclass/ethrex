@@ -28,7 +28,7 @@ use std::{net::SocketAddr, sync::Arc, time::Duration};
 use thiserror::Error;
 use tokio::net::UdpSocket;
 use tokio_util::udp::UdpFramed;
-use tracing::{debug, error, info, trace};
+use tracing::{debug, error, info, trace, warn};
 
 use super::{DiscoveryConfig, codec::DiscriminatingCodec, lookup_interval_function};
 
@@ -119,10 +119,18 @@ impl DiscoveryServer {
 
         let mut local_node_record = NodeRecord::from_node(&local_node, INITIAL_ENR_SEQ, &signer)
             .expect("Failed to create local node record");
-        if let Ok(fork_id) = storage.get_fork_id().await {
-            local_node_record
+        match storage.get_fork_id().await {
+            Ok(fork_id) => local_node_record
                 .set_fork_id(fork_id, &signer)
-                .expect("Failed to set fork_id on local node record");
+                .expect("Failed to set fork_id on local node record"),
+            // Without an `eth` entry geth's dial-candidate filter skips us outright
+            // (`NewNodeFilter` in eth/protocols/eth/discovery.go returns false when the
+            // entry fails to load), so this is worth surfacing. `refresh_fork_id` fills
+            // the entry in on the next prune tick once the store can answer.
+            Err(e) => warn!(
+                error = ?e,
+                "Could not derive fork id for the local ENR; publishing a record without an `eth` entry for now"
+            ),
         }
 
         let discv4 = if config.discv4_enabled {
@@ -407,7 +415,41 @@ impl DiscoveryServer {
                 winning_ip,
             );
         }
+        self.refresh_fork_id().await;
         Ok(())
+    }
+
+    /// Re-derives the `eth` ENR entry from the current chain head, re-signing the record
+    /// with a bumped seq when the fork id changed.
+    ///
+    /// The entry is otherwise only set once, when the discovery server starts, so a node
+    /// that is already running when a fork activates keeps advertising the pre-fork id for
+    /// the rest of the process' life. geth instead re-derives the entry on every chain head
+    /// event (`StartENRUpdater` in eth/protocols/eth/discovery.go) and filters dial
+    /// candidates on it (`NewNodeFilter`), which is what makes a current entry matter on a
+    /// discv5-only network, where the ENR is the only fork signal a peer has before the
+    /// RLPx handshake.
+    async fn refresh_fork_id(&mut self) {
+        let Ok(fork_id) = self.store.get_fork_id().await else {
+            return;
+        };
+        if self.local_node_record.get_fork_id() == Some(&fork_id) {
+            return;
+        }
+        let previous = self.local_node_record.get_fork_id().cloned();
+        if let Err(e) = self
+            .local_node_record
+            .set_fork_id(fork_id.clone(), &self.signer)
+        {
+            error!(error = ?e, "Failed to set the new fork id on the local ENR");
+            return;
+        }
+        info!(
+            ?previous,
+            new = ?fork_id,
+            seq = self.local_node_record.seq,
+            "Chain fork id changed, updated local ENR"
+        );
     }
 
     pub(crate) async fn get_lookup_interval(&self) -> Duration {
@@ -462,5 +504,144 @@ impl DiscoveryServer {
             discv4: None,
             discv5: Some(Discv5State::default()),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::peer_table::{PeerTableServer, TARGET_PEERS};
+    use ethrex_common::{
+        H256,
+        types::{Block, BlockHeader, Genesis},
+    };
+    use ethrex_storage::EngineType;
+    use std::net::{IpAddr, Ipv4Addr};
+
+    const FORK_TIMESTAMP: u64 = 2_000_000_000;
+
+    /// Store whose only scheduled fork is Amsterdam, at `FORK_TIMESTAMP`.
+    async fn store_with_pending_fork() -> Store {
+        let mut genesis = Genesis::default();
+        genesis.config.chain_id = 1;
+        genesis.config.amsterdam_time = Some(FORK_TIMESTAMP);
+        let mut store = Store::new("", EngineType::InMemory).expect("failed to create store");
+        store
+            .add_initial_state(genesis)
+            .await
+            .expect("failed to seed genesis");
+        store
+    }
+
+    /// Moves the store's head to a block whose timestamp is past `FORK_TIMESTAMP`.
+    async fn advance_head_past_fork(store: &Store) {
+        let genesis_hash = store
+            .get_canonical_block_hash(0)
+            .await
+            .unwrap()
+            .expect("missing genesis hash");
+        let header = BlockHeader {
+            number: 1,
+            parent_hash: genesis_hash,
+            timestamp: FORK_TIMESTAMP,
+            ..Default::default()
+        };
+        let hash = header.hash();
+        store
+            .add_block(Block {
+                header,
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        store
+            .forkchoice_update(vec![(1, hash)], 1, hash, None, None)
+            .await
+            .unwrap();
+    }
+
+    async fn make_server(store: Store) -> DiscoveryServer {
+        let signer = SecretKey::new(&mut rand::rngs::OsRng);
+        let pubkey = crate::utils::public_key_from_signing_key(&signer);
+        let local_node = Node::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 30303, 30303, pubkey);
+        let mut local_node_record =
+            NodeRecord::from_node(&local_node, INITIAL_ENR_SEQ, &signer).unwrap();
+        // Mirror the startup path: seed the `eth` entry from the pre-fork head.
+        let fork_id = store.get_fork_id().await.unwrap();
+        local_node_record.set_fork_id(fork_id, &signer).unwrap();
+        let udp_socket = Arc::new(UdpSocket::bind("127.0.0.1:0").await.unwrap());
+        let peer_table = PeerTableServer::spawn(
+            H256::random(),
+            TARGET_PEERS,
+            Store::new("", EngineType::InMemory).unwrap(),
+        );
+        DiscoveryServer {
+            local_node,
+            local_node_record,
+            signer,
+            udp_socket,
+            store,
+            peer_table,
+            config: DiscoveryConfig {
+                discv4_enabled: false,
+                discv5_enabled: false,
+                initial_lookup_interval: 1000.0,
+            },
+            discv4: None,
+            discv5: None,
+        }
+    }
+
+    /// Crossing a fork must re-derive the `eth` ENR entry and bump the record's seq, so
+    /// peers filtering dial candidates on the ENR see the post-fork id.
+    #[tokio::test]
+    async fn refresh_fork_id_updates_enr_after_fork() {
+        let store = store_with_pending_fork().await;
+        let mut server = make_server(store.clone()).await;
+
+        let pre_fork_id = server.local_node_record.get_fork_id().cloned().unwrap();
+        let pre_fork_seq = server.local_node_record.seq;
+        assert_eq!(
+            pre_fork_id.fork_next, FORK_TIMESTAMP,
+            "pre-fork ENR must announce the upcoming fork"
+        );
+
+        advance_head_past_fork(&store).await;
+        server.refresh_fork_id().await;
+
+        let post_fork_id = server.local_node_record.get_fork_id().cloned().unwrap();
+        assert_ne!(
+            post_fork_id.fork_hash, pre_fork_id.fork_hash,
+            "fork hash must be re-derived once the fork is passed"
+        );
+        assert_eq!(
+            post_fork_id.fork_next, 0,
+            "no further fork is scheduled, so fork_next must be 0"
+        );
+        assert!(
+            server.local_node_record.seq > pre_fork_seq,
+            "ENR seq must be bumped so peers pick up the new record"
+        );
+        assert_eq!(
+            post_fork_id,
+            store.get_fork_id().await.unwrap(),
+            "ENR must match the fork id derived from the current head"
+        );
+    }
+
+    /// An unchanged fork id must leave the record alone: re-signing on every prune tick
+    /// would churn the seq and force peers to re-fetch an identical record.
+    #[tokio::test]
+    async fn refresh_fork_id_is_a_noop_when_unchanged() {
+        let store = store_with_pending_fork().await;
+        let mut server = make_server(store).await;
+
+        let before = server.local_node_record.clone();
+        server.refresh_fork_id().await;
+
+        assert_eq!(
+            server.local_node_record, before,
+            "an unchanged fork id must not touch the record"
+        );
     }
 }
