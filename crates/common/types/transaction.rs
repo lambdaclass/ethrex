@@ -49,7 +49,9 @@ use ethrex_rlp::{
 
 #[cfg(all(feature = "eip-8025", target_arch = "riscv64"))]
 use super::eip8025_cell::OnceCell;
-use crate::types::{AccessList, AuthorizationList, BlobsBundle};
+use crate::types::{
+    AccessList, AuthorizationList, BlobsBundle, constants::VERSIONED_HASH_VERSION_KZG,
+};
 #[cfg(not(all(feature = "eip-8025", target_arch = "riscv64")))]
 use once_cell::sync::OnceCell;
 
@@ -1767,8 +1769,8 @@ impl From<FrameMode> for u8 {
 /// EIP-8141 Frame: a single execution step within a frame transaction.
 ///
 /// `mode` is the execution mode (0=DEFAULT, 1=VERIFY, 2=SENDER; 3-255 reserved).
-/// `flags` bits: 0-1 = APPROVE scope restriction, 2 = atomic batch flag
-/// (valid with any mode per spec commit 8b61fdc4), 3-7 reserved (must be zero).
+/// `flags` bits: 0-1 = APPROVE scope restriction, 2 = atomic batch flag (valid
+/// on DEFAULT and SENDER frames only), 3-7 reserved (must be zero).
 #[derive(Clone, Debug, PartialEq, Eq, Default, RSerialize, RDeserialize, Archive)]
 pub struct Frame {
     pub mode: u8,
@@ -1777,7 +1779,7 @@ pub struct Frame {
     pub target: Option<Address>,
     pub gas_limit: u64,
     // Per EIP-8141 the frame is a 6-tuple [mode, flags, target, gas_limit, value, data].
-    // Only SENDER frames may carry a non-zero value (spec line 140); see
+    // Only SENDER frames may carry a non-zero value; see
     // `validate_static_constraints`.
     #[rkyv(with=crate::rkyv_utils::U256Wrapper)]
     pub value: U256,
@@ -1802,7 +1804,7 @@ impl Frame {
     }
 
     /// An expiry verifier frame is a VERIFY frame targeting EXPIRY_VERIFIER
-    /// (EIP-8141, spec commit 0b197156).
+    /// (EIP-8141).
     pub fn is_expiry_verifier(&self) -> bool {
         self.execution_mode() == FrameMode::Verify
             && self.target == Some(frame_tx_expiry_verifier())
@@ -1856,7 +1858,7 @@ impl RLPDecode for Frame {
     }
 }
 
-/// EIP-8141 transaction signature (spec commit fe0940cae2). RLP: `[scheme, signer, msg, signature]`.
+/// EIP-8141 transaction signature. RLP: `[scheme, signer, msg, signature]`.
 /// `scheme`: 0 = ARBITRARY (`signer` MUST be empty; `signature` is arbitrary bytes),
 /// 1 = SECP256K1 (sig = v||r||s, 65 bytes), 2 = P256 (sig = r||s||qx||qy, 128 bytes).
 /// `signer`: `None` (empty) is required for ARBITRARY and allowed for SECP256K1/P256
@@ -1924,7 +1926,7 @@ pub struct FrameTransaction {
     #[rkyv(with=crate::rkyv_utils::H160Wrapper)]
     pub sender: Address,
     pub frames: Vec<Frame>,
-    /// EIP-8141 outer signature list (spec commit fe0940cae2). Validated
+    /// EIP-8141 outer signature list. Validated
     /// before any frame executes; referenced by VERIFY frames and SIGPARAM.
     pub signatures: Vec<FrameSignature>,
     pub max_priority_fee_per_gas: u64,
@@ -1947,11 +1949,16 @@ pub const FRAME_TX_PER_FRAME_COST: u64 = 475;
 pub const FRAME_TX_ENTRY_POINT_U64: u64 = 0xaa;
 /// Maximum number of frames allowed per EIP-8141 frame transaction.
 pub const FRAME_TX_MAX_FRAMES: usize = 64;
-/// EIP-8141 signature schemes (spec commit fe0940cae2): ARBITRARY=0, SECP256K1=1, P256=2.
+/// EIP-7623 `STANDARD_TOKEN_COST`, and the EIP-7976 floor per token. Frame
+/// transactions exist only from Hegota onward, which is after Amsterdam, so the
+/// raised EIP-7976 floor always applies and neither needs a fork parameter.
+const FRAME_TX_STANDARD_TOKEN_COST: u64 = 4;
+const FRAME_TX_TOTAL_COST_FLOOR_PER_TOKEN: u64 = 16;
+/// EIP-8141 signature schemes: ARBITRARY=0, SECP256K1=1, P256=2.
 pub const FRAME_SIG_SCHEME_ARBITRARY: u8 = 0;
 pub const FRAME_SIG_SCHEME_SECP256K1: u8 = 1;
 pub const FRAME_SIG_SCHEME_P256: u8 = 2;
-/// EIP-8141 §Mempool `MAX_VERIFY_GAS` (spec commit fe0940cae2): the maximum gas
+/// EIP-8141 §Mempool `MAX_VERIFY_GAS`: the maximum gas
 /// a public-mempool node should expend validating signatures and simulating the
 /// validation prefix. Signature validation counts against this budget (rule #6),
 /// so a frame tx whose `signature_verification_cost()` alone exceeds it can never
@@ -1974,7 +1981,7 @@ pub fn frame_tx_entry_point() -> Address {
     Address::from_low_u64_be(FRAME_TX_ENTRY_POINT_U64)
 }
 
-/// EXPIRY_VERIFIER predeploy address (EIP-8141, spec commit 0b197156).
+/// EXPIRY_VERIFIER predeploy address (EIP-8141).
 pub const FRAME_TX_EXPIRY_VERIFIER_U64: u64 = 0x8141;
 /// Required `data` length for an expiry verifier frame (8-byte BE deadline).
 pub const FRAME_TX_EXPIRY_DATA_LENGTH: usize = 8;
@@ -1985,7 +1992,7 @@ pub fn frame_tx_expiry_verifier() -> Address {
 }
 
 impl FrameTransaction {
-    /// Canonical signature hash (EIP-8141, spec commit fe0940cae2): the raw
+    /// Canonical signature hash (EIP-8141): the raw
     /// `signature` bytes of every signature with empty `msg` are elided (a
     /// signature over this hash cannot commit to its own bytes). Frame data is
     /// NO LONGER elided — it is fully covered. Signatures with an explicit
@@ -2023,14 +2030,14 @@ impl FrameTransaction {
         keccak(&buf)
     }
 
-    /// Per EIP-8141 (spec commit fe0940cae2): 2800 gas per SECP256K1 signature,
-    /// 6700 per P256. Unknown schemes are rejected by static validation, so
-    /// they are treated as 0 here (validation runs first).
+    /// Per EIP-8141: 100 gas per ARBITRARY signature, 2800 per SECP256K1, 6700
+    /// per P256. Unknown schemes are rejected by static validation, so they are
+    /// treated as 0 here (validation runs first).
     pub fn signature_verification_cost(&self) -> u64 {
         self.signatures
             .iter()
             .map(|s| match s.scheme {
-                FRAME_SIG_SCHEME_ARBITRARY => 0u64,
+                FRAME_SIG_SCHEME_ARBITRARY => 100u64,
                 FRAME_SIG_SCHEME_SECP256K1 => 2800u64,
                 FRAME_SIG_SCHEME_P256 => 6700u64,
                 _ => 0,
@@ -2038,26 +2045,61 @@ impl FrameTransaction {
             .sum()
     }
 
-    /// Compute total gas limit: intrinsic + calldata cost (frames + signatures)
-    /// + signature verification cost + sum of frame gas limits.
-    pub fn total_gas_limit(&self) -> u64 {
-        let mut calldata_gas: u64 = 0;
-        // RLP-encode frames to compute calldata cost
-        let mut frames_buf = Vec::new();
-        self.frames.encode(&mut frames_buf);
-        for byte in &frames_buf {
-            calldata_gas = calldata_gas.saturating_add(if *byte == 0 { 4 } else { 16 });
-        }
-        // RLP-encode signatures to compute their calldata cost
-        let mut sigs_buf = Vec::new();
-        self.signatures.encode(&mut sigs_buf);
-        for byte in &sigs_buf {
-            calldata_gas = calldata_gas.saturating_add(if *byte == 0 { 4 } else { 16 });
-        }
+    /// Iterate the EIP-8141 data fields the calldata cost is charged over:
+    /// each frame's `data`, and each signature's `signer`, `msg` and `signature`.
+    /// The RLP framing and the remaining scalar fields are not included.
+    fn data_fields(&self) -> impl Iterator<Item = &[u8]> {
+        const EMPTY: &[u8] = &[];
+        self.frames
+            .iter()
+            .map(|f| f.data.as_ref())
+            .chain(self.signatures.iter().flat_map(|s| {
+                [
+                    s.signer.as_ref().map_or(EMPTY, |a| a.as_bytes()),
+                    s.msg.as_ref(),
+                    s.signature.as_ref(),
+                ]
+            }))
+    }
+
+    /// EIP-7623 calldata cost over the frame and signature data: 4 gas per zero
+    /// byte, 16 per non-zero byte.
+    pub fn data_cost(&self) -> u64 {
+        self.data_fields().flatten().fold(0u64, |acc, byte| {
+            acc.saturating_add(if *byte == 0 { 4 } else { 16 })
+        })
+    }
+
+    /// EIP-7623 token count over the frame and signature data, used for the
+    /// calldata floor. Frame transactions exist only from Hegota onward, which is
+    /// after Amsterdam, so EIP-7976's unweighted count (every byte costs
+    /// `STANDARD_TOKEN_COST`) always applies.
+    pub fn calldata_tokens(&self) -> u64 {
+        self.data_fields()
+            .fold(0u64, |acc, field| acc.saturating_add(field.len() as u64))
+            .saturating_mul(FRAME_TX_STANDARD_TOKEN_COST)
+    }
+
+    /// The EIP-7623 calldata floor: the least the frame and signature data may
+    /// cost, whatever execution actually consumes.
+    pub fn calldata_floor_gas(&self) -> u64 {
+        self.calldata_tokens()
+            .saturating_mul(FRAME_TX_TOTAL_COST_FLOOR_PER_TOKEN)
+    }
+
+    /// The mandatory costs, always charged in full: the intrinsic cost, the
+    /// per-frame cost, and signature verification.
+    pub fn mandatory_gas(&self) -> u64 {
         FRAME_TX_INTRINSIC_COST
             .saturating_add((self.frames.len() as u64).saturating_mul(FRAME_TX_PER_FRAME_COST))
-            .saturating_add(calldata_gas)
             .saturating_add(self.signature_verification_cost())
+    }
+
+    /// Compute total gas limit: mandatory costs + data cost + sum of frame gas
+    /// limits.
+    pub fn total_gas_limit(&self) -> u64 {
+        self.mandatory_gas()
+            .saturating_add(self.data_cost())
             .saturating_add(
                 self.frames
                     .iter()
@@ -2090,8 +2132,21 @@ impl FrameTransaction {
                 "Frame count must be between 1 and {FRAME_TX_MAX_FRAMES}"
             ));
         }
-        // EIP-8141 signature list validation (spec commit fe0940cae2): scheme
-        // must be a known value; msg must be empty or a non-zero 32-byte digest.
+        // Per EIP-8141, every versioned hash must carry the EIP-4844 KZG version
+        // byte, and a transaction carrying no blobs must not name a blob fee.
+        for (i, hash) in self.blob_versioned_hashes.iter().enumerate() {
+            if hash.0.first() != Some(&VERSIONED_HASH_VERSION_KZG) {
+                return Err(format!("Blob versioned hash {i}: wrong version byte"));
+            }
+        }
+        if self.blob_versioned_hashes.is_empty() && !self.max_fee_per_blob_gas.is_zero() {
+            return Err(
+                "max_fee_per_blob_gas must be zero when the transaction carries no blobs"
+                    .to_string(),
+            );
+        }
+        // EIP-8141 signature list validation: scheme must be a known value; msg
+        // must be empty or a non-zero 32-byte digest.
         for (i, sig) in self.signatures.iter().enumerate() {
             match sig.scheme {
                 // ARBITRARY (0) carries no recoverable signer; per EIP-8141 the
@@ -2140,7 +2195,7 @@ impl FrameTransaction {
                     frame.flags
                 ));
             }
-            // Expiry verifier frames (EIP-8141, spec commit 0b197156): VERIFY
+            // Expiry verifier frames (EIP-8141): VERIFY
             // frames targeting EXPIRY_VERIFIER must have flags == 0, value == 0
             // (already enforced by the non-SENDER value rule below), and exactly
             // EXPIRY_DATA_LENGTH bytes of data; at most one per transaction.
@@ -2160,7 +2215,7 @@ impl FrameTransaction {
                     ));
                 }
             }
-            // Per EIP-8141 spec line 140, only SENDER frames may carry a
+            // Per EIP-8141, only SENDER frames may carry a
             // non-zero value. DEFAULT and VERIFY frames with a non-zero
             // value are statically invalid.
             if frame.mode != FrameMode::Sender as u8 && !frame.value.is_zero() {
@@ -2191,12 +2246,42 @@ impl FrameTransaction {
                     total_frame_gas
                 ));
             }
-            // Atomic batch flag (bit 2 of flags) requires a subsequent frame
-            // to batch with. Valid with any mode per EIP-8141 (spec commit
-            // 8b61fdc4, "Support atomic batching with any frames").
-            if frame.is_atomic_batch() && i + 1 >= self.frames.len() {
-                return Err(format!("Frame {i}: atomic batch flag on last frame"));
+            // Per EIP-8141, approval of execution is only allowed when the
+            // frame's target is empty or `tx.sender`.
+            if frame.flags & APPROVE_EXECUTION != 0
+                && frame.target.is_some_and(|target| target != self.sender)
+            {
+                return Err(format!(
+                    "Frame {i}: APPROVE_EXECUTION requires an empty target or tx.sender"
+                ));
             }
+            // Per EIP-8141, the atomic batch flag (bit 2 of flags) is only valid
+            // on a non-VERIFY frame, requires a subsequent frame to batch with,
+            // and that frame must be non-VERIFY too: batches never contain
+            // VERIFY frames.
+            if frame.is_atomic_batch() {
+                if frame.mode == FrameMode::Verify as u8 {
+                    return Err(format!("Frame {i}: atomic batch flag on a VERIFY frame"));
+                }
+                match self.frames.get(i.saturating_add(1)) {
+                    None => return Err(format!("Frame {i}: atomic batch flag on last frame")),
+                    Some(next) if next.mode == FrameMode::Verify as u8 => {
+                        return Err(format!(
+                            "Frame {i}: atomic batch flag followed by a VERIFY frame"
+                        ));
+                    }
+                    Some(_) => {}
+                }
+            }
+        }
+        // Per EIP-8141, the EIP-7623 calldata floor must be reserved independently
+        // of execution: the derived `tx_gas_limit` has to cover the mandatory costs
+        // plus the floor, or the transaction cannot pay for the data it carries.
+        let floor_gas = self.calldata_floor_gas();
+        if self.total_gas_limit() < self.mandatory_gas().saturating_add(floor_gas) {
+            return Err(format!(
+                "Total gas limit does not reserve the calldata floor of {floor_gas}"
+            ));
         }
         Ok(())
     }
@@ -2844,7 +2929,7 @@ mod serde_impl {
         pub data: Bytes,
     }
 
-    /// JSON shape of an EIP-8141 outer signature (spec commit fe0940cae2).
+    /// JSON shape of an EIP-8141 outer signature.
     #[derive(Serialize, Deserialize, Debug, PartialEq, Clone)]
     #[serde(rename_all = "camelCase")]
     pub struct SignatureEntry {
@@ -4890,8 +4975,9 @@ mod tests {
     }
 
     #[test]
-    fn atomic_batch_flag_valid_on_default_and_verify_frames() {
-        // Spec commit 8b61fdc4: the atomic batch flag is valid with any mode.
+    fn atomic_batch_flag_valid_on_default_and_sender_frames() {
+        // Per EIP-8141 the atomic batch flag is valid on DEFAULT and SENDER
+        // frames, and a batch never contains a VERIFY frame.
         let mut tx = make_test_frame_tx();
         tx.frames = vec![
             Frame {
@@ -4903,9 +4989,9 @@ mod tests {
                 data: Bytes::new(),
             },
             Frame {
-                mode: FrameMode::Verify as u8,
-                flags: 0x04 | 0x03, // atomic batch + scope bits
-                target: None,
+                mode: FrameMode::Sender as u8,
+                flags: 0x04, // atomic batch
+                target: Some(Address::from_low_u64_be(0xB0B)),
                 gas_limit: 21_000,
                 value: U256::zero(),
                 data: Bytes::new(),
@@ -4920,6 +5006,64 @@ mod tests {
             },
         ];
         assert!(tx.validate_static_constraints().is_ok());
+    }
+
+    #[test]
+    fn atomic_batch_flag_on_verify_frame_is_invalid() {
+        let mut tx = make_test_frame_tx();
+        tx.frames = vec![
+            Frame {
+                mode: FrameMode::Verify as u8,
+                flags: 0x04 | 0x03, // atomic batch + scope bits
+                target: None,
+                gas_limit: 21_000,
+                value: U256::zero(),
+                data: Bytes::new(),
+            },
+            Frame {
+                mode: FrameMode::Sender as u8,
+                flags: 0x00,
+                target: Some(Address::from_low_u64_be(0xCAFE)),
+                gas_limit: 21_000,
+                value: U256::zero(),
+                data: Bytes::new(),
+            },
+        ];
+        assert!(
+            tx.validate_static_constraints()
+                .unwrap_err()
+                .contains("atomic batch flag on a VERIFY frame")
+        );
+    }
+
+    #[test]
+    fn atomic_batch_followed_by_verify_frame_is_invalid() {
+        // Batches never contain VERIFY frames, so the frame a batch member
+        // batches with must be non-VERIFY too.
+        let mut tx = make_test_frame_tx();
+        tx.frames = vec![
+            Frame {
+                mode: FrameMode::Sender as u8,
+                flags: 0x04, // atomic batch
+                target: Some(Address::from_low_u64_be(0xB0B)),
+                gas_limit: 21_000,
+                value: U256::zero(),
+                data: Bytes::new(),
+            },
+            Frame {
+                mode: FrameMode::Verify as u8,
+                flags: 0x03,
+                target: None,
+                gas_limit: 21_000,
+                value: U256::zero(),
+                data: Bytes::new(),
+            },
+        ];
+        assert!(
+            tx.validate_static_constraints()
+                .unwrap_err()
+                .contains("atomic batch flag followed by a VERIFY frame")
+        );
     }
 
     #[test]
@@ -5042,7 +5186,7 @@ mod tests {
 
     #[test]
     fn test_frame_transaction_sig_hash_covers_all_frame_data() {
-        // Updated for spec commit fe0940cae2: frame data is NO LONGER elided.
+        // Updated for frame data is NO LONGER elided.
         let tx = make_test_frame_tx();
         let hash1 = tx.compute_sig_hash();
 
@@ -5191,7 +5335,7 @@ mod tests {
     #[test]
     fn sig_hash_covers_frame_value() {
         // Changing `value` on any frame (SENDER or VERIFY) must change the
-        // canonical signature hash (spec commit fe0940cae2: all frame data covered).
+        // canonical signature hash (all frame data covered).
         let tx = make_test_frame_tx();
         let baseline = tx.compute_sig_hash();
 
@@ -5211,7 +5355,7 @@ mod tests {
             "sig_hash must change when a VERIFY frame's value changes"
         );
 
-        // VERIFY.data is now covered too (spec commit fe0940cae2 removed elision).
+        // VERIFY.data is now covered too (EIP-8141 removed elision).
         let mut with_verify_data = tx;
         with_verify_data.frames[0].data = Bytes::from_static(b"different_verify_data");
         assert_ne!(
@@ -5337,7 +5481,7 @@ mod tests {
         assert_eq!(decoded.sender, tx.sender);
     }
 
-    // ── EIP-8141 expiry verifier frame tests (spec commit 0b197156) ──
+    // ── EIP-8141 expiry verifier frame tests ──
 
     fn expiry_frame(deadline: u64) -> Frame {
         Frame {
@@ -5388,7 +5532,7 @@ mod tests {
 
     #[test]
     fn verify_frame_with_zero_scope_is_now_statically_valid() {
-        // Spec commit 0b197156 removed the VERIFY-needs-nonzero-scope rule.
+        // EIP-8141 has no the VERIFY-needs-nonzero-scope rule.
         // make_test_frame_tx() frame[0] is VERIFY with flags=0x03 targeting sender;
         // setting flags to 0 makes it a zero-scope VERIFY (not an expiry frame,
         // since target is the sender address, not EXPIRY_VERIFIER).
@@ -5399,7 +5543,7 @@ mod tests {
 
     #[test]
     fn sig_hash_covers_expiry_deadline_and_all_verify_data() {
-        // Updated for spec commit fe0940cae2: all frame data is now covered.
+        // Updated for all frame data is now covered.
         let mut tx_a = make_test_frame_tx();
         tx_a.frames.insert(0, expiry_frame(100));
         let mut tx_b = make_test_frame_tx();
@@ -5485,11 +5629,11 @@ mod tests {
     #[test]
     fn static_validation_accepts_arbitrary_with_empty_signer() {
         let mut tx = make_test_frame_tx();
-        // ARBITRARY (scheme 0) requires an empty signer and costs no verify gas.
+        // ARBITRARY (scheme 0) requires an empty signer and costs 100 verify gas.
         tx.signatures[0].scheme = FRAME_SIG_SCHEME_ARBITRARY;
         tx.signatures[0].signer = None;
         assert!(tx.validate_static_constraints().is_ok());
-        assert_eq!(tx.signature_verification_cost(), 0);
+        assert_eq!(tx.signature_verification_cost(), 100);
     }
 
     #[test]
@@ -5502,6 +5646,88 @@ mod tests {
                 .unwrap_err()
                 .contains("ARBITRARY signatures must not name a signer"),
         );
+    }
+
+    #[test]
+    fn static_validation_rejects_approve_execution_with_third_party_target() {
+        // Approval of execution is only allowed when the target is empty or tx.sender.
+        let mut tx = make_test_frame_tx();
+        tx.frames[0].target = Some(Address::from_low_u64_be(0xBEEF));
+        assert!(
+            tx.validate_static_constraints()
+                .unwrap_err()
+                .contains("APPROVE_EXECUTION requires an empty target or tx.sender"),
+        );
+        // An empty target resolves to tx.sender, so it is allowed.
+        tx.frames[0].target = None;
+        assert!(tx.validate_static_constraints().is_ok());
+    }
+
+    #[test]
+    fn static_validation_rejects_wrong_blob_hash_version() {
+        let mut tx = make_test_frame_tx();
+        tx.blob_versioned_hashes = vec![H256([0xABu8; 32])];
+        tx.max_fee_per_blob_gas = U256::from(1u64);
+        assert!(
+            tx.validate_static_constraints()
+                .unwrap_err()
+                .contains("wrong version byte"),
+        );
+        let mut hash = [0xABu8; 32];
+        hash[0] = VERSIONED_HASH_VERSION_KZG;
+        tx.blob_versioned_hashes = vec![H256(hash)];
+        assert!(tx.validate_static_constraints().is_ok());
+    }
+
+    #[test]
+    fn static_validation_rejects_blob_fee_without_blobs() {
+        let mut tx = make_test_frame_tx();
+        assert!(tx.blob_versioned_hashes.is_empty());
+        tx.max_fee_per_blob_gas = U256::from(1u64);
+        assert!(
+            tx.validate_static_constraints()
+                .unwrap_err()
+                .contains("max_fee_per_blob_gas must be zero"),
+        );
+    }
+
+    #[test]
+    fn data_cost_covers_only_frame_and_signature_data() {
+        // 4 gas per zero byte, 16 per non-zero, over frame.data and each
+        // signature's signer/msg/signature — no RLP framing, no scalar fields.
+        let mut tx = make_test_frame_tx();
+        tx.frames[0].data = Bytes::from(vec![0u8; 3]); // 3 zero bytes -> 12
+        tx.frames[1].data = Bytes::from(vec![0xAAu8; 2]); // 2 non-zero -> 32
+        tx.signatures = vec![FrameSignature {
+            scheme: FRAME_SIG_SCHEME_ARBITRARY,
+            signer: None, // empty signer contributes nothing
+            msg: Bytes::new(),
+            signature: Bytes::from(vec![0xAAu8, 0x00]), // 16 + 4
+        }];
+        assert_eq!(tx.data_cost(), 12 + 32 + 16 + 4);
+        // Floor tokens are unweighted: 7 bytes * 4 tokens * 16 gas = 448.
+        assert_eq!(tx.calldata_tokens(), 7 * 4);
+        assert_eq!(tx.calldata_floor_gas(), 7 * 64);
+    }
+
+    #[test]
+    fn static_validation_requires_the_calldata_floor_to_be_reserved() {
+        let mut tx = make_test_frame_tx();
+        // 64 bytes of frame data need 4096 gas of floor, which frames carrying
+        // 100 gas each cannot reserve.
+        tx.signatures.clear();
+        tx.frames[0].data = Bytes::from(vec![0xAAu8; 64]);
+        tx.frames[1].data = Bytes::new();
+        tx.frames[0].gas_limit = 100;
+        tx.frames[1].gas_limit = 100;
+        assert!(
+            tx.validate_static_constraints()
+                .unwrap_err()
+                .contains("does not reserve the calldata floor of 4096"),
+        );
+        // Enough frame gas to cover the floor makes it valid again.
+        tx.frames[1].gas_limit = 4096;
+        assert!(tx.validate_static_constraints().is_ok());
     }
 
     #[test]
@@ -5576,8 +5802,8 @@ mod tests {
 
     #[test]
     fn golden_frame_tx_rlp_and_sig_hash() {
-        // Regression lock for the EIP-8141 signatures-list wire format (spec
-        // commit fe0940cae2). No external EEST reference vectors exist yet;
+        // Regression lock for the EIP-8141 signatures-list wire format. No
+        // external EEST reference vectors exist yet;
         // these values are the current canonical output and must only change
         // with a deliberate, reviewed format change.
         let tx = FrameTransaction {

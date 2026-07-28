@@ -9,7 +9,7 @@
 //!   - `SIGPARAM` (0xB4)
 //!   - Default code for EOAs: `VERIFY` has the signature-check behavior;
 //!     `SENDER` and `DEFAULT` return successfully as if calling empty code
-//!     (pinned EIP-8141 spec §"Default code" lines 412-413).
+//!     (EIP-8141 §"Default code").
 
 use crate::{
     errors::{ExceptionalHalt, InternalError, OpcodeResult, VMError},
@@ -38,12 +38,12 @@ pub fn u256_to_offset(value: U256) -> Option<usize> {
     usize::try_from(value.0[0]).ok()
 }
 
-/// Compute the transaction's MAXIMUM cost (spec line 387: APPROVE must
+/// Compute the transaction's MAXIMUM cost (EIP-8141 §Gas Accounting: APPROVE must
 /// "collect the transaction's maximum cost from payer"):
 /// `max_cost = max_fee_per_gas * total_gas_limit
 ///           + len(blob_hashes) * 131072 * max_fee_per_blob_gas`.
 /// This is the single definition of "maximum cost": APPROVE (scopes 0x1/0x3)
-/// debits it from the payer, TXPARAM(0x06) reports it (spec line 455), and the
+/// debits it from the payer, TXPARAM(0x06) reports it, and the
 /// mempool paymaster reservation reserves it. The end-of-tx refund returns
 /// `max_cost - effective_gas_price * total_gas_used - base-rate blob burn`, so
 /// the payer nets the effective-rate cost of the gas actually used plus the
@@ -423,7 +423,7 @@ impl OpcodeHandler for OpFrameParamHandler {
             0x05 => {
                 // status -- exceptional halt if current/future frame.
                 // Returns the EIP-8141 status code: 0 = failure, 1 = success,
-                // 3 = skipped (atomic-batch failure).
+                // 2 = skipped (atomic-batch failure).
                 if idx >= ctx.current_frame_index {
                     return Err(ExceptionalHalt::InvalidOpcode.into());
                 }
@@ -442,7 +442,7 @@ impl OpcodeHandler for OpFrameParamHandler {
                 U256::from(u8::from(frame.is_atomic_batch()))
             }
             0x08 => {
-                // value -- EIP-8141 FRAMEPARAM table (spec line 287)
+                // value -- EIP-8141 FRAMEPARAM table
                 frame.value
             }
             _ => return Err(ExceptionalHalt::InvalidOpcode.into()),
@@ -534,8 +534,15 @@ impl OpcodeHandler for OpSigParamHandler {
             .get(idx)
             .ok_or(ExceptionalHalt::InvalidOpcode)?;
         let result = match param {
-            // Effective signer: an absent signer resolves to tx.sender (EIP-8141).
-            0x00 => address_to_u256(sig.signer.unwrap_or(ctx.tx.sender)),
+            // Resolved signer: an absent signer resolves to tx.sender. EIP-8141
+            // assigns no resolved signer to ARBITRARY entries, so asking for one
+            // is an exceptional halt.
+            0x00 => {
+                if sig.scheme == ethrex_common::types::FRAME_SIG_SCHEME_ARBITRARY {
+                    return Err(ExceptionalHalt::InvalidOpcode.into());
+                }
+                address_to_u256(sig.signer.unwrap_or(ctx.tx.sender))
+            }
             0x01 => U256::from(sig.scheme),
             0x02 => {
                 // msg: 0 when empty (canonical sig_hash case), else the 32-byte digest.
@@ -590,7 +597,7 @@ pub fn address_to_u256(addr: ethrex_common::Address) -> U256 {
 /// When a frame targets an address with no deployed code (an EOA), the protocol
 /// runs built-in "default code" instead of executing a normal CALL. `VERIFY`
 /// runs the signature-check logic; `SENDER` and `DEFAULT` return successfully
-/// as if calling empty code (pinned EIP-8141 spec §"Default code" lines 412-413).
+/// as if calling empty code (EIP-8141 §"Default code").
 ///
 /// Returns `(success, gas_used, logs)`.
 pub fn execute_default_code(
@@ -600,8 +607,7 @@ pub fn execute_default_code(
 ) -> Result<(bool, u64, Vec<Log>), VMError> {
     match frame.execution_mode() {
         FrameMode::Verify => execute_default_verify(vm, frame, target),
-        // Pinned EIP-8141 spec (fe0940cae2) §"Default code" lines 412-413:
-        // a SENDER or DEFAULT frame whose target has no code "returns
+        // EIP-8141 §"Default code": a SENDER or DEFAULT frame whose target has no code "returns
         // successfully as if calling empty code" — this is what makes a plain
         // ETH transfer to an EOA work (spec §EOA support / Example 1).
         // Consumes no execution gas (the frame's value transfer is handled by
@@ -631,13 +637,15 @@ fn execute_default_verify(
         return Ok((false, 0, Vec::new()));
     }
 
-    // EIP-8141: the default account approves only if the signature at INDEX 0
-    // is a SECP256K1 signature over the canonical sig_hash (empty msg) whose
-    // resolved signer is the resolved target. The spec binds this to index 0
-    // specifically (not "anywhere in the list"). An absent signer resolves to
+    // EIP-8141: the default account approves only if the signature at a specific
+    // index — 0 when the allowed scope includes APPROVE_EXECUTION, else 1 (the
+    // payment-only case, where index 0 belongs to the sender's own verify frame)
+    // — is a SECP256K1 signature over the canonical sig_hash (empty msg) whose
+    // resolved signer is the resolved target. An absent signer resolves to
     // tx.sender. Signatures were already validated in execute_frame_tx, so a
     // match here is sufficient — no in-frame crypto.
-    let sender_sig_ok = ctx.tx.signatures.first().is_some_and(|s| {
+    let sig_index = if (allowed_scope & 0x02) != 0 { 0 } else { 1 };
+    let sender_sig_ok = ctx.tx.signatures.get(sig_index).is_some_and(|s| {
         s.scheme == ethrex_common::types::FRAME_SIG_SCHEME_SECP256K1
             && s.msg.is_empty()
             && s.signer.unwrap_or(ctx.tx.sender) == target
