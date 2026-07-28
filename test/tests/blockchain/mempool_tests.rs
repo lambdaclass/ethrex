@@ -1,4 +1,6 @@
-use ethrex_blockchain::Blockchain;
+use std::collections::BTreeMap;
+use std::{fs::File, io::BufReader, path::PathBuf};
+
 use ethrex_blockchain::constants::MAX_INITCODE_SIZE;
 use ethrex_blockchain::constants::{
     TX_ACCESS_LIST_ADDRESS_GAS, TX_ACCESS_LIST_STORAGE_KEY_GAS, TX_CREATE_GAS_COST,
@@ -8,6 +10,7 @@ use ethrex_blockchain::error::MempoolError;
 use ethrex_blockchain::mempool::{
     FramePaymasterReservation, Mempool, is_canonical_paymaster, transaction_intrinsic_gas,
 };
+use ethrex_blockchain::{Blockchain, BlockchainOptions};
 use ethrex_crypto::NativeCrypto;
 use rustc_hash::FxHashMap;
 
@@ -23,7 +26,6 @@ use ethrex_common::types::{
 use ethrex_common::{Address, Bytes, H160, H256, U256};
 use ethrex_storage::error::StoreError;
 use ethrex_storage::{EngineType, Store};
-use std::collections::BTreeMap;
 
 const MEMPOOL_MAX_SIZE_TEST: usize = 10_000;
 
@@ -110,15 +112,17 @@ fn create_transaction_intrinsic_gas() {
 /// the VM charge, not the legacy `TX_CREATE_GAS_COST = 53000`. The regular
 /// portion is the resource-based decomposition
 /// `TX_BASE_COST_AMSTERDAM (12000) + CREATE_ACCESS_AMSTERDAM (11000) = 23000`
-/// (no value transfer here), plus a state portion
-/// (`STATE_BYTES_PER_NEW_ACCOUNT * cpsb`). Mempool admission must return the
-/// total so txs whose `gas_limit` is below the VM intrinsic are rejected before
-/// they enter the pool, and txs above it aren't spuriously rejected.
+/// (no value transfer here). The state portion is 0: the `NEW_ACCOUNT` charge
+/// is no longer part of the intrinsic (v7 Task 4.1) — it is charged IN-REGION
+/// by `prepare_execution` (EELS `prepare_dispatch` create branch), conditioned
+/// on `get_pre_state_account(created_addr) == EMPTY_ACCOUNT`, so mempool
+/// admission cannot know it upfront without simulating the tx. Mempool
+/// admission must return the (now purely regular) intrinsic so txs whose
+/// `gas_limit` is below the VM intrinsic are rejected before they enter the
+/// pool, and txs above it aren't spuriously rejected.
 #[test]
 fn amsterdam_create_intrinsic_matches_vm_dimensions() {
-    use ethrex_levm::gas_cost::{
-        CREATE_ACCESS_AMSTERDAM, STATE_BYTES_PER_NEW_ACCOUNT, cost_per_state_byte,
-    };
+    use ethrex_levm::gas_cost::CREATE_ACCESS_AMSTERDAM;
     const TX_BASE_COST_AMSTERDAM: u64 = 12000;
 
     let (mut config, header) = build_basic_config_and_header(true, true);
@@ -143,16 +147,14 @@ fn amsterdam_create_intrinsic_matches_vm_dimensions() {
         ..Default::default()
     });
 
-    let cpsb = cost_per_state_byte(header.gas_limit);
-    let expected =
-        TX_BASE_COST_AMSTERDAM + CREATE_ACCESS_AMSTERDAM + STATE_BYTES_PER_NEW_ACCOUNT * cpsb;
+    let expected = TX_BASE_COST_AMSTERDAM + CREATE_ACCESS_AMSTERDAM;
 
     let intrinsic_gas = transaction_intrinsic_gas(&tx, Address::default(), &header, &config)
         .expect("intrinsic gas");
     assert_eq!(
         intrinsic_gas, expected,
         "Amsterdam CREATE intrinsic must be TX_BASE_COST_AMSTERDAM + \
-         CREATE_ACCESS_AMSTERDAM + STATE_BYTES_PER_NEW_ACCOUNT * cpsb, not the legacy 53000"
+         CREATE_ACCESS_AMSTERDAM (state portion moved in-region), not the legacy 53000"
     );
     // Guard against regression to the legacy 53000 constant.
     assert_ne!(
@@ -561,6 +563,16 @@ fn minimal_valid_frame_tx() -> FrameTransaction {
     }
 }
 
+/// Raise the first frame's gas limit so the transaction reserves its EIP-7623
+/// calldata floor. The minimal fixture carries no data, so tests that add frame
+/// data or signatures need the extra headroom to stay otherwise-valid.
+fn reserve_calldata_floor(tx: &mut FrameTransaction) {
+    let floor = tx.calldata_floor_gas();
+    if let Some(frame) = tx.frames.first_mut() {
+        frame.gas_limit = frame.gas_limit.max(floor);
+    }
+}
+
 #[tokio::test]
 async fn mempool_rejects_frame_tx_with_invalid_signature() {
     let store = setup_hegota_store().await;
@@ -571,10 +583,12 @@ async fn mempool_rejects_frame_tx_with_invalid_signature() {
     // ecrecover will not recover the claimed signer, so admission must reject it.
     frame_tx.signatures = vec![FrameSignature {
         scheme: FRAME_SIG_SCHEME_SECP256K1,
-        signer: Address::from_low_u64_be(0xABCD),
+        signer: Some(Address::from_low_u64_be(0xABCD)),
         msg: Bytes::new(),
         signature: Bytes::from(vec![0xAB; 65]),
     }];
+
+    reserve_calldata_floor(&mut frame_tx);
 
     let tx = Transaction::FrameTransaction(frame_tx);
     let validation = blockchain.validate_transaction(&tx, tx.sender(&NativeCrypto).unwrap());
@@ -703,15 +717,28 @@ async fn mempool_rejects_oversized_frame_data() {
     let mut frame_tx = minimal_valid_frame_tx();
     // Frame data whose length reaches the 128KB wire cap; tx.data() is empty
     // for frame txs, but the frames' payloads count toward the canonical
-    // encoding that MAX_TX_SIZE bounds.
-    frame_tx.frames[0].data = Bytes::from(vec![0u8; MAX_TX_SIZE]);
+    // encoding that MAX_TX_SIZE bounds. The payload rides a trailing SENDER
+    // frame, as a real transaction's would: the validation prefix stays inside
+    // MAX_VERIFY_GAS while that frame reserves the EIP-7623 calldata floor.
+    let payload = Bytes::from(vec![0u8; MAX_TX_SIZE]);
+    frame_tx.frames.push(Frame {
+        mode: FrameMode::Sender as u8,
+        flags: 0x00,
+        target: Some(Address::from_low_u64_be(0xCAFE)),
+        gas_limit: 0,
+        value: U256::zero(),
+        data: payload,
+    });
+    let floor = frame_tx.calldata_floor_gas();
+    frame_tx.frames[1].gas_limit = floor;
 
     let tx = Transaction::FrameTransaction(frame_tx);
     let validation = blockchain.validate_transaction(&tx, tx.sender(&NativeCrypto).unwrap());
-    assert!(matches!(
-        validation.await,
-        Err(MempoolError::TxSizeExceeded { .. })
-    ));
+    let result = validation.await;
+    assert!(
+        matches!(result, Err(MempoolError::TxSizeExceeded { .. })),
+        "got {result:?}"
+    );
 }
 
 #[tokio::test]
@@ -722,7 +749,11 @@ async fn mempool_rejects_frame_tx_with_blobs() {
     let mut frame_tx = minimal_valid_frame_tx();
     // Add a blob versioned hash; no sidecar transport exists for frame-tx
     // blobs yet, so admission must reject such txs as unsupported.
-    frame_tx.blob_versioned_hashes = vec![H256::from([0xAB; 32])];
+    let mut hash = [0xAB; 32];
+    hash[0] = 0x01; // valid KZG version byte, so the unsupported-blobs check is what fires
+    frame_tx.blob_versioned_hashes = vec![H256::from(hash)];
+
+    reserve_calldata_floor(&mut frame_tx);
 
     let tx = Transaction::FrameTransaction(frame_tx);
     let validation = blockchain.validate_transaction(&tx, tx.sender(&NativeCrypto).unwrap());
@@ -748,12 +779,14 @@ async fn mempool_rejects_frame_tx_exceeding_max_verify_gas() {
     frame_tx.signatures = (0..n_sigs)
         .map(|_| FrameSignature {
             scheme: FRAME_SIG_SCHEME_P256,
-            signer: Address::from_low_u64_be(0xABCD),
+            signer: Some(Address::from_low_u64_be(0xABCD)),
             msg: Bytes::new(),
             signature: Bytes::from(vec![0u8; 128]),
         })
         .collect();
     assert!(frame_tx.signature_verification_cost() > FRAME_TX_MAX_VERIFY_GAS);
+
+    reserve_calldata_floor(&mut frame_tx);
 
     let tx = Transaction::FrameTransaction(frame_tx);
     let validation = blockchain.validate_transaction(&tx, tx.sender(&NativeCrypto).unwrap());
@@ -847,9 +880,9 @@ async fn setup_hegota_store_ts1000() -> Store {
             (
                 frame_tx_expiry_verifier(),
                 GenesisAccount {
-                    // Canonical EIP-8141 expiry verifier runtime bytecode (spec
-                    // commit 0b197156): reverts unless calldata is exactly 8
-                    // bytes and the 8-byte BE deadline is >= block.timestamp.
+                    // Canonical EIP-8141 expiry verifier runtime bytecode:
+                    // reverts unless calldata is exactly 8 bytes and the 8-byte
+                    // BE deadline is >= block.timestamp.
                     // Seeded so the interleaved expiry-verifier frame executes
                     // (instead of hitting codeless default code) during the
                     // admission simulation.
@@ -894,7 +927,8 @@ fn frame_tx_with_expiry(deadline: u64) -> FrameTransaction {
                 mode: FrameMode::Verify as u8,
                 flags: 0x00,
                 target: Some(frame_tx_expiry_verifier()),
-                gas_limit: 100,
+                // Enough to reserve the EIP-7623 floor of the 8-byte deadline.
+                gas_limit: 1_000,
                 value: U256::zero(),
                 data: Bytes::from(data.to_vec()),
             },
@@ -2478,6 +2512,174 @@ async fn validate_transaction_rejects_pre_prague_eip7702() {
     );
 }
 
+// ----------------------------------------------------------------------------
+// Gap-admission tests
+// ----------------------------------------------------------------------------
+//
+// These tests exercise the rule that, when the mempool is heavily occupied,
+// incoming transactions with a nonce gap relative to the sender's on-chain
+// nonce are rejected. Replacements (same nonce as a tx already in the pool)
+// must bypass this rule, since they are not gapped.
+
+const GAP_TEST_MEMPOOL_MAX: usize = 10;
+const GAP_TEST_THRESHOLD_PCT: u8 = 90;
+
+fn workspace_root() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..")
+}
+
+async fn setup_funded_store(sender: Address) -> (Store, u64) {
+    let file = File::open(workspace_root().join("fixtures/genesis/execution-api.json"))
+        .expect("Failed to open genesis file");
+    let reader = BufReader::new(file);
+    let mut genesis: ethrex_common::types::Genesis =
+        serde_json::from_reader(reader).expect("Failed to deserialize genesis file");
+
+    let chain_id = genesis.config.chain_id;
+
+    genesis.alloc.insert(
+        sender,
+        GenesisAccount {
+            balance: U256::from(10).pow(U256::from(20)),
+            code: Bytes::new(),
+            storage: Default::default(),
+            nonce: 0,
+        },
+    );
+
+    let mut store =
+        Store::new("store.db", EngineType::InMemory).expect("Failed to build DB for testing");
+
+    store
+        .add_initial_state(genesis)
+        .await
+        .expect("Failed to add genesis state");
+
+    (store, chain_id)
+}
+
+/// Build a non-blob tx with the given nonce. The signature is dummy — the tests
+/// here exercise `validate_transaction`, which never inspects the signature.
+fn build_tx(chain_id: u64, nonce: u64) -> Transaction {
+    Transaction::EIP1559Transaction(EIP1559Transaction {
+        chain_id,
+        nonce,
+        max_priority_fee_per_gas: 1,
+        max_fee_per_gas: 1_000_000_000,
+        gas_limit: 100_000,
+        to: TxKind::Call(Address::from_low_u64_be(0xABBA)),
+        value: U256::zero(),
+        data: Bytes::default(),
+        access_list: Default::default(),
+        ..Default::default()
+    })
+}
+
+/// Inject `count` dummy transactions from random senders directly into the
+/// mempool, bypassing validation. Used to push occupancy above a threshold.
+fn fill_mempool(mempool: &Mempool, count: usize) {
+    for i in 0..count {
+        let sender = Address::from_low_u64_be(0x1000 + i as u64);
+        let hash = H256::from_low_u64_be(0x1000 + i as u64);
+        let tx = build_tx(1, 0);
+        mempool
+            .add_transaction(
+                hash,
+                sender,
+                MempoolTransaction::new(tx, sender),
+                None,
+                None,
+            )
+            .expect("Failed to add transaction");
+    }
+}
+
+fn blockchain_with_threshold(store: Store, threshold_pct: u8) -> Blockchain {
+    Blockchain::new(
+        store,
+        BlockchainOptions {
+            max_mempool_size: GAP_TEST_MEMPOOL_MAX,
+            gap_admit_occupancy_threshold: threshold_pct,
+            ..Default::default()
+        },
+    )
+}
+
+#[tokio::test]
+async fn gap_admission_rejected_when_pool_above_threshold() {
+    let sender = Address::from_low_u64_be(0xAAA);
+    let (store, chain_id) = setup_funded_store(sender).await;
+    let blockchain = blockchain_with_threshold(store, GAP_TEST_THRESHOLD_PCT);
+
+    // Push occupancy to 100% (10/10) — well above 90%.
+    fill_mempool(&blockchain.mempool, GAP_TEST_MEMPOOL_MAX);
+
+    // On-chain nonce is 0; submitting nonce=5 introduces a gap.
+    let gapped_tx = build_tx(chain_id, 5);
+    let result = blockchain.validate_transaction(&gapped_tx, sender).await;
+    assert!(
+        matches!(
+            result,
+            Err(MempoolError::GapAdmissionDeniedUnderPressure { .. })
+        ),
+        "expected GapAdmissionDeniedUnderPressure, got {result:?}"
+    );
+}
+
+#[tokio::test]
+async fn gap_admission_accepted_when_pool_below_threshold() {
+    let sender = Address::from_low_u64_be(0xAAB);
+    let (store, chain_id) = setup_funded_store(sender).await;
+    let blockchain = blockchain_with_threshold(store, GAP_TEST_THRESHOLD_PCT);
+
+    // Push occupancy to 50% — below 90%.
+    fill_mempool(&blockchain.mempool, GAP_TEST_MEMPOOL_MAX / 2);
+
+    let gapped_tx = build_tx(chain_id, 5);
+    let result = blockchain.validate_transaction(&gapped_tx, sender).await;
+    assert!(
+        result.is_ok(),
+        "expected gapped tx to be accepted under low pressure, got {result:?}"
+    );
+}
+
+#[tokio::test]
+async fn gap_admission_disabled_at_threshold_100() {
+    let sender = Address::from_low_u64_be(0xAAC);
+    let (store, chain_id) = setup_funded_store(sender).await;
+    // Threshold of 100 disables the check entirely.
+    let blockchain = blockchain_with_threshold(store, 100);
+
+    // Fill to 100% to make the pool maximally occupied.
+    fill_mempool(&blockchain.mempool, GAP_TEST_MEMPOOL_MAX);
+
+    let gapped_tx = build_tx(chain_id, 5);
+    let result = blockchain.validate_transaction(&gapped_tx, sender).await;
+    assert!(
+        result.is_ok(),
+        "expected gapped tx to be accepted when threshold is 100, got {result:?}"
+    );
+}
+
+#[tokio::test]
+async fn contiguous_nonce_tx_accepted_under_high_occupancy() {
+    let sender = Address::from_low_u64_be(0xAAD);
+    let (store, chain_id) = setup_funded_store(sender).await;
+    let blockchain = blockchain_with_threshold(store, GAP_TEST_THRESHOLD_PCT);
+
+    fill_mempool(&blockchain.mempool, GAP_TEST_MEMPOOL_MAX);
+
+    // On-chain nonce is 0; submitting nonce=0 is contiguous.
+    let contiguous_tx = build_tx(chain_id, 0);
+    let result = blockchain
+        .validate_transaction(&contiguous_tx, sender)
+        .await;
+    assert!(
+        result.is_ok(),
+        "expected contiguous tx to be accepted under high pressure, got {result:?}"
+    );
+}
+
 // `fee-token-l1-tx` (mempool-ingress side): an L1 node must reject L2-only tx
 // types (FeeToken 0x7d, PrivilegedL2 0x7e) at admission — they are valid only on
 // L2 and unknown to other L1 clients. `Blockchain::default_with_store` is an L1
@@ -2497,6 +2699,55 @@ async fn l1_validate_transaction_rejects_fee_token() {
     assert!(
         matches!(res, Err(MempoolError::L2OnlyTransactionType)),
         "an L1 node must reject FeeToken (0x7d) at admission (got {res:?})"
+    );
+}
+
+#[tokio::test]
+async fn replacement_at_existing_nonce_bypasses_gap_admission() {
+    let sender = Address::from_low_u64_be(0xAAE);
+    let (store, chain_id) = setup_funded_store(sender).await;
+    let blockchain = blockchain_with_threshold(store, GAP_TEST_THRESHOLD_PCT);
+
+    // First, add a gapped tx while the pool has plenty of room.
+    let original_tx = build_tx(chain_id, 5);
+    let original_hash = original_tx.hash(&NativeCrypto);
+    blockchain
+        .mempool
+        .add_transaction(
+            original_hash,
+            sender,
+            MempoolTransaction::new(original_tx, sender),
+            None,
+            None,
+        )
+        .expect("Failed to seed the pool with a tx at nonce 5");
+
+    // Now push the pool above the threshold.
+    fill_mempool(&blockchain.mempool, GAP_TEST_MEMPOOL_MAX.saturating_sub(1));
+
+    // Build a replacement at the same nonce with strictly higher fees so that
+    // `find_tx_to_replace` returns Some(_), bypassing the gap-admission rule.
+    let replacement_tx = Transaction::EIP1559Transaction(EIP1559Transaction {
+        chain_id,
+        nonce: 5,
+        max_priority_fee_per_gas: 2,
+        max_fee_per_gas: 2_000_000_000,
+        gas_limit: 100_000,
+        to: TxKind::Call(Address::from_low_u64_be(0xABBA)),
+        value: U256::zero(),
+        data: Bytes::default(),
+        access_list: Default::default(),
+        ..Default::default()
+    });
+
+    let result = blockchain
+        .validate_transaction(&replacement_tx, sender)
+        .await;
+    // A fresh gapped tx here would hit `GapAdmissionDeniedUnderPressure`; the
+    // replacement is exempt, so validation passes.
+    assert!(
+        result.is_ok(),
+        "expected replacement to bypass gap-admission rule, got {result:?}"
     );
 }
 
@@ -2544,7 +2795,7 @@ mod p2p_serve_tests {
             }],
             signatures: vec![FrameSignature {
                 scheme: FRAME_SIG_SCHEME_SECP256K1,
-                signer: Address::from_low_u64_be(0xABCD),
+                signer: Some(Address::from_low_u64_be(0xABCD)),
                 msg: bytes::Bytes::new(),
                 signature: bytes::Bytes::from(vec![0u8; 65]),
             }],

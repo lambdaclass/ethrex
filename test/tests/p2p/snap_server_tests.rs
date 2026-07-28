@@ -821,7 +821,7 @@ fn setup_initial_state() -> Result<(Store, H256), SnapError> {
 
     // Create a store and load it up with the accounts
     let store = Store::new("null", EngineType::InMemory).unwrap();
-    let mut state_trie = store.open_direct_state_trie(*EMPTY_TRIE_HASH)?;
+    let mut state_trie = store.open_direct_state_trie(EMPTY_TRIE_HASH)?;
     for (address, account) in accounts {
         let hashed_address = H256::from_str(address).unwrap().as_bytes().to_vec();
         let AccountStateSlimCodec(account) = RLPDecode::decode(&account).unwrap();
@@ -839,7 +839,7 @@ fn setup_large_state(n: u32) -> Result<(Store, H256), SnapError> {
     let account_bytes: Vec<u8> = vec![196, 128, 1, 128, 128];
     let AccountStateSlimCodec(account) = RLPDecode::decode(&account_bytes).unwrap();
     let store = Store::new("null", EngineType::InMemory).unwrap();
-    let mut state_trie = store.open_direct_state_trie(*EMPTY_TRIE_HASH)?;
+    let mut state_trie = store.open_direct_state_trie(EMPTY_TRIE_HASH)?;
     for i in 1..=n {
         // Put `i` in the high bytes so keys spread across the hash space (avoids a
         // pathologically deep trie) while staying distinct and ascending.
@@ -907,7 +907,7 @@ async fn account_range_clamps_response_bytes() -> Result<(), SnapError> {
 fn setup_large_storage_state(account_hash: H256, n: u32) -> Result<(Store, H256), SnapError> {
     let store = Store::new("null", EngineType::InMemory).unwrap();
 
-    let mut storage_trie = store.open_direct_storage_trie(account_hash, *EMPTY_TRIE_HASH)?;
+    let mut storage_trie = store.open_direct_storage_trie(account_hash, EMPTY_TRIE_HASH)?;
     for i in 1..=n {
         let mut slot_key = [0u8; 32];
         slot_key[..4].copy_from_slice(&i.to_be_bytes());
@@ -923,7 +923,7 @@ fn setup_large_storage_state(account_hash: H256, n: u32) -> Result<(Store, H256)
         storage_root,
         code_hash: H256::zero(),
     };
-    let mut state_trie = store.open_direct_state_trie(*EMPTY_TRIE_HASH)?;
+    let mut state_trie = store.open_direct_state_trie(EMPTY_TRIE_HASH)?;
     state_trie
         .insert(account_hash.as_bytes().to_vec(), account.encode_to_vec())
         .unwrap();
