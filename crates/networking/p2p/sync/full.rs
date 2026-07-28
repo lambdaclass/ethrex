@@ -547,6 +547,7 @@ pub async fn sync_cycle_full(
             blocks.first().ok_or(SyncError::NoBlocks)?.hash(),
             blocks.last().ok_or(SyncError::NoBlocks)?.hash()
         );
+        let batch_head = blocks.last().ok_or(SyncError::NoBlocks)?.header.number;
         add_blocks_in_batch(
             blockchain.clone(),
             cancel_token.clone(),
@@ -557,6 +558,12 @@ pub async fn sync_cycle_full(
             peers,
         )
         .await?;
+        // Advance the executed-state head as batches land. `eth_syncing` reports this
+        // whenever the canonical head's post-state is not resident, and residency shrinks
+        // to the recent window (or to the tip while writing through), so without this the
+        // reported `currentBlock` stays pinned at the resume point for a whole cycle and a
+        // healthy catch-up looks wedged.
+        diagnostics.write().await.executed_head = batch_head;
         if final_batch {
             reached_target = true;
         }
