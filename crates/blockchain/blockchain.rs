@@ -2877,7 +2877,7 @@ impl Blockchain {
         }
 
         // Validate blobs bundle after checking if it's already added.
-        blobs_bundle.validate(&transaction.blob_versioned_hashes(), fork)?;
+        blobs_bundle.validate(transaction.blob_versioned_hashes_ref(), fork)?;
 
         let sender = transaction.sender(&NativeCrypto)?;
 
@@ -2917,9 +2917,7 @@ impl Blockchain {
         // `add_blob_transaction_to_pool` with their sidecar, or the pool would hold
         // a transaction it cannot serve over p2p or build a block from. This covers
         // EIP-4844 and blob-carrying EIP-8141 frame transactions alike.
-        if matches!(transaction, Transaction::EIP4844Transaction(_))
-            || !transaction.blob_versioned_hashes().is_empty()
-        {
+        if transaction.is_blob_carrying() {
             return Err(MempoolError::BlobTxNoBlobsBundle);
         }
         // Wire size cap: run before sender recovery so oversized txs don't
@@ -3300,8 +3298,10 @@ impl Blockchain {
         // nethermind `MaxTxSize`. Blob txs are bounded by their own
         // wire-wrapper cap (`MAX_BLOB_TX_SIZE`) in `add_blob_transaction_to_pool`,
         // which sums the core tx and the sidecar to match geth/nethermind/erigon
-        // scope.
-        if !matches!(tx, Transaction::EIP4844Transaction(_)) {
+        // scope. That covers blob-carrying EIP-8141 frame transactions too, which
+        // would otherwise clear the 1 MiB wrapper cap and then be rejected by the
+        // 128 KiB cap meant for blobless transactions.
+        if !tx.is_blob_carrying() {
             let encoded_len = tx.encode_canonical_len();
             if encoded_len > MAX_TX_SIZE {
                 return Err(MempoolError::TxSizeExceeded {

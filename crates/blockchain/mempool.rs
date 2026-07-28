@@ -219,7 +219,11 @@ impl MempoolInner {
         let Some(tx) = self.transaction_pool.remove(hash) else {
             return Ok(());
         };
-        if matches!(tx.tx_type(), TxType::EIP4844) {
+        // Covers EIP-4844 and blob-carrying EIP-8141 frame transactions alike:
+        // `blob_tx_count` is the size of the bundle pool, so a leaked bundle
+        // would inflate blob-pool occupancy forever and, being unreachable from
+        // `transaction_pool`, could never be evicted to bring it back down.
+        if tx.is_blob_carrying() {
             self.remove_blob_bundle(hash);
         }
 
@@ -642,7 +646,10 @@ impl Mempool {
     ) -> Result<(), MempoolError> {
         let mut inner = self.write()?;
         let is_frame = matches!(transaction.tx_type(), TxType::Frame);
-        let is_blob = matches!(transaction.tx_type(), TxType::EIP4844);
+        // A blob-carrying frame transaction occupies a blob-pool slot too: its
+        // bundle is counted by `blob_tx_count`, so it must be evicted against the
+        // blob cap rather than the regular one.
+        let is_blob = transaction.is_blob_carrying();
 
         // Per-sender admission gates (queued cap #6603, gapped-nonce #6609,
         // cumulative balance #6606), re-checked atomically under the same write
@@ -911,8 +918,10 @@ impl Mempool {
         filter: &PendingTxFilter,
     ) -> Result<FxHashMap<Address, Vec<MempoolTransaction>>, StoreError> {
         let filter_tx = |tx: &Transaction| -> bool {
-            // Filter by tx type
-            let is_blob_tx = matches!(tx, Transaction::EIP4844Transaction(_));
+            // Filter by tx type. A blob-carrying EIP-8141 frame transaction
+            // belongs in the blob pass: it is subject to the block's blob limits
+            // and must clear the blob base fee, exactly as a blob transaction.
+            let is_blob_tx = tx.is_blob_carrying();
             if filter.only_plain_txs && is_blob_tx || filter.only_blob_txs && !is_blob_tx {
                 return false;
             }
