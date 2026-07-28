@@ -100,6 +100,14 @@ pub const STORAGE_FLATKEYVALUE: &str = "storage_flatkeyvalue";
 
 pub const MISC_VALUES: &str = "misc_values";
 
+/// State-history journal column family: [`u8; 8`] => [`Vec<u8>`]
+/// - [`u8; 8`] = `block_number.to_be_bytes()` (big-endian so lex order == numeric order)
+/// - [`Vec<u8>`] = `JournalEntry::encode()`
+///
+/// Stores one reverse-diff entry per committed block, enabling reorgs deeper
+/// than the in-memory `TrieLayerCache`. Pruned at finality.
+pub const STATE_HISTORY: &str = "state_history";
+
 /// Execution witnesses column family: [`Vec<u8>`] => [`Vec<u8>`]
 /// - [`Vec<u8>`] = Composite key
 ///    ```rust,no_run
@@ -126,7 +134,7 @@ pub const LOG_ADDRESS_INDEX: &str = "log_address_index";
 /// - [`Vec<u8>`] = RLP-encoded `Vec<Block>` (sorted by descending block number)
 pub const BAD_BLOCKS: &str = "bad_blocks";
 
-pub const TABLES: [&str; 22] = [
+pub const TABLES: [&str; 23] = [
     CHAIN_DATA,
     ACCOUNT_CODES,
     ACCOUNT_CODE_METADATA,
@@ -148,5 +156,6 @@ pub const TABLES: [&str; 22] = [
     EXECUTION_WITNESSES,
     BLOCK_ACCESS_LISTS,
     LOG_ADDRESS_INDEX,
+    STATE_HISTORY,
     BAD_BLOCKS,
 ];

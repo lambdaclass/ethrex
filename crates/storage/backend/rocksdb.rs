@@ -424,6 +424,32 @@ impl StorageReadView for RocksDBReadTx {
         });
         Ok(Box::new(iter))
     }
+
+    fn first_key(&self, table: &'static str) -> Result<Option<Vec<u8>>, StoreError> {
+        let cf = self
+            .db
+            .cf_handle(table)
+            .ok_or_else(|| StoreError::Custom(format!("Table {table} not found")))?;
+        let mut iter = self.db.iterator_cf(&cf, rocksdb::IteratorMode::Start);
+        match iter.next() {
+            Some(Ok((k, _))) => Ok(Some(k.to_vec())),
+            Some(Err(e)) => Err(StoreError::Custom(e.to_string())),
+            None => Ok(None),
+        }
+    }
+
+    fn last_key(&self, table: &'static str) -> Result<Option<Vec<u8>>, StoreError> {
+        let cf = self
+            .db
+            .cf_handle(table)
+            .ok_or_else(|| StoreError::Custom(format!("Table {table} not found")))?;
+        let mut iter = self.db.iterator_cf(&cf, rocksdb::IteratorMode::End);
+        match iter.next() {
+            Some(Ok((k, _))) => Ok(Some(k.to_vec())),
+            Some(Err(e)) => Err(StoreError::Custom(e.to_string())),
+            None => Ok(None),
+        }
+    }
 }
 
 /// Write batch for RocksDB
@@ -469,6 +495,20 @@ impl StorageWriteBatch for RocksDBWriteTx {
             .ok_or_else(|| StoreError::Custom(format!("Table {} not found", table)))?;
 
         self.batch.delete_cf(&cf, key);
+        Ok(())
+    }
+
+    fn delete_range(
+        &mut self,
+        table: &'static str,
+        start: &[u8],
+        end: &[u8],
+    ) -> Result<(), StoreError> {
+        let cf = self
+            .db
+            .cf_handle(table)
+            .ok_or_else(|| StoreError::Custom(format!("Table {table:?} not found")))?;
+        self.batch.delete_range_cf(&cf, start, end);
         Ok(())
     }
 
