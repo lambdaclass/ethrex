@@ -458,6 +458,25 @@ impl TrieLayerCache {
         self.layers.len()
     }
 
+    /// Returns the root of the oldest layer in the layer chain containing `root` — i.e.
+    /// walks parents until reaching a layer whose parent is not itself a layer. Returns
+    /// `root` unchanged if it has no layer.
+    ///
+    /// Used to force single-layer commits while a deep-reorg overlay is installed: the
+    /// Section 9 reconciliation in `commit_to_disk` is defined for exactly one layer at
+    /// the pivot tip `T`, and a multi-layer sweep would journal upper layers' pre-images
+    /// against the old-chain disk state instead of the new-chain/bridge state.
+    pub(crate) fn bottom_layer_root(&self, root: H256) -> H256 {
+        let mut current = root;
+        while let Some(layer) = self.layers.get(&current) {
+            if !self.layers.contains_key(&layer.parent) {
+                break;
+            }
+            current = layer.parent;
+        }
+        current
+    }
+
     /// Removes the layer at `state_root` and all its ancestors from the cache, returning
     /// one [`CommittedLayer`] per removed layer in oldest-first order (suitable for
     /// sequential disk write and per-block journaling).

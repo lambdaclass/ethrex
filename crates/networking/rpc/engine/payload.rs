@@ -1216,6 +1216,15 @@ async fn try_execute_payload(
     let block_hash = block.hash();
     let block_number = block.header.number;
     let storage = &context.storage;
+    // A deep-reorg apply pass swaps the layer cache and replays the side chain
+    // through `add_block` directly. Executing a payload concurrently can enqueue
+    // a `PersistMessage::Block` whose phase1 RCU-reads the pre-swap cache and
+    // writes back after the swap, clobbering the freshly installed overlay —
+    // replay reads would then fall through to old-chain disk state. Defer to
+    // SYNCING (the CL retries) for the duration of the pass.
+    if context.blockchain.is_reorg_in_progress() {
+        return Ok(PayloadStatus::syncing());
+    }
     // Fast path: if we already have this block's header AND its state is reachable,
     // we know it has been fully validated previously and can reply VALID (with a
     // witness if requested) without re-execution.

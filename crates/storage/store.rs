@@ -228,6 +228,17 @@ pub struct Store {
     /// Cloning `Store` shares this cell across all clones, which is required and correct.
     safe_commit_root: Arc<RwLock<H256>>,
 
+    /// While set, `forkchoice_update_inner` skips STATE_HISTORY pruning (the
+    /// finalized-number update still lands). Set by `Blockchain::enter_reorg` for
+    /// the duration of a deep-reorg apply pass: `Overlay::from_journal` reads
+    /// journal entries one by one with no snapshot isolation, and syncer-driven
+    /// forkchoice updates are not gated by the reorg mutex, so a concurrent
+    /// finality advance could otherwise prune entries out from under overlay
+    /// construction (spurious `MissingEntry`) or between a case-1 attempt and its
+    /// retry. Pruning catches up on the first finality advance after the pass
+    /// ends (`delete_range` is cumulative).
+    journal_pruning_paused: Arc<std::sync::atomic::AtomicBool>,
+
     background_threads: Arc<ThreadList>,
 }
 
@@ -1298,7 +1309,18 @@ impl Store {
                 // in the same atomic txn. `delete_range` is half-open `[start, end)`,
                 // so `end = finalized + 1`. STATE_HISTORY uses big-endian keys, so
                 // lexicographic byte order matches numeric order.
-                if finalized > prev_finalized {
+                //
+                // Skipped while a deep-reorg apply pass is in flight
+                // (`journal_pruning_paused`): `Overlay::from_journal` reads entries
+                // with no snapshot isolation, so pruning mid-construction fails it
+                // with a spurious `MissingEntry`. The finalized-number update above
+                // still lands; pruning catches up on the next advance after the
+                // pass ends because `delete_range` is cumulative from zero.
+                if finalized > prev_finalized
+                    && !self
+                        .journal_pruning_paused
+                        .load(std::sync::atomic::Ordering::Acquire)
+                {
                     let start = 0u64.to_be_bytes();
                     let end = finalized.saturating_add(1).to_be_bytes();
                     txn.delete_range(STATE_HISTORY, &start, &end)?;
@@ -1949,6 +1971,7 @@ impl Store {
             code_metadata_cache: Arc::new(Mutex::new(rustc_hash::FxHashMap::default())),
             fcu_lock: Arc::new(tokio::sync::Mutex::new(())),
             safe_commit_root,
+            journal_pruning_paused: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             background_threads: Default::default(),
         };
         let backend_clone = store.backend.clone();
@@ -3612,33 +3635,37 @@ impl Store {
             TrieLayerCache::new_with_safe_commit(threshold, self.safe_commit_root.clone());
         fresh.set_overlay(Arc::new(overlay));
 
-        // Wait for the persist worker to be idle before swapping the cache. That
-        // worker owns the trie-layer install (`apply_trie_phase1`, run from the
-        // `PersistMessage::Block` handler): it reads `trie_cache`, mutates a local
-        // clone, and RCU-writes it back; if it is mid-flight when we install, its
-        // write-back can clobber the overlay we are about to set. `PersistMessage::Ping`
-        // carries an ack channel and the worker is FIFO, so its ack proves every
-        // earlier `Block` (and thus every earlier trie install) is fully processed
-        // and the worker is back at `rx.recv()`. This is the synchronous core of
-        // [`wait_for_persistence_idle`]; we inline it here because this fn is not
-        // async. With our subsequent `trie_cache.write()` serialising any future
-        // RCU, the install is now safe.
+        // Wait for the persist worker to be idle before swapping the cache (see
+        // [`Self::rendezvous_persist_worker`]).
+        self.rendezvous_persist_worker("install_overlay_for_reorg")?;
+
+        let mut guard = self.trie_cache.write().map_err(|_| StoreError::LockError)?;
+        *guard = Arc::new(fresh);
+        Ok(())
+    }
+
+    /// Waits for the persist worker to be idle before a layer-cache swap. That
+    /// worker owns the trie-layer install (`apply_trie_phase1`, run from the
+    /// `PersistMessage::Block` handler): it reads `trie_cache`, mutates a local
+    /// clone, and RCU-writes it back; if it is mid-flight when we swap, its
+    /// write-back can clobber the freshly swapped cache (e.g. drop a just-installed
+    /// overlay, or install a side-chain layer over a base that no longer has the
+    /// overlay underneath). `PersistMessage::Ping` carries an ack channel and the
+    /// worker is FIFO, so its ack proves every earlier `Block` (and thus every
+    /// earlier trie install) is fully processed and the worker is back at
+    /// `rx.recv()`. This is the synchronous core of [`wait_for_persistence_idle`];
+    /// we inline it here because callers are not async. The caller's subsequent
+    /// `trie_cache.write()` serialising any future RCU makes the swap safe.
+    fn rendezvous_persist_worker(&self, caller: &str) -> Result<(), StoreError> {
         let (ack_tx, ack_rx) = sync_channel::<Result<(), StoreError>>(1);
         self.persist_tx
             .send(PersistMessage::Ping(ack_tx))
             .map_err(|e| {
-                StoreError::Custom(format!(
-                    "install_overlay_for_reorg: failed to ping persist worker: {e}"
-                ))
+                StoreError::Custom(format!("{caller}: failed to ping persist worker: {e}"))
             })?;
         ack_rx.recv().map_err(|e| {
-            StoreError::Custom(format!(
-                "install_overlay_for_reorg: persist worker ping ack failed: {e}"
-            ))
+            StoreError::Custom(format!("{caller}: persist worker ping ack failed: {e}"))
         })??;
-
-        let mut guard = self.trie_cache.write().map_err(|_| StoreError::LockError)?;
-        *guard = Arc::new(fresh);
         Ok(())
     }
 
@@ -3652,6 +3679,14 @@ impl Store {
             Some(ov) => Ok((ov.len(), ov.byte_size())),
             None => Ok((0, 0)),
         }
+    }
+
+    /// Pauses or resumes STATE_HISTORY pruning at finality advance (see the
+    /// `journal_pruning_paused` field). Called by `Blockchain::enter_reorg` /
+    /// `ReorgGuard::drop` to bracket a deep-reorg apply pass.
+    pub fn set_journal_pruning_paused(&self, paused: bool) {
+        self.journal_pruning_paused
+            .store(paused, std::sync::atomic::Ordering::Release);
     }
 
     /// Removes any installed overlay from the layer cache. Called by the
@@ -3671,6 +3706,14 @@ impl Store {
     /// untouched (still at the OLD chain's `D`), so subsequent FCU evaluations
     /// start from a clean foundation.
     pub fn abort_reorg(&self) -> Result<(), StoreError> {
+        // Rendezvous with the persist worker before swapping, exactly like
+        // `install_overlay_for_reorg`: the live-path ack fires BEFORE
+        // `apply_trie_phase1` installs the layer, so the worker can still be
+        // mid-flight with a pre-abort RCU snapshot. Without the rendezvous its
+        // write-back could install a side-chain layer into the fresh cache with
+        // no overlay underneath — reads at that root would then cascade into
+        // old-chain disk state.
+        self.rendezvous_persist_worker("abort_reorg")?;
         let mut guard = self.trie_cache.write().map_err(|_| StoreError::LockError)?;
         let threshold = guard.commit_threshold();
         *guard = Arc::new(TrieLayerCache::new_with_safe_commit(
@@ -4332,6 +4375,21 @@ fn commit_to_disk(
         trie.overlay().cloned()
     } else {
         None
+    };
+
+    // While an overlay is installed, commit only the bottom layer per pass. The
+    // Section 9 reconciliation below is defined for a single layer at the pivot
+    // tip `T`: bridge entries are folded into that layer's writes, [T, D] is
+    // delete_ranged, and T's journal entry records pre-images against the
+    // old-chain disk state. A multi-layer sweep would journal upper layers'
+    // pre-images against old-chain disk instead of the new-chain/bridge state
+    // (the intra-batch pre-image map is not seeded with bridge values), silently
+    // corrupting a future unwind. The backlog above `T` drains in later passes,
+    // after this commit clears the overlay (see `trie_mut.clear_overlay` below).
+    let root = if overlay_for_reconciliation.is_some() {
+        trie.bottom_layer_root(root)
+    } else {
+        root
     };
 
     // `commit` removes the committed layer(s) and returns one `CommittedLayer` per block

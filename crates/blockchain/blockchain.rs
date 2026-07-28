@@ -288,6 +288,7 @@ pub struct ReorgGuard<'a> {
 
 impl Drop for ReorgGuard<'_> {
     fn drop(&mut self) {
+        self.blockchain.storage.set_journal_pruning_paused(false);
         self.blockchain
             .reorg_in_progress
             .store(false, Ordering::Release);
@@ -553,7 +554,15 @@ impl Blockchain {
         self.reorg_in_progress
             .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
             .is_ok()
-            .then_some(ReorgGuard { blockchain: self })
+            .then(|| {
+                // Also pause STATE_HISTORY pruning for the whole pass:
+                // `Overlay::from_journal` reads entries with no snapshot
+                // isolation, and syncer-driven forkchoice updates bypass this
+                // mutex, so a concurrent finality advance could otherwise prune
+                // the journal out from under overlay construction.
+                self.storage.set_journal_pruning_paused(true);
+                ReorgGuard { blockchain: self }
+            })
     }
 
     /// Executes a block withing a new vm instance and state
