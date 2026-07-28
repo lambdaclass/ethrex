@@ -136,8 +136,36 @@ def simulate(raw: str) -> dict:
 
 # ---------------------------------------------------------------- compile / deploy
 
+# The compiler the committed EVIDENCE.md was produced with. This is checked rather than
+# merely documented because the Safe singleton deploys with only ~3% headroom under the
+# EIP-7825 transaction gas cap: a compiler that emits slightly larger code makes that
+# scenario fail with an opaque out-of-gas rather than an obvious version complaint.
+EXPECTED_SOLC = "0.8.31"
+_solc_checked = False
+
+
+def check_solc() -> str:
+    """Verify the solc on PATH, once per process. Set POC_ALLOW_ANY_SOLC=1 to override."""
+    global _solc_checked
+    out = subprocess.run(["solc", "--version"], capture_output=True, text=True, check=True).stdout
+    version = out.strip().split("Version: ")[-1].split("+")[0]
+    if not _solc_checked:
+        _solc_checked = True
+        if version != EXPECTED_SOLC:
+            msg = (f"solc {version} on PATH, but the evidence in EVIDENCE.md was produced with "
+                   f"{EXPECTED_SOLC}. Bytecode and gas will differ, and the Safe scenario has "
+                   f"only ~3% gas headroom.")
+            if os.environ.get("POC_ALLOW_ANY_SOLC") == "1":
+                print(f"    WARNING: {msg}")
+            else:
+                raise RuntimeError(msg + " Set POC_ALLOW_ANY_SOLC=1 to proceed anyway.")
+        else:
+            print(f"    solc {version}")
+    return version
+
 
 def compile_yul(rel_path: str) -> bytes:
+    check_solc()
     out = subprocess.run(
         ["solc", "--strict-assembly", "--optimize", "--bin", os.path.join(CONTRACTS, rel_path)],
         capture_output=True, text=True, check=True,
@@ -150,6 +178,7 @@ def compile_yul(rel_path: str) -> bytes:
 
 
 def compile_sol(rel_path: str, name: str) -> bytes:
+    check_solc()
     out = subprocess.run(
         ["solc", "--optimize", "--bin", os.path.join(CONTRACTS, rel_path)],
         capture_output=True, text=True, check=True,
@@ -200,6 +229,7 @@ def compile_safe(rel_path: str, name: str) -> bytes:
     bytes and lands at 16,278,183 gas — about 3% under the cap. Reverting to the default
     optimizer settings makes the singleton undeployable again.
     """
+    check_solc()
     src = safe_sources()
     out = subprocess.run(
         ["solc", "--optimize", "--optimize-runs", "1", "--via-ir", "--bin",

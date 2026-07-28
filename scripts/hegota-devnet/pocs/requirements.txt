@@ -1,0 +1,11 @@
+# Python dependencies for the EIP-7906 attack scenarios.
+#
+#   python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
+#
+# Direct dependencies only; pip resolves the rest. Versions are the ones the committed
+# EVIDENCE.md was produced with, pinned so a later release cannot silently change how
+# transactions are signed or encoded.
+eth-account==0.13.7
+eth-keys==0.7.0
+eth-utils==6.0.0
+eth-hash[pycryptodome]==0.8.0
