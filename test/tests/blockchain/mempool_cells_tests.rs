@@ -167,10 +167,10 @@ fn custody_generation_bumps_on_change() {
     );
 }
 
-// ── blob_txs_missing_custody ──────────────────────────────────────────────────
+// ── blob_txs_missing_cells ────────────────────────────────────────────────────
 
 #[test]
-fn blob_txs_missing_custody_returns_expected_pairs() {
+fn blob_txs_missing_cells_returns_expected_pairs() {
     let mp = Mempool::new(64);
 
     // Custody columns 0 and 1.
@@ -200,7 +200,7 @@ fn blob_txs_missing_custody_returns_expected_pairs() {
     };
     mp.add_blobs_bundle(tx_hash2, bundle2).unwrap();
 
-    let missing = mp.blob_txs_missing_custody().unwrap();
+    let missing = mp.blob_txs_missing_cells().unwrap();
     // Both txs should appear; h(10) missing column 1, h(11) missing both 0 and 1.
     assert!(
         missing.len() >= 2,
@@ -220,6 +220,58 @@ fn blob_txs_missing_custody_returns_expected_pairs() {
         0b11,
         "h(11) missing must be both columns"
     );
+}
+
+#[test]
+fn eager_provider_wants_every_column_not_just_custody() {
+    let mp = Mempool::new_with_sampling(64);
+    mp.set_custody_columns(0b11).unwrap();
+
+    let tx_hash = h(12);
+    let bundle = BlobsBundle {
+        blobs: vec![],
+        commitments: vec![[0u8; 48]],
+        proofs: vec![[0u8; 48]; CELLS_PER_EXT_BLOB],
+        version: 1,
+    };
+    mp.add_blobs_bundle(tx_hash, bundle).unwrap();
+    mp.store_cells(tx_hash, 1, vec![(0, 0, cell(0x01))])
+        .unwrap();
+
+    // As a sampler, only the custody gap is wanted.
+    let missing = mp.blob_txs_missing_cells().unwrap();
+    assert_eq!(
+        missing.iter().find(|(h, _)| *h == tx_hash).unwrap().1,
+        0b10,
+        "sampler wants only its custody columns"
+    );
+
+    // Latching eager mode widens the target to every column we don't hold, so the
+    // pool can reconstruct full blobs for a payload.
+    mp.latch_eager_provider();
+    let missing = mp.blob_txs_missing_cells().unwrap();
+    assert_eq!(
+        missing.iter().find(|(h, _)| *h == tx_hash).unwrap().1,
+        u128::MAX & !0b1,
+        "eager provider wants every column except the one already held"
+    );
+}
+
+#[test]
+fn latching_eager_provider_bumps_custody_generation() {
+    // The p2p sweep watches this counter to know it must re-request cells.
+    let mp = Mempool::new_with_sampling(64);
+    let before = mp.custody_generation();
+    mp.latch_eager_provider();
+    assert_ne!(
+        mp.custody_generation(),
+        before,
+        "latching must signal the sweep to back-fill missing columns"
+    );
+    // Already latched: no further work to signal.
+    let after = mp.custody_generation();
+    mp.latch_eager_provider();
+    assert_eq!(mp.custody_generation(), after);
 }
 
 // ── 2-provider gate ───────────────────────────────────────────────────────────

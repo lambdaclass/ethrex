@@ -711,9 +711,9 @@ impl PeerConnectionServer {
             {
                 warn!(error = %e, "prune_alternates failed during sweep");
             }
-            // EIP-8070: when the custody set changed (Engine API FCU v4),
-            // re-sample pending blob txs for the newly-custodied columns this
-            // peer can serve. Inert unless sampling is enabled.
+            // EIP-8070: when the custody set changed (Engine API FCU v4) or eager
+            // mode latched on, fetch the now-wanted columns this peer can serve for
+            // pending blob txs. Inert unless sampling is enabled.
             if state.blockchain.mempool.blob_sampling_enabled {
                 let generation = state.blockchain.mempool.custody_generation();
                 if generation != state.last_custody_generation {
@@ -726,7 +726,7 @@ impl PeerConnectionServer {
                         .peer_cell_mask(state.node.node_id())
                         .unwrap_or(None)
                         .unwrap_or(u128::MAX);
-                    match state.blockchain.mempool.blob_txs_missing_custody() {
+                    match state.blockchain.mempool.blob_txs_missing_cells() {
                         Ok(missing_list) => {
                             for (tx_hash, missing) in missing_list {
                                 let fetch_mask = missing & peer_available;
@@ -738,7 +738,7 @@ impl PeerConnectionServer {
                             }
                         }
                         Err(e) => {
-                            warn!(error = %e, "blob_txs_missing_custody failed during sweep")
+                            warn!(error = %e, "blob_txs_missing_cells failed during sweep")
                         }
                     }
                 }

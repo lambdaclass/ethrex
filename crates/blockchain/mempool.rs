@@ -737,6 +737,12 @@ impl Mempool {
             info!(
                 "Local payload build requested: latching EIP-8070 eager-provider mode (full blob payloads for every blob tx)"
             );
+            // Blob txs already pending were fetched as a sampler, so only custody
+            // columns are held — far short of the 64 needed to reconstruct a blob.
+            // Bumping the generation makes the p2p sweep back-fill the missing
+            // columns, so the pool holds complete blobs by the time transactions
+            // are selected.
+            self.custody_generation.fetch_add(1, Ordering::Relaxed);
         }
     }
 
@@ -1567,19 +1573,27 @@ impl Mempool {
         self.custody_generation.load(Ordering::Relaxed)
     }
 
-    /// For every pending blob tx, the custody columns we do NOT yet hold cells
-    /// for. Used by the p2p sweep to re-sample after a custody expansion.
-    /// Only returns entries with a non-empty missing mask.
-    pub fn blob_txs_missing_custody(&self) -> Result<Vec<(H256, u128)>, StoreError> {
+    /// For every pending blob tx, the columns we want but do NOT yet hold cells
+    /// for. Used by the p2p sweep to fill the gap after a custody expansion or
+    /// after eager mode latched on. Only returns entries with a non-empty mask.
+    ///
+    /// An eager provider wants every column, since it must hold complete blob data
+    /// for any tx it may include in a payload (EIP-8070, "Execution clients ::
+    /// Local block builders"). Otherwise the custody set is the target.
+    pub fn blob_txs_missing_cells(&self) -> Result<Vec<(H256, u128)>, StoreError> {
         let inner = self.read()?;
-        let custody = inner.custody_columns;
-        if custody == 0 {
+        let wanted = if self.is_eager_provider() {
+            u128::MAX
+        } else {
+            inner.custody_columns
+        };
+        if wanted == 0 {
             return Ok(Vec::new());
         }
         let mut out = Vec::new();
         for tx_hash in inner.blobs_bundle_pool.keys() {
             let have = inner.cells.get(tx_hash).map(|tc| tc.mask()).unwrap_or(0);
-            let missing = custody & !have;
+            let missing = wanted & !have;
             if missing != 0 {
                 out.push((*tx_hash, missing));
             }
