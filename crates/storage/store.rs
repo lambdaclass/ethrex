@@ -224,6 +224,17 @@ pub struct Store {
     /// Cloning `Store` shares this cell across all clones, which is required and correct.
     safe_commit_root: Arc<RwLock<H256>>,
 
+    /// While set, `forkchoice_update_inner` skips STATE_HISTORY pruning (the
+    /// finalized-number update still lands). Set by `Blockchain::enter_reorg` for
+    /// the duration of a deep-reorg apply pass: `Overlay::from_journal` reads
+    /// journal entries one by one with no snapshot isolation, and syncer-driven
+    /// forkchoice updates are not gated by the reorg mutex, so a concurrent
+    /// finality advance could otherwise prune entries out from under overlay
+    /// construction (spurious `MissingEntry`) or between a case-1 attempt and its
+    /// retry. Pruning catches up on the first finality advance after the pass
+    /// ends (`delete_range` is cumulative).
+    journal_pruning_paused: Arc<std::sync::atomic::AtomicBool>,
+
     background_threads: Arc<ThreadList>,
 }
 
@@ -1215,6 +1226,7 @@ impl Store {
     ) -> Result<(), StoreError> {
         let latest = self.load_latest_block_number().await?.unwrap_or(0);
         let db = self.backend.clone();
+        let journal_pruning_paused = self.journal_pruning_paused.clone();
         tokio::task::spawn_blocking(move || {
             let mut txn = db.begin_write()?;
 
@@ -1279,7 +1291,16 @@ impl Store {
                 // in the same atomic txn. `delete_range` is half-open `[start, end)`,
                 // so `end = finalized + 1`. STATE_HISTORY uses big-endian keys, so
                 // lexicographic byte order matches numeric order.
-                if finalized > prev_finalized {
+                //
+                // Skipped while a deep-reorg apply pass is in flight
+                // (`journal_pruning_paused`): `Overlay::from_journal` reads entries
+                // with no snapshot isolation, so pruning mid-construction fails it
+                // with a spurious `MissingEntry`. The finalized-number update above
+                // still lands; pruning catches up on the next advance after the
+                // pass ends because `delete_range` is cumulative from zero.
+                if finalized > prev_finalized
+                    && !journal_pruning_paused.load(std::sync::atomic::Ordering::Acquire)
+                {
                     let start = 0u64.to_be_bytes();
                     let end = finalized.saturating_add(1).to_be_bytes();
                     txn.delete_range(STATE_HISTORY, &start, &end)?;
@@ -1930,6 +1951,7 @@ impl Store {
             code_metadata_cache: Arc::new(Mutex::new(rustc_hash::FxHashMap::default())),
             fcu_lock: Arc::new(tokio::sync::Mutex::new(())),
             safe_commit_root,
+            journal_pruning_paused: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             background_threads: Default::default(),
         };
         let backend_clone = store.backend.clone();
@@ -2733,7 +2755,14 @@ impl Store {
         let read_view = self.backend.begin_read()?;
         let cache = self.gated_snapshot(state_root)?;
         let last_written = self.last_written()?;
-        let use_fkv = Self::flatkeyvalue_computed_with_last_written(account_hash, &last_written);
+        // While a deep-reorg overlay serves this root, flat-KV reads must
+        // go through the trie: journal entries written while the FKV generator was
+        // running lack pre-images for keys past the generator frontier, so disk
+        // flat-KV may hold the generator's stale values. `TrieWrapper` already
+        // forces the trie-node read path in this window; mirror the gate here so
+        // the EMPTY_TRIE_HASH shortcut doesn't bypass it.
+        let use_fkv = Self::flatkeyvalue_computed_with_last_written(account_hash, &last_written)
+            && !cache.overlay_serves(state_root);
 
         let storage_root = if use_fkv {
             // We will use FKVs, we don't need the root
@@ -2783,9 +2812,14 @@ impl Store {
         let last_written = self.last_written()?;
         // When FKV is active the real storage root is in the flatkeyvalue store,
         // not in the account's RLP-encoded storage_root field. Use EMPTY_TRIE_HASH
-        // so open_storage_trie_shared falls through to the FKV path.
+        // so open_storage_trie_shared falls through to the FKV path. While a
+        // deep-reorg overlay serves this root, keep the real root instead:
+        // disk flat-KV may hold stale generator values, so reads must go through
+        // the trie (see `TrieWrapper::flatkeyvalue_computed`).
         let storage_root =
-            if Self::flatkeyvalue_computed_with_last_written(account_hash, &last_written) {
+            if Self::flatkeyvalue_computed_with_last_written(account_hash, &last_written)
+                && !cache.overlay_serves(state_root)
+            {
                 *EMPTY_TRIE_HASH
             } else {
                 storage_root
@@ -3037,6 +3071,14 @@ impl Store {
         // unnecessarily fall back to the trie when the cursor sits inside an
         // account's storage sweep (the account leaf is already in FKV at that
         // point; see `flatkeyvalue_generator`).
+        //
+        // While a deep-reorg overlay serves this root, skip the FKV fast
+        // path entirely: this function never consults the overlay, and disk
+        // flat-KV may hold values the generator computed against the chain being
+        // reorged away (journal entries written during generation lack
+        // past-frontier flat-KV pre-images). The per-address trie fallback goes
+        // through `TrieWrapper`, which routes reads through the overlay.
+        let overlay_active = trie_cache.overlay_serves(state_root);
         let fkv_cursor: &[u8] = last_written.as_slice();
         for (i, path) in leaf_paths.iter().enumerate() {
             if let Some(value) = trie_cache.get(state_root, path.as_slice()) {
@@ -3045,7 +3087,7 @@ impl Store {
                 }
                 continue;
             }
-            if fkv_cursor >= path.as_slice() {
+            if !overlay_active && fkv_cursor >= path.as_slice() {
                 fkv_indices.push(i);
             } else {
                 trie_indices.push(i);
@@ -3146,6 +3188,14 @@ impl Store {
         // nibble bytes. `Nibbles` orders by its inner `data` vec, so the raw
         // slice comparison is byte-identical to the `Nibbles >= Nibbles` check
         // in `BackendTrieDB::flatkeyvalue_computed`.
+        //
+        // While a deep-reorg overlay serves this root, skip the FKV fast
+        // path entirely: this function never consults the overlay, and disk
+        // flat-KV may hold values the generator computed against the chain being
+        // reorged away (journal entries written during generation lack
+        // past-frontier flat-KV pre-images). The per-address trie fallback goes
+        // through `TrieWrapper`, which routes reads through the overlay.
+        let overlay_active = trie_cache.overlay_serves(state_root);
         let fkv_cursor: &[u8] = last_written.as_slice();
         for (i, path) in leaf_paths.iter().enumerate() {
             // Diff-layer cache holds the authoritative latest value for this
@@ -3158,7 +3208,7 @@ impl Store {
                 }
                 continue;
             }
-            if fkv_cursor >= path.as_slice() {
+            if !overlay_active && fkv_cursor >= path.as_slice() {
                 fkv_indices.push(i);
             } else {
                 trie_indices.push(i);
@@ -3869,33 +3919,37 @@ impl Store {
             TrieLayerCache::new_with_safe_commit(threshold, self.safe_commit_root.clone());
         fresh.set_overlay(Arc::new(overlay));
 
-        // Wait for the persist worker to be idle before swapping the cache. That
-        // worker owns the trie-layer install (`apply_trie_phase1`, run from the
-        // `PersistMessage::Block` handler): it reads `trie_cache`, mutates a local
-        // clone, and RCU-writes it back; if it is mid-flight when we install, its
-        // write-back can clobber the overlay we are about to set. `PersistMessage::Ping`
-        // carries an ack channel and the worker is FIFO, so its ack proves every
-        // earlier `Block` (and thus every earlier trie install) is fully processed
-        // and the worker is back at `rx.recv()`. This is the synchronous core of
-        // [`wait_for_persistence_idle`]; we inline it here because this fn is not
-        // async. With our subsequent `trie_cache.write()` serialising any future
-        // RCU, the install is now safe.
+        // Wait for the persist worker to be idle before swapping the cache (see
+        // [`Self::rendezvous_persist_worker`]).
+        self.rendezvous_persist_worker("install_overlay_for_reorg")?;
+
+        let mut guard = self.trie_cache.write().map_err(|_| StoreError::LockError)?;
+        *guard = Arc::new(fresh);
+        Ok(())
+    }
+
+    /// Waits for the persist worker to be idle before a layer-cache swap. That
+    /// worker owns the trie-layer install (`apply_trie_phase1`, run from the
+    /// `PersistMessage::Block` handler): it reads `trie_cache`, mutates a local
+    /// clone, and RCU-writes it back; if it is mid-flight when we swap, its
+    /// write-back can clobber the freshly swapped cache (e.g. drop a just-installed
+    /// overlay, or install a side-chain layer over a base that no longer has the
+    /// overlay underneath). `PersistMessage::Ping` carries an ack channel and the
+    /// worker is FIFO, so its ack proves every earlier `Block` (and thus every
+    /// earlier trie install) is fully processed and the worker is back at
+    /// `rx.recv()`. This is the synchronous core of [`wait_for_persistence_idle`];
+    /// we inline it here because callers are not async. The caller's subsequent
+    /// `trie_cache.write()` serialising any future RCU makes the swap safe.
+    fn rendezvous_persist_worker(&self, caller: &str) -> Result<(), StoreError> {
         let (ack_tx, ack_rx) = sync_channel::<Result<(), StoreError>>(1);
         self.persist_tx
             .send(PersistMessage::Ping(ack_tx))
             .map_err(|e| {
-                StoreError::Custom(format!(
-                    "install_overlay_for_reorg: failed to ping persist worker: {e}"
-                ))
+                StoreError::Custom(format!("{caller}: failed to ping persist worker: {e}"))
             })?;
         ack_rx.recv().map_err(|e| {
-            StoreError::Custom(format!(
-                "install_overlay_for_reorg: persist worker ping ack failed: {e}"
-            ))
+            StoreError::Custom(format!("{caller}: persist worker ping ack failed: {e}"))
         })??;
-
-        let mut guard = self.trie_cache.write().map_err(|_| StoreError::LockError)?;
-        *guard = Arc::new(fresh);
         Ok(())
     }
 
@@ -3928,6 +3982,7 @@ impl Store {
     /// untouched (still at the OLD chain's `D`), so subsequent FCU evaluations
     /// start from a clean foundation.
     pub fn abort_reorg(&self) -> Result<(), StoreError> {
+        self.rendezvous_persist_worker("abort_reorg")?;
         let mut guard = self.trie_cache.write().map_err(|_| StoreError::LockError)?;
         let threshold = guard.commit_threshold();
         *guard = Arc::new(TrieLayerCache::new_with_safe_commit(
@@ -3935,6 +3990,14 @@ impl Store {
             self.safe_commit_root.clone(),
         ));
         Ok(())
+    }
+
+    /// Pauses or resumes STATE_HISTORY pruning at finality advance (see the
+    /// `journal_pruning_paused` field). Called by `Blockchain::enter_reorg` /
+    /// `ReorgGuard::drop` to bracket a deep-reorg apply pass.
+    pub fn set_journal_pruning_paused(&self, paused: bool) {
+        self.journal_pruning_paused
+            .store(paused, std::sync::atomic::Ordering::Release);
     }
 
     /// Takes a block hash and returns an iterator to its ancestors. Block headers are returned
@@ -4581,6 +4644,19 @@ fn commit_to_disk(
         None
     };
 
+    // While an overlay is installed, commit only the bottom layer per pass. The
+    // reconciliation below is defined for a single layer at the pivot tip `T`: bridge
+    // entries are folded into that layer's writes, [T, D] is delete_ranged, and T's
+    // journal entry records pre-images against the pivot. A multi-layer sweep would
+    // journal upper layers' pre-images against old-chain disk instead of the
+    // new-chain/bridge state, silently corrupting a future unwind. The backlog above
+    // `T` drains in later passes, after this commit clears the overlay.
+    let root = if overlay_for_reconciliation.is_some() {
+        trie.bottom_layer_root(root)
+    } else {
+        root
+    };
+
     let committed_layers = trie_mut.commit(root).ok_or_else(|| {
         StoreError::Custom(format!(
             "commit({root:?}) returned None; layer cache invariant violated"
@@ -4646,10 +4722,15 @@ fn commit_to_disk(
 
         // The reconciliation commit is single-layer at `T`; fold the overlay bridge entries
         // into that layer's writes so they land in T's journal entry. `extra` is empty in
-        // steady state (no overlay) and for any non-T layer.
-        let is_reconciliation_layer = reorg_heights
-            .map(|(t, _)| layer.block_number == t)
-            .unwrap_or(false);
+        // steady state (no overlay).
+        // With the bottom-layer-only rule above, a commit made while the overlay
+        // is installed always contains exactly this one (bottom) layer, so it is
+        // the reconciliation layer by construction. Matching by block number
+        // (`layer.block_number == to_block`) would be fragile: root-preserving
+        // blocks create no layer (L2 empty blocks), so the bottom layer can sit
+        // above `to_block` and the bridge entries would be neither written nor
+        // journaled before the overlay is cleared.
+        let is_reconciliation_layer = overlay_for_reconciliation.is_some();
         let extra: &[(Vec<u8>, Vec<u8>)] = if is_reconciliation_layer {
             &extra_writes
         } else {
@@ -5906,6 +5987,317 @@ mod state_history_tests {
         // Calling again is still a no-op.
         store.clear_reorg_overlay().unwrap();
         assert!(store.trie_cache.read().unwrap().overlay().is_none());
+    }
+
+    /// Regression test: journal entries written while the FKV generator
+    /// was running lack flat-KV pre-images for keys past the generator frontier,
+    /// and the generator's own flat-KV writes are never journaled. While an
+    /// overlay serves the read's state root, every flat-KV fast path must be
+    /// disabled so reads fall back to the (always journaled) trie nodes;
+    /// otherwise they serve the generator's stale values for the chain being
+    /// reorged away. Roots the overlay does not serve must keep the fast path.
+    #[tokio::test]
+    async fn deep_reorg_overlay_disables_flat_kv_fast_paths() {
+        let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::open().unwrap());
+
+        // Simulate a finished FKV generation BEFORE the Store boots, so its
+        // in-memory frontier starts at [0xff; 64] and every path counts as
+        // "computed" (the Store expands the durable [0xff] sentinel at open).
+        {
+            let mut tx = backend.begin_write().unwrap();
+            tx.put(MISC_VALUES, "last_written".as_bytes(), &[0xff])
+                .unwrap();
+            tx.commit().unwrap();
+        }
+
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::from_backend(
+            backend.clone(),
+            dir.path().to_path_buf(),
+            1,
+            DEFAULT_PERSIST_CHANNEL_CAPACITY,
+        )
+        .unwrap();
+
+        // The pivot state is empty, so the correct value for every read at the
+        // pivot root is None. The old chain created the account/slot after the
+        // pivot; the generator then wrote their flat-KV leaves against the old
+        // chain — writes that are never journaled.
+        let address = Address::from_low_u64_be(0xbeef);
+        let account_hash = hash_address_fixed(&address);
+        let slot = H256::from_low_u64_be(1);
+        let slot_hash = hash_key_fixed(&slot);
+        let generator_account = AccountState {
+            nonce: 7,
+            balance: U256::from(999u64),
+            storage_root: H256::zero(),
+            code_hash: H256::zero(),
+        };
+        let generator_slot_value = U256::from(42u64);
+        {
+            let mut tx = backend.begin_write().unwrap();
+            tx.put(
+                ACCOUNT_FLATKEYVALUE,
+                &Nibbles::from_bytes(account_hash.as_bytes()).into_vec(),
+                &generator_account.encode_to_vec(),
+            )
+            .unwrap();
+            tx.put(
+                STORAGE_FLATKEYVALUE,
+                &apply_prefix(Some(account_hash), Nibbles::from_bytes(&slot_hash)).into_vec(),
+                &generator_slot_value.encode_to_vec(),
+            )
+            .unwrap();
+            tx.commit().unwrap();
+        }
+
+        // Journal entries for blocks 10 and 11 above the pivot (block 9), as
+        // written DURING generation: flat diffs are empty because the keys were
+        // past the frontier at commit time (the incomplete-journal hole). The pivot's state
+        // root is the empty trie.
+        let pivot_root = *EMPTY_TRIE_HASH;
+        {
+            let mut tx = backend.begin_write().unwrap();
+            for (n, parent_root) in [(10u64, pivot_root), (11, H256::repeat_byte(0x10))] {
+                let entry = JournalEntry {
+                    block_hash: H256::repeat_byte(n as u8),
+                    parent_state_root: parent_root,
+                    account_trie_diff: vec![],
+                    storage_trie_diff: vec![],
+                    account_flat_diff: vec![],
+                    storage_flat_diff: vec![],
+                };
+                tx.put(STATE_HISTORY, &n.to_be_bytes(), &entry.encode())
+                    .unwrap();
+            }
+            tx.commit().unwrap();
+        }
+
+        store
+            .install_overlay_for_reorg(11, 10, |_| None)
+            .expect("overlay install must succeed");
+
+        // Reads at the pivot root must return the pivot state (account and slot
+        // absent), NOT the generator's stale flat-KV values.
+        let accounts = store
+            .get_account_states_batch_by_root(pivot_root, &[address])
+            .unwrap();
+        assert_eq!(
+            accounts,
+            vec![None],
+            "batch account read must not serve the generator's stale flat-KV value"
+        );
+
+        let slot_value = store
+            .get_storage_at_root(pivot_root, address, slot)
+            .unwrap();
+        assert_eq!(
+            slot_value, None,
+            "storage read must not serve the generator's stale flat-KV value"
+        );
+
+        let state_trie = store.open_state_trie(pivot_root).unwrap();
+        assert_eq!(
+            state_trie.get(account_hash.as_bytes()).unwrap(),
+            None,
+            "trie read must not serve the generator's stale flat-KV value"
+        );
+
+        // Outside the overlay window the fast paths are untouched: a root the
+        // overlay does not serve still reads flat-KV straight from disk.
+        let unserved_root = H256::repeat_byte(0x99);
+        let accounts = store
+            .get_account_states_batch_by_root(unserved_root, &[address])
+            .unwrap();
+        assert_eq!(
+            accounts,
+            vec![Some(generator_account)],
+            "unserved roots must keep the flat-KV fast path"
+        );
+        let slot_value = store
+            .get_storage_at_root(unserved_root, address, slot)
+            .unwrap();
+        assert_eq!(
+            slot_value,
+            Some(generator_slot_value),
+            "unserved roots must keep the flat-KV fast path"
+        );
+    }
+
+    /// Adversarial regression for the multi-layer reconciliation finding: with an
+    /// overlay installed, a commit targeting a root SEVERAL layers above the pivot
+    /// must commit ONLY the bottom layer (the pivot tip `T`) per pass. Before the
+    /// fix this swept every layer at once: the `debug_assert!(len == 1)` panicked in
+    /// debug builds, and in release the upper layers' journal entries recorded
+    /// pre-images against the OLD-chain disk state instead of the new-chain/bridge
+    /// state — silent corruption for a future unwind.
+    #[tokio::test]
+    async fn overlay_backed_commit_only_commits_bottom_layer_per_pass() {
+        let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::open().unwrap());
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::from_backend(
+            backend.clone(),
+            dir.path().to_path_buf(),
+            4,
+            DEFAULT_PERSIST_CHANNEL_CAPACITY,
+        )
+        .unwrap();
+
+        // Pivot at block 9's root; journal entries for blocks 10 and 11 (the old
+        // chain above the pivot). The overlay serves the pivot root.
+        let pivot_root = H256::repeat_byte(0x09);
+        {
+            let mut tx = backend.begin_write().unwrap();
+            for (n, parent_root) in [(10u64, pivot_root), (11, H256::repeat_byte(0x0a))] {
+                let entry = JournalEntry {
+                    block_hash: H256::repeat_byte(n as u8),
+                    parent_state_root: parent_root,
+                    account_trie_diff: vec![(vec![0x00, n as u8], None)],
+                    storage_trie_diff: vec![],
+                    account_flat_diff: vec![],
+                    storage_flat_diff: vec![],
+                };
+                tx.put(STATE_HISTORY, &n.to_be_bytes(), &entry.encode())
+                    .unwrap();
+            }
+            tx.commit().unwrap();
+        }
+        store.install_overlay_for_reorg(11, 10, |_| None).unwrap();
+
+        // Three new-chain layers above the pivot: blocks 10, 11, 12.
+        let roots: Vec<H256> = (10..=12u8).map(H256::repeat_byte).collect();
+        {
+            let mut guard = store.trie_cache.write().unwrap();
+            let mut updated = (**guard).clone();
+            let mut parent = pivot_root;
+            for (i, root) in roots.iter().enumerate() {
+                let n = 10 + i as u64;
+                updated.put_batch(
+                    parent,
+                    *root,
+                    n,
+                    H256::repeat_byte(n as u8),
+                    vec![(Nibbles::from_raw(&[0x01, n as u8], false), vec![n as u8])],
+                );
+                parent = *root;
+            }
+            *guard = Arc::new(updated);
+        }
+
+        // Commit targeting the TOP layer (3 deep). With the overlay installed this
+        // MUST reduce to the bottom layer only.
+        let trie = store.trie_cache.read().unwrap().clone();
+        commit_to_disk(
+            store.backend.as_ref(),
+            &store.flatkeyvalue_control_tx,
+            &store.trie_cache,
+            &trie,
+            roots[2],
+            false,
+        )
+        .expect("bottom-layer commit must succeed (no debug_assert panic)");
+
+        // Only the bottom layer (block 10) is committed and pruned; 11 and 12 stay resident.
+        assert!(
+            !store.is_state_in_layer_cache(roots[0]).unwrap(),
+            "bottom layer must be committed and pruned"
+        );
+        assert!(
+            store.is_state_in_layer_cache(roots[1]).unwrap()
+                && store.is_state_in_layer_cache(roots[2]).unwrap(),
+            "upper layers must remain resident after the bottom-layer-only commit"
+        );
+        // The overlay was consumed by the reconciliation commit.
+        assert!(
+            store.trie_cache.read().unwrap().overlay().is_none(),
+            "reconciliation must clear the overlay"
+        );
+        // Journal: an entry exists for block 10, none yet for 11/12.
+        assert!(
+            journal_entry_exists(&backend, 10),
+            "bottom layer T must be journaled"
+        );
+        assert!(!journal_entry_exists(&backend, 11));
+        assert!(!journal_entry_exists(&backend, 12));
+
+        // The reconciliation fold MUST land in the bottom layer's journal entry:
+        // the overlay's bridge keys (untouched by the layer) appear with their
+        // old-chain pre-images. This is what block-number-keyed reconciliation
+        // matching loses when the bottom layer sits above `to_block`.
+        let entry_bytes = backend
+            .begin_read()
+            .unwrap()
+            .get(STATE_HISTORY, &10u64.to_be_bytes())
+            .unwrap()
+            .expect("journal entry for block 10");
+        let entry = JournalEntry::decode(&entry_bytes).unwrap();
+        let diff_keys: Vec<&Vec<u8>> = entry.account_trie_diff.iter().map(|(k, _)| k).collect();
+        assert!(
+            diff_keys.contains(&&vec![0x00, 10]) && diff_keys.contains(&&vec![0x00, 11]),
+            "bridge keys from the overlay must be folded into T's journal entry, got {diff_keys:?}"
+        );
+
+        // Second pass: with the overlay gone the remaining backlog commits normally.
+        let trie = store.trie_cache.read().unwrap().clone();
+        commit_to_disk(
+            store.backend.as_ref(),
+            &store.flatkeyvalue_control_tx,
+            &store.trie_cache,
+            &trie,
+            roots[2],
+            false,
+        )
+        .unwrap();
+        assert!(!store.is_state_in_layer_cache(roots[1]).unwrap());
+        assert!(!store.is_state_in_layer_cache(roots[2]).unwrap());
+        assert!(journal_entry_exists(&backend, 11));
+        assert!(journal_entry_exists(&backend, 12));
+    }
+
+    /// Adversarial regression for the journal-pruning race: while a deep-reorg
+    /// apply pass holds the pause flag, a finality advance must NOT prune
+    /// STATE_HISTORY (a concurrent `Overlay::from_journal` reads entries with no
+    /// snapshot isolation). Pruning must catch up once the pause is released.
+    #[tokio::test]
+    async fn journal_pruning_pauses_during_reorg_and_catches_up_after() {
+        let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::open().unwrap());
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::from_backend(
+            backend.clone(),
+            dir.path().to_path_buf(),
+            1,
+            DEFAULT_PERSIST_CHANNEL_CAPACITY,
+        )
+        .unwrap();
+
+        seed_journal_entries(&backend, &(1..=5).collect::<Vec<_>>());
+
+        // Paused: finality advance to 3 must not prune anything.
+        store.set_journal_pruning_paused(true);
+        store
+            .forkchoice_update_inner(vec![], 100, H256::zero(), None, Some(3))
+            .await
+            .unwrap();
+        for n in 1..=5 {
+            assert!(
+                journal_entry_exists(&backend, n),
+                "entry {n} must survive pruning while the reorg pause is held"
+            );
+        }
+
+        // Released: the next advance prunes cumulatively from zero.
+        store.set_journal_pruning_paused(false);
+        store
+            .forkchoice_update_inner(vec![], 100, H256::zero(), None, Some(4))
+            .await
+            .unwrap();
+        for n in 1..=4 {
+            assert!(
+                !journal_entry_exists(&backend, n),
+                "entry {n} must be pruned once the pause is released"
+            );
+        }
+        assert!(journal_entry_exists(&backend, 5));
     }
 }
 

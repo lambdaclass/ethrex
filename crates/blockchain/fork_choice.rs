@@ -243,6 +243,20 @@ pub async fn apply_fork_choice(
         METRICS_BLOCKS.set_head_height(head.number);
     );
 
+    // Keep the journal-length gauge current in steady state (it shrinks as
+    // finality pruning runs), not just after deep reorgs. O(1) via first/last key.
+    metrics!(
+        use ethrex_metrics::reorg::METRICS_REORG;
+        let journal_len = match (
+            store.lowest_state_history_block_number(),
+            store.highest_state_history_block_number(),
+        ) {
+            (Ok(Some(lo)), Ok(Some(hi))) => hi.saturating_sub(lo).saturating_add(1) as i64,
+            _ => 0,
+        };
+        METRICS_REORG.journal_length.set(journal_len);
+    );
+
     Ok(head)
 }
 
@@ -428,8 +442,9 @@ async fn reorg_apply_deep(
     // overlay would serve stale flat-KV values. Until generation completes we return SYNCING
     // and the CL retries once it finishes.
     // NOTE: this only closes the common case (reorg *during* generation). Entries written
-    // during generation remain permanently incomplete, so a later reorg that unwinds into
-    // them (before they finalize and are pruned) is still exposed. Full fix tracked in #7001.
+    // during generation remain permanently incomplete, but reads while an overlay is
+    // installed fall back to the (always journaled) trie nodes, so a later reorg that
+    // unwinds into them is still served correct state.
     if !store.flatkeyvalue_fully_generated()? {
         info!(%head_hash, "deferring deep-reorg apply: flat-KV generation still in progress");
         return Err(InvalidForkChoice::Syncing);
@@ -473,7 +488,11 @@ async fn reorg_apply_deep(
 
     metrics!(
         use ethrex_metrics::reorg::METRICS_REORG;
-        let reorg_depth = head.number.saturating_sub(pivot_number);
+        // Reverted depth (old-chain blocks unwound), matching the TooDeepReorg
+        // gate's definition. `head - pivot` would report ~0/1 for the
+        // canonical-head case no matter how deep the unwind.
+        let latest = store.get_latest_block_number().await.unwrap_or(head.number);
+        let reorg_depth = latest.saturating_sub(pivot_number);
         METRICS_REORG.reorg_depth_hist.observe(reorg_depth as f64);
     );
 
@@ -543,42 +562,27 @@ async fn reorg_apply_deep(
             .collect()
     };
 
-    #[cfg(feature = "metrics")]
-    let mut first_block = true;
-    for (number, block_hash) in replay_iter {
-        let block = match store.get_block_by_hash(block_hash).await? {
-            Some(b) => b,
-            None => {
-                warn!(%number, %block_hash, "deep-reorg: side-chain block body missing");
-                return Err(InvalidForkChoice::UnlinkedHead);
-            }
-        };
-        let parent_hash = block.header.parent_hash;
-        // The first add_block triggers the Section 9 reconciliation that folds the
-        // overlay into the first new-chain disk commit. Time just the add_block
-        // window so the histogram isolates the reconcile path (overlay-fold +
-        // commit) rather than the bulk side-chain replay.
-        #[cfg(feature = "metrics")]
-        let reconcile_start = first_block.then(std::time::Instant::now);
-        if let Err(e) = blockchain.add_block(block) {
-            error!(%number, %block_hash, error = %e, "deep-reorg: side-chain block execution failed");
-            // `parent_hash` is the last block we replayed successfully (or the
-            // pivot for the first iteration), i.e. the deepest still-valid head
-            // on the new chain ; the correct `latestValidHash` for an INVALID
-            // response.
-            return Err(map_chain_error_for_fcu(e, parent_hash));
-        }
-        #[cfg(feature = "metrics")]
-        if let Some(start) = reconcile_start {
-            first_block = false;
-            metrics!(
-                use ethrex_metrics::reorg::METRICS_REORG;
-                METRICS_REORG
-                    .reconcile_duration_hist
-                    .observe(start.elapsed().as_secs_f64());
-            );
-        }
-    }
+    // Run the replay on a dedicated large-stack thread: block execution (EVM +
+    // trie merkleization) recurses deeply, and tokio worker threads have small
+    // stacks — executing a long side chain inline overflows the worker stack
+    // (marginal and layout-dependent in debug builds). The thread is scoped, so
+    // borrows stay local; the FCU task blocks on it exactly as it did on the
+    // inline loop.
+    let handle = tokio::runtime::Handle::current();
+    std::thread::scope(|scope| {
+        std::thread::Builder::new()
+            .name("deep-reorg-replay".to_string())
+            .stack_size(DEEP_REORG_REPLAY_STACK_SIZE)
+            .spawn_scoped(scope, move || {
+                run_reorg_replay(&handle, blockchain, store, replay_iter)
+            })
+            .map_err(|e| {
+                error!(error = %e, "deep-reorg: failed to spawn replay thread");
+                InvalidForkChoice::Syncing
+            })?
+            .join()
+            .unwrap_or_else(|payload| std::panic::resume_unwind(payload))
+    })?;
 
     let safe_res = if !safe_hash.is_zero() {
         store.get_block_header_by_hash(safe_hash)?
@@ -634,6 +638,61 @@ async fn reorg_apply_deep(
     );
 
     Ok(head)
+}
+
+/// Stack size for the dedicated deep-reorg replay thread. Block execution (EVM +
+/// recursive trie merkleization) recurses deeply, and tokio worker threads have
+/// small stacks — a long side-chain replay executed inline overflows the worker
+/// stack (marginal and layout-dependent in debug builds).
+const DEEP_REORG_REPLAY_STACK_SIZE: usize = 16 * 1024 * 1024;
+
+/// Executes the side-chain replay loop for [`reorg_apply_deep`] on the calling
+/// (dedicated, large-stack) thread. The loop body is synchronous except for the
+/// per-block fetch, which is driven via `handle.block_on` — legal here because
+/// this runs outside the async runtime's worker threads.
+fn run_reorg_replay(
+    handle: &tokio::runtime::Handle,
+    blockchain: &Blockchain,
+    store: &Store,
+    replay_iter: Vec<(BlockNumber, H256)>,
+) -> Result<(), InvalidForkChoice> {
+    #[cfg(feature = "metrics")]
+    let mut first_block = true;
+    for (number, block_hash) in replay_iter {
+        let block = match handle.block_on(store.get_block_by_hash(block_hash))? {
+            Some(b) => b,
+            None => {
+                warn!(%number, %block_hash, "deep-reorg: side-chain block body missing");
+                return Err(InvalidForkChoice::UnlinkedHead);
+            }
+        };
+        let parent_hash = block.header.parent_hash;
+        // The first add_block triggers the reconciliation that folds the
+        // overlay into the first new-chain disk commit. Time just the add_block
+        // window so the histogram isolates the reconcile path (overlay-fold +
+        // commit) rather than the bulk side-chain replay.
+        #[cfg(feature = "metrics")]
+        let reconcile_start = first_block.then(std::time::Instant::now);
+        if let Err(e) = blockchain.add_block(block) {
+            error!(%number, %block_hash, error = %e, "deep-reorg: side-chain block execution failed");
+            // `parent_hash` is the last block we replayed successfully (or the
+            // pivot for the first iteration), i.e. the deepest still-valid head
+            // on the new chain ; the correct `latestValidHash` for an INVALID
+            // response.
+            return Err(map_chain_error_for_fcu(e, parent_hash));
+        }
+        #[cfg(feature = "metrics")]
+        if let Some(start) = reconcile_start {
+            first_block = false;
+            metrics!(
+                use ethrex_metrics::reorg::METRICS_REORG;
+                METRICS_REORG
+                    .reconcile_duration_hist
+                    .observe(start.elapsed().as_secs_f64());
+            );
+        }
+    }
+    Ok(())
 }
 
 /// RAII guard that calls [`Store::abort_reorg`] on drop, resetting the layer

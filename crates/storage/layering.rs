@@ -274,6 +274,25 @@ impl TrieLayerCache {
         self.layers.len()
     }
 
+    /// Returns the root of the oldest layer in the layer chain containing `root` — i.e.
+    /// walks parents until reaching a layer whose parent is not itself a layer. Returns
+    /// `root` unchanged if it has no layer.
+    ///
+    /// Used to force single-layer commits while a deep-reorg overlay is installed: the
+    /// reconciliation in `commit_to_disk` is defined for exactly one layer at the pivot
+    /// tip `T`, and a multi-layer sweep would journal upper layers' pre-images against
+    /// the old-chain disk state instead of the new-chain/bridge state.
+    pub(crate) fn bottom_layer_root(&self, root: H256) -> H256 {
+        let mut current = root;
+        while let Some(layer) = self.layers.get(&current) {
+            if !self.layers.contains_key(&layer.parent) {
+                break;
+            }
+            current = layer.parent;
+        }
+        current
+    }
+
     fn create_filter(expected_items: usize) -> AtomicBloomFilter<FxBuildHasher> {
         AtomicBloomFilter::with_false_pos(FALSE_POSITIVE_RATE)
             .hasher(FxBuildHasher)
@@ -327,9 +346,12 @@ impl TrieLayerCache {
         if safe_root.is_zero() {
             return None;
         }
-        // (c) The executed parent IS the safe-commit root; commit immediately.
+        // (c) The executed parent IS the safe-commit root. Still requires a layer: a
+        // canonical root need not have one (`put_batch` skips blocks whose state root equals
+        // their parent's, which on L2 is every empty block). Branch (d) gets this for free
+        // by walking `layers`.
         if parent_state_root == safe_root {
-            return Some(safe_root);
+            return self.has_layer(safe_root).then_some(safe_root);
         }
         // (d) Walk the layer parent-chain from parent_state_root looking for safe_root.
         let mut current = parent_state_root;
@@ -567,6 +589,15 @@ pub fn apply_prefix(prefix: Option<H256>, path: Nibbles) -> Nibbles {
 
 impl TrieDB for TrieWrapper {
     fn flatkeyvalue_computed(&self, key: Nibbles) -> bool {
+        // While a deep-reorg overlay serves this root, flat-KV leaf reads must not
+        // trust disk: journal entries written while the FKV generator was running
+        // are permanently missing pre-images for keys past the generator frontier,
+        // and disk flat-KV may hold the generator's value for the chain
+        // being reorged away. Force the trie-node read path instead — trie nodes
+        // are always journaled, so the overlay reconstructs them completely.
+        if self.inner.overlay_serves(self.state_root) {
+            return false;
+        }
         // NOTE: we apply the prefix here, since the underlying TrieDB should
         // always be for the state trie.
         let key = match &self.prefix_nibbles {
@@ -1198,6 +1229,58 @@ mod overlay_tests {
         assert!(!cache.overlay_serves(new_chain));
     }
 
+    /// While an overlay serves the read's state root, `flatkeyvalue_computed`
+    /// must return false so `Trie::get` walks the (always journaled) trie nodes
+    /// instead of trusting disk flat-KV, which may hold the generator's stale,
+    /// unjournaled values. Roots the overlay does not serve must be unaffected.
+    #[test]
+    fn flatkeyvalue_computed_is_disabled_while_overlay_serves() {
+        struct AlwaysComputedDb;
+        impl TrieDB for AlwaysComputedDb {
+            fn flatkeyvalue_computed(&self, _key: Nibbles) -> bool {
+                true
+            }
+            fn get(&self, _key: Nibbles) -> Result<Option<Vec<u8>>, TrieError> {
+                Ok(None)
+            }
+            fn put_batch(&self, _key_values: Vec<(Nibbles, Vec<u8>)>) -> Result<(), TrieError> {
+                unimplemented!()
+            }
+        }
+
+        let pivot = h(0xaa);
+        let unrelated = h(0xcc);
+        let key = Nibbles::from_bytes(&[0x01; 32]);
+
+        let mut cache =
+            TrieLayerCache::new_with_safe_commit(128, Arc::new(RwLock::new(H256::zero())));
+        cache.set_overlay(Arc::new(Overlay {
+            serves_root: pivot,
+            ..Default::default()
+        }));
+        let cache = Arc::new(cache);
+
+        let served = TrieWrapper::new(pivot, cache.clone(), Box::new(AlwaysComputedDb), None);
+        assert!(
+            !served.flatkeyvalue_computed(key.clone()),
+            "served root must not trust disk flat-KV"
+        );
+
+        let unserved = TrieWrapper::new(unrelated, cache.clone(), Box::new(AlwaysComputedDb), None);
+        assert!(
+            unserved.flatkeyvalue_computed(key.clone()),
+            "unserved root must keep the flat-KV fast path"
+        );
+
+        // Same for storage tries (prefixed wrapper).
+        let served_storage =
+            TrieWrapper::new(pivot, cache, Box::new(AlwaysComputedDb), Some(h(0x01)));
+        assert!(
+            !served_storage.flatkeyvalue_computed(key),
+            "served storage root must not trust disk flat-KV"
+        );
+    }
+
     /// `lookup_overlay` is the entry point from the read cascade. It must short-circuit
     /// to `None` when no overlay is installed, regardless of key length.
     #[test]
@@ -1440,6 +1523,42 @@ mod tests {
         let (mut cache, _cell) = cache_with_cell(4, l3);
         build_chain(&mut cache, 3);
         assert_eq!(cache.get_commitable(l3), Some(l3));
+    }
+
+    /// (c2) Regression: `parent_state_root == safe_root` but that root has no layer, the steady
+    /// state on L2 where empty blocks keep their parent's root. Branch (c) used to match on the
+    /// root value alone and hand `commit_to_disk` something it could not commit.
+    #[test]
+    fn parent_equals_safe_root_without_layer_yields_none() {
+        let orphan = h256(7);
+        let (mut cache, _cell) = cache_with_cell(4, orphan);
+        // An empty block: parent == state_root, so `put_batch` inserts nothing.
+        cache.put_batch(orphan, orphan, 7, orphan, vec![]);
+        assert!(
+            !cache.has_layer(orphan),
+            "empty-block root must not create a layer"
+        );
+        assert_eq!(
+            cache.get_commitable(orphan),
+            None,
+            "a safe root with no layer is not committable, even when it equals the parent"
+        );
+    }
+
+    /// (c3) A flushed root is pruned by `commit`, so it must not be offered again.
+    #[test]
+    fn already_committed_safe_root_yields_none() {
+        let safe = h256(2);
+        let (mut cache, _cell) = cache_with_cell(4, safe);
+        build_chain(&mut cache, 3);
+        assert_eq!(cache.get_commitable(safe), Some(safe));
+        cache.commit(safe).expect("first commit flushes the layer");
+        assert!(!cache.has_layer(safe), "commit prunes the flushed layer");
+        assert_eq!(
+            cache.get_commitable(safe),
+            None,
+            "re-committing an already-flushed root must not be offered again"
+        );
     }
 
     /// (d) Safe root not an ancestor (never inserted as a layer) -> None, regardless of depth.
