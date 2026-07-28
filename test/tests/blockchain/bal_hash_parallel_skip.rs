@@ -13,7 +13,7 @@
 //! canonical BAL supplied (what the P2P-sync caller hands to the pipeline).
 //! Only `bal_parallel_exec_enabled` is flipped between the two imports.
 
-use std::{fs::File, io::BufReader, path::PathBuf};
+use std::{fs::File, io::BufReader, path::PathBuf, sync::Arc};
 
 use bytes::Bytes;
 use ethrex_blockchain::{
@@ -28,6 +28,7 @@ use ethrex_common::{
         block_access_list::BlockAccessList,
     },
 };
+use ethrex_crypto::NativeCrypto;
 use ethrex_storage::{EngineType, Store};
 
 fn workspace_root() -> PathBuf {
@@ -59,7 +60,9 @@ async fn build_valid_amsterdam_block(store: &Store) -> (Block, BlockAccessList) 
         random: H256::zero(),
         withdrawals: Some(Vec::new()),
         beacon_root: Some(H256::zero()),
-        slot_number: None,
+        // EIP-7843: Amsterdam headers must carry a slot_number, else header
+        // validation rejects the block before the BAL-hash check under test.
+        slot_number: Some(1),
         version: 1,
         elasticity_multiplier: ELASTICITY_MULTIPLIER,
         gas_ceil: DEFAULT_BUILDER_GAS_CEIL,
@@ -76,6 +79,7 @@ async fn build_valid_amsterdam_block(store: &Store) -> (Block, BlockAccessList) 
 async fn parallel_path_rejects_invalid_block_access_list_hash() {
     let build_store = setup_store().await;
     let (mut block, bal) = build_valid_amsterdam_block(&build_store).await;
+    let bal = Arc::new(bal);
 
     // The empty block still records a non-empty BAL via the EIP-4788 block-start
     // system call, so the fork-activation guard is not vacuous.
@@ -84,7 +88,7 @@ async fn parallel_path_rejects_invalid_block_access_list_hash() {
         "BAL should be non-empty (4788 system call)"
     );
 
-    let canonical_hash = bal.compute_hash();
+    let canonical_hash = bal.compute_hash(&NativeCrypto);
     let forged = H256([0xde; 32]);
     assert_ne!(canonical_hash, forged);
 
@@ -98,7 +102,7 @@ async fn parallel_path_rejects_invalid_block_access_list_hash() {
             ..Default::default()
         },
     );
-    let valid = bc_ok.add_block_pipeline_bal(block.clone(), Some(&bal));
+    let valid = bc_ok.add_block_pipeline_bal(block.clone(), Some(bal.clone()));
     assert!(
         valid.is_ok(),
         "parallel path must accept a block with a correct commitment, got: {valid:?}"
@@ -116,7 +120,7 @@ async fn parallel_path_rejects_invalid_block_access_list_hash() {
             ..Default::default()
         },
     );
-    let par = bc_par.add_block_pipeline_bal(block.clone(), Some(&bal));
+    let par = bc_par.add_block_pipeline_bal(block.clone(), Some(bal.clone()));
 
     // SEQUENTIAL: same block, same BAL, only the parallel flag flipped.
     let store_seq = setup_store().await;
@@ -127,7 +131,7 @@ async fn parallel_path_rejects_invalid_block_access_list_hash() {
             ..Default::default()
         },
     );
-    let seq = bc_seq.add_block_pipeline_bal(block.clone(), Some(&bal));
+    let seq = bc_seq.add_block_pipeline_bal(block.clone(), Some(bal.clone()));
 
     // Both paths must reject a forged commitment with the same error.
     assert!(

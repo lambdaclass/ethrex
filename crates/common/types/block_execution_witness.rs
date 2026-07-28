@@ -8,14 +8,13 @@ use crate::types::{Block, Code, CodeMetadata};
 use crate::{
     constants::EMPTY_KECCAK_HASH,
     types::{AccountState, AccountUpdate, BlockHeader, ChainConfig},
-    utils::keccak,
 };
 use ethereum_types::{Address, H256, U256};
-use ethrex_crypto::{Crypto, NativeCrypto};
+use ethrex_crypto::Crypto;
 use ethrex_rlp::error::RLPDecodeError;
 use ethrex_rlp::structs::{Decoder, Encoder};
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
-use ethrex_trie::{EMPTY_TRIE_HASH, Nibbles, Node, NodeRef, Trie, TrieError};
+use ethrex_trie::{EMPTY_TRIE_HASH, FxHashMap, Nibbles, Node, NodeRef, Trie, TrieError};
 use rkyv::with::{Identity, MapKV};
 use serde::{Deserialize, Serialize};
 
@@ -209,13 +208,14 @@ impl RpcExecutionWitness {
         chain_config: ChainConfig,
         first_block_number: u64,
         decoded_headers: &[BlockHeader],
+        crypto: &dyn Crypto,
     ) -> Result<ExecutionWitness, GuestProgramStateError> {
         let initial_state_root = find_parent_state_root(decoded_headers, first_block_number)?;
         // Drop the `0x80` Null-node sentinel some `debug_executionWitness` producers emit.
         // Undecodable/unused nodes are dropped per EELS
         // `test_validation_state_extra_unused_trie_node`; missing needed nodes surface
-        // later as `RootNotFound` from `get_embedded_root`.
-        let nodes: BTreeMap<H256, Node> = self
+        // later as `RootNotFound` from `get_embedded_root_committed`.
+        let nodes: FxHashMap<H256, Node> = self
             .state
             .into_iter()
             .filter_map(|b| {
@@ -223,13 +223,13 @@ impl RpcExecutionWitness {
                     return None;
                 }
                 let node = Node::decode(&b).ok()?;
-                Some((keccak(&b), node))
+                Some((H256(crypto.keccak256(&b)), node))
             })
             .collect();
 
         // get state trie root and embed the rest of the trie into it
         let state_trie_root = if let NodeRef::Node(state_trie_root, _) =
-            Trie::get_embedded_root(&nodes, initial_state_root)?
+            Trie::get_embedded_root_committed(&nodes, initial_state_root, crypto)?
         {
             Some((*state_trie_root).clone())
         } else {
@@ -246,16 +246,17 @@ impl RpcExecutionWitness {
                 Nibbles::from_raw(&[], false),
                 &mut accounts,
                 &nodes,
+                crypto,
             );
 
             for (hashed_address, storage_root_hash) in accounts {
-                if storage_root_hash == *EMPTY_TRIE_HASH {
+                if storage_root_hash == EMPTY_TRIE_HASH {
                     continue;
                 }
                 if !nodes.contains_key(&storage_root_hash) {
                     continue;
                 }
-                let node = Trie::get_embedded_root(&nodes, storage_root_hash)?;
+                let node = Trie::get_embedded_root_committed(&nodes, storage_root_hash, crypto)?;
                 let NodeRef::Node(node, _) = node else {
                     return Err(GuestProgramStateError::Custom(
                         "execution witness does not contain non-empty storage trie".to_string(),
@@ -334,16 +335,15 @@ fn collect_accounts_from_trie(
     node: &Node,
     path: Nibbles,
     accounts: &mut Vec<(H256, H256)>,
-    nodes: &BTreeMap<H256, Node>,
+    nodes: &FxHashMap<H256, Node>,
+    crypto: &dyn Crypto,
 ) {
     match node {
         Node::Branch(branch) => {
             for (i, child) in branch.choices.iter().enumerate() {
                 let child_node: Option<&Node> = match child {
                     NodeRef::Node(n, _) => Some(n),
-                    NodeRef::Hash(hash) if hash.is_valid() => {
-                        nodes.get(&hash.finalize(&NativeCrypto))
-                    }
+                    NodeRef::Hash(hash) if hash.is_valid() => nodes.get(&hash.finalize(crypto)),
                     _ => None,
                 };
                 if let Some(child_node) = child_node {
@@ -352,6 +352,7 @@ fn collect_accounts_from_trie(
                         path.append_new(i as u8),
                         accounts,
                         nodes,
+                        crypto,
                     );
                 }
             }
@@ -359,11 +360,17 @@ fn collect_accounts_from_trie(
         Node::Extension(ext) => {
             let child_node: Option<&Node> = match &ext.child {
                 NodeRef::Node(n, _) => Some(n),
-                NodeRef::Hash(hash) if hash.is_valid() => nodes.get(&hash.finalize(&NativeCrypto)),
+                NodeRef::Hash(hash) if hash.is_valid() => nodes.get(&hash.finalize(crypto)),
                 _ => None,
             };
             if let Some(child_node) = child_node {
-                collect_accounts_from_trie(child_node, path.concat(&ext.prefix), accounts, nodes);
+                collect_accounts_from_trie(
+                    child_node,
+                    path.concat(&ext.prefix),
+                    accounts,
+                    nodes,
+                    crypto,
+                );
             }
         }
         Node::Leaf(leaf) => {
@@ -515,7 +522,7 @@ impl GuestProgramState {
                     None => AccountState::default(),
                 };
                 if update.removed_storage {
-                    account_state.storage_root = *EMPTY_TRIE_HASH;
+                    account_state.storage_root = EMPTY_TRIE_HASH;
                 }
                 if let Some(info) = &update.info {
                     account_state.nonce = info.nonce;
@@ -630,8 +637,16 @@ impl GuestProgramState {
             .entry(address)
             .or_insert_with(|| hash_address(&address, crypto));
 
-        let Ok(Some(encoded_state)) = self.state_trie.get(hashed_address.as_bytes()) else {
-            return Ok(None);
+        let encoded_state = match self.state_trie.get(hashed_address.as_bytes()) {
+            // The witness proves the account is absent.
+            Ok(None) => return Ok(None),
+            Ok(Some(encoded_state)) => encoded_state,
+            // A missing trie node means the witness lacks the proof needed to
+            // resolve this account. Surface it as an error rather than silently
+            // treating the account as absent, otherwise a read of an unmodified
+            // account (e.g. a failed CALL's target) would pass replay against an
+            // incomplete witness (EIP-8025 `witness_validation_state` tests).
+            Err(e) => return Err(GuestProgramStateError::Database(e.to_string())),
         };
         let state = AccountState::decode(&encoded_state).map_err(|_| {
             GuestProgramStateError::Database("Failed to get decode account from trie".to_string())
@@ -775,7 +790,7 @@ impl GuestProgramState {
                 return Ok(None);
             };
             let storage_trie = match self.storage_tries.get(&hashed_address) {
-                None if storage_root == *EMPTY_TRIE_HASH => return Ok(None),
+                None if storage_root == EMPTY_TRIE_HASH => return Ok(None),
                 Some(trie) if trie.hash_no_commit(crypto) == storage_root => trie,
                 _ => {
                     return Err(GuestProgramStateError::Custom(format!(
