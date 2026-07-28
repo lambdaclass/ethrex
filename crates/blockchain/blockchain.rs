@@ -224,6 +224,12 @@ pub struct Blockchain {
     /// Set to true after initial sync completes, never reset to false.
     /// Does not reflect whether an ongoing sync is in progress.
     is_synced: AtomicBool,
+    /// Set while a deep-reorg apply pass is in flight. Concurrent
+    /// FCUs from the engine API short-circuit to SYNCING while this is set,
+    /// and journal pruning in `forkchoice_update_inner` defers until the apply
+    /// pass clears it. Managed via [`enter_reorg`](Self::enter_reorg) which
+    /// returns a [`ReorgGuard`] RAII that clears the flag on drop.
+    reorg_in_progress: AtomicBool,
     /// Configuration options for blockchain behavior.
     pub options: BlockchainOptions,
     /// Cache of recently built payloads.
@@ -273,6 +279,22 @@ impl std::fmt::Debug for PrewarmedCache {
     }
 }
 
+/// RAII guard that clears [`Blockchain::reorg_in_progress`] on drop. Returned by
+/// [`Blockchain::enter_reorg`]. Ensures the flag is reset on every exit path of
+/// the apply pass, including panics that unwind through the guard.
+pub struct ReorgGuard<'a> {
+    blockchain: &'a Blockchain,
+}
+
+impl Drop for ReorgGuard<'_> {
+    fn drop(&mut self) {
+        self.blockchain.storage.set_journal_pruning_paused(false);
+        self.blockchain
+            .reorg_in_progress
+            .store(false, Ordering::Release);
+    }
+}
+
 /// Configuration options for the blockchain.
 #[derive(Debug, Clone)]
 pub struct BlockchainOptions {
@@ -311,6 +333,13 @@ pub struct BlockchainOptions {
     /// `--no-bal-parallel-trie`) to fall back to streaming `AccountUpdate`s from
     /// the executor and merkleizing post-execution.
     pub bal_parallel_trie_enabled: bool,
+    /// Optional operator override for the maximum reorg depth. `None` ; cap is purely
+    /// physical (layer-cache retention plus journal reach; bounded indirectly by finality
+    /// because finality advances prune the journal). `Some(d)` ; reject reorgs of
+    /// depth `> d` with `-38006 TooDeepReorg`. WARNING: `Some(0)` rejects EVERY reorg,
+    /// including routine 1-2 block reorgs on a healthy network — it is NOT the old
+    /// 128-block cap. Use a small positive value to approximate the pre-stack behavior.
+    pub max_reorg_depth: Option<u64>,
     /// Mempool occupancy percentage (0-100) at or above which incoming
     /// transactions with a nonce gap relative to the sender's on-chain nonce
     /// are rejected. Setting to 100 disables the check.
@@ -330,6 +359,7 @@ impl Default for BlockchainOptions {
             bal_parallel_exec_enabled: true,
             bal_prefetch_enabled: true,
             bal_parallel_trie_enabled: true,
+            max_reorg_depth: None,
             gap_admit_occupancy_threshold: DEFAULT_GAP_ADMIT_OCCUPANCY_THRESHOLD,
         }
     }
@@ -438,6 +468,7 @@ impl Blockchain {
             storage: store,
             mempool: Mempool::new(blockchain_opts.max_mempool_size),
             is_synced: AtomicBool::new(false),
+            reorg_in_progress: AtomicBool::new(false),
             payloads: Arc::new(TokioMutex::new(Vec::new())),
             options: blockchain_opts,
             merkle_pool: Self::build_merkle_pool(),
@@ -459,6 +490,7 @@ impl Blockchain {
             storage: store,
             mempool: Mempool::new(MAX_MEMPOOL_SIZE_DEFAULT),
             is_synced: AtomicBool::new(false),
+            reorg_in_progress: AtomicBool::new(false),
             payloads: Arc::new(TokioMutex::new(Vec::new())),
             options: BlockchainOptions::default(),
             merkle_pool: pool,
@@ -471,6 +503,7 @@ impl Blockchain {
             storage: store,
             mempool: Mempool::new(MAX_MEMPOOL_SIZE_DEFAULT),
             is_synced: AtomicBool::new(false),
+            reorg_in_progress: AtomicBool::new(false),
             payloads: Arc::new(TokioMutex::new(Vec::new())),
             options: BlockchainOptions::default(),
             merkle_pool: Self::build_merkle_pool(),
@@ -496,6 +529,41 @@ impl Blockchain {
             }
         }
         Ok(())
+    }
+
+    /// Returns a reference to the underlying [`Store`]. Used by the deep-reorg
+    /// orchestrator to drive the storage-side primitives.
+    pub fn store(&self) -> &Store {
+        &self.storage
+    }
+
+    /// Returns `true` while a deep-reorg apply pass is in flight. Set by
+    /// [`enter_reorg`](Self::enter_reorg); the engine API's FCU handler should
+    /// short-circuit to SYNCING when this is `true`.
+    pub fn is_reorg_in_progress(&self) -> bool {
+        self.reorg_in_progress.load(Ordering::Acquire)
+    }
+
+    /// Attempts to mark the start of a deep-reorg apply pass. Returns a RAII
+    /// guard that clears the flag on drop (success, error, or panic) if no other
+    /// pass is in flight, or `None` if one already is. This is a test-and-set:
+    /// the flag transition `false -> true` is atomic, so two concurrent FCUs
+    /// that both reach the deep path can never both acquire the guard. The loser
+    /// short-circuits to SYNCING and the CL retries. At most one apply pass runs
+    /// at a time.
+    pub fn enter_reorg(&self) -> Option<ReorgGuard<'_>> {
+        self.reorg_in_progress
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .is_ok()
+            .then(|| {
+                // Also pause STATE_HISTORY pruning for the whole pass:
+                // `Overlay::from_journal` reads entries with no snapshot
+                // isolation, and syncer-driven forkchoice updates bypass this
+                // mutex, so a concurrent finality advance could otherwise prune
+                // the journal out from under overlay construction.
+                self.storage.set_journal_pruning_paused(true);
+                ReorgGuard { blockchain: self }
+            })
     }
 
     /// Executes a block withing a new vm instance and state
@@ -4451,4 +4519,59 @@ pub fn compute_sharded_storage_root(
     let _ = DROP_SENDER.send(Box::new(root_ref));
 
     Ok((root_hash.finalize(&NativeCrypto), nodes))
+}
+
+#[cfg(test)]
+mod reorg_guard_tests {
+    use super::*;
+    use ethrex_storage::{EngineType, Store};
+
+    fn make_blockchain() -> Blockchain {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::new(dir.path(), EngineType::InMemory).unwrap();
+        Blockchain::default_with_store(store)
+    }
+
+    /// `enter_reorg` SHALL set the flag; the returned guard SHALL clear it on drop.
+    #[test]
+    fn reorg_guard_sets_and_clears_flag() {
+        let blockchain = make_blockchain();
+        assert!(!blockchain.is_reorg_in_progress(), "flag starts false");
+
+        {
+            let guard = blockchain.enter_reorg();
+            assert!(guard.is_some(), "first enter_reorg must acquire the guard");
+            assert!(
+                blockchain.is_reorg_in_progress(),
+                "flag must be set while guard is alive"
+            );
+            // A second attempt while the first guard is alive must fail the
+            // test-and-set and return None.
+            assert!(
+                blockchain.enter_reorg().is_none(),
+                "concurrent enter_reorg must not acquire a second guard"
+            );
+        }
+        assert!(
+            !blockchain.is_reorg_in_progress(),
+            "flag must clear when guard drops"
+        );
+    }
+
+    /// The guard SHALL clear the flag even when its scope ends via panic unwinding.
+    #[test]
+    fn reorg_guard_clears_flag_on_panic() {
+        let blockchain = make_blockchain();
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _guard = blockchain.enter_reorg();
+            assert!(blockchain.is_reorg_in_progress());
+            panic!("simulated apply failure");
+        }));
+        // guard is dropped by the unwind; flag must be clear below.
+        assert!(result.is_err(), "panic must propagate out of the scope");
+        assert!(
+            !blockchain.is_reorg_in_progress(),
+            "flag must be cleared after a panicking guard scope"
+        );
+    }
 }
