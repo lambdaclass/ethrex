@@ -2038,21 +2038,24 @@ impl FrameTransaction {
             .sum()
     }
 
-    /// Compute total gas limit: intrinsic + calldata cost (frames + signatures)
-    /// + signature verification cost + sum of frame gas limits.
+    /// Computes the total gas limit defined by EIP-8141.
     pub fn total_gas_limit(&self) -> u64 {
-        let mut calldata_gas: u64 = 0;
-        // RLP-encode frames to compute calldata cost
-        let mut frames_buf = Vec::new();
-        self.frames.encode(&mut frames_buf);
-        for byte in &frames_buf {
-            calldata_gas = calldata_gas.saturating_add(if *byte == 0 { 4 } else { 16 });
+        fn add_calldata_gas(calldata_gas: u64, bytes: &[u8]) -> u64 {
+            bytes.iter().fold(calldata_gas, |acc, byte| {
+                acc.saturating_add(if *byte == 0 { 4 } else { 16 })
+            })
         }
-        // RLP-encode signatures to compute their calldata cost
-        let mut sigs_buf = Vec::new();
-        self.signatures.encode(&mut sigs_buf);
-        for byte in &sigs_buf {
-            calldata_gas = calldata_gas.saturating_add(if *byte == 0 { 4 } else { 16 });
+
+        let mut calldata_gas: u64 = 0;
+        for frame in &self.frames {
+            calldata_gas = add_calldata_gas(calldata_gas, &frame.data);
+        }
+        for signature in &self.signatures {
+            if let Some(signer) = signature.signer {
+                calldata_gas = add_calldata_gas(calldata_gas, signer.as_bytes());
+            }
+            calldata_gas = add_calldata_gas(calldata_gas, &signature.msg);
+            calldata_gas = add_calldata_gas(calldata_gas, &signature.signature);
         }
         FRAME_TX_INTRINSIC_COST
             .saturating_add((self.frames.len() as u64).saturating_mul(FRAME_TX_PER_FRAME_COST))

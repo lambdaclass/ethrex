@@ -3193,3 +3193,79 @@ mod expiry_verifier_tests {
         );
     }
 }
+
+mod intrinsic_gas_accounting_tests {
+    use ethrex_common::U256;
+    use ethrex_common::types::{
+        FRAME_TX_INTRINSIC_COST, FRAME_TX_PER_FRAME_COST, FrameTransaction, Transaction,
+    };
+
+    fn interop_reference_tx() -> FrameTransaction {
+        let raw = hex::decode(
+            "06f89f833018248094e25583099ba105d9ec0a67f5ae86d90e50036425eec801038082c3508080e40280941111111111111111111111111111111111111111830186a08701c6bf5263400080f848f846018080b84100376dfea0d3368d1e0e7914b727a934f20e4fb134752d4bbcd994db1246c2197553a566aec5941b337df2fb25be8fd2c367ad19b34526656704997b25eda17a80843b9aca00847735940080c0",
+        )
+        .unwrap();
+        match Transaction::decode_canonical(&raw).unwrap() {
+            Transaction::FrameTransaction(tx) => tx,
+            _ => panic!("expected frame transaction"),
+        }
+    }
+
+    fn intrinsic_gas(tx: &FrameTransaction) -> u64 {
+        let frame_gas = tx
+            .frames
+            .iter()
+            .map(|f| f.gas_limit)
+            .fold(0u64, |acc, g| acc.saturating_add(g));
+        tx.total_gas_limit().saturating_sub(frame_gas)
+    }
+
+    #[test]
+    fn interop_reference_tx_intrinsic_gas_charges_payload_bytes_only() {
+        const ZERO_BYTE_GAS: u64 = 4;
+        const NONZERO_BYTE_GAS: u64 = 16;
+        const SECP256K1_VERIFY_GAS: u64 = 2_800;
+        const FRAME_COUNT: u64 = 2;
+        const SIGNATURE_ZERO_BYTES: u64 = 1;
+        const SIGNATURE_NONZERO_BYTES: u64 = 64;
+        const FRAME_GAS_LIMITS: u64 = 50_000 + 100_000;
+
+        let payload_calldata_gas =
+            SIGNATURE_NONZERO_BYTES * NONZERO_BYTE_GAS + SIGNATURE_ZERO_BYTES * ZERO_BYTE_GAS;
+        let expected_intrinsic_gas = FRAME_TX_INTRINSIC_COST
+            + FRAME_COUNT * FRAME_TX_PER_FRAME_COST
+            + SECP256K1_VERIFY_GAS
+            + payload_calldata_gas;
+
+        let tx = interop_reference_tx();
+        assert_eq!(tx.frames.len() as u64, FRAME_COUNT);
+        assert_eq!(intrinsic_gas(&tx), expected_intrinsic_gas);
+        assert_eq!(
+            tx.total_gas_limit(),
+            expected_intrinsic_gas + FRAME_GAS_LIMITS
+        );
+    }
+
+    #[test]
+    fn intrinsic_gas_is_insensitive_to_structural_frame_fields() {
+        let baseline = interop_reference_tx();
+
+        let mut restructured = interop_reference_tx();
+        restructured.frames[0].gas_limit = 1;
+        restructured.frames[1].gas_limit = 4_000_000_000;
+        restructured.frames[1].value = U256::from(1u64);
+
+        assert_eq!(
+            restructured.frames[0].data, baseline.frames[0].data,
+            "payload bytes must be unchanged for this test to be meaningful",
+        );
+        assert_eq!(restructured.frames[1].data, baseline.frames[1].data);
+        assert_eq!(restructured.signatures, baseline.signatures);
+
+        assert_eq!(
+            intrinsic_gas(&restructured),
+            intrinsic_gas(&baseline),
+            "structural frame fields (gas_limit, value) must not change intrinsic gas",
+        );
+    }
+}
