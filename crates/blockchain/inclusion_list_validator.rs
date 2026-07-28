@@ -1,6 +1,6 @@
 //! EIP-7805 (FOCIL) inclusion-list satisfaction validator. Tracks per-sender
 //! `(nonce, balance)` during block execution and, after execution, decides
-//! whether each IL transaction is `present | blob | unrecoverable |
+//! whether each IL transaction is `present | blob | frame | unrecoverable |
 //! intrinsic_gas_too_low | insufficient_gas | below_base_fee | invalid_nonce |
 //! invalid_balance | unsatisfied`. Returns `Err(IlUnsatisfied)` if any IL
 //! transaction is missing AND could still have been validly appended to the
@@ -188,8 +188,9 @@ impl InclusionListSatisfactionValidator {
     }
 
     /// Return `Ok(())` iff every inclusion-list transaction is classified as
-    /// non-appendable (`present | blob | unrecoverable | intrinsic_gas_too_low
-    /// | insufficient_gas | below_base_fee | invalid_nonce | invalid_balance`).
+    /// non-appendable (`present | blob | frame | unrecoverable |
+    /// intrinsic_gas_too_low | insufficient_gas | below_base_fee |
+    /// invalid_nonce | invalid_balance`).
     /// Return `Err(IlUnsatisfied)` for the first IL transaction that is missing
     /// AND could still have been validly appended to the end of the block.
     ///
@@ -227,6 +228,15 @@ impl InclusionListSatisfactionValidator {
             // Blob (EIP-4844) txs are excluded from the IL satisfaction check
             // (EELS skips `BlobTransaction`) → satisfied.
             if tx_il.tx_type() == TxType::EIP4844 {
+                continue;
+            }
+
+            // EIP-8141 frame txs are excluded from the IL satisfaction check:
+            // validity depends on executing VERIFY frames to discover `payer`,
+            // which this state-only pass cannot do. Eligibility rules for frame
+            // txs in inclusion lists are not yet specified, and an ineligible tx
+            // is excused.
+            if tx_il.tx_type() == TxType::Frame {
                 continue;
             }
 

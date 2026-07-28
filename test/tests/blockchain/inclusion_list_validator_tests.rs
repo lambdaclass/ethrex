@@ -443,6 +443,83 @@ fn check_does_not_call_state_provider() {
     // Reach the end without panicking.
 }
 
+/// Build an EIP-8141 frame tx. `Transaction::sender` reads the explicit
+/// `sender` field for this type, so no signature material is needed.
+fn make_frame_tx(sender: Address, nonce: u64, frame_gas_limit: u64) -> Transaction {
+    use ethrex_common::types::{
+        FRAME_SIG_SCHEME_SECP256K1, Frame, FrameMode, FrameSignature, FrameTransaction,
+    };
+    Transaction::FrameTransaction(FrameTransaction {
+        chain_id: 1,
+        nonce,
+        sender,
+        frames: vec![Frame {
+            mode: FrameMode::Sender as u8,
+            flags: 0x00,
+            target: Some(Address::repeat_byte(0xaa)),
+            gas_limit: frame_gas_limit,
+            value: U256::zero(),
+            data: Default::default(),
+        }],
+        signatures: vec![FrameSignature {
+            scheme: FRAME_SIG_SCHEME_SECP256K1,
+            signer: sender,
+            msg: Default::default(),
+            signature: Default::default(),
+        }],
+        max_priority_fee_per_gas: 1,
+        max_fee_per_gas: 1,
+        max_fee_per_blob_gas: U256::zero(),
+        blob_versioned_hashes: vec![],
+        ..Default::default()
+    })
+}
+
+/// An omitted EIP-8141 frame tx is excused: its validity depends on executing
+/// VERIFY frames to discover `payer`, so this state-only pass cannot judge it.
+/// Every other gate passes here — the sender's tracked nonce matches and its
+/// balance covers the cost — so only the frame skip keeps the block satisfied.
+#[test]
+fn omitted_frame_il_tx_is_satisfied() {
+    let crypto = NativeCrypto;
+    let alice = addr(1);
+
+    let il = vec![make_frame_tx(alice, 0, 100_000)];
+    let mut accounts: FxHashMap<Address, AccountStateView> = Default::default();
+    accounts.insert(alice, account(0, rich_balance()));
+    let state = MockState::with(accounts);
+
+    let validator =
+        InclusionListSatisfactionValidator::new(&il, &state, &crypto).expect("construct");
+
+    let block_txs: HashSet<H256> = HashSet::new();
+    let result = validator.check(&il, &block_txs, 30_000_000, &header(), &config(), &crypto);
+    assert!(matches!(result, Ok(())), "frame IL tx must be skipped");
+}
+
+/// A frame tx included in the block is satisfied by the presence check, which
+/// runs before the frame skip.
+#[test]
+fn frame_il_tx_present_in_block_is_satisfied() {
+    let crypto = NativeCrypto;
+    let alice = addr(1);
+
+    let il = vec![make_frame_tx(alice, 0, 100_000)];
+    let mut accounts: FxHashMap<Address, AccountStateView> = Default::default();
+    accounts.insert(alice, account(0, rich_balance()));
+    let state = MockState::with(accounts);
+
+    let validator =
+        InclusionListSatisfactionValidator::new(&il, &state, &crypto).expect("construct");
+
+    let block_txs: HashSet<H256> = il.iter().map(|t| t.hash(&NativeCrypto)).collect();
+    let result = validator.check(&il, &block_txs, 30_000_000, &header(), &config(), &crypto);
+    assert!(
+        matches!(result, Ok(())),
+        "present frame IL tx must be satisfied"
+    );
+}
+
 /// Build an EIP-4844 (blob) tx with a precached sender.
 fn make_blob_tx(sender: Address, nonce: u64, gas_limit: u64) -> Transaction {
     use ethrex_common::types::EIP4844Transaction;
