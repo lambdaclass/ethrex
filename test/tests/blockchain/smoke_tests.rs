@@ -359,7 +359,7 @@ async fn store_fake_block(store: &Store, number: u64, parent_hash: H256) -> H256
     let header = BlockHeader {
         number,
         parent_hash,
-        state_root: *EMPTY_TRIE_HASH,
+        state_root: EMPTY_TRIE_HASH,
         timestamp: number * 12,
         ..Default::default()
     };
