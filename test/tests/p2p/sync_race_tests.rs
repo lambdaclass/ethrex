@@ -117,7 +117,7 @@ async fn sync_head_executed_reflects_local_state() {
     // Header known, state present (the empty trie root always "exists"): executed.
     let stateful = BlockHeader {
         number: 2,
-        state_root: *EMPTY_TRIE_HASH,
+        state_root: EMPTY_TRIE_HASH,
         ..Default::default()
     };
     store
