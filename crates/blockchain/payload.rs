@@ -467,7 +467,31 @@ impl Blockchain {
         // an in-progress rebuild via `run_until_cancelled`, and (b) the slot-
         // timeout `select!` arm winning over a simultaneous `tx_added`
         // notification near the slot boundary.
-        if self.mempool.tx_seq() > last_built_seq {
+        //
+        // When the loop was cancelled, `engine_getPayload` is blocked on this
+        // task and must answer within the Engine API deadline (1s), while a
+        // full rebuild of a large block can exceed that deadline on its own —
+        // under sustained mempool inflow `tx_seq() > last_built_seq` is true
+        // on essentially every call, so an unconditional rebuild here puts one
+        // whole extra block build on the proposal critical path. In that case
+        // only rebuild when the payload we hold is empty: returning a slightly
+        // stale block is fine (geth/reth return best-so-far too), but
+        // proposing an empty block while the mempool has transactions is not
+        // (race (a) with no completed rebuild yet).
+        //
+        // TODO(#5011): two paths below can still put a full build on the
+        // critical path, so this narrows the exposure rather than removing it.
+        // First, the empty-payload case still rebuilds over the whole mempool;
+        // that has to stay correct (it is the race this guard exists for), but
+        // a large mempool of txs that never make it into a block — low-fee or
+        // nonce-gapped — can make even that approach the deadline. Second, this
+        // rebuild is not cancellable: unlike the in-loop build it runs as a
+        // plain `spawn_blocking(..).await`, so a `getPayload` arriving while a
+        // slot-timeout rebuild is in flight waits for it to finish. Bounding
+        // either needs a time-boxed or partial build, not a guard here.
+        if self.mempool.tx_seq() > last_built_seq
+            && (!cancel_token.is_cancelled() || res.payload.body.transactions.is_empty())
+        {
             let blockchain = self.clone();
             match tokio::task::spawn_blocking(move || blockchain.build_payload(payload)).await {
                 Ok(Ok(final_res)) => res = final_res,
@@ -696,7 +720,7 @@ impl Blockchain {
             // if inclusion of the transaction puts the block size over the size limit
             // we don't add any more txs to the payload.
             let potential_rlp_block_size =
-                context.payload_size + head_tx.encode_canonical_to_vec().len() as u64;
+                context.payload_size + head_tx.encode_canonical_len() as u64;
             if context
                 .chain_config()
                 .is_osaka_activated(context.payload.header.timestamp)
@@ -940,6 +964,29 @@ impl Blockchain {
                 .into());
             }
         };
+        // A blob sidecar is validated against the fork only at mempool insertion; the fork being
+        // built can differ (e.g. Osaka activated since). A pre-Osaka v0 sidecar (EIP-4844, one
+        // proof per blob) is invalid at Osaka — EIP-7594 requires cell proofs (v1) and there is no
+        // upgrade path — so including it would make getPayloadV5 emit a wrong-format
+        // BlobsBundleV2. That mismatch is deterministic and permanent, so drop the tx from the
+        // pool (like the frame-tx fork gates in `fill_transactions`) rather than skip-and-retry it
+        // every block, where it would also block later nonces from the same sender. Dropping it
+        // also stops other blob reads (P2P pooled-tx serving) from returning the stale sidecar;
+        // the `engine_getBlobsV2/V3` read path is tracked separately (`ethrex-getblobs-v2-legacy-proof`).
+        // The version/Osaka checks are structural (no KZG), so this needs no `c-kzg` feature.
+        // (Explicit builds carry no sidecar, so `bundle` is `None` and this is a no-op.)
+        if let Some(bundle) = &bundle
+            && bundle.version == 0
+            && context
+                .chain_config()
+                .is_osaka_activated(context.payload.header.timestamp)
+        {
+            self.remove_transaction_from_pool(&tx_hash)?;
+            return Err(EvmError::Custom(format!(
+                "dropping blob tx {tx_hash}: pre-Osaka (v0) blob sidecar is invalid post-Osaka"
+            ))
+            .into());
+        }
         if context.blobs_bundle.blobs.len() + blob_count > max_blob_number_per_block {
             // This error will only be used for debug tracing
             return Err(EvmError::Custom("max data blobs reached".to_string()).into());

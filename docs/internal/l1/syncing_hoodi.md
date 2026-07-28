@@ -1,4 +1,4 @@
-## Syncing with Holesky
+## Syncing with Hoodi
 
 ### Step 1: Set up a jwt secret for both clients
 
@@ -13,11 +13,11 @@ We will pass this new file’s path as an argument for both clients.
 
 ### Step 2: Launch Ethrex
 
-Pass holesky as a network and the jwt secret we set in the previous step.
-This will launch the node in full sync mode, in order to test out snap sync you can add the flag `--syncmode snap`.
+Pass hoodi as a network and the jwt secret we set in the previous step.
+This will launch the node in snap sync mode, which is the default; to test out full sync you can add the flag `--syncmode full`.
 
 ```bash
-cargo run --release --bin ethrex -- --network holesky --authrpc.jwtsecret ~/secrets/jwt.hex
+cargo run --release --bin ethrex -- --network hoodi --authrpc.jwtsecret ~/secrets/jwt.hex
 ```
 
 The HTTP JSON-RPC server binds to `127.0.0.1` by default and only serves the `eth,net,web3` namespaces. To call `debug_*` methods during sync from the same machine, pass `--http.api eth,net,web3,debug`. To reach the RPC port from another host, pass `--http.addr 0.0.0.0`.
@@ -29,12 +29,12 @@ For this quick tutorial we will be using lighthouse, but you can learn how to in
 You can choose your preferred installation method from [lighthouse's installation guide](https://lighthouse-book.sigmaprime.io/installation.html) and then run the following command to launch the node and sync it from a public endpoint
 
 ```bash
-lighthouse bn --network holesky --execution-endpoint http://localhost:8551 --execution-jwt ~/secrets/jwt.hex --http --checkpoint-sync-url https://checkpoint-sync.holesky.ethpandaops.io
+lighthouse bn --network hoodi --execution-endpoint http://localhost:8551 --execution-jwt ~/secrets/jwt.hex --http --checkpoint-sync-url https://checkpoint-sync.hoodi.ethpandaops.io
 ```
 
 When using lighthouse directly from its repository, replace `lighthouse bn` with `cargo run --bin lighthouse -- bn`
 
-Aside from holesky, these steps can also be used to connect to other supported networks by replacing the `--network` argument by another supported network and looking up a checkpoint sync endpoint for that network [in this community-maintained list](https://eth-clients.github.io/checkpoint-sync-endpoints/)
+Aside from hoodi, these steps can also be used to connect to other supported networks by replacing the `--network` argument by another supported network and looking up a checkpoint sync endpoint for that network [in this community-maintained list](https://eth-clients.github.io/checkpoint-sync-endpoints/)
 
 If you have a running execution node that you want to connect to your ethrex node you can do so by passing its enode as a bootnode using the `--bootnodes` flag
 
