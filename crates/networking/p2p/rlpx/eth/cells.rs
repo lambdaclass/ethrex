@@ -242,12 +242,16 @@ fn get_cells_for_tx(mempool: &Mempool, tx_hash: H256, served_mask: u128) -> Vec<
         && !bundle.blobs.is_empty()
         && let Ok(blob_cells) = bundle.cells_for_columns(served_mask)
     {
-        // cells_for_columns returns one Vec per blob; flatten blob-major.
+        // `cells_for_columns` returns one Vec per blob (each ordered by ascending
+        // column). Transpose to the index-major wire order devp2p mandates for
+        // `Cells`: all blobs at the lowest served column, then the next column, ...
         let col_count = served_mask.count_ones() as usize;
         let mut result = Vec::with_capacity(blob_cells.len() * col_count);
-        for blob_col_cells in &blob_cells {
-            for cell in blob_col_cells {
-                result.push(*cell);
+        for col_pos in 0..col_count {
+            for blob_col_cells in &blob_cells {
+                if let Some(cell) = blob_col_cells.get(col_pos) {
+                    result.push(*cell);
+                }
             }
         }
         return result;

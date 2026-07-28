@@ -2120,7 +2120,8 @@ async fn handle_incoming_message(
                     let Some(bundle) = mempool.get_blobs_bundle(*tx_hash).unwrap_or(None) else {
                         continue;
                     };
-                    // Cells are packed blob-major: [blob0 over cols, blob1 over cols, ...].
+                    // Cells are packed index-major per devp2p `caps/eth.md`:
+                    // [col0 over blobs, col1 over blobs, ...].
                     let tx_cells = cells_msg.cells.get(tx_idx).cloned().unwrap_or_default();
                     let blob_count = bundle.commitments.len();
 
@@ -2132,7 +2133,7 @@ async fn handle_incoming_message(
 
                     for blob_idx in 0..blob_count {
                         for (col_pos, &col) in cols.iter().enumerate() {
-                            let cell_pos = blob_idx * cols.len() + col_pos;
+                            let cell_pos = col_pos * blob_count + blob_idx;
                             let Some(&cell) = tx_cells.get(cell_pos) else {
                                 continue;
                             };
@@ -2465,13 +2466,15 @@ async fn flush_pending_cell_requests(state: &mut Established) -> Result<(), Peer
         }
     }
 
-    const MAX_HASHES_PER_REQUEST: usize = 256;
+    const MAX_HASHES_PER_REQUEST: usize = 64;
     for (i, chunk) in all_hashes.chunks(MAX_HASHES_PER_REQUEST).enumerate() {
         let offset = i * MAX_HASHES_PER_REQUEST;
         let chunk_len = chunk.len();
         let chunk_masks = &all_masks[offset..offset + chunk_len];
         // Merge masks for this chunk.
         let merged_mask = chunk_masks.iter().fold(0u128, |acc, &m| acc | m);
+        // devp2p `caps/eth.md` recommends a soft limit of 64 hashes per GetCells
+        // request; `MAX_HASHES_PER_REQUEST` above is chunked to stay within it.
         let request = GetCells::new(random(), chunk.to_vec(), merged_mask);
         send(state, Message::GetCells(request)).await?;
     }

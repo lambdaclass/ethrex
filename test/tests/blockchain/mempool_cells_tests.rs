@@ -51,11 +51,12 @@ fn store_and_get_cells_multi_blob_multi_column() {
 
     let mask = 0b101u128; // columns 0 and 2
     let cells = mp.get_tx_cells_for_mask(tx, mask);
-    // blob-major order: [blob0_col0, blob0_col2, blob1_col0, blob1_col2]
+    // index-major wire order (devp2p caps/eth.md, eth/72 `Cells`):
+    // [blob0_col0, blob1_col0, blob0_col2, blob1_col2]
     assert_eq!(cells.len(), 4);
     assert!(cells[0].iter().all(|&b| b == 0x11));
-    assert!(cells[1].iter().all(|&b| b == 0x22));
-    assert!(cells[2].iter().all(|&b| b == 0x33));
+    assert!(cells[1].iter().all(|&b| b == 0x33));
+    assert!(cells[2].iter().all(|&b| b == 0x22));
     assert!(cells[3].iter().all(|&b| b == 0x44));
 }
 

@@ -1685,9 +1685,12 @@ impl Mempool {
         Ok(self.read()?.peer_cell_availability.get(&peer_id).copied())
     }
 
-    /// Retrieve cells for `tx_hash` matching `column_mask`, packed blob-major:
-    /// `[blob0_colA, blob0_colB, ..., blob1_colA, ...]` over the columns we hold
-    /// within `column_mask` (ascending). Used to build a `Cells` response.
+    /// Retrieve cells for `tx_hash` matching `column_mask`, packed index-major:
+    /// `[colA_blob0, colA_blob1, ..., colB_blob0, ...]` over the columns we hold
+    /// within `column_mask` (ascending). Used to build a `Cells` response; this is
+    /// the wire order devp2p `caps/eth.md` mandates for eth/72 `Cells` ("cells are
+    /// listed by ascending index, and for each index in the order in which the
+    /// blobs appear in the transaction").
     pub fn get_tx_cells_for_mask(
         &self,
         tx_hash: H256,
@@ -1701,11 +1704,12 @@ impl Mempool {
         };
         let have = tc.mask() & column_mask;
         let mut result = Vec::with_capacity((have.count_ones() as usize) * tc.blob_count);
-        for blob_idx in 0..tc.blob_count {
-            for col in 0..CELLS_PER_EXT_BLOB {
-                if (have >> col) & 1 == 1
-                    && let Some(cell) = tc.cells.get(&(blob_idx * CELLS_PER_EXT_BLOB + col))
-                {
+        for col in 0..CELLS_PER_EXT_BLOB {
+            if (have >> col) & 1 != 1 {
+                continue;
+            }
+            for blob_idx in 0..tc.blob_count {
+                if let Some(cell) = tc.cells.get(&(blob_idx * CELLS_PER_EXT_BLOB + col)) {
                     result.push(**cell);
                 }
             }

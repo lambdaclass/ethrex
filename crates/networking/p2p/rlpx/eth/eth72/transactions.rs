@@ -1,6 +1,9 @@
+use std::collections::HashSet;
+
 use crate::rlpx::{
+    eth::transactions::{MAX_POOLED_TRANSACTIONS_BYTES, POOLED_TX_SIZE_TOLERANCE},
     message::RLPxMessage,
-    utils::{snappy_compress, snappy_decompress},
+    utils::{snappy_compress, snappy_decompress, snappy_decompress_bounded},
 };
 use crate::types::Node;
 use bytes::{BufMut, Bytes};
@@ -107,9 +110,9 @@ impl NewPooledTransactionHashes72 {
                                 .then_some(tx_blobs_bundle.version),
                             blobs_bundle: tx_blobs_bundle,
                         });
-                    p2p_tx.encode_canonical_to_vec().len()
+                    p2p_tx.encode_canonical_len()
                 }
-                _ => transaction.encode_canonical_to_vec().len(),
+                _ => transaction.encode_canonical_len(),
             };
             transaction_sizes.push(transaction_size);
         }
@@ -313,8 +316,15 @@ impl PooledTransactions72 {
         requested: &NewPooledTransactionHashes72,
         _fork: Fork,
     ) -> Result<(), MempoolError> {
+        // A well-formed response contains each requested tx at most once; reject duplicates
+        // before any per-tx work so a peer echoing one tx N times can't balloon the response
+        // (mirrors the eth/71 path in `PooledTransactions::validate_requested`).
+        let mut seen = HashSet::with_capacity(self.pooled_transactions.len());
         for tx in &self.pooled_transactions {
             let tx_hash = tx.compute_hash();
+            if !seen.insert(tx_hash) {
+                return Err(MempoolError::DuplicatePooledTx);
+            }
             let Some(pos) = requested
                 .transaction_hashes
                 .iter()
@@ -331,8 +341,11 @@ impl PooledTransactions72 {
             // encoding while eth/72 elided encoding is smaller.
             if tx.tx_type() as u8 != 3 {
                 let expected_size = requested.transaction_sizes[pos];
-                let tx_size = tx.encode_canonical_to_vec().len();
-                if tx_size != expected_size {
+                let tx_size = tx.encode_canonical_len();
+                // Same tolerance as the eth/71 path: geth's tx fetcher allows up to 8 bytes
+                // of skew between the announced and actual size before treating it as a
+                // protocol violation.
+                if tx_size.abs_diff(expected_size) > POOLED_TX_SIZE_TOLERANCE {
                     return Err(MempoolError::InvalidPooledTxSize);
                 }
             }
@@ -432,7 +445,10 @@ impl RLPxMessage for PooledTransactions72 {
     }
 
     fn decode(msg_data: &[u8]) -> Result<Self, RLPDecodeError> {
-        let decompressed_data = snappy_decompress(msg_data)?;
+        // Bound the declared decompressed length before materializing the tx list, as the
+        // eth/71 `PooledTransactions` path does. Elided blob payloads make an eth/72 response
+        // strictly smaller than its eth/71 equivalent, so the same cap applies.
+        let decompressed_data = snappy_decompress_bounded(msg_data, MAX_POOLED_TRANSACTIONS_BYTES)?;
         let decoder = Decoder::new(&decompressed_data)?;
         let (id, decoder): (u64, _) = decoder.decode_field("request-id")?;
         let (pooled_transactions, _): (Vec<P2PTransaction>, _) =
