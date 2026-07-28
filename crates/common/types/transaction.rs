@@ -2023,14 +2023,13 @@ impl FrameTransaction {
         keccak(&buf)
     }
 
-    /// Per EIP-8141 (spec commit fe0940cae2): 2800 gas per SECP256K1 signature,
-    /// 6700 per P256. Unknown schemes are rejected by static validation, so
-    /// they are treated as 0 here (validation runs first).
+    /// Per EIP-8141: 100 gas per ARBITRARY signature, 2800 per SECP256K1, and
+    /// 6700 per P256. Unknown schemes are rejected by static validation.
     pub fn signature_verification_cost(&self) -> u64 {
         self.signatures
             .iter()
             .map(|s| match s.scheme {
-                FRAME_SIG_SCHEME_ARBITRARY => 0u64,
+                FRAME_SIG_SCHEME_ARBITRARY => 100u64,
                 FRAME_SIG_SCHEME_SECP256K1 => 2800u64,
                 FRAME_SIG_SCHEME_P256 => 6700u64,
                 _ => 0,
@@ -5485,11 +5484,11 @@ mod tests {
     #[test]
     fn static_validation_accepts_arbitrary_with_empty_signer() {
         let mut tx = make_test_frame_tx();
-        // ARBITRARY (scheme 0) requires an empty signer and costs no verify gas.
+        // ARBITRARY requires an empty signer and charges 100 verification gas.
         tx.signatures[0].scheme = FRAME_SIG_SCHEME_ARBITRARY;
         tx.signatures[0].signer = None;
         assert!(tx.validate_static_constraints().is_ok());
-        assert_eq!(tx.signature_verification_cost(), 0);
+        assert_eq!(tx.signature_verification_cost(), 100);
     }
 
     #[test]
@@ -5572,6 +5571,50 @@ mod tests {
         });
         assert!(tx.total_gas_limit() >= base + 6700);
         assert_eq!(tx.signature_verification_cost(), 2800 + 6700);
+    }
+
+    #[test]
+    fn total_gas_limit_charges_arbitrary_signature_100_gas() {
+        let mut arb = make_test_frame_tx();
+        arb.signatures[0].scheme = FRAME_SIG_SCHEME_ARBITRARY;
+        arb.signatures[0].signer = None;
+        let mut secp = make_test_frame_tx();
+        secp.signatures[0].signer = None;
+
+        let sig_rlp = |sigs: &Vec<FrameSignature>| -> (usize, usize) {
+            let mut buf = Vec::new();
+            sigs.encode(&mut buf);
+            (buf.len(), buf.iter().filter(|b| **b == 0).count())
+        };
+        assert_eq!(sig_rlp(&arb.signatures), sig_rlp(&secp.signatures));
+
+        assert_eq!(arb.signature_verification_cost(), 100);
+        assert_eq!(secp.signature_verification_cost(), 2800);
+        assert_eq!(secp.total_gas_limit() - arb.total_gas_limit(), 2800 - 100);
+    }
+
+    #[test]
+    fn prefix_gas_budget_counts_arbitrary_signature_cost_at_boundary() {
+        let mut tx = make_test_frame_tx();
+        tx.signatures[0].scheme = FRAME_SIG_SCHEME_ARBITRARY;
+        tx.signatures[0].signer = None;
+        assert!(tx.validate_static_constraints().is_ok());
+
+        tx.frames[0].gas_limit = FRAME_TX_MAX_VERIFY_GAS - 100;
+        let prefix = tx.validation_prefix().unwrap();
+        assert_eq!(prefix.shape, PrefixShape::SelfVerify);
+        assert_eq!(prefix.frame_indices, vec![0]);
+        assert!(tx.validate_prefix_structure(&prefix).is_ok());
+
+        tx.frames[0].gas_limit = FRAME_TX_MAX_VERIFY_GAS - 99;
+        let prefix = tx.validation_prefix().unwrap();
+        assert_eq!(
+            tx.validate_prefix_structure(&prefix).unwrap_err(),
+            FrameValidationError::VerifyGasBudgetExceeded {
+                actual: FRAME_TX_MAX_VERIFY_GAS + 1,
+                limit: FRAME_TX_MAX_VERIFY_GAS,
+            },
+        );
     }
 
     #[test]
