@@ -132,7 +132,7 @@ async fn build_block_with_il(
         inclusion_list_transactions: Some(il.to_vec()),
     };
     let block = create_payload(&args, store, Bytes::new()).unwrap();
-    blockchain.build_payload(block, il).unwrap().payload
+    blockchain.build_payload_with_il(block, il).unwrap().payload
 }
 
 /// Build a block locally that ignores the inclusion list (used to construct
@@ -156,7 +156,7 @@ async fn build_block_ignoring_il(
         inclusion_list_transactions: None,
     };
     let block = create_payload(&args, store, Bytes::new()).unwrap();
-    blockchain.build_payload(block, &[]).unwrap().payload
+    blockchain.build_payload(block).unwrap().payload
 }
 
 /// 6.2.3 / 6.3.1 — locally-built block with IL: validator passes on import.

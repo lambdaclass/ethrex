@@ -69,7 +69,7 @@ async fn build_valid_amsterdam_block(store: &Store) -> (Block, BlockAccessList) 
         inclusion_list_transactions: None,
     };
     let payload = create_payload(&args, store, Bytes::new()).unwrap();
-    let result = bc.build_payload(payload, &[]).unwrap();
+    let result = bc.build_payload(payload).unwrap();
     let bal = result
         .block_access_list
         .expect("amsterdam block must produce a BAL");

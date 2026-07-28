@@ -2389,7 +2389,7 @@ impl Blockchain {
         // base fee) before `block` is moved into the inner pipeline.
         let header = block.header.clone();
 
-        let (_, _, result) = self.add_block_pipeline_inner(block, bal, false)?;
+        let (_, _, result) = self.add_block_pipeline_inner(block, bal, false, None)?;
         result?;
 
         // Only run the satisfaction check on the V6 path: Hegotá-active
@@ -3044,8 +3044,13 @@ impl Blockchain {
         // eviction failed, in which case the cleanup can't do better anyway).
         let mempool_tx = MempoolTransaction::new(transaction, sender);
         let insert = if broadcast {
-            self.mempool
-                .add_transaction(hash, sender, mempool_tx, frame_reservation, sender_admission)
+            self.mempool.add_transaction(
+                hash,
+                sender,
+                mempool_tx,
+                frame_reservation,
+                sender_admission,
+            )
         } else {
             self.mempool.add_transaction_no_broadcast(
                 hash,
@@ -3127,8 +3132,13 @@ impl Blockchain {
         // Add transaction to storage
         let mempool_tx = MempoolTransaction::new(transaction, sender);
         if broadcast {
-            self.mempool
-                .add_transaction(hash, sender, mempool_tx, frame_reservation, sender_admission)?;
+            self.mempool.add_transaction(
+                hash,
+                sender,
+                mempool_tx,
+                frame_reservation,
+                sender_admission,
+            )?;
         } else {
             self.mempool.add_transaction_no_broadcast(
                 hash,

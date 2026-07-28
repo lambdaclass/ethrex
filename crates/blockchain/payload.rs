@@ -436,7 +436,7 @@ impl Blockchain {
             .await;
     }
 
-    /// Shared bookkeeping for `initiate_payload_build*` — installs the
+    /// Shared bookkeeping for `initiate_payload_build` — installs the
     /// in-flight build task into the payload pool, evicting the oldest
     /// unclaimed entry if at capacity.
     async fn register_payload_build_task(
@@ -474,7 +474,7 @@ impl Blockchain {
         // Snapshot the mempool sequence *before* the build so any tx that lands
         // during the build is seen as newer than the current `res`.
         let mut last_built_seq = self.mempool.tx_seq();
-        let mut res = self.build_payload_inner(payload.clone(), None, inclusion_list)?;
+        let mut res = self.build_payload_inner(payload.clone(), None, &inclusion_list)?;
         while start.elapsed() < SECONDS_PER_SLOT && !cancel_token.is_cancelled() {
             // Wait for new transactions, cancellation, or slot deadline before rebuilding
             let remaining = SECONDS_PER_SLOT.saturating_sub(start.elapsed());

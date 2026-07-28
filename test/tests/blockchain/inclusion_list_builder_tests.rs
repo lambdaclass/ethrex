@@ -109,7 +109,7 @@ fn insert_tx(mempool: &Mempool, sender: Address, tx: Transaction) -> H256 {
     let mtx = MempoolTransaction::new(tx, sender);
     let hash = mtx.transaction().hash(&NativeCrypto);
     mempool
-        .add_transaction(hash, sender, mtx)
+        .add_transaction(hash, sender, mtx, None, None)
         .expect("add_transaction");
     hash
 }

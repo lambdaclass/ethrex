@@ -828,7 +828,6 @@ pub async fn start_api(
         gas_ceil,
         extra_data,
         allowed_namespaces,
-        #[cfg(feature = "eip-7805")]
         il_config,
     )
     .await?
