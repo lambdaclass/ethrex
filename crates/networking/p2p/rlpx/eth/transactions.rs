@@ -11,7 +11,7 @@ use ethrex_blockchain::Blockchain;
 use ethrex_blockchain::error::MempoolError;
 use ethrex_common::types::Fork;
 use ethrex_common::types::P2PTransaction;
-use ethrex_common::types::WrappedEIP4844Transaction;
+use ethrex_common::types::{BlobsBundle, WrappedEIP4844Transaction, WrappedFrameTransaction};
 use ethrex_common::{H256, types::Transaction};
 use ethrex_crypto::NativeCrypto;
 use ethrex_rlp::{
@@ -87,6 +87,20 @@ impl RLPxMessage for Transactions {
     }
 }
 
+/// The pooled sidecar of a blob-carrying transaction, as the EIP-7594 wrapper
+/// fields: the optional wrapper version (absent for a v0 sidecar) and the bundle.
+/// A missing bundle yields an empty one so announcing never fails on it.
+fn pooled_sidecar(
+    blockchain: &Blockchain,
+    hash: H256,
+) -> Result<(Option<u8>, BlobsBundle), StoreError> {
+    let bundle = blockchain
+        .mempool
+        .get_blobs_bundle(hash)?
+        .unwrap_or_default();
+    Ok(((bundle.version != 0).then_some(bundle.version), bundle))
+}
+
 // https://github.com/ethereum/devp2p/blob/master/caps/eth.md#newpooledtransactionhashes-0x08
 // Broadcast message
 #[derive(Debug, Clone, Eq, PartialEq)]
@@ -127,22 +141,32 @@ impl NewPooledTransactionHashes {
             // as it would appear in a PooledTransactions response.
             // https://eips.ethereum.org/EIPS/eip-2718
             let transaction_size = match transaction {
-                // Blob transactions use the network (wrapped) representation
-                // which includes the blobs bundle.
+                // Blob-carrying transactions use the network (wrapped)
+                // representation, which includes the blobs bundle, since that is
+                // what a `PooledTransactions` response carries.
                 // https://eips.ethereum.org/EIPS/eip-4844#networking
-                Transaction::EIP4844Transaction(eip4844_tx) => {
-                    let tx_blobs_bundle = blockchain
-                        .mempool
-                        .get_blobs_bundle(transaction_hash)?
-                        .unwrap_or_default();
-                    let p2p_tx =
-                        P2PTransaction::EIP4844TransactionWithBlobs(WrappedEIP4844Transaction {
-                            tx: eip4844_tx,
-                            wrapper_version: (tx_blobs_bundle.version != 0)
-                                .then_some(tx_blobs_bundle.version),
-                            blobs_bundle: tx_blobs_bundle,
-                        });
-                    p2p_tx.encode_canonical_len()
+                Transaction::EIP4844Transaction(tx) => {
+                    let (wrapper_version, blobs_bundle) =
+                        pooled_sidecar(blockchain, transaction_hash)?;
+                    P2PTransaction::EIP4844TransactionWithBlobs(WrappedEIP4844Transaction {
+                        tx,
+                        wrapper_version,
+                        blobs_bundle,
+                    })
+                    .encode_canonical_len()
+                }
+                // EIP-8141: a frame transaction carrying blobs is wrapped per
+                // EIP-7594 exactly as a blob transaction; one with no blobs is
+                // announced at its plain size.
+                Transaction::FrameTransaction(tx) if !tx.blob_versioned_hashes.is_empty() => {
+                    let (wrapper_version, blobs_bundle) =
+                        pooled_sidecar(blockchain, transaction_hash)?;
+                    P2PTransaction::FrameTransactionWithBlobs(WrappedFrameTransaction {
+                        tx,
+                        wrapper_version,
+                        blobs_bundle,
+                    })
+                    .encode_canonical_len()
                 }
                 _ => transaction.encode_canonical_len(),
             };

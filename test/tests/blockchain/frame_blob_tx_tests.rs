@@ -23,11 +23,12 @@ use ethrex_common::{
     Address, H160, H256, U256,
     constants::GAS_PER_BLOB,
     types::{
-        BlobsBundle, ChainConfig, DEFAULT_BUILDER_GAS_CEIL, ELASTICITY_MULTIPLIER, Frame,
-        FrameMode, FrameTransaction, Genesis, GenesisAccount, P2PTransaction, Transaction,
-        blobs_bundle::blob_from_bytes,
+        BlobsBundle, ChainConfig, DEFAULT_BUILDER_GAS_CEIL, ELASTICITY_MULTIPLIER, Fork, Frame,
+        FrameMode, FrameTransaction, Genesis, GenesisAccount, MAX_TX_SIZE, P2PTransaction,
+        Transaction, blobs_bundle::blob_from_bytes,
     },
 };
+use ethrex_p2p::rlpx::eth::transactions::{NewPooledTransactionHashes, PooledTransactions};
 use ethrex_storage::{EngineType, Store};
 
 /// The frame transaction's sender, seeded with code that calls
@@ -179,6 +180,90 @@ async fn blob_frame_transaction_is_admitted_and_served_wrapped() {
         Transaction::FrameTransaction(wrapped.tx).hash(&ethrex_crypto::NativeCrypto),
         hash
     );
+}
+
+/// The size announced in `NewPooledTransactionHashes` must be the size of what a
+/// `PooledTransactions` response actually carries, i.e. the wrapped form. A bare
+/// size here is off by the whole sidecar, far past `POOLED_TX_SIZE_TOLERANCE`, so
+/// the requesting peer rejects the response and disconnects us.
+#[tokio::test]
+async fn blob_frame_transaction_is_announced_at_its_wrapped_size() {
+    let store = hegota_store("frame-blob-announce").await;
+    let blockchain = Blockchain::default_with_store(store);
+    let (bundle, versioned_hashes) = valid_sidecar();
+    let tx = Transaction::FrameTransaction(blob_frame_tx(versioned_hashes));
+
+    let hash = blockchain
+        .add_blob_transaction_to_pool(tx.clone(), bundle)
+        .await
+        .expect("admission");
+
+    let announcement =
+        NewPooledTransactionHashes::new(vec![tx], &blockchain).expect("announcement");
+    let served = blockchain
+        .get_p2p_transaction_by_hash(&hash)
+        .expect("serving");
+
+    // The peer-side check the announcement has to satisfy: the response we serve
+    // must agree with the size we announced, within POOLED_TX_SIZE_TOLERANCE.
+    // Announcing the bare size is off by the whole sidecar and gets us dropped.
+    PooledTransactions::new(0, vec![served])
+        .validate_requested(&announcement, Fork::Hegota)
+        .expect("the served wrapped form must match the announced size");
+}
+
+/// Removing an admitted blob-carrying frame transaction must drop its sidecar
+/// too. `blob_tx_count` is the size of the bundle pool, so a leaked bundle
+/// inflates blob-pool occupancy permanently, and being unreachable from the
+/// transaction pool it can never be evicted to bring the count back down.
+#[tokio::test]
+async fn removing_a_blob_frame_transaction_drops_its_sidecar() {
+    let store = hegota_store("frame-blob-removal").await;
+    let blockchain = Blockchain::default_with_store(store);
+    let (bundle, versioned_hashes) = valid_sidecar();
+    let tx = Transaction::FrameTransaction(blob_frame_tx(versioned_hashes));
+
+    let hash = blockchain
+        .add_blob_transaction_to_pool(tx, bundle)
+        .await
+        .expect("admission");
+    assert!(blockchain.mempool.get_blobs_bundle(hash).unwrap().is_some());
+
+    blockchain.mempool.remove_transaction(&hash).unwrap();
+
+    assert!(
+        blockchain.mempool.get_blobs_bundle(hash).unwrap().is_none(),
+        "the sidecar must not outlive the transaction it belongs to"
+    );
+}
+
+/// A blob-carrying frame transaction is bounded by the blob wrapper cap
+/// (`MAX_BLOB_TX_SIZE`, 1 MiB), not the plain-transaction cap (`MAX_TX_SIZE`,
+/// 128 KiB) — the same exemption EIP-4844 transactions get.
+#[tokio::test]
+async fn blob_frame_transaction_over_the_plain_size_cap_is_admitted() {
+    let store = hegota_store("frame-blob-size-cap").await;
+    let blockchain = Blockchain::default_with_store(store);
+    let (bundle, versioned_hashes) = valid_sidecar();
+    let mut tx = blob_frame_tx(versioned_hashes);
+    // One execution frame carrying enough data to clear MAX_TX_SIZE, with the
+    // frame gas to reserve its calldata floor.
+    let data = vec![0u8; MAX_TX_SIZE];
+    tx.frames.push(Frame {
+        mode: FrameMode::Sender as u8,
+        flags: 0,
+        target: Some(Address::from_low_u64_be(SENDER)),
+        gas_limit: 10_000_000,
+        value: U256::zero(),
+        data: Bytes::from(data),
+    });
+    let tx = Transaction::FrameTransaction(tx);
+    assert!(tx.encode_canonical_len() > MAX_TX_SIZE);
+
+    blockchain
+        .add_blob_transaction_to_pool(tx, bundle)
+        .await
+        .expect("a blob-carrying frame transaction must not be held to the plain-tx size cap");
 }
 
 /// A sidecar whose commitments do not match the declared versioned hashes must
