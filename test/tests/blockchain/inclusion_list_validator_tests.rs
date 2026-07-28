@@ -463,7 +463,7 @@ fn make_frame_tx(sender: Address, nonce: u64, frame_gas_limit: u64) -> Transacti
         }],
         signatures: vec![FrameSignature {
             scheme: FRAME_SIG_SCHEME_SECP256K1,
-            signer: sender,
+            signer: Some(sender),
             msg: Default::default(),
             signature: Default::default(),
         }],

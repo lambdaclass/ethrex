@@ -563,6 +563,16 @@ fn minimal_valid_frame_tx() -> FrameTransaction {
     }
 }
 
+/// Raise the first frame's gas limit so the transaction reserves its EIP-7623
+/// calldata floor. The minimal fixture carries no data, so tests that add frame
+/// data or signatures need the extra headroom to stay otherwise-valid.
+fn reserve_calldata_floor(tx: &mut FrameTransaction) {
+    let floor = tx.calldata_floor_gas();
+    if let Some(frame) = tx.frames.first_mut() {
+        frame.gas_limit = frame.gas_limit.max(floor);
+    }
+}
+
 #[tokio::test]
 async fn mempool_rejects_frame_tx_with_invalid_signature() {
     let store = setup_hegota_store().await;
@@ -573,10 +583,12 @@ async fn mempool_rejects_frame_tx_with_invalid_signature() {
     // ecrecover will not recover the claimed signer, so admission must reject it.
     frame_tx.signatures = vec![FrameSignature {
         scheme: FRAME_SIG_SCHEME_SECP256K1,
-        signer: Address::from_low_u64_be(0xABCD),
+        signer: Some(Address::from_low_u64_be(0xABCD)),
         msg: Bytes::new(),
         signature: Bytes::from(vec![0xAB; 65]),
     }];
+
+    reserve_calldata_floor(&mut frame_tx);
 
     let tx = Transaction::FrameTransaction(frame_tx);
     let validation = blockchain.validate_transaction(&tx, tx.sender(&NativeCrypto).unwrap());
@@ -705,15 +717,28 @@ async fn mempool_rejects_oversized_frame_data() {
     let mut frame_tx = minimal_valid_frame_tx();
     // Frame data whose length reaches the 128KB wire cap; tx.data() is empty
     // for frame txs, but the frames' payloads count toward the canonical
-    // encoding that MAX_TX_SIZE bounds.
-    frame_tx.frames[0].data = Bytes::from(vec![0u8; MAX_TX_SIZE]);
+    // encoding that MAX_TX_SIZE bounds. The payload rides a trailing SENDER
+    // frame, as a real transaction's would: the validation prefix stays inside
+    // MAX_VERIFY_GAS while that frame reserves the EIP-7623 calldata floor.
+    let payload = Bytes::from(vec![0u8; MAX_TX_SIZE]);
+    frame_tx.frames.push(Frame {
+        mode: FrameMode::Sender as u8,
+        flags: 0x00,
+        target: Some(Address::from_low_u64_be(0xCAFE)),
+        gas_limit: 0,
+        value: U256::zero(),
+        data: payload,
+    });
+    let floor = frame_tx.calldata_floor_gas();
+    frame_tx.frames[1].gas_limit = floor;
 
     let tx = Transaction::FrameTransaction(frame_tx);
     let validation = blockchain.validate_transaction(&tx, tx.sender(&NativeCrypto).unwrap());
-    assert!(matches!(
-        validation.await,
-        Err(MempoolError::TxSizeExceeded { .. })
-    ));
+    let result = validation.await;
+    assert!(
+        matches!(result, Err(MempoolError::TxSizeExceeded { .. })),
+        "got {result:?}"
+    );
 }
 
 #[tokio::test]
@@ -724,7 +749,11 @@ async fn mempool_rejects_frame_tx_with_blobs() {
     let mut frame_tx = minimal_valid_frame_tx();
     // Add a blob versioned hash; no sidecar transport exists for frame-tx
     // blobs yet, so admission must reject such txs as unsupported.
-    frame_tx.blob_versioned_hashes = vec![H256::from([0xAB; 32])];
+    let mut hash = [0xAB; 32];
+    hash[0] = 0x01; // valid KZG version byte, so the unsupported-blobs check is what fires
+    frame_tx.blob_versioned_hashes = vec![H256::from(hash)];
+
+    reserve_calldata_floor(&mut frame_tx);
 
     let tx = Transaction::FrameTransaction(frame_tx);
     let validation = blockchain.validate_transaction(&tx, tx.sender(&NativeCrypto).unwrap());
@@ -750,12 +779,14 @@ async fn mempool_rejects_frame_tx_exceeding_max_verify_gas() {
     frame_tx.signatures = (0..n_sigs)
         .map(|_| FrameSignature {
             scheme: FRAME_SIG_SCHEME_P256,
-            signer: Address::from_low_u64_be(0xABCD),
+            signer: Some(Address::from_low_u64_be(0xABCD)),
             msg: Bytes::new(),
             signature: Bytes::from(vec![0u8; 128]),
         })
         .collect();
     assert!(frame_tx.signature_verification_cost() > FRAME_TX_MAX_VERIFY_GAS);
+
+    reserve_calldata_floor(&mut frame_tx);
 
     let tx = Transaction::FrameTransaction(frame_tx);
     let validation = blockchain.validate_transaction(&tx, tx.sender(&NativeCrypto).unwrap());
@@ -849,9 +880,9 @@ async fn setup_hegota_store_ts1000() -> Store {
             (
                 frame_tx_expiry_verifier(),
                 GenesisAccount {
-                    // Canonical EIP-8141 expiry verifier runtime bytecode (spec
-                    // commit 0b197156): reverts unless calldata is exactly 8
-                    // bytes and the 8-byte BE deadline is >= block.timestamp.
+                    // Canonical EIP-8141 expiry verifier runtime bytecode:
+                    // reverts unless calldata is exactly 8 bytes and the 8-byte
+                    // BE deadline is >= block.timestamp.
                     // Seeded so the interleaved expiry-verifier frame executes
                     // (instead of hitting codeless default code) during the
                     // admission simulation.
@@ -896,7 +927,8 @@ fn frame_tx_with_expiry(deadline: u64) -> FrameTransaction {
                 mode: FrameMode::Verify as u8,
                 flags: 0x00,
                 target: Some(frame_tx_expiry_verifier()),
-                gas_limit: 100,
+                // Enough to reserve the EIP-7623 floor of the 8-byte deadline.
+                gas_limit: 1_000,
                 value: U256::zero(),
                 data: Bytes::from(data.to_vec()),
             },
@@ -2763,7 +2795,7 @@ mod p2p_serve_tests {
             }],
             signatures: vec![FrameSignature {
                 scheme: FRAME_SIG_SCHEME_SECP256K1,
-                signer: Address::from_low_u64_be(0xABCD),
+                signer: Some(Address::from_low_u64_be(0xABCD)),
                 msg: bytes::Bytes::new(),
                 signature: bytes::Bytes::from(vec![0u8; 65]),
             }],

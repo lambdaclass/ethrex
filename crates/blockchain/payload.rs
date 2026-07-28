@@ -949,7 +949,7 @@ impl Blockchain {
                 continue;
             }
 
-            // EIP-8141 expiry (spec commit 0b197156): drop frame txs whose
+            // EIP-8141 expiry: drop frame txs whose
             // expiry deadline is behind the block being built. Deterministic
             // for this payload timestamp, so remove from the pool as well.
             if let Transaction::FrameTransaction(frame_tx) = &*head_tx.tx
