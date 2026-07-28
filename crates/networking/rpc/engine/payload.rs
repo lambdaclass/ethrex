@@ -16,10 +16,11 @@ use serde_json::Value;
 use tokio::sync::oneshot;
 use tracing::{debug, error, info, warn};
 
+use crate::engine::inclusion_list::block_satisfies_inclusion_list;
 use crate::rpc::{RpcApiContext, RpcHandler};
 use crate::types::payload::{
     ExecutionPayload, ExecutionPayloadBody, ExecutionPayloadBodyV2, ExecutionPayloadResponse,
-    PayloadStatus,
+    PayloadStatus, PayloadValidationStatus,
 };
 use crate::utils::RpcErr;
 use crate::utils::{RpcRequest, parse_json_hex};
@@ -446,13 +447,16 @@ impl From<NewPayloadWithWitnessV5Request> for RpcRequest {
     }
 }
 
-/// `engine_newPayloadV6` — adds `inclusionListTransactions` parameter and the
-/// `INCLUSION_LIST_UNSATISFIED` payload status per execution-apis #609. The IL
-/// satisfaction algorithm itself is wired into block validation in Phase 5.2;
-/// this handler RLP-decodes the IL parameter for parse-time validation and
-/// passes it through. (Today the V6 handler accepts the same payloads V5 would
-/// accept on a Hegotá chain; once Phase 5.2 lands, IL satisfaction is enforced
-/// at block-import time.)
+/// `engine_newPayloadV6` — extends `engine_newPayloadV5` with an
+/// `inclusionListTransactions` parameter and answers with `PayloadStatusV2`
+/// (EIP-7805).
+///
+/// A payload that omits a validly-includable inclusion-list transaction is
+/// still `VALID`: the verdict is reported through
+/// `PayloadStatusV2.inclusionListSatisfied` so the consensus layer knows not to
+/// attest to it. The list is retained under the payload's block hash so
+/// `engine_forkchoiceUpdatedV5` can report the same verdict for a head it is
+/// later told to adopt.
 pub struct NewPayloadV6Request {
     pub payload: ExecutionPayload,
     pub expected_blob_versioned_hashes: Vec<H256>,
@@ -595,87 +599,38 @@ impl RpcHandler for NewPayloadV6Request {
         )
         .await?;
 
-        // Only run IL satisfaction when the V4-equivalent path returned
-        // VALID — INVALID/SYNCING/ACCEPTED short-circuits.
-        if payload_status.status == crate::types::payload::PayloadValidationStatus::Valid
-            && !decoded_il.is_empty()
-        {
-            // The block is now stored. Read its post-state and pre-state
-            // (parent's state_root) and run the satisfaction validator.
-            let stored_header = context
-                .storage
-                .get_block_header_by_hash(block_hash_for_il)
-                .map_err(|e| RpcErr::Internal(e.to_string()))?
-                .ok_or_else(|| {
-                    RpcErr::Internal("stored block missing for IL satisfaction check".to_string())
-                })?;
-            let parent_header = context
-                .storage
-                .get_block_header_by_hash(stored_header.parent_hash)
-                .map_err(|e| RpcErr::Internal(e.to_string()))?
-                .ok_or_else(|| {
-                    RpcErr::Internal("parent block missing for IL satisfaction check".to_string())
-                })?;
-
-            let pre_state = ethrex_blockchain::inclusion_list_validator::StoreIlStateProvider {
-                store: &context.storage,
-                state_root: parent_header.state_root,
-            };
-            let post_state = ethrex_blockchain::inclusion_list_validator::StoreIlStateProvider {
-                store: &context.storage,
-                state_root: stored_header.state_root,
-            };
-            let crypto = ethrex_crypto::NativeCrypto;
-            let mut validator =
-                ethrex_blockchain::inclusion_list_validator::InclusionListSatisfactionValidator::new(
-                    &decoded_il,
-                    &pre_state,
-                    &crypto,
-                )
-                .map_err(|e| RpcErr::Internal(format!("IL validator init failed: {e}")))?;
-            validator
-                .refresh_all_from(&post_state, &crypto)
-                .map_err(|e| RpcErr::Internal(format!("IL validator refresh failed: {e}")))?;
-
-            // Reconstruct block_txs set from the stored block body.
-            let stored_body = context
-                .storage
-                .get_block_body_by_hash(block_hash_for_il)
-                .await
-                .map_err(|e| RpcErr::Internal(e.to_string()))?
-                .ok_or_else(|| {
-                    RpcErr::Internal(
-                        "stored block body missing for IL satisfaction check".to_string(),
-                    )
-                })?;
-            let block_tx_hashes: std::collections::HashSet<H256> = stored_body
-                .transactions
-                .iter()
-                .map(|tx| tx.hash(&crypto))
-                .collect();
-            let gas_left = stored_header
-                .gas_limit
-                .saturating_sub(stored_header.gas_used);
-
-            match validator.check(
-                &decoded_il,
-                &block_tx_hashes,
-                gas_left,
-                &stored_header,
-                &chain_config,
-                &crypto,
-            ) {
-                Ok(()) => {
-                    // Satisfied → pass through the V4-equivalent status.
-                }
-                Err(_unsatisfied) => {
-                    return serde_json::to_value(PayloadStatus::inclusion_list_unsatisfied())
-                        .map_err(|e| RpcErr::Internal(e.to_string()));
+        // Retain the inclusion list so `engine_forkchoiceUpdatedV5` can report
+        // `inclusionListSatisfied` for this block if the consensus layer later
+        // names it as head. Mandatory for `ACCEPTED` payloads, whose IL check is
+        // deferred until execution happens; also done for `VALID` ones so the
+        // forkchoice call need not be given the list again.
+        if matches!(
+            payload_status.status,
+            PayloadValidationStatus::Valid | PayloadValidationStatus::Accepted
+        ) {
+            match context.retained_inclusion_lists.lock() {
+                Ok(mut retained) => retained.insert(block_hash_for_il, decoded_il.clone()),
+                Err(e) => {
+                    return Err(RpcErr::Internal(format!(
+                        "retained inclusion list lock poisoned: {e}"
+                    )));
                 }
             }
         }
 
-        serde_json::to_value(payload_status).map_err(|error| RpcErr::Internal(error.to_string()))
+        // `inclusionListSatisfied` is reported only for a `VALID` payload; for
+        // every other status it stays absent. An unsatisfied list does not make
+        // the payload invalid — the consensus layer simply will not attest to
+        // it.
+        if payload_status.status != PayloadValidationStatus::Valid {
+            return serde_json::to_value(payload_status)
+                .map_err(|error| RpcErr::Internal(error.to_string()));
+        }
+
+        let satisfied =
+            block_satisfies_inclusion_list(&context, block_hash_for_il, &decoded_il).await?;
+        serde_json::to_value(payload_status.with_inclusion_list_satisfied(satisfied))
+            .map_err(|error| RpcErr::Internal(error.to_string()))
     }
 }
 

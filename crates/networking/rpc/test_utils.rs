@@ -351,6 +351,7 @@ pub async fn default_context_with_storage(storage: Store) -> RpcApiContext {
         ws: None,
         allowed_namespaces: Arc::new(all_namespaces_for_tests()),
         il_config: crate::rpc::IlConfig::default(),
+        retained_inclusion_lists: Default::default(),
     }
 }
 

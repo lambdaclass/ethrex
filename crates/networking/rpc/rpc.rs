@@ -8,6 +8,7 @@ use crate::engine::blobs::{BlobsV2Request, BlobsV3Request};
 use crate::engine::client_version::GetClientVersionV1Request;
 use crate::engine::fork_choice::ForkChoiceUpdatedV5;
 use crate::engine::inclusion_list::GetInclusionListV1Request;
+use crate::engine::inclusion_list::RetainedInclusionListsHandle;
 use crate::engine::payload::NewPayloadV6Request;
 use crate::engine::payload::{
     GetPayloadV5Request, GetPayloadV6Request, NewPayloadV5Request, NewPayloadWithWitnessV5Request,
@@ -235,6 +236,10 @@ pub struct RpcApiContext {
     /// `engine_getInclusionListV1` reads this when constructing
     /// `InclusionListBuilder` on each request.
     pub il_config: IlConfig,
+    /// EIP-7805 (FOCIL) inclusion lists retained from `engine_newPayloadV6`,
+    /// keyed by block hash, so `engine_forkchoiceUpdatedV5` can report
+    /// `inclusionListSatisfied` for the head it is told to adopt.
+    pub retained_inclusion_lists: RetainedInclusionListsHandle,
 }
 
 /// Configuration for the WebSocket RPC server.
@@ -618,6 +623,7 @@ pub async fn bind_api(
         ws: ws.clone(),
         allowed_namespaces: Arc::new(allowed_namespaces),
         il_config,
+        retained_inclusion_lists: Default::default(),
     };
 
     // Periodically clean up the active filters for the filters endpoints.

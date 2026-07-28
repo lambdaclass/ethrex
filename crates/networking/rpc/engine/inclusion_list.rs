@@ -1,21 +1,27 @@
-//! `engine_getInclusionListV1` handler. Per EIP-7805 (FOCIL) and execution-apis:
+//! `engine_getInclusionListV1` plus the EIP-7805 (FOCIL) machinery shared by
+//! `engine_newPayloadV6` and `engine_forkchoiceUpdatedV5`.
 //!
-//! - Single param: `parentHash` (32-byte hex).
+//! Per EIP-7805 and execution-apis:
+//!
+//! - `engine_getInclusionListV1` takes no parameters and builds the list from
+//!   the node's own view of the mempool against its canonical head.
 //! - Returns: array of EIP-2718 RLP-encoded transactions, hex-encoded.
 //! - Total RLP byte length ≤ `MAX_BYTES_PER_INCLUSION_LIST` (8192).
 //! - Excludes blob (EIP-4844) transactions.
 //! - 1-second timeout.
-//! - Unknown parent → JSON-RPC error code `-38007`.
 
+use std::collections::{HashMap, HashSet, VecDeque};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use bytes::Bytes;
-use ethrex_blockchain::inclusion_list_builder::{
-    AccountStateView, IlStateProvider, IlStateProviderError, InclusionListBuilder,
+use ethrex_blockchain::inclusion_list_builder::InclusionListBuilder;
+use ethrex_blockchain::inclusion_list_validator::{
+    InclusionListSatisfactionValidator, StoreIlStateProvider,
 };
-use ethrex_common::types::MAX_BYTES_PER_INCLUSION_LIST;
-use ethrex_common::{Address, H256};
-use ethrex_storage::Store;
+use ethrex_common::H256;
+use ethrex_common::types::{MAX_BYTES_PER_INCLUSION_LIST, Transaction};
+use ethrex_crypto::NativeCrypto;
 use serde_json::Value;
 use tracing::debug;
 
@@ -27,68 +33,160 @@ use crate::{
 /// 1-second deadline mandated by the FOCIL execution-apis spec.
 const GET_INCLUSION_LIST_V1_TIMEOUT: Duration = Duration::from_secs(1);
 
-#[derive(Debug)]
-pub struct GetInclusionListV1Request {
-    pub parent_hash: H256,
+/// Upper bound on retained inclusion lists. `engine_newPayloadV6` retains the
+/// list for every payload it accepts so `engine_forkchoiceUpdatedV5` can report
+/// `inclusionListSatisfied` for the head it is told to adopt; the spec allows
+/// discarding a list once its payload is no longer the tip of a branch, so a
+/// small FIFO window is enough to cover the branches still in play.
+const MAX_RETAINED_INCLUSION_LISTS: usize = 64;
+
+/// Inclusion lists retained from `engine_newPayloadV6`, keyed by block hash.
+///
+/// execution-apis requires retaining `inclusionListTransactions` for a payload
+/// with `ACCEPTED` status and permits discarding them once the payload is no
+/// longer a branch tip. Lists are kept for accepted *and* valid payloads, since
+/// `engine_forkchoiceUpdatedV5` must report the verdict for whichever of them
+/// the consensus layer later names as head. Eviction is FIFO once the window is
+/// full, which is why this is not a correctness-critical cache: a miss simply
+/// leaves `inclusionListSatisfied` unreported.
+#[derive(Debug, Default)]
+pub struct RetainedInclusionLists {
+    by_block: HashMap<H256, Vec<Transaction>>,
+    order: VecDeque<H256>,
 }
 
-/// Adapter from `Store` (keyed by state root) to the IL builder/validator's
-/// narrow `IlStateProvider` trait.
-struct StoreIlStateProvider<'a> {
-    store: &'a Store,
-    state_root: H256,
-}
+impl RetainedInclusionLists {
+    pub fn insert(&mut self, block_hash: H256, transactions: Vec<Transaction>) {
+        if self.by_block.insert(block_hash, transactions).is_none() {
+            self.order.push_back(block_hash);
+        }
+        while self.order.len() > MAX_RETAINED_INCLUSION_LISTS {
+            if let Some(evicted) = self.order.pop_front() {
+                self.by_block.remove(&evicted);
+            }
+        }
+    }
 
-impl<'a> IlStateProvider for StoreIlStateProvider<'a> {
-    fn get_account(
-        &self,
-        address: Address,
-    ) -> Result<Option<AccountStateView>, IlStateProviderError> {
-        let acct = self
-            .store
-            .get_account_state_by_root(self.state_root, address)
-            .map_err(|e| IlStateProviderError::Read(e.to_string()))?;
-        Ok(acct.map(|a| AccountStateView {
-            nonce: a.nonce,
-            balance: a.balance,
-        }))
+    pub fn get(&self, block_hash: &H256) -> Option<&[Transaction]> {
+        self.by_block.get(block_hash).map(Vec::as_slice)
     }
 }
+
+/// Shared handle to [`RetainedInclusionLists`]. The critical section only ever
+/// clones a transaction list out or moves one in, so it never spans an `await`.
+pub type RetainedInclusionListsHandle = Arc<Mutex<RetainedInclusionLists>>;
+
+/// Runs the EIP-7805 (FOCIL) satisfaction algorithm for `block_hash` against
+/// `inclusion_list`, reporting whether the block satisfies it.
+///
+/// An empty inclusion list is trivially satisfied. The algorithm is a pure
+/// state-comparison pass: the validator is seeded from the parent's pre-state,
+/// refreshed from the block's post-state, and consulted once — no transaction
+/// is re-executed.
+pub async fn block_satisfies_inclusion_list(
+    context: &RpcApiContext,
+    block_hash: H256,
+    inclusion_list: &[Transaction],
+) -> Result<bool, RpcErr> {
+    if inclusion_list.is_empty() {
+        return Ok(true);
+    }
+
+    let header = context
+        .storage
+        .get_block_header_by_hash(block_hash)
+        .map_err(|e| RpcErr::Internal(e.to_string()))?
+        .ok_or_else(|| RpcErr::Internal("block missing for IL satisfaction check".to_string()))?;
+    let parent_header = context
+        .storage
+        .get_block_header_by_hash(header.parent_hash)
+        .map_err(|e| RpcErr::Internal(e.to_string()))?
+        .ok_or_else(|| RpcErr::Internal("parent missing for IL satisfaction check".to_string()))?;
+
+    let pre_state = StoreIlStateProvider {
+        store: &context.storage,
+        state_root: parent_header.state_root,
+    };
+    let post_state = StoreIlStateProvider {
+        store: &context.storage,
+        state_root: header.state_root,
+    };
+    let crypto = NativeCrypto;
+    let mut validator =
+        InclusionListSatisfactionValidator::new(inclusion_list, &pre_state, &crypto)
+            .map_err(|e| RpcErr::Internal(format!("IL validator init failed: {e}")))?;
+    validator
+        .refresh_all_from(&post_state, &crypto)
+        .map_err(|e| RpcErr::Internal(format!("IL validator refresh failed: {e}")))?;
+
+    let body = context
+        .storage
+        .get_block_body_by_hash(block_hash)
+        .await
+        .map_err(|e| RpcErr::Internal(e.to_string()))?
+        .ok_or_else(|| {
+            RpcErr::Internal("block body missing for IL satisfaction check".to_string())
+        })?;
+    let block_tx_hashes: HashSet<H256> = body
+        .transactions
+        .iter()
+        .map(|tx| tx.hash(&crypto))
+        .collect();
+    let gas_left = header.gas_limit.saturating_sub(header.gas_used);
+    let chain_config = context.storage.get_chain_config();
+
+    Ok(validator
+        .check(
+            inclusion_list,
+            &block_tx_hashes,
+            gas_left,
+            &header,
+            &chain_config,
+            &crypto,
+        )
+        .is_ok())
+}
+
+#[derive(Debug)]
+pub struct GetInclusionListV1Request;
 
 impl RpcHandler for GetInclusionListV1Request {
     fn parse(params: &Option<Vec<Value>>) -> Result<Self, RpcErr> {
-        let params = params
-            .as_ref()
-            .ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
-        if params.len() != 1 {
-            return Err(RpcErr::BadParams("Expected 1 param".to_owned()));
+        // `engine_getInclusionListV1` takes no parameters. Both an absent and
+        // an empty array are accepted; anything else is a caller error.
+        match params {
+            None => Ok(Self),
+            Some(params) if params.is_empty() => Ok(Self),
+            Some(_) => Err(RpcErr::BadParams("Expected no params".to_owned())),
         }
-        let parent_hash: H256 = serde_json::from_value(params[0].clone())
-            .map_err(|_| RpcErr::WrongParam("parentHash".to_string()))?;
-        Ok(Self { parent_hash })
     }
 
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
-        debug!(parent_hash = ?self.parent_hash, "engine_getInclusionListV1");
-        let parent_hash = self.parent_hash;
+        debug!("engine_getInclusionListV1");
 
         // Build the IL inside `tokio::time::timeout`. The builder is sync but
         // wrapping it in spawn_blocking would be heavier than necessary; the
         // 1-second deadline is generous for the in-memory work the builder
         // performs.
         let result = tokio::time::timeout(GET_INCLUSION_LIST_V1_TIMEOUT, async move {
-            // Resolve parent header → state_root + base_fee.
-            let parent_header = context
+            // The list constrains the next block, so it is built against the
+            // node's canonical head — the parent of that block.
+            let head_number = context
                 .storage
-                .get_block_header_by_hash(parent_hash)
+                .get_latest_block_number()
+                .await
+                .map_err(|e| RpcErr::Internal(e.to_string()))?;
+            let head_header = context
+                .storage
+                .get_block_header(head_number)
                 .map_err(|e| RpcErr::Internal(e.to_string()))?
-                .ok_or_else(|| RpcErr::UnknownParent(format!("0x{:x}", parent_hash)))?;
+                .ok_or_else(|| RpcErr::Internal("canonical head header missing".to_string()))?;
 
             let state = StoreIlStateProvider {
                 store: &context.storage,
-                state_root: parent_header.state_root,
+                state_root: head_header.state_root,
             };
-            let base_fee = parent_header.base_fee_per_gas.unwrap_or(0);
+            let base_fee = head_header.base_fee_per_gas.unwrap_or(0);
 
             // Read CLI-driven config from context. Hard-cap at 8192 in
             // non-test builds per spec — operators cannot raise this above
@@ -139,46 +237,5 @@ impl RpcHandler for GetInclusionListV1Request {
             .map(|b| format!("0x{}", hex::encode(b)))
             .collect();
         serde_json::to_value(hex).map_err(|e| RpcErr::Internal(e.to_string()))
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::test_utils::default_context_with_storage;
-    use ethrex_storage::{EngineType, Store};
-    use serde_json::json;
-
-    #[tokio::test]
-    async fn unknown_parent_returns_38007() {
-        let storage = Store::new("", EngineType::InMemory).expect("in-memory store");
-        let context = default_context_with_storage(storage).await;
-
-        let req = GetInclusionListV1Request {
-            parent_hash: H256::from_low_u64_be(0xdeadbeef),
-        };
-
-        let err = req.handle(context).await.expect_err("must fail");
-        let metadata: crate::utils::RpcErrorMetadata = err.into();
-        assert_eq!(metadata.code, -38007);
-        assert_eq!(metadata.message, "Unknown parent");
-    }
-
-    #[tokio::test]
-    async fn parse_rejects_wrong_param_count() {
-        let no_params = GetInclusionListV1Request::parse(&Some(vec![]));
-        assert!(matches!(no_params, Err(RpcErr::BadParams(_))));
-
-        let two_params =
-            GetInclusionListV1Request::parse(&Some(vec![json!("0x00"), json!("0x01")]));
-        assert!(matches!(two_params, Err(RpcErr::BadParams(_))));
-    }
-
-    #[tokio::test]
-    async fn parse_accepts_valid_hash() {
-        let parsed =
-            GetInclusionListV1Request::parse(&Some(vec![json!(format!("0x{:064x}", 0x42u64))]))
-                .expect("valid 32-byte hex parses");
-        assert_eq!(parsed.parent_hash, H256::from_low_u64_be(0x42));
     }
 }

@@ -3,12 +3,13 @@ use ethrex_blockchain::{
     fork_choice::apply_fork_choice_with_deep_reorg,
     payload::{BuildPayloadArgs, create_payload},
 };
-use ethrex_common::types::{BlockHeader, ELASTICITY_MULTIPLIER};
+use ethrex_common::types::{BlockHeader, ELASTICITY_MULTIPLIER, Transaction};
 use ethrex_p2p::sync::SyncMode;
 use serde_json::Value;
 use tracing::{debug, info, warn};
 
 use crate::{
+    engine::inclusion_list::block_satisfies_inclusion_list,
     rpc::{RpcApiContext, RpcHandler},
     subscription_manager::SubscriptionManagerProtocol,
     types::{
@@ -16,7 +17,7 @@ use crate::{
             ForkChoiceResponse, ForkChoiceState, PayloadAttributesV3, PayloadAttributesV4,
             PayloadAttributesV5,
         },
-        payload::PayloadStatus,
+        payload::{PayloadStatus, PayloadValidationStatus},
     },
     utils::RpcErr,
     utils::RpcRequest,
@@ -203,6 +204,29 @@ impl RpcHandler for ForkChoiceUpdatedV5 {
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
         let (head_block_opt, mut response) =
             handle_forkchoice(&self.fork_choice_state, context.clone(), 5).await?;
+
+        // EIP-7805 (FOCIL): report whether the head satisfies the inclusion
+        // list, reusing the list `engine_newPayloadV6` retained for it. Only a
+        // `VALID` head carries a verdict; the field stays absent otherwise. A
+        // head whose list was never retained (evicted, or delivered before this
+        // node started) also reports nothing rather than guessing `true`.
+        if response.payload_status.status == PayloadValidationStatus::Valid {
+            let head_hash = self.fork_choice_state.head_block_hash;
+            let retained = match context.retained_inclusion_lists.lock() {
+                Ok(lists) => lists.get(&head_hash).map(<[Transaction]>::to_vec),
+                Err(e) => {
+                    return Err(RpcErr::Internal(format!(
+                        "retained inclusion list lock poisoned: {e}"
+                    )));
+                }
+            };
+            if let Some(inclusion_list) = retained {
+                let satisfied =
+                    block_satisfies_inclusion_list(&context, head_hash, &inclusion_list).await?;
+                response.payload_status.inclusion_list_satisfied = Some(satisfied);
+            }
+        }
+
         if let (Some(head_block), Some(attributes)) = (head_block_opt, &self.payload_attributes) {
             let chain_config = context.storage.get_chain_config();
             validate_attributes_v5(attributes, &head_block, &chain_config)?;
