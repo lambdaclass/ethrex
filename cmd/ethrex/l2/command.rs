@@ -431,7 +431,16 @@ impl Command {
                     let mut buf = &blob[8..];
                     let mut blocks = Vec::new();
                     for _ in 0..blocks_count {
-                        let (item, rest) = Block::decode_unfinished(buf)?;
+                        let (mut item, rest) = Block::decode_unfinished(buf)?;
+
+                        // TODO: Regenerate the legacy state-reconstruction fixture blobs with an
+                        // explicit empty withdrawals list, then remove this compatibility fix.
+                        // Older fixtures have a withdrawals root but omit withdrawals from the body.
+                        if item.header.withdrawals_root.is_some() && item.body.withdrawals.is_none()
+                        {
+                            item.body.withdrawals = Some(Vec::new());
+                        }
+
                         blocks.push(item);
                         buf = rest;
                     }
