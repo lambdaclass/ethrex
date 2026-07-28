@@ -473,7 +473,7 @@ pub struct Options {
         long = "blob-eager-provider",
         action = ArgAction::SetTrue,
         default_value = "false",
-        help = "EIP-8070: always act as provider (p=1.0) for every blob tx, bypassing the pseudo-random role decision. Block builders should enable this (EIP-8070 N8). Implies --blob-sampling.",
+        help = "EIP-8070: always act as provider (p=1.0) for every blob tx, bypassing the pseudo-random role decision. Implies --blob-sampling. Not needed for validators: eager mode latches on permanently the first time the CL requests a payload build.",
         help_heading = "P2P options",
         env = "ETHREX_BLOB_EAGER_PROVIDER"
     )]

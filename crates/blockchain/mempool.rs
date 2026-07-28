@@ -2,7 +2,7 @@ use std::{
     cmp::Reverse,
     collections::{BTreeMap, VecDeque, hash_map::Entry},
     sync::RwLock,
-    sync::atomic::{AtomicU64, Ordering},
+    sync::atomic::{AtomicBool, AtomicU64, Ordering},
     time::{Duration, Instant},
 };
 
@@ -21,7 +21,7 @@ use ethrex_common::{
 use ethrex_crypto::NativeCrypto;
 use ethrex_storage::error::StoreError;
 use ethrex_vm::{intrinsic_gas_dimensions, intrinsic_gas_floor};
-use tracing::warn;
+use tracing::{info, warn};
 
 // ────────────────────────────────────────────────────────────────────
 // EIP-8070 / PeerDAS sampling constants
@@ -659,9 +659,11 @@ pub struct Mempool {
     pub blob_sampling_enabled: bool,
     /// When true, this node always acts as provider (p=1.0) for every blob tx
     /// regardless of the pseudo-random role decision. Block builders SHOULD
-    /// enable this (EIP-8070 N8) to ensure full blob availability. Enabled via
-    /// `--blob-eager-provider` CLI flag.
-    pub eager_provider: bool,
+    /// permanently act in eager mode (EIP-8070) to ensure they hold complete blob
+    /// data for every tx they include. Set at startup via `--blob-eager-provider`,
+    /// and latched permanently by [`Mempool::latch_eager_provider`] the first time
+    /// the CL asks this node to build a payload.
+    eager_provider: AtomicBool,
     /// Monotonic counter bumped whenever `custody_columns` changes value (via
     /// the Engine API FCU v4). The p2p sweep compares it against its last-seen
     /// value to re-sample pending blob txs for newly-custodied columns.
@@ -681,7 +683,7 @@ impl Mempool {
             tx_added: tokio::sync::Notify::new(),
             tx_seq: AtomicU64::new(0),
             blob_sampling_enabled: false,
-            eager_provider: false,
+            eager_provider: AtomicBool::new(false),
             custody_generation: AtomicU64::new(0),
         }
     }
@@ -708,8 +710,32 @@ impl Mempool {
     pub fn new_with_eager_provider(max_mempool_size: usize) -> Self {
         Mempool {
             blob_sampling_enabled: true,
-            eager_provider: true,
+            eager_provider: AtomicBool::new(true),
             ..Self::new(max_mempool_size)
+        }
+    }
+
+    /// Whether this node acts as an eager provider (p=1.0 for every blob tx).
+    pub fn is_eager_provider(&self) -> bool {
+        self.eager_provider.load(Ordering::Acquire)
+    }
+
+    /// Latch eager-provider mode on permanently. Called when the CL asks this node
+    /// to build a payload: EIP-8070 says a block builder SHOULD permanently act in
+    /// eager mode, so that it holds complete blob data for every tx it includes.
+    /// The latch is one-way on purpose — dropping back to sampling between slots
+    /// would leak the node's proposer schedule through its fetch pattern.
+    ///
+    /// Inert unless sampling is enabled: without `--blob-sampling` the node is
+    /// already a full-replication provider.
+    pub fn latch_eager_provider(&self) {
+        if !self.blob_sampling_enabled {
+            return;
+        }
+        if !self.eager_provider.swap(true, Ordering::AcqRel) {
+            info!(
+                "Local payload build requested: latching EIP-8070 eager-provider mode (full blob payloads for every blob tx)"
+            );
         }
     }
 

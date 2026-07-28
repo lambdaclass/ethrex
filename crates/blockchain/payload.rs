@@ -404,6 +404,10 @@ impl Blockchain {
     /// Starts a payload build process. The built payload can be retrieved by calling `get_payload`.
     /// The build process will run for the full block building timeslot or until `get_payload` is called
     pub async fn initiate_payload_build(self: Arc<Blockchain>, payload: Block, payload_id: u64) {
+        // EIP-8070: a node that builds payloads SHOULD permanently act as an eager
+        // provider, so it holds complete blob data for every blob tx it may include.
+        // Inert unless blob sampling is enabled.
+        self.mempool.latch_eager_provider();
         let self_clone = self.clone();
         let cancel_token = CancellationToken::new();
         let cancel_token_clone = cancel_token.clone();

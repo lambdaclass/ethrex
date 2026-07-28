@@ -1,3 +1,4 @@
+use ethrex_blockchain::mempool::Mempool;
 use ethrex_blockchain::sampling::{is_provider_role, pick_random_extra_column};
 use ethrex_common::H256;
 
@@ -36,6 +37,39 @@ fn eager_true_always_provider() {
             "eager=true must always be provider (i={i})"
         );
     }
+}
+
+// ── eager-provider latch (EIP-8070: builders act eagerly, permanently) ───────
+
+#[test]
+fn latch_eager_provider_sticks_when_sampling_enabled() {
+    let mempool = Mempool::new_with_sampling(64);
+    assert!(
+        !mempool.is_eager_provider(),
+        "sampling node starts as a probabilistic provider"
+    );
+    mempool.latch_eager_provider();
+    assert!(
+        mempool.is_eager_provider(),
+        "a payload build request must latch eager mode on"
+    );
+    // The latch is one-way: repeat calls keep it on, nothing clears it.
+    mempool.latch_eager_provider();
+    assert!(mempool.is_eager_provider());
+}
+
+#[test]
+fn latch_eager_provider_is_inert_without_sampling() {
+    // Without --blob-sampling the node is already a full-replication provider,
+    // so the latch must stay off rather than advertise a sampling-mode role.
+    let mempool = Mempool::new(64);
+    mempool.latch_eager_provider();
+    assert!(!mempool.is_eager_provider());
+}
+
+#[test]
+fn eager_provider_flag_is_set_at_construction() {
+    assert!(Mempool::new_with_eager_provider(64).is_eager_provider());
 }
 
 // ── D1: per-node entropy (different local ids give different decisions) ────────

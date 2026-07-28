@@ -124,6 +124,42 @@ impl Cells {
             cell_mask,
         }
     }
+
+    /// Check this response against the `GetCells` request it claims to answer.
+    ///
+    /// devp2p `caps/eth.md` lets a peer omit whole transactions or clear indices
+    /// when it can't serve them, but never add: the `cells` bitmap "must be a
+    /// subset of the corresponding request's bitmap", and a peer "sending invalid
+    /// or not requested element must be disconnected". Returns `Err` with the
+    /// reason so the caller can log it before dropping the peer.
+    pub fn validate_requested(
+        &self,
+        requested_hashes: &[H256],
+        requested_mask: u128,
+    ) -> Result<(), CellsResponseError> {
+        if self.cell_mask & !requested_mask != 0 {
+            return Err(CellsResponseError::UnrequestedCellIndices);
+        }
+        if self
+            .transaction_hashes
+            .iter()
+            .any(|hash| !requested_hashes.contains(hash))
+        {
+            return Err(CellsResponseError::UnrequestedTransaction);
+        }
+        Ok(())
+    }
+}
+
+/// Why a `Cells` response failed validation against its request.
+#[derive(Debug, thiserror::Error, PartialEq, Eq)]
+pub enum CellsResponseError {
+    #[error("Cells response carries cell indices that were not requested")]
+    UnrequestedCellIndices,
+    #[error("Cells response carries a transaction hash that was not requested")]
+    UnrequestedTransaction,
+    #[error("Cells response does not answer any outstanding GetCells request")]
+    UnknownRequestId,
 }
 
 impl RLPxMessage for Cells {

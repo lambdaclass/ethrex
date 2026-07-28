@@ -8,7 +8,7 @@ use ethrex_common::{
 };
 use ethrex_p2p::rlpx::{
     eth::{
-        cells::{Cells, GetCells, MAX_CELL_REQUEST_HASHES},
+        cells::{Cells, CellsResponseError, GetCells, MAX_CELL_REQUEST_HASHES},
         eth72::transactions::{
             NewPooledTransactionHashes72, PooledTransactions72, b16_to_u128, u128_to_b16,
         },
@@ -115,6 +115,53 @@ fn get_cells_rejects_too_many_hashes() {
         .collect();
     let msg = GetCells::new(1, hashes, 1);
     assert!(GetCells::decode(&encode(&msg)).is_err());
+}
+
+// ── Cells response validation against its GetCells request ───────────────────
+//
+// devp2p caps/eth.md: a peer may omit transactions or clear indices, but the
+// response's hash list and `cells` bitmap must both be subsets of the request's.
+
+fn cells_response(hashes: Vec<H256>, cell_mask: u128) -> Cells {
+    let per_tx = vec![[0u8; BYTES_PER_CELL]; cell_mask.count_ones() as usize];
+    let cells = vec![per_tx; hashes.len()];
+    Cells::new(5, hashes, cells, cell_mask)
+}
+
+#[test]
+fn cells_accepts_subset_of_request() {
+    let requested = vec![H256::from_low_u64_be(1), H256::from_low_u64_be(2)];
+    // Fewer hashes and fewer indices than requested: both legal truncations.
+    let response = cells_response(vec![H256::from_low_u64_be(2)], 0b0010u128);
+    assert!(response.validate_requested(&requested, 0b1011u128).is_ok());
+}
+
+#[test]
+fn cells_accepts_empty_response() {
+    let requested = vec![H256::from_low_u64_be(1)];
+    let response = cells_response(vec![], 0);
+    assert!(response.validate_requested(&requested, 0b1111u128).is_ok());
+}
+
+#[test]
+fn cells_rejects_unrequested_cell_index() {
+    let requested = vec![H256::from_low_u64_be(1)];
+    // Bit 2 was never requested.
+    let response = cells_response(requested.clone(), 0b0101u128);
+    assert_eq!(
+        response.validate_requested(&requested, 0b0011u128),
+        Err(CellsResponseError::UnrequestedCellIndices)
+    );
+}
+
+#[test]
+fn cells_rejects_unrequested_transaction() {
+    let requested = vec![H256::from_low_u64_be(1)];
+    let response = cells_response(vec![H256::from_low_u64_be(7)], 0b0001u128);
+    assert_eq!(
+        response.validate_requested(&requested, 0b0011u128),
+        Err(CellsResponseError::UnrequestedTransaction)
+    );
 }
 
 // ── PooledTransactions72 elided round-trip ────────────────────────────────────

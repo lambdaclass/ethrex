@@ -18,7 +18,7 @@ use crate::{
         eth::{
             block_access_lists::{BlockAccessLists, GetBlockAccessLists},
             blocks::{BlockBodies, BlockHeaders},
-            cells::GetCells,
+            cells::{CellsResponseError, GetCells},
             eth72::{
                 status::StatusMessage72,
                 transactions::{NewPooledTransactionHashes72, PooledTransactions72},
@@ -290,6 +290,12 @@ pub struct Established {
     /// EIP-8070: buffered cell requests (tx_hashes, cell_mask) waiting to be
     /// flushed as a single batched GetCells message.
     pub(crate) pending_cell_requests: Vec<(Vec<H256>, u128)>,
+    /// EIP-8070: in-flight `GetCells` requests, keyed by request id, holding the
+    /// hashes and cell mask we asked for plus the request time. devp2p requires a
+    /// `Cells` response to answer an outstanding request, with a hash set and cell
+    /// bitmap that are subsets of what was requested; anything else is a
+    /// subprotocol violation. Swept on the same tick as the tx requests.
+    pub(crate) requested_cells: HashMap<u64, (Vec<H256>, u128, Instant)>,
     /// EIP-8070: last custody generation this connection acted on. When the
     /// mempool's custody generation advances (Engine API FCU v4 changed the
     /// custody set), the sweep re-samples pending blob txs for the new columns.
@@ -687,6 +693,13 @@ impl PeerConnectionServer {
                     retry_on_alternates(&state.blockchain, &state.peer_table, &hashes).await;
                 }
             }
+            // EIP-8070: drop in-flight GetCells entries the peer never answered, so
+            // the map can't grow unbounded on a peer that silently ignores requests.
+            // Unlike tx requests there is nothing to retry: the sampler re-requests
+            // cells on the next announcement or custody change.
+            state
+                .requested_cells
+                .retain(|_, (_, _, ts)| now.duration_since(*ts) <= INFLIGHT_TX_TIMEOUT);
             // EIP-8070: prune cell entries for txs that left the pool.
             if let Err(e) = state.blockchain.mempool.prune_cells() {
                 warn!(error = %e, "prune_cells failed during sweep");
@@ -1754,7 +1767,7 @@ async fn handle_incoming_message(
                         // Compute the local node id once per announcement (per-node entropy).
                         let local_pubkey = public_key_from_signing_key(&state.signer);
                         let local_node_id = node_id(&local_pubkey);
-                        let eager = state.blockchain.mempool.eager_provider;
+                        let eager = state.blockchain.mempool.is_eager_provider();
 
                         let mut provider_hashes: Vec<H256> = Vec::new();
                         let mut sampler_hashes: Vec<H256> = Vec::new();
@@ -2106,8 +2119,34 @@ async fn handle_incoming_message(
         ref message @ Message::Cells(_) if peer_supports_eth => {
             #[allow(unused_mut)]
             let mut verify_failed = false;
-            #[cfg(feature = "c-kzg")]
+            // devp2p `caps/eth.md`: a `Cells` response must answer an outstanding
+            // `GetCells`, and both its hash list and its `cells` bitmap must be
+            // subsets of that request's. A peer sending unrequested elements must be
+            // disconnected — unlike a KZG failure this is checkable without c-kzg,
+            // and it stops a peer from pushing cells we never asked for.
             if let Message::Cells(cells_msg) = message {
+                let outcome = match state.requested_cells.remove(&cells_msg.id) {
+                    Some((requested_hashes, requested_mask, _)) => {
+                        cells_msg.validate_requested(&requested_hashes, requested_mask)
+                    }
+                    None => Err(CellsResponseError::UnknownRequestId),
+                };
+                if let Err(error) = outcome {
+                    debug!(
+                        peer = %state.node,
+                        id = cells_msg.id,
+                        %error,
+                        "Rejecting Cells response",
+                    );
+                    verify_failed = true;
+                }
+            }
+            // Skip the KZG pass when the response already failed the framing checks:
+            // nothing from an unrequested response should reach the cell store.
+            #[cfg(feature = "c-kzg")]
+            if let Message::Cells(cells_msg) = message
+                && !verify_failed
+            {
                 use ethrex_common::types::{BYTES_PER_CELL, CELLS_PER_EXT_BLOB, Commitment, Proof};
                 use ethrex_crypto::kzg::verify_cell_kzg_proof_batch_partial;
                 let mempool = &state.blockchain.mempool;
@@ -2475,8 +2514,14 @@ async fn flush_pending_cell_requests(state: &mut Established) -> Result<(), Peer
         let merged_mask = chunk_masks.iter().fold(0u128, |acc, &m| acc | m);
         // devp2p `caps/eth.md` recommends a soft limit of 64 hashes per GetCells
         // request; `MAX_HASHES_PER_REQUEST` above is chunked to stay within it.
-        let request = GetCells::new(random(), chunk.to_vec(), merged_mask);
+        let id = random();
+        let request = GetCells::new(id, chunk.to_vec(), merged_mask);
         send(state, Message::GetCells(request)).await?;
+        // Register only after a successful send, so a failed write doesn't leave a
+        // phantom in-flight entry (mirrors `flush_pending_tx_requests`).
+        state
+            .requested_cells
+            .insert(id, (chunk.to_vec(), merged_mask, Instant::now()));
     }
     Ok(())
 }
