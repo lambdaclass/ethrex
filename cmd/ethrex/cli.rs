@@ -10,7 +10,8 @@ use std::{
 
 use clap::{ArgAction, Parser as ClapParser, Subcommand as ClapSubcommand};
 use ethrex_blockchain::{
-    BlockchainOptions, BlockchainType, DEFAULT_MAX_QUEUED_TXS_PER_ACCOUNT, L2Config,
+    BlockchainOptions, BlockchainType, DEFAULT_GAP_ADMIT_OCCUPANCY_THRESHOLD,
+    DEFAULT_MAX_QUEUED_TXS_PER_ACCOUNT, L2Config,
     error::{ChainError, InvalidBlockError},
 };
 use ethrex_common::types::{Block, DEFAULT_BUILDER_GAS_CEIL, Genesis, validate_block_body};
@@ -19,7 +20,7 @@ use ethrex_p2p::{
     tx_broadcaster::BROADCAST_INTERVAL_MS, types::Node,
 };
 use ethrex_rlp::encode::RLPEncode;
-use ethrex_storage::{error::StoreError, has_valid_db};
+use ethrex_storage::{DB_COMMIT_THRESHOLD, error::StoreError, has_valid_db};
 use tokio_util::sync::CancellationToken;
 use tracing::{Level, error, info, warn};
 
@@ -238,6 +239,16 @@ pub struct Options {
     )]
     pub mempool_max_size: usize,
     #[arg(
+        help = "Mempool occupancy percentage (0-100) at or above which incoming transactions with a nonce gap relative to the sender's on-chain nonce are rejected. Setting to 100 disables the check.",
+        long = "mempool.gap-admit-occupancy-threshold",
+        default_value_t = DEFAULT_GAP_ADMIT_OCCUPANCY_THRESHOLD,
+        value_name = "PERCENTAGE",
+        value_parser = clap::value_parser!(u8).range(0..=100),
+        help_heading = "Node options",
+        env = "ETHREX_MEMPOOL_GAP_ADMIT_OCCUPANCY_THRESHOLD"
+    )]
+    pub mempool_gap_admit_occupancy_threshold: u8,
+    #[arg(
         help = "Maximum number of queued (future/nonce-gapped) transactions a single sender may hold in the mempool. Executable (contiguous-nonce) txs are not capped (geth AccountQueue-style).",
         long = "mempool.max-queued-txs-per-account",
         default_value_t = DEFAULT_MAX_QUEUED_TXS_PER_ACCOUNT,
@@ -287,24 +298,24 @@ pub struct Options {
     pub ws_enabled: bool,
     #[arg(
         long = "ws.addr",
-        default_value = "0.0.0.0",
         value_name = "ADDRESS",
         requires = "ws_enabled",
-        help = "Listening address for the websocket rpc server.",
+        help = "Listening address for the websocket rpc server. Defaults to the http.addr value.",
+        long_help = "Listening address for the WebSocket JSON-RPC server. When unset it inherits `--http.addr` (loopback by default). Set it equal to the HTTP address to serve HTTP and WebSocket on a single listener.",
         help_heading = "RPC options",
         env = "ETHREX_WS_ADDR"
     )]
-    pub ws_addr: String,
+    pub ws_addr: Option<String>,
     #[arg(
         long = "ws.port",
-        default_value = "8546",
         value_name = "PORT",
         requires = "ws_enabled",
-        help = "Listening port for the websocket rpc server.",
+        help = "Listening port for the websocket rpc server. Defaults to the http.port value.",
+        long_help = "Listening port for the WebSocket JSON-RPC server. When unset it inherits `--http.port`, so an enabled WebSocket shares the HTTP listener unless a different port is given.",
         help_heading = "RPC options",
         env = "ETHREX_WS_PORT"
     )]
-    pub ws_port: String,
+    pub ws_port: Option<String>,
     #[arg(
         long = "authrpc.addr",
         default_value = "127.0.0.1",
@@ -449,6 +460,14 @@ pub struct Options {
         env = "ETHREX_PRECOMPUTE_WITNESSES"
     )]
     pub precompute_witnesses: bool,
+    #[arg(
+        long = "max-reorg-depth",
+        value_name = "MAX_REORG_DEPTH",
+        help = "Optional operator override for the maximum reorg depth. Omit for finality-bounded cap. Set to 0 to disable deep reorgs entirely. Set to d to reject reorgs of depth > d.",
+        help_heading = "Node options",
+        env = "ETHREX_MAX_REORG_DEPTH"
+    )]
+    pub max_reorg_depth: Option<u64>,
 }
 
 impl Options {
@@ -528,6 +547,7 @@ impl Default for Options {
             dev: Default::default(),
             force: false,
             mempool_max_size: Default::default(),
+            mempool_gap_admit_occupancy_threshold: DEFAULT_GAP_ADMIT_OCCUPANCY_THRESHOLD,
             mempool_max_queued_txs_per_account: DEFAULT_MAX_QUEUED_TXS_PER_ACCOUNT,
             tx_broadcasting_time_interval: Default::default(),
             target_peers: Default::default(),
@@ -542,6 +562,7 @@ impl Default for Options {
             no_bal_parallel_exec: false,
             no_bal_prefetch: false,
             no_bal_parallel_trie: false,
+            max_reorg_depth: None,
         }
     }
 }
@@ -955,7 +976,7 @@ pub async fn import_blocks(
             } else {
                 // We need to have the state of the latest 128 blocks
                 blockchain
-                .add_block_pipeline(block, None)
+                .add_block_pipeline_bounded(block, None, DB_COMMIT_THRESHOLD)
                 .inspect_err(|err| match err {
                     // Block number 1's parent not found, the chain must not belong to the same network as the genesis file
                     ChainError::ParentNotFound if number == 1 => warn!("The chain file is not compatible with the genesis file. Are you sure you selected the correct network?"),
@@ -1128,7 +1149,7 @@ pub async fn import_blocks_bench(
             if export_bal_path.is_some() {
                 // Sequential path: execute and capture the produced BAL
                 let produced_bal = blockchain
-                    .add_block_pipeline_bal(block, None)
+                    .add_block_pipeline_bounded(block, None, DB_COMMIT_THRESHOLD)
                     .inspect_err(|err| match err {
                         ChainError::ParentNotFound if number == 1 => warn!("The chain file is not compatible with the genesis file. Are you sure you selected the correct network?"),
                         _ => warn!("Failed to add block {number} with hash {hash:#x}"),
@@ -1140,7 +1161,7 @@ pub async fn import_blocks_bench(
             } else {
                 // Normal path (or parallel if BAL was loaded)
                 blockchain
-                    .add_block_pipeline(block, bal)
+                    .add_block_pipeline_bounded(block, bal, DB_COMMIT_THRESHOLD)
                     .inspect_err(|err| match err {
                         ChainError::ParentNotFound if number == 1 => warn!("The chain file is not compatible with the genesis file. Are you sure you selected the correct network?"),
                         _ => warn!("Failed to add block {number} with hash {hash:#x}"),
@@ -1320,6 +1341,26 @@ mod tests {
     fn http_addr_defaults_to_loopback() {
         let cli = CLI::parse_from(["ethrex"]);
         assert_eq!(cli.opts.http_addr, "127.0.0.1");
+    }
+
+    /// `--ws.addr`/`--ws.port` inherit the HTTP address/port when unset, so an enabled
+    /// WebSocket defaults to a single listener on the (loopback) HTTP endpoint — matching
+    /// geth/reth/nethermind and keeping WS off public interfaces by default.
+    #[test]
+    fn ws_defaults_to_http_endpoint() {
+        let cli = CLI::parse_from(["ethrex", "--ws.enabled"]);
+        assert!(cli.opts.ws_addr.is_none());
+        assert!(cli.opts.ws_port.is_none());
+        let http = crate::initializers::get_http_socket_addr(&cli.opts);
+        let ws = crate::initializers::get_ws_socket_addr(&cli.opts);
+        assert!(
+            ws.ip().is_loopback(),
+            "WS must default to loopback like HTTP"
+        );
+        assert_eq!(
+            ws, http,
+            "WS must share the HTTP endpoint by default (single listener)"
+        );
     }
 
     /// `--http.api` must default to `eth,net,web3`. Operators have to opt in

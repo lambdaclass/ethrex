@@ -14,6 +14,13 @@ pub mod gen_db;
 type AccountCache = FxHashMap<Address, AccountState>;
 type StorageCache = FxHashMap<(Address, H256), U256>;
 type CodeCache = FxHashMap<H256, Code>;
+/// Touched-key snapshot returned by [`CachingDatabase::touched_keys_where`].
+pub struct TouchedKeys {
+    /// Touched accounts with their storage roots.
+    pub accounts: Vec<(Address, H256)>,
+    /// Touched storage slots as `(account address, slot key)`.
+    pub slots: Vec<(Address, H256)>,
+}
 
 pub trait Database: Send + Sync {
     fn get_account_state(&self, address: Address) -> Result<AccountState, DatabaseError>;
@@ -63,6 +70,22 @@ pub trait Database: Send + Sync {
 /// Thread-safe via RwLock - optimized for read-heavy concurrent access.
 ///
 /// This caching database is inspired by reth's overlay/proof worker cache.
+///
+/// Besides the per-block warmer/executor sharing above, the mempool
+/// prewarmer builds one instance per slot and publishes it across the block
+/// boundary: `execute_block_pipeline` seeds the *next* block's execution
+/// with it when the parent state and fork match (see
+/// `ethrex-blockchain::prewarm`).
+///
+/// # Invariant
+///
+/// Because one instance is shared across the block boundary (and the
+/// prewarmer may still be filling it while the next block executes), every
+/// cached entry must be a pure function of the parent state root. A cache
+/// layer whose entries also depend on the executing block (fork, number,
+/// timestamp, ...) needs a matching handoff guard in
+/// `execute_block_pipeline` — see `precompile_cache`, whose fork-dependent
+/// entries are covered by the fork-equality check there.
 pub struct CachingDatabase {
     inner: Arc<dyn Database>,
     /// Cached account states (balance, nonce, code_hash, storage_root)
@@ -112,6 +135,37 @@ impl CachingDatabase {
 
     fn write_code(&self) -> Result<RwLockWriteGuard<'_, CodeCache>, DatabaseError> {
         self.code.write().map_err(poison_error_to_db_error)
+    }
+
+    /// Snapshot of the touched key sets matching the given filters: cached
+    /// accounts (with their storage roots) and cached storage slot keys. The
+    /// filters let a caller that tracks already-processed keys collect only
+    /// the delta, keeping the per-call allocation O(new) while the scan
+    /// stays O(cache).
+    pub fn touched_keys_where(
+        &self,
+        account_filter: &dyn Fn(&Address) -> bool,
+        slot_filter: &dyn Fn(&(Address, H256)) -> bool,
+    ) -> TouchedKeys {
+        let accounts = self
+            .accounts
+            .read()
+            .map(|a| {
+                a.iter()
+                    .filter(|(addr, _)| account_filter(addr))
+                    .map(|(addr, st)| (*addr, st.storage_root))
+                    .collect()
+            })
+            .unwrap_or_default();
+        let storage = self
+            .storage
+            .read()
+            .map(|s| s.keys().filter(|k| slot_filter(k)).copied().collect())
+            .unwrap_or_default();
+        TouchedKeys {
+            accounts,
+            slots: storage,
+        }
     }
 }
 

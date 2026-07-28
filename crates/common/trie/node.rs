@@ -2,24 +2,29 @@ mod branch;
 mod extension;
 mod leaf;
 
-use std::sync::Arc;
-#[cfg(not(all(feature = "eip-8025", target_arch = "riscv64")))]
+use alloc::sync::Arc;
+#[cfg(not(feature = "std"))]
+use alloc::{boxed::Box, vec::Vec};
+#[cfg(feature = "std")]
 pub use std::sync::OnceLock;
 
-/// `OnceLock` replacement for zkVM guest gated on `eip-8025` feature
+/// Non-atomic `OnceLock` replacement used on `no_std` builds — which include the
+/// single-threaded zkVM guest (see the crate's dependency wiring in
+/// `ethrex-common`, which builds this crate without the `std` feature).
 ///
-/// `std::sync::OnceLock` atomics are pure overhead in zkVM guest.
-/// This struct copies the methods from `once_cell::unsync::OnceCell` and uses unsafe
-/// to get around the Sync requirement.
+/// `std::sync::OnceLock`'s atomics are pure overhead in the single-threaded zkVM
+/// guest, so this mirrors `once_cell::unsync::OnceCell`: interior mutability
+/// through a plain `UnsafeCell`, no atomics.
 ///
-/// This code is only sound because the guest is guaranteed to be single-threaded.
-#[cfg(all(feature = "eip-8025", target_arch = "riscv64"))]
+/// It is deliberately **not** `Sync` — there is no `unsafe impl Sync`, so the
+/// `UnsafeCell` makes the type `!Sync` and the compiler forbids sharing it across
+/// threads. That keeps it sound without assuming `no_std` implies a single thread:
+/// a multi-threaded `no_std` consumer fails to compile instead of racing on the
+/// cell.
+#[cfg(not(feature = "std"))]
 pub struct OnceLock<T>(core::cell::UnsafeCell<Option<T>>);
 
-#[cfg(all(feature = "eip-8025", target_arch = "riscv64"))]
-unsafe impl<T: Sync> Sync for OnceLock<T> {}
-
-#[cfg(all(feature = "eip-8025", target_arch = "riscv64"))]
+#[cfg(not(feature = "std"))]
 impl<T> OnceLock<T> {
     #[inline]
     fn new() -> Self {
@@ -78,7 +83,7 @@ impl<T> OnceLock<T> {
     }
 }
 
-#[cfg(all(feature = "eip-8025", target_arch = "riscv64"))]
+#[cfg(not(feature = "std"))]
 impl<T: PartialEq> PartialEq for OnceLock<T> {
     #[inline]
     fn eq(&self, other: &Self) -> bool {
@@ -86,7 +91,7 @@ impl<T: PartialEq> PartialEq for OnceLock<T> {
     }
 }
 
-#[cfg(all(feature = "eip-8025", target_arch = "riscv64"))]
+#[cfg(not(feature = "std"))]
 impl<T> Default for OnceLock<T> {
     #[inline]
     fn default() -> Self {
@@ -94,10 +99,10 @@ impl<T> Default for OnceLock<T> {
     }
 }
 
-#[cfg(all(feature = "eip-8025", target_arch = "riscv64"))]
+#[cfg(not(feature = "std"))]
 impl<T: Eq> Eq for OnceLock<T> {}
 
-#[cfg(all(feature = "eip-8025", target_arch = "riscv64"))]
+#[cfg(not(feature = "std"))]
 impl<T: Clone> Clone for OnceLock<T> {
     #[inline]
     fn clone(&self) -> OnceLock<T> {
@@ -108,9 +113,9 @@ impl<T: Clone> Clone for OnceLock<T> {
     }
 }
 
-#[cfg(all(feature = "eip-8025", target_arch = "riscv64"))]
-impl<T: std::fmt::Debug> std::fmt::Debug for OnceLock<T> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+#[cfg(not(feature = "std"))]
+impl<T: core::fmt::Debug> core::fmt::Debug for OnceLock<T> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         let mut d = f.debug_tuple("OnceLock");
         match self.get() {
             Some(v) => d.field(v),
@@ -120,13 +125,11 @@ impl<T: std::fmt::Debug> std::fmt::Debug for OnceLock<T> {
     }
 }
 
-#[cfg(all(feature = "eip-8025", target_arch = "riscv64"))]
+#[cfg(not(feature = "std"))]
 impl<T> From<T> for OnceLock<T> {
     #[inline]
     fn from(value: T) -> Self {
-        OnceLock {
-            0: core::cell::UnsafeCell::new(Some(value)),
-        }
+        OnceLock(core::cell::UnsafeCell::new(Some(value)))
     }
 }
 
