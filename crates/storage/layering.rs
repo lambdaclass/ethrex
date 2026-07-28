@@ -261,6 +261,19 @@ impl TrieLayerCache {
         self.commit_threshold
     }
 
+    /// Whether `state_root` has a diff layer. Not every canonical root does: [`Self::put_batch`]
+    /// skips blocks whose state root equals their parent's, and flushed roots are pruned. Callers
+    /// holding a root from outside the cache must check this before treating it as committable.
+    pub fn has_layer(&self, state_root: H256) -> bool {
+        self.layers.contains_key(&state_root)
+    }
+
+    /// Number of diff layers held in memory. Diagnostic only: distinguishes a pruned root from
+    /// an empty cache.
+    pub fn layer_count(&self) -> usize {
+        self.layers.len()
+    }
+
     fn create_filter(expected_items: usize) -> AtomicBloomFilter<FxBuildHasher> {
         AtomicBloomFilter::with_false_pos(FALSE_POSITIVE_RATE)
             .hasher(FxBuildHasher)
@@ -1450,6 +1463,29 @@ mod tests {
         cache.put_batch(c, b, 20, b, vec![(key(20), vec![20])]);
         // Walking from C must terminate (start-of-walk + bounded-walk guards) and yield None.
         assert_eq!(cache.get_commitable(c), None);
+    }
+
+    /// `has_layer` is the guard the forkchoice-driven flush uses before treating a root it
+    /// holds from outside the cache as committable: a root that was already flushed, or one
+    /// whose cache was swapped out from under it (what a deep-reorg overlay install does),
+    /// has no layer and must be skipped rather than passed to `commit`.
+    #[test]
+    fn has_layer_tracks_layer_residency() {
+        let safe = h256(2);
+        let (mut cache, cell) = cache_with_cell(4, safe);
+        build_chain(&mut cache, 4);
+        assert!(cache.has_layer(safe));
+
+        cache.commit(safe).expect("resident root commits");
+        assert!(!cache.has_layer(safe), "the flushed root's layer is pruned");
+        assert!(cache.commit(safe).is_none());
+
+        let fresh = TrieLayerCache::new_with_safe_commit(4, cell);
+        assert!(
+            !fresh.has_layer(safe),
+            "the root's layer did not survive the cache swap"
+        );
+        assert_eq!(fresh.layer_count(), 0);
     }
 
     /// (f) commit(safe_root) removes the safe layer and all older ones, retaining layers above it.
