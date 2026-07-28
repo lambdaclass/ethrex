@@ -175,7 +175,7 @@ where
     T: Iterator<Item = (H256, Vec<u8>)> + Send,
 {
     let Some(initial_value) = data_iter.next() else {
-        return Ok(*EMPTY_TRIE_HASH);
+        return Ok(EMPTY_TRIE_HASH);
     };
     let mut nodes_to_write: Vec<(Nibbles, Node)> = buffer_receiver
         .recv()
