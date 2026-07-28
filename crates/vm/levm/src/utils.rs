@@ -1035,6 +1035,81 @@ pub fn intrinsic_gas_floor(tx: &Transaction, sender: Address, fork: Fork) -> Res
         .ok_or(InternalError::Overflow.into())
 }
 
+/// EIP-7623 `tokens_in`: `zero_bytes * 1 + nonzero_bytes * 4`, which is exactly
+/// the weighted calldata cost divided by `STANDARD_TOKEN_COST`.
+fn floor_tokens_in_bytes(data: &[u8]) -> Result<u64, VMError> {
+    Ok(gas_cost::tx_calldata(data)? / STANDARD_TOKEN_COST)
+}
+
+/// EIP-8141 Gas Accounting (spec commit c0c9f639): the floor arm of a frame
+/// transaction's `charged_gas`, i.e. the minimum gas the payer can be charged.
+///
+/// ```text
+/// calldata_tokens = sum(tokens_in(frame.data) for frame in tx.frames)
+///                 + sum(tokens_in(sig.signer) + tokens_in(sig.msg)
+///                       + tokens_in(sig.signature) for sig in tx.signatures)
+///
+/// returns FRAME_TX_INTRINSIC_COST
+///       + len(tx.frames) * FRAME_TX_PER_FRAME_COST
+///       + signature_verification_cost
+///       + TOTAL_COST_FLOOR_PER_TOKEN * calldata_tokens
+/// ```
+///
+/// `tokens_in` and `TOTAL_COST_FLOOR_PER_TOKEN` are the EIP-7623 definitions the
+/// spec names verbatim (weighted tokens, 10 gas each) - NOT the EIP-7976
+/// Amsterdam overrides that other tx types use at this fork.
+///
+/// The mandatory costs sit OUTSIDE the spec's `max(...)`, so they are common to
+/// both arms; including them here lets a caller write `charged_gas` as
+/// `max(unfloored_charge, this)`.
+///
+/// Tokens are counted over the DECODED payload byte fields, never over the RLP
+/// envelope that `FrameTransaction::total_gas_limit` charges as calldata.
+///
+/// A frame tx whose `total_gas_limit()` is below this value is invalid: the
+/// floor is reserved independently of execution.
+pub fn frame_tx_floor_charged_gas(
+    tx: &ethrex_common::types::FrameTransaction,
+) -> Result<u64, VMError> {
+    let mut tokens: u64 = 0;
+    for frame in &tx.frames {
+        tokens = tokens
+            .checked_add(floor_tokens_in_bytes(&frame.data)?)
+            .ok_or(InternalError::Overflow)?;
+    }
+    for sig in &tx.signatures {
+        // An absent `signer` contributes no payload bytes.
+        let signer_bytes: &[u8] = match sig.signer {
+            Some(ref address) => address.as_bytes(),
+            None => &[],
+        };
+        for field in [signer_bytes, sig.msg.as_ref(), sig.signature.as_ref()] {
+            tokens = tokens
+                .checked_add(floor_tokens_in_bytes(field)?)
+                .ok_or(InternalError::Overflow)?;
+        }
+    }
+
+    let frame_count: u64 = tx
+        .frames
+        .len()
+        .try_into()
+        .map_err(|_| InternalError::TypeConversion)?;
+    let mandatory = frame_count
+        .checked_mul(ethrex_common::types::FRAME_TX_PER_FRAME_COST)
+        .ok_or(InternalError::Overflow)?
+        .checked_add(ethrex_common::types::FRAME_TX_INTRINSIC_COST)
+        .ok_or(InternalError::Overflow)?
+        .checked_add(tx.signature_verification_cost())
+        .ok_or(InternalError::Overflow)?;
+
+    tokens
+        .checked_mul(gas_cost::TOTAL_COST_FLOOR_PER_TOKEN)
+        .ok_or(InternalError::Overflow)?
+        .checked_add(mandatory)
+        .ok_or(InternalError::Overflow.into())
+}
+
 /// Converts Account to LevmAccount
 /// The problem with this is that we don't have the storage root.
 pub fn account_to_levm_account(account: Account) -> (LevmAccount, Code) {

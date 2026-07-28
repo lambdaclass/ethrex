@@ -1618,6 +1618,18 @@ impl<'a> VM<'a> {
         // Initialize FrameTxContext
         let sig_hash = frame_tx.compute_sig_hash();
         let total_gas_limit = frame_tx.total_gas_limit();
+
+        // EIP-8141 Gas Accounting: the EIP-7623 calldata floor is reserved
+        // independently of execution, so a frame tx whose gas limit cannot cover
+        // the mandatory costs plus the floor is invalid. This also bounds the
+        // post-execution floor below by what the payer is debited at APPROVE.
+        let floor_charged_gas = crate::utils::frame_tx_floor_charged_gas(&frame_tx)?;
+        if total_gas_limit < floor_charged_gas {
+            return Err(VMError::TxValidation(
+                crate::errors::TxValidationError::IntrinsicGasBelowFloorGasCost,
+            ));
+        }
+
         self.frame_tx_context = Some(FrameTxContext {
             sender_approved: false,
             payer_address: None,
@@ -2166,6 +2178,14 @@ impl<'a> VM<'a> {
             )))?;
         let payer = ctx.payer_address.unwrap_or(sender);
 
+        // EIP-8141 Gas Accounting: charged gas is
+        //   mandatory + max(frame_data_cost + signature_data_cost + exec_gas, floor)
+        // `total_gas_used` is already `mandatory + data_cost + exec_gas` and
+        // `floor_charged_gas` is `mandatory + floor`, so the spec's max (whose
+        // mandatory term is common to both arms) reduces to this one. Applied
+        // before the refund is computed so the EIP-7623 floor bounds the charge.
+        total_gas_used = total_gas_used.max(floor_charged_gas);
+
         // Gas refunds: the payer was debited the transaction's MAXIMUM cost at
         // APPROVE (max_fee-based gas + max-rate blob cost, `compute_tx_max_cost`,
         // spec line 387). What the payer owes is the effective-rate cost of the
@@ -2391,6 +2411,15 @@ impl<'a> VM<'a> {
 
         let sig_hash = frame_tx.compute_sig_hash();
         let total_gas_limit = frame_tx.total_gas_limit();
+
+        // Same EIP-8141 floor reservation as `execute_frame_tx`, so a tx that
+        // could never be included is rejected at admission rather than pooled.
+        if total_gas_limit < crate::utils::frame_tx_floor_charged_gas(&frame_tx)? {
+            return Err(VMError::TxValidation(
+                crate::errors::TxValidationError::IntrinsicGasBelowFloorGasCost,
+            ));
+        }
+
         self.frame_tx_context = Some(FrameTxContext {
             sender_approved: false,
             payer_address: None,

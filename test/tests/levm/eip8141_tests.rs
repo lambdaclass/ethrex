@@ -1212,6 +1212,198 @@ fn state_gas_reservoir_does_not_leak_across_frames() {
     );
 }
 
+// ============ EIP-7623 calldata floor (EIP-8141 Gas Accounting) ============
+//
+// EIP-8141 (spec commit c0c9f639) floors a frame tx's calldata cost against
+// execution, over the frame and signature PAYLOAD bytes:
+//
+//   calldata_tokens = sum(tokens_in(frame.data))
+//                   + sum(tokens_in(sig.signer) + tokens_in(sig.msg)
+//                         + tokens_in(sig.signature))
+//
+//   charged_gas = mandatory
+//               + max(frame_data_cost + signature_data_cost + total_gas_used,
+//                     TOTAL_COST_FLOOR_PER_TOKEN * calldata_tokens)
+//
+// where `mandatory` (intrinsic + per-frame + signature verification) sits
+// OUTSIDE the max. A tx whose gas limit cannot reserve `mandatory + floor` is
+// invalid.
+
+/// EIP-7623 `TOTAL_COST_FLOOR_PER_TOKEN`. EIP-8141 names the EIP-7623 value
+/// verbatim, so EIP-7976's Amsterdam raise to 16 does NOT apply to frame txs.
+const FLOOR_GAS_PER_TOKEN: u64 = 10;
+
+/// EIP-7623 `tokens_in`: zero bytes count 1 token, non-zero bytes count 4.
+fn floor_tokens(data: &[u8]) -> u64 {
+    data.iter().map(|byte| if *byte == 0 { 1 } else { 4 }).sum()
+}
+
+/// EIP-8141 mandatory (outside-the-max) gas for a signature-less frame tx.
+fn mandatory_gas(frame_count: u64) -> u64 {
+    ethrex_common::types::FRAME_TX_INTRINSIC_COST
+        + frame_count * ethrex_common::types::FRAME_TX_PER_FRAME_COST
+}
+
+/// A SENDER frame targeting `target` with `data` as calldata.
+fn sender_frame(target: Address, gas_limit: u64, data: Bytes) -> Frame {
+    Frame {
+        mode: u8::from(FrameMode::Sender),
+        flags: 0,
+        target: Some(target),
+        gas_limit,
+        value: U256::zero(),
+        data,
+    }
+}
+
+/// Floor-dominant: a frame carrying 1000 non-zero payload bytes is 4000 EIP-7623
+/// tokens, i.e. a 40_000 gas floor, which dwarfs the 16_000 those bytes cost at
+/// the standard rate plus the handful of gas a STOP frame burns. The payer must
+/// be charged `mandatory + floor`, not the (much smaller) execution arm.
+#[test]
+fn floor_dominant_frame_tx_charges_the_calldata_floor() {
+    let stop_contract = Address::from_low_u64_be(0xF100);
+    let payload = vec![0xFFu8; 1000];
+
+    let tx = frame_tx_with_frames(vec![
+        verify_frame(FUNDED_SENDER),
+        sender_frame(stop_contract, 100_000, Bytes::from(payload.clone())),
+    ]);
+    let total_gas_limit = tx.total_gas_limit();
+    let sum_frame_limits: u64 = tx.frames.iter().map(|frame| frame.gas_limit).sum();
+
+    let accounts = [
+        (
+            FUNDED_SENDER,
+            AUTO_SEED_SENDER_BALANCE,
+            0,
+            Bytes::from(APPROVE_BOTH_CODE.to_vec()),
+        ),
+        (stop_contract, U256::zero(), 0, Bytes::from(vec![0x00u8])), // STOP
+    ];
+
+    let (result, _db) = run_frame_tx(&accounts, tx);
+    let report = result.expect("floor-dominant frame tx reserves the floor and is valid");
+
+    let floor = floor_tokens(&payload) * FLOOR_GAS_PER_TOKEN;
+    let expected = mandatory_gas(2) + floor;
+    assert_eq!(
+        report.gas_used,
+        expected,
+        "charged gas must be mandatory ({}) + EIP-7623 floor ({floor})",
+        mandatory_gas(2),
+    );
+
+    // The floor really is the dominant arm here: the un-floored charge
+    // (intrinsic gas plus the frame gas the frames actually burned) is strictly
+    // lower. Computed from the per-frame report so it does not depend on how
+    // `gas_refunded` is defined.
+    let frame_gas: u64 = report
+        .frame_results
+        .as_ref()
+        .expect("frame tx report must carry per-frame results")
+        .iter()
+        .map(|(_, gas, _)| *gas)
+        .sum();
+    let unfloored = total_gas_limit - sum_frame_limits + frame_gas;
+    assert!(
+        unfloored < expected,
+        "test is not floor-dominant: unfloored charge {unfloored} >= floor charge {expected}",
+    );
+}
+
+/// Execution-dominant: 8 non-zero payload bytes put the floor at 320 gas, far
+/// below the ~100k an EIP-8037 new-slot SSTORE burns. The execution arm must
+/// win, i.e. the floor must be a `max` and not an unconditional charge.
+#[test]
+fn execution_dominant_frame_tx_is_not_raised_by_the_calldata_floor() {
+    let worker = Address::from_low_u64_be(0xF200);
+    let payload = vec![0xFFu8; 8];
+
+    let tx = frame_tx_with_frames(vec![
+        verify_frame(FUNDED_SENDER),
+        sender_frame(worker, 300_000, Bytes::from(payload.clone())),
+    ]);
+    let total_gas_limit = tx.total_gas_limit();
+
+    let accounts = [
+        (
+            FUNDED_SENDER,
+            AUTO_SEED_SENDER_BALANCE,
+            0,
+            Bytes::from(APPROVE_BOTH_CODE.to_vec()),
+        ),
+        (
+            worker,
+            U256::zero(),
+            0,
+            Bytes::from(SSTORE_THEN_STOP_CODE.to_vec()),
+        ),
+    ];
+
+    let (result, _db) = run_frame_tx(&accounts, tx);
+    let report = result.expect("execution-dominant frame tx must succeed");
+
+    let floor_charge = mandatory_gas(2) + floor_tokens(&payload) * FLOOR_GAS_PER_TOKEN;
+    assert!(
+        report.gas_used > floor_charge,
+        "test is not execution-dominant: charged {} <= floor charge {floor_charge}",
+        report.gas_used,
+    );
+    // Charged gas is the execution arm verbatim: no floor uplift, so the charge
+    // plus the unburned frame gas still reconciles to the tx gas limit.
+    assert_eq!(
+        report.gas_used + report.gas_refunded,
+        total_gas_limit,
+        "floor must not raise the charge when execution dominates",
+    );
+}
+
+/// EIP-8141: the floor is reserved independently of execution, so a frame tx
+/// whose gas limit cannot cover `mandatory + floor` is invalid. Same 40_000 gas
+/// floor as above, but the frames reserve only 2_000 gas on top of the ~16_400
+/// the payload costs at the standard rate, leaving the tx short of the floor.
+/// The rejection happens before any frame runs.
+#[test]
+fn frame_tx_that_cannot_reserve_the_calldata_floor_is_invalid() {
+    let stop_contract = Address::from_low_u64_be(0xF300);
+    let payload = vec![0xFFu8; 1000];
+
+    let mut tx = frame_tx_with_frames(vec![
+        verify_frame(FUNDED_SENDER),
+        sender_frame(stop_contract, 1_000, Bytes::from(payload.clone())),
+    ]);
+    tx.frames[0].gas_limit = 1_000;
+    assert!(
+        tx.total_gas_limit() < mandatory_gas(2) + floor_tokens(&payload) * FLOOR_GAS_PER_TOKEN,
+        "test setup must be sub-floor: tx gas limit {}",
+        tx.total_gas_limit(),
+    );
+
+    let accounts = [
+        (
+            FUNDED_SENDER,
+            AUTO_SEED_SENDER_BALANCE,
+            0,
+            Bytes::from(APPROVE_BOTH_CODE.to_vec()),
+        ),
+        (stop_contract, U256::zero(), 0, Bytes::from(vec![0x00u8])), // STOP
+    ];
+
+    let (result, db) = run_frame_tx(&accounts, tx);
+    assert!(
+        matches!(
+            result,
+            Err(VMError::TxValidation(
+                ethrex_levm::errors::TxValidationError::IntrinsicGasBelowFloorGasCost
+            ))
+        ),
+        "expected IntrinsicGasBelowFloorGasCost, got {result:?}",
+    );
+    // Rejected before any frame ran, so the shared cache must be untouched.
+    assert_db_cache_unchanged(&db, &accounts);
+}
+
 // ==================== frame_tx opcode handler unit tests ====================
 // (migrated from crates/vm/levm/src/opcode_handlers/frame_tx.rs)
 
