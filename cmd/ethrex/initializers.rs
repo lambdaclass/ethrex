@@ -26,7 +26,8 @@ use ethrex_p2p::{
     utils::public_key_from_signing_key,
 };
 use ethrex_storage::{
-    EngineType, Store, StoreConfig, error::StoreError, has_valid_db, read_chain_id_from_db,
+    DB_COMMIT_THRESHOLD, EngineType, Store, StoreConfig, error::StoreError, has_valid_db,
+    read_chain_id_from_db,
 };
 use local_ip_address::{local_ip, local_ipv6};
 use rand::rngs::OsRng;
@@ -785,6 +786,7 @@ pub async fn init_l1(
             bal_parallel_trie_enabled: !opts.no_bal_parallel_trie,
             blob_sampling_enabled: opts.blob_sampling || opts.blob_eager_provider,
             blob_eager_provider: opts.blob_eager_provider,
+            max_reorg_depth: opts.max_reorg_depth,
             gap_admit_occupancy_threshold: opts.mempool_gap_admit_occupancy_threshold,
         },
     );
@@ -1055,7 +1057,10 @@ pub async fn regenerate_head_state(
             .await?
             .ok_or_else(|| eyre::eyre!("Block {i} not found"))?;
 
-        blockchain.add_block_pipeline(block, None)?;
+        // Single canonical chain: commit by depth so the in-memory trie-layer
+        // backlog stays bounded (~DB_COMMIT_THRESHOLD) instead of growing with the
+        // regeneration gap and OOMing on a large gap.
+        blockchain.add_block_pipeline_bounded(block, None, DB_COMMIT_THRESHOLD)?;
     }
 
     info!("Finished regenerating state");
