@@ -34,7 +34,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-8fab1a8a.js";
+            window.path_to_searchindex_js = "searchindex-7ba10d97.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-586b7da3.js"></script>
@@ -302,6 +302,11 @@ Node options:
           Once synced, computes execution witnesses upon receiving newPayload messages and stores them in local storage
           
           [env: ETHREX_PRECOMPUTE_WITNESSES=]
+
+      --max-reorg-depth &lt;MAX_REORG_DEPTH&gt;
+          Optional operator override for the maximum reorg depth. Omit for finality-bounded cap. Set to 0 to disable deep reorgs entirely. Set to d to reject reorgs of depth &gt; d.
+          
+          [env: ETHREX_MAX_REORG_DEPTH=]
 
 P2P options:
       --bootnodes &lt;BOOTNODE_LIST&gt;...

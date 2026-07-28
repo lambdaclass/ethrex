@@ -34,7 +34,7 @@
             const path_to_root = "../../";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "../../searchindex-8fab1a8a.js";
+            window.path_to_searchindex_js = "../../searchindex-7ba10d97.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../../toc-586b7da3.js"></script>
@@ -252,6 +252,34 @@ docker compose -f docker-compose-metrics.yaml -f docker-compose-metrics-l1.overr
 <p>Also if you have a centralized Prometheus or Grafana setup, you can adapt the provided configuration files to fit your environment, or even stop the docker containers that run Prometheus and/or Grafana leaving only the additional <code>ethereum-metrics-exporter</code> running alongside ethrex to export the metrics to your existing monitoring stack.</p>
 <pre><code class="language-sh">docker compose -f docker-compose-metrics.yaml -f docker-compose-metrics-l1.overrides.yaml up -d ethereum-metrics-exporter 
 </code></pre>
+<h2 id="reorg-metrics-and-deep-reorg-cap"><a class="header" href="#reorg-metrics-and-deep-reorg-cap">Reorg metrics and deep-reorg cap</a></h2>
+<p>Ethrex tracks fork-choice reorg activity through 8 Prometheus metrics under the
+<code>ethrex_reorg_*</code> and <code>ethrex_deep_reorg_*</code> namespaces.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Metric</th><th>Type</th><th>What to watch for</th></tr>
+</thead>
+<tbody>
+<tr><td><code>ethrex_reorg_overlay_entries</code></td><td>Gauge</td><td>Elevated for more than a few seconds indicates a stalled deep reorg.</td></tr>
+<tr><td><code>ethrex_reorg_overlay_bytes</code></td><td>Gauge</td><td>Very large values (hundreds of MB) suggest an unusually large reorg.</td></tr>
+<tr><td><code>ethrex_reorg_journal_length</code></td><td>Gauge</td><td>Decreases as finality pruning runs; should roughly track <code>head - finalized</code>.</td></tr>
+<tr><td><code>ethrex_reorg_depth</code></td><td>Histogram</td><td>Use to detect peers producing unexpectedly long reorgs.</td></tr>
+<tr><td><code>ethrex_reorg_reconcile_duration_seconds</code></td><td>Histogram</td><td>High tail latency here means a large overlay is being folded.</td></tr>
+<tr><td><code>ethrex_deep_reorg_attempts_total</code></td><td>Counter</td><td>Should be rare on a healthy network.</td></tr>
+<tr><td><code>ethrex_deep_reorg_success_total</code></td><td>Counter</td><td>Compared with attempts: a persistent gap means deep reorgs are failing.</td></tr>
+<tr><td><code>ethrex_deep_reorg_aborts_total</code></td><td>Counter</td><td>Non-zero in production warrants investigation.</td></tr>
+</tbody>
+</table>
+</div>
+<h3 id="limiting-reorg-depth"><a class="header" href="#limiting-reorg-depth">Limiting reorg depth</a></h3>
+<p>The default ceiling is physical: how far back the node can reconstruct state
+(layer-cache retention plus journal reach), bounded only indirectly by finality
+because finality advances prune the journal. To restrict it further, pass
+<code>--max-reorg-depth &lt;N&gt;</code> when starting ethrex; reorgs deeper than <code>N</code> are rejected
+with <code>-38006 TooDeepReorg</code>. WARNING: <code>--max-reorg-depth 0</code> rejects EVERY reorg —
+including routine 1-2 block reorgs on a healthy network — it does not restore the
+old 128-block cap.</p>
 <hr>
 <p>For manual setup or more details, see the <a href="https://prometheus.io/docs/introduction/overview/">Prometheus documentation</a> and <a href="https://grafana.com/docs/">Grafana documentation</a>.</p>
 
