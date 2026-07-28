@@ -13,8 +13,8 @@
 use bytes::Bytes;
 use ethrex_blockchain::vm::StoreVmDatabase;
 use ethrex_common::types::{
-    Account, BlockHeader, Code, FRAME_RECEIPT_STATUS_SUCCESS, Fork, Frame, FrameMode,
-    FrameTransaction, Transaction,
+    Account, BlockHeader, Code, FRAME_RECEIPT_STATUS_SKIPPED, FRAME_RECEIPT_STATUS_SUCCESS, Fork,
+    Frame, FrameMode, FrameTransaction, Transaction,
 };
 use ethrex_common::{Address, H256, U256, constants::EMPTY_TRIE_HASH};
 use ethrex_crypto::NativeCrypto;
@@ -567,6 +567,102 @@ fn frameparam_reads_frame_index_from_stack_top() {
         stored,
         U256::from(77_777u64),
         "FRAMEPARAM read the wrong operand order (stored {stored:#x}, expected 77_777)"
+    );
+}
+
+/// FRAMEPARAM(param=0x05, frameIndex=2) -> status of frame[2], then SSTORE at slot 0.
+/// Bytecode: PUSH1 0x05 (param), PUSH1 0x02 (frameIndex - top), FRAMEPARAM (0xB3),
+///           PUSH1 0x00 (slot key), SSTORE (0x55), STOP (0x00).
+const FRAMEPARAM_READ_FRAME2_STATUS: &[u8] =
+    &[0x60, 0x05, 0x60, 0x02, 0xB3, 0x60, 0x00, 0x55, 0x00];
+
+#[test]
+fn frameparam_status_of_skipped_frame_is_two() {
+    // EIP-8141: a frame skipped by a failed atomic batch reports status 0x2
+    // (not 0x3). Layout:
+    //   frame0: VERIFY on the sender -> APPROVE(3) -> payer + sender_approved.
+    //   frame1: DEFAULT, atomic-batch flag, reverts -> unrolls the batch.
+    //   frame2: DEFAULT, atomic-batch flag -> SKIPPED.
+    //   frame3: DEFAULT, no flag -> batch terminator, also SKIPPED.
+    //   frame4: DEFAULT, no flag -> reads FRAMEPARAM(0x05, 2) and stores it.
+    let reverter = Address::from_low_u64_be(0xD1);
+    let stop_ct = Address::from_low_u64_be(0xD2);
+    let reader = Address::from_low_u64_be(0xD3);
+    let tx = frame_tx_with_frames(vec![
+        verify_frame(FUNDED_SENDER),
+        Frame {
+            mode: u8::from(FrameMode::Default),
+            flags: 0x04,
+            target: Some(reverter),
+            gas_limit: 60_000,
+            value: U256::zero(),
+            data: Bytes::new(),
+        },
+        Frame {
+            mode: u8::from(FrameMode::Default),
+            flags: 0x04,
+            target: Some(stop_ct),
+            gas_limit: 30_000,
+            value: U256::zero(),
+            data: Bytes::new(),
+        },
+        Frame {
+            mode: u8::from(FrameMode::Default),
+            flags: 0x00,
+            target: Some(stop_ct),
+            gas_limit: 30_000,
+            value: U256::zero(),
+            data: Bytes::new(),
+        },
+        Frame {
+            mode: u8::from(FrameMode::Default),
+            flags: 0x00,
+            target: Some(reader),
+            // EIP-8037 (active at Hegota): the new-slot SSTORE spills
+            // STATE_BYTES_PER_STORAGE_SET * cost_per_state_byte (~98k) into
+            // the frame's regular gas, so the budget must cover it.
+            gas_limit: 300_000,
+            value: U256::zero(),
+            data: Bytes::new(),
+        },
+    ]);
+    let accounts = [
+        (
+            FUNDED_SENDER,
+            AUTO_SEED_SENDER_BALANCE,
+            0,
+            Bytes::from(APPROVE_BOTH_CODE.to_vec()),
+        ),
+        (
+            reverter,
+            U256::zero(),
+            0,
+            Bytes::from(PURE_REVERT_CODE.to_vec()),
+        ),
+        (stop_ct, U256::zero(), 0, Bytes::from(vec![0x00u8])), // STOP
+        (
+            reader,
+            U256::zero(),
+            0,
+            Bytes::from(FRAMEPARAM_READ_FRAME2_STATUS.to_vec()),
+        ),
+    ];
+    let (result, db) = run_frame_tx(&accounts, tx);
+    let report = result.expect("a DEFAULT-frame batch revert must not invalidate the tx");
+
+    let frame_results = report
+        .frame_results
+        .expect("frame tx report must carry per-frame results");
+    assert_eq!(
+        frame_results[2].0, FRAME_RECEIPT_STATUS_SKIPPED,
+        "frame[2] must be recorded as skipped"
+    );
+
+    // FRAMEPARAM(0x05) must surface the same code, and it must be 2.
+    assert_eq!(
+        storage_slot(&db, reader, H256::zero()),
+        U256::from(2u64),
+        "FRAMEPARAM param 0x05 must return 2 for a frame skipped by a failed atomic batch"
     );
 }
 
