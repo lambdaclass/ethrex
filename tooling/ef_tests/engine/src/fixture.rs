@@ -6,6 +6,11 @@ use serde::Deserialize;
 use serde_json::Value;
 use std::collections::BTreeMap;
 
+/// The FOCIL fixture sentinel for an unsatisfied inclusion list. EIP-7805 reports
+/// that verdict as a `VALID` payload carrying `inclusionListSatisfied: false`;
+/// fixtures predating that structure name it as a third status value instead.
+pub const IL_UNSATISFIED_STATUS: &str = "INCLUSION_LIST_UNSATISFIED";
+
 /// One JSON file holds many fixtures keyed by test name.
 pub type EngineFixtureFile = BTreeMap<String, EngineFixture>;
 

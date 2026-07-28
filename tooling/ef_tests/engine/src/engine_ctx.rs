@@ -91,6 +91,7 @@ pub async fn engine_only_context(storage: Store) -> RpcApiContext {
         // EIP-7805 (FOCIL) inclusion-list builder config; defaults are fine for
         // the engine fixture runner (it never calls engine_getInclusionListV1).
         il_config: Default::default(),
+        retained_inclusion_lists: Default::default(),
         block_worker_channel,
         ws: None,
         allowed_namespaces: Arc::new(all_namespaces_for_tests()),
