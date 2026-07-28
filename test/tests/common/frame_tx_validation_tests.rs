@@ -13,6 +13,9 @@ use ethrex_common::types::{
     FRAME_SIG_SCHEME_SECP256K1, FRAME_TX_MAX_VERIFY_GAS, Frame, FrameMode, FrameSignature,
     FrameTransaction, FrameValidationError, PrefixShape, Transaction, frame_tx_expiry_verifier,
 };
+use ethrex_common::types::{BlobsBundle, MAX_BLOBS_PER_TX, TxType};
+use ethrex_rlp::decode::RLPDecode;
+use ethrex_rlp::encode::RLPEncode;
 
 /// EIP-4844 `VERSIONED_HASH_VERSION_KZG`. The constant itself lives in a private
 /// module of `ethrex-common`, so it is restated here.
@@ -615,6 +618,31 @@ fn static_validation_rejects_blob_fee_without_blobs() {
         tx.validate_static_constraints()
             .unwrap_err()
             .contains("max_fee_per_blob_gas must be zero"),
+    );
+}
+
+/// The EIP-7594 per-transaction blob limit applies to frame transactions
+/// unchanged (EIP-8141 §Blob-carrying frame transactions). It must bind here
+/// rather than only on the sidecar: block execution has no sidecar to check, so
+/// a static-constraint miss would make ethrex accept a block that a conformant
+/// client rejects.
+#[test]
+fn static_validation_rejects_more_blobs_than_the_per_transaction_limit() {
+    let mut tx = make_test_frame_tx();
+    tx.max_fee_per_blob_gas = U256::from(1u64);
+    let mut hash = [0x11u8; 32];
+    hash[0] = VERSIONED_HASH_VERSION_KZG;
+    tx.blob_versioned_hashes = vec![H256(hash); MAX_BLOBS_PER_TX];
+    assert!(
+        tx.validate_static_constraints().is_ok(),
+        "{MAX_BLOBS_PER_TX} blobs are within the per-transaction limit"
+    );
+
+    tx.blob_versioned_hashes.push(H256(hash));
+    assert!(
+        tx.validate_static_constraints()
+            .unwrap_err()
+            .contains(&format!("Blob count must not exceed {MAX_BLOBS_PER_TX}")),
     );
 }
 

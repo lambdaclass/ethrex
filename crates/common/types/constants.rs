@@ -42,3 +42,9 @@ pub const MAX_TX_SIZE: usize = 131_072;
 /// excluding the blob sidecar. Sidecar size is bounded separately by the
 /// per-blob byte count and the fork's max blob count.
 pub const MAX_BLOB_TX_SIZE: usize = 1_048_576;
+
+/// Maximum number of blobs a single transaction may carry, independent of the
+/// higher per-block limit. Defined in
+/// [EIP-7594](https://eips.ethereum.org/EIPS/eip-7594) and applied unchanged to
+/// EIP-8141 frame transactions.
+pub const MAX_BLOBS_PER_TX: usize = 6;

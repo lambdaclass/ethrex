@@ -194,9 +194,9 @@ impl BlobsBundle {
             return Err(BlobsBundleError::MaxBlobsExceeded);
         }
 
-        // EIP-7594: a single transaction may carry at most MAX_BLOB_COUNT (6) blobs,
+        // EIP-7594: a single transaction may carry at most MAX_BLOBS_PER_TX blobs,
         // independent of the higher per-block limit.
-        if fork >= Fork::Osaka && blob_count > MAX_BLOB_COUNT {
+        if fork >= Fork::Osaka && blob_count > super::MAX_BLOBS_PER_TX {
             return Err(BlobsBundleError::MaxBlobsExceeded);
         }
 
@@ -294,16 +294,16 @@ impl AddAssign for BlobsBundle {
 }
 
 #[cfg(feature = "c-kzg")]
-const MAX_BLOB_COUNT: usize = 6;
+const MAX_BLOBS_PER_BLOCK_CANCUN: usize = 6;
 #[cfg(feature = "c-kzg")]
-const MAX_BLOB_COUNT_ELECTRA: usize = 9;
+const MAX_BLOBS_PER_BLOCK_ELECTRA: usize = 9;
 
 #[cfg(feature = "c-kzg")]
 fn max_blobs_per_block(fork: crate::types::Fork) -> usize {
     if fork >= crate::types::Fork::Prague {
-        MAX_BLOB_COUNT_ELECTRA
+        MAX_BLOBS_PER_BLOCK_ELECTRA
     } else {
-        MAX_BLOB_COUNT
+        MAX_BLOBS_PER_BLOCK_CANCUN
     }
 }
 
@@ -597,7 +597,7 @@ mod tests {
         let blob = crate::types::blobs_bundle::blob_from_bytes("Im a Blob".as_bytes().into())
             .expect("Failed to create blob");
         let blobs =
-            std::iter::repeat_n(blob, super::MAX_BLOB_COUNT_ELECTRA + 1).collect::<Vec<_>>();
+            std::iter::repeat_n(blob, super::MAX_BLOBS_PER_BLOCK_ELECTRA + 1).collect::<Vec<_>>();
 
         let blobs_bundle = crate::types::BlobsBundle::create_from_blobs(&blobs, None)
             .expect("Failed to create blobs bundle");
