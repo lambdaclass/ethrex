@@ -375,6 +375,18 @@ impl Metrics {
                     .and_modify(|e| *e += 1)
                     .or_insert(1);
             }
+            PeerConnectionError::OutboundSendTimeout => {
+                failures_grouped_by_reason
+                    .entry("OutboundSendTimeout".to_owned())
+                    .and_modify(|e| *e += 1)
+                    .or_insert(1);
+            }
+            PeerConnectionError::OutboundQueueFull => {
+                failures_grouped_by_reason
+                    .entry("OutboundQueueFull".to_owned())
+                    .and_modify(|e| *e += 1)
+                    .or_insert(1);
+            }
             PeerConnectionError::Disconnected => {
                 failures_grouped_by_reason
                     .entry("Disconnected".to_owned())

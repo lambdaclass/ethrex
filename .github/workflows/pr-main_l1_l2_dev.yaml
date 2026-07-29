@@ -65,6 +65,7 @@ jobs:
           --block-producer.operator-fee-vault-address 0xd5d2a85751b6F158e5b9B8cD509206A865672362 \
           --block-producer.l1-fee-vault-address 0x45681AE1768a8936FB87aB11453B4755e322ceec \
           --block-producer.operator-fee-per-gas 1000000000 \
+          --committer.commit-time 15000 \
           --no-monitor  2>&1 | tee /tmp/ethrex.log &
 
       - name: Wait for ethrex L2

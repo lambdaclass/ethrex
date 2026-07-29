@@ -138,6 +138,24 @@ jobs:
             cat docs/known_issues.md
           } >> "$GITHUB_STEP_SUMMARY"
 
+  engine-ef-tests:
+    name: Engine EF tests
+    needs: detect-changes
+    if: ${{ needs.detect-changes.outputs.run_tests == 'true' && github.event_name != 'merge_group' }}
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v6
+
+      - name: Free Disk Space
+        uses: ./.github/actions/free-disk
+
+      - name: Setup Rust Environment
+        uses: ./.github/actions/setup-rust
+
+      - name: Run Engine EF tests
+        run: make -C tooling/ef_tests/engine test
+
   known-issues-comment:
     name: Post Known Issues sticky comment
     runs-on: ubuntu-latest
@@ -320,6 +338,9 @@ jobs:
       - name: Checkout sources
         uses: actions/checkout@v6
 
+      - name: Free Disk Space
+        uses: ./.github/actions/free-disk
+
       - name: Download ethrex image artifact
         uses: actions/download-artifact@v6
         with:
@@ -384,7 +405,8 @@ jobs:
         uses: ethpandaops/hive-github-action@v0.5.0
         with:
           hive_repository: ethereum/hive
-          hive_version: 1c27560a1f8ac09dda26038d7a1394243e99025d
+          # ethereum/hive#1530 merge (deposit contract address mapper fix)
+          hive_version: 7c4c99ebb79955f23e1952fb0282a0dadcb6e181
           simulator: ${{ matrix.simulation }}
           client: ethrex
           client_config: ${{ steps.client-config.outputs.config }}
@@ -442,7 +464,7 @@ jobs:
     # "Integration Test" is a required check, don't change the name
     name: Integration Test
     runs-on: ubuntu-latest
-    needs: [detect-changes, run-assertoor, run-hive, check-cargo-locks]
+    needs: [detect-changes, run-assertoor, run-hive, check-cargo-locks, engine-ef-tests]
     # Make sure this job runs even if the previous jobs failed or were skipped
     if: ${{ needs.detect-changes.outputs.run_tests == 'true' && always() && needs.run-assertoor.result != 'skipped' && needs.run-hive.result != 'skipped' }}
     steps:
@@ -455,6 +477,12 @@ jobs:
 
           if [ "${{ needs.run-hive.result }}" != "success" ]; then
             echo "Job Hive failed"
+            exit 1
+          fi
+
+          # engine-ef-tests is skipped in the merge queue (merge_group), which is OK.
+          if [ "${{ needs.engine-ef-tests.result }}" != "success" ] && [ "${{ needs.engine-ef-tests.result }}" != "skipped" ]; then
+            echo "Job Engine EF tests failed"
             exit 1
           fi
 

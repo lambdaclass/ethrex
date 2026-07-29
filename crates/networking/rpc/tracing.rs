@@ -3,8 +3,9 @@ use std::time::Duration;
 use ethrex_common::H256;
 use ethrex_common::{
     serde_utils,
-    tracing::{CallTraceFrame, PrestateResult},
+    tracing::{CallTraceFrame, PrestateResult, StructLoggerEmit, StructLoggerResult},
 };
+use ethrex_vm::tracing::OpcodeTracerConfig;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -39,12 +40,25 @@ struct TraceConfig {
     reexec: Option<u32>,
 }
 
+/// The tracer variant to use for a debug trace request.
+///
+/// **Divergence from geth**: geth's default (when no `tracer` field is provided) is the
+/// per-opcode tracer. ethrex keeps `CallTracer` as the default for compatibility with
+/// Blockscout-style clients that rely on the no-tracer-specified → callTracer behaviour.
 #[derive(Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
+// The wire-format names (`callTracer`, `prestateTracer`, `opcodeTracer`) are
+// fixed by client convention; variants must keep the `Tracer` suffix to
+// serialize correctly via `rename_all = "camelCase"`.
+#[allow(clippy::enum_variant_names)]
 enum TracerType {
     #[default]
     CallTracer,
     PrestateTracer,
+    /// Per-opcode tracer emitting EIP-3155 step content under the de-facto
+    /// `structLogger` wrapper shape (`{failed, gas, returnValue, structLogs}`).
+    /// Selected via `"tracer": "opcodeTracer"`.
+    OpcodeTracer,
 }
 
 #[derive(Deserialize, Default)]
@@ -171,6 +185,30 @@ impl RpcHandler for TraceTransactionRequest {
                     PrestateResult::Diff(diff) => Ok(serde_json::to_value(diff)?),
                 }
             }
+            TracerType::OpcodeTracer => {
+                let cfg: OpcodeTracerConfig = self
+                    .trace_config
+                    .tracer_config
+                    .as_ref()
+                    .map(|v| serde_json::from_value(v.clone()))
+                    .transpose()?
+                    .unwrap_or_default();
+                let emit = StructLoggerEmit {
+                    mem_size: cfg.enable_memory,
+                    return_data: cfg.enable_return_data,
+                    refund: false,
+                };
+                let result = context
+                    .blockchain
+                    .trace_transaction_opcodes(self.tx_hash, reexec, timeout, cfg)
+                    .await
+                    .map_err(|err| RpcErr::Internal(err.to_string()))?;
+                // `debug_traceTransaction` returns the geth-RPC structLogger shape.
+                Ok(serde_json::to_value(StructLoggerResult {
+                    result: &result,
+                    emit,
+                })?)
+            }
         }
     }
 }
@@ -277,6 +315,41 @@ impl RpcHandler for TraceBlockByNumberRequest {
                         serde_json::to_value(BlockTraceComponent {
                             tx_hash: hash,
                             result: trace_value,
+                        })
+                    })
+                    .collect::<Result<_, serde_json::Error>>()?;
+                Ok(serde_json::to_value(block_trace)?)
+            }
+            TracerType::OpcodeTracer => {
+                let cfg: OpcodeTracerConfig = self
+                    .trace_config
+                    .tracer_config
+                    .as_ref()
+                    .map(|v| serde_json::from_value(v.clone()))
+                    .transpose()?
+                    .unwrap_or_default();
+                let emit = StructLoggerEmit {
+                    mem_size: cfg.enable_memory,
+                    return_data: cfg.enable_return_data,
+                    refund: false,
+                };
+                let opcode_traces = context
+                    .blockchain
+                    .trace_block_opcodes(block, reexec, timeout, cfg)
+                    .await
+                    .map_err(|err| RpcErr::Internal(err.to_string()))?;
+                // Wrap each result with StructLoggerResult so it serializes in the
+                // geth-RPC shape expected by `debug_traceBlockByNumber` consumers.
+                let block_trace: Vec<serde_json::Value> = opcode_traces
+                    .into_iter()
+                    .map(|(hash, result)| {
+                        let wrapped = serde_json::to_value(StructLoggerResult {
+                            result: &result,
+                            emit,
+                        })?;
+                        serde_json::to_value(BlockTraceComponent {
+                            tx_hash: hash,
+                            result: wrapped,
                         })
                     })
                     .collect::<Result<_, serde_json::Error>>()?;

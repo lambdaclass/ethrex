@@ -1,0 +1,93 @@
+name: Publish crates to crates.io
+run-name: Publish crates to crates.io${{ (github.event_name == 'workflow_dispatch' && inputs.dry_run) && ' (dry run)' || '' }}
+
+# `released` fires only when a release is promoted to a full (non-pre-release)
+# release — i.e. step 4 of the release process, after the RC has been tested.
+# It does NOT fire on `vX.Y.Z-rc.W` pre-release creation, so release candidates
+# never publish to crates.io (crates.io versions are immutable).
+on:
+  release:
+    types: [released]
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Verify each crate (package + compile) without publishing"
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    environment: crates-release-prod
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Set up Rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@11df97af8e8102fd60b60a77dfbf58d40cd843b8 # v1.10.1
+        with:
+          toolchain: stable
+          # This action defaults RUSTFLAGS to "-D warnings", which (a) makes the
+          # cargo-publish verify build fail on lints and (b) overrides the
+          # `[target.*].rustflags` target-features in .cargo/config.toml. Publishing
+          # already-reviewed, CI-linted code should not deny warnings -- lints are
+          # gated on PRs separately -- so disable it here.
+          rustflags: ""
+
+      - name: Publish crates in dependency order
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CRATES_IO_TOKEN }}
+          DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run }}
+        run: |
+          set -euo pipefail
+          # Topological order: each crate is published after all of its dependencies.
+          CRATES=(
+            ethrex-rlp
+            ethrex-crypto
+            ethrex-sdk-contract-utils
+            ethrex-trie
+            ethrex-common
+            ethrex-metrics
+            ethrex-levm
+            ethrex-l2-common
+            ethrex-storage
+            ethrex-vm
+            ethrex-storage-rollup
+            ethrex-blockchain
+            ethrex-p2p
+            ethrex-rpc
+            ethrex-l2-rpc
+            ethrex-sdk
+          )
+          for c in "${CRATES[@]}"; do
+            echo "::group::$c"
+            if [ "${DRY_RUN:-false}" = "true" ]; then
+              # `cargo publish --dry-run` (and `cargo package` without --list)
+              # resolve each crate's siblings against the crates.io index, which
+              # aren't published yet -- so dependents fail at resolution before they
+              # ever compile. Validate against workspace path deps instead, which
+              # needs nothing published: list the tarball file set (no index lookup)
+              # and compile with default features (what cargo's verify step builds).
+              cargo package -p "$c" --no-verify --list >/dev/null
+              cargo check -p "$c"
+            else
+              OUTPUT=$(cargo publish -p "$c" 2>&1) || {
+                echo "$OUTPUT"
+                # Idempotent re-runs: skip versions already on crates.io. cargo emits
+                # "already uploaded" (modern) or "already exists" (older/other registries).
+                if echo "$OUTPUT" | grep -qiE "already (uploaded|exists)"; then
+                  echo "$c already published, skipping"
+                  echo "::endgroup::"
+                  continue
+                fi
+                exit 1
+              }
+              # cargo >=1.66 blocks until the version is in the index;
+              # a short settle covers any registry propagation lag.
+              sleep 20
+            fi
+            echo "::endgroup::"
+          done

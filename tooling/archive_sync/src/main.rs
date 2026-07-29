@@ -10,7 +10,7 @@ use ethrex_common::utils::keccak;
 use ethrex_common::{Address, serde_utils};
 use ethrex_common::{BigEndianHash, Bytes, H256, U256, types::BlockNumber};
 use ethrex_common::{
-    constants::{EMPTY_KECCACK_HASH, EMPTY_TRIE_HASH},
+    constants::{EMPTY_KECCAK_HASH, EMPTY_TRIE_HASH},
     types::{AccountState, Block},
 };
 use ethrex_rlp::decode::RLPDecode;
@@ -145,7 +145,7 @@ async fn process_dump(dump: Dump, store: Store, current_root: H256) -> eyre::Res
             dump_account.get_account_state().encode_to_vec(),
         )?;
         // Add code to DB if it is not empty
-        if dump_account.code_hash != *EMPTY_KECCACK_HASH {
+        if dump_account.code_hash != *EMPTY_KECCAK_HASH {
             store
                 .add_account_code(Code::from_bytecode(
                     dump_account.code.clone(),
