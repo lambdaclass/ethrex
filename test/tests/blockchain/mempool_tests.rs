@@ -925,6 +925,54 @@ async fn mempool_rejects_frame_tx_exceeding_max_verify_gas() {
 }
 
 #[tokio::test]
+async fn configured_max_verify_gas_overrides_the_spec_default() {
+    // EIP-8141 §Mempool `MAX_VERIFY_GAS` is node policy (SHOULD), so operators
+    // may raise it. A prefix whose frame gas limit exceeds the spec default must
+    // be rejected under the default budget and admitted under a raised one.
+    let raised_budget = 5 * FRAME_TX_MAX_VERIFY_GAS;
+    let prefix_gas = FRAME_TX_MAX_VERIFY_GAS + 50_000;
+    assert!(prefix_gas > FRAME_TX_MAX_VERIFY_GAS && prefix_gas < raised_budget);
+
+    let mut frame_tx = minimal_valid_frame_tx();
+    frame_tx.frames[0].gas_limit = prefix_gas;
+    // The minimum priority-fee floor at admission postdates this test's helper,
+    // which builds a zero-fee transaction. Without a tip the raised-budget case
+    // is rejected by the tip floor before the verify-gas budget is consulted,
+    // so the assertion below would fail for an unrelated reason. The fee cap has
+    // to clear the tip as well.
+    frame_tx.max_priority_fee_per_gas = U256::one();
+    frame_tx.max_fee_per_gas = U256::from(1_000_000_000u64);
+    let tx = Transaction::FrameTransaction(frame_tx);
+    let sender = tx.sender(&NativeCrypto).unwrap();
+
+    let default_blockchain = Blockchain::default_with_store(setup_hegota_store().await);
+    let rejected = default_blockchain.validate_transaction(&tx, sender).await;
+    assert!(
+        matches!(rejected, Err(MempoolError::FrameTxVerifyGasBudgetExceeded)),
+        "got {rejected:?}"
+    );
+
+    let raised_blockchain = Blockchain::new(
+        setup_hegota_store().await,
+        BlockchainOptions {
+            max_verify_gas: raised_budget,
+            ..Default::default()
+        },
+    );
+    // `minimal_valid_frame_tx` is built to be structurally valid, not executable:
+    // its prefix has no approving code behind it, so once the budget stops
+    // rejecting the transaction it proceeds to prefix simulation and fails there.
+    // What this test pins is the budget itself -- under a raised budget the
+    // verify-gas rejection must no longer be the verdict. Together with the
+    // default case above, that is what makes the budget operator-tunable.
+    let admitted = raised_blockchain.validate_transaction(&tx, sender).await;
+    assert!(
+        !matches!(admitted, Err(MempoolError::FrameTxVerifyGasBudgetExceeded)),
+        "raised max_verify_gas must not reject on the verify-gas budget, got {admitted:?}"
+    );
+}
+
+#[tokio::test]
 async fn mempool_rejects_frame_tx_from_unknown_sender_with_sentinel_nonce() {
     let store = setup_hegota_store().await;
     let blockchain = Blockchain::default_with_store(store);

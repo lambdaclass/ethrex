@@ -2757,8 +2757,8 @@ mod frame_validation_prefix_tests {
     use bytes::Bytes;
     use ethrex_common::types::Transaction;
     use ethrex_common::types::{
-        Account, AccountState, BlockHeader, ChainConfig, Code, CodeMetadata, Frame,
-        FrameTransaction, PrefixShape, ValidationPrefix,
+        Account, AccountState, BlockHeader, ChainConfig, Code, CodeMetadata,
+        FRAME_TX_MAX_VERIFY_GAS, Frame, FrameTransaction, PrefixShape, ValidationPrefix,
     };
     use ethrex_common::{Address, H256, U256};
     use ethrex_crypto::NativeCrypto;
@@ -2930,6 +2930,7 @@ mod frame_validation_prefix_tests {
             &NativeCrypto,
             &prefix,
             None,
+            FRAME_TX_MAX_VERIFY_GAS,
         )
         .expect("simulation runs");
         assert!(
@@ -2966,6 +2967,7 @@ mod frame_validation_prefix_tests {
             &NativeCrypto,
             &prefix,
             None,
+            FRAME_TX_MAX_VERIFY_GAS,
         )
         .expect("simulation runs");
         assert!(
@@ -3017,6 +3019,7 @@ mod frame_validation_prefix_tests {
             &NativeCrypto,
             &prefix,
             None,
+            FRAME_TX_MAX_VERIFY_GAS,
         )
         .expect("simulation runs");
         assert!(
@@ -3055,7 +3058,7 @@ mod frame_validation_prefix_tests {
             .expect("OnlyVerifyPay shape recognized");
         assert_eq!(prefix.shape, PrefixShape::OnlyVerifyPay);
         frame_tx
-            .validate_prefix_structure(&prefix)
+            .validate_prefix_structure(&prefix, FRAME_TX_MAX_VERIFY_GAS)
             .expect("a pay frame may target a non-sender sponsor (EIP-8141 structural rule 4)");
 
         let mut db = db_with(vec![
@@ -3070,6 +3073,7 @@ mod frame_validation_prefix_tests {
             &NativeCrypto,
             &prefix,
             None,
+            FRAME_TX_MAX_VERIFY_GAS,
         )
         .expect("simulation runs");
         assert!(

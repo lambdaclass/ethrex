@@ -930,6 +930,7 @@ pub async fn init_l1(
             max_reorg_depth: opts.max_reorg_depth,
             gap_admit_occupancy_threshold: opts.mempool_gap_admit_occupancy_threshold,
             mempool_prewarm_enabled: true,
+            max_verify_gas: opts.mempool_max_verify_gas,
         },
     );
 

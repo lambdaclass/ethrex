@@ -204,7 +204,7 @@ fn prefix_shape_self_verify() {
     assert_eq!(prefix.frame_indices, vec![0]);
     assert_eq!(prefix.deploy_index, None);
     assert_eq!(prefix.pay_index, Some(0));
-    tx.validate_prefix_structure(&prefix)
+    tx.validate_prefix_structure(&prefix, FRAME_TX_MAX_VERIFY_GAS)
         .expect("SelfVerify structure should be valid");
 }
 
@@ -218,7 +218,7 @@ fn prefix_shape_deploy_self_verify() {
     assert_eq!(prefix.frame_indices, vec![0, 1]);
     assert_eq!(prefix.deploy_index, Some(0));
     assert_eq!(prefix.pay_index, Some(1));
-    tx.validate_prefix_structure(&prefix)
+    tx.validate_prefix_structure(&prefix, FRAME_TX_MAX_VERIFY_GAS)
         .expect("DeploySelfVerify structure should be valid");
 }
 
@@ -232,7 +232,7 @@ fn prefix_shape_only_verify_pay() {
     assert_eq!(prefix.frame_indices, vec![0, 1]);
     assert_eq!(prefix.deploy_index, None);
     assert_eq!(prefix.pay_index, Some(1));
-    tx.validate_prefix_structure(&prefix)
+    tx.validate_prefix_structure(&prefix, FRAME_TX_MAX_VERIFY_GAS)
         .expect("OnlyVerifyPay structure should be valid");
 }
 
@@ -246,7 +246,7 @@ fn prefix_shape_deploy_only_verify_pay() {
     assert_eq!(prefix.frame_indices, vec![0, 1, 2]);
     assert_eq!(prefix.deploy_index, Some(0));
     assert_eq!(prefix.pay_index, Some(2));
-    tx.validate_prefix_structure(&prefix)
+    tx.validate_prefix_structure(&prefix, FRAME_TX_MAX_VERIFY_GAS)
         .expect("DeployOnlyVerifyPay structure should be valid");
 }
 
@@ -261,7 +261,7 @@ fn prefix_shape_self_verify_with_interleaved_expiry_verifier() {
     assert_eq!(prefix.shape, PrefixShape::SelfVerify);
     // frame_indices omits the expiry-verifier (index 0); self_verify is at index 1.
     assert_eq!(prefix.frame_indices, vec![1]);
-    tx.validate_prefix_structure(&prefix)
+    tx.validate_prefix_structure(&prefix, FRAME_TX_MAX_VERIFY_GAS)
         .expect("SelfVerify with expiry-verifier should be structurally valid");
 }
 
@@ -282,7 +282,8 @@ fn prefix_shape_deploy_self_verify_with_expiry_verifier_between() {
     assert_eq!(prefix.deploy_index, Some(0));
     assert_eq!(prefix.pay_index, Some(2));
     assert_eq!(
-        tx.validate_prefix_structure(&prefix).unwrap_err(),
+        tx.validate_prefix_structure(&prefix, FRAME_TX_MAX_VERIFY_GAS)
+            .unwrap_err(),
         FrameValidationError::ExpiryFrameNotFirst { frame_index: 1 }
     );
 }
@@ -304,7 +305,7 @@ fn prefix_shape_deploy_self_verify_with_leading_expiry_verifier() {
     assert_eq!(prefix.frame_indices, vec![1, 2]);
     assert_eq!(prefix.deploy_index, Some(1));
     assert_eq!(prefix.pay_index, Some(2));
-    tx.validate_prefix_structure(&prefix)
+    tx.validate_prefix_structure(&prefix, FRAME_TX_MAX_VERIFY_GAS)
         .expect("DeploySelfVerify with raw-index-1 deploy should be structurally valid");
 }
 
@@ -352,7 +353,7 @@ fn prefix_rejection_deploy_not_first() {
         .expect("SelfVerify recognized (deploy after prefix is ignored)");
     assert_eq!(prefix.shape, PrefixShape::SelfVerify);
     // Structure validation passes too (the deploy frame is not in the prefix).
-    tx.validate_prefix_structure(&prefix)
+    tx.validate_prefix_structure(&prefix, FRAME_TX_MAX_VERIFY_GAS)
         .expect("SelfVerify with trailing deploy is structurally valid");
 }
 
@@ -384,7 +385,8 @@ fn prefix_rejection_target_not_sender() {
     let tx = base_frame_tx_with_frames(vec![frame]);
     let prefix = tx.validation_prefix().expect("shape recognized");
     assert_eq!(
-        tx.validate_prefix_structure(&prefix).unwrap_err(),
+        tx.validate_prefix_structure(&prefix, FRAME_TX_MAX_VERIFY_GAS)
+            .unwrap_err(),
         FrameValidationError::VerifyTargetNotSender { frame_index: 0 }
     );
 }
@@ -400,7 +402,7 @@ fn prefix_rejection_wrong_scope_self_verify() {
     // matches OnlyVerifyPay shape (pos 0 = VERIFY(exec), pos 1 = VERIFY(pay)).
     let prefix = tx.validation_prefix().expect("OnlyVerifyPay recognized");
     assert_eq!(prefix.shape, PrefixShape::OnlyVerifyPay);
-    tx.validate_prefix_structure(&prefix)
+    tx.validate_prefix_structure(&prefix, FRAME_TX_MAX_VERIFY_GAS)
         .expect("OnlyVerifyPay structure is valid");
     // Now single VERIFY with wrong scope for SelfVerify: only one VERIFY with
     // APPROVE_EXECUTION means no SelfVerify shape.
@@ -433,7 +435,8 @@ fn prefix_rejection_wrong_scope_only_verify_pay() {
     // The prefix covers only the first frame, which leaves the `pay` frame as a
     // VERIFY frame after the prefix — banned by structural rule 8.
     assert_eq!(
-        tx.validate_prefix_structure(&prefix).unwrap_err(),
+        tx.validate_prefix_structure(&prefix, FRAME_TX_MAX_VERIFY_GAS)
+            .unwrap_err(),
         FrameValidationError::VerifyFrameAfterPrefix { frame_index: 1 }
     );
 }
@@ -448,7 +451,8 @@ fn prefix_rejection_atomic_batch_in_prefix() {
     let prefix = tx.validation_prefix().expect("SelfVerify recognized");
     assert_eq!(prefix.shape, PrefixShape::SelfVerify);
     assert_eq!(
-        tx.validate_prefix_structure(&prefix).unwrap_err(),
+        tx.validate_prefix_structure(&prefix, FRAME_TX_MAX_VERIFY_GAS)
+            .unwrap_err(),
         FrameValidationError::AtomicBatchInPrefix { frame_index: 0 }
     );
 }
@@ -470,7 +474,8 @@ fn prefix_rejection_gas_budget_exceeded() {
     let prefix = tx.validation_prefix().expect("SelfVerify recognized");
     // 100_000 + 2_800 > 100_000 → budget exceeded.
     assert!(matches!(
-        tx.validate_prefix_structure(&prefix).unwrap_err(),
+        tx.validate_prefix_structure(&prefix, FRAME_TX_MAX_VERIFY_GAS)
+            .unwrap_err(),
         FrameValidationError::VerifyGasBudgetExceeded { .. }
     ));
 }
@@ -696,7 +701,8 @@ fn prefix_rejection_verify_frame_after_prefix() {
     let prefix = tx.validation_prefix().expect("SelfVerify recognized");
     assert_eq!(prefix.shape, PrefixShape::SelfVerify);
     assert_eq!(
-        tx.validate_prefix_structure(&prefix).unwrap_err(),
+        tx.validate_prefix_structure(&prefix, FRAME_TX_MAX_VERIFY_GAS)
+            .unwrap_err(),
         FrameValidationError::VerifyFrameAfterPrefix { frame_index: 1 }
     );
 }
@@ -721,7 +727,7 @@ fn prefix_accepts_non_verify_frames_after_prefix() {
         user_op_frame(),
     ]);
     let prefix = tx.validation_prefix().expect("SelfVerify recognized");
-    tx.validate_prefix_structure(&prefix)
+    tx.validate_prefix_structure(&prefix, FRAME_TX_MAX_VERIFY_GAS)
         .expect("non-VERIFY frames after the prefix are allowed");
 }
 
@@ -735,7 +741,8 @@ fn prefix_rejection_expiry_frame_not_first() {
     ]);
     let prefix = tx.validation_prefix().expect("SelfVerify recognized");
     assert_eq!(
-        tx.validate_prefix_structure(&prefix).unwrap_err(),
+        tx.validate_prefix_structure(&prefix, FRAME_TX_MAX_VERIFY_GAS)
+            .unwrap_err(),
         FrameValidationError::ExpiryFrameNotFirst { frame_index: 1 }
     );
 }
@@ -748,7 +755,7 @@ fn prefix_accepts_expiry_frame_as_first_frame() {
         user_op_frame(),
     ]);
     let prefix = tx.validation_prefix().expect("SelfVerify recognized");
-    tx.validate_prefix_structure(&prefix)
+    tx.validate_prefix_structure(&prefix, FRAME_TX_MAX_VERIFY_GAS)
         .expect("a leading expiry verifier frame is valid");
 }
 
