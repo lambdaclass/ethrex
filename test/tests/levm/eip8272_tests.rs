@@ -195,11 +195,11 @@ fn floor_bound_frame_tx() -> FrameTransaction {
     ])
 }
 
-/// source_id = keccak256(pad32(caller) || salt).
+/// source_id = keccak256(caller || salt) over the 20-byte address and 32-byte salt.
 fn source_id(caller: Address, salt: &[u8; 32]) -> H256 {
-    let mut pre = [0u8; 64];
-    pre[12..32].copy_from_slice(caller.as_bytes());
-    pre[32..64].copy_from_slice(salt);
+    let mut pre = [0u8; 52];
+    pre[..20].copy_from_slice(caller.as_bytes());
+    pre[20..52].copy_from_slice(salt);
     H256(ethrex_crypto::keccak::keccak_hash(pre))
 }
 
@@ -601,4 +601,24 @@ fn valid_references_are_recorded_as_bal_storage_reads() {
         account.storage_changes.is_empty(),
         "the reference pass only reads; it must record no storage change"
     );
+}
+
+/// Pins the EIP-8272 `source_id` preimage. §Root sources defines
+/// `source_id = keccak256(source_address ‖ salt)`, and the Specification
+/// preamble fixes the encodings: "Addresses are 20 bytes", salts are 32. The
+/// preimage is therefore 52 bytes with the address unpadded. The other tests
+/// derive the expected `source_id` with the same helper the write path uses, so
+/// they would pass under any self-consistent layout; this golden is what
+/// actually detects a change to the layout itself.
+#[test]
+fn source_id_preimage_is_the_unpadded_address_and_salt() {
+    let golden = H256::from_slice(
+        &hex::decode("df7e44625a0cd6b99a54ec5c1c3ed8851f97629a88dcf861bf9ba2d1f13d15a9").unwrap(),
+    );
+    assert_eq!(source_id(SENDER, &[0x11u8; 32]), golden);
+    // A 32-byte left-padded address would hash 64 bytes and give a different id.
+    let mut padded = [0u8; 64];
+    padded[12..32].copy_from_slice(SENDER.as_bytes());
+    padded[32..64].copy_from_slice(&[0x11u8; 32]);
+    assert_ne!(H256(ethrex_crypto::keccak::keccak_hash(padded)), golden);
 }

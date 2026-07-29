@@ -1518,7 +1518,9 @@ impl<'a> VM<'a> {
     /// EIP-8272 native RECENT_ROOT_CODE write core (docs/eip-8272.md
     /// divergence #4: the spec leaves the predeploy bytecode TBD, so ethrex
     /// executes the 64-byte `salt ‖ root` write natively). The committed entry
-    /// is keyed by `source_id = keccak256(pad32(caller) ‖ salt)` — a
+    /// is keyed by `source_id = keccak256(caller ‖ salt)` over the 20-byte
+    /// address and the 32-byte salt (EIP-8272 §Root sources, with the
+    /// fixed-length encodings its Specification preamble sets out) — a
     /// caller-authenticated namespace (nobody can write into another caller's
     /// source_id), with the salt giving each caller as many namespaces as it
     /// needs; a referencing transaction declares the same source_id in its
@@ -1541,9 +1543,9 @@ impl<'a> VM<'a> {
         if current_slot > U256::from(u64::MAX) {
             return Err(ExceptionalHalt::InvalidOpcode.into());
         }
-        let mut preimage = [0u8; 64];
-        preimage[12..32].copy_from_slice(caller.as_bytes());
-        preimage[32..64].copy_from_slice(salt);
+        let mut preimage = [0u8; 52];
+        preimage[..20].copy_from_slice(caller.as_bytes());
+        preimage[20..52].copy_from_slice(salt);
         let source_id = H256(ethrex_crypto::keccak::keccak_hash(preimage));
         let entry = ethrex_common::types::RecentRootReference {
             source_id,
