@@ -93,6 +93,18 @@ impl LevmDatabase for DynVmDatabase {
         Ok(acc_state)
     }
 
+    fn get_account_states_batch(
+        &self,
+        addresses: &[CoreAddress],
+    ) -> Result<Vec<AccountState>, DatabaseError> {
+        let states = <dyn VmDatabase>::get_account_states_batch(self.as_ref(), addresses)
+            .map_err(|e| DatabaseError::Custom(e.to_string()))?;
+        Ok(states
+            .into_iter()
+            .map(|opt| opt.unwrap_or_default())
+            .collect())
+    }
+
     fn get_storage_value(
         &self,
         address: CoreAddress,
