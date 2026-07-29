@@ -642,3 +642,78 @@ fn get_transaction_data(rpc_req_params: &Option<Vec<Value>>) -> Result<Vec<u8>, 
         .ok_or(RpcErr::BadParams("Params are note 0x prefixed".to_owned()))?;
     hex::decode(str_data).map_err(|error| RpcErr::BadParams(error.to_string()))
 }
+
+#[cfg(test)]
+mod call_nonce_tests {
+    use std::str::FromStr;
+
+    use crate::rpc::map_http_requests;
+    use crate::test_utils::default_context_with_storage;
+    use crate::utils::RpcRequest;
+    use ethrex_common::Address;
+    use ethrex_common::types::Genesis;
+    use ethrex_storage::{EngineType, Store};
+    use serde_json::{Value, json};
+
+    /// Funded EOA from fixtures/genesis/l1.json.
+    const SENDER: &str = "0x00000a8d3f37af8def18832962ee008d8dca4f7b";
+
+    /// In-memory store from the l1 test genesis with `SENDER`'s account nonce
+    /// bumped, so call objects can be exercised against a sender whose
+    /// on-chain nonce is nonzero.
+    async fn setup_store_with_sender_nonce(nonce: u64) -> Store {
+        let genesis: &str = include_str!("../../../../fixtures/genesis/l1.json");
+        let mut genesis: Genesis =
+            serde_json::from_str(genesis).expect("Fatal: test config is invalid");
+        genesis
+            .alloc
+            .get_mut(&Address::from_str(SENDER).unwrap())
+            .expect("test sender missing from genesis")
+            .nonce = nonce;
+        let mut store =
+            Store::new("test-store", EngineType::InMemory).expect("Fail to create in-memory db");
+        store.add_initial_state(genesis).await.unwrap();
+        store
+    }
+
+    async fn run_eth_call(call_object: Value) -> Value {
+        let storage = setup_store_with_sender_nonce(5).await;
+        let context = default_context_with_storage(storage).await;
+        let request: RpcRequest = serde_json::from_value(json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "eth_call",
+            "params": [call_object, "latest"],
+        }))
+        .unwrap();
+        map_http_requests(&request, context).await.unwrap()
+    }
+
+    /// A call object without `nonce` must not be rejected for senders whose
+    /// account nonce is nonzero: the env defaults the tx nonce to 0, which the
+    /// hook used to enforce against the state nonce.
+    #[tokio::test]
+    async fn eth_call_ignores_missing_nonce() {
+        let result = run_eth_call(json!({
+            "from": SENDER,
+            "to": "0xc100000000000000000000000000000000000000",
+            "value": "0x1",
+        }))
+        .await;
+        assert_eq!(result, Value::String("0x".to_string()));
+    }
+
+    /// An explicit stale nonce is ignored too: no client validates the sender
+    /// nonce on eth_call, even when the call object supplies one.
+    #[tokio::test]
+    async fn eth_call_ignores_explicit_stale_nonce() {
+        let result = run_eth_call(json!({
+            "from": SENDER,
+            "to": "0xc100000000000000000000000000000000000000",
+            "value": "0x1",
+            "nonce": "0x0",
+        }))
+        .await;
+        assert_eq!(result, Value::String("0x".to_string()));
+    }
+}

@@ -665,6 +665,10 @@ pub enum InvalidBlockHeaderError {
     BlockAccessListHashNotPresent,
     #[error("Block access list hash is present")]
     BlockAccessListHashPresent,
+    #[error("Slot number is not present")]
+    SlotNumberNotPresent,
+    #[error("Slot number is present")]
+    SlotNumberPresent,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -794,11 +798,22 @@ pub fn validate_prague_header_fields(
         return Err(InvalidBlockHeaderError::RequestsHashNotPresent);
     }
     if chain_config.is_amsterdam_activated(header.timestamp) {
+        // EIP-7928: BAL hash and EIP-7843: slot_number are both mandatory
+        // trailing header fields on Amsterdam. A header omitting either is
+        // schema-invalid and must be rejected to match conformant clients.
         if header.block_access_list_hash.is_none() {
             return Err(InvalidBlockHeaderError::BlockAccessListHashNotPresent);
         }
-    } else if header.block_access_list_hash.is_some() {
-        return Err(InvalidBlockHeaderError::BlockAccessListHashPresent);
+        if header.slot_number.is_none() {
+            return Err(InvalidBlockHeaderError::SlotNumberNotPresent);
+        }
+    } else {
+        if header.block_access_list_hash.is_some() {
+            return Err(InvalidBlockHeaderError::BlockAccessListHashPresent);
+        }
+        if header.slot_number.is_some() {
+            return Err(InvalidBlockHeaderError::SlotNumberPresent);
+        }
     }
     Ok(())
 }
@@ -826,6 +841,9 @@ pub fn validate_cancun_header_fields(
     if header.block_access_list_hash.is_some() {
         return Err(InvalidBlockHeaderError::BlockAccessListHashPresent);
     }
+    if header.slot_number.is_some() {
+        return Err(InvalidBlockHeaderError::SlotNumberPresent);
+    }
     Ok(())
 }
 
@@ -848,6 +866,9 @@ pub fn validate_pre_cancun_header_fields(
     }
     if header.block_access_list_hash.is_some() {
         return Err(InvalidBlockHeaderError::BlockAccessListHashPresent);
+    }
+    if header.slot_number.is_some() {
+        return Err(InvalidBlockHeaderError::SlotNumberPresent);
     }
     Ok(())
 }
@@ -884,7 +905,7 @@ pub fn calc_excess_blob_gas(parent: &BlockHeader, schedule: ForkBlobSchedule, fo
     }
 
     if fork >= Fork::Osaka
-        && U256::from(BLOB_BASE_COST * parent_base_fee_per_gas)
+        && U256::from(BLOB_BASE_COST) * U256::from(parent_base_fee_per_gas)
             > (U256::from(GAS_PER_BLOB))
                 * calculate_base_fee_per_blob_gas(
                     parent_excess_blob_gas,
