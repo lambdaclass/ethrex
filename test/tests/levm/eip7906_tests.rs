@@ -6,12 +6,15 @@
 //! anywhere else (legacy/EIP-1559 txs, or any other frame mode) they
 //! exceptional-halt. A POST_TX frame runs read-only (STATICCALL from
 //! ENTRY_POINT) as a trailing suffix of the frame list; if its subtree REVERTs,
-//! the whole transaction body reverts and the tx is invalid (#11829).
+//! the transaction's execution BODY reverts while the transaction itself stays
+//! VALID — included, with a failed (`status = 0`) receipt and the validation
+//! prefix (notably the APPROVE gas payment) permanently committed.
 //!
 //! These integration tests therefore drive the opcodes through POST_TX frames
 //! and surface results via "assert-or-revert": the POST_TX bytecode computes a
 //! value, compares it to the expected word, and REVERTs on mismatch — so a
-//! VALID tx means every assertion held. The diff-computation detail (sorting,
+//! SUCCEEDING tx means every assertion held, and a failed-status tx means one
+//! fired. The diff-computation detail (sorting,
 //! before/after values, exclusions) is unit-tested directly against the pure
 //! functions in `crates/vm/levm/src/opcode_handlers/tx_trace.rs`.
 //!
@@ -23,14 +26,14 @@
 use bytes::Bytes;
 use ethrex_blockchain::vm::StoreVmDatabase;
 use ethrex_common::types::{
-    Account, BlockHeader, Code, EIP1559Transaction, Fork, Frame, FrameMode, FrameTransaction,
-    Transaction, TxKind,
+    Account, BlockHeader, Code, EIP1559Transaction, FRAME_RECEIPT_STATUS_FAILURE, Fork, Frame,
+    FrameMode, FrameTransaction, Transaction, TxKind,
 };
 use ethrex_common::{Address, H256, U256, constants::EMPTY_TRIE_HASH};
 use ethrex_crypto::NativeCrypto;
 use ethrex_levm::db::gen_db::GeneralizedDatabase;
 use ethrex_levm::environment::{EVMConfig, Environment};
-use ethrex_levm::errors::{ExecutionReport, TxValidationError, VMError};
+use ethrex_levm::errors::{ExecutionReport, VMError};
 use ethrex_levm::tracing::LevmCallTracer;
 use ethrex_levm::vm::{VM, VMType};
 use ethrex_storage::Store;
@@ -78,6 +81,7 @@ const APPROVE_EXECUTION_CODE: &[u8] = &[0x60, 0x02, 0x60, 0x00, 0x60, 0x00, APPR
 
 const ASSERTION_ADDR: u64 = 0x7906;
 const WRITER_ADDR: u64 = 0x7907;
+const OTHER_ADDR: u64 = 0x7908;
 
 // ==================== Account seeding ====================
 
@@ -173,6 +177,17 @@ fn frame_tx_with_frames(frames: Vec<Frame>) -> FrameTransaction {
 /// Run `tx` against `seeds`, auto-seeding the sender with `APPROVE_BOTH_CODE` if
 /// the caller did not provide it. Returns the execution result.
 fn run_frame_tx(seeds: Vec<Seed>, tx: FrameTransaction) -> Result<ExecutionReport, VMError> {
+    run_frame_tx_with_db(seeds, tx).0
+}
+
+/// As [`run_frame_tx`], but also hands back the database so a caller can inspect
+/// the post-state. Needed for EIP-7906's partial revert, whose whole point is
+/// which state survives — something no assertion inside the reverted frame can
+/// observe.
+fn run_frame_tx_with_db(
+    seeds: Vec<Seed>,
+    tx: FrameTransaction,
+) -> (Result<ExecutionReport, VMError>, GeneralizedDatabase) {
     let mut seeds = seeds;
     if !seeds.iter().any(|s| s.addr == tx.sender) {
         seeds.push(
@@ -182,16 +197,19 @@ fn run_frame_tx(seeds: Vec<Seed>, tx: FrameTransaction) -> Result<ExecutionRepor
     let mut db = seeded_db(&seeds);
     let env = frame_tx_env(&tx);
     let transaction = Transaction::FrameTransaction(tx);
-    let mut vm = VM::new(
-        env,
-        &mut db,
-        &transaction,
-        LevmCallTracer::disabled(),
-        VMType::L1,
-        &NativeCrypto,
-    )
-    .expect("VM::new should succeed for a frame tx");
-    vm.execute()
+    let result = {
+        let mut vm = VM::new(
+            env,
+            &mut db,
+            &transaction,
+            LevmCallTracer::disabled(),
+            VMType::L1,
+            &NativeCrypto,
+        )
+        .expect("VM::new should succeed for a frame tx");
+        vm.execute()
+    };
+    (result, db)
 }
 
 fn verify_frame(target: Address) -> Frame {
@@ -341,6 +359,12 @@ fn writer_addr() -> Address {
     Address::from_low_u64_be(WRITER_ADDR)
 }
 
+/// A second body contract, for the per-address TXDIFF views — which only mean
+/// anything when more than one account appears in the transaction's diff.
+fn other_addr() -> Address {
+    Address::from_low_u64_be(OTHER_ADDR)
+}
+
 /// Run `[VERIFY(sender)->APPROVE(3), <body frames>, POST_TX(assertion)]`.
 /// `seeds` must seed every body/assertion contract; the sender is auto-seeded.
 fn run_posttx(
@@ -355,15 +379,33 @@ fn run_posttx(
     run_frame_tx(seeds, frame_tx_with_frames(frames))
 }
 
-fn assert_invalid(result: Result<ExecutionReport, VMError>) {
+/// EIP-7906: a reverted POST_TX frame reverts the execution body and nothing
+/// more. The transaction "remains valid, is included in the block, and generates
+/// a receipt with a failed status (`status = 0`)", and the validation prefix —
+/// including the APPROVE gas payment — stays committed. Asserts that shape:
+/// `Ok`, failed top-level status, payer still set, POST_TX frame recorded failed.
+fn assert_posttx_reverted(result: Result<ExecutionReport, VMError>) {
+    let report = result.unwrap_or_else(|e| {
+        panic!("a POST_TX revert must not invalidate the transaction, got Err({e:?})")
+    });
     assert!(
-        matches!(
-            result,
-            Err(VMError::TxValidation(
-                TxValidationError::InvalidFrameTransaction
-            ))
-        ),
-        "expected InvalidFrameTransaction, got {result:?}"
+        !report.is_success(),
+        "expected a failed top-level status, got {report:?}"
+    );
+    assert!(
+        report.payer_address.is_some(),
+        "the prefix APPROVE must stay committed, got {report:?}"
+    );
+    let frame_results = report
+        .frame_results
+        .as_ref()
+        .expect("a frame transaction must report per-frame results");
+    let (status, ..) = frame_results
+        .last()
+        .expect("the POST_TX frame must be recorded");
+    assert_eq!(
+        *status, FRAME_RECEIPT_STATUS_FAILURE,
+        "the POST_TX frame must be recorded as failed, got {report:?}"
     );
 }
 
@@ -380,19 +422,106 @@ fn txtrace_passes_inside_posttx_frame() {
 }
 
 #[test]
-fn posttx_revert_invalidates_whole_tx() {
-    // Same trace (count == 0) but the assertion expects 1 -> REVERT -> tx invalid.
+fn posttx_revert_fails_tx_without_invalidating_it() {
+    // Same trace (count == 0) but the assertion expects 1 -> REVERT. The body is
+    // reverted and the receipt reports status 0; the transaction stays valid.
     let code = assert_all_eq(&[(txtrace_compute(0x01, 0x00), U256::one())]);
-    assert_invalid(run_posttx(vec![], vec![], code));
+    assert_posttx_reverted(run_posttx(vec![], vec![], code));
+}
+
+/// The core EIP-7906 partial-revert shape, in one test: the body's storage write
+/// is rewound to its prestate value, while the validation prefix's effect — the
+/// APPROVE gas payment — is permanently committed and the payer is charged.
+///
+/// Excluding the transaction instead (rolling the payment back too) would let an
+/// attacker burn a block's worth of execution and revert for free, which is why
+/// the spec requires the prefix to commit (§Receipt Representation and Anti-DoS).
+#[test]
+fn posttx_revert_rewinds_the_body_but_commits_the_prefix() {
+    const SLOT: u8 = 0x01;
+    const PRESTATE_VALUE: u64 = 7;
+
+    // Body frame overwrites SLOT; the assertion then demands a whole-tx
+    // storage-change count of 0, which is false, so it reverts.
+    let writer = Seed::new(writer_addr(), multi_sstore_code(&[(SLOT, U256::from(42))]))
+        .storage(&[(u64::from(SLOT), PRESTATE_VALUE)]);
+    let assertion = Seed::new(
+        assertion_addr(),
+        assert_all_eq(&[(txtrace_compute(0x01, 0x00), U256::zero())]),
+    );
+    let tx = frame_tx_with_frames(vec![
+        verify_frame(FUNDED_SENDER),
+        default_frame(writer_addr()),
+        posttx_frame(assertion_addr()),
+    ]);
+
+    let (result, db) = run_frame_tx_with_db(vec![writer, assertion], tx);
+    assert_posttx_reverted(result);
+
+    let writer_account = db
+        .current_accounts_state
+        .get(&writer_addr())
+        .expect("the writer account must be cached");
+    assert_eq!(
+        writer_account
+            .storage
+            .get(&H256::from_low_u64_be(u64::from(SLOT)))
+            .copied(),
+        Some(U256::from(PRESTATE_VALUE)),
+        "the body's storage write must be rewound to its prestate value"
+    );
+
+    let sender_balance = db
+        .current_accounts_state
+        .get(&FUNDED_SENDER)
+        .expect("the sender account must be cached")
+        .info
+        .balance;
+    assert!(
+        sender_balance < AUTO_SEED_SENDER_BALANCE,
+        "the payer must stay charged for the gas consumed up to the revert; \
+         balance was {sender_balance}"
+    );
+}
+
+/// Logs emitted by the body go with the body's state; a POST_TX revert must leave
+/// none of them in the receipt.
+#[test]
+fn posttx_revert_drops_body_logs() {
+    // LOG0 with a zero-length payload, then STOP.
+    let emitter_code = vec![PUSH1, 0x00, PUSH1, 0x00, LOG0, STOP];
+    let emitter = Seed::new(writer_addr(), emitter_code);
+    let assertion = Seed::new(
+        assertion_addr(),
+        // One event was emitted, so asserting a count of 0 reverts.
+        assert_all_eq(&[(txtrace_compute(0x0C, 0x00), U256::zero())]),
+    );
+    let tx = frame_tx_with_frames(vec![
+        verify_frame(FUNDED_SENDER),
+        default_frame(writer_addr()),
+        posttx_frame(assertion_addr()),
+    ]);
+
+    let (result, _db) = run_frame_tx_with_db(vec![emitter, assertion], tx);
+    let report = result.expect("a POST_TX revert must not invalidate the transaction");
+    assert!(
+        !report.is_success(),
+        "expected a failed status, got {report:?}"
+    );
+    assert!(
+        report.logs.is_empty(),
+        "the body's logs must be reverted with its state, got {:?}",
+        report.logs
+    );
 }
 
 #[test]
 fn approve_halts_inside_posttx_frame() {
     // EIP-7906: APPROVE is forbidden in a POST_TX (read-only assertion) frame. It
-    // must exceptional-halt, reverting the POST_TX frame and invalidating the tx.
+    // must exceptional-halt, which fails the POST_TX frame and so reverts the body.
     // PUSH1 2 (APPROVE_EXECUTION scope); PUSH1 0; PUSH1 0; APPROVE.
     let code = vec![0x60, 0x02, 0x60, 0x00, 0x60, 0x00, APPROVE];
-    assert_invalid(run_posttx(vec![], vec![], code));
+    assert_posttx_reverted(run_posttx(vec![], vec![], code));
 }
 
 #[test]
@@ -511,7 +640,7 @@ fn txtrace_undefined_param_halts() {
         c.push(STOP);
         c
     };
-    assert_invalid(run_posttx(vec![], vec![], code));
+    assert_posttx_reverted(run_posttx(vec![], vec![], code));
 }
 
 #[test]
@@ -522,7 +651,7 @@ fn txtrace_nonzero_in2_on_scalar_param_halts() {
         c.push(STOP);
         c
     };
-    assert_invalid(run_posttx(vec![], vec![], code));
+    assert_posttx_reverted(run_posttx(vec![], vec![], code));
 }
 
 #[test]
@@ -633,6 +762,224 @@ fn eventdatacopy_halts_in_default_frame() {
 // ==================== TXDIFF through POST_TX ====================
 
 #[test]
+fn txdiff_state_params_are_priced_through_the_2929_access_lists() {
+    // EIP-7906 §Gas Cost: the state-reading TXDIFF params consult the EIP-2929
+    // access lists for their cost and add the slot/address afterwards.
+    //
+    // Both variants run byte-for-byte identical bytecode shapes (two TXDIFF reads
+    // through the same assert-or-revert scaffolding, differing only in a pushed
+    // constant), so the gas gap between them isolates the TXDIFF charge alone. The
+    // second read is warm in one variant and cold in the other, so the gap must
+    // equal the cold/warm SLOAD delta — which proves the access list is both
+    // consulted AND updated, neither of which a flat per-call charge would do.
+    let slot_read = |slot: u64| {
+        (
+            txdiff_compute(0x01, writer_addr(), U256::from(slot)),
+            U256::zero(),
+        )
+    };
+    let cold_then_warm = run_posttx(vec![], vec![], assert_all_eq(&[slot_read(1), slot_read(1)]))
+        .expect("reading an unmodified slot must succeed");
+    let cold_then_cold = run_posttx(vec![], vec![], assert_all_eq(&[slot_read(1), slot_read(2)]))
+        .expect("reading an unmodified slot must succeed");
+
+    let cold = ethrex_levm::gas_cost::sload(true, Fork::Hegota).unwrap();
+    let warm = ethrex_levm::gas_cost::sload(false, Fork::Hegota).unwrap();
+    assert_eq!(
+        cold_then_cold.gas_used - cold_then_warm.gas_used,
+        cold - warm,
+        "a repeated TXDIFF slot read must be charged the warm price"
+    );
+
+    // Same argument for the account-keyed params, against the account access list.
+    let balance_read = |addr: Address| (txdiff_compute(0x03, addr, U256::zero()), U256::zero());
+    let warm_second = run_posttx(
+        vec![],
+        vec![],
+        assert_all_eq(&[balance_read(writer_addr()), balance_read(writer_addr())]),
+    )
+    .expect("reading an untouched balance must succeed");
+    let cold_second = run_posttx(
+        vec![],
+        vec![],
+        assert_all_eq(&[balance_read(writer_addr()), balance_read(other_addr())]),
+    )
+    .expect("reading an untouched balance must succeed");
+    assert_eq!(
+        cold_second.gas_used - warm_second.gas_used,
+        ethrex_levm::gas_cost::balance(true, Fork::Hegota).unwrap()
+            - ethrex_levm::gas_cost::balance(false, Fork::Hegota).unwrap(),
+        "a repeated TXDIFF account read must be charged the warm price"
+    );
+}
+
+#[test]
+fn txdiff_per_address_view_params_do_not_warm_the_access_lists() {
+    // The per-address views are answered from the transaction-local diff, so they
+    // are flat-priced and must leave the access lists alone: a view call on an
+    // address must NOT make a following balance read warm.
+    let view = |addr: Address| (txdiff_compute(0x06, addr, U256::zero()), U256::zero());
+    let balance_read = |addr: Address| (txdiff_compute(0x03, addr, U256::zero()), U256::zero());
+
+    // Both variants are a view call followed by a balance read of `writer`; they
+    // differ only in WHICH address the view was called on. If the view warmed its
+    // argument, viewing `writer` first would make the balance read warm and the two
+    // would diverge by the cold/warm delta. Equal totals mean it did not.
+    let viewed_same = run_posttx(
+        vec![],
+        vec![],
+        assert_all_eq(&[view(writer_addr()), balance_read(writer_addr())]),
+    )
+    .expect("per-address view on an untouched address must return 0");
+    let viewed_other = run_posttx(
+        vec![],
+        vec![],
+        assert_all_eq(&[view(other_addr()), balance_read(writer_addr())]),
+    )
+    .expect("per-address view on an untouched address must return 0");
+
+    assert_eq!(
+        viewed_same.gas_used, viewed_other.gas_used,
+        "a per-address view must not add its address to the EIP-2929 access list"
+    );
+}
+
+#[test]
+fn txdiff_per_address_storage_view_maps_to_global_indices() {
+    // Body writes two slots on the writer. The per-address view (0x06 count,
+    // 0x07 local -> global) must report 2 entries, and each mapped global index
+    // must address that same writer entry in TXTRACE's global slots table (0x06
+    // = change_address, 0x07 = slot_key).
+    let writer = Seed::new(
+        writer_addr(),
+        multi_sstore_code(&[(0x01, U256::from(11)), (0x02, U256::from(22))]),
+    );
+    let writer_word = U256::from_big_endian(writer_addr().as_bytes());
+    let code = assert_all_eq(&[
+        (
+            txdiff_compute(0x06, writer_addr(), U256::zero()),
+            U256::from(2),
+        ),
+        // Local 0 and 1 map to global 0 and 1 (the writer is the only account with
+        // slot changes, so its entries head the table).
+        (
+            txdiff_compute(0x07, writer_addr(), U256::zero()),
+            U256::zero(),
+        ),
+        (
+            txdiff_compute(0x07, writer_addr(), U256::one()),
+            U256::one(),
+        ),
+        // Cross-check the mapping against the global table it indexes into.
+        (txtrace_compute(0x06, 0x00), writer_word),
+        (txtrace_compute(0x07, 0x00), U256::one()),
+        (txtrace_compute(0x07, 0x01), U256::from(2)),
+    ]);
+    assert!(
+        run_posttx(vec![writer], vec![default_frame(writer_addr())], code).is_ok(),
+        "TXDIFF's per-address storage view must map local indices onto the global table"
+    );
+}
+
+#[test]
+fn txdiff_per_address_view_count_is_zero_for_untouched_address() {
+    // An address the transaction never touched has an empty view, not a halt.
+    let code = assert_all_eq(&[
+        (
+            txdiff_compute(0x06, writer_addr(), U256::zero()),
+            U256::zero(),
+        ),
+        (
+            txdiff_compute(0x08, writer_addr(), U256::zero()),
+            U256::zero(),
+        ),
+    ]);
+    assert!(
+        run_posttx(vec![], vec![], code).is_ok(),
+        "per-address view counts must be 0 for an untouched address"
+    );
+}
+
+#[test]
+fn txdiff_per_address_view_out_of_range_local_index_halts() {
+    // Spec: "If TXDIFF received an invalid local index, i.e. value greater than or
+    // equal to the view's count, an exceptional halt occurs." The view is empty
+    // here, so local index 0 is already out of range.
+    let mut code = txdiff_compute(0x07, writer_addr(), U256::zero());
+    code.push(STOP);
+    assert_posttx_reverted(run_posttx(vec![], vec![], code));
+}
+
+#[test]
+fn txdiff_per_address_event_view_maps_interleaved_emission_order() {
+    // Two contracts each emit one event, interleaved in the body. The per-address
+    // event view must pick out only the target's, mapped to its GLOBAL log index.
+    let log0 = vec![PUSH1, 0x00, PUSH1, 0x00, LOG0, STOP];
+    let emitter_a = Seed::new(writer_addr(), log0.clone());
+    let emitter_b = Seed::new(other_addr(), log0);
+    let code = assert_all_eq(&[
+        // Two events total; one per emitter.
+        (txtrace_compute(0x0C, 0x00), U256::from(2)),
+        (
+            txdiff_compute(0x08, writer_addr(), U256::zero()),
+            U256::one(),
+        ),
+        (
+            txdiff_compute(0x08, other_addr(), U256::zero()),
+            U256::one(),
+        ),
+        // Emitter A ran first, so its single event is global index 0; B's is 1.
+        (
+            txdiff_compute(0x09, writer_addr(), U256::zero()),
+            U256::zero(),
+        ),
+        (
+            txdiff_compute(0x09, other_addr(), U256::zero()),
+            U256::one(),
+        ),
+    ]);
+    assert!(
+        run_posttx(
+            vec![emitter_a, emitter_b],
+            vec![default_frame(writer_addr()), default_frame(other_addr()),],
+            code
+        )
+        .is_ok(),
+        "TXDIFF's per-address event view must map onto global emission order"
+    );
+}
+
+#[test]
+fn txdiff_account_change_flags_report_each_field() {
+    // The writer's balance is untouched and its code unchanged, but the body
+    // changes one storage slot -> only the storage bit (0b0100) is set. The
+    // assertion contract itself was never modified -> mask 0.
+    let writer = Seed::new(writer_addr(), sstore_code(0x01, U256::from(9))).storage(&[(1, 8)]);
+    let code = assert_all_eq(&[
+        (
+            txdiff_compute(0x0A, writer_addr(), U256::zero()),
+            U256::from(0b0100u8),
+        ),
+        (
+            txdiff_compute(0x0A, other_addr(), U256::zero()),
+            U256::zero(),
+        ),
+    ]);
+    assert!(
+        run_posttx(vec![writer], vec![default_frame(writer_addr())], code).is_ok(),
+        "account_change_flags must set the storage bit and nothing else"
+    );
+}
+
+#[test]
+fn txdiff_account_change_flags_reject_nonzero_in3() {
+    // Param 0x0A is keyed by address alone; `in3` must be 0.
+    let mut code = txdiff_compute(0x0A, writer_addr(), U256::one());
+    code.push(STOP);
+    assert_posttx_reverted(run_posttx(vec![], vec![], code));
+}
+
+#[test]
 fn txdiff_slot_before_after_for_modified_slot() {
     // Writer's prestate slot 5 = 10; body changes it to 99. POST_TX asserts
     // slot_before (0x00) == 10 and slot_after (0x01) == 99.
@@ -723,7 +1070,7 @@ fn txdiff_nonzero_in3_on_balance_param_halts() {
         c
     };
     let acct = Seed::new(writer_addr(), vec![STOP]).balance(U256::from(5u64));
-    assert_invalid(run_posttx(vec![acct], vec![], code));
+    assert_posttx_reverted(run_posttx(vec![acct], vec![], code));
 }
 
 #[test]
