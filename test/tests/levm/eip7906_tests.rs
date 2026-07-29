@@ -205,6 +205,17 @@ fn verify_frame(target: Address) -> Frame {
     }
 }
 
+/// A VERIFY frame declaring only `APPROVE_PAYMENT`. A frame that declares
+/// `APPROVE_EXECUTION` must target `tx.sender` (EIP-8141 §APPROVE: that scope is
+/// the sender authorizing execution on its own behalf), so a third-party
+/// paymaster frame may declare payment scope only.
+fn pay_frame(target: Address) -> Frame {
+    Frame {
+        flags: 0x01,
+        ..verify_frame(target)
+    }
+}
+
 fn default_frame(target: Address) -> Frame {
     Frame {
         mode: u8::from(FrameMode::Default),
@@ -516,9 +527,12 @@ fn txtrace_nonzero_in2_on_scalar_param_halts() {
 
 #[test]
 fn txtrace_gas_payer_and_precharge() {
-    // Frame layout: VERIFY(paymaster)->APPROVE(1) sets payer; VERIFY(sender)->
-    // APPROVE(2) approves the sender; POST_TX asserts gas_payer (0x15) == paymaster
-    // and gas_pre_charge (0x14) == total_gas_limit * max_fee_per_gas.
+    // Frame layout: VERIFY(sender)->APPROVE(2) approves the sender, then
+    // VERIFY(paymaster)->APPROVE(1) sets a third-party payer; POST_TX asserts
+    // gas_payer (0x15) == paymaster and gas_pre_charge (0x14) ==
+    // total_gas_limit * max_fee_per_gas. Execution approval must come first:
+    // EIP-8141 §APPROVE reverts an APPROVE_PAYMENT while `sender_approved` is
+    // false, which is also the canonical `only_verify` + `pay` prefix order.
     let paymaster = Address::from_low_u64_be(0x9A);
     let seeds = vec![
         Seed::new(paymaster, APPROVE_PAYMENT_CODE.to_vec())
@@ -527,7 +541,7 @@ fn txtrace_gas_payer_and_precharge() {
         Seed::new(assertion_addr(), Vec::new()), // filled below
     ];
 
-    let mut frames = vec![verify_frame(paymaster), verify_frame(FUNDED_SENDER)];
+    let mut frames = vec![verify_frame(FUNDED_SENDER), pay_frame(paymaster)];
     frames.push(posttx_frame(assertion_addr()));
     let tx = frame_tx_with_frames(frames);
 
