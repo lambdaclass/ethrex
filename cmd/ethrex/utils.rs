@@ -82,7 +82,7 @@ pub fn parse_http_namespace(s: &str) -> eyre::Result<ethrex_rpc::RpcNamespace> {
     }
     ethrex_rpc::RpcNamespace::from_prefix(&trimmed.to_ascii_lowercase()).ok_or_else(|| {
         eyre::eyre!(
-            "unknown RPC namespace {trimmed:?}; expected one of eth, net, web3, debug, admin, txpool, testing"
+            "unknown RPC namespace {trimmed:?}; expected one of eth, net, web3, debug, admin, txpool, testing, ethrex"
         )
     })
 }
