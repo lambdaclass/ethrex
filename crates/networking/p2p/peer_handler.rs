@@ -661,7 +661,8 @@ impl PeerHandler {
     }
 
     /// Internal method to request receipts for the given block hashes from a
-    /// random eth/68 or eth/69 peer.
+    /// random eth peer (any supported version; the wire form follows the
+    /// version the connection negotiated).
     ///
     /// Returns the per-block receipt lists (aligned with the leading
     /// `block_hashes`) and the responding peer id, or `None` if there is no
@@ -722,15 +723,25 @@ impl PeerHandler {
                         return Ok(None);
                     }
                 };
-                // Non-empty and not more block-lists than requested.
-                if !receipts.is_empty() && receipts.len() <= block_hashes_len {
-                    self.peer_table.record_success(peer_id)?;
-                    return Ok(Some((receipts, peer_id)));
+                // An empty response is spec-conformant for a peer that holds
+                // none of the requested range — the norm for old history after
+                // the history-expiry rollout — so it earns only a soft penalty:
+                // the peer may still be valuable for head-following. An
+                // oversized response is a protocol violation and makes the peer
+                // disposable.
+                if receipts.is_empty() {
+                    debug!("Received empty receipts from peer {peer_id}, penalizing softly");
+                    self.peer_table.record_failure(peer_id)?;
+                    return Ok(None);
                 }
-                debug!("Received empty/oversized receipts from peer {peer_id}, penalizing");
-                self.peer_table.record_failure(peer_id)?;
-                let _ = self.peer_table.set_disposable(peer_id);
-                Ok(None)
+                if receipts.len() > block_hashes_len {
+                    debug!("Received oversized receipts from peer {peer_id}, penalizing");
+                    self.peer_table.record_failure(peer_id)?;
+                    let _ = self.peer_table.set_disposable(peer_id);
+                    return Ok(None);
+                }
+                self.peer_table.record_success(peer_id)?;
+                Ok(Some((receipts, peer_id)))
             }
         }
     }
