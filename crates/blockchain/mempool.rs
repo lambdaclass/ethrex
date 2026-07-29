@@ -301,7 +301,10 @@ impl MempoolInner {
                         *entry.get_mut() = remaining;
                     }
                 }
+                // Mirrors the increment's guard exactly: a self-paying frame tx
+                // never took a non-canonical slot, so it must not release one.
                 if !reservation.is_canonical
+                    && !reservation.is_self_pay
                     && let Entry::Occupied(mut entry) =
                         self.noncanonical_paymaster_pending.entry(paymaster)
                 {

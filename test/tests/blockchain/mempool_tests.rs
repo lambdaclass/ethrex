@@ -3390,6 +3390,85 @@ mod cumulative_balance_tests {
     }
 }
 
+#[test]
+fn self_pay_removal_does_not_release_a_noncanonical_paymaster_slot() {
+    // A self-paying frame tx never increments `noncanonical_paymaster_pending`,
+    // so removing it must not decrement it either. Otherwise a paymaster that
+    // already sponsors a third party can free its slot by submitting and
+    // dropping a self-pay tx, defeating the limit entirely.
+    let mempool = Mempool::new(MEMPOOL_MAX_SIZE_TEST);
+    let paymaster = Address::from_low_u64_be(0x9A1D);
+    let sponsored_sender = Address::from_low_u64_be(0x5E2F);
+
+    let keyed_frame_tx = |sender: Address, nonce_key: u64| {
+        let tx = Transaction::FrameTransaction(FrameTransaction {
+            chain_id: 0,
+            nonce_keys: vec![U256::from(nonce_key)],
+            nonce_seq: 0,
+            sender,
+            frames: vec![Frame {
+                mode: FrameMode::Verify as u8,
+                flags: APPROVE_EXECUTION_AND_PAYMENT,
+                target: Some(sender),
+                gas_limit: 100,
+                value: U256::zero(),
+                data: Bytes::new(),
+            }],
+            signatures: vec![],
+            max_priority_fee_per_gas: 0,
+            max_fee_per_gas: 0,
+            max_fee_per_blob_gas: U256::zero(),
+            blob_versioned_hashes: vec![],
+            ..Default::default()
+        });
+        (tx.hash(&NativeCrypto), tx)
+    };
+    let reservation = |is_self_pay: bool| FramePaymasterReservation {
+        paymaster,
+        reserved_cost: U256::from(1u64),
+        is_canonical: false,
+        is_self_pay,
+        paymaster_balance: U256::from(1_000_000u64),
+    };
+
+    // `paymaster` sponsors a third party: takes the one non-canonical slot.
+    let (sponsored_hash, sponsored_tx) = keyed_frame_tx(sponsored_sender, 1);
+    mempool
+        .add_transaction(
+            sponsored_hash,
+            sponsored_sender,
+            MempoolTransaction::new(sponsored_tx, sponsored_sender),
+            Some(reservation(false)),
+            None,
+        )
+        .expect("sponsored frame tx must be admitted");
+    assert_eq!(
+        mempool.noncanonical_paymaster_pending(paymaster).unwrap(),
+        1
+    );
+
+    // A self-pay tx from the same paymaster address, then removed.
+    let (self_pay_hash, self_pay_tx) = keyed_frame_tx(paymaster, 2);
+    mempool
+        .add_transaction(
+            self_pay_hash,
+            paymaster,
+            MempoolTransaction::new(self_pay_tx, paymaster),
+            Some(reservation(true)),
+            None,
+        )
+        .expect("self-paying frame tx must be admitted (exempt from the limit)");
+    mempool
+        .remove_transaction(&self_pay_hash)
+        .expect("removal must succeed");
+
+    assert_eq!(
+        mempool.noncanonical_paymaster_pending(paymaster).unwrap(),
+        1,
+        "removing a self-pay tx must not release the sponsored tx's slot"
+    );
+}
+
 /// The gapped-nonce admission gate (on by default above 90% occupancy) compares
 /// the tx nonce against the sender's account nonce. A keyed frame tx's
 /// `nonce_seq` lives in the NONCE_MANAGER domain, so differing from the account
