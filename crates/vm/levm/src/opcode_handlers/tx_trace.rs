@@ -117,6 +117,81 @@ pub(crate) fn topic_at(log: &Log, n: usize) -> Option<H256> {
     log.topics.get(n).copied()
 }
 
+/// Per-address view over [`slot_changes`]: the GLOBAL indices, in table order, of
+/// the entries belonging to `address` (EIP-7906 §Per-Address Remapping).
+///
+/// The returned indices are what TXDIFF param `0x07` maps a local index to, and
+/// are usable directly with the per-entry TXTRACE params. `slot_changes` sorts by
+/// address first so one address's entries are in fact contiguous, but this filters
+/// rather than range-scans so it cannot silently depend on that.
+pub(crate) fn address_slot_indices(
+    changes: &[(Address, H256, U256, U256)],
+    address: Address,
+) -> Vec<usize> {
+    changes
+        .iter()
+        .enumerate()
+        .filter_map(|(index, change)| (change.0 == address).then_some(index))
+        .collect()
+}
+
+/// Per-address view over the transaction's events: the GLOBAL log indices, in
+/// emission order, of the events emitted by `address`.
+///
+/// Unlike the storage view these are NOT contiguous — events are enumerated in
+/// emission order, so one contract's events are interleaved with every other's.
+/// This view is the only efficient way to reach them: EIP-7906 notes that the
+/// number of unrelated events is attacker-controlled, so a linear scan by the
+/// assertion itself can be inflated until it exceeds its gas stipend.
+pub(crate) fn address_event_indices(logs: &[Log], address: Address) -> Vec<usize> {
+    logs.iter()
+        .enumerate()
+        .filter_map(|(index, log)| (log.address == address).then_some(index))
+        .collect()
+}
+
+/// EIP-7906 `account_change_flags` (TXDIFF param `0x0A`): a bitmask over the
+/// account tuple `(nonce, balance, storage_root, code_hash)` recording which
+/// fields differ from their transaction-prestate values.
+///
+/// Answered entirely from the diff caches: an address absent from `current` was
+/// never touched by this transaction, so its mask is zero and no live-state read
+/// is needed. That is what lets the param carry a flat gas cost — unlike params
+/// `0x00`-`0x05`, which may fall back to a live read and are priced accordingly.
+///
+/// An address absent from `initial` was created during the transaction, so its
+/// prestate is the empty account (nonce 0, balance 0, empty-Keccak code hash) —
+/// the same convention [`balance_changes`] and [`deployed_contracts`] use.
+pub(crate) fn account_change_flags(
+    initial: &CacheDB,
+    current: &CacheDB,
+    slot_changes: &[(Address, H256, U256, U256)],
+    address: Address,
+) -> U256 {
+    let Some(after) = current.get(&address) else {
+        return U256::zero();
+    };
+    let before = initial.get(&address);
+    let mut flags = 0u8;
+    if before.map(|acc| acc.info.nonce).unwrap_or_default() != after.info.nonce {
+        flags |= 0b0001;
+    }
+    if before.map(|acc| acc.info.balance).unwrap_or_default() != after.info.balance {
+        flags |= 0b0010;
+    }
+    if slot_changes.iter().any(|change| change.0 == address) {
+        flags |= 0b0100;
+    }
+    if before
+        .map(|acc| acc.info.code_hash)
+        .unwrap_or(*EMPTY_KECCAK_HASH)
+        != after.info.code_hash
+    {
+        flags |= 0b1000;
+    }
+    U256::from(flags)
+}
+
 /// Compute the transaction gas pre-charge (the cost APPROVE would deduct):
 /// `total_gas_limit * effective_gas_price + blob_count * BLOB_GAS_PER_BLOB * base_blob_fee`.
 ///
@@ -406,9 +481,11 @@ impl OpcodeHandler for OpEventDataCopyHandler {
 /// `current_accounts_state`, which inside a POST_TX frame already reflects the
 /// whole executed tx body). A key the transaction never modified yields the same
 /// live value for both directions; an undeployed account's codehash_before is
-/// the empty-Keccak hash. The reads load the account/slot into the diff caches
-/// if absent but never trigger EIP-2929 warm/cold accounting — TXDIFF has a flat
-/// gas cost. Valid only inside a POST_TX frame (like TXTRACE / EVENTDATACOPY).
+/// the empty-Keccak hash. Params `0x00`-`0x05` may fall back to reading live
+/// state, so they are priced through the EIP-2929 access lists and warm the slot
+/// or address; the per-address views and change flags (`0x06`-`0x0A`) are answered
+/// from the transaction-local diff at a flat cost and leave the lists untouched.
+/// Valid only inside a POST_TX frame (like TXTRACE / EVENTDATACOPY).
 pub struct OpTxDiffHandler;
 impl OpcodeHandler for OpTxDiffHandler {
     #[inline(always)]
@@ -416,11 +493,37 @@ impl OpcodeHandler for OpTxDiffHandler {
         require_post_tx_frame(vm)?;
         let [param, address, in3] = *vm.current_call_frame.stack.pop()?;
 
-        vm.current_call_frame
-            .increase_consumed_gas(gas_cost::TXDIFF)?;
-
         let param = u64::try_from(param).map_err(|_| ExceptionalHalt::InvalidOpcode)?;
         let address = word_to_address(address);
+
+        // EIP-7906 §Gas Cost: params that may fall back to reading live state are
+        // priced through the EIP-2929 access lists — storage params as a cold/warm
+        // SLOAD, account params as a cold/warm account access — and the slot or
+        // address joins the respective list afterwards (`add_accessed_*` both tests
+        // and inserts). Params 0x06-0x0A are answered entirely from the
+        // transaction-local diff, so they are a flat TXTRACE_GAS_COST and do not
+        // touch the access lists.
+        //
+        // The spec writes these as the literal EIP-2929 numbers (2100 / 2600 / 100).
+        // We deliberately use the FORK-AWARE helpers instead: EIP-8038 reprices cold
+        // state access at Amsterdam, and Hegota is post-Amsterdam, so charging the
+        // hardcoded 2100 would make TXDIFF a cheaper cold-state read than SLOAD on
+        // this fork — an underpricing the flat cost this replaces did not have.
+        // Reported upstream; see docs/eip-7906.md.
+        let gas = match param {
+            0x00 | 0x01 => {
+                let key = H256(in3.to_big_endian());
+                let was_cold = vm.substate.add_accessed_slot(address, key);
+                gas_cost::sload(was_cold, vm.env.config.fork)?
+            }
+            0x02..=0x05 => {
+                let was_cold = vm.substate.add_accessed_address(address);
+                gas_cost::balance(was_cold, vm.env.config.fork)?
+            }
+            0x06..=0x0A => gas_cost::TXTRACE,
+            _ => return Err(ExceptionalHalt::InvalidOpcode.into()),
+        };
+        vm.current_call_frame.increase_consumed_gas(gas)?;
 
         let result: U256 = match param {
             // -- storage slot (in3 = slot key) --
@@ -493,6 +596,49 @@ impl OpcodeHandler for OpTxDiffHandler {
                         .unwrap_or(after)
                 };
                 U256::from_big_endian(hash.as_bytes())
+            }
+            // -- per-address storage view (0x06 count, 0x07 local index -> global) --
+            0x06 | 0x07 => {
+                let changes =
+                    slot_changes(&vm.db.initial_accounts_state, &vm.db.current_accounts_state);
+                let indices = address_slot_indices(&changes, address);
+                if param == 0x06 {
+                    require_zero_word(in3)?;
+                    U256::from(indices.len())
+                } else {
+                    // A local index at or beyond the view's count is an
+                    // exceptional halt, not a zero.
+                    let local = index_to_usize(
+                        u64::try_from(in3).map_err(|_| ExceptionalHalt::InvalidOpcode)?,
+                    )?;
+                    U256::from(*indices.get(local).ok_or(ExceptionalHalt::InvalidOpcode)?)
+                }
+            }
+            // -- per-address event view (0x08 count, 0x09 local index -> global) --
+            0x08 | 0x09 => {
+                let logs = ordered_tx_logs(vm);
+                let indices = address_event_indices(&logs, address);
+                if param == 0x08 {
+                    require_zero_word(in3)?;
+                    U256::from(indices.len())
+                } else {
+                    let local = index_to_usize(
+                        u64::try_from(in3).map_err(|_| ExceptionalHalt::InvalidOpcode)?,
+                    )?;
+                    U256::from(*indices.get(local).ok_or(ExceptionalHalt::InvalidOpcode)?)
+                }
+            }
+            // -- account change flags (in3 must be 0) --
+            0x0A => {
+                require_zero_word(in3)?;
+                let changes =
+                    slot_changes(&vm.db.initial_accounts_state, &vm.db.current_accounts_state);
+                account_change_flags(
+                    &vm.db.initial_accounts_state,
+                    &vm.db.current_accounts_state,
+                    &changes,
+                    address,
+                )
             }
             _ => return Err(ExceptionalHalt::InvalidOpcode.into()),
         };
@@ -703,5 +849,131 @@ mod pure_fn_tests {
             .map(|(a, _)| *a)
             .collect();
         assert_eq!(got, vec![addr(1), addr(2), addr(3)]);
+    }
+
+    // ---------------- per-address views (TXDIFF 0x06-0x09) ----------------
+
+    fn log_from(address: Address) -> Log {
+        Log {
+            address,
+            topics: Vec::new(),
+            data: bytes::Bytes::new(),
+        }
+    }
+
+    #[test]
+    fn address_slot_indices_maps_local_to_global_positions() {
+        let initial = cache(vec![]);
+        let current = cache(vec![
+            (addr(1), acct(0, empty_hash(), &[(0x0A, 1), (0x0B, 1)])),
+            (addr(2), acct(0, empty_hash(), &[(0x0C, 1)])),
+        ]);
+        let changes = slot_changes(&initial, &current);
+        // Global table is sorted by address then slot: (1,0x0A) (1,0x0B) (2,0x0C).
+        assert_eq!(address_slot_indices(&changes, addr(1)), vec![0, 1]);
+        assert_eq!(address_slot_indices(&changes, addr(2)), vec![2]);
+        // The mapped global index must address the same entry in the global table.
+        let global = address_slot_indices(&changes, addr(2))[0];
+        assert_eq!(changes[global].0, addr(2));
+        assert_eq!(slot_num(&changes[global].1), 0x0C);
+    }
+
+    #[test]
+    fn address_slot_indices_is_empty_for_an_untouched_address() {
+        let initial = cache(vec![]);
+        let current = cache(vec![(addr(1), acct(0, empty_hash(), &[(0x0A, 1)]))]);
+        let changes = slot_changes(&initial, &current);
+        assert!(address_slot_indices(&changes, addr(9)).is_empty());
+    }
+
+    #[test]
+    fn address_event_indices_preserves_emission_order_across_interleaving() {
+        // Events are enumerated in emission order, so one address's events are NOT
+        // contiguous — this is exactly the case the per-address view exists for.
+        let logs = vec![
+            log_from(addr(1)),
+            log_from(addr(2)),
+            log_from(addr(1)),
+            log_from(addr(3)),
+            log_from(addr(1)),
+        ];
+        assert_eq!(address_event_indices(&logs, addr(1)), vec![0, 2, 4]);
+        assert_eq!(address_event_indices(&logs, addr(2)), vec![1]);
+        assert!(address_event_indices(&logs, addr(9)).is_empty());
+    }
+
+    // ---------------- account_change_flags (TXDIFF 0x0A) ----------------
+
+    /// `acct` with an explicit nonce, for the `0b0001` flag.
+    fn acct_with_nonce(
+        nonce: u64,
+        balance: u64,
+        code_hash: H256,
+        slots: &[(u64, u64)],
+    ) -> LevmAccount {
+        let mut account = acct(balance, code_hash, slots);
+        account.info.nonce = nonce;
+        account
+    }
+
+    #[test]
+    fn account_change_flags_is_zero_for_an_untouched_address() {
+        let initial = cache(vec![(addr(1), acct(100, empty_hash(), &[]))]);
+        let current = cache(vec![(addr(1), acct(100, empty_hash(), &[]))]);
+        let changes = slot_changes(&initial, &current);
+        // Present but unchanged.
+        assert_eq!(
+            account_change_flags(&initial, &current, &changes, addr(1)),
+            U256::zero()
+        );
+        // Absent from `current` entirely — never touched, so no live read is needed.
+        assert_eq!(
+            account_change_flags(&initial, &current, &changes, addr(9)),
+            U256::zero()
+        );
+    }
+
+    #[test]
+    fn account_change_flags_sets_one_bit_per_changed_field() {
+        let c = code_of(vec![0x60, 0x00]);
+        let initial = cache(vec![
+            (addr(1), acct_with_nonce(3, 100, empty_hash(), &[])),
+            (addr(2), acct(100, empty_hash(), &[])),
+            (addr(3), acct(100, empty_hash(), &[(0x01, 5)])),
+            (addr(4), acct(100, empty_hash(), &[])),
+        ]);
+        let current = cache(vec![
+            (addr(1), acct_with_nonce(4, 100, empty_hash(), &[])), // nonce
+            (addr(2), acct(101, empty_hash(), &[])),               // balance
+            (addr(3), acct(100, empty_hash(), &[(0x01, 6)])),      // storage
+            (addr(4), acct(100, c.hash, &[])),                     // codehash
+        ]);
+        let changes = slot_changes(&initial, &current);
+        for (address, expected) in [
+            (addr(1), 0b0001u8),
+            (addr(2), 0b0010),
+            (addr(3), 0b0100),
+            (addr(4), 0b1000),
+        ] {
+            assert_eq!(
+                account_change_flags(&initial, &current, &changes, address),
+                U256::from(expected),
+                "wrong mask for {address:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn account_change_flags_combines_bits_and_treats_creation_as_all_changed() {
+        let c = code_of(vec![0x60, 0x00]);
+        // Absent from `initial` => created this transaction, so its prestate is the
+        // empty account and every populated field reads as changed.
+        let initial = cache(vec![]);
+        let current = cache(vec![(addr(1), acct_with_nonce(1, 7, c.hash, &[(0x01, 9)]))]);
+        let changes = slot_changes(&initial, &current);
+        assert_eq!(
+            account_change_flags(&initial, &current, &changes, addr(1)),
+            U256::from(0b1111u8)
+        );
     }
 }
