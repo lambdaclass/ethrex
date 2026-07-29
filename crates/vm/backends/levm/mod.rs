@@ -3934,7 +3934,11 @@ fn describe_balance_diff(expected: U256, actual: U256) -> String {
     format!("{sign}{mag_u128} wei")
 }
 
+// Matches the gate on the BAL validation code under test, whose imports
+// (Database, FxHashMap, EMPTY_KECCAK_HASH) disappear when eip-8025 is enabled
+// or rayon is disabled.
 #[cfg(test)]
+#[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
 mod bal_tests {
     use super::*;
     use ethrex_common::H256;

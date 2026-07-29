@@ -1,20 +1,32 @@
 [package]
+version = "22.0.0"
 name = "ethrex-stateless-validator"
-version.workspace = true
-edition.workspace = true
-authors.workspace = true
-documentation.workspace = true
-license.workspace = true
+edition = "2024"
+license = "MIT OR Apache-2.0"
+
+# Own workspace, like the guest bins: this crate enables the eip-8025 feature
+# on ethrex-guest-program (and transitively ethrex-vm/ethrex-common), which is
+# a guest-only configuration that must not unify into root-workspace builds of
+# the node crates.
+[workspace]
 
 [dependencies]
 thiserror = "2.0.9"
-hex-literal.workspace = true
+hex-literal = "0.4.1"
 
 ethrex-common = { path = "../../common/", default-features = false }
 ethrex-crypto = { path = "../../common/crypto", default-features = false }
 ethrex-guest-program = { path = "../", default-features = false, features = ["eip-8025"] }
 
-stateless-validator-common = { workspace = true, features = ["std"] }
+# Wire-format types (statelessInputBytes/statelessOutputBytes) for the
+# stateless-validator guest. Shared with other EL guests (e.g. reth) and owned
+# by eth-act, so it is consumed as a pinned git dep rather than vendored.
+stateless-validator-common = { git = "https://github.com/eth-act/ere-guests.git", rev = "9d3d4b9157cd0818abf68ebf7213ba041d1e83e9", default-features = false, features = ["std"] }
+
+[dev-dependencies]
+hex = "0.4.3"
+serde = { version = "1.0.203", features = ["derive"] }
+serde_json = "1.0.117"
 
 [features]
 default = []
