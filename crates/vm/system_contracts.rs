@@ -135,25 +135,3 @@ pub const RECENT_ROOT_ADDRESS: SystemContract = SystemContract {
     name: "RECENT_ROOT_ADDRESS",
     active_since_fork: Hegota,
 };
-
-#[cfg(test)]
-mod expiry_verifier_tests {
-    use super::*;
-
-    #[test]
-    fn expiry_verifier_constants_match_spec() {
-        let expected: [u8; 26] = [
-            0x60, 0x08, 0x36, 0x14, 0x60, 0x0a, 0x57, 0x5f, 0x5f, 0xfd, 0x5b, 0x5f, 0x35, 0x60,
-            0xc0, 0x1c, 0x42, 0x11, 0x60, 0x16, 0x57, 0x00, 0x5b, 0x5f, 0x5f, 0xfd,
-        ];
-        assert_eq!(
-            EXPIRY_VERIFIER_RUNTIME_BYTECODE.as_slice(),
-            expected.as_slice()
-        );
-        assert_eq!(EXPIRY_VERIFIER_RUNTIME_BYTECODE.len(), 26);
-        assert_eq!(
-            EXPIRY_VERIFIER_PREDEPLOY.address,
-            H160::from_low_u64_be(0x8141)
-        );
-    }
-}

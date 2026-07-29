@@ -3221,7 +3221,7 @@ mod frame_sig_validation_tests {
     }
 }
 
-// ==================== Relocated from crates/vm/system_contracts.rs ====================
+// ==================== EXPIRY_VERIFIER predeploy ====================
 mod expiry_verifier_tests {
     use ethrex_common::H160;
     use ethrex_vm::system_contracts::{
