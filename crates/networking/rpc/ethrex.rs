@@ -159,7 +159,9 @@ impl RpcHandler for SimulateFrameTransactionRequest {
             Ok(prefix) => prefix,
             Err(error) => return structurally_invalid(error.to_string(), max_cost),
         };
-        if let Err(error) = frame_tx.validate_prefix_structure(&prefix) {
+        if let Err(error) =
+            frame_tx.validate_prefix_structure(&prefix, context.blockchain.options.max_verify_gas)
+        {
             return structurally_invalid(error.to_string(), max_cost);
         }
         let prefix_shape = Some(prefix_shape_name(&prefix.shape).to_owned());
@@ -246,8 +248,14 @@ impl SimulateFrameTransactionRequest {
         let vm_db = StoreVmDatabase::new(context.storage.clone(), header.clone())?;
         let mut vm = context.blockchain.new_evm(vm_db)?;
         // EvmError maps to RpcErr::Vm (-32015) via From, matching eth_call/estimateGas.
-        vm.simulate_frame_validation_prefix(&self.transaction, header, prefix, None)
-            .map_err(RpcErr::from)
+        vm.simulate_frame_validation_prefix(
+            &self.transaction,
+            header,
+            prefix,
+            None,
+            context.blockchain.options.max_verify_gas,
+        )
+        .map_err(RpcErr::from)
     }
 
     /// Executes the full transaction on a fresh throwaway state to measure
