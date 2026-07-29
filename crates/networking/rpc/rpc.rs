@@ -1813,6 +1813,7 @@ mod tests {
                             "amsterdamTime": null,
                             "hegotaTime": null,
                             "derivedSlotTime": null,
+                            "payerTxparamTime": null,
                             "genesisTimestamp": null,
                             "secondsPerSlot": null,
                             "terminalTotalDifficulty": "0x0",
