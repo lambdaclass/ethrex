@@ -15,6 +15,7 @@ openvm-k256 = { git = "https://github.com/openvm-org/openvm.git", tag = "v1.4.1"
 openvm-ecc-guest = { git = "https://github.com/openvm-org/openvm.git", tag = "v1.4.1" }
 openvm-algebra-guest = { git = "https://github.com/openvm-org/openvm.git", tag = "v1.4.1" }
 rkyv = "0.8.10"
+ethrex-stateless-validator = { path = "../../stateless-validator", optional = true }
 
 ethrex-vm = { path = "../../../vm", default-features = false, features = [
     "openvm",
@@ -30,3 +31,4 @@ ethrex-guest-program = { path = "../..", default-features = false, features = [
 [features]
 l2 = ["ethrex-guest-program/l2"]
 eip-8025 = ["ethrex-guest-program/eip-8025"]
+stateless-validator = ["dep:ethrex-stateless-validator"]

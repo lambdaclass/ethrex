@@ -4,13 +4,21 @@ use std::sync::Arc;
 
 #[cfg(feature = "l2")]
 use ethrex_guest_program::l2::{ProgramInput, execution_program};
-#[cfg(all(not(feature = "l2"), not(feature = "eip-8025")))]
+#[cfg(all(
+    not(feature = "l2"),
+    not(feature = "eip-8025"),
+    not(feature = "stateless-validator")
+))]
 use ethrex_guest_program::l1::{ProgramInput, execution_program};
-#[cfg(all(not(feature = "l2"), feature = "eip-8025"))]
+#[cfg(all(
+    not(feature = "l2"),
+    feature = "eip-8025",
+    not(feature = "stateless-validator")
+))]
 use ethrex_guest_program::l1::execution_program;
 
 use ethrex_guest_program::crypto::zisk::ZiskCrypto;
-#[cfg(not(feature = "eip-8025"))]
+#[cfg(all(not(feature = "eip-8025"), not(feature = "stateless-validator")))]
 use rkyv::rancor::Error;
 
 ziskos::entrypoint!(main);
@@ -19,20 +27,35 @@ pub fn main() {
     println!("start reading input");
     let input = ziskos::io::read_slice();
 
-    #[cfg(not(feature = "eip-8025"))]
-    let input = { rkyv::from_bytes::<ProgramInput, Error>(&input).unwrap() };
-    println!("finish reading input");
+    #[cfg(feature = "stateless-validator")]
+    {
+        println!("finish reading input");
+        println!("start execution");
+        let output =
+            ethrex_stateless_validator::run_stateless_validation(&input, Arc::new(ZiskCrypto));
+        println!("finish execution");
+        println!("start revealing output");
+        ziskos::io::commit_slice(&output);
+        println!("finish revealing output");
+    }
 
-    let crypto = Arc::new(ZiskCrypto);
+    #[cfg(not(feature = "stateless-validator"))]
+    {
+        #[cfg(not(feature = "eip-8025"))]
+        let input = { rkyv::from_bytes::<ProgramInput, Error>(&input).unwrap() };
+        println!("finish reading input");
 
-    println!("start execution");
-    #[cfg(feature = "eip-8025")]
-    let output = execution_program(&input, crypto).unwrap();
-    #[cfg(not(feature = "eip-8025"))]
-    let output = execution_program(input, crypto).unwrap();
-    println!("finish execution");
+        let crypto = Arc::new(ZiskCrypto);
 
-    println!("start revealing output");
-    ziskos::io::commit_slice(&output.encode());
-    println!("finish revealing output");
+        println!("start execution");
+        #[cfg(feature = "eip-8025")]
+        let output = execution_program(&input, crypto).unwrap();
+        #[cfg(not(feature = "eip-8025"))]
+        let output = execution_program(input, crypto).unwrap();
+        println!("finish execution");
+
+        println!("start revealing output");
+        ziskos::io::commit_slice(&output.encode());
+        println!("finish revealing output");
+    }
 }
