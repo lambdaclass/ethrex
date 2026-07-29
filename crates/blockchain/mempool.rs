@@ -1286,69 +1286,52 @@ impl Mempool {
             return Ok(None);
         };
 
-        // Reject type-change replacements. Peer clients keep blob and
-        // non-blob transactions in separate sub-pools precisely so a
-        // cheap-to-replicate non-blob tx can't displace a blob tx (with
-        // its expensive sidecar) or vice versa. ethrex has a single pool,
-        // so the same guarantee has to be enforced here.
-        if std::mem::discriminant(tx) != std::mem::discriminant(tx_in_pool.transaction()) {
+        // Reject blob ↔ non-blob category changes. Peer clients keep blob
+        // and non-blob transactions in separate sub-pools precisely so a
+        // cheap-to-replicate non-blob tx can't displace a blob tx (with its
+        // expensive sidecar) or vice versa. ethrex has a single pool, so the
+        // same guarantee has to be enforced here. Type changes WITHIN the
+        // regular pool (legacy ↔ 2930 ↔ 1559 ↔ 7702) are allowed, matching
+        // geth/reth/nethermind.
+        let new_is_blob = matches!(tx, Transaction::EIP4844Transaction(_));
+        let old_is_blob = matches!(
+            tx_in_pool.transaction(),
+            Transaction::EIP4844Transaction(_)
+        );
+        if new_is_blob != old_is_blob {
             return Err(MempoolError::ReplacementTypeMismatch);
         }
 
         // Blob replacements use a stricter bump (default 100%) because blob
         // sidecars are expensive to re-propagate; all other tx types use the
-        // base bump (default 10%).
-        let bump = if matches!(tx, Transaction::EIP4844Transaction(_)) {
+        // base bump (default 10%). The category gate above makes the two
+        // sides share blob-ness, so keying on the new tx is sufficient.
+        let bump = if new_is_blob {
             blob_price_bump_percent
         } else {
             price_bump_percent
         };
 
-        // The new tx must bump every applicable fee field on its own tx type
-        // by at least `bump` percent compared to the in-pool tx at the same
-        // (sender, nonce). Each peer EL client enforces this independently per
-        // field.
-        let is_a_replacement_tx = match tx {
-            Transaction::LegacyTransaction(_) => {
-                is_bumped_u256(tx_in_pool.gas_price(), tx.gas_price(), bump)
-            }
-            Transaction::EIP4844Transaction(_) => {
-                let bumped_fee = is_bumped_u64(
-                    tx_in_pool.max_fee_per_gas().unwrap_or_default(),
-                    tx.max_fee_per_gas().unwrap_or_default(),
-                    bump,
-                );
-                let bumped_tip = is_bumped_u64(
-                    tx_in_pool.max_priority_fee().unwrap_or_default(),
-                    tx.max_priority_fee().unwrap_or_default(),
-                    bump,
-                );
-                let bumped_blob = is_bumped_u256(
-                    tx_in_pool.max_fee_per_blob_gas().unwrap_or_default(),
-                    tx.max_fee_per_blob_gas().unwrap_or_default(),
-                    bump,
-                );
-                bumped_fee && bumped_tip && bumped_blob
-            }
-            // EIP-2930 / EIP-1559 / EIP-7702 / FeeToken / Privileged: 1559-style
-            // pair of fee fields. (PrivilegedL2 transactions short-circuit
-            // before `validate_transaction` ever reaches `find_tx_to_replace`,
-            // so the Privileged variant of this arm is unreachable in practice;
-            // the other variants do hit it.)
-            _ => {
-                let bumped_fee = is_bumped_u64(
-                    tx_in_pool.max_fee_per_gas().unwrap_or_default(),
-                    tx.max_fee_per_gas().unwrap_or_default(),
-                    bump,
-                );
-                let bumped_tip = is_bumped_u64(
-                    tx_in_pool.max_priority_fee().unwrap_or_default(),
-                    tx.max_priority_fee().unwrap_or_default(),
-                    bump,
-                );
-                bumped_fee && bumped_tip
-            }
+        // The new tx must bump every applicable fee dimension by at least
+        // `bump` percent. Fee cap and tip are compared uniformly across
+        // types: a legacy tx's gas price acts as both its fee cap and its
+        // tip (geth's `GasFeeCap`/`GasTipCap` translation), so a legacy ↔
+        // typed replacement is compared on the same two dimensions and a
+        // typed replacement can't slip in underpriced against a legacy
+        // pooled tx (whose per-field maxes are `None`).
+        let bumped_fee_cap = is_bumped_u256(tx_in_pool.gas_fee_cap(), tx.gas_fee_cap(), bump);
+        let bumped_tip = is_bumped_u256(tx_in_pool.gas_tip_cap(), tx.gas_tip_cap(), bump);
+        // Blob fee dimension (both sides are blob txs here, per the gate).
+        let bumped_blob = if new_is_blob {
+            is_bumped_u256(
+                tx_in_pool.max_fee_per_blob_gas().unwrap_or_default(),
+                tx.max_fee_per_blob_gas().unwrap_or_default(),
+                bump,
+            )
+        } else {
+            true
         };
+        let is_a_replacement_tx = bumped_fee_cap && bumped_tip && bumped_blob;
 
         if !is_a_replacement_tx {
             return Err(MempoolError::UnderpricedReplacement);
@@ -1425,6 +1408,12 @@ impl Mempool {
 /// threshold computation is treated as "reject" rather than silently
 /// admitting an under-priced replacement. A `bump_percent` of 0 collapses to
 /// `new >= existing`.
+///
+/// Threshold rounds down (toward zero), so `new == floor(existing * (100 +
+/// bump) / 100)` is admitted — matches geth's and reth's replacement rules.
+/// Currently only exercised by unit tests: production compares fees via the
+/// U256 accessors (`gas_fee_cap`/`gas_tip_cap`).
+#[cfg(test)]
 fn is_bumped_u64(existing: u64, new: u64, bump_percent: u64) -> bool {
     let multiplier = 100u128 + bump_percent as u128;
     let Some(threshold) = (existing as u128).checked_mul(multiplier).map(|v| v / 100) else {
@@ -1513,7 +1502,7 @@ pub fn transaction_intrinsic_gas(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ethrex_common::types::{EIP1559Transaction, Transaction, TxKind};
+    use ethrex_common::types::{EIP1559Transaction, EIP4844Transaction, Transaction, TxKind};
     use ethrex_common::{Address, Bytes};
 
     fn dummy_mempool_tx(sender: Address, nonce: u64) -> MempoolTransaction {
@@ -1940,19 +1929,13 @@ mod tests {
             "duplicate announced hash must be reserved once"
         );
     }
-}
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use ethrex_common::types::{EIP1559Transaction, EIP4844Transaction};
-
-    // --- helpers --------------------------------------------------------
+    // --- RBF price-bump helpers --------------------------------------------
 
     fn add_to_pool(pool: &Mempool, sender: Address, tx: Transaction) -> H256 {
         let mtx = MempoolTransaction::new(tx, sender);
-        let hash = mtx.hash();
-        pool.add_transaction(hash, sender, mtx).unwrap();
+        let hash = mtx.hash(&NativeCrypto);
+        pool.add_transaction(hash, sender, mtx, None, None).unwrap();
         hash
     }
 
@@ -1971,6 +1954,14 @@ mod tests {
             max_fee_per_gas: max_fee,
             max_priority_fee_per_gas: max_priority,
             max_fee_per_blob_gas: U256::from(blob_fee),
+            ..Default::default()
+        })
+    }
+
+    fn legacy(nonce: u64, gas_price: u64) -> Transaction {
+        Transaction::LegacyTransaction(ethrex_common::types::LegacyTransaction {
+            nonce,
+            gas_price: U256::from(gas_price),
             ..Default::default()
         })
     }
@@ -2144,6 +2135,78 @@ mod tests {
             .find_tx_to_replace(sender, 0, &new, 10, 100)
             .unwrap_err();
         assert!(matches!(err, MempoolError::ReplacementTypeMismatch));
+    }
+
+    // --- cross-type replacements within the regular pool ------------------
+
+    #[test]
+    fn legacy_to_1559_replacement_allowed_when_bumped() {
+        // Type changes WITHIN the regular pool are allowed — geth/reth/
+        // nethermind all accept legacy → 1559 with a sufficient bump. The
+        // legacy gas price acts as both fee cap and tip (geth's
+        // GasFeeCap/GasTipCap translation).
+        let pool = Mempool::new(64);
+        let sender = Address::from_low_u64_be(5);
+        add_to_pool(&pool, sender, legacy(0, 1_000));
+
+        // +10% on the translated dimensions → accepted.
+        let ok = eip1559(0, 1_100, 1_100);
+        let found = pool
+            .find_tx_to_replace(sender, 0, &ok, 10, 100)
+            .unwrap()
+            .expect("legacy → 1559 replacement at 10% bump should be admitted");
+        assert!(!found.is_zero());
+
+        // Fee cap bumped but tip below the translated floor → rejected.
+        let bad = eip1559(0, 1_100, 1_099);
+        assert!(matches!(
+            pool.find_tx_to_replace(sender, 0, &bad, 10, 100)
+                .unwrap_err(),
+            MempoolError::UnderpricedReplacement
+        ));
+    }
+
+    #[test]
+    fn typed_replacement_against_legacy_pool_tx_uses_translated_dimensions() {
+        // Regression (review): previously the pooled legacy tx's per-field
+        // maxes were `None` → 0, so an underpriced typed replacement was
+        // accepted. The gas_fee_cap/gas_tip_cap translation closes the hole.
+        let pool = Mempool::new(64);
+        let sender = Address::from_low_u64_be(6);
+        add_to_pool(&pool, sender, legacy(0, 1_000));
+
+        let underpriced = eip1559(0, 1_050, 1_050); // +5% < 10%
+        assert!(matches!(
+            pool.find_tx_to_replace(sender, 0, &underpriced, 10, 100)
+                .unwrap_err(),
+            MempoolError::UnderpricedReplacement
+        ));
+    }
+
+    #[test]
+    fn legacy_to_legacy_and_1559_to_legacy_bump_rules() {
+        // 1559 → legacy: the pooled typed tx's fee cap/tip are compared
+        // against the legacy gas price (translated to both dimensions).
+        let pool = Mempool::new(64);
+        let sender = Address::from_low_u64_be(7);
+        add_to_pool(&pool, sender, eip1559(0, 1_000, 100));
+
+        // gas_price 1_100 = +10% over the pooled fee cap (1_000) and well
+        // above the tip floor (110) → accepted.
+        let ok = legacy(0, 1_100);
+        assert!(
+            pool.find_tx_to_replace(sender, 0, &ok, 10, 100)
+                .unwrap()
+                .is_some()
+        );
+
+        // gas_price 1_050 clears the tip floor but not the fee-cap bump → rejected.
+        let bad = legacy(0, 1_050);
+        assert!(matches!(
+            pool.find_tx_to_replace(sender, 0, &bad, 10, 100)
+                .unwrap_err(),
+            MempoolError::UnderpricedReplacement
+        ));
     }
 
     // --- legacy path ---------------------------------------------------
