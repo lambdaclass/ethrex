@@ -1,0 +1,28 @@
+[package]
+name = "ethrex-stateless-validator"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+documentation.workspace = true
+license.workspace = true
+
+[dependencies]
+thiserror = "2.0.9"
+hex-literal.workspace = true
+
+ethrex-common = { path = "../../common/", default-features = false }
+ethrex-crypto = { path = "../../common/crypto", default-features = false }
+ethrex-guest-program = { path = "../", default-features = false, features = ["eip-8025"] }
+
+stateless-validator-common = { workspace = true, features = ["std"] }
+
+[features]
+default = []
+# Host-side execution (fixture tests, no zkVM): enables the native crypto
+# backends required by NativeCrypto.
+host = [
+    "ethrex-crypto/blst",
+    "ethrex-crypto/kzg-rs",
+    "ethrex-crypto/secp256k1",
+    "stateless-validator-common/host",
+]
