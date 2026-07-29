@@ -10,7 +10,7 @@ mod full;
 mod healing;
 mod snap_sync;
 
-pub use backfill::{BackfillConfig, resolve_postmerge_floor, run_history_backfill};
+pub use backfill::{BackfillConfig, run_history_backfill};
 
 /// Test-only re-export of the full-sync resume-point predicate so integration tests can
 /// assert that canonical-but-stateless blocks are not treated as already-executed.
@@ -73,8 +73,11 @@ pub enum HistoryChain {
     Off,
     /// Backfill down to the merge (Paris) activation block.
     PostMerge,
-    /// Backfill down to genesis. Best-effort: many peers no longer serve
-    /// pre-merge history after the 2025 history-expiry rollout.
+    /// Backfill as far back as receipts are decodable — down to the Byzantium
+    /// block, not genesis (pre-EIP-658 receipts carry a post-state root, which
+    /// [`ethrex_common::types::Receipt`] cannot represent). Best-effort: many
+    /// peers no longer serve pre-merge history after the 2025 history-expiry
+    /// rollout.
     All,
     /// Backfill down to an explicit block number, for operators who want only a
     /// recent slice of history rather than everything back to the merge. A value

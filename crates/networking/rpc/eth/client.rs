@@ -111,6 +111,10 @@ impl RpcHandler for Syncing {
         }
 
         let syncing_status = SyncingStatusRpc {
+            // `starting_block` reuses `earliest_block_number` as a proxy. Note
+            // this is the backfill frontier on a node with `--history.chain`
+            // enabled, so it descends as historical backfill progresses rather
+            // than marking where the current sync attempt started.
             starting_block: context.storage.get_earliest_block_number().await?,
             current_block,
             highest_block,
