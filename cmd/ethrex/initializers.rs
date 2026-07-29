@@ -826,6 +826,7 @@ pub async fn init_l1(
             blob_eager_provider: opts.blob_eager_provider,
             max_reorg_depth: opts.max_reorg_depth,
             gap_admit_occupancy_threshold: opts.mempool_gap_admit_occupancy_threshold,
+            max_verify_gas: opts.mempool_max_verify_gas,
         },
     );
 

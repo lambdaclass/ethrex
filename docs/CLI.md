@@ -144,6 +144,12 @@ Node options:
           [env: ETHREX_MEMPOOL_MAX_QUEUED_TXS_PER_ACCOUNT=]
           [default: 64]
 
+      --mempool.max-verify-gas <GAS>
+          EIP-8141 MAX_VERIFY_GAS: maximum gas spent validating signatures and simulating a frame transaction's validation prefix at mempool admission. Mempool policy, not consensus.
+
+          [env: ETHREX_MEMPOOL_MAX_VERIFY_GAS=]
+          [default: 100000]
+
       --precompute-witnesses
           Once synced, computes execution witnesses upon receiving newPayload messages and stores them in local storage
           
@@ -400,6 +406,12 @@ Node options:
 
           [env: ETHREX_MEMPOOL_GAP_ADMIT_OCCUPANCY_THRESHOLD=]
           [default: 90]
+
+      --mempool.max-verify-gas <GAS>
+          EIP-8141 MAX_VERIFY_GAS: maximum gas spent validating signatures and simulating a frame transaction's validation prefix at mempool admission. Mempool policy, not consensus.
+
+          [env: ETHREX_MEMPOOL_MAX_VERIFY_GAS=]
+          [default: 100000]
 
 P2P options:
       --bootnodes <BOOTNODE_LIST>...

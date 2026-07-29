@@ -11,8 +11,8 @@ use std::{
 use clap::{ArgAction, Parser as ClapParser, Subcommand as ClapSubcommand};
 use ethrex_blockchain::{
     BlockchainOptions, BlockchainType, DEFAULT_BLOB_PRICE_BUMP_PERCENT,
-    DEFAULT_GAP_ADMIT_OCCUPANCY_THRESHOLD, DEFAULT_MAX_QUEUED_TXS_PER_ACCOUNT, DEFAULT_MIN_TIP_WEI,
-    DEFAULT_PRICE_BUMP_PERCENT, L2Config,
+    DEFAULT_GAP_ADMIT_OCCUPANCY_THRESHOLD, DEFAULT_MAX_QUEUED_TXS_PER_ACCOUNT,
+    DEFAULT_MAX_VERIFY_GAS, DEFAULT_MIN_TIP_WEI, DEFAULT_PRICE_BUMP_PERCENT, L2Config,
     error::{ChainError, InvalidBlockError},
 };
 use ethrex_common::types::{Block, DEFAULT_BUILDER_GAS_CEIL, Genesis, validate_block_body};
@@ -282,6 +282,15 @@ pub struct Options {
         env = "ETHREX_MEMPOOL_MAX_QUEUED_TXS_PER_ACCOUNT"
     )]
     pub mempool_max_queued_txs_per_account: usize,
+    #[arg(
+        help = "EIP-8141 MAX_VERIFY_GAS: maximum gas spent validating signatures and simulating a frame transaction's validation prefix at mempool admission. Mempool policy, not consensus.",
+        long = "mempool.max-verify-gas",
+        default_value_t = DEFAULT_MAX_VERIFY_GAS,
+        value_name = "GAS",
+        help_heading = "Node options",
+        env = "ETHREX_MEMPOOL_MAX_VERIFY_GAS"
+    )]
+    pub mempool_max_verify_gas: u64,
     #[arg(
         long = "http.addr",
         default_value = "127.0.0.1",
@@ -596,6 +605,7 @@ impl Default for Options {
             mempool_blob_price_bump: DEFAULT_BLOB_PRICE_BUMP_PERCENT,
             mempool_gap_admit_occupancy_threshold: DEFAULT_GAP_ADMIT_OCCUPANCY_THRESHOLD,
             mempool_max_queued_txs_per_account: DEFAULT_MAX_QUEUED_TXS_PER_ACCOUNT,
+            mempool_max_verify_gas: DEFAULT_MAX_VERIFY_GAS,
             tx_broadcasting_time_interval: Default::default(),
             target_peers: Default::default(),
             lookup_interval: Default::default(),

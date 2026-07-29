@@ -75,8 +75,8 @@ use ethrex_common::types::block_execution_witness::ExecutionWitness;
 use ethrex_common::types::fee_config::FeeConfig;
 use ethrex_common::types::{
     AccountInfo, AccountState, AccountUpdate, BalSynthesisItem, Block, BlockHash, BlockHeader,
-    BlockNumber, Code, Transaction, WrappedEIP4844Transaction, synthesize_bal_updates,
-    validate_block_body,
+    BlockNumber, Code, FRAME_TX_MAX_VERIFY_GAS, Transaction, WrappedEIP4844Transaction,
+    synthesize_bal_updates, validate_block_body,
 };
 use ethrex_common::types::{EIP7702_DELEGATED_CODE_LEN, is_eip7702_delegation};
 use ethrex_common::types::{ELASTICITY_MULTIPLIER, P2PTransaction};
@@ -387,6 +387,10 @@ pub struct BlockchainOptions {
     /// transactions with a nonce gap relative to the sender's on-chain nonce
     /// are rejected. Setting to 100 disables the check.
     pub gap_admit_occupancy_threshold: u8,
+    /// EIP-8141 §Mempool `MAX_VERIFY_GAS`: the maximum gas this node expends
+    /// validating signatures and simulating a frame transaction's validation
+    /// prefix. Mempool policy (SHOULD), not consensus, so it is operator-tunable.
+    pub max_verify_gas: u64,
 }
 
 impl Default for BlockchainOptions {
@@ -410,6 +414,7 @@ impl Default for BlockchainOptions {
             blob_eager_provider: false,
             max_reorg_depth: None,
             gap_admit_occupancy_threshold: DEFAULT_GAP_ADMIT_OCCUPANCY_THRESHOLD,
+            max_verify_gas: DEFAULT_MAX_VERIFY_GAS,
         }
     }
 }
@@ -427,6 +432,10 @@ pub const DEFAULT_BLOB_PRICE_BUMP_PERCENT: u64 = 100;
 /// `AccountQueue` default (64) — a hard cap on the future/queued subpool only;
 /// executable txs are uncapped.
 pub const DEFAULT_MAX_QUEUED_TXS_PER_ACCOUNT: usize = 64;
+
+/// Default frame-transaction verify-gas budget: the EIP-8141 §Mempool
+/// `MAX_VERIFY_GAS` value.
+pub const DEFAULT_MAX_VERIFY_GAS: u64 = FRAME_TX_MAX_VERIFY_GAS;
 
 #[derive(Debug, Clone)]
 pub struct BatchBlockProcessingFailure {
@@ -3369,7 +3378,13 @@ impl Blockchain {
             };
             let evict = match self.new_evm(vm_db.clone()) {
                 Ok(mut vm) => {
-                    match vm.simulate_frame_validation_prefix(&tx, &block.header, &prefix, None) {
+                    match vm.simulate_frame_validation_prefix(
+                        &tx,
+                        &block.header,
+                        &prefix,
+                        None,
+                        self.options.max_verify_gas,
+                    ) {
                         // Simulation passed for this tx in isolation. The
                         // per-tx validation prefix only catches a single-tx
                         // drain (its own APPROVE underflows). N txs sharing one
@@ -3546,9 +3561,7 @@ impl Blockchain {
             // crypto work done by validate_frame_signatures below. (The full
             // validation-prefix simulation runs below over a throwaway head-state
             // VM and is the authoritative gas-budget check.)
-            if frame_tx.signature_verification_cost()
-                > ethrex_common::types::FRAME_TX_MAX_VERIFY_GAS
-            {
+            if frame_tx.signature_verification_cost() > self.options.max_verify_gas {
                 return Err(MempoolError::FrameTxVerifyGasExceeded);
             }
 
@@ -3572,7 +3585,7 @@ impl Blockchain {
             // sig-cost pre-filter above; both are kept for defence-in-depth.
             let prefix = frame_tx.validation_prefix().map_err(MempoolError::from)?;
             frame_tx
-                .validate_prefix_structure(&prefix)
+                .validate_prefix_structure(&prefix, self.options.max_verify_gas)
                 .map_err(MempoolError::from)?;
         }
 
@@ -3869,7 +3882,13 @@ impl Blockchain {
             // OQ1: no canonical paymaster bytecode is resolvable, so no canonical
             // code hash is passed (the canonical-pay-frame exemption never fires).
             let outcome = vm
-                .simulate_frame_validation_prefix(tx, &header, &prefix, None)
+                .simulate_frame_validation_prefix(
+                    tx,
+                    &header,
+                    &prefix,
+                    None,
+                    self.options.max_verify_gas,
+                )
                 .map_err(|err| MempoolError::FrameTxValidationFailed(err.to_string()))?;
             if !outcome.passed {
                 return Err(MempoolError::FrameTxValidationFailed(
