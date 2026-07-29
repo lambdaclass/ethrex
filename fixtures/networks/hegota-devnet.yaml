@@ -9,28 +9,32 @@
 # Cargo feature). Launch:
 #   make localnet ENCLAVE=hegota KURTOSIS_CONFIG_FILE=fixtures/networks/hegota-devnet.yaml
 #
-# Matrix: 3x ethrex EL + Lighthouse v8.0.0-rc.1 CL (3 validator pairs), chain id
-# 3151908 (kurtosis default), 6s slots, dora explorer. The frame-tx EIPs are all
-# EL-internal and gated on Fork::Hegota (scheduled below via heze_fork_epoch), so
-# no consensus-side change is needed and stock Lighthouse drives the chain over
-# the Engine API.
+# Matrix: 3x ethrex EL + Lighthouse (glamsterdam-devnet-7) CL (3 validator pairs),
+# chain id 3151908 (kurtosis default), 6s slots, dora explorer. The frame-tx EIPs
+# are all EL-internal and gated on Fork::Hegota (scheduled below via
+# heze_fork_epoch), so no consensus-side change is needed and Lighthouse drives
+# the chain over the Engine API.
+#
+# `--mempool.max-verify-gas` raises the EIP-8141 MAX_VERIFY_GAS mempool budget
+# above the 100_000 default: sponsored transactions run a paymaster VERIFY frame
+# in the validation prefix, whose gas is charged against that budget at admission.
 participants:
   - el_type: ethrex
     el_image: ethrex:local
-    el_extra_params: ["--syncmode", "full"]
+    el_extra_params: ["--syncmode", "full", "--mempool.max-verify-gas", "500000"]
     cl_type: lighthouse
     cl_image: ethpandaops/lighthouse:glamsterdam-devnet-7
     validator_count: 32
     supernode: true
   - el_type: ethrex
     el_image: ethrex:local
-    el_extra_params: ["--syncmode", "full"]
+    el_extra_params: ["--syncmode", "full", "--mempool.max-verify-gas", "500000"]
     cl_type: lighthouse
     cl_image: ethpandaops/lighthouse:glamsterdam-devnet-7
     validator_count: 32
   - el_type: ethrex
     el_image: ethrex:local
-    el_extra_params: ["--syncmode", "full"]
+    el_extra_params: ["--syncmode", "full", "--mempool.max-verify-gas", "500000"]
     cl_type: lighthouse
     cl_image: ethpandaops/lighthouse:glamsterdam-devnet-7
     validator_count: 32
@@ -39,13 +43,54 @@ network_params:
   seconds_per_slot: 6
   # Osaka/Fulu from genesis.
   fulu_fork_epoch: 0
-  # Hegotá (heze) at epoch 1 enables ALL the frame-tx EIPs (8141/8250/8272/7906)
+  # Amsterdam/Gloas at epoch 1. Hegotá is defined on top of Amsterdam, so
+  # `amsterdamTime` MUST be set: levm resolves Amsterdam semantics from the fork
+  # ordinal (Hegota > Amsterdam), while the header schema, the BAL and the Engine
+  # API surface key off `ChainConfig::amsterdam_time`. Leaving it unset runs
+  # Amsterdam EVM rules under a pre-Amsterdam header schema — the divergence
+  # class #7053 fixes for mempool admission. It also selects the Engine API
+  # version: with Amsterdam active ethrex rejects `forkchoiceUpdatedV3` payload
+  # attributes, so the CL must drive `forkchoiceUpdatedV4` and supply the
+  # EIP-7843 `slotNumber` the Amsterdam header requires.
+  #
+  # Epoch 1, not 0: Gloas at genesis makes the beacon genesis state a Gloas
+  # state, and Lighthouse rejects the one this generator writes
+  # ("Built-in genesis state SSZ bytes are invalid: OffsetsAreDecreasing(0)").
+  # Forking in after genesis keeps the genesis state Fulu, which is the
+  # combination the sibling BAL devnet configs also use.
+  gloas_fork_epoch: 1
+  # Hegotá (heze) at epoch 2 enables ALL the frame-tx EIPs (8141/8250/8272/7906)
   # — every one is gated on Fork::Hegota. The ethereum-genesis-generator emits
   # `hezeTime`/`bogotaTime`, which ethrex parses into ChainConfig.hegota_time via
-  # its serde aliases. Frame transactions become valid from epoch 1; before that
+  # its serde aliases. Frame transactions become valid from epoch 2; before that
   # they are rejected with FrameTxPreFork.
-  gloas_fork_epoch: 0
-  heze_fork_epoch: 1
+  heze_fork_epoch: 2
+
+  # EIP-8282 builder execution requests. The builder deposit/exit predeploys are
+  # part of Glamsterdam (EIP-7773) and their empty code on an Amsterdam+ block
+  # invalidates that block, exactly as EIP-7002/EIP-7251 specify for their own
+  # predeploys. The genesis generator does not deploy them, so they are preloaded
+  # here. Slot 0 carries EXCESS_INHIBITOR (2**256-1), which the real deployment
+  # sets from init code and a preloaded runtime image would otherwise leave zero;
+  # the first end-of-block system call clears it.
+  additional_preloaded_contracts:
+    "0x0000BFF46984E3725691FA540A8C7589300D8282":
+      balance: "0"
+      nonce: "1"
+      code: "0x3373fffffffffffffffffffffffffffffffffffffffe1461011c575f54807fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff146102705760015460088111605257506058565b60089003015b601190600182026001905f5b5f821115607f57810190830284830290049160010191906064565b90939004925050503660b814609f57366102705734610270575f5260205ff35b8034106102705760383567ffffffffffffffff1680633b9aca001161027057633b9aca00029034031061027057600154600101600155600354806006026004015f358155600101602035815560010160403581556001016060358155600101608035815560010160a035905560b85f5f3760b85fa0600101600355005b60035460025480820380604011610131575060405b5f5b8181146101d7578281016006026004018160b8028154815260200181600101548152602001816002015480825260401c67ffffffffffffffff16816010018160381c81600701538160301c81600601538160281c81600501538160201c81600401538160181c81600301538160101c81600201538160081c816001015353602001816003015481526020018160040154815260200190600501549052600101610133565b91018092146101e957906002556101f4565b90505f6002555f6003555b36610242575f54600154817fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff1461023057600882820111610238575b50505f610264565b0160089003610264565b7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff5b5f555f60015560b8025ff35b5f5ffd"
+      storage:
+        "0x0000000000000000000000000000000000000000000000000000000000000000": "0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+    "0x000064D678505AD48F8CCB093BC65613800E8282":
+      balance: "0"
+      nonce: "1"
+      code: "0x3373fffffffffffffffffffffffffffffffffffffffe1460e1575f54807fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff146101c65760015460028111605157506057565b60029003015b601190600182026001905f5b5f821115607e57810190830284830290049160010191906063565b909390049250505036603014609e57366101c657346101c6575f5260205ff35b34106101c657600154600101600155600354806003026004013381556001015f35815560010160203590553360601b5f5260305f60143760445fa0600101600355005b6003546002548082038060101160f5575060105b5f5b81811461012d5782810160030260040181604402815460601b8152601401816001015481526020019060020154905260010160f7565b910180921461013f579060025561014a565b90505f6002555f6003555b36610198575f54600154817fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff146101865760028282011161018e575b50505f6101ba565b01600290036101ba565b7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff5b5f555f6001556044025ff35b5f5ffd"
+      storage:
+        "0x0000000000000000000000000000000000000000000000000000000000000000": "0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+
+# Frame-transaction-aware Dora: decodes the type-0x06 envelope and shows per-frame
+# receipts. Stock `ethpandaops/dora` renders frame txs as opaque blobs.
+dora_params:
+  image: ghcr.io/lambdaclass/dora:frame-tx-view
 
 additional_services:
   - dora
