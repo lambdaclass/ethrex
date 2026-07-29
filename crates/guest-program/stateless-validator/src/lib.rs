@@ -15,6 +15,13 @@
 //! stage with their own cycle-count instrumentation without changing the
 //! output.
 
+extern crate alloc;
+
+#[cfg(any(feature = "ere", feature = "zkvm-interface", feature = "openvm"))]
+pub mod crypto;
+#[cfg(feature = "ere")]
+pub mod platform;
+
 use std::sync::Arc;
 
 use ethrex_crypto::Crypto;
@@ -94,7 +101,7 @@ pub fn verify_stateless_new_payload(
 
 /// Validates the decoded payload through its canonical or legacy execution
 /// path, reporting a rejected payload as an error.
-fn run_validation(
+pub(crate) fn run_validation(
     ethrex_input: DecodedEip8025,
     crypto: Arc<dyn Crypto>,
 ) -> Result<(), ExecutionError> {
@@ -111,7 +118,7 @@ fn run_validation(
 }
 
 #[cfg(debug_assertions)]
-fn ethrex_new_payload_request_root(
+pub(crate) fn ethrex_new_payload_request_root(
     ethrex_input: &DecodedEip8025,
     crypto: Arc<dyn Crypto>,
 ) -> [u8; 32] {

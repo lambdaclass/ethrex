@@ -23,6 +23,27 @@ ethrex-guest-program = { path = "../", default-features = false, features = ["ei
 # by eth-act, so it is consumed as a pinned git dep rather than vendored.
 stateless-validator-common = { git = "https://github.com/eth-act/ere-guests.git", rev = "9d3d4b9157cd0818abf68ebf7213ba041d1e83e9", default-features = false, features = ["std"] }
 
+# ere platform abstraction (entrypoint/IO/cycle scopes) used by the per-zkVM
+# bins. Pinned to one ere rev; the ere-compiler/ere-server image tags are
+# derived from this rev.
+ere-platform-core = { git = "https://github.com/eth-act/ere", rev = "a25f1aed9664c3b63e73ef05360090a4c41da31b", optional = true }
+
+# zkvm-standards syscall bindings backing the zisk/sp1 crypto provider. Keeps
+# guest crypto decoupled from per-SDK patched-crate stacks (mirrors ere-guests).
+zkvm-interface = { git = "https://github.com/eth-act/zkvm-standards", rev = "282cd356c3a0498416bb0619f9c8a347ce9933fb", optional = true }
+
+# openvm crypto provider dependencies (openvm SDK v2.0.0 line, mirrors
+# ere-guests pins).
+openvm-ecc-guest = { git = "https://github.com/openvm-org/openvm.git", tag = "v2.0.0", optional = true }
+openvm-sha2 = { git = "https://github.com/openvm-org/openvm.git", tag = "v2.0.0", optional = true }
+openvm-pairing = { git = "https://github.com/openvm-org/openvm.git", tag = "v2.0.0", features = ["bn254", "bls12_381"], optional = true }
+openvm-k256 = { git = "https://github.com/openvm-org/openvm.git", tag = "v2.0.0", package = "k256", optional = true }
+openvm-p256 = { git = "https://github.com/openvm-org/openvm.git", tag = "v2.0.0", package = "p256", optional = true }
+openvm-keccak256 = { git = "https://github.com/openvm-org/openvm.git", tag = "v2.0.0", optional = true }
+openvm-curve-utils = { git = "https://github.com/axiom-crypto/openvm-eth", rev = "aa8bbe17e624d317f14ea925df7c256c0b205134", optional = true }
+openvm-kzg = { git = "https://github.com/axiom-crypto/openvm-eth", rev = "aa8bbe17e624d317f14ea925df7c256c0b205134", optional = true }
+bls12_381 = { git = "https://github.com/zkcrypto/bls12_381", rev = "6bb96951d5c2035caf4989b6e4a018435379590f", default-features = false, features = ["experimental"], optional = true }
+
 [dev-dependencies]
 hex = "0.4.3"
 serde = { version = "1.0.203", features = ["derive"] }
@@ -37,4 +58,21 @@ host = [
     "ethrex-crypto/kzg-rs",
     "ethrex-crypto/secp256k1",
     "stateless-validator-common/host",
+]
+# ere-platform entrypoint used by the per-zkVM guest bins.
+ere = ["dep:ere-platform-core"]
+# Crypto providers, selected per zkVM (mirrors ere-guests):
+zkvm-interface = ["dep:zkvm-interface"]
+sp1 = ["zkvm-interface"]
+zisk = ["zkvm-interface"]
+openvm = [
+    "dep:openvm-ecc-guest",
+    "dep:openvm-sha2",
+    "dep:openvm-pairing",
+    "dep:openvm-k256",
+    "dep:openvm-p256",
+    "dep:openvm-keccak256",
+    "dep:openvm-curve-utils",
+    "dep:openvm-kzg",
+    "dep:bls12_381",
 ]
