@@ -580,6 +580,46 @@ impl OpcodeHandler for OpSigParamHandler {
     }
 }
 
+/// RECENTROOTREFLOAD (0xB5, EIP-8272) -- read a field of a declared recent-root
+/// reference from the signed envelope. Stack: `[field, index]` with `field` on
+/// top (popped first), `index` second. `field` 0 => source_id, 1 => slot,
+/// 2 => root. Gas: 3. Reads only the envelope, never contract storage; allowed
+/// in any frame mode (incl. VERIFY). Exceptional-halt if
+/// `index >= len(recent_root_references)` or `field > 2`.
+pub struct OpRecentRootRefLoadHandler;
+impl OpcodeHandler for OpRecentRootRefLoadHandler {
+    #[inline(always)]
+    fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
+        let [field, index] = *vm.current_call_frame.stack.pop()?;
+
+        vm.current_call_frame
+            .increase_consumed_gas(gas_cost::RECENTROOTREFLOAD)?;
+
+        let ctx = vm
+            .frame_tx_context
+            .as_ref()
+            .ok_or(ExceptionalHalt::InvalidOpcode)?;
+
+        let index = u64::try_from(index).map_err(|_| ExceptionalHalt::InvalidOpcode)?;
+        let idx = index_to_usize(index)?;
+        let reference = ctx
+            .tx
+            .recent_root_references
+            .get(idx)
+            .ok_or(ExceptionalHalt::InvalidOpcode)?;
+
+        let field = u64::try_from(field).map_err(|_| ExceptionalHalt::InvalidOpcode)?;
+        let result = match field {
+            0 => U256::from_big_endian(reference.source_id.as_bytes()),
+            1 => U256::from(reference.slot),
+            2 => U256::from_big_endian(reference.root.as_bytes()),
+            _ => return Err(ExceptionalHalt::InvalidOpcode.into()),
+        };
+        vm.current_call_frame.stack.push(result)?;
+        Ok(OpcodeResult::Continue)
+    }
+}
+
 // -- Helper functions --
 
 pub fn load_tx_param(ctx: &crate::vm::FrameTxContext, param_id: u64) -> Result<U256, VMError> {
@@ -604,6 +644,8 @@ pub fn load_tx_param(ctx: &crate::vm::FrameTxContext, param_id: u64) -> Result<U
         0x0C => Ok(U256::from(ctx.legacy_sender_nonce)),
         0x0D => Ok(U256::from(ctx.tx.nonce_keys.len())),
         0x0E => Ok(U256::from_big_endian(ctx.tx.nonce_keys_hash().as_bytes())),
+        // EIP-8272: count of recent-root references.
+        0x0F => Ok(U256::from(ctx.tx.recent_root_references.len())),
         // 0x10 = nonce_keys[0], relocated from the spec's 0x0B (ethrex keeps 0x0B
         // for len(signatures); divergence documented in docs/eip-8250.md).
         0x10 => ctx
@@ -637,6 +679,13 @@ pub fn execute_default_code(
     frame: &ethrex_common::types::Frame,
     target: Address,
 ) -> Result<(bool, u64, Vec<Log>), VMError> {
+    // EIP-8272: RECENT_ROOT_ADDRESS carries no runtime bytecode (the write is
+    // native, docs/eip-8272.md divergence #4), so a frame targeting it lands
+    // in this empty-code path and executes the recent-root write instead of
+    // the generic default code.
+    if target == ethrex_common::types::frame_tx_recent_root() {
+        return execute_recent_root_frame(vm, frame);
+    }
     match frame.execution_mode() {
         FrameMode::Verify => execute_default_verify(vm, frame, target),
         // EIP-8141 §"Default code": a SENDER or DEFAULT frame whose target has no code "returns
@@ -646,6 +695,40 @@ pub fn execute_default_code(
         // the caller's deferred transfer).
         FrameMode::Sender | FrameMode::Default => Ok((true, 0, Vec::new())),
     }
+}
+
+/// EIP-8272 write semantics for a frame whose target is RECENT_ROOT_ADDRESS,
+/// mirroring what real predeploy bytecode would observe: msg.sender is the
+/// frame's caller (ENTRY_POINT for DEFAULT frames, the tx sender for SENDER
+/// frames), VERIFY frames run statically so the write fails, and the call
+/// reverts unless the frame data is exactly 64 bytes (`salt ‖ root`) with
+/// zero value. A successful write costs `RECENT_ROOT_WRITE_GAS`.
+fn execute_recent_root_frame(
+    vm: &mut VM<'_>,
+    frame: &ethrex_common::types::Frame,
+) -> Result<(bool, u64, Vec<Log>), VMError> {
+    // VERIFY frames are dispatched as static calls in the frame loop; the
+    // write is a state change, so it must fail there.
+    let is_static = frame.execution_mode() == FrameMode::Verify;
+    if is_static || frame.data.len() != 64 || !frame.value.is_zero() {
+        return Ok((false, 0, Vec::new()));
+    }
+    if frame.gas_limit < gas_cost::RECENT_ROOT_WRITE_GAS {
+        // The write out-of-gasses: the frame consumes its whole budget.
+        return Ok((false, frame.gas_limit, Vec::new()));
+    }
+    let ctx = vm
+        .frame_tx_context
+        .as_ref()
+        .ok_or(ExceptionalHalt::InvalidOpcode)?;
+    let caller = match frame.execution_mode() {
+        FrameMode::Sender => ctx.tx.sender,
+        _ => ethrex_common::types::frame_tx_entry_point(),
+    };
+    let salt = frame.data.get(..32).ok_or(ExceptionalHalt::OutOfBounds)?;
+    let root = frame.data.get(32..64).ok_or(ExceptionalHalt::OutOfBounds)?;
+    vm.recent_root_native_write(caller, salt, root)?;
+    Ok((true, gas_cost::RECENT_ROOT_WRITE_GAS, Vec::new()))
 }
 
 fn execute_default_verify(

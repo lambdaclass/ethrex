@@ -138,6 +138,22 @@ pub const NONCE_MANAGER_PREDEPLOY: SystemContract = SystemContract {
 /// storage namespace.
 pub const NONCE_MANAGER_RUNTIME_BYTECODE: [u8; 5] = [0x60, 0x00, 0x60, 0x00, 0xfd];
 
+/// EIP-8272 RECENT_ROOT_ADDRESS predeploy (0x…8272). Stores recent verified
+/// roots keyed by (source_id, slot). The spec leaves RECENT_ROOT_CODE TBD, so
+/// ethrex handles the 64-byte `salt‖root` write natively in the VM
+/// (docs/eip-8272.md divergence #4) and the account carries NO runtime
+/// bytecode: it is installed at the Hegota boundary with nonce 1 and empty
+/// code (`install_recent_root_code`), existing purely as a protocol-managed
+/// storage namespace.
+pub const RECENT_ROOT_ADDRESS: SystemContract = SystemContract {
+    address: H160([
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x82, 0x72,
+    ]),
+    name: "RECENT_ROOT_ADDRESS",
+    active_since_fork: Hegota,
+};
+
 #[cfg(test)]
 mod expiry_verifier_tests {
     use super::*;

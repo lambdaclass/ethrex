@@ -776,8 +776,10 @@ impl Blockchain {
                 Err(e) => {
                     // Frame-tx failures are deterministic (signatures bind the
                     // whole tx) EXCEPT nonce mismatches, which are transient
-                    // queue-ordering artifacts — keep those pooled for a later
-                    // block, mirroring how regular txs are treated.
+                    // queue-ordering artifacts, and EIP-8272 references that are
+                    // not yet referenceable, which the next slot resolves — keep
+                    // those pooled for a later block, mirroring how regular txs
+                    // are treated.
                     //
                     // Regular txs are likewise kept pooled on failure, since the
                     // usual cause is a transient queue-ordering/nonce/balance
@@ -789,7 +791,7 @@ impl Blockchain {
                     // build and starve that sender's other txs indefinitely.
                     // Evict those too.
                     let evict = if is_frame {
-                        !is_nonce_mismatch(&e)
+                        !is_nonce_mismatch(&e) && !is_recent_root_not_referenceable(&e)
                     } else {
                         is_deterministic_invalid(&e)
                     };
@@ -1084,6 +1086,16 @@ impl Blockchain {
 /// account nonce, so the tx becomes valid once earlier nonces are included.
 fn is_nonce_mismatch(e: &ChainError) -> bool {
     e.to_string().contains("Nonce mismatch")
+}
+
+/// Whether a frame tx failed only because an EIP-8272 recent-root reference is
+/// not yet referenceable. A root written in slot `S` becomes referenceable in
+/// slot `S + 1`, so a build landing in the same slot the tx was admitted against
+/// resolves on the next one. Expired and uncommitted references are permanent and
+/// are deliberately not covered here.
+fn is_recent_root_not_referenceable(e: &ChainError) -> bool {
+    e.to_string()
+        .contains("recent-root reference is not yet referenceable")
 }
 
 /// Whether a tx failed with an error that recurs at the same nonce for as long as

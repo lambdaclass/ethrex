@@ -160,6 +160,15 @@ pub enum TxValidationError {
     TxMaxGasLimitExceeded { tx_hash: H256, tx_gas_limit: u64 },
     #[error("Invalid frame transaction: VERIFY frame did not call APPROVE or payer not approved")]
     InvalidFrameTransaction,
+    /// EIP-8272: a reference whose slot is not yet referenceable. A root written
+    /// in slot `S` becomes referenceable in slot `S + 1`, so this resolves on its
+    /// own as the chain advances and must not be treated as intrinsic invalidity.
+    #[error("EIP-8272 recent-root reference is not yet referenceable at this slot")]
+    FrameTxRecentRootNotReferenceable,
+    /// EIP-8272: a reference outside the usable window, or one whose entry is not
+    /// committed under `RECENT_ROOT_ADDRESS` in the transaction pre-state.
+    #[error("EIP-8272 recent-root reference is expired or not committed")]
+    FrameTxRecentRootInvalid,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error, Serialize, Deserialize)]

@@ -289,6 +289,11 @@ fn run_pass(blockchain: &Blockchain, pool: &rayon::ThreadPool, req: PrewarmReque
     header.parent_hash = parent.hash();
     header.number = parent.number.saturating_add(1);
     header.timestamp = parent.timestamp.saturating_add(SLOT_DURATION_SECS);
+    // Advance the beacon slot with the block, so EIP-8272 reference-carrying
+    // frame txs warm against a slot where their roots are referenceable rather
+    // than failing the window check at the parent's slot. A timestamp-derived
+    // slot needs no adjustment: the bumped timestamp already carries it.
+    header.slot_number = parent.slot_number.map(|slot| slot.saturating_add(1));
     header.base_fee_per_gas = base_fee;
     header.gas_used = 0;
     if let Some(schedule) = config.get_fork_blob_schedule(header.timestamp) {

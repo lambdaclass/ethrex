@@ -194,6 +194,8 @@ impl Evm {
             LEVM::install_expiry_verifier_code(&mut self.db, self.crypto.as_ref())?;
             // EIP-8250: the keyed-nonce manager predeploy.
             LEVM::install_nonce_manager_code(&mut self.db, self.crypto.as_ref())?;
+            // EIP-8272: the recent-root storage-namespace predeploy.
+            LEVM::install_recent_root_code(&mut self.db)?;
         }
 
         if block_header.parent_beacon_block_root.is_some() && fork >= Fork::Cancun {

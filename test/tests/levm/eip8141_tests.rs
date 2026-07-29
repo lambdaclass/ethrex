@@ -140,6 +140,7 @@ fn frame_tx_with_frames(frames: Vec<Frame>) -> FrameTransaction {
         max_fee_per_gas: HARNESS_BASE_FEE + 1_000,
         max_fee_per_blob_gas: U256::zero(),
         blob_versioned_hashes: Vec::new(),
+        recent_root_references: Vec::new(),
         inner_hash: Default::default(),
         cached_canonical: Default::default(),
     }
@@ -3236,7 +3237,7 @@ mod frame_sig_validation_tests {
     }
 }
 
-// ==================== Relocated from crates/vm/system_contracts.rs ====================
+// ==================== EXPIRY_VERIFIER predeploy ====================
 mod expiry_verifier_tests {
     use ethrex_common::H160;
     use ethrex_vm::system_contracts::{

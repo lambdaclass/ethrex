@@ -7,7 +7,7 @@ use crate::system_contracts::{
     BUILDER_EXIT_CONTRACT_ADDRESS, CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS,
     EXPIRY_VERIFIER_PREDEPLOY, EXPIRY_VERIFIER_RUNTIME_BYTECODE, HISTORY_STORAGE_ADDRESS,
     NONCE_MANAGER_PREDEPLOY, NONCE_MANAGER_RUNTIME_BYTECODE, PRAGUE_SYSTEM_CONTRACTS,
-    SYSTEM_ADDRESS, WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS,
+    RECENT_ROOT_ADDRESS, SYSTEM_ADDRESS, WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS,
 };
 use crate::{EvmError, ExecutionResult};
 use bytes::Bytes;
@@ -2923,10 +2923,11 @@ impl LEVM {
             coinbase: block_header.coinbase,
             timestamp: block_header.timestamp,
             prev_randao: Some(block_header.prev_randao),
-            slot_number: block_header
-                .slot_number
-                .map(U256::from)
-                .unwrap_or(U256::zero()),
+            // Effective EIP-7843 slot, precomputed once per block on `EVMConfig`
+            // (CL-supplied header slot, else timestamp-derived when the
+            // `derived_slot_time` knob is active, else 0). See
+            // `ChainConfig::effective_slot_number`.
+            slot_number: config.slot_number,
             chain_id: chain_id.into(),
             base_fee_per_gas: block_header.base_fee_per_gas.unwrap_or_default().into(),
             base_blob_fee_per_gas,
@@ -3030,7 +3031,7 @@ impl LEVM {
         vm_type: VMType,
         crypto: &dyn Crypto,
     ) -> Result<ExecutionResult, EvmError> {
-        let mut env = env_from_generic(tx, block_header, db, vm_type)?;
+        let mut env = env_from_generic(tx, block_header, db)?;
 
         env.block_gas_limit = i64::MAX as u64; // disable block gas limit
 
@@ -3375,6 +3376,37 @@ impl LEVM {
         Ok(())
     }
 
+    /// Install the EIP-8272 RECENT_ROOT_ADDRESS predeploy at Hegota activation.
+    /// The account carries NO runtime bytecode: the 64-byte `salt‖root` write is
+    /// handled natively by the VM (docs/eip-8272.md divergence #4), so the
+    /// predeploy exists only as a protocol-managed storage namespace — nonce 1,
+    /// empty code, balance preserved (an EOA may have sent value here pre-fork).
+    /// Idempotent: the nonce converges to `max(existing, 1)`, so exactly one
+    /// account update is produced (at the first Hegota block) and none after.
+    pub fn install_recent_root_code(db: &mut GeneralizedDatabase) -> Result<(), EvmError> {
+        // Predeploy convention (matches the genesis predeploys 4788/2935/7002/7251).
+        const PREDEPLOY_NONCE: u64 = 1;
+
+        let existing_nonce = db
+            .get_account(RECENT_ROOT_ADDRESS.address)
+            .map_err(EvmError::from)?
+            .info
+            .nonce;
+        if existing_nonce >= PREDEPLOY_NONCE {
+            return Ok(());
+        }
+        // Record the BAL nonce change if recording is active, so a BAL
+        // reconstructor reproduces the same post-state.
+        if let Some(recorder) = db.bal_recorder_mut() {
+            recorder.record_nonce_change(RECENT_ROOT_ADDRESS.address, PREDEPLOY_NONCE);
+        }
+        let acc = db
+            .get_account_mut(RECENT_ROOT_ADDRESS.address)
+            .map_err(EvmError::from)?;
+        acc.info.nonce = PREDEPLOY_NONCE;
+        Ok(())
+    }
+
     pub(crate) fn read_withdrawal_requests(
         block_header: &BlockHeader,
         db: &mut GeneralizedDatabase,
@@ -3506,7 +3538,7 @@ impl LEVM {
         vm_type: VMType,
         crypto: &dyn Crypto,
     ) -> Result<(ExecutionResult, AccessList), VMError> {
-        let mut env = env_from_generic(&tx, header, db, vm_type)?;
+        let mut env = env_from_generic(&tx, header, db)?;
 
         adjust_disabled_base_fee(&mut env);
 
@@ -3553,6 +3585,8 @@ impl LEVM {
             Self::install_expiry_verifier_code(db, crypto)?;
             // EIP-8250: the keyed-nonce manager predeploy.
             Self::install_nonce_manager_code(db, crypto)?;
+            // EIP-8272: the recent-root storage-namespace predeploy.
+            Self::install_recent_root_code(db)?;
         }
 
         if block_header.parent_beacon_block_root.is_some() && fork >= Fork::Cancun {
@@ -3799,7 +3833,6 @@ fn env_from_generic(
     tx: &GenericTransaction,
     header: &BlockHeader,
     db: &GeneralizedDatabase,
-    vm_type: VMType,
 ) -> Result<Environment, VMError> {
     let chain_config = db.store.get_chain_config()?;
     let gas_price =
@@ -3807,24 +3840,16 @@ fn env_from_generic(
     let block_excess_blob_gas = header.excess_blob_gas;
     let config = EVMConfig::new_from_chain_config(&chain_config, header);
 
-    // slot_number: default a missing value to zero exactly like
-    // `setup_env_with_config` (the block-execution env builder) does, rather
-    // than erroring on Amsterdam+. A canonical Amsterdam header always carries
-    // a slot — `validate_prague_header_fields` rejects one that doesn't, the
-    // genesis builder fills in Some(0), and engine_newPayloadV5 requires the
-    // field — so this branch is not reachable on a well-formed chain. It is
-    // defense in depth, and it belongs on the execution side (where a missing
-    // slot would be a consensus fault) rather than in simulation, whose job is
-    // to predict what execution does: a header the executor would happily run
-    // with SLOTNUM reading 0 must not make eth_call fail. That divergence is
-    // reachable if a devnet's fork timestamps are moved so that Amsterdam
-    // retroactively covers already-stored pre-Amsterdam headers.
-    // For L2 chains, slot_number is always 0.
-    let slot_number = if let VMType::L2(_) = vm_type {
-        U256::zero()
-    } else {
-        header.slot_number.map(U256::from).unwrap_or(U256::zero())
-    };
+    // The effective EIP-7843 slot, taken from the same block-invariant value the
+    // block-execution env builder uses (`EVMConfig::new_from_chain_config` ->
+    // `ChainConfig::effective_slot_number`): the CL-supplied header slot when
+    // present, else the timestamp-derived slot once the `derived_slot_time` knob
+    // is active, else 0. Simulation must predict what execution does, so
+    // eth_call / eth_estimateGas / eth_createAccessList read the slot exactly as
+    // a mined block would — and a missing slot yields 0 rather than an error,
+    // since a header the executor would happily run with SLOTNUM reading 0 must
+    // not make eth_call fail.
+    let slot_number = config.slot_number;
 
     Ok(Environment {
         origin: tx.from.0.into(),
