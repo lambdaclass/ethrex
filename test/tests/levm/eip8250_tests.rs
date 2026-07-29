@@ -99,6 +99,7 @@ fn frame_tx_with_keys(frames: Vec<Frame>, nonce_keys: Vec<U256>) -> FrameTransac
         max_fee_per_gas: HARNESS_BASE_FEE + 1_000,
         max_fee_per_blob_gas: U256::zero(),
         blob_versioned_hashes: Vec::new(),
+        recent_root_references: Vec::new(),
         inner_hash: Default::default(),
         cached_canonical: Default::default(),
     }

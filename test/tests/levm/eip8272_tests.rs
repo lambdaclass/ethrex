@@ -55,7 +55,8 @@ fn seeded_db(accounts: &[SeededAccount]) -> GeneralizedDatabase {
 fn frame_tx(frames: Vec<Frame>) -> FrameTransaction {
     FrameTransaction {
         chain_id: CHAIN_ID,
-        nonce: 0,
+        nonce_keys: vec![U256::zero()],
+        nonce_seq: 0,
         sender: SENDER,
         frames,
         signatures: Vec::new(),
@@ -109,7 +110,7 @@ fn run_at_slot_bal(
         base_fee_per_gas: U256::from(1u64),
         gas_price: U256::from(tx.max_fee_per_gas),
         slot_number: U256::from(slot),
-        tx_nonce: tx.nonce,
+        tx_nonce: tx.nonce_seq,
         ..Default::default()
     };
     let transaction = Transaction::FrameTransaction(tx);
@@ -164,7 +165,7 @@ fn run_with_committed_roots(
         base_fee_per_gas: U256::from(1u64),
         gas_price: U256::from(tx.max_fee_per_gas),
         slot_number: U256::from(slot),
-        tx_nonce: tx.nonce,
+        tx_nonce: tx.nonce_seq,
         ..Default::default()
     };
     let transaction = Transaction::FrameTransaction(tx);
@@ -342,7 +343,7 @@ fn committed_reference_validates_and_executes() {
         gas_price: U256::from(tx.max_fee_per_gas),
         // reference at slot ref_slot + 1: age 1 is inside the usable window.
         slot_number: U256::from(ref_slot + 1),
-        tx_nonce: tx.nonce,
+        tx_nonce: tx.nonce_seq,
         ..Default::default()
     };
     let transaction = Transaction::FrameTransaction(tx);
@@ -568,7 +569,7 @@ fn valid_references_are_recorded_as_bal_storage_reads() {
         base_fee_per_gas: U256::from(1u64),
         gas_price: U256::from(tx.max_fee_per_gas),
         slot_number: U256::from(ref_slot + 1),
-        tx_nonce: tx.nonce,
+        tx_nonce: tx.nonce_seq,
         ..Default::default()
     };
     let transaction = Transaction::FrameTransaction(tx);
