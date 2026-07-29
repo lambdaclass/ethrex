@@ -635,14 +635,16 @@ impl TrieDB for TrieWrapper {
     }
 
     fn multi_get(&self, keys: &[Nibbles]) -> Vec<Result<Option<Vec<u8>>, TrieError>> {
-        // Probe the overlay for every key first, exactly like `get` does,
-        // preserving per-key overlay-first precedence. Slots that miss the
-        // overlay are batched into a single `db.multi_get` call; the overlay
-        // itself is never written to.
+        // Walk the same cascade `get` does, per key: layer cache -> overlay ->
+        // disk. Only the keys that miss both in-memory stages are batched into a
+        // single `db.multi_get` call. Skipping the overlay stage here would serve
+        // the OLD chain's disk nodes (and resurrect keys the overlay reports as
+        // absent at the pivot) for every batched reader.
         let mut results: Vec<Option<Result<Option<Vec<u8>>, TrieError>>> =
             (0..keys.len()).map(|_| None).collect();
         let mut miss_indices = Vec::new();
         let mut miss_keys = Vec::new();
+        let overlay_serves = self.inner.overlay_serves(self.state_root);
 
         for (idx, key) in keys.iter().enumerate() {
             let key = match &self.prefix_nibbles {
@@ -651,6 +653,12 @@ impl TrieDB for TrieWrapper {
             };
             if let Some(value) = self.inner.get(self.state_root, key.as_ref()) {
                 results[idx] = Some(Ok(Some(value)));
+            } else if overlay_serves
+                && let Some(overlay_result) = self.inner.lookup_overlay(key.as_ref())
+            {
+                // `Some(None)` means absent at the pivot: disk still holds the old
+                // chain's value for this key, so it must not be consulted.
+                results[idx] = Some(Ok(overlay_result));
             } else {
                 miss_indices.push(idx);
                 miss_keys.push(key);
@@ -666,7 +674,7 @@ impl TrieDB for TrieWrapper {
 
         results
             .into_iter()
-            .map(|r| r.expect("every key is either an overlay hit or a batched db miss"))
+            .map(|r| r.expect("every key is resolved in-memory or batched as a db miss"))
             .collect()
     }
 

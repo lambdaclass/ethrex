@@ -22,6 +22,7 @@ use ethrex_common::{
     types::{BlockHeader, BlockNumber, DEFAULT_BUILDER_GAS_CEIL, ELASTICITY_MULTIPLIER, Genesis},
 };
 use ethrex_storage::{EngineType, Store};
+use ethrex_trie::{Nibbles, Node, Trie};
 use tempfile::TempDir;
 
 /// Blocks on the original chain. Strictly greater than `DB_COMMIT_THRESHOLD` (128) so the
@@ -112,6 +113,14 @@ async fn extend_fork(
         built.push(block.header);
     }
     built
+}
+
+/// Paths of every internal (non-leaf) node in `trie`. These are the keys the merkle write
+/// path batches through `TrieDB::multi_get`.
+fn node_paths(trie: Trie) -> Vec<Nibbles> {
+    trie.into_iter()
+        .filter_map(|(path, node)| (!matches!(node, Node::Leaf(_))).then_some(path))
+        .collect()
 }
 
 fn as_canonical(headers: &[BlockHeader]) -> Vec<(BlockNumber, H256)> {
@@ -228,5 +237,79 @@ async fn canonical_head_with_evicted_state_becomes_readable() {
         store.has_state_root(pivot_header.state_root).unwrap(),
         "the deep-reorg apply must expose the canonical head's own post-state, \
          not its parent's"
+    );
+}
+
+/// Batched trie reads must walk the same cascade as single reads: layer cache ->
+/// overlay -> disk.
+///
+/// While an overlay serves the pivot, disk still holds the old chain's edge `D`, so a
+/// batched read that skips the overlay stage answers with nodes from the chain that was
+/// reorged away, and reports keys the overlay knows were absent at the pivot as present.
+/// `Trie::prefetch_sorted` installs whatever it reads into the trie arena under the hash
+/// the reference already carried, so those nodes are merkleized without complaint and the
+/// block's state root comes out wrong while gas, receipts and the block access list all
+/// match.
+#[tokio::test]
+async fn batched_trie_reads_resolve_through_the_overlay() {
+    let (store, _dir) = setup_store().await;
+    let blockchain = Blockchain::default_with_store(store.clone());
+
+    let (chain_a, _head_a) = chain_a_with_evicted_pivot(&store, &blockchain).await;
+    let pivot_header = chain_a[(PIVOT - 1) as usize].clone();
+    // Disk edge `D`: the last block the chain-A forkchoice update canonicalized, and the
+    // state the deep reorg below leaves on disk untouched.
+    let disk_header = chain_a[(CHAIN_LEN - 2) as usize].clone();
+    assert!(
+        store.has_state_root(disk_header.state_root).unwrap(),
+        "precondition: the disk edge's state must be on disk"
+    );
+
+    apply_fork_choice_with_deep_reorg(&blockchain, pivot_header.hash(), H256::zero(), H256::zero())
+        .await
+        .expect("forkchoice update onto the canonical, state-evicted head");
+
+    // Probe both sides of the divergence: nodes the pivot references (the overlay holds
+    // them, disk has since moved on) and nodes only `D` has (the overlay reports them
+    // absent, disk still answers with bytes).
+    let mut paths = node_paths(store.open_state_trie(pivot_header.state_root).unwrap());
+    paths.extend(node_paths(
+        store
+            .open_direct_state_trie(disk_header.state_root)
+            .unwrap(),
+    ));
+    assert!(
+        paths.len() > 1,
+        "no internal trie nodes harvested; the probe would be vacuous"
+    );
+
+    let layered = store.open_state_trie(pivot_header.state_root).unwrap();
+    let db = layered.db();
+    let on_disk = store
+        .open_direct_state_trie(disk_header.state_root)
+        .unwrap();
+    let disk_db = on_disk.db();
+
+    let batched = db.multi_get(&paths);
+    assert_eq!(batched.len(), paths.len());
+    let mut resolved_above_disk = 0usize;
+    for (path, batched) in paths.iter().zip(batched) {
+        let batched = batched.unwrap_or_else(|e| panic!("batched read failed at {path:?}: {e}"));
+        let single = db
+            .get(path.clone())
+            .unwrap_or_else(|e| panic!("single read failed at {path:?}: {e}"));
+        assert_eq!(
+            batched, single,
+            "batched read at {path:?} diverged from a single read: the cascade was not \
+             walked the same way"
+        );
+        if single != disk_db.get(path.clone()).unwrap() {
+            resolved_above_disk += 1;
+        }
+    }
+    assert!(
+        resolved_above_disk > 0,
+        "no probed key was answered above disk, so this test cannot observe a read that \
+         bypasses the overlay"
     );
 }
