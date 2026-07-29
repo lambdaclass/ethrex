@@ -608,9 +608,10 @@ fn static_validation_rejects_blob_fee_without_blobs() {
 }
 
 #[test]
-fn data_cost_covers_only_frame_and_signature_data() {
-    // 4 gas per zero byte, 16 per non-zero, over frame.data and each
-    // signature's signer/msg/signature — no RLP framing, no scalar fields.
+fn data_cost_covers_frame_signature_and_nonce_data() {
+    // 4 gas per zero byte, 16 per non-zero, over frame.data, each signature's
+    // signer/msg/signature, and EIP-8250's rlp(nonce_keys) || rlp(nonce_seq) —
+    // no other RLP framing, no other scalar fields.
     let mut tx = make_test_frame_tx();
     tx.frames[0].data = Bytes::from(vec![0u8; 3]); // 3 zero bytes -> 12
     tx.frames[1].data = Bytes::from(vec![0xAAu8; 2]); // 2 non-zero -> 32
@@ -620,17 +621,19 @@ fn data_cost_covers_only_frame_and_signature_data() {
         msg: Bytes::new(),
         signature: Bytes::from(vec![0xAAu8, 0x00]), // 16 + 4
     }];
-    assert_eq!(tx.data_cost(), 12 + 32 + 16 + 4);
-    // Floor tokens are unweighted: 7 bytes * 4 tokens * 16 gas = 448.
-    assert_eq!(tx.calldata_tokens(), 7 * 4);
-    assert_eq!(tx.calldata_floor_gas(), 7 * 64);
+    // nonce_keys == [0] and nonce_seq == 42 encode as c1 80 2a: 3 non-zero -> 48.
+    assert_eq!(tx.nonce_calldata(), vec![0xc1, 0x80, 0x2a]);
+    assert_eq!(tx.data_cost(), 12 + 32 + 16 + 4 + 48);
+    // Floor tokens are unweighted: (7 data + 3 nonce) bytes * 4 tokens * 16 gas.
+    assert_eq!(tx.calldata_tokens(), 10 * 4);
+    assert_eq!(tx.calldata_floor_gas(), 10 * 64);
 }
 
 #[test]
 fn static_validation_requires_the_calldata_floor_to_be_reserved() {
     let mut tx = make_test_frame_tx();
-    // 64 bytes of frame data need 4096 gas of floor, which frames carrying
-    // 100 gas each cannot reserve.
+    // 64 bytes of frame data plus the 3 nonce-calldata bytes are 67 floor bytes,
+    // needing 4288 gas of floor, which frames carrying 100 gas each cannot reserve.
     tx.signatures.clear();
     tx.frames[0].data = Bytes::from(vec![0xAAu8; 64]);
     tx.frames[1].data = Bytes::new();
@@ -639,9 +642,9 @@ fn static_validation_requires_the_calldata_floor_to_be_reserved() {
     assert!(
         tx.validate_static_constraints()
             .unwrap_err()
-            .contains("does not reserve the calldata floor of 4096"),
+            .contains("does not reserve the calldata floor of 4288"),
     );
     // Enough frame gas to cover the floor makes it valid again.
-    tx.frames[1].gas_limit = 4096;
+    tx.frames[1].gas_limit = 4288;
     assert!(tx.validate_static_constraints().is_ok());
 }

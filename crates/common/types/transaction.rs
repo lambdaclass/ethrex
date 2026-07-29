@@ -2159,21 +2159,36 @@ impl FrameTransaction {
             }))
     }
 
-    /// EIP-7623 calldata cost over the frame and signature data: 4 gas per zero
-    /// byte, 16 per non-zero byte.
+    /// EIP-7623 calldata cost over the frame and signature data plus EIP-8250's
+    /// nonce calldata: 4 gas per zero byte, 16 per non-zero byte.
     pub fn data_cost(&self) -> u64 {
-        self.data_fields().flatten().fold(0u64, |acc, byte| {
+        let fields = self.data_fields().flatten().fold(0u64, |acc, byte| {
             acc.saturating_add(if *byte == 0 { 4 } else { 16 })
-        })
+        });
+        let nonce = self.nonce_calldata().iter().fold(0u64, |acc, byte| {
+            acc.saturating_add(if *byte == 0 { 4 } else { 16 })
+        });
+        fields.saturating_add(nonce)
     }
 
-    /// EIP-7623 token count over the frame and signature data, used for the
-    /// calldata floor. Frame transactions exist only from Hegota onward, which is
-    /// after Amsterdam, so EIP-7976's unweighted count (every byte costs
-    /// `STANDARD_TOKEN_COST`) always applies.
+    /// EIP-8250 `nonce_calldata`: `rlp(nonce_keys) || rlp(nonce_seq)`. The bytes
+    /// this EIP adds to the payload are priced exactly as EIP-8141 prices frame
+    /// and signature data, so they enter both `data_cost` and `calldata_tokens`.
+    pub fn nonce_calldata(&self) -> Vec<u8> {
+        let mut buf = Vec::new();
+        self.nonce_keys.encode(&mut buf);
+        self.nonce_seq.encode(&mut buf);
+        buf
+    }
+
+    /// EIP-7623 token count over the frame and signature data plus EIP-8250's
+    /// nonce calldata, used for the calldata floor. Frame transactions exist only
+    /// from Hegota onward, which is after Amsterdam, so EIP-7976's unweighted
+    /// count (every byte costs `STANDARD_TOKEN_COST`) always applies.
     pub fn calldata_tokens(&self) -> u64 {
         self.data_fields()
             .fold(0u64, |acc, field| acc.saturating_add(field.len() as u64))
+            .saturating_add(self.nonce_calldata().len() as u64)
             .saturating_mul(FRAME_TX_STANDARD_TOKEN_COST)
     }
 
