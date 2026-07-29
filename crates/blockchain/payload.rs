@@ -198,7 +198,15 @@ pub fn create_payload(
     let body = BlockBody {
         transactions: Vec::new(),
         ommers: Vec::new(),
-        withdrawals: args.withdrawals.clone(),
+        // Post-Shanghai the withdrawals field is part of the body schema: emit
+        // an explicit (possibly empty) list, matching the header's
+        // withdrawals_root above, instead of omitting the field. Omitting it
+        // produces blocks that fail `validate_block_body` — the L2 block
+        // producer passes `withdrawals: None`, which previously leaked through
+        // as a body without the field under an empty-root header.
+        withdrawals: chain_config
+            .is_shanghai_activated(args.timestamp)
+            .then(|| args.withdrawals.clone().unwrap_or_default()),
     };
 
     // Delay applying withdrawals until the payload is requested and built
@@ -1246,6 +1254,53 @@ impl PartialOrd for HeadTransaction {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn create_payload_emits_explicit_empty_withdrawals_post_shanghai() {
+        // Regression: the L2 block producer passes `withdrawals: None`, which
+        // `create_payload` used to leak into the body while the header still
+        // committed to the empty withdrawals root — a block shape
+        // `validate_block_body` rejects (and every reference client rejects).
+        let mut store = ethrex_storage::Store::new("", ethrex_storage::EngineType::InMemory)
+            .expect("in-memory store");
+        store
+            .set_chain_config(&ChainConfig {
+                shanghai_time: Some(0),
+                ..Default::default()
+            })
+            .await
+            .expect("chain config");
+        let parent = BlockHeader {
+            gas_limit: 30_000_000,
+            ..Default::default()
+        };
+        let parent_hash = parent.hash();
+        store
+            .add_block_header(parent_hash, parent)
+            .await
+            .expect("parent header");
+
+        let args = BuildPayloadArgs {
+            parent: parent_hash,
+            timestamp: 1,
+            fee_recipient: Address::zero(),
+            random: H256::zero(),
+            withdrawals: None,
+            beacon_root: None,
+            slot_number: None,
+            version: 2,
+            elasticity_multiplier: 2,
+            gas_ceil: 30_000_000,
+        };
+        let block = create_payload(&args, &store, Bytes::new()).expect("payload");
+
+        // The body must carry an explicit empty list matching the header's
+        // empty root, and the produced block must pass body validation.
+        assert_eq!(block.body.withdrawals, Some(vec![]));
+        assert!(block.header.withdrawals_root.is_some());
+        ethrex_common::types::validate_block_body(&block.header, &block.body, &NativeCrypto)
+            .expect("produced block must pass validate_block_body");
+    }
 
     #[test]
     fn nonce_mismatch_detected_from_chain_error() {
