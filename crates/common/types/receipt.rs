@@ -13,10 +13,10 @@ use crate::types::TxType;
 pub type Index = u64;
 
 /// Frame receipt status codes (EIP-8141).
-/// `0x3` is reserved for frames skipped due to a failed atomic batch.
+/// `0x2` is reserved for frames skipped due to a failed atomic batch.
 pub const FRAME_RECEIPT_STATUS_FAILURE: u8 = 0;
 pub const FRAME_RECEIPT_STATUS_SUCCESS: u8 = 1;
-pub const FRAME_RECEIPT_STATUS_SKIPPED: u8 = 3;
+pub const FRAME_RECEIPT_STATUS_SKIPPED: u8 = 2;
 
 /// Per-frame execution result within a frame transaction (EIP-8141)
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
@@ -187,7 +187,7 @@ impl Receipt {
             encode_buf.push(self.tx_type as u8);
         }
         if self.tx_type == TxType::Frame {
-            // EIP-8141 ReceiptPayload (spec lines 178-185):
+            // EIP-8141 ReceiptPayload:
             // [cumulative_gas_used, payer, [frame_receipt, ...]]
             // No succeeded, no bloom, no top-level logs.
             let empty_frame_receipts = Vec::new();
