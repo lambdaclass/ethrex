@@ -1,0 +1,36 @@
+# EIP-8141 Frame Transactions Devnet — reverse proxy
+# Usage: RPC_PORT=32000 DORA_PORT=34000 caddy run --config Caddyfile
+#
+# All services accessible via Tailscale at http://ethrex-mainnet-8
+
+:80 {
+    # RPC endpoint — wallets and tools hit this
+    handle_path /rpc/* {
+        reverse_proxy localhost:{$RPC_PORT}
+        header Access-Control-Allow-Origin *
+        header Access-Control-Allow-Methods "GET, POST, OPTIONS"
+        header Access-Control-Allow-Headers "Content-Type"
+    }
+
+    # Direct RPC (for MetaMask — needs root path POST)
+    @rpc_post {
+        method POST
+        path /
+    }
+    handle @rpc_post {
+        reverse_proxy localhost:{$RPC_PORT}
+        header Access-Control-Allow-Origin *
+        header Access-Control-Allow-Methods "GET, POST, OPTIONS"
+        header Access-Control-Allow-Headers "Content-Type"
+    }
+
+    # Dora block explorer
+    handle_path /dora/* {
+        reverse_proxy localhost:{$DORA_PORT}
+    }
+
+    # Faucet
+    handle_path /faucet/* {
+        reverse_proxy localhost:8080
+    }
+}
