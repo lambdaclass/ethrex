@@ -57,3 +57,9 @@ EIP-8250 / EIP-8272 → `eips.ethereum.org` master at implementation time (pin t
 
 - EIP-8272 TXPARAM `0x0D → 0x0F` fix PR (drafted; from `lambdaclass/EIPs`).
 - EIP-8250/8141 TXPARAM `0x0B` conflict (raise for an authoritative registry).
+
+## Deploying
+
+`hegota-devnet-genesis.md` covers what a fresh genesis must contain: the fork
+schedule constraints, the predeploys the genesis generator does not ship, the
+ethrex-only chain-config fields, and the post-deployment verification pass.

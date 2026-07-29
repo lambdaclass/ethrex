@@ -85,7 +85,7 @@ def main():
             max_priority_fee=max_priority, max_fee=max_fee)
         sh = tx.sig_hash()
         s = pk.sign_msg_hash(sh)
-        sig = bytes([s.v + 27]) + s.r.to_bytes(32, "big") + s.s.to_bytes(32, "big")
+        sig = bytes([s.v]) + s.r.to_bytes(32, "big") + s.s.to_bytes(32, "big")
         tx.signatures = [FrameSig(FrameSig.SECP256K1, sender, b"", sig)]
         return tx
 

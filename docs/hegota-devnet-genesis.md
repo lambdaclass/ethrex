@@ -4,8 +4,10 @@ What a fresh genesis for this devnet must contain, and why. Every item here is
 load-bearing: omitting any of the first two sections produces a chain that either
 never starts or stops producing blocks at a fork boundary.
 
-The companion documents are `USER-GUIDE.md` (how to use the devnet) and
-`UPGRADE-GUIDE.md` (how to change a *running* devnet without a re-genesis).
+The companion documents are `hegota-devnet.md` (what the branch is composed of and
+where it diverges from the draft EIPs), `scripts/hegota-devnet/USER-GUIDE.md` (how to
+use the devnet) and `scripts/hegota-devnet/UPGRADE-GUIDE.md` (how to change a
+*running* devnet without a re-genesis).
 
 ## Fork schedule
 
