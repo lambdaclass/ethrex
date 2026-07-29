@@ -520,3 +520,85 @@ fn unreferenceable_and_invalid_references_raise_distinct_errors() {
         "an uncommitted reference must be permanent, got: {uncommitted}"
     );
 }
+
+/// Per EIP-7928, the reference-validity pass reads real predeploy storage, so
+/// each reference's storage key belongs in the block access list as a read (the
+/// pass never writes). Recorded only once the whole pass succeeds: a failed
+/// reference invalidates the transaction and the block with it.
+#[test]
+fn valid_references_are_recorded_as_bal_storage_reads() {
+    let salt = [0x99u8; 32];
+    let ref_slot = 500u64;
+    let entry = RecentRootReference {
+        source_id: source_id(SENDER, &salt),
+        slot: ref_slot,
+        root: H256::repeat_byte(0xAA),
+    };
+    let mut tx = frame_tx(vec![
+        frame(FrameMode::Verify, 0x03, SENDER, 100_000, &[]),
+        frame(
+            FrameMode::Sender,
+            0x00,
+            Address::from_low_u64_be(0xBEEF),
+            30_000,
+            &[],
+        ),
+    ]);
+    tx.recent_root_references = vec![entry.clone()];
+
+    let mut db = seeded_db(&[
+        (SENDER, big(), 0, Bytes::from(APPROVE_BOTH_CODE.to_vec())),
+        recent_root_predeploy(),
+    ]);
+    db.enable_bal_recording();
+    if let Some(account) = db.current_accounts_state.get_mut(&frame_tx_recent_root()) {
+        account.storage = [(
+            entry.storage_key(),
+            U256::from_big_endian(entry.entry_hash().as_bytes()),
+        )]
+        .into_iter()
+        .collect();
+    }
+    let env = Environment {
+        origin: tx.sender,
+        gas_limit: tx.total_gas_limit(),
+        block_gas_limit: (i64::MAX - 1) as u64,
+        config: EVMConfig::new(Fork::Hegota, EVMConfig::canonical_values(Fork::Hegota)),
+        chain_id: U256::from(CHAIN_ID),
+        base_fee_per_gas: U256::from(1u64),
+        gas_price: U256::from(tx.max_fee_per_gas),
+        slot_number: U256::from(ref_slot + 1),
+        tx_nonce: tx.nonce,
+        ..Default::default()
+    };
+    let transaction = Transaction::FrameTransaction(tx);
+    {
+        let mut vm = VM::new(
+            env,
+            &mut db,
+            &transaction,
+            LevmCallTracer::disabled(),
+            VMType::L1,
+            &NativeCrypto,
+        )
+        .expect("VM::new");
+        vm.execute()
+            .expect("committed reference must validate with BAL recording active");
+    }
+
+    let bal = db.take_bal().expect("BAL recorder was active");
+    let account = bal
+        .accounts()
+        .iter()
+        .find(|a| a.address == frame_tx_recent_root())
+        .expect("RECENT_ROOT_ADDRESS must appear in the BlockAccessList");
+    let key = U256::from_big_endian(entry.storage_key().as_bytes());
+    assert!(
+        account.storage_reads.contains(&key),
+        "the reference's storage key must be recorded as a BAL read"
+    );
+    assert!(
+        account.storage_changes.is_empty(),
+        "the reference pass only reads; it must record no storage change"
+    );
+}

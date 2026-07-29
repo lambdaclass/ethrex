@@ -1666,12 +1666,17 @@ impl<'a> VM<'a> {
         // forged-roots soundness hole that previously kept references disabled.
         // The predeploy address and each reference's storage key are warmed
         // here; the per-reference intrinsic gas already prepaid this access.
+        // These are real reads of the predeploy's storage, not declared
+        // access-list entries, so EIP-7928 requires them in the block access
+        // list — recorded once the whole pass succeeds, since a failed reference
+        // invalidates the transaction and the block along with it.
         if !frame_tx.recent_root_references.is_empty() {
             let recent_root_addr = ethrex_common::types::frame_tx_recent_root();
             let current_slot = self.env.slot_number;
             self.substate.add_accessed_address(recent_root_addr);
             // Ensure the predeploy account is cached before reading its storage.
             let _ = self.db.get_account(recent_root_addr)?;
+            let mut read_keys = Vec::with_capacity(frame_tx.recent_root_references.len());
             for reference in &frame_tx.recent_root_references {
                 // A slot at or ahead of the current one is transiently
                 // unreferenceable; past the window it is permanently invalid.
@@ -1709,6 +1714,13 @@ impl<'a> VM<'a> {
                         crate::errors::TxValidationError::FrameTxRecentRootInvalid,
                     ));
                 }
+                read_keys.push(U256::from_big_endian(storage_key.as_bytes()));
+            }
+            if let Some(recorder) = self.db.bal_recorder.as_mut() {
+                recorder.record_touched_address(recent_root_addr);
+            }
+            for key in read_keys {
+                self.record_storage_slot_to_bal(recent_root_addr, key);
             }
         }
 
