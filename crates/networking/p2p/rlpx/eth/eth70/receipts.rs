@@ -296,6 +296,69 @@ mod tests {
         assert_eq!(decoded.receipts, receipts);
     }
 
+    /// EIP-8141 §Networking: in the `Receipts` message of the protocol version
+    /// carrying the fork, a frame receipt is encoded mirroring its consensus
+    /// `ReceiptPayload`, i.e. `[tx-type, cumulative-gas, payer, [[status,
+    /// gas-used, logs], ...]]` with the type INSIDE the list. Hegota rides
+    /// eth/70 and eth/71, both of which serve `Receipts70`.
+    #[test]
+    fn receipts70_frame_receipt_matches_the_eip8141_wire_form() {
+        use ethrex_common::types::FrameReceipt;
+        use ethrex_rlp::encode::RLPEncode as _;
+        use ethrex_rlp::structs::Encoder as RlpEncoder;
+
+        let payer = Address::from_low_u64_be(0xBEEF);
+        let frame_receipts = vec![
+            FrameReceipt {
+                status: ethrex_common::types::FRAME_RECEIPT_STATUS_SUCCESS,
+                gas_used: 21_000,
+                logs: vec![Log {
+                    address: Address::from_low_u64_be(0xAA),
+                    topics: vec![H256::from_low_u64_be(1)],
+                    data: Bytes::from_static(b"frame"),
+                }],
+            },
+            FrameReceipt {
+                status: ethrex_common::types::FRAME_RECEIPT_STATUS_SKIPPED,
+                gas_used: 0,
+                logs: vec![],
+            },
+        ];
+        let receipt = Receipt {
+            tx_type: TxType::Frame,
+            // Derived on decode from the per-frame statuses, so a SKIPPED frame
+            // makes this false.
+            succeeded: false,
+            cumulative_gas_used: 123_456,
+            logs: vec![],
+            payer: Some(payer),
+            frame_receipts: Some(frame_receipts.clone()),
+        };
+
+        // The wire item must be exactly the spec's list, type first.
+        let mut expected = Vec::new();
+        RlpEncoder::new(&mut expected)
+            .encode_field(&(TxType::Frame as u8))
+            .encode_field(&123_456u64)
+            .encode_field(&payer)
+            .encode_field(&frame_receipts)
+            .finish();
+        let mut actual = Vec::new();
+        receipt.encode(&mut actual);
+        assert_eq!(
+            actual, expected,
+            "frame receipt wire item must mirror the consensus ReceiptPayload"
+        );
+
+        // And it survives a full message round-trip with payer and per-frame
+        // results intact.
+        let msg = Receipts70::new(9, false, vec![vec![receipt.clone()]]);
+        let mut buf = Vec::new();
+        msg.encode(&mut buf).unwrap();
+        let decoded = Receipts70::decode(&buf).unwrap();
+        assert_eq!(decoded.receipts, vec![vec![receipt]]);
+    }
+
     // ── Cross-type code consistency ──
 
     #[test]
