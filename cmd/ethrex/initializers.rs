@@ -157,7 +157,7 @@ const DB_METRICS_SAMPLE_INTERVAL: std::time::Duration = std::time::Duration::fro
 ///
 /// A no-op for non-RocksDB backends (`rocksdb_stats()` returns `None`). Spawned
 /// only when metrics are enabled.
-fn spawn_rocksdb_metrics_collector(
+pub(crate) fn spawn_rocksdb_metrics_collector(
     store: Store,
     tracker: &TaskTracker,
     cancel_token: CancellationToken,
@@ -372,6 +372,11 @@ pub async fn init_rpc_api(
     // Historical-chain backfill is opt-in via `--history.chain`; it is
     // meaningless in dev mode (single-node chain, full state from genesis), so
     // force it off there like syncmode.
+    if !opts.dev && opts.history_chain == HistoryChain::Off && opts.history_transactions != 0 {
+        warn!(
+            "--history.transactions has no effect with --history.chain off: no backfill runs, so there is nothing to bound"
+        );
+    }
     let backfill_config = BackfillConfig {
         mode: if opts.dev {
             HistoryChain::Off

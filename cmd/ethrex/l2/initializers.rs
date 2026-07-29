@@ -397,7 +397,12 @@ pub async fn init_l2(
 
     // Initialize metrics if enabled
     if opts.node_opts.metrics_enabled {
-        init_metrics(&opts.node_opts, &network.to_string(), tracker);
+        init_metrics(&opts.node_opts, &network.to_string(), tracker.clone());
+        initializers::spawn_rocksdb_metrics_collector(
+            store.clone(),
+            &tracker,
+            sequencer_cancellation_token.clone(),
+        );
     }
 
     let l2_url = Url::parse(&format!(
