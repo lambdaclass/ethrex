@@ -3320,9 +3320,18 @@ impl Blockchain {
             }
         }
 
+        // The fork-gated caps below must resolve the fork exactly like execution
+        // does, i.e. through the fork ordinal. A per-field activation check
+        // (`is_amsterdam_activated`) is not equivalent: on a chain that schedules a
+        // fork after Amsterdam without setting an explicit `amsterdamTime`, the
+        // ordinal is already `>= Fork::Amsterdam` while the field is unset, so a
+        // field-based gate would over-reject transactions block execution accepts.
+        let fork = config.fork(header.timestamp);
+
         // Check init code size
-        // [EIP-7954] - Amsterdam increases the limit
-        let max_initcode_size = if config.is_amsterdam_activated(header.timestamp) {
+        // [EIP-7954] - Amsterdam increases the limit.
+        // Mirrors levm's `validate_init_code_size`.
+        let max_initcode_size = if fork >= Fork::Amsterdam {
             AMSTERDAM_MAX_INITCODE_SIZE
         } else {
             MAX_INITCODE_SIZE
@@ -3334,8 +3343,10 @@ impl Blockchain {
             return Err(MempoolError::TxMaxInitCodeSizeError);
         }
 
-        if config.is_osaka_activated(header.timestamp)
-            && !config.is_amsterdam_activated(header.timestamp)
+        // EIP-7825's flat per-tx gas cap applies from Osaka until Amsterdam, which
+        // supersedes it with the EIP-8037 gas model. Mirrors levm's `default_hook`.
+        if fork >= Fork::Osaka
+            && fork < Fork::Amsterdam
             && tx.gas_limit() > POST_OSAKA_GAS_LIMIT_CAP
         {
             // https://eips.ethereum.org/EIPS/eip-7825
