@@ -95,13 +95,21 @@ dora_params:
 additional_services:
   - dora
 
+# Every published block must sit below the host's ephemeral port floor
+# (`/proc/sys/net/ipv4/ip_local_port_range`, 32768 by default). Kurtosis hands
+# dynamic host ports to unpublished services out of that range, so a fixed
+# publish inside it races them and loses:
+#   failed to bind host port 0.0.0.0:33008/tcp: address already in use
+# The EL block stays at 32000 because the public RPC endpoints resolve to
+# 32003/32010/32017 through the reverse proxy; the CL and additional-service
+# blocks are not referenced publicly and move below the floor.
 port_publisher:
   el:
     enabled: true
     public_port_start: 32000
   cl:
     enabled: true
-    public_port_start: 33000
+    public_port_start: 31000
   additional_services:
     enabled: true
-    public_port_start: 34000
+    public_port_start: 31500
