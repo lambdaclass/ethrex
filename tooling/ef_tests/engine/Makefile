@@ -1,12 +1,12 @@
 .PHONY: download-test-vectors clean-vectors test test-rocksdb test-strict amsterdam-vectors help
 
 VECTORS_ROOT := vectors
-FIXTURES_FILE := .fixtures_url
+FIXTURES_FILE := ../.fixtures_url
 SPECTEST_ARTIFACT := tests.tar.gz
 SPECTEST_VECTORS_DIR := $(VECTORS_ROOT)/eest
 SPECTEST_URL := $(shell cat $(FIXTURES_FILE))
 
-AMSTERDAM_FIXTURES_FILE := .fixtures_url_amsterdam
+AMSTERDAM_FIXTURES_FILE := ../.fixtures_url_amsterdam
 AMSTERDAM_ARTIFACT := amsterdam-tests.tar.gz
 AMSTERDAM_URL := $(shell cat $(AMSTERDAM_FIXTURES_FILE))
 

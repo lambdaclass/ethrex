@@ -1,6 +1,6 @@
 .PHONY: download-evm-ef-tests clean-evm-ef-tests run-evm-ef-tests test-levm test-levm-nostd-crypto test-revm run-evm-ef-tests flamegraph-run-ef-tests samply-run-ef-tests amsterdam-vectors
 
-FIXTURES_FILE := .fixtures_url
+FIXTURES_FILE := ../.fixtures_url
 STATETEST_ARTIFACT := test.tar.gz
 VECTORS_DIR := vectors
 
@@ -13,7 +13,7 @@ COMMIT_LEGACY_TESTS_FOR_TAG := b3f67fe
 
 STATETEST_URL := $(shell cat $(FIXTURES_FILE))
 
-AMSTERDAM_FIXTURES_FILE := .fixtures_url_amsterdam
+AMSTERDAM_FIXTURES_FILE := ../.fixtures_url_amsterdam
 AMSTERDAM_ARTIFACT := amsterdam-tests.tar.gz
 AMSTERDAM_URL := $(shell cat $(AMSTERDAM_FIXTURES_FILE))
 

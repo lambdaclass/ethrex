@@ -1,0 +1,70 @@
+name: Deep reorg (manual)
+
+# Manual trigger only -- this scenario takes ~1 hour and requires a Kurtosis
+# cluster. It is NOT a PR gate.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_NET_GIT_FETCH_WITH_CLI: "true"
+  CARGO_NET_RETRY: "10"
+
+jobs:
+  deep-reorg:
+    name: Deep reorg partition test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v6
+
+      - name: Free Disk Space
+        uses: ./.github/actions/free-disk
+
+      - name: Setup Rust Environment
+        uses: ./.github/actions/setup-rust
+
+      - name: Build ethrex (release, rocksdb + metrics)
+        run: |
+          cargo build --release --bin ethrex --features rocksdb,metrics
+
+      - name: Build ethrex Docker image
+        run: |
+          docker build -t ethrex:local .
+
+      - name: Install Kurtosis CLI
+        run: |
+          echo "deb [trusted=yes] https://apt.fury.io/kurtosis-tech/ /" \
+            | sudo tee /etc/apt/sources.list.d/kurtosis.list
+          sudo apt-get update
+          sudo apt-get install -y kurtosis-cli
+          kurtosis version
+
+      - name: Start Kurtosis engine
+        run: kurtosis engine start
+
+      - name: Run deep-reorg enclave
+        id: kurtosis-run
+        run: |
+          kurtosis run --enclave deep-reorg \
+            github.com/ethpandaops/ethereum-package \
+            --args-file tooling/reorgs/disruptoor/network-partition-deep-reorg.yaml
+
+      - name: Collect enclave logs on failure
+        if: failure()
+        run: |
+          kurtosis enclave dump deep-reorg /tmp/enclave-logs || true
+
+      - name: Upload enclave logs as artifact
+        if: failure()
+        uses: actions/upload-artifact@v6
+        with:
+          name: deep-reorg-enclave-logs
+          path: /tmp/enclave-logs
+          if-no-files-found: ignore
+
+      - name: Tear down enclave
+        if: always()
+        run: kurtosis enclave rm deep-reorg --force || true

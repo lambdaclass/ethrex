@@ -5,8 +5,8 @@
 use bytes::Bytes;
 use ethrex_blockchain::vm::StoreVmDatabase;
 use ethrex_common::types::{
-    Account, BlockHeader, ChainConfig, Code, Fork, Frame, FrameMode, FrameTransaction,
-    RecentRootReference, Transaction, frame_tx_recent_root,
+    Account, BlockHeader, ChainConfig, Code, FRAME_TX_RECENT_ROOT_USABLE_WINDOW, Fork, Frame,
+    FrameMode, FrameTransaction, RecentRootReference, Transaction, frame_tx_recent_root,
 };
 use ethrex_common::{Address, H256, U256, constants::EMPTY_TRIE_HASH};
 use ethrex_crypto::NativeCrypto;
@@ -130,6 +130,69 @@ fn run_at_slot_bal(
 
 fn recent_root_predeploy() -> SeededAccount {
     (frame_tx_recent_root(), U256::zero(), 1, Bytes::new())
+}
+
+/// Run `tx` at `slot` against a predeploy pre-seeded with `committed`, so the
+/// declared references resolve against real storage.
+fn run_with_committed_roots(
+    tx: FrameTransaction,
+    committed: &[RecentRootReference],
+    slot: u64,
+) -> Result<ExecutionReport, VMError> {
+    let accounts = [
+        (SENDER, big(), 0, Bytes::from(APPROVE_BOTH_CODE.to_vec())),
+        recent_root_predeploy(),
+    ];
+    let mut db = seeded_db(&accounts);
+    if let Some(account) = db.current_accounts_state.get_mut(&frame_tx_recent_root()) {
+        account.storage = committed
+            .iter()
+            .map(|entry| {
+                (
+                    entry.storage_key(),
+                    U256::from_big_endian(entry.entry_hash().as_bytes()),
+                )
+            })
+            .collect();
+    }
+    let env = Environment {
+        origin: tx.sender,
+        gas_limit: tx.total_gas_limit(),
+        block_gas_limit: (i64::MAX - 1) as u64,
+        config: EVMConfig::new(Fork::Hegota, EVMConfig::canonical_values(Fork::Hegota)),
+        chain_id: U256::from(CHAIN_ID),
+        base_fee_per_gas: U256::from(1u64),
+        gas_price: U256::from(tx.max_fee_per_gas),
+        slot_number: U256::from(slot),
+        tx_nonce: tx.nonce,
+        ..Default::default()
+    };
+    let transaction = Transaction::FrameTransaction(tx);
+    let mut vm = VM::new(
+        env,
+        &mut db,
+        &transaction,
+        LevmCallTracer::disabled(),
+        VMType::L1,
+        &NativeCrypto,
+    )
+    .expect("VM::new");
+    vm.execute()
+}
+
+/// A data-heavy, execution-light frame tx: enough frame data that the EIP-7623
+/// calldata floor exceeds what execution consumes, so the floor binds.
+fn floor_bound_frame_tx() -> FrameTransaction {
+    frame_tx(vec![
+        frame(FrameMode::Verify, 0x03, SENDER, 100_000, &[0xFFu8; 2048]),
+        frame(
+            FrameMode::Sender,
+            0x00,
+            Address::from_low_u64_be(0xBEEF),
+            30_000,
+            &[],
+        ),
+    ])
 }
 
 /// source_id = keccak256(pad32(caller) || salt).
@@ -268,7 +331,7 @@ fn committed_reference_validates_and_executes() {
             &[],
         ),
     ]);
-    tx.recent_root_references = vec![entry.clone()];
+    tx.recent_root_references = vec![entry];
     let env = Environment {
         origin: tx.sender,
         gas_limit: tx.total_gas_limit(),
@@ -343,5 +406,117 @@ fn evm_config_derives_slot_when_knob_active_and_cl_absent() {
     assert_eq!(
         EVMConfig::new_from_chain_config(&no_knob, &header).slot_number,
         U256::zero()
+    );
+}
+
+/// EIP-8272 reference gas is a mandatory cost, charged outside the EIP-7623
+/// floored term. The floor is defined over frame and signature data only, and at
+/// 64 gas per data byte it dominates `data_cost` (16 at most), so a floored
+/// reference charge would be absorbed whole — silently free — even though the
+/// warming it prepays happens unconditionally.
+#[test]
+fn reference_gas_is_charged_even_when_the_calldata_floor_binds() {
+    let salt = [0x55u8; 32];
+    let ref_slot = 300u64;
+    let entry = RecentRootReference {
+        source_id: source_id(SENDER, &salt),
+        slot: ref_slot,
+        root: H256::repeat_byte(0x66),
+    };
+
+    let baseline = floor_bound_frame_tx();
+    let mut referencing = floor_bound_frame_tx();
+    referencing.recent_root_references = vec![entry.clone()];
+    let reference_gas = referencing.recent_root_reference_gas();
+    assert!(reference_gas > 0, "one reference must cost something");
+
+    // The floor must actually bind, or the test would pass for the wrong reason.
+    let floor = baseline.calldata_floor_gas();
+    assert!(
+        floor > baseline.data_cost(),
+        "floor {floor} must exceed data cost {} for this to test absorption",
+        baseline.data_cost()
+    );
+
+    let without = run_with_committed_roots(baseline, &[], ref_slot + 1)
+        .expect("reference-free tx must execute");
+    let with = run_with_committed_roots(referencing, &[entry], ref_slot + 1)
+        .expect("committed reference must validate and the tx execute");
+
+    assert_eq!(
+        with.gas_used,
+        without.gas_used.saturating_add(reference_gas),
+        "reference gas must survive the calldata floor"
+    );
+}
+
+/// A reference that is merely not yet referenceable is transient — the next slot
+/// resolves it — while an expired or uncommitted one is permanent. Block building
+/// evicts a frame tx on any non-nonce-mismatch failure, so the two must not share
+/// an error.
+#[test]
+fn unreferenceable_and_invalid_references_raise_distinct_errors() {
+    let salt = [0x77u8; 32];
+    let entry_slot = 400u64;
+    let entry = RecentRootReference {
+        source_id: source_id(SENDER, &salt),
+        slot: entry_slot,
+        root: H256::repeat_byte(0x88),
+    };
+    let referencing = || {
+        let mut tx = frame_tx(vec![
+            frame(FrameMode::Verify, 0x03, SENDER, 100_000, &[]),
+            frame(
+                FrameMode::Sender,
+                0x00,
+                Address::from_low_u64_be(0xBEEF),
+                30_000,
+                &[],
+            ),
+        ]);
+        tx.recent_root_references = vec![entry.clone()];
+        tx
+    };
+
+    // Same slot as the write: referenceable only from the next slot on.
+    let same_slot =
+        run_with_committed_roots(referencing(), std::slice::from_ref(&entry), entry_slot)
+            .expect_err("a reference to the current slot must fail");
+    assert!(
+        same_slot
+            .to_string()
+            .contains("not yet referenceable at this slot"),
+        "transient failure must be distinguishable, got: {same_slot}"
+    );
+
+    // Ahead of the current slot: also transient.
+    let future =
+        run_with_committed_roots(referencing(), std::slice::from_ref(&entry), entry_slot - 1)
+            .expect_err("a reference to a future slot must fail");
+    assert!(
+        future
+            .to_string()
+            .contains("not yet referenceable at this slot"),
+        "a future reference must be transient, got: {future}"
+    );
+
+    // Past the usable window: permanent.
+    let expired = run_with_committed_roots(
+        referencing(),
+        std::slice::from_ref(&entry),
+        entry_slot + FRAME_TX_RECENT_ROOT_USABLE_WINDOW + 1,
+    )
+    .expect_err("a reference past the usable window must fail");
+    assert!(
+        expired.to_string().contains("expired or not committed"),
+        "an expired reference must be permanent, got: {expired}"
+    );
+
+    // In window but never committed: permanent.
+    let uncommitted = run_with_committed_roots(referencing(), &[], entry_slot + 1)
+        .expect_err("an uncommitted reference must fail");
+    assert!(
+        uncommitted.to_string().contains("expired or not committed"),
+        "an uncommitted reference must be permanent, got: {uncommitted}"
     );
 }

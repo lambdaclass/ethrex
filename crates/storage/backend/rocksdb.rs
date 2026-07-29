@@ -387,6 +387,28 @@ impl StorageReadView for RocksDBReadTx {
             .map_err(|e| StoreError::Custom(format!("Failed to get from {}: {}", table, e)))
     }
 
+    fn multi_get(
+        &self,
+        table: &'static str,
+        keys: &[&[u8]],
+    ) -> Vec<Result<Option<Vec<u8>>, StoreError>> {
+        let Some(cf) = self.db.cf_handle(table) else {
+            let err_msg = format!("Table {} not found", table);
+            return (0..keys.len())
+                .map(|_| Err(StoreError::Custom(err_msg.clone())))
+                .collect();
+        };
+        // `sorted_input=false`: rocksdb sorts internally. Caller may pass arbitrary order.
+        self.db
+            .batched_multi_get_cf(&cf, keys.iter().copied(), false)
+            .into_iter()
+            .map(|res| {
+                res.map(|opt| opt.map(|slice| slice.to_vec()))
+                    .map_err(|e| StoreError::Custom(format!("multi_get {}: {}", table, e)))
+            })
+            .collect()
+    }
+
     fn prefix_iterator(
         &self,
         table: &'static str,
@@ -401,6 +423,32 @@ impl StorageReadView for RocksDBReadTx {
             result.map_err(|e| StoreError::Custom(format!("Failed to iterate: {e}")))
         });
         Ok(Box::new(iter))
+    }
+
+    fn first_key(&self, table: &'static str) -> Result<Option<Vec<u8>>, StoreError> {
+        let cf = self
+            .db
+            .cf_handle(table)
+            .ok_or_else(|| StoreError::Custom(format!("Table {table} not found")))?;
+        let mut iter = self.db.iterator_cf(&cf, rocksdb::IteratorMode::Start);
+        match iter.next() {
+            Some(Ok((k, _))) => Ok(Some(k.to_vec())),
+            Some(Err(e)) => Err(StoreError::Custom(e.to_string())),
+            None => Ok(None),
+        }
+    }
+
+    fn last_key(&self, table: &'static str) -> Result<Option<Vec<u8>>, StoreError> {
+        let cf = self
+            .db
+            .cf_handle(table)
+            .ok_or_else(|| StoreError::Custom(format!("Table {table} not found")))?;
+        let mut iter = self.db.iterator_cf(&cf, rocksdb::IteratorMode::End);
+        match iter.next() {
+            Some(Ok((k, _))) => Ok(Some(k.to_vec())),
+            Some(Err(e)) => Err(StoreError::Custom(e.to_string())),
+            None => Ok(None),
+        }
     }
 }
 
@@ -447,6 +495,20 @@ impl StorageWriteBatch for RocksDBWriteTx {
             .ok_or_else(|| StoreError::Custom(format!("Table {} not found", table)))?;
 
         self.batch.delete_cf(&cf, key);
+        Ok(())
+    }
+
+    fn delete_range(
+        &mut self,
+        table: &'static str,
+        start: &[u8],
+        end: &[u8],
+    ) -> Result<(), StoreError> {
+        let cf = self
+            .db
+            .cf_handle(table)
+            .ok_or_else(|| StoreError::Custom(format!("Table {table:?} not found")))?;
+        self.batch.delete_range_cf(&cf, start, end);
         Ok(())
     }
 

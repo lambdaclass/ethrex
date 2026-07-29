@@ -1448,7 +1448,7 @@ mod tests {
         assert_eq!(config.next_fork(0), None);
     }
 
-    // EIP-7843 beacon-slot derivation knob (feedback #4).
+    // EIP-7843 beacon-slot derivation knob.
 
     /// Genesis 1000, 6s slots, knob active from ts 1000.
     fn slot_config() -> ChainConfig {

@@ -103,6 +103,16 @@ pub enum TxValidationError {
     IntrinsicGasTooLow,
     #[error("Transaction gas limit lower than the gas cost floor for calldata tokens")]
     IntrinsicGasBelowFloorGasCost,
+    /// L2-only. Raised by the L2 hook's `reserve_l1_gas` when the gas limit cannot
+    /// cover the L1 data-availability gas reserved on top of the intrinsic cost or
+    /// the calldata floor. Distinct from [`TxValidationError::IntrinsicGasTooLow`]
+    /// on purpose: the reserved amount is derived from the L1 fee config and the
+    /// block's gas price, so this failure is TRANSIENT — the same transaction can
+    /// succeed in a later block once L1 fees drop. Consumers that classify errors
+    /// as permanent-vs-transient (the payload builders' `is_deterministic_invalid`)
+    /// rely on the two not being conflated.
+    #[error("Transaction gas limit cannot cover the reserved L1 data availability gas")]
+    L1GasReservationTooLow,
     #[error(
         "Gas allowance exceeded. Block gas limit: {block_gas_limit}, transaction gas limit: {tx_gas_limit}"
     )]
@@ -150,6 +160,15 @@ pub enum TxValidationError {
     TxMaxGasLimitExceeded { tx_hash: H256, tx_gas_limit: u64 },
     #[error("Invalid frame transaction: VERIFY frame did not call APPROVE or payer not approved")]
     InvalidFrameTransaction,
+    /// EIP-8272: a reference whose slot is not yet referenceable. A root written
+    /// in slot `S` becomes referenceable in slot `S + 1`, so this resolves on its
+    /// own as the chain advances and must not be treated as intrinsic invalidity.
+    #[error("EIP-8272 recent-root reference is not yet referenceable at this slot")]
+    FrameTxRecentRootNotReferenceable,
+    /// EIP-8272: a reference outside the usable window, or one whose entry is not
+    /// committed under `RECENT_ROOT_ADDRESS` in the transaction pre-state.
+    #[error("EIP-8272 recent-root reference is expired or not committed")]
+    FrameTxRecentRootInvalid,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error, Serialize, Deserialize)]
