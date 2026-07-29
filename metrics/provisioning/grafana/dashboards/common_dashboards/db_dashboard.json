@@ -1463,7 +1463,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "rate(ethrex_db_block_cache_hits_total{instance=~\"$instance\"}[5m]) / clamp_min(rate(ethrex_db_block_cache_hits_total{instance=~\"$instance\"}[5m]) + rate(ethrex_db_block_cache_misses_total{instance=~\"$instance\"}[5m]), 1)",
+          "expr": "rate(ethrex_db_block_cache_hits{instance=~\"$instance\"}[5m]) / clamp_min(rate(ethrex_db_block_cache_hits{instance=~\"$instance\"}[5m]) + rate(ethrex_db_block_cache_misses{instance=~\"$instance\"}[5m]), 1)",
           "refId": "A",
           "legendFormat": "Hit ratio"
         }
