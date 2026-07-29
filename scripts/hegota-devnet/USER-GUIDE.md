@@ -106,13 +106,23 @@ transfers emit EIP-7708 logs from `0x…fffe`).
 ## Send & Inspect a Frame Transaction (rex CLI)
 
 The [`rex`](https://github.com/lambdaclass/rex) CLI has first-class frame-transaction
-support on its **`hegota-devnet`** branch, which git-pins ethrex's `hegota-devnet`
-crates and so speaks the exact wire format this devnet runs. Install the `rex` binary
-straight from that branch (`--locked` builds against the pinned ethrex revision):
+support (`rex frame send` / `build` / `inspect`) on `main`, but `main` depends on the
+*published* ethrex crates (`ethrex-common = "22.0.0"`), which speak the EIP-8141-only
+9-field envelope. This devnet runs the combined 8141/8250/8272/7906 11-field envelope,
+so a `rex` built from `main` cannot talk to it. Install from rex's **`hegota-devnet`**
+branch instead: it git-pins ethrex's `hegota-devnet` branch and so speaks the exact
+wire format this devnet runs.
 
 ```bash
-cargo install --locked --git https://github.com/lambdaclass/rex.git --branch hegota-devnet
+cargo install --force --git https://github.com/lambdaclass/rex.git --branch hegota-devnet
 ```
+
+> **Reinstall for this genesis, and do not pass `--locked`.** The branch's committed
+> `Cargo.lock` pins an ethrex revision that predates the current EIP-8141 signature-scheme
+> numbering, so `--locked` builds a `rex` whose transactions this devnet rejects. Without
+> it, cargo re-resolves the git dependency to the branch tip. Any earlier install is
+> stale — `rex --version` reporting `17.0.0`, or `rex frame --help` listing a `receipt`
+> subcommand instead of `inspect`, both mean the binary needs replacing.
 
 ```bash
 # Self-verified transfer (VERIFY approve exec+payment, then SENDER transfer).
