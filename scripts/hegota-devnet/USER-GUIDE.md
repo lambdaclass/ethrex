@@ -60,7 +60,7 @@ A frame transaction is `0x06 ‖ rlp(envelope)` with an 11-field envelope:
 ```
 
 - `frame = [mode, flags, target_or_empty, gas_limit, value, data]`
-- `signature = [scheme, signer, msg, signature_bytes]` — scheme 0 = secp256k1 (65-byte `v‖r‖s`, v ∈ {27,28}), scheme 1 = P256 (128-byte `r‖s‖qx‖qy`)
+- `signature = [scheme, signer, msg, signature_bytes]` — scheme 0 = ARBITRARY, scheme 1 = secp256k1 (65-byte `v‖r‖s`, v ∈ {27,28}), scheme 2 = P256 (128-byte `r‖s‖qx‖qy`)
 - `recent_root_reference = [source_id, slot, root]`
 - `sig_hash = keccak256(0x06 ‖ rlp(envelope with every empty-msg signature's bytes elided))`
 

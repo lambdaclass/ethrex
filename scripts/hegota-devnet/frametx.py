@@ -6,7 +6,7 @@ Wire layout (ethrex hegota-devnet), verified against the repo golden vector:
                      max_priority_fee, max_fee, max_blob_fee, blob_hashes,
                      recent_root_references])
   frame     = rlp([mode, flags, target_or_empty, gas_limit, value, data])
-  signature = rlp([scheme, signer, msg, signature_bytes])
+  signature = rlp([scheme, signer, msg, signature_bytes])  # scheme: 0=ARBITRARY, 1=SECP256K1, 2=P256
   sig_hash  = keccak256(0x06 || rlp(envelope with empty-msg signatures' bytes elided))
 """
 from eth_hash.auto import keccak
@@ -48,8 +48,10 @@ class Frame:
                          rlp_int(self.gas_limit), rlp_int(self.value), rlp_bytes(self.data)])
 
 class FrameSig:
-    SECP256K1 = 0
-    P256 = 1
+    # EIP-8141 signature schemes: ARBITRARY=0, SECP256K1=1, P256=2.
+    ARBITRARY = 0
+    SECP256K1 = 1
+    P256 = 2
     def __init__(self, scheme, signer, msg, signature):
         self.scheme, self.signer, self.msg, self.signature = scheme, signer, msg, signature
     def rlp(self, elide=False):
@@ -101,8 +103,8 @@ if __name__ == "__main__":
         max_priority_fee=0x3b9aca00,
         max_fee=0x6fc23ac00,
     )
-    EXPECT_RLP = "f8ae01c1800794000000000000000000000000000000000000abcde8ca01038082520880821122dc0280940000000000000000000000000000000000001234829c408080f85cf85a8094000000000000000000000000000000000000abcd80b8410101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101843b9aca008506fc23ac0080c0c0"
-    EXPECT_SIGHASH = "0x78ad972cb33b083d46ec78db62ffb45e0e53a9cb5eba1414bc1def77ed223fb3"
+    EXPECT_RLP = "f8ae01c1800794000000000000000000000000000000000000abcde8ca01038082520880821122dc0280940000000000000000000000000000000000001234829c408080f85cf85a0194000000000000000000000000000000000000abcd80b8410101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101843b9aca008506fc23ac0080c0c0"
+    EXPECT_SIGHASH = "0x989e6ce4dc87b2afd5cfa6c780ff60f01fc3b40c77057cf872410145d69f715c"
     got_rlp = golden.encode().hex()
     got_sh = "0x" + golden.sig_hash().hex()
     print("RLP match:     ", got_rlp == EXPECT_RLP)
