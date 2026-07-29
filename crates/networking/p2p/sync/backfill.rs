@@ -41,7 +41,7 @@ use super::{HistoryChain, SyncDiagnostics, SyncError};
 ///
 /// Precondition: the canonical header chain is present from genesis to head,
 /// which holds once snap sync has completed.
-pub async fn resolve_postmerge_floor(store: &Store) -> Result<Option<BlockNumber>, SyncError> {
+async fn resolve_postmerge_floor(store: &Store) -> Result<Option<BlockNumber>, SyncError> {
     if let Some(merge_block) = store.get_chain_config().merge_netsplit_block {
         return Ok(Some(merge_block));
     }
@@ -130,7 +130,9 @@ async fn resolve_floor(
 /// present exactly on `[pivot, head]` (plus, possibly, genesis in isolation), so
 /// over `[1, head]` the "has a body" predicate is monotonic and we bisect for the
 /// pivot.
-async fn reconcile_frontier(store: &Store) -> Result<BlockNumber, SyncError> {
+///
+/// Also used by snap sync to record the true frontier at the end of each cycle.
+pub(crate) async fn reconcile_frontier(store: &Store) -> Result<BlockNumber, SyncError> {
     let head = store.get_latest_block_number().await?;
     if head == 0 {
         return Ok(0);
