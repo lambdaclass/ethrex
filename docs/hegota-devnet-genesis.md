@@ -54,13 +54,18 @@ missing predeploy is that `getPayload` fails on every slot from the Amsterdam
 boundary on, the consensus client reports `Unknown payload`, and the chain freezes
 on the last pre-Amsterdam block.
 
-`ethereum-genesis-generator` deploys these from **6.1.4** onward. While
-`ETHEREUM_PACKAGE_REVISION` in the Makefile pins a revision whose generator is
-older, the devnet config preloads them itself through
-`network_params.additional_preloaded_contracts`, with storage slot 0 set to
-`EXCESS_INHIBITOR` (`2**256-1`) because a preloaded runtime image never runs the
-init code that would otherwise arm it. **Delete that block once the pinned
-generator is 6.1.4 or newer**, so the predeploys come from one place.
+`ethereum-genesis-generator` deploys these from **6.1.4** onward, which is what
+`ETHEREUM_PACKAGE_REVISION` pins, so the code no longer has to come from the config.
+The config still preloads both through `network_params.additional_preloaded_contracts`
+for one reason: 6.1.4 sets storage slot 0 to `EXCESS_INHIBITOR` (`2**256-1`) on the
+*exit* predeploy but not on the *deposit* one, and EIP-8282 arms both at deployment so
+that no request can be enqueued before the first end-of-block system call. A preloaded
+runtime image never runs the init code that would otherwise arm it. The generator
+applies its system contracts before the additional contracts, so the preload wins and
+supplies the inhibitor the generator omits.
+
+**Keep that block until the generator arms the deposit predeploy's inhibitor**, then
+delete it so the predeploys come from one place.
 
 **Hegotá predeploys** — `0x…8141` (`EXPIRY_VERIFIER`) and `0x…8250`
 (`NONCE_MANAGER`) are installed by ethrex at the fork and need no genesis entry.
