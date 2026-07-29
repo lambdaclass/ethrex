@@ -39,6 +39,9 @@ impl ProgramInput {
 ///
 /// `Direct` carries in-memory blocks + witness (test path). `Wire` carries an
 /// already-decoded EIP-8025 stateless input from spec wire bytes.
+// Built once per guest run, never collected, so the variant size gap is
+// irrelevant and boxing would only add indirection.
+#[allow(clippy::large_enum_variant)]
 #[cfg(feature = "eip-8025")]
 pub enum ProgramInput {
     Direct {
