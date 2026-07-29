@@ -3407,7 +3407,11 @@ impl Blockchain {
 
         // Check init code size
         // [EIP-7954] - Amsterdam increases the limit
-        let max_initcode_size = if config.is_amsterdam_activated(header.timestamp) {
+        // Gate on the fork ORDINAL to match execution (levm `validate_init_code_size`
+        // uses `fork >= Fork::Amsterdam`): on a chain running a post-Amsterdam fork
+        // without an explicit `amsterdamTime`, a field-based check would apply the
+        // smaller legacy cap and over-reject initcode sizes execution accepts.
+        let max_initcode_size = if config.fork(header.timestamp) >= Fork::Amsterdam {
             AMSTERDAM_MAX_INITCODE_SIZE
         } else {
             MAX_INITCODE_SIZE
