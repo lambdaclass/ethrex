@@ -2709,10 +2709,15 @@ impl FrameTransaction {
     ///   self_verify → `APPROVE_EXECUTION_AND_PAYMENT`, only_verify → `APPROVE_EXECUTION`,
     ///   pay → `APPROVE_PAYMENT`.
     /// - No frame in the prefix has the atomic-batch flag set.
-    /// - Total gas budget: Σ(prefix frame gas_limits) + signature_verification_cost() ≤ MAX_VERIFY_GAS.
+    /// - Total gas budget: Σ(prefix frame gas_limits) + signature_verification_cost() ≤ `max_verify_gas`.
+    ///
+    /// `max_verify_gas` is the node's `MAX_VERIFY_GAS` budget; the spec value is
+    /// [`FRAME_TX_MAX_VERIFY_GAS`], but it is mempool policy and therefore
+    /// operator-tunable.
     pub fn validate_prefix_structure(
         &self,
         prefix: &ValidationPrefix,
+        max_verify_gas: u64,
     ) -> Result<(), FrameValidationError> {
         let mut deploy_count = 0usize;
 
@@ -2794,10 +2799,10 @@ impl FrameTransaction {
             .map(|&i| self.frames[i].gas_limit)
             .fold(0u64, |acc, g| acc.saturating_add(g));
         let total_verify_gas = prefix_gas.saturating_add(self.signature_verification_cost());
-        if total_verify_gas > FRAME_TX_MAX_VERIFY_GAS {
+        if total_verify_gas > max_verify_gas {
             return Err(FrameValidationError::VerifyGasBudgetExceeded {
                 actual: total_verify_gas,
-                limit: FRAME_TX_MAX_VERIFY_GAS,
+                limit: max_verify_gas,
             });
         }
 

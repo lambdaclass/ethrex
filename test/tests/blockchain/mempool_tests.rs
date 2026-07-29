@@ -806,6 +806,41 @@ async fn mempool_rejects_frame_tx_exceeding_max_verify_gas() {
 }
 
 #[tokio::test]
+async fn configured_max_verify_gas_overrides_the_spec_default() {
+    // EIP-8141 §Mempool `MAX_VERIFY_GAS` is node policy (SHOULD), so operators
+    // may raise it. A prefix whose frame gas limit exceeds the spec default must
+    // be rejected under the default budget and admitted under a raised one.
+    let raised_budget = 5 * FRAME_TX_MAX_VERIFY_GAS;
+    let prefix_gas = FRAME_TX_MAX_VERIFY_GAS + 50_000;
+    assert!(prefix_gas > FRAME_TX_MAX_VERIFY_GAS && prefix_gas < raised_budget);
+
+    let mut frame_tx = minimal_valid_frame_tx();
+    frame_tx.frames[0].gas_limit = prefix_gas;
+    let tx = Transaction::FrameTransaction(frame_tx);
+    let sender = tx.sender(&NativeCrypto).unwrap();
+
+    let default_blockchain = Blockchain::default_with_store(setup_hegota_store().await);
+    let rejected = default_blockchain.validate_transaction(&tx, sender).await;
+    assert!(
+        matches!(rejected, Err(MempoolError::FrameTxVerifyGasBudgetExceeded)),
+        "got {rejected:?}"
+    );
+
+    let raised_blockchain = Blockchain::new(
+        setup_hegota_store().await,
+        BlockchainOptions {
+            max_verify_gas: raised_budget,
+            ..Default::default()
+        },
+    );
+    let admitted = raised_blockchain.validate_transaction(&tx, sender).await;
+    assert!(
+        admitted.is_ok(),
+        "raised max_verify_gas should admit the tx, got {admitted:?}"
+    );
+}
+
+#[tokio::test]
 async fn mempool_rejects_frame_tx_from_unknown_sender_with_sentinel_nonce() {
     let store = setup_hegota_store().await;
     let blockchain = Blockchain::default_with_store(store);
