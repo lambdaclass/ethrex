@@ -46,7 +46,10 @@ jobs:
     strategy:
       matrix:
         # Note: openvm backend linting is disabled due to a problem in the installation https://github.com/lambdaclass/ethrex/issues/5509
-        backend: ["sp1", "risc0", "zisk"]
+        # Note: risc0 backend linting is temporarily disabled: the c-kzg 2.1.8 floor exceeds the
+        # highest risc0 c-kzg fork tag (v2.1.7-risczero.0), so the guest workspace can't resolve.
+        # Re-add "risc0" once risc0/c-kzg-4844 publishes a >=2.1.8 tag.
+        backend: ["sp1", "zisk"]
     steps:
       - name: Checkout sources
         uses: actions/checkout@v6

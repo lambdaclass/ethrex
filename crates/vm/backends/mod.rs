@@ -16,7 +16,7 @@ pub use ethrex_levm::call_frame::CallFrameBackup;
 use ethrex_levm::db::gen_db::GeneralizedDatabase;
 pub use ethrex_levm::db::{CachingDatabase, Database as LevmDatabase};
 use ethrex_levm::errors::{ExecutionReport, TxResult};
-use ethrex_levm::vm::VMType;
+pub use ethrex_levm::vm::VMType;
 use std::sync::Arc;
 use std::sync::atomic::AtomicUsize;
 use std::sync::mpsc::Sender;
@@ -188,7 +188,7 @@ impl Evm {
         let fork = chain_config.fork(block_header.timestamp);
 
         // EIP-8141: the expiry verifier predeploy must exist from Hegota
-        // activation onward (spec commit 0b197156). Idempotent install for the
+        // activation onward. Idempotent install for the
         // payload-build path; the block-import path is hooked in prepare_block.
         if fork >= Fork::Hegota && matches!(self.vm_type, VMType::L1) {
             LEVM::install_expiry_verifier_code(&mut self.db, self.crypto.as_ref())?;

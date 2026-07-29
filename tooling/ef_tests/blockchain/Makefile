@@ -1,7 +1,7 @@
 .PHONY: download-test-vectors clean-vectors test test-levm test-sp1 test-stateless amsterdam-vectors zkevm-vectors test-stateless-zkevm
 
 VECTORS_ROOT := vectors
-FIXTURES_FILE := .fixtures_url
+FIXTURES_FILE := ../.fixtures_url
 SPECTEST_ARTIFACT := tests.tar.gz
 SPECTEST_VECTORS_DIR := $(VECTORS_ROOT)/eest
 SPECTEST_URL := $(shell cat $(FIXTURES_FILE))
@@ -12,11 +12,11 @@ LEGACYTEST_COMMIT := 1f581b8ccdc4c63acf5f2c5c1b155c690c32a8eb
 LEGACYTEST_URL := https://github.com/ethereum/legacytests/archive/$(LEGACYTEST_COMMIT).tar.gz
 LEGACYTEST_ARCHIVE_ROOT := legacytests-$(LEGACYTEST_COMMIT)/Cancun/BlockchainTests
 
-AMSTERDAM_FIXTURES_FILE := .fixtures_url_amsterdam
+AMSTERDAM_FIXTURES_FILE := ../.fixtures_url_amsterdam
 AMSTERDAM_ARTIFACT := amsterdam-tests.tar.gz
 AMSTERDAM_URL := $(shell cat $(AMSTERDAM_FIXTURES_FILE))
 
-# zkevm@v0.5.0 is filled against glamsterdam-devnet v6.1.0 (the same base as the
+# zkevm@v0.6.2 is filled against glamsterdam-devnet v7.2.0 (the same base as the
 # Amsterdam bundle) but additionally carries the EIP-8025 stateless witness
 # fields (executionWitness / statelessInputBytes / statelessOutputBytes). Both
 # bundles extract a `for_amsterdam/` subtree, so we keep the zkevm bundle in a
@@ -24,7 +24,7 @@ AMSTERDAM_URL := $(shell cat $(AMSTERDAM_FIXTURES_FILE))
 # regular Amsterdam fixtures.
 ZKEVM_VECTORS_ROOT := vectors_zkevm
 ZKEVM_VECTORS_DIR := $(ZKEVM_VECTORS_ROOT)/eest
-ZKEVM_FIXTURES_FILE := .fixtures_url_zkevm
+ZKEVM_FIXTURES_FILE := ../.fixtures_url_zkevm
 ZKEVM_ARTIFACT := zkevm-tests.tar.gz
 ZKEVM_URL := $(shell cat $(ZKEVM_FIXTURES_FILE))
 

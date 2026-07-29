@@ -244,7 +244,7 @@ fn single_fork(s: &str) -> anyhow::Result<ethrex_common::types::Fork> {
     let f = match s {
         "Frontier" => Fork::Frontier,
         "Homestead" => Fork::Homestead,
-        "EIP150" | "Tangerine" => Fork::Tangerine,
+        "EIP150" | "Tangerine" | "TangerineWhistle" => Fork::Tangerine,
         "EIP158" | "SpuriousDragon" => Fork::SpuriousDragon,
         "Byzantium" => Fork::Byzantium,
         "Constantinople" => Fork::Constantinople,
