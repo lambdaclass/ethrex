@@ -501,8 +501,13 @@ jobs:
       - name: Setup Rust Environment
         uses: ./.github/actions/setup-rust
 
+      # Built with release-grade optimization: an unoptimized ethrex overflows
+      # the 2 MiB tokio worker stack while building a payload, since every
+      # `.await` in the block-building chain keeps its locals live in a future
+      # that no inlining collapses. `release-fast` keeps opt-level 3 without
+      # thin-LTO, so the job also spends far less time compiling.
       - name: Compile ethrex binary
-        run: cargo build --bin ethrex
+        run: cargo build --profile release-fast --bin ethrex
 
       - name: Run reorg tests
-        run: cd tooling/reorgs && cargo run
+        run: cd tooling/reorgs && cargo run -- ../../target/release-fast/ethrex
