@@ -742,6 +742,7 @@ dependencies = [
  "ethereum-types",
  "hex-literal 0.4.1",
  "k256 0.13.4 (registry+https://github.com/rust-lang/crates.io-index)",
+ "malachite",
  "num-bigint",
  "p256",
  "ripemd",
@@ -844,11 +845,12 @@ dependencies = [
  "ethereum-types",
  "ethrex-crypto",
  "ethrex-rlp",
- "lazy_static",
+ "hashbrown 0.15.5",
  "rayon",
  "rkyv",
  "rustc-hash",
  "serde",
+ "spin 0.9.8",
  "thiserror",
 ]
 

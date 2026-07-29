@@ -901,11 +901,12 @@ dependencies = [
  "ethereum-types",
  "ethrex-crypto",
  "ethrex-rlp",
- "lazy_static",
+ "hashbrown 0.15.5",
  "rayon",
  "rkyv",
  "rustc-hash",
  "serde",
+ "spin",
  "thiserror",
 ]
 
