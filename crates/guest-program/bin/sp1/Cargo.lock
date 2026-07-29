@@ -167,7 +167,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "246a225cc6131e9ee4f24619af0f19d67761fff15d7ccc22e42b80846e69449a"
 dependencies = [
  "num-traits",
- "rand",
+ "rand 0.8.5",
 ]
 
 [[package]]
@@ -238,6 +238,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "bitflags"
+version = "2.13.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b588b76d00fde79687d7646a9b5bdf3cc0f655e0bbd080335a95d7e96f3587da"
+
+[[package]]
 name = "bitvec"
 version = "1.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -283,7 +289,7 @@ dependencies = [
  "group",
  "hex",
  "pairing",
- "rand_core",
+ "rand_core 0.6.4",
  "sp1-lib",
  "subtle",
 ]
@@ -391,6 +397,18 @@ name = "const-default"
 version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0b396d1f76d455557e1218ec8066ae14bba60b4b36ecd55577ba979f5db7ecaa"
+
+[[package]]
+name = "const-hex"
+version = "1.19.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "33e2a781ebdf4467d1428dc4593067825fb646f6871475098d8577421af73558"
+dependencies = [
+ "cfg-if",
+ "cpufeatures",
+ "proptest",
+ "serde_core",
+]
 
 [[package]]
 name = "const-oid"
@@ -531,7 +549,7 @@ version = "0.5.5"
 source = "git+https://github.com/sp1-patches/RustCrypto-bigint?tag=patch-0.5.5-sp1-4.0.0#d421029772fb604022defd4cae5fffb269ad5155"
 dependencies = [
  "generic-array",
- "rand_core",
+ "rand_core 0.6.4",
  "subtle",
  "zeroize",
 ]
@@ -686,7 +704,7 @@ dependencies = [
  "group",
  "hkdf",
  "pkcs8",
- "rand_core",
+ "rand_core 0.6.4",
  "sec1",
  "subtle",
  "zeroize",
@@ -842,6 +860,7 @@ name = "ethrex-guest-sp1"
 version = "22.0.0"
 dependencies = [
  "ethrex-guest-program",
+ "ethrex-stateless-validator",
  "ethrex-vm",
  "rkyv",
  "sp1-zkvm",
@@ -892,6 +911,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "ethrex-stateless-validator"
+version = "22.0.0"
+dependencies = [
+ "ethrex-common",
+ "ethrex-crypto",
+ "ethrex-guest-program",
+ "hex-literal",
+ "stateless-validator-common",
+ "thiserror",
+]
+
+[[package]]
 name = "ethrex-trie"
 version = "22.0.0"
 dependencies = [
@@ -937,7 +968,7 @@ dependencies = [
  "bitvec",
  "byteorder",
  "ff_derive",
- "rand_core",
+ "rand_core 0.6.4",
  "subtle",
 ]
 
@@ -969,7 +1000,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "835c052cb0c08c1acf6ffd71c022172e18723949c8282f2b9f27efbc51e64534"
 dependencies = [
  "byteorder",
- "rand",
+ "rand 0.8.5",
  "rustc-hex",
  "static_assertions",
 ]
@@ -1047,7 +1078,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f0f9ef7462f7c099f518d754361858f86d8a07af53ba9af0fe635bbccb151a63"
 dependencies = [
  "ff",
- "rand_core",
+ "rand_core 0.6.4",
  "subtle",
 ]
 
@@ -1312,8 +1343,8 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "58b1a1c1102a5a7fbbda117b79fb3a01e033459c738a3c1642269603484fd1c1"
 dependencies = [
  "lambdaworks-math",
- "rand",
- "rand_chacha",
+ "rand 0.8.5",
+ "rand_chacha 0.3.1",
  "serde",
  "sha2",
  "sha3",
@@ -1328,7 +1359,7 @@ dependencies = [
  "getrandom 0.2.17",
  "num-bigint 0.4.6",
  "num-traits",
- "rand",
+ "rand 0.8.5",
  "serde",
  "serde_json",
 ]
@@ -1569,7 +1600,7 @@ dependencies = [
  "p3-mds",
  "p3-poseidon2",
  "p3-symmetric",
- "rand",
+ "rand 0.8.5",
  "serde",
 ]
 
@@ -1596,7 +1627,7 @@ dependencies = [
  "num-bigint 0.4.6",
  "num-traits",
  "p3-util",
- "rand",
+ "rand 0.8.5",
  "serde",
 ]
 
@@ -1610,7 +1641,7 @@ dependencies = [
  "p3-field",
  "p3-maybe-rayon",
  "p3-util",
- "rand",
+ "rand 0.8.5",
  "serde",
  "tracing",
 ]
@@ -1633,7 +1664,7 @@ dependencies = [
  "p3-matrix",
  "p3-symmetric",
  "p3-util",
- "rand",
+ "rand 0.8.5",
 ]
 
 [[package]]
@@ -1646,7 +1677,7 @@ dependencies = [
  "p3-field",
  "p3-mds",
  "p3-symmetric",
- "rand",
+ "rand 0.8.5",
  "serde",
 ]
 
@@ -1784,6 +1815,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "proptest"
+version = "1.11.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4b45fcc2344c680f5025fe57779faef368840d0bd1f42f216291f0dc4ace4744"
+dependencies = [
+ "bitflags",
+ "num-traits",
+ "rand 0.9.5",
+ "rand_chacha 0.9.0",
+ "rand_xorshift",
+ "unarray",
+]
+
+[[package]]
 name = "ptr_meta"
 version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1840,8 +1885,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "34af8d1a0e25924bc5b7c43c079c942339d8f0a8b57c39049bef581b46327404"
 dependencies = [
  "libc",
- "rand_chacha",
- "rand_core",
+ "rand_chacha 0.3.1",
+ "rand_core 0.6.4",
+]
+
+[[package]]
+name = "rand"
+version = "0.9.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b9ef1d0d795eb7d84685bca4f72f3649f064e6641543d3a8c415898726a57b41"
+dependencies = [
+ "rand_core 0.9.5",
 ]
 
 [[package]]
@@ -1851,7 +1905,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e6c10a63a0fa32252be49d21e7709d4d4baf8d231c2dbce1eaa8141b9b127d88"
 dependencies = [
  "ppv-lite86",
- "rand_core",
+ "rand_core 0.6.4",
+]
+
+[[package]]
+name = "rand_chacha"
+version = "0.9.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d3022b5f1df60f26e1ffddd6c66e8aa15de382ae63b3a0c1bfc0e4d3e3f325cb"
+dependencies = [
+ "ppv-lite86",
+ "rand_core 0.9.5",
 ]
 
 [[package]]
@@ -1861,6 +1925,21 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ec0be4795e2f6a28069bec0b5ff3e2ac9bafc99e6a9a7dc3547996c5c816922c"
 dependencies = [
  "getrandom 0.2.17",
+]
+
+[[package]]
+name = "rand_core"
+version = "0.9.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "76afc826de14238e6e8c374ddcc1fa19e374fd8dd986b0d2af0d02377261d83c"
+
+[[package]]
+name = "rand_xorshift"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "513962919efc330f829edb2535844d1b912b0fbe2ca165d613e4e8788bb05a5a"
+dependencies = [
+ "rand_core 0.9.5",
 ]
 
 [[package]]
@@ -2061,7 +2140,7 @@ dependencies = [
  "bitcoin_hashes",
  "cfg-if",
  "k256",
- "rand",
+ "rand 0.8.5",
  "secp256k1-sys",
 ]
 
@@ -2188,7 +2267,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "77549399552de45a898a580c1b41d445bf730df867cc44e6c0233bbc4b8329de"
 dependencies = [
  "digest",
- "rand_core",
+ "rand_core 0.6.4",
 ]
 
 [[package]]
@@ -2248,7 +2327,7 @@ dependencies = [
  "getrandom 0.3.4",
  "lazy_static",
  "libm",
- "rand",
+ "rand 0.8.5",
  "sha2",
  "sp1-lib",
  "sp1-primitives",
@@ -2264,7 +2343,7 @@ dependencies = [
  "ff",
  "group",
  "pairing",
- "rand_core",
+ "rand_core 0.6.4",
  "sp1-lib",
  "subtle",
 ]
@@ -2283,6 +2362,21 @@ checksum = "d91ed6c858b01f942cd56b37a94b3e0a1798290327d1236e4d9cf4eaca44d29d"
 dependencies = [
  "base64ct",
  "der",
+]
+
+[[package]]
+name = "stateless-validator-common"
+version = "0.13.0"
+source = "git+https://github.com/eth-act/ere-guests.git?rev=9d3d4b9157cd0818abf68ebf7213ba041d1e83e9#9d3d4b9157cd0818abf68ebf7213ba041d1e83e9"
+dependencies = [
+ "const-hex",
+ "libssz",
+ "libssz-derive",
+ "libssz-merkle",
+ "libssz-types",
+ "paste",
+ "sha2",
+ "thiserror",
 ]
 
 [[package]]
@@ -2329,7 +2423,7 @@ dependencies = [
  "crunchy",
  "lazy_static",
  "num-bigint 0.4.6",
- "rand",
+ "rand 0.8.5",
  "rustc-hex",
  "sp1-lib",
 ]
@@ -2535,6 +2629,12 @@ dependencies = [
  "hex",
  "static_assertions",
 ]
+
+[[package]]
+name = "unarray"
+version = "0.1.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "eaea85b334db583fe3274d12b4cd1880032beab409c0d774be044d4480ab9a94"
 
 [[package]]
 name = "unicode-ident"
