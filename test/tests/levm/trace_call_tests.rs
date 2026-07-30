@@ -107,6 +107,40 @@ fn trace_call_calls_uses_from_field() {
     );
 }
 
+/// Regression: `debug_traceCall` must skip the sender nonce check (geth's
+/// `ToMessage(_, skipNonceCheck=true)`). A call whose `nonce` disagrees with the
+/// sender's on-chain nonce — as happens when tracing on top of a mid-block
+/// `txIndex` state — must still trace cleanly instead of erroring on a mismatch.
+#[test]
+fn trace_call_calls_skips_nonce_check() {
+    let mut db = db_with_contract(vec![0x60, 0x01, 0x60, 0x02, 0x01, 0x00]);
+    let header = default_header();
+    // Sender's state nonce is 0; supply a deliberately mismatched nonce.
+    let tx = GenericTransaction {
+        nonce: Some(42),
+        ..call_tx()
+    };
+
+    let trace = LEVM::trace_call_calls(
+        &mut db,
+        &header,
+        &tx,
+        false,
+        false,
+        0,
+        VMType::L1,
+        &NativeCrypto,
+    )
+    .expect("trace_call_calls must succeed despite the mismatched nonce");
+
+    assert_eq!(trace.len(), 1, "single top-level call frame");
+    assert!(
+        trace[0].error.is_none(),
+        "call should not error: {:?}",
+        trace[0].error
+    );
+}
+
 /// The opcode tracer over a generic call yields the expected step sequence.
 #[test]
 fn trace_call_opcodes_produces_steps() {
