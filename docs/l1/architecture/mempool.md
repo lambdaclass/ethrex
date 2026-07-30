@@ -120,7 +120,7 @@ Notes on individual checks:
 
 **Per-tx wire-size cap.** Non-blob transactions are bounded by `MAX_TX_SIZE = 128 KiB` against `Transaction::encode_canonical_len()`. Blob transactions are bounded by `MAX_BLOB_TX_SIZE` in `add_blob_transaction_to_pool` against the wire wrapper, since ethrex stores the core transaction and the sidecar in separate structs.
 
-**Init code size.** Active from Shanghai. Limit is `MAX_INITCODE_SIZE = 48 KiB` (`2 × MAX_CODE_SIZE`); from Amsterdam onward (EIP-7954) it becomes `AMSTERDAM_MAX_INITCODE_SIZE = 64 KiB`.
+**Init code size.** Active from Shanghai. Limit is `MAX_INITCODE_SIZE = 48 KiB` (`2 × MAX_CODE_SIZE`); from Amsterdam onward (EIP-7954) it becomes `AMSTERDAM_MAX_INITCODE_SIZE = 128 KiB` (`2 × AMSTERDAM_MAX_CODE_SIZE`, i.e. 2 × 64 KiB).
 
 **Nonce lookup.** Reads `account.nonce` from storage at the latest block. Rejects with `NonceTooLow` when `nonce < account.nonce` or `nonce == u64::MAX`.
 
@@ -138,13 +138,19 @@ Notes on individual checks:
 
 ## Replacement by Fee (RBF)
 
-`Mempool::find_tx_to_replace` decides whether a new transaction at an existing `(sender, nonce)` is accepted as a replacement. A replacement is accepted only when it strictly increases every applicable fee field versus the in-pool transaction:
+`Mempool::find_tx_to_replace` decides whether a new transaction at an existing `(sender, nonce)` is accepted as a replacement. The condition is:
 
-- Legacy: `gas_price` strictly greater.
-- EIP-1559 / EIP-2930 / EIP-7702 / fee-token: both `max_fee_per_gas` and `max_priority_fee_per_gas` strictly greater.
-- EIP-4844 blob: additionally `max_fee_per_blob_gas` strictly greater.
+```
+blob_fee_ok && (both_1559_fields_higher || gas_price_higher)
+```
 
-If the bump condition isn't met, the replacement is rejected with `UnderpricedReplacement`.
+- **`gas_price_higher`** — `Transaction::gas_price()` strictly greater. That accessor returns the `gas_price` field for legacy and **EIP-2930** transactions, and `max_fee_per_gas` for every typed-fee transaction (EIP-1559 / 4844 / 7702 / fee-token / frame).
+- **`both_1559_fields_higher`** — `max_fee_per_gas` *and* `max_priority_fee_per_gas` both strictly greater. Legacy and EIP-2930 transactions can never satisfy this arm: their `max_fee_per_gas()` / `max_priority_fee()` accessors return `None`, so their replacement is governed entirely by the `gas_price` comparison.
+- **`blob_fee_ok`** — when both the in-pool and incoming transaction carry `max_fee_per_blob_gas` (EIP-4844), the new one must be strictly greater; otherwise this term is vacuously true.
+
+Because the two fee arms are OR-ed, raising only `max_fee_per_gas` on an EIP-1559 transaction is already sufficient, since its `gas_price()` tracks `max_fee_per_gas`.
+
+If the bump condition isn't met, the replacement is rejected with `UnderpricedReplacement`. A configurable minimum-percentage bump is in flight (#6601).
 
 ## Per-sender Queued Cap
 
