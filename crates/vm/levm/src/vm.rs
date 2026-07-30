@@ -2284,13 +2284,12 @@ impl<'a> VM<'a> {
         // used before refunds. The EIP-7623 calldata floor then applies to the frame
         // and signature data: the mandatory costs are always charged, and the data
         // cost is floored against what execution actually consumed. EIP-8272
-        // reference gas is mandatory too — it prepays warming that happens
-        // unconditionally, and the floor is defined over the frame and signature
-        // data only, so leaving it inside the floored term would let the floor
-        // absorb it.
+        // reference intrinsic gas is mandatory too — it prepays warming that
+        // happens unconditionally — while the reference bytes themselves are
+        // ordinary transaction data, priced inside the floored term.
         let mandatory_gas = frame_tx
             .mandatory_gas()
-            .saturating_add(frame_tx.recent_root_reference_gas());
+            .saturating_add(frame_tx.recent_root_reference_intrinsic_gas());
         let applied_refund = self
             .substate
             .refunded_gas

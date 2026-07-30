@@ -409,11 +409,12 @@ fn evm_config_derives_slot_when_knob_active_and_cl_absent() {
     );
 }
 
-/// EIP-8272 reference gas is a mandatory cost, charged outside the EIP-7623
-/// floored term. The floor is defined over frame and signature data only, and at
-/// 64 gas per data byte it dominates `data_cost` (16 at most), so a floored
-/// reference charge would be absorbed whole — silently free — even though the
-/// warming it prepays happens unconditionally.
+/// EIP-8272 splits its gas in two: `recent_root_reference_intrinsic_gas` is a
+/// mandatory cost that enters both `standard_gas_limit` and `calldata_floor_gas`,
+/// while `rlp(recent_root_references)` is ordinary transaction data whose tokens
+/// enter `calldata_tokens`. With the floor binding, the charge is therefore the
+/// intrinsic gas plus the reference bytes at the floor rate, never absorbed and
+/// never billed twice.
 #[test]
 fn reference_gas_is_charged_even_when_the_calldata_floor_binds() {
     let salt = [0x55u8; 32];
@@ -427,8 +428,10 @@ fn reference_gas_is_charged_even_when_the_calldata_floor_binds() {
     let baseline = floor_bound_frame_tx();
     let mut referencing = floor_bound_frame_tx();
     referencing.recent_root_references = vec![entry.clone()];
-    let reference_gas = referencing.recent_root_reference_gas();
-    assert!(reference_gas > 0, "one reference must cost something");
+    assert!(
+        referencing.recent_root_reference_intrinsic_gas() > 0,
+        "one reference must cost something"
+    );
 
     // The floor must actually bind, or the test would pass for the wrong reason.
     let floor = baseline.calldata_floor_gas();
@@ -438,6 +441,18 @@ fn reference_gas_is_charged_even_when_the_calldata_floor_binds() {
         baseline.data_cost()
     );
 
+    // Under a binding floor the charge is the mandatory costs plus the floor, so
+    // the whole EIP-8272 delta is the difference between the two transactions'
+    // intrinsic gas and their floors.
+    let charged = |tx: &ethrex_common::types::FrameTransaction| {
+        tx.recent_root_reference_intrinsic_gas() + tx.calldata_floor_gas()
+    };
+    let expected_delta = charged(&referencing) - charged(&baseline);
+    assert!(
+        expected_delta > referencing.recent_root_reference_intrinsic_gas(),
+        "the reference bytes must add to the floor on top of the intrinsic gas"
+    );
+
     let without = run_with_committed_roots(baseline, &[], ref_slot + 1)
         .expect("reference-free tx must execute");
     let with = run_with_committed_roots(referencing, &[entry], ref_slot + 1)
@@ -445,7 +460,7 @@ fn reference_gas_is_charged_even_when_the_calldata_floor_binds() {
 
     assert_eq!(
         with.gas_used,
-        without.gas_used.saturating_add(reference_gas),
+        without.gas_used.saturating_add(expected_delta),
         "reference gas must survive the calldata floor"
     );
 }
