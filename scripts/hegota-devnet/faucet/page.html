@@ -1,0 +1,169 @@
+<!-- Faucet landing page. Self-contained: no external fonts, scripts or images,
+     so it works behind a strict CSP and on an air-gapped devnet.
+     Placeholders substituted at render time: {{CHAIN_ID}} {{AMOUNT}} {{RPC}} {{EXPLORER}} -->
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Hegotá devnet faucet</title>
+<style>
+  :root {
+    --bg: #fbfbfd; --panel: #fff; --fg: #1a1a1f; --muted: #61616b;
+    --line: #e4e4ea; --accent: #4f46e5; --accent-soft: #eef0fe;
+    --ok: #0f7b4f; --err: #b42318; --mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0e0e12; --panel: #16161c; --fg: #ececf1; --muted: #9a9aa6;
+      --line: #26262f; --accent: #8b85f8; --accent-soft: #1d1b33;
+      --ok: #46d39a; --err: #ff8a7a;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 2.5rem 1.25rem 4rem; background: var(--bg); color: var(--fg);
+    font: 15px/1.6 system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+  }
+  main { max-width: 46rem; margin: 0 auto; }
+  h1 { font-size: 1.7rem; margin: 0 0 .35rem; letter-spacing: -.02em; }
+  h2 { font-size: 1rem; margin: 2.25rem 0 .75rem; letter-spacing: .04em;
+       text-transform: uppercase; color: var(--muted); }
+  .lede { color: var(--muted); margin: 0 0 1.75rem; }
+  a { color: var(--accent); text-decoration-thickness: 1px; text-underline-offset: 2px; }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 1.25rem; }
+  .row { display: flex; gap: .6rem; flex-wrap: wrap; }
+  input {
+    flex: 1 1 22rem; min-width: 0; padding: .7rem .8rem; font: 14px var(--mono);
+    color: var(--fg); background: var(--bg);
+    border: 1px solid var(--line); border-radius: 8px;
+  }
+  input:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+  button {
+    padding: .7rem 1.3rem; font: 600 14px system-ui; cursor: pointer;
+    color: #fff; background: var(--accent); border: 0; border-radius: 8px;
+  }
+  button:disabled { opacity: .55; cursor: default; }
+  #out { margin: .9rem 0 0; font: 13px/1.5 var(--mono); white-space: pre-wrap; word-break: break-all; }
+  #out.ok { color: var(--ok); } #out.err { color: var(--err); }
+  table { width: 100%; border-collapse: collapse; }
+  td { padding: .55rem .5rem; border-top: 1px solid var(--line); vertical-align: top; }
+  tr:first-child td { border-top: 0; }
+  td:first-child { white-space: nowrap; font-weight: 600; }
+  td.desc { color: var(--muted); }
+  dl { display: grid; grid-template-columns: max-content 1fr; gap: .45rem 1rem; margin: 0; }
+  dt { color: var(--muted); }
+  dd { margin: 0; font-family: var(--mono); font-size: 13px; word-break: break-all; }
+  .note { margin-top: 1.5rem; padding: .9rem 1rem; border-radius: 10px;
+          background: var(--accent-soft); color: var(--fg); font-size: 14px; }
+  code { font: 13px var(--mono); background: var(--accent-soft); padding: .1rem .3rem; border-radius: 4px; }
+  footer { margin-top: 2.5rem; color: var(--muted); font-size: 13px; }
+</style>
+
+<main>
+  <h1>Hegotá devnet faucet</h1>
+  <p class="lede">
+    A public test network running the <strong>frame-transaction</strong> family of EIPs on
+    <a href="https://github.com/lambdaclass/ethrex">ethrex</a>. Test ETH has no value.
+  </p>
+
+  <div class="panel">
+    <div class="row">
+      <input id="addr" placeholder="0x… your address" spellcheck="false"
+             autocomplete="off" aria-label="Ethereum address">
+      <button id="go">Request {{AMOUNT}} ETH</button>
+    </div>
+    <p id="out" aria-live="polite"></p>
+  </div>
+
+  <h2>What this devnet enables</h2>
+  <div class="panel">
+    <table>
+      <tr>
+        <td><a href="https://eips.ethereum.org/EIPS/eip-8141">EIP-8141</a></td>
+        <td class="desc">Frame transactions — a new type <code>0x06</code> whose payload is a list of
+          <em>frames</em>, each executed with its own target, gas limit and mode, with payment
+          authorised by an <code>APPROVE</code> in a validation prefix.</td>
+      </tr>
+      <tr>
+        <td><a href="https://eips.ethereum.org/EIPS/eip-8250">EIP-8250</a></td>
+        <td class="desc">Keyed nonces — a transaction picks its own nonce domains, so one shared
+          sender address stops being a throughput bottleneck. Useful for privacy pools and
+          relayers.</td>
+      </tr>
+      <tr>
+        <td><a href="https://eips.ethereum.org/EIPS/eip-8272">EIP-8272</a></td>
+        <td class="desc">Recent roots — a transaction declares verified
+          <code>(source_id, slot, root)</code> commitments in its signed envelope, readable from
+          execution without touching another account's mutable storage.</td>
+      </tr>
+      <tr>
+        <td><a href="https://eips.ethereum.org/EIPS/eip-7906">EIP-7906</a></td>
+        <td class="desc">Transaction assertions — a trailing read-only <code>POST_TX</code> frame
+          inspects the whole transaction's effects and can revert the body if an invariant broke.</td>
+      </tr>
+    </table>
+  </div>
+
+  <h2>Inherited from Amsterdam</h2>
+  <div class="panel">
+    <table>
+      <tr><td><a href="https://eips.ethereum.org/EIPS/eip-7928">EIP-7928</a></td>
+          <td class="desc">Block-level access lists.</td></tr>
+      <tr><td><a href="https://eips.ethereum.org/EIPS/eip-8038">EIP-8038</a></td>
+          <td class="desc">Two-dimensional gas: state growth is priced separately from execution.</td></tr>
+      <tr><td><a href="https://eips.ethereum.org/EIPS/eip-7843">EIP-7843</a></td>
+          <td class="desc">A beacon slot number available to execution.</td></tr>
+      <tr><td><a href="https://eips.ethereum.org/EIPS/eip-8282">EIP-8282</a></td>
+          <td class="desc">Builder deposits and exits via predeploys.</td></tr>
+    </table>
+  </div>
+
+  <h2>Connect</h2>
+  <div class="panel">
+    <dl>
+      <dt>Chain ID</dt><dd>{{CHAIN_ID}}</dd>
+      {{RPC}}
+      {{EXPLORER}}
+    </dl>
+  </div>
+
+  <div class="note">
+    <strong>Budget more gas than you expect.</strong> Under EIP-8038 a plain transfer that
+    <em>creates</em> an account is far more expensive than the historical 21 000 — closer to
+    210 000 on this chain, because account creation is charged as state growth. Estimate gas
+    rather than hardcoding it; tooling with a baked-in 21 000 will fail here, and it will fail
+    specifically when paying someone new.
+  </div>
+
+  <footer>
+    Frame transactions cannot be sent by most wallets yet — see the
+    <code>scripts/hegota-devnet</code> submitters in the ethrex repository.
+  </footer>
+</main>
+
+<script>
+  const out = document.getElementById('out');
+  const btn = document.getElementById('go');
+  const addr = document.getElementById('addr');
+
+  async function claim() {
+    const value = addr.value.trim();
+    out.className = ''; out.textContent = 'Requesting…'; btn.disabled = true;
+    try {
+      const res = await fetch('/api/claim', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ address: value }),
+      });
+      const body = await res.json().catch(() => ({ msg: 'unreadable response' }));
+      out.className = res.ok ? 'ok' : 'err';
+      out.textContent = body.txhash ? `${body.msg}\n${body.txhash}` : body.msg;
+    } catch (err) {
+      out.className = 'err';
+      out.textContent = `request failed: ${err}`;
+    } finally {
+      btn.disabled = false;
+    }
+  }
+
+  btn.addEventListener('click', claim);
+  addr.addEventListener('keydown', (e) => { if (e.key === 'Enter') claim(); });
+</script>
