@@ -3080,6 +3080,7 @@ impl LEVM {
         let sender = frame_tx.sender;
 
         let env = Self::setup_env(tx, sender, block_header, db, vm_type)?;
+        let blob_base_fee = env.base_blob_fee_per_gas;
         let mut vm = VM::new(env, db, tx, LevmCallTracer::disabled(), vm_type, crypto)?;
 
         // OQ1: no canonical paymaster is resolvable, so the canonical pay-frame
@@ -3099,14 +3100,14 @@ impl LEVM {
                 return Ok(FrameValidationOutcome {
                     passed: false,
                     violation: Some(EvmError::from(err).to_string()),
-                    max_cost: Self::frame_tx_max_cost(frame_tx),
+                    max_cost: Self::frame_tx_max_cost(frame_tx, blob_base_fee),
                     accessed_paymaster: None,
                     touched_sender_slots: Vec::new(),
                 });
             }
         };
 
-        let max_cost = Self::frame_tx_max_cost(frame_tx);
+        let max_cost = Self::frame_tx_max_cost(frame_tx, blob_base_fee);
         let touched_sender_slots = vm.validation_observer.touched_sender_slots.clone();
         // The payer established by the prefix is the paymaster (OQ2: the
         // APPROVE-payment address is treated uniformly as "paymaster", including
@@ -3188,9 +3189,14 @@ impl LEVM {
     }
 
     /// TXPARAM 0x06 max cost for a frame transaction:
-    /// `max_fee_per_gas * total_gas_limit + len(blob_hashes) * 131072 * max_fee_per_blob_gas`
+    /// `max_gas * max_fee_per_gas + len(blob_hashes) * 131072 * blob_base_fee`
     /// (mirrors `load_tx_param` 0x06 in `opcode_handlers/frame_tx.rs`), saturating.
-    fn frame_tx_max_cost(frame_tx: &ethrex_common::types::FrameTransaction) -> U256 {
+    /// `max_fee_per_blob_gas` bounds inclusion only; the blob fee is collected
+    /// once at the base rate and never refunded.
+    fn frame_tx_max_cost(
+        frame_tx: &ethrex_common::types::FrameTransaction,
+        blob_base_fee: U256,
+    ) -> U256 {
         // Intentionally saturating (not checked): the TXPARAM 0x06 consensus handler
         // uses checked_mul/checked_add and halts on overflow (frame_tx.rs:499-509). Here
         // we compute a reservation ceiling for the mempool, so saturating to U256::MAX
@@ -3199,7 +3205,7 @@ impl LEVM {
             .saturating_mul(U256::from(frame_tx.total_gas_limit()));
         let blob_cost = U256::from(frame_tx.blob_versioned_hashes.len())
             .saturating_mul(U256::from(131072u64))
-            .saturating_mul(frame_tx.max_fee_per_blob_gas);
+            .saturating_mul(blob_base_fee);
         gas_cost.saturating_add(blob_cost)
     }
 

@@ -522,6 +522,11 @@ pub struct FrameTxContext {
     /// every frame and signature, so it must not run per-opcode (TXPARAM 0x06,
     /// compute_tx_max_cost). Computed once at tx entry.
     pub total_gas_limit: u64,
+    /// The block's EIP-4844 blob base fee, captured at tx entry. `max_cost`
+    /// collects the blob fee at this rate, not at `max_fee_per_blob_gas`
+    /// (EIP-8141 §Gas accounting), and `load_tx_param` has no `Environment`
+    /// handle to read it from.
+    pub blob_base_fee: U256,
 }
 
 impl FrameTxContext {
@@ -1606,6 +1611,7 @@ impl<'a> VM<'a> {
             tx: frame_tx.clone(),
             approve_called_in_current_frame: false,
             total_gas_limit,
+            blob_base_fee: self.env.base_blob_fee_per_gas,
         });
 
         // EIP-8141: every outer signature must validate
@@ -2163,15 +2169,15 @@ impl<'a> VM<'a> {
         let total_gas_used =
             mandatory_gas.saturating_add(data_and_execution.max(frame_tx.calldata_floor_gas()));
 
-        // Gas refunds: the payer was debited the transaction's MAXIMUM cost at
-        // APPROVE (max_fee-based gas + max-rate blob cost, `compute_tx_max_cost`,
-        // §Gas Accounting). What the payer owes is the effective-rate cost of the
-        // gas actually used plus the base-rate blob burn (EIP-4844 semantics);
-        // everything above that is returned here. Intrinsic gas is inside
-        // `total_gas_used`, so it stays non-refundable. When max_fee ==
-        // effective_gas_price and max_fee_per_blob_gas == base_blob_fee this
-        // reduces exactly to the old unused-frame-gas refund:
-        // max·T + B − e·U − B = e·(T − U).
+        // Gas refunds: the payer was debited the transaction's `max_cost` at
+        // APPROVE (`max_gas` at `max_fee_per_gas`, plus the blob cost already at
+        // the base rate, `compute_tx_max_cost`, §Gas accounting). What the payer
+        // owes is the effective-rate cost of the gas actually used plus the same
+        // base-rate blob burn, so the blob terms cancel and the burn is collected
+        // exactly once and never refunded. Everything above that is returned here.
+        // Intrinsic gas is inside `total_gas_used`, so it stays non-refundable.
+        // When max_fee == effective_gas_price this reduces exactly to the unused
+        // -frame-gas refund: max·T + B − e·U − B = e·(T − U).
         let effective_gas_price = self.env.gas_price;
         let charged = crate::opcode_handlers::frame_tx::compute_tx_max_cost(&ctx)
             .map_err(|_| VMError::Internal(InternalError::Overflow))?;
@@ -2184,8 +2190,9 @@ impl<'a> VM<'a> {
             .and_then(|gas_owed| gas_owed.checked_add(blob_burn))
             .ok_or(VMError::Internal(InternalError::Overflow))?;
         // charged >= owed always: effective <= max_fee (by construction of the
-        // effective price), base_blob <= max_blob (blob-fee validity check), and
-        // total_gas_used <= total_gas_limit (frames are bounded by their limits).
+        // effective price), the blob terms are identical, and total_gas_used <=
+        // max_gas (frames are bounded by their limits, and the floor is charged
+        // on both sides).
         let refund_amount = charged
             .checked_sub(owed)
             .ok_or(VMError::Internal(InternalError::Underflow))?;
@@ -2397,6 +2404,7 @@ impl<'a> VM<'a> {
             tx: frame_tx.clone(),
             approve_called_in_current_frame: false,
             total_gas_limit,
+            blob_base_fee: self.env.base_blob_fee_per_gas,
         });
 
         if !validate_frame_signatures(

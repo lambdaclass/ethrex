@@ -56,7 +56,7 @@ pub(crate) fn compute_tx_max_cost(ctx: &crate::vm::FrameTxContext) -> Result<U25
     let blob_cost = U256::from(ctx.tx.blob_versioned_hashes.len())
         .checked_mul(U256::from(131072u64))
         .ok_or(ExceptionalHalt::InvalidOpcode)?
-        .checked_mul(ctx.tx.max_fee_per_blob_gas)
+        .checked_mul(ctx.blob_base_fee)
         .ok_or(ExceptionalHalt::InvalidOpcode)?;
     gas_cost
         .checked_add(blob_cost)
@@ -671,10 +671,12 @@ mod max_cost_tests {
     use crate::vm::FrameTxContext;
     use ethrex_common::{H256, U256, types::FrameTransaction};
 
-    fn ctx(max_fee: u64, blobs: usize, max_blob_fee: u64, total_gas_limit: u64) -> FrameTxContext {
+    fn ctx(max_fee: u64, blobs: usize, blob_base_fee: u64, total_gas_limit: u64) -> FrameTxContext {
         let tx = FrameTransaction {
             max_fee_per_gas: max_fee,
-            max_fee_per_blob_gas: U256::from(max_blob_fee),
+            // Deliberately far above the base fee: `max_fee_per_blob_gas` bounds
+            // inclusion only and must not reach `max_cost`.
+            max_fee_per_blob_gas: U256::from(blob_base_fee).saturating_mul(U256::from(1_000u64)),
             blob_versioned_hashes: vec![H256::zero(); blobs],
             ..Default::default()
         };
@@ -687,11 +689,12 @@ mod max_cost_tests {
             tx,
             approve_called_in_current_frame: false,
             total_gas_limit,
+            blob_base_fee: U256::from(blob_base_fee),
         }
     }
 
     #[test]
-    fn max_cost_is_max_fee_times_limit_plus_max_blob_cost() {
+    fn max_cost_is_max_fee_times_limit_plus_base_rate_blob_cost() {
         // 10 * 100_000 + 2 * 131072 * 5 = 1_000_000 + 1_310_720
         let c = ctx(10, 2, 5, 100_000);
         assert_eq!(compute_tx_max_cost(&c).unwrap(), U256::from(2_310_720u64));
