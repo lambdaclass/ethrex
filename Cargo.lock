@@ -3963,6 +3963,7 @@ dependencies = [
  "bytes",
  "envy",
  "ethereum-types 0.15.1",
+ "ethrex-common",
  "ethrex-rpc",
  "hex",
  "jsonwebtoken",
