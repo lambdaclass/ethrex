@@ -6,6 +6,37 @@ use crate::types::account_proof::{AccountProof, StorageProof};
 use crate::types::block_identifier::{BlockIdentifierOrHash, BlockTag};
 use crate::utils::RpcErr;
 use ethrex_common::{Address, BigEndianHash, H256, U256, serde_utils};
+use ethrex_storage::Store;
+
+/// Rejects a state read whose block is known but whose post-state is gone.
+///
+/// The on-disk trie is path-keyed and single-version: opening it at a root that is no
+/// longer retained does not fail, it resolves against whatever the latest committed root
+/// holds. An unguarded read therefore answers with a *different block's* state and a 200,
+/// so these methods have to check availability before reading.
+///
+/// Only that case is turned into an error. When the block itself can't be resolved to a
+/// header the caller keeps its existing behaviour, so `pending`/`latest` and unknown-block
+/// handling are unchanged.
+async fn ensure_state_available(
+    storage: &Store,
+    block: &BlockIdentifierOrHash,
+    block_number: u64,
+) -> Result<(), RpcErr> {
+    let Some(header) = storage.get_block_header(block_number)? else {
+        return Ok(());
+    };
+    if !storage.has_state_root(header.state_root)? {
+        // Lead with geth's "missing trie node" phrasing: clients and tooling already match
+        // on it to tell "state pruned" apart from a genuine zero/empty result.
+        return Err(RpcErr::StateNotAvailable(format!(
+            "missing trie node {:#x} (block {block}, number {block_number}): state is not \
+             available, it is older than the retained state window",
+            header.state_root
+        )));
+    }
+    Ok(())
+}
 
 pub struct GetBalanceRequest {
     pub address: Address,
@@ -59,6 +90,8 @@ impl RpcHandler for GetBalanceRequest {
             )); // Should we return Null here?
         };
 
+        ensure_state_available(&context.storage, &self.block, block_number).await?;
+
         let account = context
             .storage
             .get_account_info(block_number, self.address)
@@ -94,6 +127,8 @@ impl RpcHandler for GetCodeRequest {
                 "Could not resolve block number".to_owned(),
             )); // Should we return Null here?
         };
+
+        ensure_state_available(&context.storage, &self.block, block_number).await?;
 
         let code = context
             .storage
@@ -134,6 +169,8 @@ impl RpcHandler for GetStorageAtRequest {
             )); // Should we return Null here?
         };
 
+        ensure_state_available(&context.storage, &self.block, block_number).await?;
+
         let storage_value = context
             .storage
             .get_storage_at(block_number, self.address, self.storage_slot)?
@@ -169,6 +206,8 @@ impl RpcHandler for GetTransactionCountRequest {
             return serde_json::to_value("0x0")
                 .map_err(|error| RpcErr::Internal(error.to_string()));
         };
+        ensure_state_available(&context.storage, &self.block, block_number).await?;
+
         let account_nonce = context
             .storage
             .get_nonce_by_account_address(block_number, self.address)
@@ -221,6 +260,7 @@ impl RpcHandler for GetProofRequest {
         let Some(header) = storage.get_block_header(block_number)? else {
             return Ok(Value::Null);
         };
+        ensure_state_available(storage, &self.block, block_number).await?;
         // Create account proof
         let Some(account_proof) = storage
             .get_account_proof(header.state_root, self.address, &self.storage_keys)
