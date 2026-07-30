@@ -5,27 +5,40 @@ use crate::rpc::{RpcApiContext, RpcHandler};
 use crate::types::account_proof::{AccountProof, StorageProof};
 use crate::types::block_identifier::{BlockIdentifierOrHash, BlockTag};
 use crate::utils::RpcErr;
-use ethrex_common::{Address, BigEndianHash, H256, U256, serde_utils};
+use ethrex_common::{Address, BigEndianHash, H256, U256, serde_utils, types::BlockHeader};
 use ethrex_storage::Store;
 
-/// Rejects a state read whose block is known but whose post-state is gone.
+/// Resolves `block` to a header whose post-state is actually readable, erroring instead of
+/// letting a read answer from a different block's state.
 ///
-/// The on-disk trie is path-keyed and single-version: opening it at a root that is no
-/// longer retained does not fail, it resolves against whatever the latest committed root
-/// holds. An unguarded read therefore answers with a *different block's* state and a 200,
-/// so these methods have to check availability before reading.
+/// Two ways that can happen, both handled here:
 ///
-/// Only that case is turned into an error. When the block itself can't be resolved to a
-/// header the caller keeps its existing behaviour, so `pending`/`latest` and unknown-block
-/// handling are unchanged.
-async fn ensure_state_available(
+/// * The on-disk trie is path-keyed and single-version, so opening it at a root that is no
+///   longer retained does not fail — it resolves against whatever the latest committed root
+///   holds. So availability has to be checked before reading.
+/// * A block *hash* only resolves to a height, and every read below is canonical-by-number.
+///   A hash naming a non-canonical block would therefore be served with its canonical
+///   sibling's state.
+///
+/// Returns `Ok(None)` when the block does not resolve to a header at all, leaving that case
+/// to the caller's existing behaviour, so `pending`/`latest` and unknown-block handling are
+/// unchanged.
+fn resolve_stateful_header(
     storage: &Store,
     block: &BlockIdentifierOrHash,
     block_number: u64,
-) -> Result<(), RpcErr> {
+) -> Result<Option<BlockHeader>, RpcErr> {
     let Some(header) = storage.get_block_header(block_number)? else {
-        return Ok(());
+        return Ok(None);
     };
+    if let BlockIdentifierOrHash::Hash(requested) = block
+        && storage.get_canonical_block_hash_sync(block_number)? != Some(*requested)
+    {
+        return Err(RpcErr::StateNotAvailable(format!(
+            "block {requested:#x} is not canonical; state is only served for the canonical \
+             chain, and reading it by number would answer about a different block"
+        )));
+    }
     if !storage.has_state_root(header.state_root)? {
         // Lead with geth's "missing trie node" phrasing: clients and tooling already match
         // on it to tell "state pruned" apart from a genuine zero/empty result.
@@ -35,7 +48,7 @@ async fn ensure_state_available(
             header.state_root
         )));
     }
-    Ok(())
+    Ok(Some(header))
 }
 
 pub struct GetBalanceRequest {
@@ -90,7 +103,7 @@ impl RpcHandler for GetBalanceRequest {
             )); // Should we return Null here?
         };
 
-        ensure_state_available(&context.storage, &self.block, block_number).await?;
+        resolve_stateful_header(&context.storage, &self.block, block_number)?;
 
         let account = context
             .storage
@@ -128,7 +141,7 @@ impl RpcHandler for GetCodeRequest {
             )); // Should we return Null here?
         };
 
-        ensure_state_available(&context.storage, &self.block, block_number).await?;
+        resolve_stateful_header(&context.storage, &self.block, block_number)?;
 
         let code = context
             .storage
@@ -169,7 +182,7 @@ impl RpcHandler for GetStorageAtRequest {
             )); // Should we return Null here?
         };
 
-        ensure_state_available(&context.storage, &self.block, block_number).await?;
+        resolve_stateful_header(&context.storage, &self.block, block_number)?;
 
         let storage_value = context
             .storage
@@ -206,7 +219,7 @@ impl RpcHandler for GetTransactionCountRequest {
             return serde_json::to_value("0x0")
                 .map_err(|error| RpcErr::Internal(error.to_string()));
         };
-        ensure_state_available(&context.storage, &self.block, block_number).await?;
+        resolve_stateful_header(&context.storage, &self.block, block_number)?;
 
         let account_nonce = context
             .storage
@@ -257,10 +270,9 @@ impl RpcHandler for GetProofRequest {
         let Some(block_number) = self.block.resolve_block_number(storage).await? else {
             return Ok(Value::Null);
         };
-        let Some(header) = storage.get_block_header(block_number)? else {
+        let Some(header) = resolve_stateful_header(storage, &self.block, block_number)? else {
             return Ok(Value::Null);
         };
-        ensure_state_available(storage, &self.block, block_number).await?;
         // Create account proof
         let Some(account_proof) = storage
             .get_account_proof(header.state_root, self.address, &self.storage_keys)

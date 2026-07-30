@@ -83,6 +83,38 @@ async fn state_reads_error_when_the_blocks_state_is_unavailable() {
     }
 }
 
+/// A block *hash* only resolves to a height, and the reads below are canonical-by-number, so
+/// a hash naming a non-canonical block would be answered with its canonical sibling's state.
+/// That is the same "different block's state" bug, reached through EIP-1898.
+#[tokio::test]
+async fn state_reads_reject_a_non_canonical_block_hash() {
+    let storage = store_with_stateless_block().await;
+    // A sibling at the same height that no forkchoice update ever made canonical.
+    let sibling = BlockHeader {
+        number: 1,
+        state_root: H256::from_low_u64_be(0xfeed),
+        base_fee_per_gas: Some(0),
+        extra_data: vec![0xab].into(),
+        ..Default::default()
+    };
+    let sibling_hash = sibling.hash();
+    storage
+        .add_block(Block::new(sibling, BlockBody::default()))
+        .await
+        .expect("store sibling");
+
+    let context = default_context_with_storage(storage).await;
+    let params = serde_json::json!([ADDRESS, format!("{sibling_hash:#x}")]);
+    match map_eth_requests(&request("eth_getBalance", params), context).await {
+        Err(RpcErr::StateNotAvailable(msg)) => assert!(
+            msg.contains("not canonical"),
+            "expected a canonicality error, got: {msg}"
+        ),
+        Ok(value) => panic!("answered {value} for a non-canonical hash"),
+        Err(other) => panic!("expected StateNotAvailable, got {other:?}"),
+    }
+}
+
 /// The guard must stay out of the way when the state really is there — otherwise it would
 /// break every ordinary query. Genesis state is present here, so all five must succeed.
 #[tokio::test]
