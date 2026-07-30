@@ -113,9 +113,8 @@ pub const EXPIRY_VERIFIER_PREDEPLOY: SystemContract = SystemContract {
     active_since_fork: Hegota,
 };
 
-/// Canonical runtime bytecode of the EIP-8141 expiry verifier (spec commit
-/// 0b197156): reverts unless calldata is exactly 8 bytes and the 8-byte BE
-/// deadline is >= block.timestamp.
+/// Canonical runtime bytecode of the EIP-8141 expiry verifier: reverts unless
+/// calldata is exactly 8 bytes and the 8-byte BE deadline is >= block.timestamp.
 pub const EXPIRY_VERIFIER_RUNTIME_BYTECODE: [u8; 26] = [
     0x60, 0x08, 0x36, 0x14, 0x60, 0x0a, 0x57, 0x5f, 0x5f, 0xfd, 0x5b, 0x5f, 0x35, 0x60, 0xc0, 0x1c,
     0x42, 0x11, 0x60, 0x16, 0x57, 0x00, 0x5b, 0x5f, 0x5f, 0xfd,
