@@ -413,6 +413,17 @@ pub async fn init_dev_network(
             .unwrap()
     };
 
+    // The producer stands in for the CL, so it supplies what a CL would: the
+    // EIP-7843 slot to continue from and the execution-apis#796 target gas limit,
+    // which it holds at the head's gas limit.
+    let head_header = store
+        .get_block_header_by_hash(head_block_hash)
+        .unwrap()
+        .unwrap();
+    let head_slot_number = head_header.slot_number.unwrap_or(0);
+    let target_gas_limit = head_header.gas_limit;
+    let chain_config = store.get_chain_config();
+
     let max_tries = 3;
 
     let url = format!(
@@ -421,12 +432,17 @@ pub async fn init_dev_network(
     );
 
     let block_producer_engine = ethrex_dev::block_producer::start_block_producer(
-        url,
-        read_jwtsecret_file(&opts.authrpc_jwtsecret),
-        head_block_hash,
-        max_tries,
-        1000,
-        ethrex_common::Address::default(),
+        ethrex_dev::block_producer::BlockProducerConfig {
+            execution_client_auth_url: url,
+            jwt_secret: read_jwtsecret_file(&opts.authrpc_jwtsecret),
+            head_block_hash,
+            max_tries,
+            block_production_interval_ms: 1000,
+            coinbase_address: ethrex_common::Address::default(),
+            chain_config,
+            head_slot_number,
+            target_gas_limit,
+        },
     );
     // The dev block producer is fatal: if it exhausts its retries, abort the dev node.
     spawn_fatal(
