@@ -3623,3 +3623,116 @@ fn storage_refund_from_a_later_frame_reduces_reported_gas() {
         "the applied refund {applied} must respect the EIP-3529 one-fifth cap"
     );
 }
+
+// ==================== atomic batch / EIP-7928 BAL ====================
+
+/// EIP-7928 requires the block access list to describe the block's actual state
+/// changes. An atomic batch that unrolls performed none of its writes, so the
+/// recorder must forget them: a builder that keeps them writes a BAL the block
+/// contradicts, and re-execution on import rejects the block it just produced.
+#[test]
+fn atomic_batch_revert_drops_the_batch_writes_from_the_bal() {
+    use ethrex_common::types::Frame;
+
+    let writer = Address::from_low_u64_be(0x8141_0001);
+    let reverter = Address::from_low_u64_be(0x8141_0002);
+    let terminator = Address::from_low_u64_be(0x8141_0003);
+    let slot = U256::zero();
+
+    // writer: SSTORE(0, 0x2a) ; STOP
+    let writer_code = Bytes::from(vec![0x60, 0x2a, 0x60, 0x00, 0x55, 0x00]);
+    // reverter: REVERT(0, 0)
+    let reverter_code = Bytes::from(vec![0x60, 0x00, 0x60, 0x00, 0xFD]);
+    let stop_code = Bytes::from(vec![0x00]);
+
+    let accounts: Vec<SeededAccount> = vec![
+        (
+            FUNDED_SENDER,
+            AUTO_SEED_SENDER_BALANCE,
+            0,
+            Bytes::from(APPROVE_BOTH_CODE.to_vec()),
+        ),
+        (writer, U256::zero(), 0, writer_code),
+        (reverter, U256::zero(), 0, reverter_code),
+        (terminator, U256::zero(), 0, stop_code),
+    ];
+
+    let batch_frame = |target: Address| Frame {
+        mode: u8::from(FrameMode::Sender),
+        flags: 0x04,
+        target: Some(target),
+        gas_limit: 300_000,
+        value: U256::zero(),
+        data: Bytes::new(),
+    };
+    let plain_frame = |target: Address| Frame {
+        mode: u8::from(FrameMode::Sender),
+        flags: 0x00,
+        target: Some(target),
+        gas_limit: 100_000,
+        value: U256::zero(),
+        data: Bytes::new(),
+    };
+    let verify = Frame {
+        mode: u8::from(FrameMode::Verify),
+        flags: 0x03,
+        target: Some(FUNDED_SENDER),
+        gas_limit: 80_000,
+        value: U256::zero(),
+        data: Bytes::new(),
+    };
+
+    // The batch writes, then a later member reverts, so the whole batch unrolls.
+    // The trailing non-batch frame terminates the batch.
+    let tx = frame_tx_with_frames(vec![
+        verify,
+        batch_frame(writer),
+        batch_frame(reverter),
+        plain_frame(terminator),
+    ]);
+
+    let mut db = seeded_db(&accounts);
+    db.enable_bal_recording();
+    let env = frame_tx_env(&tx);
+    let transaction = Transaction::FrameTransaction(tx);
+    {
+        let mut vm = VM::new(
+            env,
+            &mut db,
+            &transaction,
+            LevmCallTracer::disabled(),
+            VMType::L1,
+            &NativeCrypto,
+        )
+        .expect("VM::new should succeed for a frame tx");
+        vm.execute()
+            .expect("a reverting batch must not error the tx");
+    }
+
+    // The write was unrolled, so the live slot is still its prestate value.
+    let live = db
+        .current_accounts_state
+        .get(&writer)
+        .and_then(|acc| acc.storage.get(&H256::zero()).copied())
+        .unwrap_or_default();
+    assert!(
+        live.is_zero(),
+        "the batch unrolled, so the write must not survive; got {live}"
+    );
+
+    let bal = db
+        .bal_recorder
+        .take()
+        .expect("BAL recording was enabled")
+        .build();
+    let writer_entry = bal.accounts().iter().find(|acc| acc.address == writer);
+    if let Some(entry) = writer_entry {
+        assert!(
+            entry
+                .storage_changes
+                .iter()
+                .all(|change| change.slot != slot),
+            "the BAL must not record a storage change for a slot whose write was unrolled"
+        );
+    }
+}
