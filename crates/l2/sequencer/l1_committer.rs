@@ -48,8 +48,7 @@ use ethrex_rpc::{
     clients::eth::{EthClient, Overrides},
     types::block_identifier::{BlockIdentifier, BlockTag},
 };
-use ethrex_storage::EngineType;
-use ethrex_storage::{DB_COMMIT_THRESHOLD, Store};
+use ethrex_storage::{DB_COMMIT_THRESHOLD, EngineType, Store};
 use ethrex_storage_rollup::StoreRollup;
 use ethrex_vm::BlockExecutionResult;
 use rand::Rng;
