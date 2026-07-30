@@ -1,6 +1,6 @@
 use ethrex_common::constants::EMPTY_KECCAK_HASH;
 use ethrex_common::tracing::{PrePostState, PrestateAccountState, PrestateResult, PrestateTrace};
-use ethrex_common::types::{Block, GenericTransaction, Transaction};
+use ethrex_common::types::{Block, Fork, GenericTransaction, Transaction};
 use ethrex_common::{
     Address, BigEndianHash, H256, U256,
     tracing::{CallTrace, CallTraceFrame, OpcodeTraceResult},
@@ -273,9 +273,19 @@ impl LEVM {
             crypto,
         )?;
 
-        vm.execute()?;
+        let report = vm.execute()?;
+        let fork = vm.env.config.fork;
 
-        let callframe = vm.get_trace_result()?;
+        let mut callframe = vm.get_trace_result()?;
+
+        // EIP-8037 two-dimensional gas, reported on the top-level frame only from
+        // Amsterdam onwards (execution-apis `CallFrame`).
+        if fork >= Fork::Amsterdam {
+            callframe.regular_gas_used =
+                Some(report.gas_used.saturating_sub(report.state_gas_used));
+            callframe.state_gas_used = Some(report.state_gas_used);
+            callframe.gas_refund = Some(report.gas_refunded);
+        }
 
         // We only return the top call because a transaction only has one call with subcalls
         Ok(vec![callframe])
