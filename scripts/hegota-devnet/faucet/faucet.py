@@ -398,7 +398,7 @@ class Handler(BaseHTTPRequestHandler):
         if not is_hex_address(requested):
             return self._reply(400, {"msg": "invalid address"})
         # Accept any case, but treat a supplied mixed-case form as a checksum and
-        # verify it — it is a useful typo guard.
+        # verify it, it is a useful typo guard.
         raw = requested[2:] if requested.lower().startswith("0x") else requested
         if raw != raw.lower() and raw != raw.upper():
             if to_checksum_address("0x" + raw.lower()) != "0x" + raw:
@@ -442,7 +442,7 @@ class Handler(BaseHTTPRequestHandler):
                 print(f"send rejected: {err}", flush=True)
                 return self._reply(400, {"msg": f"could not send: {err}"})
             except Exception as err:
-                # Unknown outcome — the transaction may be live. Fail closed and
+                # Unknown outcome, the transaction may be live. Fail closed and
                 # keep the window, or a slow node becomes a free-ETH loop.
                 print(f"send outcome unknown: {err}", flush=True)
                 return self._reply(504, {"msg": "send timed out, outcome unknown; "

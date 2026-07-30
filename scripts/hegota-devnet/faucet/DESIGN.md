@@ -1,7 +1,8 @@
-# Hegotá devnet faucet — design notes
+# Hegotá devnet faucet, design notes
 
-Status: **not deployed, not committed.** Parked pending the devnet reset; the
-reset ships 10 prefunded wallets instead, and the faucet comes later.
+Status: **deployed** on the Hegota devnet, replacing `chainflag/eth-faucet`.
+The funding key is dedicated to the faucet and must be rotated when the chain is
+reset or made public.
 
 ## Why not the off-the-shelf one
 
@@ -13,7 +14,7 @@ and cannot be fixed by configuration:
 - Under EIP-8038 state-growth pricing a transfer that **creates** an account
   costs far more than the historical 21000. Measured on this devnet:
   21000 to an existing account succeeds; a fresh account needs ~207391. So the
-  faucet's transaction is included, runs out of gas, and burns its whole limit —
+  faucet's transaction is included, runs out of gas, and burns its whole limit,
   failing for exactly the new addresses a faucet exists to serve.
 - Two further flaws independent of gas: it rejects non-EIP-55 addresses
   (`{"msg":"invalid address"}` for the all-lowercase form most people paste), and
@@ -23,14 +24,14 @@ and cannot be fixed by configuration:
 Rebuilding a patched fork is awkward because the frontend is `go:embed`-ed from
 `web/dist`, which is produced by a yarn stage.
 
-## Rate limiting — the cases that matter
+## Rate limiting, the cases that matter
 
 Ordered by how easily each one is missed.
 
 1. **Proxy-aware client IP.** Behind a reverse proxy, `RemoteAddr` is always the
    proxy: one shared bucket, so the limit is either useless or a global lockout.
    Take the client from `X-Forwarded-For` counting **from the right**, trusting
-   exactly `PROXY_COUNT` hops. Never trust the leftmost entry — a client can put
+   exactly `PROXY_COUNT` hops. Never trust the leftmost entry, a client can put
    anything there, which is a free bypass.
 2. **Bucket IPv6 by /64, not /128.** A single user usually controls a whole /64.
    Per-/128 limiting lets them rotate through effectively unlimited addresses.
@@ -38,7 +39,7 @@ Ordered by how easily each one is missed.
    forces sharing).
 3. **Per-recipient limit, keyed on the lowercased address.** Without it, IP
    rotation refills one address. Keying on the raw string makes `0xabc…` and
-   `0xABC…` two buckets for one account — a one-character bypass.
+   `0xABC…` two buckets for one account, a one-character bypass.
 4. **Serialize sending, and own the nonce.** Concurrent claims must not build the
    same nonce. One lock around send, a local nonce, resync from chain and retry
    once on `nonce too low` / `already known`. This is not hypothetical: the
