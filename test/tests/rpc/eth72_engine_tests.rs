@@ -9,7 +9,7 @@ use ethrex_rpc::{
     engine::{blobs::BlobsV4Request, fork_choice::ForkChoiceUpdatedV4},
     rpc::{RpcApiContext, RpcHandler},
     test_utils::default_context_with_storage,
-    utils::RpcErr,
+    utils::{RpcErr, RpcErrorMetadata},
 };
 use ethrex_storage::{EngineType, Store};
 use serde_json::{Value, json};
@@ -225,13 +225,16 @@ fn fcu_v4_parse_custody_valid_16_bytes() {
 }
 
 #[test]
-fn fcu_v4_parse_custody_wrong_byte_length_is_bad_params() {
+fn fcu_v4_parse_custody_wrong_byte_length_is_invalid_params() {
     // 8 bytes instead of 16.
     let params = Some(vec![zero_fcs(), json!(null), json!("0x0000000000000001")]);
     let err = ForkChoiceUpdatedV4::parse(&params).unwrap_err();
-    assert!(
-        matches!(err, RpcErr::BadParams(_)),
-        "wrong byte length must be BadParams, got {err:?}"
+    // The Amsterdam Engine API spec mandates the JSON-RPC code, so assert on that
+    // rather than the internal variant.
+    assert_eq!(
+        RpcErrorMetadata::from(err).code,
+        -32602,
+        "a malformed custodyColumns must be -32602: Invalid params"
     );
 }
 

@@ -17,7 +17,7 @@ use ethrex_rpc::rpc::RpcHandler;
 use ethrex_rpc::test_utils::default_context_with_storage;
 use ethrex_rpc::types::fork_choice::PayloadAttributesV4;
 use ethrex_rpc::types::payload::ExecutionPayloadResponse;
-use ethrex_rpc::utils::{RpcErr, RpcRequest};
+use ethrex_rpc::utils::{RpcErr, RpcErrorMetadata, RpcRequest};
 use ethrex_storage::{EngineType, Store};
 
 fn workspace_root() -> PathBuf {
@@ -444,7 +444,7 @@ fn parse_v4_custody_wrong_length_rejected() {
         json!("0x0000000000000001"),
     ]);
     let err = parse_v4(&params).unwrap_err();
-    assert!(matches!(err, RpcErr::BadParams(_)));
+    assert_eq!(RpcErrorMetadata::from(err).code, -32602);
 }
 
 #[test]
@@ -463,7 +463,7 @@ fn parse_custody_columns_16_byte_roundtrip() {
 #[test]
 fn parse_custody_columns_wrong_length() {
     let err = parse_custody_columns(&json!("0xdeadbeef")).unwrap_err();
-    assert!(matches!(err, RpcErr::BadParams(_)));
+    assert_eq!(RpcErrorMetadata::from(err).code, -32602);
 }
 
 async fn fresh_context() -> RpcApiContext {
