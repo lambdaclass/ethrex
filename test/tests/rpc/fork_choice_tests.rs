@@ -17,7 +17,7 @@ use ethrex_rpc::rpc::RpcHandler;
 use ethrex_rpc::test_utils::default_context_with_storage;
 use ethrex_rpc::types::fork_choice::PayloadAttributesV4;
 use ethrex_rpc::types::payload::ExecutionPayloadResponse;
-use ethrex_rpc::utils::{RpcErr, RpcRequest};
+use ethrex_rpc::utils::{RpcErr, RpcErrorMetadata, RpcRequest};
 use ethrex_storage::{EngineType, Store};
 
 fn workspace_root() -> PathBuf {
@@ -365,7 +365,8 @@ async fn fcu_v4_rejects_wrong_length_custody_columns() {
         .await
         .expect_err("a short custodyColumns must be rejected");
 
-    assert!(matches!(err, RpcErr::BadParams(_)), "got: {err:?}");
+    // The Amsterdam Engine API spec mandates -32602 here.
+    assert_eq!(RpcErrorMetadata::from(err).code, -32602, "wrong error code");
 }
 
 // execution-apis#796: targetGasLimit is required on V4; an absent field is
@@ -509,7 +510,7 @@ fn parse_v4_custody_wrong_length_rejected() {
         json!("0x0000000000000001"),
     ]);
     let err = parse_v4(&params).unwrap_err();
-    assert!(matches!(err, RpcErr::BadParams(_)));
+    assert_eq!(RpcErrorMetadata::from(err).code, -32602);
 }
 
 #[test]
@@ -528,7 +529,7 @@ fn parse_custody_columns_16_byte_roundtrip() {
 #[test]
 fn parse_custody_columns_wrong_length() {
     let err = parse_custody_columns(&json!("0xdeadbeef")).unwrap_err();
-    assert!(matches!(err, RpcErr::BadParams(_)));
+    assert_eq!(RpcErrorMetadata::from(err).code, -32602);
 }
 
 async fn fresh_context() -> RpcApiContext {

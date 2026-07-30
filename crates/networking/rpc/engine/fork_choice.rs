@@ -27,22 +27,21 @@ use crate::{
 /// are little-endian (column `i` → byte `i/8`, bit `i%8`), matching geth's
 /// `types.CustodyBitmap` so EL↔CL custody sets agree across clients.
 /// Returns `Ok(None)` for JSON null or absent param.
-/// Returns `Err(RpcErr::BadParams)` when the string is present but not exactly 16 bytes.
+///
+/// A present but malformed value is `-32602: Invalid params`, which the Amsterdam
+/// Engine API specification requires for `engine_forkchoiceUpdatedV4`; hence
+/// `WrongParam` rather than `BadParams`, which ethrex maps to `-32000`.
 pub(crate) fn parse_custody_columns(value: &Value) -> Result<Option<u128>, RpcErr> {
     if value.is_null() {
         return Ok(None);
     }
     let hex_str = value
         .as_str()
-        .ok_or_else(|| RpcErr::BadParams("custodyColumns must be a hex string or null".into()))?;
+        .ok_or_else(|| RpcErr::WrongParam("custodyColumns".into()))?;
     let stripped = hex_str.strip_prefix("0x").unwrap_or(hex_str);
-    let bytes = hex::decode(stripped)
-        .map_err(|_| RpcErr::BadParams("custodyColumns: invalid hex".into()))?;
+    let bytes = hex::decode(stripped).map_err(|_| RpcErr::WrongParam("custodyColumns".into()))?;
     if bytes.len() != 16 {
-        return Err(RpcErr::BadParams(format!(
-            "custodyColumns must be 16 bytes, got {}",
-            bytes.len()
-        )));
+        return Err(RpcErr::WrongParam("custodyColumns".into()));
     }
     let mut arr = [0u8; 16];
     arr.copy_from_slice(&bytes);
