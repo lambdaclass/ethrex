@@ -26,13 +26,15 @@
 
 use bytes::Bytes;
 use ethrex_blockchain::vm::StoreVmDatabase;
+use ethrex_common::types::AccountInfo;
 use ethrex_common::types::{
     Account, BlockHeader, Code, EIP1559Transaction, FRAME_RECEIPT_STATUS_FAILURE, Fork, Frame,
     FrameMode, FrameTransaction, Transaction, TxKind,
 };
 use ethrex_common::{Address, H256, U256, constants::EMPTY_TRIE_HASH};
 use ethrex_crypto::NativeCrypto;
-use ethrex_levm::db::gen_db::GeneralizedDatabase;
+use ethrex_levm::account::{AccountStatus, LevmAccount};
+use ethrex_levm::db::gen_db::{CacheDB, GeneralizedDatabase};
 use ethrex_levm::environment::{EVMConfig, Environment};
 use ethrex_levm::errors::{ExecutionReport, VMError};
 use ethrex_levm::tracing::LevmCallTracer;
@@ -115,13 +117,17 @@ impl Seed {
     }
 }
 
-fn seeded_db(seeds: &[Seed]) -> GeneralizedDatabase {
+fn empty_store() -> DynVmDatabase {
     let in_memory_db = Store::new("", ethrex_storage::EngineType::InMemory).unwrap();
     let header = BlockHeader {
         state_root: *EMPTY_TRIE_HASH,
         ..Default::default()
     };
-    let store: DynVmDatabase = Box::new(StoreVmDatabase::new(in_memory_db, header).unwrap());
+    Box::new(StoreVmDatabase::new(in_memory_db, header).unwrap())
+}
+
+fn seeded_db(seeds: &[Seed]) -> GeneralizedDatabase {
+    let store = empty_store();
 
     let mut cache: FxHashMap<Address, Account> = FxHashMap::default();
     for seed in seeds {
@@ -141,6 +147,44 @@ fn seeded_db(seeds: &[Seed]) -> GeneralizedDatabase {
         );
     }
     GeneralizedDatabase::new_with_account_state(Arc::new(store), cache)
+}
+
+/// A database shaped like the per-transaction databases the parallel
+/// BAL-validating importer builds: the seeded accounts live in the read-only
+/// `shared_base` snapshot instead of the execution cache, and
+/// `initial_accounts_state` tracking is off (state transitions come from the BAL),
+/// so nothing but the EIP-7906 prestate map records pre-transaction values.
+fn parallel_seeded_db(seeds: &[Seed]) -> GeneralizedDatabase {
+    let store = empty_store();
+
+    let mut base: CacheDB = FxHashMap::default();
+    let mut codes: FxHashMap<H256, Code> = FxHashMap::default();
+    for seed in seeds {
+        let code = Code::from_bytecode(Bytes::from(seed.code.clone()), &NativeCrypto);
+        let storage: FxHashMap<H256, U256> = seed
+            .storage
+            .iter()
+            .map(|(k, v)| (H256::from_low_u64_be(*k), U256::from(*v)))
+            .collect();
+        base.insert(
+            seed.addr,
+            LevmAccount {
+                info: AccountInfo {
+                    code_hash: code.hash,
+                    balance: seed.balance,
+                    nonce: seed.nonce,
+                },
+                has_storage: !storage.is_empty(),
+                storage,
+                status: AccountStatus::Unmodified,
+                exists: true,
+            },
+        );
+        codes.insert(code.hash, code);
+    }
+    let mut db = GeneralizedDatabase::new_with_shared_base(Arc::new(store), Arc::new(base));
+    db.codes = codes;
+    db
 }
 
 // ==================== Frame-tx execution ====================
@@ -380,6 +424,78 @@ fn run_posttx(
     frames.extend(body_frames);
     frames.push(posttx_frame(assertion_addr()));
     run_frame_tx(seeds, frame_tx_with_frames(frames))
+}
+
+/// Runs the same POST_TX transaction against a database shaped like the
+/// sequential executor's and one shaped like a parallel BAL-validation worker's,
+/// and returns both reports.
+///
+/// EIP-7928 lets a client re-execute a block's transactions concurrently to check
+/// its Block Access List. A transaction that reads its own prestate must produce
+/// the same result and consume the same gas either way; if it does not, the
+/// builder and the importer disagree on the block's gas and the block fails its
+/// own BAL validation.
+fn run_posttx_in_both_paths(
+    mut seeds: Vec<Seed>,
+    body_frames: Vec<Frame>,
+    assertion_code: Vec<u8>,
+) -> (
+    Result<ExecutionReport, VMError>,
+    Result<ExecutionReport, VMError>,
+) {
+    seeds.push(Seed::new(assertion_addr(), assertion_code));
+    if !seeds.iter().any(|s| s.addr == FUNDED_SENDER) {
+        seeds.push(
+            Seed::new(FUNDED_SENDER, APPROVE_BOTH_CODE.to_vec()).balance(AUTO_SEED_SENDER_BALANCE),
+        );
+    }
+    let mut frames = vec![verify_frame(FUNDED_SENDER)];
+    frames.extend(body_frames);
+    frames.push(posttx_frame(assertion_addr()));
+    let tx = frame_tx_with_frames(frames);
+
+    let run = |mut db: GeneralizedDatabase| {
+        let env = frame_tx_env(&tx);
+        let transaction = Transaction::FrameTransaction(tx.clone());
+        let mut vm = VM::new(
+            env,
+            &mut db,
+            &transaction,
+            LevmCallTracer::disabled(),
+            VMType::L1,
+            &NativeCrypto,
+        )
+        .expect("VM::new should succeed for a frame tx");
+        vm.execute()
+    };
+
+    (run(seeded_db(&seeds)), run(parallel_seeded_db(&seeds)))
+}
+
+/// Asserts both paths agree: each succeeded (every assertion inside the POST_TX
+/// frame held) and both consumed the same gas.
+fn assert_paths_agree(
+    reports: (
+        Result<ExecutionReport, VMError>,
+        Result<ExecutionReport, VMError>,
+    ),
+    what: &str,
+) {
+    let (sequential, parallel) = reports;
+    let sequential = sequential.unwrap_or_else(|e| panic!("sequential path errored: {e:?}"));
+    let parallel = parallel.unwrap_or_else(|e| panic!("parallel path errored: {e:?}"));
+    assert!(
+        sequential.is_success(),
+        "{what}: the assertion fired on the sequential path"
+    );
+    assert!(
+        parallel.is_success(),
+        "{what}: the assertion fired on the parallel path, so it read a different prestate"
+    );
+    assert_eq!(
+        sequential.gas_used, parallel.gas_used,
+        "{what}: the two paths consumed different gas, which desynchronises the block's BAL"
+    );
 }
 
 /// EIP-7906: a reverted POST_TX frame reverts the execution body and nothing
@@ -1033,6 +1149,61 @@ fn txdiff_slot_before_after_for_modified_slot() {
     assert!(
         run_posttx(vec![writer], vec![default_frame(writer_addr())], code).is_ok(),
         "TXDIFF must report the prestate (before) and live (after) slot values"
+    );
+}
+
+#[test]
+fn txdiff_slot_before_reads_the_tx_prestate_in_both_execution_paths() {
+    // Writer's prestate slot 5 = 10; the body changes it to 99. `slot_before`
+    // must report 10 and `slot_after` 99 whichever way the block is executed —
+    // reading the live value for "before" would make the two agree on 99 and
+    // silently invert the assertion.
+    let writer = Seed::new(writer_addr(), sstore_code(0x05, U256::from(99))).storage(&[(5, 10)]);
+    let slot5 = U256::from(5);
+    let code = assert_all_eq(&[
+        (txdiff_compute(0x00, writer_addr(), slot5), U256::from(10)),
+        (txdiff_compute(0x01, writer_addr(), slot5), U256::from(99)),
+    ]);
+    assert_paths_agree(
+        run_posttx_in_both_paths(vec![writer], vec![default_frame(writer_addr())], code),
+        "slot_before on a slot the body wrote",
+    );
+}
+
+#[test]
+fn txdiff_balance_before_reads_the_tx_prestate_in_both_execution_paths() {
+    // The payer's balance always changes: EIP-8141 APPROVE debits the
+    // transaction's maximum cost. `balance_before` must therefore still report
+    // the seeded prestate, not the debited live balance.
+    let code = assert_all_eq(&[(
+        txdiff_compute(0x02, FUNDED_SENDER, U256::zero()),
+        AUTO_SEED_SENDER_BALANCE,
+    )]);
+    assert_paths_agree(
+        run_posttx_in_both_paths(vec![], vec![], code),
+        "balance_before on the payer, whose balance the APPROVE debit changed",
+    );
+}
+
+#[test]
+fn txdiff_per_address_slot_count_matches_in_both_execution_paths() {
+    // Param 0x06 counts the writer's changed slots, answered from the
+    // transaction-local diff. The body rewrites slot 9 with the value it already
+    // held and writes slot 1, so exactly one slot changed. Against a baseline
+    // that reports every touched slot as previously zero, the unchanged slot 9
+    // counts as a 0 -> 5 change and the answer inflates to 2.
+    let writer = Seed::new(
+        writer_addr(),
+        multi_sstore_code(&[(9, U256::from(5)), (1, U256::from(11))]),
+    )
+    .storage(&[(9, 5)]);
+    let code = assert_all_eq(&[(
+        txdiff_compute(0x06, writer_addr(), U256::zero()),
+        U256::one(),
+    )]);
+    assert_paths_agree(
+        run_posttx_in_both_paths(vec![writer], vec![default_frame(writer_addr())], code),
+        "per-address changed-slot count",
     );
 }
 
