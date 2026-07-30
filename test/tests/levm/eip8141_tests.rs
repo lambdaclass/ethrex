@@ -3717,3 +3717,111 @@ fn atomic_batch_revert_drops_the_batch_writes_from_the_bal() {
         );
     }
 }
+
+/// EIP-8141: when an atomic batch unrolls, "logs emitted by frames that executed
+/// before the failure are discarded together with their state changes [...] Those
+/// frame receipts retain their execution status and gas used, with empty logs."
+///
+/// All three halves are consensus-visible: the per-frame status and gas go into
+/// the receipts trie, and the gas also feeds the header `gasUsed` and the payer's
+/// refund. Rewriting the batch to failure-at-full-`gas_limit` would over-charge
+/// the payer and mislabel frames that did run.
+#[test]
+fn atomic_batch_unroll_keeps_frame_status_and_gas_but_drops_logs() {
+    use ethrex_common::types::{
+        FRAME_RECEIPT_STATUS_FAILURE, FRAME_RECEIPT_STATUS_SKIPPED, FRAME_RECEIPT_STATUS_SUCCESS,
+        Frame,
+    };
+
+    let logger = Address::from_low_u64_be(0x8141_0011);
+    let reverter = Address::from_low_u64_be(0x8141_0012);
+    let terminator = Address::from_low_u64_be(0x8141_0013);
+
+    // logger: LOG0(0, 0) ; STOP -- succeeds and emits one log.
+    let logger_code = Bytes::from(vec![0x60, 0x00, 0x60, 0x00, 0xA0, 0x00]);
+    // reverter: REVERT(0, 0) -- a clean revert, so it is charged its actual gas.
+    let reverter_code = Bytes::from(vec![0x60, 0x00, 0x60, 0x00, 0xFD]);
+    let stop_code = Bytes::from(vec![0x00]);
+
+    let accounts: Vec<SeededAccount> = vec![
+        (
+            FUNDED_SENDER,
+            AUTO_SEED_SENDER_BALANCE,
+            0,
+            Bytes::from(APPROVE_BOTH_CODE.to_vec()),
+        ),
+        (logger, U256::zero(), 0, logger_code),
+        (reverter, U256::zero(), 0, reverter_code),
+        (terminator, U256::zero(), 0, stop_code),
+    ];
+
+    const BATCH_FRAME_GAS: u64 = 300_000;
+    let batch_frame = |target: Address| Frame {
+        mode: u8::from(FrameMode::Sender),
+        flags: 0x04,
+        target: Some(target),
+        gas_limit: BATCH_FRAME_GAS,
+        value: U256::zero(),
+        data: Bytes::new(),
+    };
+
+    // [logger(flagged), reverter(flagged), terminator(unflagged)] is one batch.
+    // The reverter fails, so the batch unrolls and the terminator is skipped.
+    let tx = frame_tx_with_frames(vec![
+        verify_frame(FUNDED_SENDER),
+        batch_frame(logger),
+        batch_frame(reverter),
+        Frame {
+            mode: u8::from(FrameMode::Sender),
+            flags: 0x00,
+            target: Some(terminator),
+            gas_limit: 100_000,
+            value: U256::zero(),
+            data: Bytes::new(),
+        },
+    ]);
+
+    let (result, _db) = run_frame_tx(&accounts, tx);
+    let report = result.expect("a reverting batch must not invalidate the tx");
+    let frames = report.frame_results.expect("frame results present");
+
+    // The frame that ran before the failure keeps its status and its gas.
+    assert_eq!(
+        frames[1].0, FRAME_RECEIPT_STATUS_SUCCESS,
+        "a frame that succeeded before the failure keeps its status through the unroll"
+    );
+    assert!(
+        frames[1].1 > 0 && frames[1].1 < BATCH_FRAME_GAS,
+        "it keeps the gas it used ({}), not the frame's whole gas_limit",
+        frames[1].1
+    );
+    assert!(
+        frames[1].2.is_empty(),
+        "its logs go with the state changes the unroll dropped: {:?}",
+        frames[1].2
+    );
+
+    // The failing frame reverted, so it is charged what it actually used.
+    assert_eq!(frames[2].0, FRAME_RECEIPT_STATUS_FAILURE);
+    assert!(
+        frames[2].1 < BATCH_FRAME_GAS,
+        "a REVERT is charged its actual gas ({}), not the full gas_limit",
+        frames[2].1
+    );
+
+    // The remaining batch member never executed.
+    assert_eq!(frames[3].0, FRAME_RECEIPT_STATUS_SKIPPED);
+    assert_eq!(frames[3].1, 0, "a skipped frame's gas is refunded");
+
+    // The transaction's log set is the concatenation of the frame receipts' logs,
+    // so the unrolled batch contributes nothing to it either.
+    assert!(
+        report.logs.is_empty(),
+        "the unrolled batch's logs must not reach the transaction log set: {:?}",
+        report.logs
+    );
+    assert!(
+        report.gas_used < 2 * BATCH_FRAME_GAS,
+        "charging every batch frame its full gas_limit would over-bill the payer"
+    );
+}

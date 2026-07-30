@@ -2056,25 +2056,22 @@ impl<'a> VM<'a> {
                 // state — drop the state gas accumulated since batch entry.
                 self.state_gas_used = state_gas_used_at_batch_entry;
 
-                // Rewrite results for all frames in this batch (inclusive) as failed,
-                // charging each frame its full gas_limit per EIP-8141.
+                // EIP-8141: frames that executed before the failure retain their
+                // execution status and gas used; only their logs are discarded,
+                // together with the state changes the unroll drops. `total_gas_used`
+                // therefore stands as executed, and the failing frame keeps the gas
+                // the single-frame path already charged it (actual `gas_used` for a
+                // `REVERT`, the full `gas_limit` for an exceptional halt).
                 let ctx = self.frame_tx_context.as_mut().ok_or(VMError::Internal(
                     InternalError::Custom("missing frame tx context".to_string()),
                 ))?;
-                for i in batch_start_idx..=frame_idx {
-                    if let (Some(result), Some(batch_frame)) =
-                        (ctx.frame_results.get_mut(i), frame_tx.frames.get(i))
-                    {
-                        let charged_gas = batch_frame.gas_limit;
-                        total_gas_used = total_gas_used
-                            .saturating_sub(result.1)
-                            .saturating_add(charged_gas);
-                        *result = (
-                            ethrex_common::types::FRAME_RECEIPT_STATUS_FAILURE,
-                            charged_gas,
-                            Vec::new(),
-                        );
-                    }
+                for result in ctx
+                    .frame_results
+                    .get_mut(batch_start_idx..=frame_idx)
+                    .into_iter()
+                    .flatten()
+                {
+                    result.2 = Vec::new();
                 }
                 // Roll back approvals granted inside the reverted batch.
                 ctx.restore_approvals(batch_approval_snapshot);
