@@ -4,14 +4,15 @@ use ethrex_common::types::block_access_list::{
 use ethrex_common::types::{Block, BlockBody, BlockHeader};
 use ethrex_common::{Address, H256, U256};
 use ethrex_crypto::NativeCrypto;
+use ethrex_rlp::encode::RLPEncode;
 use ethrex_rpc::engine::payload::{
     GetPayloadBodiesByHashV2Request, GetPayloadBodiesByRangeV2Request,
 };
-use ethrex_rpc::map_eth_requests;
 use ethrex_rpc::rpc::RpcHandler;
 use ethrex_rpc::test_utils::default_context_with_storage;
 use ethrex_rpc::types::payload::ExecutionPayloadBodyV2;
-use ethrex_rpc::utils::RpcRequest;
+use ethrex_rpc::utils::{RpcErrorMetadata, RpcRequest};
+use ethrex_rpc::{map_debug_requests, map_eth_requests};
 use ethrex_storage::{EngineType, Store};
 use std::str::FromStr;
 
@@ -22,6 +23,20 @@ fn sample_bal() -> BlockAccessList {
         .with_nonce_changes(vec![NonceChange::new(0, 1)])
         .with_balance_changes(vec![BalanceChange::new(0, U256::from(1u64))]);
     BlockAccessList::from_accounts(vec![account])
+}
+
+// A store whose chain config has Amsterdam active from genesis, so headers with a
+// `block_access_list_hash` are recognized as post-fork.
+async fn amsterdam_store() -> Store {
+    let mut storage =
+        Store::new("temp.db", EngineType::InMemory).expect("Failed to create test DB");
+    let mut chain_config = storage.get_chain_config();
+    chain_config.amsterdam_time = Some(0);
+    storage
+        .set_chain_config(&chain_config)
+        .await
+        .expect("set chain config");
+    storage
 }
 
 // A header (number 1) that commits to `bal` via `block_access_list_hash`.
@@ -64,7 +79,7 @@ async fn eth_get_block_access_list_matches_spec_example() {
         .with_nonce_changes(vec![NonceChange::new(0, 0), NonceChange::new(1, 1)]);
     let bal = BlockAccessList::from_accounts(vec![account]);
 
-    let storage = Store::new("temp.db", EngineType::InMemory).expect("Failed to create test DB");
+    let storage = amsterdam_store().await;
     // The endpoint validates the stored BAL against the header commitment, so the
     // block's header must commit to this BAL's hash.
     let block = Block {
@@ -131,6 +146,90 @@ async fn eth_get_block_access_list_unknown_hash_returns_null() {
 
     let got = map_eth_requests(&request, context).await.expect("rpc ok");
     assert_eq!(got, serde_json::Value::Null);
+}
+
+// A block predating Amsterdam has no access list at all, which execution-apis
+// distinguishes from an unknown block: `-32001: Resource not found`.
+#[tokio::test]
+async fn eth_get_block_access_list_pre_amsterdam_is_resource_not_found() {
+    let storage = Store::new("temp.db", EngineType::InMemory).expect("Failed to create test DB");
+    let block = Block {
+        header: BlockHeader {
+            number: 1,
+            ..Default::default()
+        },
+        body: BlockBody::default(),
+    };
+    let block_hash = block.hash();
+    storage.add_block(block).await.expect("store block");
+
+    let body = format!(
+        r#"{{
+            "jsonrpc": "2.0",
+            "method": "eth_getBlockAccessList",
+            "params": ["{block_hash:#x}"],
+            "id": 1
+        }}"#
+    );
+    let request: RpcRequest = serde_json::from_str(&body).unwrap();
+    let context = default_context_with_storage(storage).await;
+
+    let err = map_eth_requests(&request, context)
+        .await
+        .expect_err("pre-Amsterdam block must be an error");
+    assert_eq!(RpcErrorMetadata::from(err).code, -32001);
+}
+
+// debug_getRawBlockAccessList returns the RLP encoding, and accepts a block hash
+// (execution-apis `BlockNumberOrTagOrHash`).
+#[tokio::test]
+async fn debug_get_raw_block_access_list_serves_rlp_by_hash() {
+    let storage = amsterdam_store().await;
+    let bal = sample_bal();
+    let block = Block {
+        header: header_committing_to(&bal),
+        body: BlockBody::default(),
+    };
+    let block_hash = block.hash();
+    storage.add_block(block).await.expect("store block");
+    storage
+        .store_block_access_list(block_hash, &bal)
+        .expect("store BAL");
+
+    let body = format!(
+        r#"{{
+            "jsonrpc": "2.0",
+            "method": "debug_getRawBlockAccessList",
+            "params": ["{block_hash:#x}"],
+            "id": 1
+        }}"#
+    );
+    let request: RpcRequest = serde_json::from_str(&body).unwrap();
+    let context = default_context_with_storage(storage).await;
+
+    let got = map_debug_requests(&request, context).await.expect("rpc ok");
+    let expected = format!("0x{}", hex::encode(bal.encode_to_vec()));
+    assert_eq!(got, serde_json::Value::String(expected));
+}
+
+// The raw getter has no `null` result: an unknown block is `-32001`.
+#[tokio::test]
+async fn debug_get_raw_block_access_list_unknown_hash_is_resource_not_found() {
+    let storage = amsterdam_store().await;
+    let context = default_context_with_storage(storage).await;
+
+    let body = r#"{
+        "jsonrpc": "2.0",
+        "method": "debug_getRawBlockAccessList",
+        "params": ["0xdeaddeaddeaddeaddeaddeaddeaddeaddeaddeaddeaddeaddeaddeaddeaddead"],
+        "id": 1
+    }"#;
+    let request: RpcRequest = serde_json::from_str(body).unwrap();
+
+    let err = map_debug_requests(&request, context)
+        .await
+        .expect_err("unknown block must be an error");
+    assert_eq!(RpcErrorMetadata::from(err).code, -32001);
 }
 
 // engine_getPayloadBodiesByHashV2 must serve the persisted BAL straight from the
