@@ -3252,7 +3252,7 @@ impl Blockchain {
             return Err(MempoolError::FrameTxPreFork);
         }
 
-        // EIP-8141 expiry (spec commit 0b197156): drop frame txs whose expiry
+        // EIP-8141 expiry: drop frame txs whose expiry
         // verifier deadline is already behind the current head timestamp.
         // Boundary: deadline == timestamp is still valid (the verifier only
         // reverts when block.timestamp > deadline).
@@ -3312,20 +3312,11 @@ impl Blockchain {
             if !ethrex_vm::validate_frame_signatures(
                 &frame_tx.signatures,
                 sig_hash,
+                frame_tx.sender,
                 config.fork(header.timestamp),
                 &NativeCrypto,
             ) {
                 return Err(MempoolError::InvalidFrameSignature);
-            }
-
-            // Local anti-malleability policy (NOT consensus): reject high-s
-            // signatures at admission. EIP-8141 accepts high-s at block execution
-            // (`signer == ecrecover`), but the raw signature bytes are committed to
-            // the tx identity hash while elided from the sig hash, so a malleated
-            // `(v,r,s) -> (v^1, r, n-s)` form would produce a second valid tx hash
-            // for the same logical tx and bypass pool dedup.
-            if !ethrex_vm::frame_signatures_are_low_s(&frame_tx.signatures) {
-                return Err(MempoolError::FrameTxMalleableSignature);
             }
 
             // EIP-8141 §Mempool: validate the prefix shape and structural rules.
