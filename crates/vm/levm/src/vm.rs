@@ -2,7 +2,7 @@ use crate::{
     TransientStorage,
     account::LevmAccount,
     call_frame::{CallFrame, Stack},
-    db::gen_db::GeneralizedDatabase,
+    db::gen_db::{CacheDB, GeneralizedDatabase},
     debug::DebugMode,
     environment::Environment,
     errors::{
@@ -900,6 +900,25 @@ pub fn find_batch_end(frames: &[Frame], failed_idx: usize) -> usize {
         .unwrap_or(failed_idx)
 }
 
+/// EIP-7906: install the transaction prestate map on `db` for `tx`, or clear it.
+///
+/// The map is needed only by transactions that can execute TXTRACE /
+/// EVENTDATACOPY / TXDIFF, i.e. frame transactions carrying a POST_TX frame on a
+/// fork where those opcodes exist; every other transaction leaves it `None` and
+/// pays nothing. Assigning on every VM construction is what scopes the map to a
+/// single transaction: the `None` branch drops the previous transaction's map,
+/// which matters because a `GeneralizedDatabase` outlives one transaction on the
+/// sequential paths.
+fn install_tx_prestate(db: &mut GeneralizedDatabase, tx: &Transaction, fork: Fork) {
+    let reaches_introspection_opcodes = fork >= Fork::Hegota
+        && matches!(tx, Transaction::FrameTransaction(frame_tx)
+            if frame_tx
+                .frames
+                .iter()
+                .any(|frame| frame.execution_mode() == FrameMode::PostTx));
+    db.tx_prestate = reaches_introspection_opcodes.then(CacheDB::default);
+}
+
 impl<'a> VM<'a> {
     /// Constructs a VM, allocating a fresh 32 KB root call-frame stack.
     ///
@@ -1015,6 +1034,11 @@ impl<'a> VM<'a> {
         root_memory: Memory,
     ) -> Result<Self, VMError> {
         db.tx_backup = None; // If BackupHook is enabled, it will contain backup at the end of tx execution.
+
+        // Must precede `get_tx_callee` and every other account resolution below, so
+        // that the transaction's first touch of an account or slot is the one the
+        // EIP-7906 prestate records.
+        install_tx_prestate(db, tx, env.config.fork);
 
         let mut substate = Substate::initialize(&env, tx)?;
 

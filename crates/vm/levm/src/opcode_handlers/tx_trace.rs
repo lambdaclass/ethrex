@@ -13,7 +13,7 @@ use ethrex_common::{Address, H256, U256};
 use rustc_hash::FxHashMap;
 
 use crate::db::gen_db::CacheDB;
-use crate::errors::{ExceptionalHalt, OpcodeResult, VMError};
+use crate::errors::{ExceptionalHalt, InternalError, OpcodeResult, VMError};
 use crate::gas_cost;
 use crate::memory::calculate_memory_size;
 use crate::opcode_handlers::OpcodeHandler;
@@ -25,19 +25,28 @@ use crate::vm::VM;
 
 /// Balance changes for the transaction, as `(address, balance_before, balance_after)`.
 ///
-/// Includes every address in `current` whose live balance differs from its
-/// prestate balance in `initial` (an address absent from `initial` has a
-/// `balance_before` of zero). Sorted by address ascending (uint160 big-endian
-/// order, which is `Address`'s natural `Ord`).
-pub(crate) fn balance_changes(initial: &CacheDB, current: &CacheDB) -> Vec<(Address, U256, U256)> {
-    let mut changes: Vec<(Address, U256, U256)> = current
+/// Includes every address the transaction touched (i.e. every address in
+/// `prestate`) whose live balance in `current` differs from the balance it held
+/// when the transaction began. An address created by the transaction has a
+/// `balance_before` of zero, since its prestate entry is the empty account.
+/// Sorted by address ascending (uint160 big-endian order, which is `Address`'s
+/// natural `Ord`).
+///
+/// The touched set comes from `prestate`, not from `current`: `current` is the
+/// execution cache, which spans the whole block while building a payload and up
+/// to a flush boundary while importing sequentially, so iterating it would report
+/// other transactions' changes and make the view path-dependent. Every prestate
+/// entry is recorded on the same first touch that inserts the account into
+/// `current`, so an absent live entry (read as "unchanged" here) cannot occur.
+pub(crate) fn balance_changes(prestate: &CacheDB, current: &CacheDB) -> Vec<(Address, U256, U256)> {
+    let mut changes: Vec<(Address, U256, U256)> = prestate
         .iter()
         .filter_map(|(address, account)| {
-            let after = account.info.balance;
-            let before = initial
+            let before = account.info.balance;
+            let after = current
                 .get(address)
                 .map(|acc| acc.info.balance)
-                .unwrap_or(U256::zero());
+                .unwrap_or(before);
             (after != before).then_some((*address, before, after))
         })
         .collect();
@@ -48,23 +57,24 @@ pub(crate) fn balance_changes(initial: &CacheDB, current: &CacheDB) -> Vec<(Addr
 /// Storage-slot changes for the transaction, as
 /// `(address, slot_key, value_before, value_after)`.
 ///
-/// Includes every `(address, slot)` in `current` storage whose live value
-/// differs from its prestate value in `initial` (an absent initial slot has a
-/// `value_before` of zero). Sorted by address ascending, then by slot key as a
-/// uint256 ascending.
+/// Includes every `(address, slot)` the transaction touched (i.e. every slot in
+/// `prestate`) whose live value in `current` differs from the value it held when
+/// the transaction began. Sorted by address ascending, then by slot key as a
+/// uint256 ascending. The touched set comes from `prestate` for the reason given
+/// on [`balance_changes`].
 pub(crate) fn slot_changes(
-    initial: &CacheDB,
+    prestate: &CacheDB,
     current: &CacheDB,
 ) -> Vec<(Address, H256, U256, U256)> {
     let mut changes: Vec<(Address, H256, U256, U256)> = Vec::new();
-    for (address, account) in current.iter() {
-        let initial_account = initial.get(address);
-        for (slot, after) in account.storage.iter() {
-            let before = initial_account
+    for (address, account) in prestate.iter() {
+        let live_account = current.get(address);
+        for (slot, before) in account.storage.iter() {
+            let after = live_account
                 .and_then(|acc| acc.storage.get(slot).copied())
-                .unwrap_or(U256::zero());
-            if *after != before {
-                changes.push((*address, *slot, before, *after));
+                .unwrap_or(*before);
+            if after != *before {
+                changes.push((*address, *slot, *before, after));
             }
         }
     }
@@ -78,27 +88,28 @@ pub(crate) fn slot_changes(
 
 /// Contracts deployed during the transaction, as `(address, codehash_after)`.
 ///
-/// Includes every address whose prestate code is empty (empty Keccak hash, or
-/// the address is absent from `initial`) and whose live code is non-empty,
-/// EXCLUDING EIP-7702 delegation designators (`0xef0100 || addr`). Current code
-/// bytes are fetched from `codes` by their code hash for the delegation check.
-/// Sorted by address ascending. Propagates `VMError` from `code_has_delegation`.
+/// Includes every address the transaction touched whose prestate code is empty
+/// (empty Keccak hash, which is also what an address created by this transaction
+/// holds) and whose live code is non-empty, EXCLUDING EIP-7702 delegation
+/// designators (`0xef0100 || addr`). Current code bytes are fetched from `codes`
+/// by their code hash for the delegation check. Sorted by address ascending.
+/// Propagates `VMError` from `code_has_delegation`. The touched set comes from
+/// `prestate` for the reason given on [`balance_changes`].
 pub(crate) fn deployed_contracts(
     codes: &FxHashMap<H256, Code>,
-    initial: &CacheDB,
+    prestate: &CacheDB,
     current: &CacheDB,
 ) -> Result<Vec<(Address, H256)>, VMError> {
     let mut deployed: Vec<(Address, H256)> = Vec::new();
-    for (address, account) in current.iter() {
-        let code_hash_after = account.info.code_hash;
-        if code_hash_after == *EMPTY_KECCAK_HASH {
+    for (address, account) in prestate.iter() {
+        if account.info.code_hash != *EMPTY_KECCAK_HASH {
             continue;
         }
-        let was_empty = initial
+        let code_hash_after = current
             .get(address)
-            .map(|acc| acc.info.code_hash == *EMPTY_KECCAK_HASH)
-            .unwrap_or(true);
-        if !was_empty {
+            .map(|acc| acc.info.code_hash)
+            .unwrap_or(*EMPTY_KECCAK_HASH);
+        if code_hash_after == *EMPTY_KECCAK_HASH {
             continue;
         }
         if let Some(code) = codes.get(&code_hash_after)
@@ -154,39 +165,40 @@ pub(crate) fn address_event_indices(logs: &[Log], address: Address) -> Vec<usize
 /// account tuple `(nonce, balance, storage_root, code_hash)` recording which
 /// fields differ from their transaction-prestate values.
 ///
-/// Answered entirely from the diff caches: an address absent from `current` was
+/// Answered entirely from the diff caches: an address absent from `prestate` was
 /// never touched by this transaction, so its mask is zero and no live-state read
 /// is needed. That is what lets the param carry a flat gas cost — unlike params
 /// `0x00`-`0x05`, which may fall back to a live read and are priced accordingly.
 ///
-/// An address absent from `initial` was created during the transaction, so its
-/// prestate is the empty account (nonce 0, balance 0, empty-Keccak code hash) —
-/// the same convention [`balance_changes`] and [`deployed_contracts`] use.
+/// An address created during the transaction has the empty account (nonce 0,
+/// balance 0, empty-Keccak code hash) as its prestate, so every populated field
+/// reads as changed — the same convention [`balance_changes`] and
+/// [`deployed_contracts`] use.
 pub(crate) fn account_change_flags(
-    initial: &CacheDB,
+    prestate: &CacheDB,
     current: &CacheDB,
     slot_changes: &[(Address, H256, U256, U256)],
     address: Address,
 ) -> U256 {
+    let Some(before) = prestate.get(&address) else {
+        return U256::zero();
+    };
+    // A prestate entry is recorded on the same first touch that inserts the
+    // account into `current`, so the live entry is always present.
     let Some(after) = current.get(&address) else {
         return U256::zero();
     };
-    let before = initial.get(&address);
     let mut flags = 0u8;
-    if before.map(|acc| acc.info.nonce).unwrap_or_default() != after.info.nonce {
+    if before.info.nonce != after.info.nonce {
         flags |= 0b0001;
     }
-    if before.map(|acc| acc.info.balance).unwrap_or_default() != after.info.balance {
+    if before.info.balance != after.info.balance {
         flags |= 0b0010;
     }
     if slot_changes.iter().any(|change| change.0 == address) {
         flags |= 0b0100;
     }
-    if before
-        .map(|acc| acc.info.code_hash)
-        .unwrap_or(*EMPTY_KECCAK_HASH)
-        != after.info.code_hash
-    {
+    if before.info.code_hash != after.info.code_hash {
         flags |= 0b1000;
     }
     U256::from(flags)
@@ -262,6 +274,19 @@ fn require_post_tx_frame(vm: &VM<'_>) -> Result<(), VMError> {
     }
 }
 
+/// The transaction prestate the EIP-7906 views read: the value each account and
+/// slot held when the transaction began.
+///
+/// It is installed for exactly the transactions that can execute these opcodes (a
+/// frame transaction carrying a POST_TX frame), and `require_post_tx_frame` has
+/// already established that this is such a transaction, so an absent map is a
+/// broken invariant rather than a state the opcodes can observe.
+fn tx_prestate<'db>(vm: &'db VM<'_>) -> Result<&'db CacheDB, VMError> {
+    vm.db.tx_prestate.as_ref().ok_or_else(|| {
+        InternalError::msg("EIP-7906 introspection without a transaction prestate").into()
+    })
+}
+
 pub struct OpTxTraceHandler;
 impl OpcodeHandler for OpTxTraceHandler {
     #[inline(always)]
@@ -278,25 +303,25 @@ impl OpcodeHandler for OpTxTraceHandler {
         // Compute the owned result first while borrowing VM state immutably;
         // the borrow ends before the stack push below.
         let result: U256 = {
-            let initial = &vm.db.initial_accounts_state;
+            let prestate = tx_prestate(vm)?;
             let current = &vm.db.current_accounts_state;
             match param {
                 // -- counts (in2 must be 0) --
                 0x00 => {
                     require_zero(in2)?;
-                    U256::from(balance_changes(initial, current).len())
+                    U256::from(balance_changes(prestate, current).len())
                 }
                 0x01 => {
                     require_zero(in2)?;
-                    U256::from(slot_changes(initial, current).len())
+                    U256::from(slot_changes(prestate, current).len())
                 }
                 0x02 => {
                     require_zero(in2)?;
-                    U256::from(deployed_contracts(&vm.db.codes, initial, current)?.len())
+                    U256::from(deployed_contracts(&vm.db.codes, prestate, current)?.len())
                 }
                 // -- balance changes (in2 = index) --
                 0x03..=0x05 => {
-                    let changes = balance_changes(initial, current);
+                    let changes = balance_changes(prestate, current);
                     let idx = index_to_usize(in2)?;
                     let (address, before, after) =
                         *changes.get(idx).ok_or(ExceptionalHalt::InvalidOpcode)?;
@@ -308,7 +333,7 @@ impl OpcodeHandler for OpTxTraceHandler {
                 }
                 // -- storage-slot changes (in2 = index) --
                 0x06..=0x09 => {
-                    let changes = slot_changes(initial, current);
+                    let changes = slot_changes(prestate, current);
                     let idx = index_to_usize(in2)?;
                     let (address, slot, before, after) =
                         *changes.get(idx).ok_or(ExceptionalHalt::InvalidOpcode)?;
@@ -321,7 +346,7 @@ impl OpcodeHandler for OpTxTraceHandler {
                 }
                 // -- deployed contracts (in2 = index) --
                 0x0A | 0x0B => {
-                    let deployed = deployed_contracts(&vm.db.codes, initial, current)?;
+                    let deployed = deployed_contracts(&vm.db.codes, prestate, current)?;
                     let idx = index_to_usize(in2)?;
                     let (address, code_hash) =
                         *deployed.get(idx).ok_or(ExceptionalHalt::InvalidOpcode)?;
@@ -476,10 +501,11 @@ impl OpcodeHandler for OpEventDataCopyHandler {
 /// Params: `0x00` slot_before / `0x01` slot_after / `0x02` balance_before /
 /// `0x03` balance_after / `0x04` codehash_before / `0x05` codehash_after.
 ///
-/// "before" is the transaction prestate (the value held in
-/// `initial_accounts_state`); "after" is the live post-body value (in
-/// `current_accounts_state`, which inside a POST_TX frame already reflects the
-/// whole executed tx body). A key the transaction never modified yields the same
+/// "before" is the transaction prestate (the value the key held when the
+/// transaction began, recorded on first touch in `tx_prestate`); "after" is the
+/// live post-body value (in `current_accounts_state`, which inside a POST_TX frame
+/// already reflects the whole executed tx body). A key the transaction never
+/// modified yields the same
 /// live value for both directions; an undeployed account's codehash_before is
 /// the empty-Keccak hash. Params `0x00`-`0x05` may fall back to reading live
 /// state, so they are priced through the EIP-2929 access lists and warm the slot
@@ -541,12 +567,12 @@ impl OpcodeHandler for OpTxDiffHandler {
                 if param == 0x01 {
                     after
                 } else {
-                    // slot_before: the prestate value lives in `initial`. The read
-                    // above guarantees the slot is present there (every key in
-                    // `current.storage` is also in `initial.storage`); fall back to
-                    // the live value so an unmodified slot still reads before==after.
-                    vm.db
-                        .initial_accounts_state
+                    // slot_before: the value the slot held when the transaction
+                    // began. The read above is itself a touch, so it captured the
+                    // prestate if nothing else had; the fallback covers a slot this
+                    // transaction never resolved, which by definition it did not
+                    // modify, so before == after.
+                    tx_prestate(vm)?
                         .get(&address)
                         .and_then(|acc| acc.storage.get(&key).copied())
                         .unwrap_or(after)
@@ -567,8 +593,7 @@ impl OpcodeHandler for OpTxDiffHandler {
                 if param == 0x03 {
                     after
                 } else {
-                    vm.db
-                        .initial_accounts_state
+                    tx_prestate(vm)?
                         .get(&address)
                         .map(|acc| acc.info.balance)
                         .unwrap_or(after)
@@ -589,8 +614,7 @@ impl OpcodeHandler for OpTxDiffHandler {
                 let hash = if param == 0x05 {
                     after
                 } else {
-                    vm.db
-                        .initial_accounts_state
+                    tx_prestate(vm)?
                         .get(&address)
                         .map(|acc| acc.info.code_hash)
                         .unwrap_or(after)
@@ -599,8 +623,7 @@ impl OpcodeHandler for OpTxDiffHandler {
             }
             // -- per-address storage view (0x06 count, 0x07 local index -> global) --
             0x06 | 0x07 => {
-                let changes =
-                    slot_changes(&vm.db.initial_accounts_state, &vm.db.current_accounts_state);
+                let changes = slot_changes(tx_prestate(vm)?, &vm.db.current_accounts_state);
                 let indices = address_slot_indices(&changes, address);
                 if param == 0x06 {
                     require_zero_word(in3)?;
@@ -631,14 +654,9 @@ impl OpcodeHandler for OpTxDiffHandler {
             // -- account change flags (in3 must be 0) --
             0x0A => {
                 require_zero_word(in3)?;
-                let changes =
-                    slot_changes(&vm.db.initial_accounts_state, &vm.db.current_accounts_state);
-                account_change_flags(
-                    &vm.db.initial_accounts_state,
-                    &vm.db.current_accounts_state,
-                    &changes,
-                    address,
-                )
+                let prestate = tx_prestate(vm)?;
+                let changes = slot_changes(prestate, &vm.db.current_accounts_state);
+                account_change_flags(prestate, &vm.db.current_accounts_state, &changes, address)
             }
             _ => return Err(ExceptionalHalt::InvalidOpcode.into()),
         };
@@ -660,9 +678,14 @@ fn require_zero_word(in3: U256) -> Result<(), VMError> {
 mod pure_fn_tests {
     //! Unit tests for the transaction-scoped trace views (the pure functions that
     //! TXTRACE / TXDIFF read). These exercise the diff computation directly from
-    //! hand-built prestate (`initial`) and live (`current`) caches, independent of
+    //! hand-built transaction-prestate and live (`current`) caches, independent of
     //! the opcode dispatch and frame machinery (covered by the integration tests
     //! in `test/tests/levm/eip7906_tests.rs`).
+    //!
+    //! The prestate cache holds exactly the accounts and slots the transaction
+    //! touched, each at the value it held when the transaction began, so an entry
+    //! for an account or slot the transaction created carries the empty account /
+    //! a zero slot value rather than being absent.
 
     use super::*;
     use crate::account::{AccountStatus, LevmAccount};
@@ -715,7 +738,7 @@ mod pure_fn_tests {
 
     #[test]
     fn balance_changes_excludes_net_zero_and_reports_before_after() {
-        let initial = cache(vec![
+        let prestate = cache(vec![
             (addr(1), acct(100, empty_hash(), &[])),
             (addr(2), acct(50, empty_hash(), &[])),
         ]);
@@ -724,30 +747,35 @@ mod pure_fn_tests {
             (addr(2), acct(50, empty_hash(), &[])),  // net-zero -> excluded
         ]);
         assert_eq!(
-            balance_changes(&initial, &current),
+            balance_changes(&prestate, &current),
             vec![(addr(1), U256::from(100), U256::from(150))]
         );
     }
 
     #[test]
-    fn balance_before_is_zero_when_absent_from_prestate() {
-        let initial = cache(vec![]);
+    fn balance_before_is_zero_for_an_account_created_by_the_transaction() {
+        // A created account's prestate is the empty account, so its before is 0.
+        let prestate = cache(vec![(addr(7), acct(0, empty_hash(), &[]))]);
         let current = cache(vec![(addr(7), acct(42, empty_hash(), &[]))]);
         assert_eq!(
-            balance_changes(&initial, &current),
+            balance_changes(&prestate, &current),
             vec![(addr(7), U256::zero(), U256::from(42))]
         );
     }
 
     #[test]
     fn balance_changes_sorted_by_address() {
-        let initial = cache(vec![]);
+        let prestate = cache(vec![
+            (addr(3), acct(0, empty_hash(), &[])),
+            (addr(1), acct(0, empty_hash(), &[])),
+            (addr(2), acct(0, empty_hash(), &[])),
+        ]);
         let current = cache(vec![
             (addr(3), acct(3, empty_hash(), &[])),
             (addr(1), acct(1, empty_hash(), &[])),
             (addr(2), acct(2, empty_hash(), &[])),
         ]);
-        let got: Vec<Address> = balance_changes(&initial, &current)
+        let got: Vec<Address> = balance_changes(&prestate, &current)
             .iter()
             .map(|(a, ..)| *a)
             .collect();
@@ -758,33 +786,37 @@ mod pure_fn_tests {
 
     #[test]
     fn slot_changes_excludes_restored_slot_and_reports_before_after() {
-        let initial = cache(vec![(addr(1), acct(0, empty_hash(), &[(0, 10), (1, 20)]))]);
+        let prestate = cache(vec![(addr(1), acct(0, empty_hash(), &[(0, 10), (1, 20)]))]);
         // slot 0 restored to its original 10 (excluded); slot 1 changed 20 -> 99.
         let current = cache(vec![(addr(1), acct(0, empty_hash(), &[(0, 10), (1, 99)]))]);
         assert_eq!(
-            slot_changes(&initial, &current),
+            slot_changes(&prestate, &current),
             vec![(addr(1), slot(1), U256::from(20), U256::from(99))]
         );
     }
 
     #[test]
-    fn slot_before_is_zero_when_absent_from_prestate() {
-        let initial = cache(vec![(addr(1), acct(0, empty_hash(), &[]))]);
+    fn slot_before_is_zero_for_a_slot_the_transaction_wrote_from_empty() {
+        // The write's own read resolved slot 5 as 0, so that is its prestate.
+        let prestate = cache(vec![(addr(1), acct(0, empty_hash(), &[(5, 0)]))]);
         let current = cache(vec![(addr(1), acct(0, empty_hash(), &[(5, 7)]))]);
         assert_eq!(
-            slot_changes(&initial, &current),
+            slot_changes(&prestate, &current),
             vec![(addr(1), slot(5), U256::zero(), U256::from(7))]
         );
     }
 
     #[test]
     fn slot_changes_sorted_by_address_then_slot() {
-        let initial = cache(vec![]);
+        let prestate = cache(vec![
+            (addr(2), acct(0, empty_hash(), &[(1, 0)])),
+            (addr(1), acct(0, empty_hash(), &[(2, 0), (1, 0)])),
+        ]);
         let current = cache(vec![
             (addr(2), acct(0, empty_hash(), &[(1, 1)])),
             (addr(1), acct(0, empty_hash(), &[(2, 1), (1, 1)])),
         ]);
-        let got: Vec<(Address, u64)> = slot_changes(&initial, &current)
+        let got: Vec<(Address, u64)> = slot_changes(&prestate, &current)
             .iter()
             .map(|(a, s, ..)| (*a, slot_num(s)))
             .collect();
@@ -800,7 +832,7 @@ mod pure_fn_tests {
         let mut codes = FxHashMap::default();
         codes.insert(new_code.hash, new_code.clone());
         codes.insert(pre_code.hash, pre_code.clone());
-        let initial = cache(vec![
+        let prestate = cache(vec![
             (addr(1), acct(0, empty_hash(), &[])),  // undeployed
             (addr(2), acct(0, pre_code.hash, &[])), // already had code
         ]);
@@ -809,7 +841,7 @@ mod pure_fn_tests {
             (addr(2), acct(0, pre_code.hash, &[])),
         ]);
         assert_eq!(
-            deployed_contracts(&codes, &initial, &current).unwrap(),
+            deployed_contracts(&codes, &prestate, &current).unwrap(),
             vec![(addr(1), new_code.hash)]
         );
     }
@@ -822,10 +854,10 @@ mod pure_fn_tests {
         let deleg = code_of(designator);
         let mut codes = FxHashMap::default();
         codes.insert(deleg.hash, deleg.clone());
-        let initial = cache(vec![(addr(1), acct(0, empty_hash(), &[]))]);
+        let prestate = cache(vec![(addr(1), acct(0, empty_hash(), &[]))]);
         let current = cache(vec![(addr(1), acct(0, deleg.hash, &[]))]);
         assert!(
-            deployed_contracts(&codes, &initial, &current)
+            deployed_contracts(&codes, &prestate, &current)
                 .unwrap()
                 .is_empty(),
             "an EIP-7702 delegation must not count as a contract deployment"
@@ -837,13 +869,17 @@ mod pure_fn_tests {
         let c = code_of(vec![0x60, 0x00]);
         let mut codes = FxHashMap::default();
         codes.insert(c.hash, c.clone());
-        let initial = cache(vec![]);
+        let prestate = cache(vec![
+            (addr(3), acct(0, empty_hash(), &[])),
+            (addr(1), acct(0, empty_hash(), &[])),
+            (addr(2), acct(0, empty_hash(), &[])),
+        ]);
         let current = cache(vec![
             (addr(3), acct(0, c.hash, &[])),
             (addr(1), acct(0, c.hash, &[])),
             (addr(2), acct(0, c.hash, &[])),
         ]);
-        let got: Vec<Address> = deployed_contracts(&codes, &initial, &current)
+        let got: Vec<Address> = deployed_contracts(&codes, &prestate, &current)
             .unwrap()
             .iter()
             .map(|(a, _)| *a)
@@ -863,12 +899,15 @@ mod pure_fn_tests {
 
     #[test]
     fn address_slot_indices_maps_local_to_global_positions() {
-        let initial = cache(vec![]);
+        let prestate = cache(vec![
+            (addr(1), acct(0, empty_hash(), &[(0x0A, 0), (0x0B, 0)])),
+            (addr(2), acct(0, empty_hash(), &[(0x0C, 0)])),
+        ]);
         let current = cache(vec![
             (addr(1), acct(0, empty_hash(), &[(0x0A, 1), (0x0B, 1)])),
             (addr(2), acct(0, empty_hash(), &[(0x0C, 1)])),
         ]);
-        let changes = slot_changes(&initial, &current);
+        let changes = slot_changes(&prestate, &current);
         // Global table is sorted by address then slot: (1,0x0A) (1,0x0B) (2,0x0C).
         assert_eq!(address_slot_indices(&changes, addr(1)), vec![0, 1]);
         assert_eq!(address_slot_indices(&changes, addr(2)), vec![2]);
@@ -880,9 +919,9 @@ mod pure_fn_tests {
 
     #[test]
     fn address_slot_indices_is_empty_for_an_untouched_address() {
-        let initial = cache(vec![]);
+        let prestate = cache(vec![(addr(1), acct(0, empty_hash(), &[(0x0A, 0)]))]);
         let current = cache(vec![(addr(1), acct(0, empty_hash(), &[(0x0A, 1)]))]);
-        let changes = slot_changes(&initial, &current);
+        let changes = slot_changes(&prestate, &current);
         assert!(address_slot_indices(&changes, addr(9)).is_empty());
     }
 
@@ -918,17 +957,18 @@ mod pure_fn_tests {
 
     #[test]
     fn account_change_flags_is_zero_for_an_untouched_address() {
-        let initial = cache(vec![(addr(1), acct(100, empty_hash(), &[]))]);
+        let prestate = cache(vec![(addr(1), acct(100, empty_hash(), &[]))]);
         let current = cache(vec![(addr(1), acct(100, empty_hash(), &[]))]);
-        let changes = slot_changes(&initial, &current);
+        let changes = slot_changes(&prestate, &current);
         // Present but unchanged.
         assert_eq!(
-            account_change_flags(&initial, &current, &changes, addr(1)),
+            account_change_flags(&prestate, &current, &changes, addr(1)),
             U256::zero()
         );
-        // Absent from `current` entirely — never touched, so no live read is needed.
+        // Absent from the prestate entirely — never touched by this transaction,
+        // so no live read is needed.
         assert_eq!(
-            account_change_flags(&initial, &current, &changes, addr(9)),
+            account_change_flags(&prestate, &current, &changes, addr(9)),
             U256::zero()
         );
     }
@@ -936,7 +976,7 @@ mod pure_fn_tests {
     #[test]
     fn account_change_flags_sets_one_bit_per_changed_field() {
         let c = code_of(vec![0x60, 0x00]);
-        let initial = cache(vec![
+        let prestate = cache(vec![
             (addr(1), acct_with_nonce(3, 100, empty_hash(), &[])),
             (addr(2), acct(100, empty_hash(), &[])),
             (addr(3), acct(100, empty_hash(), &[(0x01, 5)])),
@@ -948,7 +988,7 @@ mod pure_fn_tests {
             (addr(3), acct(100, empty_hash(), &[(0x01, 6)])),      // storage
             (addr(4), acct(100, c.hash, &[])),                     // codehash
         ]);
-        let changes = slot_changes(&initial, &current);
+        let changes = slot_changes(&prestate, &current);
         for (address, expected) in [
             (addr(1), 0b0001u8),
             (addr(2), 0b0010),
@@ -956,7 +996,7 @@ mod pure_fn_tests {
             (addr(4), 0b1000),
         ] {
             assert_eq!(
-                account_change_flags(&initial, &current, &changes, address),
+                account_change_flags(&prestate, &current, &changes, address),
                 U256::from(expected),
                 "wrong mask for {address:?}"
             );
@@ -966,13 +1006,13 @@ mod pure_fn_tests {
     #[test]
     fn account_change_flags_combines_bits_and_treats_creation_as_all_changed() {
         let c = code_of(vec![0x60, 0x00]);
-        // Absent from `initial` => created this transaction, so its prestate is the
-        // empty account and every populated field reads as changed.
-        let initial = cache(vec![]);
+        // Created this transaction, so its prestate is the empty account with a zero
+        // slot and every populated field reads as changed.
+        let prestate = cache(vec![(addr(1), acct(0, empty_hash(), &[(0x01, 0)]))]);
         let current = cache(vec![(addr(1), acct_with_nonce(1, 7, c.hash, &[(0x01, 9)]))]);
-        let changes = slot_changes(&initial, &current);
+        let changes = slot_changes(&prestate, &current);
         assert_eq!(
-            account_change_flags(&initial, &current, &changes, addr(1)),
+            account_change_flags(&prestate, &current, &changes, addr(1)),
             U256::from(0b1111u8)
         );
     }
