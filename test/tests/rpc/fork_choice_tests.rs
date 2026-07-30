@@ -303,6 +303,71 @@ async fn fcu_v4_accepts_target_gas_limit_present() {
     );
 }
 
+// Builds an FCUv4 request carrying a raw third `custodyColumns` parameter (EIP-8070).
+fn fcu_v4_request_with_custody_columns(
+    head: H256,
+    timestamp: u64,
+    custody_columns: &str,
+) -> RpcRequest {
+    let mut request = fcu_v4_request(head, timestamp, Some("0x2faf080"));
+    let params = request.params.as_mut().expect("FCUv4 params");
+    params.push(serde_json::from_str(custody_columns).expect("valid custodyColumns literal"));
+    request
+}
+
+// EIP-8070: a CL that provides custody services passes a 16-byte custody bitarray as
+// the third FCUv4 parameter. ethrex replicates every blob, so the set is accepted and
+// ignored — it must not fail the call.
+#[tokio::test]
+async fn fcu_v4_accepts_custody_columns() {
+    let store = amsterdam_test_store().await;
+    let genesis = store.get_block_header(0).unwrap().unwrap();
+    let request = fcu_v4_request_with_custody_columns(
+        genesis.hash(),
+        genesis.timestamp + 12,
+        r#""0xffffffffffffffffffffffffffffffff""#,
+    );
+
+    let context = default_context_with_storage(store).await;
+    let response = ForkChoiceUpdatedV4::call(&request, context)
+        .await
+        .expect("FCU V4 must accept custodyColumns");
+
+    assert!(!response["payloadId"].is_null());
+}
+
+// A CL that provides no custody services sends `null`, which is equally valid.
+#[tokio::test]
+async fn fcu_v4_accepts_null_custody_columns() {
+    let store = amsterdam_test_store().await;
+    let genesis = store.get_block_header(0).unwrap().unwrap();
+    let request =
+        fcu_v4_request_with_custody_columns(genesis.hash(), genesis.timestamp + 12, "null");
+
+    let context = default_context_with_storage(store).await;
+    let response = ForkChoiceUpdatedV4::call(&request, context)
+        .await
+        .expect("FCU V4 must accept a null custodyColumns");
+
+    assert!(!response["payloadId"].is_null());
+}
+
+// A non-null custodyColumns that is not exactly 16 bytes is `-32602: Invalid params`.
+#[tokio::test]
+async fn fcu_v4_rejects_wrong_length_custody_columns() {
+    let store = amsterdam_test_store().await;
+    let genesis = store.get_block_header(0).unwrap().unwrap();
+    let request =
+        fcu_v4_request_with_custody_columns(genesis.hash(), genesis.timestamp + 12, r#""0xff""#);
+
+    let context = default_context_with_storage(store).await;
+    let err = ForkChoiceUpdatedV4::call(&request, context)
+        .await
+        .expect_err("a short custodyColumns must be rejected");
+
+    assert!(matches!(err, RpcErr::BadParams(_)), "got: {err:?}");
+}
+
 // execution-apis#796: targetGasLimit is required on V4; an absent field is
 // rejected at deserialization, so the FCUv4 request fails to parse.
 #[tokio::test]

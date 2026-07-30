@@ -537,13 +537,20 @@ fn parse_v4(
         .as_ref()
         .ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
 
-    if params.len() != 2 && params.len() != 1 {
-        return Err(RpcErr::BadParams("Expected 2 or 1 params".to_owned()));
+    if !(1..=3).contains(&params.len()) {
+        return Err(RpcErr::BadParams("Expected 1, 2 or 3 params".to_owned()));
+    }
+
+    // EIP-8070 `custodyColumns`: a 16-byte bitarray of the CL's custody column
+    // indices, or null when the CL provides no custody services. ethrex is a
+    // full-replication blob provider, so the set is validated and then ignored.
+    if let Some(custody_columns) = params.get(2) {
+        validate_custody_columns(custody_columns)?;
     }
 
     let forkchoice_state: ForkChoiceState = serde_json::from_value(params[0].clone())?;
     let mut payload_attributes: Option<PayloadAttributesV4> = None;
-    if params.len() == 2 {
+    if params.len() >= 2 {
         // execution-apis#796: V4 attributes are validated strictly. A present but
         // malformed object (e.g. missing the required targetGasLimit) is rejected
         // rather than silently ignored; an absent/null object yields no attributes.
@@ -555,6 +562,28 @@ fn parse_v4(
         })?;
     }
     Ok((forkchoice_state, payload_attributes))
+}
+
+/// Validates the `engine_forkchoiceUpdatedV4` `custodyColumns` parameter: null, or a
+/// 16-byte `DATA` value interpreted as a bitarray of length `CELLS_PER_EXT_BLOB`
+/// (EIP-8070). Anything else is `-32602: Invalid params`.
+fn validate_custody_columns(value: &Value) -> Result<(), RpcErr> {
+    if value.is_null() {
+        return Ok(());
+    }
+
+    let encoded = value.as_str().ok_or_else(|| {
+        RpcErr::BadParams("custodyColumns must be a 16-byte DATA value or null".to_owned())
+    })?;
+    let bytes = hex::decode(encoded.strip_prefix("0x").unwrap_or(encoded))
+        .map_err(|error| RpcErr::BadParams(format!("invalid custodyColumns: {error}")))?;
+    if bytes.len() != 16 {
+        return Err(RpcErr::BadParams(format!(
+            "custodyColumns must be 16 bytes, got {}",
+            bytes.len()
+        )));
+    }
+    Ok(())
 }
 
 fn validate_attributes_v4(
