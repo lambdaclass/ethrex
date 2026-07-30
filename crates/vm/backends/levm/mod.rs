@@ -3085,6 +3085,7 @@ impl LEVM {
         let sender = frame_tx.sender;
 
         let env = Self::setup_env(tx, sender, block_header, db, vm_type)?;
+        let blob_base_fee = env.base_blob_fee_per_gas;
         let mut vm = VM::new(env, db, tx, LevmCallTracer::disabled(), vm_type, crypto)?;
 
         // OQ1: no canonical paymaster is resolvable, so the canonical pay-frame
@@ -3104,14 +3105,14 @@ impl LEVM {
                 return Ok(FrameValidationOutcome {
                     passed: false,
                     violation: Some(EvmError::from(err).to_string()),
-                    max_cost: Self::frame_tx_max_cost(frame_tx),
+                    max_cost: Self::frame_tx_max_cost(frame_tx, blob_base_fee),
                     accessed_paymaster: None,
                     touched_sender_slots: Vec::new(),
                 });
             }
         };
 
-        let max_cost = Self::frame_tx_max_cost(frame_tx);
+        let max_cost = Self::frame_tx_max_cost(frame_tx, blob_base_fee);
         let touched_sender_slots = vm.validation_observer.touched_sender_slots.clone();
         // The payer established by the prefix is the paymaster (OQ2: the
         // APPROVE-payment address is treated uniformly as "paymaster", including
@@ -3195,8 +3196,11 @@ impl LEVM {
     /// TXPARAM 0x06 max cost for a frame transaction. Single source of truth is
     /// [`FrameTransaction::max_cost`]; see it for the formula and the saturating
     /// (reservation-ceiling) rationale.
-    fn frame_tx_max_cost(frame_tx: &ethrex_common::types::FrameTransaction) -> U256 {
-        frame_tx.max_cost()
+    fn frame_tx_max_cost(
+        frame_tx: &ethrex_common::types::FrameTransaction,
+        blob_base_fee: U256,
+    ) -> U256 {
+        frame_tx.max_cost(blob_base_fee)
     }
 
     pub fn get_state_transitions(

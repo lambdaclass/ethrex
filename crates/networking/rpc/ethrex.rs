@@ -10,6 +10,7 @@ use ethrex_common::{
     Address, U256,
     types::{
         BlockHeader, FRAME_RECEIPT_STATUS_SUCCESS, PrefixShape, Transaction, ValidationPrefix,
+        calculate_base_fee_per_blob_gas,
     },
 };
 use ethrex_vm::backends::{FrameValidationOutcome, levm::get_max_allowed_gas_limit};
@@ -149,9 +150,19 @@ impl RpcHandler for SimulateFrameTransactionRequest {
             ));
         };
 
-        // `max_cost` is a pure function of the tx fields (no EVM pass), so it is
-        // reported on every path, including structural rejection.
-        let max_cost = to_hex_u256(frame_tx.max_cost());
+        // `max_cost` is a pure function of the tx fields and the block's blob base
+        // fee (no EVM pass), so it is reported on every path, including structural
+        // rejection.
+        let blob_schedule = context
+            .storage
+            .get_chain_config()
+            .get_fork_blob_schedule(header.timestamp)
+            .unwrap_or_default();
+        let blob_base_fee = calculate_base_fee_per_blob_gas(
+            header.excess_blob_gas.unwrap_or_default(),
+            blob_schedule.base_fee_update_fraction,
+        );
+        let max_cost = to_hex_u256(frame_tx.max_cost(blob_base_fee));
 
         // Derive and structurally validate the prefix. A structural error means
         // the transaction is invalid without needing an EVM pass.

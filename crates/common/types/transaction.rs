@@ -2063,6 +2063,13 @@ pub const FRAME_TX_MAX_RECENT_ROOT_REFERENCES: usize = 16;
 /// raised EIP-7976 floor always applies and neither needs a fork parameter.
 const FRAME_TX_STANDARD_TOKEN_COST: u64 = 4;
 const FRAME_TX_TOTAL_COST_FLOOR_PER_TOKEN: u64 = 16;
+
+/// EIP-7623 `calldata_cost`: 4 gas per zero byte, 16 per non-zero byte.
+fn calldata_cost(data: &[u8]) -> u64 {
+    data.iter().fold(0u64, |acc, byte| {
+        acc.saturating_add(if *byte == 0 { 4 } else { 16 })
+    })
+}
 /// EIP-8141 signature schemes: ARBITRARY=0, SECP256K1=1, P256=2.
 pub const FRAME_SIG_SCHEME_ARBITRARY: u8 = 0;
 pub const FRAME_SIG_SCHEME_SECP256K1: u8 = 1;
@@ -2283,16 +2290,16 @@ impl FrameTransaction {
             }))
     }
 
-    /// EIP-7623 calldata cost over the frame and signature data plus EIP-8250's
-    /// nonce calldata: 4 gas per zero byte, 16 per non-zero byte.
+    /// EIP-7623 calldata cost over the frame and signature data, EIP-8250's
+    /// nonce calldata and EIP-8272's `rlp(recent_root_references)`: 4 gas per
+    /// zero byte, 16 per non-zero byte.
     pub fn data_cost(&self) -> u64 {
         let fields = self.data_fields().flatten().fold(0u64, |acc, byte| {
             acc.saturating_add(if *byte == 0 { 4 } else { 16 })
         });
-        let nonce = self.nonce_calldata().iter().fold(0u64, |acc, byte| {
-            acc.saturating_add(if *byte == 0 { 4 } else { 16 })
-        });
-        fields.saturating_add(nonce)
+        let nonce = calldata_cost(&self.nonce_calldata());
+        let recent_roots = calldata_cost(&self.recent_root_calldata());
+        fields.saturating_add(nonce).saturating_add(recent_roots)
     }
 
     /// EIP-8250 `nonce_calldata`: `rlp(nonce_keys) || rlp(nonce_seq)`. The bytes
@@ -2305,14 +2312,16 @@ impl FrameTransaction {
         buf
     }
 
-    /// EIP-7623 token count over the frame and signature data plus EIP-8250's
-    /// nonce calldata, used for the calldata floor. Frame transactions exist only
-    /// from Hegota onward, which is after Amsterdam, so EIP-7976's unweighted
-    /// count (every byte costs `STANDARD_TOKEN_COST`) always applies.
+    /// EIP-7623 token count over the frame and signature data, EIP-8250's nonce
+    /// calldata and EIP-8272's `rlp(recent_root_references)`, used for the
+    /// calldata floor. Frame transactions exist only from Hegota onward, which is
+    /// after Amsterdam, so EIP-7976's unweighted count (every byte costs
+    /// `STANDARD_TOKEN_COST`) always applies.
     pub fn calldata_tokens(&self) -> u64 {
         self.data_fields()
             .fold(0u64, |acc, field| acc.saturating_add(field.len() as u64))
             .saturating_add(self.nonce_calldata().len() as u64)
+            .saturating_add(self.recent_root_calldata().len() as u64)
             .saturating_mul(FRAME_TX_STANDARD_TOKEN_COST)
     }
 
@@ -2331,34 +2340,40 @@ impl FrameTransaction {
             .saturating_add(self.signature_verification_cost())
     }
 
-    /// EIP-8272 §Gas accounting: the EIP-7623 calldata cost over
-    /// `rlp(recent_root_references)`, plus the per-reference intrinsic gas that
-    /// prepays warming `RECENT_ROOT_ADDRESS` and each derived storage key. Zero
-    /// when no reference is declared, so a reference-free transaction's gas is
-    /// exactly the EIP-8141 figure.
-    pub fn recent_root_reference_gas(&self) -> u64 {
+    /// EIP-8272 `recent_root_calldata`: `rlp(recent_root_references)`. The bytes
+    /// this EIP adds to the payload are priced exactly as EIP-8141 prices frame
+    /// and signature data, so they enter both `data_cost` and `calldata_tokens`.
+    /// Empty when no reference is declared, so a reference-free transaction's
+    /// gas is exactly the EIP-8141 figure.
+    pub fn recent_root_calldata(&self) -> Vec<u8> {
+        if self.recent_root_references.is_empty() {
+            return Vec::new();
+        }
+        let mut buf = Vec::new();
+        self.recent_root_references.encode(&mut buf);
+        buf
+    }
+
+    /// EIP-8272 `recent_root_reference_intrinsic_gas`: the per-reference cost
+    /// that prepays warming `RECENT_ROOT_ADDRESS` and each derived storage key.
+    /// It is a mandatory cost, charged outside the EIP-7623 floored term, so it
+    /// enters both `standard_gas_limit` and `calldata_floor_gas`.
+    pub fn recent_root_reference_intrinsic_gas(&self) -> u64 {
         if self.recent_root_references.is_empty() {
             return 0;
         }
-        let mut refs_buf = Vec::new();
-        self.recent_root_references.encode(&mut refs_buf);
-        let calldata_gas = refs_buf.iter().fold(0u64, |acc, byte| {
-            acc.saturating_add(if *byte == 0 { 4 } else { 16 })
-        });
-        calldata_gas
-            .saturating_add(FRAME_TX_RECENT_ROOT_REFERENCE_ADDRESS_GAS)
-            .saturating_add(
-                (self.recent_root_references.len() as u64)
-                    .saturating_mul(FRAME_TX_RECENT_ROOT_REFERENCE_GAS),
-            )
+        FRAME_TX_RECENT_ROOT_REFERENCE_ADDRESS_GAS.saturating_add(
+            (self.recent_root_references.len() as u64)
+                .saturating_mul(FRAME_TX_RECENT_ROOT_REFERENCE_GAS),
+        )
     }
 
-    /// Compute total gas limit: mandatory costs + data cost + recent-root
-    /// reference gas + sum of frame gas limits.
-    pub fn total_gas_limit(&self) -> u64 {
+    /// EIP-8141 `standard_gas_limit`: mandatory costs + data cost + EIP-8272
+    /// reference intrinsic gas + sum of frame gas limits.
+    pub fn standard_gas_limit(&self) -> u64 {
         self.mandatory_gas()
             .saturating_add(self.data_cost())
-            .saturating_add(self.recent_root_reference_gas())
+            .saturating_add(self.recent_root_reference_intrinsic_gas())
             .saturating_add(
                 self.frames
                     .iter()
@@ -2367,19 +2382,38 @@ impl FrameTransaction {
             )
     }
 
+    /// EIP-8141 `calldata_floor_gas`: the mandatory costs plus the EIP-7623
+    /// floor over every byte this transaction carries. The mandatory costs are
+    /// always charged, so they sit on both sides of the `max_gas` comparison.
+    pub fn calldata_floor_total(&self) -> u64 {
+        self.mandatory_gas()
+            .saturating_add(self.recent_root_reference_intrinsic_gas())
+            .saturating_add(self.calldata_floor_gas())
+    }
+
+    /// EIP-8141 `max_gas = max(standard_gas_limit, calldata_floor_gas)`: the gas
+    /// reserved from the block pool before execution and the quantity `max_cost`
+    /// is charged over. A transaction whose data floor exceeds what it declared
+    /// for execution reserves the floor rather than being rejected.
+    pub fn total_gas_limit(&self) -> u64 {
+        self.standard_gas_limit().max(self.calldata_floor_total())
+    }
+
     /// TXPARAM `0x06` max cost: the largest amount the payer may be charged,
-    /// `max_fee_per_gas * total_gas_limit + len(blob_hashes) * 131072 * max_fee_per_blob_gas`.
+    /// `max_gas * max_fee_per_gas + len(blob_hashes) * GAS_PER_BLOB * blob_base_fee`.
+    /// `max_fee_per_blob_gas` bounds inclusion only; the blob fee is collected
+    /// once at the base rate and never refunded (EIP-8141 §Blob handling).
     ///
     /// Saturating (not checked) on purpose: this is a reservation/estimate
     /// ceiling, so overflowing to `U256::MAX` is conservative. The consensus
     /// TXPARAM `0x06` handler (`opcode_handlers/frame_tx.rs`) instead uses
     /// checked math and halts on overflow.
-    pub fn max_cost(&self) -> U256 {
+    pub fn max_cost(&self, blob_base_fee: U256) -> U256 {
         let gas_cost =
             U256::from(self.max_fee_per_gas).saturating_mul(U256::from(self.total_gas_limit()));
         let blob_cost = U256::from(self.blob_versioned_hashes.len())
             .saturating_mul(U256::from(131072u64))
-            .saturating_mul(self.max_fee_per_blob_gas);
+            .saturating_mul(blob_base_fee);
         gas_cost.saturating_add(blob_cost)
     }
 
@@ -2584,19 +2618,6 @@ impl FrameTransaction {
                     Some(_) => {}
                 }
             }
-        }
-        // Per EIP-8141, the EIP-7623 calldata floor must be reserved independently
-        // of execution: the derived `tx_gas_limit` has to cover the mandatory costs
-        // plus the floor, or the transaction cannot pay for the data it carries.
-        let floor_gas = self.calldata_floor_gas();
-        let reserved = self
-            .mandatory_gas()
-            .saturating_add(self.recent_root_reference_gas())
-            .saturating_add(floor_gas);
-        if self.total_gas_limit() < reserved {
-            return Err(format!(
-                "Total gas limit does not reserve the calldata floor of {floor_gas}"
-            ));
         }
         Ok(())
     }
