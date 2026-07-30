@@ -50,6 +50,38 @@ still validates in full — e.g. `MAX_VERIFY_GAS` is a mempool-admission bound
 only, never checked in block execution), P2P, logging, docs, the payload
 *builder's* tx selection (not its execution).
 
+### Answer the test against the chain's actual history
+
+The test is about blocks that **already exist**, so a consensus change to a
+feature this chain never used is Path 1 material. Enumerate before deciding
+rather than reasoning from the diff alone — for a change confined to frame
+transactions, walk the chain and inspect the frame modes:
+
+```bash
+# every type-0x06 tx in the chain, with its frame modes
+for ((s=0; s<=HEAD; s+=200)); do
+  e=$((s+199)); (( e>HEAD )) && e=$HEAD
+  req="["; for ((b=s; b<=e; b++)); do
+    req+="{\"jsonrpc\":\"2.0\",\"id\":$b,\"method\":\"eth_getBlockByNumber\",\"params\":[\"$(printf '0x%x' $b)\",true]},"
+  done
+  curl -s -X POST -H 'content-type: application/json' -d "${req%,}]" "$RPC" \
+   | jq -c '.[].result | select(.!=null)
+            | {n:.number, frames:[.transactions[]|select(.type=="0x6")|{h:.hash, modes:[.frames[].mode]}]}
+            | select(.frames|length>0)'
+done
+```
+
+Only the replay tail is re-executed on restart — from the last flushed state
+layer (every `DB_COMMIT_THRESHOLD` = 128 blocks) to head — but treat the whole
+history as in scope: any node syncing from genesis replays all of it.
+
+A worked example: the EIP-7906 transaction-prestate fix changes what `TXDIFF`
+returns, which is consensus-visible, yet it only affects transactions carrying a
+POST_TX frame. Enumerating showed the chain's history held two frame
+transactions, both VERIFY+SENDER, so no already-produced block could change and
+Path 1 applied. The three ELs restarted with zero
+`World State Root does not match`, confirming it.
+
 > **Never use `kurtosis service update` for a state-preserving upgrade.** It
 > recreates the container, which drops the file mounts (`/network-configs`,
 > `/jwt` → `Failed to open genesis file`) and destroys the EL datadir (it lives
@@ -79,6 +111,12 @@ non-consensus change — computes identical state roots.
    `exec: /usr/local/bin/ethrex-real: Permission denied` (`docker cp` from an
    image preserves it). The datadir is untouched because the failure is pre-exec.
 3. **Canary order: el-2 first (never the bootnode), then el-3, then el-1.**
+   **Exception — a consensus change (even a history-safe one) must not be
+   canaried.** While the versions are mixed, an upgraded builder can produce a
+   block the un-upgraded nodes consider invalid, splitting the set. Stage the
+   binary into *every* EL first (`docker cp` to all of them, no restarts), then
+   restart them back to back, and verify only afterwards. The window where a
+   POST_TX-carrying transaction could be included is what you are minimising.
 4. Per EL: `docker cp /tmp/ethrex-new <ctr>:/usr/local/bin/ethrex` then
    `docker restart -t 20 <ctr>`.
 5. **Host ports:** enclaves with `port_publisher` set have **deterministic**
@@ -90,10 +128,19 @@ non-consensus change — computes identical state roots.
    so you can `docker cp` the old binary back and restart.
 
 **Durability:** the swapped binary lives in the writable layer — it survives
-reboots (set `docker update --restart unless-stopped` on all containers) but a
-container **recreate** reverts to the image. Retag the image
+reboots (set `docker update --restart unless-stopped` on all containers; the ELs
+do **not** ship with a restart policy, so check
+`docker inspect --format '{{.HostConfig.RestartPolicy.Name}}'` rather than
+assuming) but a container **recreate** reverts to the image. Retag the image
 (`docker tag ethrex:hegota-<short-sha> ethrex:hegota`) so a future recreate uses
 the new binary.
+
+When the image was built on a *different* host from the one running the enclave,
+a retag is not enough — the devnet host's image still holds the old binary, and
+tagging cannot conjure the new one. Either build on the devnet host, or ship the
+image itself (`docker save … | ssh … docker load`) before retagging. Until that
+is done, the swap is restart-durable but recreate-fragile: the running chain has
+the fix and the image does not.
 
 ## Path 1b — Add/change a CLI flag or RPC namespace without re-genesis (wrapper)
 

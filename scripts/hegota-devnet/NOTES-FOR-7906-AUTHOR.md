@@ -6,8 +6,10 @@ summarizes where our 7906 implementation diverges from the draft, what
 integrating it with the rest of the family required, and the spec questions we
 would most like a ruling on.
 
-- **Spec read:** `eips.ethereum.org` master as of 2026-06-24, including the two
-  merged updates PR #11829 (POST_TX frame mode) and PR #11830 (TXDIFF).
+- **Spec read:** `eips.ethereum.org` master as of 2026-07-28, including the
+  merged updates PR #11829 (POST_TX frame mode) and PR #11830 (TXDIFF), the
+  2026-06-29 TXDIFF pricing revision, the 2026-07-06 POST_TX revert revision and
+  the 2026-07-09 per-address view params.
 - **Implementation:** ethrex branch `hegota-devnet`; detailed notes in
   [`docs/eip-7906.md`](../../docs/eip-7906.md).
 - **Try it live:** endpoints, faucet, and a working frame-tx submitter are in
@@ -30,39 +32,67 @@ where the EIPs coexist.
 **Ask:** an authoritative opcode (and TXPARAM-index) registry for the
 8141-family EIPs, so implementations stop colliding pairwise.
 
-### 2. Provisional gas values
+### 2. Provisional gas values, and fork-aware EIP-2929 costs
 
-- `TXTRACE = 100` — the EIP's own example value.
-- `TXDIFF = 2100` — PR #11830 marks the cost TBD; ethrex prices the keyed
-  before/after lookup as a cold `SLOAD`, since it may touch a cold
-  account/slot.
+- `TXTRACE = 100` — the EIP's own example value; it doubles as the flat cost of
+  TXDIFF params `0x06`-`0x0A`.
+- TXDIFF params `0x00`-`0x05` are priced through the EIP-2929 access lists as the
+  spec's 2026-06-29 revision requires, but with the **fork-aware** cold/warm
+  costs rather than the literal `2100` / `2600` / `100`. EIP-8038 reprices cold
+  state access at Amsterdam and Hegotá is post-Amsterdam, so the hardcoded
+  numbers would make TXDIFF a strictly cheaper cold-state read than `SLOAD`.
+  Pre-Amsterdam the two agree exactly.
 
-### 3. TXDIFF "after" reads the live post-body state
+  **Ask:** express the cost as the fork's cold/warm access cost rather than as
+  fixed integers.
 
-"Before" reads the transaction prestate; "after" reads the live state through
-the execution diff caches rather than a separately materialized post-tx
-snapshot. Because POST_TX frames are the trailing suffix, the live state *is*
-the post-body state, so this is equivalent to the spec's intent — flagged for
-cross-client confirmation of edge cases. TXDIFF reads deliberately do **not**
-trigger EIP-2929 warm/cold accounting.
+### 3. "before" needs a defined granularity — this one bit us
 
-### 4. Whole-body revert is implemented as exclusion — underspecified
+The spec says "before" is the value prior to the transaction, and leaves the
+sourcing to implementations. That is a trap, because a client is likely to
+already have a cache that looks like a prestate and is not one. In ethrex the
+obvious candidate held the *block* prestate on the building path, a
+flush-boundary prestate on the sequential import path, and nothing at all on the
+concurrent path that re-executes transactions to validate the EIP-7928 Block
+Access List — where every `*_before` read then silently fell back to the live
+value, so `before == after` always.
 
-A reverted POST_TX frame invalidates the transaction through the same path as
-a reverted VERIFY frame: the transaction is **excluded from the block** and
-the approved gas payment is fully rolled back. Internally consistent, but the
-draft leaves three things open that we'd most like a ruling on:
+The failure is not a wrong answer, it is a **path-dependent** answer. An
+assertion that branches on its own diff takes different branches while a block is
+built and while it is validated; gas diverges, the BAL no longer matches, the
+block is rejected by its own producer, and block production stops. This halted
+our public devnet for two hours with nothing logged above `WARN`.
 
-1. **Receipt representation.** Exclude entirely (our choice: no receipt, not
-   in the block body) vs. include-but-mark-reverted (a status-0 receipt
-   occupying a block slot). The two disagree on the receipts root, so this is
-   consensus-relevant across clients.
-2. **Validation-prefix payment interaction.** The spec also describes the
-   validation prefix as "not reverted in a mempool-compatible way", which is
-   in tension with rolling back the approved payment on POST_TX revert (we
-   roll it back — the payer pays nothing).
-3. **Anti-DoS.** With exclusion + full payment rollback, a block builder bears
-   the execution cost of POST_TX-reverting transactions with no compensation.
+**Asks:**
+- State explicitly that "before" is the transaction prestate, and that it must be
+  identical under sequential and concurrent re-execution.
+- Add a test vector: a POST_TX frame that branches on `slot_before != slot_after`
+  for a slot its own body wrote. Any client sourcing "before" from a block-scoped
+  or BAL-seeded cache fails it, and the failure is invisible to single-path tests.
+
+### 4. Partial revert: implemented per the 2026-07-06 revision
+
+A reverted POST_TX frame reverts the execution **body** while the transaction
+stays valid: it is included, reports `status = 0`, the validation prefix (notably
+the APPROVE gas payment) stays committed, and the payer is charged. Three
+sub-questions remain open, all consensus-relevant cross-client:
+
+1. **Gas on retroactively-unwound body frames.** EIP-8141 charges a *failed*
+   frame its full `gas_limit`, but a POST_TX revert unwinds frames that
+   *succeeded*. We charge actual consumption, reading "the payer is fully charged
+   for the gas consumed up to the point of the revert" literally.
+2. **EIP-8037 state gas on a reverted body.** We drop it, mirroring the
+   atomic-batch unroll: the body was unrolled, so it grew no state.
+3. **Whether the remaining POST_TX frames in the suffix still execute** once one
+   reverts. We stop at the first. They are read-only, so it cannot change state,
+   but it changes gas.
+
+**Ask:** the Security Considerations sentence "unconditionally invalidates the
+entire transaction, including any gas payment already approved" predates the
+07-06 revision and still contradicts the normative text. It is the most likely
+cause of a client implementing exclusion, which is what we did first — and under
+exclusion the anti-DoS hole the revision names is wide open, since the same
+transaction can be resubmitted indefinitely at the builder's expense.
 
 ## B. What integration with 8141 / 8250 / 8272 required
 
@@ -92,12 +122,20 @@ POST_TX revert is a *transaction-level* failure. The two revert sites are
 distinct in the implementation, and a POST_TX revert overrides any atomic
 batch unrolling that preceded it.
 
-### 4. Whole-body revert must unwind the other EIPs' effects
+### 4. The partial revert cuts across the other EIPs' write boundaries
 
-Exclusion rolls back EIP-8250 keyed-nonce consumption and the EIP-8141
-payment through the transaction-level backup: the nonce is **not** consumed
-and the transaction is replayable — consistent with "invalidates the entire
-transaction, including any gas payment already approved".
+`consume_keyed_nonces` (EIP-8250) runs inside the APPROVE handler, i.e. in the
+validation prefix, so committing the prefix means the keyed nonce **is** spent on
+a POST_TX revert and the transaction is not replayable. That is what closes the
+DoS: under the earlier exclude-the-transaction reading the nonce was rolled back
+and the same transaction could be resubmitted indefinitely, costing a builder a
+full execution each time.
+
+**Ask:** the safety argument for committing the prefix ("the wallet controls the
+validation prefix, so it is inherently safe to commit it") is stated in EIP-8141
+terms only. It does not obviously extend to what EIP-8250 / 8272 / 8037 write
+across that boundary. A ruling on which of those writes survive a POST_TX revert
+would settle it.
 
 ### 5. TXTRACE gas-pre-charge (`0x14`) reports the 8141 maximum cost
 
@@ -128,9 +166,21 @@ POST_TX frames generously.
 
 ## Validation status
 
-Verified end-to-end on the live public devnet (through the public RPC
-endpoints): POST_TX frames execute (multi-frame transaction, all frames
-succeed) and a reverting POST_TX excludes the whole transaction with the body
-transfer rolled back. The APPROVE-in-POST_TX rejection and the
-trailing-suffix structural rule are covered by unit tests
-(`test/tests/levm/eip7906_tests.rs` and the frame-tx suites).
+Verified end-to-end on the live public devnet, on a three-client chain with
+concurrent BAL validation enabled:
+
+- A POST_TX frame executes and its assertions hold: a multi-frame transaction
+  whose body writes a storage slot and whose POST_TX frame reads `slot_before` /
+  `slot_after` across that write is included with every frame succeeding, and the
+  body's write is committed.
+- A reverting POST_TX frame reverts the body only: the transaction is included
+  with `status = 0`, the body's storage write is back at its prestate value, and
+  the payer is charged.
+- The prestate is path-independent — the same transaction produces identical
+  results and identical gas whether executed sequentially or re-executed
+  concurrently for BAL validation. This is the property whose absence halted the
+  chain (§A.3).
+
+The APPROVE-in-POST_TX rejection, the trailing-suffix structural rule and the
+per-address views are covered by tests (`test/tests/levm/eip7906_tests.rs` and the
+frame-tx suites).

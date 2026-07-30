@@ -63,3 +63,38 @@ EIP-8250 / EIP-8272 → `eips.ethereum.org` master at implementation time (pin t
 `hegota-devnet-genesis.md` covers what a fresh genesis must contain: the fork
 schedule constraints, the predeploys the genesis generator does not ship, the
 ethrex-only chain-config fields, and the post-deployment verification pass.
+
+## Running a single Hegotá node locally
+
+`--dev` needs no consensus client, which makes it the quickest way to reproduce
+something on a Hegotá chain. Two things must be right or the node dies within
+seconds of startup, both fatally and with a misleading error:
+
+1. **Amsterdam must be scheduled.** Hegotá inherits Amsterdam's rules through the
+   fork ordinal, but leaving `amsterdamTime` unset means the EIP-8038 repricing
+   and the concurrent BAL-validation path never activate — so a local run can
+   silently exercise different code from the devnet. Set both `amsterdamTime` and
+   `hegotaTime`.
+2. **The EIP-8282 builder deposit/exit predeploys must be preloaded**, with
+   `EXCESS_INHIBITOR` (`2**256-1`) in slot 0. The genesis generator does not
+   deploy them, and their empty code on an Amsterdam+ block makes the end-of-block
+   system call fail: `System contract: 0x0000…8282 has no code after deployment`,
+   which surfaces as `engine_getPayloadV5` failing rather than as anything about
+   genesis. Copy them from the `additional_preloaded_contracts` block in
+   `fixtures/networks/hegota-devnet.yaml`.
+
+Derive the genesis from `fixtures/genesis/l1.json` (Osaka-era, so only the two
+fork times need adding), then:
+
+```bash
+cargo run --release --features dev -- --dev --network <genesis.json> --datadir memory
+```
+
+A healthy node logs `Produced block` and its headers carry both `slotNumber`
+(EIP-7843) and `blockAccessListHash` (EIP-7928). The producer stands in for the
+slot clock, advancing one slot per block.
+
+The dev producer is fatal by design: three consecutive failures shut the node
+down, so a genesis problem looks like an immediate exit rather than a stalled
+chain. Read the three `Failed to produce block` lines above the shutdown — they
+name the engine-API call that rejected the payload.
