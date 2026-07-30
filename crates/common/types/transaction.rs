@@ -2294,9 +2294,9 @@ impl FrameTransaction {
         )
     }
 
-    /// Compute total gas limit: mandatory costs + data cost + recent-root
+    /// EIP-8141 `standard_gas_limit`: mandatory costs + data cost + EIP-8272
     /// reference intrinsic gas + sum of frame gas limits.
-    pub fn total_gas_limit(&self) -> u64 {
+    pub fn standard_gas_limit(&self) -> u64 {
         self.mandatory_gas()
             .saturating_add(self.data_cost())
             .saturating_add(self.recent_root_reference_intrinsic_gas())
@@ -2306,6 +2306,23 @@ impl FrameTransaction {
                     .map(|f| f.gas_limit)
                     .fold(0u64, |acc, g| acc.saturating_add(g)),
             )
+    }
+
+    /// EIP-8141 `calldata_floor_gas`: the mandatory costs plus the EIP-7623
+    /// floor over every byte this transaction carries. The mandatory costs are
+    /// always charged, so they sit on both sides of the `max_gas` comparison.
+    pub fn calldata_floor_total(&self) -> u64 {
+        self.mandatory_gas()
+            .saturating_add(self.recent_root_reference_intrinsic_gas())
+            .saturating_add(self.calldata_floor_gas())
+    }
+
+    /// EIP-8141 `max_gas = max(standard_gas_limit, calldata_floor_gas)`: the gas
+    /// reserved from the block pool before execution and the quantity `max_cost`
+    /// is charged over. A transaction whose data floor exceeds what it declared
+    /// for execution reserves the floor rather than being rejected.
+    pub fn total_gas_limit(&self) -> u64 {
+        self.standard_gas_limit().max(self.calldata_floor_total())
     }
 
     /// The expiry deadline (8-byte big-endian) of this transaction's expiry
@@ -2481,19 +2498,6 @@ impl FrameTransaction {
                     Some(_) => {}
                 }
             }
-        }
-        // Per EIP-8141, the EIP-7623 calldata floor must be reserved independently
-        // of execution: the derived `tx_gas_limit` has to cover the mandatory costs
-        // plus the floor, or the transaction cannot pay for the data it carries.
-        let floor_gas = self.calldata_floor_gas();
-        let reserved = self
-            .mandatory_gas()
-            .saturating_add(self.recent_root_reference_intrinsic_gas())
-            .saturating_add(floor_gas);
-        if self.total_gas_limit() < reserved {
-            return Err(format!(
-                "Total gas limit does not reserve the calldata floor of {floor_gas}"
-            ));
         }
         Ok(())
     }
