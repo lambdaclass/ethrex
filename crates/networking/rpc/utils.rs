@@ -73,6 +73,10 @@ pub enum RpcErr {
     InvalidPayload(String),
     #[error("Proof generation unavailable: {0}")]
     ProofGenerationUnavailable(String),
+    #[error("Resource not found: {0}")]
+    ResourceNotFound(String),
+    #[error("Pruned history unavailable: {0}")]
+    PrunedHistoryUnavailable(String),
 }
 
 impl From<RpcErr> for RpcErrorMetadata {
@@ -204,6 +208,16 @@ impl From<RpcErr> for RpcErrorMetadata {
                 code: -39004,
                 data: None,
                 message: format!("Proof generation unavailable: {context}"),
+            },
+            RpcErr::ResourceNotFound(context) => RpcErrorMetadata {
+                code: -32001,
+                data: Some(context),
+                message: "Resource not found".to_string(),
+            },
+            RpcErr::PrunedHistoryUnavailable(context) => RpcErrorMetadata {
+                code: 4444,
+                data: Some(context),
+                message: "Pruned history unavailable".to_string(),
             },
         }
     }
