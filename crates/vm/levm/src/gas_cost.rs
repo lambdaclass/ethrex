@@ -221,12 +221,12 @@ pub const CALL_VALUE_AMSTERDAM: u64 = 10300;
 pub const STORAGE_CLEAR_REFUND_AMSTERDAM: i64 = 12480;
 pub const CREATE_ACCESS_AMSTERDAM: u64 = 11000;
 
-// ===== EIP-2780 Amsterdam values (merged EIPs#11645) =====
+// ===== EIP-2780 Amsterdam values =====
 // Resource-based intrinsic transaction gas. The flat 21000 base is decomposed
 // into: sender base (TX_BASE_COST_AMSTERDAM = 12000), recipient access, and a
-// value-transfer charge split between a transfer log cost and a value cost.
-pub const TX_VALUE_COST_AMSTERDAM: u64 = 4244;
-pub const TRANSFER_LOG_COST_AMSTERDAM: u64 = 1756;
+// value-transfer charge covering both the recipient balance write and the
+// EIP-7708 transfer log.
+pub const TX_VALUE_COST_AMSTERDAM: u64 = 6000;
 
 // EIP-8038: size in bytes of one RLP-encoded authorization tuple, used to
 // derive its calldata-floor contribution below.
@@ -315,25 +315,20 @@ pub fn recipient_regular_gas(to: &TxKind, value: U256, sender: Address, fork: Fo
         return 0;
     }
 
-    let is_create = matches!(to, TxKind::Create);
-    let regular_gas = if is_create {
-        CREATE_ACCESS_AMSTERDAM
-    } else {
-        cold_account_access_cost(fork)
-    };
+    // A contract creation charges no value cost: the recipient balance write is
+    // already covered by CREATE_ACCESS.
+    if matches!(to, TxKind::Create) {
+        return CREATE_ACCESS_AMSTERDAM;
+    }
 
     #[expect(
         clippy::arithmetic_side_effects,
-        reason = "sum of small constant gas costs (<= ~17000), cannot overflow u64"
+        reason = "sum of small constant gas costs (<= ~9000), cannot overflow u64"
     )]
-    if !value.is_zero() {
-        if is_create {
-            regular_gas + TRANSFER_LOG_COST_AMSTERDAM
-        } else {
-            regular_gas + TRANSFER_LOG_COST_AMSTERDAM + TX_VALUE_COST_AMSTERDAM
-        }
+    if value.is_zero() {
+        cold_account_access_cost(fork)
     } else {
-        regular_gas
+        cold_account_access_cost(fork) + TX_VALUE_COST_AMSTERDAM
     }
 }
 

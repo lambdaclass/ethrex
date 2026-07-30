@@ -1,4 +1,4 @@
-//! EIP-2780 (PRELIMINARY EIPs#11645) resource-based intrinsic transaction gas.
+//! EIP-2780 resource-based intrinsic transaction gas.
 //!
 //! At Amsterdam the flat 21000 intrinsic base is decomposed into resource-based
 //! charges:
@@ -8,9 +8,8 @@
 //!       * contract-creation: CREATE_ACCESS_AMSTERDAM = 11000 regular + new-account state gas
 //!       * else: cold_account_access_cost = 3000
 //!   - value transfer:
-//!       * zero value or self-transfer: 0
-//!       * non-zero value contract-creation: TRANSFER_LOG_COST_AMSTERDAM = 1756
-//!       * else: TRANSFER_LOG_COST_AMSTERDAM + TX_VALUE_COST_AMSTERDAM = 1756 + 4244 = 6000
+//!       * zero value, self-transfer, or contract-creation: 0
+//!       * else: TX_VALUE_COST_AMSTERDAM = 6000
 //!
 //! These tests assert the intrinsic regular-gas decomposition at Amsterdam, the
 //! pre-Amsterdam (Osaka) control (byte-identical 21000-base), parity between
@@ -43,12 +42,11 @@ use once_cell::sync::OnceCell;
 use rustc_hash::FxHashMap;
 use std::sync::Arc;
 
-// Resource-based constants under test (PRELIMINARY EIPs#11645).
+// Resource-based constants under test.
 const TX_BASE_COST_AMSTERDAM: u64 = 12000;
 const CREATE_ACCESS_AMSTERDAM: u64 = 11000;
 const COLD_ACCOUNT_ACCESS_AMSTERDAM: u64 = 3000;
-const TRANSFER_LOG_COST_AMSTERDAM: u64 = 1756;
-const TX_VALUE_COST_AMSTERDAM: u64 = 4244;
+const TX_VALUE_COST_AMSTERDAM: u64 = 6000;
 // Pre-Amsterdam base for the Osaka control.
 const TX_BASE_COST: u64 = 21000;
 const CREATE_BASE_COST: u64 = 32000;
@@ -206,7 +204,7 @@ fn test_intrinsic_zero_value_to_account_amsterdam() {
 
 #[test]
 fn test_intrinsic_eth_transfer_to_existing_eoa_amsterdam() {
-    // non-zero value to a distinct account: base + cold access + transfer log + value.
+    // non-zero value to a distinct account: base + cold access + value cost.
     let tx = call_tx(
         TxKind::Call(Address::from_low_u64_be(0xBEEF)),
         U256::from(1u64),
@@ -214,11 +212,8 @@ fn test_intrinsic_eth_transfer_to_existing_eoa_amsterdam() {
     let (regular, state) = intrinsic_with_parity(Fork::Amsterdam, &tx);
     assert_eq!(
         regular,
-        TX_BASE_COST_AMSTERDAM
-            + COLD_ACCOUNT_ACCESS_AMSTERDAM
-            + TRANSFER_LOG_COST_AMSTERDAM
-            + TX_VALUE_COST_AMSTERDAM,
-        "ETH transfer regular gas (12000 + 3000 + 1756 + 4244 = 21000)"
+        TX_BASE_COST_AMSTERDAM + COLD_ACCOUNT_ACCESS_AMSTERDAM + TX_VALUE_COST_AMSTERDAM,
+        "ETH transfer regular gas (12000 + 3000 + 6000 = 21000)"
     );
     assert_eq!(
         regular, 21000,
@@ -250,16 +245,17 @@ fn test_intrinsic_create_zero_value_amsterdam() {
 
 #[test]
 fn test_intrinsic_create_nonzero_value_amsterdam() {
-    // contract-creation, value>0: base + CREATE_ACCESS + transfer log (no value cost).
+    // contract-creation, value>0: base + CREATE_ACCESS. No value charge — the recipient
+    // balance write is already covered by CREATE_ACCESS.
     // As above, the NEW_ACCOUNT state gas is charged in-region, not at intrinsic time.
     let tx = call_tx(TxKind::Create, U256::from(1u64));
     let (regular, state) = intrinsic_with_parity(Fork::Amsterdam, &tx);
     assert_eq!(
         regular,
-        TX_BASE_COST_AMSTERDAM + CREATE_ACCESS_AMSTERDAM + TRANSFER_LOG_COST_AMSTERDAM,
-        "create value>0 regular gas (23000 + 1756 = 24756)"
+        TX_BASE_COST_AMSTERDAM + CREATE_ACCESS_AMSTERDAM,
+        "create value>0 regular gas (12000 + 11000 = 23000)"
     );
-    assert_eq!(regular, 24756, "create value>0 regular gas must be 24756");
+    assert_eq!(regular, 23000, "create value>0 regular gas must be 23000");
     assert_eq!(
         state, 0,
         "create intrinsic state gas is 0 (NEW_ACCOUNT moved in-region)"
