@@ -98,8 +98,12 @@ pub struct ValidationObserver {
     /// before a `*CALL`). Reset each iteration.
     pub last_opcode: u8,
     /// Sender storage slots touched (read or written) during the prefix. Recorded
-    /// for the admission-time revalidation affected-set (Phase 3).
+    /// for the admission-time revalidation affected-set.
     pub touched_sender_slots: Vec<H256>,
+    /// Whether the prefix read `TXPARAM(0x0C)`, the sender's legacy account nonce
+    /// (EIP-8250 §Mempool). Such a prefix depends on the legacy nonce even when
+    /// the transaction's own nonce lives in a keyed domain.
+    pub read_legacy_nonce: bool,
     /// First violation observed, if any.
     pub violation: Option<FrameSimViolation>,
 }
@@ -118,6 +122,7 @@ impl ValidationObserver {
             canonical_paymaster_pay_frame: None,
             last_opcode: 0,
             touched_sender_slots: Vec::new(),
+            read_legacy_nonce: false,
             violation: None,
         }
     }
@@ -140,6 +145,7 @@ impl ValidationObserver {
             canonical_paymaster_pay_frame: None,
             last_opcode: 0,
             touched_sender_slots: Vec::new(),
+            read_legacy_nonce: false,
             violation: None,
         }
     }
