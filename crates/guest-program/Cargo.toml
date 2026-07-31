@@ -40,7 +40,7 @@ openvm-kzg = { git = "https://github.com/axiom-crypto/openvm-kzg.git", rev = "53
 # Must match ZISK_VERSION in .github/actions/install-zisk/action.yml.
 ziskos = { git = "https://github.com/0xPolygonHermez/zisk.git", tag = "v1.0.0-alpha", optional = true, default-features = false, features = ["inputcpy"] }
 # Must match LAMBDA_VM_COMMIT in .github/actions/install-lambdavm/action.yml.
-lambda-vm-syscalls = { git = "https://github.com/yetanotherco/lambda_vm.git", rev = "8af4e92e6e75638746fe9924f6bac715ffac9cb6", optional = true }
+lambda-vm-syscalls = { git = "https://github.com/yetanotherco/lambda_vm.git", rev = "9ccdaf28ab373da0a4a2eb79a16b90479f6686fd", optional = true }
 
 [build-dependencies]
 hex.workspace = true
@@ -63,7 +63,13 @@ zisk = [
     "ethrex-common/zisk", "ethrex-vm/zisk", "ethrex-l2-common/zisk",
 ]
 openvm = ["dep:k256", "dep:bls12_381", "dep:ff", "dep:openvm-kzg", "ethrex-l2-common/secp256k1"]
-lambdavm = ["dep:k256", "dep:lambda-vm-syscalls", "ethrex-l2-common/secp256k1"]
+lambdavm = [
+    "dep:k256",
+    "dep:bls12_381",
+    "dep:ff",
+    "dep:lambda-vm-syscalls",
+    "ethrex-l2-common/secp256k1",
+]
 
 # Build-ELF features: base + build tooling for compiling guest ELFs.
 # Used by the prover host. Enabling these triggers the build script which

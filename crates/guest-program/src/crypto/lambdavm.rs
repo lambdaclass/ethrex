@@ -1,15 +1,24 @@
 use ethereum_types::Address;
 use ethrex_crypto::{Crypto, CryptoError};
 
-use super::shared::{k256_ecrecover, k256_recover_signer};
+use super::shared::{
+    bls12_381_fp_to_g1, bls12_381_fp2_to_g2, bls12_381_g1_add, bls12_381_g1_msm, bls12_381_g2_add,
+    bls12_381_g2_msm, bls12_381_pairing_check, k256_ecrecover, k256_recover_signer,
+};
 
 /// LambdaVM crypto provider.
 ///
-/// Overrides only what LambdaVM accelerates today (Keccak-f[1600]) plus the
-/// ECDSA secp256k1 methods routed through pure-Rust `k256`. Every other
-/// `Crypto` method inherits the trait default, which uses vetted pure-Rust
-/// crates (`ark-bn254`, `bls12_381`, `malachite`, `p256`, `sha2`, `kzg-rs`)
-/// that compile to the RV64IM target.
+/// Overrides only what LambdaVM accelerates today (Keccak-f[1600]), the ECDSA
+/// secp256k1 methods routed through pure-Rust `k256`, and the BLS12-381
+/// (EIP-2537) methods routed through the portable pure-Rust `bls12_381`
+/// backend — the trait defaults for those return `Unsupported` when `blst` is
+/// compiled out of guest builds. Every other `Crypto` method inherits the
+/// trait default, which uses vetted pure-Rust crates (`ark-bn254`,
+/// `malachite`, `p256`, `sha2`) that compile to the RV64IM target.
+///
+/// KZG point-evaluation is unsupported in the LambdaVM guest: `kzg-rs` pulls
+/// in SP1-specific symbols that do not link for this target, so the trait
+/// default returns an error — same stance as the LambdaVM team's own PoC.
 ///
 /// Routing ECDSA through the `super::shared` helpers (rather than the trait
 /// default) matches the OpenVM adapter and is forward-compatible: when
@@ -35,6 +44,57 @@ impl Crypto for LambdaVmCrypto {
 
     fn keccak256(&self, input: &[u8]) -> [u8; 32] {
         keccak256_via_lambdavm(input)
+    }
+
+    fn bls12_381_g1_add(
+        &self,
+        a: ([u8; 48], [u8; 48]),
+        b: ([u8; 48], [u8; 48]),
+    ) -> Result<[u8; 96], CryptoError> {
+        bls12_381_g1_add(a, b)
+    }
+
+    #[allow(clippy::type_complexity)]
+    fn bls12_381_g1_msm(
+        &self,
+        pairs: &[(([u8; 48], [u8; 48]), [u8; 32])],
+    ) -> Result<[u8; 96], CryptoError> {
+        bls12_381_g1_msm(pairs)
+    }
+
+    fn bls12_381_g2_add(
+        &self,
+        a: ([u8; 48], [u8; 48], [u8; 48], [u8; 48]),
+        b: ([u8; 48], [u8; 48], [u8; 48], [u8; 48]),
+    ) -> Result<[u8; 192], CryptoError> {
+        bls12_381_g2_add(a, b)
+    }
+
+    #[allow(clippy::type_complexity)]
+    fn bls12_381_g2_msm(
+        &self,
+        pairs: &[(([u8; 48], [u8; 48], [u8; 48], [u8; 48]), [u8; 32])],
+    ) -> Result<[u8; 192], CryptoError> {
+        bls12_381_g2_msm(pairs)
+    }
+
+    #[allow(clippy::type_complexity)]
+    fn bls12_381_pairing_check(
+        &self,
+        pairs: &[(
+            ([u8; 48], [u8; 48]),
+            ([u8; 48], [u8; 48], [u8; 48], [u8; 48]),
+        )],
+    ) -> Result<bool, CryptoError> {
+        bls12_381_pairing_check(pairs)
+    }
+
+    fn bls12_381_fp_to_g1(&self, fp: &[u8; 48]) -> Result<[u8; 96], CryptoError> {
+        bls12_381_fp_to_g1(fp)
+    }
+
+    fn bls12_381_fp2_to_g2(&self, fp2: ([u8; 48], [u8; 48])) -> Result<[u8; 192], CryptoError> {
+        bls12_381_fp2_to_g2(fp2)
     }
 }
 

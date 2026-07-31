@@ -47,13 +47,13 @@ runs:
         path: ~/.cargo/bin/cli
         # Must match the `rev` of `lambda-vm-syscalls` in
         # crates/guest-program/Cargo.toml and crates/guest-program/bin/lambdavm/Cargo.toml.
-        key: lambda-vm-cli-8af4e92e6e75638746fe9924f6bac715ffac9cb6
+        key: lambda-vm-cli-9ccdaf28ab373da0a4a2eb79a16b90479f6686fd
 
     - name: Build LambdaVM CLI
       if: steps.cache-cli.outputs.cache-hit != 'true'
       shell: bash
       env:
-        LAMBDA_VM_COMMIT: "8af4e92e6e75638746fe9924f6bac715ffac9cb6"
+        LAMBDA_VM_COMMIT: "9ccdaf28ab373da0a4a2eb79a16b90479f6686fd"
       run: |
         TMP_DIR="$(mktemp -d)"
         git clone https://github.com/yetanotherco/lambda_vm.git "${TMP_DIR}"

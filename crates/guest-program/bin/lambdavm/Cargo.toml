@@ -15,7 +15,7 @@ panic = "abort"
 [dependencies]
 # Must match LAMBDA_VM_COMMIT in .github/actions/install-lambdavm/action.yml
 # and the lambda-vm-syscalls rev in crates/guest-program/Cargo.toml.
-lambda-vm-syscalls = { git = "https://github.com/yetanotherco/lambda_vm.git", rev = "8af4e92e6e75638746fe9924f6bac715ffac9cb6" }
+lambda-vm-syscalls = { git = "https://github.com/yetanotherco/lambda_vm.git", rev = "9ccdaf28ab373da0a4a2eb79a16b90479f6686fd" }
 rkyv = { version = "0.8.10", features = ["std", "unaligned"] }
 
 ethrex-guest-program = { path = "../../", default-features = false, features = [
