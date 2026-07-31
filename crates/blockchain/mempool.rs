@@ -1293,11 +1293,17 @@ impl Mempool {
         // same guarantee has to be enforced here. Type changes WITHIN the
         // regular pool (legacy ↔ 2930 ↔ 1559 ↔ 7702) are allowed, matching
         // geth/reth/nethermind.
-        let new_is_blob = matches!(tx, Transaction::EIP4844Transaction(_));
-        let old_is_blob = matches!(
-            tx_in_pool.transaction(),
-            Transaction::EIP4844Transaction(_)
-        );
+        //
+        // "Blob" here means *carries a sidecar*, not "is type 0x03": an
+        // EIP-8141 frame tx with a non-empty `blob_versioned_hashes` carries
+        // one too. Matching on `EIP4844Transaction` alone would classify such
+        // a frame tx as non-blob, so a frame↔frame replacement would take the
+        // 10% bump and skip the blob-fee comparison entirely — the cheap
+        // sidecar re-propagation the 100% bump exists to prevent. Admission
+        // rejects blob-carrying frame txs today (`FrameTxBlobsUnsupported`),
+        // so this is not yet reachable, but it goes live with #7038.
+        let new_is_blob = tx.is_blob_carrying();
+        let old_is_blob = tx_in_pool.transaction().is_blob_carrying();
         if new_is_blob != old_is_blob {
             return Err(MempoolError::ReplacementTypeMismatch);
         }
@@ -1404,29 +1410,21 @@ impl Mempool {
 }
 
 /// Returns true iff `new >= floor(existing * (100 + bump_percent) / 100)`.
-/// Uses `u128` intermediates with checked arithmetic so an overflow on the
-/// threshold computation is treated as "reject" rather than silently
-/// admitting an under-priced replacement. A `bump_percent` of 0 collapses to
-/// `new >= existing`.
+///
+/// Used for every fee dimension compared during replacement: fee cap, tip
+/// (both via the `gas_fee_cap`/`gas_tip_cap` U256 accessors) and
+/// `max_fee_per_blob_gas`.
 ///
 /// Threshold rounds down (toward zero), so `new == floor(existing * (100 +
 /// bump) / 100)` is admitted — matches geth's and reth's replacement rules.
-/// Currently only exercised by unit tests: production compares fees via the
-/// U256 accessors (`gas_fee_cap`/`gas_tip_cap`).
-#[cfg(test)]
-fn is_bumped_u64(existing: u64, new: u64, bump_percent: u64) -> bool {
-    let multiplier = 100u128 + bump_percent as u128;
-    let Some(threshold) = (existing as u128).checked_mul(multiplier).map(|v| v / 100) else {
-        return false;
-    };
-    (new as u128) >= threshold
-}
-
-/// U256 variant of [`is_bumped_u64`]. Used for `gas_price` (legacy) and
-/// `max_fee_per_blob_gas` (EIP-4844). Same overflow → reject semantic via
-/// `checked_mul`.
+/// A `bump_percent` of 0 collapses to `new >= existing`.
+///
+/// Both the multiplier and the product are computed in `U256`, so neither the
+/// `100 + bump_percent` addition nor the multiplication can wrap into a
+/// smaller threshold. An overflow of the product is treated as "reject"
+/// rather than silently admitting an under-priced replacement.
 fn is_bumped_u256(existing: U256, new: U256, bump_percent: u64) -> bool {
-    let multiplier = U256::from(100u64 + bump_percent);
+    let multiplier = U256::from(100u64) + U256::from(bump_percent);
     let Some(threshold) = existing
         .checked_mul(multiplier)
         .map(|v| v / U256::from(100u64))
@@ -1966,43 +1964,6 @@ mod tests {
         })
     }
 
-    // --- is_bumped_u64 -------------------------------------------------
-
-    #[test]
-    fn is_bumped_u64_exact_10_percent_accepted() {
-        assert!(is_bumped_u64(100, 110, 10));
-    }
-
-    #[test]
-    fn is_bumped_u64_just_below_10_percent_rejected() {
-        assert!(!is_bumped_u64(100, 109, 10));
-    }
-
-    #[test]
-    fn is_bumped_u64_zero_bump_allows_equal() {
-        assert!(is_bumped_u64(100, 100, 0));
-    }
-
-    #[test]
-    fn is_bumped_u64_zero_existing_always_accepted() {
-        assert!(is_bumped_u64(0, 0, 100));
-        assert!(is_bumped_u64(0, 1, 100));
-    }
-
-    #[test]
-    fn is_bumped_u64_huge_existing_rejects_under_floor() {
-        // At `existing = u64::MAX` the 100%-bumped threshold is ~3.69e19,
-        // which doesn't fit in u64. Any new value (capped at u64::MAX,
-        // ~1.84e19) is strictly below threshold and must be rejected.
-        // The previous saturating-mul implementation silently *admitted*
-        // this case because it saturated the threshold to u64::MAX/100;
-        // the new checked-arithmetic implementation rejects, which is
-        // the correct semantic.
-        assert!(!is_bumped_u64(u64::MAX, u64::MAX, 100));
-        // And the helper does not panic on extreme inputs.
-        let _ = is_bumped_u64(u64::MAX, 0, u64::MAX);
-    }
-
     // --- is_bumped_u256 ------------------------------------------------
 
     #[test]
@@ -2013,6 +1974,51 @@ mod tests {
     #[test]
     fn is_bumped_u256_blob_99_percent_rejected() {
         assert!(!is_bumped_u256(U256::from(100u64), U256::from(199u64), 100));
+    }
+
+    #[test]
+    fn is_bumped_u256_exact_10_percent_accepted() {
+        assert!(is_bumped_u256(U256::from(100u64), U256::from(110u64), 10));
+    }
+
+    #[test]
+    fn is_bumped_u256_just_below_10_percent_rejected() {
+        assert!(!is_bumped_u256(U256::from(100u64), U256::from(109u64), 10));
+    }
+
+    #[test]
+    fn is_bumped_u256_zero_bump_allows_equal() {
+        assert!(is_bumped_u256(U256::from(100u64), U256::from(100u64), 0));
+    }
+
+    #[test]
+    fn is_bumped_u256_zero_existing_always_accepted() {
+        assert!(is_bumped_u256(U256::zero(), U256::zero(), 100));
+        assert!(is_bumped_u256(U256::one(), U256::one(), 0));
+    }
+
+    #[test]
+    fn is_bumped_u256_rounds_threshold_down() {
+        // floor(101 * 110 / 100) = floor(111.1) = 111, so exactly 111 is
+        // admitted and 110 is not. Pins the round-down + `>=` boundary that
+        // matches geth/reth.
+        assert!(is_bumped_u256(U256::from(101u64), U256::from(111u64), 10));
+        assert!(!is_bumped_u256(U256::from(101u64), U256::from(110u64), 10));
+    }
+
+    #[test]
+    fn is_bumped_u256_overflowing_threshold_rejects() {
+        // At `existing = U256::MAX` the 100%-bumped product overflows U256,
+        // so `checked_mul` returns None and the helper must REJECT rather
+        // than admit. This is the branch production actually reaches on an
+        // absurd in-pool fee; a saturating implementation would instead
+        // collapse the threshold to ~U256::MAX/100 and wrongly admit.
+        assert!(!is_bumped_u256(U256::MAX, U256::MAX, 100));
+        // A huge `bump_percent` must not wrap the `100 + bump` multiplier
+        // into something small; the threshold stays unreachable.
+        assert!(!is_bumped_u256(U256::MAX, U256::MAX, u64::MAX));
+        // And no panics on extreme inputs.
+        let _ = is_bumped_u256(U256::MAX, U256::zero(), u64::MAX);
     }
 
     // --- find_tx_to_replace ---------------------------------------------
