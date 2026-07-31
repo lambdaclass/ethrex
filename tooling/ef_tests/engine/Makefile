@@ -21,7 +21,10 @@ $(SPECTEST_VECTORS_DIR): $(SPECTEST_ARTIFACT)
 	mkdir -p $(SPECTEST_VECTORS_DIR)
 	tar -xzf $(SPECTEST_ARTIFACT) --strip-components=2 -C $(SPECTEST_VECTORS_DIR) fixtures/blockchain_tests_engine
 
-$(AMSTERDAM_ARTIFACT): $(AMSTERDAM_FIXTURES_FILE)
+# Order-only on $(SPECTEST_VECTORS_DIR): building it runs clean-vectors, which deletes
+# $(AMSTERDAM_ARTIFACT). Downloading afterwards keeps the bundle from being wiped
+# between the curl and the extract.
+$(AMSTERDAM_ARTIFACT): $(AMSTERDAM_FIXTURES_FILE) | $(SPECTEST_VECTORS_DIR)
 	curl -L -o $(AMSTERDAM_ARTIFACT) $(AMSTERDAM_URL)
 
 # Clear the subtree first: the bundle is overlaid onto an existing `vectors/eest`, so
