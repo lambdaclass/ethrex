@@ -3,7 +3,7 @@
 
 use bytes::Bytes;
 use ethrex_common::types::Fork;
-use ethrex_crypto::NativeCrypto;
+use ethrex_crypto::{Crypto, NATIVE_BLS_BACKEND, NativeCrypto};
 use ethrex_levm::precompiles::bls12_pairing_check;
 
 #[test]
@@ -45,4 +45,49 @@ fn pairing_infinity() {
     );
 
     assert_eq!(result.unwrap(), zero);
+}
+
+// ── blst backend (host BLS12-381 / EIP-2537) ─────────────────────────────────
+//
+// `NativeCrypto` routes BLS12-381 through the blst backend (the `blst` feature,
+// on by default; the canonical host/L1 implementation). The portable `bls12_381`
+// reference now lives in `ethrex-guest-program` for the zkVM guests, so blst's
+// numerical agreement with it is covered by the EIP-2537 execution-spec
+// state-test vectors. The tests below exercise the host backend directly.
+
+/// Guard: the host BLS12-381 tests must run against blst. With the `blst`
+/// feature off, `NativeCrypto`'s BLS ops return an error, which would make
+/// `blst_rejects_invalid_inputs` pass vacuously (an error is still `is_err()`).
+/// Fail loudly instead of silently testing nothing.
+#[test]
+// `NATIVE_BLS_BACKEND` is a cfg-derived const; the constant assertion *is* the guard.
+#[allow(clippy::assertions_on_constants)]
+fn native_backend_is_active() {
+    assert!(
+        NATIVE_BLS_BACKEND,
+        "blst feature is off; the BLS12-381 host tests are not exercising blst"
+    );
+}
+
+const INF1: ([u8; 48], [u8; 48]) = ([0u8; 48], [0u8; 48]);
+
+fn scalar(k: u64) -> [u8; 32] {
+    let mut s = [0u8; 32];
+    s[24..32].copy_from_slice(&k.to_be_bytes());
+    s
+}
+
+#[test]
+fn blst_rejects_invalid_inputs() {
+    // Non-canonical field element (>= modulus).
+    let bad: [u8; 48] = [0xff; 48];
+    assert!(NativeCrypto.bls12_381_g1_add((bad, bad), INF1).is_err());
+    // Point not on the curve.
+    let off_curve = ([1u8; 48], [1u8; 48]);
+    assert!(NativeCrypto.bls12_381_g1_add(off_curve, INF1).is_err());
+    assert!(
+        NativeCrypto
+            .bls12_381_g1_msm(&[(off_curve, scalar(1))])
+            .is_err()
+    );
 }

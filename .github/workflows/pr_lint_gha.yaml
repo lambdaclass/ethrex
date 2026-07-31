@@ -6,6 +6,7 @@ on:
     paths:
       - ".github/**.yaml"
       - ".github/*.yml"
+      - ".github/actions/**"
 
 permissions:
   contents: read
@@ -27,3 +28,39 @@ jobs:
 
       - name: Run actionlint
         run: ./actionlint -ignore SC2086 -ignore SC2006 -ignore SC2046
+
+  image-meta:
+    name: build-docker image-meta
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v6
+
+      - name: Assert image-meta derivation across ref types
+        env:
+          SCRIPT: .github/actions/build-docker/image-meta.sh
+        run: |
+          set -euo pipefail
+          # Exercises the REAL script the build-docker action runs, so a future
+          # edit that breaks the release version string fails here, not in a release.
+          derive() { # derive <ref_type> <ref_name> <head_ref> -> "channel|version"
+            local out
+            out="$(mktemp)"
+            REF_TYPE="$1" REF_NAME="$2" HEAD_REF="$3" SHA="deadbeef" GITHUB_OUTPUT="$out" bash "$SCRIPT"
+            printf '%s|%s' "$(sed -n 's/^channel=//p' "$out")" "$(sed -n 's/^version=//p' "$out")"
+          }
+          check() { # check <desc> <ref_type> <ref_name> <head_ref> <expected>
+            local got
+            got="$(derive "$2" "$3" "$4")"
+            if [ "$got" != "$5" ]; then
+              echo "::error::$1: got '$got', expected '$5'"
+              exit 1
+            fi
+            echo "ok  $1 -> $got"
+          }
+          check "rc.1 tag"      tag    v18.0.0-rc.1 ""     "rc.1|18.0.0"
+          check "rc.2 tag"      tag    v18.0.0-rc.2 ""     "rc.2|18.0.0"
+          check "alpha pre-tag" tag    v0.0.2-alpha ""     "alpha|0.0.2"
+          check "final tag"     tag    v18.0.0      ""     "release|18.0.0"
+          check "main push"     branch main         ""     "main|dev-deadbeef"
+          check "PR build"      branch main         feat/x "feat/x|dev-deadbeef"

@@ -30,6 +30,8 @@ x-ethrex-common: &ethrex-common
   pull_policy: "${ETHREX_PULL_POLICY:-always}"
   environment:
     RUST_LOG: "${RUST_LOG:-info,ethrex_p2p::sync=debug}"
+    # Bound RocksDB resident memory (default 12 GiB) so 3 parallel snapsyncs fit in host RAM.
+    ETHREX_ROCKSDB_BLOCK_CACHE_SIZE: "${ETHREX_ROCKSDB_BLOCK_CACHE_SIZE:-4294967296}"  # 4 GiB
   ulimits:
     nofile: 1000000
   restart: unless-stopped

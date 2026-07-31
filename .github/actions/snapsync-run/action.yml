@@ -50,10 +50,29 @@ runs:
         IMAGE_TAG: ${{ inputs.ethrex_tag }}
       run: |
         echo "Building ethrex with profile: ${BUILD_PROFILE}"
-        docker build \
-          --build-arg PROFILE="${BUILD_PROFILE}" \
-          -t ethrex-local:${IMAGE_TAG} \
-          -f Dockerfile .
+        GIT_SHA=$(git rev-parse HEAD 2>/dev/null || echo unknown)
+        GIT_BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo unknown)
+        VERSION=$(git describe --tags --always --dirty 2>/dev/null || echo dev)
+        # Retry to ride out transient Docker Hub / DNS flakes on the self-hosted
+        # runner (e.g. fetching the docker/dockerfile BuildKit frontend or base images).
+        attempts=3
+        for i in $(seq 1 "$attempts"); do
+          if docker build \
+            --build-arg PROFILE="${BUILD_PROFILE}" \
+            --build-arg GIT_SHA="${GIT_SHA}" \
+            --build-arg GIT_BRANCH="${GIT_BRANCH}" \
+            --build-arg VERSION="${VERSION}" \
+            -t ethrex-local:${IMAGE_TAG} \
+            -f Dockerfile .; then
+            break
+          fi
+          if [ "$i" -eq "$attempts" ]; then
+            echo "docker build failed after ${attempts} attempts" >&2
+            exit 1
+          fi
+          echo "docker build attempt ${i}/${attempts} failed, retrying in 15s..." >&2
+          sleep 15
+        done
 
     - name: Generate Kurtosis args
       shell: bash

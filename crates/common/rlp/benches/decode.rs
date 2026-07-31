@@ -457,6 +457,8 @@ fn bench_decode_common_types(c: &mut Criterion) {
                             succeeded: rng.random(),
                             cumulative_gas_used: rng.random(),
                             logs: (0..2).map(|_| random_log(&mut rng)).collect(),
+                            payer: None,
+                            frame_receipts: None,
                         }
                         .encode_to_vec()
                     })

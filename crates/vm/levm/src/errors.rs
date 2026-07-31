@@ -103,6 +103,16 @@ pub enum TxValidationError {
     IntrinsicGasTooLow,
     #[error("Transaction gas limit lower than the gas cost floor for calldata tokens")]
     IntrinsicGasBelowFloorGasCost,
+    /// L2-only. Raised by the L2 hook's `reserve_l1_gas` when the gas limit cannot
+    /// cover the L1 data-availability gas reserved on top of the intrinsic cost or
+    /// the calldata floor. Distinct from [`TxValidationError::IntrinsicGasTooLow`]
+    /// on purpose: the reserved amount is derived from the L1 fee config and the
+    /// block's gas price, so this failure is TRANSIENT — the same transaction can
+    /// succeed in a later block once L1 fees drop. Consumers that classify errors
+    /// as permanent-vs-transient (the payload builders' `is_deterministic_invalid`)
+    /// rely on the two not being conflated.
+    #[error("Transaction gas limit cannot cover the reserved L1 data availability gas")]
+    L1GasReservationTooLow,
     #[error(
         "Gas allowance exceeded. Block gas limit: {block_gas_limit}, transaction gas limit: {tx_gas_limit}"
     )]
@@ -140,12 +150,16 @@ pub enum TxValidationError {
     Type4TxAuthorizationListIsEmpty,
     #[error("Contract creation in type 4 transaction")]
     Type4TxContractCreation,
+    #[error("Frame transactions (EIP-8141) are not supported before the Hegota fork")]
+    FrameTxPreFork,
     #[error("Gas limit price product overflow")]
     GasLimitPriceProductOverflow,
     #[error(
         "Transaction gas limit exceeds maximum. Transaction hash: {tx_hash}, transaction gas limit: {tx_gas_limit}"
     )]
     TxMaxGasLimitExceeded { tx_hash: H256, tx_gas_limit: u64 },
+    #[error("Invalid frame transaction: VERIFY frame did not call APPROVE or payer not approved")]
+    InvalidFrameTransaction,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error, Serialize, Deserialize)]
@@ -249,6 +263,12 @@ pub struct ExecutionReport {
     pub state_gas_used: u64,
     pub output: Bytes,
     pub logs: Vec<Log>,
+    /// For frame transactions: the address that paid for gas
+    pub payer_address: Option<Address>,
+    /// For frame transactions: per-frame results (status, gas_used, logs).
+    /// `status` is a `FRAME_RECEIPT_STATUS_*` code (0 = failure, 1 = success,
+    /// 3 = skipped due to failed atomic batch, per EIP-8141 receipt encoding).
+    pub frame_results: Option<Vec<(u8, u64, Vec<Log>)>>,
 }
 
 impl ExecutionReport {
@@ -283,7 +303,8 @@ impl ContextResult {
     }
 
     /// True if the failure was caused by the REVERT opcode (intentional revert).
-    /// PR #2689 reclassification only applies to ExceptionalHalt, not REVERT.
+    /// Used to gate behaviour that differs between REVERT and ExceptionalHalt —
+    /// e.g. return data is propagated to the parent on REVERT only.
     pub fn is_revert_opcode(&self) -> bool {
         matches!(self.result, TxResult::Revert(VMError::RevertOpcode))
     }

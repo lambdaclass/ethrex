@@ -436,5 +436,12 @@ pub fn commands() -> Vec<CommandDef> {
             params: GET_PROOF,
             description: "Returns the Merkle proof for an account",
         },
+        CommandDef {
+            namespace: "eth",
+            name: "getBlockAccessList",
+            rpc_method: "eth_getBlockAccessList",
+            params: BLOCK_ONLY,
+            description: "Returns the access list for a block",
+        },
     ]
 }
