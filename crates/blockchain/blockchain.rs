@@ -3550,10 +3550,7 @@ impl Blockchain {
             // exception to the rule that no failure-invalidating frame follows the
             // prefix, sound because a UTXO frame's cost is computable from the frame
             // alone and its checks read only vault protocol state.
-            let self_funded_lane = utxo_frames_active
-                && frame_tx.sender == ethrex_common::types::utxo_vault()
-                && frame_tx.frames.len() == 1
-                && frame_tx.frames[0].mode == ethrex_common::types::FrameMode::Utxo as u8;
+            let self_funded_lane = frame_tx.is_self_funded_utxo_spend(utxo_frames_active);
 
             if !self_funded_lane {
                 // EIP-8141 §Mempool: validate the prefix shape and structural rules.
@@ -3954,7 +3951,15 @@ impl Blockchain {
         // availability accounting LAST, after the cheap stateless and nonce/fee
         // checks have passed, so a malformed nonce / fee / size never pays for an
         // EVM simulation.
-        if let Transaction::FrameTransaction(frame_tx) = tx {
+        if let Transaction::FrameTransaction(frame_tx) = tx
+            && !frame_tx
+                .is_self_funded_utxo_spend(config.is_utxo_frames_activated(header.timestamp))
+        {
+            // EIP-8312: a self-funded UTXO spend is its own validation prefix and
+            // executes no EVM code, so there is nothing to simulate here — and it
+            // matches none of the EIP-8141 shapes, so deriving one would reject it.
+            // Its inputs were pre-verified against head state above.
+            //
             // Re-derive the (pure) prefix; structural validity was already
             // checked above, so this cannot fail here.
             let prefix = frame_tx.validation_prefix().map_err(MempoolError::from)?;

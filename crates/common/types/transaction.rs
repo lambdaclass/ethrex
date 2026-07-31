@@ -2928,6 +2928,26 @@ impl FrameTransaction {
     /// Expiry-verifier frames (see `Frame::is_expiry_verifier`) are transparent; they
     /// are skipped during shape matching but their indices are NOT included in
     /// `frame_indices` (which holds only the semantically meaningful prefix frames).
+    /// EIP-8312: whether this transaction is a self-funded UTXO spend, which is
+    /// its own validation prefix and therefore must bypass every EIP-8141
+    /// prefix-shape rule and the EVM prefix simulation.
+    ///
+    /// Its validity depends only on transaction fields and the vault's protocol
+    /// state, and it cannot match any of the four canonical shapes (they are
+    /// DEFAULT/VERIFY-only), so a caller that does not special-case it rejects it
+    /// as an unrecognized prefix.
+    ///
+    /// Sender-is-vault plus a single UTXO frame is sufficient without decoding the
+    /// spend: static validation only admits an empty `payer` when the sender is the
+    /// vault AND the transaction has exactly one frame, and a sponsored spend needs
+    /// a pay frame, so it can never be single-frame.
+    pub fn is_self_funded_utxo_spend(&self, utxo_frames_active: bool) -> bool {
+        utxo_frames_active
+            && self.sender == crate::types::utxo_vault()
+            && self.frames.len() == 1
+            && self.frames[0].mode == FrameMode::Utxo as u8
+    }
+
     pub fn validation_prefix(&self) -> Result<ValidationPrefix, FrameValidationError> {
         // Collect non-expiry frame indices in order.
         let non_expiry: Vec<usize> = self
