@@ -2732,6 +2732,8 @@ impl FrameTransaction {
     ///   self_verify → `APPROVE_EXECUTION_AND_PAYMENT`, only_verify → `APPROVE_EXECUTION`,
     ///   pay → `APPROVE_PAYMENT`.
     /// - No frame in the prefix has the atomic-batch flag set.
+    /// - An expiry verifier frame, if present, is the first frame of the transaction.
+    /// - No VERIFY frame follows the validation prefix.
     /// - Total gas budget: Σ(prefix frame gas_limits) + signature_verification_cost() ≤ `max_verify_gas`.
     ///
     /// `max_verify_gas` is the node's `MAX_VERIFY_GAS` budget; the spec value is
@@ -2824,6 +2826,36 @@ impl FrameTransaction {
             }
         }
 
+        // EIP-8141 §Expiry Verifier Frame: an expiry verifier frame may appear
+        // only as the first frame of the frame list. Expiry frames are otherwise
+        // transparent to prefix matching, so a misplaced one would silently pin
+        // the transaction's validity to a deadline outside the recognized shapes.
+        if let Some((frame_index, _)) = self
+            .frames
+            .iter()
+            .enumerate()
+            .skip(1)
+            .find(|(_, frame)| frame.is_expiry_verifier())
+        {
+            return Err(FrameValidationError::ExpiryFrameNotFirst { frame_index });
+        }
+
+        // EIP-8141 §Structural Rules rule 8: no VERIFY frame may follow the
+        // validation prefix. A reverting VERIFY frame invalidates the whole
+        // transaction wherever it sits, so one placed after the prefix would make
+        // validity depend on state that prefix simulation never inspects — the
+        // unbounded-invalidation case the public mempool rules exist to prevent.
+        if let Some(&prefix_end) = prefix.frame_indices.last()
+            && let Some((frame_index, _)) = self
+                .frames
+                .iter()
+                .enumerate()
+                .skip(prefix_end.saturating_add(1))
+                .find(|(_, frame)| frame.execution_mode() == FrameMode::Verify)
+        {
+            return Err(FrameValidationError::VerifyFrameAfterPrefix { frame_index });
+        }
+
         // Gas budget: prefix frame gas limits + signature cost ≤ MAX_VERIFY_GAS.
         let prefix_gas: u64 = prefix
             .frame_indices
@@ -2893,6 +2925,10 @@ pub enum FrameValidationError {
     },
     #[error("frame {frame_index}: prefix frame has atomic-batch flag set")]
     AtomicBatchInPrefix { frame_index: usize },
+    #[error("frame {frame_index}: expiry verifier frame must be the first frame")]
+    ExpiryFrameNotFirst { frame_index: usize },
+    #[error("frame {frame_index}: VERIFY frame follows the validation prefix")]
+    VerifyFrameAfterPrefix { frame_index: usize },
     #[error("prefix gas budget exceeded: {actual} > {limit} (MAX_VERIFY_GAS)")]
     VerifyGasBudgetExceeded { actual: u64, limit: u64 },
 }
