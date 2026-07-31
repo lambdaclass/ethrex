@@ -133,8 +133,6 @@ Network configs with Amsterdam timestamps:
 - `cmd/ethrex/networks/sepolia/genesis.json`
 - `cmd/ethrex/networks/hoodi/genesis.json`
 
-Docker: `glamsterdam-devnet-8` not in [`ethpandaops/eth-client-docker-image-builder/branches.yaml`](https://github.com/ethpandaops/eth-client-docker-image-builder/blob/master/branches.yaml); `ethpandaops/ethrex:glamsterdam-devnet-8` images update via manual Discord `workflow_dispatch`.
-
 ---
 
 ## Next Fork: Hegotá (H2 2026)
