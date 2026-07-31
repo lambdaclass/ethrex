@@ -568,19 +568,27 @@ async fn apply_custody_update_expansion_sets_columns() {
 }
 
 #[tokio::test]
-async fn apply_custody_update_contraction_prunes_and_sets() {
+async fn apply_custody_update_contraction_sets_and_retains_cells() {
     let ctx = fresh_context().await;
     ctx.blockchain.mempool.set_custody_columns(0b1111).unwrap();
-    // Store dummy cells for a fake tx so prune_cells has something to act on.
     let tx_hash = H256::from_low_u64_be(42);
-    // (no tx in pool — cells will be pruned immediately by prune_cells)
     ctx.blockchain
         .mempool
         .store_cells(tx_hash, 1, vec![])
         .unwrap();
+    let before = ctx.blockchain.mempool.get_cells_mask(tx_hash).unwrap();
+
     apply_custody_update(&ctx, Some(0b0011)); // remove columns 2,3
+
     assert_eq!(
         ctx.blockchain.mempool.get_custody_columns().unwrap(),
         0b0011
+    );
+    // Pruning dropped columns is optional (execution-apis amsterdam.md,
+    // engine_forkchoiceUpdatedV4 §3.3.2); cells are retained so peers that
+    // already sampled us can still be served.
+    assert_eq!(
+        ctx.blockchain.mempool.get_cells_mask(tx_hash).unwrap(),
+        before
     );
 }
