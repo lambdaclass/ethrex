@@ -398,6 +398,14 @@ pub struct Options {
     )]
     pub discv5_enabled: bool,
     #[arg(
+        long = "discovery.dns",
+        value_name = "ENRTREE_URLS",
+        help = "Comma separated enrtree:// URLs for EIP-1459 DNS discovery. Defaults to the known network list; pass an empty string to disable.",
+        help_heading = "P2P options",
+        env = "ETHREX_DISCOVERY_DNS"
+    )]
+    pub discovery_dns: Option<String>,
+    #[arg(
         long = "p2p.tx-broadcasting-interval",
         default_value_t = BROADCAST_INTERVAL_MS,
         value_name = "INTERVAL_MS",
@@ -486,6 +494,7 @@ impl Options {
             discovery_port: "30303".into(),
             discv4_enabled: true,
             discv5_enabled: true,
+            discovery_dns: None,
             mempool_max_size: 10_000,
             ..Default::default()
         }
@@ -508,6 +517,7 @@ impl Options {
             discovery_port: "30303".into(),
             discv4_enabled: true,
             discv5_enabled: true,
+            discovery_dns: None,
             mempool_max_size: 10_000,
             ..Default::default()
         }
@@ -536,6 +546,7 @@ impl Default for Options {
             discovery_port: Default::default(),
             discv4_enabled: true,
             discv5_enabled: true,
+            discovery_dns: None,
             network: Default::default(),
             bootnodes: Default::default(),
             datadir: Default::default(),

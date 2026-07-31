@@ -4,9 +4,9 @@ use crate::rlpx::l2::l2_connection::P2PBasedContext;
 #[derive(Clone, Debug)]
 pub struct P2PBasedContext;
 use crate::{
-    discovery::{DiscoveryConfig, DiscoveryServer, DiscoveryServerError},
+    discovery::{DiscoveryConfig, DiscoveryServer, DiscoveryServerError, dns},
     metrics::{CurrentStepValue, METRICS},
-    peer_table::{PeerData, PeerTable, PeerTableServerProtocol as _},
+    peer_table::{DiscoveryProtocol, PeerData, PeerTable, PeerTableServerProtocol as _},
     rlpx::{
         connection::server::{PeerConnBroadcastSender, PeerConnection},
         message::Message,
@@ -130,6 +130,16 @@ pub async fn start_network(
             .map_err(NetworkError::UdpSocketError)?,
     );
 
+    // Read what the DNS task needs before `config` is moved into the server.
+    let dns_discovery_links = config.dns_discovery_links.clone();
+    let dns_discovery_protocols = [
+        (config.discv4_enabled, DiscoveryProtocol::Discv4),
+        (config.discv5_enabled, DiscoveryProtocol::Discv5),
+    ]
+    .into_iter()
+    .filter_map(|(enabled, protocol)| enabled.then_some(protocol))
+    .collect::<Vec<_>>();
+
     DiscoveryServer::spawn(
         context.storage.clone(),
         context.local_node.clone(),
@@ -146,6 +156,16 @@ pub async fn start_network(
     .inspect_err(|e| {
         error!("Failed to start discovery server: {e}");
     })?;
+
+    // An independent bootstrap path: if the hardcoded bootnodes stop answering,
+    // this is what still gets a node with an empty peer table into the network.
+    if !dns_discovery_links.is_empty() && !dns_discovery_protocols.is_empty() {
+        context.tracker.spawn(dns::run_dns_discovery(
+            context.table.clone(),
+            dns_discovery_links,
+            dns_discovery_protocols,
+        ));
+    }
 
     context.tracker.spawn(serve_p2p_requests(context.clone()));
 

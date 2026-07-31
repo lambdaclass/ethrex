@@ -182,6 +182,11 @@ P2P options:
           [default: true]
           [possible values: true, false]
 
+      --discovery.dns <ENRTREE_URLS>
+          Comma separated enrtree:// URLs for EIP-1459 DNS discovery. Defaults to the known network list; pass an empty string to disable.
+          
+          [env: ETHREX_DISCOVERY_DNS=]
+
       --p2p.tx-broadcasting-interval <INTERVAL_MS>
           Transaction Broadcasting Time Interval (ms) for batching transactions before broadcasting them.
           
