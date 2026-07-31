@@ -3608,7 +3608,8 @@ fn storage_refund_from_a_later_frame_reduces_reported_gas() {
 mod intrinsic_gas_accounting_tests {
     use ethrex_common::U256;
     use ethrex_common::types::{
-        FRAME_TX_INTRINSIC_COST, FRAME_TX_PER_FRAME_COST, FrameTransaction, Transaction,
+        FRAME_SIG_SCHEME_SECP256K1, FRAME_TX_INTRINSIC_COST, FRAME_TX_PER_FRAME_COST,
+        FrameTransaction, Transaction,
     };
 
     fn interop_reference_tx() -> FrameTransaction {
@@ -3622,35 +3623,35 @@ mod intrinsic_gas_accounting_tests {
         }
     }
 
-    fn intrinsic_gas(tx: &FrameTransaction) -> u64 {
-        let frame_gas = tx
-            .frames
-            .iter()
-            .map(|f| f.gas_limit)
-            .fold(0u64, |acc, g| acc.saturating_add(g));
-        tx.total_gas_limit().saturating_sub(frame_gas)
-    }
-
     #[test]
     fn interop_reference_tx_intrinsic_gas_charges_payload_bytes_only() {
         const ZERO_BYTE_GAS: u64 = 4;
         const NONZERO_BYTE_GAS: u64 = 16;
         const SECP256K1_VERIFY_GAS: u64 = 2_800;
-        const FRAME_COUNT: u64 = 2;
-        const SIGNATURE_ZERO_BYTES: u64 = 1;
-        const SIGNATURE_NONZERO_BYTES: u64 = 64;
         const FRAME_GAS_LIMITS: u64 = 50_000 + 100_000;
 
-        let payload_calldata_gas =
-            SIGNATURE_NONZERO_BYTES * NONZERO_BYTE_GAS + SIGNATURE_ZERO_BYTES * ZERO_BYTE_GAS;
+        let tx = interop_reference_tx();
+
+        // The expected cost below accounts for one signature's bytes and nothing
+        // else, so pin the fixture properties that make that the whole payload.
+        assert_eq!(tx.frames.len(), 2);
+        assert!(tx.frames.iter().all(|frame| frame.data.is_empty()));
+        assert_eq!(tx.signatures.len(), 1);
+        assert_eq!(tx.signatures[0].scheme, FRAME_SIG_SCHEME_SECP256K1);
+        assert!(tx.signatures[0].signer.is_none());
+        assert!(tx.signatures[0].msg.is_empty());
+
+        let signature = tx.signatures[0].signature.as_ref();
+        let zero_bytes = signature.iter().filter(|byte| **byte == 0).count() as u64;
+        let nonzero_bytes = signature.len() as u64 - zero_bytes;
+        let payload_calldata_gas = nonzero_bytes * NONZERO_BYTE_GAS + zero_bytes * ZERO_BYTE_GAS;
+
         let expected_intrinsic_gas = FRAME_TX_INTRINSIC_COST
-            + FRAME_COUNT * FRAME_TX_PER_FRAME_COST
+            + tx.frames.len() as u64 * FRAME_TX_PER_FRAME_COST
             + SECP256K1_VERIFY_GAS
             + payload_calldata_gas;
 
-        let tx = interop_reference_tx();
-        assert_eq!(tx.frames.len() as u64, FRAME_COUNT);
-        assert_eq!(intrinsic_gas(&tx), expected_intrinsic_gas);
+        assert_eq!(tx.mandatory_gas() + tx.data_cost(), expected_intrinsic_gas);
         assert_eq!(
             tx.total_gas_limit(),
             expected_intrinsic_gas + FRAME_GAS_LIMITS
@@ -3660,23 +3661,22 @@ mod intrinsic_gas_accounting_tests {
     #[test]
     fn intrinsic_gas_is_insensitive_to_structural_frame_fields() {
         let baseline = interop_reference_tx();
+        assert!(baseline.frames.len() >= 2);
 
         let mut restructured = interop_reference_tx();
-        restructured.frames[0].gas_limit = 1;
-        restructured.frames[1].gas_limit = 4_000_000_000;
+        restructured.frames[0].gas_limit += 1_000;
         restructured.frames[1].value = U256::from(1u64);
 
+        // Asserting the two components separately rather than their sum minus the
+        // frame gas: the frame gas limits are a term of `total_gas_limit`, so
+        // subtracting them back off cancels the very field under test.
+        assert_eq!(restructured.mandatory_gas(), baseline.mandatory_gas());
+        assert_eq!(restructured.data_cost(), baseline.data_cost());
+        // A frame gas limit is the one structural field `total_gas_limit` tracks,
+        // and it passes through with no other term moving.
         assert_eq!(
-            restructured.frames[0].data, baseline.frames[0].data,
-            "payload bytes must be unchanged for this test to be meaningful",
-        );
-        assert_eq!(restructured.frames[1].data, baseline.frames[1].data);
-        assert_eq!(restructured.signatures, baseline.signatures);
-
-        assert_eq!(
-            intrinsic_gas(&restructured),
-            intrinsic_gas(&baseline),
-            "structural frame fields (gas_limit, value) must not change intrinsic gas",
+            restructured.total_gas_limit(),
+            baseline.total_gas_limit() + 1_000
         );
     }
 }
