@@ -326,7 +326,7 @@ jobs:
           # Amsterdam config is loaded from .github/config/hive/amsterdam.yaml
           - name: "Consume Engine Amsterdam"
             simulation: ethereum/eels/consume-engine
-            limit: ".*(8024|7708|7778|7843|7928|7954|8037).*"
+            limit: ".*(2780|7708|7732|7778|7843|7928|7954|7975|7976|7981|7997|8024|8037|8038|8045|8061|8070|8159|8246|8282).*"
             amsterdam: true
             artifact_prefix: consume_engine_amsterdam
           # Investigate this test
