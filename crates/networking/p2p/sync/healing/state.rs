@@ -15,7 +15,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use ethrex_common::{H256, constants::EMPTY_KECCACK_HASH, types::AccountState};
+use ethrex_common::{H256, constants::EMPTY_KECCAK_HASH, types::AccountState};
 use ethrex_crypto::NativeCrypto;
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
 use ethrex_storage::Store;
@@ -211,7 +211,7 @@ async fn heal_state_trie(
                                 H256::from_slice(&meta.path.concat(&node.partial).to_bytes());
 
                             // // Collect valid code hash
-                            if account.code_hash != *EMPTY_KECCACK_HASH {
+                            if account.code_hash != *EMPTY_KECCAK_HASH {
                                 code_hash_collector.add(account.code_hash);
                                 code_hash_collector.flush_if_needed().await?;
                             }
@@ -355,7 +355,7 @@ async fn heal_state_trie(
                     }
                     encoded_to_write.insert(path, node.encode_to_vec());
                 }
-                let trie_db = store.open_direct_state_trie(*EMPTY_TRIE_HASH)?;
+                let trie_db = store.open_direct_state_trie(EMPTY_TRIE_HASH)?;
                 let db = trie_db.db();
                 // PERF: use put_batch_no_alloc (note that it needs to remove nodes too)
                 db.put_batch(encoded_to_write.into_iter().collect())?;
@@ -403,7 +403,7 @@ fn heal_state_batch(
     healing_queue: &mut StateHealingQueue,
     nodes_to_write: &mut Vec<(Nibbles, Node)>, // TODO: change tuple to struct
 ) -> Result<Vec<RequestMetadata>, SyncError> {
-    let trie = store.open_direct_state_trie(*EMPTY_TRIE_HASH)?;
+    let trie = store.open_direct_state_trie(EMPTY_TRIE_HASH)?;
     for node in nodes.into_iter() {
         let path = batch.remove(0);
         let (pending_children_count, pending_children) =

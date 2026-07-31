@@ -5,6 +5,8 @@ edition.workspace = true
 authors.workspace = true
 documentation.workspace = true
 license.workspace = true
+description = "Persistent block and state storage layer for the ethrex Ethereum execution client"
+repository.workspace = true
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
@@ -30,10 +32,12 @@ lru.workspace = true
 [features]
 default = []
 rocksdb = ["dep:rocksdb"]
+testing = []
 
 [dev-dependencies]
 tempfile.workspace = true
 tokio = { workspace = true, features = ["full"] }
+proptest = "1.0.0"
 
 [lib]
 path = "./lib.rs"
