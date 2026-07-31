@@ -23,8 +23,12 @@ runs:
       id: cache-sysroot
       uses: actions/cache@v4
       with:
-        path: /opt/lambda-vm-sysroot
-        key: lambda-vm-sysroot-rv64im-v1
+        # Cached under $HOME: actions/cache restores as the non-root runner
+        # user, which cannot write to /opt.
+        path: ~/.lambda-vm-sysroot
+        # Key embeds the sysroot's SHA256 so a sysroot update invalidates the
+        # cache instead of silently serving a stale one.
+        key: lambda-vm-sysroot-rv64im-420e394a096f3859235e3a8121a8d5a10f995ac48e636e8d700f17d50803a0e7
 
     - name: Prepare LambdaVM sysroot
       if: steps.cache-sysroot.outputs.cache-hit != 'true'
@@ -32,19 +36,27 @@ runs:
       env:
         SYSROOT_TARBALL: /tmp/lambda-vm-sysroot-rv64im.tar.gz
         SYSROOT_URL: https://lambda.alignedlayer.com/lambda-vm-sysroot-rv64im.tar.gz
+        # Must match SYSROOT_SHA256 in the lambda_vm Makefile at
+        # LAMBDA_VM_COMMIT. Also update the cache key above when bumping.
+        SYSROOT_SHA256: 420e394a096f3859235e3a8121a8d5a10f995ac48e636e8d700f17d50803a0e7
       run: |
         source "$GITHUB_WORKSPACE/.github/scripts/retry.sh"
 
         retry curl -L "${SYSROOT_URL}" -o "${SYSROOT_TARBALL}"
-        sudo mkdir -p /opt/lambda-vm-sysroot
-        sudo tar -xzf "${SYSROOT_TARBALL}" -C /opt/lambda-vm-sysroot --strip-components=1
+        # Integrity check before extraction: the sysroot shapes the guest ELF,
+        # so a compromised tarball would silently corrupt every CI build.
+        echo "${SYSROOT_SHA256}  ${SYSROOT_TARBALL}" | sha256sum -c -
+        mkdir -p "${HOME}/.lambda-vm-sysroot"
+        tar -xzf "${SYSROOT_TARBALL}" -C "${HOME}/.lambda-vm-sysroot" --strip-components=1
         rm -f "${SYSROOT_TARBALL}"
 
     - name: Cache LambdaVM CLI binary
       id: cache-cli
       uses: actions/cache@v4
       with:
-        path: ~/.cargo/bin/cli
+        # Installed as `lambda-vm-cli` (not upstream's bare `cli`) to avoid
+        # collisions with unrelated `cli` executables on $PATH.
+        path: ~/.cargo/bin/lambda-vm-cli
         # Must match the `rev` of `lambda-vm-syscalls` in
         # crates/guest-program/Cargo.toml and crates/guest-program/bin/lambdavm/Cargo.toml.
         key: lambda-vm-cli-9ccdaf28ab373da0a4a2eb79a16b90479f6686fd
@@ -61,12 +73,12 @@ runs:
         git checkout "${LAMBDA_VM_COMMIT}"
         cargo build --release -p cli
         mkdir -p "${HOME}/.cargo/bin"
-        cp target/release/cli "${HOME}/.cargo/bin/cli"
+        cp target/release/cli "${HOME}/.cargo/bin/lambda-vm-cli"
         cd -
         rm -rf "${TMP_DIR}"
 
     - name: Expose LAMBDA_VM_SYSROOT_DIR
       shell: bash
       run: |
-        echo "LAMBDA_VM_SYSROOT_DIR=/opt/lambda-vm-sysroot" >> "$GITHUB_ENV"
+        echo "LAMBDA_VM_SYSROOT_DIR=${HOME}/.lambda-vm-sysroot" >> "$GITHUB_ENV"
         echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"

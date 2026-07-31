@@ -162,7 +162,7 @@ Each subdirectory in `bin/` contains a guest implementation for a specific zkVM.
 - **Architecture**: RISC-V 64-bit
 - **ELF output**: `bin/lambdavm/out/riscv64im-lambda-vm-elf`
 - **Source pin**: see `LAMBDA_VM_COMMIT` in `.github/actions/install-lambdavm/action.yml` and the `rev` of `lambda-vm-syscalls` in `crates/guest-program/Cargo.toml` (both must match).
-- **Requires**: nightly Rust toolchain (`nightly-2026-02-01`), `rust-src`, the LambdaVM sysroot (default `/opt/lambda-vm-sysroot`, overridable via `LAMBDA_VM_SYSROOT_DIR`), and the LambdaVM `cli` binary on `$PATH`.
+- **Requires**: nightly Rust toolchain (`nightly-2026-02-01`), `rust-src`, the LambdaVM sysroot (default `/opt/lambda-vm-sysroot`, overridable via `LAMBDA_VM_SYSROOT_DIR`), and the LambdaVM CLI binary on `$PATH` as `lambda-vm-cli` (upstream builds it as `cli`; rename it, or point `LAMBDA_VM_CLI` at the binary).
 - **Accelerated primitives**: `keccak_permute` only. ECDSA, BN254, KZG, BLS12-381, sha256, and modexp run via pure-Rust crates (slow inside the zkVM until more precompiles land).
 
 ## Data Flow

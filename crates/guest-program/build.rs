@@ -292,11 +292,11 @@ fn build_lambdavm_program() {
 
     let duration = start.elapsed();
     println!(
-        "LambdaVM guest program built in {:.2?} seconds",
+        "LambdaVM guest program built in {:.2} seconds",
         duration.as_secs_f64()
     );
 
-    let _ = std::fs::create_dir("./bin/lambdavm/out");
+    std::fs::create_dir_all("./bin/lambdavm/out").expect("could not create lambdavm/out dir");
 
     std::fs::copy(
         "./bin/lambdavm/target/riscv64im-lambda-vm-elf/release/ethrex-guest-lambdavm",

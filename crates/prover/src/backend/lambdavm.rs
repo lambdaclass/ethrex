@@ -1,6 +1,7 @@
 use std::{
     io::ErrorKind,
     process::{Command, Stdio},
+    sync::OnceLock,
     time::{Duration, Instant},
 };
 
@@ -12,6 +13,18 @@ use crate::backend::{BackendError, ProverBackend};
 const INPUT_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/lambdavm_input.bin");
 const PROOF_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/lambdavm_proof.bin");
 const ELF_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/zkvm-lambdavm-program");
+
+/// Set once the guest ELF has been written to disk; skips the per-call
+/// metadata + read + compare dance for the lifetime of the process.
+static ELF_WRITTEN: OnceLock<()> = OnceLock::new();
+
+/// Resolves the LambdaVM CLI binary: `LAMBDA_VM_CLI` env var, then
+/// `lambda-vm-cli` on `$PATH` (the name `.github/actions/install-lambdavm`
+/// installs it under — upstream builds it as the collision-prone `cli`).
+fn cli_command() -> Command {
+    let bin = std::env::var("LAMBDA_VM_CLI").unwrap_or_else(|_| "lambda-vm-cli".to_string());
+    Command::new(bin)
+}
 
 /// LambdaVM-specific proof output containing the raw proof bytes emitted by
 /// `cli prove`.
@@ -25,7 +38,8 @@ pub struct LambdaVmProveOutput(pub Vec<u8>);
 /// inputs to a length-prefixed file matching LambdaVM's `PRIVATE_INPUT_START`
 /// memory layout (4-byte LE length + rkyv-encoded `ProgramInput`).
 ///
-/// The `cli` binary must be on `$PATH`. CI installs it via
+/// The binary must be on `$PATH` as `lambda-vm-cli` (override with the
+/// `LAMBDA_VM_CLI` env var). CI installs it via
 /// `.github/actions/install-lambdavm`.
 #[derive(Default)]
 pub struct LambdaVmBackend;
@@ -36,6 +50,18 @@ impl LambdaVmBackend {
     }
 
     fn write_elf_file() -> Result<(), BackendError> {
+        if ELF_WRITTEN.get().is_some() {
+            return Ok(());
+        }
+
+        // The plain `lambdavm` feature embeds an empty ELF placeholder; only
+        // `lambdavm-build-elf` compiles and embeds the real guest binary.
+        if ZKVM_LAMBDAVM_PROGRAM_ELF.is_empty() {
+            return Err(BackendError::execution(
+                "no LambdaVM guest ELF embedded: rebuild with the `lambdavm-build-elf` feature",
+            ));
+        }
+
         let needs_write = match std::fs::metadata(ELF_PATH) {
             Ok(meta) => {
                 if meta.len() != u64::try_from(ZKVM_LAMBDAVM_PROGRAM_ELF.len()).unwrap_or(0) {
@@ -62,15 +88,16 @@ impl LambdaVmBackend {
             })?;
         }
 
+        let _ = ELF_WRITTEN.set(());
         Ok(())
     }
 
     /// Execute assuming input is already serialized to INPUT_PATH.
     fn execute_core(&self) -> Result<(), BackendError> {
-        let output = Command::new("cli")
+        let output = cli_command()
             .args(["execute", ELF_PATH, "--private-input", INPUT_PATH])
             .stdin(Stdio::inherit())
-            .stderr(Stdio::inherit())
+            .stderr(Stdio::piped())
             .output()
             .map_err(BackendError::execution)?;
 
@@ -90,9 +117,18 @@ impl LambdaVmBackend {
     /// to extract `Proving time: <float>s`).
     fn prove_core(
         &self,
-        _format: ProofFormat,
+        format: ProofFormat,
     ) -> Result<(LambdaVmProveOutput, String), BackendError> {
-        let output = Command::new("cli")
+        // LambdaVM emits its native STARK proof (a fixed-size execution proof,
+        // which is what `Compressed` asks for). There is no L1-cheap wrapper
+        // (Groth16/Plonk) yet.
+        if matches!(format, ProofFormat::Groth16) {
+            return Err(BackendError::not_implemented(
+                "Groth16-wrapped proofs are not supported by LambdaVM yet; use ProofFormat::Compressed for the native STARK proof",
+            ));
+        }
+
+        let output = cli_command()
             .args([
                 "prove",
                 ELF_PATH,
@@ -101,10 +137,9 @@ impl LambdaVmBackend {
                 "--private-input",
                 INPUT_PATH,
                 "--time",
-                "--cycles",
             ])
             .stdin(Stdio::inherit())
-            .stderr(Stdio::inherit())
+            .stderr(Stdio::piped())
             .output()
             .map_err(BackendError::proving)?;
 
@@ -125,10 +160,10 @@ impl LambdaVmBackend {
     fn verify_core(&self, proof: &LambdaVmProveOutput) -> Result<(), BackendError> {
         std::fs::write(PROOF_PATH, &proof.0).map_err(BackendError::verification)?;
 
-        let output = Command::new("cli")
+        let output = cli_command()
             .args(["verify", PROOF_PATH, ELF_PATH])
             .stdin(Stdio::inherit())
-            .stderr(Stdio::inherit())
+            .stderr(Stdio::piped())
             .output()
             .map_err(BackendError::verification)?;
 
@@ -235,7 +270,10 @@ fn parse_proving_time(stdout: &str) -> Option<Duration> {
         let line = line.trim();
         if let Some(rest) = line.strip_prefix("Proving time: ") {
             let secs_str = rest.strip_suffix('s').unwrap_or(rest);
-            if let Ok(secs) = secs_str.parse::<f64>() {
+            if let Ok(secs) = secs_str.parse::<f64>()
+                && secs.is_finite()
+                && secs >= 0.0
+            {
                 return Some(Duration::from_secs_f64(secs));
             }
         }

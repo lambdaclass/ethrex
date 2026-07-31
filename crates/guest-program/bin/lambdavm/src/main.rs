@@ -15,7 +15,9 @@ pub fn main() {
     let input = lambda_vm_syscalls::syscalls::get_private_input();
 
     #[cfg(not(feature = "eip-8025"))]
-    let input = { rkyv::from_bytes::<ProgramInput, Error>(&input).unwrap() };
+    let input = {
+        rkyv::from_bytes::<ProgramInput, Error>(&input).expect("failed to deserialize ProgramInput")
+    };
 
     let crypto = Arc::new(LambdaVmCrypto);
 

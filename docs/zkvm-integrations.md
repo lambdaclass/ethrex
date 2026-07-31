@@ -103,7 +103,7 @@ ethrex integrates with multiple zero-knowledge virtual machines (zkVMs), giving 
 - Minimalist, auditable codebase
 
 **Integration Details:**
-- The host backend shells out to LambdaVM's `cli` binary (`execute`, `prove`, `verify`).
+- The host backend shells out to LambdaVM's CLI binary (`execute`, `prove`, `verify`), resolved as `lambda-vm-cli` on `$PATH` (overridable via the `LAMBDA_VM_CLI` env var).
 - The guest binary uses LambdaVM's `lambda-vm-syscalls` SDK and a custom RV64IM target spec.
 - `LambdaVmCrypto` overrides `keccak256` (LambdaVM's only accelerated primitive today), routes ECDSA secp256k1 through pure-Rust `k256`, and routes BLS12-381 (EIP-2537) through the portable pure-Rust `bls12_381` backend (the trait defaults require `blst`, which guest builds compile out). All other `Crypto` methods inherit the trait default.
 - Source is pinned via commit hash on `yetanotherco/lambda_vm`; the same hash appears in `crates/guest-program/Cargo.toml` and `.github/actions/install-lambdavm/action.yml`.

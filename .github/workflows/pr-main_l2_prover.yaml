@@ -90,8 +90,6 @@ jobs:
 
       - name: Install LambdaVM
         if: matrix.backend == 'lambdavm'
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         uses: ./.github/actions/install-lambdavm
 
       - name: Check ${{ matrix.backend }} backend
