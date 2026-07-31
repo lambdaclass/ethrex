@@ -8,7 +8,8 @@ use ethrex_blockchain::constants::{
 };
 use ethrex_blockchain::error::MempoolError;
 use ethrex_blockchain::mempool::{
-    FramePaymasterReservation, Mempool, is_canonical_paymaster, transaction_intrinsic_gas,
+    FramePaymasterReservation, KeyedConcurrency, Mempool, is_canonical_paymaster,
+    keyed_concurrency_verdict, transaction_intrinsic_gas,
 };
 use ethrex_blockchain::{Blockchain, BlockchainOptions};
 use ethrex_crypto::NativeCrypto;
@@ -449,10 +450,24 @@ fn test_filter_mempool_transactions() {
     let mempool = Mempool::new(MEMPOOL_MAX_SIZE_TEST);
     let filter = |tx: &Transaction| -> bool { matches!(tx, Transaction::EIP4844Transaction(_)) };
     mempool
-        .add_transaction(blob_tx_hash, blob_tx_sender, blob_tx.clone(), None, None)
+        .add_transaction(
+            blob_tx_hash,
+            blob_tx_sender,
+            blob_tx.clone(),
+            None,
+            None,
+            KeyedConcurrency::Denied,
+        )
         .unwrap();
     mempool
-        .add_transaction(plain_tx_hash, plain_tx_sender, plain_tx, None, None)
+        .add_transaction(
+            plain_tx_hash,
+            plain_tx_sender,
+            plain_tx,
+            None,
+            None,
+            KeyedConcurrency::Denied,
+        )
         .unwrap();
     let txs = mempool.filter_transactions_with_filter_fn(&filter).unwrap();
     assert_eq!(
@@ -671,6 +686,7 @@ fn frame_tx_reservation_maps_clear_after_add_and_remove() {
             MempoolTransaction::new(tx, sender),
             Some(reservation),
             None,
+            KeyedConcurrency::Denied,
         )
         .expect("add frame tx with reservation");
 
@@ -1065,6 +1081,7 @@ fn blobs_bundle_insert_and_remove() {
                 MempoolTransaction::new(tx, sender),
                 None,
                 None,
+                KeyedConcurrency::Denied,
             )
             .expect("Failed to add blob transaction");
     }
@@ -1129,6 +1146,7 @@ fn blob_txs_are_not_evicted_by_regular_tx_flood() {
                 MempoolTransaction::new(blob_tx, blob_sender),
                 None,
                 None,
+                KeyedConcurrency::Denied,
             )
             .expect("Failed to add blob transaction");
         blob_hashes.push(blob_hash);
@@ -1155,6 +1173,7 @@ fn blob_txs_are_not_evicted_by_regular_tx_flood() {
                 MempoolTransaction::new(tx, sender),
                 None,
                 None,
+                KeyedConcurrency::Denied,
             )
             .expect("Failed to add regular transaction");
     }
@@ -1206,6 +1225,7 @@ fn add_blob_tx(mempool: &Mempool, nonce: u64, blob_fee: u64) -> H256 {
             MempoolTransaction::new(tx, sender),
             None,
             None,
+            KeyedConcurrency::Denied,
         )
         .expect("Failed to add blob transaction");
     hash
@@ -1235,6 +1255,7 @@ fn add_blob_tx_with_sender(mempool: &Mempool, sender: Address, nonce: u64) -> H2
             MempoolTransaction::new(tx, sender),
             None,
             None,
+            KeyedConcurrency::Denied,
         )
         .expect("Failed to add blob transaction");
     hash
@@ -1262,6 +1283,7 @@ fn blob_txs_lists_only_blob_txs_with_sender_and_nonce() {
             MempoolTransaction::new(plain, sender),
             None,
             None,
+            KeyedConcurrency::Denied,
         )
         .unwrap();
 
@@ -1517,6 +1539,7 @@ async fn mempool_rejects_underfunded_paymaster() {
                 paymaster_balance: max_cost,
             }),
             None,
+            KeyedConcurrency::Denied,
         )
         .expect("phantom reservation must be directly inserted");
 
@@ -1605,6 +1628,7 @@ async fn mempool_enforces_noncanonical_paymaster_limit() {
                 paymaster_balance: funded_balance,
             }),
             None,
+            KeyedConcurrency::Denied,
         )
         .expect("phantom frame tx must be directly inserted to fill paymaster slot");
 
@@ -1634,6 +1658,7 @@ async fn mempool_enforces_noncanonical_paymaster_limit() {
             paymaster_balance: funded_balance,
         }),
         None,
+        KeyedConcurrency::Denied,
     );
     assert!(
         matches!(result, Err(MempoolError::FrameTxNonCanonicalPaymasterLimit)),
@@ -1700,6 +1725,7 @@ fn self_pay_frame_tx_exempt_from_noncanonical_paymaster_limit() {
             MempoolTransaction::new(t1, sender),
             Some(reservation()),
             None,
+            KeyedConcurrency::Allowed,
         )
         .expect("first self-paying keyed frame tx must be admitted");
 
@@ -1711,6 +1737,7 @@ fn self_pay_frame_tx_exempt_from_noncanonical_paymaster_limit() {
             MempoolTransaction::new(t2, sender),
             Some(reservation()),
             None,
+            KeyedConcurrency::Allowed,
         )
         .expect(
             "second disjoint-keyed self-paying frame tx must also be admitted \
@@ -1774,6 +1801,7 @@ async fn mempool_rejects_second_frame_tx_same_sender_new_nonce() {
             MempoolTransaction::new(nonce1_tx, sender),
             None,
             None,
+            KeyedConcurrency::Denied,
         )
         .expect("direct insert of nonce=1 frame tx must succeed");
 
@@ -1863,6 +1891,7 @@ async fn mempool_frame_tx_replaces_same_nonce_non_frame_tx() {
             MempoolTransaction::new(regular_tx, sender),
             None,
             None,
+            KeyedConcurrency::Denied,
         )
         .expect("direct insert of non-frame tx must succeed");
 
@@ -2025,6 +2054,7 @@ async fn mempool_fee_bump_rejected_leaves_original_intact() {
                 paymaster_balance: balance,
             }),
             None,
+            KeyedConcurrency::Denied,
         )
         .expect("phantom reservation must be directly inserted");
 
@@ -2718,6 +2748,7 @@ fn fill_mempool(mempool: &Mempool, count: usize) {
                 MempoolTransaction::new(tx, sender),
                 None,
                 None,
+                KeyedConcurrency::Denied,
             )
             .expect("Failed to add transaction");
     }
@@ -2848,6 +2879,7 @@ async fn replacement_at_existing_nonce_bypasses_gap_admission() {
             MempoolTransaction::new(original_tx, sender),
             None,
             None,
+            KeyedConcurrency::Denied,
         )
         .expect("Failed to seed the pool with a tx at nonce 5");
 
@@ -2925,6 +2957,16 @@ fn keyed_frame_tx(keys: Vec<U256>, nonce_seq: u64, max_fee: u64) -> Transaction 
 }
 
 fn add_frame(blockchain: &Blockchain, tx: &Transaction) -> Result<(), MempoolError> {
+    add_frame_with(blockchain, tx, KeyedConcurrency::Allowed)
+}
+
+/// Insert a frame tx bypassing validation, stating the keyed-concurrency verdict
+/// that admission would have computed.
+fn add_frame_with(
+    blockchain: &Blockchain,
+    tx: &Transaction,
+    keyed_concurrency: KeyedConcurrency,
+) -> Result<(), MempoolError> {
     let sender = frame_self_sender();
     blockchain.mempool.add_transaction(
         tx.hash(&NativeCrypto),
@@ -2932,6 +2974,7 @@ fn add_frame(blockchain: &Blockchain, tx: &Transaction) -> Result<(), MempoolErr
         MempoolTransaction::new(tx.clone(), sender),
         None,
         None,
+        keyed_concurrency,
     )
 }
 
@@ -3180,6 +3223,7 @@ fn keyed_reannounce_does_not_leak_reservation() {
             MempoolTransaction::new(tx.clone(), sender),
             reservation(),
             None,
+            KeyedConcurrency::Allowed,
         )
     };
     add_once().unwrap();
@@ -3204,6 +3248,7 @@ fn keyed_reannounce_does_not_leak_reservation() {
 
 mod p2p_serve_tests {
     use ethrex_blockchain::Blockchain;
+    use ethrex_blockchain::mempool::KeyedConcurrency;
     use ethrex_common::types::{
         FRAME_SIG_SCHEME_SECP256K1, Frame, FrameMode, FrameSignature, FrameTransaction,
         MempoolTransaction, P2PTransaction, Transaction,
@@ -3260,6 +3305,7 @@ mod p2p_serve_tests {
                 MempoolTransaction::new(tx, sender),
                 None,
                 None,
+                KeyedConcurrency::Denied,
             )
             .expect("failed to add frame tx to mempool");
 
@@ -3297,6 +3343,7 @@ mod cumulative_balance_tests {
                 MempoolTransaction::new(tx, sender),
                 None,
                 None,
+                KeyedConcurrency::Denied,
             )
             .expect("add_transaction");
         hash
@@ -3442,6 +3489,7 @@ fn self_pay_removal_does_not_release_a_noncanonical_paymaster_slot() {
             MempoolTransaction::new(sponsored_tx, sponsored_sender),
             Some(reservation(false)),
             None,
+            KeyedConcurrency::Denied,
         )
         .expect("sponsored frame tx must be admitted");
     assert_eq!(
@@ -3458,6 +3506,7 @@ fn self_pay_removal_does_not_release_a_noncanonical_paymaster_slot() {
             MempoolTransaction::new(self_pay_tx, paymaster),
             Some(reservation(true)),
             None,
+            KeyedConcurrency::Denied,
         )
         .expect("self-paying frame tx must be admitted (exempt from the limit)");
     mempool
@@ -3522,5 +3571,254 @@ async fn keyed_frame_tx_admitted_despite_gap_gate() {
     assert!(
         result.is_ok(),
         "a keyed frame tx must not be rejected as gapped-nonce, got {result:?}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// EIP-8250 keyed-concurrency eligibility, fallback, key-domain separation and
+// the locked replacement recheck
+// ---------------------------------------------------------------------------
+
+#[test]
+fn keyed_concurrency_needs_every_eligibility_condition() {
+    // All four conditions hold: the prefix cannot be invalidated by a sibling.
+    assert_eq!(
+        keyed_concurrency_verdict(true, false, false, false),
+        KeyedConcurrency::Allowed
+    );
+    // Each condition alone is disqualifying.
+    assert_eq!(
+        keyed_concurrency_verdict(false, false, false, false),
+        KeyedConcurrency::Denied,
+        "an EOA or EIP-7702-delegated sender is not eligible"
+    );
+    assert_eq!(
+        keyed_concurrency_verdict(true, true, false, false),
+        KeyedConcurrency::Denied,
+        "a deploy frame installs the sender's code mid-flight"
+    );
+    assert_eq!(
+        keyed_concurrency_verdict(true, false, true, false),
+        KeyedConcurrency::Denied,
+        "a prefix reading sender storage can be invalidated by a sibling SSTORE"
+    );
+    assert_eq!(
+        keyed_concurrency_verdict(true, false, false, true),
+        KeyedConcurrency::Denied,
+        "a prefix reading TXPARAM(0x0C) depends on the legacy account nonce"
+    );
+}
+
+#[test]
+fn ineligible_keyed_txs_fall_back_to_one_per_sender() {
+    // With the verdict Denied, disjoint key sets no longer buy concurrency: the
+    // sender is held to one pending frame transaction.
+    let store = Store::new("", EngineType::InMemory).unwrap();
+    let blockchain = Blockchain::default_with_store(store);
+
+    let first = keyed_frame_tx(vec![U256::one()], 0, 30_000_000_000);
+    add_frame_with(&blockchain, &first, KeyedConcurrency::Denied).expect("first admitted");
+
+    let second = keyed_frame_tx(vec![U256::from(2)], 0, 30_000_000_000);
+    assert!(
+        matches!(
+            add_frame_with(&blockchain, &second, KeyedConcurrency::Denied),
+            Err(MempoolError::FrameTxSenderAlreadyPending)
+        ),
+        "an ineligible sender must not hold two pending frame txs"
+    );
+    assert!(
+        frame_pooled(&blockchain, &first),
+        "the first tx stays pooled"
+    );
+}
+
+#[test]
+fn an_eligible_keyed_tx_cannot_join_an_ineligible_one() {
+    // Concurrency requires both sides to be independent, so an eligible tx must
+    // not slip in behind a pending ineligible one (or the reverse).
+    let store = Store::new("", EngineType::InMemory).unwrap();
+    let blockchain = Blockchain::default_with_store(store);
+
+    let ineligible = keyed_frame_tx(vec![U256::one()], 0, 30_000_000_000);
+    add_frame_with(&blockchain, &ineligible, KeyedConcurrency::Denied).expect("first admitted");
+
+    let eligible = keyed_frame_tx(vec![U256::from(2)], 0, 30_000_000_000);
+    assert!(matches!(
+        add_frame_with(&blockchain, &eligible, KeyedConcurrency::Allowed),
+        Err(MempoolError::FrameTxSenderAlreadyPending)
+    ));
+
+    // Reverse order: an ineligible tx must not join a pending eligible one.
+    let store = Store::new("", EngineType::InMemory).unwrap();
+    let blockchain = Blockchain::default_with_store(store);
+    let eligible = keyed_frame_tx(vec![U256::one()], 0, 30_000_000_000);
+    add_frame_with(&blockchain, &eligible, KeyedConcurrency::Allowed).expect("first admitted");
+    let ineligible = keyed_frame_tx(vec![U256::from(2)], 0, 30_000_000_000);
+    assert!(matches!(
+        add_frame_with(&blockchain, &ineligible, KeyedConcurrency::Denied),
+        Err(MempoolError::FrameTxSenderAlreadyPending)
+    ));
+}
+
+#[test]
+fn key_zero_and_keyed_txs_never_coexist_for_one_sender() {
+    // A [0] tx consumes the legacy account nonce, so it can invalidate a keyed
+    // tx that depends on it. The two domains stay apart, in both orders.
+    let store = Store::new("", EngineType::InMemory).unwrap();
+    let blockchain = Blockchain::default_with_store(store);
+    let keyed = keyed_frame_tx(vec![U256::one()], 0, 30_000_000_000);
+    add_frame_with(&blockchain, &keyed, KeyedConcurrency::Allowed).expect("keyed admitted");
+    let key_zero = Transaction::FrameTransaction(minimal_valid_frame_tx());
+    assert!(
+        matches!(
+            add_frame_with(&blockchain, &key_zero, KeyedConcurrency::Denied),
+            Err(MempoolError::FrameTxKeyDomainMixed)
+        ),
+        "a key-0 tx must not join a pending keyed tx"
+    );
+
+    let store = Store::new("", EngineType::InMemory).unwrap();
+    let blockchain = Blockchain::default_with_store(store);
+    let key_zero = Transaction::FrameTransaction(minimal_valid_frame_tx());
+    add_frame_with(&blockchain, &key_zero, KeyedConcurrency::Denied).expect("key-0 admitted");
+    let keyed = keyed_frame_tx(vec![U256::one()], 0, 30_000_000_000);
+    assert!(
+        matches!(
+            add_frame_with(&blockchain, &keyed, KeyedConcurrency::Allowed),
+            Err(MempoolError::FrameTxKeyDomainMixed)
+        ),
+        "a keyed tx must not join a pending key-0 tx"
+    );
+}
+
+#[test]
+fn locked_replacement_rechecks_the_bid_against_the_current_predecessor() {
+    // The price check in `find_tx_to_replace` runs unlocked, so the insert must
+    // re-validate the bump against whatever is pooled now; otherwise a
+    // lower-fee resubmission can evict a higher-fee incumbent.
+    let store = Store::new("", EngineType::InMemory).unwrap();
+    let blockchain = Blockchain::default_with_store(store);
+
+    let incumbent = keyed_frame_tx(vec![U256::one()], 0, 60_000_000_000);
+    add_frame_with(&blockchain, &incumbent, KeyedConcurrency::Allowed).expect("incumbent admitted");
+
+    let underpriced = keyed_frame_tx(vec![U256::one()], 0, 30_000_000_000);
+    assert!(
+        matches!(
+            add_frame_with(&blockchain, &underpriced, KeyedConcurrency::Allowed),
+            Err(MempoolError::UnderpricedReplacement)
+        ),
+        "the locked recheck must reject a bid that no longer out-bids the pooled tx"
+    );
+    assert!(
+        frame_pooled(&blockchain, &incumbent),
+        "the higher-fee incumbent must survive"
+    );
+    assert!(!frame_pooled(&blockchain, &underpriced));
+
+    // A genuine bump still replaces.
+    let bumped = keyed_frame_tx(vec![U256::one()], 0, 90_000_000_000);
+    add_frame_with(&blockchain, &bumped, KeyedConcurrency::Allowed).expect("bump admitted");
+    assert!(frame_pooled(&blockchain, &bumped));
+    assert!(!frame_pooled(&blockchain, &incumbent));
+}
+
+/// Hegota store whose frame-tx sender runs `code` and holds a funding balance,
+/// so full admission (prefix simulation included) can be exercised against a
+/// sender whose prefix does something specific.
+async fn setup_hegota_store_with_sender_code(name: &str, code: Bytes) -> Store {
+    let genesis = Genesis {
+        config: ChainConfig {
+            chain_id: 0,
+            shanghai_time: Some(0),
+            hegota_time: Some(0),
+            ..Default::default()
+        },
+        gas_limit: 100_000_000,
+        alloc: [(
+            Address::from_low_u64_be(FRAME_TX_SELF_SENDER),
+            GenesisAccount {
+                code,
+                storage: BTreeMap::new(),
+                balance: U256::from(10u64).pow(U256::from(18u64)),
+                nonce: 0,
+            },
+        )]
+        .into_iter()
+        .collect(),
+        ..Default::default()
+    };
+    let mut store = Store::new(name, EngineType::InMemory).expect("Storage setup");
+    store
+        .add_initial_state(genesis)
+        .await
+        .expect("add genesis state");
+    store
+}
+
+#[tokio::test]
+async fn admission_grants_keyed_concurrency_to_an_independent_prefix() {
+    // The sender is a contract whose prefix only calls APPROVE: no deploy frame,
+    // no sender storage read, no TXPARAM(0x0C). Disjoint keyed txs may coexist.
+    let store = setup_hegota_store_funded().await;
+    let blockchain = Blockchain::default_with_store(store);
+
+    let first = keyed_frame_tx(vec![U256::one()], 0, 1_000_000_000);
+    blockchain
+        .add_transaction_to_pool(first)
+        .await
+        .expect("first keyed tx admitted");
+    let second = keyed_frame_tx(vec![U256::from(2)], 0, 1_000_000_000);
+    blockchain
+        .add_transaction_to_pool(second)
+        .await
+        .expect("a disjoint keyed tx from an eligible sender must be admitted too");
+}
+
+#[tokio::test]
+async fn admission_denies_keyed_concurrency_when_the_prefix_reads_the_legacy_nonce() {
+    // Sender code: PUSH1 0x0C, TXPARAM, POP, then APPROVE(3), STOP. Reading the
+    // legacy account nonce makes the prefix depend on it, so the sender falls
+    // back to one pending frame transaction.
+    let code = Bytes::from(vec![
+        0x60, 0x0C, 0xB0, 0x50, 0x60, 0x03, 0x60, 0x00, 0x60, 0x00, 0xAA, 0x00,
+    ]);
+    let store = setup_hegota_store_with_sender_code("hegota-txparam-0c", code).await;
+    let blockchain = Blockchain::default_with_store(store);
+
+    let first = keyed_frame_tx(vec![U256::one()], 0, 1_000_000_000);
+    blockchain
+        .add_transaction_to_pool(first)
+        .await
+        .expect("first keyed tx admitted");
+    let second = keyed_frame_tx(vec![U256::from(2)], 0, 1_000_000_000);
+    let result = blockchain.add_transaction_to_pool(second).await;
+    assert!(
+        matches!(result, Err(MempoolError::FrameTxSenderAlreadyPending)),
+        "a prefix reading TXPARAM(0x0C) must not get concurrency; got {result:?}"
+    );
+}
+
+#[tokio::test]
+async fn admission_denies_keyed_concurrency_when_the_prefix_reads_sender_storage() {
+    // Sender code: PUSH1 0x00, SLOAD, POP, then APPROVE(3), STOP. A sibling
+    // transaction's SSTORE could invalidate this prefix.
+    let code = Bytes::from(vec![
+        0x60, 0x00, 0x54, 0x50, 0x60, 0x03, 0x60, 0x00, 0x60, 0x00, 0xAA, 0x00,
+    ]);
+    let store = setup_hegota_store_with_sender_code("hegota-sender-sload", code).await;
+    let blockchain = Blockchain::default_with_store(store);
+
+    let first = keyed_frame_tx(vec![U256::one()], 0, 1_000_000_000);
+    blockchain
+        .add_transaction_to_pool(first)
+        .await
+        .expect("first keyed tx admitted");
+    let second = keyed_frame_tx(vec![U256::from(2)], 0, 1_000_000_000);
+    let result = blockchain.add_transaction_to_pool(second).await;
+    assert!(
+        matches!(result, Err(MempoolError::FrameTxSenderAlreadyPending)),
+        "a prefix reading sender storage must not get concurrency; got {result:?}"
     );
 }

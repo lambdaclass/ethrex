@@ -102,8 +102,8 @@ use ethrex_vm::backends::levm::LEVM;
 use ethrex_vm::backends::levm::db::DatabaseLogger;
 use ethrex_vm::{BlockExecutionResult, DynVmDatabase, Evm, EvmError, VmDatabase};
 use mempool::{
-    BalanceCheck, FRAME_CANONICAL_PAYMASTER_CODE_HASH, FramePaymasterReservation, Mempool,
-    SenderAdmission, is_canonical_paymaster,
+    BalanceCheck, FRAME_CANONICAL_PAYMASTER_CODE_HASH, FramePaymasterReservation, KeyedConcurrency,
+    Mempool, SenderAdmission, is_canonical_paymaster, keyed_concurrency_verdict,
 };
 use payload::PayloadOrTask;
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -2887,7 +2887,7 @@ impl Blockchain {
         // per-sender gate inputs, re-checked atomically inside `add_transaction`,
         // which also removes any same-nonce tx being replaced under the same lock
         // (#6938) — so no separate pre-removal here.
-        let (frame_reservation, sender_admission) =
+        let (frame_reservation, sender_admission, keyed_concurrency) =
             self.validate_transaction(&transaction, sender).await?;
 
         // Add blobs bundle before the transaction so that when add_transaction
@@ -2903,6 +2903,7 @@ impl Blockchain {
             MempoolTransaction::new(transaction, sender),
             frame_reservation,
             sender_admission,
+            keyed_concurrency,
         ) {
             let _ = self.mempool.remove_blobs_bundle(&hash);
             return Err(e);
@@ -2943,7 +2944,7 @@ impl Blockchain {
         // removal, and the insert are one atomic scope (#6938). For a frame tx
         // the removal happens only after the locked paymaster re-check, so a
         // rejected fee-bump leaves the original pending tx intact.
-        let (frame_reservation, sender_admission) =
+        let (frame_reservation, sender_admission, keyed_concurrency) =
             self.validate_transaction(&transaction, sender).await?;
 
         // Add transaction to storage
@@ -2953,6 +2954,7 @@ impl Blockchain {
             MempoolTransaction::new(transaction, sender),
             frame_reservation,
             sender_admission,
+            keyed_concurrency,
         )?;
 
         Ok(hash)
@@ -3194,7 +3196,14 @@ impl Blockchain {
         &self,
         tx: &Transaction,
         sender: Address,
-    ) -> Result<(Option<FramePaymasterReservation>, Option<SenderAdmission>), MempoolError> {
+    ) -> Result<
+        (
+            Option<FramePaymasterReservation>,
+            Option<SenderAdmission>,
+            KeyedConcurrency,
+        ),
+        MempoolError,
+    > {
         let nonce = tx.nonce();
 
         // On an L1 node, reject L2-only transaction types (FeeToken 0x7d,
@@ -3207,7 +3216,7 @@ impl Blockchain {
         }
 
         if matches!(tx, &Transaction::PrivilegedL2Transaction(_)) {
-            return Ok((None, None));
+            return Ok((None, None, KeyedConcurrency::Denied));
         }
 
         // Frame transactions: skip balance/EOA checks (payer unknown until execution)
@@ -3256,6 +3265,9 @@ impl Blockchain {
         // frame txs after simulation + availability pass; `None` for every other
         // tx type and threaded to the locked insert in `add_transaction`.
         let mut frame_reservation: Option<FramePaymasterReservation> = None;
+        // EIP-8250 keyed-concurrency verdict; set once the prefix simulation below
+        // has shown the prefix to be independent of the sender's mutable state.
+        let mut keyed_concurrency = KeyedConcurrency::Denied;
 
         if let Transaction::FrameTransaction(frame_tx) = tx {
             // EIP-8141 static constraints at admission (mirrors the VM check)
@@ -3603,6 +3615,36 @@ impl Blockchain {
                 ));
             }
 
+            // EIP-8250 keyed-concurrency eligibility. Several keyed transactions
+            // from one sender may only be pending together when this transaction's
+            // validation prefix cannot be invalidated by the sender's other
+            // transactions, which needs all four to hold:
+            //   1. the sender runs real contract code, not an EIP-7702 delegation
+            //      (an EOA's default-code prefix authenticates with the sender's
+            //      own nonce, and a delegation can be retargeted at any time),
+            //   2. no deploy frame, which would install that code mid-flight,
+            //   3. the prefix read no sender storage, so no sibling transaction's
+            //      SSTORE can invalidate it,
+            //   4. the prefix did not read TXPARAM(0x0C), the legacy account nonce
+            //      that a key-0 transaction bumps on inclusion.
+            // Anything else stays under EIP-8141's one-pending-per-sender rule.
+            if is_keyed_frame_tx {
+                let sender_code = self
+                    .storage
+                    .get_code_by_account_address(header_no, sender)
+                    .await?
+                    .map(|code| code.code_bytes())
+                    .unwrap_or_default();
+                let sender_runs_contract_code =
+                    !sender_code.is_empty() && !is_eip7702_delegation(&sender_code);
+                keyed_concurrency = keyed_concurrency_verdict(
+                    sender_runs_contract_code,
+                    prefix.deploy_index.is_some(),
+                    !outcome.touched_sender_slots.is_empty(),
+                    outcome.read_legacy_nonce,
+                );
+            }
+
             // Paymaster availability accounting (EIP-8141). The simulation
             // identified the payer (paymaster) and whether its code matched the
             // canonical paymaster hash (always false today, OQ1). Reserve the
@@ -3722,7 +3764,7 @@ impl Blockchain {
             })
         };
 
-        Ok((frame_reservation, sender_admission))
+        Ok((frame_reservation, sender_admission, keyed_concurrency))
     }
 
     /// Marks the node's chain as up to date with the current chain

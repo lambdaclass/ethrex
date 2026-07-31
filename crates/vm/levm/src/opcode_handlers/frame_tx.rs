@@ -259,6 +259,9 @@ impl OpcodeHandler for OpApproveHandler {
 }
 
 /// TXPARAM (0xB0) -- Load a transaction parameter as a 32-byte word.
+/// TXPARAM index of the sender's legacy account nonce (EIP-8250).
+const TXPARAM_LEGACY_SENDER_NONCE: u64 = 0x0C;
+
 /// Gas cost: 2
 pub struct OpTxParamHandler;
 impl OpcodeHandler for OpTxParamHandler {
@@ -276,6 +279,13 @@ impl OpcodeHandler for OpTxParamHandler {
 
         let param_id = u64::try_from(param_id).map_err(|_| ExceptionalHalt::InvalidOpcode)?;
         let result = load_tx_param(ctx, param_id)?;
+        // EIP-8250 §Mempool: a validation prefix that reads the sender's legacy
+        // account nonce depends on it, so the mempool must revalidate when that
+        // nonce changes and must not treat the transaction as replay-independent
+        // of the sender's other keyed transactions.
+        if vm.validation_observer.active && param_id == TXPARAM_LEGACY_SENDER_NONCE {
+            vm.validation_observer.read_legacy_nonce = true;
+        }
         vm.current_call_frame.stack.push(result)?;
 
         Ok(OpcodeResult::Continue)

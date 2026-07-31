@@ -349,8 +349,11 @@ pub struct FrameValidationOutcome {
     /// identified (e.g. self-funded self_verify).
     pub accessed_paymaster: Option<(Address, bool)>,
     /// Sender storage slots touched during the prefix, recorded for the
-    /// admission-time revalidation affected-set (Phase 3).
+    /// admission-time revalidation affected-set.
     pub touched_sender_slots: Vec<ethrex_common::H256>,
+    /// Whether the prefix read `TXPARAM(0x0C)`, the sender's legacy account nonce
+    /// (EIP-8250 §Mempool).
+    pub read_legacy_nonce: bool,
 }
 
 #[derive(Clone, Debug)]

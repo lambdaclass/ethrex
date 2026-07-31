@@ -3103,12 +3103,14 @@ impl LEVM {
                     max_cost: Self::frame_tx_max_cost(frame_tx),
                     accessed_paymaster: None,
                     touched_sender_slots: Vec::new(),
+                    read_legacy_nonce: false,
                 });
             }
         };
 
         let max_cost = Self::frame_tx_max_cost(frame_tx);
         let touched_sender_slots = vm.validation_observer.touched_sender_slots.clone();
+        let read_legacy_nonce = vm.validation_observer.read_legacy_nonce;
         // The payer established by the prefix is the paymaster (OQ2: the
         // APPROVE-payment address is treated uniformly as "paymaster", including
         // the self-funded sender). Its canonical flag is always false (OQ1: no
@@ -3125,6 +3127,7 @@ impl LEVM {
                 max_cost,
                 accessed_paymaster,
                 touched_sender_slots,
+                read_legacy_nonce,
             });
         }
 
@@ -3136,6 +3139,7 @@ impl LEVM {
                 max_cost,
                 accessed_paymaster,
                 touched_sender_slots,
+                read_legacy_nonce,
             });
         }
 
@@ -3148,6 +3152,7 @@ impl LEVM {
                 max_cost,
                 accessed_paymaster,
                 touched_sender_slots,
+                read_legacy_nonce,
             });
         }
 
@@ -3161,6 +3166,7 @@ impl LEVM {
                     max_cost,
                     accessed_paymaster,
                     touched_sender_slots,
+                    read_legacy_nonce,
                 });
             }
         }
@@ -3176,6 +3182,7 @@ impl LEVM {
                 max_cost,
                 accessed_paymaster,
                 touched_sender_slots,
+                read_legacy_nonce,
             });
         }
 
@@ -3185,6 +3192,7 @@ impl LEVM {
             max_cost,
             accessed_paymaster,
             touched_sender_slots,
+            read_legacy_nonce,
         })
     }
 

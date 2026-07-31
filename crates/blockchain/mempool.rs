@@ -48,6 +48,56 @@ pub const MAX_ALTERNATES_PER_HASH: usize = 8;
 /// blobpool `datacap`) so memory is bounded regardless of blobs-per-tx.
 pub const MAX_BLOB_MEMPOOL_SIZE: usize = 512;
 
+/// Whether a keyed (EIP-8250) frame transaction may sit in the pool alongside
+/// the sender's other keyed frame transactions.
+///
+/// EIP-8250 keeps EIP-8141's "one pending frame transaction per sender" rule and
+/// only removes the protocol-level obstacle to relaxing it. Concurrency is
+/// therefore admitted for a transaction whose validation prefix is provably
+/// independent of everything the sender's other transactions can change: the
+/// sender runs real (non-EIP-7702-delegated) contract code, no deploy frame
+/// installs code mid-flight, the prefix reads no sender storage, and it does not
+/// read `TXPARAM(0x0C)` (the legacy account nonce, which a key-0 transaction
+/// bumps). Anything else falls back to one pending frame transaction per sender.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum KeyedConcurrency {
+    /// The prefix is independent: gate per `(sender, nonce_key)`.
+    Allowed,
+    /// Not eligible, or not a keyed transaction: one pending frame tx per sender.
+    Denied,
+}
+
+/// The EIP-8250 keyed-concurrency verdict for one frame transaction.
+///
+/// Concurrency is admitted only when the validation prefix cannot be invalidated
+/// by anything the sender's other transactions do:
+///
+/// - `sender_runs_contract_code`: the sender is a real contract, not an EOA and
+///   not an EIP-7702 delegation. An EOA's default-code prefix authenticates
+///   against the sender's own nonce, and a delegation can be retargeted at will.
+/// - `has_deploy_frame`: a deploy frame installs the sender's code mid-flight, so
+///   the code the sibling prefixes run is not yet fixed.
+/// - `reads_sender_storage`: a sibling transaction's `SSTORE` to the sender would
+///   invalidate this prefix.
+/// - `reads_legacy_nonce`: the prefix read `TXPARAM(0x0C)`, which a key-0
+///   transaction bumps on inclusion.
+pub fn keyed_concurrency_verdict(
+    sender_runs_contract_code: bool,
+    has_deploy_frame: bool,
+    reads_sender_storage: bool,
+    reads_legacy_nonce: bool,
+) -> KeyedConcurrency {
+    if sender_runs_contract_code
+        && !has_deploy_frame
+        && !reads_sender_storage
+        && !reads_legacy_nonce
+    {
+        KeyedConcurrency::Allowed
+    } else {
+        KeyedConcurrency::Denied
+    }
+}
+
 /// Keccak-256 hash of the canonical paymaster bytecode (EIP-8141).
 ///
 /// OQ1 (canonical paymaster bytecode): UNRESOLVED. The draft EIP does not pin
@@ -204,6 +254,13 @@ struct MempoolInner {
     /// unrelated linear-nonce entry. Populated on insert; cleared on removal.
     /// Must be kept consistent with `remove_transaction_with_lock`.
     pending_frame_key_holder: FxHashMap<(Address, U256), H256>,
+    /// Pending keyed frame txs per sender, with the concurrency verdict each was
+    /// admitted under (EIP-8250). Backs three rules the per-key map cannot
+    /// express: the key-0/keyed separation, the one-pending-per-sender fallback
+    /// for ineligible txs, and refusing to let an eligible tx join a sender that
+    /// has an ineligible one pending. Populated on insert; cleared on removal.
+    /// Must be kept consistent with `remove_transaction_with_lock`.
+    pending_keyed_by_sender: FxHashMap<Address, FxHashMap<H256, KeyedConcurrency>>,
     /// Sum of reserved max-cost (TXPARAM 0x06) per paymaster across all pending
     /// frame txs that paymaster sponsors (EIP-8141). Admission checks a
     /// paymaster's balance against this running total so concurrently-pending
@@ -278,6 +335,12 @@ impl MempoolInner {
             if let Transaction::FrameTransaction(frame_tx) = &*tx
                 && frame_tx.is_keyed()
             {
+                if let Some(pending) = self.pending_keyed_by_sender.get_mut(&sender) {
+                    pending.remove(hash);
+                    if pending.is_empty() {
+                        self.pending_keyed_by_sender.remove(&sender);
+                    }
+                }
                 for key in &frame_tx.nonce_keys {
                     if self
                         .pending_frame_key_holder
@@ -651,6 +714,70 @@ impl MempoolInner {
     ///
     /// Must be called under the mempool write lock (same TOCTOU reasoning as
     /// `check_frame_tx_sender_pending`).
+    /// The locked admission gate for a frame transaction. Returns the predecessor
+    /// to replace, if the incoming transaction is a legitimate fee bump.
+    ///
+    /// Layers three rules on top of the per-key and per-sender gates below:
+    ///
+    /// - **Key-0 separation** (EIP-8250): a `[0]` transaction consumes the sender's
+    ///   legacy account nonce, so it can invalidate any keyed transaction that
+    ///   depends on that nonce. The two domains are never pending together for one
+    ///   sender.
+    /// - **Eligibility**: a keyed transaction may only be concurrent when its own
+    ///   verdict is [`KeyedConcurrency::Allowed`] *and* every keyed transaction the
+    ///   sender already has pending was admitted as `Allowed`.
+    /// - **Fallback**: anything else is held to one pending frame transaction per
+    ///   sender.
+    ///
+    /// Must be called under the mempool write lock so the check and the insert are
+    /// atomic.
+    fn check_frame_admission(
+        &self,
+        sender: Address,
+        keys: Option<&[U256]>,
+        nonce: u64,
+        incoming_hash: H256,
+        keyed_concurrency: KeyedConcurrency,
+    ) -> Result<Option<H256>, MempoolError> {
+        let sender_keyed = self.pending_keyed_by_sender.get(&sender);
+        let Some(keys) = keys else {
+            // Key-0 / linear frame tx: no keyed tx from this sender may be pending.
+            if sender_keyed.is_some_and(|pending| {
+                pending
+                    .keys()
+                    .any(|pending_hash| *pending_hash != incoming_hash)
+            }) {
+                return Err(MempoolError::FrameTxKeyDomainMixed);
+            }
+            return self.check_frame_tx_sender_pending(sender, nonce, incoming_hash);
+        };
+
+        // Keyed frame tx: no key-0 frame tx from this sender may be pending. The
+        // per-sender slot only ever holds a linear-domain frame tx, since keyed
+        // txs are tracked in `pending_keyed_by_sender` / `pending_frame_key_holder`.
+        if let Some(&(existing_hash, _)) = self.pending_frame_tx_by_sender.get(&sender)
+            && existing_hash != incoming_hash
+        {
+            return Err(MempoolError::FrameTxKeyDomainMixed);
+        }
+
+        let predecessor = self.check_keyed_frame_pending(sender, keys, nonce, incoming_hash)?;
+        // Every other pending keyed tx from this sender: the incoming tx joins them
+        // only if both sides were judged independent.
+        let blocked = sender_keyed.is_some_and(|pending| {
+            pending.iter().any(|(pending_hash, verdict)| {
+                *pending_hash != incoming_hash
+                    && Some(*pending_hash) != predecessor
+                    && (*verdict == KeyedConcurrency::Denied
+                        || keyed_concurrency == KeyedConcurrency::Denied)
+            })
+        });
+        if blocked {
+            return Err(MempoolError::FrameTxSenderAlreadyPending);
+        }
+        Ok(predecessor)
+    }
+
     fn check_keyed_frame_pending(
         &self,
         sender: Address,
@@ -768,6 +895,9 @@ impl Mempool {
     /// gates read the live pool state the insert will mutate. Executable
     /// (contiguous-nonce) txs are never queued-capped, so a single sender can
     /// hold arbitrarily many (bounded only by the global mempool size).
+    /// Insert a transaction. `keyed_concurrency` is the EIP-8250 verdict computed
+    /// during validation; it is [`KeyedConcurrency::Denied`] for everything that is
+    /// not an eligible keyed frame transaction.
     pub fn add_transaction(
         &self,
         hash: H256,
@@ -775,6 +905,7 @@ impl Mempool {
         transaction: MempoolTransaction,
         frame_reservation: Option<FramePaymasterReservation>,
         sender_admission: Option<SenderAdmission>,
+        keyed_concurrency: KeyedConcurrency,
     ) -> Result<(), MempoolError> {
         let mut inner = self.write()?;
         let is_frame = matches!(transaction.tx_type(), TxType::Frame);
@@ -829,10 +960,25 @@ impl Mempool {
             // rejected fee-bump never leaves the sender with neither the old nor
             // the new tx. Price validation already ran in validate_transaction.
             // Keyed frame txs are gated per key set; key-0/linear per sender.
-            let existing_frame_hash = match &keyed_keys {
-                Some(keys) => inner.check_keyed_frame_pending(sender, keys, nonce, hash)?,
-                None => inner.check_frame_tx_sender_pending(sender, nonce, hash)?,
-            };
+            let existing_frame_hash = inner.check_frame_admission(
+                sender,
+                keyed_keys.as_deref(),
+                nonce,
+                hash,
+                keyed_concurrency,
+            )?;
+
+            // Re-validate the fee bump against the CURRENT predecessor. The price
+            // check in `find_tx_to_replace` ran unlocked, so a concurrent
+            // replacement can have raised the incumbent's bid since; without this
+            // a lower-fee resubmission could evict a higher-fee one.
+            if let Some(old_hash) = existing_frame_hash
+                && let Some(old_tx) = inner.transaction_pool.get(&old_hash)
+                && old_hash != hash
+                && !Self::is_fee_bump(old_tx, &transaction)
+            {
+                return Err(MempoolError::UnderpricedReplacement);
+            }
 
             // Paymaster availability + non-canonical-limit re-check under the
             // write lock. The check in `validate_transaction` is an unlocked
@@ -970,6 +1116,11 @@ impl Mempool {
         if is_frame {
             match &keyed_keys {
                 Some(keys) => {
+                    inner
+                        .pending_keyed_by_sender
+                        .entry(sender)
+                        .or_default()
+                        .insert(hash, keyed_concurrency);
                     for key in keys {
                         inner.pending_frame_key_holder.insert((sender, *key), hash);
                     }
@@ -1710,7 +1861,14 @@ mod tests {
             let sender = Address::from_low_u64_be(i as u64 + 1);
             let hash = H256::from_low_u64_be(i as u64 + 1);
             mempool
-                .add_transaction(hash, sender, dummy_mempool_tx(sender, 0), None, None)
+                .add_transaction(
+                    hash,
+                    sender,
+                    dummy_mempool_tx(sender, 0),
+                    None,
+                    None,
+                    KeyedConcurrency::Denied,
+                )
                 .expect("Failed to add transaction");
         }
     }
@@ -1746,7 +1904,8 @@ mod tests {
         let tx = build_tx(nonce);
         let mtx = MempoolTransaction::new(tx, sender);
         let hash = mtx.hash(&NativeCrypto);
-        pool.add_transaction(hash, sender, mtx, None, None).unwrap();
+        pool.add_transaction(hash, sender, mtx, None, None, KeyedConcurrency::Denied)
+            .unwrap();
         hash
     }
 
@@ -1855,6 +2014,7 @@ mod tests {
                 gap_threshold: 100, // disabled
                 balance_check: None,
             }),
+            KeyedConcurrency::Denied,
         )
     }
 
@@ -1931,7 +2091,8 @@ mod tests {
     fn add_tx_cost(pool: &Mempool, sender: Address, nonce: u64, cost: u64) -> H256 {
         let mtx = MempoolTransaction::new(build_tx_cost(nonce, cost), sender);
         let hash = mtx.hash(&NativeCrypto);
-        pool.add_transaction(hash, sender, mtx, None, None).unwrap();
+        pool.add_transaction(hash, sender, mtx, None, None, KeyedConcurrency::Denied)
+            .unwrap();
         hash
     }
 
@@ -1961,6 +2122,7 @@ mod tests {
                     sender_balance: U256::from(sender_balance),
                 }),
             }),
+            KeyedConcurrency::Denied,
         )
     }
 
@@ -1987,6 +2149,7 @@ mod tests {
                 gap_threshold,
                 balance_check: None,
             }),
+            KeyedConcurrency::Denied,
         )
     }
 

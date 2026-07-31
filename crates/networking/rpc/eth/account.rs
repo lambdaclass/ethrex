@@ -254,6 +254,7 @@ impl RpcHandler for GetProofRequest {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ethrex_blockchain::mempool::KeyedConcurrency;
     use serde_json::json;
 
     #[test]
@@ -340,6 +341,7 @@ mod tests {
                 MempoolTransaction::new(tx, address),
                 None,
                 None,
+                KeyedConcurrency::Denied,
             )
             .unwrap();
     }
