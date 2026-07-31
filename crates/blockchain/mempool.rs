@@ -48,6 +48,22 @@ pub const MAX_ALTERNATES_PER_HASH: usize = 8;
 /// blobpool `datacap`) so memory is bounded regardless of blobs-per-tx.
 pub const MAX_BLOB_MEMPOOL_SIZE: usize = 512;
 
+/// Minimum increment, in percent, a frame-transaction replacement must add to
+/// both `max_fee_per_gas` and `max_priority_fee_per_gas` (EIP-8141 §Replacement
+/// and Eviction: "at least a node-configured minimum increment (10% is the
+/// conventional default)").
+pub const FRAME_TX_MIN_FEE_BUMP_PERCENT: u64 = 10;
+
+/// Whether `new_fee` clears `old_fee` by at least
+/// [`FRAME_TX_MIN_FEE_BUMP_PERCENT`]. The strict-greater conjunct carries the
+/// zero case, where the percentage bound alone would admit an equal bid.
+fn fee_is_bumped(old_fee: u64, new_fee: u64) -> bool {
+    let required = u128::from(old_fee).saturating_mul(u128::from(
+        100u64.saturating_add(FRAME_TX_MIN_FEE_BUMP_PERCENT),
+    ));
+    new_fee > old_fee && u128::from(new_fee).saturating_mul(100) >= required
+}
+
 /// Keccak-256 hash of the canonical paymaster bytecode (EIP-8141).
 ///
 /// OQ1 (canonical paymaster bytecode): UNRESOLVED. The draft EIP does not pin
@@ -459,19 +475,63 @@ impl MempoolInner {
     /// Evict the oldest regular (non-blob) transactions until the regular pool is
     /// back under its cap. Only drains `txs_order`, so blob txs are never evicted
     /// by regular-tx pressure.
+    ///
+    /// When the arrival-order victim is a frame transaction, the EIP-8141
+    /// §Replacement and Eviction order picks which frame transaction actually
+    /// goes ([`Self::worst_frame_tx`]). Arrival order still decides *whether* a
+    /// frame transaction is sacrificed at all, so frame transactions are neither
+    /// starved by nor privileged over the rest of the pool.
     fn remove_oldest_regular_transaction(&mut self) -> Result<(), StoreError> {
         while self.regular_tx_count() >= self.max_mempool_size {
-            if let Some(oldest_hash) = self.txs_order.pop_front() {
-                self.remove_transaction_with_lock(&oldest_hash)?;
-            } else {
+            let Some(oldest_hash) = self.txs_order.pop_front() else {
                 warn!(
                     "Regular mempool is full but there are no transactions to remove, this should not happen and will make the mempool grow indefinitely"
                 );
                 break;
+            };
+            let is_frame_tx = self
+                .transaction_pool
+                .get(&oldest_hash)
+                .is_some_and(|tx| matches!(&**tx, Transaction::FrameTransaction(_)));
+            let victim = if is_frame_tx {
+                self.worst_frame_tx().unwrap_or(oldest_hash)
+            } else {
+                oldest_hash
+            };
+            // The arrival-order entry is spent only when it is the victim; a
+            // reprieved transaction keeps its place at the head of the queue.
+            if victim != oldest_hash {
+                self.txs_order.push_front(oldest_hash);
             }
+            self.remove_transaction_with_lock(&victim)?;
         }
 
         Ok(())
+    }
+
+    /// The frame transaction the EIP-8141 eviction order sacrifices first:
+    /// nearest expiry deadline, then lowest priority fee. Transactions with no
+    /// deadline sort last.
+    ///
+    /// The order's first tier — transactions already invalid against the current
+    /// head — is served by `Blockchain::revalidate_frame_txs_after_block`, which
+    /// has the head-state view this path lacks.
+    ///
+    /// Scans the pool, so it runs only when arrival order already picked a frame
+    /// transaction for eviction.
+    fn worst_frame_tx(&self) -> Option<H256> {
+        self.transaction_pool
+            .iter()
+            .filter_map(|(hash, tx)| match &**tx {
+                Transaction::FrameTransaction(frame_tx) => Some((
+                    *hash,
+                    frame_tx.expiry_deadline().unwrap_or(u64::MAX),
+                    tx.max_priority_fee().unwrap_or_default(),
+                )),
+                _ => None,
+            })
+            .min_by_key(|&(_, deadline, priority_fee)| (deadline, priority_fee))
+            .map(|(hash, _, _)| hash)
     }
 
     /// Evict blob transactions until the blob sub-pool is back under its cap.
@@ -1283,7 +1343,28 @@ impl Mempool {
         else {
             return Ok(None);
         };
-        let is_a_replacement_tx = {
+        // EIP-8141 §Replacement and Eviction states a stricter rule for frame
+        // transactions than the one the other types follow: BOTH `max_fee_per_gas`
+        // and `max_priority_fee_per_gas` must rise by at least a minimum
+        // increment. A frame-tx replacement re-runs the validation-prefix
+        // simulation, so admitting one-wei bumps would let a sender buy unbounded
+        // EVM work at no cost.
+        let is_a_replacement_tx = if matches!(tx, Transaction::FrameTransaction(_)) {
+            let blob_higher_fees =
+                match (tx_in_pool.max_fee_per_blob_gas(), tx.max_fee_per_blob_gas()) {
+                    (Some(old_blob_fee), Some(new_blob_fee)) => new_blob_fee > old_blob_fee,
+                    _ => true,
+                };
+            blob_higher_fees
+                && fee_is_bumped(
+                    tx_in_pool.max_fee_per_gas().unwrap_or_default(),
+                    tx.max_fee_per_gas().unwrap_or_default(),
+                )
+                && fee_is_bumped(
+                    tx_in_pool.max_priority_fee().unwrap_or_default(),
+                    tx.max_priority_fee().unwrap_or_default(),
+                )
+        } else {
             // EIP-1559 values
             let old_tx_max_fee_per_gas = tx_in_pool.max_fee_per_gas().unwrap_or_default();
             let old_tx_max_priority_fee_per_gas = tx_in_pool.max_priority_fee().unwrap_or_default();
