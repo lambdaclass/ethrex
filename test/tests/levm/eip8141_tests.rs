@@ -571,7 +571,9 @@ fn frameparam_reads_frame_index_from_stack_top() {
 }
 
 /// FRAMEPARAM(param=0x05, frameIndex=3) -> status of frame[3], then SSTORE at slot 0.
-/// Bytecode: PUSH1 0x05 (param), PUSH1 0x03 (frameIndex - top), FRAMEPARAM (0xB3),
+/// FRAMEPARAM takes frameIndex from the top of the stack and param below it, so 0x03 (the
+/// frameIndex) is pushed last.
+/// Bytecode: PUSH1 0x05 (param), PUSH1 0x03 (frameIndex), FRAMEPARAM (0xB3),
 ///           PUSH1 0x00 (slot key), SSTORE (0x55), STOP (0x00).
 const FRAMEPARAM_READ_FRAME3_STATUS: &[u8] =
     &[0x60, 0x05, 0x60, 0x03, 0xB3, 0x60, 0x00, 0x55, 0x00];

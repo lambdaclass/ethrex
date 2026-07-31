@@ -785,7 +785,7 @@ mod test {
 
     #[test]
     fn test_frame_receipt_skipped_status_rlp_roundtrip() {
-        // Spec line 137: status code 0x2 marks frames skipped by a failed atomic batch.
+        // EIP-8141 §Receipt: status code 0x2 marks frames skipped by a failed atomic batch.
         let fr = FrameReceipt {
             status: FRAME_RECEIPT_STATUS_SKIPPED,
             gas_used: 0,
