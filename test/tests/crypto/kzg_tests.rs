@@ -157,3 +157,94 @@ fn verify_cell_proof_batch_rejects_corrupted_proof() {
         "a corrupted proof must not verify as true, got {result:?}"
     );
 }
+
+/// These wrappers are fed peer-supplied cell data, and c-kzg is what rejects
+/// malformed input: its Rust binding compares the array lengths before the FFI
+/// call, and the C code checks the column indices. The tests below pin that
+/// behaviour so a c-kzg upgrade cannot relax it unnoticed.
+///
+/// Mismatched index/cell lengths (c-kzg `Error::MismatchLength`).
+#[test]
+fn recover_cells_rejects_length_mismatch() {
+    let blob = sample_blob();
+    let cells = compute_cells(&blob).expect("compute_cells");
+    let subset: Vec<[u8; BYTES_PER_CELL]> = cells[..64].to_vec();
+    // One more index than there are cells.
+    let cell_indices: Vec<u64> = (0..65).collect();
+
+    let result = recover_cells_and_kzg_proofs(&cell_indices, &subset);
+    assert!(
+        result.is_err(),
+        "mismatched index/cell lengths must be rejected, got Ok"
+    );
+}
+
+/// Column index at or above `CELLS_PER_EXT_BLOB` (c-kzg `C_KZG_BADARGS`).
+#[test]
+fn recover_cells_rejects_out_of_range_index() {
+    let blob = sample_blob();
+    let cells = compute_cells(&blob).expect("compute_cells");
+    let subset: Vec<[u8; BYTES_PER_CELL]> = cells[..64].to_vec();
+    let mut cell_indices: Vec<u64> = (0..64).collect();
+    cell_indices[0] = CELLS_PER_EXT_BLOB as u64;
+
+    let result = recover_cells_and_kzg_proofs(&cell_indices, &subset);
+    assert!(
+        result.is_err(),
+        "an out-of-range column index must be rejected, got Ok"
+    );
+}
+
+/// Repeated column index: recovery requires strictly ascending indices, so a
+/// duplicate is rejected (c-kzg `C_KZG_BADARGS`).
+#[test]
+fn recover_cells_rejects_duplicate_index() {
+    let blob = sample_blob();
+    let cells = compute_cells(&blob).expect("compute_cells");
+    let subset: Vec<[u8; BYTES_PER_CELL]> = cells[..64].to_vec();
+    let mut cell_indices: Vec<u64> = (0..64).collect();
+    cell_indices[1] = cell_indices[0];
+
+    let result = recover_cells_and_kzg_proofs(&cell_indices, &subset);
+    assert!(
+        result.is_err(),
+        "a duplicate column index must be rejected, got Ok"
+    );
+}
+
+/// The four parallel arrays of the partial batch verify must agree in length
+/// (c-kzg `Error::MismatchLength`).
+#[test]
+fn verify_cell_proof_batch_rejects_length_mismatch() {
+    let blob = sample_blob();
+    let (commitment, proofs) =
+        blob_to_commitment_and_cell_proofs(&blob).expect("commitment_and_cell_proofs");
+    let cells = compute_cells(&blob).expect("compute_cells");
+    let cell_indices: Vec<u64> = (0..CELLS_PER_EXT_BLOB as u64).collect();
+    // One fewer commitment than cells/indices/proofs.
+    let commitments = vec![commitment; CELLS_PER_EXT_BLOB - 1];
+
+    let result = verify_cell_kzg_proof_batch_partial(&commitments, &cell_indices, &cells, &proofs);
+    assert!(
+        result.is_err(),
+        "mismatched array lengths must be rejected, got {result:?}"
+    );
+}
+
+/// Out-of-range column index on the verify path (c-kzg `C_KZG_BADARGS`).
+#[test]
+fn verify_cell_proof_batch_rejects_out_of_range_index() {
+    let blob = sample_blob();
+    let (commitment, proofs) =
+        blob_to_commitment_and_cell_proofs(&blob).expect("commitment_and_cell_proofs");
+    let cells = compute_cells(&blob).expect("compute_cells");
+    let mut cell_indices: Vec<u64> = (0..CELLS_PER_EXT_BLOB as u64).collect();
+    cell_indices[3] = CELLS_PER_EXT_BLOB as u64 + 1;
+    let commitments = vec![commitment; CELLS_PER_EXT_BLOB];
+
+    let result = verify_cell_kzg_proof_batch_partial(&commitments, &cell_indices, &cells, &proofs);
+    assert!(
+        result.is_err(),
+        "an out-of-range column index must be rejected, got {result:?}"
+    );
+}
