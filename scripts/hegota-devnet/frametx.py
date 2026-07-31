@@ -32,7 +32,9 @@ def rlp_int(x: int) -> bytes:
         return rlp_bytes(b"")
     return rlp_bytes(x.to_bytes((x.bit_length() + 7) // 8, "big"))
 
-def addr20(a: int | bytes) -> bytes:
+def addr20(a: int | bytes | str) -> bytes:
+    if isinstance(a, str):  # addresses come back from JSON-RPC as hex strings
+        return bytes.fromhex(a.removeprefix("0x").removeprefix("0X"))
     if isinstance(a, int):
         return a.to_bytes(20, "big")
     return bytes(a)
