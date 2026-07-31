@@ -83,7 +83,27 @@ runs:
         ETHREX_TAG: ${{ inputs.ethrex_tag }}
         CL_TYPE: ${{ inputs.cl_type }}
         CL_IMAGE: ${{ inputs.cl_image }}
+        # Community sepolia nodes taken from all.sepolia.ethdisco.net on
+        # 2026-07-31. Only used to seed discovery; see the note below.
+        SEPOLIA_SEED_BOOTNODES: "enode://cdf069ef02d279776cd32bdf42bc05c482836fd79dd6289b5846bf9d192e230708de35fb82a16513f4643472068d598cc8871f5183defa9c672ee8f29c56e44d@104.197.109.127:30303,enode://cac82b4d08fcd3b155b9feda308ddc1286ec05221723578a3009bd1e0586241167af68419e545c7706228df7b8516df4954216bb8e129dd84aa1c7321e4fe0f3@3.23.85.230:30303,enode://d508c19c2fa00b9c00983f1a1f4ccd56392493bfe3037fd141363295b18809be8682c2f4dd0ba584ce44ef8caa2591a66b8ca6f53c132294027e854a12923161@13.250.112.92:30303,enode://0b28ac6a6a0a16e91b22158a0d1fd61b96c52baf6bc1c19814a83e144a3f8fd5d37ec165a5c6ffdcd18336cf433cbf19de7bec0034bd02132d23ccc96afbbc42@78.46.174.72:30303,enode://f82244d708586fda1ebd19e1b258c87ea89743d91d3292185697a95d6422224a1f01b94c8155f69cb5aeab4423e59830d1b0ea89c7e24b6a37e740f3b03f7a73@37.187.149.28:30303,enode://dbf69e092b19cb752e9851b96a3f04f6b4b1ff7531336394ccaea23d4de1ea49f1607b6565265e88f8aac3da4d2993f0c2fd46ec45b229579c58d7ebf759ecab@208.115.223.58:30303,enode://74b1c94b1ecbc866d4f9b3ae0ab726a4299af97125f6aa15e8dd20ed8426d1a381c2a2279b747a1ae982033e71ae15d19067da41439965e851c6cd076260cb81@35.227.3.144:30303,enode://70dba51ff689b38a61b2d24ace6be53b9cf68d20c6905fd6a78b2ff5edc8ad2c4cc59b694a01b4e1b8fe9034e768f474d5bfeab521d9d95e890b5dc58ed45a67@85.115.217.177:30303"
       run: |
+        # Every job here starts from an empty datadir, so it can only reach the
+        # network through the bootnodes compiled into the binary. Sepolia's five
+        # EF execution-layer bootnodes stopped answering discovery on 2026-07-30
+        # and have not come back, which leaves a fresh node at zero peers until
+        # the assertoor deadline expires -- roughly 3h30m burnt per sepolia job.
+        #
+        # Seed sepolia from the public DNS node list instead. These are ordinary
+        # community nodes rather than dedicated infrastructure, so expect them to
+        # go stale; the durable fix is for ethrex to read that list itself
+        # (EIP-1459), and this block should be deleted once it does.
+        bootnodes_param=""
+        if [ "$NETWORK_NAME" = "sepolia" ]; then
+          # Six spaces so it lines up with the other el_extra_params entries
+          # after the run-block indentation is stripped.
+          bootnodes_param="      - \"--bootnodes=${SEPOLIA_SEED_BOOTNODES}\""
+        fi
+
         cat > .github/config/assertoor/network_params.generated.yaml <<YAML
         participants:
           - el_type: ethrex
@@ -92,6 +112,7 @@ runs:
               - "--syncmode=snap"
               - "--log.level=info"
               - "--http.api=eth,net,web3,debug,admin,txpool"
+        ${bootnodes_param}
             cl_type: ${CL_TYPE}
             cl_image: ${CL_IMAGE}
             count: 1
