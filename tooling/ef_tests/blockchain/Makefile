@@ -49,7 +49,10 @@ $(LEGACYTEST_VECTORS_DIR): $(LEGACYTEST_ARTIFACT)
 		$(LEGACYTEST_ARCHIVE_ROOT)/GeneralStateTests \
 		$(LEGACYTEST_ARCHIVE_ROOT)/ValidBlocks
 
-$(AMSTERDAM_ARTIFACT): $(AMSTERDAM_FIXTURES_FILE)
+# Order-only on $(SPECTEST_VECTORS_DIR): building it runs clean-vectors, which deletes
+# $(AMSTERDAM_ARTIFACT). Downloading afterwards keeps the bundle from being wiped
+# between the curl and the extract.
+$(AMSTERDAM_ARTIFACT): $(AMSTERDAM_FIXTURES_FILE) | $(SPECTEST_VECTORS_DIR)
 	curl -L -o $(AMSTERDAM_ARTIFACT) $(AMSTERDAM_URL)
 
 # Clear the subtree first: the bundle is overlaid onto an existing `vectors/eest`, so

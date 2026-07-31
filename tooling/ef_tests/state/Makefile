@@ -25,13 +25,19 @@ $(VECTORS_DIR): $(STATETEST_ARTIFACT)
 	$(MAKE) setup-test-dirs
 	$(MAKE) clone-ef-tests
 	tar -xzf $(STATETEST_ARTIFACT) --strip-components=2 -C $(VECTORS_DIR)/state_tests fixtures/state_tests
-	rm -f $(STATETEST_ARTIFACT)
 	rm -rf $(TMP_DIR)
 
-$(AMSTERDAM_ARTIFACT): $(AMSTERDAM_FIXTURES_FILE)
+# Order-only on $(VECTORS_DIR): building it runs clean-evm-ef-tests, which deletes
+# $(AMSTERDAM_ARTIFACT). Downloading afterwards keeps the bundle from being wiped
+# between the curl and the extract.
+$(AMSTERDAM_ARTIFACT): $(AMSTERDAM_FIXTURES_FILE) | $(VECTORS_DIR)
 	curl -L -o $(AMSTERDAM_ARTIFACT) $(AMSTERDAM_URL)
 
+# Clear the subtree first: the bundle is overlaid onto an existing tree, so fixtures
+# renamed or dropped between devnet releases would otherwise survive as stale
+# leftovers and run against the current client.
 $(VECTORS_DIR)/state_tests/for_amsterdam: $(AMSTERDAM_ARTIFACT) $(VECTORS_DIR)
+	rm -rf $(VECTORS_DIR)/state_tests/for_amsterdam
 	tar -xzf $(AMSTERDAM_ARTIFACT) --strip-components=2 -C $(VECTORS_DIR)/state_tests fixtures/state_tests/for_amsterdam
 
 amsterdam-vectors: $(VECTORS_DIR)/state_tests/for_amsterdam
@@ -70,10 +76,10 @@ run-evm-ef-tests: ## 🏃‍♂️ Run EF Tests
 		time cargo test --test all --profile release-fast -- $(flags);\
 	fi
 
-run-evm-ef-tests-ci: $(VECTORS_DIR) ## 🏃‍♂️ Run EF Tests only with LEVM and without spinner, for CI.
+run-evm-ef-tests-ci: $(VECTORS_DIR) amsterdam-vectors ## 🏃‍♂️ Run EF Tests only with LEVM and without spinner, for CI.
 	time cargo test -p ef_tests-state --test all --profile release-fast -- --summary
 
-test-levm: $(VECTORS_DIR)
+test-levm: $(VECTORS_DIR) amsterdam-vectors
 	$(MAKE) run-evm-ef-tests flags="--summary"
 
 test-levm-nostd-crypto: $(VECTORS_DIR) ## 🧪 Run EF state tests with no_std crypto fallbacks
