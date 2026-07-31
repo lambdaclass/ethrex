@@ -2491,6 +2491,11 @@ impl FrameTransaction {
                     // on the pay frame: it may target a non-sender sponsor,
                     // which approves payment via APPROVE(APPROVE_PAYMENT)
                     // when the frame executes.
+                    // The shape guard is load-bearing: every shape populates
+                    // `pay_index`, and for SelfVerify / DeploySelfVerify it points
+                    // at the self_verify frame, which carries
+                    // APPROVE_EXECUTION_AND_PAYMENT and does require the sender as
+                    // its target. Matching on `pay_index` alone would exempt it.
                     let is_pay_frame = matches!(
                         prefix.shape,
                         PrefixShape::OnlyVerifyPay | PrefixShape::DeployOnlyVerifyPay
