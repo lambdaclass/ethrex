@@ -110,10 +110,11 @@ fn test_warm_account_access_unchanged_across_forks() {
 #[test]
 fn test_access_list_selectors() {
     // The fork selectors expose the repriced per-entry constants directly.
-    assert_eq!(gas_cost::access_list_address_cost(Fork::Amsterdam), 3000);
+    // Each is the cold access minus WARM_ACCESS, so prepaying is gas neutral.
+    assert_eq!(gas_cost::access_list_address_cost(Fork::Amsterdam), 2900);
     assert_eq!(
         gas_cost::access_list_storage_key_cost(Fork::Amsterdam),
-        3000
+        2900
     );
     // Osaka controls: legacy literals.
     assert_eq!(gas_cost::access_list_address_cost(Fork::Osaka), 2400);
@@ -161,8 +162,8 @@ fn test_access_list_intrinsic_per_address_amsterdam() {
     let eip7981_addr_data = 20 * 4 * 16; // bytes * STANDARD_TOKEN_COST * floor(16)
     assert_eq!(
         with_addr - base - eip7981_addr_data,
-        3000,
-        "per-address access-list constant at Amsterdam must be 3000"
+        2900,
+        "per-address access-list constant at Amsterdam must be 2900"
     );
 }
 
@@ -192,8 +193,8 @@ fn test_access_list_intrinsic_per_key_amsterdam() {
     let eip7981_key_data = 32 * 4 * 16;
     assert_eq!(
         one_key - zero_keys - eip7981_key_data,
-        3000,
-        "per-key access-list constant at Amsterdam must be 3000"
+        2900,
+        "per-key access-list constant at Amsterdam must be 2900"
     );
 }
 
