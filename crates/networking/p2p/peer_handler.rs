@@ -596,15 +596,31 @@ impl PeerHandler {
                     block_bodies,
                 })) = response
                 {
-                    // Check that the response is not empty and does not contain more bodies than the ones requested
-                    if !block_bodies.is_empty() && block_bodies.len() <= block_hashes_len {
-                        self.peer_table.record_success(peer_id)?;
+                    if block_bodies.len() > block_hashes_len {
+                        // More bodies than hashes requested: a protocol violation, so
+                        // drop the peer rather than just scoring it down.
+                        debug!(
+                            %peer_id,
+                            got = block_bodies.len(),
+                            requested = block_hashes_len,
+                            "Peer returned more block bodies than requested, disposing"
+                        );
+                        self.peer_table.record_failure(peer_id)?;
+                        let _ = self.peer_table.set_disposable(peer_id);
+                        return Ok(None);
+                    }
+                    if !block_bodies.is_empty() {
+                        // Success is recorded by the caller, once the bodies have
+                        // actually been validated against their headers.
                         return Ok(Some((block_bodies, peer_id)));
                     }
                 }
-                debug!("Didn't receive block bodies from peer, penalizing peer {peer_id}");
+                // An empty response is spec-conformant for a peer that holds none of
+                // the requested range (geth's `ServiceGetBlockBodiesQuery` appends only
+                // what it finds), which post-history-expiry is the common case rather
+                // than the adversarial one. Score it down, but keep it in the table.
+                debug!(%peer_id, "No block bodies received, applying a soft penalty");
                 self.peer_table.record_failure(peer_id)?;
-                let _ = self.peer_table.set_disposable(peer_id);
                 Ok(None)
             }
         }
@@ -630,32 +646,60 @@ impl PeerHandler {
             // Keep the longest leading run of bodies that validates against its
             // header, and stop at the first that doesn't.
             //
-            // A response is not necessarily aligned with the request: a peer that
-            // holds only part of the requested range omits the hashes it is missing
-            // rather than truncating (geth's `ServiceGetBlockBodiesQuery` appends
-            // only what it finds), so the list can be compacted rather than a
-            // prefix. Mismatches are therefore expected from peers with partially
-            // expired history — exactly the peers historical backfill depends on —
-            // so they cost a normal failure rather than a critical one, and only
-            // when nothing at all validated. Every body returned here is still
-            // root-verified against its header.
-            let mut res = Vec::new();
-            for (header, body) in block_headers[..block_bodies.len()].iter().zip(block_bodies) {
-                if let Err(e) = validate_block_body(header, &body, &NativeCrypto) {
-                    debug!(
-                        "Block body for {} did not validate ({e}); keeping the {} verified before it",
-                        header.number,
-                        res.len()
-                    );
+            // A response is not necessarily aligned with the request: a peer holding
+            // only part of the range omits the hashes it lacks rather than truncating
+            // (geth's `ServiceGetBlockBodiesQuery` appends only what it finds), so the
+            // list can be compacted rather than a prefix. That is expected from peers
+            // with partially expired history and must not be punished. A body that
+            // matches *no* requested header is a different thing entirely: the peer
+            // made it up, and that still earns a critical failure.
+            let mut valid_upto = 0usize;
+            let mut mismatch = None;
+            for (idx, body) in block_bodies.iter().enumerate() {
+                if let Err(err) = validate_block_body(&block_headers[idx], body, &NativeCrypto) {
+                    mismatch = Some((idx, err));
                     break;
                 }
-                res.push(body);
+                valid_upto = idx + 1;
             }
-            if !res.is_empty() {
+
+            if let Some((idx, err)) = &mismatch {
+                // Does this body belong to some later header we asked for? If so the
+                // response is compacted, not fabricated.
+                let compacted = block_headers[idx + 1..].iter().any(|header| {
+                    validate_block_body(header, &block_bodies[*idx], &NativeCrypto).is_ok()
+                });
+                if compacted {
+                    debug!(
+                        %peer_id,
+                        block_number = block_headers[*idx].number,
+                        bodies_kept = valid_upto,
+                        "Peer skipped requested blocks it does not have; keeping the bodies verified so far"
+                    );
+                } else {
+                    debug!(
+                        %peer_id,
+                        err = %err,
+                        block_number = block_headers[*idx].number,
+                        bodies_kept = valid_upto,
+                        "Block body matches no requested header, discarding peer"
+                    );
+                    self.peer_table.record_critical_failure(peer_id)?;
+                }
+            }
+
+            if valid_upto > 0 {
+                let mut res = block_bodies;
+                res.truncate(valid_upto);
+                self.peer_table.record_success(peer_id)?;
                 return Ok(Some(res));
             }
-            // Nothing usable: penalize and re-roll onto another peer.
-            self.peer_table.record_failure(peer_id)?;
+            // Nothing usable. A fabricated body was already charged above; anything
+            // else (e.g. a peer whose whole response was for other blocks) gets a
+            // soft penalty before re-rolling onto another peer.
+            if mismatch.is_none() {
+                self.peer_table.record_failure(peer_id)?;
+            }
         }
         Ok(None)
     }
