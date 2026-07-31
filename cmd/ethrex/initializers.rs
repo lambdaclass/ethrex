@@ -799,6 +799,8 @@ pub async fn init_l1(
             bal_parallel_exec_enabled: !opts.no_bal_parallel_exec,
             bal_prefetch_enabled: !opts.no_bal_prefetch,
             bal_parallel_trie_enabled: !opts.no_bal_parallel_trie,
+            blob_sampling_enabled: opts.blob_sampling || opts.blob_eager_provider,
+            blob_eager_provider: opts.blob_eager_provider,
             max_reorg_depth: opts.max_reorg_depth,
         },
     );
