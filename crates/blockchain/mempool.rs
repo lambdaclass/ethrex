@@ -1318,6 +1318,28 @@ impl Mempool {
             price_bump_percent
         };
 
+        // A replacement must STRICTLY out-bid the pooled tx on both fee
+        // dimensions before the percentage threshold is even considered —
+        // geth applies exactly this guard in `legacypool`'s `list.Add`:
+        //
+        //     if old.GasFeeCapCmp(tx) >= 0 || old.GasTipCapCmp(tx) >= 0 { reject }
+        //
+        // It is load-bearing, not redundant with the threshold below. The
+        // threshold is computed with integer division, so it collapses onto
+        // the existing value whenever `existing * bump / 100 < 1` — with the
+        // default 10% bump that is every value below 10. For a 1 wei tip,
+        // `floor(1 * 110 / 100) == 1`, so an identical-fee tx would satisfy
+        // `new >= threshold` and be admitted as a "bump", silently evicting
+        // the pooled tx and re-gossiping the replacement. The devp2p
+        // `InvalidTxs` conformance test hits precisely this: it submits
+        // several invalid txs at an already-pooled nonce with `GasTipCap: 1`
+        // and expects none of them to propagate.
+        if tx.gas_fee_cap() <= tx_in_pool.gas_fee_cap()
+            || tx.gas_tip_cap() <= tx_in_pool.gas_tip_cap()
+        {
+            return Err(MempoolError::UnderpricedReplacement);
+        }
+
         // The new tx must bump every applicable fee dimension by at least
         // `bump` percent. Fee cap and tip are compared uniformly across
         // types: a legacy tx's gas price acts as both its fee cap and its
@@ -2036,6 +2058,66 @@ mod tests {
             .find_tx_to_replace(sender, 0, &new, 10, 100)
             .unwrap_err();
         assert!(matches!(err, MempoolError::UnderpricedReplacement));
+    }
+
+    #[test]
+    fn identical_fees_rejected_even_when_threshold_rounds_down() {
+        // Regression for the devp2p `InvalidTxs` conformance failure.
+        //
+        // The percentage threshold uses integer division, so for any fee
+        // below 10 a 10% bump rounds back onto the original value:
+        // `floor(1 * 110 / 100) == 1`. A pure `new >= threshold` test would
+        // therefore accept an IDENTICAL-fee tx as a valid replacement, evict
+        // the pooled tx and re-gossip the replacement. devp2p submits invalid
+        // txs at an already-pooled nonce with `GasTipCap: 1` and fails if any
+        // of them propagate.
+        //
+        // geth guards this in `list.Add` by requiring a strict increase on
+        // both fee fields before the threshold is consulted.
+        // A distinct tx (different gas limit → different hash, so it is not
+        // deduplicated) carrying the SAME fees as the pooled one. This is the
+        // devp2p shape: same sender, same nonce, same 1 wei fees, different
+        // payload.
+        let same_fees_other_tx = |gas: u64| {
+            Transaction::EIP1559Transaction(EIP1559Transaction {
+                nonce: 0,
+                max_fee_per_gas: 1,
+                max_priority_fee_per_gas: 1,
+                gas_limit: gas,
+                ..Default::default()
+            })
+        };
+
+        let pool = Mempool::new(64);
+        let sender = Address::from_low_u64_be(1);
+        add_to_pool(&pool, sender, same_fees_other_tx(21_000));
+
+        // Equal fees must never count as a bump.
+        let err = pool
+            .find_tx_to_replace(sender, 0, &same_fees_other_tx(100_000), 10, 100)
+            .unwrap_err();
+        assert!(
+            matches!(err, MempoolError::UnderpricedReplacement),
+            "equal fees must be rejected even where the 10% threshold rounds down to a no-op, got {err:?}"
+        );
+
+        // Same trap with a zero bump configured: geth still demands a strict
+        // increase, so equality must not slip through.
+        let err = pool
+            .find_tx_to_replace(sender, 0, &same_fees_other_tx(200_000), 0, 0)
+            .unwrap_err();
+        assert!(
+            matches!(err, MempoolError::UnderpricedReplacement),
+            "equal fees must be rejected under a zero bump too, got {err:?}"
+        );
+
+        // A genuine strict increase that also clears the threshold still works
+        // at these magnitudes (floor(1 * 110/100) == 1, and 2 >= 1).
+        assert!(
+            pool.find_tx_to_replace(sender, 0, &eip1559(0, 2, 2), 10, 100)
+                .is_ok(),
+            "a strictly higher replacement must still be accepted"
+        );
     }
 
     #[test]
