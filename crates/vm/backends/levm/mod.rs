@@ -3666,18 +3666,16 @@ impl LEVM {
         slot: U256,
     ) -> Result<U256, EvmError> {
         let key = Self::vault_slot_key(slot);
-        // Cache first, then the store. The fall-through is essential for batch
-        // sealing: it reads ring slots written up to a full batch earlier, which
-        // this block never touched and which are therefore not cached. Reading
-        // only the cache would silently treat every such root as zero and seal a
-        // batch that commits to nothing.
-        let account = db.get_account(vault).map_err(EvmError::from)?;
-        if let Some(value) = account.storage.get(&key) {
-            return Ok(*value);
-        }
-        db.store
-            .get_storage_value(vault, key)
-            .map_err(|e| EvmError::DB(e.to_string()))
+        // Cache first, then the store — and through `get_storage_slot`, which keeps
+        // the `initial_accounts_state` bookkeeping. Both halves matter: the
+        // store fall-through is what lets batch sealing read ring slots written up
+        // to a full batch earlier (this block never touched them, so they are not
+        // cached), and the bookkeeping is what lets `get_state_transitions` compute
+        // a diff for a slot this write introduces — without it, building the block's
+        // account updates fails with "Failed to get old value from account's initial
+        // storage".
+        let _ = db.get_account(vault).map_err(EvmError::from)?;
+        db.get_storage_slot(vault, key).map_err(EvmError::from)
     }
 
     /// Protocol-direct vault storage write for the block-end phase, BAL-recorded

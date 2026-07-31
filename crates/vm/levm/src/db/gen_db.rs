@@ -600,6 +600,23 @@ impl GeneralizedDatabase {
         Ok(metadata.length as usize)
     }
 
+    /// Read a storage slot outside any VM: cache first, then the store, keeping the
+    /// `initial_accounts_state` bookkeeping that `get_state_transitions` requires
+    /// for every slot present in `current_accounts_state`.
+    ///
+    /// Needed by protocol-direct block-level writes (EIP-8312's openings roots),
+    /// which have no VM to go through but must not skip that bookkeeping — the
+    /// account-updates builder errors out on a current-state slot with no recorded
+    /// pre-value.
+    pub fn get_storage_slot(&mut self, address: Address, key: H256) -> Result<U256, InternalError> {
+        if let Some(account) = self.current_accounts_state.get(&address)
+            && let Some(value) = account.storage.get(&key)
+        {
+            return Ok(*value);
+        }
+        self.get_value_from_database(address, key)
+    }
+
     /// Gets storage slot from Database, storing in initial_accounts_state for efficiency when getting AccountUpdates.
     fn get_value_from_database(
         &mut self,

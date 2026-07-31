@@ -1915,3 +1915,61 @@ fn openings_root_writes_are_recorded_in_the_block_access_list() {
         "the ring write must be recorded as a storage change"
     );
 }
+
+#[test]
+fn openings_root_write_survives_block_finalization() {
+    // Regression test for a bug this PoC deployment found and the earlier unit
+    // tests did not: writing the ring slot is not enough, the block must also be
+    // able to FINALIZE. `get_state_transitions` needs a recorded pre-value for
+    // every slot present in the current state, so a protocol-direct write that
+    // skips that bookkeeping makes the whole block unbuildable —
+    // "Failed to get old value from account's initial storage" — which on a live
+    // chain shows up as the proposer being unable to produce the activation block
+    // at all, with no error in the execution client's own log.
+    //
+    // The original tests asserted the slot's value and stopped there, so they were
+    // blind to it. Asserting through finalization is what makes this real.
+    let source = Address::from_low_u64_be(0x5011);
+    let alice = Address::from_low_u64_be(0xA11CE);
+    let block_number = 83u64;
+
+    let mut db = db_with_vault();
+    let receipts = vec![receipt_with(vec![created_log(
+        source,
+        alice,
+        0,
+        U256::from(1u64),
+    )])];
+    LEVM::write_openings_roots(&mut db, &receipts, block_number).expect("write");
+
+    let updates = db
+        .get_state_transitions()
+        .expect("the block must be finalizable after a block-end openings-root write");
+
+    let vault_update = updates
+        .iter()
+        .find(|u| u.address == utxo_vault())
+        .expect("the vault must appear in the block's account updates");
+    let ring = H256(ring_slot(block_number).to_big_endian());
+    let written = vault_update
+        .added_storage
+        .get(&ring)
+        .copied()
+        .expect("the ring slot must appear as an added storage entry");
+    let expected = merkle_root(&[opening_leaf(0, source, alice, U256::from(1u64))]);
+    assert_eq!(written, U256::from_big_endian(expected.as_bytes()));
+}
+
+#[test]
+fn empty_block_openings_root_write_survives_finalization() {
+    // The unconditional empty-block write goes through the same path, and it is the
+    // one that fires on every quiet block — i.e. almost all of them.
+    let mut db = db_with_vault();
+    LEVM::write_openings_roots(&mut db, &[], 84).expect("write");
+    let updates = db
+        .get_state_transitions()
+        .expect("an empty block's zero-root write must also finalize");
+    // A zero written over an unset slot is a no-op diff, so the vault may be absent
+    // from the updates; what must not happen is an error.
+    let _ = updates;
+}
