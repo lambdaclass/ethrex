@@ -31,6 +31,20 @@ impl Memory {
         }
     }
 
+    /// Resets this memory so its buffer can be reused from a pool by the next transaction:
+    /// drops all contents (length → 0, capacity retained) and rebases to 0.
+    ///
+    /// Truncating the buffer to length 0 is REQUIRED for correctness, not just hygiene:
+    /// [`Memory::resize`] only zero-fills bytes grown *past* `buffer.len()`, so handing a
+    /// non-empty buffer to the next tx would expose stale data from the previous one (a
+    /// consensus bug). Capacity is kept so the grown allocation is reused.
+    #[inline]
+    pub fn reset_for_reuse(&mut self) {
+        self.buffer.borrow_mut().clear();
+        self.len = 0;
+        self.current_base = 0;
+    }
+
     /// Gets the Memory for the next children callframe.
     #[inline]
     pub fn next_memory(&self) -> Memory {
@@ -54,6 +68,15 @@ impl Memory {
         }
     }
 
+    /// Truncates the memory back to base. This is crucial for constrained
+    /// memory in zkVMs. The memory is not freed, but rather shrunk in `len`,
+    /// so that the already allocated `capacity` is reused.
+    #[cfg(target_arch = "riscv64")]
+    #[inline]
+    pub fn truncate_to_base(&self) {
+        self.buffer.borrow_mut().truncate(self.current_base);
+    }
+
     /// Returns the len of the current memory, from the current base.
     #[inline]
     pub fn len(&self) -> usize {
@@ -63,6 +86,19 @@ impl Memory {
     #[inline]
     pub fn is_empty(&self) -> bool {
         self.len() == 0
+    }
+
+    /// Returns a copy of the live byte slice for this frame (from `current_base` to
+    /// `current_base + len`).  Used by the struct-log tracer for memory capture.
+    pub fn live_bytes(&self) -> Vec<u8> {
+        if self.len == 0 {
+            return Vec::new();
+        }
+        let buf = self.buffer.borrow();
+        let end = self.current_base.saturating_add(self.len);
+        buf.get(self.current_base..end)
+            .map(<[u8]>::to_vec)
+            .unwrap_or_default()
     }
 
     /// Resizes the from the current base to fit the memory specified at new_memory_size.
@@ -121,6 +157,38 @@ impl Memory {
                 true_offset..(true_offset.wrapping_add(size)),
             )))
         }
+    }
+
+    /// Borrow `size` bytes from the given offset and pass them to `f`, without
+    /// allocating a `Bytes` copy of the range.
+    ///
+    /// `load_range` reads through `self.buffer.borrow()`, whose `Ref` guard cannot
+    /// outlive this call — so a `-> &[u8]` accessor can't be written. Callers that
+    /// only need to read the range (e.g. hashing) take the borrow via this closure
+    /// instead. Semantics match `load_range` exactly, including zero-padding reads
+    /// past the current length (handled by `resize`).
+    #[inline]
+    pub fn with_range<R>(
+        &mut self,
+        offset: usize,
+        size: usize,
+        f: impl FnOnce(&[u8]) -> R,
+    ) -> Result<R, VMError> {
+        if size == 0 {
+            return Ok(f(&[]));
+        }
+
+        let new_size = offset.checked_add(size).ok_or(OutOfBounds)?;
+        self.resize(new_size)?;
+
+        let true_offset = offset.wrapping_add(self.current_base);
+
+        let buf = self.buffer.borrow();
+
+        // SAFETY: resize already makes sure bounds are correct.
+        #[allow(unsafe_code)]
+        let range = unsafe { buf.get_unchecked(true_offset..(true_offset.wrapping_add(size))) };
+        Ok(f(range))
     }
 
     /// Load N bytes from the given offset.

@@ -117,3 +117,48 @@ fn validate_cheap_passes_with_invalid_kzg_proofs() {
         "validate should fail with a KZG-related error, got: {err:?}"
     );
 }
+
+/// Regression (`kzg-sidecar-constraints`): EIP-7594 limits a single transaction to 6
+/// blobs. A 7-blob transaction must be rejected on Osaka, even though the per-block
+/// limit is higher.
+#[test]
+fn validate_cheap_rejects_more_than_six_blobs_per_tx_on_osaka() {
+    // Build one valid Osaka (version 1) blob, then replicate it to 7 blobs so the
+    // bundle stays structurally valid (matching commitments / cell-proofs / hashes)
+    // and the only thing wrong is the per-transaction blob count.
+    let one = BlobsBundle::create_from_blobs(&vec![[0u8; BYTES_PER_BLOB]], Some(1)).unwrap();
+    let bundle = BlobsBundle {
+        blobs: vec![one.blobs[0]; 7],
+        commitments: vec![one.commitments[0]; 7],
+        proofs: one.proofs.repeat(7),
+        version: 1,
+    };
+    let tx = ethrex_common::types::EIP4844Transaction {
+        blob_versioned_hashes: bundle.generate_versioned_hashes(),
+        ..Default::default()
+    };
+
+    assert!(
+        bundle.validate_cheap(&tx, Fork::Osaka).is_err(),
+        "a transaction with more than 6 blobs must be rejected on Osaka (EIP-7594)"
+    );
+}
+
+/// Regression (`kzg-sidecar-constraints`): on Osaka the only valid blob wrapper
+/// version is 1. A version-2 bundle must be rejected, not merely any non-zero version.
+#[test]
+fn validate_cheap_rejects_noncanonical_wrapper_version_on_osaka() {
+    let bundle = BlobsBundle::create_from_blobs(&vec![[0u8; BYTES_PER_BLOB]], Some(2)).unwrap();
+    let tx = ethrex_common::types::EIP4844Transaction {
+        blob_versioned_hashes: bundle.generate_versioned_hashes(),
+        ..Default::default()
+    };
+
+    assert!(
+        matches!(
+            bundle.validate_cheap(&tx, Fork::Osaka),
+            Err(BlobsBundleError::InvalidBlobVersionForFork)
+        ),
+        "wrapper version 2 must be rejected on Osaka (only version 1 is valid)"
+    );
+}

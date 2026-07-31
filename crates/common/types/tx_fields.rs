@@ -71,6 +71,15 @@ impl RLPDecode for AuthorizationTuple {
         let (address, decoder) = decoder.decode_field("address")?;
         let (nonce, decoder) = decoder.decode_field("nonce")?;
         let (y_parity, decoder) = decoder.decode_field("y_parity")?;
+        // EIP-7702 bounds y_parity to < 2**8 (geth models it as a u8). Reject
+        // out-of-range values at decode so a type-4 tx carrying one is rejected on L1
+        // as it is by other clients. The field stays U256 to keep the JSON-RPC and
+        // rkyv wire formats unchanged.
+        if y_parity > U256::from(u8::MAX) {
+            return Err(RLPDecodeError::Custom(
+                "EIP-7702 authorization y_parity must be < 2**8".to_string(),
+            ));
+        }
         let (r_signature, decoder) = decoder.decode_field("r_signature")?;
         let (s_signature, decoder) = decoder.decode_field("s_signature")?;
         let rest = decoder.finish()?;

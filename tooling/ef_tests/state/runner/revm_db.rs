@@ -74,7 +74,7 @@ impl revm::Database for RevmDynVmDatabase {
     fn code_by_hash(&mut self, code_hash: RevmB256) -> Result<RevmBytecode, Self::Error> {
         let code =
             <dyn VmDatabase>::get_account_code(self.0.as_ref(), H256::from(code_hash.as_ref()))?;
-        Ok(RevmBytecode::new_raw(RevmBytes(code.bytecode)))
+        Ok(RevmBytecode::new_raw(RevmBytes(code.code_bytes())))
     }
 
     fn storage(&mut self, address: RevmAddress, index: RevmU256) -> Result<RevmU256, Self::Error> {
@@ -117,7 +117,7 @@ impl revm::DatabaseRef for RevmDynVmDatabase {
     fn code_by_hash_ref(&self, code_hash: RevmB256) -> Result<RevmBytecode, Self::Error> {
         let code =
             <dyn VmDatabase>::get_account_code(self.0.as_ref(), H256::from(code_hash.as_ref()))?;
-        Ok(RevmBytecode::new_raw(RevmBytes(code.bytecode)))
+        Ok(RevmBytecode::new_raw(RevmBytes(code.code_bytes())))
     }
 
     fn storage_ref(&self, address: RevmAddress, index: RevmU256) -> Result<RevmU256, Self::Error> {

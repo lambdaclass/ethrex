@@ -140,6 +140,20 @@ impl StorageReadView for InMemoryReadTx {
         };
         Ok(Box::new(iter))
     }
+
+    fn first_key(&self, table: &'static str) -> Result<Option<Vec<u8>>, StoreError> {
+        let Some(table_data) = self.snapshot.get(table) else {
+            return Ok(None);
+        };
+        Ok(table_data.keys().min().cloned())
+    }
+
+    fn last_key(&self, table: &'static str) -> Result<Option<Vec<u8>>, StoreError> {
+        let Some(table_data) = self.snapshot.get(table) else {
+            return Ok(None);
+        };
+        Ok(table_data.keys().max().cloned())
+    }
 }
 
 pub struct InMemoryWriteTx {
@@ -181,8 +195,54 @@ impl StorageWriteBatch for InMemoryWriteTx {
         Ok(())
     }
 
+    fn delete_range(
+        &mut self,
+        table: &'static str,
+        start: &[u8],
+        end: &[u8],
+    ) -> Result<(), StoreError> {
+        let mut db = self
+            .backend
+            .write()
+            .map_err(|_| StoreError::Custom("Failed to acquire write lock".to_string()))?;
+
+        let db_mut = Arc::make_mut(&mut *db);
+        if let Some(table_ref) = db_mut.get_mut(table) {
+            table_ref.retain(|k, _| !(k.as_slice() >= start && k.as_slice() < end));
+        }
+        Ok(())
+    }
+
+    fn merge(&mut self, table: &'static str, key: &[u8], operand: &[u8]) -> Result<(), StoreError> {
+        // InMemory has no native merge operator, so apply the merge inline.
+        // Only TRANSACTION_LOCATIONS uses merge today; dispatch by table.
+        if table != crate::api::tables::TRANSACTION_LOCATIONS {
+            return Err(StoreError::Custom(format!(
+                "merge not supported for table {table}"
+            )));
+        }
+        let mut db = self
+            .backend
+            .write()
+            .map_err(|_| StoreError::Custom("Failed to acquire write lock".to_string()))?;
+        let db_mut = Arc::make_mut(&mut *db);
+        let table_ref = db_mut.entry(table).or_default();
+        let existing = table_ref.get(key).map(|v| v.as_slice());
+        let merged = crate::store::tx_locations_merge(existing, std::iter::once(operand))
+            .ok_or_else(|| StoreError::Custom("tx_locations_merge returned None".to_string()))?;
+        table_ref.insert(key.to_vec(), merged);
+        Ok(())
+    }
+
     fn commit(&mut self) -> Result<(), StoreError> {
-        // FIXME: in-memory writes aren't atomic
+        // NOTE: every `put`, `delete`, and `delete_range` above mutates the live
+        // `Arc<Database>` immediately under the write lock, so `commit` is a no-op
+        // and multi-op sequences (e.g. the journal entry + trie writes in
+        // `commit_to_disk`, or the `delete_range` + finalized-number update in
+        // `forkchoice_update_inner`) are not atomic. That's acceptable here: this
+        // backend is RAM-backed (dev/test only), and atomicity only guards crash
+        // recovery — a process death loses all in-memory state anyway, so a
+        // half-applied batch is never observable.
         Ok(())
     }
 }
