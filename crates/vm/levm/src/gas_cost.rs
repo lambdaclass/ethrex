@@ -102,6 +102,49 @@ const _: () =
 /// slightly over-charges ring-entry overwrites, which is the safe direction.
 pub const RECENT_ROOT_WRITE_GAS: u64 = 22100;
 
+// EIP-8312 UTXO frames. Every constant is a sum of EIP-8038 / EIP-2780 / EIP-8037
+// primitives rather than a bespoke number, so a future repricing flows through.
+// Frame transactions exist only from Hegota, which is after Amsterdam, so the
+// raised EIP-8038 values always apply and none of these needs a fork parameter.
+
+/// Per UTXO frame: the `SLOT_NEXT_INDEX` update (cold read + write).
+pub const GAS_UTXO_FRAME: u64 = COLD_STORAGE_ACCESS_AMSTERDAM + STORAGE_WRITE_AMSTERDAM;
+
+/// Per input: the openings-root read, the spent-bit word write (both charged at
+/// the cold rate unconditionally, so the price is independent of third-party
+/// warmth), plus the keccak of the 80-byte leaf preimage (3 words).
+pub const GAS_UTXO_INPUT: u64 = 2 * COLD_STORAGE_ACCESS_AMSTERDAM
+    + STORAGE_WRITE_AMSTERDAM
+    + KECCAK25_STATIC
+    + 3 * KECCAK25_DYNAMIC_BASE;
+
+/// Per proof sibling: the keccak of one 64-byte interior node (2 words).
+pub const GAS_UTXO_SIBLING: u64 = KECCAK25_STATIC + 2 * KECCAK25_DYNAMIC_BASE;
+
+/// Per created UTXO output: the `UtxoCreated` log (LOG3 with 64 bytes of data).
+pub const GAS_UTXO_OUT: u64 = LOGN_STATIC + 3 * LOGN_DYNAMIC_BASE + 64 * LOGN_DYNAMIC_BYTE_BASE;
+
+/// Per account output: the marginal recipient cost of a value transfer under
+/// EIP-2780, plus its EIP-7708 transfer log.
+pub const GAS_UTXO_ACCOUNT_OUT: u64 =
+    COLD_ACCOUNT_ACCESS_AMSTERDAM + TX_VALUE_COST_AMSTERDAM + TRANSFER_LOG_COST_AMSTERDAM;
+
+// The EIP publishes these totals; assert our derivations reproduce them exactly,
+// so a primitive changing under us is a compile error rather than a silent
+// consensus divergence.
+const _: () = assert!(GAS_UTXO_FRAME == 13_000);
+const _: () = assert!(GAS_UTXO_INPUT == 16_048);
+const _: () = assert!(GAS_UTXO_SIBLING == 42);
+const _: () = assert!(GAS_UTXO_OUT == 2_012);
+const _: () = assert!(GAS_UTXO_ACCOUNT_OUT == 9_000);
+// ethrex-common carries copies for mempool/admission math (it cannot depend on
+// levm); assert the two agree so a repricing cannot silently diverge them.
+const _: () = assert!(GAS_UTXO_FRAME == ethrex_common::types::GAS_UTXO_FRAME);
+const _: () = assert!(GAS_UTXO_INPUT == ethrex_common::types::GAS_UTXO_INPUT);
+const _: () = assert!(GAS_UTXO_SIBLING == ethrex_common::types::GAS_UTXO_SIBLING);
+const _: () = assert!(GAS_UTXO_OUT == ethrex_common::types::GAS_UTXO_OUT);
+const _: () = assert!(GAS_UTXO_ACCOUNT_OUT == ethrex_common::types::GAS_UTXO_ACCOUNT_OUT);
+
 /// EIP-7906 `TXTRACE_GAS_COST`. Provisional value (the EIP marks the gas cost TBD;
 /// 100 matches the EIP's own example, ~warm access). Also the flat cost of the
 /// TXDIFF params answered purely from the transaction-local diff (`0x06`-`0x0A`).

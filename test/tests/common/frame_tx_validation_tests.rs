@@ -7,12 +7,16 @@
 
 use bytes::Bytes;
 use ethrex_common::constants::GAS_PER_BLOB;
+use ethrex_common::types::BATCH_SIZE;
 use ethrex_common::types::{
-    APPROVE_EXECUTION, APPROVE_EXECUTION_AND_PAYMENT, APPROVE_PAYMENT, Block, BlockBody,
-    BlockHeader, ChainConfig, EIP4844Transaction, FRAME_SIG_SCHEME_ARBITRARY,
+    APPROVE_EXECUTION, APPROVE_EXECUTION_AND_PAYMENT, APPROVE_PAYMENT, BATCH_PATH_LEN, Block,
+    BlockBody, BlockHeader, ChainConfig, EIP4844Transaction, FRAME_SIG_SCHEME_ARBITRARY,
     FRAME_SIG_SCHEME_SECP256K1, FRAME_TX_MAX_VERIFY_GAS, Frame, FrameMode, FrameSignature,
-    FrameTransaction, FrameValidationError, P2PTransaction, PrefixShape, Transaction,
-    WrappedFrameTransaction, frame_tx_expiry_verifier,
+    FrameTransaction, FrameValidationError, MAX_SIBLINGS, P2PTransaction, PrefixShape, RING_SIZE,
+    SLOT_NEXT_INDEX, SLOT_RING_BASE, Spend, SpendInput, SpendOutput, Transaction,
+    WrappedFrameTransaction, batch_slot, batch_slot_for_block, fold, frame_tx_expiry_verifier,
+    hash_pair, is_spent, merkle_proof, merkle_root, opening_leaf, ring_slot, seals_batch,
+    slot_batch_base, slot_spent_base, spent_bit_location, utxo_vault,
 };
 use ethrex_common::types::{BlobsBundle, MAX_BLOBS_PER_TX, TxType};
 use ethrex_rlp::decode::RLPDecode;
@@ -543,7 +547,7 @@ fn atomic_batch_flag_on_verify_frame_is_invalid() {
         },
     ];
     assert!(
-        tx.validate_static_constraints()
+        tx.validate_static_constraints(false)
             .unwrap_err()
             .contains("atomic batch flag on a VERIFY frame")
     );
@@ -573,7 +577,7 @@ fn atomic_batch_followed_by_verify_frame_is_invalid() {
         },
     ];
     assert!(
-        tx.validate_static_constraints()
+        tx.validate_static_constraints(false)
             .unwrap_err()
             .contains("atomic batch flag followed by a VERIFY frame")
     );
@@ -585,13 +589,13 @@ fn static_validation_rejects_approve_execution_with_third_party_target() {
     let mut tx = make_test_frame_tx();
     tx.frames[0].target = Some(Address::from_low_u64_be(0xBEEF));
     assert!(
-        tx.validate_static_constraints()
+        tx.validate_static_constraints(false)
             .unwrap_err()
             .contains("APPROVE_EXECUTION requires an empty target or tx.sender"),
     );
     // An empty target resolves to tx.sender, so it is allowed.
     tx.frames[0].target = None;
-    assert!(tx.validate_static_constraints().is_ok());
+    assert!(tx.validate_static_constraints(false).is_ok());
 }
 
 #[test]
@@ -600,14 +604,14 @@ fn static_validation_rejects_wrong_blob_hash_version() {
     tx.blob_versioned_hashes = vec![H256([0xABu8; 32])];
     tx.max_fee_per_blob_gas = U256::from(1u64);
     assert!(
-        tx.validate_static_constraints()
+        tx.validate_static_constraints(false)
             .unwrap_err()
             .contains("wrong version byte"),
     );
     let mut hash = [0xABu8; 32];
     hash[0] = VERSIONED_HASH_VERSION_KZG;
     tx.blob_versioned_hashes = vec![H256(hash)];
-    assert!(tx.validate_static_constraints().is_ok());
+    assert!(tx.validate_static_constraints(false).is_ok());
 }
 
 #[test]
@@ -616,7 +620,7 @@ fn static_validation_rejects_blob_fee_without_blobs() {
     assert!(tx.blob_versioned_hashes.is_empty());
     tx.max_fee_per_blob_gas = U256::from(1u64);
     assert!(
-        tx.validate_static_constraints()
+        tx.validate_static_constraints(false)
             .unwrap_err()
             .contains("max_fee_per_blob_gas must be zero"),
     );
@@ -635,13 +639,13 @@ fn static_validation_rejects_more_blobs_than_the_per_transaction_limit() {
     hash[0] = VERSIONED_HASH_VERSION_KZG;
     tx.blob_versioned_hashes = vec![H256(hash); MAX_BLOBS_PER_TX];
     assert!(
-        tx.validate_static_constraints().is_ok(),
+        tx.validate_static_constraints(false).is_ok(),
         "{MAX_BLOBS_PER_TX} blobs are within the per-transaction limit"
     );
 
     tx.blob_versioned_hashes.push(H256(hash));
     assert!(
-        tx.validate_static_constraints()
+        tx.validate_static_constraints(false)
             .unwrap_err()
             .contains(&format!("Blob count must not exceed {MAX_BLOBS_PER_TX}")),
     );
@@ -685,13 +689,933 @@ fn max_gas_takes_the_calldata_floor_when_it_exceeds_the_standard_limit() {
     assert_eq!(tx.calldata_floor_gas(), 4288);
     assert!(tx.calldata_floor_total() > tx.standard_gas_limit());
     assert_eq!(tx.total_gas_limit(), tx.calldata_floor_total());
-    assert!(tx.validate_static_constraints().is_ok());
+    assert!(tx.validate_static_constraints(false).is_ok());
 
     // With enough frame gas to outweigh the floor, `max_gas` is the standard limit.
     tx.frames[1].gas_limit = 100_000;
     assert!(tx.standard_gas_limit() > tx.calldata_floor_total());
     assert_eq!(tx.total_gas_limit(), tx.standard_gas_limit());
-    assert!(tx.validate_static_constraints().is_ok());
+    assert!(tx.validate_static_constraints(false).is_ok());
+}
+
+// ---------------------------------------------------------------------------
+// EIP-8312 frame-mode allocation and activation gate
+//
+// The frame-mode table is unconditional: {0 DEFAULT, 1 VERIFY, 2 SENDER,
+// 3 POST_TX (EIP-7906), 4 reserved (EIP-8288 DEP_VERIFY), 5 UTXO (EIP-8312)}.
+// Only mode 5's *admissibility* is gated, on the EIP-8312 activation predicate,
+// so that a chain adopting EIP-8312 at a future timestamp re-executes all of its
+// existing blocks identically.
+// ---------------------------------------------------------------------------
+
+/// A UTXO-mode frame. Its `data` is not a well-formed spend payload — these
+/// tests exercise the mode gate, which is reached before any payload decoding.
+fn utxo_frame() -> Frame {
+    Frame {
+        mode: FrameMode::Utxo as u8,
+        flags: 0x00,
+        target: None,
+        gas_limit: 50_000,
+        value: U256::zero(),
+        data: Bytes::new(),
+    }
+}
+
+fn post_tx_frame() -> Frame {
+    Frame {
+        mode: FrameMode::PostTx as u8,
+        flags: 0x00,
+        target: None,
+        gas_limit: 10_000,
+        value: U256::zero(),
+        data: Bytes::new(),
+    }
+}
+
+#[test]
+fn frame_mode_wire_bytes_are_pinned() {
+    // These byte values are consensus-visible and covered by the transaction's
+    // signature, so pin them: EIP-7906 POST_TX keeps 3 (it was allocated first
+    // upstream and is already in live use), mode 4 stays reserved for EIP-8288's
+    // deferred DEP_VERIFY, and EIP-8312 UTXO takes 5 — a documented deviation
+    // from EIP-8312's own `UTXO_MODE = 3`.
+    assert_eq!(FrameMode::Default as u8, 0);
+    assert_eq!(FrameMode::Verify as u8, 1);
+    assert_eq!(FrameMode::Sender as u8, 2);
+    assert_eq!(FrameMode::PostTx as u8, 3);
+    assert_eq!(FrameMode::Utxo as u8, 5);
+
+    assert_eq!(FrameMode::from_u8(0), Some(FrameMode::Default));
+    assert_eq!(FrameMode::from_u8(1), Some(FrameMode::Verify));
+    assert_eq!(FrameMode::from_u8(2), Some(FrameMode::Sender));
+    assert_eq!(FrameMode::from_u8(3), Some(FrameMode::PostTx));
+    assert_eq!(FrameMode::from_u8(4), None, "mode 4 reserved for EIP-8288");
+    assert_eq!(FrameMode::from_u8(5), Some(FrameMode::Utxo));
+    for reserved in 6u8..=255 {
+        assert_eq!(FrameMode::from_u8(reserved), None);
+    }
+}
+
+#[test]
+fn reserved_mode_never_falls_back_to_default() {
+    // `execution_mode` must return None for a reserved byte rather than
+    // resolving it to DEFAULT: a silent fallback would execute an unknown frame
+    // kind as an ordinary EVM call.
+    for reserved in [4u8, 6, 7, 200, 255] {
+        let frame = Frame {
+            mode: reserved,
+            ..deploy_frame()
+        };
+        assert_eq!(
+            frame.execution_mode(),
+            None,
+            "mode {reserved} must not resolve to a defined mode"
+        );
+    }
+}
+
+#[test]
+fn utxo_frame_rejected_before_activation_and_accepted_after() {
+    let tx = base_frame_tx_with_frames(vec![self_verify_frame(), utxo_frame()]);
+
+    // Before activation mode 5 is reserved, exactly as it was before EIP-8312
+    // existed — this is what keeps already-produced blocks re-executing
+    // identically when a running chain adopts EIP-8312 at a future timestamp.
+    let err = tx.validate_static_constraints(false).unwrap_err();
+    assert!(
+        err.contains("not active"),
+        "expected an EIP-8312-inactive error, got: {err}"
+    );
+
+    // From activation the same transaction passes the mode gate. Whether it is
+    // valid overall depends on the spend-payload rules, which are a separate
+    // concern reached only once the mode is admissible — so assert on the gate,
+    // not on the outcome.
+    if let Err(err_after) = tx.validate_static_constraints(true) {
+        assert!(
+            !err_after.contains("not active"),
+            "mode gate must not fire once EIP-8312 is active, got: {err_after}"
+        );
+    }
+}
+
+#[test]
+fn mode_four_is_reserved_regardless_of_activation() {
+    // EIP-8288's DEP_VERIFY is deferred upstream, so mode 4 is invalid on both
+    // sides of the EIP-8312 boundary.
+    let frame = Frame {
+        mode: 4,
+        ..deploy_frame()
+    };
+    let tx = base_frame_tx_with_frames(vec![self_verify_frame(), frame]);
+    for active in [false, true] {
+        let err = tx.validate_static_constraints(active).unwrap_err();
+        assert!(
+            err.contains("reserved execution mode 4"),
+            "expected reserved-mode error (active={active}), got: {err}"
+        );
+    }
+}
+
+#[test]
+fn post_tx_frames_are_unaffected_by_utxo_activation() {
+    // POST_TX keeps mode 3 on both sides of activation: the EIP-8312 rollout is
+    // additive, so no already-signed POST_TX transaction and no POST_TX-producing
+    // tool changes meaning at the boundary.
+    let tx = base_frame_tx_with_frames(vec![self_verify_frame(), post_tx_frame()]);
+    assert!(tx.validate_static_constraints(false).is_ok());
+    assert!(tx.validate_static_constraints(true).is_ok());
+}
+
+#[test]
+fn utxo_and_post_tx_must_not_share_a_transaction() {
+    // v1 composition rule: EIP-7906's whole-body revert cannot be reconciled
+    // with EIP-8312's journal-external spent bits. Rejected in both frame
+    // orders — the POST_TX trailing-suffix rule covers one direction and this
+    // ban covers the other.
+    let utxo_then_post_tx =
+        base_frame_tx_with_frames(vec![self_verify_frame(), utxo_frame(), post_tx_frame()]);
+    let err = utxo_then_post_tx
+        .validate_static_constraints(true)
+        .unwrap_err();
+    assert!(
+        err.contains("must not share a transaction") || err.contains("trailing suffix"),
+        "expected a co-residency rejection, got: {err}"
+    );
+
+    let post_tx_then_utxo =
+        base_frame_tx_with_frames(vec![self_verify_frame(), post_tx_frame(), utxo_frame()]);
+    let err = post_tx_then_utxo
+        .validate_static_constraints(true)
+        .unwrap_err();
+    assert!(
+        err.contains("must not share a transaction") || err.contains("trailing suffix"),
+        "expected a co-residency rejection, got: {err}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// EIP-8312 spend payload: RLP shape, static bounds, spend hash, and the
+// transaction-level vault-sender rules.
+// ---------------------------------------------------------------------------
+
+fn actor_addr() -> Address {
+    Address::from_low_u64_be(0xAC70)
+}
+
+fn recipient_addr() -> Address {
+    Address::from_low_u64_be(0x9EC1)
+}
+
+/// A minimal well-formed spend: one input, one paying UTXO output plus a change
+/// output, sponsored by a third party.
+fn valid_spend() -> Spend {
+    Spend {
+        actors: vec![actor_addr()],
+        inputs: vec![SpendInput {
+            index: 7,
+            creation_block: 100,
+            source: Address::from_low_u64_be(0x5011),
+            recipient: actor_addr(),
+            value: U256::from(1_000_000u64),
+            position: 0,
+            siblings: vec![H256::zero(); 3],
+            batch_siblings: vec![],
+        }],
+        utxo_outs: vec![
+            SpendOutput {
+                recipient: recipient_addr(),
+                value: U256::from(400_000u64),
+            },
+            // change output: signed with value zero
+            SpendOutput {
+                recipient: actor_addr(),
+                value: U256::zero(),
+            },
+        ],
+        account_outs: vec![],
+        change_index: 1,
+        payer: Bytes::copy_from_slice(Address::from_low_u64_be(0x5907).as_bytes()),
+        max_fee_per_gas: U256::from(30_000_000_000u64),
+        max_priority_fee_per_gas: U256::from(1_000_000_000u64),
+        max_gas_limit: 500_000,
+    }
+}
+
+#[test]
+fn spend_rlp_roundtrips() {
+    let spend = valid_spend();
+    let encoded = spend.encode_to_vec();
+    let decoded = Spend::decode(&encoded).expect("spend must decode");
+    assert_eq!(decoded, spend);
+}
+
+#[test]
+fn spend_decoding_rejects_trailing_bytes() {
+    // A frame's data must be exactly one spend and nothing more, so a relayer
+    // cannot smuggle extra bytes past the signature.
+    let mut encoded = valid_spend().encode_to_vec();
+    encoded.push(0xFF);
+    assert!(Spend::decode_frame_data(&Bytes::from(encoded)).is_err());
+}
+
+#[test]
+fn spend_decoding_rejects_wrong_arity() {
+    // An input item is an 8-tuple; a 7-tuple must not decode.
+    let short_input: Vec<u8> = {
+        let mut buf = Vec::new();
+        // Encode a 7-field input list by hand-encoding a truncated structure.
+        let spend = valid_spend();
+        let mut inner = Vec::new();
+        let inp = &spend.inputs[0];
+        inp.index.encode(&mut inner);
+        inp.creation_block.encode(&mut inner);
+        inp.source.encode(&mut inner);
+        inp.recipient.encode(&mut inner);
+        inp.value.encode(&mut inner);
+        inp.position.encode(&mut inner);
+        inp.siblings.encode(&mut inner);
+        // batch_siblings deliberately omitted
+        ethrex_rlp::structs::Encoder::new(&mut buf)
+            .encode_raw(&inner)
+            .finish();
+        buf
+    };
+    assert!(SpendInput::decode(&short_input).is_err());
+}
+
+#[test]
+fn spend_static_bounds_accept_a_well_formed_spend() {
+    assert!(valid_spend().validate_static().is_ok());
+}
+
+#[test]
+fn spend_rejects_empty_actor_list_and_duplicates() {
+    let mut spend = valid_spend();
+    spend.actors.clear();
+    assert!(spend.validate_static().unwrap_err().contains("no actors"));
+
+    let mut spend = valid_spend();
+    spend.actors = vec![actor_addr(), actor_addr()];
+    assert!(
+        spend
+            .validate_static()
+            .unwrap_err()
+            .contains("more than once")
+    );
+}
+
+#[test]
+fn spend_rejects_non_increasing_input_indices() {
+    // Strictly increasing indices statically exclude spending one UTXO twice
+    // inside a single frame.
+    let mut spend = valid_spend();
+    let dup = spend.inputs[0].clone();
+    spend.inputs.push(dup);
+    assert!(
+        spend
+            .validate_static()
+            .unwrap_err()
+            .contains("strictly increasing")
+    );
+}
+
+#[test]
+fn spend_rejects_empty_input_list() {
+    let mut spend = valid_spend();
+    spend.inputs.clear();
+    assert!(spend.validate_static().unwrap_err().contains("no inputs"));
+}
+
+#[test]
+fn spend_rejects_oversized_sibling_path_and_out_of_range_position() {
+    let mut spend = valid_spend();
+    spend.inputs[0].siblings = vec![H256::zero(); MAX_SIBLINGS + 1];
+    assert!(spend.validate_static().unwrap_err().contains("siblings"));
+
+    let mut spend = valid_spend();
+    // depth 3 ⇒ positions 0..=7
+    spend.inputs[0].position = 8;
+    assert!(spend.validate_static().unwrap_err().contains("position"));
+}
+
+#[test]
+fn spend_rejects_wrong_batch_path_length() {
+    // A batch path is empty (ring proof) or exactly the batch tree's depth.
+    let mut spend = valid_spend();
+    spend.inputs[0].batch_siblings = vec![H256::zero(); BATCH_PATH_LEN - 1];
+    assert!(spend.validate_static().unwrap_err().contains("batch path"));
+
+    let mut spend = valid_spend();
+    spend.inputs[0].batch_siblings = vec![H256::zero(); BATCH_PATH_LEN];
+    assert!(spend.validate_static().is_ok());
+}
+
+#[test]
+fn spend_output_rules() {
+    // Change output must be signed with value zero.
+    let mut spend = valid_spend();
+    spend.utxo_outs[1].value = U256::from(1u64);
+    assert!(spend.validate_static().unwrap_err().contains("value zero"));
+
+    // Every non-change output must carry a non-zero value.
+    let mut spend = valid_spend();
+    spend.utxo_outs[0].value = U256::zero();
+    assert!(
+        spend
+            .validate_static()
+            .unwrap_err()
+            .contains("non-zero value")
+    );
+
+    // change_index must be in range of utxo_outs ++ account_outs.
+    let mut spend = valid_spend();
+    spend.change_index = 9;
+    assert!(
+        spend
+            .validate_static()
+            .unwrap_err()
+            .contains("out of range")
+    );
+
+    // No zero-address recipients.
+    let mut spend = valid_spend();
+    spend.utxo_outs[0].recipient = Address::zero();
+    assert!(
+        spend
+            .validate_static()
+            .unwrap_err()
+            .contains("zero address")
+    );
+}
+
+#[test]
+fn spend_payer_field_shapes() {
+    // Empty payer = self-funded.
+    let mut spend = valid_spend();
+    spend.payer = Bytes::new();
+    assert!(spend.validate_static().is_ok());
+    assert!(spend.is_self_funded());
+    assert_eq!(spend.sponsor(), None);
+
+    // 20-byte payer = sponsor.
+    let spend = valid_spend();
+    assert!(!spend.is_self_funded());
+    assert_eq!(spend.sponsor(), Some(Address::from_low_u64_be(0x5907)));
+
+    // The vault may not be named as sponsor: it is the payer the protocol
+    // assigns for self-funded spends.
+    let mut spend = valid_spend();
+    spend.payer = Bytes::copy_from_slice(utxo_vault().as_bytes());
+    assert!(
+        spend
+            .validate_static()
+            .unwrap_err()
+            .contains("must not be the vault")
+    );
+
+    // A 20-byte zero address is NOT the self-funded marker — the two encodings
+    // must not be confusable (upstream pseudocode conflates them).
+    let mut spend = valid_spend();
+    spend.payer = Bytes::copy_from_slice(Address::zero().as_bytes());
+    assert!(!spend.is_self_funded());
+    assert!(
+        spend
+            .validate_static()
+            .unwrap_err()
+            .contains("zero address")
+    );
+
+    // Any other length is malformed.
+    let mut spend = valid_spend();
+    spend.payer = Bytes::from_static(&[1, 2, 3]);
+    assert!(
+        spend
+            .validate_static()
+            .unwrap_err()
+            .contains("0 or 20 bytes")
+    );
+}
+
+#[test]
+fn spend_hash_covers_signed_fields_and_ignores_the_witness() {
+    let spend = valid_spend();
+    let base = spend.spend_hash(1);
+
+    // Domain separation: the same spend on another chain signs a different hash.
+    assert_ne!(base, spend.spend_hash(2));
+
+    // Witness refresh must not invalidate a signature: swapping the proof for a
+    // batch path leaves the hash unchanged, because only [index, creation_block]
+    // of each input is signed.
+    let mut refreshed = spend.clone();
+    refreshed.inputs[0].siblings = vec![H256::repeat_byte(0xAB); 5];
+    refreshed.inputs[0].batch_siblings = vec![H256::repeat_byte(0xCD); BATCH_PATH_LEN];
+    refreshed.inputs[0].position = 3;
+    refreshed.inputs[0].source = Address::from_low_u64_be(0xDEAD);
+    refreshed.inputs[0].value = U256::from(999u64);
+    assert_eq!(base, refreshed.spend_hash(1));
+
+    // Signed fields do move the hash.
+    let mut altered = spend.clone();
+    altered.inputs[0].index += 1;
+    assert_ne!(base, altered.spend_hash(1));
+
+    let mut altered = spend.clone();
+    altered.utxo_outs[0].recipient = Address::from_low_u64_be(0xBEEF);
+    assert_ne!(base, altered.spend_hash(1));
+
+    let mut altered = spend.clone();
+    altered.max_gas_limit += 1;
+    assert_ne!(base, altered.spend_hash(1));
+
+    // Moving which output is the change entry changes the hash too.
+    let mut altered = spend;
+    altered.change_index = 0;
+    altered.utxo_outs[0].value = U256::zero();
+    altered.utxo_outs[1].value = U256::from(1u64);
+    assert_ne!(base, altered.spend_hash(1));
+}
+
+/// A UTXO frame carrying the given spend.
+fn utxo_frame_with(spend: &Spend) -> Frame {
+    Frame {
+        mode: FrameMode::Utxo as u8,
+        flags: 0x00,
+        target: None,
+        gas_limit: 100_000,
+        value: U256::zero(),
+        data: Bytes::from(spend.encode_to_vec()),
+    }
+}
+
+/// A secp256k1 signature entry naming `signer` over `msg`. Static validation
+/// checks the entry's shape and binding, not the cryptography (that happens in
+/// the VM), so the signature bytes only need to be well-formed.
+fn spend_sig_entry(signer: Address, msg: H256) -> FrameSignature {
+    FrameSignature {
+        scheme: FRAME_SIG_SCHEME_SECP256K1,
+        signer: Some(signer),
+        msg: Bytes::copy_from_slice(msg.as_bytes()),
+        signature: Bytes::from(vec![0u8; 65]),
+    }
+}
+
+#[test]
+fn utxo_frame_requires_a_spend_hash_signature_per_actor() {
+    let spend = valid_spend();
+    let mut tx = base_frame_tx_with_frames(vec![self_verify_frame(), utxo_frame_with(&spend)]);
+
+    // No entry for the actor → rejected.
+    let err = tx.validate_static_constraints(true).unwrap_err();
+    assert!(err.contains("no spend-hash signature entry"), "got: {err}");
+
+    // With a matching entry the frame's rules pass.
+    let hash = spend.spend_hash(tx.chain_id);
+    tx.signatures.push(spend_sig_entry(actor_addr(), hash));
+    assert!(tx.validate_static_constraints(true).is_ok());
+
+    // An ARBITRARY-scheme entry carries no cryptographic binding, so it must not
+    // satisfy an actor.
+    let mut arbitrary_tx = tx.clone();
+    arbitrary_tx.signatures.pop();
+    arbitrary_tx.signatures.push(FrameSignature {
+        scheme: FRAME_SIG_SCHEME_ARBITRARY,
+        signer: None,
+        msg: Bytes::copy_from_slice(hash.as_bytes()),
+        signature: Bytes::from(vec![0u8; 8]),
+    });
+    assert!(
+        arbitrary_tx
+            .validate_static_constraints(true)
+            .unwrap_err()
+            .contains("no spend-hash signature entry")
+    );
+
+    // An entry over a different digest does not cover the actor either.
+    let mut wrong_msg_tx = tx.clone();
+    wrong_msg_tx.signatures.pop();
+    wrong_msg_tx
+        .signatures
+        .push(spend_sig_entry(actor_addr(), H256::repeat_byte(0x11)));
+    assert!(
+        wrong_msg_tx
+            .validate_static_constraints(true)
+            .unwrap_err()
+            .contains("no spend-hash signature entry")
+    );
+}
+
+#[test]
+fn utxo_frame_tuple_and_placement_rules() {
+    let spend = valid_spend();
+    let hash = spend.spend_hash(1);
+
+    // flags must be zero — in particular no atomic-batch flag.
+    let mut frame = utxo_frame_with(&spend);
+    frame.flags = 0x04;
+    let mut tx = base_frame_tx_with_frames(vec![self_verify_frame(), frame]);
+    tx.signatures.push(spend_sig_entry(actor_addr(), hash));
+    assert!(
+        tx.validate_static_constraints(true)
+            .unwrap_err()
+            .contains("flags == 0")
+    );
+
+    // A target would give the spend call semantics it does not have.
+    let mut frame = utxo_frame_with(&spend);
+    frame.target = Some(recipient_addr());
+    let mut tx = base_frame_tx_with_frames(vec![self_verify_frame(), frame]);
+    tx.signatures.push(spend_sig_entry(actor_addr(), hash));
+    assert!(
+        tx.validate_static_constraints(true)
+            .unwrap_err()
+            .contains("no target")
+    );
+
+    // A UTXO frame must not be an atomic batch's terminator: the batch's revert
+    // would try to roll back its irreversible spent bits.
+    let mut batched = deploy_frame();
+    batched.flags = 0x04;
+    let mut tx =
+        base_frame_tx_with_frames(vec![self_verify_frame(), batched, utxo_frame_with(&spend)]);
+    tx.signatures.push(spend_sig_entry(actor_addr(), hash));
+    assert!(
+        tx.validate_static_constraints(true)
+            .unwrap_err()
+            .contains("must not follow an atomic-batch frame")
+    );
+}
+
+#[test]
+fn self_funded_spend_shape_rules() {
+    let mut spend = valid_spend();
+    spend.payer = Bytes::new();
+    let hash = spend.spend_hash(1);
+
+    // Must be the only frame in its transaction (the vault fronts a
+    // transaction-scoped maximum cost). The rest of the envelope is well-formed
+    // so this rule is the only one violated.
+    let mut tx = base_frame_tx_with_frames(vec![deploy_frame(), utxo_frame_with(&spend)]);
+    tx.sender = utxo_vault();
+    tx.nonce_keys = vec![];
+    tx.nonce_seq = 0;
+    tx.signatures.push(spend_sig_entry(actor_addr(), hash));
+    assert!(
+        tx.validate_static_constraints(true)
+            .unwrap_err()
+            .contains("only frame")
+    );
+
+    // Must have the vault as sender.
+    let mut tx = base_frame_tx_with_frames(vec![utxo_frame_with(&spend)]);
+    tx.signatures.push(spend_sig_entry(actor_addr(), hash));
+    assert!(
+        tx.validate_static_constraints(true)
+            .unwrap_err()
+            .contains("vault as tx.sender")
+    );
+
+    // Well-formed self-funded spend: vault sender, single frame, no nonce keys,
+    // zero nonce_seq.
+    let mut tx = base_frame_tx_with_frames(vec![utxo_frame_with(&spend)]);
+    tx.sender = utxo_vault();
+    tx.nonce_keys = vec![];
+    tx.nonce_seq = 0;
+    tx.signatures.push(spend_sig_entry(actor_addr(), hash));
+    assert!(
+        tx.validate_static_constraints(true).is_ok(),
+        "got: {:?}",
+        tx.validate_static_constraints(true)
+    );
+}
+
+#[test]
+fn vault_sender_envelope_rules() {
+    let mut spend = valid_spend();
+    spend.payer = Bytes::new();
+    let hash = spend.spend_hash(1);
+
+    let base = || {
+        let mut tx = base_frame_tx_with_frames(vec![utxo_frame_with(&spend)]);
+        tx.sender = utxo_vault();
+        tx.nonce_keys = vec![];
+        tx.nonce_seq = 0;
+        tx.signatures.push(spend_sig_entry(actor_addr(), hash));
+        tx
+    };
+
+    // nonce_seq must be zero: nothing signs a vault-sender envelope, so every
+    // field it carries has to be pinned here.
+    let mut tx = base();
+    tx.nonce_seq = 1;
+    assert!(
+        tx.validate_static_constraints(true)
+            .unwrap_err()
+            .contains("nonce_seq == 0")
+    );
+
+    // Blobs are forbidden at consensus level, not just as mempool policy.
+    let mut tx = base();
+    let mut blob_hash = H256::zero();
+    blob_hash.0[0] = VERSIONED_HASH_VERSION_KZG;
+    tx.blob_versioned_hashes = vec![blob_hash];
+    assert!(
+        tx.validate_static_constraints(true)
+            .unwrap_err()
+            .contains("no blobs")
+    );
+
+    // A vault-sender transaction with no UTXO frame has neither a nonce nor a
+    // spend, so nothing would stop it being replayed.
+    let mut tx = base();
+    tx.frames = vec![deploy_frame()];
+    assert!(
+        tx.validate_static_constraints(true)
+            .unwrap_err()
+            .contains("at least one UTXO frame")
+    );
+
+    // Before activation the vault is an ordinary address with no carve-outs, so
+    // the usual EIP-8250 nonce-key requirement applies.
+    let mut tx = base();
+    assert!(
+        tx.validate_static_constraints(false)
+            .unwrap_err()
+            .contains("nonce_keys count")
+    );
+    tx.nonce_keys = vec![U256::zero()];
+    assert!(
+        tx.validate_static_constraints(false)
+            .unwrap_err()
+            .contains("not active"),
+        "a UTXO frame must still be inadmissible before activation"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// EIP-8312 openings tree and vault slot layout.
+//
+// These are the shared commitment primitives: root construction (block end),
+// proof verification (frame execution), and mempool policy all use them, so a
+// divergence here is a consensus divergence.
+// ---------------------------------------------------------------------------
+
+fn leaf(n: u64) -> H256 {
+    opening_leaf(
+        n,
+        Address::from_low_u64_be(0x5000 + n),
+        Address::from_low_u64_be(0x6000 + n),
+        U256::from(1_000u64 + n),
+    )
+}
+
+#[test]
+fn opening_leaf_matches_the_spec_preimage() {
+    // leaf = keccak256(index_be8 ++ source ++ recipient ++ value_be32): 80 bytes.
+    let index = 0x0102030405060708u64;
+    let source = Address::from_low_u64_be(0xAAAA);
+    let recipient = Address::from_low_u64_be(0xBBBB);
+    let value = U256::from(0xCCCCu64);
+
+    let mut preimage = Vec::new();
+    preimage.extend_from_slice(&index.to_be_bytes());
+    preimage.extend_from_slice(source.as_bytes());
+    preimage.extend_from_slice(recipient.as_bytes());
+    preimage.extend_from_slice(&value.to_big_endian());
+    assert_eq!(preimage.len(), 80);
+
+    assert_eq!(
+        opening_leaf(index, source, recipient, value),
+        ethrex_common::utils::keccak(&preimage)
+    );
+}
+
+#[test]
+fn empty_openings_tree_is_the_zero_sentinel() {
+    // A block that creates no UTXOs writes 32 zero bytes over its ring slot.
+    // The sentinel is unforgeable because a leaf is keccak of 80 bytes and can
+    // never be zero.
+    assert_eq!(merkle_root(&[]), H256::zero());
+}
+
+#[test]
+fn single_leaf_root_is_the_leaf() {
+    // len 1 is already a power of two and the folding loop does not run.
+    // Safe despite looking like a type confusion: leaves hash 80-byte preimages
+    // and interior nodes 64-byte ones, so one cannot masquerade as the other.
+    assert_eq!(merkle_root(&[leaf(0)]), leaf(0));
+}
+
+#[test]
+fn merkle_root_pads_to_a_power_of_two_not_per_odd_level() {
+    // Five leaves distinguish the two schemes. Power-of-two padding (the spec's)
+    // pads to 8, so at level 2 the node covering `e` is paired with
+    // keccak(0‖0). Per-odd-level padding would pair it with a raw zero word and
+    // produce a different root. Pin the spec's answer.
+    let leaves: Vec<H256> = (0..5).map(leaf).collect();
+
+    let zero = H256::zero();
+    let l0 = hash_pair(leaves[0], leaves[1]);
+    let l1 = hash_pair(leaves[2], leaves[3]);
+    let l2 = hash_pair(leaves[4], zero);
+    let l3 = hash_pair(zero, zero);
+    let expected = hash_pair(hash_pair(l0, l1), hash_pair(l2, l3));
+    assert_eq!(merkle_root(&leaves), expected);
+
+    // The per-odd-level alternative, for contrast: it must NOT match.
+    let odd_level_variant = {
+        let a = hash_pair(leaves[0], leaves[1]);
+        let b = hash_pair(leaves[2], leaves[3]);
+        let c = hash_pair(leaves[4], zero);
+        hash_pair(hash_pair(a, b), hash_pair(c, zero))
+    };
+    assert_ne!(
+        merkle_root(&leaves),
+        odd_level_variant,
+        "the two padding schemes must be observably different, or this test proves nothing"
+    );
+}
+
+#[test]
+fn fold_verifies_every_leaf_of_every_tree_size() {
+    // The round-trip property that makes proofs work: for every tree size and
+    // every position, folding the leaf with its sibling path reproduces the
+    // root. This is what ties root construction to proof verification.
+    for size in 1usize..=17 {
+        let leaves: Vec<H256> = (0..size as u64).map(leaf).collect();
+        let root = merkle_root(&leaves);
+        for position in 0..size {
+            let proof = merkle_proof(&leaves, position).expect("position in range");
+            assert_eq!(
+                fold(leaves[position], position as u64, &proof),
+                root,
+                "size {size}, position {position}"
+            );
+        }
+        assert!(merkle_proof(&leaves, size).is_none());
+    }
+}
+
+#[test]
+fn fold_is_position_sensitive() {
+    // Sibling order comes from the position bits, never from sorting: folding a
+    // leaf at the wrong claimed position must not reproduce the root. (A
+    // commutative/sorted-pair tree would accept either, which is exactly the
+    // convention the L2 message tree uses and this one must not.)
+    let leaves: Vec<H256> = (0..4).map(leaf).collect();
+    let root = merkle_root(&leaves);
+    let proof = merkle_proof(&leaves, 1).unwrap();
+    assert_eq!(fold(leaves[1], 1, &proof), root);
+    assert_ne!(fold(leaves[1], 0, &proof), root);
+}
+
+#[test]
+fn batch_path_depth_matches_the_batch_size() {
+    // A batch always has exactly BATCH_SIZE leaves (one openings root per
+    // block), so a batch proof is exactly log2(BATCH_SIZE) siblings — the
+    // constant a spend's `batch_siblings` length is validated against.
+    assert_eq!(BATCH_PATH_LEN, 13);
+    assert_eq!(1u64 << BATCH_PATH_LEN, BATCH_SIZE);
+
+    // Verify against a real (sparse but full-width) batch tree.
+    let roots: Vec<H256> = (0..BATCH_SIZE).map(leaf).collect();
+    let batch_root = merkle_root(&roots);
+    let position = 4095usize;
+    let proof = merkle_proof(&roots, position).unwrap();
+    assert_eq!(proof.len(), BATCH_PATH_LEN);
+    assert_eq!(fold(roots[position], position as u64, &proof), batch_root);
+}
+
+#[test]
+fn vault_slot_regions_are_disjoint() {
+    // next-index 0 | ring 1..=8192 | batch 2**128.. | spent 2**129..
+    assert_eq!(U256::from(SLOT_NEXT_INDEX), U256::zero());
+    assert_eq!(ring_slot(0), U256::from(SLOT_RING_BASE));
+    assert_eq!(ring_slot(RING_SIZE - 1), U256::from(RING_SIZE));
+    // The ring aliases every RING_SIZE blocks — which is why a spend's window
+    // check bounds how old a referenced creation block may be.
+    assert_eq!(ring_slot(RING_SIZE), ring_slot(0));
+    assert_eq!(ring_slot(RING_SIZE + 5), ring_slot(5));
+
+    // Highest reachable ring slot is far below the batch region.
+    let max_ring = U256::from(SLOT_RING_BASE) + U256::from(RING_SIZE - 1);
+    assert!(max_ring < slot_batch_base());
+
+    // Highest reachable batch slot (block < 2**64) is far below the spent region.
+    let max_batch = batch_slot_for_block(u64::MAX);
+    assert!(max_batch < slot_spent_base());
+    assert_eq!(
+        max_batch,
+        slot_batch_base() + U256::from(u64::MAX / BATCH_SIZE)
+    );
+
+    // Spent words never wrap into anything else: index < 2**64 ⇒ word < 2**56.
+    let (max_spent_slot, _) = spent_bit_location(u64::MAX);
+    assert_eq!(
+        max_spent_slot,
+        slot_spent_base() + U256::from(u64::MAX >> 8)
+    );
+}
+
+#[test]
+fn spent_bit_addressing_packs_256_flags_per_slot() {
+    // Bit `index & 0xFF` of word `SLOT_SPENT_BASE + (index >> 8)`.
+    let (slot0, mask0) = spent_bit_location(0);
+    assert_eq!(slot0, slot_spent_base());
+    assert_eq!(mask0, U256::one());
+
+    let (slot255, mask255) = spent_bit_location(255);
+    assert_eq!(slot255, slot_spent_base());
+    assert_eq!(mask255, U256::one() << 255usize);
+
+    // 256 starts the next word.
+    let (slot256, mask256) = spent_bit_location(256);
+    assert_eq!(slot256, slot_spent_base() + U256::one());
+    assert_eq!(mask256, U256::one());
+
+    // Indices in one word are independent.
+    let word = mask0 | mask256;
+    assert!(is_spent(word, 0));
+    assert!(!is_spent(word, 1));
+    assert!(!is_spent(word, 255));
+    assert!(is_spent(U256::one(), 256));
+}
+
+#[test]
+fn batch_sealing_boundary() {
+    // The batch root is written at the end of the batch's last block.
+    assert!(!seals_batch(0));
+    assert!(seals_batch(BATCH_SIZE - 1));
+    assert!(!seals_batch(BATCH_SIZE));
+    assert!(seals_batch(2 * BATCH_SIZE - 1));
+
+    // The sealing block belongs to the batch it seals, and its own ring root is
+    // one of that batch's leaves.
+    assert_eq!(batch_slot_for_block(BATCH_SIZE - 1), batch_slot(0));
+    assert_eq!(batch_slot_for_block(BATCH_SIZE), batch_slot(1));
+
+    // RING_SIZE == BATCH_SIZE is what guarantees every root of a batch is still
+    // unoverwritten in the ring when the batch is sealed.
+    assert_eq!(RING_SIZE, BATCH_SIZE);
+}
+
+// ---------------------------------------------------------------------------
+// EIP-8312 activation predicate.
+//
+// One predicate feeds every gate (mode-5 admissibility, execution dispatch,
+// vault provisioning, the openings-root block-end operation, mempool admission).
+// Divergent predicates between admission and execution are a documented stall
+// class on this codebase, so the predicate's own behavior is pinned here.
+// ---------------------------------------------------------------------------
+
+fn config_with(hegota: Option<u64>, utxo: Option<u64>) -> ChainConfig {
+    ChainConfig {
+        hegota_time: hegota,
+        utxo_frames_time: utxo,
+        ..Default::default()
+    }
+}
+
+#[test]
+fn utxo_activation_requires_its_own_timestamp() {
+    // Absent on every network and fixture that has not opted in: EIP-8312 is
+    // then entirely inactive, however far past Hegota the chain is.
+    let no_knob = config_with(Some(100), None);
+    assert!(!no_knob.is_utxo_frames_activated(100));
+    assert!(!no_knob.is_utxo_frames_activated(u64::MAX));
+
+    // Present: active from that timestamp, inclusive.
+    let scheduled = config_with(Some(100), Some(500));
+    assert!(!scheduled.is_utxo_frames_activated(499));
+    assert!(scheduled.is_utxo_frames_activated(500));
+    assert!(scheduled.is_utxo_frames_activated(501));
+}
+
+#[test]
+fn utxo_activation_also_requires_hegota() {
+    // A UTXO frame is a frame inside an EIP-8141 frame transaction, so EIP-8312
+    // cannot be active on a chain that never schedules Hegota — otherwise the
+    // vault would be installed and openings roots written on a chain where no
+    // UTXO frame could ever be carried.
+    let no_hegota = config_with(None, Some(500));
+    assert!(!no_hegota.is_utxo_frames_activated(500));
+    assert!(!no_hegota.is_utxo_frames_activated(u64::MAX));
+
+    // Knob earlier than Hegota: not active until Hegota itself is live.
+    let knob_first = config_with(Some(300), Some(100));
+    assert!(!knob_first.is_utxo_frames_activated(100));
+    assert!(!knob_first.is_utxo_frames_activated(299));
+    assert!(knob_first.is_utxo_frames_activated(300));
+}
+
+#[test]
+fn utxo_activation_is_inert_on_a_default_config() {
+    // Every existing network and fixture: no field set, nothing active. This is
+    // what makes landing the implementation a no-op until someone opts in.
+    let default = ChainConfig::default();
+    assert!(!default.is_utxo_frames_activated(0));
+    assert!(!default.is_utxo_frames_activated(u64::MAX));
 }
 
 // ---------------------------------------------------------------------------

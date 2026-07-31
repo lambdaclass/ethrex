@@ -267,6 +267,15 @@ pub struct Options {
     )]
     pub mempool_max_verify_gas: u64,
     #[arg(
+        help = "EIP-8312 MAX_UTXO_VERIFY_GAS: maximum gas counted when admitting a transaction that carries UTXO frames (actor signatures plus the frames' own cost, both gas dimensions summed). A separate lane from --mempool.max-verify-gas. Mempool policy, not consensus.",
+        long = "mempool.max-utxo-verify-gas",
+        default_value_t = ethrex_common::types::MAX_UTXO_VERIFY_GAS,
+        value_name = "GAS",
+        help_heading = "Node options",
+        env = "ETHREX_MEMPOOL_MAX_UTXO_VERIFY_GAS"
+    )]
+    pub mempool_max_utxo_verify_gas: u64,
+    #[arg(
         long = "http.addr",
         default_value = "127.0.0.1",
         value_name = "ADDRESS",
@@ -559,6 +568,7 @@ impl Default for Options {
             mempool_gap_admit_occupancy_threshold: DEFAULT_GAP_ADMIT_OCCUPANCY_THRESHOLD,
             mempool_max_queued_txs_per_account: DEFAULT_MAX_QUEUED_TXS_PER_ACCOUNT,
             mempool_max_verify_gas: DEFAULT_MAX_VERIFY_GAS,
+            mempool_max_utxo_verify_gas: ethrex_common::types::MAX_UTXO_VERIFY_GAS,
             tx_broadcasting_time_interval: Default::default(),
             target_peers: Default::default(),
             lookup_interval: Default::default(),

@@ -169,6 +169,14 @@ pub enum TxValidationError {
     /// committed under `RECENT_ROOT_ADDRESS` in the transaction pre-state.
     #[error("EIP-8272 recent-root reference is expired or not committed")]
     FrameTxRecentRootInvalid,
+    /// EIP-8312: a spend whose input cannot be proven YET — its creation block's
+    /// openings root is written at that block's end (so a UTXO is never spendable
+    /// in its own creation block), or its batch is not sealed yet. Resolves on its
+    /// own as the chain advances, so the builder keeps the transaction pooled
+    /// rather than evicting a valid spend. Distinct from every other UTXO failure,
+    /// which is permanent.
+    #[error("EIP-8312 UTXO input is not yet spendable at this block")]
+    UtxoNotYetSpendable,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error, Serialize, Deserialize)]

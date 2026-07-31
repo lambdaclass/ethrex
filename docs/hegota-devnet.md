@@ -8,7 +8,8 @@
 hegota-devnet = main       (EIP-8141 frame transactions)
               + eip-8250   (Keyed Nonces)
               + eip-8272   (Recent Roots)
-              + eip-7906   (Tx Assertions, opcode bytes allocated)
+              + eip-7906   (Tx Assertions, opcodes renumbered)
+              + eip-8312   (UTXO Frames, own activation timestamp)
               + devnet-only config, docs, scripts and the
                 ethrex-only extensions listed below
 ```
@@ -48,7 +49,14 @@ EIP-7906's Constants table carries only `TXTRACE_GAS_COST`, `EVENTDATACOPY_GAS_C
 - `RECENT_ROOT_CODE` handled **natively** (spec `TBD`). No longer divergences: `RECENTROOTREFLOAD` at `0xB5`, TXPARAM `0x0F`, and `RECENT_ROOT_ADDRESS` at `0x…8272` all match the current spec.
 
 ### EIP-7906 (Tx Assertions)
-- Opcode bytes allocated as above, the spec assigning none. Behaviour otherwise unchanged.
+- Opcodes renumbered as above. Behaviour otherwise unchanged.
+- Frame mode stays at **3**; EIP-8312 takes 5 rather than renumbering it (see below).
+
+### EIP-8312 (UTXO Frames) — see `docs/eip-8312.md`
+- Frame mode **5** (spec `3`, already taken by EIP-7906 upstream; mode 4 stays reserved for EIP-8288 DEP_VERIFY).
+- **Does not activate at `Fork::Hegota`**: its fork assignment is undecided upstream, so it gets its own `utxoFramesTime` chain-config timestamp. Absent by default, so the whole surface is inert until a chain opts in — and a future timestamp keeps the upgrade state-preserving (no new genesis).
+- A UTXO frame and a POST_TX frame may not share a transaction (v1 composition rule; neither upstream draft defines it).
+- `payer` is length-tested, never compared to numeric zero — closes a consensus-split ambiguity in the spec's pseudocode.
 
 ## Spec pins
 
@@ -72,6 +80,8 @@ eip-8037  5a8c80897a  adjacent  2026-07-31
 the devnet depends on them, so drift still matters.
 
 ## Upstream items
+
+- **EIP-8312 vs EIP-7906 frame-mode collision** (both drafts claim mode 3). Needs a shared frame-mode registry in EIP-8141; raised with the EIP-8312 authors along with a set of spec-text findings (see the change's planning notes).
 
 - EIP-8272 TXPARAM `0x0D → 0x0F` fix PR (drafted; from `lambdaclass/EIPs`).
 - EIP-8250/8141 TXPARAM `0x0B` conflict (raise for an authoritative registry).

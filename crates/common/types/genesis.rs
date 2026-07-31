@@ -315,6 +315,23 @@ pub struct ChainConfig {
     #[serde(default)]
     pub payer_txparam_time: Option<u64>,
 
+    /// EIP-8312 (UTXO frames) activation timestamp.
+    ///
+    /// EIP-8312 is a Draft whose fork assignment is undecided upstream, so it
+    /// gets its own activation timestamp rather than riding `Fork::Hegota` like
+    /// the rest of the frame-transaction family (EIP-8141/8250/8272/7906). This
+    /// also makes a state-preserving in-place upgrade possible: a FUTURE
+    /// timestamp leaves every already-produced block re-executing identically
+    /// (no vault account, no openings-root writes, no UTXO frame mode), which is
+    /// what lets the running devnet adopt EIP-8312 without a new genesis.
+    ///
+    /// `None` = EIP-8312 is not scheduled on this chain (the default: every
+    /// existing network and fixture). Setting it also requires Hegota to be
+    /// scheduled, because UTXO frames are EIP-8141 frame transactions; see
+    /// [`ChainConfig::is_utxo_frames_activated`].
+    #[serde(default)]
+    pub utxo_frames_time: Option<u64>,
+
     /// Amount of total difficulty reached by the network that triggers the consensus upgrade.
     #[serde(default, with = "crate::serde_utils::u128::hex_str_opt")]
     pub terminal_total_difficulty: Option<u128>,
@@ -429,6 +446,25 @@ impl ChainConfig {
     pub fn is_payer_txparam_activated(&self, block_timestamp: u64) -> bool {
         self.payer_txparam_time
             .is_some_and(|time| time <= block_timestamp)
+    }
+
+    /// Whether EIP-8312 (UTXO frames) is active at `block_timestamp`.
+    ///
+    /// Requires both its own activation timestamp (see
+    /// [`ChainConfig::utxo_frames_time`]) and Hegota, because a UTXO frame is a
+    /// frame inside an EIP-8141 frame transaction — a chain that scheduled
+    /// EIP-8312 without EIP-8141 could never carry one.
+    ///
+    /// This is the single predicate every EIP-8312 gate MUST use: frame-mode
+    /// admissibility, execution dispatch, vault provisioning, the openings-root
+    /// block-end operation, and mempool admission. Two gate sites resolving
+    /// activation from different expressions (a config-field check on one side, a
+    /// fork-ordinal check on the other) has already caused a
+    /// consensus-vs-admission stall on this codebase; do not reintroduce it.
+    pub fn is_utxo_frames_activated(&self, block_timestamp: u64) -> bool {
+        self.utxo_frames_time
+            .is_some_and(|time| time <= block_timestamp)
+            && self.is_hegota_activated(block_timestamp)
     }
 
     /// The effective EIP-7843 beacon slot for a block, used by EIP-8272

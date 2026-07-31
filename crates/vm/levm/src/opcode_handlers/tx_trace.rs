@@ -267,7 +267,7 @@ fn require_post_tx_frame(vm: &VM<'_>) -> Result<(), VMError> {
         .tx
         .frames
         .get(ctx.current_frame_index)
-        .map(|f| f.execution_mode())
+        .and_then(|f| f.execution_mode())
     {
         Some(FrameMode::PostTx) => Ok(()),
         _ => Err(ExceptionalHalt::InvalidOpcode.into()),

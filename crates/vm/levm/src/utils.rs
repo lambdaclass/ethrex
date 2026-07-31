@@ -1095,3 +1095,30 @@ pub fn create_eth_transfer_log(from: Address, to: Address, value: U256) -> Log {
         data: Bytes::from(data.to_vec()),
     }
 }
+
+/// EIP-8312 `UtxoCreated(address indexed source, address indexed recipient,
+/// uint64 index, uint256 value)`, emitted by settlement for each created UTXO.
+///
+/// Byte-identical in shape to what the vault's deposit bytecode emits, so an
+/// indexer (and the block-end openings-root builder) treats both creation
+/// channels the same: LOG3 from the vault, `data = index ++ value`.
+pub fn create_utxo_created_log(
+    vault: Address,
+    source: Address,
+    recipient: Address,
+    index: u64,
+    value: U256,
+) -> Log {
+    let mut data = [0u8; 64];
+    data[24..32].copy_from_slice(&index.to_be_bytes());
+    data[32..64].copy_from_slice(&value.to_big_endian());
+    Log {
+        address: vault,
+        topics: vec![
+            ethrex_common::types::UTXO_CREATED_TOPIC,
+            H256::from(source),
+            H256::from(recipient),
+        ],
+        data: bytes::Bytes::copy_from_slice(&data),
+    }
+}

@@ -277,6 +277,22 @@ struct MempoolInner {
     /// has an ineligible one pending. Populated on insert; cleared on removal.
     /// Must be kept consistent with `remove_transaction_with_lock`.
     pending_keyed_by_sender: FxHashMap<Address, FxHashMap<H256, KeyedConcurrency>>,
+
+    /// EIP-8312: the pending transaction claiming each UTXO input index, at most
+    /// one per index. Unlike `pending_frame_key_holder` this map is GLOBAL across
+    /// senders: two spends of the same index conflict regardless of who submitted
+    /// them, which is what makes the per-index rule the analogue of the per-sender
+    /// nonce rule (and the mempool's only defense against a second spend of one
+    /// input — the spent bit itself is not set until inclusion).
+    ///
+    /// Documented DoS consequence of being global: anyone can pre-claim an index
+    /// with a dust-fee transaction and force the legitimate holder into a fee-bump
+    /// war. The strictly-greater-fee replacement rule is the only guard; accepted
+    /// for this devnet.
+    ///
+    /// Populated on insert; cleared on removal. Must be kept consistent with
+    /// `remove_transaction_with_lock`.
+    pending_utxo_index_holder: FxHashMap<u64, H256>,
     /// Sum of reserved max-cost (TXPARAM 0x06) per paymaster across all pending
     /// frame txs that paymaster sponsors (EIP-8141). Admission checks a
     /// paymaster's balance against this running total so concurrently-pending
@@ -293,6 +309,24 @@ struct MempoolInner {
     /// removal path can decrement the other maps and the post-block revalidation
     /// can bound its affected set. Populated on insert; removed on removal.
     frame_tx_paymaster: FxHashMap<H256, FramePaymasterReservation>,
+}
+
+/// EIP-8312: the input indices every UTXO frame of `tx` spends.
+///
+/// Decodes each UTXO frame's spend payload; an undecodable payload contributes no
+/// indices, because static validation rejects the transaction anyway and admission
+/// must not depend on interpreting malformed data.
+pub fn utxo_input_indices(tx: &ethrex_common::types::FrameTransaction) -> Vec<u64> {
+    let mut indices = Vec::new();
+    for frame in &tx.frames {
+        if frame.mode != ethrex_common::types::FrameMode::Utxo as u8 {
+            continue;
+        }
+        if let Ok(spend) = ethrex_common::types::Spend::decode_frame_data(&frame.data) {
+            indices.extend(spend.inputs.iter().map(|input| input.index));
+        }
+    }
+    indices
 }
 
 impl MempoolInner {
@@ -368,6 +402,19 @@ impl MempoolInner {
                         .is_some_and(|h| h == hash)
                     {
                         self.pending_frame_key_holder.remove(&(sender, *key));
+                    }
+                }
+            }
+
+            // EIP-8312: release this transaction's UTXO index claims.
+            if let Transaction::FrameTransaction(frame_tx) = &*tx {
+                for index in utxo_input_indices(frame_tx) {
+                    if self
+                        .pending_utxo_index_holder
+                        .get(&index)
+                        .is_some_and(|h| h == hash)
+                    {
+                        self.pending_utxo_index_holder.remove(&index);
                     }
                 }
             }
@@ -778,6 +825,36 @@ impl MempoolInner {
     ///
     /// Must be called under the mempool write lock (same TOCTOU reasoning as
     /// `check_frame_tx_sender_pending`).
+    /// EIP-8312: resolve the pending transaction (if any) that must be replaced
+    /// for an incoming spend of `indices`, or reject.
+    ///
+    /// One pending transaction per index, globally. A newcomer conflicting with
+    /// exactly one predecessor may replace it if it out-bids under the node's
+    /// fee-bump rule (checked by the caller); a newcomer conflicting with several
+    /// is rejected, because one transaction cannot atomically replace many.
+    fn check_utxo_index_pending(
+        &self,
+        indices: &[u64],
+        incoming_hash: H256,
+    ) -> Result<Option<H256>, MempoolError> {
+        let mut predecessor: Option<H256> = None;
+        for index in indices {
+            let Some(&holder) = self.pending_utxo_index_holder.get(index) else {
+                continue;
+            };
+            if holder == incoming_hash {
+                continue; // a re-announce of the same tx holds its own indices
+            }
+            match predecessor {
+                None => predecessor = Some(holder),
+                Some(existing) if existing == holder => {}
+                // The index set spans more than one pending tx — reject.
+                Some(_) => return Err(MempoolError::FrameTxSenderAlreadyPending),
+            }
+        }
+        Ok(predecessor)
+    }
+
     /// The locked admission gate for a frame transaction. Returns the predecessor
     /// to replace, if the incoming transaction is a legitimate fee bump.
     ///
@@ -1018,6 +1095,17 @@ impl Mempool {
             _ => None,
         };
 
+        // EIP-8312: a vault-sender transaction has no meaningful sender or nonce —
+        // every one of them shares sender `0x8312`. Keying them per sender would cap
+        // the whole network at one pending spend, so their conflict domain is their
+        // input-index set instead (globally, since two spends of one index conflict
+        // whoever submitted them).
+        let utxo_indices: Vec<u64> = match &*transaction {
+            Transaction::FrameTransaction(frame_tx) => utxo_input_indices(frame_tx),
+            _ => Vec::new(),
+        };
+        let is_vault_sender = sender == ethrex_common::types::utxo_vault();
+
         // One-pending-frame-tx-per-sender gate (EIP-8141 §Mempool, review fix 1.6).
         // Must run under the write lock so the check and insert are atomic.
         if is_frame {
@@ -1027,13 +1115,33 @@ impl Mempool {
             // rejected fee-bump never leaves the sender with neither the old nor
             // the new tx. Price validation already ran in validate_transaction.
             // Keyed frame txs are gated per key set; key-0/linear per sender.
-            let existing_frame_hash = inner.check_frame_admission(
-                sender,
-                keyed_keys.as_deref(),
-                nonce,
-                hash,
-                keyed_concurrency,
-            )?;
+            let existing_frame_hash = if is_vault_sender {
+                // EIP-8312: a vault-sender spend has no nonce and no per-sender
+                // identity, so it is gated only on the indices it claims.
+                inner.check_utxo_index_pending(&utxo_indices, hash)?
+            } else {
+                let by_sender = inner.check_frame_admission(
+                    sender,
+                    keyed_keys.as_deref(),
+                    nonce,
+                    hash,
+                    keyed_concurrency,
+                )?;
+                // A sponsored spend still claims its indices, so a second spend of
+                // the same input is rejected regardless of the envelope's shape.
+                match (
+                    by_sender,
+                    inner.check_utxo_index_pending(&utxo_indices, hash)?,
+                ) {
+                    (Some(a), Some(b)) if a != b => {
+                        // Conflicts with one tx by sender and a different one by
+                        // index: one transaction cannot replace both.
+                        return Err(MempoolError::FrameTxSenderAlreadyPending);
+                    }
+                    (Some(a), _) => Some(a),
+                    (None, by_index) => by_index,
+                }
+            };
 
             // Re-validate the fee bump against the CURRENT predecessor. The price
             // check in `find_tx_to_replace` ran unlocked, so a concurrent
@@ -1181,22 +1289,32 @@ impl Mempool {
         // their nonce keys in the per-`(sender, nonce_key)` map (EIP-8250) so
         // disjoint key sets stay independent while overlaps are detectable.
         if is_frame {
-            match &keyed_keys {
-                Some(keys) => {
-                    inner
-                        .pending_keyed_by_sender
-                        .entry(sender)
-                        .or_default()
-                        .insert(hash, keyed_concurrency);
-                    for key in keys {
-                        inner.pending_frame_key_holder.insert((sender, *key), hash);
+            // EIP-8312: a vault-sender transaction is keyed only by its input
+            // indices; putting it in a per-sender map would make every vault-sender
+            // transaction collide with every other one.
+            if !is_vault_sender {
+                match &keyed_keys {
+                    Some(keys) => {
+                        inner
+                            .pending_keyed_by_sender
+                            .entry(sender)
+                            .or_default()
+                            .insert(hash, keyed_concurrency);
+                        for key in keys {
+                            inner.pending_frame_key_holder.insert((sender, *key), hash);
+                        }
+                    }
+                    None => {
+                        inner
+                            .pending_frame_tx_by_sender
+                            .insert(sender, (hash, tx_nonce));
                     }
                 }
-                None => {
-                    inner
-                        .pending_frame_tx_by_sender
-                        .insert(sender, (hash, tx_nonce));
-                }
+            }
+            // Claim every UTXO input index this transaction spends (both envelope
+            // shapes: a sponsored spend claims its indices too).
+            for index in &utxo_indices {
+                inner.pending_utxo_index_holder.insert(*index, hash);
             }
 
             // Increment the paymaster reservation maps for this frame tx. The

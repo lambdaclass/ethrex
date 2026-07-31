@@ -571,6 +571,7 @@ impl Blockchain {
         }
         self.extract_requests(&mut context)?;
         self.apply_withdrawals(&mut context)?;
+        self.write_openings_roots(&mut context)?;
         self.finalize_payload(&mut context)?;
 
         let interval = Instant::now().duration_since(since).as_millis();
@@ -596,6 +597,24 @@ impl Blockchain {
         }
 
         Ok(context.into())
+    }
+
+    /// EIP-8312: commit this block's created UTXOs. Runs last in the post-tx
+    /// phase — after requests and withdrawals, matching the import paths exactly —
+    /// and before `finalize_payload`, which takes the BAL and computes the state
+    /// root, both of which must already include these writes.
+    pub fn write_openings_roots(&self, context: &mut PayloadBuildContext) -> Result<(), EvmError> {
+        if !context
+            .chain_config()
+            .is_utxo_frames_activated(context.payload.header.timestamp)
+        {
+            return Ok(());
+        }
+        let block_number = context.payload.header.number;
+        let receipts = std::mem::take(&mut context.receipts);
+        let result = context.vm.write_openings_roots(&receipts, block_number);
+        context.receipts = receipts;
+        result
     }
 
     pub fn apply_withdrawals(&self, context: &mut PayloadBuildContext) -> Result<(), EvmError> {
@@ -799,7 +818,9 @@ impl Blockchain {
                     // build and starve that sender's other txs indefinitely.
                     // Evict those too.
                     let evict = if is_frame {
-                        !is_nonce_mismatch(&e) && !is_recent_root_not_referenceable(&e)
+                        !is_nonce_mismatch(&e)
+                            && !is_recent_root_not_referenceable(&e)
+                            && !is_utxo_not_yet_spendable(&e)
                     } else {
                         is_deterministic_invalid(&e)
                     };
@@ -1142,6 +1163,22 @@ fn is_nonce_mismatch(e: &ChainError) -> bool {
 fn is_recent_root_not_referenceable(e: &ChainError) -> bool {
     e.to_string()
         .contains("recent-root reference is not yet referenceable")
+}
+
+/// EIP-8312: whether a build failure means "this spend's input is not spendable
+/// YET" rather than "never".
+///
+/// A UTXO created in the block currently being built, or whose batch is not sealed
+/// yet, becomes spendable in a later block — evicting such a transaction would
+/// drop a valid spend. Every other UTXO failure (spent bit set, proof mismatch,
+/// conservation shortfall, fee-cap violation) is permanent and must evict.
+///
+/// Classified on a dedicated marker rather than on a nonce-mismatch string: the
+/// nonce-mismatch class keeps a transaction pooled AND, combined with per-sender
+/// queueing, re-selects it as the sender's head on every rebuild — the eternal
+/// build-fail-repool stall this branch has already fought once.
+fn is_utxo_not_yet_spendable(e: &ChainError) -> bool {
+    e.to_string().contains("UTXO input is not yet spendable")
 }
 
 /// Whether a tx failed with an error that recurs at the same nonce for as long as

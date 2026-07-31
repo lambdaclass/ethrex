@@ -212,6 +212,15 @@ impl Evm {
             LEVM::install_recent_root_code(&mut self.db)?;
         }
 
+        // EIP-8312: the UTXO vault, on its own activation timestamp rather than
+        // the Hegota fork. Mirrors the install in `LEVM::prepare_block` (import
+        // path) — both sides must install or builder and importer diverge.
+        if matches!(self.vm_type, VMType::L1)
+            && chain_config.is_utxo_frames_activated(block_header.timestamp)
+        {
+            LEVM::install_vault_code(&mut self.db, self.crypto.as_ref())?;
+        }
+
         if block_header.parent_beacon_block_root.is_some() && fork >= Fork::Cancun {
             LEVM::beacon_root_contract_call(
                 block_header,
@@ -241,6 +250,21 @@ impl Evm {
 
     /// Wraps [LEVM::process_withdrawals].
     /// Applies the withdrawals to the state or the block_chache if using [LEVM].
+    /// EIP-8312: commit the block's created UTXOs (see
+    /// `LEVM::write_openings_roots`). The build-path counterpart of the call the
+    /// import paths make; both must run, in the same position, or the builder
+    /// produces a block its own importer rejects.
+    pub fn write_openings_roots(
+        &mut self,
+        receipts: &[Receipt],
+        block_number: u64,
+    ) -> Result<(), EvmError> {
+        match self.vm_type {
+            VMType::L1 => LEVM::write_openings_roots(&mut self.db, receipts, block_number),
+            VMType::L2(_) => Ok(()),
+        }
+    }
+
     pub fn process_withdrawals(&mut self, withdrawals: &[Withdrawal]) -> Result<(), EvmError> {
         LEVM::process_withdrawals(&mut self.db, withdrawals)
     }

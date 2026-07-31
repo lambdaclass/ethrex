@@ -7,7 +7,8 @@ use crate::system_contracts::{
     BUILDER_EXIT_CONTRACT_ADDRESS, CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS,
     EXPIRY_VERIFIER_PREDEPLOY, EXPIRY_VERIFIER_RUNTIME_BYTECODE, HISTORY_STORAGE_ADDRESS,
     NONCE_MANAGER_PREDEPLOY, NONCE_MANAGER_RUNTIME_BYTECODE, PRAGUE_SYSTEM_CONTRACTS,
-    RECENT_ROOT_ADDRESS, SYSTEM_ADDRESS, WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS,
+    RECENT_ROOT_ADDRESS, SYSTEM_ADDRESS, UTXO_VAULT_PREDEPLOY, UTXO_VAULT_RUNTIME_BYTECODE,
+    WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS,
 };
 use crate::{EvmError, ExecutionResult};
 use bytes::Bytes;
@@ -425,6 +426,13 @@ impl LEVM {
             Self::process_withdrawals(db, withdrawals)?;
         }
 
+        // EIP-8312: commit this block's created UTXOs. Last in the post-tx phase,
+        // after requests and withdrawals, and in the same position on every
+        // execution path — an asymmetry here diverges builder from importer.
+        if chain_config.is_utxo_frames_activated(block.header.timestamp) {
+            Self::write_openings_roots(db, &receipts, block.header.number)?;
+        }
+
         // Extract BAL if recording was enabled
         let bal = db.take_bal();
 
@@ -589,6 +597,16 @@ impl LEVM {
 
             if let Some(withdrawals) = &block.body.withdrawals {
                 Self::process_withdrawals(db, withdrawals)?;
+            }
+
+            // EIP-8312: commit this block's created UTXOs, in the same position as
+            // on the sequential paths. This must precede
+            // `validate_bal_withdrawal_index` below, which checks the n+1 index
+            // against actual post-phase state — and on this path the state root is
+            // derived from the BAL, so a missing write is a state-root mismatch
+            // even when execution itself was correct.
+            if chain_config.is_utxo_frames_activated(block.header.timestamp) {
+                Self::write_openings_roots(db, &receipts, block.header.number)?;
             }
             // State transitions for merkleizer come from bal_to_account_updates,
             // not from db — no need to call send_state_transitions_tx here.
@@ -873,6 +891,13 @@ impl LEVM {
 
         if let Some(withdrawals) = &block.body.withdrawals {
             Self::process_withdrawals(db, withdrawals)?;
+        }
+
+        // EIP-8312: commit this block's created UTXOs. Last in the post-tx phase,
+        // after requests and withdrawals, and in the same position on every
+        // execution path — an asymmetry here diverges builder from importer.
+        if chain_config.is_utxo_frames_activated(block.header.timestamp) {
+            Self::write_openings_roots(db, &receipts, block.header.number)?;
         }
         LEVM::send_state_transitions_tx(&merkleizer, db, queue_length)?;
 
@@ -3488,6 +3513,197 @@ impl LEVM {
         Ok(())
     }
 
+    /// Install the EIP-8312 UTXO vault predeploy at EIP-8312 activation.
+    ///
+    /// Unlike the EIP-8272 namespace predeploy, the vault carries real runtime
+    /// bytecode (deposits), so this follows the expiry-verifier shape. Idempotent:
+    /// writes only when the existing code differs, so exactly one account update
+    /// is produced (at the first activated block) and none afterwards.
+    ///
+    /// A pre-existing balance at the address is preserved and becomes inert vault
+    /// surplus: conservation bounds every frame's outflows by its proven input
+    /// value, so a surplus cannot be spent and solvency is unaffected. The nonce
+    /// converges to `max(existing, 1)`, matching the EIP-8250 activation rule.
+    pub fn install_vault_code(
+        db: &mut GeneralizedDatabase,
+        crypto: &dyn Crypto,
+    ) -> Result<(), EvmError> {
+        // Predeploy convention (matches the genesis predeploys 4788/2935/7002/7251).
+        const PREDEPLOY_NONCE: u64 = 1;
+
+        let current = db.get_account_code(UTXO_VAULT_PREDEPLOY.address)?;
+        if current.code() == UTXO_VAULT_RUNTIME_BYTECODE.as_slice() {
+            return Ok(());
+        }
+        let existing_nonce = db
+            .get_account(UTXO_VAULT_PREDEPLOY.address)
+            .map_err(EvmError::from)?
+            .info
+            .nonce;
+        let new_nonce = existing_nonce.max(PREDEPLOY_NONCE);
+        let code = Code::from_bytecode(Bytes::from_static(&UTXO_VAULT_RUNTIME_BYTECODE), crypto);
+        let code_hash = code.hash;
+        // Record BAL code/nonce changes if recording is active, so a BAL
+        // reconstructor reproduces the same post-state.
+        if let Some(recorder) = db.bal_recorder_mut() {
+            recorder.record_code_change(UTXO_VAULT_PREDEPLOY.address, code.code_bytes());
+            recorder.record_nonce_change(UTXO_VAULT_PREDEPLOY.address, new_nonce);
+        }
+        let acc = db
+            .get_account_mut(UTXO_VAULT_PREDEPLOY.address)
+            .map_err(EvmError::from)?;
+        acc.info.code_hash = code_hash;
+        acc.info.nonce = new_nonce;
+        db.codes.entry(code_hash).or_insert(code);
+        Ok(())
+    }
+
+    /// EIP-8312 block-end openings roots.
+    ///
+    /// After every transaction in the block, commit the UTXOs it created: write
+    /// the Merkle root of this block's openings to its ring slot, and — at a batch
+    /// boundary — the root of the batch's openings roots to its batch slot. These
+    /// are the commitments a later spend proves against.
+    ///
+    /// Leaves come from the block's `UtxoCreated` receipt logs rather than from an
+    /// execution-time accumulator. That choice matters three times over: a
+    /// transaction the builder drops has no receipt and therefore contributes no
+    /// leaf (no rollback bookkeeping needed); the parallel importer collects
+    /// receipts in transaction order like every other path, so all four paths
+    /// agree by construction; and both creation channels (vault deposits and
+    /// settlement outputs) emit the same log, so neither can be forgotten.
+    ///
+    /// The log's *emitter* is load-bearing: any contract can emit a log with the
+    /// same topic, so only logs whose address is the vault may become leaves.
+    /// Filtering on topic alone would let anyone forge a spendable UTXO out of the
+    /// vault's pooled balance.
+    ///
+    /// The write is protocol-direct (no EVM, no gas) and manually BAL-recorded,
+    /// like `process_withdrawals`.
+    pub fn write_openings_roots(
+        db: &mut GeneralizedDatabase,
+        receipts: &[Receipt],
+        block_number: u64,
+    ) -> Result<(), EvmError> {
+        use ethrex_common::types::{
+            UTXO_CREATED_TOPIC, merkle_root, opening_leaf, ring_slot, seals_batch, utxo_vault,
+        };
+
+        let vault = utxo_vault();
+
+        // Collect this block's created UTXOs, ordered by index. Indices come from
+        // one global counter, so ordering by index is ordering by creation.
+        let mut created: Vec<(u64, H256)> = Vec::new();
+        for receipt in receipts {
+            for log in &receipt.logs {
+                // Emitter check first: a same-topic log from any other address is
+                // not a UTXO creation.
+                if log.address != vault {
+                    continue;
+                }
+                if log.topics.first() != Some(&UTXO_CREATED_TOPIC) || log.topics.len() != 3 {
+                    continue;
+                }
+                if log.data.len() != 64 {
+                    continue;
+                }
+                // topics[1] = source, topics[2] = recipient (both left-padded);
+                // data = index (32 bytes) ++ value (32 bytes).
+                let source = Address::from_slice(&log.topics[1].0[12..]);
+                let recipient = Address::from_slice(&log.topics[2].0[12..]);
+                let index_word = U256::from_big_endian(&log.data[..32]);
+                // The index space the leaf encoding and spent bitfield are defined
+                // over is u64; a wider value cannot be a real creation.
+                let Ok(index) = u64::try_from(index_word) else {
+                    continue;
+                };
+                let value = U256::from_big_endian(&log.data[32..]);
+                created.push((index, opening_leaf(index, source, recipient, value)));
+            }
+        }
+        created.sort_unstable_by_key(|(index, _)| *index);
+        let leaves: Vec<H256> = created.into_iter().map(|(_, leaf)| leaf).collect();
+
+        // The ring write is UNCONDITIONAL: a block that created nothing writes the
+        // all-zeros empty-tree root, which CLEARS the entry this slot held one ring
+        // length ago. Skipping it would silently grant that stale root a second
+        // window, and would diverge from any client that writes it — only visibly
+        // after the first wrap, thousands of blocks later.
+        let root = merkle_root(&leaves);
+        Self::write_vault_slot(db, vault, ring_slot(block_number), root)?;
+
+        // At a batch boundary, seal the batch: its leaves are the openings roots of
+        // its blocks, exactly as written to the ring (including the zero roots of
+        // empty blocks, which are real leaves here, not padding).
+        if seals_batch(block_number) {
+            let batch_size = ethrex_common::types::BATCH_SIZE;
+            let first = block_number.saturating_sub(batch_size - 1);
+            let mut batch_leaves: Vec<H256> = Vec::with_capacity(batch_size as usize);
+            for n in first..=block_number {
+                let slot = ring_slot(n);
+                let value = Self::read_vault_slot(db, vault, slot)?;
+                batch_leaves.push(H256(value.to_big_endian()));
+            }
+            let batch_root = merkle_root(&batch_leaves);
+            Self::write_vault_slot(
+                db,
+                vault,
+                ethrex_common::types::batch_slot_for_block(block_number),
+                batch_root,
+            )?;
+        }
+
+        Ok(())
+    }
+
+    fn vault_slot_key(slot: U256) -> H256 {
+        H256(slot.to_big_endian())
+    }
+
+    fn read_vault_slot(
+        db: &mut GeneralizedDatabase,
+        vault: Address,
+        slot: U256,
+    ) -> Result<U256, EvmError> {
+        let key = Self::vault_slot_key(slot);
+        // Cache first, then the store. The fall-through is essential for batch
+        // sealing: it reads ring slots written up to a full batch earlier, which
+        // this block never touched and which are therefore not cached. Reading
+        // only the cache would silently treat every such root as zero and seal a
+        // batch that commits to nothing.
+        let account = db.get_account(vault).map_err(EvmError::from)?;
+        if let Some(value) = account.storage.get(&key) {
+            return Ok(*value);
+        }
+        db.store
+            .get_storage_value(vault, key)
+            .map_err(|e| EvmError::DB(e.to_string()))
+    }
+
+    /// Protocol-direct vault storage write for the block-end phase, BAL-recorded
+    /// by hand because nothing else records a write made outside the EVM (the
+    /// parallel importer rebuilds post-state from the BAL, so an unrecorded write
+    /// is a state-root divergence).
+    fn write_vault_slot(
+        db: &mut GeneralizedDatabase,
+        vault: Address,
+        slot: U256,
+        value: H256,
+    ) -> Result<(), EvmError> {
+        let key = Self::vault_slot_key(slot);
+        let new_value = U256::from_big_endian(value.as_bytes());
+        let current = Self::read_vault_slot(db, vault, slot)?;
+        // The recorder keys slots by U256, matching the EIP-7928 wire form.
+        let slot_key = U256::from_big_endian(&key.0);
+        if let Some(recorder) = db.bal_recorder_mut() {
+            recorder.capture_pre_storage(vault, slot_key, current);
+            recorder.record_storage_write(vault, slot_key, new_value);
+        }
+        let acc = db.get_account_mut(vault).map_err(EvmError::from)?;
+        acc.storage.insert(key, new_value);
+        Ok(())
+    }
+
     pub(crate) fn read_withdrawal_requests(
         block_header: &BlockHeader,
         db: &mut GeneralizedDatabase,
@@ -3668,6 +3884,15 @@ impl LEVM {
             Self::install_nonce_manager_code(db, crypto)?;
             // EIP-8272: the recent-root storage-namespace predeploy.
             Self::install_recent_root_code(db)?;
+        }
+
+        // EIP-8312: the UTXO vault. Gated on its own activation timestamp, not on
+        // the Hegota fork — the EIP's fork assignment is undecided upstream, and a
+        // future timestamp is what keeps every already-produced block
+        // re-executing identically. Also hooked in apply_system_calls for the
+        // payload-build path; a one-sided install would diverge build from import.
+        if chain_config.is_utxo_frames_activated(block_header.timestamp) {
+            Self::install_vault_code(db, crypto)?;
         }
 
         if block_header.parent_beacon_block_root.is_some() && fork >= Fork::Cancun {

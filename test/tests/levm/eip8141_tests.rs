@@ -4066,7 +4066,7 @@ fn max_gas_reserves_the_calldata_floor_instead_of_rejecting() {
         "max_gas must be the floor when the floor binds"
     );
     assert!(
-        tx.validate_static_constraints().is_ok(),
+        tx.validate_static_constraints(false).is_ok(),
         "a floor-bound transaction is valid; it reserves the floor rather than being rejected"
     );
 }

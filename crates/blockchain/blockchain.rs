@@ -354,6 +354,10 @@ pub struct BlockchainOptions {
     /// validating signatures and simulating a frame transaction's validation
     /// prefix. Mempool policy (SHOULD), not consensus, so it is operator-tunable.
     pub max_verify_gas: u64,
+    /// EIP-8312 admission budget for transactions carrying UTXO frames. Separate
+    /// knob from `max_verify_gas`: the two lanes are disjoint, and this devnet
+    /// already runs a raised `max_verify_gas` for EIP-8272 proof benchmarking.
+    pub max_utxo_verify_gas: u64,
 }
 
 impl Default for BlockchainOptions {
@@ -372,6 +376,7 @@ impl Default for BlockchainOptions {
             max_reorg_depth: None,
             gap_admit_occupancy_threshold: DEFAULT_GAP_ADMIT_OCCUPANCY_THRESHOLD,
             max_verify_gas: DEFAULT_MAX_VERIFY_GAS,
+            max_utxo_verify_gas: ethrex_common::types::MAX_UTXO_VERIFY_GAS,
         }
     }
 }
@@ -3494,8 +3499,15 @@ impl Blockchain {
         if let Transaction::FrameTransaction(frame_tx) = tx {
             // EIP-8141 static constraints at admission (mirrors the VM check)
             // so malformed frame txs never occupy pool slots.
+            //
+            // EIP-8312 activation is resolved from the SAME predicate execution
+            // uses, against the head timestamp: the prospective inclusion block
+            // is at least this recent, and the builder re-checks per block.
+            // Admission and execution disagreeing about activation is the
+            // documented stall class this codebase already hit once.
+            let utxo_frames_active = config.is_utxo_frames_activated(header.timestamp);
             frame_tx
-                .validate_static_constraints()
+                .validate_static_constraints(utxo_frames_active)
                 .map_err(MempoolError::InvalidFrameTransaction)?;
 
             // Frame `data` size is bounded by the wire-size cap below
@@ -3527,14 +3539,148 @@ impl Blockchain {
                 return Err(MempoolError::InvalidFrameSignature);
             }
 
-            // EIP-8141 §Mempool: validate the prefix shape and structural rules.
-            // The full gas-budget check (prefix frame gas limits + sig cost ≤
-            // MAX_VERIFY_GAS) is the authoritative superset of the cheap
-            // sig-cost pre-filter above; both are kept for defence-in-depth.
-            let prefix = frame_tx.validation_prefix().map_err(MempoolError::from)?;
-            frame_tx
-                .validate_prefix_structure(&prefix, self.options.max_verify_gas)
-                .map_err(MempoolError::from)?;
+            // EIP-8312: a self-funded spend is its own validation prefix. Its
+            // validity depends only on transaction fields and the vault's protocol
+            // state, so it needs no EVM prefix simulation — and it cannot satisfy
+            // the four EIP-8141 prefix shapes, which are DEFAULT/VERIFY-only, so
+            // without this lane it would be rejected as an unrecognized prefix.
+            //
+            // A sponsored spend keeps the ordinary prefix (the sponsor's pay frame)
+            // and additionally has its UTXO frames pre-verified below — an explicit
+            // exception to the rule that no failure-invalidating frame follows the
+            // prefix, sound because a UTXO frame's cost is computable from the frame
+            // alone and its checks read only vault protocol state.
+            let self_funded_lane = utxo_frames_active
+                && frame_tx.sender == ethrex_common::types::utxo_vault()
+                && frame_tx.frames.len() == 1
+                && frame_tx.frames[0].mode == ethrex_common::types::FrameMode::Utxo as u8;
+
+            if !self_funded_lane {
+                // EIP-8141 §Mempool: validate the prefix shape and structural rules.
+                // The full gas-budget check (prefix frame gas limits + sig cost ≤
+                // MAX_VERIFY_GAS) is the authoritative superset of the cheap
+                // sig-cost pre-filter above; both are kept for defence-in-depth.
+                let prefix = frame_tx.validation_prefix().map_err(MempoolError::from)?;
+                frame_tx
+                    .validate_prefix_structure(&prefix, self.options.max_verify_gas)
+                    .map_err(MempoolError::from)?;
+            }
+
+            // EIP-8312 admission budget. Policy only: counts the actor-signature
+            // cost plus the combined `utxo_frame_gas` of the transaction's UTXO
+            // frames, with both EIP-8037 dimensions summed. Computed from the frames
+            // alone — no state reads, no signature checks — so an over-budget
+            // transaction is rejected before any expensive work.
+            if utxo_frames_active {
+                let mut utxo_budget = frame_tx.signature_verification_cost();
+                for frame in &frame_tx.frames {
+                    if frame.mode != ethrex_common::types::FrameMode::Utxo as u8 {
+                        continue;
+                    }
+                    let Ok(spend) = ethrex_common::types::Spend::decode_frame_data(&frame.data)
+                    else {
+                        continue; // static validation already rejected this
+                    };
+                    utxo_budget = utxo_budget.saturating_add(spend.admission_gas());
+                }
+                if utxo_budget > self.options.max_utxo_verify_gas {
+                    return Err(MempoolError::InvalidFrameTransaction(format!(
+                        "UTXO admission budget exceeded: {utxo_budget} > {}",
+                        self.options.max_utxo_verify_gas
+                    )));
+                }
+
+                // EIP-8312 §Mempool: pre-verify every UTXO frame's inputs against
+                // head state, by native reads of the vault's storage — the same
+                // non-EVM admission model EIP-8272 uses for recent-root references,
+                // and the right one here because a UTXO frame executes no code.
+                //
+                // Deliberately ordered AFTER static validation, signature
+                // authentication and the (statically computable) budget check, so
+                // these per-input state reads cannot be provoked by a transaction
+                // that fails a cheap check first.
+                //
+                // Policy only: the binding checks run again at inclusion. This pass
+                // may over-reject relative to the block that would actually include
+                // the transaction (it evaluates against the head), which is the
+                // acceptable direction for a mempool filter — except for the
+                // not-yet-spendable case, which is left to the builder's transient
+                // classification rather than rejected here.
+                let vault = ethrex_common::types::utxo_vault();
+                let prospective_block = header.number.saturating_add(1);
+                for frame in &frame_tx.frames {
+                    if frame.mode != ethrex_common::types::FrameMode::Utxo as u8 {
+                        continue;
+                    }
+                    let Ok(spend) = ethrex_common::types::Spend::decode_frame_data(&frame.data)
+                    else {
+                        continue;
+                    };
+                    for input in &spend.inputs {
+                        // A UTXO created in the prospective block (or later) is not
+                        // provable yet but will be: leave it to the builder, which
+                        // keeps such a transaction pooled.
+                        if input.creation_block >= prospective_block {
+                            continue;
+                        }
+                        let leaf = ethrex_common::types::opening_leaf(
+                            input.index,
+                            input.source,
+                            input.recipient,
+                            input.value,
+                        );
+                        let mut root =
+                            ethrex_common::types::fold(leaf, input.position, &input.siblings);
+                        let root_slot = if input.batch_siblings.is_empty() {
+                            let age = prospective_block.saturating_sub(input.creation_block);
+                            if age > ethrex_common::types::RING_SIZE {
+                                return Err(MempoolError::InvalidFrameTransaction(
+                                    "UTXO input's ring entry has aged out; a batch proof is required"
+                                        .to_string(),
+                                ));
+                            }
+                            ethrex_common::types::ring_slot(input.creation_block)
+                        } else {
+                            let batch = input.creation_block / ethrex_common::types::BATCH_SIZE;
+                            let sealed_after = batch
+                                .saturating_add(1)
+                                .saturating_mul(ethrex_common::types::BATCH_SIZE);
+                            if prospective_block < sealed_after {
+                                continue; // batch not sealed yet: transient
+                            }
+                            root = ethrex_common::types::fold(
+                                root,
+                                input.creation_block % ethrex_common::types::BATCH_SIZE,
+                                &input.batch_siblings,
+                            );
+                            ethrex_common::types::batch_slot_for_block(input.creation_block)
+                        };
+
+                        let stored = self
+                            .storage
+                            .get_storage_at(header_no, vault, H256(root_slot.to_big_endian()))?
+                            .unwrap_or_default();
+                        if stored != U256::from_big_endian(root.as_bytes()) {
+                            return Err(MempoolError::InvalidFrameTransaction(
+                                "UTXO input's opening does not prove against the committed root"
+                                    .to_string(),
+                            ));
+                        }
+
+                        // Already spent: permanent, so reject rather than pool it.
+                        let (spent_slot, _) = ethrex_common::types::spent_bit_location(input.index);
+                        let word = self
+                            .storage
+                            .get_storage_at(header_no, vault, H256(spent_slot.to_big_endian()))?
+                            .unwrap_or_default();
+                        if ethrex_common::types::is_spent(word, input.index) {
+                            return Err(MempoolError::InvalidFrameTransaction(
+                                "UTXO input is already spent".to_string(),
+                            ));
+                        }
+                    }
+                }
+            }
 
             // One head-state storage read runs per reference, so this must stay
             // behind `validate_static_constraints` (which caps the reference count

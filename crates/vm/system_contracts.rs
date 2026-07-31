@@ -154,6 +154,44 @@ pub const RECENT_ROOT_ADDRESS: SystemContract = SystemContract {
     active_since_fork: Hegota,
 };
 
+/// EIP-8312 UTXO vault predeploy (0x…8312). Holds every unspent UTXO's value.
+/// Unlike the other Hegotá-family predeploys it carries real runtime bytecode:
+/// its code implements deposits (create a UTXO), while every other write to its
+/// storage or balance is performed by the protocol directly.
+///
+/// `active_since_fork` is `Hegota` because that is the earliest fork at which
+/// frame transactions — and therefore UTXO frames — can exist, but it is NOT the
+/// activation gate: EIP-8312 has its own activation timestamp (its fork
+/// assignment is undecided upstream), and the install is gated on
+/// `ChainConfig::is_utxo_frames_activated`. This field is descriptive metadata
+/// only; no code derives activation from it.
+pub const UTXO_VAULT_PREDEPLOY: SystemContract = SystemContract {
+    address: H160([
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x83, 0x12,
+    ]),
+    name: "UTXO_VAULT",
+    active_since_fork: Hegota,
+};
+
+/// Canonical runtime bytecode of the EIP-8312 UTXO vault, verbatim from the
+/// spec's `assets/eip-8312/utxo_vault.eas`.
+///
+/// Behavior: `recipient = calldata[0:20]`; revert unless `calldatasize == 20`,
+/// `callvalue != 0`, and `recipient != 0`; otherwise assign
+/// `index = sload(0)`, `sstore(0, index + 1)`, and emit
+/// `UtxoCreated(source=caller, recipient, index, value)` as
+/// `LOG3(topic, caller, recipient)` with `index ++ value` as data. A plain
+/// transfer (empty calldata) reverts, so no value enters the vault without
+/// creating a UTXO.
+pub const UTXO_VAULT_RUNTIME_BYTECODE: [u8; 76] = [
+    0x5f, 0x35, 0x60, 0x60, 0x1c, 0x80, 0x15, 0x60, 0x14, 0x36, 0x14, 0x15, 0x17, 0x34, 0x15, 0x17,
+    0x60, 0x48, 0x57, 0x5f, 0x54, 0x80, 0x60, 0x01, 0x01, 0x5f, 0x55, 0x5f, 0x52, 0x34, 0x60, 0x20,
+    0x52, 0x33, 0x7f, 0x3b, 0x19, 0x24, 0x14, 0x65, 0xa4, 0x7b, 0xc1, 0x87, 0xf1, 0xd9, 0xc7, 0xdb,
+    0x70, 0x83, 0x48, 0x55, 0xa9, 0x07, 0x18, 0x37, 0x42, 0xa4, 0xb6, 0x3a, 0xa8, 0x24, 0xc5, 0x76,
+    0x29, 0x6f, 0x5e, 0x60, 0x40, 0x5f, 0xa3, 0x00, 0x5b, 0x5f, 0x5f, 0xfd,
+];
+
 #[cfg(test)]
 mod expiry_verifier_tests {
     use super::*;

@@ -1897,7 +1897,22 @@ pub struct FeeTokenTransaction {
     pub cached_canonical: OnceCell<Vec<u8>>,
 }
 
-/// EIP-8141 Frame Transaction mode
+/// EIP-8141 Frame Transaction mode.
+///
+/// Mode-number note: upstream EIP-8312 specifies `UTXO_MODE = 3`, which upstream
+/// EIP-7906 had already taken for POST_TX. ethrex keeps POST_TX at 3 (upstream
+/// EIP-7906, already live) and places UTXO at 5, leaving 4 reserved for
+/// EIP-8288's deferred DEP_VERIFY. Rationale: EIP-8312 activates on its own
+/// timestamp, so a pre-activation window where mode 3 means POST_TX exists on
+/// every chain; renumbering POST_TX at activation would make mode resolution
+/// depend on the activation era at every consumer and would break already-signed
+/// POST_TX transactions and tooling. Recorded as a divergence in
+/// docs/eip-8312.md, and raised upstream as the frame-mode collision (the two
+/// drafts need a shared mode registry in EIP-8141).
+///
+/// Mode 5 is only *admissible* from the EIP-8312 activation timestamp; see
+/// `ChainConfig::is_utxo_frames_activated`. Before it, mode 5 is reserved and
+/// makes the transaction invalid, exactly as it was before this EIP.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default, RSerialize, RDeserialize, Archive)]
 #[repr(u8)]
 pub enum FrameMode {
@@ -1907,19 +1922,30 @@ pub enum FrameMode {
     Sender = 2,
     /// EIP-7906: `POST_TX` — a STATICCALL-executed trailing-suffix frame whose
     /// revert reverts the whole tx body. Required context for TXTRACE /
-    /// EVENTDATACOPY / TXDIFF. (EIP-8288's deferred DEP_VERIFY moves to mode 4.)
+    /// EVENTDATACOPY / TXDIFF. (Mode 4 stays reserved for EIP-8288 DEP_VERIFY.)
     PostTx = 3,
+    /// EIP-8312: `UTXO` — declares a UTXO spend; executes no EVM code.
+    /// Admissible only from the EIP-8312 activation timestamp.
+    Utxo = 5,
 }
 
 impl FrameMode {
     /// Convert from the lower 8 bits of the mode field.
-    /// Returns None for reserved values (4-255).
+    /// Returns `None` for reserved values (4, and 6-255).
+    ///
+    /// Note this is a pure wire-byte mapping: mode 5 resolving to
+    /// [`FrameMode::Utxo`] does not mean EIP-8312 is active. Callers gate
+    /// admissibility on `ChainConfig::is_utxo_frames_activated` (static
+    /// validation does this, so nothing downstream sees a UTXO frame on a
+    /// pre-activation block).
     pub fn from_u8(val: u8) -> Option<Self> {
         match val {
             0 => Some(FrameMode::Default),
             1 => Some(FrameMode::Verify),
             2 => Some(FrameMode::Sender),
             3 => Some(FrameMode::PostTx),
+            // 4 reserved: EIP-8288 DEP_VERIFY (deferred).
+            5 => Some(FrameMode::Utxo),
             _ => None,
         }
     }
@@ -1927,18 +1953,14 @@ impl FrameMode {
 
 impl From<FrameMode> for u8 {
     fn from(mode: FrameMode) -> u8 {
-        match mode {
-            FrameMode::Default => 0,
-            FrameMode::Verify => 1,
-            FrameMode::Sender => 2,
-            FrameMode::PostTx => 3,
-        }
+        mode as u8
     }
 }
 
 /// EIP-8141 Frame: a single execution step within a frame transaction.
 ///
-/// `mode` is the execution mode (0=DEFAULT, 1=VERIFY, 2=SENDER; 3-255 reserved).
+/// `mode` is the wire execution-mode byte; its meaning is era-dependent, see
+/// [`FrameMode`]. Resolve it with [`Frame::execution_mode`], never by casting.
 /// `flags` bits: 0-1 = APPROVE scope restriction, 2 = atomic batch flag (valid
 /// on DEFAULT and SENDER frames only), 3-7 reserved (must be zero).
 #[derive(Clone, Debug, PartialEq, Eq, Default, RSerialize, RDeserialize, Archive)]
@@ -1958,9 +1980,14 @@ pub struct Frame {
 }
 
 impl Frame {
-    /// Extract the execution mode from the `mode` field.
-    pub fn execution_mode(&self) -> FrameMode {
-        FrameMode::from_u8(self.mode).unwrap_or_default()
+    /// Resolve the execution mode from the wire `mode` byte. `None` means the
+    /// byte is reserved, which makes the transaction invalid.
+    ///
+    /// Deliberately no default fallback: a reserved byte must never silently
+    /// resolve to DEFAULT, which would execute an unknown frame kind as an
+    /// ordinary EVM call.
+    pub fn execution_mode(&self) -> Option<FrameMode> {
+        FrameMode::from_u8(self.mode)
     }
 
     /// Extract the APPROVE scope restriction from bits 0-1 of `flags`.
@@ -1974,10 +2001,9 @@ impl Frame {
     }
 
     /// An expiry verifier frame is a VERIFY frame targeting EXPIRY_VERIFIER
-    /// (EIP-8141).
+    /// (EIP-8141). VERIFY's wire byte is era-independent, so this needs no era.
     pub fn is_expiry_verifier(&self) -> bool {
-        self.execution_mode() == FrameMode::Verify
-            && self.target == Some(frame_tx_expiry_verifier())
+        self.mode == FrameMode::Verify as u8 && self.target == Some(frame_tx_expiry_verifier())
     }
 }
 
@@ -2545,13 +2571,29 @@ impl FrameTransaction {
 
     /// Validate static constraints per EIP-8141 spec.
     /// Returns an error string if the transaction is invalid.
-    pub fn validate_static_constraints(&self) -> Result<(), String> {
+    /// `utxo_frames_active` is `ChainConfig::is_utxo_frames_activated` for the
+    /// block this transaction is being validated against. It gates only whether
+    /// EIP-8312 UTXO frames (mode 5) are admissible; the frame-mode table itself
+    /// is unconditional. Never pass a literal at a consensus site.
+    pub fn validate_static_constraints(&self, utxo_frames_active: bool) -> Result<(), String> {
         // tx.sender != zero address
         if self.sender == Address::zero() {
             return Err("tx.sender must not be zero address".to_string());
         }
+        // EIP-8312 vault-sender transactions: a spend needs no account behind it.
+        // Replay protection comes entirely from its inputs' spent bits, so no
+        // nonce is checked or consumed, and EIP-8250's requirement that every
+        // frame transaction declare 1..=16 nonce keys does not apply. The
+        // envelope's `nonce_seq` field must still be zero (checked below), and
+        // the transaction must actually contain a UTXO frame (checked after the
+        // frame loop) — otherwise a vault-sender envelope would have neither a
+        // nonce nor a spend to protect it from replay.
+        let is_vault_sender = utxo_frames_active && self.sender == crate::types::utxo_vault();
+
         // EIP-8250 keyed nonces: 1..=16 strictly-increasing keys; nonce_seq < 2**64-1.
-        if self.nonce_keys.is_empty() || self.nonce_keys.len() > FRAME_TX_MAX_NONCE_KEYS {
+        if !is_vault_sender
+            && (self.nonce_keys.is_empty() || self.nonce_keys.len() > FRAME_TX_MAX_NONCE_KEYS)
+        {
             return Err(format!(
                 "nonce_keys count must be between 1 and {FRAME_TX_MAX_NONCE_KEYS}"
             ));
@@ -2583,6 +2625,22 @@ impl FrameTransaction {
                 "Frame count must be between 1 and {FRAME_TX_MAX_FRAMES}"
             ));
         }
+        if is_vault_sender {
+            // No signature covers a vault-sender envelope, so every field it
+            // could carry must be constrained here rather than left malleable.
+            if self.nonce_seq != 0 {
+                return Err(
+                    "a vault-sender transaction must have nonce_seq == 0 (EIP-8312)".to_string(),
+                );
+            }
+            // Enforced at consensus level, not merely as mempool policy: an
+            // unsigned envelope with an unenforced blob field would be freely
+            // malleable.
+            if !self.blob_versioned_hashes.is_empty() {
+                return Err("a vault-sender transaction must carry no blobs (EIP-8312)".to_string());
+            }
+        }
+
         // Per EIP-8141, every versioned hash must carry the EIP-4844 KZG version
         // byte, and a transaction carrying no blobs must not name a blob fee.
         for (i, hash) in self.blob_versioned_hashes.iter().enumerate() {
@@ -2645,7 +2703,8 @@ impl FrameTransaction {
         // bound below rejects tx-level totals that don't fit in signed i64.
         let mut total_frame_gas: u128 = 0;
         let mut expiry_frame_count: usize = 0;
-        // EIP-7906: POST_TX (mode 3) frames must form a contiguous trailing suffix —
+        let mut utxo_frame_count: usize = 0;
+        // EIP-7906: POST_TX frames must form a contiguous trailing suffix —
         // once any frame is POST_TX, every later frame must be POST_TX too.
         let post_tx = FrameMode::PostTx as u8;
         if let Some(first) = self.frames.iter().position(|f| f.mode == post_tx)
@@ -2653,10 +2712,33 @@ impl FrameTransaction {
         {
             return Err("POST_TX frames must form a contiguous trailing suffix".to_string());
         }
+        // EIP-8312: a UTXO frame and a POST_TX frame must not share a
+        // transaction (v1 composition rule). EIP-7906's whole-body revert cannot
+        // be reconciled with EIP-8312's journal-external spent bits: rolling the
+        // bits back would violate the EIP-8312 durability rule, while keeping
+        // them set and skipping settlement would strand user value in the vault.
+        // The suffix rule above already forbids a UTXO frame *after* a POST_TX
+        // frame; this covers the reverse order.
+        let utxo = FrameMode::Utxo as u8;
+        if self.frames.iter().any(|f| f.mode == utxo)
+            && self.frames.iter().any(|f| f.mode == post_tx)
+        {
+            return Err("UTXO frames and POST_TX frames must not share a transaction".to_string());
+        }
+
         for (i, frame) in self.frames.iter().enumerate() {
-            // Reject reserved execution modes (4-255); POST_TX (3) is admitted (EIP-7906).
-            if frame.mode >= 4 {
+            // `None` means the mode byte is reserved (4, and 6-255).
+            let Some(frame_mode) = frame.execution_mode() else {
                 return Err(format!("Frame {i}: reserved execution mode {}", frame.mode));
+            };
+            // EIP-8312 has its own activation timestamp (its fork assignment is
+            // undecided upstream), so before activation mode 5 is reserved just
+            // as it was before this EIP existed. This keeps every
+            // already-produced block re-executing identically.
+            if frame_mode == FrameMode::Utxo && !utxo_frames_active {
+                return Err(format!(
+                    "Frame {i}: UTXO frames are not active at this block (EIP-8312)"
+                ));
             }
             // Reserved flag bits 3-7 must be zero
             if frame.flags >= 8 {
@@ -2685,10 +2767,84 @@ impl FrameTransaction {
                     ));
                 }
             }
+            // EIP-8312 UTXO frame rules. `value == 0` comes free from the
+            // SENDER-only value rule below; `flags == 0` and `target == None`
+            // are checked here, then the spend payload is decoded and
+            // statically validated.
+            if frame_mode == FrameMode::Utxo {
+                utxo_frame_count = utxo_frame_count.saturating_add(1);
+                // `flags == 0` in particular means a UTXO frame carries no
+                // EIP-8250 atomic-batch flag: its spent-bit writes are outside
+                // the frame revert journal and cannot participate in a batch
+                // rollback.
+                if frame.flags != 0 {
+                    return Err(format!(
+                        "Frame {i}: UTXO frame must have flags == 0 (flags={:#04x})",
+                        frame.flags
+                    ));
+                }
+                // A spend has no callee; a target would give it call semantics
+                // it does not have.
+                if frame.target.is_some() {
+                    return Err(format!("Frame {i}: UTXO frame must have no target"));
+                }
+                // Placement: a frame immediately following an atomic-batch
+                // flagged frame is that batch's terminator and is reverted with
+                // the batch, which the irreversible spent bits forbid.
+                if i > 0
+                    && self
+                        .frames
+                        .get(i - 1)
+                        .is_some_and(|prev| prev.is_atomic_batch())
+                {
+                    return Err(format!(
+                        "Frame {i}: UTXO frame must not follow an atomic-batch frame"
+                    ));
+                }
+                let spend = crate::types::Spend::decode_frame_data(&frame.data)
+                    .map_err(|e| format!("Frame {i}: {e}"))?;
+                spend
+                    .validate_static()
+                    .map_err(|e| format!("Frame {i}: {e}"))?;
+                // Every actor must be covered by a signature entry over the
+                // spend hash: a protocol-validated scheme (ARBITRARY carries no
+                // cryptographic binding and does not qualify) whose resolved
+                // signer is the actor and whose explicit msg is the spend hash.
+                let spend_hash = spend.spend_hash(self.chain_id);
+                for actor in &spend.actors {
+                    let covered = self.signatures.iter().any(|sig| {
+                        sig.scheme != FRAME_SIG_SCHEME_ARBITRARY
+                            && sig.msg.as_ref() == spend_hash.as_bytes()
+                            && sig.signer.unwrap_or(self.sender) == *actor
+                    });
+                    if !covered {
+                        return Err(format!(
+                            "Frame {i}: no spend-hash signature entry for actor {actor:#x}"
+                        ));
+                    }
+                }
+                // Self-funded shape: the vault fronts the maximum cost, so the
+                // spend must be the transaction's only frame and the vault must
+                // be its sender.
+                if spend.is_self_funded() {
+                    if self.frames.len() != 1 {
+                        return Err(format!(
+                            "Frame {i}: a self-funded spend must be the only frame in its transaction"
+                        ));
+                    }
+                    if self.sender != crate::types::utxo_vault() {
+                        return Err(format!(
+                            "Frame {i}: a self-funded spend requires the vault as tx.sender"
+                        ));
+                    }
+                }
+            }
+
             // Per EIP-8141, only SENDER frames may carry a
             // non-zero value. DEFAULT and VERIFY frames with a non-zero
             // value are statically invalid.
-            if frame.mode != FrameMode::Sender as u8 && !frame.value.is_zero() {
+            // (This also gives EIP-8312 its `frame.value == 0` rule for free.)
+            if frame_mode != FrameMode::Sender && !frame.value.is_zero() {
                 return Err(format!(
                     "Frame {i}: non-zero value only allowed in SENDER mode (mode={}, value={})",
                     frame.mode, frame.value
@@ -2744,6 +2900,16 @@ impl FrameTransaction {
                 }
             }
         }
+
+        // EIP-8312: a vault-sender transaction with no UTXO frame has neither a
+        // nonce nor a spend, so nothing would prevent replaying it.
+        if is_vault_sender && utxo_frame_count == 0 {
+            return Err(
+                "a vault-sender transaction must contain at least one UTXO frame (EIP-8312)"
+                    .to_string(),
+            );
+        }
+
         Ok(())
     }
 
@@ -2778,11 +2944,14 @@ impl FrameTransaction {
         };
 
         let is_default = |pos: usize| -> bool {
-            frame(pos).is_some_and(|f| f.execution_mode() == FrameMode::Default)
+            // DEFAULT/VERIFY wire bytes are era-independent, and the four
+            // recognized prefix shapes are DEFAULT/VERIFY-only by definition —
+            // a UTXO or POST_TX frame in prefix position simply fails to match,
+            // which is the intended "unrecognized prefix" outcome.
+            frame(pos).is_some_and(|f| f.mode == FrameMode::Default as u8)
         };
-        let is_verify = |pos: usize| -> bool {
-            frame(pos).is_some_and(|f| f.execution_mode() == FrameMode::Verify)
-        };
+        let is_verify =
+            |pos: usize| -> bool { frame(pos).is_some_and(|f| f.mode == FrameMode::Verify as u8) };
         let scope_of = |pos: usize| -> u8 { frame(pos).map_or(0, |f| f.scope_restriction()) };
 
         if non_expiry.is_empty() {
@@ -2892,7 +3061,7 @@ impl FrameTransaction {
                     if prefix.frame_indices.first() != Some(&idx) {
                         return Err(FrameValidationError::DeployNotFirst { frame_index: idx });
                     }
-                    if frame.execution_mode() != FrameMode::Default {
+                    if frame.mode != FrameMode::Default as u8 {
                         return Err(FrameValidationError::DeployNotDefaultMode {
                             frame_index: idx,
                         });
@@ -2900,7 +3069,7 @@ impl FrameTransaction {
                 }
                 _ => {
                     // VERIFY frame (self_verify, only_verify, or pay).
-                    if frame.execution_mode() != FrameMode::Verify {
+                    if frame.mode != FrameMode::Verify as u8 {
                         return Err(FrameValidationError::VerifyFrameNotVerifyMode {
                             frame_index: idx,
                         });
@@ -2976,7 +3145,7 @@ impl FrameTransaction {
                 .iter()
                 .enumerate()
                 .skip(prefix_end.saturating_add(1))
-                .find(|(_, frame)| frame.execution_mode() == FrameMode::Verify)
+                .find(|(_, frame)| frame.execution_mode() == Some(FrameMode::Verify))
         {
             return Err(FrameValidationError::VerifyFrameAfterPrefix { frame_index });
         }
@@ -5582,7 +5751,7 @@ mod tests {
                 data: Bytes::new(),
             },
         ];
-        assert!(tx.validate_static_constraints().is_ok());
+        assert!(tx.validate_static_constraints(true).is_ok());
     }
 
     #[test]
@@ -5596,7 +5765,7 @@ mod tests {
             value: U256::zero(),
             data: Bytes::new(),
         }];
-        let err = tx.validate_static_constraints().unwrap_err();
+        let err = tx.validate_static_constraints(true).unwrap_err();
         assert!(err.contains("atomic batch flag on last frame"), "{err}");
     }
 
@@ -5655,7 +5824,7 @@ mod tests {
             value: U256::zero(),
             data: Bytes::new(),
         };
-        assert_eq!(frame.execution_mode(), FrameMode::Sender);
+        assert_eq!(frame.execution_mode(), Some(FrameMode::Sender));
         assert_eq!(frame.scope_restriction(), 1);
         assert!(frame.is_atomic_batch());
         let encoded = frame.encode_to_vec();
@@ -5796,18 +5965,18 @@ mod tests {
     fn validate_static_rejects_bad_nonce_keys() {
         let mut tx = make_test_frame_tx();
         tx.nonce_keys = vec![]; // empty
-        assert!(tx.validate_static_constraints().is_err());
+        assert!(tx.validate_static_constraints(true).is_err());
         tx.nonce_keys = (0..17).map(U256::from).collect(); // > 16
-        assert!(tx.validate_static_constraints().is_err());
+        assert!(tx.validate_static_constraints(true).is_err());
         tx.nonce_keys = vec![U256::from(1u64), U256::from(1u64)]; // not strictly increasing
-        assert!(tx.validate_static_constraints().is_err());
+        assert!(tx.validate_static_constraints(true).is_err());
         // key 0 mixed with a non-zero key is rejected (key 0 must be the sole key)
         tx.nonce_keys = vec![U256::zero(), U256::from(5u64)];
-        assert!(tx.validate_static_constraints().is_err());
+        assert!(tx.validate_static_constraints(true).is_err());
         // valid keys but nonce_seq == 2**64-1 is rejected
         tx.nonce_keys = vec![U256::zero()];
         tx.nonce_seq = u64::MAX;
-        assert!(tx.validate_static_constraints().is_err());
+        assert!(tx.validate_static_constraints(true).is_err());
     }
 
     #[test]
@@ -5843,7 +6012,7 @@ mod tests {
                 root: H256::zero(),
             })
             .collect();
-        assert!(tx.validate_static_constraints().is_err());
+        assert!(tx.validate_static_constraints(true).is_err());
     }
 
     #[test]
@@ -5937,7 +6106,7 @@ mod tests {
     #[test]
     fn per_frame_gas_limit_above_i64_max_is_rejected() {
         let tx = make_frame_tx_with_gas_limits(vec![(i64::MAX as u64) + 1]);
-        let err = tx.validate_static_constraints().unwrap_err();
+        let err = tx.validate_static_constraints(true).unwrap_err();
         assert!(err.contains("exceeds 2**63-1"), "unexpected error: {err}");
     }
 
@@ -5945,7 +6114,7 @@ mod tests {
     fn cumulative_frame_gas_limit_above_i64_max_is_rejected() {
         let half = (i64::MAX as u64) / 2 + 1;
         let tx = make_frame_tx_with_gas_limits(vec![half, half]);
-        let err = tx.validate_static_constraints().unwrap_err();
+        let err = tx.validate_static_constraints(true).unwrap_err();
         assert!(err.contains("cumulative"), "unexpected error: {err}");
     }
 
@@ -5954,7 +6123,7 @@ mod tests {
         let a = (i64::MAX as u64) / 2;
         let b = i64::MAX as u64 - a;
         let tx = make_frame_tx_with_gas_limits(vec![a, b]);
-        tx.validate_static_constraints()
+        tx.validate_static_constraints(true)
             .expect("exact i64::MAX total should be accepted");
     }
 
@@ -5963,7 +6132,7 @@ mod tests {
         // The frame-count check fires before the gas-limit accumulator runs,
         // so an empty frame list surfaces the count error, not a gas error.
         let tx = make_frame_tx_with_gas_limits(vec![]);
-        let err = tx.validate_static_constraints().unwrap_err();
+        let err = tx.validate_static_constraints(true).unwrap_err();
         assert!(err.contains("between 1 and"), "unexpected error: {err}");
     }
 
@@ -6025,7 +6194,7 @@ mod tests {
             inner_hash: OnceCell::new(),
             cached_canonical: OnceCell::new(),
         };
-        let err = verify_tx.validate_static_constraints().unwrap_err();
+        let err = verify_tx.validate_static_constraints(true).unwrap_err();
         assert!(
             err.contains("non-zero value only allowed in SENDER mode"),
             "unexpected error for VERIFY: {err}"
@@ -6043,7 +6212,7 @@ mod tests {
             }],
             ..verify_tx
         };
-        let err = default_tx.validate_static_constraints().unwrap_err();
+        let err = default_tx.validate_static_constraints(true).unwrap_err();
         assert!(
             err.contains("non-zero value only allowed in SENDER mode"),
             "unexpected error for DEFAULT: {err}"
@@ -6062,7 +6231,7 @@ mod tests {
             ..default_tx
         };
         sender_tx
-            .validate_static_constraints()
+            .validate_static_constraints(true)
             .expect("SENDER frames may carry non-zero value");
     }
 
@@ -6136,7 +6305,7 @@ mod tests {
     fn expiry_verifier_frame_passes_static_validation() {
         let mut tx = make_test_frame_tx();
         tx.frames.insert(0, expiry_frame(1_700_000_000));
-        assert!(tx.validate_static_constraints().is_ok());
+        assert!(tx.validate_static_constraints(true).is_ok());
     }
 
     #[test]
@@ -6145,7 +6314,7 @@ mod tests {
         let mut f = expiry_frame(0);
         f.data = Bytes::from_static(b"short");
         tx.frames.insert(0, f);
-        let err = tx.validate_static_constraints().unwrap_err();
+        let err = tx.validate_static_constraints(true).unwrap_err();
         assert!(err.contains("8 bytes"), "{err}");
     }
 
@@ -6155,7 +6324,7 @@ mod tests {
         let mut f = expiry_frame(0);
         f.flags = 0x01;
         tx.frames.insert(0, f);
-        let err = tx.validate_static_constraints().unwrap_err();
+        let err = tx.validate_static_constraints(true).unwrap_err();
         assert!(err.contains("flags == 0"), "{err}");
     }
 
@@ -6164,7 +6333,7 @@ mod tests {
         let mut tx = make_test_frame_tx();
         tx.frames.insert(0, expiry_frame(1));
         tx.frames.insert(0, expiry_frame(2));
-        let err = tx.validate_static_constraints().unwrap_err();
+        let err = tx.validate_static_constraints(true).unwrap_err();
         assert!(err.contains("more than one expiry"), "{err}");
     }
 
@@ -6176,7 +6345,7 @@ mod tests {
         // since target is the sender address, not EXPIRY_VERIFIER).
         let mut tx = make_test_frame_tx();
         tx.frames[0].flags = 0x00;
-        assert!(tx.validate_static_constraints().is_ok());
+        assert!(tx.validate_static_constraints(true).is_ok());
     }
 
     #[test]
@@ -6259,7 +6428,7 @@ mod tests {
         let mut tx = make_test_frame_tx();
         tx.signatures[0].scheme = 3;
         assert!(
-            tx.validate_static_constraints()
+            tx.validate_static_constraints(true)
                 .unwrap_err()
                 .contains("unsupported scheme"),
         );
@@ -6271,7 +6440,7 @@ mod tests {
         // ARBITRARY (scheme 0) requires an empty signer and costs 100 verify gas.
         tx.signatures[0].scheme = FRAME_SIG_SCHEME_ARBITRARY;
         tx.signatures[0].signer = None;
-        assert!(tx.validate_static_constraints().is_ok());
+        assert!(tx.validate_static_constraints(true).is_ok());
         assert_eq!(tx.signature_verification_cost(), 100);
     }
 
@@ -6281,7 +6450,7 @@ mod tests {
         tx.signatures[0].scheme = FRAME_SIG_SCHEME_ARBITRARY;
         tx.signatures[0].signer = Some(Address::from_low_u64_be(0xABCD));
         assert!(
-            tx.validate_static_constraints()
+            tx.validate_static_constraints(true)
                 .unwrap_err()
                 .contains("ARBITRARY signatures must not name a signer"),
         );
@@ -6292,7 +6461,7 @@ mod tests {
         let mut tx = make_test_frame_tx();
         tx.signatures[0].msg = Bytes::from(vec![1u8; 16]);
         assert!(
-            tx.validate_static_constraints()
+            tx.validate_static_constraints(true)
                 .unwrap_err()
                 .contains("32 bytes"),
         );
@@ -6303,7 +6472,7 @@ mod tests {
         let mut tx = make_test_frame_tx();
         tx.signatures[0].msg = Bytes::from(vec![0u8; 32]);
         assert!(
-            tx.validate_static_constraints()
+            tx.validate_static_constraints(true)
                 .unwrap_err()
                 .contains("zero digest"),
         );

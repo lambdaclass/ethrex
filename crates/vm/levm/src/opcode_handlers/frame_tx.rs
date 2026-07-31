@@ -87,7 +87,17 @@ pub fn apply_approve(
             // approval. Per the spec's APPROVE_PAYMENT rules, revert the frame
             // while sender_approved == false (the sender authorizes execution
             // first; only then may a payer be bound and the max cost collected).
-            if !ctx.sender_approved {
+            //
+            // EIP-8312 waives exactly this precondition for a vault-sender
+            // transaction. The vault's code never calls APPROVE, so it can never
+            // grant execution approval — without the waiver a sponsor could never
+            // pay for a spend and the sponsored vault-sender form (the one that
+            // lets one sponsor serve many concurrent spends) would be unusable.
+            // Nothing else is waived: SENDER frames stay invalid, so waiving this
+            // does not let the vault act.
+            let vault_sender = vm.env.config.utxo_frames_active
+                && ctx.tx.sender == ethrex_common::types::utxo_vault();
+            if !ctx.sender_approved && !vault_sender {
                 return Err(VMError::RevertOpcode);
             }
             // EIP-8250: a payment approval's effects (nonce consumption, payer
@@ -225,7 +235,7 @@ impl OpcodeHandler for OpApproveHandler {
         // Gate on the POST_TX mode specifically rather than on `is_static`: VERIFY
         // frames are also static, but APPROVE is precisely how they grant sender /
         // payer approval, so they must keep working.
-        if current_frame.execution_mode() == FrameMode::PostTx {
+        if current_frame.execution_mode() == Some(FrameMode::PostTx) {
             return Err(ExceptionalHalt::InvalidOpcode.into());
         }
 
@@ -780,14 +790,20 @@ pub fn execute_default_code(
         return execute_recent_root_frame(vm, frame);
     }
     match frame.execution_mode() {
-        FrameMode::Verify => execute_default_verify(vm, frame, target),
+        Some(FrameMode::Verify) => execute_default_verify(vm, frame, target),
         // EIP-8141 §"Default code": a SENDER or DEFAULT frame whose target has no code "returns
         // successfully as if calling empty code" — this is what makes a plain
         // ETH transfer to an EOA work (spec §EOA support / Example 1).
         // Consumes no execution gas (the frame's value transfer is handled by
         // the caller's deferred transfer).
         // EIP-7906: POST_TX default-code is handled like SENDER/DEFAULT.
-        FrameMode::Sender | FrameMode::Default | FrameMode::PostTx => Ok((true, 0, Vec::new())),
+        Some(FrameMode::Sender | FrameMode::Default | FrameMode::PostTx) => {
+            Ok((true, 0, Vec::new()))
+        }
+        // A UTXO frame never reaches the default-code path: it executes no EVM
+        // code and is dispatched natively by the frame loop before any target
+        // code resolution. A reserved mode is rejected by static validation.
+        Some(FrameMode::Utxo) | None => Err(ExceptionalHalt::InvalidOpcode.into()),
     }
 }
 
@@ -803,7 +819,7 @@ fn execute_recent_root_frame(
 ) -> Result<(bool, u64, Vec<Log>), VMError> {
     // VERIFY frames are dispatched as static calls in the frame loop; the
     // write is a state change, so it must fail there.
-    let is_static = frame.execution_mode() == FrameMode::Verify;
+    let is_static = frame.execution_mode() == Some(FrameMode::Verify);
     if is_static || frame.data.len() != 64 || !frame.value.is_zero() {
         return Ok((false, 0, Vec::new()));
     }
@@ -816,7 +832,7 @@ fn execute_recent_root_frame(
         .as_ref()
         .ok_or(ExceptionalHalt::InvalidOpcode)?;
     let caller = match frame.execution_mode() {
-        FrameMode::Sender => ctx.tx.sender,
+        Some(FrameMode::Sender) => ctx.tx.sender,
         _ => ethrex_common::types::frame_tx_entry_point(),
     };
     let salt = frame.data.get(..32).ok_or(ExceptionalHalt::OutOfBounds)?;
@@ -993,4 +1009,305 @@ mod max_cost_tests {
             Err(VMError::ExceptionalHalt(ExceptionalHalt::InvalidOpcode))
         ));
     }
+}
+
+/// A UTXO frame's settled payout, produced by [`execute_utxo_frame`] and applied
+/// after the frame loop (EIP-8312 §Settlement).
+#[derive(Debug, Clone)]
+pub struct UtxoSettlement {
+    /// Index of the frame that produced this settlement, so its logs can be
+    /// attributed to the right receipt entry.
+    pub frame_index: usize,
+    /// `spend.actors[0]` when there is exactly one actor, else the vault: the
+    /// `source` recorded in the outputs' `UtxoCreated` logs.
+    pub source: Address,
+    /// Total proven input value.
+    pub spent_value: U256,
+    /// Sum of the signed (non-change) output values.
+    pub signed_out: U256,
+    /// Index into `outputs` designating the change entry.
+    pub change_index: usize,
+    /// UTXO outputs (created as new UTXOs), in order.
+    pub utxo_outs: Vec<(Address, U256)>,
+    /// Account outputs (credited directly), in order.
+    pub account_outs: Vec<(Address, U256)>,
+    /// Whether this frame's spend is self-funded, i.e. the vault fronts the
+    /// transaction's cost and the actual fee is deducted from the change.
+    pub self_funded: bool,
+    /// `GAS_NEW_ACCOUNT_STATE` reserves charged for account outputs, to be
+    /// returned at settlement for recipients that already exist.
+    pub new_account_reserve_each: u64,
+}
+
+/// EIP-8312 UTXO frame execution.
+///
+/// Executes no EVM code. Verifies each input's opening against the vault's
+/// openings roots, atomically checks-and-sets its spent bit through the durable
+/// tier, enforces value conservation including the transaction's maximum cost for
+/// a self-funded spend, and assigns or binds the payer.
+///
+/// Returns the gas consumed plus the settlement to apply after the frame loop.
+/// Any failed check makes the whole transaction invalid (as with a reverting
+/// VERIFY frame), signalled by `Ok(None)`; the caller sets `tx_invalid`.
+pub fn execute_utxo_frame(
+    vm: &mut VM<'_>,
+    frame: &ethrex_common::types::Frame,
+    frame_index: usize,
+) -> Result<Option<(u64, UtxoSettlement)>, VMError> {
+    use ethrex_common::types::{
+        BATCH_SIZE, RING_SIZE, Spend, batch_slot_for_block, fold, is_spent, opening_leaf,
+        ring_slot, spent_bit_location, utxo_vault,
+    };
+
+    // Static validation already decoded and bounds-checked this payload; decode
+    // again here rather than threading it through, so execution never depends on
+    // a value computed outside consensus.
+    let Ok(spend) = Spend::decode_frame_data(&frame.data) else {
+        return Ok(None);
+    };
+
+    // --- Gas ---------------------------------------------------------------
+    // Regular and state components are summed into one frame charge; the state
+    // components are tracked separately so block-level 2D accounting can split
+    // them back out, and so the durable ones survive scope reverts.
+    let state_per_spent_bit = spent_bit_state_gas(vm);
+    let reserve_per_account_out = vm.state_gas_new_account;
+
+    let mut sibling_count: u64 = 0;
+    for input in &spend.inputs {
+        sibling_count = sibling_count
+            .saturating_add(u64::try_from(input.siblings.len()).unwrap_or(u64::MAX))
+            .saturating_add(u64::try_from(input.batch_siblings.len()).unwrap_or(u64::MAX));
+    }
+    let inputs = u64::try_from(spend.inputs.len()).unwrap_or(u64::MAX);
+    let utxo_out_count = u64::try_from(spend.utxo_outs.len()).unwrap_or(u64::MAX);
+    let account_out_count = u64::try_from(spend.account_outs.len()).unwrap_or(u64::MAX);
+
+    let regular_gas = gas_cost::GAS_UTXO_FRAME
+        .saturating_add(gas_cost::GAS_UTXO_INPUT.saturating_mul(inputs))
+        .saturating_add(gas_cost::GAS_UTXO_SIBLING.saturating_mul(sibling_count))
+        .saturating_add(gas_cost::GAS_UTXO_OUT.saturating_mul(utxo_out_count))
+        .saturating_add(gas_cost::GAS_UTXO_ACCOUNT_OUT.saturating_mul(account_out_count));
+    let state_gas = state_per_spent_bit
+        .saturating_mul(inputs)
+        .saturating_add(reserve_per_account_out.saturating_mul(account_out_count));
+    let utxo_frame_gas = regular_gas.saturating_add(state_gas);
+
+    // Per the EIP an under-provisioned UTXO frame invalidates the transaction —
+    // it is not a failed frame that the transaction survives.
+    if frame.gas_limit < utxo_frame_gas {
+        return Ok(None);
+    }
+
+    // --- Fee caps ----------------------------------------------------------
+    // The actors signed caps; the envelope (which for a vault-sender transaction
+    // nobody signed) must stay within them.
+    let ctx = vm
+        .frame_tx_context
+        .as_ref()
+        .ok_or(ExceptionalHalt::InvalidOpcode)?;
+    let tx_max_fee = U256::from(ctx.tx.max_fee_per_gas);
+    let tx_max_priority = U256::from(ctx.tx.max_priority_fee_per_gas);
+    let tx_gas_limit = ctx.total_gas_limit;
+    let max_cost = compute_tx_max_cost(ctx)?;
+    let tx_sender = ctx.tx.sender;
+    let chain_id = ctx.tx.chain_id;
+
+    if tx_max_fee > spend.max_fee_per_gas
+        || tx_max_priority > spend.max_priority_fee_per_gas
+        || tx_gas_limit > spend.max_gas_limit
+    {
+        return Ok(None);
+    }
+
+    // --- Inputs: verify openings and set spent bits -------------------------
+    let block_number = vm.env.block_number;
+    let mut spent_value = U256::zero();
+    for input in &spend.inputs {
+        // The recipient named by the proven opening must be one of the actors
+        // that signed this spend.
+        if !spend.actors.contains(&input.recipient) {
+            return Ok(None);
+        }
+
+        let leaf = opening_leaf(input.index, input.source, input.recipient, input.value);
+        let mut root = fold(leaf, input.position, &input.siblings);
+
+        if input.batch_siblings.is_empty() {
+            // Ring proof: the creation block's openings root must still be in the
+            // ring, and a UTXO is only spendable from the block AFTER its
+            // creation (its root is written at the creation block's end).
+            let age = block_number.checked_sub(input.creation_block);
+            // `age == 0` (created in this very block) and a creation block ahead of
+            // us are TRANSIENT: the openings root is written at the creation
+            // block's end, so the spend becomes valid in a later block. Surface
+            // that distinctly so the builder keeps the transaction pooled instead
+            // of evicting a valid spend.
+            let Some(age) = age else {
+                return Err(VMError::TxValidation(
+                    crate::errors::TxValidationError::UtxoNotYetSpendable,
+                ));
+            };
+            if age == 0 {
+                return Err(VMError::TxValidation(
+                    crate::errors::TxValidationError::UtxoNotYetSpendable,
+                ));
+            }
+            if age > RING_SIZE {
+                return Ok(None); // aged out of the ring: needs a batch proof
+            }
+            let slot = u256_to_h256(ring_slot(input.creation_block));
+            if vm.read_vault_slot(slot)? != U256::from_big_endian(root.as_bytes()) {
+                return Ok(None);
+            }
+        } else {
+            // Batch proof: the batch containing the creation block must be
+            // sealed, which happens at the end of its last block.
+            let batch = input.creation_block / BATCH_SIZE;
+            let sealed_after = batch.checked_add(1).and_then(|b| b.checked_mul(BATCH_SIZE));
+            let Some(sealed_after) = sealed_after else {
+                return Ok(None);
+            };
+            if block_number < sealed_after {
+                // The batch is not sealed yet — transient, like the ring case.
+                return Err(VMError::TxValidation(
+                    crate::errors::TxValidationError::UtxoNotYetSpendable,
+                ));
+            }
+            root = fold(
+                root,
+                input.creation_block % BATCH_SIZE,
+                &input.batch_siblings,
+            );
+            let slot = u256_to_h256(batch_slot_for_block(input.creation_block));
+            if vm.read_vault_slot(slot)? != U256::from_big_endian(root.as_bytes()) {
+                return Ok(None);
+            }
+        }
+
+        // Atomic check-and-set of the spent bit, through the durable tier: the
+        // read sees bits staged by earlier frames of this same transaction, so a
+        // duplicate across frames fails here rather than double-spending.
+        let (slot_u256, mask) = spent_bit_location(input.index);
+        let slot = u256_to_h256(slot_u256);
+        let word = vm.read_vault_slot(slot)?;
+        if is_spent(word, input.index) {
+            return Ok(None);
+        }
+        vm.stage_durable_vault_write(slot, word | mask);
+        vm.durable_state_gas = vm.durable_state_gas.saturating_add(state_per_spent_bit);
+
+        spent_value = match spent_value.checked_add(input.value) {
+            Some(v) => v,
+            None => return Ok(None),
+        };
+    }
+
+    // --- Conservation and payer -------------------------------------------
+    let mut signed_out = U256::zero();
+    let outputs: Vec<(Address, U256)> = spend
+        .utxo_outs
+        .iter()
+        .chain(spend.account_outs.iter())
+        .map(|o| (o.recipient, o.value))
+        .collect();
+    for (j, (_, value)) in outputs.iter().enumerate() {
+        if u64::try_from(j).is_ok_and(|j| j == spend.change_index) {
+            continue; // the change entry is signed with zero and excluded
+        }
+        signed_out = match signed_out.checked_add(*value) {
+            Some(v) => v,
+            None => return Ok(None),
+        };
+    }
+
+    let self_funded = spend.is_self_funded();
+    if self_funded {
+        // The vault fronts the transaction's maximum cost, so the inputs must
+        // cover the outputs AND that cost before a payer exists. This is what an
+        // opcode running after gas prepayment could not express.
+        let needed = match signed_out.checked_add(max_cost) {
+            Some(v) => v,
+            None => return Ok(None),
+        };
+        if spent_value < needed {
+            return Ok(None);
+        }
+        let ctx = vm
+            .frame_tx_context
+            .as_mut()
+            .ok_or(ExceptionalHalt::InvalidOpcode)?;
+        // A self-funded spend is the only frame in its transaction (static rule),
+        // so no payer can have been established before this point.
+        if ctx.payer_address.is_some() {
+            return Ok(None);
+        }
+        ctx.payer_address = Some(utxo_vault());
+        // Collect the transaction's maximum cost from the vault now, exactly as an
+        // APPROVE(APPROVE_PAYMENT) frame would debit a paymaster. The standard
+        // payer flow then refunds `charged - owed` at the end, so the vault is
+        // debited precisely the actual fee — which is the amount settlement
+        // subtracts from the change output. Without this debit the refund would
+        // credit the vault money it never paid.
+        //
+        // Solvency: conservation just proved the inputs cover `max_cost`, and the
+        // vault custodies that input value, so the debit cannot underflow.
+        let vault = utxo_vault();
+        if vm.decrease_account_balance(vault, max_cost).is_err() {
+            return Ok(None);
+        }
+    } else {
+        // Sponsored: the sponsor pays, so the frame's own conservation excludes
+        // the fee. The post-loop check binds the resolved payer to `spend.payer`.
+        if spent_value < signed_out {
+            return Ok(None);
+        }
+    }
+
+    // `source` for the created outputs' logs: a single actor is attributable, a
+    // multi-actor spend pools value and is attributed to the vault.
+    let source = if let [only_actor] = spend.actors.as_slice() {
+        *only_actor
+    } else {
+        utxo_vault()
+    };
+    // Silence the unused warning on builds where the sender is not otherwise
+    // read; the value is part of the frame's authenticated context.
+    let _ = tx_sender;
+    let _ = chain_id;
+
+    let settlement = UtxoSettlement {
+        frame_index,
+        source,
+        spent_value,
+        signed_out,
+        // Static validation bounded `change_index` by the output count, which is
+        // itself a `usize`, so this cannot truncate.
+        change_index: usize::try_from(spend.change_index).unwrap_or(usize::MAX),
+        utxo_outs: spend
+            .utxo_outs
+            .iter()
+            .map(|o| (o.recipient, o.value))
+            .collect(),
+        account_outs: spend
+            .account_outs
+            .iter()
+            .map(|o| (o.recipient, o.value))
+            .collect(),
+        self_funded,
+        new_account_reserve_each: reserve_per_account_out,
+    };
+
+    Ok(Some((utxo_frame_gas, settlement)))
+}
+
+/// EIP-8312 state gas for one spent bit: 1/256 of a new slot's state gas,
+/// rounded up. Derived from the live EIP-8037 parameter rather than stored as a
+/// literal, so a repricing flows through.
+fn spent_bit_state_gas(vm: &VM<'_>) -> u64 {
+    vm.state_gas_storage_set.div_ceil(256)
+}
+
+fn u256_to_h256(value: U256) -> ethrex_common::H256 {
+    ethrex_common::H256(value.to_big_endian())
 }

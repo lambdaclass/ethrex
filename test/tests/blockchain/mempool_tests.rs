@@ -4514,3 +4514,169 @@ async fn admission_denies_keyed_concurrency_when_the_prefix_reads_sender_storage
         "a prefix reading sender storage must not get concurrency; got {result:?}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// EIP-8312: per-UTXO-index pool identity.
+//
+// A vault-sender transaction has no meaningful sender or nonce, so its conflict
+// domain is its input-index set — global across senders, because two spends of
+// one index conflict regardless of who submitted them. The mempool's per-index
+// rule is the ONLY thing that stops two same-index spends being pooled at once
+// (the spent bit is not set until inclusion).
+// ---------------------------------------------------------------------------
+
+/// The input indices a frame transaction's UTXO frames spend, as the mempool
+/// computes them.
+#[test]
+fn utxo_input_indices_reads_every_utxo_frames_inputs() {
+    use ethrex_blockchain::mempool::utxo_input_indices;
+    use ethrex_common::types::{Frame, FrameMode, Spend, SpendInput, SpendOutput};
+    use ethrex_rlp::encode::RLPEncode;
+
+    let make_spend = |indices: &[u64]| Spend {
+        actors: vec![Address::from_low_u64_be(0xA)],
+        inputs: indices
+            .iter()
+            .map(|i| SpendInput {
+                index: *i,
+                creation_block: 1,
+                source: Address::from_low_u64_be(1),
+                recipient: Address::from_low_u64_be(0xA),
+                value: U256::from(10u64),
+                position: 0,
+                siblings: vec![],
+                batch_siblings: vec![],
+            })
+            .collect(),
+        utxo_outs: vec![SpendOutput {
+            recipient: Address::from_low_u64_be(0xA),
+            value: U256::zero(),
+        }],
+        account_outs: vec![],
+        change_index: 0,
+        payer: Bytes::new(),
+        max_fee_per_gas: U256::from(1u64),
+        max_priority_fee_per_gas: U256::from(1u64),
+        max_gas_limit: 1_000,
+    };
+
+    let utxo_frame = |spend: &Spend| Frame {
+        mode: FrameMode::Utxo as u8,
+        flags: 0,
+        target: None,
+        gas_limit: 100_000,
+        value: U256::zero(),
+        data: Bytes::from(spend.encode_to_vec()),
+    };
+
+    let a = make_spend(&[3, 9]);
+    let b = make_spend(&[11]);
+    let mut tx = FrameTransaction {
+        chain_id: 1,
+        nonce_keys: vec![],
+        nonce_seq: 0,
+        sender: ethrex_common::types::utxo_vault(),
+        frames: vec![utxo_frame(&a), utxo_frame(&b)],
+        ..Default::default()
+    };
+    let mut indices = utxo_input_indices(&tx);
+    indices.sort_unstable();
+    assert_eq!(indices, vec![3, 9, 11], "every UTXO frame's inputs count");
+
+    // A non-UTXO frame contributes nothing, whatever its data looks like.
+    tx.frames.push(Frame {
+        mode: FrameMode::Default as u8,
+        flags: 0,
+        target: None,
+        gas_limit: 1,
+        value: U256::zero(),
+        data: Bytes::from(a.encode_to_vec()), // spend-shaped, but not a UTXO frame
+    });
+    let mut indices = utxo_input_indices(&tx);
+    indices.sort_unstable();
+    assert_eq!(
+        indices,
+        vec![3, 9, 11],
+        "a spend-shaped DEFAULT frame must not claim indices"
+    );
+
+    // An undecodable payload contributes nothing rather than panicking: static
+    // validation rejects such a transaction anyway, and admission must not depend
+    // on interpreting malformed data.
+    let malformed = FrameTransaction {
+        chain_id: 1,
+        nonce_keys: vec![],
+        nonce_seq: 0,
+        sender: ethrex_common::types::utxo_vault(),
+        frames: vec![Frame {
+            mode: FrameMode::Utxo as u8,
+            flags: 0,
+            target: None,
+            gas_limit: 1,
+            value: U256::zero(),
+            data: Bytes::from_static(&[0xFF, 0xFF]),
+        }],
+        ..Default::default()
+    };
+    assert!(utxo_input_indices(&malformed).is_empty());
+}
+
+#[test]
+fn utxo_admission_gas_matches_the_eip_schedule() {
+    use ethrex_common::types::{Spend, SpendInput, SpendOutput};
+
+    // The EIP's worked example: one input with a depth-10 proof, two UTXO outputs.
+    // 13000 + (16048 + 42*10 + 383) + 2012*2 = 33,875.
+    let spend = Spend {
+        actors: vec![Address::from_low_u64_be(0xA)],
+        inputs: vec![SpendInput {
+            index: 0,
+            creation_block: 1,
+            source: Address::from_low_u64_be(1),
+            recipient: Address::from_low_u64_be(0xA),
+            value: U256::from(10u64),
+            position: 0,
+            siblings: vec![H256::zero(); 10],
+            batch_siblings: vec![],
+        }],
+        utxo_outs: vec![
+            SpendOutput {
+                recipient: Address::from_low_u64_be(0xB),
+                value: U256::from(1u64),
+            },
+            SpendOutput {
+                recipient: Address::from_low_u64_be(0xA),
+                value: U256::zero(),
+            },
+        ],
+        account_outs: vec![],
+        change_index: 1,
+        payer: Bytes::new(),
+        max_fee_per_gas: U256::from(1u64),
+        max_priority_fee_per_gas: U256::from(1u64),
+        max_gas_limit: 1_000,
+    };
+    assert_eq!(spend.admission_gas(), 33_875);
+    assert!(spend.admission_gas() < ethrex_common::types::MAX_UTXO_VERIFY_GAS);
+
+    // Documented ceiling: each account output carries a full new-account reserve,
+    // so two fresh-account outputs already exceed the default budget even though
+    // such a spend is consensus-valid. Pinned so the consequence stays visible.
+    let mut two_account_outs = spend.clone();
+    two_account_outs.utxo_outs.clear();
+    two_account_outs.account_outs = vec![
+        SpendOutput {
+            recipient: Address::from_low_u64_be(0xB),
+            value: U256::from(1u64),
+        },
+        SpendOutput {
+            recipient: Address::from_low_u64_be(0xC),
+            value: U256::zero(),
+        },
+    ];
+    two_account_outs.change_index = 1;
+    assert!(
+        two_account_outs.admission_gas() > ethrex_common::types::MAX_UTXO_VERIFY_GAS,
+        "two account outputs must exceed the default budget (a known EIP consequence)"
+    );
+}
