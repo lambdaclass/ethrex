@@ -6,11 +6,9 @@
 //! reverse-fills bodies + receipts from peers down to that floor, one bounded,
 //! validated batch at a time, persisting progress so it resumes across restarts.
 
-use std::sync::{
-    Arc,
-    atomic::{AtomicBool, Ordering},
-};
+use std::sync::Arc;
 
+use ethrex_blockchain::Blockchain;
 use ethrex_common::types::{BlockHeader, BlockNumber};
 use ethrex_storage::{BackfilledBlock, Store};
 use tokio::time::{Duration, sleep};
@@ -46,15 +44,12 @@ async fn resolve_postmerge_floor(store: &Store) -> Result<Option<BlockNumber>, S
         return Ok(Some(merge_block));
     }
     let head = store.get_latest_block_number().await?;
-    first_pos_block(head, |n| is_pos_block(store, n))
-}
-
-/// Whether canonical block `n` is proof-of-stake, detected by `difficulty == 0`
-/// (post-merge blocks carry zero difficulty). A missing header signals a corrupt
-/// DB: this is only ever called over the already-synced canonical chain.
-fn is_pos_block(store: &Store, n: BlockNumber) -> Result<bool, SyncError> {
-    let header = store.get_block_header(n)?.ok_or(SyncError::CorruptDB)?;
-    Ok(header.difficulty.is_zero())
+    // A block is proof-of-stake iff its difficulty is zero. A missing header signals
+    // a corrupt DB: this only ever walks the already-synced canonical chain.
+    first_pos_block(head, |n| {
+        let header = store.get_block_header(n)?.ok_or(SyncError::CorruptDB)?;
+        Ok(header.difficulty.is_zero())
+    })
 }
 
 /// First index in `[0, head]` where `is_pos` holds, assuming `is_pos` is
@@ -173,6 +168,10 @@ const _: () = assert!(
 /// Pause between successful batches so backfill yields peers/bandwidth to
 /// head-following sync rather than saturating them.
 const BACKFILL_BATCH_INTERVAL: Duration = Duration::from_millis(500);
+/// Consecutive non-advancing steps before backfill reports itself stalled. At
+/// `BACKFILL_IDLE_INTERVAL` per step this is a couple of minutes of no progress,
+/// long enough not to fire on a transient peer gap.
+const BACKFILL_STALL_STEPS: u32 = 12;
 /// Backoff when a batch makes no progress (no peers, incomplete response) or
 /// while initial sync is still running.
 const BACKFILL_IDLE_INTERVAL: Duration = Duration::from_secs(10);
@@ -212,6 +211,10 @@ struct BackfillPlan {
     head: BlockNumber,
     /// `Debug` rendering of the mode for diagnostics; never changes.
     mode_label: String,
+    /// Whether the next batch is the first of this run. The first batch includes
+    /// the frontier block itself, to repair a snap pivot that has a body but no
+    /// receipts; later batches stop below the frontier.
+    first_batch: bool,
 }
 
 /// Background task that backfills historical block bodies and receipts below the
@@ -228,8 +231,8 @@ struct BackfillPlan {
 pub async fn run_history_backfill(
     mut peers: PeerHandler,
     store: Store,
+    blockchain: Arc<Blockchain>,
     config: BackfillConfig,
-    snap_enabled: Arc<AtomicBool>,
     cancel_token: CancellationToken,
     diagnostics: Arc<tokio::sync::RwLock<SyncDiagnostics>>,
 ) {
@@ -242,6 +245,10 @@ pub async fn run_history_backfill(
     let mut reconciled = false;
     // Resolved on the first step that runs after initial sync (see `BackfillPlan`).
     let mut plan: Option<BackfillPlan> = None;
+    // Consecutive steps that made no progress, used to tell a genuine stall (no peer
+    // serves the range we need) from a healthy idle. Without this a stall is silent:
+    // the task just sleeps forever and only a flatlining frontier gauge shows it.
+    let mut idle_steps: u32 = 0;
     loop {
         if cancel_token.is_cancelled() {
             return;
@@ -249,20 +256,40 @@ pub async fn run_history_backfill(
         let delay = match backfill_step(
             &mut peers,
             &store,
+            &blockchain,
             &config,
-            &snap_enabled,
             &diagnostics,
             &mut reconciled,
             &mut plan,
         )
         .await
         {
-            Ok(BackfillProgress::Advanced) => BACKFILL_BATCH_INTERVAL,
+            Ok(BackfillProgress::Advanced) => {
+                if idle_steps >= BACKFILL_STALL_STEPS {
+                    info!("History backfill resumed");
+                }
+                idle_steps = 0;
+                diagnostics.write().await.backfill_stalled = false;
+                BACKFILL_BATCH_INTERVAL
+            }
             // Nothing left to fill, ever: stop instead of waking every 10s to
             // re-check a frontier and floor that cannot change.
             Ok(BackfillProgress::Complete) => return,
-            Ok(BackfillProgress::Waiting) => BACKFILL_IDLE_INTERVAL,
+            Ok(BackfillProgress::Waiting) => {
+                idle_steps = idle_steps.saturating_add(1);
+                if idle_steps == BACKFILL_STALL_STEPS {
+                    // Report once on entering the stall rather than every tick.
+                    warn!(
+                        attempts = idle_steps,
+                        "History backfill is not advancing: no peer is serving the range it needs. \
+                         It keeps retrying; the frontier stays where it is."
+                    );
+                    diagnostics.write().await.backfill_stalled = true;
+                }
+                BACKFILL_IDLE_INTERVAL
+            }
             Err(e) => {
+                idle_steps = idle_steps.saturating_add(1);
                 warn!("History backfill step failed (will retry): {e}");
                 BACKFILL_IDLE_INTERVAL
             }
@@ -280,14 +307,18 @@ pub async fn run_history_backfill(
 async fn backfill_step(
     peers: &mut PeerHandler,
     store: &Store,
+    blockchain: &Blockchain,
     config: &BackfillConfig,
-    snap_enabled: &AtomicBool,
     diagnostics: &Arc<tokio::sync::RwLock<SyncDiagnostics>>,
     reconciled: &mut bool,
     plan: &mut Option<BackfillPlan>,
 ) -> Result<BackfillProgress, SyncError> {
-    // Don't compete with initial sync; wait until it has finished.
-    if snap_enabled.load(Ordering::Relaxed) {
+    // Only fill while the node is at the head. Gating on the snap flag alone was
+    // not enough: it is clear on every restart of an already-synced node (the
+    // auto-switch in `sync_manager`) and under `--syncmode full`, so backfill would
+    // compete with a full-sync catch-up for the same peers, and would pin
+    // `plan.head` to a stale head.
+    if !blockchain.is_synced() {
         return Ok(BackfillProgress::Waiting);
     }
 
@@ -321,6 +352,7 @@ async fn backfill_step(
                 floor,
                 head: store.get_latest_block_number().await?,
                 mode_label: format!("{:?}", config.mode),
+                first_batch: true,
             })
         }
     };
@@ -339,13 +371,25 @@ async fn backfill_step(
         return Ok(BackfillProgress::Complete);
     }
 
-    // Next batch is [batch_lo, frontier - 1]. Read headers top-down (highest
-    // first): the peer returns bodies/receipts in request order, so a truncated
-    // response still yields a contiguous run adjacent to the frontier, letting us
-    // lower the frontier without leaving a hole.
-    let batch_lo = frontier.saturating_sub(BACKFILL_BATCH_SIZE).max(floor);
-    let mut headers: Vec<BlockHeader> = Vec::with_capacity((frontier - batch_lo) as usize);
-    for number in (batch_lo..frontier).rev() {
+    // Read headers top-down (highest first): the peer returns bodies/receipts in
+    // request order, so a truncated response still yields a contiguous run adjacent
+    // to the frontier, letting us lower the frontier without leaving a hole.
+    //
+    // The first batch includes the frontier block itself, every later batch stops
+    // just below it. On a snap-synced node the frontier is the pivot, and snap only
+    // stored the pivot's *body* (`add_block` writes no receipts and the block is
+    // never executed), so its receipts would otherwise never be filled and
+    // `eth_getBlockReceipts`/`eth_getTransactionReceipt` would stay wrong for that
+    // one block while the frontier advertised it as complete. Re-fetching one body
+    // is the cost of repairing it.
+    let batch_hi = if plan.first_batch {
+        frontier
+    } else {
+        frontier - 1
+    };
+    let batch_lo = batch_hi.saturating_sub(BACKFILL_BATCH_SIZE - 1).max(floor);
+    let mut headers: Vec<BlockHeader> = Vec::with_capacity((batch_hi - batch_lo + 1) as usize);
+    for number in (batch_lo..=batch_hi).rev() {
         let header = store
             .get_block_header(number)?
             .ok_or(SyncError::CorruptDB)?;
@@ -393,8 +437,10 @@ async fn backfill_step(
         })
         .collect();
 
-    let new_earliest = frontier - filled as u64;
+    // `filled` blocks were stored counting down from `batch_hi`.
+    let new_earliest = batch_hi + 1 - filled as u64;
     store.add_backfilled_blocks(blocks, new_earliest).await?;
+    plan.first_batch = false;
     {
         let mut diag = diagnostics.write().await;
         diag.backfill_frontier = Some(new_earliest);

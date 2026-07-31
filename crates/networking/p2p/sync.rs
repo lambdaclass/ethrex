@@ -113,6 +113,10 @@ pub struct SyncDiagnostics {
     pub backfill_frontier: Option<u64>,
     /// Whether backfill has reached its floor (nothing left to fill).
     pub backfill_complete: bool,
+    /// Set when backfill has made no progress for several consecutive attempts,
+    /// i.e. no peer is serving the range it needs. Distinguishes a genuine stall
+    /// from a healthy idle, which otherwise look identical.
+    pub backfill_stalled: bool,
 }
 
 #[derive(Debug, Clone, serde::Serialize)]

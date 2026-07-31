@@ -46,9 +46,10 @@ impl SyncManager {
         let snap_enabled = Arc::new(AtomicBool::new(matches!(sync_mode, SyncMode::Snap)));
 
         // Clone the shared handles the optional backfill task needs before
-        // `peer_handler`/`cancel_token` are moved into the Syncer below.
+        // `peer_handler`/`cancel_token`/`blockchain` are moved into the Syncer below.
         let backfill_peers = peer_handler.clone();
         let backfill_cancel = cancel_token.clone();
+        let backfill_blockchain = blockchain.clone();
 
         // Fetch checkpoint once to avoid duplicate DB reads
         let has_checkpoint = store
@@ -101,8 +102,8 @@ impl SyncManager {
             tokio::spawn(run_history_backfill(
                 backfill_peers,
                 store.clone(),
+                backfill_blockchain,
                 backfill_config,
-                snap_enabled.clone(),
                 backfill_cancel,
                 diagnostics.clone(),
             ));
