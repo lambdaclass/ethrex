@@ -101,8 +101,9 @@ absent. Enabling backfill (or a fresh snap sync) sets it correctly.
 
 Backfill fills in reverse — from the pivot downward toward a floor — one bounded
 batch (64 blocks) at a time. It runs at lower priority than following the chain
-head: it waits until initial sync finishes, sleeps between batches, and never
-lets the tip fall behind.
+head: it fills only while the node is synced to the tip, sleeps between batches,
+and never lets the tip fall behind. A node that restarts behind the head finishes
+catching up first, so backfill never competes with a catch-up for peers.
 
 ```mermaid
 flowchart TD
@@ -166,7 +167,10 @@ corrupts the database and always resumes exactly where it left off.
   there is no ordering in which the on-disk state is left torn.
 - **The frontier is the durable resume cursor.** On restart the task re-reads
   `earliest_block_number` and continues from there. The invariant *"every block in
-  `[frontier, head]` has full bodies and receipts"* holds across any restart.
+  `[frontier, head]` has full bodies and receipts"* holds across any restart. The
+  first batch of a run deliberately includes the frontier block itself: on a
+  snap-synced node that block is the pivot, and snap stored only its body, so its
+  receipts need filling before the invariant is true.
 - **Worst case after an abrupt kill** (e.g. `docker restart -t 0`, power loss) is
   re-fetching the single most-recent batch: an un-fsynced write-ahead-log tail is
   discarded on RocksDB recovery, and because the frontier and its data share one
@@ -192,6 +196,8 @@ healthy backfill is quiet between the start and completion messages:
 | `History backfill advanced` | debug | each batch |
 | `Historical chain backfill complete` | info | frontier reaches the floor |
 | `History backfill step failed (will retry)` | warn | a batch failed; it retries |
+| `History backfill is not advancing` | warn | no peer served the needed range for several minutes; also sets `backfill_stalled` in the sync diagnostics |
+| `History backfill resumed` | info | progress returned after a stall |
 
 For continuous, log-level-independent visibility, enable metrics
 (`--metrics`) and watch the `ethrex_db_backfill_frontier_block` gauge descend
@@ -231,6 +237,11 @@ return the full block and its receipts.
   descends below that block. Above it, many peers no longer serve pre-merge
   bodies/receipts, so `all` can stall at a block it cannot fetch; it reports the
   stall and keeps retrying rather than failing the node.
+- **A single block whose receipts exceed 10 MiB cannot be fetched.** Requests ask
+  for receipt index `0` and drop an incomplete trailing block, so backfill never
+  paginates within a block. Such a block would stall the run rather than being
+  skipped. Not reachable at today's gas limits, but it is the case EIP-7975's
+  `firstBlockReceiptIndex` exists for.
 - **`--history.transactions` does not prune.** It bounds what backfill indexes, but
   never removes existing index entries, and blocks above the sync pivot are always
   indexed by normal import. Shrinking it on an already-indexed node frees nothing.
