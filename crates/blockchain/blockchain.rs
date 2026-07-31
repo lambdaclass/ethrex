@@ -512,6 +512,11 @@ impl Blockchain {
     /// Test-permissive `Blockchain` constructor. Mirrors `BlockchainOptions::default`
     /// but disables admission-policy gates (e.g. the min-tip floor) so that
     /// unrelated tests don't need to set every mempool option explicitly.
+    ///
+    /// **Do not use in production.** Despite the name, this is not a "sensible
+    /// default" constructor: it deliberately weakens mempool admission. Node
+    /// startup builds its `BlockchainOptions` from the CLI instead (see
+    /// `cmd/ethrex/initializers.rs`). Every current caller is a test harness.
     pub fn default_with_store(store: Store) -> Self {
         let options = BlockchainOptions {
             min_tip_wei: 0,
