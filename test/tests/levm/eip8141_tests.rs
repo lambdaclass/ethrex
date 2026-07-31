@@ -4008,51 +4008,124 @@ fn frame_tx_over_the_per_tx_blob_limit_is_rejected() {
 }
 
 mod intrinsic_gas_accounting_tests {
-    use ethrex_common::U256;
+    use bytes::Bytes;
     use ethrex_common::types::{
-        FRAME_TX_INTRINSIC_COST, FRAME_TX_PER_FRAME_COST, FrameTransaction, Transaction,
+        FRAME_SIG_SCHEME_SECP256K1, FRAME_TX_INTRINSIC_COST, FRAME_TX_PER_FRAME_COST, Frame,
+        FrameSignature, FrameTransaction, Transaction,
     };
+    use ethrex_common::{Address, U256};
 
+    /// A pay-then-transfer frame transaction taken off the Hegotá devnet: a
+    /// self-`VERIFY` prefix frame approving execution and payment, then a SENDER
+    /// frame moving value. Fields other than the nonce are the devnet
+    /// transaction's own, including its 65-byte SECP256K1 signature.
+    ///
+    /// The devnet capture predates the EIP-8250 keyed-nonce envelope, so the
+    /// transaction is rebuilt here with `nonce_keys`/`nonce_seq` and round-tripped
+    /// through the canonical encoding rather than being decoded from the original
+    /// 9-field payload, which this branch's decoder rejects.
     fn interop_reference_tx() -> FrameTransaction {
-        let raw = hex::decode(
-            "06f89f833018248094e25583099ba105d9ec0a67f5ae86d90e50036425eec801038082c3508080e40280941111111111111111111111111111111111111111830186a08701c6bf5263400080f848f846018080b84100376dfea0d3368d1e0e7914b727a934f20e4fb134752d4bbcd994db1246c2197553a566aec5941b337df2fb25be8fd2c367ad19b34526656704997b25eda17a80843b9aca00847735940080c0",
-        )
-        .unwrap();
+        let tx = FrameTransaction {
+            chain_id: 301_824,
+            nonce_keys: vec![U256::zero()],
+            nonce_seq: 0,
+            sender: Address::from_slice(
+                &hex::decode("e25583099ba105d9ec0a67f5ae86d90e50036425").unwrap(),
+            ),
+            frames: vec![
+                Frame {
+                    mode: 1,
+                    flags: 3,
+                    target: None,
+                    gas_limit: 50_000,
+                    value: U256::zero(),
+                    data: Bytes::new(),
+                },
+                Frame {
+                    mode: 2,
+                    flags: 0,
+                    target: Some(Address::repeat_byte(0x11)),
+                    gas_limit: 100_000,
+                    value: U256::from(500_000_000_000_000u64),
+                    data: Bytes::new(),
+                },
+            ],
+            signatures: vec![FrameSignature {
+                scheme: FRAME_SIG_SCHEME_SECP256K1,
+                signer: None,
+                msg: Bytes::new(),
+                signature: Bytes::from(
+                    hex::decode(
+                        "00376dfea0d3368d1e0e7914b727a934f20e4fb134752d4bbcd994db1246c219755\
+                         3a566aec5941b337df2fb25be8fd2c367ad19b34526656704997b25eda17a80",
+                    )
+                    .unwrap(),
+                ),
+            }],
+            max_priority_fee_per_gas: 1_000_000_000,
+            max_fee_per_gas: 2_000_000_000,
+            max_fee_per_blob_gas: U256::zero(),
+            blob_versioned_hashes: vec![],
+            ..Default::default()
+        };
+
+        let mut raw = vec![];
+        Transaction::FrameTransaction(tx).encode_canonical(&mut raw);
         match Transaction::decode_canonical(&raw).unwrap() {
-            Transaction::FrameTransaction(tx) => tx,
+            Transaction::FrameTransaction(decoded) => decoded,
             _ => panic!("expected frame transaction"),
         }
     }
 
-    fn intrinsic_gas(tx: &FrameTransaction) -> u64 {
-        let frame_gas = tx
-            .frames
+    /// EIP-7623 byte pricing, the rule `data_cost` applies to every payload field.
+    fn calldata_gas(bytes: &[u8]) -> u64 {
+        bytes
             .iter()
-            .map(|f| f.gas_limit)
-            .fold(0u64, |acc, g| acc.saturating_add(g));
-        tx.total_gas_limit().saturating_sub(frame_gas)
+            .map(|byte| if *byte == 0 { 4 } else { 16 })
+            .sum()
     }
 
     #[test]
     fn interop_reference_tx_intrinsic_gas_charges_payload_bytes_only() {
-        const ZERO_BYTE_GAS: u64 = 4;
-        const NONZERO_BYTE_GAS: u64 = 16;
         const SECP256K1_VERIFY_GAS: u64 = 2_800;
-        const FRAME_COUNT: u64 = 2;
-        const SIGNATURE_ZERO_BYTES: u64 = 1;
-        const SIGNATURE_NONZERO_BYTES: u64 = 64;
         const FRAME_GAS_LIMITS: u64 = 50_000 + 100_000;
 
-        let payload_calldata_gas =
-            SIGNATURE_NONZERO_BYTES * NONZERO_BYTE_GAS + SIGNATURE_ZERO_BYTES * ZERO_BYTE_GAS;
-        let expected_intrinsic_gas = FRAME_TX_INTRINSIC_COST
-            + FRAME_COUNT * FRAME_TX_PER_FRAME_COST
-            + SECP256K1_VERIFY_GAS
-            + payload_calldata_gas;
-
         let tx = interop_reference_tx();
-        assert_eq!(tx.frames.len() as u64, FRAME_COUNT);
-        assert_eq!(intrinsic_gas(&tx), expected_intrinsic_gas);
+
+        // The expected cost below enumerates every payload field that carries a
+        // byte charge, so pin the fixture properties that keep the list closed:
+        // no frame data, and exactly one signature with no signer or explicit msg.
+        assert_eq!(tx.frames.len(), 2);
+        assert!(tx.frames.iter().all(|frame| frame.data.is_empty()));
+        assert_eq!(tx.signatures.len(), 1);
+        assert_eq!(tx.signatures[0].scheme, FRAME_SIG_SCHEME_SECP256K1);
+        assert!(tx.signatures[0].signer.is_none());
+        assert!(tx.signatures[0].msg.is_empty());
+
+        // EIP-8141 prices the signature bytes; EIP-8250 adds
+        // `rlp(nonce_keys) || rlp(nonce_seq)` to the same charge, so a frame
+        // transaction is never signature bytes alone even with empty frame data.
+        let payload_calldata_gas = calldata_gas(tx.signatures[0].signature.as_ref());
+        let nonce_calldata_gas = calldata_gas(&tx.nonce_calldata());
+        let recent_root_calldata_gas = calldata_gas(&tx.recent_root_calldata());
+        assert!(
+            nonce_calldata_gas > 0,
+            "the keyed nonce is always encoded, so it always carries a byte charge"
+        );
+        assert_eq!(
+            recent_root_calldata_gas, 0,
+            "a transaction declaring no recent root reference pays exactly the \
+             EIP-8141 figure for that field"
+        );
+
+        let expected_intrinsic_gas = FRAME_TX_INTRINSIC_COST
+            + tx.frames.len() as u64 * FRAME_TX_PER_FRAME_COST
+            + SECP256K1_VERIFY_GAS
+            + payload_calldata_gas
+            + nonce_calldata_gas
+            + recent_root_calldata_gas;
+
+        assert_eq!(tx.mandatory_gas() + tx.data_cost(), expected_intrinsic_gas);
         assert_eq!(
             tx.total_gas_limit(),
             expected_intrinsic_gas + FRAME_GAS_LIMITS
@@ -4062,23 +4135,22 @@ mod intrinsic_gas_accounting_tests {
     #[test]
     fn intrinsic_gas_is_insensitive_to_structural_frame_fields() {
         let baseline = interop_reference_tx();
+        assert!(baseline.frames.len() >= 2);
 
         let mut restructured = interop_reference_tx();
-        restructured.frames[0].gas_limit = 1;
-        restructured.frames[1].gas_limit = 4_000_000_000;
+        restructured.frames[0].gas_limit += 1_000;
         restructured.frames[1].value = U256::from(1u64);
 
+        // Asserting the two components separately rather than their sum minus the
+        // frame gas: the frame gas limits are a term of `total_gas_limit`, so
+        // subtracting them back off cancels the very field under test.
+        assert_eq!(restructured.mandatory_gas(), baseline.mandatory_gas());
+        assert_eq!(restructured.data_cost(), baseline.data_cost());
+        // A frame gas limit is the one structural field `total_gas_limit` tracks,
+        // and it passes through with no other term moving.
         assert_eq!(
-            restructured.frames[0].data, baseline.frames[0].data,
-            "payload bytes must be unchanged for this test to be meaningful",
-        );
-        assert_eq!(restructured.frames[1].data, baseline.frames[1].data);
-        assert_eq!(restructured.signatures, baseline.signatures);
-
-        assert_eq!(
-            intrinsic_gas(&restructured),
-            intrinsic_gas(&baseline),
-            "structural frame fields (gas_limit, value) must not change intrinsic gas",
+            restructured.total_gas_limit(),
+            baseline.total_gas_limit() + 1_000
         );
     }
 }
