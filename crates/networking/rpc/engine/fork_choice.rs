@@ -51,13 +51,12 @@ pub(crate) fn parse_custody_columns(value: &Value) -> Result<Option<u128>, RpcEr
 /// Apply a custody column update received via `engine_forkchoiceUpdatedV4`.
 ///
 /// Lock discipline: each mempool accessor takes its own short-lived guard;
-/// no guard is held across the set+prune sequence.
+/// no guard is held across the read+set sequence.
 ///
-/// Broadcast wiring note: direct p2p broadcast of updated availability is not
-/// reachable from `RpcApiContext` (the context exposes a `PeerHandler` but not
-/// a channel to push availability advertisements). The set and prune steps are
-/// applied immediately; the p2p layer will pick up the updated `custody_columns`
-/// value on its next announce/flush cycle via `mempool.get_custody_columns()`.
+/// Direct p2p broadcast of updated availability is not reachable from
+/// `RpcApiContext` (the context exposes a `PeerHandler` but not a channel to
+/// push availability advertisements). The p2p layer picks up the new set on its
+/// next announce/flush cycle via `mempool.get_custody_columns()`.
 pub(crate) fn apply_custody_update(context: &RpcApiContext, custody_columns: Option<u128>) {
     let Some(new) = custody_columns else {
         // null / absent param — no custody change.
@@ -85,11 +84,11 @@ pub(crate) fn apply_custody_update(context: &RpcApiContext, custody_columns: Opt
     let contracted = prev & !new; // bits removed
 
     // Update the custody set; the p2p layer reads it on its next announce/flush
-    // cycle. Column-level cell pruning on contraction is intentionally NOT done
-    // here: retaining the extra cells is harmless and keeps them available to
-    // serving peers (so no availability-fault window), and the periodic mempool
-    // sweep still drops all cells for txs that leave the pool. See PLAN follow-ups
-    // for column-level pruning + broadcast-before-prune ordering.
+    // cycle. Cells for dropped columns are retained rather than pruned: pruning is
+    // optional (execution-apis amsterdam.md, engine_forkchoiceUpdatedV4 §3.3.2) and
+    // retaining them keeps us able to serve peers that already sampled us, so no
+    // availability-fault window opens. The periodic mempool sweep still drops all
+    // cells for txs that leave the pool.
     if let Err(e) = mempool.set_custody_columns(new) {
         warn!("apply_custody_update: failed to set custody_columns: {e}");
         return;
@@ -261,9 +260,12 @@ impl RpcHandler for ForkChoiceUpdatedV4 {
     }
 
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
+        // The custody set update runs independently of the fork choice update
+        // (execution-apis amsterdam.md, engine_forkchoiceUpdatedV4 §3.4), so it is
+        // applied before any early return from the forkchoice flow.
+        apply_custody_update(&context, self.custody_columns);
         let (head_block_opt, mut response) =
             handle_forkchoice(&self.fork_choice_state, context.clone(), 4).await?;
-        apply_custody_update(&context, self.custody_columns);
         if let (Some(head_block), Some(attributes)) = (head_block_opt, &self.payload_attributes) {
             validate_attributes_v4(attributes, &head_block, &context)?;
             let payload_id = build_payload_v4(attributes, context, &self.fork_choice_state).await?;
