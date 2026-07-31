@@ -570,26 +570,43 @@ fn frameparam_reads_frame_index_from_stack_top() {
     );
 }
 
-/// FRAMEPARAM(param=0x05, frameIndex=2) -> status of frame[2], then SSTORE at slot 0.
-/// Bytecode: PUSH1 0x05 (param), PUSH1 0x02 (frameIndex - top), FRAMEPARAM (0xB3),
+/// FRAMEPARAM(param=0x05, frameIndex=3) -> status of frame[3], then SSTORE at slot 0.
+/// Bytecode: PUSH1 0x05 (param), PUSH1 0x03 (frameIndex - top), FRAMEPARAM (0xB3),
 ///           PUSH1 0x00 (slot key), SSTORE (0x55), STOP (0x00).
-const FRAMEPARAM_READ_FRAME2_STATUS: &[u8] =
-    &[0x60, 0x05, 0x60, 0x02, 0xB3, 0x60, 0x00, 0x55, 0x00];
+const FRAMEPARAM_READ_FRAME3_STATUS: &[u8] =
+    &[0x60, 0x05, 0x60, 0x03, 0xB3, 0x60, 0x00, 0x55, 0x00];
 
+/// Covers both halves of atomic-batch revert status: the settled one (a frame the
+/// batch never reached reports `0x2` SKIPPED and is refunded) and the one
+/// `docs/eip-8141.md` §11 still marks UNRESOLVED pending cross-client
+/// confirmation (a frame that executed and succeeded before the failure reports
+/// `0x0` FAILURE and is charged its full `gas_limit`). The §11 assertions below
+/// pin today's behaviour so that resolving §11 the other way fails here loudly
+/// instead of silently changing consensus.
 #[test]
 fn frameparam_status_of_skipped_frame_is_two() {
     // EIP-8141: a frame skipped by a failed atomic batch reports status 0x2
     // (not 0x3). Layout:
     //   frame0: VERIFY on the sender -> APPROVE(3) -> payer + sender_approved.
-    //   frame1: DEFAULT, atomic-batch flag, reverts -> unrolls the batch.
-    //   frame2: DEFAULT, atomic-batch flag -> SKIPPED.
-    //   frame3: DEFAULT, no flag -> batch terminator, also SKIPPED.
-    //   frame4: DEFAULT, no flag -> reads FRAMEPARAM(0x05, 2) and stores it.
+    //   frame1: DEFAULT, atomic-batch flag, succeeds -> rolled back with the batch.
+    //   frame2: DEFAULT, atomic-batch flag, reverts -> unrolls the batch.
+    //   frame3: DEFAULT, atomic-batch flag -> SKIPPED.
+    //   frame4: DEFAULT, no flag -> batch terminator, also SKIPPED.
+    //   frame5: DEFAULT, no flag -> reads FRAMEPARAM(0x05, 3) and stores it.
+    const ROLLED_BACK_FRAME_GAS_LIMIT: u64 = 30_000;
     let reverter = Address::from_low_u64_be(0xD1);
     let stop_ct = Address::from_low_u64_be(0xD2);
     let reader = Address::from_low_u64_be(0xD3);
     let tx = frame_tx_with_frames(vec![
         verify_frame(FUNDED_SENDER),
+        Frame {
+            mode: u8::from(FrameMode::Default),
+            flags: 0x04,
+            target: Some(stop_ct),
+            gas_limit: ROLLED_BACK_FRAME_GAS_LIMIT,
+            value: U256::zero(),
+            data: Bytes::new(),
+        },
         Frame {
             mode: u8::from(FrameMode::Default),
             flags: 0x04,
@@ -644,7 +661,7 @@ fn frameparam_status_of_skipped_frame_is_two() {
             reader,
             U256::zero(),
             0,
-            Bytes::from(FRAMEPARAM_READ_FRAME2_STATUS.to_vec()),
+            Bytes::from(FRAMEPARAM_READ_FRAME3_STATUS.to_vec()),
         ),
     ];
     let (result, db) = run_frame_tx(&accounts, tx);
@@ -654,8 +671,29 @@ fn frameparam_status_of_skipped_frame_is_two() {
         .frame_results
         .expect("frame tx report must carry per-frame results");
     assert_eq!(
-        frame_results[2].0, FRAME_RECEIPT_STATUS_SKIPPED,
-        "frame[2] must be recorded as skipped"
+        frame_results[3].0, FRAME_RECEIPT_STATUS_SKIPPED,
+        "frame[3] must be recorded as skipped"
+    );
+    assert_eq!(
+        frame_results[4].0, FRAME_RECEIPT_STATUS_SKIPPED,
+        "the batch terminator is part of the skip"
+    );
+    // Skipped frames are refunded, and `gas_used` here feeds the block header's
+    // `gasUsed`, so the zero is consensus-visible.
+    assert_eq!(frame_results[3].1, 0, "a skipped frame consumes no gas");
+    assert_eq!(frame_results[4].1, 0);
+    // docs/eip-8141.md §11, UNRESOLVED: frame[1] executed and succeeded before the
+    // batch failed, and is rewritten as FAILURE charged its full gas_limit rather
+    // than SKIPPED and refunded. That differs from the single-frame path, where a
+    // frame is only charged what it used.
+    assert_eq!(
+        frame_results[1].0,
+        ethrex_common::types::FRAME_RECEIPT_STATUS_FAILURE,
+        "a succeeded-then-rolled-back batch frame reports failure, not skipped"
+    );
+    assert_eq!(
+        frame_results[1].1, ROLLED_BACK_FRAME_GAS_LIMIT,
+        "a rolled-back batch frame is charged its full gas limit"
     );
 
     // FRAMEPARAM(0x05) must surface the same code, and it must be 2.
