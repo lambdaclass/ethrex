@@ -16,7 +16,7 @@ AMSTERDAM_FIXTURES_FILE := ../.fixtures_url_amsterdam
 AMSTERDAM_ARTIFACT := amsterdam-tests.tar.gz
 AMSTERDAM_URL := $(shell cat $(AMSTERDAM_FIXTURES_FILE))
 
-# zkevm@v0.6.2 is filled against glamsterdam-devnet v7.2.0 (the same base as the
+# zkevm@v0.6.2 is filled against glamsterdam-devnet v7.2.0 (one devnet behind the
 # Amsterdam bundle) but additionally carries the EIP-8025 stateless witness
 # fields (executionWitness / statelessInputBytes / statelessOutputBytes). Both
 # bundles extract a `for_amsterdam/` subtree, so we keep the zkevm bundle in a
@@ -52,7 +52,11 @@ $(LEGACYTEST_VECTORS_DIR): $(LEGACYTEST_ARTIFACT)
 $(AMSTERDAM_ARTIFACT): $(AMSTERDAM_FIXTURES_FILE)
 	curl -L -o $(AMSTERDAM_ARTIFACT) $(AMSTERDAM_URL)
 
+# Clear the subtree first: the bundle is overlaid onto an existing `vectors/eest`, so
+# fixtures renamed or dropped between devnet releases would otherwise survive as stale
+# leftovers and run against the current client.
 $(SPECTEST_VECTORS_DIR)/for_amsterdam: $(AMSTERDAM_ARTIFACT) $(SPECTEST_VECTORS_DIR)
+	rm -rf $(SPECTEST_VECTORS_DIR)/for_amsterdam
 	tar -xzf $(AMSTERDAM_ARTIFACT) --strip-components=2 -C $(SPECTEST_VECTORS_DIR) fixtures/blockchain_tests/for_amsterdam
 
 amsterdam-vectors: $(SPECTEST_VECTORS_DIR)/for_amsterdam

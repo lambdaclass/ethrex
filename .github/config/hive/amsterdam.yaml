@@ -1,4 +1,4 @@
 # Amsterdam (BAL) hive test configuration
-# Pinned to tests-glamsterdam-devnet@v7.2.0 (execution-specs `devnets/glamsterdam/7`)
-fixtures: https://github.com/ethereum/execution-specs/releases/download/tests-glamsterdam-devnet%40v7.2.0/fixtures_glamsterdam-devnet.tar.gz
-eels_commit: 50a25a54997581820640a1820e9ebb4bae93486b
+# Pinned to tests-glamsterdam-devnet@v8.0.0 (execution-specs `devnets/glamsterdam/8`)
+fixtures: https://github.com/ethereum/execution-specs/releases/download/tests-glamsterdam-devnet%40v8.0.0/fixtures_glamsterdam-devnet.tar.gz
+eels_commit: d681ca4fd019ee80099dd1899bdbee419cab8e0b
