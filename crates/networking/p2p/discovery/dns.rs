@@ -14,6 +14,13 @@
 //! `base32(keccak256(child_record_text)[..16])` — verified on every fetch, which
 //! makes the whole tree tamper-evident under one signature.
 //!
+//! Note that a bundled list of discv5 ENRs is *not* an equivalent fallback, even
+//! though other clients ship one: theirs hold only consensus-layer records (an
+//! `eth2`/`attnets` key, no `eth` key, and a TCP port of 0 or a beacon port), so
+//! none of those nodes can ever become an execution-layer peer. A DNS node list
+//! is the only bootstrap source that is both independent of the bootnodes and
+//! actually made of execution-layer nodes.
+//!
 //! See <https://eips.ethereum.org/EIPS/eip-1459>.
 
 use std::{collections::HashSet, future::Future, str::FromStr, time::Duration};
@@ -51,10 +58,13 @@ pub const DEFAULT_MAX_REQUESTS: usize = 512;
 /// How deep we follow `enrtree://` links into other trees.
 const MAX_LINK_DEPTH: usize = 1;
 
-/// Interval between DNS re-syncs. The published trees change on the order of
-/// minutes, and this path only needs to keep a *bootstrap* supply of contacts
-/// available, so a slow poll is enough.
+/// Interval between DNS re-syncs once a sync has succeeded. The published trees
+/// change on the order of minutes, and this path only needs to keep a
+/// *bootstrap* supply of contacts available, so a slow poll is enough.
 pub const DNS_SYNC_INTERVAL: Duration = Duration::from_secs(30 * 60);
+/// First retry delay after a sync that produced no nodes. Doubles up to
+/// [`DNS_SYNC_INTERVAL`]; see [`next_sync_delay`].
+pub const DNS_RETRY_MIN_INTERVAL: Duration = Duration::from_secs(60);
 
 #[derive(Debug, Error)]
 pub enum DnsDiscoveryError {
@@ -494,12 +504,29 @@ impl TxtResolver for SystemResolver {
     }
 }
 
+/// Delay before the next sync, given how many syncs in a row produced nothing.
+///
+/// A sync that yields no nodes retries quickly and backs off toward the
+/// steady-state interval. This matters because DNS is not merely a supplement in
+/// practice: when the bootnodes are unreachable it is the *only* way in, so
+/// waiting a full interval after a transient resolver failure would leave the
+/// node peerless for that whole time.
+fn next_sync_delay(consecutive_empty_syncs: u32) -> Duration {
+    let Some(attempt) = consecutive_empty_syncs.checked_sub(1) else {
+        return DNS_SYNC_INTERVAL;
+    };
+    // Shift is clamped well below u32's width, so the doubling cannot overflow.
+    DNS_RETRY_MIN_INTERVAL
+        .saturating_mul(1u32 << attempt.min(16))
+        .min(DNS_SYNC_INTERVAL)
+}
+
 /// Periodically syncs the configured DNS node lists into the peer table.
 ///
-/// Runs alongside discv4/discv5 rather than gating startup on it: DNS is a
-/// bootstrap *supplement*, and a slow or unreachable resolver must never delay
-/// the node coming up. Contacts are added exactly the way bootnodes are, so they
-/// get pinged, validated and dialed through the existing paths.
+/// Runs alongside discv4/discv5 rather than gating startup on it, so a slow or
+/// unreachable resolver never delays the node coming up. Contacts are added
+/// exactly the way bootnodes are, so they get pinged, validated and dialed
+/// through the existing paths.
 pub async fn run_dns_discovery(
     peer_table: PeerTable,
     links: Vec<EnrTreeLink>,
@@ -520,11 +547,17 @@ pub async fn run_dns_discovery(
     info!(trees = %domains, "Starting DNS discovery");
 
     let discovery = DnsDiscovery::new(resolver, links);
+    let mut consecutive_empty_syncs = 0u32;
     loop {
         let nodes = discovery.sync().await;
         if nodes.is_empty() {
-            warn!("DNS discovery sync returned no nodes");
+            consecutive_empty_syncs = consecutive_empty_syncs.saturating_add(1);
+            warn!(
+                attempt = consecutive_empty_syncs,
+                "DNS discovery sync returned no nodes"
+            );
         } else {
+            consecutive_empty_syncs = 0;
             info!(count = nodes.len(), "DNS discovery: adding contacts");
             for protocol in &protocols {
                 if let Err(e) = peer_table.new_contacts(nodes.clone(), *protocol) {
@@ -532,7 +565,9 @@ pub async fn run_dns_discovery(
                 }
             }
         }
-        tokio::time::sleep(DNS_SYNC_INTERVAL).await;
+        let delay = next_sync_delay(consecutive_empty_syncs);
+        debug!(?delay, "DNS discovery: sleeping until next sync");
+        tokio::time::sleep(delay).await;
     }
 }
 
@@ -568,6 +603,27 @@ mod tests {
             labels.push(label);
         }
         (dns, labels)
+    }
+
+    #[test]
+    fn retries_quickly_after_an_empty_sync_then_backs_off() {
+        // A successful sync waits the full steady-state interval.
+        assert_eq!(next_sync_delay(0), DNS_SYNC_INTERVAL);
+        // The first empty sync must retry soon, not an interval later: with the
+        // bootnodes unreachable this is the only path to a peer.
+        assert_eq!(next_sync_delay(1), DNS_RETRY_MIN_INTERVAL);
+        assert_eq!(next_sync_delay(2), DNS_RETRY_MIN_INTERVAL * 2);
+        assert_eq!(next_sync_delay(3), DNS_RETRY_MIN_INTERVAL * 4);
+        // Backoff is monotonic and never exceeds the steady-state interval.
+        let mut previous = Duration::ZERO;
+        for attempt in 0..64 {
+            let delay = next_sync_delay(attempt + 1);
+            assert!(delay <= DNS_SYNC_INTERVAL, "attempt {attempt} overshot");
+            assert!(delay >= previous, "attempt {attempt} went backwards");
+            previous = delay;
+        }
+        // Deep into the backoff it has saturated rather than overflowed.
+        assert_eq!(next_sync_delay(u32::MAX), DNS_SYNC_INTERVAL);
     }
 
     #[test]
