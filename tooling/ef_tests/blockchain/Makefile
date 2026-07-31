@@ -16,6 +16,13 @@ AMSTERDAM_FIXTURES_FILE := ../.fixtures_url_amsterdam
 AMSTERDAM_ARTIFACT := amsterdam-tests.tar.gz
 AMSTERDAM_URL := $(shell cat $(AMSTERDAM_FIXTURES_FILE))
 
+# Subtrees the Amsterdam bundle contributes. `for_bpo2toamsterdamattime15k` holds the
+# fork-activation fixtures (a header field appearing mid-chain, the gas schedule
+# switching between blocks); it exists only in this bundle, so omitting it leaves the
+# whole fork boundary untested.
+AMSTERDAM_SUBTREES := for_amsterdam for_bpo2toamsterdamattime15k
+AMSTERDAM_STAMP := $(SPECTEST_VECTORS_DIR)/.amsterdam_overlay
+
 # zkevm@v0.6.2 is filled against glamsterdam-devnet v7.2.0 (one devnet behind the
 # Amsterdam bundle) but additionally carries the EIP-8025 stateless witness
 # fields (executionWitness / statelessInputBytes / statelessOutputBytes). Both
@@ -55,14 +62,16 @@ $(LEGACYTEST_VECTORS_DIR): $(LEGACYTEST_ARTIFACT)
 $(AMSTERDAM_ARTIFACT): $(AMSTERDAM_FIXTURES_FILE) | $(SPECTEST_VECTORS_DIR)
 	curl -L -o $(AMSTERDAM_ARTIFACT) $(AMSTERDAM_URL)
 
-# Clear the subtree first: the bundle is overlaid onto an existing `vectors/eest`, so
+# Clear the subtrees first: the bundle is overlaid onto an existing `vectors/eest`, so
 # fixtures renamed or dropped between devnet releases would otherwise survive as stale
 # leftovers and run against the current client.
-$(SPECTEST_VECTORS_DIR)/for_amsterdam: $(AMSTERDAM_ARTIFACT) $(SPECTEST_VECTORS_DIR)
-	rm -rf $(SPECTEST_VECTORS_DIR)/for_amsterdam
-	tar -xzf $(AMSTERDAM_ARTIFACT) --strip-components=2 -C $(SPECTEST_VECTORS_DIR) fixtures/blockchain_tests/for_amsterdam
+$(AMSTERDAM_STAMP): $(AMSTERDAM_ARTIFACT) $(SPECTEST_VECTORS_DIR)
+	rm -rf $(addprefix $(SPECTEST_VECTORS_DIR)/,$(AMSTERDAM_SUBTREES))
+	tar -xzf $(AMSTERDAM_ARTIFACT) --strip-components=2 -C $(SPECTEST_VECTORS_DIR) \
+		$(addprefix fixtures/blockchain_tests/,$(AMSTERDAM_SUBTREES))
+	touch $@
 
-amsterdam-vectors: $(SPECTEST_VECTORS_DIR)/for_amsterdam
+amsterdam-vectors: $(AMSTERDAM_STAMP)
 
 $(ZKEVM_ARTIFACT): $(ZKEVM_FIXTURES_FILE)
 	curl -L -o $(ZKEVM_ARTIFACT) $(ZKEVM_URL)
