@@ -3150,3 +3150,79 @@ mod cumulative_balance_tests {
         assert_eq!(total, expected);
     }
 }
+
+#[tokio::test]
+async fn revalidation_evicts_a_frame_tx_whose_recent_root_aged_out() {
+    // EIP-8272 §Public mempool handling: a slot advance can push a declared
+    // reference out of the usable window. Revalidation must re-run the freshness
+    // conditions against the new head and evict what they now reject, instead of
+    // leaving the tx pooled until block building fails it.
+    let reference = recent_root_reference(RECENT_ROOT_TEST_HEAD_SLOT);
+    let store = setup_hegota_store_with_slot(std::slice::from_ref(&reference)).await;
+    let blockchain = Blockchain::default_with_store(store);
+
+    let tx = Transaction::FrameTransaction(frame_tx_with_reference(reference));
+    let tx_hash = blockchain
+        .add_transaction_to_pool(tx)
+        .await
+        .expect("frame tx with a committed in-window reference must be admitted");
+
+    // A head whose slot leaves the reference one slot past the usable window.
+    // The window check is pure arithmetic and precedes the storage read.
+    let aged_out_block = Block::new(
+        BlockHeader {
+            number: 1,
+            gas_limit: 100_000_000,
+            parent_hash: H256::zero(),
+            slot_number: Some(RECENT_ROOT_TEST_HEAD_SLOT + FRAME_TX_RECENT_ROOT_USABLE_WINDOW + 1),
+            ..Default::default()
+        },
+        BlockBody::empty(),
+    );
+
+    blockchain
+        .revalidate_frame_txs_after_block(&aged_out_block)
+        .expect("revalidate_frame_txs_after_block must not error");
+
+    assert!(
+        blockchain
+            .mempool
+            .get_mempool_transaction_by_hash(tx_hash)
+            .expect("get_mempool_transaction_by_hash")
+            .is_none(),
+        "a frame tx whose recent-root reference aged out must be evicted"
+    );
+}
+
+#[tokio::test]
+async fn revalidation_keeps_a_frame_tx_whose_recent_root_is_still_valid() {
+    // The complement of the eviction case: a still-committed, still-in-window
+    // reference must survive revalidation, so the new check cannot drain the pool.
+    let reference = recent_root_reference(RECENT_ROOT_TEST_HEAD_SLOT);
+    let store = setup_hegota_store_with_slot(std::slice::from_ref(&reference)).await;
+    let head = store
+        .get_block_by_number(0)
+        .await
+        .expect("read genesis block")
+        .expect("genesis block present");
+    let blockchain = Blockchain::default_with_store(store);
+
+    let tx = Transaction::FrameTransaction(frame_tx_with_reference(reference));
+    let tx_hash = blockchain
+        .add_transaction_to_pool(tx)
+        .await
+        .expect("frame tx with a committed in-window reference must be admitted");
+
+    blockchain
+        .revalidate_frame_txs_after_block(&head)
+        .expect("revalidate_frame_txs_after_block must not error");
+
+    assert!(
+        blockchain
+            .mempool
+            .get_mempool_transaction_by_hash(tx_hash)
+            .expect("get_mempool_transaction_by_hash")
+            .is_some(),
+        "a frame tx with a valid reference must survive revalidation"
+    );
+}
