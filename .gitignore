@@ -40,6 +40,7 @@ jwt.hex
 /tmp
 
 *tests*.tar.gz
+tooling/ef_tests/state/test.tar.gz
 
 .env
 
