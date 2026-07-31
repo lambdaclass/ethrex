@@ -16,11 +16,11 @@
 
 ## Current Devnet
 
-**bal-devnet-7** — last `bal-`-prefixed devnet. Future devnets prefixed `glamsterdam-`.
+**glamsterdam-devnet-8**
 
-- Spec baseline: [`devnets/bal/7`](https://github.com/ethereum/execution-specs/tree/devnets/bal/7)
-- Fixtures: [`tests-bal@v7.2.0`](https://github.com/ethereum/execution-specs/releases/tag/tests-bal@v7.2.0) (`.github/config/hive/amsterdam.yaml`)
-- EELS commit: `a3e5201a53d8c94e2283ae170a2c71bbc233f7e7`
+- Spec baseline: [`devnets/glamsterdam/8`](https://github.com/ethereum/execution-specs/tree/devnets/glamsterdam/8)
+- Fixtures: [`tests-glamsterdam-devnet@v8.0.0`](https://github.com/ethereum/execution-specs/releases/tag/tests-glamsterdam-devnet@v8.0.0) (`.github/config/hive/amsterdam.yaml`, `tooling/ef_tests/.fixtures_url_amsterdam`)
+- EELS commit: `d681ca4fd019ee80099dd1899bdbee419cab8e0b`
 - Status: 🟢 aligned — blockchain ef-tests + hive `eels/consume-engine` Amsterdam all passing
 - Tracking: [#6583]
 
@@ -130,7 +130,7 @@ Not implemented. Tracked at [#6212].
 - **`debug_getRawBlockAccessList` RPC + `-32001` error code** per [execution-apis#794](https://github.com/ethereum/execution-apis/pull/794) — required for bal-devnet-7 protocol-side; tracked separately.
 - **Debug receipt fields** ([PM #2033](https://github.com/ethereum/pm/issues/2033#issuecomment-4397074196)) — qu0b polling clients on extending `debug_getBlockReceipts` with `regularGasUsed` / `stateGasCharged` / `stateGasRefunded` / `cumulative*`. Cross-client debug aid; not bal-7 scope.
 - **Deferred-on-success state-gas charging** for `CREATE`/`CREATE2`/`CALL*` (misilva73 audit point #3 in [specs#2804](https://github.com/ethereum/execution-specs/issues/2804)) — not landing in bal-7 per Maria Silva on Discord 2026-05-08.
-- **EIP-8025 zkboost fixtures** — RESOLVED: the stateless harness now tracks `tests-zkevm@v0.6.2` (filled against glamsterdam-devnet v7.2.0, matching the live Amsterdam bundle); all fixtures run with no blanket or per-fork skip and pass.
+- **EIP-8025 zkboost fixtures** — the stateless harness tracks `tests-zkevm@v0.6.2`, the newest zkEVM release, filled against glamsterdam-devnet v7.2.0. The live Amsterdam bundle is now v8.0.0, so Amsterdam+ fixtures are skipped by fork in the stateless run until a devnet-8 zkEVM bundle ships. See `docs/known_issues.md`.
 - **Remaining gas repricing EIPs** (2780, 7904, 8038) — no other client has started; revisit if SFI'd at ACDE.
 
 ---

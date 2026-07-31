@@ -24,7 +24,11 @@ $(SPECTEST_VECTORS_DIR): $(SPECTEST_ARTIFACT)
 $(AMSTERDAM_ARTIFACT): $(AMSTERDAM_FIXTURES_FILE)
 	curl -L -o $(AMSTERDAM_ARTIFACT) $(AMSTERDAM_URL)
 
+# Clear the subtree first: the bundle is overlaid onto an existing `vectors/eest`, so
+# fixtures renamed or dropped between devnet releases would otherwise survive as stale
+# leftovers and run against the current client.
 $(SPECTEST_VECTORS_DIR)/for_amsterdam: $(AMSTERDAM_ARTIFACT) $(SPECTEST_VECTORS_DIR)
+	rm -rf $(SPECTEST_VECTORS_DIR)/for_amsterdam
 	tar -xzf $(AMSTERDAM_ARTIFACT) --strip-components=2 -C $(SPECTEST_VECTORS_DIR) fixtures/blockchain_tests_engine/for_amsterdam
 
 amsterdam-vectors: $(SPECTEST_VECTORS_DIR)/for_amsterdam ## 📥 Overlay glamsterdam-devnet-6 engine fixtures onto vectors/eest
