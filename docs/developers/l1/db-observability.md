@@ -17,7 +17,7 @@ pre-built Grafana dashboard renders them out of the box.
    in-memory backend.
 2. *(Optional)* Set `ETHREX_ROCKSDB_STATISTICS=1` to enable RocksDB's internal
    statistics, which populate the block-cache **hit/miss** counters
-   (`ethrex_db_block_cache_hits` / `_misses`). This adds a small
+   (`ethrex_db_block_cache_hits_total` / `_misses_total`). This adds a small
    (~1–2%) overhead and is off by default; every other metric works without it.
 
 The `ethrex DB Observability` dashboard is provisioned automatically from
@@ -53,8 +53,8 @@ carry a `cf` label (`bodies`, `receipts_v2`, `transaction_locations`, `headers`,
 | `ethrex_db_block_cache_capacity_bytes` | Shared block-cache capacity |
 | `ethrex_db_block_cache_pinned_bytes` | Block-cache bytes pinned (index/filter blocks) |
 | `ethrex_db_running_compactions` | Currently running compactions |
-| `ethrex_db_block_cache_hits` | Cumulative block-cache hits (requires `ETHREX_ROCKSDB_STATISTICS`) |
-| `ethrex_db_block_cache_misses` | Cumulative block-cache misses (requires `ETHREX_ROCKSDB_STATISTICS`) |
+| `ethrex_db_block_cache_hits_total` | Cumulative block-cache hits (requires `ETHREX_ROCKSDB_STATISTICS`) |
+| `ethrex_db_block_cache_misses_total` | Cumulative block-cache misses (requires `ETHREX_ROCKSDB_STATISTICS`) |
 | `ethrex_db_backfill_frontier_block` | Lowest block with full chain data on disk (the backfill frontier / `earliest_block_number`) |
 
 ## The dashboard

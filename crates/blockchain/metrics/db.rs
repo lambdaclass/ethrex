@@ -1,5 +1,8 @@
-use prometheus::{IntGauge, IntGaugeVec, register_int_gauge, register_int_gauge_vec};
-use std::sync::LazyLock;
+use prometheus::{
+    IntCounter, IntGauge, IntGaugeVec, register_int_counter, register_int_gauge,
+    register_int_gauge_vec,
+};
+use std::sync::{Arc, LazyLock, Mutex};
 
 // Metrics defined in this module register into the Prometheus default registry,
 // so the metrics API exposes them via `gather_default_metrics()`. They are
@@ -28,9 +31,14 @@ pub struct MetricsDB {
     block_cache_pinned_bytes: IntGauge,
     running_compactions: IntGauge,
     /// Cumulative block-cache hits (0 unless RocksDB statistics are enabled).
-    block_cache_hits: IntGauge,
+    block_cache_hits: IntCounter,
     /// Cumulative block-cache misses (0 unless RocksDB statistics are enabled).
-    block_cache_misses: IntGauge,
+    block_cache_misses: IntCounter,
+    /// Last absolute ticker values seen, so the counters above can be advanced by
+    /// deltas. RocksDB tickers are absolute and reset to zero when the DB is
+    /// reopened; feeding them straight into a gauge made the series go backwards on
+    /// every restart, which `rate()` cannot interpret.
+    last_cache_tickers: Arc<Mutex<(u64, u64)>>,
     /// Lowest block with full chain data on disk (the history-backfill frontier /
     /// `earliest_block_number`); descends toward the floor as backfill runs.
     backfill_frontier_block: IntGauge,
@@ -118,16 +126,17 @@ impl MetricsDB {
                 "Number of currently running RocksDB compactions"
             )
             .expect("Failed to create ethrex_db_running_compactions"),
-            block_cache_hits: register_int_gauge!(
-                "ethrex_db_block_cache_hits",
+            block_cache_hits: register_int_counter!(
+                "ethrex_db_block_cache_hits_total",
                 "Cumulative RocksDB block cache hits (requires statistics enabled)"
             )
-            .expect("Failed to create ethrex_db_block_cache_hits"),
-            block_cache_misses: register_int_gauge!(
-                "ethrex_db_block_cache_misses",
+            .expect("Failed to create ethrex_db_block_cache_hits_total"),
+            block_cache_misses: register_int_counter!(
+                "ethrex_db_block_cache_misses_total",
                 "Cumulative RocksDB block cache misses (requires statistics enabled)"
             )
-            .expect("Failed to create ethrex_db_block_cache_misses"),
+            .expect("Failed to create ethrex_db_block_cache_misses_total"),
+            last_cache_tickers: Arc::new(Mutex::new((0, 0))),
             backfill_frontier_block: register_int_gauge!(
                 "ethrex_db_backfill_frontier_block",
                 "Lowest block with full chain data on disk (history-backfill frontier)"
@@ -193,8 +202,23 @@ impl MetricsDB {
         self.block_cache_pinned_bytes
             .set(block_cache_pinned_bytes as i64);
         self.running_compactions.set(running_compactions as i64);
-        self.block_cache_hits.set(block_cache_hits as i64);
-        self.block_cache_misses.set(block_cache_misses as i64);
+        // Advance the counters by the delta since the last sample. A value lower
+        // than the last one means RocksDB's statistics were reset (DB reopened), so
+        // treat the new value as the delta rather than emitting a decrease.
+        if let Ok(mut last) = self.last_cache_tickers.lock() {
+            let (last_hits, last_misses) = *last;
+            self.block_cache_hits.inc_by(
+                block_cache_hits
+                    .saturating_sub(last_hits)
+                    .min(block_cache_hits),
+            );
+            self.block_cache_misses.inc_by(
+                block_cache_misses
+                    .saturating_sub(last_misses)
+                    .min(block_cache_misses),
+            );
+            *last = (block_cache_hits, block_cache_misses);
+        }
     }
 
     /// Set the backfill frontier (lowest block with full chain data).

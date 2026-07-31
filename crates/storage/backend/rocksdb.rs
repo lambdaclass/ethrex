@@ -109,12 +109,25 @@ impl RocksDBBackend {
         // overhead; enable with ETHREX_ROCKSDB_STATISTICS=1 on observability
         // nodes. Per-CF size/key/file properties below need no statistics.
         // Parse the value rather than testing presence, so `=0` disables instead of
-        // enabling. Documented as `ETHREX_ROCKSDB_STATISTICS=1`; a non-numeric value
-        // is treated as off.
-        let stats_enabled = std::env::var("ETHREX_ROCKSDB_STATISTICS")
-            .ok()
-            .and_then(|value| value.trim().parse::<u64>().ok())
-            .is_some_and(|value| value != 0);
+        // enabling. Accepts a number (`1`/`0`) or a bool (`true`/`false`), since both
+        // are what an operator reaches for; anything else warns instead of silently
+        // choosing a behaviour.
+        let stats_enabled = match std::env::var("ETHREX_ROCKSDB_STATISTICS") {
+            Err(_) => false,
+            Ok(raw) => {
+                let value = raw.trim();
+                match value.parse::<u64>().map(|n| n != 0) {
+                    Ok(enabled) => enabled,
+                    Err(_) => value.parse::<bool>().unwrap_or_else(|_| {
+                        warn!(
+                            value,
+                            "Ignoring unparseable ETHREX_ROCKSDB_STATISTICS; expected 1/0 or true/false"
+                        );
+                        false
+                    }),
+                }
+            }
+        };
         if stats_enabled {
             opts.enable_statistics();
         }
