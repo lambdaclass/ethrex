@@ -2343,12 +2343,9 @@ impl FrameTransaction {
     /// EIP-8272 `recent_root_calldata`: `rlp(recent_root_references)`. The bytes
     /// this EIP adds to the payload are priced exactly as EIP-8141 prices frame
     /// and signature data, so they enter both `data_cost` and `calldata_tokens`.
-    /// Empty when no reference is declared, so a reference-free transaction's
-    /// gas is exactly the EIP-8141 figure.
+    /// An empty list still encodes as `0xc0` and occupies that byte on the wire,
+    /// so it is priced; only `recent_root_reference_intrinsic_gas` is waived.
     pub fn recent_root_calldata(&self) -> Vec<u8> {
-        if self.recent_root_references.is_empty() {
-            return Vec::new();
-        }
         let mut buf = Vec::new();
         self.recent_root_references.encode(&mut buf);
         buf
@@ -5761,7 +5758,9 @@ mod tests {
         }];
         let mut refs_buf = Vec::new();
         refs.encode(&mut refs_buf);
-        let expected_calldata: u64 = refs_buf.iter().map(|b| if *b == 0 { 4 } else { 16 }).sum();
+        let calldata: u64 = refs_buf.iter().map(|b| if *b == 0 { 4 } else { 16 }).sum();
+        // The empty list the baseline carries is itself one 0xc0 byte.
+        let expected_calldata = calldata - 16;
         let expected_intrinsic =
             FRAME_TX_RECENT_ROOT_REFERENCE_ADDRESS_GAS + FRAME_TX_RECENT_ROOT_REFERENCE_GAS;
 
@@ -5771,6 +5770,13 @@ mod tests {
             base + expected_calldata + expected_intrinsic,
             "reference-carrying tx must add rlp(refs) calldata cost + intrinsic reference gas",
         );
+    }
+
+    #[test]
+    fn empty_recent_root_reference_list_is_charged_the_byte_it_occupies() {
+        let mut tx = make_test_frame_tx();
+        tx.recent_root_references = vec![];
+        assert_eq!(tx.recent_root_calldata(), vec![0xc0]);
     }
 
     fn make_frame_tx_with_gas_limits(limits: Vec<u64>) -> FrameTransaction {
