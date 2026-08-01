@@ -518,10 +518,11 @@ pub struct FrameTxContext {
     pub tx: ethrex_common::types::FrameTransaction,
     /// Whether APPROVE was called in the current frame
     pub approve_called_in_current_frame: bool,
-    /// Cached `FrameTransaction::total_gas_limit()`. Computing it re-encodes
-    /// every frame and signature, so it must not run per-opcode (TXPARAM 0x06,
+    /// Cached `FrameTransaction::max_gas()`, the EIP-8141 `max_gas` the payer's
+    /// maximum cost is reserved against. Computing it re-encodes every frame and
+    /// signature, so it must not run per-opcode (TXPARAM 0x06,
     /// compute_tx_max_cost). Computed once at tx entry.
-    pub total_gas_limit: u64,
+    pub max_gas: u64,
 }
 
 impl FrameTxContext {
@@ -1597,6 +1598,7 @@ impl<'a> VM<'a> {
         // Initialize FrameTxContext
         let sig_hash = frame_tx.compute_sig_hash();
         let total_gas_limit = frame_tx.total_gas_limit();
+        let max_gas = frame_tx.max_gas();
         self.frame_tx_context = Some(FrameTxContext {
             sender_approved: false,
             payer_address: None,
@@ -1605,7 +1607,7 @@ impl<'a> VM<'a> {
             sig_hash,
             tx: frame_tx.clone(),
             approve_called_in_current_frame: false,
-            total_gas_limit,
+            max_gas,
         });
 
         // EIP-8141: every outer signature must validate
@@ -2387,7 +2389,7 @@ impl<'a> VM<'a> {
         }
 
         let sig_hash = frame_tx.compute_sig_hash();
-        let total_gas_limit = frame_tx.total_gas_limit();
+        let max_gas = frame_tx.max_gas();
         self.frame_tx_context = Some(FrameTxContext {
             sender_approved: false,
             payer_address: None,
@@ -2396,7 +2398,7 @@ impl<'a> VM<'a> {
             sig_hash,
             tx: frame_tx.clone(),
             approve_called_in_current_frame: false,
-            total_gas_limit,
+            max_gas,
         });
 
         if !validate_frame_signatures(

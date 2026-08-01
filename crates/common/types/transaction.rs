@@ -2155,6 +2155,18 @@ impl FrameTransaction {
             )
     }
 
+    /// EIP-8141 `max_gas`: what the payer's maximum cost is reserved against.
+    ///
+    /// A transaction whose frames reserve less than its own calldata floor is not
+    /// invalid — the spec raises the reservation to the floor instead, so the payer
+    /// can always cover the floor-priced charge that settlement applies. The extra
+    /// headroom is never spendable by a frame (each keeps its own `gas_limit`); it
+    /// is reserved and refunded.
+    pub fn max_gas(&self) -> u64 {
+        self.total_gas_limit()
+            .max(self.mandatory_gas().saturating_add(self.calldata_floor_gas()))
+    }
+
     /// The expiry deadline (8-byte big-endian) of this transaction's expiry
     /// verifier frame, if one exists with well-formed data.
     pub fn expiry_deadline(&self) -> Option<u64> {
@@ -2320,15 +2332,6 @@ impl FrameTransaction {
                     Some(_) => {}
                 }
             }
-        }
-        // Per EIP-8141, the EIP-7623 calldata floor must be reserved independently
-        // of execution: the derived `tx_gas_limit` has to cover the mandatory costs
-        // plus the floor, or the transaction cannot pay for the data it carries.
-        let floor_gas = self.calldata_floor_gas();
-        if self.total_gas_limit() < self.mandatory_gas().saturating_add(floor_gas) {
-            return Err(format!(
-                "Total gas limit does not reserve the calldata floor of {floor_gas}"
-            ));
         }
         Ok(())
     }

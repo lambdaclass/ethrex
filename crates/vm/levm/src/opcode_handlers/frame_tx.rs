@@ -40,7 +40,7 @@ pub fn u256_to_offset(value: U256) -> Option<usize> {
 
 /// Compute the transaction's MAXIMUM cost (EIP-8141 §Gas Accounting: APPROVE must
 /// "collect the transaction's maximum cost from payer"):
-/// `max_cost = max_fee_per_gas * total_gas_limit
+/// `max_cost = max_fee_per_gas * max_gas
 ///           + len(blob_hashes) * 131072 * max_fee_per_blob_gas`.
 /// This is the single definition of "maximum cost": APPROVE (scopes 0x1/0x3)
 /// debits it from the payer, TXPARAM(0x06) reports it, and the
@@ -51,7 +51,7 @@ pub fn u256_to_offset(value: U256) -> Option<usize> {
 /// non-refundable).
 pub(crate) fn compute_tx_max_cost(ctx: &crate::vm::FrameTxContext) -> Result<U256, VMError> {
     let gas_cost = U256::from(ctx.tx.max_fee_per_gas)
-        .checked_mul(U256::from(ctx.total_gas_limit))
+        .checked_mul(U256::from(ctx.max_gas))
         .ok_or(ExceptionalHalt::InvalidOpcode)?;
     let blob_cost = U256::from(ctx.tx.blob_versioned_hashes.len())
         .checked_mul(U256::from(131072u64))
@@ -671,7 +671,7 @@ mod max_cost_tests {
     use crate::vm::FrameTxContext;
     use ethrex_common::{H256, U256, types::FrameTransaction};
 
-    fn ctx(max_fee: u64, blobs: usize, max_blob_fee: u64, total_gas_limit: u64) -> FrameTxContext {
+    fn ctx(max_fee: u64, blobs: usize, max_blob_fee: u64, max_gas: u64) -> FrameTxContext {
         let tx = FrameTransaction {
             max_fee_per_gas: max_fee,
             max_fee_per_blob_gas: U256::from(max_blob_fee),
@@ -686,7 +686,7 @@ mod max_cost_tests {
             sig_hash: H256::zero(),
             tx,
             approve_called_in_current_frame: false,
-            total_gas_limit,
+            max_gas,
         }
     }
 
@@ -695,7 +695,7 @@ mod max_cost_tests {
         // 10 * 100_000 + 2 * 131072 * 5 = 1_000_000 + 1_310_720
         let c = ctx(10, 2, 5, 100_000);
         assert_eq!(compute_tx_max_cost(&c).unwrap(), U256::from(2_310_720u64));
-        // No blobs: just max_fee * total_gas_limit.
+        // No blobs: just max_fee * max_gas.
         let c = ctx(7, 0, 999, 21_000);
         assert_eq!(compute_tx_max_cost(&c).unwrap(), U256::from(147_000u64));
     }

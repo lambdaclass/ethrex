@@ -624,7 +624,7 @@ fn data_cost_covers_only_frame_and_signature_data() {
 }
 
 #[test]
-fn static_validation_requires_the_calldata_floor_to_be_reserved() {
+fn a_transaction_reserving_less_than_its_calldata_floor_raises_max_gas() {
     let mut tx = make_test_frame_tx();
     // 64 bytes of frame data need 4096 gas of floor, which frames carrying
     // 100 gas each cannot reserve.
@@ -633,12 +633,14 @@ fn static_validation_requires_the_calldata_floor_to_be_reserved() {
     tx.frames[1].data = Bytes::new();
     tx.frames[0].gas_limit = 100;
     tx.frames[1].gas_limit = 100;
-    assert!(
-        tx.validate_static_constraints()
-            .unwrap_err()
-            .contains("does not reserve the calldata floor of 4096"),
-    );
-    // Enough frame gas to cover the floor makes it valid again.
-    tx.frames[1].gas_limit = 4096;
+    // EIP-8141 resolves the shortfall by reserving `max(standard_gas_limit,
+    // calldata_floor_gas)`, not by invalidating the transaction: rejecting it here
+    // would fork away from any client that reserves the max.
     assert!(tx.validate_static_constraints().is_ok());
+    assert!(tx.total_gas_limit() < tx.mandatory_gas() + tx.calldata_floor_gas());
+    assert_eq!(tx.max_gas(), tx.mandatory_gas() + tx.calldata_floor_gas());
+
+    // Frames that already reserve more than the floor keep their own total.
+    tx.frames[1].gas_limit = 1_000_000;
+    assert_eq!(tx.max_gas(), tx.total_gas_limit());
 }
