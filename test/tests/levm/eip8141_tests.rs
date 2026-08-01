@@ -578,13 +578,11 @@ fn frameparam_reads_frame_index_from_stack_top() {
 const FRAMEPARAM_READ_FRAME3_STATUS: &[u8] =
     &[0x60, 0x05, 0x60, 0x03, 0xB3, 0x60, 0x00, 0x55, 0x00];
 
-/// Covers both halves of atomic-batch revert status: the settled one (a frame the
-/// batch never reached reports `0x2` SKIPPED and is refunded) and the one
-/// `docs/eip-8141.md` §11 still marks UNRESOLVED pending cross-client
-/// confirmation (a frame that executed and succeeded before the failure reports
-/// `0x0` FAILURE and is charged its full `gas_limit`). The §11 assertions below
-/// pin today's behaviour so that resolving §11 the other way fails here loudly
-/// instead of silently changing consensus.
+/// Covers both halves of an atomic-batch revert: a frame the batch never reached
+/// reports `0x2` SKIPPED and is refunded, and a frame that executed before the
+/// failure keeps the status and gas it earned, losing only its logs. Both feed the
+/// block header `gasUsed` and the receipts trie, so each assertion here is
+/// consensus-visible.
 #[test]
 fn frameparam_status_of_skipped_frame_is_two() {
     // EIP-8141: a frame skipped by a failed atomic batch reports status 0x2
@@ -599,12 +597,16 @@ fn frameparam_status_of_skipped_frame_is_two() {
     let reverter = Address::from_low_u64_be(0xD1);
     let stop_ct = Address::from_low_u64_be(0xD2);
     let reader = Address::from_low_u64_be(0xD3);
+    // Emits an empty LOG0 and stops, so the rolled-back frame has both gas and a log
+    // to account for: PUSH1 0x00, PUSH1 0x00, LOG0, STOP.
+    let logger = Address::from_low_u64_be(0xD4);
+    const LOGGER_CODE: &[u8] = &[0x60, 0x00, 0x60, 0x00, 0xA0, 0x00];
     let tx = frame_tx_with_frames(vec![
         verify_frame(FUNDED_SENDER),
         Frame {
             mode: u8::from(FrameMode::Default),
             flags: 0x04,
-            target: Some(stop_ct),
+            target: Some(logger),
             gas_limit: ROLLED_BACK_FRAME_GAS_LIMIT,
             value: U256::zero(),
             data: Bytes::new(),
@@ -659,6 +661,7 @@ fn frameparam_status_of_skipped_frame_is_two() {
             Bytes::from(PURE_REVERT_CODE.to_vec()),
         ),
         (stop_ct, U256::zero(), 0, Bytes::from(vec![0x00u8])), // STOP
+        (logger, U256::zero(), 0, Bytes::from(LOGGER_CODE.to_vec())),
         (
             reader,
             U256::zero(),
@@ -684,18 +687,31 @@ fn frameparam_status_of_skipped_frame_is_two() {
     // `gasUsed`, so the zero is consensus-visible.
     assert_eq!(frame_results[3].1, 0, "a skipped frame consumes no gas");
     assert_eq!(frame_results[4].1, 0);
-    // docs/eip-8141.md §11, UNRESOLVED: frame[1] executed and succeeded before the
-    // batch failed, and is rewritten as FAILURE charged its full gas_limit rather
-    // than SKIPPED and refunded. That differs from the single-frame path, where a
-    // frame is only charged what it used.
+    // EIP-8141: "Those frame receipts retain their execution status and gas used,
+    // with empty logs." frame[1] ran and succeeded before the batch failed, so it
+    // keeps SUCCESS and the gas it actually used — charging its full gas_limit would
+    // bill the payer for gas the transaction never spent, and bills a frame
+    // differently inside a batch than outside one.
     assert_eq!(
         frame_results[1].0,
-        ethrex_common::types::FRAME_RECEIPT_STATUS_FAILURE,
-        "a succeeded-then-rolled-back batch frame reports failure, not skipped"
+        ethrex_common::types::FRAME_RECEIPT_STATUS_SUCCESS,
+        "a frame that succeeded before the batch failed keeps its status"
     );
-    assert_eq!(
-        frame_results[1].1, ROLLED_BACK_FRAME_GAS_LIMIT,
-        "a rolled-back batch frame is charged its full gas limit"
+    assert!(
+        frame_results[1].1 > 0 && frame_results[1].1 < ROLLED_BACK_FRAME_GAS_LIMIT,
+        "a rolled-back batch frame keeps the gas it used, not its full limit: {}",
+        frame_results[1].1
+    );
+    assert!(
+        frame_results[1].2.is_empty(),
+        "logs written before the failure are discarded with the batch state"
+    );
+    // The failing frame reverted, so it is charged what it used, exactly as it would
+    // be outside a batch.
+    assert!(
+        frame_results[2].1 < 60_000,
+        "a REVERTing frame is charged its actual gas inside a batch too: {}",
+        frame_results[2].1
     );
 
     // FRAMEPARAM(0x05) must surface the same code, and it must be 2.
