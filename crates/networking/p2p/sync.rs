@@ -28,7 +28,7 @@ use spawned_concurrency::error::ActorError;
 use std::collections::{BTreeMap, HashSet};
 use std::path::PathBuf;
 use std::sync::{
-    Arc,
+    Arc, LazyLock,
     atomic::{AtomicBool, Ordering},
 };
 use tokio::sync::mpsc::error::SendError;
@@ -43,13 +43,16 @@ pub use snap_sync::{
 };
 
 #[cfg(feature = "sync-test")]
-lazy_static::lazy_static! {
-    static ref EXECUTE_BATCH_SIZE: usize = std::env::var("EXECUTE_BATCH_SIZE").map(|var| var.parse().expect("Execute batch size environmental variable is not a number")).unwrap_or(EXECUTE_BATCH_SIZE_DEFAULT);
-}
+static EXECUTE_BATCH_SIZE: LazyLock<usize> = LazyLock::new(|| {
+    std::env::var("EXECUTE_BATCH_SIZE")
+        .map(|var| {
+            var.parse()
+                .expect("Execute batch size environmental variable is not a number")
+        })
+        .unwrap_or(EXECUTE_BATCH_SIZE_DEFAULT)
+});
 #[cfg(not(feature = "sync-test"))]
-lazy_static::lazy_static! {
-    static ref EXECUTE_BATCH_SIZE: usize = EXECUTE_BATCH_SIZE_DEFAULT;
-}
+static EXECUTE_BATCH_SIZE: LazyLock<usize> = LazyLock::new(|| EXECUTE_BATCH_SIZE_DEFAULT);
 
 #[derive(Debug, PartialEq, Clone, Default)]
 pub enum SyncMode {
