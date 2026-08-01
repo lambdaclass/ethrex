@@ -3,11 +3,6 @@ name = "runner"
 version = "0.1.0"
 edition = "2024"
 license = "MIT OR Apache-2.0"
-# tooling/ is its own workspace, so point cargo at the root workspace
-# explicitly: runner inherits workspace.dependencies (rustc-hash) and
-# workspace.lints from the repo root, not from tooling/Cargo.toml. Without
-# this, `cd tooling/runner && cargo run` fails to resolve them.
-workspace = "../.."
 
 [dependencies]
 ethrex-levm = { path = "../../crates/vm/levm" }
