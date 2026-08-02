@@ -2098,6 +2098,7 @@ impl<'a> VM<'a> {
         // depth-driven rather than a single revert/commit.
         let mut body_substate_depth: Option<usize> = None;
         let mut body_logs_start: usize = 0;
+        let mut body_frame_start: usize = 0;
         let mut state_gas_used_at_body_entry: i64 = 0;
         let mut post_tx_reverted = false;
 
@@ -2219,6 +2220,7 @@ impl<'a> VM<'a> {
                 body_substate_depth = Some(self.substate.backup_depth());
                 body_backup.bal_checkpoint = self.db.bal_recorder.as_ref().map(|r| r.checkpoint());
                 body_logs_start = all_logs.len();
+                body_frame_start = frame_idx;
                 state_gas_used_at_body_entry = self.state_gas_used;
             }
             absorbing_body = is_body_frame;
@@ -2812,8 +2814,16 @@ impl<'a> VM<'a> {
                 }
                 crate::utils::restore_cache_state(self.db, mem::take(&mut body_backup))?;
                 // Logs the body emitted are gone with its state. The prefix's logs
-                // (an APPROVE-side EIP-7708 transfer log, say) survive.
+                // (an APPROVE-side EIP-7708 transfer log, say) survive. The per-frame
+                // receipts keep their status and gas but lose those logs too — the
+                // consensus receipt carries only them, so the header bloom is built from
+                // them and would otherwise commit to logs that no longer happened.
                 all_logs.truncate(body_logs_start);
+                if let Some(ctx) = self.frame_tx_context.as_mut() {
+                    for (_, _, logs) in ctx.frame_results.iter_mut().skip(body_frame_start) {
+                        logs.clear();
+                    }
+                }
                 // EIP-8037: the body was unrolled, so it created no state and owes no
                 // state gas. Mirrors the atomic-batch unroll, which drops the state
                 // gas accumulated since batch entry for the same reason. EIP-7906 does
@@ -3565,6 +3575,57 @@ impl<'a> VM<'a> {
                 self.env.config.fork,
                 self.vm_type,
             )
+            // EIP-8272's predeploy is codeless too, but a call into it performs the native
+            // recent-root write, so it must reach `run_execution`.
+            && !(self.env.config.fork >= Fork::Hegota
+                && self.current_call_frame.to == ethrex_common::types::frame_tx_recent_root())
+    }
+
+    /// EIP-8272 native write for a transaction whose recipient is the predeploy itself.
+    fn run_top_level_recent_root_write(&mut self) -> Result<ContextResult, VMError> {
+        let recent_root_addr = ethrex_common::types::frame_tx_recent_root();
+        if let Some(recorder) = self.db.bal_recorder.as_mut() {
+            recorder.record_touched_address(recent_root_addr);
+        }
+
+        let gas_limit = self.current_call_frame.gas_limit;
+        let revert = |gas_used: u64| ContextResult {
+            result: TxResult::Revert(VMError::RevertOpcode),
+            gas_used,
+            gas_spent: gas_used,
+            output: Bytes::new(),
+        };
+
+        // `gas_remaining` enters this frame already net of intrinsic gas, so what the
+        // transaction owes is always measured against `gas_limit`, never the write cost alone.
+        #[expect(clippy::as_conversions, reason = "gas_remaining is non-negative here")]
+        let consumed = |frame: &crate::call_frame::CallFrame| {
+            frame.gas_limit.saturating_sub(frame.gas_remaining.max(0) as u64)
+        };
+
+        if self.current_call_frame.calldata.len() != 64 || !self.current_call_frame.msg_value.is_zero() {
+            return Ok(revert(consumed(&self.current_call_frame)));
+        }
+        if self.current_call_frame.gas_remaining < crate::gas_cost::RECENT_ROOT_WRITE_GAS as i64 {
+            self.current_call_frame.gas_remaining = 0;
+            return Ok(revert(gas_limit));
+        }
+
+        let caller = self.current_call_frame.msg_sender;
+        let calldata = self.current_call_frame.calldata.clone();
+        let (salt, root) = calldata.split_at(32);
+        self.recent_root_native_write(caller, salt, root)?;
+        self.current_call_frame.gas_remaining = self
+            .current_call_frame
+            .gas_remaining
+            .saturating_sub(crate::gas_cost::RECENT_ROOT_WRITE_GAS as i64);
+        let gas_used = consumed(&self.current_call_frame);
+        Ok(ContextResult {
+            result: TxResult::Success,
+            gas_used,
+            gas_spent: gas_used,
+            output: Bytes::new(),
+        })
     }
 
     /// Main execution loop.
@@ -3602,6 +3663,15 @@ impl<'a> VM<'a> {
         // charge is rolled back in the precompile branch below (mirrors EELS
         // `refill_frame_state_gas`). Set in-region by `prepare_execution`.
         let top_frame_new_account_charged = self.value_new_account_charged;
+
+        // EIP-8272: the predeploy is codeless, so a transaction sent straight to it would
+        // otherwise run as a transfer to an ordinary account and write nothing. Same native
+        // write the CALL-opcode and frame paths perform.
+        if self.env.config.fork >= Fork::Hegota
+            && self.current_call_frame.to == ethrex_common::types::frame_tx_recent_root()
+        {
+            return self.run_top_level_recent_root_write();
+        }
 
         #[expect(clippy::as_conversions, reason = "remaining gas conversion")]
         if precompiles::is_precompile(
