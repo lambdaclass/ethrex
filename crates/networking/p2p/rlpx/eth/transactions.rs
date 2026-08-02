@@ -26,7 +26,7 @@ use tracing::debug;
 /// between clients (e.g. geth's `Transaction.Size()` omits the v1 blob-sidecar wrapper
 /// version byte), so we tolerate a few bytes before treating it as a protocol violation.
 /// Matches go-ethereum's tx fetcher (`eth/fetcher/tx_fetcher.go`).
-const POOLED_TX_SIZE_TOLERANCE: usize = 8;
+pub(crate) const POOLED_TX_SIZE_TOLERANCE: usize = 8;
 
 /// Upper bound on the decompressed size of a `PooledTransactions` response, enforced before
 /// decompression so an oversized reply is rejected without materializing it. Tighter than the
@@ -34,7 +34,7 @@ const POOLED_TX_SIZE_TOLERANCE: usize = 8;
 /// response to `softResponseLimit` (2 MiB) and stops after the first tx that crosses it, so a
 /// well-behaved reply is at most ~2 MiB plus one max-size tx (~1 MiB blob wrapper). 4 MiB clears
 /// that with margin while staying 4× below the frame cap.
-const MAX_POOLED_TRANSACTIONS_BYTES: usize = 4 * 1024 * 1024;
+pub(crate) const MAX_POOLED_TRANSACTIONS_BYTES: usize = 4 * 1024 * 1024;
 
 /// Target maximum size of a `PooledTransactions` response we *serve*, matching go-ethereum's
 /// `softResponseLimit` (2 MiB). We stop before a transaction would push the response over this,
