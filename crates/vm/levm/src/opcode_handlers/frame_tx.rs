@@ -254,8 +254,22 @@ impl OpcodeHandler for OpApproveHandler {
                 vm.current_call_frame.memory.len(),
             )?)?;
 
+        let approval_snapshot = vm
+            .frame_tx_context
+            .as_ref()
+            .map(|ctx| (ctx.payer_address, ctx.sender_approved));
         let surcharge = apply_approve(vm, scope_val, frame_target)?;
-        vm.current_call_frame.increase_consumed_gas(surcharge)?;
+        // The approval context is not database-backed, so the frame rollback that undoes the debit
+        // and the nonce consumption would leave the payer recorded and refunded at end of tx.
+        if let Err(err) = vm.current_call_frame.increase_consumed_gas(surcharge) {
+            if let (Some((payer, sender_approved)), Some(ctx)) =
+                (approval_snapshot, vm.frame_tx_context.as_mut())
+            {
+                ctx.payer_address = payer;
+                ctx.sender_approved = sender_approved;
+            }
+            return Err(err.into());
+        }
 
         let ctx = vm
             .frame_tx_context
