@@ -1790,7 +1790,7 @@ impl<'a> VM<'a> {
     /// EIP-8250's strict "consumption MUST NOT be reverted by an atomic-batch
     /// snapshot" durability is tracked for devnet/interop validation — see
     /// `docs/eip-8250.md`. Key-0 consumption matches existing EIP-8141 behaviour.
-    pub(crate) fn consume_keyed_nonces(&mut self, sender: Address) -> Result<(), VMError> {
+    pub(crate) fn consume_keyed_nonces(&mut self, sender: Address) -> Result<u64, VMError> {
         let (nonce_keys, next_seq) = match &self.tx {
             Transaction::FrameTransaction(ft) => (
                 ft.nonce_keys.clone(),
@@ -1798,9 +1798,10 @@ impl<'a> VM<'a> {
                     .checked_add(1)
                     .ok_or(VMError::Internal(InternalError::Overflow))?,
             ),
-            _ => return Ok(()),
+            _ => return Ok(0),
         };
         let nonce_manager = ethrex_common::types::frame_tx_nonce_manager();
+        let mut surcharge: u64 = 0;
         for key in &nonce_keys {
             if key.is_zero() {
                 self.increment_account_nonce(sender)?;
@@ -1813,8 +1814,7 @@ impl<'a> VM<'a> {
             let _ = self.db.get_account(nonce_manager)?;
             let current = self.get_storage_value(nonce_manager, slot)?;
             if current.is_zero() {
-                self.current_call_frame
-                    .increase_consumed_gas(crate::gas_cost::KEYED_NONCE_FIRST_USE_GAS)?;
+                surcharge = surcharge.saturating_add(crate::gas_cost::KEYED_NONCE_FIRST_USE_GAS);
             }
             let slot_u256 = U256::from_big_endian(&slot.0);
             self.update_account_storage(
@@ -1825,7 +1825,30 @@ impl<'a> VM<'a> {
                 current,
             )?;
         }
-        Ok(())
+        Ok(surcharge)
+    }
+
+    /// The surcharge `consume_keyed_nonces` will charge, without consuming anything.
+    pub(crate) fn keyed_nonce_first_use_surcharge(&mut self) -> Result<u64, VMError> {
+        let (sender, nonce_keys) = match &self.tx {
+            Transaction::FrameTransaction(ft) => (ft.sender, ft.nonce_keys.clone()),
+            _ => return Ok(0),
+        };
+        let nonce_manager = ethrex_common::types::frame_tx_nonce_manager();
+        let mut surcharge: u64 = 0;
+        for key in &nonce_keys {
+            if key.is_zero() {
+                continue;
+            }
+            let mut preimage = [0u8; 64];
+            preimage[12..32].copy_from_slice(sender.as_bytes());
+            preimage[32..64].copy_from_slice(&key.to_big_endian());
+            let slot = H256(ethrex_crypto::keccak::keccak_hash(preimage));
+            if self.get_storage_value(nonce_manager, slot)?.is_zero() {
+                surcharge = surcharge.saturating_add(crate::gas_cost::KEYED_NONCE_FIRST_USE_GAS);
+            }
+        }
+        Ok(surcharge)
     }
 
     fn execute_frame_tx(&mut self) -> Result<ExecutionReport, VMError> {

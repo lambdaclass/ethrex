@@ -65,11 +65,14 @@ pub(crate) fn compute_tx_max_cost(ctx: &crate::vm::FrameTxContext) -> Result<U25
 
 /// Apply APPROVE side effects for the given scope.
 /// This is shared between OpApproveHandler and (future) default code.
+/// Returns the EIP-8250 first-use surcharge the approval incurred; the caller charges it to the
+/// approving frame, whose gas budget it comes out of.
 pub fn apply_approve(
     vm: &mut VM<'_>,
     scope: u64,
     frame_target: ethrex_common::Address,
-) -> Result<(), VMError> {
+) -> Result<u64, VMError> {
+    let mut surcharge = 0;
     match scope {
         0x1 => {
             // APPROVE_PAYMENT: increment nonce, deduct max cost, record payer.
@@ -117,7 +120,7 @@ pub fn apply_approve(
             let tx_cost = compute_tx_max_cost(ctx)?;
             let sender = ctx.tx.sender;
 
-            vm.consume_keyed_nonces(sender)?;
+            surcharge = vm.consume_keyed_nonces(sender)?;
             // Payer balance underflow is a frame-level revert, not a consensus
             // fault: the outer restore_cache_state() path rolls back the nonce
             // increment above when RevertOpcode propagates.
@@ -172,7 +175,7 @@ pub fn apply_approve(
             let tx_cost = compute_tx_max_cost(ctx)?;
             let sender = ctx.tx.sender;
 
-            vm.consume_keyed_nonces(sender)?;
+            surcharge = vm.consume_keyed_nonces(sender)?;
             // See scope 0x1 above for the Underflow → RevertOpcode rationale.
             match vm.decrease_account_balance(frame_target, tx_cost) {
                 Ok(()) => {}
@@ -192,7 +195,7 @@ pub fn apply_approve(
             return Err(ExceptionalHalt::InvalidOpcode.into());
         }
     }
-    Ok(())
+    Ok(surcharge)
 }
 
 /// APPROVE (0xAA) -- Frame transaction approval opcode.
@@ -261,7 +264,8 @@ impl OpcodeHandler for OpApproveHandler {
                 vm.current_call_frame.memory.len(),
             )?)?;
 
-        apply_approve(vm, scope_val, frame_target)?;
+        let surcharge = apply_approve(vm, scope_val, frame_target)?;
+        vm.current_call_frame.increase_consumed_gas(surcharge)?;
 
         let ctx = vm
             .frame_tx_context
@@ -879,6 +883,13 @@ fn execute_default_verify(
         return Ok((false, 0, Vec::new()));
     }
 
+    // The surcharge comes out of this frame's budget like any other gas, so a frame that cannot
+    // afford it approves nothing.
+    let surcharge = vm.keyed_nonce_first_use_surcharge()?;
+    if surcharge > frame.gas_limit {
+        return Ok((false, frame.gas_limit, Vec::new()));
+    }
+
     apply_approve(vm, allowed_scope, target)?;
 
     let ctx = vm
@@ -887,7 +898,7 @@ fn execute_default_verify(
         .ok_or(ExceptionalHalt::InvalidOpcode)?;
     ctx.approve_called_in_current_frame = true;
 
-    Ok((true, 0, Vec::new()))
+    Ok((true, surcharge, Vec::new()))
 }
 
 #[cfg(test)]
