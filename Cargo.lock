@@ -3859,6 +3859,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "ethrex-binary-trie"
+version = "22.0.0"
+dependencies = [
+ "blake3",
+ "ethereum-types 0.15.1",
+ "hex",
+ "hex-literal 0.4.1",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "ethrex-blockchain"
 version = "22.0.0"
 dependencies = [
