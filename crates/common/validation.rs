@@ -5,11 +5,11 @@
 
 use crate::constants::{GAS_PER_BLOB, MAX_RLP_BLOCK_SIZE, POST_OSAKA_GAS_LIMIT_CAP};
 use crate::errors::InvalidBlockError;
-use crate::types::requests::{EncodedRequests, Requests, compute_requests_hash};
+use crate::types::requests::{compute_requests_hash, EncodedRequests, Requests};
 use crate::types::{
-    Block, BlockHeader, ChainConfig, EIP4844Transaction, Receipt, compute_receipts_root,
-    validate_block_header, validate_cancun_header_fields, validate_prague_header_fields,
-    validate_pre_cancun_header_fields,
+    compute_receipts_root, validate_block_header, validate_cancun_header_fields,
+    validate_prague_header_fields, validate_pre_cancun_header_fields, Block, BlockHeader,
+    ChainConfig, EIP4844Transaction, Receipt,
 };
 use ethrex_crypto::Crypto;
 use ethrex_rlp::encode::RLPEncode;
@@ -109,6 +109,21 @@ pub fn validate_requests_hash(
 ) -> Result<(), InvalidBlockError> {
     if !chain_config.is_prague_activated(header.timestamp) {
         return Ok(());
+    }
+
+    // BSC (Parlia) does not use `requests_hash` as the EIP-7685 requests hash.
+    // Per BEP-675 it is repurposed as an opaque MEV block-source tag (a version
+    // byte + the winning builder's address) on builder-proposed blocks, and is
+    // the empty-requests hash otherwise. Parlia's `VerifyRequests` is a no-op —
+    // the only consensus rule is that the field is present post-Prague. So do
+    // NOT recompute it from block contents and compare (that expects
+    // sha256("") and wrongly rejects every MEV-tagged block).
+    if chain_config.chain_id == 56 || chain_config.chain_id == 97 {
+        return if header.requests_hash.is_some() {
+            Ok(())
+        } else {
+            Err(InvalidBlockError::RequestsHashMismatch)
+        };
     }
 
     let encoded_requests: Vec<EncodedRequests> = requests.iter().map(|r| r.encode()).collect();
