@@ -1,10 +1,7 @@
 use std::sync::Arc;
 
 use crate::{
-    runner::{
-        EFTestRunnerError, InternalError,
-        revm_db::{RevmState, revm_state},
-    },
+    runner::{EFTestRunnerError, InternalError},
     types::{EFTest, EFTestTransaction},
 };
 use ethrex_blockchain::vm::StoreVmDatabase;
@@ -47,21 +44,17 @@ impl VmDatabase for StateTestVmDatabase {
     }
 }
 
-/// Loads initial state, used for REVM as it contains RevmState.
-pub async fn load_initial_state_revm(test: &EFTest) -> (RevmState, H256, Store) {
+/// Loads the genesis-backed store for a test, for callers that need to apply account
+/// updates against it rather than execute.
+pub async fn load_initial_state_store(test: &EFTest) -> (H256, Store) {
     let genesis = Genesis::from(test);
 
     let mut storage = Store::new("./temp", EngineType::InMemory).expect("Failed to create Store");
     storage.add_initial_state(genesis.clone()).await.unwrap();
 
-    let vm_db: DynVmDatabase = Box::new(StateTestVmDatabase {
-        inner: StoreVmDatabase::new(storage.clone(), genesis.get_block().header).unwrap(),
-    });
-
-    (revm_state(vm_db), genesis.get_block().hash(), storage)
+    (genesis.get_block().hash(), storage)
 }
 
-/// Loads initial state, function for LEVM as it does not require RevmState
 pub async fn load_initial_state_levm(test: &EFTest) -> GeneralizedDatabase {
     let genesis = Genesis::from(test);
 

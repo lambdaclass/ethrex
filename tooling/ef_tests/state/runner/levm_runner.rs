@@ -70,12 +70,6 @@ pub async fn run_ef_test(test: &EFTest) -> Result<EFTestReport, EFTestRunnerErro
                         levm_cache,
                     );
                 }
-                Err(EFTestRunnerError::VMExecutionMismatch(_)) => {
-                    return Err(EFTestRunnerError::Internal(InternalError::FirstRunInternal(
-                        format!("VM execution mismatch errors should only happen when running with revm. This failed during levm's execution. LEVM runner {}",line!())
-                            .to_owned(),
-                    )));
-                }
                 Err(EFTestRunnerError::ExpectedExceptionDoesNotMatchReceived(reason)) => {
                     ef_test_report_fork
                         .register_post_state_validation_error_mismatch(reason, *vector);
@@ -598,7 +592,7 @@ pub async fn ensure_post_state(
 }
 
 pub async fn post_state_root(account_updates: &[AccountUpdate], test: &EFTest) -> H256 {
-    let (_initial_state, block_hash, store) = utils::load_initial_state_revm(test).await;
+    let (block_hash, store) = utils::load_initial_state_store(test).await;
     let ret_account_updates_batch = store
         .apply_account_updates_batch(block_hash, account_updates)
         .unwrap()
