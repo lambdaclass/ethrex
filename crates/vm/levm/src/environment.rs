@@ -47,7 +47,10 @@ pub struct Environment {
     /// When true, skip the sender nonce-mismatch validation. Used by the simulation
     /// RPCs (eth_call, eth_estimateGas, eth_createAccessList): call objects may omit
     /// the nonce, and no client enforces it there. The account nonce still increments
-    /// during execution.
+    /// during execution. `debug_traceCall` relies on it too (geth's
+    /// `ToMessage(_, skipNonceCheck=true)`): the synthetic call may run on top of a
+    /// mid-block state (`txIndex`) whose nonce differs from the value the caller
+    /// supplied, so enforcing the check would spuriously reject the trace.
     pub disable_nonce_check: bool,
     /// When true, the tx is a pre-execution system contract call (EIP-2935, EIP-4788,
     /// EIP-7002, EIP-7251 etc.). Skips the block-level gas-allowance check since system
