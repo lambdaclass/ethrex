@@ -3080,7 +3080,6 @@ impl LEVM {
         let sender = frame_tx.sender;
 
         let env = Self::setup_env(tx, sender, block_header, db, vm_type)?;
-        let blob_base_fee = env.base_blob_fee_per_gas;
         let mut vm = VM::new(env, db, tx, LevmCallTracer::disabled(), vm_type, crypto)?;
 
         // OQ1: no canonical paymaster is resolvable, so the canonical pay-frame
@@ -3100,14 +3099,14 @@ impl LEVM {
                 return Ok(FrameValidationOutcome {
                     passed: false,
                     violation: Some(EvmError::from(err).to_string()),
-                    max_cost: Self::frame_tx_max_cost(frame_tx, blob_base_fee),
+                    reservation_ceiling: Self::frame_tx_reservation_ceiling(frame_tx),
                     accessed_paymaster: None,
                     touched_sender_slots: Vec::new(),
                 });
             }
         };
 
-        let max_cost = Self::frame_tx_max_cost(frame_tx, blob_base_fee);
+        let reservation_ceiling = Self::frame_tx_reservation_ceiling(frame_tx);
         let touched_sender_slots = vm.validation_observer.touched_sender_slots.clone();
         // The payer established by the prefix is the paymaster (OQ2: the
         // APPROVE-payment address is treated uniformly as "paymaster", including
@@ -3122,7 +3121,7 @@ impl LEVM {
             return Ok(FrameValidationOutcome {
                 passed: false,
                 violation: Some(format!("{violation:?}")),
-                max_cost,
+                reservation_ceiling,
                 accessed_paymaster,
                 touched_sender_slots,
             });
@@ -3133,7 +3132,7 @@ impl LEVM {
             return Ok(FrameValidationOutcome {
                 passed: false,
                 violation: Some("validation prefix frame reverted".to_string()),
-                max_cost,
+                reservation_ceiling,
                 accessed_paymaster,
                 touched_sender_slots,
             });
@@ -3145,7 +3144,7 @@ impl LEVM {
             return Ok(FrameValidationOutcome {
                 passed: false,
                 violation: Some("validation prefix did not establish a payer".to_string()),
-                max_cost,
+                reservation_ceiling,
                 accessed_paymaster,
                 touched_sender_slots,
             });
@@ -3158,7 +3157,7 @@ impl LEVM {
                 return Ok(FrameValidationOutcome {
                     passed: false,
                     violation: Some(format!("{:?}", FrameSimViolation::DeployInstalledNoCode)),
-                    max_cost,
+                    reservation_ceiling,
                     accessed_paymaster,
                     touched_sender_slots,
                 });
@@ -3173,7 +3172,7 @@ impl LEVM {
                     "validation prefix gas {} exceeds MAX_VERIFY_GAS {}",
                     sim.total_gas_used, FRAME_TX_MAX_VERIFY_GAS
                 )),
-                max_cost,
+                reservation_ceiling,
                 accessed_paymaster,
                 touched_sender_slots,
             });
@@ -3182,30 +3181,36 @@ impl LEVM {
         Ok(FrameValidationOutcome {
             passed: true,
             violation: None,
-            max_cost,
+            reservation_ceiling,
             accessed_paymaster,
             touched_sender_slots,
         })
     }
 
-    /// TXPARAM 0x06 max cost for a frame transaction:
-    /// `max_gas * max_fee_per_gas + len(blob_hashes) * 131072 * blob_base_fee`
-    /// (mirrors `load_tx_param` 0x06 in `opcode_handlers/frame_tx.rs`), saturating.
-    /// `max_fee_per_blob_gas` bounds inclusion only; the blob fee is collected
-    /// once at the base rate and never refunded.
-    fn frame_tx_max_cost(
-        frame_tx: &ethrex_common::types::FrameTransaction,
-        blob_base_fee: U256,
-    ) -> U256 {
-        // Intentionally saturating (not checked): the TXPARAM 0x06 consensus handler
-        // uses checked_mul/checked_add and halts on overflow (frame_tx.rs:499-509). Here
-        // we compute a reservation ceiling for the mempool, so saturating to U256::MAX
-        // on overflow is conservative — it just makes the reservation larger, not smaller.
+    /// Mempool reservation ceiling for a frame transaction:
+    /// `max_gas * max_fee_per_gas + len(blob_hashes) * 131072 * max_fee_per_blob_gas`,
+    /// saturating.
+    ///
+    /// The consensus `max_cost` that APPROVE collects prices blobs at the
+    /// including block's `blob_base_fee` (EIP-8141 §Gas Accounting, TXPARAM 0x06;
+    /// `load_tx_param` 0x06 in `opcode_handlers/frame_tx.rs`). That rate is not
+    /// known at admission — the simulation runs against the current head, while
+    /// execution charges the base fee of whichever later block includes the
+    /// transaction — and the blob base fee moves per block, so pricing the
+    /// reservation at the head's rate could reserve less than the eventual charge.
+    /// `max_fee_per_blob_gas >= blob_base_fee` is an inclusion condition
+    /// (EIP-8141 §Blob handling), so the declared max rate bounds every block that
+    /// can include the transaction and keeps this a true ceiling.
+    ///
+    /// Intentionally saturating (not checked): the TXPARAM 0x06 consensus handler
+    /// uses checked_mul/checked_add and halts on overflow. Saturating to
+    /// `U256::MAX` here only makes the reservation larger, never smaller.
+    fn frame_tx_reservation_ceiling(frame_tx: &ethrex_common::types::FrameTransaction) -> U256 {
         let gas_cost = U256::from(frame_tx.max_fee_per_gas)
             .saturating_mul(U256::from(frame_tx.total_gas_limit()));
         let blob_cost = U256::from(frame_tx.blob_versioned_hashes.len())
             .saturating_mul(U256::from(131072u64))
-            .saturating_mul(blob_base_fee);
+            .saturating_mul(frame_tx.max_fee_per_blob_gas);
         gas_cost.saturating_add(blob_cost)
     }
 

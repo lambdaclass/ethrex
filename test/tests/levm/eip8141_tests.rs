@@ -2610,6 +2610,62 @@ mod frame_validation_prefix_tests {
         );
         assert_eq!(outcome.accessed_paymaster, Some((sender, false)));
     }
+
+    /// The paymaster reservation bounds the blob fee at the transaction's declared
+    /// `max_fee_per_blob_gas`, not at the head block's `blob_base_fee`. Admission
+    /// simulates against the current head while execution charges the base fee of
+    /// whichever later block includes the transaction, and the blob base fee moves
+    /// per block. EIP-8141 §Blob handling makes `max_fee_per_blob_gas >=
+    /// blob_base_fee` an inclusion condition, so the declared rate bounds every
+    /// block that can include the transaction; the head's rate does not.
+    #[test]
+    fn reservation_ceiling_prices_blobs_at_the_declared_max_rate() {
+        const GAS_PER_BLOB: u64 = 1 << 17;
+        const MAX_FEE_PER_BLOB_GAS: u64 = 1_000;
+
+        let sender = addr(0x5E_11_02);
+        let mut tx = frame_tx_prefix(sender, vec![frame(1, 0x03, sender, 50_000)]);
+        let Transaction::FrameTransaction(frame_tx) = &mut tx else {
+            unreachable!("frame_tx_prefix builds a frame transaction")
+        };
+        frame_tx.max_fee_per_blob_gas = U256::from(MAX_FEE_PER_BLOB_GAS);
+        frame_tx.blob_versioned_hashes = vec![H256([
+            0x01, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0,
+        ])];
+
+        // Enough balance to cover the consensus max cost APPROVE collects, which
+        // prices the blob at the head's base fee — the quantity this reservation
+        // deliberately does not use.
+        let mut db = db_with(vec![(sender, account(1_000_000, approve_code(0x03)))]);
+        let prefix = ValidationPrefix {
+            shape: PrefixShape::SelfVerify,
+            frame_indices: vec![0],
+            deploy_index: None,
+            pay_index: Some(0),
+        };
+        let outcome = LEVM::simulate_frame_validation_prefix(
+            &tx,
+            &header(),
+            &mut db,
+            VMType::L1,
+            &NativeCrypto,
+            &prefix,
+            None,
+        )
+        .expect("simulation runs");
+        assert!(
+            outcome.passed,
+            "the blob-carrying self_verify prefix must pass, got {:?}",
+            outcome.violation
+        );
+        // max_fee_per_gas is zero here, so the ceiling is the blob term alone.
+        assert_eq!(
+            outcome.reservation_ceiling,
+            U256::from(GAS_PER_BLOB * MAX_FEE_PER_BLOB_GAS),
+            "the reservation must price the blob at max_fee_per_blob_gas"
+        );
+    }
 }
 
 // ==================== Relocated from crates/vm/levm/src/vm.rs ====================
