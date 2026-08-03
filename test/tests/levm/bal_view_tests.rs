@@ -105,6 +105,7 @@ mod inner {
     /// at indices 1 and 2), the cursor boundary semantics are correct:
     /// - `max_idx = 1` returns `V0` (only tx 0's write is visible)
     /// - `max_idx = 2` returns `V1` (tx 1's write is also visible)
+    ///
     /// This mirrors the pre-write value tx 1 and tx 2 would observe respectively.
     #[test]
     fn sstore_sees_prior_write() {
