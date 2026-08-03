@@ -19,9 +19,6 @@ pub(crate) fn blake3_hash(data: &[u8]) -> H256 {
 
 /// A node in stored form: a branch's children are the hashes it
 /// commits to, not loaded subtrees.
-// Unused until the trie loads nodes from a store; see the note on
-// `decode_bit_prefix`.
-#[allow(dead_code)]
 #[derive(Debug, PartialEq, Eq)]
 pub(super) enum StoredNode {
     Leaf {
@@ -64,7 +61,6 @@ pub(super) fn encode_branch(prefix: &[u8], left: H256, right: H256) -> Vec<u8> {
 }
 
 /// Decode a node from its stored bytes.
-#[allow(dead_code)]
 pub(super) fn decode(encoded: &[u8]) -> Result<StoredNode, BinaryTrieError> {
     match encoded.split_first() {
         Some((&LEAF_NODE_TAG, rest)) => {

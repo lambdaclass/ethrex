@@ -28,6 +28,18 @@ same key/value set yields the same root. Correctness is pinned by the
 spec conformance vectors rather than by a second in-crate
 implementation.
 
+### Storage
+
+The trie is storage-backed. `trie::BinaryTrieDB` is the node store —
+`get(path)` / `put_batch`, keyed by a node's bit path from the root, the
+same path-keyed single-version model the MPT's `TrieDB` uses — and
+`trie::InMemoryBinaryTrieDB` is the implementation this crate ships;
+the RocksDB one belongs to `crates/storage`. A child is either loaded
+or the hash of a subtree still in the database, so `open` costs
+nothing, `root()` reads nothing (a stored reference already is its
+hash), and reads and inserts load only the nodes on their path.
+`commit()` writes the loaded nodes back and returns the root.
+
 ### Test vectors
 
 `tests/vectors/binary_trie_vectors.json` is **vendored** from the EELS
@@ -41,9 +53,9 @@ documentation:
 
 ### Non-goals (today)
 
-No persistence/`TrieDB` backing, no hash caching, no deletion, no
-proofs, no fork wiring. These are deferred to the state-commitment
-integration work.
+No hash caching and no dirty tracking (`commit` rewrites every loaded
+node), no deletion, no proofs, no fork wiring. These are deferred to
+the state-commitment integration work.
 
 ### Spec discrepancy
 

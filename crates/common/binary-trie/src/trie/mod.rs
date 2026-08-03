@@ -4,10 +4,14 @@
 
 mod binary_trie;
 mod bits;
+pub mod db;
 pub(crate) mod node;
+pub mod path;
 
 pub use binary_trie::BinaryTrie;
+pub use db::{BinaryTrieDB, InMemoryBinaryTrieDB};
 pub use node::EMPTY_TRIE_ROOT;
+pub use path::BitPath;
 
 /// Longest accepted key, in bytes. Bounds branch-prefix bit counts
 /// below the two-byte limit of `encode_bit_prefix`.

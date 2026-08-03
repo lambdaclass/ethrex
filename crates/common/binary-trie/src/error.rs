@@ -20,6 +20,11 @@ pub enum BinaryTrieError {
     /// something the tree never wrote.
     #[error("malformed stored node: {0}")]
     MalformedNode(&'static str),
+    /// The storage backend failed, or is missing a node the tree
+    /// expects: everything a correct tree over a correct store never
+    /// sees.
+    #[error("trie backend: {0}")]
+    Backend(String),
     /// Balance does not fit the 16-byte field of the basic data leaf.
     #[error("balance does not fit the 16-byte basic-data field")]
     BalanceTooLarge,

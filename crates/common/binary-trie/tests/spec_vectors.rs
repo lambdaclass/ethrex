@@ -170,7 +170,7 @@ fn basic_data_matches_spec() {
 #[test]
 fn incremental_matches_spec_roots() {
     for case in load().trie_roots {
-        let mut trie = ethrex_binary_trie::trie::BinaryTrie::new();
+        let mut trie = ethrex_binary_trie::trie::BinaryTrie::new_temp();
         for e in &case.entries {
             trie.insert(unhex(&e.key), unhex(&e.value).try_into().unwrap())
                 .unwrap();

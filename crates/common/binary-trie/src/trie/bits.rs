@@ -25,10 +25,6 @@ pub fn bytes_to_bits(data: &[u8]) -> Vec<u8> {
 /// Rejects padding bits that are not zero. The encoder never sets them,
 /// so accepting them would give one node two valid encodings — and
 /// therefore two hashes.
-// No caller until the trie can load nodes from a store (Task 2 of
-// docs/plans/2026-08-03-pbt-persistent-state.md); the encoding is
-// built and pinned first so the stored format is settled.
-#[allow(dead_code)]
 pub(super) fn decode_bit_prefix(data: &[u8]) -> Result<(Vec<u8>, usize), BinaryTrieError> {
     let count_bytes: [u8; 2] = data
         .get(..2)
