@@ -224,7 +224,10 @@ pub async fn init_l2(
 
     let genesis = network.get_genesis()?;
     let store_config = StoreConfig {
-        rocksdb_block_cache_size: opts.node_opts.rocksdb_block_cache_size,
+        rocksdb_block_cache_size: opts
+            .node_opts
+            .rocksdb_block_cache_size
+            .unwrap_or_else(ethrex_storage::default_rocksdb_block_cache_size),
         ..StoreConfig::default()
     };
     let store = init_store_with_config(&datadir, genesis.clone(), store_config).await?;

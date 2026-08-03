@@ -75,8 +75,7 @@ const IN_MEMORY_COMMIT_THRESHOLD: usize = 10000;
 /// import only ever extend a single canonical chain (no competing forks to mis-commit).
 pub const BATCH_COMMIT_THRESHOLD: usize = 4;
 
-
-/// Default size in bytes of the RocksDB shared block cache: 12 GiB.
+/// Ceiling on the RocksDB shared block cache: 12 GiB.
 ///
 /// This cache holds both data blocks AND the index/bloom-filter blocks for every
 /// open SST file (because we enable `cache_index_and_filter_blocks`), so its size
@@ -88,7 +87,85 @@ pub const BATCH_COMMIT_THRESHOLD: usize = 4;
 /// sweep predates the 4KB block size on the trie-node/flat-KV CFs (#6940), which
 /// raises their index/filter block count ~4x; the floor is likely now somewhat
 /// above 8 GiB and warrants a re-sweep.
-pub const DEFAULT_ROCKSDB_BLOCK_CACHE_SIZE_BYTES: usize = 12 * 1024 * 1024 * 1024;
+pub const MAX_ROCKSDB_BLOCK_CACHE_SIZE_BYTES: usize = 12 * 1024 * 1024 * 1024;
+
+/// Floor on the RocksDB shared block cache: 512 MiB. Below this the per-SST
+/// index and filter blocks no longer stay resident and every trie read pays an
+/// extra disk seek, which is worse than the memory it saves. Applied even when
+/// it exceeds [`ROCKSDB_BLOCK_CACHE_MEMORY_PERCENT`] of a very small host.
+pub const MIN_ROCKSDB_BLOCK_CACHE_SIZE_BYTES: usize = 512 * 1024 * 1024;
+
+/// Share of the host's (or cgroup's) memory the block cache may claim by default.
+///
+/// The rest has to cover the in-memory trie-layer backlog, block execution, the
+/// mempool, peer buffers and allocator slack, so the cache cannot have most of the
+/// machine. At 40% a 32 GiB host lands on the 12 GiB ceiling and a 16 GiB host gets
+/// ~6.4 GiB — under the ~8 GiB thrash floor, but that is the memory-constrained
+/// tradeoff the ceiling's docs describe, and it leaves the node room not to be
+/// OOM-killed.
+pub const ROCKSDB_BLOCK_CACHE_MEMORY_PERCENT: usize = 40;
+
+/// Default RocksDB shared block cache size, derived from the memory this process
+/// is actually allowed to use.
+///
+/// A fixed default cannot serve both a 64 GiB validator and a 16 GiB CI runner: the
+/// ceiling alone is 71% of a 16 GiB host, which leaves no headroom for the rest of
+/// the node. Sizes to [`ROCKSDB_BLOCK_CACHE_MEMORY_PERCENT`] of the detected limit,
+/// clamped to [`MIN_ROCKSDB_BLOCK_CACHE_SIZE_BYTES`] ..=
+/// [`MAX_ROCKSDB_BLOCK_CACHE_SIZE_BYTES`]. Falls back to the ceiling when the limit
+/// cannot be detected, preserving the previous behavior.
+pub fn default_rocksdb_block_cache_size() -> usize {
+    rocksdb_block_cache_size_for(host_memory_limit_bytes())
+}
+
+/// Pure part of [`default_rocksdb_block_cache_size`]: the clamp, with the detected
+/// memory limit supplied by the caller. `None` means detection failed.
+pub fn rocksdb_block_cache_size_for(memory_limit: Option<usize>) -> usize {
+    let Some(limit) = memory_limit else {
+        return MAX_ROCKSDB_BLOCK_CACHE_SIZE_BYTES;
+    };
+    (limit / 100 * ROCKSDB_BLOCK_CACHE_MEMORY_PERCENT).clamp(
+        MIN_ROCKSDB_BLOCK_CACHE_SIZE_BYTES,
+        MAX_ROCKSDB_BLOCK_CACHE_SIZE_BYTES,
+    )
+}
+
+/// Memory this process may use: the smaller of the host's physical memory and the
+/// cgroup memory limit, so a container gets sized against its own limit rather than
+/// the machine it happens to run on. `None` when nothing could be read (non-Linux,
+/// or an unreadable/absent `/proc`), which callers treat as "unknown".
+fn host_memory_limit_bytes() -> Option<usize> {
+    [physical_memory_bytes(), cgroup_memory_limit_bytes()]
+        .into_iter()
+        .flatten()
+        .min()
+}
+
+/// `MemTotal` from `/proc/meminfo`, in bytes.
+fn physical_memory_bytes() -> Option<usize> {
+    let meminfo = std::fs::read_to_string("/proc/meminfo").ok()?;
+    let kib: usize = meminfo
+        .lines()
+        .find_map(|line| line.strip_prefix("MemTotal:"))?
+        .split_whitespace()
+        .next()?
+        .parse()
+        .ok()?;
+    kib.checked_mul(1024)
+}
+
+/// The cgroup memory limit, in bytes: `memory.max` under cgroup v2, falling back to
+/// `memory.limit_in_bytes` under v1. Both report "no limit" out of band — v2 with the
+/// literal `max`, v1 with a sentinel near `u64::MAX` — which yields `None` here (v1's
+/// sentinel simply exceeds any real `MemTotal`, so the `min` above discards it).
+fn cgroup_memory_limit_bytes() -> Option<usize> {
+    [
+        "/sys/fs/cgroup/memory.max",
+        "/sys/fs/cgroup/memory/memory.limit_in_bytes",
+    ]
+    .into_iter()
+    .find_map(|path| std::fs::read_to_string(path).ok()?.trim().parse().ok())
+}
 
 /// Tunable configuration for [`Store::new_with_config`] and related constructors.
 ///
@@ -111,7 +188,7 @@ pub struct StoreConfig {
 impl Default for StoreConfig {
     fn default() -> Self {
         Self {
-            rocksdb_block_cache_size: DEFAULT_ROCKSDB_BLOCK_CACHE_SIZE_BYTES,
+            rocksdb_block_cache_size: default_rocksdb_block_cache_size(),
             persist_channel_capacity: DEFAULT_PERSIST_CHANNEL_CAPACITY,
         }
     }
@@ -5324,8 +5401,8 @@ pub fn read_chain_id_from_db(path: &Path) -> Option<u64> {
     #[cfg(feature = "rocksdb")]
     {
         // The cache size is irrelevant for this one-shot chain-id read (the LRU
-        // is sized as a ceiling, not pre-allocated), so we use the default.
-        let backend = match RocksDBBackend::open(path, DEFAULT_ROCKSDB_BLOCK_CACHE_SIZE_BYTES) {
+        // is sized as a ceiling, not pre-allocated), so we use the ceiling.
+        let backend = match RocksDBBackend::open(path, MAX_ROCKSDB_BLOCK_CACHE_SIZE_BYTES) {
             Ok(backend) => backend,
             Err(e) => {
                 warn!("Failed to open RocksDB at {path:?} to read chain ID: {e}");
