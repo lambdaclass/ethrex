@@ -4511,9 +4511,7 @@ fn commit_to_disk(
         // the pivot-vs-`D` difference, so it wins over `read_view` for any key it carries.
         // `None` in the overlay means "absent at the pivot", which is exactly the journal's
         // "delete on rollback" entry.
-        let pivot_overlay = is_reconciliation_layer
-            .then_some(overlay_for_reconciliation.as_ref())
-            .flatten();
+        let pivot_overlay = overlay_for_reconciliation.as_ref();
 
         for (key, value) in layer.nodes.iter().chain(extra.iter()) {
             let (is_leaf, is_account) = classify_trie_key(key.len());
