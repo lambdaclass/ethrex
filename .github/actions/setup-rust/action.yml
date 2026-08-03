@@ -46,8 +46,15 @@ runs:
     #   segment of the key. One writer per pool keeps the entry to the widest
     #   dependency set in it; the rest restore only. Per-job keys would put ~32
     #   writers on main, several times what the budget holds.
+    #
+    # `tooling` is a second workspace with its own target dir, and the default
+    # `workspaces` covers only the repo root, so the ef_tests, reorgs, loc and
+    # hive_report builds were never cached at all.
     - name: Add Rust Cache
       uses: Swatinem/rust-cache@v2
       with:
         shared-key: ${{ inputs.cache-pool }}
         save-if: ${{ inputs.save-cache == 'true' && github.ref == 'refs/heads/main' }}
+        workspaces: |
+          .
+          tooling

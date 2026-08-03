@@ -505,11 +505,13 @@ jobs:
       - name: Free Disk Space
         uses: ./.github/actions/free-disk
 
+      # Its own pool: this is the only job on main that builds the root
+      # workspace at `release-fast`, so the `l1` entry (dev profile) carries
+      # nothing it can link against.
       - name: Setup Rust Environment
         uses: ./.github/actions/setup-rust
         with:
-          cache-pool: l1
-          save-cache: 'false'
+          cache-pool: l1-reorg
 
       # Built with release-grade optimization: an unoptimized ethrex overflows
       # the 2 MiB tokio worker stack while building a payload, since every
