@@ -27,7 +27,6 @@ members = [
   "tooling/repl",
   "test",
 ]
-exclude = ["crates/vm/levm/bench/revm_comparison"]
 resolver = "2"
 
 default-members = ["cmd/ethrex"]

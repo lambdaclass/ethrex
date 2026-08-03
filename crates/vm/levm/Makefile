@@ -1,4 +1,4 @@
-.PHONY: all test clippy fmt usage lint eth-tests run-evm-ef-tests flamegraph-run-ef-tests samply-run-ef-tests render-benches samply-run-bench
+.PHONY: all test clippy fmt usage lint eth-tests run-evm-ef-tests flamegraph-run-ef-tests samply-run-ef-tests
 
 all: test clippy fmt ## 🚀 Runs all tests, linter and formatter
 
@@ -23,118 +23,6 @@ run-evm-ef-tests: ## 🏃‍♂️ Run EF Tests
 	cd ../../../tooling/ef_tests/state && \
 	make run-evm-ef-tests flags="$(flags)"
 
-###### Benchmarks ######
-REPETITIONS := 10000
-REPETITIONS_SLOW := 200
-
-BENCH_FACT_ITERATIONS := 57
-BENCH_FACT_REC_ITERATIONS := 57
-BENCH_FIB_ITERATIONS := 57
-BENCH_FIB_REC_ITERATIONS := 15
-BENCH_HASHES_ITERATIONS := 57
-BENCH_BUBBLESORT_ITERATIONS := 100 # Size of the array to sort
-BENCH_MINT_ITERATIONS := 500
-BENCH_TRANSFER_ITERATIONS := 500
-BENCH_APPROVAL_ITERATIONS := 500
-BENCH_PUSH_ITERATIONS := 0 # unused, fixed size array to use stack
-BENCH_MSTOREBENCH_ITERATIONS := 0 # unused, fixed size array to use stack
-BENCH_SSTOREBENCH_ITERATIONS := 0 # unused, fixed size array to use stack
-
-# For manually testing you could add --show-output to hyperfine
-define run_benchmark
-	mkdir -p ./bench-results
-	@printf "%s\n" "revm_$(1)"
-	@target/release/benchmark revm $(1) 1 $($(3))
-	@printf "%s\n" "levm_$(1)"
-	@target/release/benchmark levm $(1) 1 $($(3))
-	hyperfine -w 5 -r 10 -N --export-markdown ./bench-results/$(1).md --export-json ./bench-results/$(1).json \
-		-n "revm_$(1)" "target/release/benchmark revm $(1) $($(2)) $($(3))" \
-		-n "levm_$(1)" "target/release/benchmark levm $(1) $($(2)) $($(3))"
-	@echo
-endef
-
-define run_benchmark_ci
-	@printf "%s\n" "main_revm$(1)"
-	@../../../main/benchmark revm $(1) 1 $($(3))
-	@printf "%s\n" "main_levm$(1)"
-	@../../../main/benchmark levm $(1) 1 $($(3))
-	@printf "%s\n" "pr_revm$(1)"
-	@../../../pr/benchmark revm $(1) 1 $($(3))
-	@printf "%s\n" "pr_levm_$(1)"
-	@../../../pr/benchmark levm $(1) 1 $($(3))
-	hyperfine -w 5 -r 10 -N --export-markdown ../../../benchmark_comparison_results/$(1).md \
-		-n "main_revm_$(1)" "../../../main/benchmark revm $(1) $($(2)) $($(3))" \
-		-n "main_levm_$(1)" "../../../main/benchmark levm $(1) $($(2)) $($(3))" \
-		-n "pr_revm_$(1)" "../../../pr/benchmark revm $(1) $($(2)) $($(3))" \
-		-n "pr_levm_$(1)" "../../../pr/benchmark levm $(1) $($(2)) $($(3))"
-	@echo
-endef
-
-compile-contracts:
-	cd ../../../ && \
-	cargo run --package revm_comparison \
-	--bin compile \
-	--manifest-path crates/vm/levm/bench/revm_comparison/Cargo.toml
-
-revm-comparison: compile-contracts ## 📊 Run benchmarks of fibonacci and factorial for both REVM and LEVM
-	$(MAKE) build-revm-comparison
-	$(call run_benchmark,SstoreBench_no_opt,REPETITIONS_SLOW,BENCH_SSTOREBENCH_ITERATIONS)
-	$(call run_benchmark,MstoreBench,REPETITIONS,BENCH_MSTOREBENCH_ITERATIONS)
-	$(call run_benchmark,Fibonacci,REPETITIONS,BENCH_FIB_ITERATIONS)
-	$(call run_benchmark,FibonacciRecursive,REPETITIONS_SLOW,BENCH_FIB_REC_ITERATIONS)
-	$(call run_benchmark,Factorial,REPETITIONS,BENCH_FACT_ITERATIONS)
-	$(call run_benchmark,FactorialRecursive,REPETITIONS,BENCH_FACT_REC_ITERATIONS)
-	$(call run_benchmark,Push,REPETITIONS,BENCH_PUSH_ITERATIONS)
-	$(call run_benchmark,ManyHashes,REPETITIONS_SLOW,BENCH_HASHES_ITERATIONS)
-	$(call run_benchmark,BubbleSort,REPETITIONS_SLOW,BENCH_BUBBLESORT_ITERATIONS)
-	$(call run_benchmark,ERC20Approval,REPETITIONS_SLOW,BENCH_APPROVAL_ITERATIONS)
-	$(call run_benchmark,ERC20Transfer,REPETITIONS_SLOW,BENCH_TRANSFER_ITERATIONS)
-	$(call run_benchmark,ERC20Mint,REPETITIONS_SLOW,BENCH_MINT_ITERATIONS)
-
-revm-comparison-ci: compile-contracts
-	mkdir -p ../../../benchmark_comparison_results
-	$(call run_benchmark_ci,Fibonacci,REPETITIONS,BENCH_FIB_ITERATIONS)
-	$(call run_benchmark_ci,FibonacciRecursive,REPETITIONS_SLOW,BENCH_FIB_REC_ITERATIONS)
-	$(call run_benchmark_ci,Factorial,REPETITIONS,BENCH_FACT_ITERATIONS)
-	$(call run_benchmark_ci,FactorialRecursive,REPETITIONS,BENCH_FACT_ITERATIONS)
-	$(call run_benchmark_ci,Push,REPETITIONS,BENCH_PUSH_ITERATIONS)
-	$(call run_benchmark_ci,MstoreBench,REPETITIONS,BENCH_MSTOREBENCH_ITERATIONS)
-	$(call run_benchmark_ci,SstoreBench_no_opt,REPETITIONS_SLOW,BENCH_SSTOREBENCH_ITERATIONS)
-	$(call run_benchmark_ci,ManyHashes,REPETITIONS_SLOW,BENCH_HASHES_ITERATIONS)
-	$(call run_benchmark_ci,BubbleSort,REPETITIONS_SLOW,BENCH_BUBBLESORT_ITERATIONS)
-	$(call run_benchmark_ci,ERC20Approval,REPETITIONS_SLOW,BENCH_APPROVAL_ITERATIONS)
-	$(call run_benchmark_ci,ERC20Transfer,REPETITIONS_SLOW,BENCH_TRANSFER_ITERATIONS)
-	$(call run_benchmark_ci,ERC20Mint,REPETITIONS_SLOW,BENCH_MINT_ITERATIONS)
-
-render-benches:
-	python3 ./bench/revm_comparison/create_bench_page.py > report.html
-
-flamegraph-levm-benchmark:
-	$(MAKE) flamegraph-levm-bench-generic name=Fibonacci repetitions=$(REPETITIONS) iterations=$(BENCH_FIB_ITERATIONS)
-	$(MAKE) flamegraph-levm-bench-generic name=FibonacciRecursive repetitions=$(REPETITIONS_SLOW) iterations=$(BENCH_FIB_REC_ITERATIONS)
-	$(MAKE) flamegraph-levm-bench-generic name=Factorial repetitions=$(REPETITIONS) iterations=$(BENCH_FACT_ITERATIONS)
-	$(MAKE) flamegraph-levm-bench-generic name=FactorialRecursive repetitions=$(REPETITIONS) iterations=$(BENCH_FACT_REC_ITERATIONS)
-	$(MAKE) flamegraph-levm-bench-generic name=ManyHashes repetitions=$(REPETITIONS_SLOW) iterations=$(BENCH_HASHES_ITERATIONS)
-	$(MAKE) flamegraph-levm-bench-generic name=BubbleSort repetitions=$(REPETITIONS_SLOW) iterations=$(BENCH_BUBBLESORT_ITERATIONS)
-	$(MAKE) flamegraph-levm-bench-generic name=ERC20Approval repetitions=$(REPETITIONS_SLOW) iterations=$(BENCH_APPROVAL_ITERATIONS)
-	$(MAKE) flamegraph-levm-bench-generic name=ERC20Transfer repetitions=$(REPETITIONS_SLOW) iterations=$(BENCH_TRANSFER_ITERATIONS)
-	$(MAKE) flamegraph-levm-bench-generic name=ERC20Mint repetitions=$(REPETITIONS_SLOW) iterations=$(BENCH_MINT_ITERATIONS)
-	$(MAKE) flamegraph-levm-bench-generic name=Push repetitions=$(REPETITIONS_SLOW) iterations=$(BENCH_PUSH_ITERATIONS)
-
-flamegraph-levm-bench-generic:
-	mkdir -p flamegraph_levm_benchmark
-	cargo flamegraph --root --package revm_comparison --bin benchmark --output flamegraph_levm_benchmark/flamegraph_levm_$(name).svg -- levm $(name) $(repetitions) $(iterations)
-
-build-revm-comparison:
-	cd bench/revm_comparison && \
-		CARGO_TARGET_DIR=../../target \
-		cargo build --release --bin benchmark
-
-build-revm-comparison-debuginfo:
-	cd bench/revm_comparison && \
-		CARGO_PROFILE_RELEASE_DEBUG=1 CARGO_TARGET_DIR=../../target \
-		cargo build --release --bin benchmark
-
 ###### Build Client with LEVM ######
 EFTEST_DIR := ../../../tooling/ef_tests/state
 VECTORS_DIR := $(EFTEST_DIR)/vectors
@@ -150,11 +38,3 @@ flamegraph-run-ef-tests: ## 🔥 Run EF tests and create a flamegraph per test f
 samply-run-ef-tests: ## ⚡️ Run EF tests and create a samply profiling file per test folder
 	cd $(EFTEST_DIR) && \
 	$(MAKE) samply-run-ef-tests
-
-BENCH ?= *
-BENCH_REPS ?= 500
-BENCH_ITERS ?= 57
-
-samply-run-bench: ## ⚡️ Runs the provided bench with samply Pass BENCH=Fibonacci to choose the benchmark.
-	$(MAKE) build-revm-comparison-debuginfo
-	samply record -r 10000 target/release/benchmark levm $(BENCH) $(BENCH_REPS) $(BENCH_ITERS)
