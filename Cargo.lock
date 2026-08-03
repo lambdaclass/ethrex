@@ -3906,6 +3906,7 @@ dependencies = [
  "bytes",
  "crc32fast",
  "ethereum-types 0.15.1",
+ "ethrex-binary-trie",
  "ethrex-crypto",
  "ethrex-rlp",
  "ethrex-trie",

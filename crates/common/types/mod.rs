@@ -13,6 +13,7 @@ mod fork_id;
 mod genesis;
 pub mod l2;
 pub mod payload;
+pub mod pbt_state;
 pub mod prover;
 mod receipt;
 pub mod requests;

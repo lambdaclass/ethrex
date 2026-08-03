@@ -183,3 +183,58 @@ fn incremental_matches_spec_roots() {
         );
     }
 }
+
+/// The spec roots survive a full storage round trip.
+///
+/// `incremental_matches_spec_roots` builds in memory and hashes what it
+/// built, so it never touches the backend. This commits each case,
+/// reopens it from a fresh handle on the same nodes, and re-checks the
+/// root and every value — putting the node encoding, the path keying,
+/// lazy loading and the hash cache between the vectors and the answer.
+#[test]
+fn spec_roots_survive_a_storage_round_trip() {
+    use ethrex_binary_trie::trie::{BinaryTrie, InMemoryBinaryTrieDB};
+
+    for case in load().trie_roots {
+        let expected = unhex(&case.root);
+
+        let db = InMemoryBinaryTrieDB::new_empty();
+        let nodes = db.inner();
+        let mut trie = BinaryTrie::new(Box::new(db));
+        for e in &case.entries {
+            trie.insert(unhex(&e.key), unhex(&e.value).try_into().unwrap())
+                .unwrap();
+        }
+        let committed = trie.commit().unwrap();
+        assert_eq!(
+            committed.as_bytes(),
+            expected.as_slice(),
+            "committed root, case {}",
+            case.name
+        );
+
+        // A fresh handle on the same nodes: nothing is carried over in
+        // memory, so every answer below comes from the store.
+        let mut reopened = BinaryTrie::open(Box::new(InMemoryBinaryTrieDB::new(nodes)), committed);
+        assert_eq!(
+            reopened.root().as_bytes(),
+            expected.as_slice(),
+            "reopened root, case {}",
+            case.name
+        );
+        // Entries are ordered and may repeat a key; the last write wins,
+        // so check against the value that survived.
+        let mut surviving: BTreeMap<Vec<u8>, Vec<u8>> = BTreeMap::new();
+        for e in &case.entries {
+            surviving.insert(unhex(&e.key), unhex(&e.value));
+        }
+        for (key, value) in &surviving {
+            assert_eq!(
+                reopened.get(key).unwrap().as_ref().map(|v| v.as_slice()),
+                Some(value.as_slice()),
+                "reopened value for {key:?}, case {}",
+                case.name
+            );
+        }
+    }
+}
