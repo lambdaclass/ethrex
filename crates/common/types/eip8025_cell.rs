@@ -1,4 +1,4 @@
-/// `OnceCell` replacement for zkVM guest gated on `eip-8025` feature.
+/// `OnceCell` replacement for the ZisK zkVM guest (riscv64).
 ///
 /// `once_cell::sync::OnceCell` atomics are pure overhead in zkVM guest.
 /// This struct copies the methods from `once_cell::unsync::OnceCell` and uses unsafe

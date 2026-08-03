@@ -43,7 +43,7 @@ sp1 = []
 risc0 = ["c-kzg"]
 zisk = []
 rayon = ["dep:rayon"]
-secp256k1 = ["rayon"]
+secp256k1 = []
 
 [lints.rust]
 unsafe_code = "warn"

@@ -47,12 +47,12 @@ use ethrex_rlp::{
     structs::{Decoder, Encoder},
 };
 
-#[cfg(all(feature = "eip-8025", target_arch = "riscv64"))]
+#[cfg(all(feature = "zisk", target_arch = "riscv64"))]
 use super::eip8025_cell::OnceCell;
 use crate::types::{
     AccessList, AuthorizationList, BlobsBundle, constants::VERSIONED_HASH_VERSION_KZG,
 };
-#[cfg(not(all(feature = "eip-8025", target_arch = "riscv64")))]
+#[cfg(not(all(feature = "zisk", target_arch = "riscv64")))]
 use once_cell::sync::OnceCell;
 
 // The `#[serde(untagged)]` attribute allows the `Transaction` enum to be serialized without
