@@ -522,6 +522,11 @@ pub struct FrameTxContext {
     /// every frame and signature, so it must not run per-opcode (TXPARAM 0x06,
     /// compute_tx_max_cost). Computed once at tx entry.
     pub total_gas_limit: u64,
+    /// The block's EIP-4844 blob base fee, captured at tx entry. `max_cost`
+    /// collects the blob fee at this rate, not at `max_fee_per_blob_gas`
+    /// (EIP-8141 §Gas accounting), and `load_tx_param` has no `Environment`
+    /// handle to read it from.
+    pub blob_base_fee: U256,
 }
 
 impl FrameTxContext {
@@ -1515,6 +1520,63 @@ impl<'a> VM<'a> {
         Ok(report)
     }
 
+    /// EIP-8272 native RECENT_ROOT_CODE write core (docs/eip-8272.md
+    /// divergence #4: the spec leaves the predeploy bytecode TBD, so ethrex
+    /// executes the 64-byte `salt ‖ root` write natively). The committed entry
+    /// is keyed by `source_id = keccak256(caller ‖ salt)` over the 20-byte
+    /// address and the 32-byte salt (EIP-8272 §Root sources, with the
+    /// fixed-length encodings its Specification preamble sets out) — a
+    /// caller-authenticated namespace (nobody can write into another caller's
+    /// source_id), with the salt giving each caller as many namespaces as it
+    /// needs; a referencing transaction declares the same source_id in its
+    /// envelope. The entry commits to the CURRENT slot (EIP-7843
+    /// `env.slot_number`); last-write-wins within a block follows from plain
+    /// storage-write ordering. Callers enforce the static/value/calldata-shape
+    /// rules and gas; this core performs the storage write through the
+    /// standard backed-up path (journaled and BAL-recorded like any storage
+    /// write, and rolled back by an enclosing revert exactly as a real
+    /// bytecode SSTORE would be).
+    pub(crate) fn recent_root_native_write(
+        &mut self,
+        caller: Address,
+        salt: &[u8],
+        root: &[u8],
+    ) -> Result<(), VMError> {
+        let current_slot = self.env.slot_number;
+        // Beacon slots are u64; a larger env value can only come from a
+        // crafted header. Refuse to write rather than truncate.
+        if current_slot > U256::from(u64::MAX) {
+            return Err(ExceptionalHalt::InvalidOpcode.into());
+        }
+        let mut preimage = [0u8; 52];
+        preimage[..20].copy_from_slice(caller.as_bytes());
+        preimage[20..52].copy_from_slice(salt);
+        let source_id = H256(ethrex_crypto::keccak::keccak_hash(preimage));
+        let entry = ethrex_common::types::RecentRootReference {
+            source_id,
+            slot: current_slot.low_u64(),
+            root: H256::from_slice(root),
+        };
+        // entry_hash/storage_key come from the shared ethrex-common helpers —
+        // the same code the read-side validity check runs, so a root written
+        // here always validates its own reference.
+        let storage_key = entry.storage_key();
+        let entry_hash = entry.entry_hash();
+        let recent_root_addr = ethrex_common::types::frame_tx_recent_root();
+        // Ensure the predeploy account is cached before touching its storage.
+        let _ = self.db.get_account(recent_root_addr)?;
+        let current = self.get_storage_value(recent_root_addr, storage_key)?;
+        let key_u256 = U256::from_big_endian(&storage_key.0);
+        self.update_account_storage(
+            recent_root_addr,
+            storage_key,
+            key_u256,
+            U256::from_big_endian(entry_hash.as_bytes()),
+            current,
+        )?;
+        Ok(())
+    }
+
     /// Execute a frame transaction (EIP-8141).
     /// This bypasses the normal prepare/finalize hooks and orchestrates per-frame execution.
     fn execute_frame_tx(&mut self) -> Result<ExecutionReport, VMError> {
@@ -1594,6 +1656,81 @@ impl<'a> VM<'a> {
             ));
         }
 
+        // EIP-8272 reference validity: every declared (source_id, slot, root)
+        // must be a committed recent root. Enforced before the frame loop so no
+        // frame executes when any reference is invalid — an invalid reference
+        // invalidates the transaction and, on block import, the whole block.
+        // The slot window (1 <= current_slot - slot <= USABLE_WINDOW) is checked
+        // in U256 against EIP-7843's env.slot_number (never block.timestamp):
+        // a root becomes referenceable the slot AFTER it was written, and past
+        // the window its ring-buffer entry may have been overwritten. The
+        // storage assertion recomputes entry_hash/storage_key with the shared
+        // ethrex-common helpers (one definition with the native write handler —
+        // a divergence would make natively written roots unreferenceable) and
+        // requires RECENT_ROOT_ADDRESS[storage_key] == entry_hash. entry_hash
+        // commits to the RAW slot, so an entry overwritten by an aliasing newer
+        // slot can never satisfy a stale reference — this is what closes the
+        // forged-roots soundness hole that previously kept references disabled.
+        // The predeploy address and each reference's storage key are warmed
+        // here; the per-reference intrinsic gas already prepaid this access.
+        // These are real reads of the predeploy's storage, not declared
+        // access-list entries, so EIP-7928 requires them in the block access
+        // list — recorded once the whole pass succeeds, since a failed reference
+        // invalidates the transaction and the block along with it.
+        if !frame_tx.recent_root_references.is_empty() {
+            let recent_root_addr = ethrex_common::types::frame_tx_recent_root();
+            let current_slot = self.env.slot_number;
+            self.substate.add_accessed_address(recent_root_addr);
+            // Ensure the predeploy account is cached before reading its storage.
+            let _ = self.db.get_account(recent_root_addr)?;
+            let mut read_keys = Vec::with_capacity(frame_tx.recent_root_references.len());
+            for reference in &frame_tx.recent_root_references {
+                // A slot at or ahead of the current one is transiently
+                // unreferenceable; past the window it is permanently invalid.
+                let age = current_slot.checked_sub(U256::from(reference.slot));
+                match age {
+                    None => {
+                        return Err(VMError::TxValidation(
+                            crate::errors::TxValidationError::FrameTxRecentRootNotReferenceable,
+                        ));
+                    }
+                    Some(age) if age.is_zero() => {
+                        return Err(VMError::TxValidation(
+                            crate::errors::TxValidationError::FrameTxRecentRootNotReferenceable,
+                        ));
+                    }
+                    Some(age)
+                        if age
+                            > U256::from(
+                                ethrex_common::types::FRAME_TX_RECENT_ROOT_USABLE_WINDOW,
+                            ) =>
+                    {
+                        return Err(VMError::TxValidation(
+                            crate::errors::TxValidationError::FrameTxRecentRootInvalid,
+                        ));
+                    }
+                    Some(_) => {}
+                }
+                let storage_key = reference.storage_key();
+                self.substate
+                    .add_accessed_slot(recent_root_addr, storage_key);
+                let committed = self.get_storage_value(recent_root_addr, storage_key)?;
+                let expected = U256::from_big_endian(reference.entry_hash().as_bytes());
+                if committed != expected {
+                    return Err(VMError::TxValidation(
+                        crate::errors::TxValidationError::FrameTxRecentRootInvalid,
+                    ));
+                }
+                read_keys.push(U256::from_big_endian(storage_key.as_bytes()));
+            }
+            if let Some(recorder) = self.db.bal_recorder.as_mut() {
+                recorder.record_touched_address(recent_root_addr);
+            }
+            for key in read_keys {
+                self.record_storage_slot_to_bal(recent_root_addr, key);
+            }
+        }
+
         // Initialize FrameTxContext
         let sig_hash = frame_tx.compute_sig_hash();
         let total_gas_limit = frame_tx.total_gas_limit();
@@ -1606,6 +1743,7 @@ impl<'a> VM<'a> {
             tx: frame_tx.clone(),
             approve_called_in_current_frame: false,
             total_gas_limit,
+            blob_base_fee: self.env.base_blob_fee_per_gas,
         });
 
         // EIP-8141: every outer signature must validate
@@ -2151,8 +2289,13 @@ impl<'a> VM<'a> {
         // state changes — and are applied once here, capped at a fifth of the gas
         // used before refunds. The EIP-7623 calldata floor then applies to the frame
         // and signature data: the mandatory costs are always charged, and the data
-        // cost is floored against what execution actually consumed.
-        let mandatory_gas = frame_tx.mandatory_gas();
+        // cost is floored against what execution actually consumed. EIP-8272
+        // reference intrinsic gas is mandatory too — it prepays warming that
+        // happens unconditionally — while the reference bytes themselves are
+        // ordinary transaction data, priced inside the floored term.
+        let mandatory_gas = frame_tx
+            .mandatory_gas()
+            .saturating_add(frame_tx.recent_root_reference_intrinsic_gas());
         let applied_refund = self
             .substate
             .refunded_gas
@@ -2163,15 +2306,15 @@ impl<'a> VM<'a> {
         let total_gas_used =
             mandatory_gas.saturating_add(data_and_execution.max(frame_tx.calldata_floor_gas()));
 
-        // Gas refunds: the payer was debited the transaction's MAXIMUM cost at
-        // APPROVE (max_fee-based gas + max-rate blob cost, `compute_tx_max_cost`,
-        // §Gas Accounting). What the payer owes is the effective-rate cost of the
-        // gas actually used plus the base-rate blob burn (EIP-4844 semantics);
-        // everything above that is returned here. Intrinsic gas is inside
-        // `total_gas_used`, so it stays non-refundable. When max_fee ==
-        // effective_gas_price and max_fee_per_blob_gas == base_blob_fee this
-        // reduces exactly to the old unused-frame-gas refund:
-        // max·T + B − e·U − B = e·(T − U).
+        // Gas refunds: the payer was debited the transaction's `max_cost` at
+        // APPROVE (`max_gas` at `max_fee_per_gas`, plus the blob cost already at
+        // the base rate, `compute_tx_max_cost`, §Gas accounting). What the payer
+        // owes is the effective-rate cost of the gas actually used plus the same
+        // base-rate blob burn, so the blob terms cancel and the burn is collected
+        // exactly once and never refunded. Everything above that is returned here.
+        // Intrinsic gas is inside `total_gas_used`, so it stays non-refundable.
+        // When max_fee == effective_gas_price this reduces exactly to the unused
+        // -frame-gas refund: max·T + B − e·U − B = e·(T − U).
         let effective_gas_price = self.env.gas_price;
         let charged = crate::opcode_handlers::frame_tx::compute_tx_max_cost(&ctx)
             .map_err(|_| VMError::Internal(InternalError::Overflow))?;
@@ -2184,8 +2327,9 @@ impl<'a> VM<'a> {
             .and_then(|gas_owed| gas_owed.checked_add(blob_burn))
             .ok_or(VMError::Internal(InternalError::Overflow))?;
         // charged >= owed always: effective <= max_fee (by construction of the
-        // effective price), base_blob <= max_blob (blob-fee validity check), and
-        // total_gas_used <= total_gas_limit (frames are bounded by their limits).
+        // effective price), the blob terms are identical, and total_gas_used <=
+        // max_gas (frames are bounded by their limits, and the floor is charged
+        // on both sides).
         let refund_amount = charged
             .checked_sub(owed)
             .ok_or(VMError::Internal(InternalError::Underflow))?;
@@ -2397,6 +2541,7 @@ impl<'a> VM<'a> {
             tx: frame_tx.clone(),
             approve_called_in_current_frame: false,
             total_gas_limit,
+            blob_base_fee: self.env.base_blob_fee_per_gas,
         });
 
         if !validate_frame_signatures(

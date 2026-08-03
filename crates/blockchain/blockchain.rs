@@ -73,8 +73,8 @@ use ethrex_common::types::block_execution_witness::ExecutionWitness;
 use ethrex_common::types::fee_config::FeeConfig;
 use ethrex_common::types::{
     AccountInfo, AccountState, AccountUpdate, BalSynthesisItem, Block, BlockHash, BlockHeader,
-    BlockNumber, Code, Transaction, WrappedEIP4844Transaction, synthesize_bal_updates,
-    validate_block_body,
+    BlockNumber, Code, FrameTransaction, Transaction, WrappedEIP4844Transaction,
+    synthesize_bal_updates, validate_block_body,
 };
 use ethrex_common::types::{EIP7702_DELEGATED_CODE_LEN, is_eip7702_delegation};
 use ethrex_common::types::{ELASTICITY_MULTIPLIER, P2PTransaction};
@@ -3001,6 +3001,77 @@ impl Blockchain {
         Ok(())
     }
 
+    /// EIP-8272 §Public mempool handling (SHOULD; local peer policy — it may
+    /// over-reject but must never under-reject): whether every recent-root
+    /// reference `frame_tx` declares would be valid in the earliest block that
+    /// could include it, with `header` as the current head. `current_slot` is
+    /// therefore `head.slot_number + 1`: a reference that is "too new" or expired
+    /// against that slot can never make the transaction valid right now.
+    ///
+    /// The three consensus conditions mirrored here:
+    ///   1. `slot < current_slot` (a root is only referenceable from the slot
+    ///      after it was written),
+    ///   2. `current_slot - slot <= FRAME_TX_RECENT_ROOT_USABLE_WINDOW` (older
+    ///      entries may be overwritten by ring-buffer aliasing),
+    ///   3. the entry hash is committed in the RECENT_ROOT_ADDRESS predeploy at
+    ///      `header`'s state.
+    ///
+    /// The storage assertion must be explicit: the validation-trace simulation
+    /// runs only the validation prefix and never reaches the frame-tx
+    /// reference-validity check in the VM. The head slot is the CL-supplied header
+    /// slot when present, else the timestamp-derived slot once the EIP-7843
+    /// `derived_slot_time` knob is active — matching the slot block execution
+    /// derives (`ChainConfig::effective_slot_number`). When there is genuinely no
+    /// sound slot to compare against (no CL slot and the derivation knob inactive)
+    /// the policy is skipped entirely (guard, don't reject); block execution
+    /// remains the authoritative check.
+    fn check_recent_root_references(
+        &self,
+        frame_tx: &FrameTransaction,
+        header: &BlockHeader,
+        header_number: BlockNumber,
+    ) -> Result<(), MempoolError> {
+        let config = self.storage.get_chain_config();
+        if frame_tx.recent_root_references.is_empty()
+            || (header.slot_number.is_none() && !config.is_derived_slot_activated(header.timestamp))
+        {
+            return Ok(());
+        }
+        let head_slot = config.effective_slot_number(header.slot_number, header.timestamp);
+        let current_slot = head_slot.saturating_add(1);
+        let recent_root_address = ethrex_common::types::frame_tx_recent_root();
+        for reference in &frame_tx.recent_root_references {
+            if reference.slot >= current_slot {
+                return Err(MempoolError::FrameTxRecentRootTooNew {
+                    reference_slot: reference.slot,
+                    current_slot,
+                });
+            }
+            // `reference.slot < current_slot` holds here, so the subtraction
+            // cannot underflow.
+            if current_slot - reference.slot
+                > ethrex_common::types::FRAME_TX_RECENT_ROOT_USABLE_WINDOW
+            {
+                return Err(MempoolError::FrameTxRecentRootExpired {
+                    reference_slot: reference.slot,
+                    current_slot,
+                });
+            }
+            // The committed entry hash must match what the reference declares. An
+            // absent predeploy or an empty/aliased slot reads as 0 and correctly
+            // fails the match.
+            let stored = self
+                .storage
+                .get_storage_at(header_number, recent_root_address, reference.storage_key())?
+                .unwrap_or_default();
+            let expected = U256::from_big_endian(reference.entry_hash().as_bytes());
+            if stored != expected {
+                return Err(MempoolError::FrameTxRecentRootNotCommitted);
+            }
+        }
+        Ok(())
+    }
+
     /// Re-simulate pending frame transactions (EIP-8141) whose validity may have
     /// changed because of a newly canonical `block`, evicting any that no longer
     /// pass. A local peer policy: it never affects consensus or block-building.
@@ -3077,6 +3148,20 @@ impl Blockchain {
             {
                 self.mempool.remove_transaction(&hash)?;
                 continue;
+            }
+
+            // EIP-8272 §Public mempool handling: a slot advance can age a declared
+            // recent-root reference out of the usable window, or a reorg can leave
+            // it uncommitted at the new head. Re-run the admission conditions and
+            // evict what they now reject. A storage-read failure is transient, so
+            // it keeps the tx (never under-reject on a read error alone).
+            match self.check_recent_root_references(frame_tx, &block.header, block.header.number) {
+                Ok(()) => {}
+                Err(MempoolError::StoreError(_)) => continue,
+                Err(_) => {
+                    self.mempool.remove_transaction(&hash)?;
+                    continue;
+                }
             }
 
             // Re-derive the prefix and re-simulate against the new head state.
@@ -3302,6 +3387,14 @@ impl Blockchain {
             frame_tx
                 .validate_prefix_structure(&prefix)
                 .map_err(MempoolError::from)?;
+
+            // One head-state storage read runs per reference, so this must stay
+            // behind `validate_static_constraints` (which caps the reference count
+            // at FRAME_TX_MAX_RECENT_ROOT_REFERENCES) and behind signature
+            // authentication: ahead of them, a single unauthenticated transaction
+            // sized at MAX_TX_SIZE could declare thousands of references and force
+            // a keccak-random storage lookup for each.
+            self.check_recent_root_references(frame_tx, &header, header_no)?;
         }
 
         // Wire size cap for non-blob txs: peer-policy default, not consensus.

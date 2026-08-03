@@ -56,7 +56,7 @@ pub(crate) fn compute_tx_max_cost(ctx: &crate::vm::FrameTxContext) -> Result<U25
     let blob_cost = U256::from(ctx.tx.blob_versioned_hashes.len())
         .checked_mul(U256::from(131072u64))
         .ok_or(ExceptionalHalt::InvalidOpcode)?
-        .checked_mul(ctx.tx.max_fee_per_blob_gas)
+        .checked_mul(ctx.blob_base_fee)
         .ok_or(ExceptionalHalt::InvalidOpcode)?;
     gas_cost
         .checked_add(blob_cost)
@@ -560,6 +560,46 @@ impl OpcodeHandler for OpSigParamHandler {
     }
 }
 
+/// RECENTROOTREFLOAD (0xB5, EIP-8272) -- read a field of a declared recent-root
+/// reference from the signed envelope. Stack: `[field, index]` with `field` on
+/// top (popped first), `index` second. `field` 0 => source_id, 1 => slot,
+/// 2 => root. Gas: 3. Reads only the envelope, never contract storage; allowed
+/// in any frame mode (incl. VERIFY). Exceptional-halt if
+/// `index >= len(recent_root_references)` or `field > 2`.
+pub struct OpRecentRootRefLoadHandler;
+impl OpcodeHandler for OpRecentRootRefLoadHandler {
+    #[inline(always)]
+    fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
+        let [field, index] = *vm.current_call_frame.stack.pop()?;
+
+        vm.current_call_frame
+            .increase_consumed_gas(gas_cost::RECENTROOTREFLOAD)?;
+
+        let ctx = vm
+            .frame_tx_context
+            .as_ref()
+            .ok_or(ExceptionalHalt::InvalidOpcode)?;
+
+        let index = u64::try_from(index).map_err(|_| ExceptionalHalt::InvalidOpcode)?;
+        let idx = index_to_usize(index)?;
+        let reference = ctx
+            .tx
+            .recent_root_references
+            .get(idx)
+            .ok_or(ExceptionalHalt::InvalidOpcode)?;
+
+        let field = u64::try_from(field).map_err(|_| ExceptionalHalt::InvalidOpcode)?;
+        let result = match field {
+            0 => U256::from_big_endian(reference.source_id.as_bytes()),
+            1 => U256::from(reference.slot),
+            2 => U256::from_big_endian(reference.root.as_bytes()),
+            _ => return Err(ExceptionalHalt::InvalidOpcode.into()),
+        };
+        vm.current_call_frame.stack.push(result)?;
+        Ok(OpcodeResult::Continue)
+    }
+}
+
 // -- Helper functions --
 
 pub fn load_tx_param(ctx: &crate::vm::FrameTxContext, param_id: u64) -> Result<U256, VMError> {
@@ -580,6 +620,8 @@ pub fn load_tx_param(ctx: &crate::vm::FrameTxContext, param_id: u64) -> Result<U
         0x09 => Ok(U256::from(ctx.tx.frames.len())),
         0x0A => Ok(U256::from(ctx.current_frame_index)),
         0x0B => Ok(U256::from(ctx.tx.signatures.len())),
+        // EIP-8272: count of recent-root references.
+        0x0F => Ok(U256::from(ctx.tx.recent_root_references.len())),
         _ => Err(ExceptionalHalt::InvalidOpcode.into()),
     }
 }
@@ -605,6 +647,13 @@ pub fn execute_default_code(
     frame: &ethrex_common::types::Frame,
     target: Address,
 ) -> Result<(bool, u64, Vec<Log>), VMError> {
+    // EIP-8272: RECENT_ROOT_ADDRESS carries no runtime bytecode (the write is
+    // native, docs/eip-8272.md divergence #4), so a frame targeting it lands
+    // in this empty-code path and executes the recent-root write instead of
+    // the generic default code.
+    if target == ethrex_common::types::frame_tx_recent_root() {
+        return execute_recent_root_frame(vm, frame);
+    }
     match frame.execution_mode() {
         FrameMode::Verify => execute_default_verify(vm, frame, target),
         // EIP-8141 §"Default code": a SENDER or DEFAULT frame whose target has no code "returns
@@ -614,6 +663,40 @@ pub fn execute_default_code(
         // the caller's deferred transfer).
         FrameMode::Sender | FrameMode::Default => Ok((true, 0, Vec::new())),
     }
+}
+
+/// EIP-8272 write semantics for a frame whose target is RECENT_ROOT_ADDRESS,
+/// mirroring what real predeploy bytecode would observe: msg.sender is the
+/// frame's caller (ENTRY_POINT for DEFAULT frames, the tx sender for SENDER
+/// frames), VERIFY frames run statically so the write fails, and the call
+/// reverts unless the frame data is exactly 64 bytes (`salt ‖ root`) with
+/// zero value. A successful write costs `RECENT_ROOT_WRITE_GAS`.
+fn execute_recent_root_frame(
+    vm: &mut VM<'_>,
+    frame: &ethrex_common::types::Frame,
+) -> Result<(bool, u64, Vec<Log>), VMError> {
+    // VERIFY frames are dispatched as static calls in the frame loop; the
+    // write is a state change, so it must fail there.
+    let is_static = frame.execution_mode() == FrameMode::Verify;
+    if is_static || frame.data.len() != 64 || !frame.value.is_zero() {
+        return Ok((false, 0, Vec::new()));
+    }
+    if frame.gas_limit < gas_cost::RECENT_ROOT_WRITE_GAS {
+        // The write out-of-gasses: the frame consumes its whole budget.
+        return Ok((false, frame.gas_limit, Vec::new()));
+    }
+    let ctx = vm
+        .frame_tx_context
+        .as_ref()
+        .ok_or(ExceptionalHalt::InvalidOpcode)?;
+    let caller = match frame.execution_mode() {
+        FrameMode::Sender => ctx.tx.sender,
+        _ => ethrex_common::types::frame_tx_entry_point(),
+    };
+    let salt = frame.data.get(..32).ok_or(ExceptionalHalt::OutOfBounds)?;
+    let root = frame.data.get(32..64).ok_or(ExceptionalHalt::OutOfBounds)?;
+    vm.recent_root_native_write(caller, salt, root)?;
+    Ok((true, gas_cost::RECENT_ROOT_WRITE_GAS, Vec::new()))
 }
 
 fn execute_default_verify(
@@ -671,10 +754,12 @@ mod max_cost_tests {
     use crate::vm::FrameTxContext;
     use ethrex_common::{H256, U256, types::FrameTransaction};
 
-    fn ctx(max_fee: u64, blobs: usize, max_blob_fee: u64, total_gas_limit: u64) -> FrameTxContext {
+    fn ctx(max_fee: u64, blobs: usize, blob_base_fee: u64, total_gas_limit: u64) -> FrameTxContext {
         let tx = FrameTransaction {
             max_fee_per_gas: max_fee,
-            max_fee_per_blob_gas: U256::from(max_blob_fee),
+            // Deliberately far above the base fee: `max_fee_per_blob_gas` bounds
+            // inclusion only and must not reach `max_cost`.
+            max_fee_per_blob_gas: U256::from(blob_base_fee).saturating_mul(U256::from(1_000u64)),
             blob_versioned_hashes: vec![H256::zero(); blobs],
             ..Default::default()
         };
@@ -687,11 +772,12 @@ mod max_cost_tests {
             tx,
             approve_called_in_current_frame: false,
             total_gas_limit,
+            blob_base_fee: U256::from(blob_base_fee),
         }
     }
 
     #[test]
-    fn max_cost_is_max_fee_times_limit_plus_max_blob_cost() {
+    fn max_cost_is_max_fee_times_limit_plus_base_rate_blob_cost() {
         // 10 * 100_000 + 2 * 131072 * 5 = 1_000_000 + 1_310_720
         let c = ctx(10, 2, 5, 100_000);
         assert_eq!(compute_tx_max_cost(&c).unwrap(), U256::from(2_310_720u64));

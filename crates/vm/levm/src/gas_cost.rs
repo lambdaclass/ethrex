@@ -72,6 +72,29 @@ pub const FRAMEDATACOPY_STATIC: u64 = 3;
 pub const FRAMEDATACOPY_DYNAMIC_BASE: u64 = 3;
 pub const FRAMEPARAM: u64 = 2;
 pub const SIGPARAM: u64 = 2;
+// EIP-8272 Recent Roots
+pub const RECENTROOTREFLOAD: u64 = 3;
+/// Frame transactions exist only from Hegota, which is after Amsterdam, so the
+/// EIP-8038 access-list parameters always apply.
+pub const RECENT_ROOT_REFERENCE_ADDRESS_GAS: u64 = ACCESS_LIST_ADDRESS_COST_AMSTERDAM;
+/// ACCESS_LIST_STORAGE_KEY_COST + 2*KECCAK256_BASE + 7*KECCAK256_WORD (ethrex
+/// names the keccak constants KECCAK25_STATIC / KECCAK25_DYNAMIC_BASE).
+pub const RECENT_ROOT_REFERENCE_GAS: u64 =
+    ACCESS_LIST_STORAGE_KEY_COST_AMSTERDAM + 2 * KECCAK25_STATIC + 7 * KECCAK25_DYNAMIC_BASE;
+// `total_gas_limit` charges these through ethrex-common, which cannot depend on
+// this module. Keep the two definitions from drifting apart.
+const _: () = assert!(
+    RECENT_ROOT_REFERENCE_ADDRESS_GAS
+        == ethrex_common::types::FRAME_TX_RECENT_ROOT_REFERENCE_ADDRESS_GAS
+);
+const _: () =
+    assert!(RECENT_ROOT_REFERENCE_GAS == ethrex_common::types::FRAME_TX_RECENT_ROOT_REFERENCE_GAS);
+/// EIP-8272: flat cost of a successful native RECENT_ROOT_ADDRESS write. The
+/// spec leaves RECENT_ROOT_CODE (and its gas schedule) TBD, so ethrex prices
+/// the write as a cold created-slot SSTORE (20000 creation + 2100 cold
+/// surcharge) — the dominant real cost of committing the entry. Flat pricing
+/// slightly over-charges ring-entry overwrites, which is the safe direction.
+pub const RECENT_ROOT_WRITE_GAS: u64 = 22100;
 
 pub fn framedatacopy(
     new_memory_size: usize,

@@ -139,6 +139,7 @@ fn frame_tx_with_frames(frames: Vec<Frame>) -> FrameTransaction {
         max_fee_per_gas: HARNESS_BASE_FEE + 1_000,
         max_fee_per_blob_gas: U256::zero(),
         blob_versioned_hashes: Vec::new(),
+        recent_root_references: Vec::new(),
         inner_hash: Default::default(),
         cached_canonical: Default::default(),
     }
@@ -1332,6 +1333,7 @@ mod frame_tx_opcode_handler_tests {
             tx,
             approve_called_in_current_frame: false,
             total_gas_limit: 0,
+            blob_base_fee: U256::zero(),
         }
     }
 
@@ -1418,6 +1420,7 @@ mod frame_tx_opcode_handler_tests {
             tx: FrameTransaction::default(),
             approve_called_in_current_frame: false,
             total_gas_limit: 0,
+            blob_base_fee: U256::zero(),
         };
         let result = load_tx_param(&ctx, 0x0B).unwrap();
         assert_eq!(result, U256::zero());
@@ -2659,7 +2662,7 @@ mod atomic_batch_end_tests {
 }
 
 mod atomic_batch_approval_rollback_tests {
-    use ethrex_common::Address;
+    use ethrex_common::{Address, U256};
     use ethrex_levm::vm::FrameTxContext;
 
     fn minimal_ctx() -> FrameTxContext {
@@ -2672,6 +2675,7 @@ mod atomic_batch_approval_rollback_tests {
             tx: ethrex_common::types::FrameTransaction::default(),
             approve_called_in_current_frame: false,
             total_gas_limit: 0,
+            blob_base_fee: U256::zero(),
         }
     }
 
@@ -3220,7 +3224,7 @@ mod frame_sig_validation_tests {
     }
 }
 
-// ==================== Relocated from crates/vm/system_contracts.rs ====================
+// ==================== EXPIRY_VERIFIER predeploy ====================
 mod expiry_verifier_tests {
     use ethrex_common::H160;
     use ethrex_vm::system_contracts::{
@@ -3602,5 +3606,41 @@ fn storage_refund_from_a_later_frame_reduces_reported_gas() {
     assert!(
         applied <= pre_refund / 5,
         "the applied refund {applied} must respect the EIP-3529 one-fifth cap"
+    );
+}
+
+/// EIP-8141 `max_gas = max(standard_gas_limit, calldata_floor_gas)`. A frame
+/// transaction whose data floor exceeds what it declared for execution reserves
+/// the floor; it is not rejected. Both quantities carry the mandatory costs, so
+/// the floor wins exactly when the EIP-7623 token charge exceeds the declared
+/// data cost plus frame gas.
+#[test]
+fn max_gas_reserves_the_calldata_floor_instead_of_rejecting() {
+    use ethrex_common::types::Frame;
+
+    // A frame carrying a large payload but almost no execution gas: the floor
+    // (64 per byte) dominates the data cost (16 at most) plus the frame gas.
+    let mut tx = frame_tx_with_frames(vec![Frame {
+        mode: u8::from(FrameMode::Verify),
+        flags: 0x03,
+        target: Some(FUNDED_SENDER),
+        gas_limit: 1_000,
+        value: U256::zero(),
+        data: Bytes::from(vec![0x11u8; 4_096]),
+    }]);
+    tx.sender = FUNDED_SENDER;
+
+    assert!(
+        tx.calldata_floor_total() > tx.standard_gas_limit(),
+        "the floor must bind for this to test the reservation"
+    );
+    assert_eq!(
+        tx.total_gas_limit(),
+        tx.calldata_floor_total(),
+        "max_gas must be the floor when the floor binds"
+    );
+    assert!(
+        tx.validate_static_constraints().is_ok(),
+        "a floor-bound transaction is valid; it reserves the floor rather than being rejected"
     );
 }

@@ -1963,6 +1963,45 @@ impl RLPDecode for FrameSignature {
     }
 }
 
+/// EIP-8272 recent-root reference: a declared `(source_id, slot, root)` tuple.
+/// RLP: `[source_id, slot, root]`. `root` is opaque to consensus; applications
+/// bind its meaning. `slot` is a beacon slot number (`< 2**64`).
+#[derive(Clone, Debug, PartialEq, Eq, Default, RSerialize, RDeserialize, Archive)]
+pub struct RecentRootReference {
+    #[rkyv(with=crate::rkyv_utils::H256Wrapper)]
+    pub source_id: H256,
+    pub slot: u64,
+    #[rkyv(with=crate::rkyv_utils::H256Wrapper)]
+    pub root: H256,
+}
+
+impl RLPEncode for RecentRootReference {
+    fn encode(&self, buf: &mut dyn bytes::BufMut) {
+        Encoder::new(buf)
+            .encode_field(&self.source_id)
+            .encode_field(&self.slot)
+            .encode_field(&self.root)
+            .finish();
+    }
+}
+
+impl RLPDecode for RecentRootReference {
+    fn decode_unfinished(rlp: &[u8]) -> Result<(RecentRootReference, &[u8]), RLPDecodeError> {
+        let decoder = Decoder::new(rlp)?;
+        let (source_id, decoder) = decoder.decode_field("source_id")?;
+        let (slot, decoder) = decoder.decode_field("slot")?;
+        let (root, decoder) = decoder.decode_field("root")?;
+        Ok((
+            RecentRootReference {
+                source_id,
+                slot,
+                root,
+            },
+            decoder.finish()?,
+        ))
+    }
+}
+
 /// EIP-8141 Frame Transaction
 /// A transaction whose validity and gas payment are defined abstractly via frames.
 /// No ECDSA signature — sender is explicit. Authentication happens via APPROVE opcode.
@@ -1982,6 +2021,9 @@ pub struct FrameTransaction {
     pub max_fee_per_blob_gas: U256,
     #[rkyv(with=rkyv::with::Map<crate::rkyv_utils::H256Wrapper>)]
     pub blob_versioned_hashes: Vec<H256>,
+    /// EIP-8272: declared recent-root references (0..=`FRAME_TX_MAX_RECENT_ROOT_REFERENCES`).
+    /// Appended as the last RLP envelope field.
+    pub recent_root_references: Vec<RecentRootReference>,
     #[rkyv(with=rkyv::with::Skip)]
     pub inner_hash: OnceCell<H256>,
     #[rkyv(with=rkyv::with::Skip)]
@@ -1996,6 +2038,8 @@ pub const FRAME_TX_PER_FRAME_COST: u64 = 475;
 pub const FRAME_TX_ENTRY_POINT_U64: u64 = 0xaa;
 /// Maximum number of frames allowed per EIP-8141 frame transaction.
 pub const FRAME_TX_MAX_FRAMES: usize = 64;
+/// EIP-8272: maximum number of recent-root references per frame transaction.
+pub const FRAME_TX_MAX_RECENT_ROOT_REFERENCES: usize = 16;
 /// EIP-7623 `STANDARD_TOKEN_COST`, and the EIP-7976 floor per token. Frame
 /// transactions exist only from Hegota onward, which is after Amsterdam, so the
 /// raised EIP-7976 floor always applies and neither needs a fork parameter.
@@ -2038,6 +2082,79 @@ pub fn frame_tx_expiry_verifier() -> Address {
     Address::from_low_u64_be(FRAME_TX_EXPIRY_VERIFIER_U64)
 }
 
+/// EIP-8272 RECENT_ROOT_ADDRESS predeploy address (0x…8272).
+pub const FRAME_TX_RECENT_ROOT_U64: u64 = 0x8272;
+
+/// Returns the RECENT_ROOT_ADDRESS `Address` (0x…8272) per EIP-8272.
+pub fn frame_tx_recent_root() -> Address {
+    Address::from_low_u64_be(FRAME_TX_RECENT_ROOT_U64)
+}
+
+/// EIP-8272 intrinsic gas constants: `RECENT_ROOT_REFERENCE_ADDRESS_GAS` is
+/// `ACCESS_LIST_ADDRESS_COST` and `RECENT_ROOT_REFERENCE_GAS` is
+/// `ACCESS_LIST_STORAGE_KEY_COST + 2 * KECCAK256_BASE_GAS + 7 * KECCAK256_WORD_GAS`.
+/// Both access-list parameters are 3000 from Amsterdam onward (EIP-8038), and
+/// frame transactions exist only from Hegota, which is after Amsterdam, so the
+/// raised values always apply and neither needs a fork parameter. Defined here
+/// rather than in levm's `gas_cost` because ethrex-common cannot depend on it;
+/// `gas_cost` asserts at compile time that the two agree.
+pub const FRAME_TX_RECENT_ROOT_REFERENCE_ADDRESS_GAS: u64 = 3000;
+pub const FRAME_TX_RECENT_ROOT_REFERENCE_GAS: u64 = 3000 + 2 * 30 + 7 * 6;
+
+/// EIP-8272 recent-root ring-buffer length: the RECENT_ROOT_ADDRESS predeploy
+/// keeps one entry per source per slot for the last `RECENT_ROOT_LENGTH` slots;
+/// storage keys are derived from `slot mod RECENT_ROOT_LENGTH`.
+pub const FRAME_TX_RECENT_ROOT_LENGTH: u64 = 8192;
+/// EIP-8272 usable window: a declared reference is valid iff
+/// `1 <= current_slot - slot <= FRAME_TX_RECENT_ROOT_USABLE_WINDOW`. The upper
+/// bound is `RECENT_ROOT_LENGTH - 1` because an entry exactly one ring-length
+/// old may already have been overwritten by its aliasing slot.
+pub const FRAME_TX_RECENT_ROOT_USABLE_WINDOW: u64 = 8191;
+
+/// EIP-8272 domain separator for recent-root entry hashes:
+/// `keccak256("RECENT_ROOT_ENTRY")`.
+pub fn recent_root_entry_domain() -> H256 {
+    keccak(b"RECENT_ROOT_ENTRY")
+}
+
+/// EIP-8272 domain separator for recent-root storage keys:
+/// `keccak256("RECENT_ROOT_STORAGE")`.
+pub fn recent_root_storage_domain() -> H256 {
+    keccak(b"RECENT_ROOT_STORAGE")
+}
+
+impl RecentRootReference {
+    /// EIP-8272 entry hash committed into RECENT_ROOT_ADDRESS storage:
+    /// `keccak256(ENTRY_DOMAIN || source_id || uint64_be(slot) || root)`.
+    /// Commits to the RAW slot (not `slot mod RECENT_ROOT_LENGTH`), so a
+    /// ring-buffer entry overwritten by an aliasing newer slot can never
+    /// satisfy a reference to the older slot.
+    ///
+    /// This is the single definition shared by the read-side validity check,
+    /// the native write handler, and the mempool policy — computing it in more
+    /// than one place risks a natively written root that its own reference
+    /// cannot validate.
+    pub fn entry_hash(&self) -> H256 {
+        let mut buf = Vec::with_capacity(32 + 32 + 8 + 32);
+        buf.extend_from_slice(recent_root_entry_domain().as_bytes());
+        buf.extend_from_slice(self.source_id.as_bytes());
+        buf.extend_from_slice(&self.slot.to_be_bytes());
+        buf.extend_from_slice(self.root.as_bytes());
+        keccak(&buf)
+    }
+
+    /// EIP-8272 storage key in the RECENT_ROOT_ADDRESS predeploy:
+    /// `keccak256(STORAGE_DOMAIN || source_id || uint64_be(slot mod RECENT_ROOT_LENGTH))`.
+    /// See `entry_hash` for the single-definition rule.
+    pub fn storage_key(&self) -> H256 {
+        let mut buf = Vec::with_capacity(32 + 32 + 8);
+        buf.extend_from_slice(recent_root_storage_domain().as_bytes());
+        buf.extend_from_slice(self.source_id.as_bytes());
+        buf.extend_from_slice(&(self.slot % FRAME_TX_RECENT_ROOT_LENGTH).to_be_bytes());
+        keccak(&buf)
+    }
+}
+
 impl FrameTransaction {
     /// Canonical signature hash (EIP-8141): the raw
     /// `signature` bytes of every signature with empty `msg` are elided (a
@@ -2073,6 +2190,7 @@ impl FrameTransaction {
             .encode_field(&self.max_fee_per_gas)
             .encode_field(&self.max_fee_per_blob_gas)
             .encode_field(&self.blob_versioned_hashes)
+            .encode_field(&self.recent_root_references)
             .finish();
         keccak(&buf)
     }
@@ -2109,21 +2227,27 @@ impl FrameTransaction {
             }))
     }
 
-    /// EIP-7623 calldata cost over the frame and signature data: 4 gas per zero
-    /// byte, 16 per non-zero byte.
+    /// EIP-7623 calldata cost over the frame and signature data plus EIP-8272's
+    /// `rlp(recent_root_references)`: 4 gas per zero byte, 16 per non-zero byte.
     pub fn data_cost(&self) -> u64 {
-        self.data_fields().flatten().fold(0u64, |acc, byte| {
+        let fields = self.data_fields().flatten().fold(0u64, |acc, byte| {
             acc.saturating_add(if *byte == 0 { 4 } else { 16 })
-        })
+        });
+        let recent_roots = self.recent_root_calldata().iter().fold(0u64, |acc, byte| {
+            acc.saturating_add(if *byte == 0 { 4 } else { 16 })
+        });
+        fields.saturating_add(recent_roots)
     }
 
-    /// EIP-7623 token count over the frame and signature data, used for the
-    /// calldata floor. Frame transactions exist only from Hegota onward, which is
-    /// after Amsterdam, so EIP-7976's unweighted count (every byte costs
-    /// `STANDARD_TOKEN_COST`) always applies.
+    /// EIP-7623 token count over the frame and signature data plus EIP-8272's
+    /// `rlp(recent_root_references)`, used for the calldata floor. Frame
+    /// transactions exist only from Hegota onward, which is after Amsterdam, so
+    /// EIP-7976's unweighted count (every byte costs `STANDARD_TOKEN_COST`)
+    /// always applies.
     pub fn calldata_tokens(&self) -> u64 {
         self.data_fields()
             .fold(0u64, |acc, field| acc.saturating_add(field.len() as u64))
+            .saturating_add(self.recent_root_calldata().len() as u64)
             .saturating_mul(FRAME_TX_STANDARD_TOKEN_COST)
     }
 
@@ -2142,17 +2266,63 @@ impl FrameTransaction {
             .saturating_add(self.signature_verification_cost())
     }
 
-    /// Compute total gas limit: mandatory costs + data cost + sum of frame gas
-    /// limits.
-    pub fn total_gas_limit(&self) -> u64 {
+    /// EIP-8272 `recent_root_calldata`: `rlp(recent_root_references)`. The bytes
+    /// this EIP adds to the payload are priced exactly as EIP-8141 prices frame
+    /// and signature data, so they enter both `data_cost` and `calldata_tokens`.
+    /// Empty when no reference is declared, so a reference-free transaction's
+    /// gas is exactly the EIP-8141 figure.
+    pub fn recent_root_calldata(&self) -> Vec<u8> {
+        if self.recent_root_references.is_empty() {
+            return Vec::new();
+        }
+        let mut buf = Vec::new();
+        self.recent_root_references.encode(&mut buf);
+        buf
+    }
+
+    /// EIP-8272 `recent_root_reference_intrinsic_gas`: the per-reference cost
+    /// that prepays warming `RECENT_ROOT_ADDRESS` and each derived storage key.
+    /// It is a mandatory cost, charged outside the EIP-7623 floored term, so it
+    /// enters both `standard_gas_limit` and `calldata_floor_gas`.
+    pub fn recent_root_reference_intrinsic_gas(&self) -> u64 {
+        if self.recent_root_references.is_empty() {
+            return 0;
+        }
+        FRAME_TX_RECENT_ROOT_REFERENCE_ADDRESS_GAS.saturating_add(
+            (self.recent_root_references.len() as u64)
+                .saturating_mul(FRAME_TX_RECENT_ROOT_REFERENCE_GAS),
+        )
+    }
+
+    /// EIP-8141 `standard_gas_limit`: mandatory costs + data cost + EIP-8272
+    /// reference intrinsic gas + sum of frame gas limits.
+    pub fn standard_gas_limit(&self) -> u64 {
         self.mandatory_gas()
             .saturating_add(self.data_cost())
+            .saturating_add(self.recent_root_reference_intrinsic_gas())
             .saturating_add(
                 self.frames
                     .iter()
                     .map(|f| f.gas_limit)
                     .fold(0u64, |acc, g| acc.saturating_add(g)),
             )
+    }
+
+    /// EIP-8141 `calldata_floor_gas`: the mandatory costs plus the EIP-7623
+    /// floor over every byte this transaction carries. The mandatory costs are
+    /// always charged, so they sit on both sides of the `max_gas` comparison.
+    pub fn calldata_floor_total(&self) -> u64 {
+        self.mandatory_gas()
+            .saturating_add(self.recent_root_reference_intrinsic_gas())
+            .saturating_add(self.calldata_floor_gas())
+    }
+
+    /// EIP-8141 `max_gas = max(standard_gas_limit, calldata_floor_gas)`: the gas
+    /// reserved from the block pool before execution and the quantity `max_cost`
+    /// is charged over. A transaction whose data floor exceeds what it declared
+    /// for execution reserves the floor rather than being rejected.
+    pub fn total_gas_limit(&self) -> u64 {
+        self.standard_gas_limit().max(self.calldata_floor_total())
     }
 
     /// The expiry deadline (8-byte big-endian) of this transaction's expiry
@@ -2173,6 +2343,14 @@ impl FrameTransaction {
         // tx.sender != zero address
         if self.sender == Address::zero() {
             return Err("tx.sender must not be zero address".to_string());
+        }
+        // EIP-8272: at most FRAME_TX_MAX_RECENT_ROOT_REFERENCES references.
+        // (3-tuple shape, 32-byte source_id/root, and slot < 2**64 are enforced
+        // by the RecentRootReference type / RLP decoding.)
+        if self.recent_root_references.len() > FRAME_TX_MAX_RECENT_ROOT_REFERENCES {
+            return Err(format!(
+                "recent_root_references count must be <= {FRAME_TX_MAX_RECENT_ROOT_REFERENCES}"
+            ));
         }
         if self.frames.is_empty() || self.frames.len() > FRAME_TX_MAX_FRAMES {
             return Err(format!(
@@ -2320,15 +2498,6 @@ impl FrameTransaction {
                     Some(_) => {}
                 }
             }
-        }
-        // Per EIP-8141, the EIP-7623 calldata floor must be reserved independently
-        // of execution: the derived `tx_gas_limit` has to cover the mandatory costs
-        // plus the floor, or the transaction cannot pay for the data it carries.
-        let floor_gas = self.calldata_floor_gas();
-        if self.total_gas_limit() < self.mandatory_gas().saturating_add(floor_gas) {
-            return Err(format!(
-                "Total gas limit does not reserve the calldata floor of {floor_gas}"
-            ));
         }
         Ok(())
     }
@@ -2604,6 +2773,7 @@ impl RLPEncode for FrameTransaction {
             .encode_field(&self.max_fee_per_gas)
             .encode_field(&self.max_fee_per_blob_gas)
             .encode_field(&self.blob_versioned_hashes)
+            .encode_field(&self.recent_root_references)
             .finish();
     }
 }
@@ -2621,6 +2791,7 @@ impl RLPDecode for FrameTransaction {
         let (max_fee_per_gas, decoder) = decoder.decode_field("max_fee_per_gas")?;
         let (max_fee_per_blob_gas, decoder) = decoder.decode_field("max_fee_per_blob_gas")?;
         let (blob_versioned_hashes, decoder) = decoder.decode_field("blob_versioned_hashes")?;
+        let (recent_root_references, decoder) = decoder.decode_field("recent_root_references")?;
         let tx = FrameTransaction {
             chain_id,
             nonce,
@@ -2631,6 +2802,7 @@ impl RLPDecode for FrameTransaction {
             max_fee_per_gas,
             max_fee_per_blob_gas,
             blob_versioned_hashes,
+            recent_root_references,
             inner_hash: OnceCell::new(),
             cached_canonical: OnceCell::new(),
         };
@@ -3009,6 +3181,26 @@ mod serde_impl {
         }
     }
 
+    /// JSON (RPC) representation of an EIP-8272 recent-root reference.
+    #[derive(Serialize, Deserialize, Debug, PartialEq, Clone)]
+    #[serde(rename_all = "camelCase")]
+    pub struct RecentRootReferenceEntry {
+        pub source_id: H256,
+        #[serde(with = "crate::serde_utils::u64::hex_str")]
+        pub slot: u64,
+        pub root: H256,
+    }
+
+    impl From<&RecentRootReference> for RecentRootReferenceEntry {
+        fn from(value: &RecentRootReference) -> RecentRootReferenceEntry {
+            RecentRootReferenceEntry {
+                source_id: value.source_id,
+                slot: value.slot,
+                root: value.root,
+            }
+        }
+    }
+
     fn serialize_u256_hex<S: serde::Serializer>(value: &U256, s: S) -> Result<S::Ok, S::Error> {
         s.serialize_str(&format!("{value:#x}"))
     }
@@ -3305,7 +3497,7 @@ mod serde_impl {
         where
             S: serde::Serializer,
         {
-            let mut s = serializer.serialize_struct("FrameTransaction", 10)?;
+            let mut s = serializer.serialize_struct("FrameTransaction", 11)?;
             s.serialize_field("type", &TxType::Frame)?;
             s.serialize_field("chainId", &format!("{:#x}", self.chain_id))?;
             s.serialize_field("nonce", &format!("{:#x}", self.nonce))?;
@@ -3329,6 +3521,14 @@ mod serde_impl {
             s.serialize_field("maxFeePerGas", &format!("{:#x}", self.max_fee_per_gas))?;
             s.serialize_field("maxFeePerBlobGas", &self.max_fee_per_blob_gas)?;
             s.serialize_field("blobVersionedHashes", &self.blob_versioned_hashes)?;
+            s.serialize_field(
+                "recentRootReferences",
+                &self
+                    .recent_root_references
+                    .iter()
+                    .map(RecentRootReferenceEntry::from)
+                    .collect::<Vec<_>>(),
+            )?;
             s.end()
         }
     }
@@ -5025,6 +5225,7 @@ mod tests {
             max_fee_per_gas: 30_000_000_000,
             max_fee_per_blob_gas: U256::zero(),
             blob_versioned_hashes: vec![],
+            recent_root_references: vec![],
             inner_hash: OnceCell::new(),
             cached_canonical: OnceCell::new(),
         }
@@ -5270,6 +5471,89 @@ mod tests {
         assert!(sigs[0].get("msg").is_some());
     }
 
+    #[test]
+    fn recent_root_references_round_trip_and_validation() {
+        let mut tx = make_test_frame_tx();
+        tx.recent_root_references = vec![RecentRootReference {
+            source_id: H256::repeat_byte(0x11),
+            slot: 7,
+            root: H256::repeat_byte(0x22),
+        }];
+        let mut buf = Vec::new();
+        tx.encode(&mut buf);
+        let (decoded, rest) = FrameTransaction::decode_unfinished(&buf).unwrap();
+        assert!(rest.is_empty());
+        assert_eq!(decoded.recent_root_references, tx.recent_root_references);
+        // more than FRAME_TX_MAX_RECENT_ROOT_REFERENCES (16) is rejected.
+        tx.recent_root_references = (0..17u64)
+            .map(|i| RecentRootReference {
+                source_id: H256::zero(),
+                slot: i,
+                root: H256::zero(),
+            })
+            .collect();
+        assert!(tx.validate_static_constraints().is_err());
+    }
+
+    #[test]
+    fn recent_root_hash_byte_layout_matches_spec() {
+        use crate::utils::keccak;
+        let r = RecentRootReference {
+            source_id: H256::repeat_byte(0xAB),
+            slot: 8195,
+            root: H256::repeat_byte(0xCD),
+        };
+        // entry_hash preimage: keccak("RECENT_ROOT_ENTRY") || source_id || be64(slot) || root
+        let mut pre = Vec::new();
+        pre.extend_from_slice(keccak(b"RECENT_ROOT_ENTRY").as_bytes());
+        pre.extend_from_slice(&[0xAB; 32]);
+        pre.extend_from_slice(&8195u64.to_be_bytes());
+        pre.extend_from_slice(&[0xCD; 32]);
+        assert_eq!(r.entry_hash(), keccak(&pre));
+        // storage_key preimage: keccak("RECENT_ROOT_STORAGE") || source_id || be64(slot mod 8192)
+        // 8195 mod 8192 = 3
+        let mut pre = Vec::new();
+        pre.extend_from_slice(keccak(b"RECENT_ROOT_STORAGE").as_bytes());
+        pre.extend_from_slice(&[0xAB; 32]);
+        pre.extend_from_slice(&3u64.to_be_bytes());
+        assert_eq!(r.storage_key(), keccak(&pre));
+        // Ring aliasing: slot and slot + RECENT_ROOT_LENGTH share a storage key
+        // but never an entry hash (entry_hash commits to the raw slot).
+        let r2 = RecentRootReference {
+            slot: 8195 + FRAME_TX_RECENT_ROOT_LENGTH,
+            ..r
+        };
+        assert_eq!(r.storage_key(), r2.storage_key());
+        assert_ne!(r.entry_hash(), r2.entry_hash());
+    }
+
+    #[test]
+    fn recent_root_references_are_charged_calldata_gas() {
+        // U-2: a reference-carrying frame tx is charged EIP-7623 calldata cost over
+        // rlp(recent_root_references) in addition to the flat intrinsic reference gas.
+        let mut tx = make_test_frame_tx();
+        tx.recent_root_references = vec![];
+        let base = tx.total_gas_limit();
+
+        let refs = vec![RecentRootReference {
+            source_id: H256::repeat_byte(0x11),
+            slot: 7,
+            root: H256::repeat_byte(0x22),
+        }];
+        let mut refs_buf = Vec::new();
+        refs.encode(&mut refs_buf);
+        let expected_calldata: u64 = refs_buf.iter().map(|b| if *b == 0 { 4 } else { 16 }).sum();
+        let expected_intrinsic =
+            FRAME_TX_RECENT_ROOT_REFERENCE_ADDRESS_GAS + FRAME_TX_RECENT_ROOT_REFERENCE_GAS;
+
+        tx.recent_root_references = refs;
+        assert_eq!(
+            tx.total_gas_limit(),
+            base + expected_calldata + expected_intrinsic,
+            "reference-carrying tx must add rlp(refs) calldata cost + intrinsic reference gas",
+        );
+    }
+
     fn make_frame_tx_with_gas_limits(limits: Vec<u64>) -> FrameTransaction {
         let frames = limits
             .into_iter()
@@ -5292,6 +5576,7 @@ mod tests {
             max_fee_per_gas: 30_000_000_000,
             max_fee_per_blob_gas: U256::zero(),
             blob_versioned_hashes: vec![],
+            recent_root_references: vec![],
             inner_hash: OnceCell::new(),
             cached_canonical: OnceCell::new(),
         }
@@ -5383,6 +5668,7 @@ mod tests {
             max_fee_per_gas: 30_000_000_000,
             max_fee_per_blob_gas: U256::zero(),
             blob_versioned_hashes: vec![],
+            recent_root_references: vec![],
             inner_hash: OnceCell::new(),
             cached_canonical: OnceCell::new(),
         };
@@ -5754,6 +6040,7 @@ mod tests {
             max_fee_per_gas: 0x6fc23ac00,
             max_fee_per_blob_gas: U256::zero(),
             blob_versioned_hashes: vec![],
+            recent_root_references: vec![],
             inner_hash: OnceCell::new(),
             cached_canonical: OnceCell::new(),
         };
@@ -5764,7 +6051,7 @@ mod tests {
         // GOLDEN_RLP: obtained from first run
         assert_eq!(
             rlp_hex,
-            "f8ab010794000000000000000000000000000000000000abcde8ca01038082520880821122dc0280940000000000000000000000000000000000001234829c408080f85cf85a0194000000000000000000000000000000000000abcd80b8410101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101843b9aca008506fc23ac0080c0"
+            "f8ac010794000000000000000000000000000000000000abcde8ca01038082520880821122dc0280940000000000000000000000000000000000001234829c408080f85cf85a0194000000000000000000000000000000000000abcd80b8410101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101843b9aca008506fc23ac0080c0c0"
         );
 
         // Round-trips losslessly.
@@ -5776,7 +6063,7 @@ mod tests {
         // GOLDEN_SIG_HASH: obtained from first run
         assert_eq!(
             format!("{:#x}", sig_hash),
-            "0xe7dc3f33413fc69c09f9c690be154ded294954e497aeea6ce0010ba513f2f26d",
+            "0x02ac14285f1aad037318540d2eabc502ff44f7fa9ae1498549c15e9e83333f3a",
         );
 
         // Elision invariant: changing empty-msg signature bytes must NOT change sig_hash.
