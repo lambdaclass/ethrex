@@ -95,16 +95,31 @@ impl Code {
 
     /// Builds the [`Code::jumpdests`] bitmap: one pass over the bytecode, setting the
     /// bit for every `JUMPDEST` while skipping `PUSH` immediates.
+    ///
+    /// The bits of a byte are accumulated in a register and written once the scan leaves
+    /// that byte, which the monotonic `i` makes safe. Reading the bitmap back inside the
+    /// loop instead would turn each `JUMPDEST` into a read-modify-write, and indexing it
+    /// would put a bounds-check panic path in the loop; either costs more than the scan
+    /// itself for bytecode with few jump destinations.
     pub fn compute_jumpdests(code: &[u8]) -> Arc<[u8]> {
         let mut bitmap = vec![0u8; code.len().div_ceil(8)];
         let mut any = false;
+        let mut current_byte = usize::MAX;
+        let mut bits = 0u8;
         let mut i = 0;
         while i < code.len() {
             // TODO: we don't use the constants from the vm module to avoid a circular dependency
             match code[i] {
                 // OP_JUMPDEST
                 0x5B => {
-                    bitmap[i / 8] |= 1 << (i % 8);
+                    if i / 8 != current_byte {
+                        if let Some(byte) = bitmap.get_mut(current_byte) {
+                            *byte = bits;
+                        }
+                        current_byte = i / 8;
+                        bits = 0;
+                    }
+                    bits |= 1 << (i % 8);
                     any = true;
                 }
                 // OP_PUSH1..32
@@ -115,6 +130,9 @@ impl Code {
                 _ => (),
             }
             i += 1;
+        }
+        if let Some(byte) = bitmap.get_mut(current_byte) {
+            *byte = bits;
         }
         // Share the single empty bitmap for jumpless bytecode (very common: EOAs,
         // tiny contracts) so we don't allocate for an all-zero map; `is_valid_jumpdest`
