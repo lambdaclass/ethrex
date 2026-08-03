@@ -1,6 +1,6 @@
 //! BAL lazy-cursor regression tests.
 //!
-//! All three tests exercise the helper functions directly (unit level) because
+//! All five tests exercise the helper functions directly (unit level) because
 //! `seed_one_storage_slot_from_bal` and `seed_one_address_info_from_bal` are
 //! `#[cfg(feature = "rayon")]`-gated; reaching
 //! `execute_block_parallel` from the test crate would require enabling that
