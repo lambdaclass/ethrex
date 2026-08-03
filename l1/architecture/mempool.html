@@ -1,0 +1,481 @@
+<!DOCTYPE HTML>
+<html lang="en" class="light sidebar-visible" dir="ltr">
+    <head>
+        <!-- Book generated using mdBook -->
+        <meta charset="UTF-8">
+        <title>Mempool - Ethrex</title>
+
+
+        <!-- Custom HTML head -->
+
+        <meta name="description" content="">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="theme-color" content="#ffffff">
+
+        <link rel="shortcut icon" href="../../favicon-65f98953.png">
+        <link rel="stylesheet" href="../../css/variables-8adf115d.css">
+        <link rel="stylesheet" href="../../css/general-2459343d.css">
+        <link rel="stylesheet" href="../../css/chrome-ae938929.css">
+        <link rel="stylesheet" href="../../css/print-9e4910d8.css" media="print">
+
+        <!-- Fonts -->
+        <link rel="stylesheet" href="../../fonts/fonts-9644e21d.css">
+
+        <!-- Highlight.js Stylesheets -->
+        <link rel="stylesheet" id="mdbook-highlight-css" href="../../highlight-493f70e1.css">
+        <link rel="stylesheet" id="mdbook-tomorrow-night-css" href="../../tomorrow-night-4c0ae647.css">
+        <link rel="stylesheet" id="mdbook-ayu-highlight-css" href="../../ayu-highlight-3fdfc3ac.css">
+
+        <!-- Custom theme stylesheets -->
+
+
+        <!-- Provide site root and default themes to javascript -->
+        <script>
+            const path_to_root = "../../";
+            const default_light_theme = "light";
+            const default_dark_theme = "navy";
+            window.path_to_searchindex_js = "../../searchindex-78ca2674.js";
+        </script>
+        <!-- Start loading toc.js asap -->
+        <script src="../../toc-399bd7a2.js"></script>
+    </head>
+    <body>
+    <div id="mdbook-help-container">
+        <div id="mdbook-help-popup">
+            <h2 class="mdbook-help-title">Keyboard shortcuts</h2>
+            <div>
+                <p>Press <kbd>←</kbd> or <kbd>→</kbd> to navigate between chapters</p>
+                <p>Press <kbd>S</kbd> or <kbd>/</kbd> to search in the book</p>
+                <p>Press <kbd>?</kbd> to show this help</p>
+                <p>Press <kbd>Esc</kbd> to hide this help</p>
+            </div>
+        </div>
+    </div>
+    <div id="mdbook-body-container">
+        <!-- Work around some values being stored in localStorage wrapped in quotes -->
+        <script>
+            try {
+                let theme = localStorage.getItem('mdbook-theme');
+                let sidebar = localStorage.getItem('mdbook-sidebar');
+
+                if (theme.startsWith('"') && theme.endsWith('"')) {
+                    localStorage.setItem('mdbook-theme', theme.slice(1, theme.length - 1));
+                }
+
+                if (sidebar.startsWith('"') && sidebar.endsWith('"')) {
+                    localStorage.setItem('mdbook-sidebar', sidebar.slice(1, sidebar.length - 1));
+                }
+            } catch (e) { }
+        </script>
+
+        <!-- Set the theme before any content is loaded, prevents flash -->
+        <script>
+            const default_theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? default_dark_theme : default_light_theme;
+            let theme;
+            try { theme = localStorage.getItem('mdbook-theme'); } catch(e) { }
+            if (theme === null || theme === undefined) { theme = default_theme; }
+            const html = document.documentElement;
+            html.classList.remove('light')
+            html.classList.add(theme);
+            html.classList.add("js");
+        </script>
+
+        <input type="checkbox" id="mdbook-sidebar-toggle-anchor" class="hidden">
+
+        <!-- Hide / unhide sidebar before it is displayed -->
+        <script>
+            let sidebar = null;
+            const sidebar_toggle = document.getElementById("mdbook-sidebar-toggle-anchor");
+            if (document.body.clientWidth >= 1080) {
+                try { sidebar = localStorage.getItem('mdbook-sidebar'); } catch(e) { }
+                sidebar = sidebar || 'visible';
+            } else {
+                sidebar = 'hidden';
+                sidebar_toggle.checked = false;
+            }
+            if (sidebar === 'visible') {
+                sidebar_toggle.checked = true;
+            } else {
+                html.classList.remove('sidebar-visible');
+            }
+        </script>
+
+        <nav id="mdbook-sidebar" class="sidebar" aria-label="Table of contents">
+            <!-- populated by js -->
+            <mdbook-sidebar-scrollbox class="sidebar-scrollbox"></mdbook-sidebar-scrollbox>
+            <noscript>
+                <iframe class="sidebar-iframe-outer" src="../../toc.html"></iframe>
+            </noscript>
+            <div id="mdbook-sidebar-resize-handle" class="sidebar-resize-handle">
+                <div class="sidebar-resize-indicator"></div>
+            </div>
+        </nav>
+
+        <div id="mdbook-page-wrapper" class="page-wrapper">
+
+            <div class="page">
+                <div id="mdbook-menu-bar-hover-placeholder"></div>
+                <div id="mdbook-menu-bar" class="menu-bar sticky">
+                    <div class="left-buttons">
+                        <label id="mdbook-sidebar-toggle" class="icon-button" for="mdbook-sidebar-toggle-anchor" title="Toggle Table of Contents" aria-label="Toggle Table of Contents" aria-controls="mdbook-sidebar">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M0 96C0 78.3 14.3 64 32 64H416c17.7 0 32 14.3 32 32s-14.3 32-32 32H32C14.3 128 0 113.7 0 96zM0 256c0-17.7 14.3-32 32-32H416c17.7 0 32 14.3 32 32s-14.3 32-32 32H32c-17.7 0-32-14.3-32-32zM448 416c0 17.7-14.3 32-32 32H32c-17.7 0-32-14.3-32-32s14.3-32 32-32H416c17.7 0 32 14.3 32 32z"/></svg></span>
+                        </label>
+                        <button id="mdbook-theme-toggle" class="icon-button" type="button" title="Change theme" aria-label="Change theme" aria-haspopup="true" aria-expanded="false" aria-controls="mdbook-theme-list">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 576 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M371.3 367.1c27.3-3.9 51.9-19.4 67.2-42.9L600.2 74.1c12.6-19.5 9.4-45.3-7.6-61.2S549.7-4.4 531.1 9.6L294.4 187.2c-24 18-38.2 46.1-38.4 76.1L371.3 367.1zm-19.6 25.4l-116-104.4C175.9 290.3 128 339.6 128 400c0 3.9 .2 7.8 .6 11.6c1.8 17.5-10.2 36.4-27.8 36.4H96c-17.7 0-32 14.3-32 32s14.3 32 32 32H240c61.9 0 112-50.1 112-112c0-2.5-.1-5-.2-7.5z"/></svg></span>
+                        </button>
+                        <ul id="mdbook-theme-list" class="theme-popup" aria-label="Themes" role="menu">
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-default_theme">Auto</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-light">Light</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-rust">Rust</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-coal">Coal</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-navy">Navy</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-ayu">Ayu</button></li>
+                        </ul>
+                        <button id="mdbook-search-toggle" class="icon-button" type="button" title="Search (`/`)" aria-label="Toggle Searchbar" aria-expanded="false" aria-keyshortcuts="/ s" aria-controls="mdbook-searchbar">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M416 208c0 45.9-14.9 88.3-40 122.7L502.6 457.4c12.5 12.5 12.5 32.8 0 45.3s-32.8 12.5-45.3 0L330.7 376c-34.4 25.2-76.8 40-122.7 40C93.1 416 0 322.9 0 208S93.1 0 208 0S416 93.1 416 208zM208 352c79.5 0 144-64.5 144-144s-64.5-144-144-144S64 128.5 64 208s64.5 144 144 144z"/></svg></span>
+                        </button>
+                    </div>
+
+                    <h1 class="menu-title">Ethrex</h1>
+
+                    <div class="right-buttons">
+                        <a href="../../print.html" title="Print this book" aria-label="Print this book">
+                            <span class=fa-svg id="print-button"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M128 0C92.7 0 64 28.7 64 64v96h64V64H354.7L384 93.3V160h64V93.3c0-17-6.7-33.3-18.7-45.3L400 18.7C388 6.7 371.7 0 354.7 0H128zM384 352v32 64H128V384 368 352H384zm64 32h32c17.7 0 32-14.3 32-32V256c0-35.3-28.7-64-64-64H64c-35.3 0-64 28.7-64 64v96c0 17.7 14.3 32 32 32H64v64c0 35.3 28.7 64 64 64H384c35.3 0 64-28.7 64-64V384zm-16-88c-13.3 0-24-10.7-24-24s10.7-24 24-24s24 10.7 24 24s-10.7 24-24 24z"/></svg></span>
+                        </a>
+                        <a href="https://github.com/lambdaclass/ethrex" title="Git repository" aria-label="Git repository">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 496 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M165.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6zm-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3zm44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9zM244.8 8C106.1 8 0 113.3 0 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C428.2 457.8 496 362.9 496 252 496 113.3 383.5 8 244.8 8zM97.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1zm-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7zm32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1zm-11.4-14.7c-1.6 1-1.6 3.6 0 5.9 1.6 2.3 4.3 3.3 5.6 2.3 1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2z"/></svg></span>
+                        </a>
+
+                    </div>
+                </div>
+
+                <div id="mdbook-search-wrapper" class="hidden">
+                    <form id="mdbook-searchbar-outer" class="searchbar-outer">
+                        <div class="search-wrapper">
+                            <input type="search" id="mdbook-searchbar" name="searchbar" placeholder="Search this book ..." aria-controls="mdbook-searchresults-outer" aria-describedby="searchresults-header">
+                            <div class="spinner-wrapper">
+                                <span class=fa-svg id="fa-spin"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M304 48c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zm0 416c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zM48 304c26.5 0 48-21.5 48-48s-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48zm464-48c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zM142.9 437c18.7-18.7 18.7-49.1 0-67.9s-49.1-18.7-67.9 0s-18.7 49.1 0 67.9s49.1 18.7 67.9 0zm0-294.2c18.7-18.7 18.7-49.1 0-67.9S93.7 56.2 75 75s-18.7 49.1 0 67.9s49.1 18.7 67.9 0zM369.1 437c18.7 18.7 49.1 18.7 67.9 0s18.7-49.1 0-67.9s-49.1-18.7-67.9 0s-18.7 49.1 0 67.9z"/></svg></span>
+                            </div>
+                        </div>
+                    </form>
+                    <div id="mdbook-searchresults-outer" class="searchresults-outer hidden">
+                        <div id="mdbook-searchresults-header" class="searchresults-header"></div>
+                        <ul id="mdbook-searchresults">
+                        </ul>
+                    </div>
+                </div>
+
+                <!-- Apply ARIA attributes after the sidebar and the sidebar toggle button are added to the DOM -->
+                <script>
+                    document.getElementById('mdbook-sidebar-toggle').setAttribute('aria-expanded', sidebar === 'visible');
+                    document.getElementById('mdbook-sidebar').setAttribute('aria-hidden', sidebar !== 'visible');
+                    Array.from(document.querySelectorAll('#mdbook-sidebar a')).forEach(function(link) {
+                        link.setAttribute('tabIndex', sidebar === 'visible' ? 0 : -1);
+                    });
+                </script>
+
+                <div id="mdbook-content" class="content">
+                    <main>
+                        <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.4/dist/katex.min.css">
+<h1 id="mempool"><a class="header" href="#mempool">Mempool</a></h1>
+<p>This document describes how ethrex stores, validates, and propagates pending transactions, as implemented on <code>main</code>.</p>
+<blockquote>
+<p><strong>Keep this current with the code.</strong> A PR that changes mempool <em>behavior</em> should update the relevant rustdoc next to the code, and — if it changes the <em>shape</em> documented here (data structures, admission pipeline, propagation flows) — the matching section of this page, in the same PR. Exact check ordering, error variants, and constants are authoritatively defined in the code; this page describes the durable structure.</p>
+</blockquote>
+<h2 id="overview"><a class="header" href="#overview">Overview</a></h2>
+<p>The mempool is the single in-memory pool of pending transactions held by the node. It is the entry point for every transaction the node learns about — local RPC submissions and gossip from peers — and the source the payload builder pulls from when constructing a block.</p>
+<pre><code>                   ┌─────────────────────────┐         ┌─────────────────────────┐
+                   │   JSON-RPC ingress      │         │   P2P ingress           │
+                   │  eth_sendRawTransaction │         │  Transactions /         │
+                   │                         │         │  PooledTransactions     │
+                   └────────────┬────────────┘         └────────────┬────────────┘
+                                │                                    │
+                                │  add_transaction_to_pool /         │  add_transaction_to_pool /
+                                │  add_blob_transaction_to_pool      │  add_blob_transaction_to_pool
+                                ▼                                    ▼
+                   ┌──────────────────────────────────────────────────────────────┐
+                   │           Blockchain::validate_transaction                    │
+                   │   (size, init code, gas caps, nonce, EIP-3607, balance,      │
+                   │    cumulative balance, RBF, chain id, gap-admission, …)       │
+                   └──────────────────────────────┬───────────────────────────────┘
+                                                  │
+                                                  ▼
+                   ┌──────────────────────────────────────────────────────────────┐
+                   │                          Mempool                              │
+                   │  transaction_pool · blobs_bundle_pool · broadcast_pool · …    │
+                   └─────┬──────────────────────────┬──────────────────────────┬──┘
+                         │                          │                          │
+                         │ broadcast_pool           │ transaction_pool         │ transaction_pool
+                         ▼                          ▼                          ▼
+                   ┌───────────────┐         ┌───────────────┐         ┌───────────────┐
+                   │ tx_broadcaster│         │ Payload       │         │ Fork-choice   │
+                   │ (P2P gossip)  │         │ Builder       │         │ update        │
+                   └───────────────┘         └───────────────┘         │ (removes txs  │
+                                                                       │  included in  │
+                                                                       │  new head)    │
+                                                                       └───────────────┘
+</code></pre>
+<p>The mempool participates in four flows:</p>
+<ul>
+<li><strong>RPC ingress</strong> — <code>eth_sendRawTransaction</code> calls <code>Blockchain::add_transaction_to_pool</code> / <code>add_blob_transaction_to_pool</code>.</li>
+<li><strong>P2P ingress</strong> — incoming <code>Transactions</code> / <code>PooledTransactions</code> messages call the same <code>add_transaction_to_pool</code> / <code>add_blob_transaction_to_pool</code> entry points.</li>
+<li><strong>Block-building source</strong> — the payload builder calls <code>Mempool::filter_transactions</code> to pull pending transactions grouped by sender and sorted by nonce.</li>
+<li><strong>Block-removal source</strong> — when fork-choice promotes a new canonical head, <code>Blockchain::remove_block_transactions_from_pool</code> evicts every included transaction.</li>
+</ul>
+<h2 id="data-structures"><a class="header" href="#data-structures">Data Structures</a></h2>
+<p>The pool is a single <code>Mempool</code> value (<code>crates/blockchain/mempool.rs</code>) holding one <code>RwLock&lt;MempoolInner&gt;</code>, a <code>tokio::sync::Notify</code> (<code>tx_added</code>) used to wake payload builders on insertion, and a monotonic <code>AtomicU64</code> (<code>tx_seq</code>) bumped on every insertion for staleness detection.</p>
+<h3 id="mempoolinner"><a class="header" href="#mempoolinner"><code>MempoolInner</code></a></h3>
+<p>The inner state, mutated only under the write lock:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Field</th><th>Type</th><th>Purpose</th></tr>
+</thead>
+<tbody>
+<tr><td><code>transaction_pool</code></td><td><code>FxHashMap&lt;H256, MempoolTransaction&gt;</code></td><td>The authoritative set of pooled transactions, keyed by hash.</td></tr>
+<tr><td><code>broadcast_pool</code></td><td><code>FxHashSet&lt;H256&gt;</code></td><td>Hashes still pending the next P2P broadcast tick. Drained by <code>tx_broadcaster</code>.</td></tr>
+<tr><td><code>blobs_bundle_pool</code></td><td><code>FxHashMap&lt;H256, BlobsBundle&gt;</code></td><td>EIP-4844 sidecars, keyed by the owning transaction hash. Its key set is the blob txs currently held.</td></tr>
+<tr><td><code>blobs_bundle_by_versioned_hash</code></td><td><code>FxHashMap&lt;H256, FxHashMap&lt;H256, usize&gt;&gt;</code></td><td>Reverse index: <code>versioned_hash → { tx_hash → position_in_bundle }</code>. A blob can be referenced by more than one transaction, so each referencing tx has its own inner entry.</td></tr>
+<tr><td><code>in_flight_txs</code></td><td><code>FxHashSet&lt;H256&gt;</code></td><td>Hashes for which a <code>GetPooledTransactions</code> request was sent but no response has arrived. Prevents duplicate requests across peers.</td></tr>
+<tr><td><code>alternates</code></td><td><code>FxHashMap&lt;H256, (VecDeque&lt;Alternate&gt;, Instant)&gt;</code></td><td>Per-hash queue of alternate announcers (fallback peers to retry against) plus a last-touched instant.</td></tr>
+<tr><td><code>txs_by_sender_nonce</code></td><td><code>BTreeMap&lt;(H160, u64), H256&gt;</code></td><td>Sorted <code>(sender, nonce)</code> index for nonce lookups, replacement, and the per-sender queued cap.</td></tr>
+<tr><td><code>txs_order</code></td><td><code>VecDeque&lt;H256&gt;</code></td><td>FIFO insertion order of regular (non-blob) txs. Drives regular eviction.</td></tr>
+<tr><td><code>max_mempool_size</code></td><td><code>usize</code></td><td>Cap on the regular (non-blob) pool. Set from <code>--mempool.maxsize</code>.</td></tr>
+<tr><td><code>max_blob_mempool_size</code></td><td><code>usize</code></td><td>Cap on the blob sub-pool.</td></tr>
+<tr><td><code>mempool_prune_threshold</code></td><td><code>usize</code></td><td>Length at which <code>txs_order</code> is compacted to drop tombstones (<code>max + max/2</code>).</td></tr>
+<tr><td><code>pending_frame_tx_by_sender</code></td><td><code>FxHashMap&lt;Address, (H256, u64)&gt;</code></td><td>EIP-8141: at most one pending frame tx per sender — <code>(hash, nonce)</code>.</td></tr>
+<tr><td><code>reserved_pending_cost</code></td><td><code>FxHashMap&lt;Address, U256&gt;</code></td><td>EIP-8141: per-paymaster sum of reserved max-cost across pending frame txs.</td></tr>
+<tr><td><code>noncanonical_paymaster_pending</code></td><td><code>FxHashMap&lt;Address, u8&gt;</code></td><td>EIP-8141: count of pending frame txs per non-canonical paymaster.</td></tr>
+<tr><td><code>frame_tx_paymaster</code></td><td><code>FxHashMap&lt;H256, FramePaymasterReservation&gt;</code></td><td>EIP-8141: per-frame-tx paymaster reservation record.</td></tr>
+</tbody>
+</table>
+</div>
+<h3 id="mempooltransaction"><a class="header" href="#mempooltransaction"><code>MempoolTransaction</code></a></h3>
+<p>Defined in <code>crates/common/types/transaction.rs</code> (in its <code>mempool</code> module), this wraps a <code>Transaction</code> (<code>inner: Arc&lt;Transaction&gt;</code>) together with the recovered <code>sender: Address</code> and a <code>timestamp: u128</code> (microseconds since epoch, set on entry). The pool stores only <code>MempoolTransaction</code>s — never raw transactions — so the sender is recovered once at admission and never re-derived on query.</p>
+<h2 id="admission-validation"><a class="header" href="#admission-validation">Admission Validation</a></h2>
+<p>Every transaction entering the pool — through RPC or P2P — passes through <code>Blockchain::validate_transaction</code> (<code>crates/blockchain/blockchain.rs</code>). It returns <code>Ok((tx_to_replace, frame_reservation, sender_account_nonce))</code> — <code>tx_to_replace</code> is <code>Some(hash)</code> when the transaction replaces an existing one at the same <code>(sender, nonce)</code> — or <code>Err(MempoolError::*)</code> on rejection. Checks run in this order:</p>
+<pre><code>┌──────────────────────────────────────────────────────────────────────────┐
+│                  Blockchain::validate_transaction                         │
+├──────────────────────────────────────────────────────────────────────────┤
+│  1. L2-only tx-type rejection (L1 node)              → L2OnlyTransaction… │
+│  2. PrivilegedL2 short-circuit                       → Ok (bypasses pool) │
+│  3. Frame-tx (EIP-8141) static gates                 → FrameTx…           │
+│  4. Per-tx wire-size cap (non-blob)                  → TxSizeExceeded     │
+│  5. Init code size cap (Shanghai+, Amsterdam adj.)   → TxMaxInitCodeSize  │
+│  6. Post-Osaka gas-limit cap (EIP-7825)              → TxMaxGasLimitExc…  │
+│  7. tx.gas_limit ≤ header.gas_limit                  → TxGasLimitExceeded │
+│  8. max_priority_fee ≤ max_fee_per_gas               → TxTipAboveFeeCap   │
+│  9. EIP-7702 pre-Prague / empty auth list            → Eip7702TxPreFork / │
+│                                                        EmptyAuthorization │
+│ 10. Intrinsic gas ≤ tx.gas_limit                     → TxIntrinsicGas…    │
+│ 11. max_fee_per_blob_gas ≥ MIN_BASE_FEE_PER_BLOB_GAS → TxBlobBaseFeeTooLow│
+│ 12. Nonce ≥ account.nonce  &amp;&amp;  nonce ≠ u64::MAX      → NonceTooLow        │
+│ 13. EIP-3607 contract-sender check (7702 exc.)       → SenderIsContract   │
+│ 14. Single-tx cost ≤ account.balance                 → NotEnoughBalance   │
+│ 15. RBF: find_tx_to_replace                          → UnderpricedRepl…   │
+│ 16. Cumulative pending cost ≤ balance                → InsufficientCumul… │
+│ 17. tx.chain_id matches config.chain_id (if set)     → InvalidChainId     │
+│ 18. Gapped-nonce rejection under pool pressure       → GapAdmissionDenied │
+│ 19. Frame-tx validation-prefix sim + paymaster       → FrameTx…           │
+│ (per-sender queued cap is enforced inside add_transaction, post-validate) │
+└──────────────────────────────────────────────────────────────────────────┘
+</code></pre>
+<p>Notes on individual checks:</p>
+<p><strong>L2-only rejection.</strong> On an L1 node, L2-only transaction types (<code>FeeToken</code> <code>0x7d</code>, <code>PrivilegedL2</code> <code>0x7e</code>) are rejected with <code>L2OnlyTransactionType</code> — they are valid only on L2 and unknown to other L1 clients.</p>
+<p><strong>Privileged short-circuit.</strong> <code>Transaction::PrivilegedL2Transaction</code> returns early before pool admission; these are produced by the L2 sequencer.</p>
+<p><strong>Frame transactions (EIP-8141).</strong> Frame txs go through an extended set of gates — fork activation (<code>FrameTxPreFork</code>), expiry (<code>FrameTxExpired</code>), static structural validity (<code>InvalidFrameTransaction</code>), a no-blobs rule (<code>FrameTxBlobsUnsupported</code>), a signature-verification gas budget (<code>FrameTxVerifyGasExceeded</code> / <code>FrameTxVerifyGasBudgetExceeded</code>), signature authenticity and low-<code>s</code> malleability (<code>InvalidFrameSignature</code> / <code>FrameTxMalleableSignature</code>), and validation-prefix shape (<code>FrameTxUnrecognizedPrefix</code> / <code>FrameTxInvalidPrefixStructure</code>). The validation-prefix simulation and paymaster accounting run last (see <a href="#frame-transactions-eip-8141">Frame transactions</a>).</p>
+<p><strong>Per-tx wire-size cap.</strong> Non-blob transactions are bounded by <code>MAX_TX_SIZE = 128 KiB</code> against <code>Transaction::encode_canonical_len()</code>. Blob transactions are bounded by <code>MAX_BLOB_TX_SIZE</code> in <code>add_blob_transaction_to_pool</code> against the wire wrapper, since ethrex stores the core transaction and the sidecar in separate structs.</p>
+<p><strong>Init code size.</strong> Active from Shanghai. Limit is <code>MAX_INITCODE_SIZE = 48 KiB</code> (<code>2 × MAX_CODE_SIZE</code>); from Amsterdam onward (EIP-7954) it becomes <code>AMSTERDAM_MAX_INITCODE_SIZE = 128 KiB</code> (<code>2 × AMSTERDAM_MAX_CODE_SIZE</code>, i.e. 2 × 64 KiB).</p>
+<p><strong>Nonce lookup.</strong> Reads <code>account.nonce</code> from storage at the latest block. Rejects with <code>NonceTooLow</code> when <code>nonce &lt; account.nonce</code> or <code>nonce == u64::MAX</code>.</p>
+<p><strong>EIP-3607.</strong> Senders with non-empty <code>code_hash</code> are rejected with <code>SenderIsContract</code>, except when their code is a valid EIP-7702 delegation designation: exactly <code>EIP7702_DELEGATED_CODE_LEN = 23</code> bytes — the 3-byte <code>0xef0100</code> prefix followed by the 20-byte delegate address. A length-based fast path consults code-metadata length first and only fetches bytecode when the length matches the delegation shape. Skipped for frame txs.</p>
+<p><strong>Single-tx balance.</strong> <code>tx.cost_without_base_fee()</code> — <code>gas_limit × max_fee_per_gas + value</code>, plus <code>blob_gas × max_fee_per_blob_gas</code> for blob transactions — must not exceed the sender’s balance. Senders absent from state are rejected. Skipped for frame txs (payer unknown until execution).</p>
+<p><strong>Cumulative-balance check.</strong> Beyond the single-tx balance check, the sum of the sender’s already-pooled transaction costs (via <code>Mempool::sum_cost_for_sender</code>, excluding the tx being replaced and any obsoleted below-nonce entries) plus the new tx’s cost must not exceed the balance; otherwise <code>InsufficientCumulativeBalance { required, available }</code>. This prevents a sender from parking many individually-fundable but collectively-unfundable transactions. Skipped for frame txs.</p>
+<p><strong>Chain id.</strong> Only checked when the transaction declares one; mismatch with <code>ChainConfig::chain_id</code> rejects.</p>
+<p><strong>Gapped-nonce rejection under pressure.</strong> When the pool is heavily occupied, a new <em>non-replacement</em> transaction whose nonce is not the sender’s on-chain nonce is rejected with <code>GapAdmissionDeniedUnderPressure { occupancy_pct, nonce_gap }</code>. The gate fires only when <code>occupancy_pct ≥ gap_admit_occupancy_threshold</code> (default 90; a threshold of 100 disables it), so nonce-gap parking spam is bounded without affecting normal load.</p>
+<p><strong>Per-sender queued cap.</strong> Enforced inside <code>add_transaction</code> (see <a href="#insertion-path">Insertion path</a>), not here, so it re-checks the live pool atomically with the insert.</p>
+<h2 id="replacement-by-fee-rbf"><a class="header" href="#replacement-by-fee-rbf">Replacement by Fee (RBF)</a></h2>
+<p><code>Mempool::find_tx_to_replace</code> decides whether a new transaction at an existing <code>(sender, nonce)</code> is accepted as a replacement. The condition is:</p>
+<pre><code>blob_fee_ok &amp;&amp; (both_1559_fields_higher || gas_price_higher)
+</code></pre>
+<ul>
+<li><strong><code>gas_price_higher</code></strong> — <code>Transaction::gas_price()</code> strictly greater. That accessor returns the <code>gas_price</code> field for legacy and <strong>EIP-2930</strong> transactions, and <code>max_fee_per_gas</code> for every typed-fee transaction (EIP-1559 / 4844 / 7702 / fee-token / frame).</li>
+<li><strong><code>both_1559_fields_higher</code></strong> — <code>max_fee_per_gas</code> <em>and</em> <code>max_priority_fee_per_gas</code> both strictly greater. Legacy and EIP-2930 transactions can never satisfy this arm: their <code>max_fee_per_gas()</code> / <code>max_priority_fee()</code> accessors return <code>None</code>, so their replacement is governed entirely by the <code>gas_price</code> comparison.</li>
+<li><strong><code>blob_fee_ok</code></strong> — when both the in-pool and incoming transaction carry <code>max_fee_per_blob_gas</code> (EIP-4844), the new one must be strictly greater; otherwise this term is vacuously true.</li>
+</ul>
+<p>Because the two fee arms are OR-ed, raising only <code>max_fee_per_gas</code> on an EIP-1559 transaction is already sufficient, since its <code>gas_price()</code> tracks <code>max_fee_per_gas</code>.</p>
+<p>If the bump condition isn’t met, the replacement is rejected with <code>UnderpricedReplacement</code>. A configurable minimum-percentage bump is in flight (#6601).</p>
+<h2 id="per-sender-queued-cap"><a class="header" href="#per-sender-queued-cap">Per-sender Queued Cap</a></h2>
+<p>A per-sender cap bounds only the <strong>queued</strong> (future / nonce-gapped) sub-pool, aligned with geth’s <code>AccountQueue</code>: transactions whose nonce is beyond the sender’s contiguous executable run from the on-chain nonce. <code>BlockchainOptions::max_queued_txs_per_account</code> (default <code>DEFAULT_MAX_QUEUED_TXS_PER_ACCOUNT = 64</code>, <code>--mempool.max-queued-txs-per-account</code>). Executable (contiguous-nonce) transactions are <strong>never</strong> capped, so a single high-throughput sender is unaffected. Exceeding the cap yields <code>MaxQueuedTxsPerAccountExceeded { sender, count, limit }</code>.</p>
+<p>The check runs inside <code>Mempool::add_transaction</code> under the same write lock as the insertion — the queued count is computed atomically with the insert, so two concurrent submissions from one sender cannot both pass a stale count and race past the cap. A <code>QueuedCap { account_nonce, max }</code> value, computed by <code>validate_transaction</code> (which holds the sender’s on-chain nonce), is threaded through. Replacements are exempt: a same-<code>(sender, nonce)</code> replace doesn’t grow the queue.</p>
+<h2 id="insertion-path"><a class="header" href="#insertion-path">Insertion Path</a></h2>
+<p><code>Mempool::add_transaction(hash, sender, transaction, frame_reservation, queued_cap)</code> runs under the write lock in this order:</p>
+<pre><code>┌─────────────────────────────────────────────────────────────────────────┐
+│                       Mempool::add_transaction                           │
+├─────────────────────────────────────────────────────────────────────────┤
+│  acquire write lock                                                      │
+│   │                                                                      │
+│   ├── per-sender queued cap (only future-nonce txs; atomic w/ insert)    │
+│   │     if is_future &amp;&amp; queued_count ≥ max → MaxQueuedTxsPerAccount…      │
+│   │                                                                      │
+│   ├── frame-tx (EIP-8141) gating: one-pending-per-sender + locked        │
+│   │     paymaster availability / non-canonical-limit re-check, then      │
+│   │     remove the tx occupying (sender, nonce) if replacing             │
+│   │                                                                      │
+│   ├── prune txs_order if len &gt; mempool_prune_threshold                   │
+│   │                                                                      │
+│   ├── eviction: blob → remove_worst_blob_transaction if over blob cap;   │
+│   │             regular → remove_oldest_regular_transaction if at cap,    │
+│   │             then push hash onto txs_order                            │
+│   │                                                                      │
+│   ├── insert (sender, nonce) → hash into txs_by_sender_nonce             │
+│   ├── insert hash → MempoolTransaction into transaction_pool             │
+│   ├── insert hash into broadcast_pool; drop from alternates              │
+│   └── frame-tx: record pending_frame_tx_by_sender + paymaster reserves   │
+│  drop write lock                                                         │
+│  bump tx_seq; tx_added.notify_waiters()  ── wakes the payload builder    │
+└─────────────────────────────────────────────────────────────────────────┘
+</code></pre>
+<p>For blob transactions, <code>add_blobs_bundle</code> is called immediately before <code>add_transaction</code> so the sidecar is queryable by the time the payload builder is notified.</p>
+<h2 id="eviction"><a class="header" href="#eviction">Eviction</a></h2>
+<p>Regular and blob transactions are evicted by separate policies:</p>
+<ul>
+<li><strong>Regular (<code>remove_oldest_regular_transaction</code>)</strong> — strictly <strong>FIFO</strong> by insertion order: pop from the front of <code>txs_order</code> until <code>regular_tx_count() &lt; max_mempool_size</code>. No tip- or sender-fairness consideration (a known limitation — see <a href="#known-limitations--open-work">Open work</a>).</li>
+<li><strong>Blob (<code>remove_worst_blob_transaction</code>)</strong> — the blob sub-pool is evicted by <em>least includability</em>, not FIFO: the dropped tx maximizes <code>(per-sender nonce offset, Reverse(max_fee_per_blob_gas))</code> — i.e. the deepest-in-its-own-queue blob, ties broken by lowest blob fee — so the next-includable low-nonce blob is never dropped for a high-nonce one.</li>
+</ul>
+<p><code>txs_order</code> is a tombstoned queue: removing a transaction via any path (eviction, replacement, block inclusion, explicit removal) leaves a stale hash that is filtered at pop time. When its length crosses <code>mempool_prune_threshold</code> (<code>max + max/2</code>), the next <code>add_transaction</code> compacts it in place.</p>
+<h2 id="frame-transactions-eip-8141"><a class="header" href="#frame-transactions-eip-8141">Frame Transactions (EIP-8141)</a></h2>
+<p>Frame transactions carry a validation prefix and may be sponsored by a paymaster. The mempool holds extra per-sender and per-paymaster state to admit them safely:</p>
+<ul>
+<li><strong>One pending frame tx per sender</strong> — <code>pending_frame_tx_by_sender</code> enforces a single in-flight frame tx per sender; the check and insert are atomic under the write lock.</li>
+<li><strong>Paymaster reservation accounting</strong> — <code>reserved_pending_cost</code> sums each paymaster’s reserved max-cost across pending frame txs so concurrent sponsored txs can’t collectively overdraw it (<code>FrameTxPaymasterUnderfunded</code>); <code>noncanonical_paymaster_pending</code> bounds the number of pending frame txs a non-canonical paymaster may sponsor (<code>FrameTxNonCanonicalPaymasterLimit</code>); <code>frame_tx_paymaster</code> records each tx’s reservation so removal (eviction / inclusion / reorg) releases it exactly once.</li>
+</ul>
+<p>The unlocked checks in <code>validate_transaction</code> (availability, non-canonical limit) are a pre-filter; the authoritative re-check runs under the write lock in <code>add_transaction</code>, matching the pattern used by the per-sender gates.</p>
+<h2 id="p2p-propagation"><a class="header" href="#p2p-propagation">P2P Propagation</a></h2>
+<p>Three P2P paths interact with the mempool:</p>
+<p><strong>Periodic broadcast.</strong> <code>TxBroadcaster</code> (<code>crates/networking/p2p/tx_broadcaster.rs</code>) runs an actor on a <code>--p2p.tx-broadcasting-interval</code>-millisecond tick. Each tick it snapshots <code>broadcast_pool</code> via <code>Mempool::get_txs_for_broadcast</code>, sends full transaction bodies to ~<code>sqrt(peers)</code> peers and <code>NewPooledTransactionHashes</code> announcements to the rest, then calls <code>Mempool::remove_broadcasted_txs</code> to clear the set. Blob (EIP-4844) and frame (EIP-8141) transactions are announced by hash only; privileged transactions are filtered out. Per-peer deduplication is tracked with a broadcast record keyed by hash and a peer bitset.</p>
+<p><strong>New-peer hash dump.</strong> On a fresh RLPx connection, <code>send_all_pooled_tx_hashes</code> (<code>crates/networking/p2p/rlpx/connection/server.rs</code>) sends the node’s known pooled-transaction hashes to the new peer. It reads them via <code>Mempool::get_all_txs_by_sender</code>, flattens, and skips privileged transactions.</p>
+<p><strong>GetPooledTransactions responses.</strong> <code>GetPooledTransactions::handle</code> (<code>crates/networking/p2p/rlpx/eth/transactions.rs</code>) serves requested hashes through <code>Blockchain::get_p2p_transaction_by_hash</code>, which reads the pooled transaction (and its blobs bundle for blob txs) and returns a <code>not found</code> path for missing hashes and for privileged transactions (which are not served over P2P).</p>
+<p>Incoming gossip flows the other way: <code>Mempool::reserve_unknown_hashes</code> filters incoming <code>NewPooledTransactionHashes</code> against <code>transaction_pool</code> and <code>in_flight_txs</code> in one locked pass, marking unknown hashes in-flight so concurrent peer handlers don’t issue duplicate <code>GetPooledTransactions</code> requests. <code>clear_in_flight_txs</code> clears the marker when the response arrives or the connection drops; <code>alternates</code> records fallback announcers to retry against.</p>
+<h2 id="operator-facing-cli"><a class="header" href="#operator-facing-cli">Operator-Facing CLI</a></h2>
+<p>Mempool-related flags in <code>cmd/ethrex/cli.rs</code>:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Flag</th><th>Env</th><th>Default</th><th>Controls</th></tr>
+</thead>
+<tbody>
+<tr><td><code>--mempool.maxsize</code></td><td><code>ETHREX_MEMPOOL_MAX_SIZE</code></td><td><code>10_000</code></td><td>Cap on the regular pool — eviction starts at this size.</td></tr>
+<tr><td><code>--mempool.max-queued-txs-per-account</code></td><td><code>ETHREX_MEMPOOL_MAX_QUEUED_TXS_PER_ACCOUNT</code></td><td><code>64</code> (<code>DEFAULT_MAX_QUEUED_TXS_PER_ACCOUNT</code>)</td><td>Per-sender cap on queued (future-nonce) transactions; executable txs are never capped.</td></tr>
+<tr><td><code>--mempool.gap-admit-occupancy-threshold</code></td><td><code>ETHREX_MEMPOOL_GAP_ADMIT_OCCUPANCY_THRESHOLD</code></td><td><code>90</code> (<code>DEFAULT_GAP_ADMIT_OCCUPANCY_THRESHOLD</code>)</td><td>Occupancy percentage (<code>0..=100</code>) at/above which gapped-nonce txs are rejected; <code>100</code> disables the gate.</td></tr>
+<tr><td><code>--p2p.tx-broadcasting-interval</code></td><td><code>ETHREX_P2P_TX_BROADCASTING_INTERVAL</code></td><td><code>1000</code> ms (<code>BROADCAST_INTERVAL_MS</code>)</td><td>Period of the <code>TxBroadcaster</code> actor tick.</td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="error-taxonomy"><a class="header" href="#error-taxonomy">Error Taxonomy</a></h2>
+<p><code>MempoolError</code> (<code>crates/blockchain/error.rs</code>). Selected variants:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Variant</th><th>Triggered when</th></tr>
+</thead>
+<tbody>
+<tr><td><code>L2OnlyTransactionType</code></td><td>An L2-only tx type (<code>FeeToken</code> / <code>PrivilegedL2</code>) reaches an L1 node’s admission.</td></tr>
+<tr><td><code>TxSizeExceeded { actual, limit }</code></td><td>Canonical wire-encoded size exceeds <code>MAX_TX_SIZE</code> (non-blob) or the blob wrapper cap.</td></tr>
+<tr><td><code>TxMaxInitCodeSizeError</code></td><td>Contract-creation init code exceeds the fork’s initcode cap.</td></tr>
+<tr><td><code>TxMaxGasLimitExceededError(hash, limit)</code></td><td>EIP-7825: <code>tx.gas_limit</code> exceeds the post-Osaka cap.</td></tr>
+<tr><td><code>TxGasLimitExceededError</code></td><td><code>tx.gas_limit &gt; header.gas_limit</code>.</td></tr>
+<tr><td><code>TxTipAboveFeeCapError</code></td><td><code>max_priority_fee_per_gas &gt; max_fee_per_gas</code>.</td></tr>
+<tr><td><code>Eip7702TxPreFork</code> / <code>EmptyAuthorizationList</code></td><td>Type-4 tx before Prague / with an empty authorization list.</td></tr>
+<tr><td><code>TxIntrinsicGasCostAboveLimitError</code> / <code>TxGasOverflowError</code> / <code>IntrinsicGasError(_)</code></td><td>Intrinsic gas exceeds the limit / overflow / computation error.</td></tr>
+<tr><td><code>TxBlobBaseFeeTooLowError</code></td><td><code>max_fee_per_blob_gas &lt; MIN_BASE_FEE_PER_BLOB_GAS</code>.</td></tr>
+<tr><td><code>NonceTooLow</code></td><td><code>tx.nonce &lt; account.nonce</code> or <code>nonce == u64::MAX</code>.</td></tr>
+<tr><td><code>SenderIsContract</code></td><td>EIP-3607: sender has non-empty code that isn’t a valid EIP-7702 delegation.</td></tr>
+<tr><td><code>NotEnoughBalance</code></td><td>Single-tx cost exceeds balance, or sender absent from state.</td></tr>
+<tr><td><code>InsufficientCumulativeBalance { required, available }</code></td><td>Sum of the sender’s pending-tx costs plus this one exceeds balance.</td></tr>
+<tr><td><code>UnderpricedReplacement</code></td><td>RBF candidate doesn’t strictly out-bid the in-pool tx on all fee fields.</td></tr>
+<tr><td><code>InvalidChainId(expected)</code></td><td><code>tx.chain_id</code> set and doesn’t match the configured chain.</td></tr>
+<tr><td><code>GapAdmissionDeniedUnderPressure { occupancy_pct, nonce_gap }</code></td><td>Non-replacement gapped-nonce tx while occupancy ≥ threshold.</td></tr>
+<tr><td><code>MaxQueuedTxsPerAccountExceeded { sender, count, limit }</code></td><td>Per-sender queued (future-nonce) cap would be exceeded.</td></tr>
+<tr><td><code>BlobsBundleError(_)</code> / <code>BlobTxNoBlobsBundle</code></td><td>KZG/sidecar validation failed / blob tx submitted to a non-blob entry point.</td></tr>
+<tr><td><code>InvalidPooledTxType(_)</code> / <code>InvalidPooledTxSize</code> / <code>RequestedPooledTxNotFound</code></td><td><code>PooledTransactions</code> response type/size mismatch, or an unrequested tx.</td></tr>
+<tr><td><code>FrameTx*</code> (many)</td><td>EIP-8141 frame-tx admission failures (fork, expiry, signature, prefix, paymaster).</td></tr>
+<tr><td><code>InvalidTxSender(_)</code> / <code>StoreError(_)</code> / <code>NoBlockHeaderError</code></td><td>Signature recovery failed / storage error / missing latest header.</td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="known-limitations--open-work"><a class="header" href="#known-limitations--open-work">Known Limitations / Open Work</a></h2>
+<p>The mempool today is a single combined pool with FIFO regular eviction and the admission checks above. Areas with hardening work in flight or planned (tracked in their own PRs, which carry their own documentation):</p>
+<ul>
+<li><strong>Tip-aware regular eviction.</strong> Regular eviction is arrival-order FIFO; a high-tip transaction can be evicted for a low-tip one. Heap/tip-aware eviction is in flight (#6607).</li>
+<li><strong>RBF percentage fee bump.</strong> RBF currently accepts any strict fee increase; a configurable minimum-percentage bump (and cross-type replacement rejection) is in flight (#6601).</li>
+<li><strong>Minimum priority-fee floor at admission</strong> (#6604).</li>
+<li><strong>Non-propagating local transactions</strong> (<code>--mempool.private</code>) (#6576).</li>
+<li><strong>Local-vs-P2P origin threading</strong> through admission (#6608).</li>
+<li><strong>Periodic re-validation / sweep</strong> of stale or dormant pending transactions (#6610).</li>
+<li><strong>Single combined pool.</strong> Blob and non-blob transactions share <code>transaction_pool</code> with separate caps and eviction, but there is no full pending/queued sub-pool separation.</li>
+</ul>
+<h2 id="related-documentation"><a class="header" href="#related-documentation">Related Documentation</a></h2>
+<ul>
+<li><a href="./overview.html">System Overview</a> — where the mempool sits inside the node.</li>
+<li><a href="./block_execution.html">Block Execution Pipeline</a> — how the payload builder consumes pending transactions.</li>
+</ul>
+
+                    </main>
+
+                    <nav class="nav-wrapper" aria-label="Page navigation">
+                        <!-- Mobile navigation buttons -->
+                            <a rel="prev" href="../../l1/architecture/crate_map.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                                <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
+                            </a>
+
+                            <a rel="next prefetch" href="../../l1/fundamentals/index.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                                <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
+                            </a>
+
+                        <div style="clear: both"></div>
+                    </nav>
+                </div>
+            </div>
+
+            <nav class="nav-wide-wrapper" aria-label="Page navigation">
+                    <a rel="prev" href="../../l1/architecture/crate_map.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                        <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
+                    </a>
+
+                    <a rel="next prefetch" href="../../l1/fundamentals/index.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                        <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
+                    </a>
+            </nav>
+
+        </div>
+
+        <template id=fa-eye><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 576 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M288 32c-80.8 0-145.5 36.8-192.6 80.6C48.6 156 17.3 208 2.5 243.7c-3.3 7.9-3.3 16.7 0 24.6C17.3 304 48.6 356 95.4 399.4C142.5 443.2 207.2 480 288 480s145.5-36.8 192.6-80.6c46.8-43.5 78.1-95.4 93-131.1c3.3-7.9 3.3-16.7 0-24.6c-14.9-35.7-46.2-87.7-93-131.1C433.5 68.8 368.8 32 288 32zM432 256c0 79.5-64.5 144-144 144s-144-64.5-144-144s64.5-144 144-144s144 64.5 144 144zM288 192c0 35.3-28.7 64-64 64c-11.5 0-22.3-3-31.6-8.4c-.2 2.8-.4 5.5-.4 8.4c0 53 43 96 96 96s96-43 96-96s-43-96-96-96c-2.8 0-5.6 .1-8.4 .4c5.3 9.3 8.4 20.1 8.4 31.6z"/></svg></span></template>
+        <template id=fa-eye-slash><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M38.8 5.1C28.4-3.1 13.3-1.2 5.1 9.2S-1.2 34.7 9.2 42.9l592 464c10.4 8.2 25.5 6.3 33.7-4.1s6.3-25.5-4.1-33.7L525.6 386.7c39.6-40.6 66.4-86.1 79.9-118.4c3.3-7.9 3.3-16.7 0-24.6c-14.9-35.7-46.2-87.7-93-131.1C465.5 68.8 400.8 32 320 32c-68.2 0-125 26.3-169.3 60.8L38.8 5.1zM223.1 149.5C248.6 126.2 282.7 112 320 112c79.5 0 144 64.5 144 144c0 24.9-6.3 48.3-17.4 68.7L408 294.5c5.2-11.8 8-24.8 8-38.5c0-53-43-96-96-96c-2.8 0-5.6 .1-8.4 .4c5.3 9.3 8.4 20.1 8.4 31.6c0 10.2-2.4 19.8-6.6 28.3l-90.3-70.8zm223.1 298L373 389.9c-16.4 6.5-34.3 10.1-53 10.1c-79.5 0-144-64.5-144-144c0-6.9 .5-13.6 1.4-20.2L83.1 161.5C60.3 191.2 44 220.8 34.5 243.7c-3.3 7.9-3.3 16.7 0 24.6c14.9 35.7 46.2 87.7 93 131.1C174.5 443.2 239.2 480 320 480c47.8 0 89.9-12.9 126.2-32.5z"/></svg></span></template>
+        <template id=fa-copy><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M502.6 70.63l-61.25-61.25C435.4 3.371 427.2 0 418.7 0H255.1c-35.35 0-64 28.66-64 64l.0195 256C192 355.4 220.7 384 256 384h192c35.2 0 64-28.8 64-64V93.25C512 84.77 508.6 76.63 502.6 70.63zM464 320c0 8.836-7.164 16-16 16H255.1c-8.838 0-16-7.164-16-16L239.1 64.13c0-8.836 7.164-16 16-16h128L384 96c0 17.67 14.33 32 32 32h47.1V320zM272 448c0 8.836-7.164 16-16 16H63.1c-8.838 0-16-7.164-16-16L47.98 192.1c0-8.836 7.164-16 16-16H160V128H63.99c-35.35 0-64 28.65-64 64l.0098 256C.002 483.3 28.66 512 64 512h192c35.2 0 64-28.8 64-64v-32h-47.1L272 448z"/></svg></span></template>
+        <template id=fa-play><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 384 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M73 39c-14.8-9.1-33.4-9.4-48.5-.9S0 62.6 0 80V432c0 17.4 9.4 33.4 24.5 41.9s33.7 8.1 48.5-.9L361 297c14.3-8.7 23-24.2 23-41s-8.7-32.2-23-41L73 39z"/></svg></span></template>
+        <template id=fa-clock-rotate-left><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M75 75L41 41C25.9 25.9 0 36.6 0 57.9V168c0 13.3 10.7 24 24 24H134.1c21.4 0 32.1-25.9 17-41l-30.8-30.8C155 85.5 203 64 256 64c106 0 192 86 192 192s-86 192-192 192c-40.8 0-78.6-12.7-109.7-34.4c-14.5-10.1-34.4-6.6-44.6 7.9s-6.6 34.4 7.9 44.6C151.2 495 201.7 512 256 512c141.4 0 256-114.6 256-256S397.4 0 256 0C185.3 0 121.3 28.7 75 75zm181 53c-13.3 0-24 10.7-24 24V256c0 6.4 2.5 12.5 7 17l72 72c9.4 9.4 24.6 9.4 33.9 0s9.4-24.6 0-33.9l-65-65V152c0-13.3-10.7-24-24-24z"/></svg></span></template>
+
+
+
+        <script>
+            window.playground_copyable = true;
+        </script>
+
+
+        <script src="../../elasticlunr-ef4e11c1.min.js"></script>
+        <script src="../../mark-09e88c2c.min.js"></script>
+        <script src="../../searcher-c2a407aa.js"></script>
+
+        <script src="../../clipboard-1626706a.min.js"></script>
+        <script src="../../highlight-abc7f01d.js"></script>
+        <script src="../../book-a0b12cfe.js"></script>
+
+        <!-- Custom JS scripts -->
+        <script src="../../mermaid-eefea253.min.js"></script>
+        <script src="../../mermaid-init-ccf746f1.js"></script>
+
+
+
+    </div>
+    </body>
+</html>
