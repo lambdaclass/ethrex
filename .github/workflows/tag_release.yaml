@@ -84,6 +84,9 @@ jobs:
 
       - name: Setup Rust Environment
         uses: ./.github/actions/setup-rust
+        with:
+          cache-pool: l2
+          save-cache: 'false'
 
       - name: Install SP1 (only Linux)
         if: ${{ matrix.os == 'linux' }}
@@ -167,6 +170,9 @@ jobs:
 
       - name: Setup Rust Environment
         uses: ./.github/actions/setup-rust
+        with:
+          cache-pool: l2
+          save-cache: 'false'
 
       - name: Install SP1
         if: ${{ matrix.zkvm == 'sp1' }}

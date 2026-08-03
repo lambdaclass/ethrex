@@ -38,6 +38,9 @@ jobs:
         uses: actions/checkout@v6
       - name: Setup Rust Environment
         uses: ./.github/actions/setup-rust
+        with:
+          cache-pool: l1
+          save-cache: 'false'
 
       - name: Download EF Tests
         run: |
@@ -83,6 +86,9 @@ jobs:
         uses: actions/checkout@v6
       - name: Setup Rust Environment
         uses: ./.github/actions/setup-rust
+        with:
+          cache-pool: l1
+          save-cache: 'false'
 
       - name: Run EF state tests with no_std crypto fallbacks
         run: make -C tooling/ef_tests/state test-levm-nostd-crypto
@@ -99,6 +105,9 @@ jobs:
 
       - name: Setup Rust Environment
         uses: ./.github/actions/setup-rust
+        with:
+          cache-pool: l1
+          save-cache: 'false'
 
       - name: Download EF Tests
         run: |
@@ -223,6 +232,9 @@ jobs:
         uses: actions/checkout@v6
       - name: Setup Rust Environment
         uses: ./.github/actions/setup-rust
+        with:
+          cache-pool: l1
+          save-cache: 'false'
 
       - name: Run tests
         run: |
@@ -237,6 +249,9 @@ jobs:
         uses: actions/checkout@v6
       - name: Setup Rust Environment
         uses: ./.github/actions/setup-rust
+        with:
+          cache-pool: l1
+          save-cache: 'false'
 
       - name: Install hyperfine
         uses: taiki-e/install-action@v2

@@ -72,6 +72,8 @@ jobs:
       - name: Setup Rust Environment
         uses: ./.github/actions/setup-rust
         with:
+          cache-pool: l1
+          save-cache: 'false'
           components: rustfmt, clippy
 
       # We don't run with workspace, as members of the workspace require l2. We run it with workspace
@@ -116,6 +118,8 @@ jobs:
 
       - name: Setup Rust Environment
         uses: ./.github/actions/setup-rust
+        with:
+          cache-pool: l1
 
       - name: Run unit tests
         run: |
@@ -152,6 +156,9 @@ jobs:
 
       - name: Setup Rust Environment
         uses: ./.github/actions/setup-rust
+        with:
+          cache-pool: l1
+          save-cache: 'false'
 
       - name: Run Engine EF tests
         run: make -C tooling/ef_tests/engine test
@@ -500,6 +507,9 @@ jobs:
 
       - name: Setup Rust Environment
         uses: ./.github/actions/setup-rust
+        with:
+          cache-pool: l1
+          save-cache: 'false'
 
       - name: Compile ethrex binary
         run: cargo build --bin ethrex

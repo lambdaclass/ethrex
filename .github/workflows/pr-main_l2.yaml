@@ -87,6 +87,8 @@ jobs:
       - name: Setup Rust Environment
         uses: ./.github/actions/setup-rust
         with:
+          cache-pool: l2
+          save-cache: 'false'
           components: rustfmt, clippy
 
       - name: Install RISC0
@@ -127,6 +129,9 @@ jobs:
 
       - name: Setup Rust Environment
         uses: ./.github/actions/setup-rust
+        with:
+          cache-pool: l2
+          save-cache: 'false'
 
       - name: Validate blobs match genesis
         run: |
@@ -212,6 +217,9 @@ jobs:
 
       - name: Setup Rust Environment
         uses: ./.github/actions/setup-rust
+        with:
+          cache-pool: l2
+          save-cache: 'false'
 
       - name: Setup Node.js
         uses: actions/setup-node@v6
@@ -340,6 +348,8 @@ jobs:
         uses: actions/checkout@v6
       - name: Setup Rust Environment
         uses: ./.github/actions/setup-rust
+        with:
+          cache-pool: l2
 
       - name: Install solc
         uses: ./.github/actions/install-solc
@@ -504,6 +514,9 @@ jobs:
 
       - name: Setup Rust Environment
         uses: ./.github/actions/setup-rust
+        with:
+          cache-pool: l2
+          save-cache: 'false'
 
       - name: Install solc
         uses: ./.github/actions/install-solc
@@ -647,6 +660,9 @@ jobs:
         uses: actions/checkout@v6
       - name: Setup Rust Environment
         uses: ./.github/actions/setup-rust
+        with:
+          cache-pool: l2
+          save-cache: 'false'
 
       - name: Download ethrex image artifact
         uses: actions/download-artifact@v6
@@ -714,6 +730,9 @@ jobs:
         uses: actions/checkout@v6
       - name: Setup Rust Environment
         uses: ./.github/actions/setup-rust
+        with:
+          cache-pool: l2
+          save-cache: 'false'
 
       - name: Install solc
         uses: ./.github/actions/install-solc

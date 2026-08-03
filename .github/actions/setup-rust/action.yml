@@ -5,6 +5,18 @@ inputs:
     description: "Rust components to install (e.g., rustfmt, clippy)"
     required: false
     default: ""
+  cache-pool:
+    description: >
+      Name of the cache pool to share with other jobs that build a comparable
+      dependency graph (e.g. "l1", "l2", "ef-tests"). Jobs in the same pool read
+      and write one cache entry per platform instead of one per job. Leave unset
+      to fall back to a per-job entry.
+    required: false
+    default: ""
+  save-cache:
+    description: "Set to 'false' for jobs whose target dir is not worth a pool slot."
+    required: false
+    default: "true"
 runs:
   using: "composite"
   steps:
@@ -23,13 +35,19 @@ runs:
         toolchain: ${{ steps.rustver.outputs.rust_version }}
         components: ${{ inputs.components }}
 
-    # Only main writes the cargo cache. A repo has a 10GB Actions cache budget
-    # with LRU eviction, and a single release target dir here is ~2.75GB, so
-    # letting every PR job save means the entries evict each other and almost
-    # every run builds cold. Caches saved on PR refs are also unreadable from
-    # any other branch, whereas main's are readable everywhere.
+    # The Actions cache budget defaults to 10GB per repository and is evicted
+    # LRU, while one target dir here runs 1.2-2.75GB, so the budget holds only a
+    # handful of entries. Two rules keep them from evicting each other:
+    #
+    # - Only main writes. Entries saved on a PR ref are unreadable from every
+    #   other branch, so they cost budget without ever being restored.
+    # - Jobs building comparable dependency graphs share one entry via
+    #   `cache-pool` (rust-cache's `shared-key`), which replaces the per-job
+    #   segment of the key. One writer per pool keeps the entry to the widest
+    #   dependency set in it; the rest restore only. Per-job keys would put ~32
+    #   writers on main, several times what the budget holds.
     - name: Add Rust Cache
       uses: Swatinem/rust-cache@v2
       with:
-        save-if: ${{ github.ref == 'refs/heads/main' }}
-
+        shared-key: ${{ inputs.cache-pool }}
+        save-if: ${{ inputs.save-cache == 'true' && github.ref == 'refs/heads/main' }}
