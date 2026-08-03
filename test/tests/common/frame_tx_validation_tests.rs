@@ -635,12 +635,12 @@ fn max_gas_takes_the_calldata_floor_when_it_exceeds_the_standard_limit() {
     tx.frames[0].gas_limit = 100;
     tx.frames[1].gas_limit = 100;
     assert!(tx.calldata_floor_total() > tx.standard_gas_limit());
-    assert_eq!(tx.total_gas_limit(), tx.calldata_floor_total());
+    assert_eq!(tx.max_gas(), tx.calldata_floor_total());
     assert!(tx.validate_static_constraints().is_ok());
 
     // With enough frame gas to outweigh the floor, `max_gas` is the standard limit.
     tx.frames[1].gas_limit = 100_000;
     assert!(tx.standard_gas_limit() > tx.calldata_floor_total());
-    assert_eq!(tx.total_gas_limit(), tx.standard_gas_limit());
+    assert_eq!(tx.max_gas(), tx.standard_gas_limit());
     assert!(tx.validate_static_constraints().is_ok());
 }

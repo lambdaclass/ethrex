@@ -3206,8 +3206,8 @@ impl LEVM {
     /// uses checked_mul/checked_add and halts on overflow. Saturating to
     /// `U256::MAX` here only makes the reservation larger, never smaller.
     fn frame_tx_reservation_ceiling(frame_tx: &ethrex_common::types::FrameTransaction) -> U256 {
-        let gas_cost = U256::from(frame_tx.max_fee_per_gas)
-            .saturating_mul(U256::from(frame_tx.total_gas_limit()));
+        let gas_cost =
+            U256::from(frame_tx.max_fee_per_gas).saturating_mul(U256::from(frame_tx.max_gas()));
         let blob_cost = U256::from(frame_tx.blob_versioned_hashes.len())
             .saturating_mul(U256::from(131072u64))
             .saturating_mul(frame_tx.max_fee_per_blob_gas);

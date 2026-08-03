@@ -518,10 +518,10 @@ pub struct FrameTxContext {
     pub tx: ethrex_common::types::FrameTransaction,
     /// Whether APPROVE was called in the current frame
     pub approve_called_in_current_frame: bool,
-    /// Cached `FrameTransaction::total_gas_limit()`. Computing it re-encodes
-    /// every frame and signature, so it must not run per-opcode (TXPARAM 0x06,
+    /// Cached `FrameTransaction::max_gas()`. Computing it re-encodes every frame
+    /// and signature, so it must not run per-opcode (TXPARAM 0x06,
     /// compute_tx_max_cost). Computed once at tx entry.
-    pub total_gas_limit: u64,
+    pub max_gas: u64,
     /// The block's EIP-4844 blob base fee, captured at tx entry. `max_cost`
     /// collects the blob fee at this rate, not at `max_fee_per_blob_gas`
     /// (EIP-8141 §Gas accounting), and `load_tx_param` has no `Environment`
@@ -744,7 +744,7 @@ fn scalar_at_most(scalar: &[u8], upper: &[u8; 32]) -> bool {
 
 /// Validate every EIP-8141 outer signature against the canonical `sig_hash`.
 /// Returns false if any signature is malformed or invalid. Verification gas is
-/// intrinsic (already in `total_gas_limit`), so a scratch budget is used for the
+/// intrinsic (already in `standard_gas_limit`), so a scratch budget is used for the
 /// crypto precompiles and their deduction is ignored.
 #[expect(
     clippy::indexing_slicing,
@@ -1601,7 +1601,7 @@ impl<'a> VM<'a> {
 
         // Initialize FrameTxContext
         let sig_hash = frame_tx.compute_sig_hash();
-        let total_gas_limit = frame_tx.total_gas_limit();
+        let max_gas = frame_tx.max_gas();
         self.frame_tx_context = Some(FrameTxContext {
             sender_approved: false,
             payer_address: None,
@@ -1610,7 +1610,7 @@ impl<'a> VM<'a> {
             sig_hash,
             tx: frame_tx.clone(),
             approve_called_in_current_frame: false,
-            total_gas_limit,
+            max_gas,
             blob_base_fee: self.env.base_blob_fee_per_gas,
         });
 
@@ -1650,7 +1650,12 @@ impl<'a> VM<'a> {
             .iter()
             .map(|f| f.gas_limit)
             .fold(0u64, |acc, g| acc.saturating_add(g));
-        let intrinsic_gas = total_gas_limit.saturating_sub(sum_frame_gas_limits);
+        // The non-frame part of `standard_gas_limit`, not of `max_gas`: when the
+        // calldata floor dominates, the extra reservation is not intrinsic gas and
+        // is applied once at settlement instead.
+        let intrinsic_gas = frame_tx
+            .mandatory_gas()
+            .saturating_add(frame_tx.data_cost());
         let mut total_gas_used: u64 = intrinsic_gas;
         let mut tx_invalid = false;
 
@@ -2394,7 +2399,7 @@ impl<'a> VM<'a> {
         }
 
         let sig_hash = frame_tx.compute_sig_hash();
-        let total_gas_limit = frame_tx.total_gas_limit();
+        let max_gas = frame_tx.max_gas();
         self.frame_tx_context = Some(FrameTxContext {
             sender_approved: false,
             payer_address: None,
@@ -2403,7 +2408,7 @@ impl<'a> VM<'a> {
             sig_hash,
             tx: frame_tx.clone(),
             approve_called_in_current_frame: false,
-            total_gas_limit,
+            max_gas,
             blob_base_fee: self.env.base_blob_fee_per_gas,
         });
 

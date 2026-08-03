@@ -110,7 +110,7 @@ fn seeded_db(accounts: &[SeededAccount]) -> GeneralizedDatabase {
 fn frame_tx_env(tx: &FrameTransaction) -> Environment {
     Environment {
         origin: tx.sender,
-        gas_limit: tx.total_gas_limit(),
+        gas_limit: tx.max_gas(),
         block_gas_limit: (i64::MAX - 1) as u64,
         config: EVMConfig::new(Fork::Hegota, EVMConfig::canonical_values(Fork::Hegota)),
         chain_id: U256::from(HARNESS_CHAIN_ID),
@@ -1331,7 +1331,7 @@ mod frame_tx_opcode_handler_tests {
             sig_hash: ethrex_common::H256::zero(),
             tx,
             approve_called_in_current_frame: false,
-            total_gas_limit: 0,
+            max_gas: 0,
             blob_base_fee: U256::zero(),
         }
     }
@@ -1418,7 +1418,7 @@ mod frame_tx_opcode_handler_tests {
             sig_hash: ethrex_common::H256::zero(),
             tx: FrameTransaction::default(),
             approve_called_in_current_frame: false,
-            total_gas_limit: 0,
+            max_gas: 0,
             blob_base_fee: U256::zero(),
         };
         let result = load_tx_param(&ctx, 0x0B).unwrap();
@@ -2729,7 +2729,7 @@ mod atomic_batch_approval_rollback_tests {
             sig_hash: ethrex_common::H256::zero(),
             tx: ethrex_common::types::FrameTransaction::default(),
             approve_called_in_current_frame: false,
-            total_gas_limit: 0,
+            max_gas: 0,
             blob_base_fee: U256::zero(),
         }
     }
@@ -3690,12 +3690,53 @@ fn max_gas_reserves_the_calldata_floor_instead_of_rejecting() {
         "the floor must bind for this to test the reservation"
     );
     assert_eq!(
-        tx.total_gas_limit(),
+        tx.max_gas(),
         tx.calldata_floor_total(),
         "max_gas must be the floor when the floor binds"
     );
     assert!(
         tx.validate_static_constraints().is_ok(),
         "a floor-bound transaction is valid; it reserves the floor rather than being rejected"
+    );
+}
+
+/// A floor-bound frame transaction settles at the floor: the reservation raised
+/// to `calldata_floor_gas` is what the payer is charged for, and no frame gas is
+/// reported as refunded because the floor already absorbs it.
+#[test]
+fn a_floor_bound_frame_transaction_is_charged_the_floor() {
+    use ethrex_common::types::Frame;
+
+    let tx = frame_tx_with_frames(vec![Frame {
+        mode: u8::from(FrameMode::Verify),
+        flags: 0x03,
+        target: Some(FUNDED_SENDER),
+        gas_limit: 100_000,
+        value: U256::zero(),
+        data: Bytes::from(vec![0x11u8; 4_096]),
+    }]);
+    let floor_total = tx.calldata_floor_total();
+    assert!(
+        floor_total > tx.standard_gas_limit(),
+        "the floor must bind for this to test the settlement"
+    );
+
+    let (result, _db) = run_frame_tx(
+        &[(
+            FUNDED_SENDER,
+            AUTO_SEED_SENDER_BALANCE,
+            0,
+            Bytes::from(APPROVE_BOTH_CODE.to_vec()),
+        )],
+        tx,
+    );
+    let report = result.expect("valid: the self-verify frame approves execution and payment");
+    assert_eq!(
+        report.gas_used, floor_total,
+        "a floor-bound transaction is charged max_gas, which is the floor"
+    );
+    assert_eq!(
+        report.gas_refunded, 0,
+        "the floor leaves no frame gas to report as refunded"
     );
 }
