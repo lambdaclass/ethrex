@@ -1,6 +1,8 @@
 //! Bit-level helpers. Bits are `Vec<u8>` of 0/1 values, MSB-first,
 //! matching the spec's readability-first representation.
 
+use crate::error::BinaryTrieError;
+
 /// Expand each byte into eight bits, most significant bit first.
 ///
 /// Sized up front rather than collected from an iterator: `flat_map`
@@ -15,6 +17,42 @@ pub fn bytes_to_bits(data: &[u8]) -> Vec<u8> {
         }
     }
     bits
+}
+
+/// Inverse of [`encode_bit_prefix`]: read the bit count, unpack that
+/// many bits, and report how many bytes were consumed.
+///
+/// Rejects padding bits that are not zero. The encoder never sets them,
+/// so accepting them would give one node two valid encodings — and
+/// therefore two hashes.
+// No caller until the trie can load nodes from a store (Task 2 of
+// docs/plans/2026-08-03-pbt-persistent-state.md); the encoding is
+// built and pinned first so the stored format is settled.
+#[allow(dead_code)]
+pub(super) fn decode_bit_prefix(data: &[u8]) -> Result<(Vec<u8>, usize), BinaryTrieError> {
+    let count_bytes: [u8; 2] = data
+        .get(..2)
+        .ok_or(BinaryTrieError::MalformedNode("prefix length truncated"))?
+        .try_into()
+        .expect("slice of two bytes");
+    let count = u16::from_be_bytes(count_bytes) as usize;
+
+    let packed_len = count.div_ceil(8);
+    let packed = data
+        .get(2..2 + packed_len)
+        .ok_or(BinaryTrieError::MalformedNode("prefix bits truncated"))?;
+
+    let mut bits = vec![0u8; count];
+    for (i, bit) in bits.iter_mut().enumerate() {
+        *bit = (packed[i / 8] >> (7 - i % 8)) & 1;
+    }
+    if let Some(last) = packed.last()
+        && !count.is_multiple_of(8)
+        && last & (0xff >> (count % 8)) != 0
+    {
+        return Err(BinaryTrieError::MalformedNode("non-zero prefix padding"));
+    }
+    Ok((bits, 2 + packed_len))
 }
 
 /// Encode a branch prefix: a two-byte big-endian bit count followed by
