@@ -5672,6 +5672,63 @@ mod tests {
         assert!(ok.as_blob().is_some());
     }
 
+    /// A `PooledTransaction` keeps only `BlobsBundle` (whose `version` is a plain
+    /// `u8`), so the wire `wrapper_version` field is derived on encode as
+    /// `Some(version)` iff `version != 0`. A peer that sends an explicit
+    /// `wrapper_version: Some(0)` therefore re-encodes as `None` — one byte shorter.
+    /// That normalization must not move the tx hash, and the byte skew must stay
+    /// inside the p2p announced-size tolerance (8 bytes, `POOLED_TX_SIZE_TOLERANCE`
+    /// in `ethrex-p2p`), or the size check would reject such a peer's response.
+    #[test]
+    fn pooled_blob_tx_normalizes_explicit_zero_wrapper_version() {
+        let tx = EIP4844Transaction::default();
+        let expected_hash = Transaction::EIP4844Transaction(EIP4844Transaction::default())
+            .compute_hash(&NativeCrypto);
+
+        // Wire bytes as a peer that spells out the pre-Osaka default version.
+        let mut canonical = vec![TxType::EIP4844 as u8];
+        WrappedEIP4844Transaction {
+            tx,
+            wrapper_version: Some(0),
+            blobs_bundle: BlobsBundle::empty(),
+        }
+        .encode(&mut canonical);
+        let mut wire = Vec::new();
+        <[u8] as RLPEncode>::encode(&canonical, &mut wire);
+
+        let decoded = PooledTransaction::decode(&wire).expect("explicit Some(0) must decode");
+        let (_, bundle) = decoded.as_blob().expect("blob tx keeps its sidecar");
+        assert_eq!(bundle.version, 0, "Some(0) collapses to version 0");
+        assert_eq!(decoded.compute_hash(), expected_hash);
+
+        // Re-encoding drops the now-redundant field: exactly the one byte that
+        // `Some(0u8)` occupied (RLP-encoded as 0x80).
+        let reencoded = decoded.encode_to_vec();
+        assert_eq!(
+            wire.len() - reencoded.len(),
+            1,
+            "only the wrapper-version byte may be dropped"
+        );
+        assert!(wire.len().abs_diff(reencoded.len()) <= 8);
+
+        // The normalized form is a fixed point: re-decoding and re-encoding it is
+        // a no-op, so the byte loss is one-shot and not a per-hop drift.
+        let round_tripped = PooledTransaction::decode(&reencoded).unwrap();
+        assert_eq!(
+            round_tripped.encode_to_vec(),
+            reencoded,
+            "the normalized encoding must round-trip unchanged"
+        );
+        assert_eq!(round_tripped.compute_hash(), expected_hash);
+
+        // `encode_canonical_len` mirrors `encode_canonical`, so the size we announce
+        // to peers matches the bytes we would actually send.
+        assert_eq!(
+            decoded.encode_canonical_len(),
+            decoded.encode_canonical_to_vec().len()
+        );
+    }
+
     #[test]
     fn static_validation_rejects_unknown_scheme() {
         let mut tx = make_test_frame_tx();
