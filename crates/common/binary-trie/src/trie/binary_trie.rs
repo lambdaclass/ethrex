@@ -16,13 +16,21 @@
 //! an unmodified opened trie reports its root without a single
 //! database access.
 //!
+//! A loaded node carries two pieces of state about itself, correlated
+//! when it changes but divergent afterwards. Its *cached hash* is
+//! filled the first time anyone needs it, so [`BinaryTrie::root`]
+//! hashes each node at most once. Its *dirty* flag says the database's
+//! copy is stale, so [`BinaryTrie::commit`] writes only what changed.
+//! They cannot be one field: `root()` fills every cached hash, which
+//! would erase the record of what still needs writing.
+//!
 //! Deliberate simplifications, deferred to later tasks of the
-//! persistent-state plan: no hash caching (every `root()` rehashes
-//! what is loaded), no dirty tracking (`commit` writes every loaded
-//! node, not just changed ones), and no deletion. Recursion depth is
-//! bounded by the key length in bits, so max-length keys could
-//! theoretically overflow the stack; embedding keys are at most 66
-//! bytes, and going iterative is the fallback if that ever matters.
+//! persistent-state plan: no deletion. Recursion depth is bounded by
+//! the key length in bits, so max-length keys could theoretically
+//! overflow the stack; embedding keys are at most 66 bytes, and going
+//! iterative is the fallback if that ever matters.
+
+use std::sync::OnceLock;
 
 use ethereum_types::H256;
 
@@ -54,8 +62,46 @@ enum Node {
 /// A child: either the node itself, or the hash of a subtree the
 /// database holds, to be loaded if and when the descent reaches it.
 enum NodeRef {
-    Loaded(Box<Node>),
+    Loaded {
+        node: Box<Node>,
+        /// This node's hash, empty until something asks for it.
+        hash: OnceLock<H256>,
+        /// The database's copy of this node is stale, or absent.
+        dirty: bool,
+    },
     Stored(H256),
+}
+
+impl NodeRef {
+    /// A node that was just built or just changed shape: nothing knows
+    /// its hash, and the database does not have it.
+    fn loaded(node: Node) -> Self {
+        Self::Loaded {
+            node: Box::new(node),
+            hash: OnceLock::new(),
+            dirty: true,
+        }
+    }
+
+    /// A node read back from the database under `hash`: its hash is
+    /// exactly the reference that pointed at it, and the copy on disk
+    /// is the one in hand.
+    fn resolved(node: Node, hash: H256) -> Self {
+        Self::Loaded {
+            node: Box::new(node),
+            hash: OnceLock::from(hash),
+            dirty: false,
+        }
+    }
+
+    /// Record that this subtree changed: the cached hash is no longer
+    /// this node's hash, and the database holds an older version.
+    fn invalidate(&mut self) {
+        if let Self::Loaded { hash, dirty, .. } = self {
+            hash.take();
+            *dirty = true;
+        }
+    }
 }
 
 /// Compressed binary radix trie over prefix-free byte keys and
@@ -112,7 +158,7 @@ impl BinaryTrie {
         let Self { db, root } = self;
         match root {
             None => {
-                *root = Some(NodeRef::Loaded(Box::new(Node::Leaf { key, value })));
+                *root = Some(NodeRef::loaded(Node::Leaf { key, value }));
                 Ok(())
             }
             Some(node_ref) => Self::insert_at(db.as_ref(), node_ref, &bits, 0, key, value),
@@ -124,6 +170,11 @@ impl BinaryTrie {
     ///
     /// `path` must be the bit path of `node_ref` itself: that is the
     /// key it was written under.
+    ///
+    /// The node arrives clean, with its hash already known: the
+    /// reference being replaced *was* that hash, and the bytes it was
+    /// decoded from are the ones on disk. So a read costs no hashing
+    /// and leaves nothing for the next commit to write.
     fn resolve<'a>(
         db: &dyn BinaryTrieDB,
         node_ref: &'a mut NodeRef,
@@ -145,10 +196,10 @@ impl BinaryTrie {
                     right: NodeRef::Stored(right),
                 },
             };
-            *node_ref = NodeRef::Loaded(Box::new(node));
+            *node_ref = NodeRef::resolved(node, hash);
         }
         match node_ref {
-            NodeRef::Loaded(node) => Ok(node),
+            NodeRef::Loaded { node, .. } => Ok(node),
             NodeRef::Stored(_) => unreachable!("just replaced with a loaded node"),
         }
     }
@@ -176,7 +227,30 @@ impl BinaryTrie {
     ///
     /// Every failure is detected before anything is mutated, so an
     /// error leaves the subtree — and therefore the trie — untouched.
+    ///
+    /// Success means something at or below this node changed, so this
+    /// node's cached hash and stored copy are both out of date. The
+    /// `&mut` descent visits exactly the nodes from the root down to
+    /// the change, so invalidating one frame on the way out
+    /// invalidates every ancestor of the change and nothing else.
     fn insert_at(
+        db: &dyn BinaryTrieDB,
+        node_ref: &mut NodeRef,
+        bits: &[u8],
+        depth: usize,
+        key: Vec<u8>,
+        value: [u8; 32],
+    ) -> Result<(), BinaryTrieError> {
+        let result = Self::insert_below(db, node_ref, bits, depth, key, value);
+        if result.is_ok() {
+            node_ref.invalidate();
+        }
+        result
+    }
+
+    /// The insertion itself; see [`BinaryTrie::insert_at`], which wraps
+    /// it to invalidate the node on the way back out.
+    fn insert_below(
         db: &dyn BinaryTrieDB,
         node_ref: &mut NodeRef,
         bits: &[u8],
@@ -256,8 +330,11 @@ impl BinaryTrie {
                 )
             }
         };
-        let new_leaf = NodeRef::Loaded(Box::new(Node::Leaf { key, value }));
-        let displaced = NodeRef::Loaded(Box::new(displaced));
+        // Both children are new to their positions: the leaf did not
+        // exist, and the displaced subtree's own node now sits one
+        // level deeper, so neither is where the database left it.
+        let new_leaf = NodeRef::loaded(Node::Leaf { key, value });
+        let displaced = NodeRef::loaded(displaced);
         let (left, right) = if bits[split] == 0 {
             (new_leaf, displaced)
         } else {
@@ -320,7 +397,11 @@ impl BinaryTrie {
     /// the recursive tagged BLAKE3 commitment of the node structure.
     ///
     /// Reads nothing: a stored reference is already the hash of what it
-    /// points at, so only loaded nodes are hashed.
+    /// points at, so only loaded nodes are hashed — and each of those
+    /// at most once, since the answer is cached in the node. Insertion
+    /// clears the cache on every node it descends through, so a cached
+    /// hash is only ever returned for a subtree that has not changed
+    /// since it was computed.
     pub fn root(&self) -> H256 {
         match &self.root {
             None => EMPTY_TRIE_ROOT,
@@ -331,46 +412,76 @@ impl BinaryTrie {
     fn merkleize(node_ref: &NodeRef) -> H256 {
         match node_ref {
             NodeRef::Stored(hash) => *hash,
-            NodeRef::Loaded(node) => match node.as_ref() {
-                Node::Leaf { key, value } => leaf_hash(key, value),
-                Node::Branch {
-                    prefix,
-                    left,
-                    right,
-                } => branch_hash(prefix, Self::merkleize(left), Self::merkleize(right)),
-            },
+            NodeRef::Loaded { node, hash, .. } => *hash.get_or_init(|| Self::hash_node(node)),
         }
     }
 
-    /// Write every loaded node to the database under its bit path and
-    /// return the root hash.
+    /// Hash of a loaded node from its children — the computation the
+    /// cache memoizes, kept out of [`BinaryTrie::merkleize`] so that
+    /// filling one node's cache never re-enters that same cache.
+    fn hash_node(node: &Node) -> H256 {
+        match node {
+            Node::Leaf { key, value } => leaf_hash(key, value),
+            Node::Branch {
+                prefix,
+                left,
+                right,
+            } => branch_hash(prefix, Self::merkleize(left), Self::merkleize(right)),
+        }
+    }
+
+    /// Write the changed nodes to the database under their bit paths
+    /// and return the root hash.
     ///
-    /// Loaded, not changed: without dirty tracking a node that was only
-    /// read is rewritten with the bytes it already had, which is
-    /// wasteful but never wrong. Stored references are skipped — their
-    /// subtrees are already on disk, and a split never moves them,
-    /// since the bits an ancestor stops consuming are exactly the bits
-    /// its new child starts consuming.
+    /// Only the changed ones: a node whose stored copy is still current
+    /// is skipped, along with everything below it. That is safe because
+    /// insertion dirties every node from the root down to what it
+    /// changed, so a clean node cannot have a dirty descendant — the
+    /// invariant the skip rests on.
+    ///
+    /// Stored references are skipped too — their subtrees are already
+    /// on disk, and a split never moves them, since the bits an
+    /// ancestor stops consuming are exactly the bits its new child
+    /// starts consuming.
+    ///
+    /// Committing an unchanged trie writes nothing at all, not even an
+    /// empty batch.
     ///
     /// # Errors
     ///
-    /// [`BinaryTrieError::Backend`] if the write fails.
-    pub fn commit(&self) -> Result<H256, BinaryTrieError> {
+    /// [`BinaryTrieError::Backend`] if the write fails. The dirty flags
+    /// survive a failed write, so the nodes are offered again next
+    /// time.
+    pub fn commit(&mut self) -> Result<H256, BinaryTrieError> {
         let mut entries = Vec::new();
         let root = match &self.root {
             None => EMPTY_TRIE_ROOT,
             Some(node_ref) => Self::collect(node_ref, BitPath::new(), &mut entries),
         };
+        if entries.is_empty() {
+            return Ok(root);
+        }
         self.db.put_batch(entries)?;
+        if let Some(node_ref) = &mut self.root {
+            Self::mark_clean(node_ref);
+        }
         Ok(root)
     }
 
-    /// Hash of the subtree at `path`, pushing every loaded node in it
+    /// Hash of the subtree at `path`, pushing every dirty node in it
     /// onto `entries` as (path, encoded bytes).
     fn collect(node_ref: &NodeRef, path: BitPath, entries: &mut Vec<(BitPath, Vec<u8>)>) -> H256 {
-        let node = match node_ref {
+        let (node, hash) = match node_ref {
             NodeRef::Stored(hash) => return *hash,
-            NodeRef::Loaded(node) => node,
+            NodeRef::Loaded { node, hash, dirty } => {
+                if !*dirty {
+                    // The database already has this node, and — by the
+                    // invariant [`BinaryTrie::commit`] documents —
+                    // everything below it as well.
+                    return *hash.get_or_init(|| Self::hash_node(node));
+                }
+                (node, hash)
+            }
         };
         // A node's stored bytes are its hashing preimage, so the
         // encoding written and the hash returned cannot disagree.
@@ -386,9 +497,30 @@ impl BinaryTrie {
                 encode_branch(prefix, left_hash, right_hash)
             }
         };
-        let hash = blake3_hash(&encoded);
+        let computed = blake3_hash(&encoded);
         entries.push((path, encoded));
-        hash
+        // A dirty node may still hold a cached hash — `root()` fills
+        // caches without cleaning anything — and it agrees with what
+        // was just computed, since both describe the current subtree.
+        *hash.get_or_init(|| computed)
+    }
+
+    /// Mark the subtree at `node_ref` as matching the database, having
+    /// just written it. Stops at clean nodes: by the invariant
+    /// [`BinaryTrie::commit`] relies on, there is nothing dirty below
+    /// one.
+    fn mark_clean(node_ref: &mut NodeRef) {
+        let NodeRef::Loaded { node, dirty, .. } = node_ref else {
+            return;
+        };
+        if !*dirty {
+            return;
+        }
+        *dirty = false;
+        if let Node::Branch { left, right, .. } = node.as_mut() {
+            Self::mark_clean(left);
+            Self::mark_clean(right);
+        }
     }
 }
 
@@ -403,33 +535,56 @@ mod tests {
     use std::sync::Arc;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
-    /// A backend that counts reads, so a test can assert what a
-    /// traversal actually loaded rather than what it could have.
+    /// Nodes read and nodes written, counted per node rather than per
+    /// call: what matters is how much of the tree was touched, not how
+    /// many batches it arrived in.
+    #[derive(Clone, Default)]
+    struct Counts {
+        reads: Arc<AtomicUsize>,
+        writes: Arc<AtomicUsize>,
+    }
+
+    impl Counts {
+        fn reads(&self) -> usize {
+            self.reads.load(Ordering::Relaxed)
+        }
+
+        fn writes(&self) -> usize {
+            self.writes.load(Ordering::Relaxed)
+        }
+    }
+
+    /// A backend that counts reads and writes, so a test can assert
+    /// what a traversal actually loaded or stored rather than what it
+    /// could have.
     struct CountingDB {
         inner: InMemoryBinaryTrieDB,
-        reads: Arc<AtomicUsize>,
+        counts: Counts,
     }
 
     impl CountingDB {
-        fn over(map: NodeMap) -> (Self, Arc<AtomicUsize>) {
-            let reads = Arc::new(AtomicUsize::new(0));
+        fn over(map: NodeMap) -> (Self, Counts) {
+            let counts = Counts::default();
             (
                 Self {
                     inner: InMemoryBinaryTrieDB::new(map),
-                    reads: Arc::clone(&reads),
+                    counts: counts.clone(),
                 },
-                reads,
+                counts,
             )
         }
     }
 
     impl BinaryTrieDB for CountingDB {
         fn get(&self, path: &BitPath) -> Result<Option<Vec<u8>>, BinaryTrieError> {
-            self.reads.fetch_add(1, Ordering::Relaxed);
+            self.counts.reads.fetch_add(1, Ordering::Relaxed);
             self.inner.get(path)
         }
 
         fn put_batch(&self, entries: Vec<(BitPath, Vec<u8>)>) -> Result<(), BinaryTrieError> {
+            self.counts
+                .writes
+                .fetch_add(entries.len(), Ordering::Relaxed);
             self.inner.put_batch(entries)
         }
     }
@@ -493,28 +648,24 @@ mod tests {
     #[test]
     fn opened_trie_computes_its_root_without_reading() {
         let (map, root) = commit_entries(&sample_entries());
-        let (db, reads) = CountingDB::over(map);
+        let (db, counts) = CountingDB::over(map);
 
         let trie = BinaryTrie::open(Box::new(db), root);
         assert_eq!(trie.root(), root);
-        assert_eq!(
-            reads.load(Ordering::Relaxed),
-            0,
-            "a stored reference already is its hash"
-        );
+        assert_eq!(counts.reads(), 0, "a stored reference already is its hash");
     }
 
     #[test]
     fn loads_lazily_on_descent() {
         let entries = wide_entries();
         let (map, root) = commit_entries(&entries);
-        let (db, reads) = CountingDB::over(map);
+        let (db, counts) = CountingDB::over(map);
 
         let mut trie = BinaryTrie::open(Box::new(db), root);
         let (key, value) = &entries[9];
         assert_eq!(trie.get(key).unwrap(), Some(*value));
 
-        let loaded = reads.load(Ordering::Relaxed);
+        let loaded = counts.reads();
         assert!(
             loaded <= 5,
             "descent should read the path (<= 5 nodes), read {loaded}"
@@ -576,6 +727,158 @@ mod tests {
             from_scratch.insert(key.clone(), *value).unwrap();
         }
         assert_eq!(new_root, from_scratch.root());
+    }
+
+    /// Root of a from-scratch trie over `entries` — the canonical
+    /// answer any incrementally-updated trie must agree with.
+    fn root_from_scratch(entries: &[(Vec<u8>, [u8; 32])]) -> H256 {
+        let mut trie = BinaryTrie::new_temp();
+        for (key, value) in entries {
+            trie.insert(key.clone(), *value).unwrap();
+        }
+        trie.root()
+    }
+
+    /// A key that shares all eight leading bits with `wide_entries`'
+    /// fifth key and diverges only in the second byte, so inserting it
+    /// splits the leaf at the bottom of a five-node path rather than
+    /// anything near the root.
+    fn deep_split_key() -> Vec<u8> {
+        let mut key = vec![0x00; 34];
+        key[0] = 0x05;
+        key[1] = 0x01;
+        key
+    }
+
+    /// Longest root-to-leaf path in the `wide_entries` tree: a
+    /// four-branch spine (splitting bits 4, 5, 6 and 7) plus the leaf.
+    const WIDE_PATH_NODES: usize = 5;
+
+    #[test]
+    fn reopened_trie_commits_nothing_when_unchanged() {
+        let entries = wide_entries();
+        let (map, root) = commit_entries(&entries);
+        let (db, counts) = CountingDB::over(map);
+
+        let mut trie = BinaryTrie::open(Box::new(db), root);
+        for (key, value) in entries.iter().take(4) {
+            assert_eq!(trie.get(key).unwrap(), Some(*value));
+        }
+        assert!(counts.reads() > 0, "the reads should have loaded nodes");
+
+        assert_eq!(trie.commit().unwrap(), root);
+        assert_eq!(
+            counts.writes(),
+            0,
+            "reading loads nodes but changes none of them, so there is \
+             nothing the database does not already hold"
+        );
+    }
+
+    #[test]
+    fn resolved_nodes_are_clean() {
+        let entries = wide_entries();
+        let (map, root) = commit_entries(&entries);
+        let (db, counts) = CountingDB::over(map);
+
+        let mut trie = BinaryTrie::open(Box::new(db), root);
+        let (key, value) = &entries[9];
+        assert_eq!(trie.get(key).unwrap(), Some(*value));
+
+        assert_eq!(
+            trie.commit().unwrap(),
+            root,
+            "reading must not move the root"
+        );
+        assert_eq!(
+            counts.writes(),
+            0,
+            "a node resolved from the database matches the database"
+        );
+    }
+
+    #[test]
+    fn insert_writes_only_the_touched_path() {
+        let entries = wide_entries();
+        let (map, root) = commit_entries(&entries);
+        let (db, counts) = CountingDB::over(map);
+
+        let newcomer = deep_split_key();
+        let mut trie = BinaryTrie::open(Box::new(db), root);
+        trie.insert(newcomer.clone(), [0xcd; 32]).unwrap();
+        let new_root = trie.commit().unwrap();
+
+        let mut expected = entries;
+        expected.push((newcomer, [0xcd; 32]));
+        assert_eq!(
+            new_root,
+            root_from_scratch(&expected),
+            "the incremental root must be the canonical one"
+        );
+
+        // The split replaces the leaf it lands on with a branch and two
+        // leaves — one node more than the path held — and rewrites the
+        // ancestors above it because their child hashes moved.
+        let bound = WIDE_PATH_NODES + 2;
+        let written = counts.writes();
+        assert!(
+            written <= bound,
+            "an insert should write the root-to-leaf path ({WIDE_PATH_NODES}) plus \
+             the split's new branch and second leaf (+2) = {bound} nodes, wrote {written}"
+        );
+        let node_count = 2 * expected.len() - 1;
+        assert!(
+            written < node_count,
+            "wrote {written} of the tree's {node_count} nodes"
+        );
+    }
+
+    #[test]
+    fn root_is_stable_across_calls_and_matches_a_fresh_trie() {
+        let entries = wide_entries();
+        let mut trie = BinaryTrie::new_temp();
+        for (key, value) in &entries {
+            trie.insert(key.clone(), *value).unwrap();
+        }
+
+        let first = trie.root();
+        assert_eq!(first, trie.root(), "root() must not depend on call count");
+        assert_eq!(first, root_from_scratch(&entries));
+
+        // And again after a further insert, so a cache filled by the
+        // first call cannot survive into the second answer.
+        trie.insert(deep_split_key(), [0xcd; 32]).unwrap();
+        let second = trie.root();
+        assert_eq!(second, trie.root());
+        let mut expected = entries;
+        expected.push((deep_split_key(), [0xcd; 32]));
+        assert_eq!(second, root_from_scratch(&expected));
+    }
+
+    #[test]
+    fn mutation_invalidates_ancestor_hashes() {
+        let entries = wide_entries();
+        let mut trie = BinaryTrie::new_temp();
+        for (key, value) in &entries {
+            trie.insert(key.clone(), *value).unwrap();
+        }
+        // Fills every cached hash in the tree, root included.
+        let before = trie.root();
+
+        // Splits a leaf four branches down: every node between it and
+        // the root now commits to something that changed.
+        let newcomer = deep_split_key();
+        trie.insert(newcomer.clone(), [0xcd; 32]).unwrap();
+        let after = trie.root();
+
+        assert_ne!(after, before, "a new key must move the root");
+        let mut expected = entries;
+        expected.push((newcomer, [0xcd; 32]));
+        assert_eq!(
+            after,
+            root_from_scratch(&expected),
+            "a stale ancestor hash is a wrong root"
+        );
     }
 
     #[test]

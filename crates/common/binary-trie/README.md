@@ -38,7 +38,13 @@ the RocksDB one belongs to `crates/storage`. A child is either loaded
 or the hash of a subtree still in the database, so `open` costs
 nothing, `root()` reads nothing (a stored reference already is its
 hash), and reads and inserts load only the nodes on their path.
-`commit()` writes the loaded nodes back and returns the root.
+
+A loaded node also caches its own hash and tracks whether the
+database's copy of it is stale. `root()` therefore hashes each node at
+most once, and `commit()` writes only the nodes that changed —
+committing an unchanged trie writes nothing at all. Insertion clears
+both, on every node from the root down to what it changed, so neither
+cache can outlive the subtree it describes.
 
 ### Test vectors
 
@@ -53,9 +59,8 @@ documentation:
 
 ### Non-goals (today)
 
-No hash caching and no dirty tracking (`commit` rewrites every loaded
-node), no deletion, no proofs, no fork wiring. These are deferred to
-the state-commitment integration work.
+No deletion, no proofs, no fork wiring. These are deferred to the
+state-commitment integration work.
 
 ### Spec discrepancy
 
