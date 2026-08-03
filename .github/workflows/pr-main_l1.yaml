@@ -117,9 +117,13 @@ jobs:
       - name: Setup Rust Environment
         uses: ./.github/actions/setup-rust
 
+      # `rocksdb` gates the test files that need the RocksDB backend's commit
+      # cadence. It has to be `ethrex-test`'s own feature: another crate turning
+      # on `ethrex-storage/rocksdb` does not satisfy that cfg, so without it here
+      # those files compile to nothing.
       - name: Run unit tests
         run: |
-          cargo test --workspace --exclude 'ethrex-l2*' --exclude ethrex-prover --exclude ethrex-guest-program
+          cargo test --workspace --features rocksdb --exclude 'ethrex-l2*' --exclude ethrex-prover --exclude ethrex-guest-program
 
       - name: Run Blockchain EF tests
         if: ${{ github.event_name != 'merge_group' }}
@@ -438,7 +442,7 @@ jobs:
       - name: Check if any job failed
         run: |
           if [ "${{ needs.test.result }}" != "success" ]; then
-            echo "Job Assertoor Tx Check failed"
+            echo "Job Test failed"
             exit 1
           fi
 
