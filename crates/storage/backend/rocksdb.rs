@@ -1,6 +1,6 @@
 use crate::api::tables::{
-    ACCOUNT_CODES, ACCOUNT_FLATKEYVALUE, ACCOUNT_TRIE_NODES, BLOCK_NUMBERS, BODIES,
-    CANONICAL_BLOCK_HASHES, FULLSYNC_HEADERS, HEADERS, RECEIPTS_V2, STORAGE_FLATKEYVALUE,
+    ACCOUNT_CODE_METADATA, ACCOUNT_CODES, ACCOUNT_FLATKEYVALUE, ACCOUNT_TRIE_NODES, BLOCK_NUMBERS,
+    BODIES, CANONICAL_BLOCK_HASHES, FULLSYNC_HEADERS, HEADERS, RECEIPTS_V2, STORAGE_FLATKEYVALUE,
     STORAGE_TRIE_NODES, TRANSACTION_LOCATIONS,
 };
 use crate::api::{
@@ -208,18 +208,28 @@ impl RocksDBBackend {
                     configure_block_cache(&mut block_opts);
                     cf_opts.set_block_based_table_factory(&block_opts);
                 }
-                ACCOUNT_CODES => {
+                ACCOUNT_CODES | ACCOUNT_CODE_METADATA => {
                     cf_opts.set_write_buffer_size(128 * 1024 * 1024); // 128MB
                     cf_opts.set_max_write_buffer_number(3);
                     cf_opts.set_target_file_size_base(256 * 1024 * 1024); // 256MB
 
-                    cf_opts.set_enable_blob_files(true);
-                    // Small bytecodes should go inline (mainly for delegation indicators)
-                    cf_opts.set_min_blob_size(32);
-                    cf_opts.set_blob_compression_type(rocksdb::DBCompressionType::Lz4);
+                    if cf_name == ACCOUNT_CODES {
+                        cf_opts.set_enable_blob_files(true);
+                        // Small bytecodes should go inline (mainly for delegation indicators)
+                        cf_opts.set_min_blob_size(32);
+                        cf_opts.set_blob_compression_type(rocksdb::DBCompressionType::Lz4);
+                    }
 
                     let mut block_opts = BlockBasedOptions::default();
-                    block_opts.set_block_size(32 * 1024); // 32KB
+                    // Exact-key point lookups on the execution read path, same shape as the
+                    // trie-node and flat-KV CFs above: EXT*/CALL* resolve a code hash to its
+                    // bytecode or length. A 4KB (page-sized) block keeps per-get read
+                    // amplification down — with blob files the SST value is just a blob
+                    // reference, so a large block buys nothing — and the filter prunes the
+                    // levels that cannot hold the hash instead of reading a data block per
+                    // level to find out.
+                    block_opts.set_block_size(4 * 1024); // 4KB
+                    block_opts.set_bloom_filter(10.0, false); // 10 bits per key
                     configure_block_cache(&mut block_opts);
                     cf_opts.set_block_based_table_factory(&block_opts);
                 }
