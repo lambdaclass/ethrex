@@ -36,7 +36,7 @@ use ethrex_common::{
 };
 use ethrex_crypto::{NativeCrypto, keccak::keccak_hash};
 use ethrex_rlp::{
-    decode::{RLPDecode, decode_bytes},
+    decode::{RLPDecode, decode_bytes, decode_rlp_item},
     encode::RLPEncode,
 };
 use ethrex_trie::{EMPTY_TRIE_HASH, Nibbles, Trie, TrieLogger, TrieNode, TrieWitness};
@@ -120,8 +120,15 @@ enum FKVGeneratorControlMessage {
     Continue,
 }
 
-// 64mb
-const CODE_CACHE_MAX_SIZE: u64 = 64 * 1024 * 1024;
+/// Byte budget for the in-memory bytecode cache.
+///
+/// Bytecode is a small fraction of the working set next to trie nodes and flat
+/// key-values (which the RocksDB block cache serves), but a cold code read costs a
+/// blob-file fetch, so caching contracts pays for itself: 256 MiB holds ~10k max-size
+/// (24 KiB) contracts, or ~100k of typical size. Before [`Code::size`] counted the
+/// bytecode, this budget bounded only the jump-destination tables, and the cache could
+/// hold multiple GiB of code without evicting.
+const CODE_CACHE_MAX_SIZE: u64 = 256 * 1024 * 1024;
 
 /// Key used to persist the `flushed_upto` block number in `MISC_VALUES`.
 const FLUSHED_UPTO_KEY: &[u8] = b"bodies_flushed_upto";
@@ -136,6 +143,7 @@ const MAX_BAD_BLOCKS: usize = 16;
 struct CodeCache {
     inner_cache: LruCache<H256, Code, FxBuildHasher>,
     cache_size: u64,
+    max_size: u64,
 }
 
 impl Default for CodeCache {
@@ -143,6 +151,7 @@ impl Default for CodeCache {
         Self {
             inner_cache: LruCache::unbounded_with_hasher(FxBuildHasher),
             cache_size: 0,
+            max_size: CODE_CACHE_MAX_SIZE,
         }
     }
 }
@@ -153,15 +162,17 @@ impl CodeCache {
     }
 
     fn insert(&mut self, code: &Code) -> Result<(), StoreError> {
-        let code_size = code.size();
-        let cache_len = self.inner_cache.len() + 1;
-        self.cache_size += code_size as u64;
-        let current_size = self.cache_size;
-        debug!(
-            "[ACCOUNT CODE CACHE] cache elements (): {cache_len}, total size: {current_size} bytes"
-        );
+        // A hash already cached must not be added to `cache_size` again, or the counter
+        // drifts up permanently and evicts entries that fit. `get` also refreshes
+        // recency, which is what a repeated read should do.
+        if self.inner_cache.get(&code.hash).is_some() {
+            return Ok(());
+        }
 
-        while self.cache_size > CODE_CACHE_MAX_SIZE {
+        self.cache_size += code.size() as u64;
+        self.inner_cache.put(code.hash, code.clone());
+
+        while self.cache_size > self.max_size {
             if let Some((_, code)) = self.inner_cache.pop_lru() {
                 self.cache_size -= code.size() as u64;
             } else {
@@ -169,7 +180,11 @@ impl CodeCache {
             }
         }
 
-        self.inner_cache.get_or_insert(code.hash, || code.clone());
+        let cache_len = self.inner_cache.len();
+        let current_size = self.cache_size;
+        debug!(
+            "[ACCOUNT CODE CACHE] cache elements (): {cache_len}, total size: {current_size} bytes"
+        );
         Ok(())
     }
 }
@@ -912,11 +927,11 @@ impl Store {
         else {
             return Ok(None);
         };
-        let (bytecode_slice, targets) = decode_bytes(&bytes)?;
+        let (bytecode_slice, jumpdests) = decode_bytes(&bytes)?;
         let code = Code::from_parts_unchecked(
             code_hash,
             bytecode_slice,
-            <Vec<u32>>::decode(targets)?.into(),
+            decode_jumpdests(bytecode_slice, jumpdests)?,
         );
 
         // insert into cache and evict if needed
@@ -4887,13 +4902,25 @@ pub fn receipt_key(block_hash: &BlockHash, index: u64) -> Vec<u8> {
 }
 
 fn encode_code(code: &Code) -> Vec<u8> {
-    let mut buf =
-        Vec::with_capacity(6 + code.len() + std::mem::size_of_val::<[u32]>(&code.jump_targets));
+    let jumpdests = code.jumpdests();
+    let mut buf = Vec::with_capacity(6 + code.len() + jumpdests.len());
     code.code().encode(&mut buf);
-    // `Arc<[u32]>` (the in-memory share) has no `RLPEncode` impl; encode through an
-    // owned `Vec` on this cold DB-write path (code is persisted once per hash).
-    code.jump_targets.to_vec().encode(&mut buf);
+    jumpdests.encode(&mut buf);
     buf
+}
+
+/// Decodes the JUMPDEST bitmap stored after the bytecode in an [`ACCOUNT_CODES`] value.
+///
+/// Values written before the bitmap representation hold an RLP *list* of `u32` offsets
+/// there instead. The RLP item header distinguishes a list from a byte string, so both
+/// forms are readable: for the older one the bitmap is rebuilt from the bytecode, which
+/// is cheaper than decoding the list.
+fn decode_jumpdests(code: &[u8], encoded: &[u8]) -> Result<Arc<[u8]>, StoreError> {
+    let (is_list, payload, _) = decode_rlp_item(encoded)?;
+    if is_list {
+        return Ok(Code::compute_jumpdests(code));
+    }
+    Ok(Arc::from(payload))
 }
 
 #[derive(Debug, Default, Clone)]
@@ -5066,6 +5093,137 @@ pub fn read_chain_id_from_db(path: &Path) -> Option<u64> {
     {
         let _ = path;
         None
+    }
+}
+
+#[cfg(test)]
+mod account_code_tests {
+    use super::*;
+
+    const JUMPDEST: u8 = 0x5b;
+    const PUSH1: u8 = 0x60;
+
+    /// A max-size contract that is almost entirely JUMPDESTs, the shape that makes the
+    /// jump-destination representation matter: as a list of offsets it is ~4x the size
+    /// of the bytecode it describes.
+    fn jumpdest_dense_code() -> Code {
+        let mut bytecode = vec![JUMPDEST; 24576];
+        bytecode[0] = 0x00;
+        Code::from_bytecode_unchecked(bytecode.into(), H256::zero())
+    }
+
+    /// Encodes an `ACCOUNT_CODES` value the way it was written before the bitmap: the
+    /// bytecode followed by an RLP list of `u32` JUMPDEST offsets.
+    fn encode_code_legacy(code: &Code) -> Vec<u8> {
+        let offsets: Vec<u32> = (0..code.len())
+            .filter(|offset| code.is_valid_jumpdest(*offset))
+            .map(|offset| offset as u32)
+            .collect();
+        let mut buf = Vec::new();
+        code.code().encode(&mut buf);
+        offsets.encode(&mut buf);
+        buf
+    }
+
+    #[test]
+    fn encoded_value_carries_one_bitmap_bit_per_code_byte() {
+        let code = jumpdest_dense_code();
+        let encoded = encode_code(&code);
+
+        assert_eq!(encoded.len(), 6 + code.len() + code.len().div_ceil(8));
+    }
+
+    #[test]
+    fn round_trip_preserves_the_bitmap() {
+        let code = jumpdest_dense_code();
+        let encoded = encode_code(&code);
+
+        let (bytecode, jumpdests) = decode_bytes(&encoded).unwrap();
+        assert_eq!(bytecode, code.code());
+        assert_eq!(
+            decode_jumpdests(bytecode, jumpdests).unwrap().as_ref(),
+            code.jumpdests()
+        );
+    }
+
+    /// Values written before the bitmap SHALL still decode, with the bitmap rebuilt from
+    /// the bytecode, so an existing database needs no migration.
+    #[test]
+    fn legacy_offset_list_values_decode_to_the_same_bitmap() {
+        for bytecode in [
+            vec![0x00, JUMPDEST, 0x00, JUMPDEST],
+            vec![PUSH1, JUMPDEST, JUMPDEST],
+            vec![0x00; 32],
+        ] {
+            let code = Code::from_bytecode_unchecked(bytecode.into(), H256::zero());
+            let legacy = encode_code_legacy(&code);
+
+            let (decoded_bytecode, jumpdests) = decode_bytes(&legacy).unwrap();
+            assert_eq!(decoded_bytecode, code.code());
+            assert_eq!(
+                decode_jumpdests(decoded_bytecode, jumpdests)
+                    .unwrap()
+                    .as_ref(),
+                code.jumpdests()
+            );
+        }
+    }
+
+    /// Re-inserting a cached hash SHALL NOT grow the accounted size, or the counter
+    /// drifts up until the cache evicts entries that fit.
+    #[test]
+    fn repeated_inserts_do_not_inflate_the_accounted_size() {
+        let code = jumpdest_dense_code();
+        let mut cache = CodeCache::default();
+
+        cache.insert(&code).unwrap();
+        let after_first = cache.cache_size;
+        for _ in 0..8 {
+            cache.insert(&code).unwrap();
+        }
+
+        assert_eq!(cache.cache_size, after_first);
+        assert_eq!(cache.inner_cache.len(), 1);
+    }
+
+    /// The accounted size SHALL include the bytecode itself, so the cache honors its
+    /// memory budget instead of holding orders of magnitude more than it accounts for.
+    #[test]
+    fn accounted_size_covers_the_bytecode_and_bitmap() {
+        let code = jumpdest_dense_code();
+        let mut cache = CodeCache::default();
+        cache.insert(&code).unwrap();
+
+        assert!(cache.cache_size >= (code.len() + code.jumpdests().len()) as u64);
+    }
+
+    #[test]
+    fn cache_evicts_down_to_its_budget() {
+        let mut cache = CodeCache {
+            max_size: 128 * 1024,
+            ..Default::default()
+        };
+
+        for i in 0..16u8 {
+            let mut bytecode = vec![JUMPDEST; 24576];
+            bytecode[0] = i;
+            cache
+                .insert(&Code::from_bytecode_unchecked(
+                    bytecode.into(),
+                    H256::from_low_u64_be(i.into()),
+                ))
+                .unwrap();
+        }
+
+        assert!(cache.cache_size <= cache.max_size);
+        assert!(cache.inner_cache.len() < 16);
+    }
+
+    /// The default budget SHALL be the one the cache actually enforces, so a change to
+    /// the constant cannot silently leave the cache unbounded.
+    #[test]
+    fn default_cache_uses_the_configured_budget() {
+        assert_eq!(CodeCache::default().max_size, CODE_CACHE_MAX_SIZE);
     }
 }
 
