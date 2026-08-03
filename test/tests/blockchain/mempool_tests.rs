@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 use std::{fs::File, io::BufReader, path::PathBuf};
 
-use ethrex_blockchain::constants::MAX_INITCODE_SIZE;
+use ethrex_blockchain::constants::{AMSTERDAM_MAX_INITCODE_SIZE, MAX_INITCODE_SIZE};
 use ethrex_blockchain::constants::{
     TX_ACCESS_LIST_ADDRESS_GAS, TX_ACCESS_LIST_STORAGE_KEY_GAS, TX_CREATE_GAS_COST,
     TX_DATA_NON_ZERO_GAS_EIP2028, TX_DATA_ZERO_GAS_COST, TX_GAS_COST, TX_INIT_CODE_WORD_GAS_COST,
@@ -12,6 +12,7 @@ use ethrex_blockchain::mempool::{
     keyed_concurrency_verdict, transaction_intrinsic_gas,
 };
 use ethrex_blockchain::{Blockchain, BlockchainOptions};
+use ethrex_common::constants::POST_OSAKA_GAS_LIMIT_CAP;
 use ethrex_crypto::NativeCrypto;
 use rustc_hash::FxHashMap;
 
@@ -298,6 +299,129 @@ async fn transaction_with_big_init_code_in_shanghai_fails() {
         validation.await,
         Err(MempoolError::TxMaxInitCodeSizeError)
     ));
+}
+
+/// Genesis that schedules Hegota with no explicit `amsterdamTime`, the shape both
+/// live Hegota devnets use. `config.fork()` resolves to `Fork::Hegota`, which is
+/// past `Fork::Amsterdam`, while `amsterdam_time` stays `None`. `sender` is a
+/// funded, codeless EOA so a contract creation from it clears the balance and
+/// EIP-3607 checks.
+async fn setup_hegota_store_without_amsterdam_time(sender: Address) -> Store {
+    hegota_store_without_amsterdam_time("hegota-no-amsterdam-time", sender, None).await
+}
+
+/// The same shape with Osaka scheduled explicitly, so `is_osaka_activated` is true
+/// while `amsterdam_time` stays `None`: the config where the EIP-7825 flat gas cap
+/// and the fork ordinal disagree.
+async fn setup_osaka_hegota_store_without_amsterdam_time(sender: Address) -> Store {
+    hegota_store_without_amsterdam_time("osaka-hegota-no-amsterdam-time", sender, Some(0)).await
+}
+
+async fn hegota_store_without_amsterdam_time(
+    name: &str,
+    sender: Address,
+    osaka_time: Option<u64>,
+) -> Store {
+    let genesis = Genesis {
+        config: ChainConfig {
+            chain_id: 0,
+            shanghai_time: Some(0),
+            osaka_time,
+            hegota_time: Some(0),
+            ..Default::default()
+        },
+        gas_limit: 100_000_000,
+        alloc: [(
+            sender,
+            GenesisAccount {
+                code: Bytes::new(),
+                storage: BTreeMap::new(),
+                balance: U256::from(10u64).pow(U256::from(20u64)),
+                nonce: 0,
+            },
+        )]
+        .into_iter()
+        .collect(),
+        ..Default::default()
+    };
+    let mut store = Store::new(name, EngineType::InMemory).expect("Storage setup");
+    store
+        .add_initial_state(genesis)
+        .await
+        .expect("add genesis state");
+    store
+}
+
+/// [EIP-7954]: admission must apply the Amsterdam initcode cap whenever the
+/// resolved fork is at or past Amsterdam, matching levm's
+/// `validate_init_code_size`. A chain running a post-Amsterdam fork without an
+/// explicit `amsterdamTime` still executes under the larger cap, so admission
+/// must not reject a creation block execution would accept.
+#[tokio::test]
+async fn transaction_with_amsterdam_init_code_is_admitted_without_amsterdam_time() {
+    let sender = Address::from_low_u64_be(0xF00D);
+    let store = setup_hegota_store_without_amsterdam_time(sender).await;
+    let blockchain = Blockchain::default_with_store(store);
+
+    // Past the legacy EIP-3860 cap, within the Amsterdam one. Kept well below
+    // MAX_TX_SIZE, the wire cap checked before the initcode cap.
+    let init_code_len = MAX_INITCODE_SIZE as usize + 1;
+    assert!(init_code_len <= AMSTERDAM_MAX_INITCODE_SIZE as usize);
+
+    let tx = Transaction::EIP1559Transaction(EIP1559Transaction {
+        chain_id: 0,
+        nonce: 0,
+        max_priority_fee_per_gas: 1,
+        max_fee_per_gas: 1_000_000_000,
+        gas_limit: 99_000_000,
+        to: TxKind::Create,
+        value: U256::zero(),
+        data: Bytes::from(vec![0x1; init_code_len]),
+        access_list: Default::default(),
+        ..Default::default()
+    });
+
+    let validation = blockchain.validate_transaction(&tx, sender).await;
+    assert!(
+        validation.is_ok(),
+        "creation with {init_code_len}-byte initcode must be admitted on a \
+         post-Amsterdam fork without amsterdamTime; got {validation:?}"
+    );
+}
+
+/// [EIP-7825]: the flat per-tx gas cap applies from Osaka until Amsterdam, which
+/// supersedes it with the EIP-8037 gas model. Admission must decide that by fork
+/// ordinal, like levm's `default_hook`. On a chain scheduling Osaka and a
+/// post-Amsterdam fork but no explicit `amsterdamTime`, `is_osaka_activated` is
+/// true and `is_amsterdam_activated` false, so a field-based gate applies the cap
+/// while execution does not.
+#[tokio::test]
+async fn transaction_above_the_osaka_gas_cap_is_admitted_without_amsterdam_time() {
+    let sender = Address::from_low_u64_be(0xF00E);
+    let store = setup_osaka_hegota_store_without_amsterdam_time(sender).await;
+    let blockchain = Blockchain::default_with_store(store);
+
+    // Past the EIP-7825 cap, within the genesis block gas limit (checked after it).
+    let gas_limit = POST_OSAKA_GAS_LIMIT_CAP + 1;
+    let tx = Transaction::EIP1559Transaction(EIP1559Transaction {
+        chain_id: 0,
+        nonce: 0,
+        max_priority_fee_per_gas: 1,
+        max_fee_per_gas: 1_000_000_000,
+        gas_limit,
+        to: TxKind::Call(Address::from_low_u64_be(0xBEEF)),
+        value: U256::zero(),
+        data: Bytes::new(),
+        access_list: Default::default(),
+        ..Default::default()
+    });
+
+    let validation = blockchain.validate_transaction(&tx, sender).await;
+    assert!(
+        validation.is_ok(),
+        "a {gas_limit}-gas tx must be admitted on a post-Amsterdam fork without \
+         amsterdamTime, where EIP-7825's cap no longer applies; got {validation:?}"
+    );
 }
 
 #[tokio::test]
@@ -2895,6 +3019,100 @@ async fn validate_transaction_rejects_pre_prague_eip7702() {
     assert!(
         matches!(res, Err(MempoolError::Eip7702TxPreFork)),
         "pre-Prague type-4 tx must be rejected with Eip7702TxPreFork (got {res:?})"
+    );
+}
+
+/// The type-4 gate must resolve Prague by fork ordinal, like levm's
+/// `validate_type_4_tx`. Both live Hegota devnet genesis files set `shanghaiTime`
+/// and `hegotaTime` only, leaving `prague_time` `None` while `config.fork()`
+/// returns `Fork::Hegota`, which is past Prague. A field-based gate rejects a
+/// type-4 tx that execution accepts.
+#[tokio::test]
+async fn validate_transaction_admits_eip7702_without_prague_time() {
+    let sender = Address::from_low_u64_be(0xF00F);
+    let store = setup_hegota_store_without_amsterdam_time(sender).await;
+    let blockchain = Blockchain::default_with_store(store);
+
+    let tx = Transaction::EIP7702Transaction(EIP7702Transaction {
+        chain_id: 0,
+        nonce: 0,
+        max_priority_fee_per_gas: 1,
+        max_fee_per_gas: 1_000_000_000,
+        gas_limit: 100_000,
+        to: Address::from_low_u64_be(0xBEEF),
+        value: U256::zero(),
+        data: Bytes::new(),
+        access_list: Default::default(),
+        authorization_list: vec![AuthorizationTuple::default()],
+        ..Default::default()
+    });
+
+    let res = blockchain.validate_transaction(&tx, sender).await;
+    assert!(
+        res.is_ok(),
+        "a type-4 tx must be admitted on a post-Prague fork without pragueTime; got {res:?}"
+    );
+}
+
+/// The initcode cap's activation test must resolve Shanghai by fork ordinal too.
+/// levm gates `validate_init_code_size` on `fork >= Fork::Shanghai`, so on a chain
+/// scheduling a post-Shanghai fork without `shanghaiTime` a field-based gate skips
+/// the cap at admission while execution enforces it: the tx enters the pool, gets
+/// built into a payload, and fails during execution. Cancun is the fork used here
+/// because its cap, `MAX_INITCODE_SIZE`, is the only one an admissible transaction
+/// can exceed: `AMSTERDAM_MAX_INITCODE_SIZE` equals `MAX_TX_SIZE`, the wire cap
+/// checked first.
+#[tokio::test]
+async fn transaction_over_the_initcode_cap_is_rejected_without_shanghai_time() {
+    let sender = Address::from_low_u64_be(0xF010);
+    let genesis = Genesis {
+        config: ChainConfig {
+            chain_id: 0,
+            cancun_time: Some(0),
+            ..Default::default()
+        },
+        gas_limit: 100_000_000,
+        alloc: [(
+            sender,
+            GenesisAccount {
+                code: Bytes::new(),
+                storage: BTreeMap::new(),
+                balance: U256::from(10u64).pow(U256::from(20u64)),
+                nonce: 0,
+            },
+        )]
+        .into_iter()
+        .collect(),
+        ..Default::default()
+    };
+    let mut store =
+        Store::new("cancun-no-shanghai-time", EngineType::InMemory).expect("Storage setup");
+    store
+        .add_initial_state(genesis)
+        .await
+        .expect("add genesis state");
+    let blockchain = Blockchain::default_with_store(store);
+
+    // Past the cap that applies at Cancun, and within the wire size limit.
+    let init_code_len = MAX_INITCODE_SIZE as usize + 1;
+    let tx = Transaction::EIP1559Transaction(EIP1559Transaction {
+        chain_id: 0,
+        nonce: 0,
+        max_priority_fee_per_gas: 1,
+        max_fee_per_gas: 1_000_000_000,
+        gas_limit: 99_000_000,
+        to: TxKind::Create,
+        value: U256::zero(),
+        data: Bytes::from(vec![0x1; init_code_len]),
+        access_list: Default::default(),
+        ..Default::default()
+    });
+
+    let res = blockchain.validate_transaction(&tx, sender).await;
+    assert!(
+        matches!(res, Err(MempoolError::TxMaxInitCodeSizeError)),
+        "a {init_code_len}-byte initcode must be rejected on a post-Shanghai fork \
+         without shanghaiTime, as execution rejects it (got {res:?})"
     );
 }
 
