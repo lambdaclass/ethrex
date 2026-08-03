@@ -180,10 +180,10 @@ pub enum Opcode {
     FRAMEPARAM = 0xB3,
     SIGPARAM = 0xB4,
     // EIP-7906
-    TXTRACE = 0xB5,
-    EVENTDATACOPY = 0xB6,
+    TXTRACE = 0xB6,
+    EVENTDATACOPY = 0xB7,
     // EIP-7906 TXDIFF (spec PR #11830). Keyed state-diff lookup.
-    TXDIFF = 0xB7,
+    TXDIFF = 0xB8,
     // EIP-8024
     DUPN = 0xE6,
     SWAPN = 0xE7,
@@ -345,9 +345,9 @@ impl From<u8> for Opcode {
             table[0xB2] = Opcode::FRAMEDATACOPY;
             table[0xB3] = Opcode::FRAMEPARAM;
             table[0xB4] = Opcode::SIGPARAM;
-            table[0xB5] = Opcode::TXTRACE;
-            table[0xB6] = Opcode::EVENTDATACOPY;
-            table[0xB7] = Opcode::TXDIFF;
+            table[0xB6] = Opcode::TXTRACE;
+            table[0xB7] = Opcode::EVENTDATACOPY;
+            table[0xB8] = Opcode::TXDIFF;
             table[0x51] = Opcode::MLOAD;
             table[0x52] = Opcode::MSTORE;
             table[0x53] = Opcode::MSTORE8;
@@ -700,7 +700,7 @@ mod tests {
         // 0xEF is never assigned in any table -> it holds the invalid handler.
         for fork in [Fork::Osaka, Fork::Amsterdam] {
             let table = VM::build_opcode_table(fork);
-            for byte in [0xAAusize, 0xB0, 0xB1, 0xB2, 0xB3, 0xB4, 0xB5, 0xB6, 0xB7] {
+            for byte in [0xAAusize, 0xB0, 0xB1, 0xB2, 0xB3, 0xB4, 0xB6, 0xB7, 0xB8] {
                 assert!(
                     same_handler(table[byte], table[0xEF]),
                     "frame opcode {byte:#x} must be invalid at {fork:?}"

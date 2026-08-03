@@ -1,4 +1,4 @@
-//! EIP-7906: TXTRACE (0xB5), EVENTDATACOPY (0xB6), and TXDIFF (0xB7)
+//! EIP-7906: TXTRACE (0xB6), EVENTDATACOPY (0xB7), and TXDIFF (0xB8)
 //! data-extraction opcodes. All three are valid only inside a POST_TX frame.
 //!
 //! Pure functions that derive the transaction-scoped trace views (balance
@@ -246,7 +246,7 @@ fn ordered_tx_logs(vm: &VM<'_>) -> Vec<Log> {
     vm.substate.extract_logs()
 }
 
-/// TXTRACE (0xB5) -- EIP-7906 transaction-scoped state/event introspection.
+/// TXTRACE (0xB6) -- EIP-7906 transaction-scoped state/event introspection.
 ///
 /// Stack: `[in2, param]` with `in2` on top (popped first) and `param` the
 /// deeper operand, matching FRAMEPARAM. `param` selects the field; `in2` is
@@ -432,7 +432,7 @@ fn require_zero(in2: u64) -> Result<(), VMError> {
     Ok(())
 }
 
-/// EVENTDATACOPY (0xB6) -- EIP-7906 copy of an emitted event's data into memory.
+/// EVENTDATACOPY (0xB7) -- EIP-7906 copy of an emitted event's data into memory.
 ///
 /// Mirrors CALLDATACOPY's gas accounting, but past-the-end reads halt (the data
 /// region is exactly `data[data_offset..data_offset+length]`; no zero-fill).
@@ -491,7 +491,7 @@ impl OpcodeHandler for OpEventDataCopyHandler {
     }
 }
 
-/// TXDIFF (0xB7) -- EIP-7906 keyed state-diff lookup (spec PR #11830).
+/// TXDIFF (0xB8) -- EIP-7906 keyed state-diff lookup (spec PR #11830).
 ///
 /// Stack: `[param, address, in3]` with `param` on top (popped first), then
 /// `address`, then `in3` (deepest). `param` selects the field; `address` is the

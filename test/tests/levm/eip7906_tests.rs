@@ -1,4 +1,4 @@
-//! EIP-7906: TXTRACE (0xB5), EVENTDATACOPY (0xB6), and TXDIFF (0xB7)
+//! EIP-7906: TXTRACE (0xB6), EVENTDATACOPY (0xB7), and TXDIFF (0xB8)
 //! introspection opcodes (spec bytes).
 //!
 //! Per EIP-7906 spec PR #11829, these three introspection opcodes execute ONLY
@@ -45,9 +45,9 @@ use std::sync::Arc;
 
 // ==================== Opcode bytes ====================
 
-const TXTRACE: u8 = 0xB5;
-const EVENTDATACOPY: u8 = 0xB6;
-const TXDIFF: u8 = 0xB7;
+const TXTRACE: u8 = 0xB6;
+const EVENTDATACOPY: u8 = 0xB7;
+const TXDIFF: u8 = 0xB8;
 
 // EVM opcodes used by the bytecode builders.
 const PUSH1: u8 = 0x60;
@@ -1327,7 +1327,7 @@ fn run_normal_tx(code: Vec<u8>, fork: Fork) -> bool {
 
 #[test]
 fn txtrace_invalid_before_hegota() {
-    // 0xB5 is not installed before Hegota -> undefined opcode -> halt.
+    // 0xB6 is not installed before Hegota -> undefined opcode -> halt.
     let code = vec![0x60, 0x15, 0x60, 0x00, TXTRACE, STOP];
     assert!(
         !run_normal_tx(code, Fork::Amsterdam),
