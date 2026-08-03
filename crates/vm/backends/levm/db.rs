@@ -80,6 +80,15 @@ impl LevmDatabase for DatabaseLogger {
     }
 
     fn get_code_metadata(&self, code_hash: CoreH256) -> Result<CodeMetadata, DatabaseError> {
+        // A size-only read still observes the bytecode, so the witness must carry it:
+        // EIP-8025 stateless validation recomputes the length from the code itself, and
+        // that is also how `ExecutionWitness::get_code_metadata` answers.
+        if code_hash != *EMPTY_KECCAK_HASH {
+            self.code_accessed
+                .lock()
+                .map_err(|_| DatabaseError::Custom("Could not lock mutex".to_string()))?
+                .push(code_hash);
+        }
         self.store.get_code_metadata(code_hash)
     }
 }
