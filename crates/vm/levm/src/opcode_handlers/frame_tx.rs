@@ -503,10 +503,11 @@ impl OpcodeHandler for OpFrameParamHandler {
 /// SIGPARAM (0xB4) -- signature-scoped metadata and data copy (EIP-8141).
 /// Metadata (params 0x00-0x03): stack `[param, signatureIndex]` with
 /// `signatureIndex` on top; gas 2; returns one word (0x00 effective signer,
-/// 0x01 scheme, 0x02 msg, 0x03 len(signature)). Copy (param 0x04): stack
-/// `[memOffset, dataOffset, length, param, signatureIndex]` with `signatureIndex`
-/// on top; CALLDATACOPY gas; copies an ARBITRARY signature's raw bytes into
-/// memory (zero-filled past the end) and pushes nothing — any other scheme halts.
+/// 0x01 scheme, 0x02 msg, 0x03 len(signature)). Copy (param 0x04): takes
+/// `[signatureIndex, param, memOffset, dataOffset, length]` from the stack,
+/// matching `CALLDATACOPY`'s operand order; CALLDATACOPY gas; copies an ARBITRARY
+/// signature's raw bytes into memory (zero-filled past the end) and pushes
+/// nothing — any other scheme halts.
 pub struct OpSigParamHandler;
 impl OpcodeHandler for OpSigParamHandler {
     #[inline(always)]
@@ -520,7 +521,7 @@ impl OpcodeHandler for OpSigParamHandler {
         // 0x04: copy the referenced ARBITRARY signature's raw bytes into memory,
         // CALLDATACOPY-style (see FRAMEDATACOPY). Pops three more operands.
         if param == 0x04 {
-            let [length, data_offset, mem_offset] = *vm.current_call_frame.stack.pop()?;
+            let [mem_offset, data_offset, length] = *vm.current_call_frame.stack.pop()?;
             let (length, mem_offset) = size_offset_to_usize(length, mem_offset)?;
             let data_offset_opt = u256_to_offset(data_offset);
 
