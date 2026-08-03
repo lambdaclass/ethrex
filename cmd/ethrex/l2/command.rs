@@ -494,6 +494,7 @@ impl Command {
                         latest_hash_on_batch,
                         latest_hash_on_batch,
                         latest_hash_on_batch,
+                        None,
                     )
                     .await?;
 

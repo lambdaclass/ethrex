@@ -9,7 +9,10 @@ path = "src/lib.rs"
 
 [features]
 rocksdb = ["ethrex-storage/rocksdb"]
-l2 = []
+# Matches the feature set the L2 node itself is built with (`-F l2,l2-sql`), so
+# the test binary reuses those artifacts instead of compiling the whole L2 stack
+# a second time in a different configuration.
+l2 = ["ethrex/l2", "ethrex/l2-sql"]
 c-kzg = ["ethrex-common/c-kzg"]
 rayon = ["ethrex-levm/rayon"]
 eip-8025 = ["ethrex-levm/eip-8025"]
@@ -68,6 +71,8 @@ serde.workspace = true
 libssz.workspace = true
 libssz-types.workspace = true
 libssz-derive.workspace = true
+ethrex-metrics = { workspace = true, features = ["metrics"] }
+serial_test = "3"
 
 [[test]]
 name = "ethrex_tests"
