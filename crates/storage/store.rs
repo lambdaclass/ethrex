@@ -89,7 +89,10 @@ pub const MAX_ROCKSDB_BLOCK_CACHE_SIZE_BYTES: usize = 12 * 1024 * 1024 * 1024;
 /// Floor on the RocksDB shared block cache: 512 MiB. Below this the per-SST
 /// index and filter blocks no longer stay resident and every trie read pays an
 /// extra disk seek, which is worse than the memory it saves. Applied even when
-/// it exceeds [`ROCKSDB_BLOCK_CACHE_MEMORY_PERCENT`] of a very small host.
+/// it exceeds [`ROCKSDB_BLOCK_CACHE_MEMORY_PERCENT`] of a very small host, and
+/// even when it exceeds the detected limit outright: a node given less than this
+/// much memory cannot follow the chain anyway, so the floor is the more useful
+/// failure mode than a cache too small to hold the filters.
 pub const MIN_ROCKSDB_BLOCK_CACHE_SIZE_BYTES: usize = 512 * 1024 * 1024;
 
 /// Share of the host's (or cgroup's) memory the block cache may claim by default.
@@ -121,7 +124,7 @@ pub fn rocksdb_block_cache_size_for(memory_limit: Option<usize>) -> usize {
     let Some(limit) = memory_limit else {
         return MAX_ROCKSDB_BLOCK_CACHE_SIZE_BYTES;
     };
-    (limit / 100 * ROCKSDB_BLOCK_CACHE_MEMORY_PERCENT).clamp(
+    (limit.saturating_mul(ROCKSDB_BLOCK_CACHE_MEMORY_PERCENT) / 100).clamp(
         MIN_ROCKSDB_BLOCK_CACHE_SIZE_BYTES,
         MAX_ROCKSDB_BLOCK_CACHE_SIZE_BYTES,
     )
@@ -151,17 +154,60 @@ fn physical_memory_bytes() -> Option<usize> {
     kib.checked_mul(1024)
 }
 
-/// The cgroup memory limit, in bytes: `memory.max` under cgroup v2, falling back to
-/// `memory.limit_in_bytes` under v1. Both report "no limit" out of band — v2 with the
-/// literal `max`, v1 with a sentinel near `u64::MAX` — which yields `None` here (v1's
-/// sentinel simply exceeds any real `MemTotal`, so the `min` above discards it).
+/// The cgroup memory limit that applies to this process, in bytes: `memory.max`
+/// under cgroup v2, falling back to `memory.limit_in_bytes` under v1. Both report
+/// "no limit" out of band — v2 with the literal `max`, v1 with a sentinel near
+/// `u64::MAX` — which yields `None` here (v1's sentinel simply exceeds any real
+/// `MemTotal`, so the `min` above discards it).
+///
+/// The limit may sit on any cgroup between the one the process belongs to and the
+/// mount root — a systemd slice, a Kubernetes pod's parent, an outer container — and
+/// the mount root itself is usually unlimited, so reading the root alone would miss
+/// it. The process's own cgroup comes from `/proc/self/cgroup` and every level up to
+/// the root is read, with the smallest limit winning.
 fn cgroup_memory_limit_bytes() -> Option<usize> {
-    [
-        "/sys/fs/cgroup/memory.max",
-        "/sys/fs/cgroup/memory/memory.limit_in_bytes",
-    ]
-    .into_iter()
-    .find_map(|path| std::fs::read_to_string(path).ok()?.trim().parse().ok())
+    let cgroups = std::fs::read_to_string("/proc/self/cgroup").ok()?;
+    let v2 = cgroups
+        .lines()
+        .find_map(|line| line.strip_prefix("0::"))
+        .and_then(|relative| {
+            cgroup_limit_up_to_root(Path::new("/sys/fs/cgroup"), relative, "memory.max")
+        });
+    v2.or_else(|| {
+        let relative = cgroups.lines().find_map(|line| {
+            // `hierarchy-ID:controller-list:cgroup-path`
+            let mut fields = line.splitn(3, ':');
+            let controllers = fields.nth(1)?;
+            let path = fields.next()?;
+            controllers
+                .split(',')
+                .any(|controller| controller == "memory")
+                .then_some(path)
+        })?;
+        cgroup_limit_up_to_root(
+            Path::new("/sys/fs/cgroup/memory"),
+            relative,
+            "memory.limit_in_bytes",
+        )
+    })
+}
+
+/// Smallest value of `file` across `<mount>/<relative>` and each of its ancestors up
+/// to `mount`, skipping levels whose file is absent or reports no limit.
+fn cgroup_limit_up_to_root(mount: &Path, relative: &str, file: &str) -> Option<usize> {
+    let mut dir = mount.join(relative.trim_start_matches('/'));
+    let mut limit: Option<usize> = None;
+    loop {
+        if let Some(value) = std::fs::read_to_string(dir.join(file))
+            .ok()
+            .and_then(|contents| contents.trim().parse::<usize>().ok())
+        {
+            limit = Some(limit.map_or(value, |current| current.min(value)));
+        }
+        if dir == mount || !dir.pop() {
+            return limit;
+        }
+    }
 }
 
 /// Tunable configuration for [`Store::new_with_config`] and related constructors.
@@ -6390,5 +6436,95 @@ mod flatkeyvalue_completeness_tests {
         assert!(!Store::flatkeyvalue_generation_complete(Some(&[
             0xff, 0xff
         ])));
+    }
+}
+
+#[cfg(test)]
+mod cgroup_memory_limit_tests {
+    use super::*;
+    use std::fs;
+
+    /// Builds `<root>/<relative>` and writes `contents` into the `file` of every
+    /// directory the map names, keyed by path relative to `root` ("" is the root).
+    fn cgroup_tree(root: &Path, relative: &str, file: &str, limits: &[(&str, &str)]) {
+        fs::create_dir_all(root.join(relative)).expect("create cgroup tree");
+        for (dir, contents) in limits {
+            fs::write(root.join(dir).join(file), contents).expect("write limit");
+        }
+    }
+
+    /// A limit set on an ancestor cgroup (a systemd slice, a pod's parent) applies to
+    /// the process, so it must be found even though the process's own cgroup is
+    /// unlimited and the mount root reports `max`.
+    #[test]
+    fn ancestor_limit_applies() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let root = tmp.path();
+        cgroup_tree(
+            root,
+            "system.slice/ethrex.service",
+            "memory.max",
+            &[("", "max"), ("system.slice", "4294967296")],
+        );
+
+        assert_eq!(
+            cgroup_limit_up_to_root(root, "/system.slice/ethrex.service", "memory.max"),
+            Some(4 * 1024 * 1024 * 1024)
+        );
+    }
+
+    /// With limits at several levels the tightest one is what the kernel enforces.
+    #[test]
+    fn smallest_limit_in_the_chain_wins() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let root = tmp.path();
+        cgroup_tree(
+            root,
+            "kubepods/pod123/container",
+            "memory.max",
+            &[
+                ("kubepods", "8589934592"),
+                ("kubepods/pod123", "2147483648"),
+                ("kubepods/pod123/container", "4294967296"),
+            ],
+        );
+
+        assert_eq!(
+            cgroup_limit_up_to_root(root, "kubepods/pod123/container", "memory.max"),
+            Some(2 * 1024 * 1024 * 1024)
+        );
+    }
+
+    /// An unlimited chain is "unknown", not zero: v2 writes the literal `max` and v1 a
+    /// sentinel near `u64::MAX`, and absent files must not count either.
+    #[test]
+    fn unlimited_chain_yields_no_limit() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let root = tmp.path();
+        cgroup_tree(root, "docker/abc", "memory.max", &[("", "max")]);
+
+        assert_eq!(
+            cgroup_limit_up_to_root(root, "docker/abc", "memory.max"),
+            None
+        );
+        // A cgroup path that does not exist under this mount (a v1 controller that is
+        // not mounted, a stale line in /proc/self/cgroup) reads as unknown too.
+        assert_eq!(
+            cgroup_limit_up_to_root(root, "not/here", "memory.max"),
+            None
+        );
+    }
+
+    /// The root cgroup is itself a level: a limit set there still applies.
+    #[test]
+    fn root_limit_applies_to_the_root_cgroup() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let root = tmp.path();
+        cgroup_tree(root, "", "memory.limit_in_bytes", &[("", "536870912")]);
+
+        assert_eq!(
+            cgroup_limit_up_to_root(root, "/", "memory.limit_in_bytes"),
+            Some(512 * 1024 * 1024)
+        );
     }
 }
