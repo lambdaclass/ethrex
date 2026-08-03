@@ -22,11 +22,14 @@ The crate has two halves:
 
 ### The trie
 
-`trie::BinaryTrie` is incremental and insertion-based. Its canonical
-structure is insertion-order independent: any insertion order over the
-same key/value set yields the same root. Correctness is pinned by the
-spec conformance vectors rather than by a second in-crate
-implementation.
+`trie::BinaryTrie` is incremental: it inserts, updates and removes in
+place. Its canonical structure is update-order independent — any
+sequence of insertions and removals arriving at the same key/value set
+yields the same root. Insertion splits a node in two when keys diverge
+inside its prefix; removal is the inverse, collapsing the parent branch
+of the removed leaf into its surviving sibling, which absorbs the bits
+the branch consumed. Correctness is pinned by the spec conformance
+vectors rather than by a second in-crate implementation.
 
 ### Storage
 
@@ -42,9 +45,18 @@ hash), and reads and inserts load only the nodes on their path.
 A loaded node also caches its own hash and tracks whether the
 database's copy of it is stale. `root()` therefore hashes each node at
 most once, and `commit()` writes only the nodes that changed —
-committing an unchanged trie writes nothing at all. Insertion clears
+committing an unchanged trie writes nothing at all. An update clears
 both, on every node from the root down to what it changed, so neither
 cache can outlive the subtree it describes.
+
+A removal leaves nodes behind in the store: the removed leaf, and the
+collapsed branch's surviving child, which moves up one level. `commit()`
+carries those paths in the same batch as empty-valued entries, which
+the backend deletes — the tombstone convention the MPT's `TrieDB`
+already uses, so `BinaryTrieDB` needs no removal method. Nothing below
+the survivor moves: it absorbs exactly the bits its old path loses, so
+the paths of its whole subtree are unchanged and none of it is
+rewritten.
 
 ### Test vectors
 
@@ -59,8 +71,8 @@ documentation:
 
 ### Non-goals (today)
 
-No deletion, no proofs, no fork wiring. These are deferred to the
-state-commitment integration work.
+No proofs, no fork wiring. These are deferred to the state-commitment
+integration work.
 
 ### Spec discrepancy
 

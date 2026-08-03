@@ -27,6 +27,16 @@ pub trait BinaryTrieDB: Send + Sync {
     fn get(&self, path: &BitPath) -> Result<Option<Vec<u8>>, BinaryTrieError>;
 
     /// Write every entry, replacing whatever was at each path.
+    ///
+    /// An empty value is a tombstone: the node at that path left the
+    /// tree and the implementation must delete it, so a later [`get`]
+    /// answers `None`. No node ever encodes to zero bytes — a node
+    /// encoding starts with a tag — so the two cannot be confused.
+    /// Removal rides in the write batch rather than in a method of its
+    /// own so that one atomic batch carries a whole commit, the same
+    /// arrangement the MPT's `TrieDB` uses.
+    ///
+    /// [`get`]: BinaryTrieDB::get
     fn put_batch(&self, entries: Vec<(BitPath, Vec<u8>)>) -> Result<(), BinaryTrieError>;
 }
 
@@ -69,7 +79,11 @@ impl BinaryTrieDB for InMemoryBinaryTrieDB {
     fn put_batch(&self, entries: Vec<(BitPath, Vec<u8>)>) -> Result<(), BinaryTrieError> {
         let mut nodes = self.lock_inner()?;
         for (path, encoded) in entries {
-            nodes.insert(path.to_db_key(), encoded);
+            if encoded.is_empty() {
+                nodes.remove(&path.to_db_key());
+            } else {
+                nodes.insert(path.to_db_key(), encoded);
+            }
         }
         Ok(())
     }

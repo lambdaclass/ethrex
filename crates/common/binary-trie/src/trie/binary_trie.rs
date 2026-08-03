@@ -1,12 +1,15 @@
-//! Incremental insertion-based binary radix trie, backed by a
+//! Incrementally updated binary radix trie, backed by a
 //! [`BinaryTrieDB`].
 //!
-//! The trie retains its node structure across insertions, splitting
-//! nodes on descent, and hashes that structure on [`BinaryTrie::root`].
-//! Canonical-form invariant: a branch's prefix is exactly the bits its
-//! two subtrees share beyond the parent split, so the structure — and
-//! therefore the root — depends only on the key/value set, never on
-//! insertion order.
+//! The trie retains its node structure across updates, splitting nodes
+//! on insertion and collapsing them on removal, and hashes that
+//! structure on [`BinaryTrie::root`]. Canonical-form invariant: a
+//! branch's prefix is exactly the bits its two subtrees share beyond
+//! the parent split, so the structure — and therefore the root —
+//! depends only on the key/value set, never on the order of the
+//! insertions and removals that arrived at it. A split and a collapse
+//! are inverses: the one moves bits from a prefix into a new branch
+//! above, the other folds them back into the survivor below.
 //!
 //! Subtrees need not be in memory. A [`NodeRef`] is either a loaded
 //! node or the hash of one that lives in the database under its bit
@@ -24,12 +27,17 @@
 //! They cannot be one field: `root()` fills every cached hash, which
 //! would erase the record of what still needs writing.
 //!
-//! Deliberate simplifications, deferred to later tasks of the
-//! persistent-state plan: no deletion. Recursion depth is bounded by
-//! the key length in bits, so max-length keys could theoretically
-//! overflow the stack; embedding keys are at most 66 bytes, and going
-//! iterative is the fallback if that ever matters.
+//! A removal also leaves paths behind: the leaf's own, and the
+//! survivor's, once a collapse moves it up. [`BinaryTrie::commit`]
+//! sends those to the database as empty-valued entries — tombstones
+//! the backend deletes — in the same batch as the writes.
+//!
+//! Recursion depth is bounded by the key length in bits, so max-length
+//! keys could theoretically overflow the stack; embedding keys are at
+//! most 66 bytes, and going iterative is the fallback if that ever
+//! matters.
 
+use std::collections::{BTreeSet, HashSet};
 use std::sync::OnceLock;
 
 use ethereum_types::H256;
@@ -104,17 +112,43 @@ impl NodeRef {
     }
 }
 
+/// What a removal did to the subtree it was applied to, reported back
+/// up the descent.
+enum Removal {
+    /// The key is not in this subtree; nothing changed.
+    Absent,
+    /// The key was removed and this subtree still has a node at its
+    /// path — either because the removal was deeper down, or because
+    /// this node collapsed into its surviving child.
+    Removed([u8; 32]),
+    /// The key was removed and *this node* was it, so the reference to
+    /// it must go. Only the parent can act on that: it alone knows the
+    /// sibling that takes its place.
+    Vanished([u8; 32]),
+}
+
 /// Compressed binary radix trie over prefix-free byte keys and
 /// 32-byte values, committing to its contents with a BLAKE3 root.
 pub struct BinaryTrie {
     db: Box<dyn BinaryTrieDB>,
     root: Option<NodeRef>,
+    /// Paths whose nodes left the tree since the last commit, to be
+    /// deleted from the database by the next one.
+    ///
+    /// Ordered rather than hashed so a commit batch is deterministic;
+    /// the set is at most two paths per removal, so the ordering costs
+    /// nothing worth counting.
+    pending_removal: BTreeSet<BitPath>,
 }
 
 impl BinaryTrie {
     /// An empty trie writing to `db`.
     pub fn new(db: Box<dyn BinaryTrieDB>) -> Self {
-        Self { db, root: None }
+        Self {
+            db,
+            root: None,
+            pending_removal: BTreeSet::new(),
+        }
     }
 
     /// The trie `db` holds under `root`, with nothing loaded yet.
@@ -125,6 +159,7 @@ impl BinaryTrie {
         Self {
             db,
             root: (root != EMPTY_TRIE_ROOT).then_some(NodeRef::Stored(root)),
+            pending_removal: BTreeSet::new(),
         }
     }
 
@@ -155,7 +190,7 @@ impl BinaryTrie {
             return Err(BinaryTrieError::KeyTooLong);
         }
         let bits = bytes_to_bits(&key);
-        let Self { db, root } = self;
+        let Self { db, root, .. } = self;
         match root {
             None => {
                 *root = Some(NodeRef::loaded(Node::Leaf { key, value }));
@@ -348,6 +383,209 @@ impl BinaryTrie {
         Ok(())
     }
 
+    /// Remove `key`, returning the value it held, or `None` if it was
+    /// not there.
+    ///
+    /// Absence is not an error: the spec's state model deletes by
+    /// writing zero, and a slot that was already absent is written to
+    /// zero as readily as one that was not.
+    ///
+    /// Takes the tree from one canonical shape to the other: removing
+    /// a leaf leaves its parent branch with a single child, which is
+    /// not a shape a branch is allowed to have — a branch exists only
+    /// where two subtrees diverge. The parent therefore collapses into
+    /// its surviving child. See [`BinaryTrie::collapse`].
+    ///
+    /// # Errors
+    ///
+    /// [`BinaryTrieError::Backend`] or [`BinaryTrieError::MalformedNode`]
+    /// if a node on the path, or the sibling of the removed leaf, could
+    /// not be loaded.
+    pub fn remove(&mut self, key: &[u8]) -> Result<Option<[u8; 32]>, BinaryTrieError> {
+        let bits = bytes_to_bits(key);
+        let Self {
+            db,
+            root,
+            pending_removal,
+        } = self;
+        let Some(node_ref) = root else {
+            return Ok(None);
+        };
+        match Self::remove_at(db.as_ref(), node_ref, &bits, 0, key, pending_removal)? {
+            Removal::Absent => Ok(None),
+            Removal::Removed(value) => Ok(Some(value)),
+            Removal::Vanished(value) => {
+                // The root was the matching leaf and nothing is left to
+                // take its place.
+                pending_removal.insert(BitPath::new());
+                *root = None;
+                Ok(Some(value))
+            }
+        }
+    }
+
+    /// Remove from the subtree at `node_ref`, invalidating it on the
+    /// way back out if anything below it changed — the same discipline
+    /// [`BinaryTrie::insert_at`] follows, and for the same reason: the
+    /// `&mut` descent visits exactly the ancestors of the change.
+    ///
+    /// A [`Removal::Absent`] result changed nothing, so it must leave
+    /// the cached hash and the dirty flag alone; invalidating there
+    /// would make a failed lookup dirty the whole path to the root.
+    fn remove_at(
+        db: &dyn BinaryTrieDB,
+        node_ref: &mut NodeRef,
+        bits: &[u8],
+        depth: usize,
+        key: &[u8],
+        pending_removal: &mut BTreeSet<BitPath>,
+    ) -> Result<Removal, BinaryTrieError> {
+        let result = Self::remove_below(db, node_ref, bits, depth, key, pending_removal);
+        if !matches!(result, Ok(Removal::Absent) | Err(_)) {
+            node_ref.invalidate();
+        }
+        result
+    }
+
+    /// The removal itself; see [`BinaryTrie::remove_at`], which wraps
+    /// it to invalidate the node on the way back out.
+    fn remove_below(
+        db: &dyn BinaryTrieDB,
+        node_ref: &mut NodeRef,
+        bits: &[u8],
+        depth: usize,
+        key: &[u8],
+        pending_removal: &mut BTreeSet<BitPath>,
+    ) -> Result<Removal, BinaryTrieError> {
+        // The descent got here by matching `bits[..depth]`, so those
+        // bits are this node's path — the key it is stored under.
+        let path = BitPath::from_bits(&bits[..depth]);
+        let (bit, value) = match Self::resolve(db, node_ref, &path)? {
+            Node::Leaf {
+                key: leaf_key,
+                value,
+            } => {
+                return Ok(if leaf_key.as_slice() == key {
+                    // The caller unlinks this leaf: only it knows
+                    // whether there is a sibling to put in its place.
+                    Removal::Vanished(*value)
+                } else {
+                    Removal::Absent
+                });
+            }
+            Node::Branch {
+                prefix,
+                left,
+                right,
+            } => {
+                let split = depth + prefix.len();
+                if split >= bits.len() || bits[depth..split] != prefix[..] {
+                    return Ok(Removal::Absent);
+                }
+                let bit = bits[split];
+                let child = if bit == 0 { left } else { right };
+                match Self::remove_at(db, child, bits, split + 1, key, pending_removal)? {
+                    // Nothing below vanished, so this branch still has
+                    // both its children and keeps its shape.
+                    other @ (Removal::Absent | Removal::Removed(_)) => return Ok(other),
+                    Removal::Vanished(value) => (bit, value),
+                }
+            }
+        };
+
+        Self::collapse(db, node_ref, &path, bit, pending_removal)?;
+        Ok(Removal::Removed(value))
+    }
+
+    /// Replace the branch at `node_ref` with its surviving child, the
+    /// removed leaf having left it with only one.
+    ///
+    /// The survivor takes the branch's place *and* absorbs the bits the
+    /// branch consumed — its prefix, then the split bit that selected
+    /// the survivor — so the same bit string still leads to the same
+    /// leaves. A leaf needs no merge: it carries its whole key, and the
+    /// path never told it anything the key does not.
+    ///
+    /// **Path arithmetic, the invariant this rests on.** A child's path
+    /// is `parent_path ‖ parent_prefix ‖ split_bit`. The survivor moves
+    /// from `path ‖ prefix ‖ bit` up to `path`, and its own prefix
+    /// grows by exactly `prefix ‖ bit`. Those two changes cancel: every
+    /// node *below* the survivor keeps the path it already had, so a
+    /// subtree that is still nothing but a hash stays addressable and
+    /// is never rewritten. Only the collapsed node itself moves.
+    ///
+    /// `bit` is the side the removed leaf was on, so the survivor is
+    /// the child on `bit ^ 1`.
+    fn collapse(
+        db: &dyn BinaryTrieDB,
+        node_ref: &mut NodeRef,
+        path: &BitPath,
+        bit: u8,
+        pending_removal: &mut BTreeSet<BitPath>,
+    ) -> Result<(), BinaryTrieError> {
+        let NodeRef::Loaded { node, .. } = node_ref else {
+            unreachable!("resolved on the way in")
+        };
+        let Node::Branch {
+            prefix,
+            left,
+            right,
+        } = node.as_mut()
+        else {
+            unreachable!("only a branch has a child to lose")
+        };
+        let removed_path = path.child(prefix, bit);
+        let survivor_path = path.child(prefix, bit ^ 1);
+        // Load the survivor where it is *now*: the database holds it
+        // under its old path, which the move is about to retire.
+        let survivor = if bit == 0 { right } else { left };
+        Self::resolve(db, survivor, &survivor_path)?;
+
+        // Nothing below can fail from here on, so the branch is never
+        // left half-collapsed.
+        let Node::Branch {
+            mut prefix,
+            left,
+            right,
+        } = std::mem::replace(
+            node.as_mut(),
+            Node::Leaf {
+                key: Vec::new(),
+                value: [0; 32],
+            },
+        )
+        else {
+            unreachable!("matched a branch above")
+        };
+        let NodeRef::Loaded { node: survivor, .. } = (if bit == 0 { right } else { left }) else {
+            unreachable!("just resolved")
+        };
+        *node.as_mut() = match *survivor {
+            // A leaf carries its whole key, so it loses nothing by
+            // moving up: there is no prefix to merge.
+            Node::Leaf { key, value } => Node::Leaf { key, value },
+            Node::Branch {
+                prefix: below,
+                left,
+                right,
+            } => {
+                prefix.push(bit ^ 1);
+                prefix.extend_from_slice(&below);
+                Node::Branch {
+                    prefix,
+                    left,
+                    right,
+                }
+            }
+        };
+        // Two paths now hold nodes that are no longer part of the tree.
+        // The collapsed branch's own path is not one of them: the
+        // survivor occupies it, and being dirty will overwrite it.
+        pending_removal.insert(removed_path);
+        pending_removal.insert(survivor_path);
+        Ok(())
+    }
+
     /// Value stored under `key`, or `None` if absent.
     ///
     /// Takes `&mut self` because a read loads the nodes on its path and
@@ -359,7 +597,7 @@ impl BinaryTrie {
     /// if a node on the path could not be loaded.
     pub fn get(&mut self, key: &[u8]) -> Result<Option<[u8; 32]>, BinaryTrieError> {
         let bits = bytes_to_bits(key);
-        let Self { db, root } = self;
+        let Self { db, root, .. } = self;
         match root {
             None => Ok(None),
             Some(node_ref) => Self::get_at(db.as_ref(), node_ref, &bits, 0, key),
@@ -447,21 +685,46 @@ impl BinaryTrie {
     /// Committing an unchanged trie writes nothing at all, not even an
     /// empty batch.
     ///
+    /// Removals ride along in the same batch as empty-valued entries —
+    /// a tombstone the backend turns into a delete, following the MPT's
+    /// `pending_removal` rather than adding a delete method to
+    /// [`BinaryTrieDB`]. An empty value cannot be confused for a node:
+    /// `decode` rejects empty input outright.
+    ///
+    /// A path that is being written is never tombstoned. Delete a key
+    /// and put it back before committing and the tree ends up the shape
+    /// it started, so the very paths the removal retired are the ones
+    /// the reinsertion fills — a tombstone for them would erase a live
+    /// node.
+    ///
     /// # Errors
     ///
     /// [`BinaryTrieError::Backend`] if the write fails. The dirty flags
-    /// survive a failed write, so the nodes are offered again next
-    /// time.
+    /// and the pending removals survive a failed write, so the nodes are
+    /// offered again next time.
     pub fn commit(&mut self) -> Result<H256, BinaryTrieError> {
         let mut entries = Vec::new();
         let root = match &self.root {
             None => EMPTY_TRIE_ROOT,
             Some(node_ref) => Self::collect(node_ref, BitPath::new(), &mut entries),
         };
+        let written: HashSet<&BitPath> = entries.iter().map(|(path, _)| path).collect();
+        let tombstones: Vec<BitPath> = self
+            .pending_removal
+            .iter()
+            .filter(|path| !written.contains(path))
+            .cloned()
+            .collect();
+        drop(written);
+        entries.extend(tombstones.into_iter().map(|path| (path, Vec::new())));
         if entries.is_empty() {
+            // Nothing was written, so nothing was filtered: every
+            // pending removal would have made it into `entries`, and
+            // there were none.
             return Ok(root);
         }
         self.db.put_batch(entries)?;
+        self.pending_removal.clear();
         if let Some(node_ref) = &mut self.root {
             Self::mark_clean(node_ref);
         }
@@ -602,17 +865,46 @@ mod tests {
             .collect()
     }
 
+    /// A 34-byte key whose only non-zero byte is the first, set to `i`:
+    /// keys that agree on their leading four bits and differ in the
+    /// four after them.
+    fn wide_key(i: u8) -> Vec<u8> {
+        let mut key = vec![0x00; 34];
+        key[0] = i;
+        key
+    }
+
     /// Sixteen keys differing only in the low nibble of their first
     /// byte: 31 nodes in all, at most 5 of them on any root-to-leaf
     /// path.
     fn wide_entries() -> Vec<(Vec<u8>, [u8; 32])> {
-        (0u8..16)
-            .map(|i| {
-                let mut key = vec![0x00; 34];
-                key[0] = i;
-                (key, [i; 32])
-            })
-            .collect()
+        (0u8..16).map(|i| (wide_key(i), [i; 32])).collect()
+    }
+
+    /// Eight keys whose fifth bit is 0 and one whose fifth bit is 1.
+    ///
+    /// The root branch therefore splits at bit 4 into a 15-node subtree
+    /// on the left and the lone key's leaf on the right. Removing that
+    /// lone key collapses the root onto a *branch* that is still
+    /// nothing but a hash — the shape that makes prefix merging and
+    /// path arithmetic observable.
+    fn lopsided_entries() -> Vec<(Vec<u8>, [u8; 32])> {
+        (0u8..9).map(|i| (wide_key(i), [i; 32])).collect()
+    }
+
+    /// The lone right-hand key of [`lopsided_entries`].
+    const LOPSIDED_ODD_ONE: u8 = 8;
+
+    /// Path of the leaf holding [`LOPSIDED_ODD_ONE`]: four zero bits of
+    /// shared prefix, then the split bit that chose the right side.
+    fn lopsided_removed_leaf_path() -> BitPath {
+        BitPath::from_bits(&[0, 0, 0, 0, 1])
+    }
+
+    /// Path of the surviving left-hand subtree of [`lopsided_entries`],
+    /// before the collapse moves it up to the root.
+    fn lopsided_survivor_path() -> BitPath {
+        BitPath::from_bits(&[0, 0, 0, 0, 0])
     }
 
     /// Fill a fresh in-memory backend, commit, and hand back the node
@@ -735,6 +1027,32 @@ mod tests {
         let mut trie = BinaryTrie::new_temp();
         for (key, value) in entries {
             trie.insert(key.clone(), *value).unwrap();
+        }
+        trie.root()
+    }
+
+    /// One step of an insert/delete sequence: a value to insert under
+    /// `key`, or `None` to remove it.
+    type Step = (Vec<u8>, Option<[u8; 32]>);
+
+    fn ins(i: u8) -> Step {
+        (wide_key(i), Some([i; 32]))
+    }
+
+    fn del(i: u8) -> Step {
+        (wide_key(i), None)
+    }
+
+    /// Root reached by running `steps` over a fresh trie.
+    fn root_after(steps: &[Step]) -> H256 {
+        let mut trie = BinaryTrie::new_temp();
+        for (key, value) in steps {
+            match value {
+                Some(value) => trie.insert(key.clone(), *value).unwrap(),
+                None => {
+                    trie.remove(key).unwrap();
+                }
+            }
         }
         trie.root()
     }
@@ -992,6 +1310,228 @@ mod tests {
         assert_eq!(trie.root(), root_before);
         assert_eq!(trie.get(&[0xaa, 0xbb]).unwrap(), Some([1; 32]));
         assert_eq!(trie.get(&[0xaa, 0xcc]).unwrap(), Some([2; 32]));
+    }
+
+    #[test]
+    fn remove_returns_the_value_and_absent_keys_are_none() {
+        let mut trie = BinaryTrie::new_temp();
+        // Removing from an empty trie is not an error.
+        assert_eq!(trie.remove(&wide_key(0)).unwrap(), None);
+
+        trie.insert(wide_key(0), [0; 32]).unwrap();
+        trie.insert(wide_key(1), [1; 32]).unwrap();
+        trie.insert(wide_key(2), [2; 32]).unwrap();
+
+        assert_eq!(trie.remove(&wide_key(7)).unwrap(), None, "absent key");
+        assert_eq!(trie.remove(&wide_key(1)).unwrap(), Some([1; 32]));
+        assert_eq!(trie.get(&wide_key(1)).unwrap(), None, "gone after removal");
+        assert_eq!(
+            trie.remove(&wide_key(1)).unwrap(),
+            None,
+            "removing twice removes nothing the second time"
+        );
+        assert_eq!(trie.get(&wide_key(0)).unwrap(), Some([0; 32]));
+        assert_eq!(trie.get(&wide_key(2)).unwrap(), Some([2; 32]));
+    }
+
+    #[test]
+    fn removing_the_only_key_empties_the_trie() {
+        let mut trie = BinaryTrie::new_temp();
+        trie.insert(vec![0x42; 34], [1; 32]).unwrap();
+        assert_ne!(trie.root(), EMPTY_TRIE_ROOT);
+
+        assert_eq!(trie.remove(&[0x42; 34]).unwrap(), Some([1; 32]));
+        assert_eq!(trie.root(), EMPTY_TRIE_ROOT);
+        assert_eq!(trie.get(&[0x42; 34]).unwrap(), None);
+        assert_eq!(trie.commit().unwrap(), EMPTY_TRIE_ROOT);
+    }
+
+    #[test]
+    fn insert_delete_sequences_converge_on_the_same_root() {
+        // Survivor is a branch. Keys 0, 1 and 2 share six leading bits
+        // and split at bit 6 into the pair {0, 1} and the singleton
+        // {2}, so deleting 2 collapses the root onto the {0, 1} branch.
+        // That branch only becomes the canonical root for {0, 1} if it
+        // absorbs the six prefix bits and the split bit above it.
+        let canonical = root_from_scratch(&[(wide_key(0), [0; 32]), (wide_key(1), [1; 32])]);
+        let sequences = [
+            vec![ins(0), ins(1), ins(2), del(2)],
+            vec![ins(2), ins(1), ins(0), del(2)],
+            vec![ins(0), ins(2), del(2), ins(1)],
+            // Two collapses in a row: deleting 3 leaves leaf 2 to move
+            // up (survivor is a leaf), then deleting 2 collapses the
+            // root onto a branch.
+            vec![ins(0), ins(1), ins(2), ins(3), del(3), del(2)],
+            // Delete and reinsert: the cycle must return the root it
+            // started from, tombstones and all.
+            vec![ins(0), ins(1), ins(2), del(2), ins(2), del(2)],
+        ];
+        for (i, steps) in sequences.iter().enumerate() {
+            assert_eq!(
+                root_after(steps),
+                canonical,
+                "branch survivor, sequence {i}"
+            );
+        }
+
+        // Survivor is a leaf: deleting 0 leaves the {0, 1} branch
+        // holding only leaf 1, which moves up carrying its whole key.
+        let canonical = root_from_scratch(&[(wide_key(1), [1; 32]), (wide_key(2), [2; 32])]);
+        let sequences = [
+            vec![ins(0), ins(1), ins(2), del(0)],
+            vec![ins(2), ins(0), ins(1), del(0)],
+            vec![ins(0), ins(1), del(0), ins(2)],
+            vec![ins(1), ins(0), ins(2), del(0), ins(0), del(0)],
+        ];
+        for (i, steps) in sequences.iter().enumerate() {
+            assert_eq!(root_after(steps), canonical, "leaf survivor, sequence {i}");
+        }
+
+        // A wider set, deleted down to half: eight collapses at varying
+        // depths, reached two different ways.
+        let evens: Vec<_> = (0u8..16)
+            .step_by(2)
+            .map(|i| (wide_key(i), [i; 32]))
+            .collect();
+        let canonical = root_from_scratch(&evens);
+        let all_then_odds_out: Vec<Step> = (0u8..16)
+            .map(ins)
+            .chain((1u8..16).step_by(2).map(del))
+            .collect();
+        let evens_then_odds_in_and_out: Vec<Step> = (0u8..16)
+            .step_by(2)
+            .map(ins)
+            .chain((1u8..16).step_by(2).map(ins))
+            .chain((1u8..16).step_by(2).rev().map(del))
+            .collect();
+        assert_eq!(root_after(&all_then_odds_out), canonical);
+        assert_eq!(root_after(&evens_then_odds_in_and_out), canonical);
+
+        // And over the embedding's real key shapes, including the
+        // 66-byte one, which diverges from the rest at the second bit.
+        let entries = sample_entries();
+        let mut trie = BinaryTrie::new_temp();
+        for (key, value) in &entries {
+            trie.insert(key.clone(), *value).unwrap();
+        }
+        let (dropped, kept) = entries.split_at(1);
+        assert_eq!(
+            trie.remove(&dropped[0].0).unwrap(),
+            Some(dropped[0].1),
+            "the removed key's value comes back"
+        );
+        assert_eq!(trie.root(), root_from_scratch(kept));
+    }
+
+    #[test]
+    fn collapse_preserves_stored_subtrees() {
+        let entries = lopsided_entries();
+        let (map, root) = commit_entries(&entries);
+
+        let mut trie = BinaryTrie::open(Box::new(InMemoryBinaryTrieDB::new(map.clone())), root);
+        // The survivor is the root's other child: a whole subtree that
+        // has never been loaded. It moves up one level and absorbs the
+        // bits the root consumed, which must leave every path below it
+        // exactly where the database put it.
+        let removed = wide_key(LOPSIDED_ODD_ONE);
+        assert_eq!(trie.remove(&removed).unwrap(), Some([LOPSIDED_ODD_ONE; 32]));
+        let new_root = trie.commit().unwrap();
+
+        let kept = &entries[..entries.len() - 1];
+        let mut reopened = BinaryTrie::open(Box::new(InMemoryBinaryTrieDB::new(map)), new_root);
+        for (key, value) in kept {
+            assert_eq!(
+                reopened.get(key).unwrap(),
+                Some(*value),
+                "key {key:02x?} after the collapse"
+            );
+        }
+        assert_eq!(reopened.get(&removed).unwrap(), None);
+        assert_eq!(
+            reopened.root(),
+            root_from_scratch(kept),
+            "the collapsed tree must be the canonical one for what is left"
+        );
+    }
+
+    #[test]
+    fn collapse_writes_are_bounded() {
+        let entries = lopsided_entries();
+        let (map, root) = commit_entries(&entries);
+        let (db, counts) = CountingDB::over(map);
+
+        let mut trie = BinaryTrie::open(Box::new(db), root);
+        trie.remove(&wide_key(LOPSIDED_ODD_ONE)).unwrap();
+        trie.commit().unwrap();
+
+        // The collapse rewrites one node — the root, now the survivor —
+        // and tombstones two paths: the removed leaf's and the
+        // survivor's old one. The survivor's 15-node subtree keeps its
+        // paths, so none of it is rewritten.
+        let bound = 3;
+        let written = counts.writes();
+        assert!(
+            written <= bound,
+            "a collapse should write the merged node plus two tombstones \
+             = {bound} entries, wrote {written}"
+        );
+        let node_count = 2 * entries.len() - 1;
+        assert!(
+            written < node_count,
+            "wrote {written} of the tree's {node_count} nodes"
+        );
+    }
+
+    #[test]
+    fn reinserting_before_the_commit_beats_the_tombstones() {
+        let entries = lopsided_entries();
+        let (map, root) = commit_entries(&entries);
+
+        let mut trie = BinaryTrie::open(Box::new(InMemoryBinaryTrieDB::new(map.clone())), root);
+        let key = wide_key(LOPSIDED_ODD_ONE);
+        // Out and back in before anything is written: the tree returns
+        // to the shape it had, so the reinsertion refills the very
+        // paths the removal retired. Tombstoning them now would delete
+        // live nodes — and the trie would still report the right root,
+        // because the root is computed from memory.
+        trie.remove(&key).unwrap();
+        trie.insert(key.clone(), [0xee; 32]).unwrap();
+        let new_root = trie.commit().unwrap();
+
+        let mut reopened = BinaryTrie::open(Box::new(InMemoryBinaryTrieDB::new(map)), new_root);
+        for (key, value) in &entries[..entries.len() - 1] {
+            assert_eq!(reopened.get(key).unwrap(), Some(*value));
+        }
+        assert_eq!(reopened.get(&key).unwrap(), Some([0xee; 32]));
+    }
+
+    #[test]
+    fn removed_paths_are_tombstoned() {
+        let entries = lopsided_entries();
+        let (map, root) = commit_entries(&entries);
+
+        let store = InMemoryBinaryTrieDB::new(map.clone());
+        assert!(store.get(&lopsided_removed_leaf_path()).unwrap().is_some());
+        assert!(store.get(&lopsided_survivor_path()).unwrap().is_some());
+
+        let mut trie = BinaryTrie::open(Box::new(InMemoryBinaryTrieDB::new(map)), root);
+        trie.remove(&wide_key(LOPSIDED_ODD_ONE)).unwrap();
+        trie.commit().unwrap();
+
+        assert_eq!(
+            store.get(&lopsided_removed_leaf_path()).unwrap(),
+            None,
+            "the removed leaf's path must not still hold a node"
+        );
+        assert_eq!(
+            store.get(&lopsided_survivor_path()).unwrap(),
+            None,
+            "the survivor moved up, so its old path is garbage"
+        );
+        assert!(
+            store.get(&BitPath::new()).unwrap().is_some(),
+            "the survivor's new path is the root's"
+        );
     }
 
     #[test]
