@@ -87,6 +87,16 @@ pub trait StorageReadView: Send + Sync {
         table: &'static str,
         prefix: &[u8],
     ) -> Result<Box<dyn Iterator<Item = PrefixResult> + '_>, StoreError>;
+
+    /// Returns the lowest key in `table` by lexicographic order, or `None` if the table is
+    /// empty. Backends that support forward iteration (e.g. RocksDB `IteratorMode::Start`)
+    /// should implement this in O(1).
+    fn first_key(&self, table: &'static str) -> Result<Option<Vec<u8>>, StoreError>;
+
+    /// Returns the highest key in `table` by lexicographic order, or `None` if the table is
+    /// empty. Backends that support reverse iteration (e.g. RocksDB `IteratorMode::End`) should
+    /// implement this in O(1).
+    fn last_key(&self, table: &'static str) -> Result<Option<Vec<u8>>, StoreError>;
 }
 
 /// Write transaction interface.
@@ -109,6 +119,22 @@ pub trait StorageWriteBatch: Send {
 
     /// Removes a key-value pair from the specified table.
     fn delete(&mut self, table: &'static str, key: &[u8]) -> Result<(), StoreError>;
+
+    /// Removes every key in `[start, end)` from the specified table.
+    ///
+    /// Half-open range; `end` is exclusive. Equivalent to enumerating each key
+    /// in the range and calling [`delete`], but backends with native range-delete
+    /// support (e.g. RocksDB's `delete_range_cf`) can implement it more efficiently.
+    ///
+    /// Lexicographic byte order is used for the range bounds — callers using
+    /// numeric keys must encode them in a representation whose lex order matches
+    /// numeric order (e.g. `u64::to_be_bytes()`).
+    fn delete_range(
+        &mut self,
+        table: &'static str,
+        start: &[u8],
+        end: &[u8],
+    ) -> Result<(), StoreError>;
 
     /// Appends a merge operand for the given key in the specified table.
     ///
