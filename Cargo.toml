@@ -59,8 +59,8 @@ debug-assertions = true
 # Used by test targets: keeps release-grade opt-level for the hot EVM / trie /
 # RLP paths but drops thin-LTO, raises codegen-units, and uses line-tables-only
 # debuginfo so cargo test rebuilds finish in a fraction of the time of
-# release-with-debug. Tests are the only consumer, so `debug_assert!` invariants
-# stay armed.
+# release-with-debug. Tests are the only consumer, so the `debug_assert!` and
+# overflow checks `release` turns off stay armed.
 [profile.release-fast]
 inherits = "release"
 lto = false
@@ -68,6 +68,7 @@ codegen-units = 16
 debug = "line-tables-only"
 incremental = true
 debug-assertions = true
+overflow-checks = true
 
 [workspace.dependencies]
 ethrex-blockchain = { path = "./crates/blockchain", version = "22.0.0", default-features = false }
