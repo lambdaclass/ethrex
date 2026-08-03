@@ -39,7 +39,7 @@ fn memory_constrained_host_keeps_headroom() {
     let limit = 16 * GIB;
     let cache = rocksdb_block_cache_size_for(Some(limit));
 
-    assert_eq!(cache, limit / 100 * ROCKSDB_BLOCK_CACHE_MEMORY_PERCENT);
+    assert_eq!(cache, limit * ROCKSDB_BLOCK_CACHE_MEMORY_PERCENT / 100);
     assert!(
         cache < MAX_ROCKSDB_BLOCK_CACHE_SIZE_BYTES,
         "a 16 GiB host must not be handed the ceiling"
