@@ -4026,7 +4026,7 @@ mod intrinsic_gas_accounting_tests {
     /// 9-field payload, which this branch's decoder rejects.
     fn interop_reference_tx() -> FrameTransaction {
         let tx = FrameTransaction {
-            chain_id: 301_824,
+            chain_id: 3_151_908,
             nonce_keys: vec![U256::zero()],
             nonce_seq: 0,
             sender: Address::from_slice(
