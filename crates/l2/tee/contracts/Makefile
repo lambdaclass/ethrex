@@ -18,10 +18,15 @@ ON_CHAIN_PROPOSER ?= 0x0
 #
 # Keep each comment on its own line: Make preserves whitespace preceding an
 # inline `#`, which would be appended to the revision string.
-# lambdaclass/automata-on-chain-pccs, main tip as of 2026-08-03
-PCCS_REV = ca17e114db2774b7c8a3bd27c845d04f7483fa6e
-# lambdaclass/automata-dcap-attestation, main tip as of 2026-08-03
-DCAP_ATTESTATION_REV = 1ab48e66b584aad8a9007faf7d64216661a168a5
+# The two forks below pin their own openzeppelin/solady clones as of these
+# revisions, so pinning them here fixes the whole transitive contract tree.
+# Both currently sit on the fork branch `chore/pin-dependency-revisions` rather
+# than main: re-point them at the merge commits once those PRs land, so the
+# revisions stay reachable if the branches are deleted.
+# lambdaclass/automata-on-chain-pccs
+PCCS_REV = 41a4422ffad3e8b0b5cf1c210ea9aa2c9f51adb4
+# lambdaclass/automata-dcap-attestation
+DCAP_ATTESTATION_REV = e09b587c214f016c9ee5c9b7f71e0bb581c84134
 # OpenZeppelin/openzeppelin-contracts v5.7.0
 OPENZEPPELIN_REV = cab19933c33c2ad1d4c7a84864a3601dddfd16f3
 # automata-network/automata-dcap-qpl, main tip as of 2026-08-03
