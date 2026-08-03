@@ -81,10 +81,21 @@ pub enum Transaction {
 /// sidecar carried only by EIP-4844 transactions. Replaces the former
 /// `P2PTransaction` enum.
 ///
-/// `blobs_bundle` is private and set only through a constructor that upholds the
-/// invariant: a bundle is present exactly for EIP-4844 transactions. Privileged
-/// (L2) txs are excluded at runtime — the RLP decoder rejects the 0x7e type
-/// byte.
+/// `blobs_bundle` is private so it can only be set through a constructor, which
+/// checks the pairing rule at construction time: a bundle is present exactly for
+/// EIP-4844 transactions. That is the mistake worth catching — building a value
+/// whose sidecar doesn't match its tx type.
+///
+/// It is deliberately not a standing guarantee, which is why `tx` stays public.
+/// Nothing depends on one: every consumer matches on the `(tx, blobs_bundle)`
+/// pair rather than on `tx` alone — see [`PooledTransaction::as_blob`],
+/// [`PooledTransaction::encode_canonical`] and
+/// [`PooledTransaction::encode_canonical_len`] — so a pair desynced after the
+/// fact encodes as a sidecar-less transaction instead of producing malformed
+/// wire bytes.
+///
+/// Privileged (L2) txs are excluded at runtime — the RLP decoder rejects the
+/// 0x7e type byte.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PooledTransaction {
     pub tx: Transaction,
