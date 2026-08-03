@@ -4027,8 +4027,8 @@ fn describe_balance_diff(expected: U256, actual: U256) -> String {
 }
 
 // Exercises the rayon-parallel-BAL execution path (and shares its
-// `not(eip-8025)`-gated imports), so it only builds in the non-guest test profile.
-#[cfg(all(test, not(feature = "eip-8025")))]
+// `rayon`-gated imports), so it only builds when that feature is on.
+#[cfg(all(test, feature = "rayon"))]
 mod bal_tests {
     use super::*;
     use ethrex_common::H256;
@@ -4388,9 +4388,9 @@ mod system_call_coinbase_tests {
 
 /// Tests for EIP-8079 burned_fees computation in execute_block (LStar-gated).
 ///
-/// Shares the non-guest execution path's `not(eip-8025)`-gated imports
-/// (`EMPTY_KECCAK_HASH`, `FxHashMap`, `Database`), so it only builds in that profile.
-#[cfg(all(test, not(feature = "eip-8025")))]
+/// Shares the non-guest execution path's `rayon`-gated imports
+/// (`EMPTY_KECCAK_HASH`, `FxHashMap`, `Database`), so it only builds with rayon.
+#[cfg(all(test, feature = "rayon"))]
 mod burned_fees_tests {
     use super::*;
     use ethrex_common::{
