@@ -50,9 +50,14 @@ pub struct LogsFilter {
     /// Up to which block to stop retrieving logs.
     /// Will default to `latest` if not provided.
     pub to_block: BlockIdentifier,
+    /// Restricts the filter to a single block, by hash. The spec defines this as
+    /// an alternative to the `fromBlock`/`toBlock` range, so the two forms are
+    /// mutually exclusive and this one takes precedence when present.
+    pub block_hash: Option<H256>,
     /// The addresses from where the logs origin from.
     pub address_filters: Option<AddressFilter>,
-    /// Which topics to filter.
+    /// Which topics to filter. Empty means "match any topic", which is also what
+    /// an absent `topics` field means.
     pub topics: Vec<TopicFilter>,
 }
 impl RpcHandler for LogsFilter {
@@ -82,18 +87,41 @@ impl RpcHandler for LogsFilter {
                     })
                     .transpose()?
                     .flatten();
+                let block_hash = param
+                    .get("blockHash")
+                    .map(
+                        |block_hash| match serde_json::from_value::<H256>(block_hash.clone()) {
+                            Ok(hash) => Ok(hash),
+                            _ => Err(RpcErr::WrongParam("blockHash".to_string())),
+                        },
+                    )
+                    .transpose()?;
+                // Every field of the filter object is optional in the spec, so an
+                // absent `topics` means "match any topic" rather than an error.
                 let topics_filters = param
                     .get("topics")
-                    .ok_or_else(|| RpcErr::MissingParam("topics".to_string()))
-                    .and_then(|topics| {
+                    .map(|topics| {
                         match serde_json::from_value::<Option<Vec<TopicFilter>>>(topics.clone()) {
                             Ok(filters) => Ok(filters),
                             _ => Err(RpcErr::WrongParam("topics".to_string())),
                         }
-                    })?;
+                    })
+                    .transpose()?
+                    .flatten();
+                // The spec models the filter as one of two shapes: a block range,
+                // or a single block by hash. Combining them is a malformed request
+                // rather than a silent precedence rule.
+                if block_hash.is_some()
+                    && (param.contains_key("fromBlock") || param.contains_key("toBlock"))
+                {
+                    return Err(RpcErr::BadParams(
+                        "`blockHash` cannot be combined with `fromBlock` or `toBlock`".to_string(),
+                    ));
+                }
                 Ok(LogsFilter {
                     from_block,
                     to_block,
+                    block_hash,
                     address_filters,
                     topics: topics_filters.unwrap_or_else(Vec::new),
                 })
@@ -125,16 +153,30 @@ pub(crate) async fn fetch_logs_with_filter(
     filter: &LogsFilter,
     storage: Store,
 ) -> Result<Vec<RpcLog>, RpcErr> {
-    let from = filter
-        .from_block
-        .resolve_block_number(&storage)
-        .await?
-        .ok_or(RpcErr::WrongParam("fromBlock".to_string()))?;
-    let to = filter
-        .to_block
-        .resolve_block_number(&storage)
-        .await?
-        .ok_or(RpcErr::WrongParam("toBlock".to_string()))?;
+    // A `blockHash` filter covers exactly that block; the range fields are not
+    // part of that form of the request (see LogsFilter::block_hash).
+    let (from, to) = match filter.block_hash {
+        Some(block_hash) => {
+            let block_number = storage
+                .get_block_number(block_hash)
+                .await?
+                .ok_or_else(|| RpcErr::BadParams(format!("Unknown block hash {block_hash:#x}")))?;
+            (block_number, block_number)
+        }
+        None => {
+            let from = filter
+                .from_block
+                .resolve_block_number(&storage)
+                .await?
+                .ok_or(RpcErr::WrongParam("fromBlock".to_string()))?;
+            let to = filter
+                .to_block
+                .resolve_block_number(&storage)
+                .await?
+                .ok_or(RpcErr::WrongParam("toBlock".to_string()))?;
+            (from, to)
+        }
+    };
     if (from..=to).is_empty() {
         return Err(RpcErr::BadParams("Empty range".to_string()));
     }
@@ -354,6 +396,65 @@ mod tests {
             "{request:?}"
         );
         assert_eq!(request.topics, vec![TopicFilter::Topic(Some(H256::zero()))]);
+    }
+
+    #[test]
+    fn test_get_logs_without_topics() {
+        // Every field of the filter object is optional; an absent `topics` asks
+        // for every log in range.
+        let params = Some(vec![json!({"fromBlock": "0x1", "toBlock": "0x2"})]);
+        let request = LogsFilter::parse(&params).unwrap();
+
+        assert!(request.topics.is_empty(), "{request:?}");
+        assert!(request.block_hash.is_none(), "{request:?}");
+    }
+
+    #[test]
+    fn test_get_logs_with_empty_filter() {
+        let params = Some(vec![json!({})]);
+        let request = LogsFilter::parse(&params).unwrap();
+
+        assert!(request.topics.is_empty(), "{request:?}");
+        assert!(request.address_filters.is_none(), "{request:?}");
+        assert!(
+            matches!(request.from_block, BlockIdentifier::Tag(BlockTag::Latest)),
+            "{request:?}"
+        );
+    }
+
+    #[test]
+    fn test_get_logs_by_block_hash() {
+        let params = Some(vec![json!({
+            "blockHash": "0x0000000000000000000000000000000000000000000000000000000000000001"
+        })]);
+        let request = LogsFilter::parse(&params).unwrap();
+
+        assert_eq!(request.block_hash, Some(H256::from_low_u64_be(1)));
+        assert!(request.topics.is_empty(), "{request:?}");
+    }
+
+    #[test]
+    fn test_get_logs_block_hash_with_range_is_rejected() {
+        // The spec models the two forms as mutually exclusive.
+        for extra in ["fromBlock", "toBlock"] {
+            let params = Some(vec![json!({
+                "blockHash": "0x0000000000000000000000000000000000000000000000000000000000000001",
+                extra: "0x1"
+            })]);
+            assert!(
+                matches!(LogsFilter::parse(&params), Err(RpcErr::BadParams(_))),
+                "expected {extra} alongside blockHash to be rejected"
+            );
+        }
+    }
+
+    #[test]
+    fn test_get_logs_malformed_block_hash_is_rejected() {
+        let params = Some(vec![json!({"blockHash": "not a hash"})]);
+        assert!(matches!(
+            LogsFilter::parse(&params),
+            Err(RpcErr::WrongParam(_))
+        ));
     }
 
     #[test]

@@ -59,6 +59,14 @@ pub struct PollableFilter {
 impl NewFilterRequest {
     pub fn parse(params: &Option<Vec<serde_json::Value>>) -> Result<Self, RpcErr> {
         let filter = LogsFilter::parse(params)?;
+        // A polled filter tracks a moving range of blocks, so a single-block
+        // `blockHash` filter is meaningless here. The spec only defines it for
+        // eth_getLogs, and the shared parser accepts it for that endpoint.
+        if filter.block_hash.is_some() {
+            return Err(RpcErr::BadParams(
+                "`blockHash` is not a valid filter for eth_newFilter".to_string(),
+            ));
+        }
         Ok(NewFilterRequest {
             request_data: filter,
         })
@@ -477,6 +485,7 @@ mod tests {
                     filter_data: LogsFilter {
                         from_block: BlockIdentifier::Number(1),
                         to_block: BlockIdentifier::Number(2),
+                        block_hash: None,
                         address_filters: None,
                         topics: vec![],
                     },
