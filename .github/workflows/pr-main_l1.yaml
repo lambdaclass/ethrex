@@ -73,7 +73,6 @@ jobs:
         uses: ./.github/actions/setup-rust
         with:
           cache-pool: l1
-          save-cache: 'false'
           components: rustfmt, clippy
 
       # We don't run with workspace, as members of the workspace require l2. We run it with workspace
@@ -120,6 +119,7 @@ jobs:
         uses: ./.github/actions/setup-rust
         with:
           cache-pool: l1
+          save-cache: 'true'
 
       - name: Run unit tests
         run: |
@@ -158,7 +158,6 @@ jobs:
         uses: ./.github/actions/setup-rust
         with:
           cache-pool: l1
-          save-cache: 'false'
 
       - name: Run Engine EF tests
         run: make -C tooling/ef_tests/engine test
@@ -512,6 +511,7 @@ jobs:
         uses: ./.github/actions/setup-rust
         with:
           cache-pool: l1-reorg
+          save-cache: 'true'
 
       # Built with release-grade optimization: an unoptimized ethrex overflows
       # the 2 MiB tokio worker stack while building a payload, since every

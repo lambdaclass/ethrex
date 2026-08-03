@@ -55,6 +55,7 @@ jobs:
         uses: ./.github/actions/setup-rust
         with:
           cache-pool: prover
+          save-cache: 'true'
 
       - name: Check solc
         run: solc --version

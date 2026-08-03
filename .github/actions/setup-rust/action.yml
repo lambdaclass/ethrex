@@ -14,9 +14,11 @@ inputs:
     required: false
     default: ""
   save-cache:
-    description: "Set to 'false' for jobs whose target dir is not worth a pool slot."
+    description: >
+      Set to 'true' on the single job that owns a pool's entry, i.e. the one
+      building its widest dependency set. Every other job restores only.
     required: false
-    default: "true"
+    default: "false"
 runs:
   using: "composite"
   steps:
@@ -43,9 +45,12 @@ runs:
     #   other branch, so they cost budget without ever being restored.
     # - Jobs building comparable dependency graphs share one entry via
     #   `cache-pool` (rust-cache's `shared-key`), which replaces the per-job
-    #   segment of the key. One writer per pool keeps the entry to the widest
-    #   dependency set in it; the rest restore only. Per-job keys would put ~32
-    #   writers on main, several times what the budget holds.
+    #   segment of the key. Exactly one job per pool opts into `save-cache`, and
+    #   it is the one building the pool's widest dependency set; the rest restore
+    #   only, so a lean target dir can never claim the slot. Actions cache keys
+    #   are immutable, so a first-writer-wins race would persist until the key
+    #   rotates. Per-job keys would put ~32 writers on main, several times what
+    #   the budget holds.
     #
     # `tooling` is a second workspace with its own target dir, and the default
     # `workspaces` covers only the repo root, so the ef_tests, reorgs, loc and
