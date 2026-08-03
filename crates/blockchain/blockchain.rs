@@ -3220,10 +3220,20 @@ impl Blockchain {
             .ok_or(MempoolError::NoBlockHeaderError)?;
         let config = self.storage.get_chain_config();
 
+        // Every fork gate below must resolve the fork exactly like execution does,
+        // i.e. through the fork ordinal. A per-field activation check
+        // (`is_amsterdam_activated`) is not equivalent: on a chain that schedules a
+        // fork after Amsterdam without setting an explicit `amsterdamTime`, the
+        // ordinal is already `>= Fork::Amsterdam` while the field is unset, so a
+        // field-based gate diverges from execution in whichever direction the gate
+        // points, over-rejecting transactions execution accepts or admitting ones it
+        // rejects.
+        let fork = config.fork(header.timestamp);
+
         // EIP-8141 fork gating: reject frame transactions before Hegota activates.
         // Prevents FrameTransaction (type 0x06) from entering the mempool or being
         // forwarded over P2P on chains where EIP-8141 has not yet activated.
-        if is_frame_tx && !config.is_hegota_activated(header.timestamp) {
+        if is_frame_tx && fork < Fork::Hegota {
             return Err(MempoolError::FrameTxPreFork);
         }
 
@@ -3288,7 +3298,7 @@ impl Blockchain {
                 &frame_tx.signatures,
                 sig_hash,
                 frame_tx.sender,
-                config.fork(header.timestamp),
+                fork,
                 &NativeCrypto,
             ) {
                 return Err(MempoolError::InvalidFrameSignature);
@@ -3320,14 +3330,6 @@ impl Blockchain {
             }
         }
 
-        // The fork-gated caps below must resolve the fork exactly like execution
-        // does, i.e. through the fork ordinal. A per-field activation check
-        // (`is_amsterdam_activated`) is not equivalent: on a chain that schedules a
-        // fork after Amsterdam without setting an explicit `amsterdamTime`, the
-        // ordinal is already `>= Fork::Amsterdam` while the field is unset, so a
-        // field-based gate would over-reject transactions block execution accepts.
-        let fork = config.fork(header.timestamp);
-
         // Check init code size
         // [EIP-7954] - Amsterdam increases the limit.
         // Mirrors levm's `validate_init_code_size`.
@@ -3336,7 +3338,7 @@ impl Blockchain {
         } else {
             MAX_INITCODE_SIZE
         };
-        if config.is_shanghai_activated(header.timestamp)
+        if fork >= Fork::Shanghai
             && tx.is_contract_creation()
             && tx.data().len() > max_initcode_size as usize
         {
@@ -3372,7 +3374,7 @@ impl Blockchain {
         // at admission so invalid type-4 txs never enter the pool.
         if let Transaction::EIP7702Transaction(eip7702) = tx {
             // Type-4 txs only exist from Prague onward.
-            if !config.is_prague_activated(header.timestamp) {
+            if fork < Fork::Prague {
                 return Err(MempoolError::Eip7702TxPreFork);
             }
             // An empty authorization_list makes the tx invalid.
