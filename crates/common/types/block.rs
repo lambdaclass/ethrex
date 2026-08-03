@@ -4,10 +4,7 @@ use super::{
 };
 use crate::{
     Address, H256, U256,
-    constants::{
-        BLOB_BASE_COST, DEFAULT_OMMERS_HASH, EMPTY_WITHDRAWALS_HASH, GAS_PER_BLOB,
-        MIN_BASE_FEE_PER_BLOB_GAS,
-    },
+    constants::{BLOB_BASE_COST, DEFAULT_OMMERS_HASH, GAS_PER_BLOB, MIN_BASE_FEE_PER_BLOB_GAS},
     types::{Receipt, Transaction},
 };
 use bytes::Bytes;
@@ -690,6 +687,10 @@ pub enum InvalidBlockHeaderError {
     BlockAccessListHashNotPresent,
     #[error("Block access list hash is present")]
     BlockAccessListHashPresent,
+    #[error("Slot number is not present")]
+    SlotNumberNotPresent,
+    #[error("Slot number is present")]
+    SlotNumberPresent,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -785,11 +786,10 @@ pub fn validate_block_body(
                 return Err(InvalidBlockBodyError::WithdrawalsRootNotMatch);
             }
         }
-        (Some(withdrawals_root), None) => {
-            if withdrawals_root != *EMPTY_WITHDRAWALS_HASH {
-                return Err(InvalidBlockBodyError::WithdrawalsRootNotMatch);
-            }
-        }
+        // Post-Shanghai, the withdrawals field must be present in the body even when
+        // empty. A body that omits it is malformed, regardless of the header's
+        // withdrawals_root — geth ("missing withdrawals in block body"), reth,
+        // nethermind, erigon and besu all reject this shape.
         (None, None) => {}
         _ => return Err(InvalidBlockBodyError::WithdrawalsRootNotMatch),
     }
@@ -819,11 +819,22 @@ pub fn validate_prague_header_fields(
         return Err(InvalidBlockHeaderError::RequestsHashNotPresent);
     }
     if chain_config.is_amsterdam_activated(header.timestamp) {
+        // EIP-7928: BAL hash and EIP-7843: slot_number are both mandatory
+        // trailing header fields on Amsterdam. A header omitting either is
+        // schema-invalid and must be rejected to match conformant clients.
         if header.block_access_list_hash.is_none() {
             return Err(InvalidBlockHeaderError::BlockAccessListHashNotPresent);
         }
-    } else if header.block_access_list_hash.is_some() {
-        return Err(InvalidBlockHeaderError::BlockAccessListHashPresent);
+        if header.slot_number.is_none() {
+            return Err(InvalidBlockHeaderError::SlotNumberNotPresent);
+        }
+    } else {
+        if header.block_access_list_hash.is_some() {
+            return Err(InvalidBlockHeaderError::BlockAccessListHashPresent);
+        }
+        if header.slot_number.is_some() {
+            return Err(InvalidBlockHeaderError::SlotNumberPresent);
+        }
     }
     Ok(())
 }
@@ -851,6 +862,9 @@ pub fn validate_cancun_header_fields(
     if header.block_access_list_hash.is_some() {
         return Err(InvalidBlockHeaderError::BlockAccessListHashPresent);
     }
+    if header.slot_number.is_some() {
+        return Err(InvalidBlockHeaderError::SlotNumberPresent);
+    }
     Ok(())
 }
 
@@ -873,6 +887,9 @@ pub fn validate_pre_cancun_header_fields(
     }
     if header.block_access_list_hash.is_some() {
         return Err(InvalidBlockHeaderError::BlockAccessListHashPresent);
+    }
+    if header.slot_number.is_some() {
+        return Err(InvalidBlockHeaderError::SlotNumberPresent);
     }
     Ok(())
 }
@@ -909,7 +926,7 @@ pub fn calc_excess_blob_gas(parent: &BlockHeader, schedule: ForkBlobSchedule, fo
     }
 
     if fork >= Fork::Osaka
-        && U256::from(BLOB_BASE_COST * parent_base_fee_per_gas)
+        && U256::from(BLOB_BASE_COST) * U256::from(parent_base_fee_per_gas)
             > (U256::from(GAS_PER_BLOB))
                 * calculate_base_fee_per_blob_gas(
                     parent_excess_blob_gas,
@@ -1291,5 +1308,49 @@ mod test {
             hash_before, hash_after,
             "injecting None must not change the block hash (Amsterdam no-op)"
         );
+    }
+
+    #[test]
+    fn test_validate_block_body_rejects_missing_withdrawals_field() {
+        use crate::constants::EMPTY_WITHDRAWALS_HASH;
+
+        let crypto = NativeCrypto;
+        let header = BlockHeader {
+            transactions_root: compute_transactions_root(&[], &crypto),
+            withdrawals_root: Some(*EMPTY_WITHDRAWALS_HASH),
+            ..Default::default()
+        };
+
+        // A post-Shanghai body that OMITS the withdrawals field is malformed and
+        // must be rejected even when the header commits to the empty-withdrawals
+        // root (geth: "missing withdrawals in block body"; reth, nethermind,
+        // erigon and besu reject this shape as well).
+        let body_missing = BlockBody {
+            withdrawals: None,
+            ..BlockBody::empty()
+        };
+        assert!(matches!(
+            validate_block_body(&header, &body_missing, &crypto),
+            Err(InvalidBlockBodyError::WithdrawalsRootNotMatch)
+        ));
+
+        // An explicit empty withdrawals list is valid for the same header.
+        assert!(validate_block_body(&header, &BlockBody::empty(), &crypto).is_ok());
+
+        // A withdrawals field without a header root (pre-Shanghai shape) is rejected.
+        let pre_shanghai_header = BlockHeader {
+            transactions_root: compute_transactions_root(&[], &crypto),
+            ..Default::default()
+        };
+        assert!(matches!(
+            validate_block_body(&pre_shanghai_header, &BlockBody::empty(), &crypto),
+            Err(InvalidBlockBodyError::WithdrawalsRootNotMatch)
+        ));
+        // Neither field present is valid.
+        let body_no_withdrawals = BlockBody {
+            withdrawals: None,
+            ..BlockBody::empty()
+        };
+        assert!(validate_block_body(&pre_shanghai_header, &body_no_withdrawals, &crypto).is_ok());
     }
 }

@@ -1021,7 +1021,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-blockchain"
-version = "21.0.0"
+version = "22.0.0"
 dependencies = [
  "bytes",
  "crossbeam",
@@ -1045,7 +1045,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-common"
-version = "21.0.0"
+version = "22.0.0"
 dependencies = [
  "bytes",
  "crc32fast",
@@ -1078,7 +1078,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-crypto"
-version = "21.0.0"
+version = "22.0.0"
 dependencies = [
  "ark-bn254",
  "ark-ec",
@@ -1099,7 +1099,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-guest-program"
-version = "21.0.0"
+version = "22.0.0"
 dependencies = [
  "bytes",
  "ethereum-types",
@@ -1117,7 +1117,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-l2-common"
-version = "21.0.0"
+version = "22.0.0"
 dependencies = [
  "bytes",
  "ethereum-types",
@@ -1135,7 +1135,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-levm"
-version = "21.0.0"
+version = "22.0.0"
 dependencies = [
  "bytes",
  "derive_more",
@@ -1153,7 +1153,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-metrics"
-version = "21.0.0"
+version = "22.0.0"
 dependencies = [
  "axum",
  "ethrex-common",
@@ -1168,7 +1168,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-p2p"
-version = "21.0.0"
+version = "22.0.0"
 dependencies = [
  "aes",
  "aes-gcm",
@@ -1209,7 +1209,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-rlp"
-version = "21.0.0"
+version = "22.0.0"
 dependencies = [
  "bytes",
  "ethereum-types",
@@ -1218,7 +1218,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-rpc"
-version = "21.0.0"
+version = "22.0.0"
 dependencies = [
  "axum",
  "axum-extra",
@@ -1257,7 +1257,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-storage"
-version = "21.0.0"
+version = "22.0.0"
 dependencies = [
  "anyhow",
  "bytes",
@@ -1278,7 +1278,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-trie"
-version = "21.0.0"
+version = "22.0.0"
 dependencies = [
  "anyhow",
  "bytes",
@@ -1286,17 +1286,18 @@ dependencies = [
  "ethereum-types",
  "ethrex-crypto",
  "ethrex-rlp",
- "lazy_static",
+ "hashbrown 0.15.5",
  "rayon",
  "rkyv",
  "rustc-hash",
  "serde 1.0.228",
+ "spin",
  "thiserror 2.0.18",
 ]
 
 [[package]]
 name = "ethrex-vm"
-version = "21.0.0"
+version = "22.0.0"
 dependencies = [
  "bytes",
  "derive_more",
@@ -2871,7 +2872,7 @@ dependencies = [
 
 [[package]]
 name = "quote-gen"
-version = "21.0.0"
+version = "22.0.0"
 dependencies = [
  "configfs-tsm",
  "ethrex-blockchain",
@@ -3636,6 +3637,12 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
 ]
+
+[[package]]
+name = "spin"
+version = "0.9.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6980e8d7511241f8acf4aebddbb1ff938df5eebe98691418c4468d0b72a96a67"
 
 [[package]]
 name = "spki"

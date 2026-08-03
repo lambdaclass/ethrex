@@ -224,7 +224,7 @@ impl NativeBlockProducer {
             .store_block(block, account_updates_list, execution_result)?;
 
         // 9. Apply fork choice
-        apply_fork_choice(&self.store, block_hash, block_hash, block_hash).await?;
+        apply_fork_choice(&self.store, block_hash, block_hash, block_hash, None).await?;
 
         // 10. The block is stored and canonical, so the L1 messages it consumed are
         //     now settled — remove exactly those (the front `n` we selected in step 1)

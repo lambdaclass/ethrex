@@ -329,6 +329,7 @@ pub fn prepare_vm_for_tx<'a>(
             is_privileged: false,
             fee_token: None,
             disable_balance_check: false,
+            disable_nonce_check: false,
             is_system_call: false,
         },
         db,

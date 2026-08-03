@@ -485,7 +485,7 @@ impl Substate {
 ///     println!("Transaction reverted");
 /// }
 /// ```
-/// EIP-8141 spec lines 346-347: the top-level `frame.value` transfer
+/// EIP-8141 §Behavior: the top-level `frame.value` transfer
 /// reverts the frame if the sender's balance is strictly less than the
 /// amount being sent. Factored out so the decision can be unit-tested
 /// without bringing up a full VM state.
@@ -711,11 +711,41 @@ pub struct VM<'a> {
     pub stateless_validator: Option<&'a dyn crate::StatelessValidator>,
 }
 
-/// Validate every EIP-8141 outer signature (spec commit fe0940cae2) against
-/// the canonical `sig_hash`. Returns false if any signature is malformed or
-/// invalid. Verification gas is intrinsic (already in `total_gas_limit`), so a
-/// scratch budget is used for the crypto precompiles and their deduction is
-/// ignored.
+/// secp256k1 group order `n`.
+const SECP256K1_N: [u8; 32] = [
+    0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xfe,
+    0xba, 0xae, 0xdc, 0xe6, 0xaf, 0x48, 0xa0, 0x3b, 0xbf, 0xd2, 0x5e, 0x8c, 0xd0, 0x36, 0x41, 0x41,
+];
+/// secp256k1 `n / 2`.
+const SECP256K1_N_HALF: [u8; 32] = [
+    0x7f, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+    0x5d, 0x57, 0x6e, 0x73, 0x57, 0xa4, 0x50, 0x1d, 0xdf, 0xe9, 0x2f, 0x46, 0x68, 0x1b, 0x20, 0xa0,
+];
+/// P-256 (secp256r1) group order `n`.
+const SECP256R1_N: [u8; 32] = [
+    0xff, 0xff, 0xff, 0xff, 0x00, 0x00, 0x00, 0x00, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+    0xbc, 0xe6, 0xfa, 0xad, 0xa7, 0x17, 0x9e, 0x84, 0xf3, 0xb9, 0xca, 0xc2, 0xfc, 0x63, 0x25, 0x51,
+];
+/// P-256 (secp256r1) `n / 2`.
+const SECP256R1_N_HALF: [u8; 32] = [
+    0x7f, 0xff, 0xff, 0xff, 0x80, 0x00, 0x00, 0x00, 0x7f, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+    0xde, 0x73, 0x7d, 0x56, 0xd3, 0x8b, 0xcf, 0x42, 0x79, 0xdc, 0xe5, 0x61, 0x7e, 0x31, 0x92, 0xa8,
+];
+
+/// True when the big-endian 32-byte scalar is in `(0, upper)`.
+fn scalar_below(scalar: &[u8], upper: &[u8; 32]) -> bool {
+    scalar.iter().any(|&b| b != 0) && scalar < &upper[..]
+}
+
+/// True when the big-endian 32-byte scalar is in `(0, upper]`.
+fn scalar_at_most(scalar: &[u8], upper: &[u8; 32]) -> bool {
+    scalar.iter().any(|&b| b != 0) && scalar <= &upper[..]
+}
+
+/// Validate every EIP-8141 outer signature against the canonical `sig_hash`.
+/// Returns false if any signature is malformed or invalid. Verification gas is
+/// intrinsic (already in `total_gas_limit`), so a scratch budget is used for the
+/// crypto precompiles and their deduction is ignored.
 #[expect(
     clippy::indexing_slicing,
     reason = "signature length is checked before each fixed-offset slice"
@@ -723,10 +753,13 @@ pub struct VM<'a> {
 pub fn validate_frame_signatures(
     signatures: &[ethrex_common::types::FrameSignature],
     sig_hash: ethrex_common::H256,
+    sender: ethrex_common::Address,
     fork: Fork,
     crypto: &dyn Crypto,
 ) -> bool {
-    use ethrex_common::types::{FRAME_SIG_SCHEME_P256, FRAME_SIG_SCHEME_SECP256K1};
+    use ethrex_common::types::{
+        FRAME_SIG_SCHEME_ARBITRARY, FRAME_SIG_SCHEME_P256, FRAME_SIG_SCHEME_SECP256K1,
+    };
     for sig in signatures {
         // Resolve the signed message.
         let msg: [u8; 32] = match sig.msg.len() {
@@ -750,16 +783,17 @@ pub fn validate_frame_signatures(
                 let v = sig.signature[0];
                 let r = &sig.signature[1..33];
                 let s = &sig.signature[33..65];
-                // EIP-8141 defines verification as `signer == ecrecover(msg, v, r, s)`
-                // and does NOT mandate EIP-2 low-s, so a high-s frame signature is
-                // spec-valid and MUST be accepted here (this is the consensus
-                // block-execution path). Anti-malleability (low-s) is enforced as
-                // local mempool policy in `frame_signatures_are_low_s`, never at
-                // consensus — rejecting high-s here would diverge from a conformant
-                // client that accepts it.
+                // EIP-8141 requires a canonical signature: `v` is a bare recovery
+                // id (0 or 1), `0 < r < n`, and low-s per EIP-2 (`0 < s <= n/2`),
+                // so each signature has exactly one encoding.
+                if v > 1 || !scalar_below(r, &SECP256K1_N) || !scalar_at_most(s, &SECP256K1_N_HALF)
+                {
+                    return false;
+                }
+                // The ecrecover precompile takes `v` in EVM form (27 or 28).
                 let mut calldata = vec![0u8; 128];
                 calldata[..32].copy_from_slice(&msg);
-                calldata[63] = v;
+                calldata[63] = v.saturating_add(27);
                 calldata[64..96].copy_from_slice(r);
                 calldata[96..128].copy_from_slice(s);
                 let Ok(result) = crate::precompiles::ecrecover(
@@ -774,7 +808,12 @@ pub fn validate_frame_signatures(
                     return false;
                 }
                 let recovered = ethrex_common::Address::from_slice(&result[12..]);
-                if recovered == ethrex_common::Address::zero() || recovered != sig.signer {
+                if recovered == ethrex_common::Address::zero() {
+                    return false;
+                }
+                // Per EIP-8141, an absent signer resolves to tx.sender (used for
+                // introspection too); the recovered key must equal the resolved signer.
+                if recovered != sig.signer.unwrap_or(sender) {
                     return false;
                 }
             }
@@ -786,12 +825,20 @@ pub fn validate_frame_signatures(
                 let s = &sig.signature[32..64];
                 let qx = &sig.signature[64..96];
                 let qy = &sig.signature[96..128];
+                // EIP-8141 requires `0 < r < n` and low-s (`0 < s <= n/2`) so each
+                // signature has one encoding. P256VERIFY itself accepts high-s, so
+                // signers must normalize `s` to `n - s` before use.
+                if !scalar_below(r, &SECP256R1_N) || !scalar_at_most(s, &SECP256R1_N_HALF) {
+                    return false;
+                }
                 // signer = keccak256(qx || qy)[12:]  (NO domain separator)
                 let mut pk = Vec::with_capacity(64);
                 pk.extend_from_slice(qx);
                 pk.extend_from_slice(qy);
                 let h = ethrex_crypto::keccak::keccak_hash(&pk);
-                if ethrex_common::Address::from_slice(&h[12..]) != sig.signer {
+                // Per EIP-8141, an absent signer resolves to tx.sender (used for
+                // introspection too); the derived key must equal the resolved signer.
+                if ethrex_common::Address::from_slice(&h[12..]) != sig.signer.unwrap_or(sender) {
                     return false;
                 }
                 let mut calldata = vec![0u8; 160];
@@ -812,59 +859,10 @@ pub fn validate_frame_signatures(
                     return false;
                 }
             }
-            _ => return false,
-        }
-    }
-    true
-}
-
-/// Local mempool anti-malleability policy (NOT consensus): returns `false` if any
-/// frame signature is high-s (`s > n/2`).
-///
-/// EIP-8141 verification is `signer == ecrecover(msg, v, r, s)` and does not
-/// mandate EIP-2 low-s, so a high-s signature is spec-valid and is accepted on the
-/// consensus block-execution path. But the raw signature bytes are committed to the
-/// transaction identity hash while being elided from the sig hash, so the malleated
-/// form `(v, r, s) -> (v^1, r, n-s)` (and the P256 `s -> n-s`) yields a second valid
-/// tx hash for the same logical transaction — a mempool dedup bypass. Admission
-/// rejects high-s so a malleated duplicate never occupies a pool slot; this gates
-/// only what this node admits/relays, never what it accepts in a block.
-///
-/// Signatures are assumed already structurally validated by
-/// [`validate_frame_signatures`]; malformed inputs conservatively return `false`.
-#[allow(
-    clippy::indexing_slicing,
-    reason = "signature length is checked before each fixed-offset slice"
-)]
-pub fn frame_signatures_are_low_s(signatures: &[ethrex_common::types::FrameSignature]) -> bool {
-    use ethrex_common::types::{FRAME_SIG_SCHEME_P256, FRAME_SIG_SCHEME_SECP256K1};
-    // secp256k1n/2 = 0x7fffffffffffffffffffffffffffffff5d576e7357a4501ddfe92f46681b20a0
-    const SECP256K1_N_HALF: [u8; 32] = [
-        0x7f, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
-        0xff, 0x5d, 0x57, 0x6e, 0x73, 0x57, 0xa4, 0x50, 0x1d, 0xdf, 0xe9, 0x2f, 0x46, 0x68, 0x1b,
-        0x20, 0xa0,
-    ];
-    // P-256 (secp256r1) n/2 = 0x7fffffff800000007fffffffffffffffde737d56d38bcf4279dce5617e3192a8
-    const P256_N_HALF: [u8; 32] = [
-        0x7f, 0xff, 0xff, 0xff, 0x80, 0x00, 0x00, 0x00, 0x7f, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
-        0xff, 0xde, 0x73, 0x7d, 0x56, 0xd3, 0x8b, 0xcf, 0x42, 0x79, 0xdc, 0xe5, 0x61, 0x7e, 0x31,
-        0x92, 0xa8,
-    ];
-    for sig in signatures {
-        match sig.scheme {
-            FRAME_SIG_SCHEME_SECP256K1 => {
-                if sig.signature.len() != 65 {
-                    return false;
-                }
-                if sig.signature[33..65] > SECP256K1_N_HALF[..] {
-                    return false;
-                }
-            }
-            FRAME_SIG_SCHEME_P256 => {
-                if sig.signature.len() != 128 {
-                    return false;
-                }
-                if sig.signature[32..64] > P256_N_HALF[..] {
+            FRAME_SIG_SCHEME_ARBITRARY => {
+                // ARBITRARY: no protocol crypto; the signer must be empty. A
+                // custom verifier reads the raw bytes via SIGPARAM 0x04.
+                if sig.signer.is_some() {
                     return false;
                 }
             }
@@ -876,8 +874,10 @@ pub fn frame_signatures_are_low_s(signatures: &[ethrex_common::types::FrameSigna
 
 /// Find the end of the atomic batch containing `failed_idx`, per EIP-8141:
 /// a batch is a maximal contiguous run of frames whose ATOMIC_BATCH_FLAG is
-/// set, terminated by the first frame without the flag — any mode (spec
-/// commit 8b61fdc4). Returns the index of the batch's terminating frame.
+/// set, terminated by the first frame without the flag. Static validation
+/// guarantees no VERIFY frame carries the flag or terminates a batch, so every
+/// frame in the returned range is DEFAULT or SENDER. Returns the index of the
+/// batch's terminating frame.
 ///
 /// Exposed (hidden) for the `ethrex-test` crate's frame-batch unit tests; not
 /// part of the stable public API.
@@ -1619,11 +1619,12 @@ impl<'a> VM<'a> {
             total_gas_limit,
         });
 
-        // EIP-8141 (spec commit fe0940cae2): every outer signature must validate
+        // EIP-8141: every outer signature must validate
         // before any frame executes; otherwise the whole transaction is invalid.
         if !validate_frame_signatures(
             &frame_tx.signatures,
             sig_hash,
+            frame_tx.sender,
             self.env.config.fork,
             self.crypto,
         ) {
@@ -1673,12 +1674,12 @@ impl<'a> VM<'a> {
         // Execute frames sequentially
         for (frame_idx, frame) in frame_tx.frames.iter().enumerate() {
             // If we're skipping frames due to an atomic batch revert, record
-            // the frame with status SKIPPED. Per EIP-8141 (spec line 185), the
+            // the frame with status SKIPPED. Per EIP-8141, the
             // gas allotted to skipped frames is refunded at the end of the
             // transaction, so we record `gas_used = 0` and do NOT add the
             // frame's `gas_limit` to `total_gas_used`.
             //
-            // Note (EIP-8141 @ 0b197156): an expiry verifier frame has flags
+            // Note (EIP-8141): an expiry verifier frame has flags
             // == 0, so it can only be a batch TERMINATOR, never a flagged
             // member. A failed batch therefore skips a trailing expiry frame
             // and its deadline is not checked at execution time. This is
@@ -1819,7 +1820,7 @@ impl<'a> VM<'a> {
             // Push substate backup for per-frame state isolation
             self.substate.push_backup();
 
-            // EIP-8141 top-level value transfer (spec lines 346-347): the outer
+            // EIP-8141 top-level value transfer: the outer
             // frame call owns CALLVALUE delivery. We only CHECK affordability
             // here; the actual transfer runs inside whichever branch executes
             // the frame, so it is recorded in the backup that branch restores on
@@ -1868,7 +1869,7 @@ impl<'a> VM<'a> {
                 (false, frame.gas_limit, Vec::new())
             } else if bytecode.is_empty() && !is_delegation_7702 {
                 // Default code runs only when the target has NEITHER code NOR a delegation
-                // indicator (EIP-8141 §Execution lines 348-349). After eip7702_get_code,
+                // indicator (EIP-8141 §Execution). After eip7702_get_code,
                 // bytecode is the delegatee's code when delegated, so a delegation to an
                 // empty delegatee still falls into the CallFrame branch below and returns
                 // success without executing anything — NOT into the default-code path.
@@ -1905,7 +1906,7 @@ impl<'a> VM<'a> {
             } else {
                 // Normal code execution via CallFrame. msg_value carries
                 // `frame.value` so the contract sees the correct CALLVALUE
-                // (EIP-8141 spec line 346), but `should_transfer_value` stays
+                // (EIP-8141 §Behavior), but `should_transfer_value` stays
                 // false because the deferred `do_frame_value_transfer!()` below
                 // (invoked after the frame swap) owns the transfer — the inner
                 // CALL machinery must not move the funds a second time.
@@ -2086,7 +2087,7 @@ impl<'a> VM<'a> {
                 }
 
                 // Find the end of this batch (the first frame at or after the
-                // failing one without the flag — any mode, spec commit 8b61fdc4)
+                // failing one without the flag)
                 let batch_end = find_batch_end(&frame_tx.frames, frame_idx);
 
                 if batch_end > frame_idx {
@@ -2104,7 +2105,7 @@ impl<'a> VM<'a> {
                 in_atomic_batch = false;
             }
 
-            // VERIFY frame enforcement (spec commit 0b197156): a reverted
+            // VERIFY frame enforcement: a reverted
             // VERIFY frame invalidates the transaction. A VERIFY frame that
             // succeeds WITHOUT calling APPROVE is valid (e.g. the expiry
             // verifier frame). A reverted VERIFY frame invalidates the tx;
@@ -2119,7 +2120,7 @@ impl<'a> VM<'a> {
             self.substate.clear_transient_storage();
         }
 
-        // Post-execution: spec line 189 — "verify that `payer` has been set
+        // Post-execution, per EIP-8141: "verify that `payer` has been set
         // (i.e. `payer != None`). If `payer` is set, refund any unpaid gas to
         // the payer. If it is not, the whole transaction is invalid."
         let ctx =
@@ -2155,9 +2156,27 @@ impl<'a> VM<'a> {
             )))?;
         let payer = ctx.payer_address.unwrap_or(sender);
 
+        // EIP-8141 gas finalization. EIP-3529 storage refunds accumulate into a
+        // single transaction-scoped counter across frames — `substate.refunded_gas`,
+        // which a reverted frame or an unrolled atomic batch drops along with its
+        // state changes — and are applied once here, capped at a fifth of the gas
+        // used before refunds. The EIP-7623 calldata floor then applies to the frame
+        // and signature data: the mandatory costs are always charged, and the data
+        // cost is floored against what execution actually consumed.
+        let mandatory_gas = frame_tx.mandatory_gas();
+        let applied_refund = self
+            .substate
+            .refunded_gas
+            .min(total_gas_used / crate::hooks::default_hook::MAX_REFUND_QUOTIENT);
+        let data_and_execution = total_gas_used
+            .saturating_sub(applied_refund)
+            .saturating_sub(mandatory_gas);
+        let total_gas_used =
+            mandatory_gas.saturating_add(data_and_execution.max(frame_tx.calldata_floor_gas()));
+
         // Gas refunds: the payer was debited the transaction's MAXIMUM cost at
         // APPROVE (max_fee-based gas + max-rate blob cost, `compute_tx_max_cost`,
-        // spec line 387). What the payer owes is the effective-rate cost of the
+        // §Gas Accounting). What the payer owes is the effective-rate cost of the
         // gas actually used plus the base-rate blob burn (EIP-4844 semantics);
         // everything above that is returned here. Intrinsic gas is inside
         // `total_gas_used`, so it stays non-refundable. When max_fee ==
@@ -2394,6 +2413,7 @@ impl<'a> VM<'a> {
         if !validate_frame_signatures(
             &frame_tx.signatures,
             sig_hash,
+            frame_tx.sender,
             self.env.config.fork,
             self.crypto,
         ) {
