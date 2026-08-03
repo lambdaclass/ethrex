@@ -3,7 +3,7 @@ use std::collections::BTreeMap;
 use crate::report::EFTestsReport;
 use crate::{
     parser::SPECIFIC_IGNORED_TESTS,
-    report::{self, EFTestReport, TestReRunReport, format_duration_as_mm_ss},
+    report::{self, EFTestReport},
     types::EFTest,
 };
 use clap::Parser;
@@ -12,13 +12,10 @@ use ethrex_common::Address;
 use ethrex_common::types::Fork;
 use ethrex_levm::account::LevmAccount;
 use ethrex_levm::errors::{ExecutionReport, VMError};
-pub use revm::primitives::hardfork::SpecId;
 use serde::{Deserialize, Serialize};
 use spinoff::{Color, Spinner, spinners::Dots};
 
 pub mod levm_runner;
-pub mod revm_db;
-pub mod revm_runner;
 
 #[derive(Debug, thiserror::Error, Clone, Serialize, Deserialize)]
 pub enum EFTestRunnerError {
@@ -30,8 +27,6 @@ pub enum EFTestRunnerError {
     FailedToEnsurePreState(String),
     #[error("Failed to ensure post-state: {1}")]
     FailedToEnsurePostState(Box<ExecutionReport>, String, BTreeMap<Address, LevmAccount>),
-    #[error("VM run mismatch: {0}")]
-    VMExecutionMismatch(String),
     #[error("Exception does not match the expected: {0}")]
     ExpectedExceptionDoesNotMatchReceived(String),
     #[error("EIP-7702 should not be a create type")]
@@ -48,8 +43,6 @@ pub enum EFTestRunnerError {
 pub enum InternalError {
     #[error("First run failed unexpectedly: {0}")]
     FirstRunInternal(String),
-    #[error("Re-runner failed unexpectedly: {0}")]
-    ReRunInternal(String, TestReRunReport),
     #[error("Main runner failed unexpectedly: {0}")]
     MainRunnerInternal(String),
     #[error("{0}")]
@@ -73,7 +66,7 @@ pub struct EFTestRunnerOptions {
     /// For running tests with a specific name
     #[arg(long, value_name = "SPECIFIC_TESTS", value_delimiter = ',')]
     pub specific_tests: Vec<String>,
-    /// For running tests only with LEVM without the REVM re-run.
+    /// For printing only the failure summary instead of writing a report file.
     #[arg(short, long, value_name = "SUMMARY", default_value = "false")]
     pub summary: bool,
     #[arg(long, value_name = "SKIP", value_delimiter = ',')]
@@ -81,9 +74,6 @@ pub struct EFTestRunnerOptions {
     /// For providing more detailed information
     #[arg(long, value_name = "VERBOSE", default_value = "false")]
     pub verbose: bool,
-    /// For running tests ONLY with revm
-    #[arg(long, value_name = "REVM", default_value = "false")]
-    pub revm: bool,
     /// For running particular tests that have their specified paths listed with the tests flag.
     #[arg(long, value_name = "PATHS", default_value = "false")]
     pub paths: bool,
@@ -120,15 +110,8 @@ pub async fn run_ef_tests(
     ef_tests: Vec<EFTest>,
     opts: &EFTestRunnerOptions,
 ) -> Result<(), EFTestRunnerError> {
-    let mut reports = report::load()?;
-    if reports.is_empty() {
-        if opts.revm {
-            run_with_revm(&mut reports, &ef_tests, opts).await?;
-            return Ok(());
-        } else {
-            run_with_levm(&mut reports, &ef_tests, opts).await?;
-        }
-    }
+    let mut reports = Vec::new();
+    run_with_levm(&mut reports, &ef_tests, opts).await?;
     if opts.summary {
         if reports.iter().any(|r| !r.passed()) {
             println!(
@@ -140,7 +123,6 @@ pub async fn run_ef_tests(
         return Ok(());
     }
     if reports.iter().any(|r| !r.passed()) {
-        re_run_with_revm(&mut reports, &ef_tests, opts).await?;
         return write_report(&reports);
     }
     let mut report_spinner = Spinner::new(Dots, "Loading report...".to_owned(), Color::Cyan);
@@ -201,132 +183,9 @@ async fn run_with_levm(
     Ok(())
 }
 
-/// ### Runs all tests with REVM
-async fn run_with_revm(
-    reports: &mut Vec<EFTestReport>,
-    ef_tests: &[EFTest],
-    opts: &EFTestRunnerOptions,
-) -> Result<(), EFTestRunnerError> {
-    let revm_run_time = std::time::Instant::now();
-    println!("{}", "Running all tests with REVM...".to_owned());
-
-    for (idx, test) in ef_tests.iter().enumerate() {
-        if opts.verbose {
-            println!("Running test: {:?}", test.name);
-        }
-        let total_tests = ef_tests.len();
-        println!(
-            "{} {}/{total_tests} - {}",
-            "Running all tests with REVM".bold(),
-            idx + 1,
-            format_duration_as_mm_ss(revm_run_time.elapsed())
-        );
-        let ef_test_report = match revm_runner::_run_ef_test_revm(test).await {
-            Ok(ef_test_report) => ef_test_report,
-            Err(EFTestRunnerError::Internal(err)) => return Err(EFTestRunnerError::Internal(err)),
-            non_internal_errors => {
-                return Err(EFTestRunnerError::Internal(
-                    InternalError::FirstRunInternal(format!(
-                        "Non-internal error raised when executing revm. This should not happen: {non_internal_errors:?}",
-                    )),
-                ));
-            }
-        };
-        reports.push(ef_test_report);
-        println!("{}", report::progress(reports, revm_run_time.elapsed()));
-    }
-    println!(
-        "Ran all tests with REVM in {}",
-        format_duration_as_mm_ss(revm_run_time.elapsed())
-    );
-    Ok(())
-}
-
-async fn re_run_with_revm(
-    reports: &mut [EFTestReport],
-    ef_tests: &[EFTest],
-    opts: &EFTestRunnerOptions,
-) -> Result<(), EFTestRunnerError> {
-    let revm_run_time = std::time::Instant::now();
-    println!("{}", "Running failed tests with REVM...".to_owned());
-    let failed_tests = reports.iter().filter(|report| !report.passed()).count();
-
-    // Iterate only over failed tests
-    for (idx, failed_test_report) in reports
-        .iter_mut()
-        .filter(|report| !report.passed())
-        .enumerate()
-    {
-        if opts.verbose {
-            println!("Running test: {:?}", failed_test_report.name);
-        }
-        print!(
-            "\r{} {}/{failed_tests} - {}",
-            "Re-running failed tests with REVM".bold(),
-            idx + 1,
-            format_duration_as_mm_ss(revm_run_time.elapsed())
-        );
-
-        match revm_runner::re_run_failed_ef_test(
-            ef_tests
-                .iter()
-                .find(|test| {
-                    let hash = test
-                        ._info
-                        .generated_test_hash
-                        .or(test._info.hash)
-                        .unwrap_or_default();
-
-                    let failed_hash = failed_test_report.test_hash;
-
-                    hash == failed_hash && test.name == failed_test_report.name
-                })
-                .unwrap(),
-            failed_test_report,
-        )
-        .await
-        {
-            Ok(re_run_report) => {
-                failed_test_report.register_re_run_report(re_run_report.clone());
-            }
-            Err(EFTestRunnerError::Internal(InternalError::ReRunInternal(
-                reason,
-                re_run_report,
-            ))) => {
-                write_report(reports)?;
-                cache_re_run(reports)?;
-                return Err(EFTestRunnerError::Internal(InternalError::ReRunInternal(
-                    reason,
-                    re_run_report,
-                )));
-            }
-            non_re_run_internal_errors => {
-                println!("{} \n{failed_test_report}", "Failing Test:".bold());
-                return Err(EFTestRunnerError::Internal(
-                    InternalError::MainRunnerInternal(format!(
-                        "Non-internal error raised when executing revm. This should not happen: {non_re_run_internal_errors:?}"
-                    )),
-                ));
-            }
-        }
-    }
-    println!(
-        "\nRe-ran failed tests with REVM in {}",
-        format_duration_as_mm_ss(revm_run_time.elapsed())
-    );
-    Ok(())
-}
-
 fn write_report(reports: &[EFTestReport]) -> Result<(), EFTestRunnerError> {
     let mut report_spinner = Spinner::new(Dots, "Loading report...".to_owned(), Color::Cyan);
     let report_file_path = report::write(reports)?;
     report_spinner.success(&format!("Report written to file {report_file_path:?}").bold());
-    Ok(())
-}
-
-fn cache_re_run(reports: &[EFTestReport]) -> Result<(), EFTestRunnerError> {
-    let mut cache_spinner = Spinner::new(Dots, "Caching re-run...".to_owned(), Color::Cyan);
-    let cache_file_path = report::cache(reports)?;
-    cache_spinner.success(&format!("Re-run cached to file {cache_file_path:?}").bold());
     Ok(())
 }
