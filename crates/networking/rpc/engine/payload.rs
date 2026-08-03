@@ -313,7 +313,12 @@ impl RpcHandler for NewPayloadV5Request {
                 let hex_str = v
                     .as_str()
                     .ok_or(RpcErr::WrongParam("blockAccessList".to_string()))?;
-                let bytes = hex::decode(hex_str.trim_start_matches("0x"))
+                // EIP-7928 blockAccessList is a DATA field: the `0x` prefix is
+                // mandatory. Reject an unprefixed value rather than trimming it.
+                let hex_body = hex_str
+                    .strip_prefix("0x")
+                    .ok_or(RpcErr::WrongParam("blockAccessList".to_string()))?;
+                let bytes = hex::decode(hex_body)
                     .map_err(|_| RpcErr::WrongParam("blockAccessList".to_string()))?;
                 Ok::<_, RpcErr>(ethrex_common::utils::keccak(bytes))
             })
@@ -1211,6 +1216,15 @@ async fn try_execute_payload(
     let block_hash = block.hash();
     let block_number = block.header.number;
     let storage = &context.storage;
+    // A deep-reorg apply pass swaps the layer cache and replays the side chain
+    // through `add_block` directly. Executing a payload concurrently can enqueue
+    // a `PersistMessage::Block` whose phase1 RCU-reads the pre-swap cache and
+    // writes back after the swap, clobbering the freshly installed overlay —
+    // replay reads would then fall through to old-chain disk state. Defer to
+    // SYNCING (the CL retries) for the duration of the pass.
+    if context.blockchain.is_reorg_in_progress() {
+        return Ok(PayloadStatus::syncing());
+    }
     // Fast path: if we already have this block's header AND its state is reachable,
     // we know it has been fully validated previously and can reply VALID (with a
     // witness if requested) without re-execution.
@@ -1268,7 +1282,7 @@ async fn try_execute_payload(
     // on disk). Stash the block in HEADERS+BODIES and return ACCEPTED; a later
     // forkchoiceUpdated pointing at this block (or a descendant) will drive
     // the deep-reorg apply path. Matches geth's `eth/catalyst/api.go` behavior
-    // with the `HasBlockAndState` predicate. Issue #6685.
+    // with the `HasBlockAndState` predicate.
     //
     // If the parent is itself unknown, fall through to `add_block` which
     // returns `ChainError::ParentNotFound` and stashes the block; handled

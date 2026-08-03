@@ -439,7 +439,7 @@ impl<'a> VM<'a> {
                 //     that a prior tuple already materialized reads `exists == true`.
                 if !authority_exists && self.increase_state_gas(self.state_gas_new_account).is_err()
                 {
-                    self.fail_prepare_region()?;
+                    self.fail_prepare_region();
                     return Ok(());
                 }
 
@@ -450,7 +450,7 @@ impl<'a> VM<'a> {
                         .increase_consumed_gas(ACCOUNT_WRITE_AMSTERDAM)
                         .is_err()
                     {
-                        self.fail_prepare_region()?;
+                        self.fail_prepare_region();
                         return Ok(());
                     }
                     written_accounts.insert(authority_address);
@@ -464,7 +464,7 @@ impl<'a> VM<'a> {
                         && !delegation_set_for.contains(&authority_address)
                         && self.increase_state_gas(self.state_gas_auth_base).is_err()
                     {
-                        self.fail_prepare_region()?;
+                        self.fail_prepare_region();
                         return Ok(());
                     }
                     delegation_set_for.insert(authority_address);

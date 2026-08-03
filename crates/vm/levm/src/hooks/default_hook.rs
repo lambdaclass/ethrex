@@ -112,7 +112,7 @@ impl Hook for DefaultHook {
             .map_err(|_| TxValidationError::NonceIsMax)?;
 
         // check for nonce mismatch
-        if sender_info.nonce != vm.env.tx_nonce {
+        if !vm.env.disable_nonce_check && sender_info.nonce != vm.env.tx_nonce {
             return Err(TxValidationError::NonceMismatch {
                 expected: sender_info.nonce,
                 actual: vm.env.tx_nonce,
@@ -188,7 +188,7 @@ impl Hook for DefaultHook {
                 if vm.db.get_account(created_addr)?.is_empty() {
                     let charge = vm.state_gas_new_account;
                     if vm.increase_state_gas(charge).is_err() {
-                        vm.fail_prepare_region()?;
+                        vm.fail_prepare_region();
                     }
                 }
             } else {
@@ -236,7 +236,7 @@ impl Hook for DefaultHook {
                 if recipient_is_empty && !vm.tx.value().is_zero() {
                     let charge = vm.state_gas_new_account;
                     if vm.increase_state_gas(charge).is_err() {
-                        vm.fail_prepare_region()?;
+                        vm.fail_prepare_region();
                     } else {
                         // Signal so a subsequent Amsterdam precompile-halt in
                         // `run_execution` rolls this charge back (the recipient
@@ -262,7 +262,7 @@ impl Hook for DefaultHook {
                         cold_account_access_cost(vm.env.config.fork)
                     };
                     if vm.current_call_frame.increase_consumed_gas(charge).is_err() {
-                        vm.fail_prepare_region()?;
+                        vm.fail_prepare_region();
                     } else if !is_warm {
                         vm.substate.add_accessed_address(target);
                     }
@@ -273,18 +273,17 @@ impl Hook for DefaultHook {
         // EIP-8037: the atomic prepare region rolled back (one of its charges OOG'd)
         // and burned all gas; `run_execution` turns `pending_prep_oog` into a full-gas
         // revert `ContextResult` (not a tx-level `Err`, which would wrongly invalidate
-        // the block). What must be skipped afterward depends on the tx kind:
-        //
-        // - CREATE: skip everything. The value transfer would fund the created address
-        //   and (in `execute`) the nonce bump would materialize it; `undo_value_transfer`
-        //   only re-credits the sender on the create path, so the funding would persist
-        //   as a phantom account. EELS never creates the account on this OOG.
-        // - non-CREATE: still run `transfer_value` + `set_bytecode_and_code_address`.
-        //   The full-gas revert routes through `finalize_execution`, whose
-        //   `undo_value_transfer` reverses the transfer symmetrically (net zero) — the
-        //   same behavior these cases had before the region existed. Skipping only the
-        //   transfer here (while `undo` still runs) would underflow the recipient.
-        if vm.pending_prep_oog && vm.is_create()? {
+        // the block). In that case the top-frame dispatch never happens, so its
+        // recipient-touching steps (`transfer_value`, `set_bytecode_and_code_address`,
+        // which read `tx.to` via `increase_account_balance` / `eip7702_get_code`) must
+        // be skipped for EVERY tx kind, not just CREATE. EELS `prepare_dispatch` loads
+        // the recipient only at dispatch, which a prepare-region halt precedes — so a
+        // spurious recipient read here would be invisible under full-state execution but
+        // break witness sufficiency under EIP-8025 stateless validation (the recipient's
+        // trie node isn't in the witness). `undo_value_transfer` correspondingly skips
+        // the recipient debit on this path (there was no transfer to reverse), so the
+        // sender's upfront value debit is still returned with no recipient underflow.
+        if vm.pending_prep_oog {
             return Ok(());
         }
 
@@ -327,7 +326,7 @@ impl Hook for DefaultHook {
         // tx_state_gas collapses to 0, tx_regular_gas = max(intrinsic_regular +
         // message.gas, calldata_floor). The user does NOT lose the whole gas_limit.
         //
-        // ethrex's in-region CREATE NEW_ACCOUNT charge (Task 4.2) runs before the
+        // ethrex's in-region CREATE NEW_ACCOUNT charge runs before the
         // collision check and is rolled back to the frame's entry baseline by
         // `handle_create_transaction` on collision (see that function), so
         // `state_gas_used` is already net zero here.
@@ -391,7 +390,11 @@ impl Hook for DefaultHook {
 
 pub fn undo_value_transfer(vm: &mut VM<'_>) -> Result<(), VMError> {
     // In a create if Tx was reverted the account won't even exist by this point.
-    if !vm.is_create()? {
+    // On a prepare-region OOG (`pending_prep_oog`) `prepare_execution` skipped
+    // `transfer_value`, so the recipient was never credited (nor loaded) — debiting
+    // it here would both underflow and spuriously read `tx.to` out of the witness.
+    // The sender is still re-credited its upfront value debit below.
+    if !vm.is_create()? && !vm.pending_prep_oog {
         vm.decrease_account_balance(vm.current_call_frame.to, vm.current_call_frame.msg_value)?;
     }
 

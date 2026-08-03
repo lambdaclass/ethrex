@@ -3,8 +3,8 @@ use ethrex_common::{
     Address, H256, serde_utils,
     types::{
         BlockHash, BlockNumber, EIP1559Transaction, EIP2930Transaction, EIP7702Transaction,
-        FeeTokenTransaction, FrameTransaction, LegacyTransaction, PrivilegedL2Transaction,
-        Transaction, WrappedEIP4844Transaction,
+        EnvelopeTxType, FeeTokenTransaction, FrameTransaction, LegacyTransaction,
+        PrivilegedL2Transaction, Transaction, WrappedEIP4844Transaction,
     },
 };
 use ethrex_crypto::NativeCrypto;
@@ -83,37 +83,27 @@ impl SendRawTransactionRequest {
                 // Decode tx based on type
                 let tx_bytes = &bytes[1..];
 
-                match *tx_type {
-                    // Legacy
-                    0x0 => {
-                        LegacyTransaction::decode(tx_bytes).map(SendRawTransactionRequest::Legacy)
-                    }
-                    // EIP2930
-                    0x1 => {
+                // `from_type_byte` is the single gate for valid envelope types: it rejects 0x00
+                // (legacy is the bare-list branch below) and any unassigned type byte.
+                match EnvelopeTxType::from_type_byte(*tx_type)? {
+                    EnvelopeTxType::EIP2930 => {
                         EIP2930Transaction::decode(tx_bytes).map(SendRawTransactionRequest::EIP2930)
                     }
-                    // EIP1559
-                    0x2 => {
+                    EnvelopeTxType::EIP1559 => {
                         EIP1559Transaction::decode(tx_bytes).map(SendRawTransactionRequest::EIP1559)
                     }
-                    // EIP4844
-                    0x3 => WrappedEIP4844Transaction::decode(tx_bytes)
+                    EnvelopeTxType::EIP4844 => WrappedEIP4844Transaction::decode(tx_bytes)
                         .map(SendRawTransactionRequest::EIP4844),
-                    // EIP7702
-                    0x4 => {
+                    EnvelopeTxType::EIP7702 => {
                         EIP7702Transaction::decode(tx_bytes).map(SendRawTransactionRequest::EIP7702)
                     }
-                    // FeeTokenTransaction
-                    0x7d => FeeTokenTransaction::decode(tx_bytes)
+                    EnvelopeTxType::Frame => {
+                        FrameTransaction::decode(tx_bytes).map(SendRawTransactionRequest::Frame)
+                    }
+                    EnvelopeTxType::FeeToken => FeeTokenTransaction::decode(tx_bytes)
                         .map(SendRawTransactionRequest::FeeToken),
-                    // FrameTransaction (EIP-8141)
-                    0x6 => FrameTransaction::decode(tx_bytes).map(SendRawTransactionRequest::Frame),
-                    // PrivilegedL2Transaction
-                    0x7e => PrivilegedL2Transaction::decode(tx_bytes)
+                    EnvelopeTxType::Privileged => PrivilegedL2Transaction::decode(tx_bytes)
                         .map(SendRawTransactionRequest::PrivilegedL2),
-                    ty => Err(RLPDecodeError::Custom(format!(
-                        "Invalid transaction type: {ty}"
-                    ))),
                 }
             }
             // LegacyTransaction

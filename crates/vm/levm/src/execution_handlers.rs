@@ -150,7 +150,7 @@ impl<'a> VM<'a> {
 
         if new_account.create_would_collide() {
             // EIP-8037: `prepare_execution`'s in-region CREATE `NEW_ACCOUNT` charge
-            // (Task 4.2) runs before this collision check and fires whenever the
+            // runs before this collision check and fires whenever the
             // target's pre-state was EMPTY_ACCOUNT — which can be true even for a
             // colliding target in the EELS-documented "highly unlikely" case of a
             // zero-nonce/zero-code/zero-balance address that nonetheless has storage

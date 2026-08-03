@@ -28,11 +28,12 @@ let info = store.get_account_info(block_number, address)?;
 
 ## Deep-reorg cap and metrics
 
-By default the maximum reorg depth is finality-bounded: ethrex accepts any reorg
-up to the distance between the current head and the last finalized block (or the
-lowest journal entry when no finalized block is known). To restrict this further,
-pass `--max-reorg-depth <N>` on the CLI. `--max-reorg-depth 0` disables deep reorgs
-entirely and restores the pre-4-PR-stack behavior.
+By default the maximum reorg depth is physical: how far back the node can reconstruct
+state (in-memory layer retention plus the reverse-diff journal's reach). It is bounded
+only indirectly by finality, because finality advances prune the journal. To restrict
+this further, pass `--max-reorg-depth <N>` on the CLI; reorgs deeper than `N` are
+rejected with `-38006 TooDeepReorg`. NOTE: `--max-reorg-depth 0` rejects EVERY reorg,
+including routine 1-2 block reorgs — it does not restore the old 128-block cap.
 
 The following Prometheus metrics are exposed under `ethrex_reorg_*` /
 `ethrex_deep_reorg_*`:

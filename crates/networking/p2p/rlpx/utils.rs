@@ -148,4 +148,36 @@ mod tests {
         let out = snappy_decompress(&compressed).expect("decompress");
         assert_eq!(out, data);
     }
+
+    /// `snappy_decompress_bounded` rejects a declared length above a caller-supplied `max_len`
+    /// even when it is well under the global frame cap — the per-message bound used for
+    /// `PooledTransactions`.
+    #[test]
+    fn snappy_decompress_bounded_rejects_above_max_len() {
+        // Declare 8 MiB (under the 16 MiB global cap) but bound at 4 MiB.
+        let mut frame = Vec::new();
+        let mut declared = 8u64 * 1024 * 1024;
+        while declared >= 0x80 {
+            frame.push((declared as u8) | 0x80);
+            declared >>= 7;
+        }
+        frame.push(declared as u8);
+        frame.push(0x00); // minimal (invalid) body
+
+        let err = snappy_decompress_bounded(&frame, 4 * 1024 * 1024)
+            .expect_err("declared length above max_len must be rejected");
+        assert!(
+            format!("{err}").to_lowercase().contains("exceed"),
+            "expected a declared-length cap rejection, got: {err}"
+        );
+    }
+
+    /// A round-trip whose payload fits under the tighter bound still decodes.
+    #[test]
+    fn snappy_decompress_bounded_allows_below_max_len() {
+        let data = b"pooled transactions payload".repeat(100);
+        let compressed = snappy_compress(data.clone()).expect("compress");
+        let out = snappy_decompress_bounded(&compressed, 4 * 1024 * 1024).expect("decompress");
+        assert_eq!(out, data);
+    }
 }

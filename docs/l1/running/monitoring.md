@@ -113,10 +113,13 @@ Ethrex tracks fork-choice reorg activity through 8 Prometheus metrics under the
 
 ### Limiting reorg depth
 
-The default ceiling is finality-bounded (the distance between the current head and
-the last finalized block). To restrict it further, pass `--max-reorg-depth <N>` when
-starting ethrex. Setting `--max-reorg-depth 0` disables deep reorgs entirely and
-returns `SYNCING` for any fork choice update that would require one.
+The default ceiling is physical: how far back the node can reconstruct state
+(layer-cache retention plus journal reach), bounded only indirectly by finality
+because finality advances prune the journal. To restrict it further, pass
+`--max-reorg-depth <N>` when starting ethrex; reorgs deeper than `N` are rejected
+with `-38006 TooDeepReorg`. WARNING: `--max-reorg-depth 0` rejects EVERY reorg —
+including routine 1-2 block reorgs on a healthy network — it does not restore the
+old 128-block cap.
 
 ---
 

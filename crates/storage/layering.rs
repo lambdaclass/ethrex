@@ -75,13 +75,6 @@
 //! On the first commit the reconciliation step folds the overlay entries and
 //! the new layer together into a single atomic RocksDB write batch, then
 //! clears the overlay.
-//!
-//! ## Merged PRs
-//!
-//! - PR #6686 — initial journal + overlay foundation
-//! - PR #6687 — overlay construction from journal
-//! - PR #6689 — deep-reorg orchestration (overlay install, side-chain replay)
-//! - PR #6685 (tracking) — lift the 128-block reorg cap; this PR
 
 use ethrex_common::{H256, types::BlockNumber};
 use fastbloom::AtomicBloomFilter;
@@ -261,38 +254,6 @@ impl TrieLayerCache {
         self.commit_threshold
     }
 
-    /// Whether `state_root` has a diff layer. Not every canonical root does: [`Self::put_batch`]
-    /// skips blocks whose state root equals their parent's, and flushed roots are pruned. Callers
-    /// holding a root from outside the cache must check this before treating it as committable.
-    pub fn has_layer(&self, state_root: H256) -> bool {
-        self.layers.contains_key(&state_root)
-    }
-
-    /// Number of diff layers held in memory. Diagnostic only: distinguishes a pruned root from
-    /// an empty cache.
-    pub fn layer_count(&self) -> usize {
-        self.layers.len()
-    }
-
-    /// Returns the root of the oldest layer in the layer chain containing `root` — i.e.
-    /// walks parents until reaching a layer whose parent is not itself a layer. Returns
-    /// `root` unchanged if it has no layer.
-    ///
-    /// Used to force single-layer commits while a deep-reorg overlay is installed: the
-    /// reconciliation in `commit_to_disk` is defined for exactly one layer at the pivot
-    /// tip `T`, and a multi-layer sweep would journal upper layers' pre-images against
-    /// the old-chain disk state instead of the new-chain/bridge state.
-    pub(crate) fn bottom_layer_root(&self, root: H256) -> H256 {
-        let mut current = root;
-        while let Some(layer) = self.layers.get(&current) {
-            if !self.layers.contains_key(&layer.parent) {
-                break;
-            }
-            current = layer.parent;
-        }
-        current
-    }
-
     fn create_filter(expected_items: usize) -> AtomicBloomFilter<FxBuildHasher> {
         AtomicBloomFilter::with_false_pos(FALSE_POSITIVE_RATE)
             .hasher(FxBuildHasher)
@@ -379,15 +340,19 @@ impl TrieLayerCache {
         None
     }
 
-    /// Test-only reproduction of the pre-fix depth-only commit gate.
+    /// Depth-only commit gate for single-canonical-chain re-execution (full sync, block
+    /// import, startup state regeneration).
     ///
     /// Walks the parent chain from `state_root`, counting layers, and returns the state root of
-    /// the layer that is `threshold` layers deep — committing purely by depth, ignoring
-    /// canonicality and the [`safe_commit_root`](Self::safe_commit_root) cell. This mirrors the
-    /// deleted `get_commitable_with_threshold` and exists only so the regression test can
-    /// contrast it against the canonical+depth [`get_commitable`](Self::get_commitable) gate.
-    #[cfg(test)]
-    fn get_commitable_by_depth_for_test(
+    /// the layer that is `threshold` layers deep — committing purely by depth, ignoring the
+    /// canonical [`safe_commit_root`](Self::safe_commit_root) cell.
+    ///
+    /// Used only where the node extends a single canonical chain (these paths never execute
+    /// competing forks), so the non-canonical-commit hazard that the canonical gate guards
+    /// against cannot occur. The canonical gate keys on the `head - 128` safe-commit root, which
+    /// these paths never advance (nothing is canonicalized until a later forkchoice update), so
+    /// it would never flush during re-execution; this depth gate bounds memory instead.
+    pub(crate) fn get_commitable_by_depth(
         &self,
         mut state_root: H256,
         threshold: usize,
@@ -471,6 +436,38 @@ impl TrieLayerCache {
         });
 
         self.bloom = filter;
+    }
+
+    /// Whether `state_root` has a diff layer. Not every canonical root does: [`Self::put_batch`]
+    /// skips blocks whose state root equals their parent's, and flushed roots are pruned. Callers
+    /// holding a root from outside the cache must check this before treating it as committable.
+    pub fn has_layer(&self, state_root: H256) -> bool {
+        self.layers.contains_key(&state_root)
+    }
+
+    /// Number of diff layers held in memory. Diagnostic only: distinguishes a pruned root from
+    /// an empty cache.
+    pub fn layer_count(&self) -> usize {
+        self.layers.len()
+    }
+
+    /// Returns the root of the oldest layer in the layer chain containing `root` — i.e.
+    /// walks parents until reaching a layer whose parent is not itself a layer. Returns
+    /// `root` unchanged if it has no layer.
+    ///
+    /// Used to force single-layer commits while a deep-reorg overlay is installed: the
+    /// The reconciliation in `commit_to_disk` is defined for exactly one layer at
+    /// the pivot tip `T`, and a multi-layer sweep would journal upper layers' pre-images
+    /// against the old-chain disk state instead of the new-chain/bridge state.
+    pub(crate) fn bottom_layer_root(&self, root: H256) -> H256 {
+        let mut current = root;
+        while let Some(layer) = self.layers.get(&current) {
+            if !self.layers.contains_key(&layer.parent) {
+                break;
+            }
+            current = layer.parent;
+        }
+        current
     }
 
     /// Removes the layer at `state_root` and all its ancestors from the cache, returning
@@ -751,7 +748,7 @@ pub enum OverlayError {
 /// execution cascade as: new layer cache -> overlay -> on-disk state. On-disk state
 /// is NOT mutated while the overlay is alive; disk stays at `D` until the first
 /// new-chain commit folds the overlay and the new layer together into a single
-/// atomic write (PR 3's reconciliation step).
+/// atomic write (the reconciliation step in `commit_to_disk`).
 pub struct Overlay {
     account_trie: FxHashMap<Vec<u8>, Option<Vec<u8>>>,
     storage_trie: FxHashMap<Vec<u8>, Option<Vec<u8>>>,
@@ -845,9 +842,11 @@ impl Overlay {
         // SAFETY: `StorageReadView` does not guarantee snapshot isolation on RocksDB.
         // The only writer to STATE_HISTORY is `forkchoice_update_inner` (finality
         // pruning); a concurrent FCU `delete_range` between two `.get()` calls below
-        // could cause a spurious `MissingEntry`. PR 3 will install a reorg-in-progress
-        // flag; while it is set, `forkchoice_update_inner` will not enter, preventing
-        // pruning during overlay construction.
+        // could cause a spurious `MissingEntry`. This is prevented by the
+        // reorg-in-progress guard: `Blockchain::enter_reorg` holds
+        // `Store::set_journal_pruning_paused(true)` for the whole apply pass, so
+        // pruning is deferred while the overlay is constructed (it catches up on
+        // the next finality advance after the pass).
         let read = backend.begin_read()?;
         let mut n = from_block;
         loop {
@@ -971,8 +970,8 @@ impl Overlay {
     }
 
     /// Iterates every overlay entry across the four CFs as `(cf, key, value)`. Used
-    /// by PR 3's reconciliation step to fold overlay-only entries into the first
-    /// new-chain commit.
+    /// by the reconciliation step in `commit_to_disk` to fold overlay-only entries
+    /// into the first new-chain commit.
     pub fn iter_all_entries(
         &self,
     ) -> impl Iterator<Item = (OverlayCf, &Vec<u8>, &Option<Vec<u8>>)> {
@@ -1186,7 +1185,7 @@ mod overlay_tests {
     /// The overlay must only be consulted by readers at a "consuming" root ; the pivot
     /// (`serves_root`) or a new-chain layer root present in the cache. Unrelated roots
     /// (old-chain edge `D`, historical/RPC reads) must fall through to disk. Regression
-    /// for the #6687 "Overlay Applies Across Roots" P1.
+    /// for the review finding "Overlay Applies Across Roots".
     #[test]
     fn overlay_serves_only_consuming_roots() {
         let pivot = h(0xaa);
@@ -1422,7 +1421,7 @@ mod overlay_tests {
 
     #[test]
     fn iter_all_entries_visits_each_cf() {
-        // Sanity check for PR 3's reconciliation path: every CF an entry was inserted
+        // Sanity check for the reconciliation path: every CF an entry was inserted
         // into must show up in iter_all_entries, with the right CF tag.
         let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::open().unwrap());
         let entry = JournalEntry {
@@ -1655,32 +1654,61 @@ mod tests {
         );
     }
 
-    /// Red -> green regression: the old depth-only gate commits non-canonical state (pruning
-    /// genesis -> the "post-state for block 0 absent" wedge); the canonical+depth gate commits
-    /// nothing while no canonical safe-commit point exists.
+    /// Why live block-by-block execution must NOT use the depth gate: with nothing canonicalized
+    /// (safe_commit cell ZERO), the depth gate would flush a non-canonical layer and prune genesis
+    /// -> the "post-state for block 0 absent" wedge. The canonical gate commits nothing instead.
     ///
     /// Wedge simulation: non-canonical newPayload layers pile up but nothing is canonicalized,
     /// so the safe_commit cell stays ZERO and never advances.
     #[test]
-    fn noncanonical_depth_old_gate_commits_new_gate_does_not() {
+    fn live_canonical_gate_holds_while_depth_gate_would_commit() {
         // threshold = 4, safe_commit cell = ZERO (nothing canonicalized).
         let (mut cache, _cell) = cache_with_cell(4, H256::zero());
         // Linear chain L1 <- L2 <- L3 <- L4 <- L5 (distinct keys so guards pass).
         let roots = build_chain(&mut cache, 5);
         let l5 = *roots.last().unwrap();
 
-        // OLD gate: commits a layer at depth 4 (the bug) -> would prune genesis on the
-        // path-keyed disk root.
+        // Depth gate: commits a layer at depth 4 -> would prune genesis on the path-keyed disk
+        // root if used in live mode. This is why live mode uses the canonical gate below.
         assert!(
-            cache.get_commitable_by_depth_for_test(l5, 4).is_some(),
-            "old depth-only gate must commit at depth 4 (the bug)"
+            cache.get_commitable_by_depth(l5, 4).is_some(),
+            "depth-only gate commits at depth 4 regardless of canonicality"
         );
 
-        // NEW gate: safe_commit cell is zero, so nothing is committed and genesis is preserved.
+        // Canonical gate (live mode): safe_commit cell is zero, so nothing is committed and
+        // genesis is preserved.
         assert_eq!(
             cache.get_commitable(l5),
             None,
-            "canonical+depth gate must commit nothing while safe_commit is zero (the fix)"
+            "canonical gate must commit nothing while safe_commit is zero (the wedge fix)"
+        );
+    }
+
+    /// Batch execution (full sync / import) must still flush even when no FCU has advanced the
+    /// safe-commit cell. The canonical gate stays parked at zero (import does not FCU until the
+    /// end; full sync's `head - 128` root never lands on a ~1024-block batch boundary), so batch
+    /// mode commits by depth instead -> memory stays bounded and state is durable across restart.
+    #[test]
+    fn batch_depth_gate_flushes_without_safe_commit() {
+        // safe_commit cell = ZERO, as during bulk import before the terminal FCU.
+        let (mut cache, _cell) = cache_with_cell(4, H256::zero());
+        // Five batch layers stacked (each stands in for ~1024 blocks in real batch mode).
+        let roots = build_chain(&mut cache, 5);
+        let tip = *roots.last().unwrap();
+
+        // Canonical gate would never flush here -> unbounded memory (the regression iovoid flagged).
+        assert_eq!(
+            cache.get_commitable(tip),
+            None,
+            "canonical gate never flushes batch layers while safe_commit is zero"
+        );
+
+        // Depth gate (batch mode) flushes the layer BATCH_COMMIT_THRESHOLD deep: root_2 sits 4
+        // layers below the tip (tip=root_5).
+        assert_eq!(
+            cache.get_commitable_by_depth(tip, 4),
+            Some(roots[1]),
+            "batch depth gate must flush the layer 4 deep, bounding memory"
         );
     }
 }

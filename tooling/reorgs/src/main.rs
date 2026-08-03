@@ -493,8 +493,8 @@ async fn test_storage_slots_reorg(simulator: Arc<Mutex<Simulator>>) {
 ///      `build_payload` on B issues `FCU(head = genesis)`, which lands in
 ///      `apply_fork_choice` with `latest = 150`, `canonical_link_height = 0`,
 ///      hence `reorg_depth = 150`. The old `REORG_DEPTH_LIMIT = 128` would
-///      have returned `TooDeepReorg`; PR 4's finality-bounded ceiling
-///      (`latest - finalized_number = 150`) accepts it.
+///      have returned `TooDeepReorg`; the physical ceiling (journal reach
+///      covers the full 150-block chain, retention floor 10000) accepts it.
 ///
 /// Chain B is salted (`with_salt(1)`) so its blocks diverge from chain A's
 /// from block 1 onward. Without the salt the two chains would produce
@@ -527,8 +527,8 @@ async fn test_deep_reorg_beyond_128(simulator: Arc<Mutex<Simulator>>) {
 
     // Phase 2: build chain B from genesis. The first build_payload triggers
     // the cap-check at reorg_depth = 150 (latest_A - link_to_genesis = 150).
-    // Pre-PR-4 this would return TooDeepReorg{ limit: 128 } and the test
-    // would panic on the build_payload assertion.
+    // Before the reorg-cap lift this would return TooDeepReorg{ limit: 128 }
+    // and the test would panic on the build_payload assertion.
     let mut chain_b = base_chain.fork().with_salt(1);
     info!("Building chain B (200 blocks, forks at genesis -- first FCU is the 150-deep reorg)");
     for i in 0..200usize {
@@ -578,7 +578,7 @@ async fn test_deep_reorg_beyond_128(simulator: Arc<Mutex<Simulator>>) {
 ///      returns `StateNotReachable`, and `reorg_apply_deep` takes over with
 ///      `pivot = COMMON`, `side_chain_len = 200`. The replay loop calls
 ///      `Blockchain::add_block` 200 times against overlay-backed reads, and the
-///      first commit folds the overlay into disk atomically via the Section 9
+///      first commit folds the overlay into disk atomically via the reconciliation
 ///      reconciliation.
 async fn test_deep_reorg_side_chain_replay(simulator: Arc<Mutex<Simulator>>) {
     const COMMON: usize = 100;
