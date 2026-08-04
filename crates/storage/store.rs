@@ -3257,6 +3257,15 @@ impl Store {
         // nibble bytes. `Nibbles` orders by its inner `data` vec, so the raw
         // slice comparison is byte-identical to the `Nibbles >= Nibbles` check
         // in `BackendTrieDB::flatkeyvalue_computed`.
+        //
+        // While a deep-reorg overlay serves this root, skip the FKV fast path
+        // entirely: this function never consults the overlay, and disk flat-KV may
+        // hold values the generator computed against the chain being reorged away
+        // (journal entries written during generation lack past-frontier flat-KV
+        // pre-images). The per-slot trie fallback reads through `TrieWrapper`, which
+        // routes through the overlay. Mirrors the gate in
+        // `get_storage_at_root` and `get_account_states_batch_by_root`.
+        let overlay_active = trie_cache.overlay_serves(state_root);
         let fkv_cursor: &[u8] = last_written.as_slice();
         for (i, path) in leaf_paths.iter().enumerate() {
             // Diff-layer cache holds the authoritative latest value for this
@@ -3269,7 +3278,7 @@ impl Store {
                 }
                 continue;
             }
-            if fkv_cursor >= path.as_slice() {
+            if !overlay_active && fkv_cursor >= path.as_slice() {
                 fkv_indices.push(i);
             } else {
                 trie_indices.push(i);
@@ -6251,6 +6260,18 @@ mod state_history_tests {
             "storage read must not serve the generator's stale flat-KV value"
         );
 
+        let batched_slots = store
+            .get_storage_values_batch_by_root(
+                pivot_root,
+                &[(hash_address_fixed(&address), EMPTY_TRIE_HASH, slot)],
+            )
+            .unwrap();
+        assert_eq!(
+            batched_slots,
+            vec![None],
+            "batch storage read must not serve the generator's stale flat-KV value"
+        );
+
         let state_trie = store.open_state_trie(pivot_root).unwrap();
         assert_eq!(
             state_trie.get(account_hash.as_bytes()).unwrap(),
@@ -6275,6 +6296,18 @@ mod state_history_tests {
         assert_eq!(
             slot_value,
             Some(generator_slot_value),
+            "unserved roots must keep the flat-KV fast path"
+        );
+
+        let batched_slots = store
+            .get_storage_values_batch_by_root(
+                unserved_root,
+                &[(hash_address_fixed(&address), EMPTY_TRIE_HASH, slot)],
+            )
+            .unwrap();
+        assert_eq!(
+            batched_slots,
+            vec![Some(generator_slot_value)],
             "unserved roots must keep the flat-KV fast path"
         );
     }
