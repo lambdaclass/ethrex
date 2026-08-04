@@ -1779,15 +1779,23 @@ impl Blockchain {
                 }
             }
 
-            // Store all the accessed evm bytecodes
-            for code_hash in logger
-                .code_accessed
-                .lock()
-                .map_err(|_e| {
+            // Store all the accessed evm bytecodes. `code_accessed` records one entry
+            // per read, and a contract read for both its bytecode and its length is
+            // recorded twice, so dedup before embedding: a repeated hash would put the
+            // same (up to 24KB) bytecode in the witness more than once.
+            let accessed_codes: Vec<H256> = {
+                let accessed = logger.code_accessed.lock().map_err(|_e| {
                     ChainError::WitnessGeneration("Failed to gather used bytecodes".to_string())
-                })?
-                .iter()
-            {
+                })?;
+                let mut seen =
+                    FxHashSet::with_capacity_and_hasher(accessed.len(), Default::default());
+                accessed
+                    .iter()
+                    .copied()
+                    .filter(|h| seen.insert(*h))
+                    .collect()
+            };
+            for code_hash in &accessed_codes {
                 let code = self
                     .storage
                     .get_account_code(*code_hash)
@@ -2041,15 +2049,22 @@ impl Blockchain {
             }
         }
 
-        // Store all the accessed evm bytecodes
-        for code_hash in logger
-            .code_accessed
-            .lock()
-            .map_err(|_e| {
+        // Store all the accessed evm bytecodes. `code_accessed` records one entry
+        // per read, and a contract read for both its bytecode and its length is
+        // recorded twice, so dedup before embedding: a repeated hash would put the
+        // same (up to 24KB) bytecode in the witness more than once.
+        let accessed_codes: Vec<H256> = {
+            let accessed = logger.code_accessed.lock().map_err(|_e| {
                 ChainError::WitnessGeneration("Failed to gather used bytecodes".to_string())
-            })?
-            .iter()
-        {
+            })?;
+            let mut seen = FxHashSet::with_capacity_and_hasher(accessed.len(), Default::default());
+            accessed
+                .iter()
+                .copied()
+                .filter(|h| seen.insert(*h))
+                .collect()
+        };
+        for code_hash in &accessed_codes {
             let code = self
                 .storage
                 .get_account_code(*code_hash)

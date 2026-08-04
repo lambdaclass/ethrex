@@ -18,7 +18,7 @@ use ethrex_rlp::{
 use super::GenesisAccount;
 use crate::constants::{EMPTY_KECCAK_HASH, EMPTY_TRIE_HASH};
 
-/// Shared empty jump-target table. `Code::default()` and any bytecode without a
+/// Shared empty jumpdest bitmap. `Code::default()` and any bytecode without a
 /// `JUMPDEST` clone this (a refcount bump) instead of allocating a fresh empty
 /// `Arc` header each time. This matters because the per-tx `Code::default()`
 /// placeholder and every EOA / empty-code load would otherwise each allocate.
@@ -43,9 +43,13 @@ pub struct Code {
     /// The real bytecode length, needed for some opcodes, `bytecode` is padded with 33 STOPs to avoid checked adds on hot loop.
     bytecode_len: usize,
     /// One bit per bytecode byte, set when that offset holds a `JUMPDEST` that is not
-    /// part of a `PUSH` immediate. A bitmap is `len/8` bytes regardless of how dense
+    /// part of a `PUSH` immediate. Costs `ceil(len / 8)` bytes regardless of how dense
     /// the jump destinations are, and validating a jump is a bit test rather than a
     /// search.
+    ///
+    /// Bytecode with no jump destination stores a zero-length bitmap ([`EMPTY_JUMPDESTS`])
+    /// rather than an all-zero one, so this is not always `ceil(len / 8)` bytes long;
+    /// [`Code::is_valid_jumpdest`] reads a missing byte as "no jump destination".
     //
     // `Arc<[u8]>` so cloning `Code` (hot: every message-call resolves and clones
     // the callee's code) is a refcount bump instead of deep-copying the bitmap.
@@ -99,8 +103,8 @@ impl Code {
     /// The bits of a byte are accumulated in a register and written once the scan leaves
     /// that byte, which the monotonic `i` makes safe. Reading the bitmap back inside the
     /// loop instead would turn each `JUMPDEST` into a read-modify-write, and indexing it
-    /// would put a bounds-check panic path in the loop; either costs more than the scan
-    /// itself for bytecode with few jump destinations.
+    /// would put a bounds-check panic path in the loop body, which inhibits optimization
+    /// of every iteration rather than only the ones that find a destination.
     pub fn compute_jumpdests(code: &[u8]) -> Arc<[u8]> {
         let mut bitmap = vec![0u8; code.len().div_ceil(8)];
         let mut any = false;
@@ -190,9 +194,9 @@ impl Code {
     /// Estimates the size of the Code struct in bytes
     /// (including stack size and heap allocation).
     ///
-    /// Note: This is an estimation and may not be exact. Shared allocations (the
-    /// empty bitmap, a `Bytes` slice of a larger buffer) are counted in full, so the
-    /// estimate is an upper bound.
+    /// Note: an estimate. It ignores allocator overhead and the `Arc`/`Bytes` control
+    /// blocks, so it slightly under-counts, and a shared allocation is attributed in
+    /// full to every entry holding it.
     ///
     /// # Returns
     ///
