@@ -79,10 +79,7 @@ impl LevmDatabase for DatabaseLogger {
         self.store.as_ref().get_account_code(code_hash)
     }
 
-    fn get_account_codes_batch(
-        &self,
-        code_hashes: &[CoreH256],
-    ) -> Result<Vec<Code>, DatabaseError> {
+    fn prefetch_codes(&self, code_hashes: &[CoreH256]) -> Result<(), DatabaseError> {
         // Record before delegating, exactly as the per-hash path does, so a batched
         // read cannot leave the witness short of a bytecode it observed.
         {
@@ -97,7 +94,7 @@ impl LevmDatabase for DatabaseLogger {
                     .copied(),
             );
         }
-        self.store.as_ref().get_account_codes_batch(code_hashes)
+        self.store.as_ref().prefetch_codes(code_hashes)
     }
 
     fn get_code_metadata(&self, code_hash: CoreH256) -> Result<CodeMetadata, DatabaseError> {
@@ -177,7 +174,7 @@ impl LevmDatabase for DynVmDatabase {
     fn get_account_codes_batch(
         &self,
         code_hashes: &[CoreH256],
-    ) -> Result<Vec<Code>, DatabaseError> {
+    ) -> Result<Vec<Option<Code>>, DatabaseError> {
         <dyn VmDatabase>::get_account_codes_batch(self.as_ref(), code_hashes)
             .map_err(|e| DatabaseError::Custom(e.to_string()))
     }

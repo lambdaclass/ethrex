@@ -14,12 +14,14 @@ use ethrex_storage::{EngineType, Store};
 /// Number of distinct codes written.
 ///
 /// The batched read picks between a parallel fan-out of point gets and sharded blocking
-/// reads, switching once the batch forms more 256-key shards than there are cores. This
-/// is sized past that switch so the parity checks cover the sharded path; the fan-out
-/// path is covered by [`batch_matches_the_single_get_below_the_shard_threshold`].
+/// reads, switching once the batch forms more 256-key shards than there are cores. Sized
+/// past that switch so the parity checks cover the sharded path; the fan-out path is
+/// covered by [`batch_matches_the_single_get_below_the_shard_threshold`].
 fn code_count() -> u64 {
-    let parallelism = std::thread::available_parallelism().map_or(8, |p| p.get()) as u64;
-    256 * parallelism + 256
+    let parallelism =
+        u64::try_from(std::thread::available_parallelism().map_or(8, |p| p.get())).unwrap_or(8);
+    // One shard per 256 keys, and sharding is chosen above `parallelism` shards.
+    256 * (parallelism + 1)
 }
 
 const JUMPDEST: u8 = 0x5b;
@@ -67,22 +69,38 @@ async fn batch_matches_the_single_get_including_absent_hashes() {
         requested.push(absent_hash(id));
     }
 
+    // Read per-hash FIRST, on a cold cache, so these are real database reads rather
+    // than the batch's own inserts read back.
+    let singles: Vec<Option<Code>> = requested
+        .iter()
+        .map(|hash| store.get_account_code(*hash).expect("get_account_code"))
+        .collect();
+
     let batched = store
         .get_account_codes_batch(&requested)
         .expect("get_account_codes_batch");
     assert_eq!(batched.len(), requested.len());
 
-    for (hash, batched) in requested.iter().zip(batched.iter()) {
-        let single = store.get_account_code(*hash).expect("get_account_code");
+    for ((hash, batched), single) in requested.iter().zip(batched.iter()).zip(singles.iter()) {
+        // Independent expectation: absent hashes yield None, present ones the code we
+        // wrote, with the bitmap recomputed from the bytecode rather than read back.
+        let expected = (*hash != absent_hash(0) && hash.to_low_u64_be() < count)
+            .then(|| code_of(hash.to_low_u64_be()));
+
         assert_eq!(
             batched.as_ref().map(|c| c.code()),
-            single.as_ref().map(|c| c.code()),
+            expected.as_ref().map(|c| c.code()),
             "bytecode mismatch for {hash:?}"
         );
         assert_eq!(
             batched.as_ref().map(|c| c.jumpdests()),
-            single.as_ref().map(|c| c.jumpdests()),
+            expected.as_ref().map(|c| c.jumpdests()),
             "jumpdest bitmap mismatch for {hash:?}"
+        );
+        assert_eq!(
+            batched.as_ref().map(|c| c.code()),
+            single.as_ref().map(|c| c.code()),
+            "batch and per-hash read disagree for {hash:?}"
         );
     }
 }
@@ -100,10 +118,16 @@ async fn batch_results_follow_the_requested_order() {
         .expect("get_account_codes_batch");
 
     for (id, batched) in (0..count).rev().zip(batched.iter()) {
+        let expected = code_of(id);
         assert_eq!(
             batched.as_ref().map(|c| c.code()),
-            Some(code_of(id).code()),
+            Some(expected.code()),
             "wrong code returned for id {id}"
+        );
+        assert_eq!(
+            batched.as_ref().map(|c| c.jumpdests()),
+            Some(expected.jumpdests()),
+            "wrong bitmap returned for id {id}"
         );
     }
 }
@@ -157,15 +181,16 @@ async fn batch_matches_the_single_get_below_the_shard_threshold() {
         .expect("get_account_codes_batch");
 
     for (hash, batched) in requested.iter().zip(batched.iter()) {
-        let single = store.get_account_code(*hash).expect("get_account_code");
+        let id = hash.to_low_u64_be();
+        let expected = (id < 64).then(|| code_of(id));
         assert_eq!(
             batched.as_ref().map(|c| c.code()),
-            single.as_ref().map(|c| c.code()),
+            expected.as_ref().map(|c| c.code()),
             "bytecode mismatch for {hash:?}"
         );
         assert_eq!(
             batched.as_ref().map(|c| c.jumpdests()),
-            single.as_ref().map(|c| c.jumpdests()),
+            expected.as_ref().map(|c| c.jumpdests()),
             "jumpdest bitmap mismatch for {hash:?}"
         );
     }

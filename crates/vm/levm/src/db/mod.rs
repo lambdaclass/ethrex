@@ -43,13 +43,17 @@ pub trait Database: Send + Sync {
             .map(|a| self.get_account_state(*a))
             .collect()
     }
-    /// Batch bytecode lookup. Default: loop. Backends with a batched read path
-    /// (e.g. rocksdb `multi_get_cf` on the account-codes table) should override
-    /// this and the caching layer above will dispatch to it.
-    fn get_account_codes_batch(&self, code_hashes: &[H256]) -> Result<Vec<Code>, DatabaseError> {
+    /// Batch bytecode lookup, aligned to `code_hashes`. `None` means the hash is absent
+    /// from the database. Default: loop. Backends with a batched read path (e.g. rocksdb
+    /// `multi_get_cf` on the account-codes table) should override this; the caching layer
+    /// above dispatches to it from [`Self::prefetch_codes`].
+    fn get_account_codes_batch(
+        &self,
+        code_hashes: &[H256],
+    ) -> Result<Vec<Option<Code>>, DatabaseError> {
         code_hashes
             .iter()
-            .map(|h| self.get_account_code(*h))
+            .map(|h| self.get_account_code(*h).map(Some))
             .collect()
     }
     /// Batch storage-slot lookup. Default: loop. Backends with a batched read
@@ -62,6 +66,18 @@ pub trait Database: Send + Sync {
         keys.iter()
             .map(|&(addr, key)| self.get_storage_value(addr, key))
             .collect()
+    }
+
+    /// Prefetch a batch of bytecodes into the cache. Default: sequential fallback.
+    ///
+    /// Warming only, so nothing is returned and an absent hash is not an error. Backends
+    /// with a batched read path (e.g. rocksdb `multi_get_cf` on the account-codes table)
+    /// reach it through the caching layer's override.
+    fn prefetch_codes(&self, code_hashes: &[H256]) -> Result<(), DatabaseError> {
+        for &hash in code_hashes {
+            let _ = self.get_account_code(hash);
+        }
+        Ok(())
     }
     /// Prefetch a batch of accounts into the cache. Default: sequential fallback.
     fn prefetch_accounts(&self, addresses: &[Address]) -> Result<(), DatabaseError> {
@@ -320,21 +336,14 @@ impl Database for CachingDatabase {
             .collect()
     }
 
-    /// Fetches the uncached bytecodes in one batch, so a batch whose entries share code
-    /// hashes reads each once, then answers every entry from the cache under the lock
-    /// that already covers the insert.
-    fn get_account_codes_batch(&self, code_hashes: &[H256]) -> Result<Vec<Code>, DatabaseError> {
-        let answer_from = |cache: &CodeCache| -> Result<Vec<Code>, DatabaseError> {
-            code_hashes
-                .iter()
-                .map(|hash| {
-                    cache.get(hash).cloned().ok_or_else(|| {
-                        DatabaseError::Custom(format!("code {hash:?} missing after batch read"))
-                    })
-                })
-                .collect()
-        };
-
+    /// Fetches the uncached bytecodes in one batch and inserts them, reading each
+    /// distinct hash once however many entries share it.
+    ///
+    /// Returns nothing: the executor reads code through [`Self::get_account_code`], which
+    /// this turns into a cache hit. Assembling a result vector here would hold the write
+    /// lock that guards every executor code read for the length of the batch, to build
+    /// something a warming caller discards.
+    fn prefetch_codes(&self, code_hashes: &[H256]) -> Result<(), DatabaseError> {
         let missing: Vec<H256> = {
             let cache = self.read_code()?;
             let mut seen: FxHashSet<H256> = FxHashSet::default();
@@ -346,18 +355,18 @@ impl Database for CachingDatabase {
         };
 
         if missing.is_empty() {
-            let cache = self.read_code()?;
-            return answer_from(&cache);
+            return Ok(());
         }
 
         let codes = self.inner.get_account_codes_batch(&missing)?;
-        // Assembled under the same write guard as the insert. Reacquiring a read lock
-        // instead would be correct only while this cache never evicts.
         let mut cache = self.write_code()?;
         for (hash, code) in missing.into_iter().zip(codes.into_iter()) {
-            cache.entry(hash).or_insert(code);
+            // An absent hash has nothing to warm; the executor reports it if reached.
+            if let Some(code) = code {
+                cache.entry(hash).or_insert(code);
+            }
         }
-        answer_from(&cache)
+        Ok(())
     }
 
     fn prefetch_accounts(&self, addresses: &[Address]) -> Result<(), DatabaseError> {

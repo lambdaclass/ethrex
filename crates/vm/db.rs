@@ -26,13 +26,14 @@ pub trait VmDatabase: Send + Sync + DynClone {
             .collect()
     }
 
-    /// Batch bytecode lookup. Default impl loops `get_account_code`.
-    /// Backends that can amortize per-key cost (e.g. rocksdb `multi_get_cf` on
-    /// the account-codes table) should override this.
-    fn get_account_codes_batch(&self, code_hashes: &[H256]) -> Result<Vec<Code>, EvmError> {
+    /// Batch bytecode lookup, aligned to `code_hashes`. `None` means the hash is absent
+    /// from the database, which callers warming a cache treat as nothing to warm rather
+    /// than as failure. Default impl loops `get_account_code`; backends that can amortize
+    /// per-key cost (e.g. rocksdb `multi_get_cf` on the account-codes table) override it.
+    fn get_account_codes_batch(&self, code_hashes: &[H256]) -> Result<Vec<Option<Code>>, EvmError> {
         code_hashes
             .iter()
-            .map(|h| self.get_account_code(*h))
+            .map(|h| self.get_account_code(*h).map(Some))
             .collect()
     }
 
