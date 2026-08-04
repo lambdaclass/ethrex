@@ -22,7 +22,8 @@ use crate::{
 };
 
 /// Maximum consecutive PeerTable `RequestTimeout` cycles without an intervening
-/// successful cycle before the snap manager loop escalates to `exit(2)`.
+/// successful cycle before the snap manager loop cancels the construction-time
+/// cancellation token (on L1: node shutdown/flush) instead of `process::exit`.
 /// The counter resets on each successful cycle. Value matches the pivot-update
 /// rotation budget in `snap_sync`.
 const MAX_CONSECUTIVE_REQUEST_TIMEOUTS: u64 = 5;
@@ -128,6 +129,9 @@ pub struct SyncManager {
     last_fcu_head: Arc<Mutex<H256>>,
     store: Store,
     diagnostics: Arc<tokio::sync::RwLock<SyncDiagnostics>>,
+    /// Cancellation token from construction. On L1 this is the node token `main`
+    /// waits on; cancelling it runs shutdown/flush instead of `process::exit`.
+    cancel_token: CancellationToken,
 }
 
 impl SyncManager {
@@ -178,7 +182,7 @@ impl SyncManager {
         let syncer = Arc::new(Mutex::new(Syncer::new(
             peer_handler,
             snap_enabled.clone(),
-            cancel_token,
+            cancel_token.clone(),
             blockchain,
             datadir,
             diagnostics.clone(),
@@ -189,6 +193,7 @@ impl SyncManager {
             last_fcu_head: Arc::new(Mutex::new(H256::zero())),
             store: store.clone(),
             diagnostics,
+            cancel_token,
         };
         // If the node was in the middle of a sync and then re-started we must resume syncing
         // Otherwise we will incorreclty assume the node is already synced and work on invalid state
@@ -294,6 +299,7 @@ impl SyncManager {
         let syncer = self.syncer.clone();
         let store = self.store.clone();
         let sync_head = self.last_fcu_head.clone();
+        let cancel_token = self.cancel_token.clone();
 
         tokio::spawn(async move {
             // If we can't get hold of the syncer, then it means that there is an active sync in process
@@ -342,9 +348,10 @@ impl SyncManager {
                         error!(
                             consecutive_timeouts = retry_state.consecutive_timeouts,
                             max = MAX_CONSECUTIVE_REQUEST_TIMEOUTS,
-                            "Sync cycle failed with {MAX_CONSECUTIVE_REQUEST_TIMEOUTS} consecutive PeerTable request timeouts without a successful cycle; exiting"
+                            "Sync cycle failed with {MAX_CONSECUTIVE_REQUEST_TIMEOUTS} consecutive PeerTable request timeouts without a successful cycle; cancelling node"
                         );
-                        std::process::exit(2);
+                        cancel_token.cancel();
+                        break;
                     }
                     SyncLoopStep::SleepAndContinue(delay) => {
                         warn!(
