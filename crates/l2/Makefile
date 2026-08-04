@@ -6,6 +6,12 @@
 
 .DEFAULT_GOAL := help
 
+# Image metadata baked into the compose-built images (consumed by
+# docker-compose.yaml build args). Mirrors the root Makefile's build-image.
+GIT_SHA    := $(shell git rev-parse HEAD 2>/dev/null || echo unknown)
+GIT_BRANCH := $(shell git rev-parse --abbrev-ref HEAD 2>/dev/null || echo unknown)
+VERSION    := $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
+
 # ==============================================================================
 # Top-Level Targets
 # ==============================================================================
@@ -27,6 +33,12 @@ restart: restart-l1-docker deploy-l1 restart-metrics restart-l2 ## 🔄 Restarts
 
 L2_GENESIS_FILE_PATH=../../fixtures/genesis/l2.json
 L1_GENESIS_FILE_PATH=../../fixtures/genesis/l1.json
+NATIVE_L2_GENESIS_FILE_PATH=../../fixtures/genesis/native_l2.json
+# Dedicated L1 genesis for native rollups: activates LStar (EXECUTE precompile).
+# Kept separate from l1.json, which is shared by the standard L2 flow, local devnet,
+# RPC/EF tests and benches (all via include_str!) and must stay at Osaka.
+NATIVE_L1_GENESIS_FILE_PATH=../../fixtures/genesis/l1_native.json
+NATIVE_RELAYER_PRIVATE_KEY=0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d
 
 ethrex_PATH=$(shell pwd)/../..
 ethrex_BIN_PATH=$(ethrex_PATH)/target/release/ethrex
@@ -83,6 +95,15 @@ init-l1: ## 🚀 Initializes an L1 Lambda ethrex Client
 	--dev \
 	--datadir ${ethrex_L1_DEV_DB}
 
+init-l1-native: ## 🚀 Initializes an L1 Lambda ethrex Client with LStar active (EXECUTE precompile enabled) for native rollups
+	cargo run --release --features l2 --manifest-path ../../Cargo.toml --bin ethrex -- \
+	--network ${NATIVE_L1_GENESIS_FILE_PATH} \
+	--http.port ${L1_PORT} \
+	--http.addr ${L1_RPC_ADDRESS} \
+	--authrpc.port ${L1_AUTH_PORT} \
+	--dev \
+	--datadir ${ethrex_L1_DEV_DB}
+
 rm-db-l1: ## 🛑 Removes the DB used by the L1
 	cargo run --release --manifest-path ../../Cargo.toml --bin ethrex -- removedb --datadir ${ethrex_L1_DEV_DB} --force
 
@@ -98,6 +119,17 @@ deploy-l1: ## 📜 Deploys the L1 contracts
 	--private-keys-file-path ../../fixtures/keys/private_keys_l1.txt \
 	--genesis-l1-path ${L1_GENESIS_FILE_PATH} \
 	--genesis-l2-path ${L2_GENESIS_FILE_PATH}
+
+deploy-l1-native: ## 📜 Deploys NativeRollup.sol to L1 (native rollups)
+	COMPILE_CONTRACTS=true \
+	cargo run --release --features l2,l2-sql --manifest-path ../../Cargo.toml -- l2 deploy \
+	--eth-rpc-url ${L1_RPC_URL} \
+	--private-key ${L1_PRIVATE_KEY} \
+	--native-rollups \
+	--native-rollups.relayer-pk ${NATIVE_RELAYER_PRIVATE_KEY} \
+	--native-rollups.finality-delay 0 \
+	--genesis-l2-path ${NATIVE_L2_GENESIS_FILE_PATH} \
+	--l2-gas-limit 15000000
 
 ## Same as deploy-l1 but deploys the SP1 verifier
 deploy-l1-sp1: ## 📜 Deploys the L1 contracts with SP1 verifier
@@ -152,6 +184,25 @@ init-l2: ## 🚀 Initializes an L2 Lambda ethrex Client
 	--committer.l1-private-key 0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924 \
 	--proof-coordinator.l1-private-key 0x39725efee3fb28614de3bacaffe4cc4bd8c436257e2c8bb887c4b5c4be45e76d \
 	--proof-coordinator.addr ${PROOF_COORDINATOR_ADDRESS}
+
+init-l2-native: ## 🚀 Initializes a native rollup L2 client
+	export $(shell cat ../../cmd/.env | xargs); \
+	ETHREX_NO_MONITOR=true \
+	cargo run --release --features l2,l2-sql --manifest-path ../../Cargo.toml -- \
+	l2 \
+	--native-rollups \
+	--native-rollups.block-time 10000 \
+	--native-rollups.contract-address $${ETHREX_NATIVE_ROLLUP_CONTRACT_ADDRESS} \
+	--native-rollups.relayer-pk ${NATIVE_RELAYER_PRIVATE_KEY} \
+	--native-rollups.l1-pk ${L1_PRIVATE_KEY} \
+	--network ${NATIVE_L2_GENESIS_FILE_PATH} \
+	--http.port ${L2_PORT} \
+	--http.addr ${L2_RPC_ADDRESS} \
+	--datadir ${ethrex_L2_DEV_DB} \
+	--eth.rpc-url ${L1_RPC_URL} \
+	--watcher.watch-interval 1000 \
+	--watcher.block-delay 0 \
+	--no-monitor
 
 init-l2-dev: ## 🚀 Initializes an L1 and L2 Lambda ethrex Client
 	COMPILE_CONTRACTS=true \
@@ -237,6 +288,7 @@ integration-test: rm-db-l2 rm-db-l1 # We create an empty .env file simply becaus
 	docker compose down
 	DOCKER_ETHREX_WORKDIR=${DOCKER_ETHREX_WORKDIR} \
 	ETHREX_L2_VALIDIUM=${ETHREX_L2_VALIDIUM} \
+	GIT_SHA=$(GIT_SHA) GIT_BRANCH=$(GIT_BRANCH) VERSION=$(VERSION) \
 	docker compose up --detach --build
 	RUST_LOG=info,ethrex_l2_prover=debug make init-prover-exec & \
 	ETHREX_WATCHER_BRIDGE_ADDRESS=$(shell make bridge-address) \
@@ -251,6 +303,7 @@ integration-test-gpu: rm-db-l2 rm-db-l1
 	docker compose down
 	DOCKER_ETHREX_WORKDIR=${DOCKER_ETHREX_WORKDIR} \
 	ETHREX_BLOCK_PRODUCER_BLOCK_TIME=${ETHREX_BLOCK_PRODUCER_BLOCK_TIME} \
+	GIT_SHA=$(GIT_SHA) GIT_BRANCH=$(GIT_BRANCH) VERSION=$(VERSION) \
 	docker compose up --detach --build
 
 	RUST_LOG=info,ethrex_l2_prover=debug GPU=true make init-prover-sp1 & \

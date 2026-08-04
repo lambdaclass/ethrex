@@ -1,10 +1,22 @@
 use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
 
 use clap::{Parser as ClapParser, Subcommand as ClapSubcommand};
 use ethrex_blockchain::{Blockchain, BlockchainOptions, BlockchainType, L2Config};
 use ethrex_common::types::Block;
+use tracing::info;
 
 use crate::utils::{migrate_block_body, migrate_block_header};
+
+/// Minimum interval between migration progress log lines.
+const PROGRESS_LOG_INTERVAL: Duration = Duration::from_secs(10);
+
+/// Per-second processing rate for progress logs. Returns 0 when `elapsed` is
+/// zero so the division can never produce `inf` or `NaN`.
+fn blocks_per_second(count: u64, elapsed: Duration) -> f64 {
+    let secs = elapsed.as_secs_f64();
+    if secs > 0.0 { count as f64 / secs } else { 0.0 }
+}
 
 #[allow(clippy::upper_case_acronyms)]
 #[derive(ClapParser)]
@@ -85,11 +97,15 @@ async fn migrate_libmdbx_to_rocksdb(
         .expect("Cannot get latest known block from rocksdb store");
 
     if last_known_block >= last_block_number {
-        println!("Rocksdb store is already up to date");
+        info!("RocksDB store is already up to date (latest block {last_known_block})");
         return;
     }
 
-    println!("Migrating from block {last_known_block} to {last_block_number}");
+    let total_blocks = last_block_number - last_known_block;
+    info!(
+        "Migrating {total_blocks} blocks ({} to {last_block_number}) from libmdbx to RocksDB",
+        last_known_block + 1
+    );
 
     let blockchain_opts = BlockchainOptions {
         // TODO: we may want to migrate using a specified fee config
@@ -113,6 +129,8 @@ async fn migrate_libmdbx_to_rocksdb(
 
     let blocks = block_headers.zip(block_bodies);
     let mut added_blocks = Vec::new();
+    let start = Instant::now();
+    let mut last_progress_log = Instant::now();
     for (header, body) in blocks {
         let header = migrate_block_header(header);
         let body = migrate_block_body(body);
@@ -124,8 +142,19 @@ async fn migrate_libmdbx_to_rocksdb(
             .add_block_pipeline(block, None)
             .unwrap_or_else(|e| panic!("Cannot add block {block_number} to rocksdb store: {e}"));
         added_blocks.push((block_number, block_hash));
+
+        if last_progress_log.elapsed() >= PROGRESS_LOG_INTERVAL {
+            let migrated = added_blocks.len() as u64;
+            let rate = blocks_per_second(migrated, start.elapsed());
+            info!(
+                "Migrated {migrated}/{total_blocks} blocks ({:.1}%), currently at block {block_number} ({rate:.0} blocks/s)",
+                migrated as f64 * 100.0 / total_blocks.max(1) as f64
+            );
+            last_progress_log = Instant::now();
+        }
     }
 
+    let migrated_blocks = added_blocks.len();
     let last_block = old_store
         .get_block_header(last_block_number)
         .ok()
@@ -141,4 +170,9 @@ async fn migrate_libmdbx_to_rocksdb(
         )
         .await
         .expect("Cannot apply forkchoice update");
+
+    info!(
+        "Migration complete: {migrated_blocks} blocks migrated in {:.1}s, head is now block {last_block_number}",
+        start.elapsed().as_secs_f64()
+    );
 }

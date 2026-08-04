@@ -43,6 +43,7 @@ services:
       - RUST_LOG=ethrex_p2p::rlpx::eth::blocks=off,ethrex_p2p::sync=debug,ethrex_p2p::network=info,spawned_concurrency::tasks::gen_server=off
     command: >
       --http.addr 0.0.0.0
+      --http.api eth,net,web3,admin
       --authrpc.addr 0.0.0.0
       --network hoodi
       --authrpc.jwtsecret /secrets/jwt.hex

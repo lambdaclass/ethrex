@@ -1,6 +1,6 @@
 use ethrex_common::{
-    H256,
-    types::{BlobsBundleError, BlockHash},
+    Address, H256, U256,
+    types::{BlobsBundleError, BlockHash, FrameValidationError},
 };
 use ethrex_rlp::error::RLPDecodeError;
 use ethrex_storage::error::StoreError;
@@ -81,17 +81,29 @@ pub enum MempoolError {
     BlobsBundleError(#[from] BlobsBundleError),
     #[error("Transaction max init code size exceeded")]
     TxMaxInitCodeSizeError,
-    #[error("Transaction max data size exceeded")]
-    TxMaxDataSizeError,
+    #[error("Transaction encoded size ({actual} bytes) exceeds the {limit}-byte limit")]
+    TxSizeExceeded { actual: usize, limit: usize },
+    #[error(
+        "Sender {sender:#x} has {count} queued (future-nonce) transactions (per-account cap {limit}); rejecting new future transaction"
+    )]
+    MaxQueuedTxsPerAccountExceeded {
+        sender: Address,
+        count: usize,
+        limit: usize,
+    },
+    #[error("Transaction sender is a contract account (EIP-3607)")]
+    SenderIsContract,
     #[error("Transaction gas limit exceeded")]
     TxGasLimitExceededError,
     #[error(
         "Transaction gas limit exceeds maximum. Transaction hash: {0}, transaction gas limit: {1}"
     )]
     TxMaxGasLimitExceededError(H256, u64),
-    #[error("Transaction priority fee above gas fee")]
-    TxGasOverflowError,
     #[error("Transaction intrinsic gas overflow")]
+    TxGasOverflowError,
+    #[error("Could not compute transaction intrinsic gas: {0}")]
+    IntrinsicGasError(String),
+    #[error("Transaction priority fee above gas fee")]
     TxTipAboveFeeCapError,
     #[error("Transaction intrinsic gas cost above gas limit")]
     TxIntrinsicGasCostAboveLimitError,
@@ -107,6 +119,8 @@ pub enum MempoolError {
     InvalidChainId(u64),
     #[error("Account does not have enough balance to cover the tx cost")]
     NotEnoughBalance,
+    #[error("Sender's cumulative pending-tx cost ({required}) exceeds balance ({available})")]
+    InsufficientCumulativeBalance { required: U256, available: U256 },
     #[error("Transaction gas fields are invalid")]
     InvalidTxGasvalues,
     #[error("Invalid pooled TxType, expected: {0}")]
@@ -115,6 +129,8 @@ pub enum MempoolError {
     InvalidPooledTxSize,
     #[error("Requested pooled transaction was not received")]
     RequestedPooledTxNotFound,
+    #[error("Received a duplicate pooled transaction (more txs than requested)")]
+    DuplicatePooledTx,
     #[error("Transaction sender is invalid {0}")]
     InvalidTxSender(#[from] ethrex_crypto::CryptoError),
     #[error("Attempted to replace a pooled transaction with an underpriced transaction")]
@@ -123,6 +139,54 @@ pub enum MempoolError {
         "EIP-4844 replacement carries fewer blobs ({new_count}) than the in-pool tx ({old_count})"
     )]
     ReplacementShrinksBlobs { old_count: usize, new_count: usize },
+    #[error("Frame transactions (EIP-8141) are not supported before the Hegota fork")]
+    FrameTxPreFork,
+    #[error("Frame transaction expiry deadline has passed")]
+    FrameTxExpired,
+    #[error("Invalid frame transaction: {0}")]
+    InvalidFrameTransaction(String),
+    #[error("Invalid frame transaction signature")]
+    InvalidFrameSignature,
+    #[error("Frame transaction blobs are not yet supported")]
+    FrameTxBlobsUnsupported,
+    #[error("Frame transaction signature verification cost exceeds MAX_VERIFY_GAS")]
+    FrameTxVerifyGasExceeded,
+    #[error("Frame transaction validation prefix does not match any recognized shape")]
+    FrameTxUnrecognizedPrefix,
+    #[error("Frame transaction prefix structure is invalid: {0}")]
+    FrameTxInvalidPrefixStructure(String),
+    #[error("Frame transaction prefix gas budget (frames + sig cost) exceeds MAX_VERIFY_GAS")]
+    FrameTxVerifyGasBudgetExceeded,
+    #[error("A pending frame transaction from this sender is already in the pool")]
+    FrameTxSenderAlreadyPending,
+    #[error("Frame transaction validation-prefix simulation failed: {0}")]
+    FrameTxValidationFailed(String),
+    #[error("Frame transaction paymaster has insufficient balance to cover the reserved max cost")]
+    FrameTxPaymasterUnderfunded,
+    #[error(
+        "Non-canonical paymaster already sponsors the maximum number of pending frame transactions"
+    )]
+    FrameTxNonCanonicalPaymasterLimit,
+    #[error("EIP-7702 transaction has an empty authorization list")]
+    EmptyAuthorizationList,
+    #[error("EIP-7702 (type-4) transaction is not valid before Prague")]
+    Eip7702TxPreFork,
+    #[error("Mempool {occupancy_pct}% full; rejecting gapped-nonce tx (nonce gap = {nonce_gap})")]
+    GapAdmissionDeniedUnderPressure { occupancy_pct: u8, nonce_gap: u64 },
+    #[error("L2-only transaction type is not valid on an L1 node")]
+    L2OnlyTransactionType,
+}
+
+impl From<FrameValidationError> for MempoolError {
+    fn from(err: FrameValidationError) -> Self {
+        match err {
+            FrameValidationError::UnrecognizedPrefix => MempoolError::FrameTxUnrecognizedPrefix,
+            FrameValidationError::VerifyGasBudgetExceeded { .. } => {
+                MempoolError::FrameTxVerifyGasBudgetExceeded
+            }
+            other => MempoolError::FrameTxInvalidPrefixStructure(other.to_string()),
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -156,6 +220,8 @@ pub enum InvalidForkChoice {
     InvalidAncestor(BlockHash),
     #[error("Cannot find link between Head and the canonical chain")]
     UnlinkedHead,
+    #[error("Reorg depth {reorg_depth} exceeds the client's limit of {limit}")]
+    TooDeepReorg { reorg_depth: u64, limit: u64 },
 
     // TODO(#5564): handle arbitrary reorgs
     #[error("State root of the new head is not reachable from the database")]

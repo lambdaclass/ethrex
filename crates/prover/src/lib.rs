@@ -1,3 +1,16 @@
+// Non-exec backends rkyv-serialize `ProgramInput`, which the `eip-8025` variant
+// doesn't implement.
+#[cfg(all(
+    feature = "eip-8025",
+    any(
+        feature = "sp1",
+        feature = "risc0",
+        feature = "openvm",
+        feature = "zisk"
+    )
+))]
+compile_error!("feature `eip-8025` cannot be combined with `sp1`, `risc0`, `openvm`, or `zisk`");
+
 pub mod backend;
 pub mod protocol;
 pub mod prover;

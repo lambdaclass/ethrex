@@ -3,10 +3,8 @@ use crate::rlpx::l2::l2_connection::P2PBasedContext;
 #[cfg(not(feature = "l2"))]
 #[derive(Clone, Debug)]
 pub struct P2PBasedContext;
-use crate::discv5::server::{DiscoveryServer as Discv5Server, DiscoveryServerError as Discv5Error};
 use crate::{
-    discovery::{DiscoveryConfig, DiscoveryMultiplexer},
-    discv4::server::{DiscoveryServer as Discv4Server, DiscoveryServerError as Discv4Error},
+    discovery::{DiscoveryConfig, DiscoveryServer, DiscoveryServerError},
     metrics::{CurrentStepValue, METRICS},
     peer_table::{PeerData, PeerTable, PeerTableServerProtocol as _},
     rlpx::{
@@ -21,7 +19,7 @@ use ethrex_blockchain::Blockchain;
 use ethrex_common::H256;
 use ethrex_storage::Store;
 use secp256k1::SecretKey;
-use spawned_concurrency::tasks::{ActorRef, ActorStart as _};
+use spawned_concurrency::tasks::ActorRef;
 use std::{
     io,
     net::SocketAddr,
@@ -50,7 +48,15 @@ pub struct P2PContext {
     pub based_context: Option<P2PBasedContext>,
     pub tx_broadcaster: ActorRef<TxBroadcaster>,
     pub initial_lookup_interval: f64,
+    /// Caps concurrent INBOUND connections (including pre-handshake) so a flood of inbound
+    /// dials can't accumulate connection actors/sockets without bound. Each inbound connection
+    /// actor holds a permit for its lifetime; the permit is released when the actor is dropped.
+    pub(crate) inbound_admission: Arc<tokio::sync::Semaphore>,
 }
+
+/// Max concurrent inbound connections (peer_table TARGET_PEERS = 100, plus headroom for
+/// pre-handshake churn and short-lived overlap).
+const MAX_INBOUND_CONNECTIONS: usize = 150;
 
 impl P2PContext {
     #[allow(clippy::too_many_arguments)]
@@ -98,16 +104,15 @@ impl P2PContext {
             based_context,
             tx_broadcaster,
             initial_lookup_interval: lookup_interval,
+            inbound_admission: Arc::new(tokio::sync::Semaphore::new(MAX_INBOUND_CONNECTIONS)),
         })
     }
 }
 
 #[derive(Debug, thiserror::Error)]
 pub enum NetworkError {
-    #[error("Failed to start discv4 server: {0}")]
-    Discv4Error(#[from] Discv4Error),
-    #[error("Failed to start discv5 server: {0}")]
-    Discv5Error(#[from] Discv5Error),
+    #[error("Failed to start discovery server: {0}")]
+    DiscoveryError(#[from] DiscoveryServerError),
     #[error("Failed to start Tx Broadcaster: {0}")]
     TxBroadcasterError(#[from] TxBroadcasterError),
     #[error("Failed to bind UDP socket: {0}")]
@@ -125,56 +130,22 @@ pub async fn start_network(
             .map_err(NetworkError::UdpSocketError)?,
     );
 
-    // Start protocol servers first to get their handles
-    let discv4_handle = if config.discv4_enabled {
-        Some(
-            Discv4Server::spawn(
-                context.storage.clone(),
-                context.local_node.clone(),
-                context.signer,
-                udp_socket.clone(),
-                context.table.clone(),
-                bootnodes.clone(),
-                context.initial_lookup_interval,
-            )
-            .await
-            .inspect_err(|e| {
-                error!("Failed to start discv4 server: {e}");
-            })?,
-        )
-    } else {
-        None
-    };
-
-    let discv5_handle = if config.discv5_enabled {
-        Some(
-            Discv5Server::spawn(
-                context.storage.clone(),
-                context.local_node.clone(),
-                context.signer,
-                udp_socket.clone(),
-                context.table.clone(),
-                bootnodes.clone(),
-                context.initial_lookup_interval,
-            )
-            .await
-            .inspect_err(|e| {
-                error!("Failed to start discv5 server: {e}");
-            })?,
-        )
-    } else {
-        None
-    };
-
-    // Start multiplexer actor with handles to protocol servers
-    DiscoveryMultiplexer::new(
+    DiscoveryServer::spawn(
+        context.storage.clone(),
+        context.local_node.clone(),
+        context.signer,
         udp_socket,
-        context.local_node.node_id(),
-        config,
-        discv4_handle,
-        discv5_handle,
+        context.table.clone(),
+        bootnodes,
+        DiscoveryConfig {
+            initial_lookup_interval: context.initial_lookup_interval,
+            ..config
+        },
     )
-    .start();
+    .await
+    .inspect_err(|e| {
+        error!("Failed to start discovery server: {e}");
+    })?;
 
     context.tracker.spawn(serve_p2p_requests(context.clone()));
 
@@ -205,7 +176,18 @@ pub(crate) async fn serve_p2p_requests(context: P2PContext) {
             continue;
         }
 
-        let _ = PeerConnection::spawn_as_receiver(context.clone(), peer_addr, stream);
+        // Bound concurrent inbound connections: if we're at capacity, drop this one instead
+        // of letting connection actors/sockets accumulate. The permit is moved into the
+        // connection actor and released when the actor is dropped.
+        let permit = match context.inbound_admission.clone().try_acquire_owned() {
+            Ok(permit) => permit,
+            Err(_) => {
+                tracing::debug!(peer = %peer_addr, "Inbound connection cap reached, dropping connection");
+                continue;
+            }
+        };
+
+        let _ = PeerConnection::spawn_as_receiver(context.clone(), peer_addr, stream, permit);
     }
 }
 
@@ -274,6 +256,10 @@ pub async fn periodically_show_peer_stats_during_syncing(
 
     loop {
         if blockchain.is_synced() {
+            if !sync_started_logged {
+                info!("Node already has state; following chain via full sync");
+                return;
+            }
             // Log sync complete summary
             let total_elapsed = format_duration(start.elapsed());
             let headers_downloaded = METRICS.downloaded_headers.get();
@@ -830,7 +816,7 @@ pub async fn periodically_show_peer_stats_after_sync(peer_table: &PeerTable) {
                         .any(|cap| peer.supported_capabilities.contains(cap))
             })
             .count();
-        info!("Snap Peers: {snap_active_peers} / Total Peers: {active_peers}");
+        info!("Peers: {active_peers} (snap-capable: {snap_active_peers})");
         interval.tick().await;
     }
 }

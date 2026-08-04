@@ -2,10 +2,10 @@ use bytes::Bytes;
 use ethereum_types::{H256, U256};
 use ethrex_common::{
     Address, Bloom, H160,
-    constants::{EMPTY_KECCACK_HASH, EMPTY_TRIE_HASH},
+    constants::{EMPTY_KECCAK_HASH, EMPTY_TRIE_HASH},
     types::{
-        AccountState, BlockBody, BlockHeader, ChainConfig, Code, Genesis, Receipt, Transaction,
-        TxType,
+        AccountState, Block, BlockBody, BlockHeader, ChainConfig, Code, Genesis, Receipt,
+        Transaction, TxType,
     },
     utils::keccak,
 };
@@ -56,6 +56,7 @@ async fn test_store_suite(engine_type: EngineType) {
     run_test(test_genesis_block, engine_type).await;
     run_test(test_iter_accounts, engine_type).await;
     run_test(test_iter_storage, engine_type).await;
+    run_test(test_bad_blocks, engine_type).await;
 }
 
 async fn test_iter_accounts(store: Store) {
@@ -66,7 +67,7 @@ async fn test_iter_accounts(store: Store) {
                 AccountState {
                     nonce: 2 * i,
                     balance: U256::from(3 * i),
-                    code_hash: *EMPTY_KECCACK_HASH,
+                    code_hash: *EMPTY_KECCAK_HASH,
                     storage_root: *EMPTY_TRIE_HASH,
                 },
             )
@@ -107,7 +108,7 @@ async fn test_iter_storage(store: Store) {
             nonce: 1,
             balance: U256::zero(),
             storage_root,
-            code_hash: *EMPTY_KECCACK_HASH,
+            code_hash: *EMPTY_KECCAK_HASH,
         }
         .encode_to_vec(),
     )
@@ -131,6 +132,14 @@ async fn test_genesis_block(mut store: Store) {
     let genesis_kurtosis: Genesis =
         serde_json::from_str(GENESIS_KURTOSIS).expect("deserialize kurtosis.json");
     let genesis_hive: Genesis = serde_json::from_str(GENESIS_HIVE).expect("deserialize hive.json");
+
+    let kurtosis_hash = genesis_kurtosis.get_block().hash();
+    let kurtosis_config = genesis_kurtosis.config;
+    let hive_hash = genesis_hive.get_block().hash();
+    let hive_config = genesis_hive.config;
+    assert_ne!(kurtosis_hash, hive_hash);
+    assert_ne!(kurtosis_config, hive_config);
+
     store
         .add_initial_state(genesis_kurtosis.clone())
         .await
@@ -139,9 +148,56 @@ async fn test_genesis_block(mut store: Store) {
         .add_initial_state(genesis_kurtosis)
         .await
         .expect("second genesis with same block");
-    let result = store.add_initial_state(genesis_hive).await;
+
+    // With validation skipped, the mismatching genesis is trusted instead of
+    // rejected: the call returns Ok rather than IncompatibleChainConfig.
+    store
+        .add_initial_state_skip_validation(genesis_hive.clone())
+        .await
+        .expect("skip-validation trusts the stored genesis");
+
+    // The stored genesis block/state is trusted and kept as-is: the supplied
+    // (hive) genesis header must not overwrite the stored kurtosis one.
+    let stored_header = store
+        .get_block_header(0)
+        .expect("load genesis header")
+        .expect("genesis header present");
+    assert_eq!(
+        stored_header.hash(),
+        kurtosis_hash,
+        "skip-validation must preserve the stored genesis block"
+    );
+    // The chain config, however, is always applied from the supplied genesis
+    // file. `chain_config` is not reloaded from the datadir on boot, so it must
+    // come from the genesis file or it would be left at its (wrong) default.
+    assert_eq!(
+        store.get_chain_config(),
+        hive_config,
+        "skip-validation must apply the chain config from the supplied genesis"
+    );
+
+    // Without skip-validation, a mismatching genesis is rejected.
+    let result = store.add_initial_state(genesis_hive.clone()).await;
     assert!(result.is_err());
     assert!(matches!(result, Err(StoreError::IncompatibleChainConfig)));
+
+    // Fresh datadir: skip-validation has no genesis to trust, so it builds the
+    // supplied genesis normally rather than short-circuiting.
+    let mut fresh = Store::new("memory", EngineType::InMemory).expect("fresh in-memory store");
+    fresh
+        .add_initial_state_skip_validation(genesis_hive)
+        .await
+        .expect("skip-validation on a fresh datadir builds genesis");
+    assert_eq!(
+        fresh
+            .get_block_header(0)
+            .expect("load fresh genesis header")
+            .expect("fresh genesis header present")
+            .hash(),
+        hive_hash,
+        "skip-validation on a fresh datadir must build the supplied genesis"
+    );
+    assert_eq!(fresh.get_chain_config(), hive_config);
 }
 
 fn remove_test_dbs(path: &str) {
@@ -177,6 +233,46 @@ async fn test_store_block(store: Store) {
     let _ = block_header.hash();
     assert_eq!(stored_header, block_header);
     assert_eq!(stored_body, block_body);
+}
+
+async fn test_bad_blocks(store: Store) {
+    // Empty store returns no bad blocks.
+    assert!(store.get_bad_blocks().await.unwrap().is_empty());
+
+    let (_, body) = create_block_for_testing();
+    let make_block = |number: u64| {
+        let header = BlockHeader {
+            number,
+            ..Default::default()
+        };
+        Block::new(header, body.clone())
+    };
+
+    // Insert out of order; the list must come back sorted by descending number.
+    let block_a = make_block(5);
+    let block_b = make_block(9);
+    let block_c = make_block(2);
+    store.add_bad_block(block_a.clone()).await.unwrap();
+    store.add_bad_block(block_b.clone()).await.unwrap();
+    store.add_bad_block(block_c.clone()).await.unwrap();
+
+    let bad_blocks = store.get_bad_blocks().await.unwrap();
+    let numbers: Vec<u64> = bad_blocks.iter().map(|b| b.header.number).collect();
+    assert_eq!(numbers, vec![9, 5, 2]);
+
+    // Duplicate (number, hash) is ignored.
+    store.add_bad_block(block_b.clone()).await.unwrap();
+    assert_eq!(store.get_bad_blocks().await.unwrap().len(), 3);
+
+    // The list is bounded: inserting many more evicts the lowest-numbered blocks.
+    for number in 100..140u64 {
+        store.add_bad_block(make_block(number)).await.unwrap();
+    }
+    let bounded = store.get_bad_blocks().await.unwrap();
+    assert_eq!(bounded.len(), 16);
+    // Highest kept is the most recent insert; lowest kept is above the evicted range.
+    assert_eq!(bounded.first().unwrap().header.number, 139);
+    assert_eq!(bounded.last().unwrap().header.number, 124);
 }
 
 fn create_block_for_testing() -> (BlockHeader, BlockBody) {
@@ -219,7 +315,7 @@ fn create_block_for_testing() -> (BlockHeader, BlockBody) {
         blob_gas_used: Some(0x00),
         excess_blob_gas: Some(0x00),
         parent_beacon_block_root: Some(H256::zero()),
-        requests_hash: Some(*EMPTY_KECCACK_HASH),
+        requests_hash: Some(*EMPTY_KECCAK_HASH),
         ..Default::default()
     };
     let block_body = BlockBody {
@@ -251,6 +347,8 @@ async fn test_store_block_receipt(store: Store) {
         succeeded: true,
         cumulative_gas_used: 1747,
         logs: vec![],
+        payer: None,
+        frame_receipts: None,
     };
     let block_number = 6;
     let index = 4;
