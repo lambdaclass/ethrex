@@ -481,6 +481,7 @@ pub async fn init_native_rollup_l2(
         bal_parallel_trie_enabled: true,
         max_reorg_depth: opts.node_opts.max_reorg_depth,
         gap_admit_occupancy_threshold: opts.node_opts.mempool_gap_admit_occupancy_threshold,
+        private_mempool: opts.node_opts.mempool_private,
     };
 
     let blockchain = init_blockchain(store.clone(), blockchain_opts);
