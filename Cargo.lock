@@ -4482,6 +4482,8 @@ dependencies = [
  "k256",
  "lazy_static",
  "libssz",
+ "libssz-merkle",
+ "libssz-types",
  "once_cell",
  "p256",
  "proptest",

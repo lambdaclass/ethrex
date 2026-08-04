@@ -63,6 +63,8 @@ reqwest.workspace = true
 tokio-util.workspace = true
 ethrex-guest-program = { workspace = true, default-features = false }
 libssz.workspace = true
+libssz-merkle.workspace = true
+libssz-types.workspace = true
 ethrex-crypto.workspace = true
 ethrex-metrics = { workspace = true, features = ["metrics"] }
 serial_test = "3"
