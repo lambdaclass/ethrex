@@ -49,6 +49,7 @@ use std::{
     collections::{BTreeMap, HashMap, HashSet, hash_map::Entry},
     fmt::Debug,
     io::Write,
+    num::NonZeroUsize,
     path::{Path, PathBuf},
     sync::{
         Arc, Condvar, Mutex, RwLock,
@@ -274,6 +275,13 @@ fn code_cache_size_for(memory_limit: Option<usize>) -> u64 {
         .clamp(MIN_CODE_CACHE_SIZE_BYTES, MAX_CODE_CACHE_SIZE_BYTES)
 }
 
+/// Entry bound for [`Store::code_metadata_cache`], derived from a 16 MiB ceiling at the
+/// ~64 B an `LruCache` entry costs (32 B key + 8 B value + list/table overhead). Sized
+/// against the code cache it shadows (see [`code_cache_size_for`]), so a length stays
+/// resident for every code that could be, while bounding what an `EXTCODESIZE` sweep
+/// over unique contracts can pin.
+const CODE_METADATA_CACHE_MAX_ENTRIES: usize = (16 * 1024 * 1024) / 64;
+
 /// Key used to persist the `flushed_upto` block number in `MISC_VALUES`.
 const FLUSHED_UPTO_KEY: &[u8] = b"bodies_flushed_upto";
 
@@ -373,8 +381,11 @@ pub struct Store {
     account_code_cache: Arc<Mutex<CodeCache>>,
 
     /// Cache for code metadata (code length), keyed by the bytecode hash.
-    /// Uses FxHashMap for efficient lookups, much smaller than code cache.
-    code_metadata_cache: Arc<Mutex<rustc_hash::FxHashMap<H256, CodeMetadata>>>,
+    ///
+    /// Bounded: `EXTCODESIZE` reads this on the execution path, so an unbounded map
+    /// would grow by one entry per distinct contract ever asked for a length and never
+    /// give the memory back. See [`CODE_METADATA_CACHE_MAX_ENTRIES`].
+    code_metadata_cache: Arc<Mutex<LruCache<H256, CodeMetadata, FxBuildHasher>>>,
 
     /// Serializes concurrent `forkchoice_update` callers so that the cache
     /// update and the DB write transaction remain mutually ordered.
@@ -1215,7 +1226,7 @@ impl Store {
 
     /// Check if account code exists by its hash, without constructing the full `Code` struct.
     /// More efficient than `get_account_code` for existence checks since it skips
-    /// RLP decoding and `Code` struct construction (no `jump_targets` deserialization).
+    /// RLP decoding and `Code` struct construction (no jumpdest-bitmap decoding).
     /// Note: The underlying `get()` still reads the value from RocksDB (including blob files).
     pub fn code_exists(&self, code_hash: H256) -> Result<bool, StoreError> {
         // Code introduced by a not-yet-flushed block lives only in the buffer; check
@@ -1316,7 +1327,7 @@ impl Store {
         self.code_metadata_cache
             .lock()
             .map_err(|_| StoreError::LockError)?
-            .insert(code_hash, metadata);
+            .put(code_hash, metadata);
 
         Ok(Some(metadata))
     }
@@ -2260,7 +2271,10 @@ impl Store {
             pending_trie_roots: Arc::new(PendingTrieRoots::default()),
             last_computed_flatkeyvalue: Arc::new(RwLock::new(last_written)),
             account_code_cache: Arc::new(Mutex::new(CodeCache::default())),
-            code_metadata_cache: Arc::new(Mutex::new(rustc_hash::FxHashMap::default())),
+            code_metadata_cache: Arc::new(Mutex::new(LruCache::with_hasher(
+                NonZeroUsize::new(CODE_METADATA_CACHE_MAX_ENTRIES).unwrap_or(NonZeroUsize::MIN),
+                FxBuildHasher,
+            ))),
             fcu_lock: Arc::new(tokio::sync::Mutex::new(())),
             safe_commit_root,
             journal_pruning_paused: Arc::new(std::sync::atomic::AtomicBool::new(false)),
@@ -5760,16 +5774,31 @@ mod account_code_tests {
     }
 
     /// Values written before the bitmap SHALL still decode, with the bitmap rebuilt from
-    /// the bytecode, so an existing database needs no migration.
+    /// the bytecode, so an existing database needs no rewriting.
+    ///
+    /// The expectation is built from the offsets the legacy value itself names, not from
+    /// `Code::compute_jumpdests`, so this pins the rebuilt bitmap against the old format
+    /// rather than against the implementation that produces it.
     #[test]
     fn legacy_offset_list_values_decode_to_the_same_bitmap() {
-        for bytecode in [
-            vec![0x00, JUMPDEST, 0x00, JUMPDEST],
-            vec![PUSH1, JUMPDEST, JUMPDEST],
-            vec![0x00; 32],
+        for (bytecode, offsets) in [
+            (vec![0x00, JUMPDEST, 0x00, JUMPDEST], vec![1u32, 3]),
+            // The byte after PUSH1 is its immediate, so only offset 2 is a destination.
+            (vec![PUSH1, JUMPDEST, JUMPDEST], vec![2u32]),
+            (vec![0x00; 32], vec![]),
         ] {
-            let code = Code::from_bytecode_unchecked(bytecode.into(), H256::zero());
+            let code = Code::from_bytecode_unchecked(bytecode.clone().into(), H256::zero());
             let legacy = encode_code_legacy(&code);
+
+            let mut expected = vec![0u8; bytecode.len().div_ceil(8)];
+            for offset in &offsets {
+                let index = usize::try_from(*offset).expect("offset fits usize");
+                expected[index / 8] |= 1 << (index % 8);
+            }
+            // A jumpless contract stores no bitmap at all rather than an all-zero one.
+            if offsets.is_empty() {
+                expected.clear();
+            }
 
             let (decoded_bytecode, jumpdests) = decode_bytes(&legacy).unwrap();
             assert_eq!(decoded_bytecode, code.code());
@@ -5777,7 +5806,8 @@ mod account_code_tests {
                 decode_jumpdests(decoded_bytecode, jumpdests)
                     .unwrap()
                     .as_ref(),
-                code.jumpdests()
+                expected.as_slice(),
+                "rebuilt bitmap disagrees with the legacy offsets for {bytecode:?}"
             );
         }
     }

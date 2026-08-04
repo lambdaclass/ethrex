@@ -56,7 +56,7 @@ fn offsets_past_the_bytecode_are_not_valid() {
     }
 }
 
-/// Jumpless bytecode SHALL NOT allocate a bitmap, and empty code SHALL have none.
+/// Jumpless bytecode SHALL have an empty bitmap, as SHALL empty code.
 #[test]
 fn jumpless_bytecode_has_an_empty_bitmap() {
     assert!(code_of(vec![STOP; 64]).jumpdests().is_empty());

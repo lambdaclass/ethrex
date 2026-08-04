@@ -280,9 +280,16 @@ impl Database for CachingDatabase {
     }
 
     fn get_code_metadata(&self, code_hash: H256) -> Result<CodeMetadata, DatabaseError> {
-        // Delegate directly to the underlying database.
-        // The underlying Store already has its own code_metadata_cache,
-        // so we don't need to duplicate caching here.
+        // Answer from resident code when there is any. The BAL warmer loads the block's
+        // bytecode into this cache, so a length read usually has the answer here under a
+        // shared read lock. Falling straight through would instead take the store's
+        // single mutex-guarded metadata cache, serializing every `EXTCODESIZE` across
+        // the parallel executor's threads.
+        if let Some(code) = self.read_code()?.get(&code_hash) {
+            return Ok(CodeMetadata {
+                length: u64::try_from(code.len()).unwrap_or(u64::MAX),
+            });
+        }
         self.inner.get_code_metadata(code_hash)
     }
 

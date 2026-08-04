@@ -15,6 +15,7 @@
 ### 2026-08-03
 
 - Size the default RocksDB shared block cache from the memory the process may actually use — 40% of the smaller of physical memory and the cgroup limit, clamped to 512 MiB..=12 GiB — instead of a flat 12 GiB. The flat default was 71% of a 16 GiB host, leaving no headroom for trie layers, execution and the mempool; `--rocksdb.block-cache-size` still overrides it
+- Cut the cost of a cold contract-code access: store jump destinations as a 1-bit-per-byte bitmap instead of a persisted RLP list of `u32` offsets, count the bytecode in the code cache's byte budget, answer `EXTCODESIZE` from the code-length table instead of materializing the bytecode, and give the account-code column families a bloom filter (4KB data blocks on the blob-backed bytecode CF). Raises the code cache's byte budget from an effective 64 MiB of jump tables to 256 MiB of bytecode, and bumps the store schema version so an older binary warns rather than failing on the new value format. `COLD_ACCOUNT_CODE_ACCESS` drops from 7736 to 4652 gas in the EIP-8038 repricing fit, and `COLD_ACCOUNT_CODE_WRITE` from 10415 to 6355 [#7095](https://github.com/lambdaclass/ethrex/pull/7095)
 
 ### 2026-07-22
 

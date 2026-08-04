@@ -228,15 +228,27 @@ impl RocksDBBackend {
                     }
 
                     let mut block_opts = BlockBasedOptions::default();
-                    // Exact-key point lookups on the execution read path, same shape as the
-                    // trie-node and flat-KV CFs above: EXT*/CALL* resolve a code hash to its
-                    // bytecode or length. A 4KB (page-sized) block keeps per-get read
-                    // amplification down — with blob files the SST value is just a blob
-                    // reference, so a large block buys nothing — and the filter prunes the
-                    // levels that cannot hold the hash instead of reading a data block per
-                    // level to find out.
-                    block_opts.set_block_size(4 * 1024); // 4KB
+                    // Both CFs answer exact-key point lookups on the execution read path:
+                    // EXT*/CALL* resolve a code hash to its bytecode or its length. The
+                    // filter is what pays here, pruning the levels that cannot hold the
+                    // hash instead of reading a data block per level to find out.
                     block_opts.set_bloom_filter(10.0, false); // 10 bits per key
+                    if cf_name == ACCOUNT_CODES {
+                        // With blob files the SST value is only a blob reference, so a
+                        // large block buys nothing; page-sized keeps per-get read
+                        // amplification down.
+                        block_opts.set_block_size(4 * 1024); // 4KB
+                        // Lookups here are almost always positive, since the hash comes
+                        // from an account that references it. Dropping the last level's
+                        // filter is most of the filter memory for no hit-rate loss.
+                        cf_opts.set_optimize_filters_for_hits(true);
+                    } else {
+                        // Metadata rows are 32-byte key + 8-byte length with no blob
+                        // indirection, so ~100 of them share a 4KB block and shrinking
+                        // the block only multiplies index entries. Keep the 16KB this CF
+                        // used before it had an arm of its own.
+                        block_opts.set_block_size(16 * 1024); // 16KB
+                    }
                     configure_block_cache(&mut block_opts);
                     cf_opts.set_block_based_table_factory(&block_opts);
                 }
