@@ -3156,8 +3156,9 @@ impl Store {
                         .into_iter()
                         // A panicked shard yields one Err element rather than
                         // re-panicking the whole node; the consumer's `?` below
-                        // then surfaces it and the best-effort prefetch caller
-                        // swallows it (the slots are simply left uncached).
+                        // surfaces it to the caller. Every caller of this batch
+                        // treats a failed warm as best-effort, so the keys are
+                        // simply left uncached and read normally later.
                         .flat_map(|h| {
                             h.join().unwrap_or_else(|_| {
                                 vec![Err(StoreError::Custom(
@@ -3313,8 +3314,9 @@ impl Store {
                         .into_iter()
                         // A panicked shard yields one Err element rather than
                         // re-panicking the whole node; the consumer's `?` below
-                        // then surfaces it and the best-effort prefetch caller
-                        // swallows it (the slots are simply left uncached).
+                        // surfaces it to the caller. Every caller of this batch
+                        // treats a failed warm as best-effort, so the keys are
+                        // simply left uncached and read normally later.
                         .flat_map(|h| {
                             h.join().unwrap_or_else(|_| {
                                 vec![Err(StoreError::Custom(

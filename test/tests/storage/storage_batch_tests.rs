@@ -5,7 +5,8 @@
 //!
 //! The prefetch warms a cache that execution trusts, so the batched path must
 //! return byte-identical key->value mappings (including "missing slot" -> None)
-//! as the single-slot path, across both the FKV-swept and FKV-unswept states.
+//! as the single-slot path. Covers the FKV-swept and FKV-unswept states; see the
+//! note in `run_parity_test` for the partially-swept state.
 
 use std::collections::BTreeMap;
 use std::time::{Duration, Instant};

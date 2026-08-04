@@ -868,9 +868,10 @@ impl LEVM {
             })
             .map(|ac| ac.address)
             .collect();
-        store
-            .prefetch_accounts(&write_addrs)
-            .map_err(|e| EvmError::Custom(format!("bal_to_account_updates prefetch: {e}")))?;
+        // Best-effort: the loop below reads every account it needs through
+        // `get_account_state`, so a failed warm costs cache hits and nothing else.
+        // Propagating it here would let a prefetch turn into a block-processing error.
+        let _ = store.prefetch_accounts(&write_addrs);
 
         for acct_changes in bal.accounts() {
             let addr = acct_changes.address;
