@@ -118,6 +118,66 @@ fn progressive_list_roots_match_remerkleable() {
     }
 }
 
+/// The shape #3248 actually uses: `SszExecutionPayload` is
+/// `ProgressiveContainer(active_fields=[1; 19])` and `SszExecutionRequests` is
+/// `[1; 5]`. There is no libssz type for this, so production code composes
+/// `mix_in_active_fields(merkleize_progressive(field_roots), &[true; N])` by hand
+/// — and so does this test, which is why it is the one that matters most.
+///
+/// Ignored for the same reason as above: `merkleize_progressive` is wrong. The
+/// surrounding primitives are not — `mix_in_active_fields`, `merkleize`, `pack`
+/// and `mix_in_length` were all verified against remerkleable independently, so
+/// swapping the two children in `libssz` makes every case here pass.
+///
+/// Reference roots from remerkleable at the pin:
+///
+/// ```text
+/// PC(active_fields=[1,1,1], x=1, y=2, z=3)             -> e9ff4f89…
+/// PC(active_fields=[1;5],   a=1, b=2, c=3, d=4, e=5)   -> 5a167eaf…
+/// ```
+#[test]
+#[ignore = "libssz-merkle 0.2.2 swaps progressive subtree children; see doc comment"]
+fn progressive_container_roots_match_remerkleable() {
+    use libssz_merkle::{Node, merkleize_progressive, mix_in_active_fields};
+
+    let hasher = CryptoHasher(NativeCrypto);
+
+    for (n, expected_hex) in [
+        (
+            3usize,
+            "e9ff4f8918d6640489dbb084574dbaf57cc7e8a5b4cd1fcd904a7af79a0dc89d",
+        ),
+        (
+            5,
+            "5a167eafdb77037933df6b87009c5d116ef0b6e6800d37b2e70693875b64318d",
+        ),
+    ] {
+        // Each field is a uint64 i, whose root is the value LE in a zero-padded chunk.
+        let field_roots: Vec<Node> = (1..=n as u64)
+            .map(|i| {
+                let mut chunk = [0u8; 32];
+                chunk[..8].copy_from_slice(&i.to_le_bytes());
+                chunk
+            })
+            .collect();
+
+        let root = merkleize_progressive(&hasher, &field_roots);
+        let got = mix_in_active_fields(&hasher, &root, &vec![true; n]);
+        let expected: [u8; 32] = hex::decode(expected_hex)
+            .expect("static hex is valid")
+            .try_into()
+            .expect("32 bytes");
+
+        assert_eq!(
+            got,
+            expected,
+            "progressive-container root diverged at {n} fields:\n  \
+             libssz       {}\n  remerkleable {expected_hex}",
+            hex::encode(got),
+        );
+    }
+}
+
 /// The empty list is the one case a broken implementation is most likely to get
 /// right by accident (zero hash), so assert the non-empty cases move the root.
 #[test]
