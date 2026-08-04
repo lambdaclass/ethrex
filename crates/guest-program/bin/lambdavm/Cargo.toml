@@ -6,11 +6,14 @@ license = "MIT OR Apache-2.0"
 
 [workspace]
 
+# Thin LTO measurably lowers executed guest cycles (~2.3% on lambda_vm's
+# committed ethrex_bench fixtures) at a small ELF-size cost, which is free in
+# this VM (execution is priced per executed instruction, not by ELF size).
+# Cargo's release default is lto = false / codegen-units = 16. Kept identical
+# to the guest profile in yetanotherco/lambda_vm so both repos build the same
+# ELF.
 [profile.release]
-opt-level = 3
-lto = true
-codegen-units = 1
-panic = "abort"
+lto = "thin"
 
 [dependencies]
 # Must match LAMBDA_VM_COMMIT in .github/actions/install-lambdavm/action.yml

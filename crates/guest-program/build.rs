@@ -248,9 +248,8 @@ fn build_lambdavm_program() {
         );
     }
 
-    let sysroot_cflags = format!(
-        "--target=riscv64 -march=rv64im -mabi=lp64 --sysroot={sysroot_dir}"
-    );
+    let sysroot_cflags =
+        format!("--target=riscv64 -march=rv64im -mabi=lp64 --sysroot={sysroot_dir}");
 
     let start = std::time::Instant::now();
 

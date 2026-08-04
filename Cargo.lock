@@ -4020,6 +4020,7 @@ dependencies = [
  "ff 0.13.1",
  "hex",
  "k256",
+ "keccak",
  "lambda-vm-syscalls",
  "libssz",
  "libssz-derive",

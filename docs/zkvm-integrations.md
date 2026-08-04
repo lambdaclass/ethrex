@@ -105,11 +105,11 @@ ethrex integrates with multiple zero-knowledge virtual machines (zkVMs), giving 
 **Integration Details:**
 - The host backend shells out to LambdaVM's CLI binary (`execute`, `prove`, `verify`), resolved as `lambda-vm-cli` on `$PATH` (overridable via the `LAMBDA_VM_CLI` env var).
 - The guest binary uses LambdaVM's `lambda-vm-syscalls` SDK and a custom RV64IM target spec.
-- `LambdaVmCrypto` overrides `keccak256` (LambdaVM's only accelerated primitive today), routes ECDSA secp256k1 through pure-Rust `k256`, and routes BLS12-381 (EIP-2537) through the portable pure-Rust `bls12_381` backend (the trait defaults require `blst`, which guest builds compile out). All other `Crypto` methods inherit the trait default.
+- `LambdaVmCrypto` overrides `keccak256` (a sponge over the `keccak_permute` precompile) and `secp256k1_ecrecover` (the recovery's 2-term linear combination is evaluated through the ECSM `ecsm_mul` precompile, reconstructing the point from x-only queries, with a pure-Rust fallback), and routes BLS12-381 (EIP-2537) through the portable pure-Rust `bls12_381` backend (the trait defaults require `blst`, which guest builds compile out). All other `Crypto` methods inherit the trait default. The accelerated machinery is kept byte-for-byte in sync with the LambdaVM team's copy (`crypto/ethrex-crypto` in yetanotherco/lambda_vm).
 - Source is pinned via commit hash on `yetanotherco/lambda_vm`; the same hash appears in `crates/guest-program/Cargo.toml` and `.github/actions/install-lambdavm/action.yml`.
 
 **Current Limitations:**
-- Only `keccak_permute` is accelerated. ECDSA recovery, BN254, BLS12-381, sha256, and modexp run via pure-Rust crates — real EVM block proving will be substantially slower than SP1/RISC0 until more precompiles land.
+- Only `keccak_permute` and `ecsm_mul` (keccak + ECDSA recovery) are accelerated. BN254, BLS12-381, sha256, and modexp run via pure-Rust crates — real EVM block proving will be substantially slower than SP1/RISC0 until more precompiles land.
 - KZG point-evaluation (precompile 0x0a) is unsupported in the LambdaVM guest: `kzg-rs` pulls in SP1-specific symbols that do not link for the RV64IM target, so blocks containing point-evaluation calls cannot be proven yet.
 - Proof compression to an L1-cheap verifier (Groth16/Plonk wrapper) is on LambdaVM's roadmap. Proofs today are local STARKs, not directly verifiable on Ethereum L1.
 - L2 prover integration is not yet wired (`BackendType::LambdaVM` is L1-only, mirroring the Zisk backend's current state).
