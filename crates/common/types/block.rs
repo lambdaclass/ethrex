@@ -788,6 +788,10 @@ pub fn validate_block_body(
 /// blob reconstruction) — never on bodies received from the network.
 pub fn normalize_legacy_withdrawals(header: &BlockHeader, body: &mut BlockBody) {
     if body.withdrawals.is_none() && header.withdrawals_root == Some(*EMPTY_WITHDRAWALS_HASH) {
+        tracing::debug!(
+            block = header.number,
+            "Normalizing legacy omitted-withdrawals block body from trusted history"
+        );
         body.withdrawals = Some(Vec::new());
     }
 }
