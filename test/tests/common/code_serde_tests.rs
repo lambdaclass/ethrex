@@ -42,3 +42,36 @@ fn default_code_is_padded() {
     assert!(code.is_empty());
     assert_eq!(code.dispatch_buf().len(), BYTECODE_PADDING);
 }
+
+/// The wire format SHALL carry only the hash and the bytecode. Jump destinations are a
+/// pure function of the bytecode, and every type embedding a `Code` inherits this format
+/// (`AccountUpdate`, which the L2 rollup store persists with bincode), so a derived field
+/// here would couple that stored format to how jump destinations are represented.
+#[test]
+fn code_serde_does_not_persist_derived_jumpdests() {
+    let bytecode = vec![0x5b /* JUMPDEST */; 512];
+    let code = Code::from_bytecode(bytecode.into(), &NativeCrypto);
+    assert!(
+        !code.jumpdests().is_empty(),
+        "fixture must have a non-empty bitmap for this to prove anything"
+    );
+
+    let json = serde_json::to_value(&code).expect("serialize");
+    // `serde_json` orders its map keys, so compare against a sorted expectation.
+    let fields: Vec<&str> = json
+        .as_object()
+        .expect("Code serializes as a struct")
+        .keys()
+        .map(String::as_str)
+        .collect();
+    assert_eq!(
+        fields,
+        vec!["code", "hash"],
+        "unexpected field in the Code wire format"
+    );
+
+    // Recomputed on the way back in, so the round trip is still lossless.
+    let restored: Code = serde_json::from_value(json).expect("deserialize");
+    assert_eq!(restored.jumpdests(), code.jumpdests());
+    assert_eq!(restored, code);
+}

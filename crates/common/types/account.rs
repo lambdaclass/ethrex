@@ -215,11 +215,14 @@ impl Code {
 /// `Code` is padded with [`BYTECODE_PADDING`] trailing STOPs) sound regardless of
 /// where the bytes came from. Deserializing the padded buffer directly would
 /// otherwise let unpadded input through and cause OOB reads during execution.
+/// The jump destinations are deliberately absent: they are a pure function of the
+/// bytecode, so carrying them would put a derived value in the wire format of everything
+/// that embeds a `Code` (notably `AccountUpdate`, which the L2 rollup store persists with
+/// bincode) and couple that format to how they happen to be represented.
 #[derive(Serialize, Deserialize)]
 struct CodeSerde {
     hash: H256,
     code: Bytes,
-    jumpdests: Arc<[u8]>,
 }
 
 impl Serialize for Code {
@@ -227,7 +230,6 @@ impl Serialize for Code {
         CodeSerde {
             hash: self.hash,
             code: self.code_bytes(),
-            jumpdests: self.jumpdests.clone(),
         }
         .serialize(serializer)
     }
@@ -235,12 +237,12 @@ impl Serialize for Code {
 
 impl<'de> Deserialize<'de> for Code {
     fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        let CodeSerde {
+        let CodeSerde { hash, code } = CodeSerde::deserialize(deserializer)?;
+        Ok(Self::from_parts_unchecked(
             hash,
-            code,
-            jumpdests,
-        } = CodeSerde::deserialize(deserializer)?;
-        Ok(Self::from_parts_unchecked(hash, &code, jumpdests))
+            &code,
+            Self::compute_jumpdests(&code),
+        ))
     }
 }
 
