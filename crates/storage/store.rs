@@ -1089,13 +1089,11 @@ impl Store {
 
     /// Batched [`Self::get_account_code`].
     ///
-    /// Resolves the buffer and the LRU first and issues one `multi_get` over
-    /// [`ACCOUNT_CODES`] for whatever is left, so the backend can share index and filter
-    /// blocks and overlap the blob reads that a per-hash `get` has to serialize. The LRU
-    /// is locked once for the whole batch rather than twice per code.
-    ///
-    /// Keys are sorted only to make the read order deterministic; the rocksdb backend
-    /// sorts its own `multi_get` input.
+    /// Resolves the buffer and the LRU first, then reads whatever is left by whichever
+    /// of two strategies gets more of those reads in flight for a batch this size: a
+    /// parallel fan-out of point gets, or sorted keys split into contiguous shards read
+    /// concurrently. See the comment on the read below for how the choice is made. The
+    /// LRU is locked once for the whole batch rather than twice per code.
     ///
     /// Results are returned in the order of `code_hashes`. Duplicate hashes are read
     /// once. `None` means the hash is absent from the database.
@@ -1151,30 +1149,32 @@ impl Store {
         let parallelism = std::thread::available_parallelism().map_or(8, |p| p.get());
         let shards = missing.len().div_ceil(KEYS_PER_SHARD).min(MAX_SHARDS);
         let read_view = self.backend.begin_read()?;
-        let decode_shard =
-            |rv: &dyn StorageReadView, hashes: &[H256]| -> Vec<Result<Option<Code>, StoreError>> {
+        // Both paths decode in whatever thread did the read, so rebuilding the jumpdest
+        // bitmap for a legacy entry stays off the caller's thread and stays parallel.
+        let decode = |hash: &H256, value: Option<Vec<u8>>| -> Result<Option<Code>, StoreError> {
+            let Some(bytes) = value else { return Ok(None) };
+            let (bytecode_slice, jumpdests) = decode_bytes(&bytes)?;
+            Ok(Some(Code::from_parts_unchecked(
+                *hash,
+                bytecode_slice,
+                decode_jumpdests(bytecode_slice, jumpdests)?,
+            )))
+        };
+        let decoded: Vec<Result<Option<Code>, StoreError>> = if shards > parallelism {
+            let chunk = missing.len().div_ceil(shards);
+            let rv = read_view.as_ref();
+            let read_shard = |hashes: &[H256]| -> Vec<Result<Option<Code>, StoreError>> {
                 let keys: Vec<&[u8]> = hashes.iter().map(|h| h.as_bytes()).collect();
                 rv.multi_get(ACCOUNT_CODES, &keys)
                     .into_iter()
                     .zip(hashes.iter())
-                    .map(|(value, hash)| {
-                        let Some(bytes) = value? else { return Ok(None) };
-                        let (bytecode_slice, jumpdests) = decode_bytes(&bytes)?;
-                        Ok(Some(Code::from_parts_unchecked(
-                            *hash,
-                            bytecode_slice,
-                            decode_jumpdests(bytecode_slice, jumpdests)?,
-                        )))
-                    })
+                    .map(|(value, hash)| decode(hash, value?))
                     .collect()
             };
-        let decoded: Vec<Result<Option<Code>, StoreError>> = if shards > parallelism {
-            let chunk = missing.len().div_ceil(shards);
-            let rv = read_view.as_ref();
             std::thread::scope(|scope| {
                 let handles: Vec<_> = missing
                     .chunks(chunk)
-                    .map(|ck| scope.spawn(move || decode_shard(rv, ck)))
+                    .map(|ck| scope.spawn(move || read_shard(ck)))
                     .collect();
                 handles
                     .into_iter()
@@ -1182,16 +1182,12 @@ impl Store {
                     .collect()
             })
         } else {
+            // One key per read, so `get` rather than a single-key `multi_get`: the
+            // batched call sets up its own result buffers, which is pure overhead here.
             let rv = read_view.as_ref();
             missing
                 .par_iter()
-                .map(|hash| {
-                    decode_shard(rv, std::slice::from_ref(hash))
-                        .pop()
-                        .unwrap_or_else(|| {
-                            Err(StoreError::Custom("empty code read result".to_string()))
-                        })
-                })
+                .map(|hash| decode(hash, rv.get(ACCOUNT_CODES, hash.as_bytes())?))
                 .collect()
         };
 

@@ -2841,10 +2841,12 @@ impl LEVM {
         // `bal_storage_slots` at the call site), so this warmer covers only account
         // states and contract code, which overlap execution.
         //
-        // The chunk must not be narrower than what the store's sharded read path needs
-        // to reach full queue depth, or chunking would trade the executor's head start
-        // for slower reads. That path shards at 256 keys and caps at 64 shards, so this
-        // is the smallest chunk that still saturates it.
+        // Sized against the batched code read below (`Store::get_account_codes_batch`),
+        // which shards at 256 keys and caps at 64 shards: narrower chunks would cap its
+        // read concurrency, trading the executor's head start for shallower reads. This
+        // is the smallest chunk that can still reach that cap, and only does so when
+        // most accounts in a chunk hold distinct code; a chunk of EOAs yields no code
+        // hashes at all and the boundary costs nothing either way.
         const WARM_CHUNK_ACCOUNTS: usize = 256 * 64;
 
         for chunk in accounts.chunks(WARM_CHUNK_ACCOUNTS) {

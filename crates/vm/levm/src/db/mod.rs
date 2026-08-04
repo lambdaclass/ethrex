@@ -3,7 +3,7 @@ use ethrex_common::{
     Address, H256, U256,
     types::{AccountState, ChainConfig, Code, CodeMetadata},
 };
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 use std::sync::{Arc, OnceLock, PoisonError, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 pub mod gen_db;
@@ -294,6 +294,9 @@ impl Database for CachingDatabase {
     /// cache under one read lock. Repeated addresses cost a single database read, and a
     /// caller that wants the states pays one map lookup each rather than a full
     /// `get_account_state` round trip per address.
+    ///
+    /// The read lock spans the whole assembly, so callers should keep `addresses` to a
+    /// bounded slice: a writer (an executor filling the same cache) waits on it.
     fn get_account_states_batch(
         &self,
         addresses: &[Address],
@@ -310,36 +313,44 @@ impl Database for CachingDatabase {
             .collect()
     }
 
-    /// Fetches the uncached bytecodes in one batch, then answers from the cache under a
-    /// single read lock, so a batch whose entries share code hashes reads each once.
+    /// Fetches the uncached bytecodes in one batch, so a batch whose entries share code
+    /// hashes reads each once, then answers every entry from the cache under the lock
+    /// that already covers the insert.
     fn get_account_codes_batch(&self, code_hashes: &[H256]) -> Result<Vec<Code>, DatabaseError> {
-        let missing: Vec<H256> = {
-            let cache = self.read_code()?;
-            let mut seen: FxHashMap<H256, ()> = FxHashMap::default();
+        let answer_from = |cache: &CodeCache| -> Result<Vec<Code>, DatabaseError> {
             code_hashes
                 .iter()
-                .copied()
-                .filter(|h| !cache.contains_key(h) && seen.insert(*h, ()).is_none())
+                .map(|hash| {
+                    cache.get(hash).cloned().ok_or_else(|| {
+                        DatabaseError::Custom(format!("code {hash:?} missing after batch read"))
+                    })
+                })
                 .collect()
         };
 
-        if !missing.is_empty() {
-            let codes = self.inner.get_account_codes_batch(&missing)?;
-            let mut cache = self.write_code()?;
-            for (hash, code) in missing.into_iter().zip(codes.into_iter()) {
-                cache.entry(hash).or_insert(code);
-            }
+        let missing: Vec<H256> = {
+            let cache = self.read_code()?;
+            let mut seen: FxHashSet<H256> = FxHashSet::default();
+            code_hashes
+                .iter()
+                .copied()
+                .filter(|h| !cache.contains_key(h) && seen.insert(*h))
+                .collect()
+        };
+
+        if missing.is_empty() {
+            let cache = self.read_code()?;
+            return answer_from(&cache);
         }
 
-        let cache = self.read_code()?;
-        code_hashes
-            .iter()
-            .map(|hash| {
-                cache.get(hash).cloned().ok_or_else(|| {
-                    DatabaseError::Custom(format!("code {hash:?} missing after batch read"))
-                })
-            })
-            .collect()
+        let codes = self.inner.get_account_codes_batch(&missing)?;
+        // Assembled under the same write guard as the insert. Reacquiring a read lock
+        // instead would be correct only while this cache never evicts.
+        let mut cache = self.write_code()?;
+        for (hash, code) in missing.into_iter().zip(codes.into_iter()) {
+            cache.entry(hash).or_insert(code);
+        }
+        answer_from(&cache)
     }
 
     fn prefetch_accounts(&self, addresses: &[Address]) -> Result<(), DatabaseError> {
