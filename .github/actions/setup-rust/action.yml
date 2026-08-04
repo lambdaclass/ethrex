@@ -58,7 +58,15 @@ runs:
     - name: Add Rust Cache
       uses: Swatinem/rust-cache@v2
       with:
-        shared-key: ${{ inputs.cache-pool }}
+        # ImageOS (e.g. ubuntu22, ubuntu24, macos14) keeps runner images from
+        # sharing one pool entry: rust-cache's default key only carries
+        # runner.os ("Linux"), so an ubuntu-latest job could save proc-macro
+        # dylibs linked against a newer glibc that ubuntu-22.04 jobs then
+        # restore and fail to load ("version `GLIBC_2.39' not found").
+        # Empty on self-hosted runners, which preserves the old key shape.
+        # Only pooled entries get the suffix: an empty shared-key must stay
+        # empty so pool-less jobs keep their per-job keys.
+        shared-key: ${{ inputs.cache-pool != '' && format('{0}-{1}', inputs.cache-pool, env.ImageOS) || '' }}
         save-if: ${{ inputs.save-cache == 'true' && github.ref == 'refs/heads/main' }}
         workspaces: |
           .
