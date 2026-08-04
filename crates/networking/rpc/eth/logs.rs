@@ -11,7 +11,10 @@ use crate::{
     utils::RpcErr,
 };
 use ethereum_types::{Bloom, BloomInput};
-use ethrex_common::{H160, H256};
+use ethrex_common::{
+    H160, H256,
+    types::{BlockBody, BlockHeader},
+};
 use ethrex_crypto::NativeCrypto;
 use ethrex_storage::Store;
 use serde::Deserialize;
@@ -153,15 +156,39 @@ pub(crate) async fn fetch_logs_with_filter(
     filter: &LogsFilter,
     storage: Store,
 ) -> Result<Vec<RpcLog>, RpcErr> {
-    // A `blockHash` filter covers exactly that block; the range fields are not
-    // part of that form of the request (see LogsFilter::block_hash).
-    let (from, to) = match filter.block_hash {
+    let address_filter: HashSet<_> = match &filter.address_filters {
+        Some(AddressFilter::Single(address)) => std::iter::once(address).collect(),
+        Some(AddressFilter::Many(addresses)) => addresses.iter().collect(),
+        None => HashSet::new(),
+    };
+    // Derive the filter's address/topic blooms once, up front, so the per-block
+    // header-bloom check below is a cheap bit-subset test instead of re-hashing
+    // every address and topic for each block in the range.
+    let bloom_matcher = BloomFilterMatcher::new(&address_filter, &filter.topics);
+
+    let mut logs: Vec<RpcLog> = Vec::new();
+    match filter.block_hash {
         Some(block_hash) => {
-            let block_number = storage
-                .get_block_number(block_hash)
-                .await?
+            let block_header = storage
+                .get_block_header_by_hash(block_hash)?
                 .ok_or_else(|| RpcErr::BadParams(format!("Unknown block hash {block_hash:#x}")))?;
-            (block_number, block_number)
+            if bloom_matcher.matches(&block_header.logs_bloom) {
+                let block_body =
+                    storage
+                        .get_block_body_by_hash(block_hash)
+                        .await?
+                        .ok_or(RpcErr::Internal(format!(
+                            "Could not get body for block {block_hash:#x}"
+                        )))?;
+                collect_block_logs(
+                    &storage,
+                    &block_header,
+                    &block_body,
+                    &address_filter,
+                    &mut logs,
+                )
+                .await?;
+            }
         }
         None => {
             let from = filter
@@ -174,81 +201,42 @@ pub(crate) async fn fetch_logs_with_filter(
                 .resolve_block_number(&storage)
                 .await?
                 .ok_or(RpcErr::WrongParam("toBlock".to_string()))?;
-            (from, to)
-        }
-    };
-    if (from..=to).is_empty() {
-        return Err(RpcErr::BadParams("Empty range".to_string()));
-    }
-    let address_filter: HashSet<_> = match &filter.address_filters {
-        Some(AddressFilter::Single(address)) => std::iter::once(address).collect(),
-        Some(AddressFilter::Many(addresses)) => addresses.iter().collect(),
-        None => HashSet::new(),
-    };
-    // Derive the filter's address/topic blooms once, up front, so the per-block
-    // header-bloom check below is a cheap bit-subset test instead of re-hashing
-    // every address and topic for each block in the range.
-    let bloom_matcher = BloomFilterMatcher::new(&address_filter, &filter.topics);
-
-    let mut logs: Vec<RpcLog> = Vec::new();
-    // The idea here is to fetch every log and filter by address, if given.
-    // For that, we'll need each block in range, and its transactions,
-    // and for each transaction, we'll need its receipts, which
-    // contain the actual logs we want.
-    for block_num in from..=to {
-        // The block header carries a bloom filter over every (address, topic)
-        // pair logged in the block. If it can't possibly contain a log matching
-        // this filter, skip the block without loading its body or receipts.
-        let block_header = storage
-            .get_block_header(block_num)?
-            .ok_or(RpcErr::Internal(format!(
-                "Could not get header for block {block_num}"
-            )))?;
-        if !bloom_matcher.matches(&block_header.logs_bloom) {
-            continue;
-        }
-        // Take the body of the block, we
-        // will use it to access the transactions.
-        let block_body = storage
-            .get_block_body(block_num)
-            .await?
-            .ok_or(RpcErr::Internal(format!(
-                "Could not get body for block {block_num}"
-            )))?;
-        let block_hash = block_header.hash();
-
-        // Fetch all of the block's receipts in a single bulk read instead of a
-        // point lookup per transaction (each of which also re-resolved the
-        // canonical block hash). For mainnet blocks with hundreds of txs this
-        // is the dominant cost of eth_getLogs.
-        let receipts = storage.get_receipts_for_block(&block_hash).await?;
-
-        let mut block_log_index = 0_u64;
-
-        // Transactions share indices with their receipts; pair them by index.
-        for (tx_index, tx) in block_body.transactions.iter().enumerate() {
-            let tx_hash = tx.hash(&NativeCrypto);
-            let receipt = receipts.get(tx_index).ok_or(RpcErr::Internal(format!(
-                "Missing receipt for block {block_num} tx {tx_index}"
-            )))?;
-
-            if receipt.succeeded {
-                for log in &receipt.logs {
-                    if address_filter.is_empty() || address_filter.contains(&log.address) {
-                        // Some extra data is needed when
-                        // forming the RPC response.
-                        logs.push(RpcLog {
-                            log: log.clone().into(),
-                            log_index: block_log_index,
-                            transaction_hash: tx_hash,
-                            transaction_index: tx_index as u64,
-                            block_number: block_num,
-                            block_hash,
-                            removed: false,
-                        });
-                    }
-                    block_log_index += 1;
+            if (from..=to).is_empty() {
+                return Err(RpcErr::BadParams("Empty range".to_string()));
+            }
+            // The idea here is to fetch every log and filter by address, if given.
+            // For that, we'll need each block in range, and its transactions,
+            // and for each transaction, we'll need its receipts, which
+            // contain the actual logs we want.
+            for block_num in from..=to {
+                // The block header carries a bloom filter over every (address, topic)
+                // pair logged in the block. If it can't possibly contain a log matching
+                // this filter, skip the block without loading its body or receipts.
+                let block_header = storage
+                    .get_block_header(block_num)?
+                    .ok_or(RpcErr::Internal(format!(
+                        "Could not get header for block {block_num}"
+                    )))?;
+                if !bloom_matcher.matches(&block_header.logs_bloom) {
+                    continue;
                 }
+                // Take the body of the block, we
+                // will use it to access the transactions.
+                let block_body =
+                    storage
+                        .get_block_body(block_num)
+                        .await?
+                        .ok_or(RpcErr::Internal(format!(
+                            "Could not get body for block {block_num}"
+                        )))?;
+                collect_block_logs(
+                    &storage,
+                    &block_header,
+                    &block_body,
+                    &address_filter,
+                    &mut logs,
+                )
+                .await?;
             }
         }
     }
@@ -287,6 +275,55 @@ pub(crate) async fn fetch_logs_with_filter(
     };
 
     Ok(filtered_logs)
+}
+
+/// Collect every address-matching log of one block into `logs`, pairing the
+/// block's transactions with their receipts by index.
+async fn collect_block_logs(
+    storage: &Store,
+    block_header: &BlockHeader,
+    block_body: &BlockBody,
+    address_filter: &HashSet<&H160>,
+    logs: &mut Vec<RpcLog>,
+) -> Result<(), RpcErr> {
+    let block_num = block_header.number;
+    let block_hash = block_header.hash();
+
+    // Fetch all of the block's receipts in a single bulk read instead of a
+    // point lookup per transaction (each of which also re-resolved the
+    // canonical block hash). For mainnet blocks with hundreds of txs this
+    // is the dominant cost of eth_getLogs.
+    let receipts = storage.get_receipts_for_block(&block_hash).await?;
+
+    let mut block_log_index = 0_u64;
+
+    // Transactions share indices with their receipts; pair them by index.
+    for (tx_index, tx) in block_body.transactions.iter().enumerate() {
+        let tx_hash = tx.hash(&NativeCrypto);
+        let receipt = receipts.get(tx_index).ok_or(RpcErr::Internal(format!(
+            "Missing receipt for block {block_num} tx {tx_index}"
+        )))?;
+
+        if receipt.succeeded {
+            for log in &receipt.logs {
+                if address_filter.is_empty() || address_filter.contains(&log.address) {
+                    // Some extra data is needed when
+                    // forming the RPC response.
+                    logs.push(RpcLog {
+                        log: log.clone().into(),
+                        log_index: block_log_index,
+                        transaction_hash: tx_hash,
+                        transaction_index: tx_index as u64,
+                        block_number: block_num,
+                        block_hash,
+                        removed: false,
+                    });
+                }
+                block_log_index += 1;
+            }
+        }
+    }
+    Ok(())
 }
 
 /// A log filter's addresses and topic positions pre-derived into header-bloom
@@ -454,6 +491,108 @@ mod tests {
         assert!(matches!(
             LogsFilter::parse(&params),
             Err(RpcErr::WrongParam(_))
+        ));
+    }
+
+    /// A `blockHash` filter must return the logs of exactly that block, even
+    /// when the block is no longer canonical. Resolving the hash through the
+    /// canonical number index would instead return the logs of whatever block
+    /// replaced it at the same height after a reorg, silently, which is the
+    /// substitution EIP-234 exists to prevent.
+    #[tokio::test]
+    async fn test_get_logs_by_block_hash_survives_reorg() {
+        use ethrex_common::types::{Block, BlockBody, LegacyTransaction, Log, Receipt, TxType};
+        use ethrex_storage::EngineType;
+
+        let storage =
+            Store::new("temp.db", EngineType::InMemory).expect("Failed to create test DB");
+
+        // Two competing blocks at height 1, distinguished by their extra_data
+        // and by the address their single log comes from.
+        let make_block = |tag: u8| {
+            let header = BlockHeader {
+                number: 1,
+                extra_data: vec![tag].into(),
+                ..Default::default()
+            };
+            let body = BlockBody {
+                transactions: vec![ethrex_common::types::Transaction::LegacyTransaction(
+                    LegacyTransaction::default(),
+                )],
+                ommers: Default::default(),
+                withdrawals: Default::default(),
+            };
+            Block::new(header, body)
+        };
+        let reorged_out = make_block(1);
+        let canonical = make_block(2);
+        let reorged_hash = reorged_out.hash();
+        let canonical_hash = canonical.hash();
+        assert_ne!(reorged_hash, canonical_hash);
+
+        let receipt_logging_from = |address: H160| {
+            Receipt::new(
+                TxType::Legacy,
+                true,
+                21000,
+                vec![Log {
+                    address,
+                    topics: vec![],
+                    data: Default::default(),
+                }],
+            )
+        };
+        storage.add_block(reorged_out).await.unwrap();
+        storage.add_block(canonical).await.unwrap();
+        storage
+            .add_receipts(
+                reorged_hash,
+                vec![receipt_logging_from(H160::repeat_byte(1))],
+            )
+            .await
+            .unwrap();
+        storage
+            .add_receipts(
+                canonical_hash,
+                vec![receipt_logging_from(H160::repeat_byte(2))],
+            )
+            .await
+            .unwrap();
+        // Make the second block the canonical one at height 1, demoting the first.
+        storage
+            .forkchoice_update(vec![(1, canonical_hash)], 1, canonical_hash, None, None)
+            .await
+            .unwrap();
+
+        let filter_for = |block_hash| LogsFilter {
+            from_block: BlockIdentifier::Tag(BlockTag::Latest),
+            to_block: BlockIdentifier::Tag(BlockTag::Latest),
+            block_hash: Some(block_hash),
+            address_filters: None,
+            topics: vec![],
+        };
+
+        // The demoted block's hash returns the demoted block's own logs.
+        let logs = fetch_logs_with_filter(&filter_for(reorged_hash), storage.clone())
+            .await
+            .unwrap();
+        assert_eq!(logs.len(), 1, "{logs:?}");
+        assert_eq!(logs[0].block_hash, reorged_hash);
+        assert_eq!(logs[0].log.address, H160::repeat_byte(1));
+
+        // The canonical block's hash returns its logs, not the demoted one's.
+        let logs = fetch_logs_with_filter(&filter_for(canonical_hash), storage.clone())
+            .await
+            .unwrap();
+        assert_eq!(logs.len(), 1, "{logs:?}");
+        assert_eq!(logs[0].block_hash, canonical_hash);
+        assert_eq!(logs[0].log.address, H160::repeat_byte(2));
+
+        // A hash the node has never seen is an error, not an empty result.
+        let unknown = H256::repeat_byte(0xff);
+        assert!(matches!(
+            fetch_logs_with_filter(&filter_for(unknown), storage).await,
+            Err(RpcErr::BadParams(_))
         ));
     }
 
