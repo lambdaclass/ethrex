@@ -66,7 +66,7 @@ use ethrex_levm::{
     vm::VM,
 };
 #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
-use rayon::iter::{IntoParallelIterator, IntoParallelRefIterator, ParallelIterator};
+use rayon::iter::{IntoParallelIterator, ParallelIterator};
 #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::cmp::min;
@@ -2823,36 +2823,60 @@ impl LEVM {
             return Ok(());
         }
 
-        // Phase 1: Prefetch all account states — parallel inner fetch + single write-lock.
-        // This warms the CachingDatabase account cache and the TrieLayerCache with
-        // state trie nodes. Storage slots are prefetched synchronously before the
-        // executor starts (see `bal_storage_slots` at the call site), so this warmer
-        // only needs to cover account states and contract code, which overlap exec.
-        let account_addresses: Vec<Address> = accounts.iter().map(|ac| ac.address).collect();
-        store
-            .prefetch_accounts(&account_addresses)
-            .map_err(|e| EvmError::Custom(format!("prefetch_accounts: {e}")))?;
+        // Accounts and their code are warmed in chunks rather than as two whole-block
+        // phases. Code hashes come from account states, so a phase that reads every
+        // address before the first code read leaves the executor faulting in code itself
+        // for the whole of that phase, however early the warmer finishes in aggregate.
+        // Chunking starts the code reads after the first slice of addresses instead.
+        //
+        // Storage slots are prefetched synchronously before the executor starts (see
+        // `bal_storage_slots` at the call site), so this warmer covers only account
+        // states and contract code, which overlap execution.
+        //
+        // Sized against the batched code read below (`Store::get_account_codes_batch`),
+        // which shards at 256 keys and caps at 64 shards: narrower chunks would cap its
+        // read concurrency, trading the executor's head start for shallower reads. This
+        // is the smallest chunk that can still reach that cap, and only does so when
+        // most accounts in a chunk hold distinct code; a chunk of EOAs yields no code
+        // hashes at all and the boundary costs nothing either way.
+        const WARM_CHUNK_ACCOUNTS: usize = 256 * 64;
 
-        if cancelled.load(Ordering::Relaxed) {
-            return Ok(());
+        for chunk in accounts.chunks(WARM_CHUNK_ACCOUNTS) {
+            if cancelled.load(Ordering::Relaxed) {
+                return Ok(());
+            }
+
+            let addresses: Vec<Address> = chunk.iter().map(|ac| ac.address).collect();
+            // Returns the states as well as caching them, so the code hashes come out
+            // of this read instead of costing a second lookup per account.
+            let states = store
+                .get_account_states_batch(&addresses)
+                .map_err(|e| EvmError::Custom(format!("get_account_states_batch: {e}")))?;
+
+            // Distinct hashes only: accounts sharing one bytecode are common, and
+            // without this the same code would be requested once per account holding it.
+            let mut code_hashes: Vec<ethrex_common::H256> = states
+                .iter()
+                .map(|s| s.code_hash)
+                .filter(|h| *h != *EMPTY_KECCAK_HASH)
+                .collect();
+            code_hashes.sort_unstable();
+            code_hashes.dedup();
+
+            if code_hashes.is_empty() {
+                continue;
+            }
+
+            // Best-effort: a code hash present in a BAL but absent from the database
+            // must not fail the warmer, since the executor reports that itself. The
+            // batch is all-or-nothing, so fall back to per-hash reads rather than
+            // leaving the whole chunk cold because of one absent entry.
+            if store.get_account_codes_batch(&code_hashes).is_err() {
+                for hash in &code_hashes {
+                    let _ = store.get_account_code(*hash);
+                }
+            }
         }
-
-        // Phase 2: Code prefetch — collect code hashes from Phase 1 account states
-        // (already cached after Phase 1 prefetch), then batch-fetch codes in parallel.
-        // Uses par_iter for collection since blocks can have thousands of accounts.
-        let code_hashes: Vec<ethrex_common::H256> = accounts
-            .par_iter()
-            .filter_map(|ac| {
-                store
-                    .get_account_state(ac.address)
-                    .ok()
-                    .filter(|s| s.code_hash != *EMPTY_KECCAK_HASH)
-                    .map(|s| s.code_hash)
-            })
-            .collect();
-        code_hashes.par_iter().for_each(|&h| {
-            let _ = store.get_account_code(h);
-        });
 
         Ok(())
     }

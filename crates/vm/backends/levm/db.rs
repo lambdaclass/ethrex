@@ -79,6 +79,27 @@ impl LevmDatabase for DatabaseLogger {
         self.store.as_ref().get_account_code(code_hash)
     }
 
+    fn get_account_codes_batch(
+        &self,
+        code_hashes: &[CoreH256],
+    ) -> Result<Vec<Code>, DatabaseError> {
+        // Record before delegating, exactly as the per-hash path does, so a batched
+        // read cannot leave the witness short of a bytecode it observed.
+        {
+            let mut code_accessed = self
+                .code_accessed
+                .lock()
+                .map_err(|_| DatabaseError::Custom("Could not lock mutex".to_string()))?;
+            code_accessed.extend(
+                code_hashes
+                    .iter()
+                    .filter(|h| **h != *EMPTY_KECCAK_HASH)
+                    .copied(),
+            );
+        }
+        self.store.as_ref().get_account_codes_batch(code_hashes)
+    }
+
     fn get_code_metadata(&self, code_hash: CoreH256) -> Result<CodeMetadata, DatabaseError> {
         // A size-only read still observes the bytecode, so the witness must carry it:
         // EIP-8025 stateless validation recomputes the length from the code itself, and
@@ -138,6 +159,14 @@ impl LevmDatabase for DynVmDatabase {
 
     fn get_account_code(&self, code_hash: CoreH256) -> Result<Code, DatabaseError> {
         <dyn VmDatabase>::get_account_code(self.as_ref(), code_hash)
+            .map_err(|e| DatabaseError::Custom(e.to_string()))
+    }
+
+    fn get_account_codes_batch(
+        &self,
+        code_hashes: &[CoreH256],
+    ) -> Result<Vec<Code>, DatabaseError> {
+        <dyn VmDatabase>::get_account_codes_batch(self.as_ref(), code_hashes)
             .map_err(|e| DatabaseError::Custom(e.to_string()))
     }
 

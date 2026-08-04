@@ -25,6 +25,16 @@ pub trait VmDatabase: Send + Sync + DynClone {
             .map(|a| self.get_account_state(*a))
             .collect()
     }
+
+    /// Batch bytecode lookup. Default impl loops `get_account_code`.
+    /// Backends that can amortize per-key cost (e.g. rocksdb `multi_get_cf` on
+    /// the account-codes table) should override this.
+    fn get_account_codes_batch(&self, code_hashes: &[H256]) -> Result<Vec<Code>, EvmError> {
+        code_hashes
+            .iter()
+            .map(|h| self.get_account_code(*h))
+            .collect()
+    }
 }
 
 dyn_clone::clone_trait_object!(VmDatabase);
