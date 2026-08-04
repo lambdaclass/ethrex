@@ -836,7 +836,7 @@ fn collect_prefetch_targets(
     match node {
         Node::Branch(branch) => {
             let depth = path.len();
-            let mut buckets: [Vec<usize>; 16] = std::array::from_fn(|_| Vec::new());
+            let mut buckets: [Vec<usize>; 16] = core::array::from_fn(|_| Vec::new());
             for &i in key_indices {
                 let p = sorted_paths[i].as_ref();
                 if depth >= p.len() {
@@ -905,12 +905,12 @@ fn install_prefetch_targets(
     path: &Nibbles,
     key_indices: &[usize],
     sorted_paths: &[Nibbles],
-    results: &mut std::vec::IntoIter<Result<Option<Vec<u8>>, TrieError>>,
+    results: &mut alloc::vec::IntoIter<Result<Option<Vec<u8>>, TrieError>>,
 ) -> Result<(), TrieError> {
     match node {
         Node::Branch(branch) => {
             let depth = path.len();
-            let mut buckets: [Vec<usize>; 16] = std::array::from_fn(|_| Vec::new());
+            let mut buckets: [Vec<usize>; 16] = core::array::from_fn(|_| Vec::new());
             for &i in key_indices {
                 let p = sorted_paths[i].as_ref();
                 if depth >= p.len() {
