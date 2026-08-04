@@ -1050,10 +1050,14 @@ pub async fn regenerate_head_state(
     for i in (last_state_number + 1)..=head_block_number {
         debug!("Re-applying block {i} to regenerate state");
 
-        let block = store
+        let mut block = store
             .get_block_by_number(i)
             .await?
             .ok_or_else(|| eyre::eyre!("Block {i} not found"))?;
+
+        // Stored blocks produced by older ethrex versions may carry the legacy
+        // omitted-withdrawals body shape, which block validation now rejects.
+        ethrex_common::types::normalize_legacy_withdrawals(&block.header, &mut block.body);
 
         // Single canonical chain: commit by depth so the in-memory trie-layer
         // backlog stays bounded (~DB_COMMIT_THRESHOLD) instead of growing with the
