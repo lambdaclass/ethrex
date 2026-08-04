@@ -15,13 +15,13 @@ ON_CHAIN_PROPOSER ?= 0x0
 # Comments stay off the value lines: Make keeps whitespace before an inline `#`.
 # The two forks pin their own openzeppelin/solady, so these fix the whole
 # transitive contract tree.
-# NOTE: both are commits on the forks' `chore/pin-dependency-revisions` branches,
-# not main. A default clone cannot reach them once those branches are gone, so
-# repoint at the post-merge commits when the fork PRs land.
-# lambdaclass/automata-on-chain-pccs
-PCCS_REV = 6691609e2562065bd5087083af6c77b89124e6b3
-# lambdaclass/automata-dcap-attestation
-DCAP_ATTESTATION_REV = 2eb8af8a59ed532342dc2c3385535ac9af6541b5
+# lambdaclass/automata-on-chain-pccs, merge commit of its PR #2, on main.
+PCCS_REV = 903fd1bcfd4609f7d7a2c0cb809a3240a927db2b
+# lambdaclass/automata-dcap-attestation.
+# NOTE: still a commit on that fork's `chore/pin-dependency-revisions` branch (its
+# PR #2), not main. Repoint at the merge commit once it lands, so a default clone
+# can still reach it if the branch is deleted.
+DCAP_ATTESTATION_REV = 44b5a6def41c9f482402bab65ed84134ef369f1f
 # OpenZeppelin/openzeppelin-contracts v5.7.0
 OPENZEPPELIN_REV = cab19933c33c2ad1d4c7a84864a3601dddfd16f3
 # automata-network/automata-dcap-qpl, main tip as of 2026-08-03
