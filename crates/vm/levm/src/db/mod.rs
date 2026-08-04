@@ -43,6 +43,15 @@ pub trait Database: Send + Sync {
             .map(|a| self.get_account_state(*a))
             .collect()
     }
+    /// Batch bytecode lookup. Default: loop. Backends with a batched read path
+    /// (e.g. rocksdb `multi_get_cf` on the account-codes table) should override
+    /// this and the caching layer above will dispatch to it.
+    fn get_account_codes_batch(&self, code_hashes: &[H256]) -> Result<Vec<Code>, DatabaseError> {
+        code_hashes
+            .iter()
+            .map(|h| self.get_account_code(*h))
+            .collect()
+    }
     /// Batch storage-slot lookup. Default: loop. Backends with a batched read
     /// path (e.g. rocksdb `multi_get_cf` on the storage flat key-value table)
     /// should override this and the caching layer above will dispatch to it.
@@ -281,6 +290,58 @@ impl Database for CachingDatabase {
         self.precompile_cache.as_ref()
     }
 
+    /// Warms every address through [`Self::prefetch_accounts`], then answers from the
+    /// cache under one read lock. Repeated addresses cost a single database read, and a
+    /// caller that wants the states pays one map lookup each rather than a full
+    /// `get_account_state` round trip per address.
+    fn get_account_states_batch(
+        &self,
+        addresses: &[Address],
+    ) -> Result<Vec<AccountState>, DatabaseError> {
+        self.prefetch_accounts(addresses)?;
+        let cache = self.read_accounts()?;
+        addresses
+            .iter()
+            .map(|addr| {
+                cache.get(addr).copied().ok_or_else(|| {
+                    DatabaseError::Custom(format!("account {addr:?} missing after prefetch"))
+                })
+            })
+            .collect()
+    }
+
+    /// Fetches the uncached bytecodes in one batch, then answers from the cache under a
+    /// single read lock, so a batch whose entries share code hashes reads each once.
+    fn get_account_codes_batch(&self, code_hashes: &[H256]) -> Result<Vec<Code>, DatabaseError> {
+        let missing: Vec<H256> = {
+            let cache = self.read_code()?;
+            let mut seen: FxHashMap<H256, ()> = FxHashMap::default();
+            code_hashes
+                .iter()
+                .copied()
+                .filter(|h| !cache.contains_key(h) && seen.insert(*h, ()).is_none())
+                .collect()
+        };
+
+        if !missing.is_empty() {
+            let codes = self.inner.get_account_codes_batch(&missing)?;
+            let mut cache = self.write_code()?;
+            for (hash, code) in missing.into_iter().zip(codes.into_iter()) {
+                cache.entry(hash).or_insert(code);
+            }
+        }
+
+        let cache = self.read_code()?;
+        code_hashes
+            .iter()
+            .map(|hash| {
+                cache.get(hash).cloned().ok_or_else(|| {
+                    DatabaseError::Custom(format!("code {hash:?} missing after batch read"))
+                })
+            })
+            .collect()
+    }
+
     fn prefetch_accounts(&self, addresses: &[Address]) -> Result<(), DatabaseError> {
         // Filter out already-cached addresses before issuing the batch read.
         let missing: Vec<Address> = {
@@ -294,9 +355,6 @@ impl Database for CachingDatabase {
         if missing.is_empty() {
             return Ok(());
         }
-        // Dispatch to inner's batch path. For the rocksdb-backed StoreVmDatabase
-        // this collapses into a single multi_get on ACCOUNT_FLATKEYVALUE for the
-        // FKV-covered subset; default impl loops for other backends.
         let states = self.inner.get_account_states_batch(&missing)?;
         let mut cache = self.write_accounts()?;
         for (addr, state) in missing.into_iter().zip(states.into_iter()) {

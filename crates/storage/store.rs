@@ -1087,6 +1087,136 @@ impl Store {
         Ok(Some(code))
     }
 
+    /// Batched [`Self::get_account_code`].
+    ///
+    /// Resolves the buffer and the LRU first and issues one `multi_get` over
+    /// [`ACCOUNT_CODES`] for whatever is left, so the backend can share index and filter
+    /// blocks and overlap the blob reads that a per-hash `get` has to serialize. The LRU
+    /// is locked once for the whole batch rather than twice per code.
+    ///
+    /// Keys are sorted only to make the read order deterministic; the rocksdb backend
+    /// sorts its own `multi_get` input.
+    ///
+    /// Results are returned in the order of `code_hashes`. Duplicate hashes are read
+    /// once. `None` means the hash is absent from the database.
+    pub fn get_account_codes_batch(
+        &self,
+        code_hashes: &[H256],
+    ) -> Result<Vec<Option<Code>>, StoreError> {
+        let mut out: Vec<Option<Code>> = vec![None; code_hashes.len()];
+        // Positions to fill per distinct hash, so a repeated hash costs one read.
+        let mut pending: HashMap<H256, Vec<usize>> = HashMap::new();
+
+        {
+            let buffer = self.buffer()?;
+            let mut cache = self
+                .account_code_cache
+                .lock()
+                .map_err(|_| StoreError::LockError)?;
+            for (i, hash) in code_hashes.iter().enumerate() {
+                if let Some(code) = buffer.get_code(hash) {
+                    out[i] = Some(code);
+                } else if let Some(code) = cache.get(hash)? {
+                    out[i] = Some(code);
+                } else {
+                    pending.entry(*hash).or_default().push(i);
+                }
+            }
+        }
+
+        if pending.is_empty() {
+            return Ok(out);
+        }
+
+        let mut missing: Vec<H256> = pending.keys().copied().collect();
+        missing.sort_unstable();
+
+        // Cold blob reads here are latency-bound, so what matters is how many are in
+        // flight. Two ways to get there, and which one wins depends on the batch size:
+        //
+        // * A parallel fan-out of point gets reaches queue depth ~= core count. Cheap
+        //   for any batch: rayon's pool is already warm.
+        // * Contiguous shards of the SORTED keys, one blocking thread each, reach queue
+        //   depth ~= shard count and share RocksDB blocks within a shard. This is the
+        //   only way past core count (async_io is OFF in this build, so a single
+        //   `multi_get` runs the whole batch at queue depth 1), but it pays a thread
+        //   spawn per shard.
+        //
+        // So shard only once sharding can actually beat the fan-out, i.e. once the batch
+        // is wide enough to form more shards than there are cores. Below that the
+        // fan-out is both deeper and cheaper, and a single serial `multi_get` would be
+        // far worse than either.
+        const KEYS_PER_SHARD: usize = 256;
+        const MAX_SHARDS: usize = 64;
+        let parallelism = std::thread::available_parallelism().map_or(8, |p| p.get());
+        let shards = missing.len().div_ceil(KEYS_PER_SHARD).min(MAX_SHARDS);
+        let read_view = self.backend.begin_read()?;
+        let decode_shard =
+            |rv: &dyn StorageReadView, hashes: &[H256]| -> Vec<Result<Option<Code>, StoreError>> {
+                let keys: Vec<&[u8]> = hashes.iter().map(|h| h.as_bytes()).collect();
+                rv.multi_get(ACCOUNT_CODES, &keys)
+                    .into_iter()
+                    .zip(hashes.iter())
+                    .map(|(value, hash)| {
+                        let Some(bytes) = value? else { return Ok(None) };
+                        let (bytecode_slice, jumpdests) = decode_bytes(&bytes)?;
+                        Ok(Some(Code::from_parts_unchecked(
+                            *hash,
+                            bytecode_slice,
+                            decode_jumpdests(bytecode_slice, jumpdests)?,
+                        )))
+                    })
+                    .collect()
+            };
+        let decoded: Vec<Result<Option<Code>, StoreError>> = if shards > parallelism {
+            let chunk = missing.len().div_ceil(shards);
+            let rv = read_view.as_ref();
+            std::thread::scope(|scope| {
+                let handles: Vec<_> = missing
+                    .chunks(chunk)
+                    .map(|ck| scope.spawn(move || decode_shard(rv, ck)))
+                    .collect();
+                handles
+                    .into_iter()
+                    .flat_map(|h| h.join().expect("account code shard panicked"))
+                    .collect()
+            })
+        } else {
+            let rv = read_view.as_ref();
+            missing
+                .par_iter()
+                .map(|hash| {
+                    decode_shard(rv, std::slice::from_ref(hash))
+                        .pop()
+                        .unwrap_or_else(|| {
+                            Err(StoreError::Custom("empty code read result".to_string()))
+                        })
+                })
+                .collect()
+        };
+
+        let mut fetched: Vec<Code> = Vec::new();
+        for (hash, code) in missing.iter().zip(decoded.into_iter()) {
+            let Some(code) = code? else { continue };
+            for &i in pending.get(hash).into_iter().flatten() {
+                out[i] = Some(code.clone());
+            }
+            fetched.push(code);
+        }
+
+        if !fetched.is_empty() {
+            let mut cache = self
+                .account_code_cache
+                .lock()
+                .map_err(|_| StoreError::LockError)?;
+            for code in &fetched {
+                cache.insert(code)?;
+            }
+        }
+
+        Ok(out)
+    }
+
     /// Check if account code exists by its hash, without constructing the full `Code` struct.
     /// More efficient than `get_account_code` for existence checks since it skips
     /// RLP decoding and `Code` struct construction (no `jump_targets` deserialization).
