@@ -1327,12 +1327,22 @@ impl Mempool {
     /// pooled-hashes dump so the caller takes one lock instead of one per tx.
     pub fn get_txs_for_new_peer_dump(&self) -> Result<Vec<MempoolTransaction>, StoreError> {
         let inner = self.read()?;
-        Ok(inner
+        let mut txs: Vec<MempoolTransaction> = inner
             .transaction_pool
             .iter()
             .filter(|(hash, tx)| !inner.private_pool.contains(hash) && !tx.is_privileged())
             .map(|(_, tx)| tx.clone())
-            .collect())
+            .collect();
+        // Announce grouped by sender and ascending by nonce, matching what the
+        // previous `get_all_txs_by_sender`-based dump produced. This is NOT
+        // cosmetic: `transaction_pool` is a hash map, so an unsorted dump
+        // announces a sender's transactions in arbitrary order, and a peer that
+        // fetches them in that order sees nonce gaps. Gapped transactions are
+        // future/queued on the receiving side, so they can be turned away by
+        // the gap-admission gate or counted against the per-sender queued cap
+        // and never enter the peer's pool at all.
+        txs.sort_by(|a, b| a.sender().cmp(&b.sender()).then_with(|| a.cmp(b)));
+        Ok(txs)
     }
 
     /// For the per-account **queued** (future-nonce) cap: if a tx at `tx_nonce`
@@ -1581,6 +1591,65 @@ mod tests {
             nonce,
             ..Default::default()
         })
+    }
+
+    #[test]
+    fn new_peer_dump_is_grouped_by_sender_and_nonce_ordered() {
+        // Regression: the dump reads from `transaction_pool`, a hash map, so
+        // without an explicit sort it emits a sender's txs in arbitrary order.
+        // The peer then fetches them out of nonce order, sees gaps, and its own
+        // gap-admission / queued-cap gates can turn them away — transactions
+        // silently never reach the peer's pool.
+        let pool = Mempool::new(64);
+        let a = Address::from_low_u64_be(0xA);
+        let b = Address::from_low_u64_be(0xB);
+
+        // Insert deliberately out of order, interleaving senders. `to` is
+        // derived from the sender so the two senders' txs hash differently —
+        // `dummy_mempool_tx` doesn't embed the sender, so same-nonce txs from
+        // different senders would otherwise collide on hash.
+        let make = |sender: Address, nonce: u64| {
+            let tx = Transaction::EIP1559Transaction(EIP1559Transaction {
+                nonce,
+                gas_limit: 21_000,
+                to: TxKind::Call(sender),
+                ..Default::default()
+            });
+            MempoolTransaction::new(tx, sender)
+        };
+        for (sender, nonce) in [(a, 2u64), (b, 1), (a, 0), (b, 0), (a, 1)] {
+            let mtx = make(sender, nonce);
+            let hash = mtx.hash(&NativeCrypto);
+            pool.add_transaction(hash, sender, mtx, None, None).unwrap();
+        }
+
+        let dumped = pool.get_txs_for_new_peer_dump().unwrap();
+        assert_eq!(dumped.len(), 5);
+
+        // Each sender's slice must be strictly ascending by nonce.
+        for sender in [a, b] {
+            let nonces: Vec<u64> = dumped
+                .iter()
+                .filter(|tx| tx.sender() == sender)
+                .map(|tx| tx.nonce())
+                .collect();
+            let mut sorted = nonces.clone();
+            sorted.sort_unstable();
+            assert_eq!(
+                nonces, sorted,
+                "dump must be nonce-ordered per sender, got {nonces:?} for {sender:?}"
+            );
+        }
+
+        // And a sender's txs must be contiguous, not interleaved with the other's.
+        let senders: Vec<Address> = dumped.iter().map(|tx| tx.sender()).collect();
+        let mut deduped = senders.clone();
+        deduped.dedup();
+        assert_eq!(
+            deduped.len(),
+            2,
+            "each sender's txs must form one contiguous run, got {senders:?}"
+        );
     }
 
     fn add_tx(pool: &Mempool, sender: Address, nonce: u64) -> H256 {
