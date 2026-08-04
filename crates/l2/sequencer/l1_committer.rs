@@ -18,7 +18,7 @@ use ethrex_common::{
     types::{
         BLOB_BASE_FEE_UPDATE_FRACTION, BlobsBundle, Block, BlockNumber, Fork, Genesis,
         MIN_BASE_FEE_PER_BLOB_GAS, TxType, batch::Batch, blobs_bundle, fake_exponential,
-        fee_config::FeeConfig,
+        fee_config::FeeConfig, normalize_legacy_withdrawals,
     },
 };
 use ethrex_l2_common::sequencer_state::{SequencerState, SequencerStatus};
@@ -1642,11 +1642,14 @@ pub async fn regenerate_state(
     for block_number in last_state_number + 1..=target_block_number {
         debug!("Re-applying block {block_number} to regenerate state");
 
-        let Some(block) = store.get_block_by_number(block_number).await? else {
+        let Some(mut block) = store.get_block_by_number(block_number).await? else {
             return Err(CommitterError::FailedToCreateCheckpoint(format!(
                 "Block {block_number} not found"
             )));
         };
+        // Stored blocks produced by older ethrex versions may carry the legacy
+        // omitted-withdrawals body shape, which block validation now rejects.
+        normalize_legacy_withdrawals(&block.header, &mut block.body);
 
         let Some(fee_config) = rollup_store.get_fee_config_by_block(block_number).await? else {
             return Err(CommitterError::FailedToCreateCheckpoint(format!(

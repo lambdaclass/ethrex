@@ -435,7 +435,15 @@ impl Command {
                     let mut buf = &blob[8..];
                     let mut blocks = Vec::new();
                     for _ in 0..blocks_count {
-                        let (item, rest) = Block::decode_unfinished(buf)?;
+                        let (mut item, rest) = Block::decode_unfinished(buf)?;
+                        // Batch blobs published by older ethrex versions carry the
+                        // legacy omitted-withdrawals body shape, which block
+                        // validation now rejects. The published history is
+                        // immutable, so normalize on read.
+                        ethrex_common::types::normalize_legacy_withdrawals(
+                            &item.header,
+                            &mut item.body,
+                        );
                         blocks.push(item);
                         buf = rest;
                     }
