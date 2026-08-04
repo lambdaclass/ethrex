@@ -11,7 +11,7 @@ use std::sync::Arc;
 
 use ethrex_common::types::block_execution_witness::ExecutionWitness;
 use ethrex_common::types::stateless_ssz::{
-    NewPayloadRequest, SszChainConfig, SszStatelessInput, SszStatelessValidationResult,
+    NewPayloadRequest, SszStatelessInput, SszStatelessValidationResult,
 };
 use ethrex_crypto::Crypto;
 use ethrex_guest_program::common::ExecutionError;
@@ -29,7 +29,7 @@ use libssz_merkle::{HashTreeRoot, Sha2Hasher};
 pub fn verify_stateless_new_payload(
     new_payload_request: &NewPayloadRequest,
     execution_witness: ExecutionWitness,
-    chain_config: &SszChainConfig,
+    chain_id: u64,
     crypto: Arc<dyn Crypto>,
 ) -> SszStatelessValidationResult {
     let request_root = new_payload_request.hash_tree_root(&Sha2Hasher);
@@ -42,10 +42,13 @@ pub fn verify_stateless_new_payload(
         }
     };
 
+    // `chain_id` and `schema_id` are echoed even when validation fails; only a
+    // decode failure produces the all-zero default, which happens before this.
     SszStatelessValidationResult {
         new_payload_request_root: request_root,
         successful_validation: successful,
-        chain_config: chain_config.clone(),
+        chain_id,
+        schema_id: ethrex_common::types::stateless_ssz::STATELESS_INPUT_SCHEMA_ID,
     }
 }
 
@@ -91,7 +94,7 @@ impl ethrex_vm::StatelessValidator for StatelessExecutor {
         let result = verify_stateless_new_payload(
             &input.new_payload_request,
             execution_witness,
-            &input.chain_config,
+            input.chain_id,
             self.crypto.clone(),
         );
 

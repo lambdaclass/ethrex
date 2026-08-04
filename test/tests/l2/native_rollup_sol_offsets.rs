@@ -17,9 +17,8 @@
 #![allow(clippy::unwrap_used)]
 
 use ethrex_common::types::stateless_ssz::{
-    Bytes20, ExecutionPayload, ExecutionRequests, NewPayloadRequest, SszChainConfig,
-    SszExecutionWitness, SszForkActivation, SszForkConfig, SszStatelessInput,
-    SszStatelessValidationResult,
+    Bytes20, ExecutionPayload, ExecutionRequests, NewPayloadRequest, SszExecutionWitness,
+    SszStatelessInput, SszStatelessValidationResult,
 };
 use libssz::SszEncode;
 
@@ -89,17 +88,6 @@ fn sample_execution_payload() -> ExecutionPayload {
     }
 }
 
-fn empty_fork_config() -> SszForkConfig {
-    SszForkConfig {
-        fork: 0,
-        activation: SszForkActivation {
-            block_number: vec![].try_into().expect("block_number"),
-            timestamp: vec![].try_into().expect("timestamp"),
-        },
-        blob_schedule: vec![].try_into().expect("blob_schedule"),
-    }
-}
-
 fn encode_sample_input() -> Vec<u8> {
     let input = SszStatelessInput {
         new_payload_request: NewPayloadRequest {
@@ -119,10 +107,7 @@ fn encode_sample_input() -> Vec<u8> {
             codes: vec![].try_into().expect("codes"),
             headers: vec![].try_into().expect("headers"),
         },
-        chain_config: SszChainConfig {
-            chain_id: 1,
-            active_fork: empty_fork_config(),
-        },
+        chain_id: 1,
         public_keys: vec![].try_into().expect("public_keys"),
     };
     let mut buf = Vec::new();
@@ -215,10 +200,8 @@ fn sol_result_offsets_match_encoding() {
     let result = SszStatelessValidationResult {
         new_payload_request_root: [0xAA; 32],
         successful_validation: true,
-        chain_config: SszChainConfig {
-            chain_id: 0x1122334455667788,
-            active_fork: empty_fork_config(),
-        },
+        chain_id: 0x1122334455667788,
+        schema_id: ethrex_common::types::stateless_ssz::STATELESS_INPUT_SCHEMA_ID,
     };
     let mut buf = Vec::new();
     result.ssz_append(&mut buf);
@@ -229,18 +212,29 @@ fn sol_result_offsets_match_encoding() {
         "RESULT_SUCCESS_OFFSET does not point at successful_validation"
     );
 
-    let cc_off_pos = sol_uint_const(&src, "RESULT_CHAIN_CONFIG_OFFSET_POS");
+    // Since execution-specs #3278 the result is entirely fixed-size, so
+    // RESULT_FIXED_LEN is the exact encoded length and both remaining fields are
+    // direct reads — there is no chain_config offset to dereference.
     let fixed_len = sol_uint_const(&src, "RESULT_FIXED_LEN");
-    let cc_off = u32_le(&buf, cc_off_pos);
     assert_eq!(
-        cc_off, fixed_len,
-        "chain_config data must start at RESULT_FIXED_LEN"
+        buf.len(),
+        fixed_len,
+        "RESULT_FIXED_LEN must equal the exact encoded result length"
     );
-    // chain_id is chain_config's first field (uint64 LE) at the dereferenced offset.
-    let chain_id = u64::from_le_bytes(buf[cc_off..cc_off + 8].try_into().unwrap());
+
+    let chain_id_off = sol_uint_const(&src, "RESULT_CHAIN_ID_OFFSET");
+    let chain_id = u64::from_le_bytes(buf[chain_id_off..chain_id_off + 8].try_into().unwrap());
     assert_eq!(
         chain_id, 0x1122334455667788,
-        "chain_id must be readable at the RESULT_CHAIN_CONFIG_OFFSET_POS deref"
+        "RESULT_CHAIN_ID_OFFSET does not point at chain_id"
+    );
+
+    let schema_off = sol_uint_const(&src, "RESULT_SCHEMA_ID_OFFSET");
+    let schema_id = u16::from_le_bytes(buf[schema_off..schema_off + 2].try_into().unwrap());
+    assert_eq!(
+        schema_id,
+        ethrex_common::types::stateless_ssz::STATELESS_INPUT_SCHEMA_ID,
+        "RESULT_SCHEMA_ID_OFFSET does not point at schema_id"
     );
 }
 

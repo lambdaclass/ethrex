@@ -146,8 +146,7 @@ mod tests {
     use bytes::Bytes;
     use ethrex_common::types::stateless_ssz::{
         Bytes20, DepositRequest, ExecutionPayload, ExecutionRequests, NewPayloadRequest,
-        SszChainConfig, SszExecutionWitness, SszForkActivation, SszForkConfig, SszStatelessInput,
-        SszStatelessValidationResult, Withdrawal,
+        SszExecutionWitness, SszStatelessInput, SszStatelessValidationResult, Withdrawal,
     };
     use libssz::SszEncode;
 
@@ -163,17 +162,8 @@ mod tests {
             let result = SszStatelessValidationResult {
                 new_payload_request_root: [0u8; 32],
                 successful_validation: true,
-                chain_config: SszChainConfig {
-                    chain_id: 1,
-                    active_fork: SszForkConfig {
-                        fork: 0,
-                        activation: SszForkActivation {
-                            block_number: vec![].try_into().expect("empty block_number"),
-                            timestamp: vec![].try_into().expect("empty timestamp"),
-                        },
-                        blob_schedule: vec![].try_into().expect("empty blob_schedule"),
-                    },
-                },
+                chain_id: 1,
+                schema_id: 0x1501,
             };
             let mut buf = Vec::new();
             result.ssz_append(&mut buf);
@@ -223,17 +213,7 @@ mod tests {
                 codes: vec![].try_into().expect("codes"),
                 headers: vec![].try_into().expect("headers"),
             },
-            chain_config: SszChainConfig {
-                chain_id: 1,
-                active_fork: SszForkConfig {
-                    fork: 0,
-                    activation: SszForkActivation {
-                        block_number: vec![].try_into().expect("block_number"),
-                        timestamp: vec![].try_into().expect("timestamp"),
-                    },
-                    blob_schedule: vec![].try_into().expect("blob_schedule"),
-                },
-            },
+            chain_id: 1,
             public_keys: vec![].try_into().expect("public_keys"),
         }
     }
@@ -243,17 +223,8 @@ mod tests {
             let result = SszStatelessValidationResult {
                 new_payload_request_root: [0u8; 32],
                 successful_validation: false,
-                chain_config: SszChainConfig {
-                    chain_id: 1,
-                    active_fork: SszForkConfig {
-                        fork: 0,
-                        activation: SszForkActivation {
-                            block_number: vec![].try_into().expect("empty block_number"),
-                            timestamp: vec![].try_into().expect("empty timestamp"),
-                        },
-                        blob_schedule: vec![].try_into().expect("empty blob_schedule"),
-                    },
-                },
+                chain_id: 1,
+                schema_id: 0x1501,
             };
             let mut buf = Vec::new();
             result.ssz_append(&mut buf);

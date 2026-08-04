@@ -363,11 +363,9 @@ pub fn build_ssz_stateless_input(
     let stateless_input = SszStatelessInput {
         new_payload_request,
         witness: ssz_witness,
-        chain_config: ethrex_common::types::block_execution_witness::chain_config_to_ssz(
-            &witness.chain_config,
-            header.timestamp,
-        )
-        .map_err(|e| format!("active_fork encode: {e:?}"))?,
+        // #3278: only the chain id crosses the wire. The consumer derives the rest
+        // from (chain_id, fork), with the fork coming from the schema-id prefix.
+        chain_id: witness.chain_config.chain_id,
         public_keys: SszList::new(), // Empty for now
     };
 

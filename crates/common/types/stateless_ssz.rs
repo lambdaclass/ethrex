@@ -5,7 +5,7 @@
 //! tree-hashing `NewPayloadRequest` and producing the `PublicInput`
 //! committed to by execution proofs. The second section layers the
 //! native-rollup types (`SszStatelessInput`, `SszStatelessValidationResult`,
-//! `SszExecutionWitness`, `SszChainConfig`) on top of those.
+//! `SszExecutionWitness`) on top of those.
 
 use bytes::Bytes;
 use libssz::{SszDecode, SszEncode};
@@ -365,10 +365,6 @@ const MAX_BYTES_PER_HEADER: usize = 1_024; // 2^10
 const MAX_PUBLIC_KEYS: usize = 1_048_576; // 2^20
 /// PUBLIC_KEY_BYTES — an uncompressed secp256k1 public key is 65 bytes.
 const PUBLIC_KEY_BYTES: usize = 65;
-/// MAX_BLOB_SCHEDULES_PER_FORK — SSZ Optional[BlobSchedule] as List[T, 1].
-const MAX_BLOB_SCHEDULES_PER_FORK: usize = 1;
-/// MAX_FORK_ACTIVATION_VALUES — SSZ Optional[uint64] as List[uint64, 1].
-const MAX_FORK_ACTIVATION_VALUES: usize = 1;
 
 // ── Stateless validation types ───────────────────────────────────
 //
@@ -376,40 +372,21 @@ const MAX_FORK_ACTIVATION_VALUES: usize = 1;
 // commit EIP-8025 PR #11604 pins:
 // https://github.com/ethereum/execution-specs/blob/85fc20ca5937719a854472a87cb48d01ef1dffca/src/ethereum/forks/amsterdam/stateless_ssz.py
 
-/// SSZ Optional[uint64] modelled as `List[uint64, 1]`.
-pub type SszOptionalForkActivationValue = SszList<u64, MAX_FORK_ACTIVATION_VALUES>;
-/// SSZ Optional[BlobSchedule] modelled as `List[SszBlobSchedule, 1]`.
-pub type SszOptionalBlobSchedule = SszList<SszBlobSchedule, MAX_BLOB_SCHEDULES_PER_FORK>;
+/// Schema id of the stateless input wire format: `fork_index << 8 | revision`,
+/// where fork `0x15` is Amsterdam and revision `0x01` is the current encoding.
+///
+/// The 2-byte big-endian prefix is how the fork reaches the guest at all — #3278
+/// removed all chain configuration from the SSZ body — and it is echoed as a
+/// public output field so a verifier can pin which rules were applied. Upstream
+/// rejects any other id outright; so does ethrex.
+///
+/// Note that upstream reused `0x1501` across an incompatible body change
+/// (#3248 + #3278 vs `tests-zkevm@v0.6.2`), so the id alone does not distinguish
+/// the two dialects. ethrex speaks the newer one.
+pub const STATELESS_INPUT_SCHEMA_ID: u16 = 0x1501;
 
-/// SSZ `BlobSchedule` — effective blob params for a fork.
-#[derive(Debug, Clone, PartialEq, Eq, SszEncode, SszDecode, HashTreeRoot)]
-pub struct SszBlobSchedule {
-    pub target: u64,
-    pub max: u64,
-    pub base_fee_update_fraction: u64,
-}
-
-/// SSZ `ForkActivation` — the (optional) block/timestamp a fork activates at.
-#[derive(Debug, Clone, PartialEq, Eq, SszEncode, SszDecode, HashTreeRoot)]
-pub struct SszForkActivation {
-    pub block_number: SszOptionalForkActivationValue,
-    pub timestamp: SszOptionalForkActivationValue,
-}
-
-/// SSZ `ForkConfig` — the active fork id, its activation, and blob schedule.
-#[derive(Debug, Clone, PartialEq, Eq, SszEncode, SszDecode, HashTreeRoot)]
-pub struct SszForkConfig {
-    pub fork: u64,
-    pub activation: SszForkActivation,
-    pub blob_schedule: SszOptionalBlobSchedule,
-}
-
-/// SSZ `ChainConfig` container. Variable-size (nests `active_fork`'s lists).
-#[derive(Debug, Clone, PartialEq, Eq, SszEncode, SszDecode, HashTreeRoot)]
-pub struct SszChainConfig {
-    pub chain_id: u64,
-    pub active_fork: SszForkConfig,
-}
+/// Byte length of the big-endian [`STATELESS_INPUT_SCHEMA_ID`] prefix.
+pub const STATELESS_INPUT_SCHEMA_ID_SIZE: usize = 2;
 
 /// SSZ `ExecutionWitness` container matching the execution-specs definition.
 ///
@@ -432,7 +409,10 @@ pub struct SszExecutionWitness {
 pub struct SszStatelessInput {
     pub new_payload_request: NewPayloadRequest,
     pub witness: SszExecutionWitness,
-    pub chain_config: SszChainConfig,
+    /// Chain identifier. #3278 removed `ChainConfig` from the wire: fork
+    /// activation info and blob schedules are guest-internal, keyed by
+    /// `(chain_id, fork)`, with the fork coming from the schema-id prefix.
+    pub chain_id: u64,
     pub public_keys: SszList<SszVector<u8, PUBLIC_KEY_BYTES>, MAX_PUBLIC_KEYS>,
 }
 
@@ -441,7 +421,13 @@ pub struct SszStatelessInput {
 pub struct SszStatelessValidationResult {
     pub new_payload_request_root: [u8; 32],
     pub successful_validation: bool,
-    pub chain_config: SszChainConfig,
+    /// Chain identifier echoed from the input — real even when validation fails;
+    /// only a decode failure yields the all-zero default.
+    pub chain_id: u64,
+    /// The full schema id the guest decoded (`0x1501` for Amsterdam revision 1).
+    /// Public so a verifier can pin which fork rules and encoding were used, for
+    /// forks that share a payload shape. Added by execution-specs #3278.
+    pub schema_id: u16,
 }
 
 // ── Conversions to internal types ────────────────────────────────
@@ -610,38 +596,6 @@ mod tests {
 
     // ── Stateless helpers ────────────────────────────────────────
 
-    fn sample_active_fork() -> SszForkConfig {
-        SszForkConfig {
-            fork: 25, // Amsterdam (spec ProtocolFork index)
-            activation: SszForkActivation {
-                block_number: SszList::new(),
-                timestamp: {
-                    let mut v = SszList::new();
-                    v.push(0u64).expect("one value fits");
-                    v
-                },
-            },
-            blob_schedule: SszList::new(),
-        }
-    }
-
-    #[test]
-    fn ssz_chain_config_with_active_fork_round_trip() {
-        round_trip(&SszChainConfig {
-            chain_id: 1,
-            active_fork: sample_active_fork(),
-        });
-        round_trip(&SszForkActivation {
-            block_number: SszList::new(),
-            timestamp: SszList::new(),
-        });
-        round_trip(&SszBlobSchedule {
-            target: 3,
-            max: 6,
-            base_fee_update_fraction: 3_338_477,
-        });
-    }
-
     fn list<T: SszEncode + SszDecode, const N: usize>(items: Vec<T>) -> SszList<T, N> {
         let mut list = SszList::new();
         for item in items {
@@ -655,22 +609,6 @@ mod tests {
         value.ssz_append(&mut buf);
         let decoded = T::from_ssz_bytes(&buf).expect("SSZ decode failed");
         assert_eq!(*value, decoded, "round-trip mismatch");
-    }
-
-    #[test]
-    fn ssz_chain_config_round_trip() {
-        round_trip(&SszChainConfig {
-            chain_id: 1,
-            active_fork: sample_active_fork(),
-        });
-        round_trip(&SszChainConfig {
-            chain_id: 0,
-            active_fork: sample_active_fork(),
-        });
-        round_trip(&SszChainConfig {
-            chain_id: u64::MAX,
-            active_fork: sample_active_fork(),
-        });
     }
 
     #[test]
@@ -735,20 +673,16 @@ mod tests {
         let result = SszStatelessValidationResult {
             new_payload_request_root: [0xab; 32],
             successful_validation: true,
-            chain_config: SszChainConfig {
-                chain_id: 42,
-                active_fork: sample_active_fork(),
-            },
+            chain_id: 42,
+            schema_id: 0x1501,
         };
         round_trip(&result);
 
         let result_false = SszStatelessValidationResult {
             new_payload_request_root: [0x00; 32],
             successful_validation: false,
-            chain_config: SszChainConfig {
-                chain_id: 1,
-                active_fork: sample_active_fork(),
-            },
+            chain_id: 1,
+            schema_id: 0x1501,
         };
         round_trip(&result_false);
     }
@@ -761,8 +695,12 @@ mod tests {
     // reading the wrong bytes on L1.
 
     const SOL_RESULT_SUCCESS_OFFSET: usize = 32;
-    // result bytes 33..36 hold the u32 LE OFFSET to chain_config's variable data (not chain_id itself).
-    const SOL_RESULT_CHAIN_CONFIG_OFFSET_POS: usize = 33;
+    // Since #3278 the result is entirely fixed-size (32 + 1 + 8 + 2 = 43 bytes):
+    // chain_id is read directly at 33, schema_id at 41. There is no longer an
+    // offset to dereference.
+    const SOL_RESULT_CHAIN_ID_OFFSET: usize = 33;
+    const SOL_RESULT_SCHEMA_ID_OFFSET: usize = 41;
+    const SOL_RESULT_FIXED_LEN: usize = 43;
     const SOL_EP_STATE_ROOT_OFFSET: usize = 52;
     const SOL_EP_BLOCK_NUMBER_OFFSET: usize = 404;
     const SOL_EP_GAS_LIMIT_OFFSET: usize = 412;
@@ -807,35 +745,42 @@ mod tests {
     #[test]
     fn nativerollup_sol_result_layout_matches() {
         // Encode a StatelessValidationResult and confirm the contract's fixed
-        // offsets: successful_validation @32, chain_config offset @33, and chain_id
-        // (first field of chain_config) at the dereferenced offset.
+        // offsets. Under #3278 every field is fixed-size, so all three are direct
+        // reads and the total length is exactly 43 bytes.
         let result = SszStatelessValidationResult {
             new_payload_request_root: [0xAA; 32],
             successful_validation: true,
-            chain_config: SszChainConfig {
-                chain_id: 0x1122334455667788,
-                active_fork: sample_active_fork(),
-            },
+            chain_id: 0x1122334455667788,
+            schema_id: 0x1501,
         };
         let mut buf = Vec::new();
         result.ssz_append(&mut buf);
 
         assert_eq!(
+            buf.len(),
+            SOL_RESULT_FIXED_LEN,
+            "result must be exactly 43 fixed bytes; a variable tail means \
+             ChainConfig is still in there"
+        );
+        assert_eq!(
             buf[SOL_RESULT_SUCCESS_OFFSET], 1,
             "successful_validation must be byte 32"
         );
-        let cc_off = u32_le(&buf, SOL_RESULT_CHAIN_CONFIG_OFFSET_POS);
-        assert_eq!(
-            cc_off, 37,
-            "chain_config offset value must be 37 (fixed part length), actual: {}",
-            cc_off
+        let chain_id = u64::from_le_bytes(
+            buf[SOL_RESULT_CHAIN_ID_OFFSET..SOL_RESULT_CHAIN_ID_OFFSET + 8]
+                .try_into()
+                .unwrap(),
         );
-        // chain_id is the first field of SszChainConfig, uint64 LE, at cc_off.
-        let chain_id = u64::from_le_bytes(buf[cc_off..cc_off + 8].try_into().unwrap());
         assert_eq!(
             chain_id, 0x1122334455667788,
-            "chain_id must be readable at the deref offset"
+            "chain_id must be a direct u64 LE read at 33"
         );
+        let schema_id = u16::from_le_bytes(
+            buf[SOL_RESULT_SCHEMA_ID_OFFSET..SOL_RESULT_SCHEMA_ID_OFFSET + 2]
+                .try_into()
+                .unwrap(),
+        );
+        assert_eq!(schema_id, 0x1501, "schema_id must be a u16 LE read at 41");
     }
 
     #[test]
@@ -862,16 +807,16 @@ mod tests {
                 codes: SszList::new(),
                 headers: SszList::new(),
             },
-            chain_config: SszChainConfig {
-                chain_id: 1,
-                active_fork: sample_active_fork(),
-            },
+            chain_id: 1,
             public_keys: SszList::new(),
         };
         let mut buf = Vec::new();
         input.ssz_append(&mut buf);
 
-        // StatelessInput fixed part = 4 offsets (16 bytes); new_payload_request is field 0.
+        // StatelessInput fixed part = npr offset(4) + witness offset(4) +
+        // chain_id(8) + public_keys offset(4) = 20 bytes. new_payload_request is
+        // still field 0, so its offset is at byte 0 and the contract's dynamic
+        // read there is unaffected.
         let npr_abs = u32_le(&buf, 0);
         // NewPayloadRequest fixed prefix: execution_payload offset @ npr_abs.
         let ep_abs = npr_abs + u32_le(&buf, npr_abs);
