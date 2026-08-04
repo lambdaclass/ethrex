@@ -108,6 +108,7 @@ fn simulated_slot_number(slot_number: Option<u64>) -> U256 {
         &mut db,
         VMType::L1,
         &NativeCrypto,
+        None,
     )
     .expect("simulation must not error");
     match result {
