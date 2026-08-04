@@ -110,6 +110,11 @@ contract NativeRollup {
     // revision 0x01. The guest echoes it so we can pin which rules were applied.
     uint16 constant EXPECTED_SCHEMA_ID = 0x1501;
 
+    // `statelessInputBytes` is a 2-byte big-endian schema id followed by the SSZ
+    // body, so every absolute read into the body is shifted by this much. The
+    // SSZ fixed part of `SszStatelessInput` begins at this offset.
+    uint256 constant INPUT_SCHEMA_PREFIX_LEN = 2;
+
     // Byte offsets inside the SSZ `ExecutionPayload` fixed prefix.
     uint256 constant EP_PARENT_HASH_OFFSET = 0;
     uint256 constant EP_STATE_ROOT_OFFSET = 52;
@@ -361,8 +366,16 @@ contract NativeRollup {
             bytes32 parentBeaconBlockRoot
         )
     {
-        require(sszInput.length >= 20, "SSZ: input too short");
-        uint256 nprAbs = _readU32LECalldata(sszInput, 0);
+        // 22 = 2-byte schema prefix + the 20-byte SszStatelessInput fixed part
+        // (npr_off 4 | witness_off 4 | chain_id 8 | public_keys_off 4).
+        require(sszInput.length >= INPUT_SCHEMA_PREFIX_LEN + 20, "SSZ: input too short");
+        require(
+            (uint16(uint8(sszInput[0])) << 8) | uint16(uint8(sszInput[1])) == EXPECTED_SCHEMA_ID,
+            "SSZ: unexpected schema id"
+        );
+        // SSZ offsets are relative to the body, so rebase them past the prefix.
+        uint256 nprAbs =
+            INPUT_SCHEMA_PREFIX_LEN + _readU32LECalldata(sszInput, INPUT_SCHEMA_PREFIX_LEN);
         // 44 = NPR fixed prefix: 3 var-field offsets (12) + parent_beacon_block_root (32).
         require(sszInput.length >= nprAbs + 44, "SSZ: NPR offset out of range");
         parentBeaconBlockRoot = _readBytes32Calldata(sszInput, nprAbs + 8);

@@ -88,6 +88,10 @@ fn sample_execution_payload() -> ExecutionPayload {
     }
 }
 
+/// Encode a sample `statelessInputBytes`: the 2-byte big-endian schema id then
+/// the SSZ body, exactly as `build_ssz_stateless_input` emits it. The prefix is
+/// modelled here on purpose — the contract rebases every absolute read past it,
+/// so a guard over an unprefixed body would not catch a framing mismatch.
 fn encode_sample_input() -> Vec<u8> {
     let input = SszStatelessInput {
         new_payload_request: NewPayloadRequest {
@@ -110,7 +114,9 @@ fn encode_sample_input() -> Vec<u8> {
         chain_id: 1,
         public_keys: vec![].try_into().expect("public_keys"),
     };
-    let mut buf = Vec::new();
+    let mut buf = ethrex_common::types::stateless_ssz::STATELESS_INPUT_SCHEMA_ID
+        .to_be_bytes()
+        .to_vec();
     input.ssz_append(&mut buf);
     buf
 }
@@ -121,9 +127,17 @@ fn encode_sample_input() -> Vec<u8> {
 fn sol_ep_offsets_match_encoding() {
     let src = read_contract();
     let buf = encode_sample_input();
+    let prefix_len = sol_uint_const(&src, "INPUT_SCHEMA_PREFIX_LEN");
+    assert_eq!(prefix_len, 2, "INPUT_SCHEMA_PREFIX_LEN must be 2");
+    assert_eq!(
+        u16::from_be_bytes([buf[0], buf[1]]),
+        ethrex_common::types::stateless_ssz::STATELESS_INPUT_SCHEMA_ID,
+        "sample input must carry the schema-id prefix the contract requires"
+    );
 
     // StatelessInput fixed part: 4 offsets; new_payload_request is field 0.
-    let npr_abs = u32_le(&buf, 0);
+    // SSZ offsets are body-relative, so rebase past the prefix as `advance()` does.
+    let npr_abs = prefix_len + u32_le(&buf, prefix_len);
     // NewPayloadRequest fixed prefix: execution_payload offset @ npr_abs.
     let ep_abs = npr_abs + u32_le(&buf, npr_abs);
 

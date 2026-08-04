@@ -59,11 +59,30 @@ fn run_execute(
     calldata: &Bytes,
     gas_remaining: &mut u64,
 ) -> Result<Bytes, VMError> {
-    use ethrex_common::types::stateless_ssz::SszStatelessInput;
+    use ethrex_common::types::stateless_ssz::{
+        STATELESS_INPUT_SCHEMA_ID, STATELESS_INPUT_SCHEMA_ID_SIZE, SszStatelessInput,
+    };
     use libssz::SszDecode;
 
-    // Attacker-controlled input: SSZ decode failure is a CALL-level failure, not an invariant.
-    let input = SszStatelessInput::from_ssz_bytes(calldata)
+    // The input is schema-prefixed `statelessInputBytes`: a 2-byte big-endian
+    // schema id, then the SSZ body. Since execution-specs #3278 the prefix is the
+    // only thing that identifies the fork — no chain configuration crosses the
+    // wire — so rejecting an unexpected id is a correctness requirement, not a
+    // sanity check. Upstream `deserialize_stateless_input` rejects it the same way.
+    //
+    // All of this is attacker-controlled, so every failure here is a CALL-level
+    // failure rather than an invariant violation.
+    // `split_first_chunk` yields a fixed-size array, so no indexing is needed —
+    // this crate denies `clippy::indexing_slicing`.
+    let (schema_bytes, body) = calldata
+        .split_first_chunk::<STATELESS_INPUT_SCHEMA_ID_SIZE>()
+        .ok_or(VMError::from(PrecompileError::ExecuteInvalidInput))?;
+    let schema_id = u16::from_be_bytes(*schema_bytes);
+    if schema_id != STATELESS_INPUT_SCHEMA_ID {
+        return Err(VMError::from(PrecompileError::ExecuteInvalidInput));
+    }
+
+    let input = SszStatelessInput::from_ssz_bytes(body)
         .map_err(|_| VMError::from(PrecompileError::ExecuteInvalidInput))?;
 
     validate_l2_constraints(&input)?;

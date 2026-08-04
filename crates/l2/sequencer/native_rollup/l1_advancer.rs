@@ -369,8 +369,14 @@ pub fn build_ssz_stateless_input(
         public_keys: SszList::new(), // Empty for now
     };
 
-    // 5. Serialize to SSZ bytes
-    let mut buf = Vec::new();
+    // 5. Serialize to schema-prefixed SSZ bytes.
+    //
+    // The 2-byte big-endian schema id goes first, making this byte-identical to
+    // the spec's `statelessInputBytes`. Since #3278 it is the only carrier of the
+    // fork, so it is not optional framing.
+    let mut buf = ethrex_common::types::stateless_ssz::STATELESS_INPUT_SCHEMA_ID
+        .to_be_bytes()
+        .to_vec();
     stateless_input.ssz_append(&mut buf);
     Ok(buf)
 }

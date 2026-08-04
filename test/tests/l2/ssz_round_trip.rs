@@ -7,7 +7,9 @@
 
 use bytes::Bytes;
 use ethrex_common::types::block_execution_witness::ExecutionWitness;
-use ethrex_common::types::stateless_ssz::SszStatelessInput;
+use ethrex_common::types::stateless_ssz::{
+    STATELESS_INPUT_SCHEMA_ID, STATELESS_INPUT_SCHEMA_ID_SIZE, SszStatelessInput,
+};
 use ethrex_common::types::{BlockBody, BlockHeader};
 use ethrex_common::{Address, H256};
 use ethrex_crypto::NativeCrypto;
@@ -83,8 +85,19 @@ fn block_to_ssz_to_block_preserves_hash() {
     let ssz_bytes =
         build_ssz_stateless_input(&header, &body, &witness, None).expect("SSZ encoding failed");
 
-    // SSZ → deserialize
-    let input = SszStatelessInput::from_ssz_bytes(&ssz_bytes).expect("SSZ decoding failed");
+    // SSZ → deserialize. `build_ssz_stateless_input` emits schema-prefixed
+    // `statelessInputBytes` since execution-specs #3278, so strip and check the
+    // 2-byte schema id before decoding the body — the same order the EXECUTE
+    // precompile uses.
+    let (schema_bytes, body_bytes) = ssz_bytes
+        .split_first_chunk::<STATELESS_INPUT_SCHEMA_ID_SIZE>()
+        .expect("input carries a schema-id prefix");
+    assert_eq!(
+        u16::from_be_bytes(*schema_bytes),
+        STATELESS_INPUT_SCHEMA_ID,
+        "producer must emit the Amsterdam schema id"
+    );
+    let input = SszStatelessInput::from_ssz_bytes(body_bytes).expect("SSZ decoding failed");
 
     // SSZ → Block
     let reconstructed_block =
