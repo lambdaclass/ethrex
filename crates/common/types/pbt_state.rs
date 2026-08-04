@@ -7,6 +7,15 @@
 //! itself stays free of trie concerns, and the trie crate stays free of
 //! ethrex's own types.
 //!
+//! # Zero means absent
+//!
+//! Every leaf written here goes through [`state_write`], which
+//! resolves a value of 32 zero bytes to a removal rather than an
+//! insertion. That collapse is the state model's to make — the trie
+//! stores any 32-byte value quite happily — and the spec makes it for
+//! every state leaf, so a state written through this module can never
+//! commit to a zero-valued leaf.
+//!
 //! # Removal is only partly supported
 //!
 //! Flat state made removal trivial — an account was one map entry. A
@@ -162,11 +171,16 @@ fn apply_account_update(
 
     if let Some(info) = &update.info {
         let code_size = resolve_code_size(trie, update, info)?;
-        trie.insert(
+        state_write(
+            trie,
             get_tree_key_for_basic_data(&address32),
             encode_basic_data(code_size, info.nonce, info.balance)?,
         )?;
-        trie.insert(get_tree_key_for_code_hash(&address32), info.code_hash.0)?;
+        state_write(
+            trie,
+            get_tree_key_for_code_hash(&address32),
+            info.code_hash.0,
+        )?;
     }
 
     if let Some(code) = &update.code {
@@ -178,7 +192,8 @@ fn apply_account_update(
             .as_ref()
             .map_or(code.hash, |info| info.code_hash);
         for (chunk_id, chunk) in chunkify_code(code.code()).into_iter().enumerate() {
-            trie.insert(
+            state_write(
+                trie,
                 get_tree_key_for_code_chunk(&address32, &code_hash.0, chunk_id as u64),
                 chunk,
             )?;
@@ -186,17 +201,47 @@ fn apply_account_update(
     }
 
     for (slot, value) in &update.added_storage {
-        let key = get_tree_key_for_storage_slot(&address32, slot_index(slot));
-        if value.is_zero() {
-            // Zero means absent: a slot written to zero is removed
-            // rather than kept as a zero-valued leaf.
-            trie.remove(&key)?;
-        } else {
-            trie.insert(key, value.to_big_endian())?;
-        }
+        state_write(
+            trie,
+            get_tree_key_for_storage_slot(&address32, slot_index(slot)),
+            value.to_big_endian(),
+        )?;
     }
 
     Ok(())
+}
+
+/// Write `value` at `key`, resolving 32 zero bytes to a removal rather
+/// than an insertion.
+///
+/// The trie itself has no value that means absence: every 32-byte value
+/// is storable, and only a key's presence distinguishes it from an
+/// absent one. Collapsing zero onto absence is therefore the state
+/// model's choice, and it is made here — once, for every state leaf —
+/// so that an absent key and a zero-valued one are the same state with
+/// the same root. Reads recover what was collapsed: an absent key reads
+/// back as the zero it stood for.
+///
+/// Three leaves actually reach the zero case:
+///
+/// - A storage slot written to zero, which is how the EVM clears one.
+/// - A code chunk of 31 zero bytes, as in a run of `STOP` or a
+///   zero-filled data region. Chunk presence therefore does not
+///   delimit the code — its length is the basic-data `code_size`.
+/// - The basic data of an account with no code, zero nonce and zero
+///   balance, since the version and reserved bytes are zero too. Such
+///   an account is still distinguished from an absent one by its
+///   code-hash leaf.
+fn state_write(
+    trie: &mut BinaryTrie,
+    key: Vec<u8>,
+    value: [u8; 32],
+) -> Result<(), BinaryTrieError> {
+    if value == [0u8; 32] {
+        trie.remove(&key)?;
+        return Ok(());
+    }
+    trie.insert(key, value)
 }
 
 fn refuse_if_overflow_storage(
@@ -346,6 +391,45 @@ mod tests {
                 "sub-index {sub_index}"
             );
         }
+    }
+
+    /// Zero is absent, for every leaf and not just storage: a leaf whose
+    /// value encodes to 32 zero bytes is never committed. Pinned against
+    /// the spec by `pbt_state`'s `eoa_zero_nonce_and_balance` and
+    /// `code_chunks_of_zero_bytes` cases.
+    #[test]
+    fn leaves_encoding_to_zero_are_left_absent() {
+        let a32 = address20_to_address32(ADDR_A);
+
+        // Zero nonce, zero balance, no code: the basic data is 32 zero
+        // bytes, so only the code-hash leaf distinguishes this account
+        // from an absent one.
+        let mut trie = applied(&[eoa_update(ADDR_A, 0, 0)]);
+        assert_eq!(trie.get(&get_tree_key_for_basic_data(&a32)).unwrap(), None);
+        assert_eq!(
+            trie.get(&get_tree_key_for_code_hash(&a32)).unwrap(),
+            Some(EMPTY_KECCAK_HASH.0)
+        );
+
+        // 62 zero bytes of code: both chunks are 32 zero bytes and are
+        // absent, so chunk presence does not delimit the code — its
+        // length lives in the basic data's code size.
+        let code = code_of(vec![0u8; 62]);
+        let code_hash = code.hash;
+        let mut trie = applied(&[contract_update(ADDR_B, code)]);
+        let b32 = address20_to_address32(ADDR_B);
+        for chunk_id in 0..2 {
+            assert_eq!(
+                trie.get(&get_tree_key_for_code_chunk(&b32, &code_hash.0, chunk_id))
+                    .unwrap(),
+                None,
+                "chunk {chunk_id} of zero bytes must not be committed"
+            );
+        }
+        assert_eq!(
+            trie.get(&get_tree_key_for_basic_data(&b32)).unwrap(),
+            Some(encode_basic_data(62, 1, U256::from(7u64)).unwrap())
+        );
     }
 
     #[test]

@@ -67,7 +67,7 @@ documentation:
     ethereum/execution-specs, branch projects/binary-trie
     tests/binary_trie/vectors/
 
-**Vendored from:** `projects/binary-trie` @ `f8986dca`
+**Vendored from:** `projects/binary-trie` @ `ad84d306`
 
 ### Non-goals (today)
 
