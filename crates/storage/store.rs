@@ -1009,10 +1009,15 @@ impl Store {
         // is wide enough to form more shards than there are cores. Below that the
         // fan-out is both deeper and cheaper, and a single serial `multi_get` would be
         // far worse than either.
+        //
+        // The shard cap therefore has to sit above the core count, or on a host with at
+        // least that many cores the fan-out would always win and this path would be
+        // unreachable. Cap at twice the cores so there is always a batch size at which
+        // sharding is worth its spawns.
         const KEYS_PER_SHARD: usize = 256;
-        const MAX_SHARDS: usize = 64;
         let parallelism = std::thread::available_parallelism().map_or(8, |p| p.get());
-        let shards = missing.len().div_ceil(KEYS_PER_SHARD).min(MAX_SHARDS);
+        let max_shards = parallelism.saturating_mul(2);
+        let shards = missing.len().div_ceil(KEYS_PER_SHARD).min(max_shards);
         let read_view = self.backend.begin_read()?;
         // Both paths decode in whatever thread did the read, so rebuilding the jumpdest
         // bitmap for a legacy entry stays off the caller's thread and stays parallel.

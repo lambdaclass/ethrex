@@ -314,7 +314,7 @@ impl VmDatabase for StoreVmDatabase {
         skip_all,
         fields(namespace = "block_execution")
     )]
-    fn get_account_codes_batch(&self, code_hashes: &[H256]) -> Result<Vec<Code>, EvmError> {
+    fn get_account_codes_batch(&self, code_hashes: &[H256]) -> Result<Vec<Option<Code>>, EvmError> {
         // The empty hash is answered here rather than sent to the store, matching
         // `get_account_code`, so a batch containing EOAs does not fault on it.
         let to_read: Vec<H256> = code_hashes
@@ -329,26 +329,21 @@ impl VmDatabase for StoreVmDatabase {
 
         let mut by_hash: FxHashMap<H256, Code> = FxHashMap::default();
         for (hash, code) in to_read.iter().zip(read.into_iter()) {
-            match code {
-                Some(code) => {
-                    by_hash.insert(*hash, code);
-                }
-                None => return Err(EvmError::DB(format!("Code not found for hash: {hash:?}"))),
+            if let Some(code) = code {
+                by_hash.insert(*hash, code);
             }
         }
 
-        code_hashes
+        Ok(code_hashes
             .iter()
             .map(|h| {
                 if *h == *EMPTY_KECCAK_HASH {
-                    return Ok(Code::default());
+                    Some(Code::default())
+                } else {
+                    by_hash.get(h).cloned()
                 }
-                by_hash
-                    .get(h)
-                    .cloned()
-                    .ok_or_else(|| EvmError::DB(format!("Code not found for hash: {h:?}")))
             })
-            .collect()
+            .collect())
     }
 
     #[instrument(

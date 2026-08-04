@@ -2833,15 +2833,19 @@ impl LEVM {
         // `bal_storage_slots` at the call site), so this warmer covers only account
         // states and contract code, which overlap execution.
         //
-        // Sized against the batched code read below (`Store::get_account_codes_batch`),
-        // which shards at 256 keys and caps at 64 shards: narrower chunks would cap its
-        // read concurrency, trading the executor's head start for shallower reads. This
-        // is the smallest chunk that can still reach that cap, and only does so when
-        // most accounts in a chunk hold distinct code; a chunk of EOAs yields no code
-        // hashes at all and the boundary costs nothing either way.
-        const WARM_CHUNK_ACCOUNTS: usize = 256 * 64;
+        // Sized against the read concurrency a chunk's code fetch can reach, not against
+        // the account count. That fetch runs at a queue depth bounded by the number of
+        // distinct uncached code hashes in the chunk, which is at most the number of
+        // accounts and usually far fewer, so the chunk only has to be a comfortable
+        // multiple of the core count to keep every fetch deep. Chunking finer than that
+        // would trade the executor's head start for shallower reads; chunking coarser
+        // just delays the first code read for no gain.
+        let warm_chunk_accounts = std::thread::available_parallelism()
+            .map_or(8, |p| p.get())
+            .saturating_mul(64)
+            .max(1024);
 
-        for chunk in accounts.chunks(WARM_CHUNK_ACCOUNTS) {
+        for chunk in accounts.chunks(warm_chunk_accounts) {
             if cancelled.load(Ordering::Relaxed) {
                 return Ok(());
             }
@@ -2863,19 +2867,15 @@ impl LEVM {
             code_hashes.sort_unstable();
             code_hashes.dedup();
 
-            if code_hashes.is_empty() {
+            // Re-checked between the two reads, not only per chunk: a cancelled warmer
+            // should not still issue a chunk's worth of code reads.
+            if code_hashes.is_empty() || cancelled.load(Ordering::Relaxed) {
                 continue;
             }
 
             // Best-effort: a code hash present in a BAL but absent from the database
-            // must not fail the warmer, since the executor reports that itself. The
-            // batch is all-or-nothing, so fall back to per-hash reads rather than
-            // leaving the whole chunk cold because of one absent entry.
-            if store.get_account_codes_batch(&code_hashes).is_err() {
-                for hash in &code_hashes {
-                    let _ = store.get_account_code(*hash);
-                }
-            }
+            // must not fail the warmer, since the executor reports that itself.
+            let _ = store.prefetch_codes(&code_hashes);
         }
 
         Ok(())
