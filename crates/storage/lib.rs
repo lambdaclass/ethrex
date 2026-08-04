@@ -70,6 +70,7 @@ pub mod block_data_buffer;
 pub mod error;
 pub mod journal;
 mod layering;
+pub mod log_index;
 pub mod migrations;
 pub mod rlp;
 pub mod store;
