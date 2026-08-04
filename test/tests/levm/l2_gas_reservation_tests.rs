@@ -212,6 +212,7 @@ fn test_insufficient_gas_for_l1_fee_rejected() {
         LevmCallTracer::disabled(),
         VMType::L2(fee_config()),
         &NativeCrypto,
+        None,
     )
     .unwrap();
 
@@ -251,6 +252,7 @@ fn test_gas_limit_exactly_covers_intrinsic_plus_l1() {
         LevmCallTracer::disabled(),
         VMType::L2(fee_config()),
         &NativeCrypto,
+        None,
     )
     .unwrap();
 
@@ -283,6 +285,7 @@ fn test_no_l1_fee_config_21000_is_enough() {
         LevmCallTracer::disabled(),
         VMType::L2(no_l1_fee_config),
         &NativeCrypto,
+        None,
     )
     .unwrap();
 
@@ -312,6 +315,7 @@ fn test_l1_fee_vault_receives_full_payment() {
         LevmCallTracer::disabled(),
         VMType::L2(fee_config()),
         &NativeCrypto,
+        None,
     )
     .unwrap();
 
@@ -378,6 +382,7 @@ fn test_contract_execution_with_l1_gas_reservation() {
         LevmCallTracer::disabled(),
         VMType::L2(fee_config()),
         &NativeCrypto,
+        None,
     )
     .unwrap();
 
@@ -442,6 +447,7 @@ fn test_oog_revert_still_pays_l1_fee_vault() {
         LevmCallTracer::disabled(),
         VMType::L2(fee_config()),
         &NativeCrypto,
+        None,
     )
     .unwrap();
 
@@ -529,6 +535,7 @@ fn test_eip7623_floor_plus_l1_gas_rejected_when_insufficient() {
         LevmCallTracer::disabled(),
         VMType::L2(fee_config()),
         &NativeCrypto,
+        None,
     )
     .unwrap();
 
@@ -571,6 +578,7 @@ fn test_eip7623_floor_plus_l1_gas_exactly_covered_succeeds() {
         LevmCallTracer::disabled(),
         VMType::L2(fee_config()),
         &NativeCrypto,
+        None,
     )
     .unwrap();
 
