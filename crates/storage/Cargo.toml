@@ -36,6 +36,7 @@ rocksdb = ["dep:rocksdb"]
 testing = []
 
 [dev-dependencies]
+hex.workspace = true
 tempfile.workspace = true
 tokio = { workspace = true, features = ["full"] }
 proptest = "1.0.0"

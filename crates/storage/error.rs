@@ -1,3 +1,5 @@
+use ethrex_binary_trie::BinaryTrieError;
+use ethrex_common::types::pbt_state::PbtStateError;
 use ethrex_rlp::error::RLPDecodeError;
 use ethrex_trie::TrieError;
 use thiserror::Error;
@@ -16,6 +18,13 @@ pub enum StoreError {
     RLPDecode(#[from] RLPDecodeError),
     #[error(transparent)]
     Trie(#[from] TrieError),
+    /// The binary trie itself failed, on a path that does not go
+    /// through the state model — a commit, or a read of a stored node.
+    #[error(transparent)]
+    BinaryTrie(#[from] BinaryTrieError),
+    /// Mapping ethrex account state onto binary trie leaves failed.
+    #[error(transparent)]
+    PbtState(#[from] PbtStateError),
     #[error("missing store: is an execution DB being used instead?")]
     MissingStore,
     #[error("Could not open DB for reading")]

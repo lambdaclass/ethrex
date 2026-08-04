@@ -14,6 +14,7 @@ use crate::{
     },
     apply_prefix,
     backend::in_memory::InMemoryBackend,
+    binary_trie::BackendBinaryTrieDB,
     block_data_buffer::BlockDataBuffer,
     error::StoreError,
     journal::{FlatDiff, JournalEntry},
@@ -23,6 +24,7 @@ use crate::{
     utils::{ChainDataIndex, SnapStateIndex},
 };
 
+use ethrex_binary_trie::trie::BinaryTrie;
 use ethrex_common::{
     Address, H256, U256,
     types::{
@@ -31,6 +33,7 @@ use ethrex_common::{
         Receipt, Transaction,
         block_access_list::BlockAccessList,
         block_execution_witness::{ExecutionWitness, RpcExecutionWitness},
+        pbt_state::apply_account_updates,
     },
     utils::keccak,
 };
@@ -2498,6 +2501,127 @@ impl Store {
         tx.commit()?;
 
         Ok(state_root)
+    }
+
+    /// Adds all genesis accounts to the EIP-8297 binary trie, persists
+    /// it, and returns its root: the counterpart of
+    /// [`Store::setup_genesis_state_trie`].
+    ///
+    /// The two differ in more than the trie. The MPT keeps an account's
+    /// state in two places — one leaf in the state trie, one storage
+    /// subtrie per account — and keeps code out of the trie entirely.
+    /// The binary trie is a single tree in which every part of an
+    /// account, code chunks included, is a leaf; there are no subtries
+    /// to build and no root to thread into an account leaf.
+    ///
+    /// Code is nevertheless *also* written to the code table, exactly
+    /// as the MPT path writes it. The two are not alternatives: the
+    /// trie commits to code as chunks, while the EVM fetches whole
+    /// bytecode by hash, and only the table answers that.
+    ///
+    /// **Per-account updates, not the bulk load.** [`BinaryTrie::from_sorted_leaves`]
+    /// exists for exactly this shape of input, but it takes *leaves*,
+    /// and reaching them from an alloc means deriving each account's
+    /// keys — a second copy of the embedding, which could then disagree
+    /// with the one block import uses. Routing through
+    /// [`apply_account_updates`] instead makes the genesis path and the
+    /// import path the same code by construction, which matters more
+    /// here than anywhere else: genesis is the anchor every later block
+    /// builds on. The cost is bounded — mainnet's alloc is under ten
+    /// thousand accounts, and this runs once.
+    pub async fn setup_genesis_binary_trie(
+        &self,
+        genesis_accounts: BTreeMap<Address, GenesisAccount>,
+    ) -> Result<H256, StoreError> {
+        let mut updates = Vec::with_capacity(genesis_accounts.len());
+        for (address, account) in genesis_accounts {
+            let code = Code::from_bytecode(account.code, &NativeCrypto);
+            self.add_account_code(code.clone()).await?;
+
+            updates.push(AccountUpdate {
+                address,
+                removed: false,
+                info: Some(AccountInfo {
+                    code_hash: code.hash,
+                    balance: account.balance,
+                    nonce: account.nonce,
+                }),
+                code: Some(code),
+                // Zero-valued slots are not filtered out here, unlike
+                // in the MPT path: `apply_account_updates` resolves a
+                // zero value to an absent leaf itself, for every leaf
+                // kind and not just storage.
+                added_storage: account
+                    .storage
+                    .into_iter()
+                    .map(|(slot, value)| (H256(slot.to_big_endian()), value))
+                    .collect(),
+                removed_storage: false,
+            });
+        }
+
+        let mut trie = BinaryTrie::new(Box::new(BackendBinaryTrieDB::new(self.backend.clone())?));
+        apply_account_updates(&mut trie, &updates)?;
+        Ok(trie.commit()?)
+    }
+
+    /// Advances the EIP-8297 binary trie by one block: opens it at
+    /// `parent_root`, applies `account_updates`, persists the nodes
+    /// that changed, and returns the new root. The binary-trie
+    /// counterpart of [`Store::apply_account_updates_from_trie_batch`],
+    /// and the step that follows [`Store::setup_genesis_binary_trie`]'s
+    /// anchor.
+    ///
+    /// **Storage layer only, deliberately.** Nothing here reads or
+    /// writes a block header, and no caller in `crates/blockchain`
+    /// invokes it yet. That is not an oversight: on this branch no
+    /// header commits to a binary-trie root and there is no activation
+    /// predicate to ask whether one should, so validating an imported
+    /// header's root or producing one while building a payload would
+    /// have nothing to hook into. Both arrive with the activation
+    /// config, and this method is what they will call.
+    ///
+    /// **Why this is cheap.** Opening at `parent_root` loads no nodes —
+    /// the root is a bare [`NodeRef::Stored`] hash until something
+    /// touches it. Applying the updates loads only the root-to-leaf
+    /// paths they reach, and [`BinaryTrie::commit`] writes only the
+    /// nodes those paths dirtied. A block therefore costs its own
+    /// footprint, not the trie's size.
+    ///
+    /// [`NodeRef::Stored`]: ethrex_binary_trie::trie::NodeRef::Stored
+    ///
+    /// **Code goes to the code table too**, exactly as the genesis path
+    /// and the MPT path write it. The trie commits to code as chunks,
+    /// but the EVM fetches whole bytecode by hash, and only
+    /// `ACCOUNT_CODES` answers that.
+    ///
+    /// No diff layer is involved: nodes land on disk immediately. Layer
+    /// integration keyed by binary-trie root is its own step, and this
+    /// method is the consumer it will wrap.
+    ///
+    /// # Errors
+    ///
+    /// [`StoreError::PbtState`] if the updates cannot be applied —
+    /// notably removing an account whose storage reaches the overflow
+    /// zone, which the trie cannot enumerate. Nothing is committed in
+    /// that case, so `parent_root` remains the state on disk.
+    pub async fn apply_account_updates_to_binary_trie(
+        &self,
+        parent_root: H256,
+        account_updates: &[AccountUpdate],
+    ) -> Result<H256, StoreError> {
+        for update in account_updates {
+            if let Some(code) = &update.code {
+                self.add_account_code(code.clone()).await?;
+            }
+        }
+
+        let mut trie = BinaryTrie::open(
+            Box::new(BackendBinaryTrieDB::new(self.backend.clone())?),
+            parent_root,
+        );
+        apply_account_updates(&mut trie, account_updates)?;
+        Ok(trie.commit()?)
     }
 
     // Key format: block_number (8 bytes, big-endian) + block_hash (32 bytes)
@@ -6312,5 +6436,875 @@ mod flatkeyvalue_completeness_tests {
         assert!(!Store::flatkeyvalue_generation_complete(Some(&[
             0xff, 0xff
         ])));
+    }
+}
+
+#[cfg(test)]
+mod genesis_binary_trie_tests {
+    use super::*;
+    use crate::backend::in_memory::InMemoryBackend;
+    use crate::binary_trie::BackendBinaryTrieDB;
+    use ethrex_binary_trie::embedding::{
+        address20_to_address32, chunkify_code, encode_basic_data, get_tree_key_for_basic_data,
+        get_tree_key_for_code_chunk, get_tree_key_for_code_hash, get_tree_key_for_storage_slot,
+    };
+    use ethrex_binary_trie::trie::{BinaryTrie, EMPTY_TRIE_ROOT};
+    use ethrex_common::Bytes;
+    use ethrex_common::constants::EMPTY_KECCAK_HASH;
+    use ethrex_common::types::pbt_state::apply_account_updates;
+    use rustc_hash::FxHashMap;
+    use serde::Deserialize;
+
+    pub(super) const ADDR_A: Address = Address::repeat_byte(0xaa);
+    pub(super) const ADDR_B: Address = Address::repeat_byte(0xbb);
+
+    /// A store over a fresh in-memory backend, plus the backend itself
+    /// so a test can open its own trie handle on the same bytes.
+    pub(super) fn test_store() -> (Store, Arc<dyn StorageBackend>, tempfile::TempDir) {
+        let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::open().unwrap());
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::from_backend(
+            backend.clone(),
+            dir.path().to_path_buf(),
+            1,
+            DEFAULT_PERSIST_CHANNEL_CAPACITY,
+        )
+        .unwrap();
+        (store, backend, dir)
+    }
+
+    pub(super) fn genesis_account(
+        nonce: u64,
+        balance: u64,
+        code: Vec<u8>,
+        storage: &[(u64, u64)],
+    ) -> GenesisAccount {
+        GenesisAccount {
+            code: Bytes::from(code),
+            storage: storage
+                .iter()
+                .map(|(slot, value)| (U256::from(*slot), U256::from(*value)))
+                .collect(),
+            balance: U256::from(balance),
+            nonce,
+        }
+    }
+
+    pub(super) fn alloc(
+        entries: Vec<(Address, GenesisAccount)>,
+    ) -> BTreeMap<Address, GenesisAccount> {
+        entries.into_iter().collect()
+    }
+
+    pub(super) fn code_of(bytes: Vec<u8>) -> Code {
+        Code::from_bytecode(Bytes::from(bytes), &NativeCrypto)
+    }
+
+    pub(super) fn storage_map(slots: &[(u64, u64)]) -> FxHashMap<H256, U256> {
+        slots
+            .iter()
+            .map(|(slot, value)| (H256(U256::from(*slot).to_big_endian()), U256::from(*value)))
+            .collect()
+    }
+
+    /// The root the same accounts reach with no store in sight: the
+    /// plain path, built by hand rather than through the conversion the
+    /// store method performs, so the two are independent statements.
+    pub(super) fn plain_root(updates: &[AccountUpdate]) -> H256 {
+        let mut trie = BinaryTrie::new_temp();
+        apply_account_updates(&mut trie, updates).expect("updates apply");
+        trie.root()
+    }
+
+    /// A trie opened at `root` over a *fresh* handle on `backend`, so
+    /// nothing is inherited but what actually reached the database.
+    pub(super) fn reopen(backend: &Arc<dyn StorageBackend>, root: H256) -> BinaryTrie {
+        let db = BackendBinaryTrieDB::new(Arc::clone(backend)).expect("read view opens");
+        BinaryTrie::open(Box::new(db), root)
+    }
+
+    #[tokio::test]
+    async fn an_empty_alloc_seeds_the_empty_root() {
+        let (store, _backend, _dir) = test_store();
+        assert_eq!(
+            store
+                .setup_genesis_binary_trie(BTreeMap::new())
+                .await
+                .unwrap(),
+            EMPTY_TRIE_ROOT
+        );
+    }
+
+    #[tokio::test]
+    async fn a_single_eoa_matches_the_plain_path() {
+        let (store, _backend, _dir) = test_store();
+        let root = store
+            .setup_genesis_binary_trie(alloc(vec![(
+                ADDR_A,
+                genesis_account(3, 1_000, vec![], &[]),
+            )]))
+            .await
+            .unwrap();
+
+        assert_ne!(root, EMPTY_TRIE_ROOT);
+        assert_eq!(
+            root,
+            plain_root(&[AccountUpdate {
+                address: ADDR_A,
+                info: Some(AccountInfo {
+                    code_hash: *EMPTY_KECCAK_HASH,
+                    balance: U256::from(1_000u64),
+                    nonce: 3,
+                }),
+                code: Some(code_of(vec![])),
+                ..AccountUpdate::new(ADDR_A)
+            }])
+        );
+    }
+
+    #[tokio::test]
+    async fn a_contract_with_overflow_code_and_boundary_storage_matches_the_plain_path() {
+        let (store, _backend, _dir) = test_store();
+        // 130 chunks: 128 in the header stem, 2 in the code zone. And
+        // storage on both sides of the slot-63/64 header boundary.
+        let bytecode = vec![0x01u8; 31 * 130];
+        let storage = [(63u64, 0xaaaa), (64, 0xbbbb)];
+        let root = store
+            .setup_genesis_binary_trie(alloc(vec![(
+                ADDR_A,
+                genesis_account(1, 7, bytecode.clone(), &storage),
+            )]))
+            .await
+            .unwrap();
+
+        let code = code_of(bytecode);
+        assert_eq!(
+            root,
+            plain_root(&[AccountUpdate {
+                address: ADDR_A,
+                info: Some(AccountInfo {
+                    code_hash: code.hash,
+                    balance: U256::from(7u64),
+                    nonce: 1,
+                }),
+                code: Some(code),
+                added_storage: storage_map(&storage),
+                ..AccountUpdate::new(ADDR_A)
+            }])
+        );
+    }
+
+    #[tokio::test]
+    async fn the_seeded_trie_is_readable_from_the_database() {
+        let (store, backend, _dir) = test_store();
+        let bytecode = vec![0x01u8; 31 * 130];
+        let code = code_of(bytecode.clone());
+        let root = store
+            .setup_genesis_binary_trie(alloc(vec![
+                (
+                    ADDR_A,
+                    genesis_account(1, 7, bytecode.clone(), &[(63, 0xaaaa), (64, 0xbbbb)]),
+                ),
+                (ADDR_B, genesis_account(2, 200, vec![], &[])),
+            ]))
+            .await
+            .unwrap();
+
+        let mut trie = reopen(&backend, root);
+        assert_eq!(trie.root(), root);
+
+        let a32 = address20_to_address32(ADDR_A);
+        assert_eq!(
+            trie.get(&get_tree_key_for_basic_data(&a32)).unwrap(),
+            Some(encode_basic_data(31 * 130, 1, U256::from(7u64)).unwrap())
+        );
+        assert_eq!(
+            trie.get(&get_tree_key_for_code_hash(&a32)).unwrap(),
+            Some(code.hash.0)
+        );
+        // A header-stem slot and an overflow-zone one.
+        assert_eq!(
+            trie.get(&get_tree_key_for_storage_slot(&a32, U256::from(63)))
+                .unwrap(),
+            Some(U256::from(0xaaaau64).to_big_endian())
+        );
+        assert_eq!(
+            trie.get(&get_tree_key_for_storage_slot(&a32, U256::from(64)))
+                .unwrap(),
+            Some(U256::from(0xbbbbu64).to_big_endian())
+        );
+        // An overflow code chunk, which lives outside the account stem.
+        assert_eq!(
+            trie.get(&get_tree_key_for_code_chunk(&a32, &code.hash.0, 129))
+                .unwrap(),
+            Some(chunkify_code(&bytecode)[129])
+        );
+
+        let b32 = address20_to_address32(ADDR_B);
+        assert_eq!(
+            trie.get(&get_tree_key_for_basic_data(&b32)).unwrap(),
+            Some(encode_basic_data(0, 2, U256::from(200u64)).unwrap())
+        );
+    }
+
+    #[tokio::test]
+    async fn account_code_is_retrievable_by_hash() {
+        let (store, _backend, _dir) = test_store();
+        let bytecode = vec![0x60u8, 0x01, 0x60, 0x02, 0x01];
+        let code = code_of(bytecode.clone());
+        store
+            .setup_genesis_binary_trie(alloc(vec![(
+                ADDR_A,
+                genesis_account(1, 7, bytecode.clone(), &[]),
+            )]))
+            .await
+            .unwrap();
+
+        // The trie commits code as chunks, but the EVM fetches bytecode
+        // by hash, so it must also be in the code table.
+        let stored = store
+            .get_account_code(code.hash)
+            .unwrap()
+            .expect("genesis code is stored");
+        assert_eq!(stored.code(), bytecode.as_slice());
+        assert_eq!(stored.hash, code.hash);
+    }
+
+    #[tokio::test]
+    async fn a_zero_valued_storage_slot_in_the_alloc_is_absent() {
+        let (store, backend, _dir) = test_store();
+        let with_zero = store
+            .setup_genesis_binary_trie(alloc(vec![(
+                ADDR_A,
+                genesis_account(1, 7, vec![], &[(5, 0), (6, 42)]),
+            )]))
+            .await
+            .unwrap();
+
+        let (other, _other_backend, _other_dir) = test_store();
+        let without_zero = other
+            .setup_genesis_binary_trie(alloc(vec![(
+                ADDR_A,
+                genesis_account(1, 7, vec![], &[(6, 42)]),
+            )]))
+            .await
+            .unwrap();
+
+        assert_eq!(
+            with_zero, without_zero,
+            "a zero-valued slot must commit to nothing at all"
+        );
+
+        let a32 = address20_to_address32(ADDR_A);
+        let mut trie = reopen(&backend, with_zero);
+        assert_eq!(
+            trie.get(&get_tree_key_for_storage_slot(&a32, U256::from(5)))
+                .unwrap(),
+            None
+        );
+        assert_eq!(
+            trie.get(&get_tree_key_for_storage_slot(&a32, U256::from(6)))
+                .unwrap(),
+            Some(U256::from(42u64).to_big_endian())
+        );
+    }
+
+    /// Genesis seeding against the spec's own whole-state roots.
+    ///
+    /// The `pbt_state` section of the vendored fixture is a set of
+    /// complete states and the roots they commit to, produced by the
+    /// spec's `src/ethereum/state_pbt.py`. `crates/common`'s
+    /// `pbt_state_vectors.rs` runs them through
+    /// [`apply_account_updates`] directly; running the very same cases
+    /// through the store's genesis path pins the alloc conversion and
+    /// the storage round trip to the spec too, not merely to each
+    /// other.
+    mod spec_vectors {
+        use super::*;
+
+        #[derive(Deserialize)]
+        struct Fixture {
+            pbt_state: Vec<StateCase>,
+        }
+
+        #[derive(Deserialize)]
+        struct StateCase {
+            name: String,
+            /// Keyed by 20-byte address hex; order is not significant.
+            accounts: BTreeMap<String, AccountSpec>,
+            root: String,
+        }
+
+        #[derive(Deserialize)]
+        struct AccountSpec {
+            nonce: u64,
+            /// Hex: balances can exceed a JSON-safe integer.
+            balance: String,
+            code: String,
+            /// `keccak256(code)`, restated because overflow code chunk
+            /// keys are content-addressed by it.
+            code_hash: String,
+            /// Keyed by decimal slot number, values 32-byte hex.
+            storage: BTreeMap<String, String>,
+        }
+
+        fn unhex(s: &str) -> Vec<u8> {
+            hex::decode(s.strip_prefix("0x").unwrap_or(s)).expect("fixture hex string")
+        }
+
+        fn hex_u256(s: &str) -> U256 {
+            U256::from_str_radix(s.trim_start_matches("0x"), 16).expect("fixture hex integer")
+        }
+
+        fn genesis_alloc(case: &StateCase) -> BTreeMap<Address, GenesisAccount> {
+            case.accounts
+                .iter()
+                .map(|(address, account)| {
+                    let code = Bytes::from(unhex(&account.code));
+                    assert_eq!(
+                        Code::from_bytecode(code.clone(), &NativeCrypto)
+                            .hash
+                            .as_bytes(),
+                        unhex(&account.code_hash).as_slice(),
+                        "case {}: fixture code_hash is keccak256(code)",
+                        case.name
+                    );
+                    (
+                        Address::from_slice(&unhex(address)),
+                        GenesisAccount {
+                            code,
+                            storage: account
+                                .storage
+                                .iter()
+                                .map(|(slot, value)| {
+                                    (
+                                        U256::from_dec_str(slot).expect("fixture decimal slot"),
+                                        U256::from_big_endian(&unhex(value)),
+                                    )
+                                })
+                                .collect(),
+                            balance: hex_u256(&account.balance),
+                            nonce: account.nonce,
+                        },
+                    )
+                })
+                .collect()
+        }
+
+        #[tokio::test]
+        async fn seeded_genesis_roots_match_spec() {
+            let fixture: Fixture = serde_json::from_str(include_str!(
+                "../common/binary-trie/tests/vectors/binary_trie_vectors.json"
+            ))
+            .expect("fixture parses");
+            // The fixture is vendored and refreshed upstream, so its
+            // case count is expected to grow; assert only that the
+            // section did not arrive empty.
+            assert!(!fixture.pbt_state.is_empty(), "no pbt_state cases");
+
+            for case in &fixture.pbt_state {
+                let (store, _backend, _dir) = test_store();
+                let root = store
+                    .setup_genesis_binary_trie(genesis_alloc(case))
+                    .await
+                    .unwrap_or_else(|err| panic!("case {}: seeding: {err}", case.name));
+                assert_eq!(
+                    root.as_bytes(),
+                    unhex(&case.root).as_slice(),
+                    "genesis state root, case {}",
+                    case.name
+                );
+            }
+        }
+    }
+}
+
+/// The store's per-block binary-trie advance,
+/// [`Store::apply_account_updates_to_binary_trie`].
+///
+/// Every test seeds through [`Store::setup_genesis_binary_trie`] and
+/// then advances, so the two halves of the storage path — the anchor
+/// and the step — are exercised as one, and the helpers are shared with
+/// [`genesis_binary_trie_tests`] rather than restated.
+#[cfg(test)]
+mod binary_trie_block_tests {
+    use super::genesis_binary_trie_tests::{
+        ADDR_A, ADDR_B, alloc, code_of, genesis_account, plain_root, reopen, storage_map,
+        test_store,
+    };
+    use super::*;
+    use crate::api::tables::BINARY_TRIE_NODES;
+    use crate::api::{StorageLockedView, StorageReadView, StorageWriteBatch};
+    use crate::backend::in_memory::InMemoryBackend;
+    use ethrex_binary_trie::embedding::{
+        address20_to_address32, encode_basic_data, get_tree_key_for_basic_data,
+        get_tree_key_for_code_hash, get_tree_key_for_storage_slot,
+    };
+    use ethrex_binary_trie::trie::EMPTY_TRIE_ROOT;
+    use ethrex_common::constants::EMPTY_KECCAK_HASH;
+    use ethrex_common::types::pbt_state::PbtStateError;
+
+    const ADDR_C: Address = Address::repeat_byte(0xcc);
+
+    /// A block's update to a plain account: new nonce and balance, no
+    /// code and no storage.
+    fn eoa_update(address: Address, nonce: u64, balance: u64) -> AccountUpdate {
+        AccountUpdate {
+            info: Some(AccountInfo {
+                code_hash: *EMPTY_KECCAK_HASH,
+                balance: U256::from(balance),
+                nonce,
+            }),
+            ..AccountUpdate::new(address)
+        }
+    }
+
+    /// A block's update to an account's storage alone: no `info`, so
+    /// nothing about the account header is rewritten.
+    fn storage_update(address: Address, slots: &[(u64, u64)]) -> AccountUpdate {
+        AccountUpdate {
+            added_storage: storage_map(slots),
+            ..AccountUpdate::new(address)
+        }
+    }
+
+    fn contract_update(
+        address: Address,
+        nonce: u64,
+        balance: u64,
+        code: &Code,
+        slots: &[(u64, u64)],
+    ) -> AccountUpdate {
+        AccountUpdate {
+            info: Some(AccountInfo {
+                code_hash: code.hash,
+                balance: U256::from(balance),
+                nonce,
+            }),
+            code: Some(code.clone()),
+            added_storage: storage_map(slots),
+            ..AccountUpdate::new(address)
+        }
+    }
+
+    fn store_over(backend: Arc<dyn StorageBackend>) -> (Store, tempfile::TempDir) {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::from_backend(
+            backend,
+            dir.path().to_path_buf(),
+            1,
+            DEFAULT_PERSIST_CHANNEL_CAPACITY,
+        )
+        .unwrap();
+        (store, dir)
+    }
+
+    /// How many binary-trie nodes the database currently holds.
+    fn nodes_on_disk(backend: &Arc<dyn StorageBackend>) -> usize {
+        backend
+            .begin_read()
+            .unwrap()
+            .prefix_iterator(BINARY_TRIE_NODES, &[])
+            .unwrap()
+            .count()
+    }
+
+    /// A backend counting the [`BINARY_TRIE_NODES`] entries written
+    /// through it, so a test can state how much of the trie a block
+    /// actually rewrote rather than assuming the dirty tracking works.
+    ///
+    /// Counted per entry, not per batch: what matters is how many nodes
+    /// were touched, not how many transactions carried them. Deletes
+    /// count too — a tombstone is a write.
+    #[derive(Debug)]
+    struct CountingBackend {
+        inner: Arc<dyn StorageBackend>,
+        node_writes: Arc<AtomicUsize>,
+    }
+
+    /// A fresh counting backend and the counter it reports into.
+    fn counting_backend() -> (Arc<dyn StorageBackend>, Arc<AtomicUsize>) {
+        let node_writes = Arc::new(AtomicUsize::new(0));
+        let backend: Arc<dyn StorageBackend> = Arc::new(CountingBackend {
+            inner: Arc::new(InMemoryBackend::open().unwrap()),
+            node_writes: node_writes.clone(),
+        });
+        (backend, node_writes)
+    }
+
+    impl StorageBackend for CountingBackend {
+        fn clear_table(&self, table: &'static str) -> Result<(), StoreError> {
+            self.inner.clear_table(table)
+        }
+
+        fn begin_read(&self) -> Result<Arc<dyn StorageReadView>, StoreError> {
+            self.inner.begin_read()
+        }
+
+        fn begin_write(&self) -> Result<Box<dyn StorageWriteBatch + 'static>, StoreError> {
+            Ok(Box::new(CountingWriteBatch {
+                inner: self.inner.begin_write()?,
+                node_writes: self.node_writes.clone(),
+            }))
+        }
+
+        fn begin_locked(
+            &self,
+            table_name: &'static str,
+        ) -> Result<Box<dyn StorageLockedView + 'static>, StoreError> {
+            self.inner.begin_locked(table_name)
+        }
+
+        fn create_checkpoint(&self, path: &Path) -> Result<(), StoreError> {
+            self.inner.create_checkpoint(path)
+        }
+
+        fn flush(&self) -> Result<(), StoreError> {
+            self.inner.flush()
+        }
+    }
+
+    struct CountingWriteBatch {
+        inner: Box<dyn StorageWriteBatch>,
+        node_writes: Arc<AtomicUsize>,
+    }
+
+    impl StorageWriteBatch for CountingWriteBatch {
+        fn put_batch(
+            &mut self,
+            table: &'static str,
+            batch: Vec<(Vec<u8>, Vec<u8>)>,
+        ) -> Result<(), StoreError> {
+            if table == BINARY_TRIE_NODES {
+                self.node_writes.fetch_add(batch.len(), Ordering::Relaxed);
+            }
+            self.inner.put_batch(table, batch)
+        }
+
+        fn delete(&mut self, table: &'static str, key: &[u8]) -> Result<(), StoreError> {
+            if table == BINARY_TRIE_NODES {
+                self.node_writes.fetch_add(1, Ordering::Relaxed);
+            }
+            self.inner.delete(table, key)
+        }
+
+        fn delete_range(
+            &mut self,
+            table: &'static str,
+            start: &[u8],
+            end: &[u8],
+        ) -> Result<(), StoreError> {
+            self.inner.delete_range(table, start, end)
+        }
+
+        fn merge(
+            &mut self,
+            table: &'static str,
+            key: &[u8],
+            operand: &[u8],
+        ) -> Result<(), StoreError> {
+            self.inner.merge(table, key, operand)
+        }
+
+        fn commit(&mut self) -> Result<(), StoreError> {
+            self.inner.commit()
+        }
+    }
+
+    #[tokio::test]
+    async fn one_block_advances_the_root() {
+        let (store, _backend, _dir) = test_store();
+        let genesis_root = store
+            .setup_genesis_binary_trie(alloc(vec![
+                (ADDR_A, genesis_account(1, 100, vec![], &[])),
+                (ADDR_B, genesis_account(2, 200, vec![], &[])),
+            ]))
+            .await
+            .unwrap();
+
+        let block_root = store
+            .apply_account_updates_to_binary_trie(
+                genesis_root,
+                &[eoa_update(ADDR_A, 2, 150), eoa_update(ADDR_C, 0, 50)],
+            )
+            .await
+            .unwrap();
+
+        assert_ne!(block_root, genesis_root);
+        // The real assertion: advancing the stored trie by a block must
+        // land on the very trie the resulting state builds from scratch,
+        // not merely on some root that changed.
+        assert_eq!(
+            block_root,
+            plain_root(&[
+                eoa_update(ADDR_A, 2, 150),
+                eoa_update(ADDR_B, 2, 200),
+                eoa_update(ADDR_C, 0, 50),
+            ])
+        );
+    }
+
+    #[tokio::test]
+    async fn three_blocks_in_sequence_reach_the_final_state_root() {
+        let (store, _backend, _dir) = test_store();
+        let bytecode = vec![0x01u8; 31 * 3];
+        let code = code_of(bytecode.clone());
+        let mut root = store
+            .setup_genesis_binary_trie(alloc(vec![
+                (ADDR_A, genesis_account(1, 100, vec![], &[])),
+                (ADDR_B, genesis_account(1, 7, bytecode, &[(5, 7)])),
+            ]))
+            .await
+            .unwrap();
+
+        // Each block opens at the root the previous one returned, which
+        // is the whole point: nothing is carried over in memory.
+        let blocks = vec![
+            vec![eoa_update(ADDR_A, 2, 90), storage_update(ADDR_B, &[(5, 9)])],
+            // Slot 100 is past the header stem, so it lands in the
+            // overflow storage zone.
+            vec![
+                eoa_update(ADDR_A, 3, 80),
+                storage_update(ADDR_B, &[(100, 3)]),
+            ],
+            // A zero-valued slot is a removal, so slot 5 leaves the trie.
+            vec![storage_update(ADDR_B, &[(5, 0)]), eoa_update(ADDR_C, 0, 10)],
+        ];
+        let mut roots = Vec::new();
+        for block in &blocks {
+            root = store
+                .apply_account_updates_to_binary_trie(root, block)
+                .await
+                .unwrap();
+            roots.push(root);
+        }
+        assert_eq!(
+            roots.iter().collect::<HashSet<_>>().len(),
+            roots.len(),
+            "each block changed the state, so each root should be new"
+        );
+
+        assert_eq!(
+            root,
+            plain_root(&[
+                eoa_update(ADDR_A, 3, 80),
+                contract_update(ADDR_B, 1, 7, &code, &[(100, 3)]),
+                eoa_update(ADDR_C, 0, 10),
+            ])
+        );
+    }
+
+    #[tokio::test]
+    async fn a_block_writes_far_fewer_nodes_than_the_trie_holds() {
+        let (backend, node_writes) = counting_backend();
+        let (store, _dir) = store_over(backend.clone());
+
+        let accounts: Vec<Address> = (1..=200u64).map(Address::from_low_u64_be).collect();
+        let genesis_root = store
+            .setup_genesis_binary_trie(alloc(
+                accounts
+                    .iter()
+                    .map(|address| (*address, genesis_account(1, 100, vec![], &[])))
+                    .collect(),
+            ))
+            .await
+            .unwrap();
+
+        let trie_nodes = nodes_on_disk(&backend);
+        node_writes.store(0, Ordering::Relaxed);
+
+        let block_root = store
+            .apply_account_updates_to_binary_trie(
+                genesis_root,
+                &[
+                    eoa_update(accounts[3], 2, 150),
+                    eoa_update(accounts[177], 5, 900),
+                ],
+            )
+            .await
+            .unwrap();
+        assert_ne!(block_root, genesis_root);
+
+        // Opening at a root loads nothing, applying loads only the
+        // paths touched, and committing writes only what changed — the
+        // property that makes per-block persistence affordable at all.
+        // A block touching two of two hundred accounts must rewrite the
+        // two root-to-leaf paths and nothing else, so an order of
+        // magnitude below the trie's size is a generous ceiling.
+        let written = node_writes.load(Ordering::Relaxed);
+        assert!(
+            written * 10 < trie_nodes,
+            "block rewrote {written} of {trie_nodes} nodes"
+        );
+    }
+
+    #[tokio::test]
+    async fn an_empty_update_list_is_a_no_op() {
+        let (backend, node_writes) = counting_backend();
+        let (store, _dir) = store_over(backend.clone());
+        let genesis_root = store
+            .setup_genesis_binary_trie(alloc(vec![
+                (ADDR_A, genesis_account(1, 100, vec![], &[])),
+                (ADDR_B, genesis_account(2, 200, vec![], &[])),
+            ]))
+            .await
+            .unwrap();
+
+        node_writes.store(0, Ordering::Relaxed);
+        assert_eq!(
+            store
+                .apply_account_updates_to_binary_trie(genesis_root, &[])
+                .await
+                .unwrap(),
+            genesis_root
+        );
+        assert_eq!(node_writes.load(Ordering::Relaxed), 0);
+
+        // And over an empty parent, where there is not even a root node
+        // to leave alone.
+        assert_eq!(
+            store
+                .apply_account_updates_to_binary_trie(EMPTY_TRIE_ROOT, &[])
+                .await
+                .unwrap(),
+            EMPTY_TRIE_ROOT
+        );
+        assert_eq!(node_writes.load(Ordering::Relaxed), 0);
+    }
+
+    #[tokio::test]
+    async fn removing_an_account_reaches_the_trie_of_the_survivors() {
+        let (store, backend, _dir) = test_store();
+        // Slot 5 lives in the header stem, which `apply_account_updates`
+        // can enumerate and therefore remove; the overflow zone is the
+        // case below.
+        let genesis_root = store
+            .setup_genesis_binary_trie(alloc(vec![
+                (ADDR_A, genesis_account(1, 100, vec![], &[])),
+                (ADDR_B, genesis_account(2, 200, vec![], &[(5, 7)])),
+                (ADDR_C, genesis_account(3, 300, vec![], &[])),
+            ]))
+            .await
+            .unwrap();
+
+        let block_root = store
+            .apply_account_updates_to_binary_trie(genesis_root, &[AccountUpdate::removed(ADDR_B)])
+            .await
+            .unwrap();
+
+        assert_eq!(
+            block_root,
+            plain_root(&[eoa_update(ADDR_A, 1, 100), eoa_update(ADDR_C, 3, 300)])
+        );
+
+        let mut trie = reopen(&backend, block_root);
+        let b32 = address20_to_address32(ADDR_B);
+        assert_eq!(trie.get(&get_tree_key_for_basic_data(&b32)).unwrap(), None);
+        assert_eq!(trie.get(&get_tree_key_for_code_hash(&b32)).unwrap(), None);
+        assert_eq!(
+            trie.get(&get_tree_key_for_storage_slot(&b32, U256::from(5)))
+                .unwrap(),
+            None
+        );
+    }
+
+    #[tokio::test]
+    async fn removing_an_account_with_overflow_storage_is_refused() {
+        let (store, backend, _dir) = test_store();
+        let genesis_root = store
+            .setup_genesis_binary_trie(alloc(vec![
+                (ADDR_A, genesis_account(1, 100, vec![], &[(100, 7)])),
+                (ADDR_B, genesis_account(2, 200, vec![], &[])),
+            ]))
+            .await
+            .unwrap();
+
+        // A self-destruct in the same block that wrote overflow storage:
+        // the trie cannot enumerate that storage, so the removal must
+        // surface as an error rather than strand it.
+        let err = store
+            .apply_account_updates_to_binary_trie(
+                genesis_root,
+                &[AccountUpdate {
+                    added_storage: storage_map(&[(100, 9)]),
+                    ..AccountUpdate::removed(ADDR_A)
+                }],
+            )
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(
+                &err,
+                StoreError::PbtState(PbtStateError::OverflowStorageNotRemovable(address))
+                    if *address == ADDR_A
+            ),
+            "unexpected error: {err:?}"
+        );
+
+        // The refusal left the parent state alone: nothing was committed.
+        let a32 = address20_to_address32(ADDR_A);
+        let mut trie = reopen(&backend, genesis_root);
+        assert_eq!(trie.root(), genesis_root);
+        assert_eq!(
+            trie.get(&get_tree_key_for_storage_slot(&a32, U256::from(100)))
+                .unwrap(),
+            Some(U256::from(7u64).to_big_endian())
+        );
+    }
+
+    #[tokio::test]
+    async fn the_advanced_trie_is_readable_through_a_fresh_handle() {
+        let (store, backend, _dir) = test_store();
+        let genesis_root = store
+            .setup_genesis_binary_trie(alloc(vec![(ADDR_A, genesis_account(1, 100, vec![], &[]))]))
+            .await
+            .unwrap();
+
+        let bytecode = vec![0x60u8, 0x01, 0x60, 0x02, 0x01];
+        let code = code_of(bytecode.clone());
+        let block_root = store
+            .apply_account_updates_to_binary_trie(
+                genesis_root,
+                &[
+                    eoa_update(ADDR_A, 2, 150),
+                    contract_update(ADDR_B, 1, 9, &code, &[(5, 42)]),
+                ],
+            )
+            .await
+            .unwrap();
+
+        // A fresh handle inherits nothing but the bytes on disk.
+        let mut trie = reopen(&backend, block_root);
+        assert_eq!(trie.root(), block_root);
+
+        let a32 = address20_to_address32(ADDR_A);
+        assert_eq!(
+            trie.get(&get_tree_key_for_basic_data(&a32)).unwrap(),
+            Some(encode_basic_data(0, 2, U256::from(150u64)).unwrap())
+        );
+
+        let b32 = address20_to_address32(ADDR_B);
+        assert_eq!(
+            trie.get(&get_tree_key_for_basic_data(&b32)).unwrap(),
+            Some(encode_basic_data(bytecode.len() as u32, 1, U256::from(9u64)).unwrap())
+        );
+        assert_eq!(
+            trie.get(&get_tree_key_for_code_hash(&b32)).unwrap(),
+            Some(code.hash.0)
+        );
+        assert_eq!(
+            trie.get(&get_tree_key_for_storage_slot(&b32, U256::from(5)))
+                .unwrap(),
+            Some(U256::from(42u64).to_big_endian())
+        );
+
+        // The trie commits code as chunks, but the EVM fetches whole
+        // bytecode by hash, and only the code table answers that.
+        let stored = store
+            .get_account_code(code.hash)
+            .unwrap()
+            .expect("the block's code is stored");
+        assert_eq!(stored.code(), bytecode.as_slice());
+        assert_eq!(stored.hash, code.hash);
     }
 }
