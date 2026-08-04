@@ -12,6 +12,10 @@
 
 ## Perf
 
+### 2026-07-28
+
+- Distance-gate single-canonical-chain trie-layer commit: blocks far from the sync target write straight through to disk (shallow layer cache, cheap state reads) while the recent `DB_COMMIT_THRESHOLD`-block window near the target stays resident. Reorg reach is unaffected — every commit still writes a reverse-diff journal entry, so written-through spans remain reconstructible via the state-history overlay [#7023](https://github.com/lambdaclass/ethrex/pull/7023)
+
 ### 2026-07-22
 
 - Unify full-sync batch import onto the per-block execution pipeline, validating every block's state root and reusing the pipeline's BAL-driven parallel execution instead of the bespoke "execute all, apply once" batch path [#7008](https://github.com/lambdaclass/ethrex/pull/7008)

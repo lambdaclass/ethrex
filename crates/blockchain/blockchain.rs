@@ -137,6 +137,66 @@ const MAX_MEMPOOL_SIZE_DEFAULT: usize = 10_000;
 /// transaction admission is denied. Set to 100 to disable the check.
 pub const DEFAULT_GAP_ADMIT_OCCUPANCY_THRESHOLD: u8 = 90;
 
+/// Distance ahead of the sync target at which single-canonical-chain execution switches from
+/// writing trie layers straight to disk to retaining the in-memory window. Set to
+/// `2 * DB_COMMIT_THRESHOLD` (see [`SyncCommitMode`]).
+///
+/// Far from the target there is nothing to serve from memory: the node is not at head, so it
+/// answers no snap requests for these roots and no consensus client asks it to reorg them.
+/// Committing each layer immediately keeps the layer stack ~1 deep, and `TrieLayerCache::get`
+/// walks that stack on every state read — a 128-deep stack taxes the whole catch-up.
+///
+/// Reorg reach does not depend on this: every commit on the per-block path writes a
+/// reverse-diff journal entry (`STATE_HISTORY`), so a write-through span stays reorg-able via
+/// `Overlay::from_journal` — `compute_reorg_ceiling` counts journal reach, not just resident
+/// layers. Retention near the target is about being *ready at head* rather than being able to
+/// reorg at all: shallow reorgs (the common case) unwind straight from resident layers instead
+/// of reconstructing an overlay, and snap/historical reads of the recent window resolve from
+/// memory.
+///
+/// The `2 *` margin makes the window fully warm before the tip reaches head: retention starts
+/// at `target - 2*DB_COMMIT_THRESHOLD` and, at one layer per block, reaches a full
+/// `DB_COMMIT_THRESHOLD` resident layers exactly when the tip hits
+/// `target - DB_COMMIT_THRESHOLD`.
+pub const SYNC_RETAIN_WARMUP: u64 = 2 * DB_COMMIT_THRESHOLD as u64;
+
+/// How a single-canonical-chain block's trie layer is committed, chosen by the block's distance
+/// from the sync target (see [`SYNC_RETAIN_WARMUP`]).
+///
+/// Used by full sync, block import and startup regeneration — paths that extend one canonical
+/// chain, where committing by depth is sound because there are no competing forks. Live
+/// `newPayload` keeps the canonical safe-commit gate instead (`commit_depth: None`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SyncCommitMode {
+    /// More than [`SYNC_RETAIN_WARMUP`] behind the target: commit each layer immediately
+    /// (~1 resident layer), keeping state reads cheap through the bulk of the range.
+    WriteThrough,
+    /// Within [`SYNC_RETAIN_WARMUP`] of the target: retain the recent `DB_COMMIT_THRESHOLD`
+    /// layers so the node arrives at head ready to serve them.
+    RetainWindow,
+}
+
+impl SyncCommitMode {
+    /// Picks the mode for `block_number` given the highest block this run will reach
+    /// (`sync_target`). Saturating arithmetic means a target at or below the block (which
+    /// should not happen) falls to `RetainWindow`, the conservative side.
+    pub fn for_block(block_number: u64, sync_target: u64) -> Self {
+        if sync_target.saturating_sub(block_number) > SYNC_RETAIN_WARMUP {
+            SyncCommitMode::WriteThrough
+        } else {
+            SyncCommitMode::RetainWindow
+        }
+    }
+
+    /// `commit_depth` to pass to [`Blockchain::add_block_pipeline_bounded`].
+    pub fn commit_depth(self) -> usize {
+        match self {
+            SyncCommitMode::WriteThrough => 1,
+            SyncCommitMode::RetainWindow => DB_COMMIT_THRESHOLD,
+        }
+    }
+}
+
 /// Background thread for dropping large tree structures off the critical path.
 /// Accepts any `Send` value and drops it on a dedicated thread, avoiding
 /// recursive deallocation costs (~500us for state trie roots) on hot paths.
@@ -2761,8 +2821,9 @@ impl Blockchain {
     ///   peer-BAL-persistence code.
     ///
     /// This trades the single-trie-materialization amortization (one root for the whole batch) for
-    /// per-block roots; trie layers commit by depth (`DB_COMMIT_THRESHOLD`) so the in-memory layer
-    /// backlog stays bounded during bulk sync.
+    /// per-block roots. Trie layers commit by each block's distance from `sync_target` (see
+    /// [`SyncCommitMode`]): blocks far from the target write straight through, while the recent
+    /// `DB_COMMIT_THRESHOLD`-block window near the target stays resident.
     ///
     /// If an error occurs, returns a tuple containing:
     /// - The error type ([`ChainError`]).
@@ -2772,11 +2833,15 @@ impl Blockchain {
     /// `bals` holds the per-block Block Access Lists fetched during sync, aligned by index with
     /// `blocks`. Pass an empty slice when no BALs are available (e.g. block import from RLP); the
     /// pipeline then rebuilds each BAL. Only a BAL matching its block's header commitment is used.
+    ///
+    /// `sync_target` is the highest block number this run will reach; it drives the per-block
+    /// commit mode (see [`SyncCommitMode`]).
     pub async fn add_blocks_in_batch(
         &self,
         blocks: Vec<Block>,
         bals: &[Option<BlockAccessList>],
         cancellation_token: CancellationToken,
+        sync_target: u64,
     ) -> Result<(), (ChainError, Option<BatchBlockProcessingFailure>)> {
         debug_assert!(
             bals.is_empty() || bals.len() == blocks.len(),
@@ -2817,11 +2882,11 @@ impl Blockchain {
                 .cloned()
                 .map(Arc::new);
 
-            // Single canonical chain: commit trie layers by depth so the in-memory backlog
-            // stays bounded (~DB_COMMIT_THRESHOLD) instead of growing with the sync range.
-            // The now per-block granularity is why this uses DB_COMMIT_THRESHOLD (128), not
-            // the batch-layer threshold.
-            if let Err(err) = self.add_block_pipeline_bounded(block, bal, DB_COMMIT_THRESHOLD) {
+            // Commit this block's trie layer by its distance from `sync_target` (see
+            // `SyncCommitMode`): far blocks write straight through, the recent window near the
+            // target stays resident.
+            let commit_depth = SyncCommitMode::for_block(block_number, sync_target).commit_depth();
+            if let Err(err) = self.add_block_pipeline_bounded(block, bal, commit_depth) {
                 return Err((
                     err,
                     Some(BatchBlockProcessingFailure {
