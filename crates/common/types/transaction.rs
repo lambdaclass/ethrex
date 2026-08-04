@@ -87,15 +87,18 @@ pub enum Transaction {
 /// whose sidecar doesn't match its tx type.
 ///
 /// It is deliberately not a standing guarantee, which is why `tx` stays public.
-/// Nothing depends on one: every consumer matches on the `(tx, blobs_bundle)`
-/// pair rather than on `tx` alone — see [`PooledTransaction::as_blob`],
-/// [`PooledTransaction::encode_canonical`] and
+/// Nothing depends on one: every path that could emit a sidecar matches on the
+/// `(tx, blobs_bundle)` pair rather than on `tx` alone — see
+/// [`PooledTransaction::as_blob`], [`PooledTransaction::encode_canonical`] and
 /// [`PooledTransaction::encode_canonical_len`] — so a pair desynced after the
 /// fact encodes as a sidecar-less transaction instead of producing malformed
-/// wire bytes.
+/// wire bytes. [`PooledTransaction::tx_type`] and
+/// [`PooledTransaction::compute_hash`] do read `tx` alone; both are properties
+/// of the transaction itself and stay correct either way.
 ///
-/// Privileged (L2) txs are excluded at runtime — the RLP decoder rejects the
-/// 0x7e type byte.
+/// Privileged (L2) txs are excluded at runtime, but not at the type byte: 0x7e
+/// is a valid envelope type, so it decodes through [`Transaction`] and the
+/// decoder then rejects the resulting `PrivilegedL2Transaction`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PooledTransaction {
     pub tx: Transaction,
@@ -192,8 +195,8 @@ impl PooledTransaction {
         buf
     }
 
-    /// Canonical p2p encoded length, counted without allocating (mirrors
-    /// [`PooledTransaction::encode_canonical`]); equals
+    /// Canonical p2p encoded length, counted without building the output buffer
+    /// (mirrors [`PooledTransaction::encode_canonical`]); equals
     /// `encode_canonical_to_vec().len()`. For blob txs this counts the full
     /// sidecar, since the wrapped form carries it.
     pub fn encode_canonical_len(&self) -> usize {
@@ -212,7 +215,11 @@ impl PooledTransaction {
 }
 
 /// Borrowed view of the wrapped EIP-4844 network form, so encoding or sizing a
-/// pooled blob tx neither allocates nor clones the (hundreds-of-KB) sidecar.
+/// pooled blob tx does not clone the (hundreds-of-KB) sidecar — building an
+/// owned [`WrappedEIP4844Transaction`] out of a `&PooledTransaction` would have
+/// to. Sizing is still not allocation-free: `RLPEncode::length`'s `ByteCounter`
+/// elides only the output buffer, while `Encoder` accumulates the encoded fields
+/// in its own `temp_buf` either way.
 ///
 /// The wire `wrapper_version` field is not carried here: it is present iff the
 /// bundle's version is non-zero, so it is derived from `blobs_bundle.version`.
