@@ -251,21 +251,17 @@ impl NativeL1Advancer {
 /// preimage of `block_access_list_hash` (see `BlockAccessList::compute_hash`),
 /// so the guest-program reconstruction can decode it and recompute the same
 /// hash. `None` (pre-Amsterdam) → empty list.
+/// Build the SSZ `block_access_list` field.
+///
+/// Since execution-specs #3248 this is a `ProgressiveList<u8>`, which carries no
+/// length bound, so the conversion is infallible — the `Result` is gone.
 pub fn bal_to_ssz_block_access_list(
     bal: Option<&ethrex_common::types::block_access_list::BlockAccessList>,
-) -> Result<
-    libssz_types::SszList<
-        u8,
-        // Mirrors ExecutionPayload.block_access_list field in stateless_ssz.rs (2^24).
-        16_777_216,
-    >,
-    String,
-> {
+) -> libssz_types::ProgressiveList<u8> {
     use ethrex_rlp::encode::RLPEncode;
     match bal {
-        Some(bal) => libssz_types::SszList::try_from(bal.encode_to_vec())
-            .map_err(|e| format!("block_access_list exceeds MAX_BLOCK_ACCESS_LIST_BYTES: {e:?}")),
-        None => Ok(libssz_types::SszList::new()),
+        Some(bal) => bal.encode_to_vec().into(),
+        None => libssz_types::ProgressiveList::new(),
     }
 }
 
@@ -281,22 +277,19 @@ pub fn build_ssz_stateless_input(
 ) -> Result<Vec<u8>, String> {
     use ethrex_common::types::stateless_ssz::*;
     use libssz::SszEncode;
-    use libssz_types::SszList;
+    use libssz_types::{ProgressiveList, SszList};
 
     // 1. Convert Block → SSZ ExecutionPayload
-    let transactions: Vec<SszList<u8, 1_073_741_824>> = body
+    // Both levels are progressive lists since #3248, so neither can overflow a
+    // bound and the conversions are infallible.
+    let transactions: Vec<ProgressiveList<u8>> = body
         .transactions
         .iter()
-        .enumerate()
-        .map(|(i, tx)| {
-            SszList::try_from(tx.encode_canonical_to_vec())
-                .map_err(|e| format!("transaction[{i}] exceeds MAX_BYTES_PER_TRANSACTION: {e:?}"))
-        })
-        .collect::<Result<_, _>>()?;
-    let ssz_transactions = SszList::try_from(transactions)
-        .map_err(|e| format!("transactions exceed MAX_TRANSACTIONS_PER_PAYLOAD: {e:?}"))?;
+        .map(|tx| tx.encode_canonical_to_vec().into())
+        .collect();
+    let ssz_transactions: ProgressiveList<ProgressiveList<u8>> = transactions.into();
 
-    let ssz_withdrawals = SszList::new(); // Empty for L2
+    let ssz_withdrawals = ProgressiveList::new(); // Empty for L2
 
     // base_fee_per_gas as LE uint256
     let mut base_fee_bytes = [0u8; 32];
@@ -335,7 +328,7 @@ pub fn build_ssz_stateless_input(
         withdrawals: ssz_withdrawals,
         blob_gas_used: header.blob_gas_used.unwrap_or(0),
         excess_blob_gas: header.excess_blob_gas.unwrap_or(0),
-        block_access_list: bal_to_ssz_block_access_list(bal)?,
+        block_access_list: bal_to_ssz_block_access_list(bal),
         // EIP-7843: carry the header's slot number into the SSZ payload so L1 can
         // read it and the reconstructed block hash matches.
         slot_number: header.slot_number.unwrap_or(0),
@@ -349,14 +342,16 @@ pub fn build_ssz_stateless_input(
 
     // L2 blocks never carry EIP-7685 requests.
     let execution_requests = ExecutionRequests {
-        deposits: SszList::new(),
-        withdrawals: SszList::new(),
-        consolidations: SszList::new(),
+        deposits: ProgressiveList::new(),
+        withdrawals: ProgressiveList::new(),
+        consolidations: ProgressiveList::new(),
+        builder_deposits: ProgressiveList::new(),
+        builder_exits: ProgressiveList::new(),
     };
 
     let new_payload_request = NewPayloadRequest {
         execution_payload,
-        versioned_hashes: SszList::new(), // Empty for L2
+        versioned_hashes: ProgressiveList::new(), // Empty for L2
         parent_beacon_block_root,
         execution_requests,
     };
@@ -531,7 +526,7 @@ mod devnet_tests {
         use ethrex_rlp::encode::RLPEncode;
 
         // None → empty SSZ list (pre-Amsterdam).
-        let empty = bal_to_ssz_block_access_list(None).expect("none encodes");
+        let empty = bal_to_ssz_block_access_list(None);
         assert_eq!(empty.len(), 0);
 
         // Some(bal) → the SSZ bytes equal the BAL's RLP encoding, so that
@@ -539,7 +534,7 @@ mod devnet_tests {
         let bal =
             BlockAccessList::from_accounts(vec![AccountChanges::new(Address::from([0x11u8; 20]))]);
         let expected = bal.encode_to_vec();
-        let got = bal_to_ssz_block_access_list(Some(&bal)).expect("some encodes");
+        let got = bal_to_ssz_block_access_list(Some(&bal));
         let got_bytes: Vec<u8> = got.iter().copied().collect();
         assert_eq!(got_bytes, expected);
         assert!(!got_bytes.is_empty());
