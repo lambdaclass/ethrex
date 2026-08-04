@@ -76,84 +76,219 @@ pub enum Transaction {
     FrameTransaction(FrameTransaction),
 }
 
-/// The same as a Transaction enum, only that blob transactions are in wrapped format, including
-/// the blobs bundle.
-/// PrivilegedL2Transaction is not included as it is not expected to be sent over P2P.
+/// A transaction in the form it travels the devp2p `PooledTransactions` wire
+/// (EIP-2718 / EIP-4844 networking): a consensus [`Transaction`] plus the blob
+/// sidecar carried only by EIP-4844 transactions. Replaces the former
+/// `P2PTransaction` enum.
+///
+/// `blobs_bundle` is private so it can only be set through a constructor, which
+/// checks the pairing rule at construction time: a bundle is present exactly for
+/// EIP-4844 transactions. That is the mistake worth catching — building a value
+/// whose sidecar doesn't match its tx type.
+///
+/// It is deliberately not a standing guarantee, which is why `tx` stays public.
+/// Nothing depends on one: every path that could emit a sidecar matches on the
+/// `(tx, blobs_bundle)` pair rather than on `tx` alone — see
+/// [`PooledTransaction::as_blob`], [`PooledTransaction::encode_canonical`] and
+/// [`PooledTransaction::encode_canonical_len`] — so a pair desynced after the
+/// fact encodes as a sidecar-less transaction instead of producing malformed
+/// wire bytes. [`PooledTransaction::tx_type`] and
+/// [`PooledTransaction::compute_hash`] do read `tx` alone; both are properties
+/// of the transaction itself and stay correct either way.
+///
+/// Privileged (L2) txs are excluded at runtime, but not at the type byte: 0x7e
+/// is a valid envelope type, so it decodes through [`Transaction`] and the
+/// decoder then rejects the resulting `PrivilegedL2Transaction`.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum P2PTransaction {
-    LegacyTransaction(LegacyTransaction),
-    EIP2930Transaction(EIP2930Transaction),
-    EIP1559Transaction(EIP1559Transaction),
-    EIP4844TransactionWithBlobs(WrappedEIP4844Transaction),
-    EIP7702Transaction(EIP7702Transaction),
-    FeeTokenTransaction(FeeTokenTransaction),
-    FrameTransaction(FrameTransaction),
+pub struct PooledTransaction {
+    pub tx: Transaction,
+    blobs_bundle: Option<BlobsBundle>,
 }
 
-impl TryInto<Transaction> for P2PTransaction {
-    type Error = String;
+/// Error building a [`PooledTransaction`] whose blob sidecar does not match the
+/// transaction type.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum PooledTransactionError {
+    #[error("EIP-4844 pooled transaction is missing its blobs bundle")]
+    MissingBlobsBundle,
+    #[error("non-blob pooled transaction must not carry a blobs bundle")]
+    UnexpectedBlobsBundle,
+}
 
-    fn try_into(self) -> Result<Transaction, Self::Error> {
-        match self {
-            P2PTransaction::LegacyTransaction(itx) => Ok(Transaction::LegacyTransaction(itx)),
-            P2PTransaction::EIP2930Transaction(itx) => Ok(Transaction::EIP2930Transaction(itx)),
-            P2PTransaction::EIP1559Transaction(itx) => Ok(Transaction::EIP1559Transaction(itx)),
-            P2PTransaction::EIP7702Transaction(itx) => Ok(Transaction::EIP7702Transaction(itx)),
-            P2PTransaction::FrameTransaction(itx) => Ok(Transaction::FrameTransaction(itx)),
-            _ => Err("Can't convert blob p2p transaction into regular transaction. Blob bundle would be lost.".to_string()),
+impl PooledTransaction {
+    /// Wraps a consensus transaction in its pooled (p2p) form.
+    ///
+    /// `blobs_bundle` must be `Some` for EIP-4844 transactions (which are
+    /// gossiped with their sidecar) and `None` for every other type; any other
+    /// combination is rejected.
+    pub fn new(
+        tx: Transaction,
+        blobs_bundle: Option<BlobsBundle>,
+    ) -> Result<Self, PooledTransactionError> {
+        match (
+            matches!(tx, Transaction::EIP4844Transaction(_)),
+            blobs_bundle.is_some(),
+        ) {
+            (true, false) => Err(PooledTransactionError::MissingBlobsBundle),
+            (false, true) => Err(PooledTransactionError::UnexpectedBlobsBundle),
+            _ => Ok(Self { tx, blobs_bundle }),
+        }
+    }
+
+    /// Builds a blob (EIP-4844) pooled transaction from its tx and sidecar.
+    /// Infallible: the invariant holds by construction.
+    pub fn new_blob(tx: EIP4844Transaction, blobs_bundle: BlobsBundle) -> Self {
+        Self {
+            tx: Transaction::EIP4844Transaction(tx),
+            blobs_bundle: Some(blobs_bundle),
+        }
+    }
+
+    /// Builds a non-blob pooled transaction. Errors if `tx` is an EIP-4844
+    /// transaction (use [`PooledTransaction::new_blob`] for those).
+    pub fn from_transaction(tx: Transaction) -> Result<Self, PooledTransactionError> {
+        Self::new(tx, None)
+    }
+
+    /// Consumes the wrapper, returning the transaction and its optional sidecar.
+    pub fn into_parts(self) -> (Transaction, Option<BlobsBundle>) {
+        (self.tx, self.blobs_bundle)
+    }
+
+    pub fn tx_type(&self) -> TxType {
+        self.tx.tx_type()
+    }
+
+    pub fn compute_hash(&self) -> H256 {
+        self.tx.compute_hash(&NativeCrypto)
+    }
+
+    /// Returns the EIP-4844 transaction and its blob sidecar when this is a
+    /// blob transaction carrying a bundle; `None` for every other type.
+    pub fn as_blob(&self) -> Option<(&EIP4844Transaction, &BlobsBundle)> {
+        match (&self.tx, &self.blobs_bundle) {
+            (Transaction::EIP4844Transaction(tx), Some(bundle)) => Some((tx, bundle)),
+            _ => None,
+        }
+    }
+
+    /// Encodes the transaction in its canonical p2p (network) form: blob txs
+    /// use the wrapped representation (tx + blobs bundle), every other type
+    /// matches [`Transaction::encode_canonical`].
+    pub fn encode_canonical(&self, buf: &mut dyn bytes::BufMut) {
+        match (&self.tx, &self.blobs_bundle) {
+            (Transaction::EIP4844Transaction(tx), Some(bundle)) => {
+                buf.put_u8(TxType::EIP4844 as u8);
+                WrappedEIP4844TransactionRef {
+                    tx,
+                    blobs_bundle: bundle,
+                }
+                .encode(buf);
+            }
+            _ => self.tx.encode_canonical(buf),
+        }
+    }
+
+    pub fn encode_canonical_to_vec(&self) -> Vec<u8> {
+        let mut buf = Vec::new();
+        self.encode_canonical(&mut buf);
+        buf
+    }
+
+    /// Canonical p2p encoded length, counted without building the output buffer
+    /// (mirrors [`PooledTransaction::encode_canonical`]); equals
+    /// `encode_canonical_to_vec().len()`. For blob txs this counts the full
+    /// sidecar, since the wrapped form carries it.
+    pub fn encode_canonical_len(&self) -> usize {
+        match (&self.tx, &self.blobs_bundle) {
+            (Transaction::EIP4844Transaction(tx), Some(bundle)) => {
+                // 1 byte for the EIP-2718 type prefix.
+                1 + WrappedEIP4844TransactionRef {
+                    tx,
+                    blobs_bundle: bundle,
+                }
+                .length()
+            }
+            _ => self.tx.encode_canonical_len(),
         }
     }
 }
 
-impl RLPEncode for P2PTransaction {
+/// Borrowed view of the wrapped EIP-4844 network form, so encoding or sizing a
+/// pooled blob tx does not clone the (hundreds-of-KB) sidecar — building an
+/// owned [`WrappedEIP4844Transaction`] out of a `&PooledTransaction` would have
+/// to. Sizing is still not allocation-free: `RLPEncode::length`'s `ByteCounter`
+/// elides only the output buffer, while `Encoder` accumulates the encoded fields
+/// in its own `temp_buf` either way.
+///
+/// The wire `wrapper_version` field is not carried here: it is present iff the
+/// bundle's version is non-zero, so it is derived from `blobs_bundle.version`.
+/// That is lossless for pooled transactions because the mempool stores only
+/// [`BlobsBundle`] (whose `version` is a plain `u8`) — no path persists an
+/// explicit `Some(0)` to round-trip. The owned [`WrappedEIP4844Transaction`]
+/// keeps `wrapper_version` as its own `Option<u8>` because the RPC/SDK send
+/// path does build an explicit `Some(0)` (a pre-Osaka L2 batch commitment) and
+/// must re-encode it verbatim.
+struct WrappedEIP4844TransactionRef<'a> {
+    tx: &'a EIP4844Transaction,
+    blobs_bundle: &'a BlobsBundle,
+}
+
+impl RLPEncode for WrappedEIP4844TransactionRef<'_> {
     fn encode(&self, buf: &mut dyn bytes::BufMut) {
-        match self {
-            P2PTransaction::LegacyTransaction(t) => t.encode(buf),
-            tx => <[u8] as RLPEncode>::encode(&tx.encode_canonical_to_vec(), buf),
+        let wrapper_version = (self.blobs_bundle.version != 0).then_some(self.blobs_bundle.version);
+        let encoder = Encoder::new(buf);
+        encoder
+            .encode_field(self.tx)
+            .encode_optional_field(&wrapper_version)
+            .encode_field(&self.blobs_bundle.blobs)
+            .encode_field(&self.blobs_bundle.commitments)
+            .encode_field(&self.blobs_bundle.proofs)
+            .finish();
+    }
+}
+
+impl RLPEncode for PooledTransaction {
+    fn encode(&self, buf: &mut dyn bytes::BufMut) {
+        // Legacy txs are a bare RLP list; every other type (including the
+        // wrapped blob form) is the canonical encoding wrapped as an RLP byte
+        // string. `encode_canonical_to_vec` handles the blob-vs-canonical split
+        // and, unlike `Transaction::encode`, does not touch the tx's canonical
+        // cache.
+        match &self.tx {
+            Transaction::LegacyTransaction(t) => t.encode(buf),
+            _ => <[u8] as RLPEncode>::encode(&self.encode_canonical_to_vec(), buf),
         };
     }
 }
 
-impl RLPDecode for P2PTransaction {
+impl RLPDecode for PooledTransaction {
     fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
         let (is_list, payload, remainder) = decode_rlp_item(rlp)?;
-        if !is_list {
-            let tx_type = *payload.first().ok_or(RLPDecodeError::InvalidLength)?;
+        // The pooled (network) form diverges from the canonical Transaction
+        // form only for EIP-4844, where blob txs are wrapped together with
+        // their blobs bundle. Handle that one case here and delegate every
+        // other type to Transaction, so newly added tx types need no changes.
+        // The delegation also inherits Transaction's `EnvelopeTxType::from_type_byte`
+        // gate, which rejects 0x00 envelopes and unassigned type bytes.
+        if !is_list && payload.first() == Some(&(TxType::EIP4844 as u8)) {
             let tx_encoding = payload.get(1..).ok_or(RLPDecodeError::InvalidLength)?;
-            // `from_type_byte` is the single gate for valid envelope types: it rejects 0x00
-            // (legacy is the bare-list branch below) and any unassigned type byte.
-            let tx = match EnvelopeTxType::from_type_byte(tx_type)? {
-                EnvelopeTxType::EIP2930 => {
-                    P2PTransaction::EIP2930Transaction(EIP2930Transaction::decode(tx_encoding)?)
-                }
-                EnvelopeTxType::EIP1559 => {
-                    P2PTransaction::EIP1559Transaction(EIP1559Transaction::decode(tx_encoding)?)
-                }
-                EnvelopeTxType::EIP4844 => P2PTransaction::EIP4844TransactionWithBlobs(
-                    WrappedEIP4844Transaction::decode(tx_encoding)?,
-                ),
-                EnvelopeTxType::EIP7702 => {
-                    P2PTransaction::EIP7702Transaction(EIP7702Transaction::decode(tx_encoding)?)
-                }
-                EnvelopeTxType::Frame => {
-                    P2PTransaction::FrameTransaction(FrameTransaction::decode(tx_encoding)?)
-                }
-                EnvelopeTxType::FeeToken => {
-                    P2PTransaction::FeeTokenTransaction(FeeTokenTransaction::decode(tx_encoding)?)
-                }
-                // Privileged (L2) transactions are never gossiped over p2p.
-                EnvelopeTxType::Privileged => {
-                    return Err(RLPDecodeError::Custom(
-                        "privileged transactions are not sent over p2p".to_string(),
-                    ));
-                }
-            };
-            Ok((tx, remainder))
-        } else {
-            // LegacyTransaction
-            LegacyTransaction::decode_unfinished(rlp)
-                .map(|(tx, rem)| (P2PTransaction::LegacyTransaction(tx), rem))
+            let wrapped = WrappedEIP4844Transaction::decode(tx_encoding)?;
+            return Ok((
+                PooledTransaction::new_blob(wrapped.tx, wrapped.blobs_bundle),
+                remainder,
+            ));
         }
+        let (tx, remainder) = Transaction::decode_unfinished(rlp)?;
+        // Privileged (L2) transactions are never gossiped over p2p.
+        if matches!(tx, Transaction::PrivilegedL2Transaction(_)) {
+            return Err(RLPDecodeError::Custom(
+                "privileged transactions are not sent over p2p".to_string(),
+            ));
+        }
+        let pooled = PooledTransaction::from_transaction(tx)
+            .map_err(|e| RLPDecodeError::Custom(e.to_string()))?;
+        Ok((pooled, remainder))
     }
 }
 
@@ -2754,90 +2889,6 @@ mod canonic_encoding {
                 Transaction::FrameTransaction(t) => t.length(),
             };
             prefix_len + inner_len
-        }
-    }
-
-    impl P2PTransaction {
-        pub fn tx_type(&self) -> TxType {
-            match self {
-                P2PTransaction::LegacyTransaction(_) => TxType::Legacy,
-                P2PTransaction::EIP2930Transaction(_) => TxType::EIP2930,
-                P2PTransaction::EIP1559Transaction(_) => TxType::EIP1559,
-                P2PTransaction::EIP4844TransactionWithBlobs(_) => TxType::EIP4844,
-                P2PTransaction::EIP7702Transaction(_) => TxType::EIP7702,
-                P2PTransaction::FeeTokenTransaction(_) => TxType::FeeToken,
-                P2PTransaction::FrameTransaction(_) => TxType::Frame,
-            }
-        }
-
-        pub fn encode_canonical(&self, buf: &mut dyn bytes::BufMut) {
-            match self {
-                // Legacy transactions don't have a prefix
-                P2PTransaction::LegacyTransaction(_) => {}
-                _ => buf.put_u8(self.tx_type() as u8),
-            }
-            match self {
-                P2PTransaction::LegacyTransaction(t) => t.encode(buf),
-                P2PTransaction::EIP2930Transaction(t) => t.encode(buf),
-                P2PTransaction::EIP1559Transaction(t) => t.encode(buf),
-                P2PTransaction::EIP4844TransactionWithBlobs(t) => t.encode(buf),
-                P2PTransaction::EIP7702Transaction(t) => t.encode(buf),
-                P2PTransaction::FeeTokenTransaction(t) => t.encode(buf),
-                P2PTransaction::FrameTransaction(t) => t.encode(buf),
-            };
-        }
-
-        pub fn encode_canonical_to_vec(&self) -> Vec<u8> {
-            let mut buf = Vec::new();
-            self.encode_canonical(&mut buf);
-            buf
-        }
-
-        /// Canonical encoded length without allocating (mirrors
-        /// [`P2PTransaction::encode_canonical`]); equals
-        /// `encode_canonical_to_vec().len()`. For the blob variant this includes
-        /// the full sidecar, since `EIP4844TransactionWithBlobs` encodes it.
-        pub fn encode_canonical_len(&self) -> usize {
-            let prefix_len = match self {
-                P2PTransaction::LegacyTransaction(_) => 0,
-                _ => 1,
-            };
-            let inner_len = match self {
-                P2PTransaction::LegacyTransaction(t) => t.length(),
-                P2PTransaction::EIP2930Transaction(t) => t.length(),
-                P2PTransaction::EIP1559Transaction(t) => t.length(),
-                P2PTransaction::EIP4844TransactionWithBlobs(t) => t.length(),
-                P2PTransaction::EIP7702Transaction(t) => t.length(),
-                P2PTransaction::FeeTokenTransaction(t) => t.length(),
-                P2PTransaction::FrameTransaction(t) => t.length(),
-            };
-            prefix_len + inner_len
-        }
-
-        pub fn compute_hash(&self) -> H256 {
-            match self {
-                P2PTransaction::LegacyTransaction(t) => {
-                    Transaction::LegacyTransaction(t.clone()).compute_hash(&NativeCrypto)
-                }
-                P2PTransaction::EIP2930Transaction(t) => {
-                    Transaction::EIP2930Transaction(t.clone()).compute_hash(&NativeCrypto)
-                }
-                P2PTransaction::EIP1559Transaction(t) => {
-                    Transaction::EIP1559Transaction(t.clone()).compute_hash(&NativeCrypto)
-                }
-                P2PTransaction::EIP4844TransactionWithBlobs(t) => {
-                    Transaction::EIP4844Transaction(t.tx.clone()).compute_hash(&NativeCrypto)
-                }
-                P2PTransaction::EIP7702Transaction(t) => {
-                    Transaction::EIP7702Transaction(t.clone()).compute_hash(&NativeCrypto)
-                }
-                P2PTransaction::FeeTokenTransaction(t) => {
-                    Transaction::FeeTokenTransaction(t.clone()).compute_hash(&NativeCrypto)
-                }
-                P2PTransaction::FrameTransaction(t) => {
-                    Transaction::FrameTransaction(t.clone()).compute_hash(&NativeCrypto)
-                }
-            }
         }
     }
 }
@@ -5594,23 +5645,106 @@ mod tests {
 
     #[test]
     fn p2p_frame_transaction_rlp_roundtrip() {
-        // A frame tx (EIP-8141) must survive a full P2PTransaction RLP
+        // A frame tx (EIP-8141) must survive a full PooledTransaction RLP
         // encode/decode round-trip so it can be served over the wire on request.
         let ft = make_test_frame_tx();
         assert!(!ft.signatures.is_empty());
         assert!(!ft.frames.is_empty());
-        let original = P2PTransaction::FrameTransaction(ft);
+        let original = PooledTransaction::from_transaction(Transaction::FrameTransaction(ft))
+            .expect("frame tx is not a blob tx");
 
         let encoded = original.encode_to_vec();
-        let (decoded, rest) = P2PTransaction::decode_unfinished(&encoded).unwrap();
+        let (decoded, rest) = PooledTransaction::decode_unfinished(&encoded).unwrap();
         assert!(rest.is_empty());
         assert_eq!(decoded, original);
         assert_eq!(decoded.tx_type(), TxType::Frame);
 
-        // The decoded variant converts cleanly into a regular Transaction
-        // (frame txs carry no blobs bundle).
-        let as_tx: Transaction = decoded.try_into().unwrap();
-        assert!(matches!(as_tx, Transaction::FrameTransaction(_)));
+        // A frame tx carries no blobs bundle, so the inner Transaction is all
+        // there is.
+        assert!(matches!(decoded.tx, Transaction::FrameTransaction(_)));
+    }
+
+    #[test]
+    fn pooled_transaction_constructor_enforces_blob_invariant() {
+        let legacy = || Transaction::LegacyTransaction(LegacyTransaction::default());
+        let blob = || Transaction::EIP4844Transaction(EIP4844Transaction::default());
+
+        // Non-blob tx with no bundle: ok.
+        assert!(PooledTransaction::from_transaction(legacy()).is_ok());
+        // Non-blob tx with a bundle: rejected.
+        assert_eq!(
+            PooledTransaction::new(legacy(), Some(BlobsBundle::empty())),
+            Err(PooledTransactionError::UnexpectedBlobsBundle),
+        );
+        // Blob tx without a bundle: rejected (also via from_transaction).
+        assert_eq!(
+            PooledTransaction::new(blob(), None),
+            Err(PooledTransactionError::MissingBlobsBundle),
+        );
+        assert_eq!(
+            PooledTransaction::from_transaction(blob()),
+            Err(PooledTransactionError::MissingBlobsBundle),
+        );
+        // Blob tx with a bundle: ok and exposes the sidecar.
+        let ok = PooledTransaction::new(blob(), Some(BlobsBundle::empty())).unwrap();
+        assert!(ok.as_blob().is_some());
+    }
+
+    /// A `PooledTransaction` keeps only `BlobsBundle` (whose `version` is a plain
+    /// `u8`), so the wire `wrapper_version` field is derived on encode as
+    /// `Some(version)` iff `version != 0`. A peer that sends an explicit
+    /// `wrapper_version: Some(0)` therefore re-encodes as `None` — one byte shorter.
+    /// That normalization must not move the tx hash, and the byte skew must stay
+    /// inside the p2p announced-size tolerance (8 bytes, `POOLED_TX_SIZE_TOLERANCE`
+    /// in `ethrex-p2p`), or the size check would reject such a peer's response.
+    #[test]
+    fn pooled_blob_tx_normalizes_explicit_zero_wrapper_version() {
+        let tx = EIP4844Transaction::default();
+        let expected_hash = Transaction::EIP4844Transaction(EIP4844Transaction::default())
+            .compute_hash(&NativeCrypto);
+
+        // Wire bytes as a peer that spells out the pre-Osaka default version.
+        let mut canonical = vec![TxType::EIP4844 as u8];
+        WrappedEIP4844Transaction {
+            tx,
+            wrapper_version: Some(0),
+            blobs_bundle: BlobsBundle::empty(),
+        }
+        .encode(&mut canonical);
+        let mut wire = Vec::new();
+        <[u8] as RLPEncode>::encode(&canonical, &mut wire);
+
+        let decoded = PooledTransaction::decode(&wire).expect("explicit Some(0) must decode");
+        let (_, bundle) = decoded.as_blob().expect("blob tx keeps its sidecar");
+        assert_eq!(bundle.version, 0, "Some(0) collapses to version 0");
+        assert_eq!(decoded.compute_hash(), expected_hash);
+
+        // Re-encoding drops the now-redundant field: exactly the one byte that
+        // `Some(0u8)` occupied (RLP-encoded as 0x80).
+        let reencoded = decoded.encode_to_vec();
+        assert_eq!(
+            wire.len() - reencoded.len(),
+            1,
+            "only the wrapper-version byte may be dropped"
+        );
+        assert!(wire.len().abs_diff(reencoded.len()) <= 8);
+
+        // The normalized form is a fixed point: re-decoding and re-encoding it is
+        // a no-op, so the byte loss is one-shot and not a per-hop drift.
+        let round_tripped = PooledTransaction::decode(&reencoded).unwrap();
+        assert_eq!(
+            round_tripped.encode_to_vec(),
+            reencoded,
+            "the normalized encoding must round-trip unchanged"
+        );
+        assert_eq!(round_tripped.compute_hash(), expected_hash);
+
+        // `encode_canonical_len` mirrors `encode_canonical`, so the size we announce
+        // to peers matches the bytes we would actually send.
+        assert_eq!(
+            decoded.encode_canonical_len(),
+            decoded.encode_canonical_to_vec().len()
+        );
     }
 
     #[test]

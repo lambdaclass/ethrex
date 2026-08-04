@@ -43,7 +43,7 @@ use ethrex_blockchain::Blockchain;
 use ethrex_common::H256;
 #[cfg(feature = "l2")]
 use ethrex_common::types::Transaction;
-use ethrex_common::types::{MempoolTransaction, P2PTransaction, Receipt};
+use ethrex_common::types::{MempoolTransaction, Receipt};
 use ethrex_crypto::NativeCrypto;
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_storage::{Store, error::StoreError};
@@ -1621,11 +1621,10 @@ async fn handle_incoming_message(
             }
             // If we receive a blob transaction without blobs or with blobs that don't match the versioned hashes we must disconnect from the peer
             for tx in &msg.pooled_transactions {
-                if let P2PTransaction::EIP4844TransactionWithBlobs(itx) = tx
-                    && (itx.blobs_bundle.is_empty()
-                        || itx
-                            .blobs_bundle
-                            .validate_blob_commitment_hashes(&itx.tx.blob_versioned_hashes)
+                if let Some((tx4844, blobs_bundle)) = tx.as_blob()
+                    && (blobs_bundle.is_empty()
+                        || blobs_bundle
+                            .validate_blob_commitment_hashes(&tx4844.blob_versioned_hashes)
                             .is_err())
                 {
                     debug!(

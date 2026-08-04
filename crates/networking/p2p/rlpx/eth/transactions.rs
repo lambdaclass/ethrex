@@ -10,8 +10,7 @@ use bytes::Bytes;
 use ethrex_blockchain::Blockchain;
 use ethrex_blockchain::error::MempoolError;
 use ethrex_common::types::Fork;
-use ethrex_common::types::P2PTransaction;
-use ethrex_common::types::WrappedEIP4844Transaction;
+use ethrex_common::types::PooledTransaction;
 use ethrex_common::{H256, types::Transaction};
 use ethrex_crypto::NativeCrypto;
 use ethrex_rlp::{
@@ -135,13 +134,7 @@ impl NewPooledTransactionHashes {
                         .mempool
                         .get_blobs_bundle(transaction_hash)?
                         .unwrap_or_default();
-                    let p2p_tx =
-                        P2PTransaction::EIP4844TransactionWithBlobs(WrappedEIP4844Transaction {
-                            tx: eip4844_tx,
-                            wrapper_version: (tx_blobs_bundle.version != 0)
-                                .then_some(tx_blobs_bundle.version),
-                            blobs_bundle: tx_blobs_bundle,
-                        });
+                    let p2p_tx = PooledTransaction::new_blob(eip4844_tx, tx_blobs_bundle);
                     p2p_tx.encode_canonical_len()
                 }
                 _ => transaction.encode_canonical_len(),
@@ -312,11 +305,11 @@ pub struct PooledTransactions {
     // id is a u64 chosen by the requesting peer, the responding peer must mirror the value for the response
     // https://github.com/ethereum/devp2p/blob/master/caps/eth.md#protocol-messages
     pub id: u64,
-    pub pooled_transactions: Vec<P2PTransaction>,
+    pub pooled_transactions: Vec<PooledTransaction>,
 }
 
 impl PooledTransactions {
-    pub fn new(id: u64, pooled_transactions: Vec<P2PTransaction>) -> Self {
+    pub fn new(id: u64, pooled_transactions: Vec<PooledTransaction>) -> Self {
         Self {
             pooled_transactions,
             id,
@@ -341,8 +334,8 @@ impl PooledTransactions {
             if !seen.insert(tx_hash) {
                 return Err(MempoolError::DuplicatePooledTx);
             }
-            if let P2PTransaction::EIP4844TransactionWithBlobs(itx) = tx {
-                itx.blobs_bundle.validate_cheap(&itx.tx, fork)?;
+            if let Some((tx4844, bundle)) = tx.as_blob() {
+                bundle.validate_cheap(tx4844, fork)?;
             }
             let Some(pos) = requested
                 .transaction_hashes
@@ -378,40 +371,46 @@ impl PooledTransactions {
         blockchain: &Blockchain,
         is_l2_mode: bool,
     ) -> Result<(), MempoolError> {
-        for tx in self.pooled_transactions {
-            if let P2PTransaction::EIP4844TransactionWithBlobs(itx) = tx {
-                if is_l2_mode {
-                    debug!(
-                        peer=%node,
-                        "Rejecting blob transaction in L2 mode - blob transactions are not supported in L2",
-                    );
-                    continue;
-                }
-                if let Err(e) = blockchain
-                    .add_blob_transaction_to_pool(itx.tx, itx.blobs_bundle)
-                    .await
-                {
-                    if matches!(e, MempoolError::BlobsBundleError(_)) {
-                        return Err(e);
+        for pooled in self.pooled_transactions {
+            let (tx, blobs_bundle) = pooled.into_parts();
+            match blobs_bundle {
+                // Only EIP-4844 transactions are gossiped with a blobs bundle.
+                Some(bundle) => {
+                    let Transaction::EIP4844Transaction(inner) = tx else {
+                        debug!(
+                            peer=%node,
+                            "Rejecting pooled transaction: blobs bundle on a non-blob transaction",
+                        );
+                        continue;
+                    };
+                    if is_l2_mode {
+                        debug!(
+                            peer=%node,
+                            "Rejecting blob transaction in L2 mode - blob transactions are not supported in L2",
+                        );
+                        continue;
                     }
-                    debug!(
-                        peer=%node,
-                        error=%e,
-                        "Error adding transaction"
-                    );
-                    continue;
+                    if let Err(e) = blockchain.add_blob_transaction_to_pool(inner, bundle).await {
+                        if matches!(e, MempoolError::BlobsBundleError(_)) {
+                            return Err(e);
+                        }
+                        debug!(
+                            peer=%node,
+                            error=%e,
+                            "Error adding transaction"
+                        );
+                        continue;
+                    }
                 }
-            } else {
-                let regular_tx = tx
-                    .try_into()
-                    .map_err(|error| MempoolError::StoreError(StoreError::Custom(error)))?;
-                if let Err(e) = blockchain.add_transaction_to_pool(regular_tx).await {
-                    debug!(
-                        peer=%node,
-                        error=%e,
-                        "Error adding transaction"
-                    );
-                    continue;
+                None => {
+                    if let Err(e) = blockchain.add_transaction_to_pool(tx).await {
+                        debug!(
+                            peer=%node,
+                            error=%e,
+                            "Error adding transaction"
+                        );
+                        continue;
+                    }
                 }
             }
         }
@@ -439,7 +438,7 @@ impl RLPxMessage for PooledTransactions {
         let decompressed_data = snappy_decompress_bounded(msg_data, MAX_POOLED_TRANSACTIONS_BYTES)?;
         let decoder = Decoder::new(&decompressed_data)?;
         let (id, decoder): (u64, _) = decoder.decode_field("request-id")?;
-        let (pooled_transactions, _): (Vec<P2PTransaction>, _) =
+        let (pooled_transactions, _): (Vec<PooledTransaction>, _) =
             decoder.decode_field("pooledTransactions")?;
 
         Ok(Self::new(id, pooled_transactions))
@@ -451,14 +450,15 @@ mod tests {
     use super::*;
     use ethrex_common::types::EIP1559Transaction;
 
-    fn p2p_tx(nonce: u64) -> P2PTransaction {
-        P2PTransaction::EIP1559Transaction(EIP1559Transaction {
+    fn p2p_tx(nonce: u64) -> PooledTransaction {
+        PooledTransaction::from_transaction(Transaction::EIP1559Transaction(EIP1559Transaction {
             nonce,
             ..Default::default()
-        })
+        }))
+        .expect("a non-blob tx carries no sidecar")
     }
 
-    fn announcement_for(txs: &[P2PTransaction]) -> NewPooledTransactionHashes {
+    fn announcement_for(txs: &[PooledTransaction]) -> NewPooledTransactionHashes {
         NewPooledTransactionHashes::from_raw(
             txs.iter()
                 .map(|t| t.tx_type() as u8)

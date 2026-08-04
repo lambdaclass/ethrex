@@ -6,7 +6,7 @@
 //! `0x00` prefix), so ethrex commits `rlp(legacy)` for bytes that were `0x00 || rlp(legacy)` —
 //! a cross-client transactions-root divergence. The decoders must reject the `0x00` type byte.
 use ethrex_common::types::{
-    Block, BlockBody, BlockHeader, EIP1559Transaction, LegacyTransaction, P2PTransaction,
+    Block, BlockBody, BlockHeader, EIP1559Transaction, LegacyTransaction, PooledTransaction,
     Transaction, TxKind,
 };
 use ethrex_common::{Address, Bytes, U256};
@@ -60,8 +60,10 @@ fn transaction_decode_rejects_typed_zero() {
 }
 
 #[test]
-fn p2p_transaction_decode_rejects_typed_zero() {
-    let decoded = P2PTransaction::decode(&typed_zero_rlp_item());
+fn pooled_transaction_decode_rejects_typed_zero() {
+    // `PooledTransaction` inherits the gate by delegating every non-4844 type to
+    // `Transaction::decode_unfinished`.
+    let decoded = PooledTransaction::decode(&typed_zero_rlp_item());
     assert!(decoded.is_err(), "got: {decoded:?}");
 }
 

@@ -2,7 +2,10 @@ use bytes::Bytes;
 use ethrex_blockchain::Blockchain;
 use ethrex_common::{
     Address, H256,
-    types::{EIP1559Transaction, MempoolTransaction, P2PTransaction, Transaction},
+    types::{
+        BlobsBundle, EIP1559Transaction, EIP4844Transaction, MempoolTransaction, PooledTransaction,
+        Transaction,
+    },
 };
 use ethrex_crypto::NativeCrypto;
 use ethrex_p2p::rlpx::{
@@ -43,7 +46,9 @@ fn get_pooled_transactions_not_empty_message() {
 
 #[test]
 fn pooled_transactions_of_one_type() {
-    let transaction1 = P2PTransaction::LegacyTransaction(Default::default());
+    let transaction1 =
+        PooledTransaction::from_transaction(Transaction::LegacyTransaction(Default::default()))
+            .unwrap();
     let pooled_transactions = vec![transaction1.clone()];
     let pooled_transactions = PooledTransactions::new(1, pooled_transactions);
 
@@ -52,6 +57,31 @@ fn pooled_transactions_of_one_type() {
     let decoded = PooledTransactions::decode(&buf).unwrap();
     assert_eq!(decoded.id, 1);
     assert_eq!(decoded.pooled_transactions, vec![transaction1]);
+}
+
+// A blob transaction is gossiped in wrapped (network) form carrying its blobs
+// bundle. It must survive a full `PooledTransactions` RLP round-trip with the
+// sidecar intact, and `as_blob()` must expose both the tx and the bundle.
+#[test]
+fn pooled_transactions_blob_roundtrip_preserves_sidecar() {
+    let blob_tx = PooledTransaction::new_blob(EIP4844Transaction::default(), BlobsBundle::empty());
+    // A non-blob tx in the same message must round-trip with no sidecar.
+    let legacy_tx =
+        PooledTransaction::from_transaction(Transaction::LegacyTransaction(Default::default()))
+            .unwrap();
+    let original = vec![blob_tx, legacy_tx];
+    let pooled_transactions = PooledTransactions::new(7, original.clone());
+
+    let mut buf = Vec::new();
+    pooled_transactions.encode(&mut buf).unwrap();
+    let decoded = PooledTransactions::decode(&buf).unwrap();
+
+    assert_eq!(decoded.id, 7);
+    assert_eq!(decoded.pooled_transactions, original);
+    // The blob variant still carries its bundle after the round-trip.
+    assert!(decoded.pooled_transactions[0].as_blob().is_some());
+    // The legacy variant carries none.
+    assert!(decoded.pooled_transactions[1].as_blob().is_none());
 }
 
 fn test_blockchain() -> Blockchain {
