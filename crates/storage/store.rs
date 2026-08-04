@@ -1141,21 +1141,29 @@ impl Store {
                 length: code.len() as u64,
             };
 
-            // Write metadata for future use (async, fire and forget)
-            let metadata_buf = metadata.length.to_be_bytes().to_vec();
-            let hash_key = code_hash.0.to_vec();
-            let backend = self.backend.clone();
-            tokio::task::spawn(async move {
-                if let Err(e) = async {
-                    let mut tx = backend.begin_write()?;
-                    tx.put(ACCOUNT_CODE_METADATA, &hash_key, &metadata_buf)?;
-                    tx.commit()
-                }
-                .await
-                {
-                    tracing::warn!("Failed to write code metadata during auto-migration: {}", e);
-                }
-            });
+            // Backfill the row for future reads, fire and forget.
+            //
+            // Only when a Tokio runtime is reachable: this read is on the execution
+            // path (`EXTCODESIZE`), which runs on rayon workers, and
+            // `tokio::task::spawn` panics outside a runtime. Skipping the backfill
+            // costs one code read the next time that hash is asked for; panicking
+            // would take the node down.
+            if let Ok(handle) = tokio::runtime::Handle::try_current() {
+                let metadata_buf = metadata.length.to_be_bytes().to_vec();
+                let hash_key = code_hash.0.to_vec();
+                let backend = self.backend.clone();
+                handle.spawn(async move {
+                    if let Err(e) = async {
+                        let mut tx = backend.begin_write()?;
+                        tx.put(ACCOUNT_CODE_METADATA, &hash_key, &metadata_buf)?;
+                        tx.commit()
+                    }
+                    .await
+                    {
+                        tracing::warn!("Failed to write code metadata during backfill: {}", e);
+                    }
+                });
+            }
 
             metadata
         };
@@ -5228,6 +5236,39 @@ mod account_code_tests {
 
     const JUMPDEST: u8 = 0x5b;
     const PUSH1: u8 = 0x60;
+
+    /// `EXTCODESIZE` resolves a length through [`Store::get_code_metadata`], and
+    /// execution runs on rayon workers, which are not inside a Tokio runtime. A hash
+    /// with no metadata row SHALL still answer from the bytecode there rather than
+    /// panicking on the backfill spawn. This test is deliberately NOT `#[tokio::test]`:
+    /// the absence of a runtime is the condition under test.
+    #[test]
+    fn metadata_falls_back_to_the_bytecode_without_a_tokio_runtime() {
+        use crate::backend::in_memory::InMemoryBackend;
+
+        let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::open().unwrap());
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::from_backend(
+            backend.clone(),
+            dir.path().to_path_buf(),
+            1,
+            DEFAULT_PERSIST_CHANNEL_CAPACITY,
+        )
+        .unwrap();
+
+        // Code present, metadata row absent: the shape of any database written before
+        // ACCOUNT_CODE_METADATA existed, which no migration backfills.
+        let code = jumpdest_dense_code();
+        let mut tx = backend.begin_write().unwrap();
+        tx.put(ACCOUNT_CODES, code.hash.as_bytes(), &encode_code(&code))
+            .unwrap();
+        tx.commit().unwrap();
+
+        let metadata = store
+            .get_code_metadata(code.hash)
+            .expect("metadata read must not fail off-runtime");
+        assert_eq!(metadata.map(|m| m.length), Some(code.len() as u64));
+    }
 
     /// A max-size contract that is almost entirely JUMPDESTs, the shape that makes the
     /// jump-destination representation matter: as a list of offsets it is ~4x the size
