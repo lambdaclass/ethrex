@@ -2182,6 +2182,15 @@ impl<'a> VM<'a> {
             let state_gas_reservoir_at_frame_entry = self.state_gas_reservoir;
             let state_gas_spill_at_frame_entry = self.state_gas_spill;
 
+            // EIP-7928: capture the access-list recorder before the frame runs. A
+            // reverted frame's state changes are rolled back, so its recorded
+            // changes must be rolled back too — otherwise the builder emits an
+            // access list that disagrees with the state the block actually
+            // contains, and the block fails its own BAL validation on
+            // re-execution. Because the builder rebuilds the same transaction
+            // every slot, a single such frame halts block production.
+            let mut frame_bal_checkpoint = self.db.bal_recorder.as_ref().map(|r| r.checkpoint());
+
             let (frame_success, frame_gas_used, frame_logs) = if value_transfer_reverted {
                 self.substate.revert_backup();
                 self.restore_cache_state()?;
@@ -2336,6 +2345,20 @@ impl<'a> VM<'a> {
             // their accumulated state gas.
             if !frame_success {
                 self.state_gas_used = state_gas_used_at_frame_entry;
+                // EIP-7928: drop the reverted frame's recorded changes. `restore`
+                // re-files a freshly-written slot as a read and leaves
+                // `touched_addresses` alone, so every access the frame made is
+                // still reported — only the reverted changes go. This mirrors the
+                // atomic-batch unroll below; a frame that reverts on its own needs
+                // the same reconciliation, including the case where a slot was
+                // written and then read inside the frame (the write suppresses the
+                // read record, so dropping the write without re-filing it would
+                // leave the slot in neither list).
+                if let Some(checkpoint) = frame_bal_checkpoint.take()
+                    && let Some(recorder) = self.db.bal_recorder.as_mut()
+                {
+                    recorder.restore(checkpoint);
+                }
             }
             // EIP-8037: frames are gas-isolated, so the state-gas reservoir/spill
             // must not leak across the frame boundary. A reservoir credit from an
