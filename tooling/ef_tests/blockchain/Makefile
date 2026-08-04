@@ -1,4 +1,4 @@
-.PHONY: download-test-vectors clean-vectors test test-levm test-sp1 test-stateless amsterdam-vectors zkevm-vectors test-stateless-zkevm
+.PHONY: download-test-vectors clean-vectors test test-levm test-sp1 test-stateless amsterdam-vectors zkevm-vectors test-stateless-zkevm stateless-vector
 
 VECTORS_ROOT := vectors
 FIXTURES_FILE := ../.fixtures_url
@@ -64,6 +64,13 @@ $(ZKEVM_VECTORS_DIR): $(ZKEVM_ARTIFACT)
 	rm -rf $(ZKEVM_VECTORS_DIR)
 	mkdir -p $(ZKEVM_VECTORS_DIR)
 	tar -xzf $(ZKEVM_ARTIFACT) --strip-components=2 -C $(ZKEVM_VECTORS_DIR) fixtures/blockchain_tests/for_amsterdam
+
+# Conformance vectors for execution-specs 3c3b6f4af (#3248 progressive SSZ +
+# #3278 ChainConfig removal). No tests-zkevm release carries that schema, and
+# v0.6.2 reuses schema id 0x1501 for the OLD body, so its vectors misparse.
+# Generated, never committed. See scripts/gen_stateless_vectors.sh.
+stateless-vector:
+	scripts/gen_stateless_vectors.sh
 
 zkevm-vectors: $(ZKEVM_VECTORS_DIR)
 
