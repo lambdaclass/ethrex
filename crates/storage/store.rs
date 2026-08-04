@@ -1044,11 +1044,26 @@ impl Store {
             std::thread::scope(|scope| {
                 let handles: Vec<_> = missing
                     .chunks(chunk)
-                    .map(|ck| scope.spawn(move || read_shard(ck)))
+                    .map(|ck| (ck, scope.spawn(move || read_shard(ck))))
                     .collect();
                 handles
                     .into_iter()
-                    .flat_map(|h| h.join().expect("account code shard panicked"))
+                    .flat_map(|(shard, handle)| {
+                        // A panicked shard becomes an `Err` per key it covered, keeping
+                        // the results aligned with `missing` and leaving the caller's
+                        // best-effort handling to decide. Re-panicking here would
+                        // escalate a warm into taking down whatever runs it.
+                        handle.join().unwrap_or_else(|_| {
+                            shard
+                                .iter()
+                                .map(|_| {
+                                    Err(StoreError::Custom(
+                                        "account code shard panicked".to_string(),
+                                    ))
+                                })
+                                .collect()
+                        })
+                    })
                     .collect()
             })
         } else {
