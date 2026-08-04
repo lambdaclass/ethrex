@@ -1,0 +1,504 @@
+<!DOCTYPE HTML>
+<html lang="en" class="light sidebar-visible" dir="ltr">
+    <head>
+        <!-- Book generated using mdBook -->
+        <meta charset="UTF-8">
+        <title>Native Rollups (EXECUTE precompile) - Ethrex</title>
+
+
+        <!-- Custom HTML head -->
+
+        <meta name="description" content="">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="theme-color" content="#ffffff">
+
+        <link rel="shortcut icon" href="../../favicon-65f98953.png">
+        <link rel="stylesheet" href="../../css/variables-8adf115d.css">
+        <link rel="stylesheet" href="../../css/general-2459343d.css">
+        <link rel="stylesheet" href="../../css/chrome-ae938929.css">
+        <link rel="stylesheet" href="../../css/print-9e4910d8.css" media="print">
+
+        <!-- Fonts -->
+        <link rel="stylesheet" href="../../fonts/fonts-9644e21d.css">
+
+        <!-- Highlight.js Stylesheets -->
+        <link rel="stylesheet" id="mdbook-highlight-css" href="../../highlight-493f70e1.css">
+        <link rel="stylesheet" id="mdbook-tomorrow-night-css" href="../../tomorrow-night-4c0ae647.css">
+        <link rel="stylesheet" id="mdbook-ayu-highlight-css" href="../../ayu-highlight-3fdfc3ac.css">
+
+        <!-- Custom theme stylesheets -->
+
+
+        <!-- Provide site root and default themes to javascript -->
+        <script>
+            const path_to_root = "../../";
+            const default_light_theme = "light";
+            const default_dark_theme = "navy";
+            window.path_to_searchindex_js = "../../searchindex-438dca6c.js";
+        </script>
+        <!-- Start loading toc.js asap -->
+        <script src="../../toc-ec0f4f2d.js"></script>
+    </head>
+    <body>
+    <div id="mdbook-help-container">
+        <div id="mdbook-help-popup">
+            <h2 class="mdbook-help-title">Keyboard shortcuts</h2>
+            <div>
+                <p>Press <kbd>←</kbd> or <kbd>→</kbd> to navigate between chapters</p>
+                <p>Press <kbd>S</kbd> or <kbd>/</kbd> to search in the book</p>
+                <p>Press <kbd>?</kbd> to show this help</p>
+                <p>Press <kbd>Esc</kbd> to hide this help</p>
+            </div>
+        </div>
+    </div>
+    <div id="mdbook-body-container">
+        <!-- Work around some values being stored in localStorage wrapped in quotes -->
+        <script>
+            try {
+                let theme = localStorage.getItem('mdbook-theme');
+                let sidebar = localStorage.getItem('mdbook-sidebar');
+
+                if (theme.startsWith('"') && theme.endsWith('"')) {
+                    localStorage.setItem('mdbook-theme', theme.slice(1, theme.length - 1));
+                }
+
+                if (sidebar.startsWith('"') && sidebar.endsWith('"')) {
+                    localStorage.setItem('mdbook-sidebar', sidebar.slice(1, sidebar.length - 1));
+                }
+            } catch (e) { }
+        </script>
+
+        <!-- Set the theme before any content is loaded, prevents flash -->
+        <script>
+            const default_theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? default_dark_theme : default_light_theme;
+            let theme;
+            try { theme = localStorage.getItem('mdbook-theme'); } catch(e) { }
+            if (theme === null || theme === undefined) { theme = default_theme; }
+            const html = document.documentElement;
+            html.classList.remove('light')
+            html.classList.add(theme);
+            html.classList.add("js");
+        </script>
+
+        <input type="checkbox" id="mdbook-sidebar-toggle-anchor" class="hidden">
+
+        <!-- Hide / unhide sidebar before it is displayed -->
+        <script>
+            let sidebar = null;
+            const sidebar_toggle = document.getElementById("mdbook-sidebar-toggle-anchor");
+            if (document.body.clientWidth >= 1080) {
+                try { sidebar = localStorage.getItem('mdbook-sidebar'); } catch(e) { }
+                sidebar = sidebar || 'visible';
+            } else {
+                sidebar = 'hidden';
+                sidebar_toggle.checked = false;
+            }
+            if (sidebar === 'visible') {
+                sidebar_toggle.checked = true;
+            } else {
+                html.classList.remove('sidebar-visible');
+            }
+        </script>
+
+        <nav id="mdbook-sidebar" class="sidebar" aria-label="Table of contents">
+            <!-- populated by js -->
+            <mdbook-sidebar-scrollbox class="sidebar-scrollbox"></mdbook-sidebar-scrollbox>
+            <noscript>
+                <iframe class="sidebar-iframe-outer" src="../../toc.html"></iframe>
+            </noscript>
+            <div id="mdbook-sidebar-resize-handle" class="sidebar-resize-handle">
+                <div class="sidebar-resize-indicator"></div>
+            </div>
+        </nav>
+
+        <div id="mdbook-page-wrapper" class="page-wrapper">
+
+            <div class="page">
+                <div id="mdbook-menu-bar-hover-placeholder"></div>
+                <div id="mdbook-menu-bar" class="menu-bar sticky">
+                    <div class="left-buttons">
+                        <label id="mdbook-sidebar-toggle" class="icon-button" for="mdbook-sidebar-toggle-anchor" title="Toggle Table of Contents" aria-label="Toggle Table of Contents" aria-controls="mdbook-sidebar">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M0 96C0 78.3 14.3 64 32 64H416c17.7 0 32 14.3 32 32s-14.3 32-32 32H32C14.3 128 0 113.7 0 96zM0 256c0-17.7 14.3-32 32-32H416c17.7 0 32 14.3 32 32s-14.3 32-32 32H32c-17.7 0-32-14.3-32-32zM448 416c0 17.7-14.3 32-32 32H32c-17.7 0-32-14.3-32-32s14.3-32 32-32H416c17.7 0 32 14.3 32 32z"/></svg></span>
+                        </label>
+                        <button id="mdbook-theme-toggle" class="icon-button" type="button" title="Change theme" aria-label="Change theme" aria-haspopup="true" aria-expanded="false" aria-controls="mdbook-theme-list">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 576 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M371.3 367.1c27.3-3.9 51.9-19.4 67.2-42.9L600.2 74.1c12.6-19.5 9.4-45.3-7.6-61.2S549.7-4.4 531.1 9.6L294.4 187.2c-24 18-38.2 46.1-38.4 76.1L371.3 367.1zm-19.6 25.4l-116-104.4C175.9 290.3 128 339.6 128 400c0 3.9 .2 7.8 .6 11.6c1.8 17.5-10.2 36.4-27.8 36.4H96c-17.7 0-32 14.3-32 32s14.3 32 32 32H240c61.9 0 112-50.1 112-112c0-2.5-.1-5-.2-7.5z"/></svg></span>
+                        </button>
+                        <ul id="mdbook-theme-list" class="theme-popup" aria-label="Themes" role="menu">
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-default_theme">Auto</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-light">Light</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-rust">Rust</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-coal">Coal</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-navy">Navy</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-ayu">Ayu</button></li>
+                        </ul>
+                        <button id="mdbook-search-toggle" class="icon-button" type="button" title="Search (`/`)" aria-label="Toggle Searchbar" aria-expanded="false" aria-keyshortcuts="/ s" aria-controls="mdbook-searchbar">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M416 208c0 45.9-14.9 88.3-40 122.7L502.6 457.4c12.5 12.5 12.5 32.8 0 45.3s-32.8 12.5-45.3 0L330.7 376c-34.4 25.2-76.8 40-122.7 40C93.1 416 0 322.9 0 208S93.1 0 208 0S416 93.1 416 208zM208 352c79.5 0 144-64.5 144-144s-64.5-144-144-144S64 128.5 64 208s64.5 144 144 144z"/></svg></span>
+                        </button>
+                    </div>
+
+                    <h1 class="menu-title">Ethrex</h1>
+
+                    <div class="right-buttons">
+                        <a href="../../print.html" title="Print this book" aria-label="Print this book">
+                            <span class=fa-svg id="print-button"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M128 0C92.7 0 64 28.7 64 64v96h64V64H354.7L384 93.3V160h64V93.3c0-17-6.7-33.3-18.7-45.3L400 18.7C388 6.7 371.7 0 354.7 0H128zM384 352v32 64H128V384 368 352H384zm64 32h32c17.7 0 32-14.3 32-32V256c0-35.3-28.7-64-64-64H64c-35.3 0-64 28.7-64 64v96c0 17.7 14.3 32 32 32H64v64c0 35.3 28.7 64 64 64H384c35.3 0 64-28.7 64-64V384zm-16-88c-13.3 0-24-10.7-24-24s10.7-24 24-24s24 10.7 24 24s-10.7 24-24 24z"/></svg></span>
+                        </a>
+                        <a href="https://github.com/lambdaclass/ethrex" title="Git repository" aria-label="Git repository">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 496 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M165.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6zm-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3zm44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9zM244.8 8C106.1 8 0 113.3 0 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C428.2 457.8 496 362.9 496 252 496 113.3 383.5 8 244.8 8zM97.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1zm-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7zm32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1zm-11.4-14.7c-1.6 1-1.6 3.6 0 5.9 1.6 2.3 4.3 3.3 5.6 2.3 1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2z"/></svg></span>
+                        </a>
+
+                    </div>
+                </div>
+
+                <div id="mdbook-search-wrapper" class="hidden">
+                    <form id="mdbook-searchbar-outer" class="searchbar-outer">
+                        <div class="search-wrapper">
+                            <input type="search" id="mdbook-searchbar" name="searchbar" placeholder="Search this book ..." aria-controls="mdbook-searchresults-outer" aria-describedby="searchresults-header">
+                            <div class="spinner-wrapper">
+                                <span class=fa-svg id="fa-spin"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M304 48c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zm0 416c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zM48 304c26.5 0 48-21.5 48-48s-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48zm464-48c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zM142.9 437c18.7-18.7 18.7-49.1 0-67.9s-49.1-18.7-67.9 0s-18.7 49.1 0 67.9s49.1 18.7 67.9 0zm0-294.2c18.7-18.7 18.7-49.1 0-67.9S93.7 56.2 75 75s-18.7 49.1 0 67.9s49.1 18.7 67.9 0zM369.1 437c18.7 18.7 49.1 18.7 67.9 0s18.7-49.1 0-67.9s-49.1-18.7-67.9 0s-18.7 49.1 0 67.9z"/></svg></span>
+                            </div>
+                        </div>
+                    </form>
+                    <div id="mdbook-searchresults-outer" class="searchresults-outer hidden">
+                        <div id="mdbook-searchresults-header" class="searchresults-header"></div>
+                        <ul id="mdbook-searchresults">
+                        </ul>
+                    </div>
+                </div>
+
+                <!-- Apply ARIA attributes after the sidebar and the sidebar toggle button are added to the DOM -->
+                <script>
+                    document.getElementById('mdbook-sidebar-toggle').setAttribute('aria-expanded', sidebar === 'visible');
+                    document.getElementById('mdbook-sidebar').setAttribute('aria-hidden', sidebar !== 'visible');
+                    Array.from(document.querySelectorAll('#mdbook-sidebar a')).forEach(function(link) {
+                        link.setAttribute('tabIndex', sidebar === 'visible' ? 0 : -1);
+                    });
+                </script>
+
+                <div id="mdbook-content" class="content">
+                    <main>
+                        <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.4/dist/katex.min.css">
+<h1 id="native-rollups"><a class="header" href="#native-rollups">Native Rollups</a></h1>
+<h2 id="overview"><a class="header" href="#overview">Overview</a></h2>
+<p><a href="https://eips.ethereum.org/EIPS/eip-8079">EIP-8079</a> proposes “native rollups” — a mechanism where L1 verifies L2 state transitions by re-executing them inside the EVM via an <code>EXECUTE</code> precompile. This replaces complex proof systems (zkVM/fraud proofs) with direct execution, leveraging the fact that L1 already has an EVM capable of running the same transactions.</p>
+<p>The spec defines the EXECUTE precompile as a thin wrapper around <code>verify_stateless_new_payload</code> — the same function the L1 ZK-EVM effort uses. Our implementation reuses the stateless-validation infrastructure landed with EIP-8025 (#6427). The EXECUTE precompile code is <strong>always-compiled</strong>; the precompile fires only at runtime when <code>fork &gt;= Fork::LStar &amp;&amp; vm_type == VMType::L1</code>.</p>
+<blockquote>
+<p><strong>Implementation note — spec divergences:</strong> The implementation tracks the <a href="https://github.com/l2beat/l2beat">l2beat native-rollups spec book</a> rather than the published EIP-8079 text. The two diverge in three places:</p>
+<ul>
+<li><strong>Anchoring</strong>: l2beat uses <code>parent_beacon_block_root</code> as an arbitrary <code>bytes32</code> to carry the L1 messages Merkle root. Published EIP-8079 specifies an <code>ANCHOR_ADDRESS</code> precompile for this purpose.</li>
+<li><strong>EXECUTE signature</strong>: The l2beat signature passes <code>(uint16 _l1MessagesCount, bytes _sszStatelessInput)</code>. EIP-8079 specifies a different calling convention.</li>
+<li><strong><code>burned_fees</code></strong>: EIP-8079 makes <code>burned_fees</code> a new execution-payload header field. Our implementation includes it as a recompute-only header field gated at <code>Fork::LStar</code> (EIP-8079-aligned, §G).</li>
+</ul>
+<p>Where EIP-8079 and the l2beat spec agree, “EIP-8079 conformance” also means l2beat conformance.</p>
+</blockquote>
+<pre><code>SSZ-encoded StatelessInput (NewPayloadRequest + ExecutionWitness + ChainConfig)
+        |
+  EXECUTE precompile (in LEVM) — thin wrapper
+        |
+  1. Deserialize SSZ once (read gas_limit; keep the decoded input)
+  2. Validate L2 constraints (no blobs, no withdrawals, no execution_requests)
+  3. Charge gas = gas_limit + calldata_len·EXECUTE_GAS_PER_WITNESS_BYTE
+  4. Delegate the decoded input to StatelessValidator → verify_stateless_new_payload()
+        |
+        v
+  verify_stateless_new_payload (in crates/blockchain/stateless.rs)
+        |
+  1. Compute hash_tree_root of NewPayloadRequest
+  2. Validate block headers from witness
+  3. Build GuestProgramState from witness
+  4. Convert NewPayloadRequest → Block
+  5. Execute block via LEVM
+  6. Return StatelessValidationResult (SSZ)
+        |
+  Returns SSZ-encoded (new_payload_request_root, successful_validation, chain_config) or reverts
+</code></pre>
+<h2 id="execute-precompile"><a class="header" href="#execute-precompile">EXECUTE Precompile</a></h2>
+<p>The core logic lives in <code>execute_precompile.rs</code>. It parses SSZ-encoded <code>StatelessInput</code> once, validates L2-specific constraints, charges gas (<code>gas_limit + calldata_len · EXECUTE_GAS_PER_WITNESS_BYTE</code>), and delegates the already-decoded input to <code>verify_stateless_new_payload</code> via the <code>StatelessValidator</code> trait. Gas is charged on <code>gas_limit</code> (the true upper bound on re-execution), never on the attacker-controlled <code>gas_used</code>.</p>
+<h3 id="input-format"><a class="header" href="#input-format">Input Format</a></h3>
+<p>SSZ-encoded <code>StatelessInput</code>:</p>
+<pre class="playground"><code class="language-rust edition2024"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>pub struct SszStatelessInput {
+    pub new_payload_request: NewPayloadRequest,  // Full block as SSZ
+    pub witness: SszExecutionWitness,            // State trie, storage tries, codes
+    pub chain_config: SszChainConfig,            // chain_id
+    pub public_keys: SszList&lt;...&gt;,               // Pre-recovered tx public keys (stub)
+}
+<span class="boring">}</span></code></pre>
+<p>The <code>NewPayloadRequest</code> contains:</p>
+<ul>
+<li><code>execution_payload</code>: Full SSZ <code>ExecutionPayload</code> (header fields + transactions + withdrawals)</li>
+<li><code>versioned_hashes</code>: Blob hashes (empty for L2)</li>
+<li><code>parent_beacon_block_root</code>: Used to carry the L1 messages Merkle root</li>
+<li><code>execution_requests</code>: Deposit/withdrawal/consolidation requests (empty for L2)</li>
+</ul>
+<h3 id="output-format"><a class="header" href="#output-format">Output Format</a></h3>
+<p>SSZ-encoded <code>StatelessValidationResult</code>:</p>
+<pre class="playground"><code class="language-rust edition2024"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>pub struct StatelessValidationResult {
+    pub new_payload_request_root: [u8; 32],  // hash_tree_root of NewPayloadRequest
+    pub successful_validation: bool,          // Whether execution was valid
+    pub chain_config: SszChainConfig,         // chain_id (echo back)
+}
+<span class="boring">}</span></code></pre>
+<p>The contract checks <code>successful_validation == true</code> at byte 32 of the result.</p>
+<h3 id="l2-constraint-validation"><a class="header" href="#l2-constraint-validation">L2 Constraint Validation</a></h3>
+<p>Before delegating to <code>verify_stateless_new_payload</code>, the precompile validates:</p>
+<ul>
+<li><code>blob_gas_used == 0</code> — no blob data on L2</li>
+<li><code>excess_blob_gas == 0</code> — no blob fee market on L2</li>
+<li><code>withdrawals</code> is empty — L2 doesn’t have consensus-layer withdrawals</li>
+<li><code>execution_requests</code> is empty — no deposit/withdrawal/consolidation requests</li>
+<li>No type-3 (blob) transactions in the transaction list</li>
+</ul>
+<h3 id="gas-charging"><a class="header" href="#gas-charging">Gas Charging</a></h3>
+<p>Gas is charged as:</p>
+<pre><code>charge = gas_limit + calldata_len · EXECUTE_GAS_PER_WITNESS_BYTE
+</code></pre>
+<p>where <code>gas_limit</code> is from <code>ExecutionPayload.gas_limit</code> and <code>calldata_len</code> is the length of the raw <code>_sszStatelessInput</code> bytes. The precompile <strong>fails closed</strong> (CALL-level <code>ExceptionalHalt</code>) if the input is invalid or the charge cannot be applied — the <code>advance()</code> call reverts rather than committing an unvalidated state.</p>
+<h2 id="l1-anchoring"><a class="header" href="#l1-anchoring">L1 Anchoring</a></h2>
+<p>L1 messages are anchored via <strong><code>parent_beacon_block_root</code></strong> in the block header. The NativeBlockProducer on L2 sets this field to the Merkle root of consumed L1 messages. During L2 block processing, the EIP-4788 BEACON_ROOTS system contract stores this root at <code>0x000F3df6D732807Ef1319fB7B8bB8522d0Beac02</code>, making it available to L2 contracts.</p>
+<h2 id="l1-to-l2-messaging"><a class="header" href="#l1-to-l2-messaging">L1 to L2 Messaging</a></h2>
+<p>The L1→L2 message flow uses a relayer, a prefunded L2 bridge contract, and Merkle proof verification against the anchored L1 messages root:</p>
+<ol>
+<li>Users call <code>NativeRollup.sendL1Message(to, gasLimit, data)</code> on L1 with ETH value — this records <code>keccak256(abi.encodePacked(from, to, value, gasLimit, keccak256(data), nonce))</code> as an L1 message hash in the contract’s <code>pendingL1Messages</code> array</li>
+<li>When <code>advance()</code> is called with <code>_l1MessagesCount</code>, the L2 advancer computes a <strong>Merkle root</strong> over the consumed L1 message hashes (commutative Keccak256)</li>
+<li>The Merkle root is embedded in the <code>parent_beacon_block_root</code> field of the SSZ <code>NewPayloadRequest</code></li>
+<li>During L2 block processing, the EIP-4788 system contract stores this root at <code>BEACON_ROOTS_ADDRESS</code></li>
+<li>On L2, a relayer sends transactions calling <code>L2Bridge.processL1Message(from, to, value, gasLimit, data, nonce, merkleProof)</code>, which reads the root from BEACON_ROOTS, verifies the Merkle inclusion proof, then executes <code>to.call{value: value, gas: gasLimit}(data)</code></li>
+<li>The <strong>state root check</strong> at the end of execution implicitly guarantees correct message processing</li>
+</ol>
+<p><strong>Block builder constraint:</strong> The relayer chooses how many L1 messages to consume (<code>_l1MessagesCount</code> can be 0). The Merkle root is encoded in <code>parent_beacon_block_root</code> <em>before</em> the block transactions execute. The block builder must include the matching <code>processL1Message()</code> transactions — if they don’t match, the state root will differ and the EXECUTE precompile will return <code>successful_validation = false</code>.</p>
+<p>The relayer pays gas for L1 message transactions. L1 messages support arbitrary calldata, enabling not just ETH transfers but also arbitrary contract calls on L2.</p>
+<h2 id="l2-to-l1-messaging-withdrawals"><a class="header" href="#l2-to-l1-messaging-withdrawals">L2 to L1 Messaging (Withdrawals)</a></h2>
+<p>Withdrawals allow users to move ETH from L2 back to L1. The flow uses <strong>state root proofs</strong> — since the EXECUTE precompile verifies the post-state root, L2 contract storage can be proven directly against it:</p>
+<pre><code>L2: User calls L2Bridge.withdraw(receiverOnL1) with ETH
+     → keeps ETH locked in the bridge contract
+     → writes sentMessages[keccak256(abi.encodePacked(from, receiver, amount, messageId))] = true
+     → emits WithdrawalInitiated(from, receiver, amount, messageId)
+
+EXECUTE precompile: Executes block and returns post-state root
+     → no event scanning or custom Merkle tree needed
+     → the state root captures everything, including L2Bridge's sentMessages storage
+
+L1: NativeRollup.advance() stores stateRootHistory[blockNumber] = newStateRoot
+
+L1: User calls NativeRollup.claimWithdrawal(from, receiver, amount, messageId, blockNumber, accountProof, storageProof)
+     → looks up stateRootHistory[blockNumber] as the L2 state root
+     → checks that block.timestamp &gt;= stateRootTimestamps[blockNumber] + FINALITY_DELAY
+     → account proof: state root → L2Bridge account → extracts storageRoot
+     → storage proof: storageRoot → sentMessages[withdrawalHash] == true
+     → marks withdrawal as claimed (prevents double-claiming)
+     → transfers ETH to receiver
+</code></pre>
+<p>Each withdrawal is uniquely identified by <code>keccak256(abi.encodePacked(from, receiver, amount, messageId))</code>. The <code>messageId</code> is a counter maintained by the L2Bridge contract (<code>withdrawalNonce</code>), starting at 0 and incrementing per withdrawal. The MPT proof verification lives in <code>MPTProof.sol</code> (trie traversal, RLP decoding, account/storage proof verification), which NativeRollup.sol imports as an internal library.</p>
+<h2 id="gas-token-deposits"><a class="header" href="#gas-token-deposits">Gas Token Deposits</a></h2>
+<p>The L2Bridge predeploy at <code>0x00...fffd</code> is deployed in genesis with a large preminted ETH balance (<code>U256::MAX / 2</code>) to cover all future L1 messages. A relayer calls <code>processL1Message()</code> to execute L1 messages (transferring ETH and/or executing calldata) from the bridge’s balance. The relayer pays gas, solving the “first deposit problem” — users don’t need gas to receive L1 messages. The NativeRollup contract on L1 accumulates ETH over time as users call <code>sendL1Message()</code>.</p>
+<h2 id="fee-market"><a class="header" href="#fee-market">Fee Market</a></h2>
+<p>EIP-1559 base fee is computed by the L2 node from the parent block’s header fields. The NativeRollup contract on L1 does not track fee market parameters — this is handled entirely by the L2 node’s standard block production logic, and the EXECUTE precompile re-derives the base fee from the block header in the <code>NewPayloadRequest</code>. In this PoC, the demo wires the coinbase to the relayer address; a production deployment would choose its own coinbase policy.</p>
+<h2 id="statelessness"><a class="header" href="#statelessness">Statelessness</a></h2>
+<p>The precompile receives an SSZ-encoded <code>SszExecutionWitness</code> containing the state trie, storage tries, and code for all accounts touched during execution. This enables the precompile to re-execute without persistent L2 state.</p>
+<p>The <code>GuestProgramStateDb</code> adapter (<code>crates/vm/levm/src/db/guest_program_state_db.rs</code>) implements LEVM’s <code>Database</code> trait backed by <code>GuestProgramState</code>, bridging the gap between the stateless execution witness and LEVM’s database interface. This direct adapter is needed because <code>ethrex-levm</code> cannot depend on <code>ethrex-vm</code> (it’s the other way around).</p>
+<h2 id="block-execution-validation"><a class="header" href="#block-execution-validation">Block Execution Validation</a></h2>
+<p><code>verify_stateless_new_payload</code> (<code>crates/blockchain/stateless.rs</code>) performs the following:</p>
+<ol>
+<li>Computes the SSZ <code>hash_tree_root</code> of the <code>NewPayloadRequest</code></li>
+<li>Validates block headers from the witness</li>
+<li>Builds <code>GuestProgramState</code> from the witness</li>
+<li>Converts the SSZ <code>NewPayloadRequest</code> → ethrex <code>Block</code></li>
+<li>Executes the block via LEVM</li>
+<li>Returns <code>StatelessValidationResult</code> with the hash tree root and a <code>successful_validation</code> flag</li>
+</ol>
+<p>The state root check implicitly guarantees both correct L1 message processing and correct L2→L1 withdrawal recording.</p>
+<h2 id="contracts"><a class="header" href="#contracts">Contracts</a></h2>
+<h3 id="nativerollupsol"><a class="header" href="#nativerollupsol">NativeRollup.sol</a></h3>
+<p>L1 contract that manages L2 state on-chain. Storage layout:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Slot</th><th>Field</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td>0</td><td><code>blockHash</code></td><td>Current L2 block hash</td></tr>
+<tr><td>1</td><td><code>stateRoot</code></td><td>Current L2 state root</td></tr>
+<tr><td>2</td><td><code>blockNumber</code></td><td>Latest committed L2 block number</td></tr>
+<tr><td>3</td><td><code>l2GasLimit</code></td><td>L2 block gas limit</td></tr>
+<tr><td>4</td><td><code>chainId</code></td><td>L2 chain ID</td></tr>
+<tr><td>5</td><td><code>pendingL1Messages</code></td><td>Array of L1 message hashes</td></tr>
+<tr><td>6</td><td><code>l1MessageIndex</code></td><td>Next L1 message index to consume</td></tr>
+<tr><td>7</td><td><code>totalDeposited</code></td><td>Total ETH bridged in via <code>sendL1Message</code> (escrow solvency)</td></tr>
+<tr><td>8</td><td><code>totalClaimed</code></td><td>Total ETH paid out by <code>claimWithdrawal</code></td></tr>
+<tr><td>9</td><td><code>stateRootHistory</code></td><td><code>mapping(uint256 =&gt; bytes32)</code> — state root per block number</td></tr>
+<tr><td>10</td><td><code>claimedWithdrawals</code></td><td><code>mapping(bytes32 =&gt; bool)</code> — prevents double-claiming</td></tr>
+<tr><td>11</td><td><code>stateRootTimestamps</code></td><td><code>mapping(uint256 =&gt; uint256)</code> — commit timestamp per block</td></tr>
+<tr><td>12</td><td><code>_locked</code></td><td>Reentrancy protection</td></tr>
+<tr><td>13</td><td><code>lastFetchedL1Block</code></td><td>Deploy block; seeds the L1 watcher cursor</td></tr>
+<tr><td>14</td><td><code>advancer</code></td><td>Address authorized to call <code>advance()</code></td></tr>
+<tr><td>15</td><td><code>pendingAdvancer</code></td><td>Nominated next advancer, pending acceptance (two-step handoff)</td></tr>
+</tbody>
+</table>
+</div>
+<p><code>CHAIN_ID</code> and <code>FINALITY_DELAY</code> are <code>immutable</code> (stored in code, not storage). <code>FINALITY_DELAY</code> is the minimum seconds a state root must age before its withdrawals can be claimed; it is set at deploy time from <code>--native-rollups.finality-delay</code> (default 0 = instant finality for the local demo; production must pass a reorg-safe value).</p>
+<p>Constructor: <code>constructor(bytes32 _initialStateRoot, bytes32 _initialBlockHash, uint256 _blockGasLimit, uint256 _chainId, address _advancer, uint256 _finalityDelay)</code>.</p>
+<p>Functions:</p>
+<ul>
+<li><strong><code>sendL1Message(address _to, uint256 _gasLimit, bytes _data)</code></strong> — payable; records <code>keccak256(abi.encodePacked(from, to, value, gasLimit, keccak256(data), nonce))</code> as an L1 message hash, burns <code>_gasLimit</code> gas on L1</li>
+<li><strong><code>receive()</code></strong> — payable fallback; accepts ETH without recording an L1 message (used to fund the contract)</li>
+<li><strong><code>advance(uint16 _l1MessagesCount, bytes _sszStatelessInput)</code></strong> — calls the EXECUTE precompile, decodes the block-level fields and the L1 messages Merkle root (<code>parent_beacon_block_root</code>) from the SSZ input, recomputes the root over <code>pendingL1Messages[l1MessageIndex .. +count]</code> and reverts on mismatch, then commits the new L2 state. Mirrors <code>OnChainProposer.commitBatch</code>’s <code>processedPrivilegedTransactionsRollingHash</code> check.</li>
+<li><strong><code>claimWithdrawal(address, address, uint256, uint256, uint256, bytes[], bytes[])</code></strong> — verifies MPT account + storage proofs against <code>stateRootHistory[blockNumber]</code>, enforces finality delay, transfers ETH</li>
+<li><strong><code>getPendingL1MessagesRoot(uint16 number)</code></strong> — view; recomputes the Merkle root over the next <code>number</code> unconsumed L1 messages, mirroring <code>CommonBridge.getPendingTransactionsVersionedHash</code></li>
+</ul>
+<h3 id="l2bridgesol"><a class="header" href="#l2bridgesol">L2Bridge.sol</a></h3>
+<p>L2 predeploy at <code>0x00...fffd</code> handling both L1 message processing and withdrawals. Storage: slot 0 = relayer, slot 1 = l1MessageNonce, slot 2 = withdrawalNonce, slot 3 = <code>sentMessages</code> mapping.</p>
+<ul>
+<li><strong><code>processL1Message(..., bytes32[] merkleProof)</code></strong> — verifies Merkle inclusion proof against the L1 messages root read from the EIP-4788 BEACON_ROOTS contract at <code>0x000F3df6D732807Ef1319fB7B8bB8522d0Beac02</code>, executes <code>to.call{value, gas}(data)</code></li>
+<li><strong><code>withdraw(address receiver)</code></strong> — payable; writes <code>sentMessages[hash] = true</code> for MPT proving on L1</li>
+</ul>
+<h3 id="mptproofsol"><a class="header" href="#mptproofsol">MPTProof.sol</a></h3>
+<p>Solidity library for MPT proof verification: trie traversal, RLP decoding, account proof verification (state root → storageRoot), and storage proof verification (storageRoot → mapping value). Compiled as an internal library (inlined by the compiler).</p>
+<h3 id="merkle_treers"><a class="header" href="#merkle_treers">merkle_tree.rs</a></h3>
+<p><code>crates/l2/common/src/merkle_tree.rs</code> — Merkle tree using commutative Keccak256 hashing. Provides <code>compute_merkle_root()</code> and <code>compute_merkle_proof()</code>. Used by the L2 actors (block producer, advancer) and the L2 withdrawal proof RPC endpoint.</p>
+<h2 id="compilation-and-feature-flags"><a class="header" href="#compilation-and-feature-flags">Compilation and Feature Flags</a></h2>
+<p>The native-rollup EXECUTE precompile, the stateless-validation pipeline, and all SSZ types are <strong>always-compiled</strong> — there is no cargo feature that gates them out. (The old unified devnet feature flag was removed.)</p>
+<p><strong>Runtime gate:</strong> the EXECUTE precompile body executes only when <code>fork &gt;= Fork::LStar &amp;&amp; vm_type == VMType::L1</code>. On any other fork or VM type the precompile is a no-op CALL.</p>
+<p>The only remaining cargo feature is <strong><code>eip-8025</code></strong>, which controls the guest-program input/output format. The SSZ dep chain is:</p>
+<pre><code class="language-toml"># crates/guest-program/Cargo.toml  (guest only — not the host)
+eip-8025 = [
+    "ethrex-common/eip-8025",
+    "ethrex-vm/eip-8025",
+    "dep:libssz",
+    "dep:libssz-merkle",
+    "dep:libssz-types",
+    "dep:libssz-derive",
+]
+
+# crates/blockchain/Cargo.toml
+eip-8025 = ["ethrex-common/eip-8025", "ethrex-vm/eip-8025"]
+
+# crates/common/Cargo.toml
+eip-8025 = ["ethrex-trie/eip-8025"]   # guest-only trie SSZ support; the always-compiled stateless SSZ types do not need it
+</code></pre>
+<p>When <code>eip-8025</code> is compiled into the guest program:</p>
+<ul>
+<li>Input format: <code>NewPayloadRequest</code> (SSZ) + <code>ExecutionWitness</code> (rkyv) — the EIP-8025 wire format</li>
+<li>Output format: <code>ProgramOutput { new_payload_request_root: [u8; 32], valid: bool }</code> — 33 bytes</li>
+</ul>
+<p>Without <code>eip-8025</code>:</p>
+<ul>
+<li>Input/output use the legacy rkyv <code>ProgramInput</code>/<code>ProgramOutput</code> format</li>
+<li>The host (node) always has the SSZ types compiled in for the EXECUTE precompile</li>
+</ul>
+<h2 id="summary-table-vs-l2beat-native-rollups-spec-see-divergences-note-above"><a class="header" href="#summary-table-vs-l2beat-native-rollups-spec-see-divergences-note-above">Summary Table (vs l2beat native-rollups spec; see divergences note above)</a></h2>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Aspect</th><th>l2beat spec</th><th>Us</th><th>Alignment</th></tr>
+</thead>
+<tbody>
+<tr><td>Core function</td><td><code>verify_stateless_new_payload</code></td><td>Implemented (blockchain/stateless.rs)</td><td><strong>Aligned</strong></td></tr>
+<tr><td>Input format</td><td>SSZ <code>StatelessInput</code></td><td>SSZ types via libssz</td><td><strong>Aligned</strong></td></tr>
+<tr><td>Output format</td><td>SSZ <code>StatelessValidationResult</code></td><td>Implemented</td><td><strong>Aligned</strong></td></tr>
+<tr><td>Gas charging</td><td><code>gas_limit + calldata·EXECUTE_GAS_PER_WITNESS_BYTE</code></td><td>Implemented</td><td><strong>Aligned</strong></td></tr>
+<tr><td>Fail-closed on invalid input</td><td>CALL-level ExceptionalHalt</td><td>Implemented</td><td><strong>Aligned</strong></td></tr>
+<tr><td>L2 preprocessing</td><td>Explicit layer (no blobs, no withdrawals)</td><td>Implemented</td><td><strong>Aligned</strong></td></tr>
+<tr><td>Serialization</td><td>SSZ (execution-specs types)</td><td>SSZ via libssz</td><td><strong>Aligned</strong></td></tr>
+<tr><td>L1 anchoring</td><td><code>parent_beacon_block_root</code> (arbitrary bytes32)</td><td>Merkle root via <code>parent_beacon_block_root</code></td><td><strong>Aligned</strong></td></tr>
+<tr><td>L1→L2 messaging</td><td>Proof-based (no custom tx types)</td><td>Merkle proofs against BEACON_ROOTS</td><td><strong>Aligned</strong></td></tr>
+<tr><td>L2→L1 messaging</td><td>State root proofs (MPT)</td><td>MPT account + storage proofs</td><td><strong>Aligned</strong></td></tr>
+<tr><td>Gas token deposits</td><td>Preminted predeploy</td><td>L2Bridge with <code>U256::MAX / 2</code></td><td><strong>Aligned</strong></td></tr>
+<tr><td>No custom tx types</td><td>Design principle</td><td>Achieved (relayer txs)</td><td><strong>Aligned</strong></td></tr>
+<tr><td>First deposit problem</td><td>WIP in spec</td><td>Solved (relayer pays gas)</td><td><strong>Ahead</strong></td></tr>
+<tr><td><code>burned_fees</code> header field</td><td>EIP-8079 header field (§G)</td><td>Implemented — LStar-gated recompute-only field</td><td><strong>Aligned</strong></td></tr>
+<tr><td>Contract state</td><td>blockHash, stateRoot, blockNumber, gasLimit, chainId</td><td>Implemented</td><td><strong>Aligned</strong></td></tr>
+<tr><td>StatelessValidator trait</td><td>Implied (precompile wraps standard function)</td><td>Implemented in LEVM</td><td><strong>Aligned</strong></td></tr>
+<tr><td>Cycle-free architecture</td><td>Implied</td><td>Trait injection pattern</td><td><strong>Aligned</strong></td></tr>
+<tr><td>ZK variant</td><td>Specified (proof-carrying tx + PROOFROOT)</td><td>Not implemented (re-execution only)</td><td><strong>Gap (by design)</strong></td></tr>
+<tr><td>Forced transactions</td><td>WIP (FOCIL)</td><td>Not implemented</td><td><strong>Gap</strong></td></tr>
+<tr><td>DA cost pricing</td><td>WIP</td><td>Not implemented</td><td><strong>Both WIP</strong></td></tr>
+<tr><td><code>public_keys</code></td><td>Pre-recovered tx keys</td><td>Empty tuple (stub)</td><td><strong>Stub</strong></td></tr>
+</tbody>
+</table>
+</div>
+<h3 id="eip-8079-divergences"><a class="header" href="#eip-8079-divergences">EIP-8079 divergences</a></h3>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Aspect</th><th>Published EIP-8079</th><th>Our implementation</th></tr>
+</thead>
+<tbody>
+<tr><td>L1 anchoring mechanism</td><td><code>ANCHOR_ADDRESS</code> precompile</td><td><code>parent_beacon_block_root</code> field (l2beat model)</td></tr>
+<tr><td>EXECUTE calling convention</td><td>EIP-8079 calling convention</td><td><code>advance(uint16 _l1MessagesCount, bytes _sszStatelessInput)</code> (l2beat model)</td></tr>
+<tr><td><code>burned_fees</code></td><td>New execution-payload header field</td><td>Implemented as LStar-gated recompute-only field (matches EIP-8079 §G)</td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="limitations"><a class="header" href="#limitations">Limitations</a></h2>
+<p>This PoC intentionally omits several things that would be needed for production:</p>
+<ul>
+<li><strong>ZK variant</strong> — Only the re-execution variant is implemented. The ZK variant (proof-carrying transactions + PROOFROOT opcode) requires L1 consensus changes not yet available.</li>
+<li><strong>No forced transaction mechanism</strong> — No censorship resistance guarantees (FOCIL integration is WIP in the spec)</li>
+<li><strong>No L1 message inclusion deadline</strong> — <code>pendingL1Messages</code> have no per-message deadline, so the advancer can defer processing them indefinitely without on-chain consequence. <code>OnChainProposer.sol</code> enforces this for privileged transactions via <code>PRIVILEGED_TX_MAX_WAIT_BEFORE_INCLUSION</code> + <code>hasExpiredPrivilegedTransactions()</code>; the analogous mechanism for <code>NativeRollup.sol</code> is a TODO.</li>
+<li><strong>L2 ETH supply drain</strong> — Base fees are burned but not credited back on L2. A production solution would use a <code>BaseFeeVault</code> pattern.</li>
+<li><strong>No blob data support</strong> — Only calldata-based input (spec proposes blob references via EIP-8142)</li>
+<li><strong><code>public_keys</code> empty</strong> — Pre-recovered transaction public keys are not populated yet</li>
+</ul>
+
+                    </main>
+
+                    <nav class="nav-wrapper" aria-label="Page navigation">
+                        <!-- Mobile navigation buttons -->
+                            <a rel="prev" href="../../vm/levm/debug.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                                <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
+                            </a>
+
+                            <a rel="next prefetch" href="../../ethrex_replay/ethrex_replay.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                                <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
+                            </a>
+
+                        <div style="clear: both"></div>
+                    </nav>
+                </div>
+            </div>
+
+            <nav class="nav-wide-wrapper" aria-label="Page navigation">
+                    <a rel="prev" href="../../vm/levm/debug.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                        <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
+                    </a>
+
+                    <a rel="next prefetch" href="../../ethrex_replay/ethrex_replay.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                        <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
+                    </a>
+            </nav>
+
+        </div>
+
+        <template id=fa-eye><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 576 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M288 32c-80.8 0-145.5 36.8-192.6 80.6C48.6 156 17.3 208 2.5 243.7c-3.3 7.9-3.3 16.7 0 24.6C17.3 304 48.6 356 95.4 399.4C142.5 443.2 207.2 480 288 480s145.5-36.8 192.6-80.6c46.8-43.5 78.1-95.4 93-131.1c3.3-7.9 3.3-16.7 0-24.6c-14.9-35.7-46.2-87.7-93-131.1C433.5 68.8 368.8 32 288 32zM432 256c0 79.5-64.5 144-144 144s-144-64.5-144-144s64.5-144 144-144s144 64.5 144 144zM288 192c0 35.3-28.7 64-64 64c-11.5 0-22.3-3-31.6-8.4c-.2 2.8-.4 5.5-.4 8.4c0 53 43 96 96 96s96-43 96-96s-43-96-96-96c-2.8 0-5.6 .1-8.4 .4c5.3 9.3 8.4 20.1 8.4 31.6z"/></svg></span></template>
+        <template id=fa-eye-slash><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M38.8 5.1C28.4-3.1 13.3-1.2 5.1 9.2S-1.2 34.7 9.2 42.9l592 464c10.4 8.2 25.5 6.3 33.7-4.1s6.3-25.5-4.1-33.7L525.6 386.7c39.6-40.6 66.4-86.1 79.9-118.4c3.3-7.9 3.3-16.7 0-24.6c-14.9-35.7-46.2-87.7-93-131.1C465.5 68.8 400.8 32 320 32c-68.2 0-125 26.3-169.3 60.8L38.8 5.1zM223.1 149.5C248.6 126.2 282.7 112 320 112c79.5 0 144 64.5 144 144c0 24.9-6.3 48.3-17.4 68.7L408 294.5c5.2-11.8 8-24.8 8-38.5c0-53-43-96-96-96c-2.8 0-5.6 .1-8.4 .4c5.3 9.3 8.4 20.1 8.4 31.6c0 10.2-2.4 19.8-6.6 28.3l-90.3-70.8zm223.1 298L373 389.9c-16.4 6.5-34.3 10.1-53 10.1c-79.5 0-144-64.5-144-144c0-6.9 .5-13.6 1.4-20.2L83.1 161.5C60.3 191.2 44 220.8 34.5 243.7c-3.3 7.9-3.3 16.7 0 24.6c14.9 35.7 46.2 87.7 93 131.1C174.5 443.2 239.2 480 320 480c47.8 0 89.9-12.9 126.2-32.5z"/></svg></span></template>
+        <template id=fa-copy><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M502.6 70.63l-61.25-61.25C435.4 3.371 427.2 0 418.7 0H255.1c-35.35 0-64 28.66-64 64l.0195 256C192 355.4 220.7 384 256 384h192c35.2 0 64-28.8 64-64V93.25C512 84.77 508.6 76.63 502.6 70.63zM464 320c0 8.836-7.164 16-16 16H255.1c-8.838 0-16-7.164-16-16L239.1 64.13c0-8.836 7.164-16 16-16h128L384 96c0 17.67 14.33 32 32 32h47.1V320zM272 448c0 8.836-7.164 16-16 16H63.1c-8.838 0-16-7.164-16-16L47.98 192.1c0-8.836 7.164-16 16-16H160V128H63.99c-35.35 0-64 28.65-64 64l.0098 256C.002 483.3 28.66 512 64 512h192c35.2 0 64-28.8 64-64v-32h-47.1L272 448z"/></svg></span></template>
+        <template id=fa-play><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 384 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M73 39c-14.8-9.1-33.4-9.4-48.5-.9S0 62.6 0 80V432c0 17.4 9.4 33.4 24.5 41.9s33.7 8.1 48.5-.9L361 297c14.3-8.7 23-24.2 23-41s-8.7-32.2-23-41L73 39z"/></svg></span></template>
+        <template id=fa-clock-rotate-left><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M75 75L41 41C25.9 25.9 0 36.6 0 57.9V168c0 13.3 10.7 24 24 24H134.1c21.4 0 32.1-25.9 17-41l-30.8-30.8C155 85.5 203 64 256 64c106 0 192 86 192 192s-86 192-192 192c-40.8 0-78.6-12.7-109.7-34.4c-14.5-10.1-34.4-6.6-44.6 7.9s-6.6 34.4 7.9 44.6C151.2 495 201.7 512 256 512c141.4 0 256-114.6 256-256S397.4 0 256 0C185.3 0 121.3 28.7 75 75zm181 53c-13.3 0-24 10.7-24 24V256c0 6.4 2.5 12.5 7 17l72 72c9.4 9.4 24.6 9.4 33.9 0s9.4-24.6 0-33.9l-65-65V152c0-13.3-10.7-24-24-24z"/></svg></span></template>
+
+
+
+        <script>
+            window.playground_copyable = true;
+        </script>
+
+
+        <script src="../../elasticlunr-ef4e11c1.min.js"></script>
+        <script src="../../mark-09e88c2c.min.js"></script>
+        <script src="../../searcher-c2a407aa.js"></script>
+
+        <script src="../../clipboard-1626706a.min.js"></script>
+        <script src="../../highlight-abc7f01d.js"></script>
+        <script src="../../book-a0b12cfe.js"></script>
+
+        <!-- Custom JS scripts -->
+        <script src="../../mermaid-eefea253.min.js"></script>
+        <script src="../../mermaid-init-ccf746f1.js"></script>
+
+
+
+    </div>
+    </body>
+</html>

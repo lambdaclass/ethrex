@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-78ca2674.js";
+            window.path_to_searchindex_js = "searchindex-438dca6c.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-399bd7a2.js"></script>
+        <script src="toc-ec0f4f2d.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -3192,6 +3192,316 @@ COMPILE_CONTRACTS=true cargo install --locked --path cmd/ethrex --bin ethrex --f
 <h1 id="deploying-a-based-ethrex-l2"><a class="header" href="#deploying-a-based-ethrex-l2">Deploying a based ethrex L2</a></h1>
 <p>TBD</p>
 <div style="break-before: page; page-break-before: always;"></div><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.4/dist/katex.min.css">
+<h1 id="deploying-a-native-rollups-ethrex-l2"><a class="header" href="#deploying-a-native-rollups-ethrex-l2">Deploying a native rollups ethrex L2</a></h1>
+<p>This guide covers how to deploy a native rollup L2 using ethrex. Native rollups (based on <a href="https://eips.ethereum.org/EIPS/eip-8079">EIP-8079</a>) replace ZK proofs and fraud proofs with direct re-execution on L1: when the L2 submits a block, L1 re-executes it via the <code>EXECUTE</code> precompile and verifies the state transition is correct.</p>
+<blockquote class="blockquote-tag blockquote-tag-note">
+<p class="blockquote-tag-title"><svg viewbox="0 0 16 16" width="18" height="18"><path d="M0 8a8 8 0 1 1 16 0A8 8 0 0 1 0 8Zm8-6.5a6.5 6.5 0 1 0 0 13 6.5 6.5 0 0 0 0-13ZM6.5 7.75A.75.75 0 0 1 7.25 7h1a.75.75 0 0 1 .75.75v2.75h.25a.75.75 0 0 1 0 1.5h-2a.75.75 0 0 1 0-1.5h.25v-2h-.25a.75.75 0 0 1-.75-.75ZM8 6a1 1 0 1 1 0-2 1 1 0 0 1 0 2Z"></path></svg>Note</p>
+<p>This is a proof-of-concept. The native rollup L2 runs against a local ethrex L1 with the EXECUTE precompile enabled. It is not yet intended for public testnets or production.</p>
+</blockquote>
+<h2 id="architecture-overview"><a class="header" href="#architecture-overview">Architecture overview</a></h2>
+<pre><code>┌──────────────────────────────────┐
+│            L1 (ethrex)           │
+│                                  │
+│  NativeRollup.sol                │
+│    ├─ advance()                  │
+│    │    └─ calls EXECUTE(0x0101) │
+│    │         └─ re-executes L2   │
+│    │            block in LEVM    │
+│    ├─ sendL1Message()            │
+│    └─ claimWithdrawal()          │
+└──────────┬───────────────────────┘
+           │ L1 RPC
+           │
+┌──────────┴───────────────────────┐
+│         L2 (ethrex native)       │
+│                                  │
+│  NativeL1Watcher                 │
+│    └─ polls L1 for new messages  │
+│                                  │
+│  NativeBlockProducer             │
+│    ├─ builds relayer txs for     │
+│    │  L1 messages                │
+│    ├─ sets parent_beacon_block   │
+│    │  _root = Merkle root        │
+│    └─ produces L2 blocks         │
+│                                  │
+│  NativeL1Advancer               │
+│    ├─ generates execution witness│
+│    ├─ encodes SSZ StatelessInput │
+│    └─ calls advance() on L1      │
+│                                  │
+│  Predeploys:                     │
+│    L2Bridge  (0x...fffd)         │
+└──────────────────────────────────┘
+</code></pre>
+<p>The three L2 GenServer actors run as concurrent tasks:</p>
+<ul>
+<li>
+<p><strong>NativeL1Watcher</strong> — Polls the L1 NativeRollup.sol contract at regular intervals for <code>L1MessageRecorded</code> events and forwards them to the NativeBlockProducer via <code>EnqueueL1Messages</code> actor messages (there is no shared queue; the producer owns a private message queue). It scans L1 logs in configurable block ranges and parses the event data (sender, recipient, value, gas limit, calldata, nonce).</p>
+</li>
+<li>
+<p><strong>NativeBlockProducer</strong> — Produces L2 blocks every <code>block_time_ms</code> milliseconds. It first consumes pending L1 messages from its own queue, builds signed relayer transactions to execute those messages via the L2Bridge contract, then fills remaining block gas with regular mempool transactions. It sets <code>parent_beacon_block_root</code> in the block header to the L1 messages Merkle root, which the EIP-4788 system contract stores at <code>BEACON_ROOTS_ADDRESS</code> during block processing.</p>
+</li>
+<li>
+<p><strong>NativeL1Advancer</strong> — Reads produced L2 blocks from the Store, generates an execution witness, encodes it as SSZ <code>StatelessInput</code>, and submits it to NativeRollup.sol via <code>advance()</code>. The contract forwards the SSZ to the EXECUTE precompile which calls <code>verify_stateless_new_payload</code>.</p>
+</li>
+</ul>
+<h2 id="prerequisites-6"><a class="header" href="#prerequisites-6">Prerequisites</a></h2>
+<ul>
+<li>Rust toolchain (stable)</li>
+<li><code>solc</code> (Solidity compiler) — needed to compile the contracts during build</li>
+<li><a href="https://github.com/lambdaclass/rex/tree/feat/claim-native-withdraw"><code>rex</code></a> — run <code>make cli</code> in that branch to install the required version</li>
+<li>Docker — needed for the Blockscout block explorer (Step 6)</li>
+<li>Python 3 — needed for the contract verification script (Step 6)</li>
+</ul>
+<blockquote class="blockquote-tag blockquote-tag-note">
+<p class="blockquote-tag-title"><svg viewbox="0 0 16 16" width="18" height="18"><path d="M0 8a8 8 0 1 1 16 0A8 8 0 0 1 0 8Zm8-6.5a6.5 6.5 0 1 0 0 13 6.5 6.5 0 0 0 0-13ZM6.5 7.75A.75.75 0 0 1 7.25 7h1a.75.75 0 0 1 .75.75v2.75h.25a.75.75 0 0 1 0 1.5h-2a.75.75 0 0 1 0-1.5h.25v-2h-.25a.75.75 0 0 1-.75-.75ZM8 6a1 1 0 1 1 0-2 1 1 0 0 1 0 2Z"></path></svg>Note</p>
+<p><strong>Rex CLI syntax quirks:</strong></p>
+<ul>
+<li><code>--value</code> is always in <strong>wei</strong> (e.g., <code>1000000000000000000</code> for 1 ETH).</li>
+<li><code>bytes</code> arguments should be passed as hex <strong>without</strong> the <code>0x</code> prefix (e.g., <code>d09de08a</code>), or as <code>""</code> for empty bytes.</li>
+</ul>
+</blockquote>
+<p>Verify solc is installed:</p>
+<pre><code class="language-shell">solc --version
+</code></pre>
+<h2 id="demo"><a class="header" href="#demo">Demo</a></h2>
+<blockquote>
+<p><strong>What this demo shows:</strong> a native rollup L2 that settles blocks to L1 via direct re-execution (the EXECUTE precompile), with a live deposit (L1→L2) and withdrawal (L2→L1) roundtrip.</p>
+</blockquote>
+<p>The native rollup L2 runs with two terminals: one for L1, one for L2. A third terminal is used for deploying, querying, and interacting.</p>
+<p>All commands are run from the repository root.</p>
+<h3 id="setup"><a class="header" href="#setup">Setup</a></h3>
+<p>Build the binary first (this compiles the Solidity contracts and embeds them):</p>
+<pre><code class="language-shell">COMPILE_CONTRACTS=true cargo build --release --features l2,l2-sql
+</code></pre>
+<p>Clean up any previous state:</p>
+<pre><code class="language-shell">rm -rf /tmp/ethrex_l1 /tmp/ethrex_l2
+</code></pre>
+<h4 id="terminal-1--start-l1"><a class="header" href="#terminal-1--start-l1">Terminal 1 — Start L1</a></h4>
+<p>Start a local ethrex L1 with the EXECUTE precompile enabled. This uses a
+dedicated genesis (<code>l1_native.json</code>) that activates the LStar fork, which is
+what turns address <code>0x0101</code> into the <code>EXECUTE</code> precompile:</p>
+<pre><code class="language-shell">./target/release/ethrex \
+  --network fixtures/genesis/l1_native.json \
+  --http.port 8545 --http.addr 0.0.0.0 --authrpc.port 8551 \
+  --dev --datadir /tmp/ethrex_l1
+</code></pre>
+<p>Wait until you see L1 producing blocks (the <code>--dev</code> flag auto-mines).</p>
+<h4 id="terminal-2--deploy-contracts-and-start-l2"><a class="header" href="#terminal-2--deploy-contracts-and-start-l2">Terminal 2 — Deploy contracts and start L2</a></h4>
+<p>Deploy <code>NativeRollup.sol</code> to L1 and generate the L2 genesis:</p>
+<pre><code class="language-shell">./target/release/ethrex l2 deploy \
+  --eth-rpc-url http://localhost:8545 \
+  --private-key 0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924 \
+  --native-rollups \
+  --native-rollups.relayer-pk 0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d \
+  --native-rollups.finality-delay 0 \
+  --l2-gas-limit 15000000 \
+  --genesis-l2-path fixtures/genesis/native_l2.json
+</code></pre>
+<blockquote>
+<p><strong><code>--l2-gas-limit</code></strong>: <code>advance()</code> re-executes the whole L2 block inside a single
+L1 transaction, so this value must stay under the L1 per-transaction gas cap
+(EIP-7825, 16,777,216) with headroom for the precompile’s witness/bookkeeping
+gas. <code>15000000</code> is the tested value; the deployer rejects anything above the cap
+and the immutable contract enforces the same bound in its constructor.</p>
+<p><strong><code>--native-rollups.finality-delay 0</code></strong>: instant finality, <strong>local demo only</strong>.
+The value is baked immutably into the contract, has no default, and a production
+deployment must pass a reorg-safe delay in seconds.</p>
+</blockquote>
+<p>You should see output like:</p>
+<pre><code>NativeRollup.sol deployed at: 0x...
+Contract address written to cmd/.env
+</code></pre>
+<p>Load the contract address and start the L2 node:</p>
+<pre><code class="language-shell">source cmd/.env
+
+./target/release/ethrex l2 \
+  --native-rollups \
+  --native-rollups.contract-address $ETHREX_NATIVE_ROLLUP_CONTRACT_ADDRESS \
+  --native-rollups.relayer-pk 0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d \
+  --native-rollups.l1-pk 0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924 \
+  --network fixtures/genesis/native_l2.json \
+  --http.port 1729 --http.addr 0.0.0.0 \
+  --datadir /tmp/ethrex_l2 \
+  --eth.rpc-url http://localhost:8545 \
+  --no-monitor
+</code></pre>
+<h3 id="step-1-verify-the-l2-is-advancing"><a class="header" href="#step-1-verify-the-l2-is-advancing">Step 1: Verify the L2 is advancing</a></h3>
+<p>Once the L2 is running, you should see log lines like:</p>
+<pre><code>NativeBlockProducer: produced block N (0x...) with M txs, gas_used=X
+NativeL1Advancer: advanced block N on L1 (state_root=0x..., l1_msgs=0, tx=Some(0x...))
+</code></pre>
+<p>Query the L1 contract to verify:</p>
+<pre><code class="language-shell">source cmd/.env
+
+# L2 block number committed to L1
+rex call $ETHREX_NATIVE_ROLLUP_CONTRACT_ADDRESS "blockNumber()" --rpc-url http://localhost:8545
+
+# L2 block number from the L2 RPC directly
+rex block-number --rpc-url http://localhost:1729
+</code></pre>
+<p>The L1 value should trail the L2 value by a few blocks (the advancer runs on a configurable interval).</p>
+<h3 id="step-2-query-contract-state"><a class="header" href="#step-2-query-contract-state">Step 2: Query contract state</a></h3>
+<p>The <code>NativeRollup.sol</code> contract exposes public getters for all its state:</p>
+<pre><code class="language-shell"># Current L2 state root
+rex call $ETHREX_NATIVE_ROLLUP_CONTRACT_ADDRESS "stateRoot()" --rpc-url http://localhost:8545
+
+# Current L2 block hash
+rex call $ETHREX_NATIVE_ROLLUP_CONTRACT_ADDRESS "blockHash()" --rpc-url http://localhost:8545
+
+# Block gas limit
+rex call $ETHREX_NATIVE_ROLLUP_CONTRACT_ADDRESS "l2GasLimit()" --rpc-url http://localhost:8545
+
+# Chain ID
+rex call $ETHREX_NATIVE_ROLLUP_CONTRACT_ADDRESS "chainId()" --rpc-url http://localhost:8545
+</code></pre>
+<h3 id="step-3-deposit-eth-l1--l2"><a class="header" href="#step-3-deposit-eth-l1--l2">Step 3: Deposit ETH (L1 → L2)</a></h3>
+<p>Send ETH from L1 to a fresh account on L2.</p>
+<pre><code class="language-shell"># Pick a fresh address (not pre-funded on L2)
+# Private key 0x42 → address 0x6f4c950442e1af093bcff730381e63ae9171b87a
+DEPOSIT_TO=0x6f4c950442e1af093bcff730381e63ae9171b87a
+
+# Check L2 balance is 0
+rex balance $DEPOSIT_TO --rpc-url http://localhost:1729
+
+# Deposit 1 ETH via sendL1Message(to, gasLimit, data)
+# Note: --value is in wei (1 ETH = 1000000000000000000)
+rex send $ETHREX_NATIVE_ROLLUP_CONTRACT_ADDRESS \
+  "sendL1Message(address,uint256,bytes)" \
+  $DEPOSIT_TO 105000 "" \
+  --value 1000000000000000000 \
+  --rpc-url http://localhost:8545 \
+  -k 0xbcdf20249abf0ed6d944c0288fad489e33f66b3960d9e6229c1cd214ed3bbe31
+
+# Watch the L2 logs in Terminal 2 — the watcher picks up the message and
+# the block producer includes a relayer tx for it.
+
+# After ~10 seconds, check the L2 balance:
+rex balance $DEPOSIT_TO --rpc-url http://localhost:1729
+# Should show 1000000000000000000 (1 ETH in wei)
+</code></pre>
+<h3 id="step-4-deploy-a-contract-on-l2-and-call-it-from-l1"><a class="header" href="#step-4-deploy-a-contract-on-l2-and-call-it-from-l1">Step 4: Deploy a contract on L2 and call it from L1</a></h3>
+<p>This step demonstrates that L1→L2 messages can carry arbitrary calldata, not just ETH transfers. We deploy a Counter contract on L2, then increment it by sending a message from L1.</p>
+<pre><code class="language-shell"># Deploy Counter.sol on L2 (increment + get functions)
+# Uses the deposit recipient account (funded with 1 ETH in Step 3)
+rex deploy --contract-path crates/l2/contracts/src/example/Counter.sol \
+  --remappings "" \
+  --rpc-url http://localhost:1729 \
+  --private-key 0x0000000000000000000000000000000000000000000000000000000000000042
+# Note the deployed contract address from the output
+COUNTER=&lt;deployed_address&gt;
+
+# Verify counter starts at 0
+rex call $COUNTER "count()" --rpc-url http://localhost:1729
+
+# Send an L1 message that calls increment() on the counter
+# increment() selector = 0xd09de08a (pass without 0x prefix as bytes arg)
+rex send $ETHREX_NATIVE_ROLLUP_CONTRACT_ADDRESS \
+  "sendL1Message(address,uint256,bytes)" \
+  $COUNTER 105000 d09de08a \
+  --value 0 \
+  --rpc-url http://localhost:8545 \
+  -k 0xbcdf20249abf0ed6d944c0288fad489e33f66b3960d9e6229c1cd214ed3bbe31
+
+# Wait ~10 seconds for the L2 to process the L1 message, then check:
+rex call $COUNTER "count()" --rpc-url http://localhost:1729
+# Should return 1
+</code></pre>
+<h3 id="step-5-withdraw-eth-l2--l1"><a class="header" href="#step-5-withdraw-eth-l2--l1">Step 5: Withdraw ETH (L2 → L1)</a></h3>
+<p>Send ETH from L2 back to an L1 address.</p>
+<pre><code class="language-shell"># L1 receiver address (the deployer account)
+L1_RECEIVER=0xE25583099BA105D9ec0A67f5Ae86D90e50036425
+
+# Record L1 balance before
+rex balance $L1_RECEIVER --rpc-url http://localhost:8545
+
+# Withdraw 0.5 ETH from L2 via L2Bridge.withdraw(receiver)
+# Uses the test account's private key (0x42)
+rex send 0x000000000000000000000000000000000000fffd \
+  "withdraw(address)" \
+  $L1_RECEIVER \
+  --value 500000000000000000 \
+  --rpc-url http://localhost:1729 \
+  -k 0x0000000000000000000000000000000000000000000000000000000000000042
+</code></pre>
+<p>Wait for the L2 block containing the withdrawal to be advanced on L1 (watch the advancer logs in Terminal 2).</p>
+<p>Then claim the withdrawal on L1 (replace <code>TX_HASH</code> with the L2 withdrawal tx hash from the output above):</p>
+<pre><code class="language-shell"># Fetches the proof from L2 and claims the withdrawal on L1 in one step
+rex l2 claim-native-withdraw TX_HASH \
+  0xbcdf20249abf0ed6d944c0288fad489e33f66b3960d9e6229c1cd214ed3bbe31 \
+  $ETHREX_NATIVE_ROLLUP_CONTRACT_ADDRESS \
+  http://localhost:8545 \
+  http://localhost:1729
+
+# Verify the L1 balance increased
+rex balance $L1_RECEIVER --rpc-url http://localhost:8545
+</code></pre>
+<blockquote class="blockquote-tag blockquote-tag-tip">
+<p class="blockquote-tag-title"><svg viewbox="0 0 16 16" width="18" height="18"><path d="M8 1.5c-2.363 0-4 1.69-4 3.75 0 .984.424 1.625.984 2.304l.214.253c.223.264.47.556.673.848.284.411.537.896.621 1.49a.75.75 0 0 1-1.484.211c-.04-.282-.163-.547-.37-.847a8.456 8.456 0 0 0-.542-.68c-.084-.1-.173-.205-.268-.32C3.201 7.75 2.5 6.766 2.5 5.25 2.5 2.31 4.863 0 8 0s5.5 2.31 5.5 5.25c0 1.516-.701 2.5-1.328 3.259-.095.115-.184.22-.268.319-.207.245-.383.453-.541.681-.208.3-.33.565-.37.847a.751.751 0 0 1-1.485-.212c.084-.593.337-1.078.621-1.489.203-.292.45-.584.673-.848.075-.088.147-.173.213-.253.561-.679.985-1.32.985-2.304 0-2.06-1.637-3.75-4-3.75ZM5.75 12h4.5a.75.75 0 0 1 0 1.5h-4.5a.75.75 0 0 1 0-1.5ZM6 15.25a.75.75 0 0 1 .75-.75h2.5a.75.75 0 0 1 0 1.5h-2.5a.75.75 0 0 1-.75-.75Z"></path></svg>Tip</p>
+<p>The integration test at <code>test/tests/l2/native_rollup.rs</code> automates the full deposit/withdraw/counter roundtrip including proof fetching and claim submission. Run it with:</p>
+<pre><code class="language-shell">cargo test -p ethrex-test --features l2 -- l2::native_rollup --nocapture
+</code></pre>
+</blockquote>
+<h3 id="step-6-verify-precompile-usage-with-blockscout"><a class="header" href="#step-6-verify-precompile-usage-with-blockscout">Step 6: Verify precompile usage with Blockscout</a></h3>
+<p>Run a <a href="https://github.com/blockscout/blockscout">Blockscout</a> block explorer against the L1 to visually confirm that each <code>advance()</code> transaction triggers an internal CALL to the EXECUTE precompile at <code>0x0000...0101</code>.</p>
+<p>Requires Docker and a local clone of <a href="https://github.com/blockscout/blockscout">Blockscout</a>.</p>
+<h4 id="set-up-blockscout"><a class="header" href="#set-up-blockscout">Set up Blockscout</a></h4>
+<p>Clone Blockscout and enable the smart contract verifier (needed to decode method names):</p>
+<pre><code class="language-shell">git clone https://github.com/blockscout/blockscout.git ~/Documents/blockscout
+cd ~/Documents/blockscout/docker-compose
+</code></pre>
+<p>Add the <code>smart-contract-verifier</code> service to <code>geth.yml</code> (after the <code>sig-provider</code> service):</p>
+<pre><code class="language-yaml">  smart-contract-verifier:
+    extends:
+      file: ./services/smart-contract-verifier.yml
+      service: smart-contract-verifier
+</code></pre>
+<p>Enable it in <code>envs/common-blockscout.env</code> — find the commented-out verifier lines and replace them with:</p>
+<pre><code>MICROSERVICE_SC_VERIFIER_ENABLED=true
+MICROSERVICE_SC_VERIFIER_URL=http://smart-contract-verifier:8050/
+MICROSERVICE_SC_VERIFIER_TYPE=sc_verifier
+</code></pre>
+<h4 id="start-blockscout"><a class="header" href="#start-blockscout">Start Blockscout</a></h4>
+<p>With L1 and L2 already running:</p>
+<pre><code class="language-shell">cd ~/Documents/blockscout/docker-compose
+docker compose -f geth.yml up -d
+</code></pre>
+<p>Wait for Blockscout to finish indexing before proceeding. The more blocks L1 has already mined, the longer this takes (typically 1-2 minutes). You can check progress at http://localhost or via the API:</p>
+<pre><code class="language-shell">curl -s 'http://localhost/api/v2/main-page/indexing-status' | python3 -m json.tool
+# Wait until "finished_indexing_blocks": true and "indexed_blocks_ratio": "1.00"
+</code></pre>
+<p>Then open http://localhost.</p>
+<h4 id="verify-the-nativerollup-contract"><a class="header" href="#verify-the-nativerollup-contract">Verify the NativeRollup contract</a></h4>
+<p>Verifying the contract in Blockscout lets it decode function selectors (like <code>0x069c7eee</code>) into human-readable method names (like <code>advance</code>). This uses Blockscout’s built-in verification API — it’s completely local and free.</p>
+<blockquote class="blockquote-tag blockquote-tag-important">
+<p class="blockquote-tag-title"><svg viewbox="0 0 16 16" width="18" height="18"><path d="M0 1.75C0 .784.784 0 1.75 0h12.5C15.216 0 16 .784 16 1.75v9.5A1.75 1.75 0 0 1 14.25 13H8.06l-2.573 2.573A1.458 1.458 0 0 1 3 14.543V13H1.75A1.75 1.75 0 0 1 0 11.25Zm1.75-.25a.25.25 0 0 0-.25.25v9.5c0 .138.112.25.25.25h2a.75.75 0 0 1 .75.75v2.19l2.72-2.72a.749.749 0 0 1 .53-.22h6.5a.25.25 0 0 0 .25-.25v-9.5a.25.25 0 0 0-.25-.25Zm7 2.25v2.5a.75.75 0 0 1-1.5 0v-2.5a.75.75 0 0 1 1.5 0ZM9 9a1 1 0 1 1-2 0 1 1 0 0 1 2 0Z"></path></svg>Important</p>
+<p>The contract must be fully indexed before verification works. If the script fails with <code>Address is not a smart-contract</code>, wait another 30 seconds and retry — Blockscout is still processing.</p>
+</blockquote>
+<p>From the ethrex repo root, run:</p>
+<pre><code class="language-shell">python3 tooling/l2/dev/blockscout_verify_native_rollup.py $ETHREX_NATIVE_ROLLUP_CONTRACT_ADDRESS
+</code></pre>
+<p>You should see <code>Contract verified successfully!</code>. Now Blockscout will show decoded method names, event names, and parameter values for all interactions with the contract.</p>
+<h4 id="what-to-look-for"><a class="header" href="#what-to-look-for">What to look for</a></h4>
+<p>On the homepage you should see <code>advance</code> transactions from the advancer to the NativeRollup contract. Click any of them and check:</p>
+<ul>
+<li><strong>Internal txns</strong> tab: shows <code>Call | Success | 0xC5...7600 → 0x00...0101</code> — the NativeRollup contract calling the EXECUTE precompile.</li>
+<li><strong>Logs</strong> tab: shows the <code>StateAdvanced</code> event with the new L2 block number and state root.</li>
+</ul>
+<h4 id="stop-blockscout"><a class="header" href="#stop-blockscout">Stop Blockscout</a></h4>
+<pre><code class="language-shell">cd ~/Documents/blockscout/docker-compose
+docker compose -f geth.yml down -v
+rm -rf services/blockscout-db-data services/stats-db-data
+</code></pre>
+<h3 id="cleaning-up"><a class="header" href="#cleaning-up">Cleaning up</a></h3>
+<p>Remove the databases to start fresh:</p>
+<pre><code class="language-shell">rm -rf /tmp/ethrex_l1 /tmp/ethrex_l2
+</code></pre>
+<h2 id="further-reading"><a class="header" href="#further-reading">Further reading</a></h2>
+<ul>
+<li><a href="#native-rollups">EXECUTE precompile architecture</a> — detailed specification of the precompile, contracts, gap analysis vs the L2Beat native rollups spec, and L1 message mechanism</li>
+</ul>
+<div style="break-before: page; page-break-before: always;"></div><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.4/dist/katex.min.css">
 <h1 id="running-ethrex-in-aligned-mode"><a class="header" href="#running-ethrex-in-aligned-mode">Running Ethrex in Aligned Mode</a></h1>
 <p>This guide extends the <a href="#deploying-an-ethrex-l2">Deploy an L2 overview</a> and shows how to run an ethrex L2 with <strong>Aligned mode</strong> enabled.</p>
 <blockquote>
@@ -3857,7 +4167,7 @@ cargo run --release -- deposit \
 </table>
 </div>
 <h2 id="commands"><a class="header" href="#commands">Commands</a></h2>
-<h3 id="prerequisites-6"><a class="header" href="#prerequisites-6">Prerequisites</a></h3>
+<h3 id="prerequisites-7"><a class="header" href="#prerequisites-7">Prerequisites</a></h3>
 <ul>
 <li>A fresh-cloned ethrex repository.</li>
 <li><code>rex</code> installed and available in your PATH. If you haven’t installed it yet, follow one of the methods in the <a href="https://github.com/lambdaclass/rex?tab=readme-ov-file#rex-cli">rex repository</a>.</li>
@@ -3950,7 +4260,7 @@ rex l2 withdraw 111111111111111111 0x41443995d9eb6c6d6df51e55db2b188b12fe0f80d32
 <div style="break-before: page; page-break-before: always;"></div><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.4/dist/katex.min.css">
 <h1 id="deploying-an-ethrex-l2-with-shared-bridge-enabled"><a class="header" href="#deploying-an-ethrex-l2-with-shared-bridge-enabled">Deploying an ethrex L2 with shared bridge enabled</a></h1>
 <p>In this section, we’ll cover how to deploy two ethrex L2 with shared bridge enabled on a devnet.</p>
-<h2 id="prerequisites-7"><a class="header" href="#prerequisites-7">Prerequisites</a></h2>
+<h2 id="prerequisites-8"><a class="header" href="#prerequisites-8">Prerequisites</a></h2>
 <p>This guide assumes that you have the ethrex repository cloned.</p>
 <h2 id="steps"><a class="header" href="#steps">Steps</a></h2>
 <h3 id="change-directory"><a class="header" href="#change-directory">Change directory</a></h3>
@@ -4147,7 +4457,7 @@ ADD COLUMN value_per_token BLOB;
 </blockquote>
 <p>Before proceeding, note that this guide assumes you have ethrex installed. If you haven’t installed it yet, follow one of the methods in the <a href="getting-started/installation/README.html">Installation Guide</a>. If you’re looking to build from source, don’t skip this section—we’ll cover that method here, as it is independent of the deployment approach you choose later.</p>
 <h2 id="building-from-source-skip-if-ethrex-is-already-installed-1"><a class="header" href="#building-from-source-skip-if-ethrex-is-already-installed-1">Building from source (skip if ethrex is already installed)</a></h2>
-<h3 id="prerequisites-8"><a class="header" href="#prerequisites-8">Prerequisites</a></h3>
+<h3 id="prerequisites-9"><a class="header" href="#prerequisites-9">Prerequisites</a></h3>
 <p>Ensure you have the following installed on your system:</p>
 <ul>
 <li>Rust and Cargo (install via <a href="https://rustup.rs/">rustup</a>)</li>
@@ -4200,7 +4510,7 @@ cargo install --locked --path cmd/ethrex --bin ethrex --features l2,l2-sql,sp1,r
 <div style="break-before: page; page-break-before: always;"></div><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.4/dist/katex.min.css">
 <h1 id="run-an-ethrex-l2-sp1-prover"><a class="header" href="#run-an-ethrex-l2-sp1-prover">Run an ethrex L2 SP1 prover</a></h1>
 <p>In this section, we’ll guide you through the steps to run an ethrex L2 prover that utilizes SP1 for generating ZK proofs. These proofs are essential for validating batch execution and state settlement on your ethrex L2.</p>
-<h2 id="prerequisites-9"><a class="header" href="#prerequisites-9">Prerequisites</a></h2>
+<h2 id="prerequisites-10"><a class="header" href="#prerequisites-10">Prerequisites</a></h2>
 <ul>
 <li>This guide assumes that you have ethrex installed with the SP1 feature and available in your PATH. If you haven’t installed it yet, follow one of the methods in the Installation Guide. If you want to build the binary from source, refer to the <a href="#building-from-source-skip-if-ethrex-is-already-installed-1">Building from source</a> section and select the appropriate build option.</li>
 <li>This guide also assumes that you have already deployed an ethrex L2 with SP1 enabled. If you haven’t done so yet, please refer to one of the <a href="#deploying-an-ethrex-l2">Deploying an ethrex L2</a> guides.</li>
@@ -4233,7 +4543,7 @@ We choose SP1 as the backend to indicate the prover to generate SP1 proofs.</p>
 <div style="break-before: page; page-break-before: always;"></div><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.4/dist/katex.min.css">
 <h1 id="run-an-ethrex-l2-risc0-prover"><a class="header" href="#run-an-ethrex-l2-risc0-prover">Run an ethrex L2 RISC0 prover</a></h1>
 <p>In this section, we’ll guide you through the steps to run an ethrex L2 prover that utilizes RISC0 for generating ZK proofs. These proofs are essential for validating batch execution and state settlement on your ethrex L2.</p>
-<h2 id="prerequisites-10"><a class="header" href="#prerequisites-10">Prerequisites</a></h2>
+<h2 id="prerequisites-11"><a class="header" href="#prerequisites-11">Prerequisites</a></h2>
 <ul>
 <li>This guide assumes that you have ethrex installed with the RISC0 feature and available in your PATH. If you haven’t installed it yet, follow one of the methods in the Installation Guide. If you want to build the binary from source, refer to the <a href="#building-from-source-skip-if-ethrex-is-already-installed-1">Building from source</a> section and select the appropriate build option.</li>
 <li>This guide also assumes that you have already deployed an ethrex L2 with RISC0 enabled. If you haven’t done so yet, please refer to one of the <a href="#deploying-an-ethrex-l2">Deploying an ethrex L2</a> guides.</li>
@@ -4256,7 +4566,7 @@ We choose RISC0 as the backend to indicate the prover to generate RISC0 proofs.<
 <div style="break-before: page; page-break-before: always;"></div><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.4/dist/katex.min.css">
 <h1 id="run-an-ethrex-tdx-prover"><a class="header" href="#run-an-ethrex-tdx-prover">Run an ethrex TDX prover</a></h1>
 <p>In this section, we’ll guide you through the steps to run an ethrex L2 TDX prover for generating TEE proofs. These proofs are essential for validating batch execution and state settlement on your ethrex L2.</p>
-<h2 id="prerequisites-11"><a class="header" href="#prerequisites-11">Prerequisites</a></h2>
+<h2 id="prerequisites-12"><a class="header" href="#prerequisites-12">Prerequisites</a></h2>
 <ul>
 <li>This guide assumes that you have already deployed an ethrex L2 with TDX enabled. If you haven’t done so yet, please refer to one of the <a href="#deploying-an-ethrex-l2">Deploying an ethrex L2</a> guides.</li>
 <li>A machine with TDX support <a href="https://github.com/canonical/tdx">with the required setup</a>.</li>
@@ -4276,7 +4586,7 @@ make run
 <div style="break-before: page; page-break-before: always;"></div><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.4/dist/katex.min.css">
 <h1 id="run-multiple-provers"><a class="header" href="#run-multiple-provers">Run multiple provers</a></h1>
 <p>In this section, we’ll guide you through the steps to run multiple ethrex L2 provers for generating ZK proofs using different backends. These proofs are essential for validating batch execution and state settlement on your ethrex L2.</p>
-<h2 id="prerequisites-12"><a class="header" href="#prerequisites-12">Prerequisites</a></h2>
+<h2 id="prerequisites-13"><a class="header" href="#prerequisites-13">Prerequisites</a></h2>
 <ul>
 <li>This guide assumes that you have already deployed an ethrex L2 with TDX enabled. If you haven’t done so yet, please refer to one of the <a href="#deploying-an-ethrex-l2">Deploying an ethrex L2</a> guides.</li>
 </ul>
@@ -5186,7 +5496,7 @@ rex l2 claim-withdraw &lt;L2_WITHDRAWAL_TX_HASH&gt; 0xbcdf20249abf0ed6d944c0288f
 <div style="break-before: page; page-break-before: always;"></div><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.4/dist/katex.min.css">
 <h1 id="interacting-with-the-shared-bridge"><a class="header" href="#interacting-with-the-shared-bridge">Interacting with the shared bridge</a></h1>
 <p>This document details different scenarios for interacting with shared bridge enabled L2s.</p>
-<h2 id="prerequisites-13"><a class="header" href="#prerequisites-13">Prerequisites</a></h2>
+<h2 id="prerequisites-14"><a class="header" href="#prerequisites-14">Prerequisites</a></h2>
 <p>This guide assumes you already have two L2s running with the shared bridge enabled.
 Refer to <a href="#deploying-an-ethrex-l2-with-shared-bridge-enabled">Deploy a shared bridge enabled L2</a></p>
 <h2 id="eth-transfer"><a class="header" href="#eth-transfer">ETH Transfer</a></h2>
@@ -5449,7 +5759,7 @@ number_of_privileged_transaction_logs_u16 ||
 <h2 id="conclusion-1"><a class="header" href="#conclusion-1">Conclusion</a></h2>
 <p>Sending block lists in blobs instead of state diffs decreases the number of transactions that can fit in a single blob by approximately 2x for ETH transfers and 3x for ERC20 transfers.</p>
 <h2 id="how-these-measurements-were-done"><a class="header" href="#how-these-measurements-were-done">How these measurements were done</a></h2>
-<h3 id="prerequisites-14"><a class="header" href="#prerequisites-14">Prerequisites</a></h3>
+<h3 id="prerequisites-15"><a class="header" href="#prerequisites-15">Prerequisites</a></h3>
 <ul>
 <li>Fresh cloned ethrex repository</li>
 <li>The spammer and measurer code provided in the appendix set up for running (you can create a new cargo project and copy the code there)</li>
@@ -8648,7 +8958,7 @@ make init-prover-exec
 <p>To get started first, read the developer <a href="#setting-up-a-development-environment-for-ethrex">installation guide</a> to learn about ethrex and its features. Then you can look into the <a href="#l1-developer-docs">L1 developer docs</a> or the <a href="#l2-developer-docs">L2 developer docs</a></p>
 <div style="break-before: page; page-break-before: always;"></div><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.4/dist/katex.min.css">
 <h1 id="setting-up-a-development-environment-for-ethrex"><a class="header" href="#setting-up-a-development-environment-for-ethrex">Setting up a development environment for ethrex</a></h1>
-<h2 id="prerequisites-15"><a class="header" href="#prerequisites-15">Prerequisites</a></h2>
+<h2 id="prerequisites-16"><a class="header" href="#prerequisites-16">Prerequisites</a></h2>
 <ul>
 <li><a href="https://www.rust-lang.org/tools/install">Rust</a></li>
 <li><a href="https://git-scm.com/downloads">Git</a></li>
@@ -8719,7 +9029,7 @@ docker build -t ethrex --build-arg PROFILE="release-with-debug-assertions" --bui
 </ul>
 <div style="break-before: page; page-break-before: always;"></div><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.4/dist/katex.min.css">
 <h1 id="ethrex-as-a-local-development-node"><a class="header" href="#ethrex-as-a-local-development-node">Ethrex as a local development node</a></h1>
-<h2 id="prerequisites-16"><a class="header" href="#prerequisites-16">Prerequisites</a></h2>
+<h2 id="prerequisites-17"><a class="header" href="#prerequisites-17">Prerequisites</a></h2>
 <p>This guide assumes you’ve read the dev <a href="#setting-up-a-development-environment-for-ethrex">installation guide</a></p>
 <h2 id="dev-mode"><a class="header" href="#dev-mode">Dev mode</a></h2>
 <p>In dev mode ethrex acts as a local Ethereum development node. It can be run with the following command</p>
@@ -8734,7 +9044,7 @@ docker build -t ethrex --build-arg PROFILE="release-with-debug-assertions" --bui
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.4/dist/katex.min.css">
 <h2 id="importing-blocks"><a class="header" href="#importing-blocks">Importing blocks</a></h2>
 <p>The simplest task a node can do is import blocks offline. We would do so like this:</p>
-<h2 id="prerequisites-17"><a class="header" href="#prerequisites-17">Prerequisites</a></h2>
+<h2 id="prerequisites-18"><a class="header" href="#prerequisites-18">Prerequisites</a></h2>
 <p>This guide assumes you’ve read the dev <a href="#setting-up-a-development-environment-for-ethrex">installation guide</a></p>
 <h2 id="import-blocks"><a class="header" href="#import-blocks">Import blocks</a></h2>
 <pre><code class="language-bash"># Execute the import
@@ -8884,7 +9194,7 @@ fn get_account_code(&amp;self, code_hash: H256) -&gt; Result&lt;Bytes, EvmError&
 <div style="break-before: page; page-break-before: always;"></div><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.4/dist/katex.min.css">
 <h1 id="quick-start-l1-localnet"><a class="header" href="#quick-start-l1-localnet">Quick Start (L1 localnet)</a></h1>
 <p>This page will show you how to quickly spin up a local development network with ethrex.</p>
-<h2 id="prerequisites-18"><a class="header" href="#prerequisites-18">Prerequisites</a></h2>
+<h2 id="prerequisites-19"><a class="header" href="#prerequisites-19">Prerequisites</a></h2>
 <ul>
 <li><a href="https://docs.kurtosis.com/install/#ii-install-the-cli">Kurtosis</a></li>
 <li><a href="https://www.rust-lang.org/tools/install">Rust</a></li>
@@ -9090,7 +9400,7 @@ docker compose -f docker-compose-metrics.yaml -f docker-compose-metrics-l1.overr
 <p>This guide covers the profiling tools available for ethrex developers, including CPU profiling and memory profiling.</p>
 <h2 id="cpu-profiling-with-pprof"><a class="header" href="#cpu-profiling-with-pprof">CPU Profiling with <code>pprof</code></a></h2>
 <p>Ethrex includes built-in CPU profiling via <a href="https://github.com/tikv/pprof-rs">pprof-rs</a>, gated behind the <code>cpu_profiling</code> feature flag. When enabled, a profiler starts at boot (1000 Hz sampling) and writes a <code>profile.pb</code> file to the current working directory at shutdown.</p>
-<h3 id="prerequisites-19"><a class="header" href="#prerequisites-19">Prerequisites</a></h3>
+<h3 id="prerequisites-20"><a class="header" href="#prerequisites-20">Prerequisites</a></h3>
 <p>To view the generated profiles you need one of:</p>
 <ul>
 <li><strong>Go toolchain</strong> (<code>go tool pprof</code>) — the standard pprof viewer</li>
@@ -9273,7 +9583,7 @@ See <a href="https://steel.ethereum.foundation/docs/execution-specs/mainnet/runn
 </ul>
 </li>
 </ol>
-<h2 id="prerequisites-20"><a class="header" href="#prerequisites-20">Prerequisites</a></h2>
+<h2 id="prerequisites-21"><a class="header" href="#prerequisites-21">Prerequisites</a></h2>
 <h3 id="required-tools"><a class="header" href="#required-tools">Required Tools</a></h3>
 <ol>
 <li>
@@ -9427,7 +9737,7 @@ TEST_PATTERN_EELS=".*fork_Paris.*|.*fork_Shanghai.*|.*fork_Cancun.*"     # Multi
 <li>Pass/fail statistics per simulation</li>
 <li>Fork-specific results (Paris, Shanghai, Cancun, Prague, Amsterdam)</li>
 </ul>
-<h2 id="cleaning-up"><a class="header" href="#cleaning-up">Cleaning Up</a></h2>
+<h2 id="cleaning-up-1"><a class="header" href="#cleaning-up-1">Cleaning Up</a></h2>
 <p>Remove Hive logs and workspace:</p>
 <pre><code class="language-bash">make clean-hive-logs
 </code></pre>
@@ -9669,7 +9979,7 @@ python3 summarize.py ./results/ethrex ./results/geth
 </ul>
 <div style="break-before: page; page-break-before: always;"></div><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.4/dist/katex.min.css">
 <h1 id="ethrex-as-a-local-l2-development-node"><a class="header" href="#ethrex-as-a-local-l2-development-node">Ethrex as a local L2 development node</a></h1>
-<h2 id="prerequisites-21"><a class="header" href="#prerequisites-21">Prerequisites</a></h2>
+<h2 id="prerequisites-22"><a class="header" href="#prerequisites-22">Prerequisites</a></h2>
 <ul>
 <li>This guide assumes you’ve read the dev <a href="#setting-up-a-development-environment-for-ethrex">installation guide</a></li>
 <li>An Ethereum utility tool like <a href="https://github.com/lambdaclass/rex">rex</a></li>
@@ -9688,7 +9998,7 @@ python3 summarize.py ./results/ethrex ./results/geth
 <div style="break-before: page; page-break-before: always;"></div><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.4/dist/katex.min.css">
 <h1 id="running-integration-tests"><a class="header" href="#running-integration-tests">Running integration tests</a></h1>
 <p>In this section, we will explain how to run integration tests for ethrex L2 with the objective of validating the correct functioning of our stack in our releases. For this, we will use ethrex as a local L2 dev node.</p>
-<h2 id="prerequisites-22"><a class="header" href="#prerequisites-22">Prerequisites</a></h2>
+<h2 id="prerequisites-23"><a class="header" href="#prerequisites-23">Prerequisites</a></h2>
 <ul>
 <li>Install the latest ethrex release or pre-release binary following the instructions in the <a href="https://docs.ethrex.xyz/getting-started/installation/binary_distribution.html">Install ethrex (binary distribution)</a> section.</li>
 <li>For running the tests, you’ll need a fresh clone of <a href="https://github.com/lambdaclass/ethrex/">ethrex</a>.</li>
@@ -9831,7 +10141,7 @@ export ARCH=linux-x86_64       # or linux-aarch64, macos-aarch64
 export WORK=$HOME/upgrade-test  # workspace
 mkdir -p "$WORK"
 </code></pre>
-<h2 id="prerequisites-23"><a class="header" href="#prerequisites-23">Prerequisites</a></h2>
+<h2 id="prerequisites-24"><a class="header" href="#prerequisites-24">Prerequisites</a></h2>
 <ul>
 <li><a href="https://github.com/lambdaclass/rex"><code>rex</code></a> on <code>$PATH</code> (used to call <code>upgradeToAndCall</code> and read contract state)</li>
 <li><code>curl</code>, <code>jq</code></li>
@@ -10807,6 +11117,272 @@ These proofs allow verifying that a value is included (or its key doesn’t exis
 <h3 id="debug-mode"><a class="header" href="#debug-mode">Debug Mode</a></h3>
 <p>Debug mode currently enables printing in solidity by using a <code>print()</code> function that does an <code>MSTORE</code> with a specific offset to toggle the “print mode”. If the VM is in debug mode it will recognize the offset as the “key” for enabling/disabling print mode. If print mode is enabled, MSTORE opcode stores into a buffer the data that the user wants to print, and when there is no more data left to read it prints it and disables the print mode so that execution continues normally.
 You can find the solidity code in the <a href="https://github.com/lambdaclass/ethrex/blob/4e0ed9cc3b4ccb818dbc37afb305726cc01cec55/fixtures/contracts/levm_print/Print.sol">fixtures</a> of this repository. It can be tested with the <code>PrintTest</code> contract and it can be imported into another contracts.</p>
+<div style="break-before: page; page-break-before: always;"></div><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.4/dist/katex.min.css">
+<h1 id="native-rollups"><a class="header" href="#native-rollups">Native Rollups</a></h1>
+<h2 id="overview-6"><a class="header" href="#overview-6">Overview</a></h2>
+<p><a href="https://eips.ethereum.org/EIPS/eip-8079">EIP-8079</a> proposes “native rollups” — a mechanism where L1 verifies L2 state transitions by re-executing them inside the EVM via an <code>EXECUTE</code> precompile. This replaces complex proof systems (zkVM/fraud proofs) with direct execution, leveraging the fact that L1 already has an EVM capable of running the same transactions.</p>
+<p>The spec defines the EXECUTE precompile as a thin wrapper around <code>verify_stateless_new_payload</code> — the same function the L1 ZK-EVM effort uses. Our implementation reuses the stateless-validation infrastructure landed with EIP-8025 (#6427). The EXECUTE precompile code is <strong>always-compiled</strong>; the precompile fires only at runtime when <code>fork &gt;= Fork::LStar &amp;&amp; vm_type == VMType::L1</code>.</p>
+<blockquote>
+<p><strong>Implementation note — spec divergences:</strong> The implementation tracks the <a href="https://github.com/l2beat/l2beat">l2beat native-rollups spec book</a> rather than the published EIP-8079 text. The two diverge in three places:</p>
+<ul>
+<li><strong>Anchoring</strong>: l2beat uses <code>parent_beacon_block_root</code> as an arbitrary <code>bytes32</code> to carry the L1 messages Merkle root. Published EIP-8079 specifies an <code>ANCHOR_ADDRESS</code> precompile for this purpose.</li>
+<li><strong>EXECUTE signature</strong>: The l2beat signature passes <code>(uint16 _l1MessagesCount, bytes _sszStatelessInput)</code>. EIP-8079 specifies a different calling convention.</li>
+<li><strong><code>burned_fees</code></strong>: EIP-8079 makes <code>burned_fees</code> a new execution-payload header field. Our implementation includes it as a recompute-only header field gated at <code>Fork::LStar</code> (EIP-8079-aligned, §G).</li>
+</ul>
+<p>Where EIP-8079 and the l2beat spec agree, “EIP-8079 conformance” also means l2beat conformance.</p>
+</blockquote>
+<pre><code>SSZ-encoded StatelessInput (NewPayloadRequest + ExecutionWitness + ChainConfig)
+        |
+  EXECUTE precompile (in LEVM) — thin wrapper
+        |
+  1. Deserialize SSZ once (read gas_limit; keep the decoded input)
+  2. Validate L2 constraints (no blobs, no withdrawals, no execution_requests)
+  3. Charge gas = gas_limit + calldata_len·EXECUTE_GAS_PER_WITNESS_BYTE
+  4. Delegate the decoded input to StatelessValidator → verify_stateless_new_payload()
+        |
+        v
+  verify_stateless_new_payload (in crates/blockchain/stateless.rs)
+        |
+  1. Compute hash_tree_root of NewPayloadRequest
+  2. Validate block headers from witness
+  3. Build GuestProgramState from witness
+  4. Convert NewPayloadRequest → Block
+  5. Execute block via LEVM
+  6. Return StatelessValidationResult (SSZ)
+        |
+  Returns SSZ-encoded (new_payload_request_root, successful_validation, chain_config) or reverts
+</code></pre>
+<h2 id="execute-precompile"><a class="header" href="#execute-precompile">EXECUTE Precompile</a></h2>
+<p>The core logic lives in <code>execute_precompile.rs</code>. It parses SSZ-encoded <code>StatelessInput</code> once, validates L2-specific constraints, charges gas (<code>gas_limit + calldata_len · EXECUTE_GAS_PER_WITNESS_BYTE</code>), and delegates the already-decoded input to <code>verify_stateless_new_payload</code> via the <code>StatelessValidator</code> trait. Gas is charged on <code>gas_limit</code> (the true upper bound on re-execution), never on the attacker-controlled <code>gas_used</code>.</p>
+<h3 id="input-format"><a class="header" href="#input-format">Input Format</a></h3>
+<p>SSZ-encoded <code>StatelessInput</code>:</p>
+<pre class="playground"><code class="language-rust edition2024"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>pub struct SszStatelessInput {
+    pub new_payload_request: NewPayloadRequest,  // Full block as SSZ
+    pub witness: SszExecutionWitness,            // State trie, storage tries, codes
+    pub chain_config: SszChainConfig,            // chain_id
+    pub public_keys: SszList&lt;...&gt;,               // Pre-recovered tx public keys (stub)
+}
+<span class="boring">}</span></code></pre>
+<p>The <code>NewPayloadRequest</code> contains:</p>
+<ul>
+<li><code>execution_payload</code>: Full SSZ <code>ExecutionPayload</code> (header fields + transactions + withdrawals)</li>
+<li><code>versioned_hashes</code>: Blob hashes (empty for L2)</li>
+<li><code>parent_beacon_block_root</code>: Used to carry the L1 messages Merkle root</li>
+<li><code>execution_requests</code>: Deposit/withdrawal/consolidation requests (empty for L2)</li>
+</ul>
+<h3 id="output-format"><a class="header" href="#output-format">Output Format</a></h3>
+<p>SSZ-encoded <code>StatelessValidationResult</code>:</p>
+<pre class="playground"><code class="language-rust edition2024"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>pub struct StatelessValidationResult {
+    pub new_payload_request_root: [u8; 32],  // hash_tree_root of NewPayloadRequest
+    pub successful_validation: bool,          // Whether execution was valid
+    pub chain_config: SszChainConfig,         // chain_id (echo back)
+}
+<span class="boring">}</span></code></pre>
+<p>The contract checks <code>successful_validation == true</code> at byte 32 of the result.</p>
+<h3 id="l2-constraint-validation"><a class="header" href="#l2-constraint-validation">L2 Constraint Validation</a></h3>
+<p>Before delegating to <code>verify_stateless_new_payload</code>, the precompile validates:</p>
+<ul>
+<li><code>blob_gas_used == 0</code> — no blob data on L2</li>
+<li><code>excess_blob_gas == 0</code> — no blob fee market on L2</li>
+<li><code>withdrawals</code> is empty — L2 doesn’t have consensus-layer withdrawals</li>
+<li><code>execution_requests</code> is empty — no deposit/withdrawal/consolidation requests</li>
+<li>No type-3 (blob) transactions in the transaction list</li>
+</ul>
+<h3 id="gas-charging"><a class="header" href="#gas-charging">Gas Charging</a></h3>
+<p>Gas is charged as:</p>
+<pre><code>charge = gas_limit + calldata_len · EXECUTE_GAS_PER_WITNESS_BYTE
+</code></pre>
+<p>where <code>gas_limit</code> is from <code>ExecutionPayload.gas_limit</code> and <code>calldata_len</code> is the length of the raw <code>_sszStatelessInput</code> bytes. The precompile <strong>fails closed</strong> (CALL-level <code>ExceptionalHalt</code>) if the input is invalid or the charge cannot be applied — the <code>advance()</code> call reverts rather than committing an unvalidated state.</p>
+<h2 id="l1-anchoring"><a class="header" href="#l1-anchoring">L1 Anchoring</a></h2>
+<p>L1 messages are anchored via <strong><code>parent_beacon_block_root</code></strong> in the block header. The NativeBlockProducer on L2 sets this field to the Merkle root of consumed L1 messages. During L2 block processing, the EIP-4788 BEACON_ROOTS system contract stores this root at <code>0x000F3df6D732807Ef1319fB7B8bB8522d0Beac02</code>, making it available to L2 contracts.</p>
+<h2 id="l1-to-l2-messaging"><a class="header" href="#l1-to-l2-messaging">L1 to L2 Messaging</a></h2>
+<p>The L1→L2 message flow uses a relayer, a prefunded L2 bridge contract, and Merkle proof verification against the anchored L1 messages root:</p>
+<ol>
+<li>Users call <code>NativeRollup.sendL1Message(to, gasLimit, data)</code> on L1 with ETH value — this records <code>keccak256(abi.encodePacked(from, to, value, gasLimit, keccak256(data), nonce))</code> as an L1 message hash in the contract’s <code>pendingL1Messages</code> array</li>
+<li>When <code>advance()</code> is called with <code>_l1MessagesCount</code>, the L2 advancer computes a <strong>Merkle root</strong> over the consumed L1 message hashes (commutative Keccak256)</li>
+<li>The Merkle root is embedded in the <code>parent_beacon_block_root</code> field of the SSZ <code>NewPayloadRequest</code></li>
+<li>During L2 block processing, the EIP-4788 system contract stores this root at <code>BEACON_ROOTS_ADDRESS</code></li>
+<li>On L2, a relayer sends transactions calling <code>L2Bridge.processL1Message(from, to, value, gasLimit, data, nonce, merkleProof)</code>, which reads the root from BEACON_ROOTS, verifies the Merkle inclusion proof, then executes <code>to.call{value: value, gas: gasLimit}(data)</code></li>
+<li>The <strong>state root check</strong> at the end of execution implicitly guarantees correct message processing</li>
+</ol>
+<p><strong>Block builder constraint:</strong> The relayer chooses how many L1 messages to consume (<code>_l1MessagesCount</code> can be 0). The Merkle root is encoded in <code>parent_beacon_block_root</code> <em>before</em> the block transactions execute. The block builder must include the matching <code>processL1Message()</code> transactions — if they don’t match, the state root will differ and the EXECUTE precompile will return <code>successful_validation = false</code>.</p>
+<p>The relayer pays gas for L1 message transactions. L1 messages support arbitrary calldata, enabling not just ETH transfers but also arbitrary contract calls on L2.</p>
+<h2 id="l2-to-l1-messaging-withdrawals"><a class="header" href="#l2-to-l1-messaging-withdrawals">L2 to L1 Messaging (Withdrawals)</a></h2>
+<p>Withdrawals allow users to move ETH from L2 back to L1. The flow uses <strong>state root proofs</strong> — since the EXECUTE precompile verifies the post-state root, L2 contract storage can be proven directly against it:</p>
+<pre><code>L2: User calls L2Bridge.withdraw(receiverOnL1) with ETH
+     → keeps ETH locked in the bridge contract
+     → writes sentMessages[keccak256(abi.encodePacked(from, receiver, amount, messageId))] = true
+     → emits WithdrawalInitiated(from, receiver, amount, messageId)
+
+EXECUTE precompile: Executes block and returns post-state root
+     → no event scanning or custom Merkle tree needed
+     → the state root captures everything, including L2Bridge's sentMessages storage
+
+L1: NativeRollup.advance() stores stateRootHistory[blockNumber] = newStateRoot
+
+L1: User calls NativeRollup.claimWithdrawal(from, receiver, amount, messageId, blockNumber, accountProof, storageProof)
+     → looks up stateRootHistory[blockNumber] as the L2 state root
+     → checks that block.timestamp &gt;= stateRootTimestamps[blockNumber] + FINALITY_DELAY
+     → account proof: state root → L2Bridge account → extracts storageRoot
+     → storage proof: storageRoot → sentMessages[withdrawalHash] == true
+     → marks withdrawal as claimed (prevents double-claiming)
+     → transfers ETH to receiver
+</code></pre>
+<p>Each withdrawal is uniquely identified by <code>keccak256(abi.encodePacked(from, receiver, amount, messageId))</code>. The <code>messageId</code> is a counter maintained by the L2Bridge contract (<code>withdrawalNonce</code>), starting at 0 and incrementing per withdrawal. The MPT proof verification lives in <code>MPTProof.sol</code> (trie traversal, RLP decoding, account/storage proof verification), which NativeRollup.sol imports as an internal library.</p>
+<h2 id="gas-token-deposits"><a class="header" href="#gas-token-deposits">Gas Token Deposits</a></h2>
+<p>The L2Bridge predeploy at <code>0x00...fffd</code> is deployed in genesis with a large preminted ETH balance (<code>U256::MAX / 2</code>) to cover all future L1 messages. A relayer calls <code>processL1Message()</code> to execute L1 messages (transferring ETH and/or executing calldata) from the bridge’s balance. The relayer pays gas, solving the “first deposit problem” — users don’t need gas to receive L1 messages. The NativeRollup contract on L1 accumulates ETH over time as users call <code>sendL1Message()</code>.</p>
+<h2 id="fee-market"><a class="header" href="#fee-market">Fee Market</a></h2>
+<p>EIP-1559 base fee is computed by the L2 node from the parent block’s header fields. The NativeRollup contract on L1 does not track fee market parameters — this is handled entirely by the L2 node’s standard block production logic, and the EXECUTE precompile re-derives the base fee from the block header in the <code>NewPayloadRequest</code>. In this PoC, the demo wires the coinbase to the relayer address; a production deployment would choose its own coinbase policy.</p>
+<h2 id="statelessness"><a class="header" href="#statelessness">Statelessness</a></h2>
+<p>The precompile receives an SSZ-encoded <code>SszExecutionWitness</code> containing the state trie, storage tries, and code for all accounts touched during execution. This enables the precompile to re-execute without persistent L2 state.</p>
+<p>The <code>GuestProgramStateDb</code> adapter (<code>crates/vm/levm/src/db/guest_program_state_db.rs</code>) implements LEVM’s <code>Database</code> trait backed by <code>GuestProgramState</code>, bridging the gap between the stateless execution witness and LEVM’s database interface. This direct adapter is needed because <code>ethrex-levm</code> cannot depend on <code>ethrex-vm</code> (it’s the other way around).</p>
+<h2 id="block-execution-validation"><a class="header" href="#block-execution-validation">Block Execution Validation</a></h2>
+<p><code>verify_stateless_new_payload</code> (<code>crates/blockchain/stateless.rs</code>) performs the following:</p>
+<ol>
+<li>Computes the SSZ <code>hash_tree_root</code> of the <code>NewPayloadRequest</code></li>
+<li>Validates block headers from the witness</li>
+<li>Builds <code>GuestProgramState</code> from the witness</li>
+<li>Converts the SSZ <code>NewPayloadRequest</code> → ethrex <code>Block</code></li>
+<li>Executes the block via LEVM</li>
+<li>Returns <code>StatelessValidationResult</code> with the hash tree root and a <code>successful_validation</code> flag</li>
+</ol>
+<p>The state root check implicitly guarantees both correct L1 message processing and correct L2→L1 withdrawal recording.</p>
+<h2 id="contracts-1"><a class="header" href="#contracts-1">Contracts</a></h2>
+<h3 id="nativerollupsol"><a class="header" href="#nativerollupsol">NativeRollup.sol</a></h3>
+<p>L1 contract that manages L2 state on-chain. Storage layout:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Slot</th><th>Field</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td>0</td><td><code>blockHash</code></td><td>Current L2 block hash</td></tr>
+<tr><td>1</td><td><code>stateRoot</code></td><td>Current L2 state root</td></tr>
+<tr><td>2</td><td><code>blockNumber</code></td><td>Latest committed L2 block number</td></tr>
+<tr><td>3</td><td><code>l2GasLimit</code></td><td>L2 block gas limit</td></tr>
+<tr><td>4</td><td><code>chainId</code></td><td>L2 chain ID</td></tr>
+<tr><td>5</td><td><code>pendingL1Messages</code></td><td>Array of L1 message hashes</td></tr>
+<tr><td>6</td><td><code>l1MessageIndex</code></td><td>Next L1 message index to consume</td></tr>
+<tr><td>7</td><td><code>totalDeposited</code></td><td>Total ETH bridged in via <code>sendL1Message</code> (escrow solvency)</td></tr>
+<tr><td>8</td><td><code>totalClaimed</code></td><td>Total ETH paid out by <code>claimWithdrawal</code></td></tr>
+<tr><td>9</td><td><code>stateRootHistory</code></td><td><code>mapping(uint256 =&gt; bytes32)</code> — state root per block number</td></tr>
+<tr><td>10</td><td><code>claimedWithdrawals</code></td><td><code>mapping(bytes32 =&gt; bool)</code> — prevents double-claiming</td></tr>
+<tr><td>11</td><td><code>stateRootTimestamps</code></td><td><code>mapping(uint256 =&gt; uint256)</code> — commit timestamp per block</td></tr>
+<tr><td>12</td><td><code>_locked</code></td><td>Reentrancy protection</td></tr>
+<tr><td>13</td><td><code>lastFetchedL1Block</code></td><td>Deploy block; seeds the L1 watcher cursor</td></tr>
+<tr><td>14</td><td><code>advancer</code></td><td>Address authorized to call <code>advance()</code></td></tr>
+<tr><td>15</td><td><code>pendingAdvancer</code></td><td>Nominated next advancer, pending acceptance (two-step handoff)</td></tr>
+</tbody>
+</table>
+</div>
+<p><code>CHAIN_ID</code> and <code>FINALITY_DELAY</code> are <code>immutable</code> (stored in code, not storage). <code>FINALITY_DELAY</code> is the minimum seconds a state root must age before its withdrawals can be claimed; it is set at deploy time from <code>--native-rollups.finality-delay</code> (default 0 = instant finality for the local demo; production must pass a reorg-safe value).</p>
+<p>Constructor: <code>constructor(bytes32 _initialStateRoot, bytes32 _initialBlockHash, uint256 _blockGasLimit, uint256 _chainId, address _advancer, uint256 _finalityDelay)</code>.</p>
+<p>Functions:</p>
+<ul>
+<li><strong><code>sendL1Message(address _to, uint256 _gasLimit, bytes _data)</code></strong> — payable; records <code>keccak256(abi.encodePacked(from, to, value, gasLimit, keccak256(data), nonce))</code> as an L1 message hash, burns <code>_gasLimit</code> gas on L1</li>
+<li><strong><code>receive()</code></strong> — payable fallback; accepts ETH without recording an L1 message (used to fund the contract)</li>
+<li><strong><code>advance(uint16 _l1MessagesCount, bytes _sszStatelessInput)</code></strong> — calls the EXECUTE precompile, decodes the block-level fields and the L1 messages Merkle root (<code>parent_beacon_block_root</code>) from the SSZ input, recomputes the root over <code>pendingL1Messages[l1MessageIndex .. +count]</code> and reverts on mismatch, then commits the new L2 state. Mirrors <code>OnChainProposer.commitBatch</code>’s <code>processedPrivilegedTransactionsRollingHash</code> check.</li>
+<li><strong><code>claimWithdrawal(address, address, uint256, uint256, uint256, bytes[], bytes[])</code></strong> — verifies MPT account + storage proofs against <code>stateRootHistory[blockNumber]</code>, enforces finality delay, transfers ETH</li>
+<li><strong><code>getPendingL1MessagesRoot(uint16 number)</code></strong> — view; recomputes the Merkle root over the next <code>number</code> unconsumed L1 messages, mirroring <code>CommonBridge.getPendingTransactionsVersionedHash</code></li>
+</ul>
+<h3 id="l2bridgesol"><a class="header" href="#l2bridgesol">L2Bridge.sol</a></h3>
+<p>L2 predeploy at <code>0x00...fffd</code> handling both L1 message processing and withdrawals. Storage: slot 0 = relayer, slot 1 = l1MessageNonce, slot 2 = withdrawalNonce, slot 3 = <code>sentMessages</code> mapping.</p>
+<ul>
+<li><strong><code>processL1Message(..., bytes32[] merkleProof)</code></strong> — verifies Merkle inclusion proof against the L1 messages root read from the EIP-4788 BEACON_ROOTS contract at <code>0x000F3df6D732807Ef1319fB7B8bB8522d0Beac02</code>, executes <code>to.call{value, gas}(data)</code></li>
+<li><strong><code>withdraw(address receiver)</code></strong> — payable; writes <code>sentMessages[hash] = true</code> for MPT proving on L1</li>
+</ul>
+<h3 id="mptproofsol"><a class="header" href="#mptproofsol">MPTProof.sol</a></h3>
+<p>Solidity library for MPT proof verification: trie traversal, RLP decoding, account proof verification (state root → storageRoot), and storage proof verification (storageRoot → mapping value). Compiled as an internal library (inlined by the compiler).</p>
+<h3 id="merkle_treers"><a class="header" href="#merkle_treers">merkle_tree.rs</a></h3>
+<p><code>crates/l2/common/src/merkle_tree.rs</code> — Merkle tree using commutative Keccak256 hashing. Provides <code>compute_merkle_root()</code> and <code>compute_merkle_proof()</code>. Used by the L2 actors (block producer, advancer) and the L2 withdrawal proof RPC endpoint.</p>
+<h2 id="compilation-and-feature-flags"><a class="header" href="#compilation-and-feature-flags">Compilation and Feature Flags</a></h2>
+<p>The native-rollup EXECUTE precompile, the stateless-validation pipeline, and all SSZ types are <strong>always-compiled</strong> — there is no cargo feature that gates them out. (The old unified devnet feature flag was removed.)</p>
+<p><strong>Runtime gate:</strong> the EXECUTE precompile body executes only when <code>fork &gt;= Fork::LStar &amp;&amp; vm_type == VMType::L1</code>. On any other fork or VM type the precompile is a no-op CALL.</p>
+<p>The only remaining cargo feature is <strong><code>eip-8025</code></strong>, which controls the guest-program input/output format. The SSZ dep chain is:</p>
+<pre><code class="language-toml"># crates/guest-program/Cargo.toml  (guest only — not the host)
+eip-8025 = [
+    "ethrex-common/eip-8025",
+    "ethrex-vm/eip-8025",
+    "dep:libssz",
+    "dep:libssz-merkle",
+    "dep:libssz-types",
+    "dep:libssz-derive",
+]
+
+# crates/blockchain/Cargo.toml
+eip-8025 = ["ethrex-common/eip-8025", "ethrex-vm/eip-8025"]
+
+# crates/common/Cargo.toml
+eip-8025 = ["ethrex-trie/eip-8025"]   # guest-only trie SSZ support; the always-compiled stateless SSZ types do not need it
+</code></pre>
+<p>When <code>eip-8025</code> is compiled into the guest program:</p>
+<ul>
+<li>Input format: <code>NewPayloadRequest</code> (SSZ) + <code>ExecutionWitness</code> (rkyv) — the EIP-8025 wire format</li>
+<li>Output format: <code>ProgramOutput { new_payload_request_root: [u8; 32], valid: bool }</code> — 33 bytes</li>
+</ul>
+<p>Without <code>eip-8025</code>:</p>
+<ul>
+<li>Input/output use the legacy rkyv <code>ProgramInput</code>/<code>ProgramOutput</code> format</li>
+<li>The host (node) always has the SSZ types compiled in for the EXECUTE precompile</li>
+</ul>
+<h2 id="summary-table-vs-l2beat-native-rollups-spec-see-divergences-note-above"><a class="header" href="#summary-table-vs-l2beat-native-rollups-spec-see-divergences-note-above">Summary Table (vs l2beat native-rollups spec; see divergences note above)</a></h2>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Aspect</th><th>l2beat spec</th><th>Us</th><th>Alignment</th></tr>
+</thead>
+<tbody>
+<tr><td>Core function</td><td><code>verify_stateless_new_payload</code></td><td>Implemented (blockchain/stateless.rs)</td><td><strong>Aligned</strong></td></tr>
+<tr><td>Input format</td><td>SSZ <code>StatelessInput</code></td><td>SSZ types via libssz</td><td><strong>Aligned</strong></td></tr>
+<tr><td>Output format</td><td>SSZ <code>StatelessValidationResult</code></td><td>Implemented</td><td><strong>Aligned</strong></td></tr>
+<tr><td>Gas charging</td><td><code>gas_limit + calldata·EXECUTE_GAS_PER_WITNESS_BYTE</code></td><td>Implemented</td><td><strong>Aligned</strong></td></tr>
+<tr><td>Fail-closed on invalid input</td><td>CALL-level ExceptionalHalt</td><td>Implemented</td><td><strong>Aligned</strong></td></tr>
+<tr><td>L2 preprocessing</td><td>Explicit layer (no blobs, no withdrawals)</td><td>Implemented</td><td><strong>Aligned</strong></td></tr>
+<tr><td>Serialization</td><td>SSZ (execution-specs types)</td><td>SSZ via libssz</td><td><strong>Aligned</strong></td></tr>
+<tr><td>L1 anchoring</td><td><code>parent_beacon_block_root</code> (arbitrary bytes32)</td><td>Merkle root via <code>parent_beacon_block_root</code></td><td><strong>Aligned</strong></td></tr>
+<tr><td>L1→L2 messaging</td><td>Proof-based (no custom tx types)</td><td>Merkle proofs against BEACON_ROOTS</td><td><strong>Aligned</strong></td></tr>
+<tr><td>L2→L1 messaging</td><td>State root proofs (MPT)</td><td>MPT account + storage proofs</td><td><strong>Aligned</strong></td></tr>
+<tr><td>Gas token deposits</td><td>Preminted predeploy</td><td>L2Bridge with <code>U256::MAX / 2</code></td><td><strong>Aligned</strong></td></tr>
+<tr><td>No custom tx types</td><td>Design principle</td><td>Achieved (relayer txs)</td><td><strong>Aligned</strong></td></tr>
+<tr><td>First deposit problem</td><td>WIP in spec</td><td>Solved (relayer pays gas)</td><td><strong>Ahead</strong></td></tr>
+<tr><td><code>burned_fees</code> header field</td><td>EIP-8079 header field (§G)</td><td>Implemented — LStar-gated recompute-only field</td><td><strong>Aligned</strong></td></tr>
+<tr><td>Contract state</td><td>blockHash, stateRoot, blockNumber, gasLimit, chainId</td><td>Implemented</td><td><strong>Aligned</strong></td></tr>
+<tr><td>StatelessValidator trait</td><td>Implied (precompile wraps standard function)</td><td>Implemented in LEVM</td><td><strong>Aligned</strong></td></tr>
+<tr><td>Cycle-free architecture</td><td>Implied</td><td>Trait injection pattern</td><td><strong>Aligned</strong></td></tr>
+<tr><td>ZK variant</td><td>Specified (proof-carrying tx + PROOFROOT)</td><td>Not implemented (re-execution only)</td><td><strong>Gap (by design)</strong></td></tr>
+<tr><td>Forced transactions</td><td>WIP (FOCIL)</td><td>Not implemented</td><td><strong>Gap</strong></td></tr>
+<tr><td>DA cost pricing</td><td>WIP</td><td>Not implemented</td><td><strong>Both WIP</strong></td></tr>
+<tr><td><code>public_keys</code></td><td>Pre-recovered tx keys</td><td>Empty tuple (stub)</td><td><strong>Stub</strong></td></tr>
+</tbody>
+</table>
+</div>
+<h3 id="eip-8079-divergences"><a class="header" href="#eip-8079-divergences">EIP-8079 divergences</a></h3>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Aspect</th><th>Published EIP-8079</th><th>Our implementation</th></tr>
+</thead>
+<tbody>
+<tr><td>L1 anchoring mechanism</td><td><code>ANCHOR_ADDRESS</code> precompile</td><td><code>parent_beacon_block_root</code> field (l2beat model)</td></tr>
+<tr><td>EXECUTE calling convention</td><td>EIP-8079 calling convention</td><td><code>advance(uint16 _l1MessagesCount, bytes _sszStatelessInput)</code> (l2beat model)</td></tr>
+<tr><td><code>burned_fees</code></td><td>New execution-payload header field</td><td>Implemented as LStar-gated recompute-only field (matches EIP-8079 §G)</td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="limitations-1"><a class="header" href="#limitations-1">Limitations</a></h2>
+<p>This PoC intentionally omits several things that would be needed for production:</p>
+<ul>
+<li><strong>ZK variant</strong> — Only the re-execution variant is implemented. The ZK variant (proof-carrying transactions + PROOFROOT opcode) requires L1 consensus changes not yet available.</li>
+<li><strong>No forced transaction mechanism</strong> — No censorship resistance guarantees (FOCIL integration is WIP in the spec)</li>
+<li><strong>No L1 message inclusion deadline</strong> — <code>pendingL1Messages</code> have no per-message deadline, so the advancer can defer processing them indefinitely without on-chain consequence. <code>OnChainProposer.sol</code> enforces this for privileged transactions via <code>PRIVILEGED_TX_MAX_WAIT_BEFORE_INCLUSION</code> + <code>hasExpiredPrivilegedTransactions()</code>; the analogous mechanism for <code>NativeRollup.sol</code> is a TODO.</li>
+<li><strong>L2 ETH supply drain</strong> — Base fees are burned but not credited back on L2. A production solution would use a <code>BaseFeeVault</code> pattern.</li>
+<li><strong>No blob data support</strong> — Only calldata-based input (spec proposes blob references via EIP-8142)</li>
+<li><strong><code>public_keys</code> empty</strong> — Pre-recovered transaction public keys are not populated yet</li>
+</ul>
 <div style="break-before: page; page-break-before: always;"></div><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.4/dist/katex.min.css">
 <h1 id="ethrex-replay"><a class="header" href="#ethrex-replay">ethrex-replay</a></h1>
 <p>A tool for executing and proving Ethereum blocks, transactions, and L2 batches — inspired by <a href="https://github.com/lambdaclass/starknet-replay">starknet-replay</a>.</p>
@@ -12951,7 +13527,7 @@ Long-term research directions and second-order ideas are intentionally out of sc
 </table>
 </div>
 <h1 id="ethrex-trie-optimization-for-zkvm"><a class="header" href="#ethrex-trie-optimization-for-zkvm">ethrex-trie optimization for zkvm</a></h1>
-<h1 id="overview-6"><a class="header" href="#overview-6">Overview</a></h1>
+<h1 id="overview-7"><a class="header" href="#overview-7">Overview</a></h1>
 <p>Using the risc0-trie we get the next perf. gains in cycle count over our ethrex-trie:</p>
 <ul>
 <li><code>rebuild_storage_trie()</code> 218.999 -&gt; 64.435 (x3.4)</li>

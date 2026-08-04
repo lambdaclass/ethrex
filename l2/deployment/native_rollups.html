@@ -3,7 +3,7 @@
     <head>
         <!-- Book generated using mdBook -->
         <meta charset="UTF-8">
-        <title>Prover Performance - Ethrex</title>
+        <title>Deploying a native rollups ethrex L2 - Ethrex</title>
 
 
         <!-- Custom HTML head -->
@@ -177,288 +177,325 @@
                 <div id="mdbook-content" class="content">
                     <main>
                         <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.4/dist/katex.min.css">
-<h1 id="ethrex-prover-performance"><a class="header" href="#ethrex-prover-performance">ethrex-prover performance</a></h1>
-<h2 id="latest-benchmarks-against-rsp"><a class="header" href="#latest-benchmarks-against-rsp">Latest benchmarks against rsp</a></h2>
+<h1 id="deploying-a-native-rollups-ethrex-l2"><a class="header" href="#deploying-a-native-rollups-ethrex-l2">Deploying a native rollups ethrex L2</a></h1>
+<p>This guide covers how to deploy a native rollup L2 using ethrex. Native rollups (based on <a href="https://eips.ethereum.org/EIPS/eip-8079">EIP-8079</a>) replace ZK proofs and fraud proofs with direct re-execution on L1: when the L2 submits a block, L1 re-executes it via the <code>EXECUTE</code> precompile and verifies the state transition is correct.</p>
+<blockquote class="blockquote-tag blockquote-tag-note">
+<p class="blockquote-tag-title"><svg viewbox="0 0 16 16" width="18" height="18"><path d="M0 8a8 8 0 1 1 16 0A8 8 0 0 1 0 8Zm8-6.5a6.5 6.5 0 1 0 0 13 6.5 6.5 0 0 0 0-13ZM6.5 7.75A.75.75 0 0 1 7.25 7h1a.75.75 0 0 1 .75.75v2.75h.25a.75.75 0 0 1 0 1.5h-2a.75.75 0 0 1 0-1.5h.25v-2h-.25a.75.75 0 0 1-.75-.75ZM8 6a1 1 0 1 1 0-2 1 1 0 0 1 0 2Z"></path></svg>Note</p>
+<p>This is a proof-of-concept. The native rollup L2 runs against a local ethrex L1 with the EXECUTE precompile enabled. It is not yet intended for public testnets or production.</p>
+</blockquote>
+<h2 id="architecture-overview"><a class="header" href="#architecture-overview">Architecture overview</a></h2>
+<pre><code>┌──────────────────────────────────┐
+│            L1 (ethrex)           │
+│                                  │
+│  NativeRollup.sol                │
+│    ├─ advance()                  │
+│    │    └─ calls EXECUTE(0x0101) │
+│    │         └─ re-executes L2   │
+│    │            block in LEVM    │
+│    ├─ sendL1Message()            │
+│    └─ claimWithdrawal()          │
+└──────────┬───────────────────────┘
+           │ L1 RPC
+           │
+┌──────────┴───────────────────────┐
+│         L2 (ethrex native)       │
+│                                  │
+│  NativeL1Watcher                 │
+│    └─ polls L1 for new messages  │
+│                                  │
+│  NativeBlockProducer             │
+│    ├─ builds relayer txs for     │
+│    │  L1 messages                │
+│    ├─ sets parent_beacon_block   │
+│    │  _root = Merkle root        │
+│    └─ produces L2 blocks         │
+│                                  │
+│  NativeL1Advancer               │
+│    ├─ generates execution witness│
+│    ├─ encodes SSZ StatelessInput │
+│    └─ calls advance() on L1      │
+│                                  │
+│  Predeploys:                     │
+│    L2Bridge  (0x...fffd)         │
+└──────────────────────────────────┘
+</code></pre>
+<p>The three L2 GenServer actors run as concurrent tasks:</p>
 <ul>
-<li>ethrex commit: <code>42073248334a6f517c22bd7b8faf30787724d9da</code> (<a href="https://github.com/lambdaclass/ethrex/pull/5224/">#5224</a>)</li>
-<li>rsp commit: <code>2c5718029e7c0b24a34b011088fef221489fc714</code></li>
+<li>
+<p><strong>NativeL1Watcher</strong> — Polls the L1 NativeRollup.sol contract at regular intervals for <code>L1MessageRecorded</code> events and forwards them to the NativeBlockProducer via <code>EnqueueL1Messages</code> actor messages (there is no shared queue; the producer owns a private message queue). It scans L1 logs in configurable block ranges and parses the event data (sender, recipient, value, gas limit, calldata, nonce).</p>
+</li>
+<li>
+<p><strong>NativeBlockProducer</strong> — Produces L2 blocks every <code>block_time_ms</code> milliseconds. It first consumes pending L1 messages from its own queue, builds signed relayer transactions to execute those messages via the L2Bridge contract, then fills remaining block gas with regular mempool transactions. It sets <code>parent_beacon_block_root</code> in the block header to the L1 messages Merkle root, which the EIP-4788 system contract stores at <code>BEACON_ROOTS_ADDRESS</code> during block processing.</p>
+</li>
+<li>
+<p><strong>NativeL1Advancer</strong> — Reads produced L2 blocks from the Store, generates an execution witness, encodes it as SSZ <code>StatelessInput</code>, and submits it to NativeRollup.sol via <code>advance()</code>. The contract forwards the SSZ to the EXECUTE precompile which calls <code>verify_stateless_new_payload</code>.</p>
+</li>
 </ul>
-<div class="table-wrapper">
-<table>
-<thead>
-<tr><th>Block (mainnet)</th><th>Gas Used</th><th>ethrex (SP1)</th><th>rsp</th><th>(ethrex - rsp) / rsp * 100%</th></tr>
-</thead>
-<tbody>
-<tr><td>23769082</td><td>7,949,562</td><td>02m 23s</td><td>01m 27s</td><td>63.2%</td></tr>
-<tr><td>23769083</td><td>44,943,006</td><td>12m 24s</td><td>07m 49s</td><td>58.7%</td></tr>
-<tr><td>23769084</td><td>27,075,543</td><td>08m 40s</td><td>Failed</td><td>-</td></tr>
-<tr><td>23769085</td><td>22,213,854</td><td>06m 40s</td><td>Failed</td><td>-</td></tr>
-<tr><td>23769086</td><td>28,364,699</td><td>07m 36s</td><td>04m 45s</td><td>60.0%</td></tr>
-<tr><td>23769087</td><td>17,523,985</td><td>06m 02s</td><td>Failed</td><td>-</td></tr>
-<tr><td>23769088</td><td>17,527,759</td><td>04m 50s</td><td>02m 59s</td><td>61.4%</td></tr>
-<tr><td>23769089</td><td>23,854,094</td><td>08m 14s</td><td>04m 44s</td><td>73.9%</td></tr>
-<tr><td>23769090</td><td>24,238,029</td><td>08m 11s</td><td>04m 40s</td><td>75.4%</td></tr>
-<tr><td>23769091</td><td>24,421,216</td><td>07m 02s</td><td>Failed</td><td>-</td></tr>
-<tr><td>23769092</td><td>21,714,227</td><td>06m 35s</td><td>04m 01s</td><td>64.3%</td></tr>
-</tbody>
-</table>
-</div>
-<p><strong>Benchmark server hardware:</strong></p>
-<p>For ethrex:</p>
+<h2 id="prerequisites"><a class="header" href="#prerequisites">Prerequisites</a></h2>
 <ul>
-<li>AMD EPYC 7713 64-Core Processor</li>
-<li>128 GB RAM</li>
-<li>RTX 4090 24 GB</li>
-</ul>
-<p>For rsp:</p>
-<ul>
-<li>AMD EPYC 7F72 24-Core Processor</li>
-<li>64 GB RAM</li>
-<li>RTX 4090 24 GB</li>
+<li>Rust toolchain (stable)</li>
+<li><code>solc</code> (Solidity compiler) — needed to compile the contracts during build</li>
+<li><a href="https://github.com/lambdaclass/rex/tree/feat/claim-native-withdraw"><code>rex</code></a> — run <code>make cli</code> in that branch to install the required version</li>
+<li>Docker — needed for the Blockscout block explorer (Step 6)</li>
+<li>Python 3 — needed for the contract verification script (Step 6)</li>
 </ul>
 <blockquote class="blockquote-tag blockquote-tag-note">
 <p class="blockquote-tag-title"><svg viewbox="0 0 16 16" width="18" height="18"><path d="M0 8a8 8 0 1 1 16 0A8 8 0 0 1 0 8Zm8-6.5a6.5 6.5 0 1 0 0 13 6.5 6.5 0 0 0 0-13ZM6.5 7.75A.75.75 0 0 1 7.25 7h1a.75.75 0 0 1 .75.75v2.75h.25a.75.75 0 0 1 0 1.5h-2a.75.75 0 0 1 0-1.5h.25v-2h-.25a.75.75 0 0 1-.75-.75ZM8 6a1 1 0 1 1 0-2 1 1 0 0 1 0 2Z"></path></svg>Note</p>
-<p>rsp exited with a <code>block gas used mismatch</code> error on the failed cases</p>
+<p><strong>Rex CLI syntax quirks:</strong></p>
+<ul>
+<li><code>--value</code> is always in <strong>wei</strong> (e.g., <code>1000000000000000000</code> for 1 ETH).</li>
+<li><code>bytes</code> arguments should be passed as hex <strong>without</strong> the <code>0x</code> prefix (e.g., <code>d09de08a</code>), or as <code>""</code> for empty bytes.</li>
+</ul>
 </blockquote>
-<p><strong>How to reproduce for ethrex:</strong></p>
-<ol>
-<li>Clone <a href="https://github.com/lambdaclass/ethrex-replay">ethrex-replay</a>
-<ol>
-<li>Optionally, edit <code>Cargo.toml</code> to change the <code>ethrex</code> libraries to a specific branch/commit you want to benchmark.</li>
-<li>Run <code>cargo update</code> if you do change it.</li>
-</ol>
-</li>
-<li>Run <code>cargo r -r -F "sp1,gpu" -p ethrex-replay -- blocks --action prove --zkvm sp1 --from 23769082 --to 23769092 --rpc-url &lt;RPC&gt;</code>
-<ol>
-<li>For ethrex, an RPC endpoint that implements <code>debug_executionWitness</code> (like an ethrex or reth node) works best.</li>
-</ol>
-</li>
-</ol>
-<p><strong>How to reproduce for rsp:</strong></p>
-<ol>
-<li>Clone <a href="https://github.com/succinctlabs/rsp">rsp</a></li>
-<li>Make the following change so that we measure rsp’s proving time the same way we measure it for ethrex (duration of the <code>prove()</code> call), you can then grep the stdout for <code>proving_time</code>:</li>
-</ol>
-<pre><code class="language-bash">        diff --git a/crates/executor/host/src/full_executor.rs b/crates/executor/host/src/full_executor.rs
-    index 99a0478..d42a1d2 100644
-    --- a/crates/executor/host/src/full_executor.rs
-    +++ b/crates/executor/host/src/full_executor.rs
-    @@ -123,6 +123,7 @@ pub trait BlockExecutor&lt;C: ExecutorComponents&gt; {
-                 .map_err(|err| eyre::eyre!("{err}"))??;
-    
-                 let proving_duration = proving_start.elapsed();
-    +            println!("proving time: {}", proving_duration.as_secs());
-                 let proof_bytes = bincode::serialize(&amp;proof.proof).unwrap();
-    
-                 hooks
+<p>Verify solc is installed:</p>
+<pre><code class="language-shell">solc --version
 </code></pre>
-<ol start="3">
-<li>Run <code>SP1_PROVER=cuda cargo r -r --manifest-path bin/host/Cargo.toml --block-number &lt;BLOCK NUMBER&gt; --rpc-url &lt;RPC&gt; --prove</code>
-<ol>
-<li>For rsp, an alchemy RPC endpoint works best.</li>
-</ol>
-</li>
-</ol>
-<h2 id="optimizations"><a class="header" href="#optimizations">Optimizations</a></h2>
-<div class="table-wrapper">
-<table>
-<thead>
-<tr><th>Name</th><th>PR</th><th>tl;dr</th></tr>
-</thead>
-<tbody>
-<tr><td>jumpdest opt.</td><td>https://github.com/lambdaclass/ethrex/pull/4608</td><td>Cuts 15% total zkvm cycles</td></tr>
-<tr><td>trie opt. 1</td><td>https://github.com/lambdaclass/ethrex/pull/4648</td><td>Halves trie hashing calls</td></tr>
-<tr><td>trie opt. 2</td><td>https://github.com/lambdaclass/ethrex/pull/4723</td><td>Trie hashing zkVM cycles reduced 1/4, faster than risc0-trie</td></tr>
-<tr><td>trie opt. 3</td><td>https://github.com/lambdaclass/ethrex/pull/4763</td><td>Trie <code>get</code> and <code>insert</code> ops. reduced cycles by 1/14.</td></tr>
-<tr><td>trie opt. 4</td><td>https://github.com/lambdaclass/ethrex/pull/5224</td><td>Serialize resolved tries and removes decoding, 22% total cycles reduced</td></tr>
-<tr><td>ecpairing precompile</td><td>https://github.com/lambdaclass/ethrex/pull/4809</td><td>Reduced ecpairing cycles from 138k to 6k (10% total proving cycles gone)</td></tr>
-<tr><td>ecmul precompile</td><td>https://github.com/lambdaclass/ethrex/pull/5133</td><td>Reduces another 10% of total cycles</td></tr>
-</tbody>
-</table>
-</div>
-<p>Trie operations are one of the most expensive in our prover right now. We are using <a href="https://github.com/risc0/risc0-ethereum/tree/main/crates/trie">risc0-trie</a> as a fast zkVM trie reference to optimize our own. <a href="#ethrex-trie-optimization-for-zkvm">ethrex-trie optimization for zkvm</a> see for a detailed exploration of our trie vs risc0’s.</p>
-<h3 id="detailed-proving-times-sp1"><a class="header" href="#detailed-proving-times-sp1">Detailed proving times (SP1)</a></h3>
-<p>Benchmark server hardware:</p>
-<ul>
-<li>AMD EPYC 7713 64-Core Processor</li>
-<li>128 GB RAM</li>
-<li>RTX 4090 24 GB</li>
-</ul>
-<h3 id="absolute-times"><a class="header" href="#absolute-times">Absolute times</a></h3>
-<div class="table-wrapper">
-<table>
-<thead>
-<tr><th>Block (Mainnet)</th><th>Gas</th><th>ethrex main (<code>70fc63</code>)</th><th>ethrex (jumpdest opt.)</th><th>ethrex (ecpairing precompile)</th><th>ethrex (trie opt1.)</th><th>ethrex (trie opt2.)</th><th>ethrex (trie opt3.)</th><th>ethrex (trie opt1. + trie opt2. + trie opt3.)</th><th>ethrex (all opts, our trie)</th><th>ethrex (risc0_trie)</th><th>rsp main (<code>9a7048</code>)</th></tr>
-</thead>
-<tbody>
-<tr><td>23426993</td><td>35.7M</td><td>20m 40s</td><td>20m 04s</td><td>20m 10s</td><td>20m 12s</td><td>19m 31s</td><td>17m 20s</td><td>16m 24s</td><td>14m 38s</td><td>14m 32s</td><td>08m 39s</td></tr>
-<tr><td>23426994</td><td>20.7M</td><td>13m 24s</td><td>12m 55s</td><td>12m 32s</td><td>13m 08s</td><td>12m 48s</td><td>11m 31s</td><td>10m 53s</td><td>09m 18s</td><td>10m 04s</td><td>05m 39s</td></tr>
-<tr><td>23426995</td><td>16.6M</td><td>10m 14s</td><td>09m 54s</td><td>09m 56s</td><td>09m 56s</td><td>09m 52s</td><td>08m 39s</td><td>08m 06s</td><td>07m 20s</td><td>07m 19s</td><td>04m 33s</td></tr>
-<tr><td>23426996</td><td>22.5M</td><td>16m 58s</td><td>16m 37s</td><td>15m 48s</td><td>16m 50s</td><td>15m 42s</td><td>14m 44s</td><td>14m 08s</td><td>12m 25s</td><td>12m 59s</td><td>06m 39s</td></tr>
-</tbody>
-</table>
-</div>
-<h3 id="relative-improvement-vs-ethrex-main-opt---basebase--100"><a class="header" href="#relative-improvement-vs-ethrex-main-opt---basebase--100">Relative improvement vs ethrex main (<code>(opt - base)/base * 100</code>)</a></h3>
-<div class="table-wrapper">
-<table>
-<thead>
-<tr><th>Block (Mainnet)</th><th>Gas</th><th>ethrex (jumpdest opt.)</th><th>ethrex (ecpairing precompile)</th><th>ethrex (trie opt1.)</th><th>ethrex (trie opt2.)</th><th>ethrex (trie opt3.)</th><th>ethrex (trie opt1+2+3)</th><th>ethrex (all opts, our trie)</th><th>ethrex (risc0_trie)</th></tr>
-</thead>
-<tbody>
-<tr><td>23426993</td><td>35.7M</td><td>-2.9%</td><td>-2.4%</td><td>-2.3%</td><td>-5.6%</td><td>-16.1%</td><td>-20.6%</td><td>-29.2%</td><td>-29.7%</td></tr>
-<tr><td>23426994</td><td>20.7M</td><td>-3.6%</td><td>-6.5%</td><td>-2.0%</td><td>-4.5%</td><td>-14.1%</td><td>-18.8%</td><td>-30.6%</td><td>-24.9%</td></tr>
-<tr><td>23426995</td><td>16.6M</td><td>-3.3%</td><td>-2.9%</td><td>-2.9%</td><td>-3.6%</td><td>-15.5%</td><td>-20.8%</td><td>-28.3%</td><td>-28.5%</td></tr>
-<tr><td>23426996</td><td>22.5M</td><td>-2.1%</td><td>-6.9%</td><td>-0.8%</td><td>-7.5%</td><td>-13.2%</td><td>-16.7%</td><td>-26.8%</td><td>-23.5%</td></tr>
-</tbody>
-</table>
-</div>
-<h3 id="relative-to-rsp-main-opt---rsp--rsp--100"><a class="header" href="#relative-to-rsp-main-opt---rsp--rsp--100">Relative to RSP main (<code>(opt - rsp) / rsp * 100</code>)</a></h3>
-<div class="table-wrapper">
-<table>
-<thead>
-<tr><th>Block</th><th>Gas</th><th>ethrex main</th><th>ethrex (jumpdest opt.)</th><th>ethrex (ecpairing precompile)</th><th>ethrex (trie opt1.)</th><th>ethrex (trie opt2.)</th><th>ethrex (trie opt3.)</th><th>ethrex (trie opt1+2+3)</th><th>ethrex (all opts, our trie)</th><th>ethrex (risc0_trie)</th></tr>
-</thead>
-<tbody>
-<tr><td>23426993</td><td>35.7M</td><td>138.9%</td><td>132.0%</td><td>133.1%</td><td>133.5%</td><td>125.6%</td><td>100.4%</td><td>89.6%</td><td>69.2%</td><td>68.0%</td></tr>
-<tr><td>23426994</td><td>20.7M</td><td>137.2%</td><td>128.6%</td><td>121.8%</td><td>132.4%</td><td>126.5%</td><td>103.8%</td><td>92.6%</td><td>64.6%</td><td>78.2%</td></tr>
-<tr><td>23426995</td><td>16.6M</td><td>124.9%</td><td>117.6%</td><td>118.3%</td><td>118.3%</td><td>116.8%</td><td>90.1%</td><td>78.0%</td><td>61.2%</td><td>60.8%</td></tr>
-<tr><td>23426996</td><td>22.5M</td><td>155.1%</td><td>149.9%</td><td>137.6%</td><td>153.1%</td><td>136.1%</td><td>121.6%</td><td>112.5%</td><td>86.7%</td><td>95.2%</td></tr>
-</tbody>
-</table>
-</div>
-<h1 id="ethrex-trie-optimization-for-zkvm"><a class="header" href="#ethrex-trie-optimization-for-zkvm">ethrex-trie optimization for zkvm</a></h1>
-<h1 id="overview"><a class="header" href="#overview">Overview</a></h1>
-<p>Using the risc0-trie we get the next perf. gains in cycle count over our ethrex-trie:</p>
-<ul>
-<li><code>rebuild_storage_trie()</code> 218.999 -&gt; 64.435 (x3.4)</li>
-<li><code>rebuild_state_trie()</code> 119.510 -&gt; 37.426 (x3.2)</li>
-<li><code>apply_account_updates()</code> 139.519 -&gt; 16.702 (x8.4)</li>
-<li><code>state_trie_root()</code> 63.482 -&gt; 17.276 (x3.7)</li>
-<li><code>validate_receipts_root()</code> 13.068 -&gt; 2.013 (x6.5)</li>
-</ul>
-<p>our goal is to have our trie perform as close as possible to risc0’s.</p>
-<h1 id="flamegraph-overview"><a class="header" href="#flamegraph-overview">Flamegraph overview</a></h1>
-<p>ethrex-trie (filtering for <code>ethrex_trie</code> functions)
-<img src="img/ethrex_trie_flamegraph.png" alt="alt text"></p>
-<p>risc0-trie (filtering for <code>risc0_ethereum_trie</code> functions)
-<img src="img/risc0_trie_flamegraph.png" alt="alt text"></p>
-<h1 id="optimizations-to-our-trie"><a class="header" href="#optimizations-to-our-trie">Optimizations to our trie</a></h1>
-<h2 id="1-caching-the-initial-node-hashes"><a class="header" href="#1-caching-the-initial-node-hashes">1. Caching the initial node hashes</a></h2>
-<p>https://github.com/lambdaclass/ethrex/pull/4648</p>
-<p>We were calculating all the hashes of the initial state trie (and storage) nodes, but we weren’t caching them when building the tries, so there was double hashing. https://github.com/lambdaclass/ethrex/pull/4648 fixes it by introducing a function to manually set the cached hash of a node, and caching whenever building a trie using <code>Trie::from_nodes</code> .</p>
-<p>Calls to <code>compute_hash</code> were reduced by half after those changes:</p>
-<p>before
-<img src="img/before_initial_hash_caching.png" alt="alt text"></p>
-<p>after
-<img src="img/after_initial_hash_caching.png" alt="alt text"></p>
-<p>although the total proving time didn’t change that much:</p>
-<p><img src="img/initial_hash_caching_prove_time.png" alt="alt text"></p>
-<p>(proved with SP1 in <code>l2-gpu-3</code>, RTX 4090)</p>
-<h2 id="2-memcpy-calls-on-trie-hashing"><a class="header" href="#2-memcpy-calls-on-trie-hashing">2. <code>memcpy</code> calls on trie hashing</a></h2>
-<p>ethrex-trie:
-<img src="img/ethrex_trie_hashing.png" alt="alt text"></p>
-<p>risc0-trie:
-<img src="img/risc0_trie_hashing.png" alt="alt text"></p>
-<p>our <code>Node::compute_hash</code> is almost on par with risc0’s <code>Node::memoize</code> (hashes and caches the hash) but we have a big <code>memcpy</code> call that’s almost twice as long in cycles as the actual hashing.</p>
-<p>initially I thought this was an overhead of <code>OnceLock::initialize</code> because risc0 uses an <code>Option</code> to cache the hash, but apparently that’s not the case as I ran a small experiment in which I compared initialization cycles for both and got the next results:</p>
-<pre><code class="language-bash">Report cycle tracker: {"oncelock": 3830000, "option": 3670000}
-</code></pre>
-<details>
-<summary>Experiment code</summary>
-<pre><code>lib
-
-```rust
-use std::sync::OnceLock;
-
-pub struct OnceLockCache {
-    pub inner: OnceLock&lt;u128&gt;,
-}
-
-impl OnceLockCache {
-    pub fn init(&amp;self, inner: u128) {
-        println!("cycle-tracker-report-start: oncelock");
-        self.inner.get_or_init(|| compute_inner(inner));
-        println!("cycle-tracker-report-end: oncelock");
-    }
-}
-
-pub struct OptionCache {
-    pub inner: Option&lt;u128&gt;,
-}
-
-impl OptionCache {
-    pub fn init(&amp;mut self, inner: u128) {
-        println!("cycle-tracker-report-start: option");
-        self.inner = Some(compute_inner(inner));
-        println!("cycle-tracker-report-end: option");
-    }
-}
-
-pub fn compute_inner(inner: u128) -&gt; u128 {
-    inner.pow(2)
-}
-```
-
-guest program
-
-```rust
-#![no_main]
-sp1_zkvm::entrypoint!(main);
-
-use std::sync::OnceLock;
-
-use fibonacci_lib::{OnceLockCache, OptionCache};
-
-pub fn main() {
-    let mut oncelocks = Vec::with_capacity(10000);
-    let mut options = Vec::with_capacity(10000);
-
-    for i in (1 &lt;&lt; 64)..((1 &lt;&lt; 64) + 10000) {
-        let oncelock_cache = OnceLockCache {
-            inner: OnceLock::new(),
-        };
-        oncelock_cache.init(i);
-        oncelocks.push(oncelock_cache);
-    }
-
-    for i in (1 &lt;&lt; 64)..((1 &lt;&lt; 64) + 10000) {
-        let mut option_cache = OptionCache { inner: None };
-        option_cache.init(i);
-        options.push(option_cache);
-    }
-}
-```
-</code></pre>
-</details>
-<p>in the flamegraph it’s not clear where that <code>memcpy</code> is originating (any ideas?). The calls that are on top of it are <code>encode_bytes()</code> (from our RLP lib) and some <code>sha3</code> calls.</p>
+<h2 id="demo"><a class="header" href="#demo">Demo</a></h2>
 <blockquote>
-<p>Node hashing is composed of two operations: first the node is encoded into RLP, then we keccak hash the result.</p>
+<p><strong>What this demo shows:</strong> a native rollup L2 that settles blocks to L1 via direct re-execution (the EXECUTE precompile), with a live deposit (L1→L2) and withdrawal (L2→L1) roundtrip.</p>
 </blockquote>
-<h3 id="rlp-encoding"><a class="header" href="#rlp-encoding">RLP Encoding</a></h3>
-<p>Our RLP lib uses a temp buffer to write encoded payloads to, and in the end it <code>finalize</code>s the encoding by writing the payload prefix (which contains a length) to an output buffer, plus the actual payload. This means we are allocating two buffers, initializing them, and copying bytes to both of them for each node that’s being encoded and hashed.</p>
-<p>First I tried preallocating the buffers (which are vecs) by estimating a node’s final RLP length.</p>
-<p>This was done in the <code>l2/opt_rlp_buffer</code>, this had an influence on the <code>memcpy</code> length by reducing it almost 15%:</p>
-<p>then I tried to bypass our RLP encoder altogether by implementing a small and fast encoding for the <code>Branch</code> node only (which is the majoritarian node type), this reduced <code>memcpy</code>  further, 30% over <code>main</code>:</p>
-<p>I didn’t test implementing fast RLP for the other node types as I was expecting a bigger reduction in <code>memcpy</code> from <code>Branch</code> alone.</p>
-<h3 id="keccak"><a class="header" href="#keccak">Keccak</a></h3>
-<p>A difference between our trie and risc0’s is that they use the <code>tiny-keccak</code> crate instead of <code>sha3</code> as we do. I tried replacing it in our trie but the <code>memcpy</code> got bigger.</p>
-<p>Regarding memory, I also noticed that when hashing we are initializing a 32 byte array and writing the hash to it after. I wanted to test if this mattered so I experimented by creating an uninitialized buffer with <code>MaybeUninit</code> (unsafe rust) and writing the hash to it. This had no impact in <code>memcpy</code>’s length.</p>
-<p>Both changes are in the <code>l2/opt_keccak</code> branch.</p>
-<h3 id="final"><a class="header" href="#final">Final</a></h3>
-<p>At the end the problem was a combination of slow RLP encoding and that we did a preorder traversal while hashing a trie recursively. This was fixed in https://github.com/lambdaclass/ethrex/pull/4723.</p>
-<h2 id="3-node-cloning-in-noderefget_node"><a class="header" href="#3-node-cloning-in-noderefget_node">3. Node cloning in <code>NodeRef::get_node</code></a></h2>
-<p>Whenever we <code>get</code>, <code>insert</code> or <code>remove</code> from a trie we are calling <code>NodeRef::get_node</code> which clones the <code>Node</code> from memory and returns it, which means that for each operation over a trie we are cloning all the relevant nodes for that op.</p>
-<p>This is fixed in https://github.com/lambdaclass/ethrex/pull/4763 see that PR desc. for details</p>
+<p>The native rollup L2 runs with two terminals: one for L1, one for L2. A third terminal is used for deploying, querying, and interacting.</p>
+<p>All commands are run from the repository root.</p>
+<h3 id="setup"><a class="header" href="#setup">Setup</a></h3>
+<p>Build the binary first (this compiles the Solidity contracts and embeds them):</p>
+<pre><code class="language-shell">COMPILE_CONTRACTS=true cargo build --release --features l2,l2-sql
+</code></pre>
+<p>Clean up any previous state:</p>
+<pre><code class="language-shell">rm -rf /tmp/ethrex_l1 /tmp/ethrex_l2
+</code></pre>
+<h4 id="terminal-1--start-l1"><a class="header" href="#terminal-1--start-l1">Terminal 1 — Start L1</a></h4>
+<p>Start a local ethrex L1 with the EXECUTE precompile enabled. This uses a
+dedicated genesis (<code>l1_native.json</code>) that activates the LStar fork, which is
+what turns address <code>0x0101</code> into the <code>EXECUTE</code> precompile:</p>
+<pre><code class="language-shell">./target/release/ethrex \
+  --network fixtures/genesis/l1_native.json \
+  --http.port 8545 --http.addr 0.0.0.0 --authrpc.port 8551 \
+  --dev --datadir /tmp/ethrex_l1
+</code></pre>
+<p>Wait until you see L1 producing blocks (the <code>--dev</code> flag auto-mines).</p>
+<h4 id="terminal-2--deploy-contracts-and-start-l2"><a class="header" href="#terminal-2--deploy-contracts-and-start-l2">Terminal 2 — Deploy contracts and start L2</a></h4>
+<p>Deploy <code>NativeRollup.sol</code> to L1 and generate the L2 genesis:</p>
+<pre><code class="language-shell">./target/release/ethrex l2 deploy \
+  --eth-rpc-url http://localhost:8545 \
+  --private-key 0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924 \
+  --native-rollups \
+  --native-rollups.relayer-pk 0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d \
+  --native-rollups.finality-delay 0 \
+  --l2-gas-limit 15000000 \
+  --genesis-l2-path fixtures/genesis/native_l2.json
+</code></pre>
+<blockquote>
+<p><strong><code>--l2-gas-limit</code></strong>: <code>advance()</code> re-executes the whole L2 block inside a single
+L1 transaction, so this value must stay under the L1 per-transaction gas cap
+(EIP-7825, 16,777,216) with headroom for the precompile’s witness/bookkeeping
+gas. <code>15000000</code> is the tested value; the deployer rejects anything above the cap
+and the immutable contract enforces the same bound in its constructor.</p>
+<p><strong><code>--native-rollups.finality-delay 0</code></strong>: instant finality, <strong>local demo only</strong>.
+The value is baked immutably into the contract, has no default, and a production
+deployment must pass a reorg-safe delay in seconds.</p>
+</blockquote>
+<p>You should see output like:</p>
+<pre><code>NativeRollup.sol deployed at: 0x...
+Contract address written to cmd/.env
+</code></pre>
+<p>Load the contract address and start the L2 node:</p>
+<pre><code class="language-shell">source cmd/.env
+
+./target/release/ethrex l2 \
+  --native-rollups \
+  --native-rollups.contract-address $ETHREX_NATIVE_ROLLUP_CONTRACT_ADDRESS \
+  --native-rollups.relayer-pk 0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d \
+  --native-rollups.l1-pk 0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924 \
+  --network fixtures/genesis/native_l2.json \
+  --http.port 1729 --http.addr 0.0.0.0 \
+  --datadir /tmp/ethrex_l2 \
+  --eth.rpc-url http://localhost:8545 \
+  --no-monitor
+</code></pre>
+<h3 id="step-1-verify-the-l2-is-advancing"><a class="header" href="#step-1-verify-the-l2-is-advancing">Step 1: Verify the L2 is advancing</a></h3>
+<p>Once the L2 is running, you should see log lines like:</p>
+<pre><code>NativeBlockProducer: produced block N (0x...) with M txs, gas_used=X
+NativeL1Advancer: advanced block N on L1 (state_root=0x..., l1_msgs=0, tx=Some(0x...))
+</code></pre>
+<p>Query the L1 contract to verify:</p>
+<pre><code class="language-shell">source cmd/.env
+
+# L2 block number committed to L1
+rex call $ETHREX_NATIVE_ROLLUP_CONTRACT_ADDRESS "blockNumber()" --rpc-url http://localhost:8545
+
+# L2 block number from the L2 RPC directly
+rex block-number --rpc-url http://localhost:1729
+</code></pre>
+<p>The L1 value should trail the L2 value by a few blocks (the advancer runs on a configurable interval).</p>
+<h3 id="step-2-query-contract-state"><a class="header" href="#step-2-query-contract-state">Step 2: Query contract state</a></h3>
+<p>The <code>NativeRollup.sol</code> contract exposes public getters for all its state:</p>
+<pre><code class="language-shell"># Current L2 state root
+rex call $ETHREX_NATIVE_ROLLUP_CONTRACT_ADDRESS "stateRoot()" --rpc-url http://localhost:8545
+
+# Current L2 block hash
+rex call $ETHREX_NATIVE_ROLLUP_CONTRACT_ADDRESS "blockHash()" --rpc-url http://localhost:8545
+
+# Block gas limit
+rex call $ETHREX_NATIVE_ROLLUP_CONTRACT_ADDRESS "l2GasLimit()" --rpc-url http://localhost:8545
+
+# Chain ID
+rex call $ETHREX_NATIVE_ROLLUP_CONTRACT_ADDRESS "chainId()" --rpc-url http://localhost:8545
+</code></pre>
+<h3 id="step-3-deposit-eth-l1--l2"><a class="header" href="#step-3-deposit-eth-l1--l2">Step 3: Deposit ETH (L1 → L2)</a></h3>
+<p>Send ETH from L1 to a fresh account on L2.</p>
+<pre><code class="language-shell"># Pick a fresh address (not pre-funded on L2)
+# Private key 0x42 → address 0x6f4c950442e1af093bcff730381e63ae9171b87a
+DEPOSIT_TO=0x6f4c950442e1af093bcff730381e63ae9171b87a
+
+# Check L2 balance is 0
+rex balance $DEPOSIT_TO --rpc-url http://localhost:1729
+
+# Deposit 1 ETH via sendL1Message(to, gasLimit, data)
+# Note: --value is in wei (1 ETH = 1000000000000000000)
+rex send $ETHREX_NATIVE_ROLLUP_CONTRACT_ADDRESS \
+  "sendL1Message(address,uint256,bytes)" \
+  $DEPOSIT_TO 105000 "" \
+  --value 1000000000000000000 \
+  --rpc-url http://localhost:8545 \
+  -k 0xbcdf20249abf0ed6d944c0288fad489e33f66b3960d9e6229c1cd214ed3bbe31
+
+# Watch the L2 logs in Terminal 2 — the watcher picks up the message and
+# the block producer includes a relayer tx for it.
+
+# After ~10 seconds, check the L2 balance:
+rex balance $DEPOSIT_TO --rpc-url http://localhost:1729
+# Should show 1000000000000000000 (1 ETH in wei)
+</code></pre>
+<h3 id="step-4-deploy-a-contract-on-l2-and-call-it-from-l1"><a class="header" href="#step-4-deploy-a-contract-on-l2-and-call-it-from-l1">Step 4: Deploy a contract on L2 and call it from L1</a></h3>
+<p>This step demonstrates that L1→L2 messages can carry arbitrary calldata, not just ETH transfers. We deploy a Counter contract on L2, then increment it by sending a message from L1.</p>
+<pre><code class="language-shell"># Deploy Counter.sol on L2 (increment + get functions)
+# Uses the deposit recipient account (funded with 1 ETH in Step 3)
+rex deploy --contract-path crates/l2/contracts/src/example/Counter.sol \
+  --remappings "" \
+  --rpc-url http://localhost:1729 \
+  --private-key 0x0000000000000000000000000000000000000000000000000000000000000042
+# Note the deployed contract address from the output
+COUNTER=&lt;deployed_address&gt;
+
+# Verify counter starts at 0
+rex call $COUNTER "count()" --rpc-url http://localhost:1729
+
+# Send an L1 message that calls increment() on the counter
+# increment() selector = 0xd09de08a (pass without 0x prefix as bytes arg)
+rex send $ETHREX_NATIVE_ROLLUP_CONTRACT_ADDRESS \
+  "sendL1Message(address,uint256,bytes)" \
+  $COUNTER 105000 d09de08a \
+  --value 0 \
+  --rpc-url http://localhost:8545 \
+  -k 0xbcdf20249abf0ed6d944c0288fad489e33f66b3960d9e6229c1cd214ed3bbe31
+
+# Wait ~10 seconds for the L2 to process the L1 message, then check:
+rex call $COUNTER "count()" --rpc-url http://localhost:1729
+# Should return 1
+</code></pre>
+<h3 id="step-5-withdraw-eth-l2--l1"><a class="header" href="#step-5-withdraw-eth-l2--l1">Step 5: Withdraw ETH (L2 → L1)</a></h3>
+<p>Send ETH from L2 back to an L1 address.</p>
+<pre><code class="language-shell"># L1 receiver address (the deployer account)
+L1_RECEIVER=0xE25583099BA105D9ec0A67f5Ae86D90e50036425
+
+# Record L1 balance before
+rex balance $L1_RECEIVER --rpc-url http://localhost:8545
+
+# Withdraw 0.5 ETH from L2 via L2Bridge.withdraw(receiver)
+# Uses the test account's private key (0x42)
+rex send 0x000000000000000000000000000000000000fffd \
+  "withdraw(address)" \
+  $L1_RECEIVER \
+  --value 500000000000000000 \
+  --rpc-url http://localhost:1729 \
+  -k 0x0000000000000000000000000000000000000000000000000000000000000042
+</code></pre>
+<p>Wait for the L2 block containing the withdrawal to be advanced on L1 (watch the advancer logs in Terminal 2).</p>
+<p>Then claim the withdrawal on L1 (replace <code>TX_HASH</code> with the L2 withdrawal tx hash from the output above):</p>
+<pre><code class="language-shell"># Fetches the proof from L2 and claims the withdrawal on L1 in one step
+rex l2 claim-native-withdraw TX_HASH \
+  0xbcdf20249abf0ed6d944c0288fad489e33f66b3960d9e6229c1cd214ed3bbe31 \
+  $ETHREX_NATIVE_ROLLUP_CONTRACT_ADDRESS \
+  http://localhost:8545 \
+  http://localhost:1729
+
+# Verify the L1 balance increased
+rex balance $L1_RECEIVER --rpc-url http://localhost:8545
+</code></pre>
+<blockquote class="blockquote-tag blockquote-tag-tip">
+<p class="blockquote-tag-title"><svg viewbox="0 0 16 16" width="18" height="18"><path d="M8 1.5c-2.363 0-4 1.69-4 3.75 0 .984.424 1.625.984 2.304l.214.253c.223.264.47.556.673.848.284.411.537.896.621 1.49a.75.75 0 0 1-1.484.211c-.04-.282-.163-.547-.37-.847a8.456 8.456 0 0 0-.542-.68c-.084-.1-.173-.205-.268-.32C3.201 7.75 2.5 6.766 2.5 5.25 2.5 2.31 4.863 0 8 0s5.5 2.31 5.5 5.25c0 1.516-.701 2.5-1.328 3.259-.095.115-.184.22-.268.319-.207.245-.383.453-.541.681-.208.3-.33.565-.37.847a.751.751 0 0 1-1.485-.212c.084-.593.337-1.078.621-1.489.203-.292.45-.584.673-.848.075-.088.147-.173.213-.253.561-.679.985-1.32.985-2.304 0-2.06-1.637-3.75-4-3.75ZM5.75 12h4.5a.75.75 0 0 1 0 1.5h-4.5a.75.75 0 0 1 0-1.5ZM6 15.25a.75.75 0 0 1 .75-.75h2.5a.75.75 0 0 1 0 1.5h-2.5a.75.75 0 0 1-.75-.75Z"></path></svg>Tip</p>
+<p>The integration test at <code>test/tests/l2/native_rollup.rs</code> automates the full deposit/withdraw/counter roundtrip including proof fetching and claim submission. Run it with:</p>
+<pre><code class="language-shell">cargo test -p ethrex-test --features l2 -- l2::native_rollup --nocapture
+</code></pre>
+</blockquote>
+<h3 id="step-6-verify-precompile-usage-with-blockscout"><a class="header" href="#step-6-verify-precompile-usage-with-blockscout">Step 6: Verify precompile usage with Blockscout</a></h3>
+<p>Run a <a href="https://github.com/blockscout/blockscout">Blockscout</a> block explorer against the L1 to visually confirm that each <code>advance()</code> transaction triggers an internal CALL to the EXECUTE precompile at <code>0x0000...0101</code>.</p>
+<p>Requires Docker and a local clone of <a href="https://github.com/blockscout/blockscout">Blockscout</a>.</p>
+<h4 id="set-up-blockscout"><a class="header" href="#set-up-blockscout">Set up Blockscout</a></h4>
+<p>Clone Blockscout and enable the smart contract verifier (needed to decode method names):</p>
+<pre><code class="language-shell">git clone https://github.com/blockscout/blockscout.git ~/Documents/blockscout
+cd ~/Documents/blockscout/docker-compose
+</code></pre>
+<p>Add the <code>smart-contract-verifier</code> service to <code>geth.yml</code> (after the <code>sig-provider</code> service):</p>
+<pre><code class="language-yaml">  smart-contract-verifier:
+    extends:
+      file: ./services/smart-contract-verifier.yml
+      service: smart-contract-verifier
+</code></pre>
+<p>Enable it in <code>envs/common-blockscout.env</code> — find the commented-out verifier lines and replace them with:</p>
+<pre><code>MICROSERVICE_SC_VERIFIER_ENABLED=true
+MICROSERVICE_SC_VERIFIER_URL=http://smart-contract-verifier:8050/
+MICROSERVICE_SC_VERIFIER_TYPE=sc_verifier
+</code></pre>
+<h4 id="start-blockscout"><a class="header" href="#start-blockscout">Start Blockscout</a></h4>
+<p>With L1 and L2 already running:</p>
+<pre><code class="language-shell">cd ~/Documents/blockscout/docker-compose
+docker compose -f geth.yml up -d
+</code></pre>
+<p>Wait for Blockscout to finish indexing before proceeding. The more blocks L1 has already mined, the longer this takes (typically 1-2 minutes). You can check progress at http://localhost or via the API:</p>
+<pre><code class="language-shell">curl -s 'http://localhost/api/v2/main-page/indexing-status' | python3 -m json.tool
+# Wait until "finished_indexing_blocks": true and "indexed_blocks_ratio": "1.00"
+</code></pre>
+<p>Then open http://localhost.</p>
+<h4 id="verify-the-nativerollup-contract"><a class="header" href="#verify-the-nativerollup-contract">Verify the NativeRollup contract</a></h4>
+<p>Verifying the contract in Blockscout lets it decode function selectors (like <code>0x069c7eee</code>) into human-readable method names (like <code>advance</code>). This uses Blockscout’s built-in verification API — it’s completely local and free.</p>
+<blockquote class="blockquote-tag blockquote-tag-important">
+<p class="blockquote-tag-title"><svg viewbox="0 0 16 16" width="18" height="18"><path d="M0 1.75C0 .784.784 0 1.75 0h12.5C15.216 0 16 .784 16 1.75v9.5A1.75 1.75 0 0 1 14.25 13H8.06l-2.573 2.573A1.458 1.458 0 0 1 3 14.543V13H1.75A1.75 1.75 0 0 1 0 11.25Zm1.75-.25a.25.25 0 0 0-.25.25v9.5c0 .138.112.25.25.25h2a.75.75 0 0 1 .75.75v2.19l2.72-2.72a.749.749 0 0 1 .53-.22h6.5a.25.25 0 0 0 .25-.25v-9.5a.25.25 0 0 0-.25-.25Zm7 2.25v2.5a.75.75 0 0 1-1.5 0v-2.5a.75.75 0 0 1 1.5 0ZM9 9a1 1 0 1 1-2 0 1 1 0 0 1 2 0Z"></path></svg>Important</p>
+<p>The contract must be fully indexed before verification works. If the script fails with <code>Address is not a smart-contract</code>, wait another 30 seconds and retry — Blockscout is still processing.</p>
+</blockquote>
+<p>From the ethrex repo root, run:</p>
+<pre><code class="language-shell">python3 tooling/l2/dev/blockscout_verify_native_rollup.py $ETHREX_NATIVE_ROLLUP_CONTRACT_ADDRESS
+</code></pre>
+<p>You should see <code>Contract verified successfully!</code>. Now Blockscout will show decoded method names, event names, and parameter values for all interactions with the contract.</p>
+<h4 id="what-to-look-for"><a class="header" href="#what-to-look-for">What to look for</a></h4>
+<p>On the homepage you should see <code>advance</code> transactions from the advancer to the NativeRollup contract. Click any of them and check:</p>
+<ul>
+<li><strong>Internal txns</strong> tab: shows <code>Call | Success | 0xC5...7600 → 0x00...0101</code> — the NativeRollup contract calling the EXECUTE precompile.</li>
+<li><strong>Logs</strong> tab: shows the <code>StateAdvanced</code> event with the new L2 block number and state root.</li>
+</ul>
+<h4 id="stop-blockscout"><a class="header" href="#stop-blockscout">Stop Blockscout</a></h4>
+<pre><code class="language-shell">cd ~/Documents/blockscout/docker-compose
+docker compose -f geth.yml down -v
+rm -rf services/blockscout-db-data services/stats-db-data
+</code></pre>
+<h3 id="cleaning-up"><a class="header" href="#cleaning-up">Cleaning up</a></h3>
+<p>Remove the databases to start fresh:</p>
+<pre><code class="language-shell">rm -rf /tmp/ethrex_l1 /tmp/ethrex_l2
+</code></pre>
+<h2 id="further-reading"><a class="header" href="#further-reading">Further reading</a></h2>
+<ul>
+<li><a href="../../vm/levm/native_rollups.html">EXECUTE precompile architecture</a> — detailed specification of the precompile, contracts, gap analysis vs the L2Beat native rollups spec, and L1 message mechanism</li>
+</ul>
 
                     </main>
 
                     <nav class="nav-wrapper" aria-label="Page navigation">
                         <!-- Mobile navigation buttons -->
-                            <a rel="prev" href="../../l2/bench/zkvm_comparison.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                            <a rel="prev" href="../../l2/deployment/based.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                                 <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                             </a>
 
-                            <a rel="next prefetch" href="../../case-studies.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                            <a rel="next prefetch" href="../../l2/deployment/aligned.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                                 <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
                             </a>
 
@@ -468,11 +505,11 @@ pub fn main() {
             </div>
 
             <nav class="nav-wide-wrapper" aria-label="Page navigation">
-                    <a rel="prev" href="../../l2/bench/zkvm_comparison.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                    <a rel="prev" href="../../l2/deployment/based.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                         <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                     </a>
 
-                    <a rel="next prefetch" href="../../case-studies.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                    <a rel="next prefetch" href="../../l2/deployment/aligned.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                         <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
                     </a>
             </nav>
