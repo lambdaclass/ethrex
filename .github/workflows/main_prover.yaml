@@ -8,6 +8,9 @@ on:
   pull_request:
     paths:
       - ".github/workflows/main_prover.yaml"
+      - "Dockerfile"
+      - ".dockerignore"
+      - "crates/l2/docker-compose*.yaml"
   workflow_dispatch:
     inputs:
       ref:
@@ -28,6 +31,11 @@ env:
   # Work around frequent libgit2/submodule fetch flakiness in CI.
   CARGO_NET_GIT_FETCH_WITH_CLI: "true"
   CARGO_NET_RETRY: "10"
+  # Image metadata for the compose-built images (consumed by docker-compose.yaml
+  # build args). Without these, compose-built images bake revision=unknown/version=dev.
+  GIT_SHA: ${{ github.sha }}
+  GIT_BRANCH: ${{ github.head_ref || github.ref_name }}
+  VERSION: dev-${{ github.sha }}
 
 jobs:
   test:
@@ -45,6 +53,9 @@ jobs:
           ref: ${{ github.event_name == 'workflow_dispatch' && inputs.ref || github.sha }}
       - name: Setup Rust Environment
         uses: ./.github/actions/setup-rust
+        with:
+          cache-pool: prover
+          save-cache: 'true'
 
       - name: Check solc
         run: solc --version
@@ -86,7 +97,7 @@ jobs:
       - name: Build test
         # if: ${{ always() && github.event_name == 'merge_group' }}
         run: |
-          cargo test -p ethrex-test l2_integration_test --no-run --release
+          cargo test -p ethrex-test l2_integration_test --no-run --release --features l2
 
       - name: Start L1
         run: |

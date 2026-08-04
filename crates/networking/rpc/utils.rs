@@ -50,6 +50,12 @@ pub enum RpcErr {
     Halt { reason: String, gas_used: u64 },
     #[error("Authentication error: {0:?}")]
     AuthenticationError(AuthenticationError),
+    /// JSON-RPC 2.0 §5.1: the JSON sent is not a valid Request object. Used
+    /// for malformed bodies on the auth port (e.g. empty batches) where we
+    /// also drop the request id (per spec, id MUST be null when it cannot
+    /// be detected).
+    #[error("Invalid Request: {0}")]
+    InvalidRequest(String),
     #[error("Invalid forkchoice state: {0}")]
     InvalidForkChoiceState(String),
     #[error("Invalid payload attributes: {0}")]
@@ -86,6 +92,11 @@ impl From<RpcErr> for RpcErrorMetadata {
                 code: -32000,
                 data: None,
                 message: format!("Invalid params: {context}"),
+            },
+            RpcErr::InvalidRequest(context) => RpcErrorMetadata {
+                code: -32600,
+                data: None,
+                message: format!("Invalid Request: {context}"),
             },
             RpcErr::MissingParam(parameter_name) => RpcErrorMetadata {
                 code: -32000,
@@ -241,6 +252,9 @@ pub enum RpcNamespace {
     Net,
     /// Transaction pool inspection methods (exposed as `txpool_*`).
     Mempool,
+    /// Testing-only methods for fixture generation (exposed as `testing_*`).
+    /// Disabled by default; must never be exposed on public-facing RPC APIs.
+    Testing,
 }
 
 impl RpcNamespace {
@@ -254,6 +268,7 @@ impl RpcNamespace {
             "web3" => Some(RpcNamespace::Web3),
             "net" => Some(RpcNamespace::Net),
             "txpool" => Some(RpcNamespace::Mempool),
+            "testing" => Some(RpcNamespace::Testing),
             _ => None,
         }
     }
@@ -334,7 +349,7 @@ impl Default for RpcRequest {
 ///
 /// Contains the error code, message, and optional additional data.
 /// Error codes follow the JSON-RPC 2.0 and Ethereum conventions.
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct RpcErrorMetadata {
     /// Numeric error code (negative for standard errors).
     pub code: i32,

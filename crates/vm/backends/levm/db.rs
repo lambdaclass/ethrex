@@ -1,5 +1,5 @@
 use ethrex_common::U256 as CoreU256;
-use ethrex_common::constants::EMPTY_KECCACK_HASH;
+use ethrex_common::constants::EMPTY_KECCAK_HASH;
 use ethrex_common::types::{AccountState, Code, CodeMetadata};
 use ethrex_common::{Address as CoreAddress, H256 as CoreH256};
 use ethrex_levm::db::Database as LevmDatabase;
@@ -69,7 +69,7 @@ impl LevmDatabase for DatabaseLogger {
     }
 
     fn get_account_code(&self, code_hash: CoreH256) -> Result<Code, DatabaseError> {
-        if code_hash != *EMPTY_KECCACK_HASH {
+        if code_hash != *EMPTY_KECCAK_HASH {
             let mut code_accessed = self
                 .code_accessed
                 .lock()
@@ -91,6 +91,18 @@ impl LevmDatabase for DynVmDatabase {
             .unwrap_or_default();
 
         Ok(acc_state)
+    }
+
+    fn get_account_states_batch(
+        &self,
+        addresses: &[CoreAddress],
+    ) -> Result<Vec<AccountState>, DatabaseError> {
+        let states = <dyn VmDatabase>::get_account_states_batch(self.as_ref(), addresses)
+            .map_err(|e| DatabaseError::Custom(e.to_string()))?;
+        Ok(states
+            .into_iter()
+            .map(|opt| opt.unwrap_or_default())
+            .collect())
     }
 
     fn get_storage_value(

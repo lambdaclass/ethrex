@@ -77,7 +77,7 @@ impl Hook for L2Hook {
         // Max fee per gas must be sufficient to cover base fee + operator fee
         validate_sufficient_max_fee_per_gas_l2(vm, &self.fee_config.operator_fee_config)?;
         // Reserve L1 gas from the execution budget so execution can't consume it.
-        // If gas_limit < intrinsic_gas + l1_gas, this returns IntrinsicGasTooLow.
+        // If gas_limit < intrinsic_gas + l1_gas, this returns L1GasReservationTooLow.
         reserve_l1_gas(vm, &self.fee_config.l1_fee_config)?;
         Ok(())
     }
@@ -319,12 +319,19 @@ fn validate_sufficient_max_fee_per_gas_l2(
 /// the griefing vector where a user sets gas_limit = intrinsic_gas.
 ///
 /// If gas_limit < intrinsic_gas + l1_gas, increase_consumed_gas returns
-/// OutOfGas, which we map to IntrinsicGasTooLow to reject the tx upfront.
+/// OutOfGas, which we map to L1GasReservationTooLow to reject the tx upfront.
 ///
 /// On Prague+, also validates gas_limit >= floor + l1_gas (EIP-7623).
 /// Finalize computes actual_gas_used = max(execution_gas, floor) + l1_gas,
 /// so without this check a tx with heavy calldata could pass validation
 /// but underflow in refund_sender.
+///
+/// Both failures use `L1GasReservationTooLow` rather than `IntrinsicGasTooLow`
+/// because `l1_gas` tracks the L1 fee config and the block's gas price: a tx can
+/// fail here purely because L1 data availability was momentarily expensive and
+/// succeed in the next block. Reusing `IntrinsicGasTooLow` would make it
+/// indistinguishable from the tx's own immutable intrinsic-gas shortfall, which
+/// the payload builders evict on.
 fn reserve_l1_gas(vm: &mut VM<'_>, l1_fee_config: &Option<L1FeeConfig>) -> Result<(), VMError> {
     let l1_gas = calculate_l1_fee_gas(vm, l1_fee_config)?;
 
@@ -335,13 +342,13 @@ fn reserve_l1_gas(vm: &mut VM<'_>, l1_fee_config: &Option<L1FeeConfig>) -> Resul
         let floor = vm.get_min_gas_used()?;
         let floor_plus_l1 = floor.checked_add(l1_gas).ok_or(InternalError::Overflow)?;
         if vm.env.gas_limit < floor_plus_l1 {
-            return Err(TxValidationError::IntrinsicGasTooLow.into());
+            return Err(TxValidationError::L1GasReservationTooLow.into());
         }
     }
 
     vm.current_call_frame
         .increase_consumed_gas(l1_gas)
-        .map_err(|_| TxValidationError::IntrinsicGasTooLow)?;
+        .map_err(|_| TxValidationError::L1GasReservationTooLow)?;
     Ok(())
 }
 
@@ -491,7 +498,11 @@ fn prepare_execution_privileged(vm: &mut VM<'_>) -> Result<(), crate::errors::VM
 
     // (6) INTRINSIC_GAS_TOO_LOW
     // CHANGED: the gas should be charged, but the transaction shouldn't error
-    if vm.add_intrinsic_gas().is_err() {
+    let intrinsic_failed = match vm.get_intrinsic_gas() {
+        Ok(intrinsic) => vm.add_intrinsic_gas(&intrinsic).is_err(),
+        Err(_) => true,
+    };
+    if intrinsic_failed {
         tx_should_fail = true;
     }
 
@@ -518,11 +529,11 @@ fn prepare_execution_privileged(vm: &mut VM<'_>) -> Result<(), crate::errors::VM
         // If the transaction failed some validation, but it must still be included
         // To prevent it from taking effect, we force it to revert
         vm.current_call_frame.msg_value = U256::zero();
-        vm.current_call_frame.set_code(Code {
-            hash: H256::zero(),
-            bytecode: vec![Opcode::INVALID.into()].into(),
-            jump_targets: Vec::new(),
-        })?;
+        vm.current_call_frame
+            .set_code(Code::from_bytecode_unchecked(
+                vec![Opcode::INVALID.into()].into(),
+                H256::zero(),
+            ))?;
         return Ok(());
     }
 
@@ -579,14 +590,18 @@ fn prepare_execution_fee_token(vm: &mut VM<'_>) -> Result<U256, crate::errors::V
     let sender_address = vm.env.origin;
     let sender_info = vm.db.get_account(sender_address)?.info.clone();
 
+    // Compute intrinsic gas once; reused by the min-gas-limit validation and
+    // `add_intrinsic_gas` below (mirrors the default hook).
+    let intrinsic = vm.get_intrinsic_gas()?;
+
     if vm.env.config.fork >= Fork::Prague {
-        default_hook::validate_min_gas_limit(vm)?;
+        default_hook::validate_min_gas_limit(vm, &intrinsic)?;
         // EIP-7825 (Prague to pre-Amsterdam): reject tx if gas_limit > TX_MAX_GAS_LIMIT_AMSTERDAM.
         // Amsterdam removes this restriction (EIP-8037 reservoir model).
         if vm.env.config.fork < Fork::Amsterdam && vm.tx.gas_limit() > TX_MAX_GAS_LIMIT_AMSTERDAM {
             return Err(VMError::TxValidation(
                 TxValidationError::TxMaxGasLimitExceeded {
-                    tx_hash: vm.tx.hash(),
+                    tx_hash: vm.tx.hash(vm.crypto),
                     tx_gas_limit: vm.tx.gas_limit(),
                 },
             ));
@@ -597,7 +612,7 @@ fn prepare_execution_fee_token(vm: &mut VM<'_>) -> Result<U256, crate::errors::V
         {
             return Err(VMError::TxValidation(
                 TxValidationError::TxMaxGasLimitExceeded {
-                    tx_hash: vm.tx.hash(),
+                    tx_hash: vm.tx.hash(vm.crypto),
                     tx_gas_limit: vm.tx.gas_limit(),
                 },
             ));
@@ -626,14 +641,14 @@ fn prepare_execution_fee_token(vm: &mut VM<'_>) -> Result<U256, crate::errors::V
     }
 
     // (6) INTRINSIC_GAS_TOO_LOW
-    vm.add_intrinsic_gas()?;
+    vm.add_intrinsic_gas(&intrinsic)?;
 
     // (7) NONCE_IS_MAX
     vm.increment_account_nonce(sender_address)
         .map_err(|_| TxValidationError::NonceIsMax)?;
 
     // check for nonce mismatch
-    if sender_info.nonce != vm.env.tx_nonce {
+    if !vm.env.disable_nonce_check && sender_info.nonce != vm.env.tx_nonce {
         return Err(TxValidationError::NonceMismatch {
             expected: sender_info.nonce,
             actual: vm.env.tx_nonce,
@@ -656,7 +671,7 @@ fn prepare_execution_fee_token(vm: &mut VM<'_>) -> Result<U256, crate::errors::V
 
     // (9) SENDER_NOT_EOA
     let code = vm.db.get_code(sender_info.code_hash)?;
-    default_hook::validate_sender(sender_address, &code.bytecode)?;
+    default_hook::validate_sender(sender_address, code.code())?;
 
     // (10) GAS_ALLOWANCE_EXCEEDED
     default_hook::validate_gas_allowance(vm)?;
@@ -836,6 +851,7 @@ fn simulate_common_bridge_call(
         LevmCallTracer::disabled(),
         VMType::L2(Default::default()),
         vm.crypto,
+        None,
     )?;
     new_vm.hooks = vec![];
     default_hook::set_bytecode_and_code_address(&mut new_vm)?;

@@ -35,7 +35,7 @@ impl OpcodeHandler for OpDupNHandler {
         let relative_offset = vm
             .current_call_frame
             .bytecode
-            .bytecode
+            .dispatch_buf()
             .get(vm.current_call_frame.pc)
             .copied()
             .unwrap_or_default();

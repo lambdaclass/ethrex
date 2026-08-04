@@ -1,10 +1,11 @@
 use std::sync::Arc;
 
+use ethrex_common::types::block_access_list::BlockAccessList;
 use ethrex_common::types::block_execution_witness::{ExecutionWitness, GuestProgramState};
 use ethrex_common::types::{Block, Receipt, validate_block_body};
 use ethrex_common::{
     H256, U256, validate_block_access_list_hash, validate_block_pre_execution, validate_gas_used,
-    validate_receipts_root, validate_requests_hash,
+    validate_receipts_root_and_logs_bloom, validate_requests_hash,
 };
 use ethrex_crypto::Crypto;
 use ethrex_vm::{Evm, GuestProgramStateWrapper, VmDatabase};
@@ -26,6 +27,12 @@ pub struct BatchExecutionResult {
     pub non_privileged_count: U256,
     /// Chain ID from the execution witness.
     pub chain_id: u64,
+    /// Per-block recomputed burned fees (EIP-8079, LStar+). `None` for pre-LStar forks.
+    /// One entry per block in the same order as `receipts`.
+    pub burned_fees: Vec<Option<u64>>,
+    /// Per-block recomputed Block Access List (EIP-7928, Amsterdam+). `None` for pre-Amsterdam.
+    /// One entry per block in the same order as `receipts`.
+    pub bals: Vec<Option<BlockAccessList>>,
 }
 
 /// Execute a batch of blocks using the provided VM factory.
@@ -100,6 +107,8 @@ where
     // Execute blocks
     let mut parent_block_header = &parent_block_header;
     let mut acc_receipts = Vec::new();
+    let mut acc_burned_fees: Vec<Option<u64>> = Vec::new();
+    let mut acc_bals: Vec<Option<BlockAccessList>> = Vec::new();
     let mut non_privileged_count: usize = 0;
 
     for (i, block) in blocks.iter().enumerate() {
@@ -130,6 +139,7 @@ where
 
         let receipts = result.receipts;
         let block_gas_used = result.block_gas_used;
+        let block_burned_fees = result.burned_fees;
 
         let account_updates = report_cycles("get_state_transitions", || {
             vm.get_state_transitions().map_err(ExecutionError::Evm)
@@ -156,8 +166,8 @@ where
             validate_gas_used(block_gas_used, &block.header).map_err(ExecutionError::GasValidation)
         })?;
 
-        report_cycles("validate_receipts_root", || {
-            validate_receipts_root(&block.header, &receipts, crypto.as_ref())
+        report_cycles("validate_receipts_root_and_logs_bloom", || {
+            validate_receipts_root_and_logs_bloom(&block.header, &receipts, crypto.as_ref())
                 .map_err(ExecutionError::ReceiptsRootValidation)
         })?;
 
@@ -173,12 +183,15 @@ where
                     &chain_config,
                     bal,
                     block.body.transactions.len(),
+                    crypto.as_ref(),
                 )
                 .map_err(ExecutionError::BlockValidation)
             })?;
         }
 
         acc_receipts.push(receipts);
+        acc_burned_fees.push(block_burned_fees);
+        acc_bals.push(bal);
         parent_block_header = &block.header;
     }
 
@@ -204,5 +217,7 @@ where
         last_block_hash,
         non_privileged_count: non_privileged_count.into(),
         chain_id,
+        burned_fees: acc_burned_fees,
+        bals: acc_bals,
     })
 }

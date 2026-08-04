@@ -101,6 +101,9 @@ const DEFAULT_ON_CHAIN_PROPOSER_ADDRESS: Address = H160([
 const DEFAULT_RICH_KEYS_FILE_PATH: &str = "fixtures/keys/private_keys_l1.txt";
 const DEFAULT_TEST_KEYS_FILE_PATH: &str = "fixtures/keys/private_keys_tests.txt";
 
+const PREFUNDING_POLL_INTERVAL: Duration = Duration::from_secs(2);
+const PREFUNDING_MAX_ATTEMPTS: u32 = 60;
+
 #[tokio::test]
 async fn l2_integration_test() -> Result<(), Box<dyn std::error::Error>> {
     read_env_file_by_config();
@@ -112,6 +115,8 @@ async fn l2_integration_test() -> Result<(), Box<dyn std::error::Error>> {
     let withdrawals_count = std::env::var("INTEGRATION_TEST_WITHDRAW_COUNT")
         .map(|amount| amount.parse().expect("Invalid withdrawal amount value"))
         .unwrap_or(5);
+
+    wait_for_prefunded_accounts(&l2_client, &private_keys).await?;
 
     // Not thread-safe (fee vault and bridge balance checks).
     test_deposit(&l1_client, &l2_client, &private_keys.pop().unwrap()).await?;
@@ -2601,7 +2606,7 @@ async fn test_fee_token(
         data: Bytes::new(),
         ..Default::default()
     });
-    let tx_size = tx.encode_canonical_to_vec().len().try_into().unwrap();
+    let tx_size = tx.encode_canonical_len().try_into().unwrap();
     let transfer_fees = get_fees_details_l2(&transfer_receipt, &l2_client, tx_size).await?;
 
     let sender_fee_token_spent = sender_token_balance_before_transfer
@@ -2984,6 +2989,43 @@ fn on_chain_proposer_address() -> Address {
     std::env::var("ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS")
         .map(|address| address.parse().expect("Invalid proposer address"))
         .unwrap_or(DEFAULT_ON_CHAIN_PROPOSER_ADDRESS)
+}
+
+/// Waits until every test account has been credited on L2.
+///
+/// A node started with `--dev` funds the rich accounts by depositing through the
+/// bridge, and the deployer only awaits the L1 receipts. The credits reach L2
+/// asynchronously through the L1 watcher, a batch or more after the RPC starts
+/// answering, so a balance read before that returns zero and every balance-delta
+/// assertion below it is off by the pre-funded amount.
+async fn wait_for_prefunded_accounts(
+    l2_client: &EthClient,
+    private_keys: &[SecretKey],
+) -> Result<(), Box<dyn std::error::Error>> {
+    for private_key in private_keys {
+        let address = get_address_from_secret_key(&private_key.secret_bytes())?;
+
+        for attempt in 1..=PREFUNDING_MAX_ATTEMPTS {
+            let balance = l2_client
+                .get_balance(address, BlockIdentifier::Tag(BlockTag::Latest))
+                .await?;
+
+            if !balance.is_zero() {
+                break;
+            }
+
+            assert!(
+                attempt < PREFUNDING_MAX_ATTEMPTS,
+                "L2 balance of test account {address:#x} is still zero after \
+                 {PREFUNDING_MAX_ATTEMPTS} attempts; the --dev pre-funding deposits never landed"
+            );
+
+            println!("Waiting for the L2 pre-funding of {address:#x} (attempt {attempt})");
+            tokio::time::sleep(PREFUNDING_POLL_INTERVAL).await;
+        }
+    }
+
+    Ok(())
 }
 
 /// Waits until the batch containing L2->L1 message is verified on L1, and returns the proof for that message

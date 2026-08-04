@@ -1,6 +1,7 @@
 use crate::backends::levm::LEVM;
-use ethrex_common::tracing::{CallTrace, PrestateResult};
+use ethrex_common::tracing::{CallTrace, OpcodeTraceResult, PrestateResult};
 use ethrex_common::types::Block;
+pub use ethrex_levm::tracing::OpcodeTracerConfig;
 
 use crate::{Evm, EvmError};
 
@@ -32,6 +33,7 @@ impl Evm {
             with_log,
             self.vm_type,
             self.crypto.as_ref(),
+            self.stateless_validator.as_deref(),
         )
     }
 
@@ -63,6 +65,32 @@ impl Evm {
         )
     }
 
+    /// Executes a single tx and captures the per-opcode (EIP-3155) trace.
+    /// Assumes that the received state already contains changes from previous transactions.
+    pub fn trace_tx_opcodes(
+        &mut self,
+        block: &Block,
+        tx_index: usize,
+        cfg: OpcodeTracerConfig,
+    ) -> Result<OpcodeTraceResult, EvmError> {
+        let tx = block
+            .body
+            .transactions
+            .get(tx_index)
+            .ok_or(EvmError::Custom(
+                "Missing Transaction for Trace".to_string(),
+            ))?;
+
+        LEVM::trace_tx_opcodes(
+            &mut self.db,
+            &block.header,
+            tx,
+            cfg,
+            self.vm_type,
+            self.crypto.as_ref(),
+        )
+    }
+
     /// Reruns the given block, saving the changes on the state, doesn't output any results or receipts.
     /// If the optional argument `stop_index` is set, the run will stop just before executing the transaction at that index
     /// and won't process the withdrawals afterwards.
@@ -78,6 +106,7 @@ impl Evm {
             stop_index,
             self.vm_type,
             self.crypto.as_ref(),
+            self.stateless_validator.as_deref(),
         )
     }
 }

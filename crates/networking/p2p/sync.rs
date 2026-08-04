@@ -9,9 +9,14 @@ mod full;
 mod healing;
 mod snap_sync;
 
+/// Test-only re-export of the full-sync resume-point predicate so integration tests can
+/// assert that canonical-but-stateless blocks are not treated as already-executed.
+#[cfg(feature = "test-utils")]
+pub use full::{first_resume_point_in_batch, is_resume_point};
+
 use crate::metrics::METRICS;
-use crate::peer_handler::{PeerHandler, PeerHandlerError};
-use crate::snap::constants::EXECUTE_BATCH_SIZE_DEFAULT;
+use crate::peer_handler::{BlockRequestOrder, HeaderFetchOutcome, PeerHandler, PeerHandlerError};
+use crate::snap::constants::{EXECUTE_BATCH_SIZE_DEFAULT, MIN_FULL_BLOCKS};
 use crate::utils::delete_leaves_folder;
 use ethrex_blockchain::{Blockchain, error::ChainError};
 use ethrex_common::H256;
@@ -29,7 +34,7 @@ use std::sync::{
 use tokio::sync::mpsc::error::SendError;
 use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, warn};
 
 // Re-export types used by submodules
 pub use snap_sync::{
@@ -58,6 +63,12 @@ pub enum SyncMode {
 pub struct SyncDiagnostics {
     pub sync_mode: String,
     pub current_phase: String,
+    /// Highest block whose post-state is actually on disk (the executed/state head).
+    /// Updated by the full-sync cycle. May trail the canonical head when an FCU
+    /// canonicalized blocks before their state was computed; `eth_syncing` reports
+    /// this rather than the canonical pointer so the node isn't shown as near-synced
+    /// while it has no state up to the tip.
+    pub executed_head: u64,
     pub pivot_block_number: Option<u64>,
     pub pivot_timestamp: Option<u64>,
     pub pivot_age_seconds: Option<u64>,
@@ -189,7 +200,7 @@ impl Syncer {
                     }
                     true => {
                         // We do nothing, as the error is recoverable
-                        error!(
+                        warn!(
                             time_elapsed_s = start_time.elapsed().as_secs(),
                             %sync_head,
                             %error, "Sync cycle failed, retrying",
@@ -204,6 +215,39 @@ impl Syncer {
     async fn sync_cycle(&mut self, sync_head: H256, store: Store) -> Result<(), SyncError> {
         // Take picture of the current sync mode, we will update the original value when we need to
         if self.snap_enabled.load(Ordering::Relaxed) {
+            // Probe the sync head's block number before committing to snap sync.
+            // On a fresh devnet the chain head may be only a few blocks deep; the
+            // existing in-loop `head_close_to_0` guard in `sync_cycle_snap`
+            // (snap_sync.rs, same `< MIN_FULL_BLOCKS` check) is only reached
+            // after a successful header batch, which can stall when peers are
+            // barely synced themselves. Pre-checking avoids that. The probe
+            // response is intentionally discarded; on the snap path the loop
+            // re-fetches headers, which keeps `sync_cycle_snap`'s entry simple.
+            if let Some(sync_head_number) = probe_sync_head_number(&mut self.peers, sync_head).await
+                && sync_head_number < MIN_FULL_BLOCKS
+            {
+                info!(
+                    sync_head_number,
+                    "Sync head below MIN_FULL_BLOCKS ({MIN_FULL_BLOCKS}), using full sync"
+                );
+                self.snap_enabled.store(false, Ordering::Relaxed);
+                // Clear any stale snap checkpoint so the manager loop in
+                // `sync_manager.rs` doesn't keep re-entering this branch
+                // after the full sync completes. Mirrors the cleanup done
+                // when the manager auto-switches to full on startup.
+                if let Err(e) = store.clear_snap_state().await {
+                    warn!("Failed to clear stale snap state: {e}");
+                }
+                return full::sync_cycle_full(
+                    &mut self.peers,
+                    self.blockchain.clone(),
+                    self.cancel_token.clone(),
+                    sync_head,
+                    store,
+                    &self.diagnostics,
+                )
+                .await;
+            }
             METRICS.enable().await;
             // We validate that we have the folders that are being used empty, as we currently assume
             // they are. If they are not empty we empty the folder
@@ -227,10 +271,56 @@ impl Syncer {
                 self.cancel_token.clone(),
                 sync_head,
                 store,
+                &self.diagnostics,
             )
             .await
         }
     }
+}
+
+/// Number of attempts to fetch the sync head's header for the snap-vs-full pre-check.
+const PROBE_SYNC_HEAD_ATTEMPTS: u32 = 3;
+/// Delay between probe attempts.
+const PROBE_SYNC_HEAD_RETRY_DELAY: std::time::Duration = std::time::Duration::from_secs(2);
+
+/// Tries to fetch the block header for `sync_head` and return its number.
+///
+/// Returns `None` if peers don't respond with the requested header within
+/// `PROBE_SYNC_HEAD_ATTEMPTS`. Callers should treat that as "couldn't decide"
+/// and fall through to the regular sync path.
+///
+/// Worst-case latency budget: `PROBE_SYNC_HEAD_ATTEMPTS` × `PEER_REPLY_TIMEOUT`
+/// (5s, from `snap/constants.rs`) + (`PROBE_SYNC_HEAD_ATTEMPTS` − 1) ×
+/// `PROBE_SYNC_HEAD_RETRY_DELAY` = ~19s on a peer-starved network before we
+/// fall through to the snap path. On a healthy network the first attempt
+/// usually returns in well under a second.
+async fn probe_sync_head_number(peers: &mut PeerHandler, sync_head: H256) -> Option<u64> {
+    for attempt in 1..=PROBE_SYNC_HEAD_ATTEMPTS {
+        match peers
+            .request_block_headers_from_hash(sync_head, BlockRequestOrder::NewToOld)
+            .await
+        {
+            Ok(HeaderFetchOutcome::Headers(headers)) => {
+                if let Some(header) = headers.iter().find(|h| h.hash() == sync_head) {
+                    return Some(header.number);
+                }
+                debug!("Sync head probe: response did not contain target header");
+            }
+            Ok(outcome) => {
+                debug!(
+                    reason = outcome.failure_reason(),
+                    "Sync head probe attempt {attempt}/{PROBE_SYNC_HEAD_ATTEMPTS}: no headers"
+                );
+            }
+            Err(e) => {
+                warn!("Sync head probe attempt {attempt}/{PROBE_SYNC_HEAD_ATTEMPTS} failed: {e}");
+            }
+        }
+        if attempt < PROBE_SYNC_HEAD_ATTEMPTS {
+            tokio::time::sleep(PROBE_SYNC_HEAD_RETRY_DELAY).await;
+        }
+    }
+    None
 }
 
 #[derive(Debug, Default)]
@@ -261,8 +351,6 @@ pub enum SyncError {
     JoinHandle(#[from] tokio::task::JoinError),
     #[error("Missing data from DB")]
     CorruptDB,
-    #[error("No bodies were found for the given headers")]
-    BodiesNotFound,
     #[error("Failed to fetch latest canonical block, unable to sync")]
     NoLatestCanonical,
     #[error("Range received is invalid")]
@@ -340,10 +428,15 @@ impl SyncError {
             | SyncError::RocksDBError(_)
             | SyncError::BytecodeFileError
             | SyncError::NoLatestCanonical
-            | SyncError::PeerTableError(_)
             | SyncError::MissingFullsyncBatch
             | SyncError::Snap(_)
             | SyncError::FileSystem(_) => false,
+            // A timed-out actor request is transient (mailbox pressure or a
+            // slow handler — requests use spawned-concurrency's 5s default
+            // timeout); a stopped actor means p2p is shutting down and must
+            // stay fatal.
+            SyncError::PeerTableError(ActorError::RequestTimeout) => true,
+            SyncError::PeerTableError(ActorError::ActorStopped) => false,
             SyncError::Chain(_)
             | SyncError::Store(_)
             | SyncError::Send(_)
@@ -351,7 +444,6 @@ impl SyncError {
             | SyncError::Rlp(_)
             | SyncError::JoinHandle(_)
             | SyncError::CorruptDB
-            | SyncError::BodiesNotFound
             | SyncError::InvalidRangeReceived
             | SyncError::BlockNumber(_)
             | SyncError::NoBlocks

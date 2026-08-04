@@ -87,6 +87,7 @@ jobs:
       - name: Setup Rust Environment
         uses: ./.github/actions/setup-rust
         with:
+          cache-pool: l2
           components: rustfmt, clippy
 
       - name: Install RISC0
@@ -102,10 +103,21 @@ jobs:
       - name: Run cargo check
         run: cargo check --workspace --features l2,l2-sql
 
+      - name: Run cargo check (eip-8025 SSZ guest path)
+        run: cargo check --workspace --features eip-8025
+
       - name: Run cargo clippy
         run: |
           cargo clippy --workspace --features l2,l2-sql -- -D warnings
           make lint
+
+      - name: Run native rollup unit tests
+        run: cargo test -p ethrex-l2 --lib native_rollup
+
+      - name: Run native rollup integration tests (merkle + ssz)
+        run: |
+          cargo test -p ethrex-test --features l2 --test ethrex_tests l2::native_rollup_l1_messages_root
+          cargo test -p ethrex-test --features l2 --test ethrex_tests l2::ssz_round_trip
 
       - name: Run cargo fmt
         run: |
@@ -127,6 +139,8 @@ jobs:
 
       - name: Setup Rust Environment
         uses: ./.github/actions/setup-rust
+        with:
+          cache-pool: l2
 
       - name: Validate blobs match genesis
         run: |
@@ -212,6 +226,8 @@ jobs:
 
       - name: Setup Rust Environment
         uses: ./.github/actions/setup-rust
+        with:
+          cache-pool: l2
 
       - name: Setup Node.js
         uses: actions/setup-node@v6
@@ -340,6 +356,9 @@ jobs:
         uses: actions/checkout@v6
       - name: Setup Rust Environment
         uses: ./.github/actions/setup-rust
+        with:
+          cache-pool: l2
+          save-cache: 'true'
 
       - name: Install solc
         uses: ./.github/actions/install-solc
@@ -352,7 +371,7 @@ jobs:
 
       - name: Build test
         run: |
-          cargo test -p ethrex-test l2:: --no-run --release
+          cargo test -p ethrex-test l2:: --no-run --release --features l2
 
       - name: Start Web3Signer
         if: matrix.web3signer
@@ -504,6 +523,8 @@ jobs:
 
       - name: Setup Rust Environment
         uses: ./.github/actions/setup-rust
+        with:
+          cache-pool: l2
 
       - name: Install solc
         uses: ./.github/actions/install-solc
@@ -530,6 +551,18 @@ jobs:
 
       - name: Set up Nix
         uses: cachix/install-nix-action@v31
+        with:
+          # crates.io 403s any User-Agent containing "curl/", which is what Nix's
+          # fetchurl sends by default, breaking crate downloads during the image
+          # build. In multi-user (daemon) mode the FOD builds run under the
+          # nix-daemon and don't see the caller's environment, so override the
+          # User-Agent via impure-env (honored because the runner is a trusted
+          # user). Use curl's glued short option `-A<value>`: a single space-free
+          # token that survives impure-env's space-separated parsing and
+          # fetchurl's unquoted word-split (curl rejects the --user-agent=value form).
+          extra_nix_config: |
+            extra-experimental-features = configurable-impure-env
+            impure-env = NIX_CURL_FLAGS=-Aethrex-ci+https://github.com/lambdaclass/ethrex
 
       - name: Set up QEMU
         run: |
@@ -635,6 +668,8 @@ jobs:
         uses: actions/checkout@v6
       - name: Setup Rust Environment
         uses: ./.github/actions/setup-rust
+        with:
+          cache-pool: l2
 
       - name: Download ethrex image artifact
         uses: actions/download-artifact@v6
@@ -702,6 +737,8 @@ jobs:
         uses: actions/checkout@v6
       - name: Setup Rust Environment
         uses: ./.github/actions/setup-rust
+        with:
+          cache-pool: l2
 
       - name: Install solc
         uses: ./.github/actions/install-solc
@@ -720,7 +757,7 @@ jobs:
 
       - name: Build test
         run: |
-          cargo test -p ethrex-test l2:: --no-run --release
+          cargo test -p ethrex-test l2:: --no-run --release --features l2
 
       - name: Download ethrex image artifact
         uses: actions/download-artifact@v6

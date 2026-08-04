@@ -15,7 +15,7 @@ use ethrex_common::{
     },
     types::{
         AccountUpdate, BlobsBundle, Block, BlockBody, BlockHash, BlockHeader, BlockNumber,
-        ChainConfig, Fork, MempoolTransaction, Receipt, Transaction, TxKind, TxType, Withdrawal,
+        ChainConfig, MempoolTransaction, Receipt, Transaction, TxKind, TxType, Withdrawal,
         block_access_list::BlockAccessList,
         bloom_from_logs, calc_excess_blob_gas, calculate_base_fee_per_blob_gas,
         calculate_base_fee_per_gas, compute_receipts_root, compute_transactions_root,
@@ -26,7 +26,7 @@ use ethrex_common::{
 
 use ethrex_crypto::NativeCrypto;
 use ethrex_crypto::keccak::Keccak256;
-use ethrex_vm::{Evm, EvmError, check_2d_gas_allowance};
+use ethrex_vm::{Evm, EvmError, check_2d_gas_allowance, compute_burned_fees};
 
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_storage::{Store, error::StoreError};
@@ -117,6 +117,18 @@ impl BuildPayloadArgs {
         if let Some(beacon_root) = self.beacon_root {
             hasher.update(beacon_root);
         }
+        // execution-apis#796 / glamsterdam-devnet-4: hash slot_number and
+        // gas_ceil so two FCUv4 calls that differ only in CL-supplied
+        // targetGasLimit (or in slot_number) do not collide on payload_id.
+        // Scoped to V4: for V1/V2/V3 gas_ceil is always the static
+        // --builder.gas-limit (no collision to disambiguate), so hashing it
+        // there would change those IDs without fixing anything.
+        if self.version >= 4 {
+            if let Some(slot_number) = self.slot_number {
+                hasher.update(slot_number.to_be_bytes());
+            }
+            hasher.update(self.gas_ceil.to_be_bytes());
+        }
         let res = &mut hasher.finalize()[..8];
         res[0] = self.version;
         Ok(u64::from_be_bytes(res.try_into().map_err(|_| {
@@ -186,7 +198,15 @@ pub fn create_payload(
     let body = BlockBody {
         transactions: Vec::new(),
         ommers: Vec::new(),
-        withdrawals: args.withdrawals.clone(),
+        // Post-Shanghai the withdrawals field is part of the body schema: emit
+        // an explicit (possibly empty) list, matching the header's
+        // withdrawals_root above, instead of omitting the field. Omitting it
+        // produces blocks that fail `validate_block_body` — the L2 block
+        // producer passes `withdrawals: None`, which previously leaked through
+        // as a body without the field under an empty-root header.
+        withdrawals: chain_config
+            .is_shanghai_activated(args.timestamp)
+            .then(|| args.withdrawals.clone().unwrap_or_default()),
     };
 
     // Delay applying withdrawals until the payload is requested and built
@@ -194,7 +214,6 @@ pub fn create_payload(
 }
 
 pub fn calc_gas_limit(parent_gas_limit: u64, builder_gas_ceil: u64) -> u64 {
-    // TODO: check where we should get builder values from
     let delta = parent_gas_limit / GAS_LIMIT_BOUND_DIVISOR - 1;
     let mut limit = parent_gas_limit;
     let desired_limit = max(builder_gas_ceil, MIN_GAS_LIMIT);
@@ -238,6 +257,10 @@ pub struct PayloadBuildContext {
     pub payload_size: u64,
     /// Block Access List for EIP-7928
     pub block_access_list: Option<BlockAccessList>,
+    /// Set when building from an explicit transaction list (`testing_buildBlockV1`),
+    /// which carries no blob sidecars. Lets the blob path derive blob gas from the
+    /// tx's versioned hashes instead of a mempool bundle.
+    pub explicit_build: bool,
 }
 
 impl PayloadBuildContext {
@@ -290,6 +313,7 @@ impl PayloadBuildContext {
             account_updates: Vec::new(),
             payload_size,
             block_access_list: None,
+            explicit_build: false,
         })
     }
 
@@ -413,6 +437,9 @@ impl Blockchain {
         const SECONDS_PER_SLOT: Duration = Duration::from_secs(12);
         // Attempt to rebuild the payload as many times within the given timeframe to maximize fee revenue
         // TODO(#4997): start with an empty block
+        // Snapshot the mempool sequence *before* the build so any tx that lands
+        // during the build is seen as newer than the current `res`.
+        let mut last_built_seq = self.mempool.tx_seq();
         let mut res = self.build_payload(payload.clone())?;
         while start.elapsed() < SECONDS_PER_SLOT && !cancel_token.is_cancelled() {
             // Wait for new transactions, cancellation, or slot deadline before rebuilding
@@ -425,6 +452,7 @@ impl Blockchain {
             }
             let payload = payload.clone();
             let self_clone = self.clone();
+            let seq_before = self.mempool.tx_seq();
             let building_task =
                 tokio::task::spawn_blocking(move || self_clone.build_payload(payload));
             // Cancel the current build process and return the previous payload if it is requested earlier
@@ -433,6 +461,7 @@ impl Blockchain {
             match cancel_token.run_until_cancelled(building_task).await {
                 Some(Ok(current_res)) => {
                     res = current_res?;
+                    last_built_seq = seq_before;
                 }
                 Some(Err(err)) => {
                     warn!(%err, "Payload-building task panicked");
@@ -440,11 +469,76 @@ impl Blockchain {
                 None => {}
             }
         }
+
+        // If a tx landed after the snapshot that produced `res`, do one final
+        // build before returning. Covers both races: (a) cancellation dropping
+        // an in-progress rebuild via `run_until_cancelled`, and (b) the slot-
+        // timeout `select!` arm winning over a simultaneous `tx_added`
+        // notification near the slot boundary.
+        //
+        // When the loop was cancelled, `engine_getPayload` is blocked on this
+        // task and must answer within the Engine API deadline (1s), while a
+        // full rebuild of a large block can exceed that deadline on its own —
+        // under sustained mempool inflow `tx_seq() > last_built_seq` is true
+        // on essentially every call, so an unconditional rebuild here puts one
+        // whole extra block build on the proposal critical path. In that case
+        // only rebuild when the payload we hold is empty: returning a slightly
+        // stale block is fine (geth/reth return best-so-far too), but
+        // proposing an empty block while the mempool has transactions is not
+        // (race (a) with no completed rebuild yet).
+        //
+        // TODO(#5011): two paths below can still put a full build on the
+        // critical path, so this narrows the exposure rather than removing it.
+        // First, the empty-payload case still rebuilds over the whole mempool;
+        // that has to stay correct (it is the race this guard exists for), but
+        // a large mempool of txs that never make it into a block — low-fee or
+        // nonce-gapped — can make even that approach the deadline. Second, this
+        // rebuild is not cancellable: unlike the in-loop build it runs as a
+        // plain `spawn_blocking(..).await`, so a `getPayload` arriving while a
+        // slot-timeout rebuild is in flight waits for it to finish. Bounding
+        // either needs a time-boxed or partial build, not a guard here.
+        if self.mempool.tx_seq() > last_built_seq
+            && (!cancel_token.is_cancelled() || res.payload.body.transactions.is_empty())
+        {
+            let blockchain = self.clone();
+            match tokio::task::spawn_blocking(move || blockchain.build_payload(payload)).await {
+                Ok(Ok(final_res)) => res = final_res,
+                Ok(Err(err)) => {
+                    warn!(%err, "Final payload rebuild failed; returning previous result")
+                }
+                Err(err) => warn!(%err, "Final payload rebuild task panicked"),
+            }
+        }
+
         Ok(res)
     }
 
-    /// Completes the payload building process, return the block value
+    /// Completes the payload building process, return the block value.
+    /// Transactions are pulled from the mempool.
     pub fn build_payload(&self, payload: Block) -> Result<PayloadBuildResult, ChainError> {
+        self.build_payload_inner(payload, None)
+    }
+
+    /// Builds a payload from an explicit, ordered list of transactions instead of the
+    /// mempool. Used by `testing_buildBlockV1`. Every transaction must execute
+    /// successfully and is included in the given order; the first failing
+    /// transaction aborts the build (matching geth's `BuildTestingPayload`).
+    pub fn build_payload_with_transactions(
+        &self,
+        payload: Block,
+        transactions: Vec<Transaction>,
+    ) -> Result<PayloadBuildResult, ChainError> {
+        self.build_payload_inner(payload, Some(transactions))
+    }
+
+    /// Shared block-building pipeline. When `explicit_transactions` is `None` the
+    /// payload is filled from the mempool; otherwise the provided transactions are
+    /// applied verbatim.
+    fn build_payload_inner(
+        &self,
+        payload: Block,
+        explicit_transactions: Option<Vec<Transaction>>,
+    ) -> Result<PayloadBuildResult, ChainError> {
         let since = Instant::now();
 
         debug!("Building payload");
@@ -454,7 +548,11 @@ impl Blockchain {
         if let BlockchainType::L1 = self.options.r#type {
             self.apply_system_operations(&mut context)?;
         }
-        self.fill_transactions(&mut context)?;
+        context.explicit_build = explicit_transactions.is_some();
+        match explicit_transactions {
+            None => self.fill_transactions(&mut context)?,
+            Some(transactions) => self.fill_explicit_transactions(&mut context, transactions)?,
+        }
         // EIP-7928: Post-tx phase uses index n+1 for both requests and withdrawals.
         // Order must match geth: requests (system calls) BEFORE withdrawals.
         if context
@@ -617,7 +715,10 @@ impl Blockchain {
                 head_tx.tx.gas_limit()
             };
             if context.remaining_gas < tx_gas_reservation {
-                debug!("Skipping transaction: {}, no gas left", head_tx.tx.hash());
+                debug!(
+                    "Skipping transaction: {}, no gas left",
+                    head_tx.tx.hash(&NativeCrypto)
+                );
                 // We don't have enough gas left for the transaction, so we skip all txs from this account
                 txs.pop();
                 continue;
@@ -627,7 +728,7 @@ impl Blockchain {
             // if inclusion of the transaction puts the block size over the size limit
             // we don't add any more txs to the payload.
             let potential_rlp_block_size =
-                context.payload_size + head_tx.encode_canonical_to_vec().len() as u64;
+                context.payload_size + head_tx.encode_canonical_len() as u64;
             if context
                 .chain_config()
                 .is_osaka_activated(context.payload.header.timestamp)
@@ -638,7 +739,7 @@ impl Blockchain {
             context.payload_size = potential_rlp_block_size;
 
             // TODO: maybe fetch hash too when filtering mempool so we don't have to compute it here (we can do this in the same refactor as adding timestamp)
-            let tx_hash = head_tx.tx.hash();
+            let tx_hash = head_tx.tx.hash(&NativeCrypto);
 
             // Check whether the tx is replay-protected
             if head_tx.tx.protected() && !chain_config.is_eip155_activated(context.block_number()) {
@@ -650,10 +751,106 @@ impl Blockchain {
                 continue;
             }
 
+            // EIP-8141 fork gating: drop frame transactions that reached the payload
+            // builder before Hegota has activated. These must never be included in a
+            // block until the fork is live.
+            if head_tx.tx_type() == TxType::Frame
+                && !chain_config.is_hegota_activated(context.payload.header.timestamp)
+            {
+                debug!("Skipping frame transaction before Hegota fork: {}", tx_hash);
+                txs.pop();
+                self.remove_transaction_from_pool(&tx_hash)?;
+                continue;
+            }
+
+            // EIP-8141 expiry: drop frame txs whose
+            // expiry deadline is behind the block being built. Deterministic
+            // for this payload timestamp, so remove from the pool as well.
+            if let Transaction::FrameTransaction(frame_tx) = &*head_tx.tx
+                && frame_tx
+                    .expiry_deadline()
+                    .is_some_and(|deadline| deadline < context.payload.header.timestamp)
+            {
+                debug!("Skipping expired frame transaction: {}", tx_hash);
+                txs.pop();
+                self.remove_transaction_from_pool(&tx_hash)?;
+                continue;
+            }
+
+            let is_frame = head_tx.tx_type() == TxType::Frame;
+
             match self.apply_tx_to_payload(head_tx, context) {
                 Ok(()) => txs.shift()?,
-                Err(_) => txs.pop(),
+                Err(e) => {
+                    // Frame-tx failures are deterministic (signatures bind the
+                    // whole tx) EXCEPT nonce mismatches, which are transient
+                    // queue-ordering artifacts — keep those pooled for a later
+                    // block, mirroring how regular txs are treated.
+                    //
+                    // Regular txs are likewise kept pooled on failure, since the
+                    // usual cause is a transient queue-ordering/nonce/balance
+                    // artifact that a later block resolves. But a
+                    // DETERMINISTICALLY-invalid regular tx (intrinsic gas below
+                    // the minimum or the calldata floor, or initcode over the
+                    // size cap) can never become valid at its nonce; keeping it
+                    // pooled lets it re-occupy the sender's queue head on every
+                    // build and starve that sender's other txs indefinitely.
+                    // Evict those too.
+                    let evict = if is_frame {
+                        !is_nonce_mismatch(&e)
+                    } else {
+                        is_deterministic_invalid(&e)
+                    };
+                    if evict {
+                        // Neutral wording on purpose: the two branches evict for
+                        // different reasons (a frame tx for any non-nonce-mismatch
+                        // failure, a regular tx only for a deterministic one), so
+                        // naming either reason here would mislabel the other.
+                        debug!("Evicting transaction {tx_hash} from the pool: {e}");
+                        self.remove_transaction_from_pool(&tx_hash)?;
+                    }
+                    txs.pop()
+                }
             }
+        }
+        Ok(())
+    }
+
+    /// Applies an explicit, ordered list of transactions to the payload, bypassing
+    /// the mempool. Used by `testing_buildBlockV1`. Every transaction must execute
+    /// successfully; the first failure aborts the build.
+    ///
+    /// Blob (type-3) transactions carry no sidecar in the canonical encoding accepted
+    /// here, so the resulting blobs bundle is empty; blob gas is still accounted from
+    /// the tx's versioned hashes (see `apply_blob_transaction`).
+    fn fill_explicit_transactions(
+        &self,
+        context: &mut PayloadBuildContext,
+        transactions: Vec<Transaction>,
+    ) -> Result<(), ChainError> {
+        let base_fee = context.base_fee_per_gas();
+        for tx in transactions {
+            // L1 blocks must not contain L2-only transaction types (`FeeToken`
+            // 0x7d, `Privileged` 0x7e). Block import rejects them too
+            // (`validate_l1_transaction_types`); reject here so an explicit-tx
+            // build never produces a payload no other L1 client would accept.
+            if let BlockchainType::L1 = self.options.r#type
+                && tx.tx_type().is_l2_only()
+            {
+                return Err(ChainError::Custom(format!(
+                    "transaction type {:#x} is not valid on L1",
+                    tx.tx_type() as u8
+                )));
+            }
+            let sender = tx.sender(&NativeCrypto).map_err(|err| {
+                ChainError::Custom(format!("invalid transaction signature: {err}"))
+            })?;
+            let tip = tx.effective_gas_tip(base_fee).unwrap_or_default();
+            let head = HeadTransaction {
+                tx: MempoolTransaction::new(tx, sender),
+                tip,
+            };
+            self.apply_tx_to_payload(head, context)?;
         }
         Ok(())
     }
@@ -673,7 +870,7 @@ impl Blockchain {
         head: HeadTransaction,
         context: &mut PayloadBuildContext,
     ) -> Result<(), ChainError> {
-        let tx_hash = head.tx.hash();
+        let tx_hash = head.tx.hash(&NativeCrypto);
 
         // EIP-8037 (Amsterdam+, PR #2703): per-tx 2D inclusion check against
         // running block totals. Run BEFORE we touch the BAL recorder so a
@@ -681,7 +878,6 @@ impl Blockchain {
         if context.is_amsterdam
             && let Err(e) = check_2d_gas_allowance(
                 &head.tx,
-                Fork::Amsterdam,
                 context.block_regular_gas_used,
                 context.block_state_gas_used,
                 context.payload.header.gas_limit,
@@ -759,15 +955,47 @@ impl Blockchain {
         context: &mut PayloadBuildContext,
     ) -> Result<Receipt, ChainError> {
         // Fetch blobs bundle
-        let tx_hash = head.tx.hash();
+        let tx_hash = head.tx.hash(&NativeCrypto);
         let max_blob_number_per_block = self.effective_max_blobs(context);
-        let Some(blobs_bundle) = self.mempool.get_blobs_bundle(tx_hash)? else {
-            // No blob tx should enter the mempool without its blobs bundle so this is an internal error
-            return Err(
-                StoreError::Custom(format!("No blobs bundle found for blob tx {tx_hash}")).into(),
-            );
+        // The blob count drives blob-gas accounting. Normally it comes from the
+        // mempool sidecar; for an explicit build (`testing_buildBlockV1`) there is
+        // no sidecar, so derive it from the tx's versioned hashes and leave the
+        // blobs bundle empty (the EVM only needs the hashes, which are in the tx).
+        let (blob_count, bundle) = match self.mempool.get_blobs_bundle(tx_hash)? {
+            Some(blobs_bundle) => (blobs_bundle.blobs.len(), Some(blobs_bundle)),
+            None if context.explicit_build => ((**head).blob_versioned_hashes().len(), None),
+            None => {
+                // No blob tx should enter the mempool without its blobs bundle so this is an internal error
+                return Err(StoreError::Custom(format!(
+                    "No blobs bundle found for blob tx {tx_hash}"
+                ))
+                .into());
+            }
         };
-        if context.blobs_bundle.blobs.len() + blobs_bundle.blobs.len() > max_blob_number_per_block {
+        // A blob sidecar is validated against the fork only at mempool insertion; the fork being
+        // built can differ (e.g. Osaka activated since). A pre-Osaka v0 sidecar (EIP-4844, one
+        // proof per blob) is invalid at Osaka — EIP-7594 requires cell proofs (v1) and there is no
+        // upgrade path — so including it would make getPayloadV5 emit a wrong-format
+        // BlobsBundleV2. That mismatch is deterministic and permanent, so drop the tx from the
+        // pool (like the frame-tx fork gates in `fill_transactions`) rather than skip-and-retry it
+        // every block, where it would also block later nonces from the same sender. Dropping it
+        // also stops other blob reads (P2P pooled-tx serving) from returning the stale sidecar;
+        // the `engine_getBlobsV2/V3` read path is tracked separately (`ethrex-getblobs-v2-legacy-proof`).
+        // The version/Osaka checks are structural (no KZG), so this needs no `c-kzg` feature.
+        // (Explicit builds carry no sidecar, so `bundle` is `None` and this is a no-op.)
+        if let Some(bundle) = &bundle
+            && bundle.version == 0
+            && context
+                .chain_config()
+                .is_osaka_activated(context.payload.header.timestamp)
+        {
+            self.remove_transaction_from_pool(&tx_hash)?;
+            return Err(EvmError::Custom(format!(
+                "dropping blob tx {tx_hash}: pre-Osaka (v0) blob sidecar is invalid post-Osaka"
+            ))
+            .into());
+        }
+        if context.blobs_bundle.blobs.len() + blob_count > max_blob_number_per_block {
             // This error will only be used for debug tracing
             return Err(EvmError::Custom("max data blobs reached".to_string()).into());
         };
@@ -776,8 +1004,10 @@ impl Blockchain {
         // Update context with blob data
         let prev_blob_gas = context.payload.header.blob_gas_used.unwrap_or_default();
         context.payload.header.blob_gas_used =
-            Some(prev_blob_gas + (blobs_bundle.blobs.len() * GAS_PER_BLOB as usize) as u64);
-        context.blobs_bundle += blobs_bundle;
+            Some(prev_blob_gas + (blob_count * GAS_PER_BLOB as usize) as u64);
+        if let Some(blobs_bundle) = bundle {
+            context.blobs_bundle += blobs_bundle;
+        }
         Ok(receipt)
     }
 
@@ -833,9 +1063,43 @@ impl Blockchain {
         context.account_updates = account_updates;
 
         // Set BAL hash in block header (EIP-7928)
-        context.payload.header.block_access_list_hash =
-            block_access_list.as_ref().map(|bal| bal.compute_hash());
+        context.payload.header.block_access_list_hash = block_access_list
+            .as_ref()
+            .map(|bal| bal.compute_hash(&NativeCrypto));
         context.block_access_list = block_access_list;
+
+        // EIP-8079 (LStar+): compute and set burned_fees in block header.
+        // Uses the same helper and identical inputs as the verification path
+        // (backends/mod.rs compute_burned_fees) so production == verification.
+        if context
+            .chain_config()
+            .is_lstar_activated(context.payload.header.timestamp)
+        {
+            let base_fee_per_gas = context.payload.header.base_fee_per_gas.unwrap_or(0);
+            // Post-refund Σ gas_spent: last receipt's cumulative_gas_used (per EIP-8079).
+            // Do NOT use header.gas_used — that is pre-refund for Amsterdam+ per EIP-7778.
+            let gas_spent = context
+                .receipts
+                .last()
+                .map(|r| r.cumulative_gas_used)
+                .unwrap_or(0);
+            let blob_base_fee: u64 = context.base_fee_per_blob_gas.try_into().unwrap_or(u64::MAX);
+            let blob_gas_used = context.payload.header.blob_gas_used.unwrap_or(0);
+            // RLP trailing-optional contiguity: slot_number and burned_fees are adjacent
+            // positional optionals decoded greedily.  A block with slot_number=None but
+            // burned_fees=Some would be mis-decoded (silent corruption).  At LStar both
+            // must be Some.
+            debug_assert!(
+                context.payload.header.slot_number.is_some(),
+                "LStar block sets burned_fees=Some so slot_number must be Some (RLP trailing-optional contiguity)"
+            );
+            context.payload.header.burned_fees = Some(compute_burned_fees(
+                base_fee_per_gas,
+                gas_spent,
+                blob_base_fee,
+                blob_gas_used,
+            ));
+        }
 
         let mut logs = vec![];
         for receipt in context.receipts.iter().cloned() {
@@ -847,6 +1111,91 @@ impl Blockchain {
         context.payload.header.logs_bloom = bloom_from_logs(&logs, &NativeCrypto);
         Ok(())
     }
+}
+
+/// Returns true if `e` represents a transaction nonce mismatch.
+///
+/// The VM surfaces this as `TxValidationError::NonceMismatch` which gets
+/// stringified through `EvmError::Transaction(String)` →
+/// `ChainError::InvalidBlock(InvalidBlockError::InvalidTransaction(String))`.
+/// There is no typed variant to match at the `ChainError` level, so we detect
+/// it by the stable Display substring. Used to keep gapped-nonce frame txs
+/// pooled instead of evicting them: a nonce gap is transient because the
+/// `TransactionQueue` feeds the lowest pooled nonce without comparing to the
+/// account nonce, so the tx becomes valid once earlier nonces are included.
+fn is_nonce_mismatch(e: &ChainError) -> bool {
+    e.to_string().contains("Nonce mismatch")
+}
+
+/// Whether a tx failed with an error that recurs at the same nonce for as long as
+/// the active fork's rules hold — i.e. it is intrinsically invalid, not merely
+/// mis-ordered.
+///
+/// "For as long as the fork's rules hold" is the honest bound, not "forever": a
+/// fork can relax the very limit that failed. Amsterdam raises the initcode cap
+/// (`AMSTERDAM_INIT_CODE_MAX_SIZE` vs `INIT_CODE_MAX_SIZE`), lowers the intrinsic
+/// base cost, and removes the per-tx gas cap. A tx evicted just before such a fork
+/// would have become includable just after. The window is one fork boundary and the
+/// sender can resubmit, which is a better trade than starving that sender's queue on
+/// every build until then. Covers the levm intrinsic-gas checks (gas limit
+/// below the minimum intrinsic cost or below the EIP-7623 calldata floor) and
+/// the EIP-3860/7954 initcode size cap. There is no typed variant at the
+/// `ChainError` level, so it is detected by the stable Display substrings; the
+/// `deterministic_invalid_detected_from_chain_error` test pins them through the
+/// real conversion path so a reworded error breaks the test, not eviction.
+///
+/// Such a tx must be evicted rather than kept pooled: otherwise it re-occupies
+/// its sender's queue head on every payload build and starves that sender's
+/// other transactions (a payload-inclusion stall).
+///
+/// The matched set is deliberately narrow, and smaller than the abstract class of
+/// "invalid given the tx bytes and sender" — most of that class cannot reach here,
+/// because mempool admission (`Blockchain::validate_transaction`) already rejects
+/// it. A tx whose priority fee exceeds its max fee per gas is refused there
+/// (`TxTipAboveFeeCapError`), as is `nonce == u64::MAX` (`NonceTooLow`, in both the
+/// existing-account and fresh-sender branches), the initcode cap, and — only while
+/// Osaka is active and Amsterdam is not — the per-tx gas cap. Blob-tx structural
+/// faults are caught by `BlobsBundle::validate`. So a variant being absent below
+/// usually means it never makes it into the pool, not that it was overlooked.
+///
+/// `SenderNotEOA` is excluded on purpose for a different reason: an EIP-7702
+/// delegation can be revoked, so that failure is transient, not permanent.
+///
+/// Note for anyone extending this: the substrings are load-bearing. They are
+/// matched against `Display` output because the typed variant does not survive the
+/// trip to `ChainError` — `impl From<VMError> for EvmError` collapses it into
+/// `EvmError::Transaction(String)`. Reworded LEVM errors must therefore break the
+/// pinning test rather than silently disable eviction, which is what that test is
+/// for. Before adding an arm, check that EVERY site raising that variant is
+/// deterministic: string matching cannot separate two producers of one variant, so
+/// a variant raised from both a permanent and a transient condition is
+/// unclassifiable here. Note that "every site" means both hooks — several of these
+/// variants are raised from `l2_hook` as well as `default_hook`, and the count is
+/// what matters, not the file. `TxValidationError::L1GasReservationTooLow` exists
+/// for exactly that reason: the L2 hook's transient `l1_gas` shortfall would
+/// otherwise be indistinguishable from `IntrinsicGasTooLow`.
+pub fn is_deterministic_invalid(e: &ChainError) -> bool {
+    let msg = e.to_string();
+    // Every producer of `IntrinsicGasTooLow` is deterministic given the tx's bytes
+    // and the active fork: `validate_min_gas_limit`'s `gas_limit < intrinsic` check,
+    // its EIP-8037 `regular.max(floor) > TX_MAX_GAS_LIMIT` cap, and the equivalent
+    // budget check in `VM::add_intrinsic_gas`. The L2 hook's transient `l1_gas`
+    // shortfall raises `L1GasReservationTooLow` instead, so it does not reach here.
+    msg.contains("gas limit lower than the minimum gas cost")
+        || msg.contains("gas cost floor for calldata tokens")
+        || msg.contains("Initcode size exceeded")
+        // EIP-7825 / EIP-8037 per-tx gas cap. Three producers — `default_hook` plus
+        // two in the L2 hook's fee-token path — and all three compare `gas_limit`
+        // against a fork constant, so every one of them is deterministic.
+        //
+        // Admission rejects the cap too, but only at insertion and only while
+        // `is_osaka_activated && !is_amsterdam_activated`, so this arm is
+        // load-bearing in two ways. On L1: a tx admitted before Osaka survives in
+        // the pool and then fails every build once Osaka is live. On L2: the hook
+        // applies the cap from PRAGUE onward, ahead of admission's Osaka gate, so a
+        // fee-token tx over the cap is admitted and then rejected on every build
+        // with no fork boundary involved at all.
+        || msg.contains("gas limit exceeds maximum")
 }
 
 /// Runs a plain (non blob) transaction, updates the gas count and returns the receipt
@@ -1070,5 +1419,300 @@ impl Ord for HeadTransaction {
 impl PartialOrd for HeadTransaction {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         Some(self.cmp(other))
+    }
+}
+
+/// Tests for EIP-8079 burned_fees production (LStar-gated) in finalize_payload.
+#[cfg(test)]
+mod burned_fees_payload_tests {
+    use super::*;
+    use ethrex_common::types::{DEFAULT_BUILDER_GAS_CEIL, ELASTICITY_MULTIPLIER, Genesis};
+    use ethrex_storage::EngineType;
+    use ethrex_vm::compute_burned_fees;
+    use std::path::Path;
+
+    /// Load the execution-api genesis (has all Prague system contracts deployed) and
+    /// override the chain config to add Amsterdam / LStar activation timestamps.
+    fn load_genesis_with_forks(amsterdam: bool, lstar: bool) -> Genesis {
+        let path = Path::new(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../fixtures/genesis/execution-api.json"
+        ));
+        let mut genesis = Genesis::try_from(path).expect("Failed to load execution-api genesis");
+        // Patch the fork timestamps.
+        genesis.config.amsterdam_time = amsterdam.then_some(0);
+        genesis.config.lstar_time = lstar.then_some(0);
+        // Amsterdam/LStar require slot_number in the genesis header; set it here.
+        if amsterdam || lstar {
+            genesis.slot_number = Some(0);
+        }
+        genesis
+    }
+
+    /// Build one empty payload on top of genesis and return the produced block.
+    /// `slot_number` must be `Some` when LStar is active (RLP contiguity invariant).
+    async fn build_empty_payload(genesis: Genesis, slot_number: Option<u64>) -> Block {
+        let mut store =
+            Store::new("store.db", EngineType::InMemory).expect("Failed to create in-memory store");
+        store
+            .add_initial_state(genesis)
+            .await
+            .expect("Failed to add genesis");
+        let blockchain = Blockchain::default_with_store(store.clone());
+        let genesis_header = store.get_block_header(0).unwrap().unwrap();
+        let args = BuildPayloadArgs {
+            parent: genesis_header.hash(),
+            timestamp: 1,
+            fee_recipient: Address::zero(),
+            random: H256::zero(),
+            withdrawals: Some(Vec::new()),
+            beacon_root: Some(H256::zero()),
+            slot_number,
+            version: 1,
+            elasticity_multiplier: ELASTICITY_MULTIPLIER,
+            gas_ceil: DEFAULT_BUILDER_GAS_CEIL,
+        };
+        let block_template =
+            create_payload(&args, &store, Bytes::new()).expect("create_payload failed");
+        blockchain
+            .build_payload(block_template)
+            .expect("build_payload failed")
+            .payload
+    }
+
+    /// LStar block must have burned_fees = Some(compute_burned_fees(base_fee, gas_spent,
+    /// blob_base_fee, blob_gas_used)) where gas_spent is post-refund (last receipt's
+    /// cumulative_gas_used), matching the verification path.
+    #[tokio::test]
+    async fn lstar_block_produces_burned_fees() {
+        let genesis = load_genesis_with_forks(true, true);
+        let config = genesis.config;
+        // slot_number=Some(1): required by the RLP trailing-optional contiguity invariant
+        // when burned_fees is Some (LStar+).
+        let block = build_empty_payload(genesis, Some(1)).await;
+        let header = &block.header;
+
+        // Compute expected using the same helper + same-basis inputs as finalize_payload.
+        // Empty block: no receipts → gas_spent = 0; no blobs → blob_gas_used = 0.
+        let blob_base_fee: u64 = calculate_base_fee_per_blob_gas(
+            header.excess_blob_gas.unwrap_or(0),
+            config
+                .get_fork_blob_schedule(header.timestamp)
+                .map(|s| s.base_fee_update_fraction)
+                .unwrap_or(0),
+        )
+        .try_into()
+        .unwrap_or(u64::MAX);
+
+        let expected = compute_burned_fees(
+            header.base_fee_per_gas.unwrap_or(0),
+            0, // gas_spent = 0 (no transactions → no receipts)
+            blob_base_fee,
+            header.blob_gas_used.unwrap_or(0),
+        );
+
+        assert_eq!(
+            header.burned_fees,
+            Some(expected),
+            "LStar: burned_fees must equal compute_burned_fees(base_fee={}, gas_spent=0, blob_base_fee={}, blob_gas_used={})",
+            header.base_fee_per_gas.unwrap_or(0),
+            blob_base_fee,
+            header.blob_gas_used.unwrap_or(0),
+        );
+    }
+
+    /// Pre-LStar (Amsterdam) blocks must leave burned_fees = None.
+    #[tokio::test]
+    async fn amsterdam_block_does_not_set_burned_fees() {
+        let genesis = load_genesis_with_forks(true, false); // Amsterdam only, no LStar
+        let block = build_empty_payload(genesis, None).await;
+        assert_eq!(
+            block.header.burned_fees, None,
+            "Amsterdam (pre-LStar): burned_fees must be None"
+        );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn create_payload_emits_explicit_empty_withdrawals_post_shanghai() {
+        // Regression: the L2 block producer passes `withdrawals: None`, which
+        // `create_payload` used to leak into the body while the header still
+        // committed to the empty withdrawals root — a block shape
+        // `validate_block_body` rejects (and every reference client rejects).
+        let mut store = ethrex_storage::Store::new("", ethrex_storage::EngineType::InMemory)
+            .expect("in-memory store");
+        store
+            .set_chain_config(&ChainConfig {
+                shanghai_time: Some(0),
+                ..Default::default()
+            })
+            .await
+            .expect("chain config");
+        let parent = BlockHeader {
+            gas_limit: 30_000_000,
+            ..Default::default()
+        };
+        let parent_hash = parent.hash();
+        store
+            .add_block_header(parent_hash, parent)
+            .await
+            .expect("parent header");
+
+        let args = BuildPayloadArgs {
+            parent: parent_hash,
+            timestamp: 1,
+            fee_recipient: Address::zero(),
+            random: H256::zero(),
+            withdrawals: None,
+            beacon_root: None,
+            slot_number: None,
+            version: 2,
+            elasticity_multiplier: 2,
+            gas_ceil: 30_000_000,
+        };
+        let block = create_payload(&args, &store, Bytes::new()).expect("payload");
+
+        // The body must carry an explicit empty list matching the header's
+        // empty root, and the produced block must pass body validation.
+        assert_eq!(block.body.withdrawals, Some(vec![]));
+        assert!(block.header.withdrawals_root.is_some());
+        ethrex_common::types::validate_block_body(&block.header, &block.body, &NativeCrypto)
+            .expect("produced block must pass validate_block_body");
+    }
+
+    #[test]
+    fn nonce_mismatch_detected_from_chain_error() {
+        // Build the ChainError through the REAL production conversion path so a
+        // change to the TxValidationError/VMError Display strings breaks this
+        // test instead of silently breaking `is_nonce_mismatch` (which keys off
+        // the "Nonce mismatch" substring). Path:
+        // TxValidationError::NonceMismatch -> VMError -> EvmError::Transaction
+        // (via From, which stringifies) -> ChainError::InvalidBlock.
+        use ethrex_levm::errors::{TxValidationError, VMError};
+        let nonce_err: ChainError =
+            EvmError::from(VMError::TxValidation(TxValidationError::NonceMismatch {
+                expected: 5,
+                actual: 7,
+            }))
+            .into();
+        assert!(
+            is_nonce_mismatch(&nonce_err),
+            "is_nonce_mismatch must match the real NonceMismatch Display; got: {nonce_err}"
+        );
+        // A different validation error must NOT match, also via the real path.
+        let other: ChainError = EvmError::from(VMError::TxValidation(
+            TxValidationError::InsufficientAccountFunds,
+        ))
+        .into();
+        assert!(
+            !is_nonce_mismatch(&other),
+            "is_nonce_mismatch must not match unrelated errors; got: {other}"
+        );
+    }
+
+    #[test]
+    fn deterministic_invalid_detected_from_chain_error() {
+        // Pin `is_deterministic_invalid`'s Display substrings through the REAL
+        // production conversion path (same rationale as the nonce-mismatch pin
+        // test above): a reworded levm error must break this test, not silently
+        // stop evicting doomed txs.
+        use ethrex_levm::errors::{TxValidationError, VMError};
+        let to_chain = |e: TxValidationError| -> ChainError {
+            EvmError::from(VMError::TxValidation(e)).into()
+        };
+
+        // Intrinsically invalid at this nonce forever -> must be evicted.
+        for (err, name) in [
+            (TxValidationError::IntrinsicGasTooLow, "IntrinsicGasTooLow"),
+            (
+                TxValidationError::IntrinsicGasBelowFloorGasCost,
+                "IntrinsicGasBelowFloorGasCost",
+            ),
+            (
+                TxValidationError::InitcodeSizeExceeded {
+                    max_size: 1,
+                    actual_size: 2,
+                },
+                "InitcodeSizeExceeded",
+            ),
+            (
+                TxValidationError::TxMaxGasLimitExceeded {
+                    tx_hash: H256::zero(),
+                    tx_gas_limit: 1,
+                },
+                "TxMaxGasLimitExceeded",
+            ),
+        ] {
+            let e = to_chain(err);
+            assert!(
+                is_deterministic_invalid(&e),
+                "is_deterministic_invalid must match {name}; got: {e}"
+            );
+        }
+
+        // Transient failures (nonce gap, balance, fees) must NOT be evicted.
+        for (err, name) in [
+            (
+                TxValidationError::NonceMismatch {
+                    expected: 5,
+                    actual: 7,
+                },
+                "NonceMismatch",
+            ),
+            (
+                TxValidationError::InsufficientAccountFunds,
+                "InsufficientAccountFunds",
+            ),
+            (
+                TxValidationError::InsufficientMaxFeePerGas,
+                "InsufficientMaxFeePerGas",
+            ),
+        ] {
+            let e = to_chain(err);
+            assert!(
+                !is_deterministic_invalid(&e),
+                "is_deterministic_invalid must NOT match transient {name}; got: {e}"
+            );
+        }
+    }
+
+    #[test]
+    fn l1_gas_reservation_too_low_is_not_deterministic() {
+        // The L2 hook's `reserve_l1_gas` rejects a tx whose gas limit cannot cover
+        // the reserved `l1_gas`, which tracks the L1 fee config and the block's gas
+        // price — so the same tx can succeed a block later. That failure MUST stay
+        // pooled, which is why it has its own variant instead of reusing
+        // `IntrinsicGasTooLow`. If the two are ever merged again, this test fails
+        // and eviction stops silently dropping recoverable L2 txs.
+        use ethrex_levm::errors::{TxValidationError, VMError};
+        let to_chain = |e: TxValidationError| -> ChainError {
+            EvmError::from(VMError::TxValidation(e)).into()
+        };
+
+        let transient = to_chain(TxValidationError::L1GasReservationTooLow);
+        assert!(
+            !is_deterministic_invalid(&transient),
+            "L1GasReservationTooLow is transient (l1_gas varies per block) and must \
+             NOT be evicted; got: {transient}"
+        );
+
+        // The distinction is only meaningful if the two stringify differently: a
+        // reworded `L1GasReservationTooLow` that drifted into containing the
+        // intrinsic-gas substring would start being evicted.
+        let permanent = to_chain(TxValidationError::IntrinsicGasTooLow);
+        assert!(
+            is_deterministic_invalid(&permanent),
+            "IntrinsicGasTooLow must still be evicted; got: {permanent}"
+        );
+        assert_ne!(
+            transient.to_string(),
+            permanent.to_string(),
+            "L1GasReservationTooLow and IntrinsicGasTooLow must not share a Display \
+             string, or the transient case becomes unclassifiable"
+        );
     }
 }
