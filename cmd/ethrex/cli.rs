@@ -865,8 +865,12 @@ impl FromStr for LogColor {
 }
 
 /// Find directories under `base` that look like real ethrex databases
-/// (`metadata.json` present), including the unsuffixed base, known public-network
-/// suffixes, and `chain-*` custom-genesis / L2 dirs.
+/// (`metadata.json` with a recognized schema version).
+///
+/// Checks the unsuffixed base and every immediate subdirectory. Name-based
+/// filters (public-network lists, `chain-*`) are intentionally avoided so the
+/// removedb guard fails closed if a future network suffix is added without
+/// updating a hand-maintained list.
 pub fn find_valid_datadir_candidates(base: &Path) -> Vec<PathBuf> {
     let mut candidates = Vec::new();
 
@@ -874,20 +878,8 @@ pub fn find_valid_datadir_candidates(base: &Path) -> Vec<PathBuf> {
         candidates.push(base.to_path_buf());
     }
 
-    for suffix in Network::all_datadir_suffixes() {
-        let path = base.join(suffix);
-        if has_valid_db(&path) {
-            candidates.push(path);
-        }
-    }
-
     if let Ok(entries) = std::fs::read_dir(base) {
         for entry in entries.flatten() {
-            let name = entry.file_name();
-            let name = name.to_string_lossy();
-            if !name.starts_with("chain-") {
-                continue;
-            }
             let path = entry.path();
             if path.is_dir() && has_valid_db(&path) {
                 candidates.push(path);
@@ -930,9 +922,9 @@ pub fn guard_remove_datadir(base: &Path, effective: &Path) -> eyre::Result<()> {
             "refusing to remove {effective:?}: no valid database there, but found one at the old \
              unsuffixed location {base:?}.\n\
              Re-passing the same `--datadir` will not help while `--network` still appends a \
-             subdirectory. Migrate first, remove the old directory manually \
-             (e.g. `rm -rf {base:?}`), or run removedb with `--network local-devnet` (without \
-             `--dev`) so no subdirectory is appended and the target is {base:?}.\n\
+             subdirectory. Migrate first (start the node once so the DB moves into the network \
+             subdirectory), then re-run removedb with the matching `--network`, or remove the old \
+             directory manually (e.g. `rm -rf {base:?}`).\n\
              Databases found under {base:?}:\n{alternate_list}"
         );
     }
@@ -1558,7 +1550,7 @@ mod tests {
             err.contains("Re-passing the same `--datadir` will not help"),
             "{err}"
         );
-        assert!(err.contains("local-devnet"), "{err}");
+        assert!(err.contains("Migrate first"), "{err}");
         assert!(err.contains("rm -rf"), "{err}");
         assert!(has_valid_db(base));
     }
@@ -1609,6 +1601,36 @@ mod tests {
         assert_eq!(found.len(), 2);
         assert!(found.iter().any(|p| p.ends_with("sepolia")));
         assert!(found.iter().any(|p| p.ends_with("chain-99")));
+    }
+
+    #[test]
+    fn guard_refuses_unknown_suffix_sibling_db() {
+        // Fail-closed: a valid DB under any immediate subdirectory must trip the
+        // guard, even when the name is not in all_datadir_suffixes() / chain-*.
+        let tmp = tempfile::tempdir().unwrap();
+        let base = tmp.path();
+        let weirdnet = base.join("weirdnet");
+        write_valid_db_metadata(&weirdnet);
+
+        let effective = base.join("mainnet");
+        let err = guard_remove_datadir(base, &effective)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("refusing to remove"), "{err}");
+        assert!(err.contains("weirdnet"), "{err}");
+        assert!(has_valid_db(&weirdnet), "sibling DB must stay untouched");
+    }
+
+    #[test]
+    fn find_candidates_includes_unknown_suffix_dirs() {
+        let tmp = tempfile::tempdir().unwrap();
+        let base = tmp.path();
+        write_valid_db_metadata(&base.join("weirdnet"));
+        fs::create_dir_all(base.join("empty-junk")).unwrap();
+
+        let found = find_valid_datadir_candidates(base);
+        assert_eq!(found.len(), 1);
+        assert!(found[0].ends_with("weirdnet"));
     }
 
     /// `--http.addr` must default to `127.0.0.1` so a fresh install on a public
