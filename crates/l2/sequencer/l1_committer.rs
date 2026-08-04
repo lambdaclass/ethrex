@@ -646,12 +646,18 @@ impl L1Committer {
         info!("Generating missing checkpoint for batch {}", batch.number);
 
         // Fetch the blocks in the batch along with their respective fee configs
-        let (blocks, fee_configs) = fetch_blocks_with_respective_fee_configs::<CommitterError>(
+        let (mut blocks, fee_configs) = fetch_blocks_with_respective_fee_configs::<CommitterError>(
             batch,
             &self.store,
             &self.rollup_store,
         )
         .await?;
+
+        // Stored blocks produced by older ethrex versions may carry the legacy
+        // omitted-withdrawals body shape, which block validation now rejects.
+        for block in blocks.iter_mut() {
+            normalize_legacy_withdrawals(&block.header, &mut block.body);
+        }
 
         // Re-execute the blocks in the batch to recreate the checkpoint
         for (i, block) in blocks.iter().enumerate() {
@@ -865,7 +871,12 @@ impl L1Committer {
                         "Failed to get_block_header() after get_block_body()".to_owned(),
                     ))?;
 
-                Block::new(block_to_commit_header, block_to_commit_body)
+                let mut block = Block::new(block_to_commit_header, block_to_commit_body);
+                // Stored blocks produced by older ethrex versions may carry the
+                // legacy omitted-withdrawals body shape, which block validation
+                // (and thus the fallback re-execution below) now rejects.
+                normalize_legacy_withdrawals(&block.header, &mut block.body);
+                block
             };
 
             let current_block_gas_used = potential_batch_block.header.gas_used;
