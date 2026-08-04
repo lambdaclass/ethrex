@@ -2887,17 +2887,15 @@ impl LEVM {
         // `bal_storage_slots` at the call site), so this warmer covers only account
         // states and contract code, which overlap execution.
         //
-        // Sized against the read concurrency a chunk's code fetch can reach, not against
-        // the account count. That fetch runs at a queue depth bounded by the number of
-        // distinct uncached code hashes in the chunk, which is at most the number of
-        // accounts and usually far fewer, so the chunk only has to be a comfortable
-        // multiple of the core count to keep every fetch deep. Chunking finer than that
-        // would trade the executor's head start for shallower reads; chunking coarser
-        // just delays the first code read for no gain.
-        let warm_chunk_accounts = std::thread::available_parallelism()
-            .map_or(8, |p| p.get())
-            .saturating_mul(64)
-            .max(1024);
+        // Sized to saturate the read depth of the batched code fetch, because on the
+        // blocks this targets the warmer is throughput-bound rather than latency-bound:
+        // it occupies the whole execution window, so total read concurrency matters more
+        // than how soon the first code lands. That fetch shards at 256 keys and caps its
+        // shard count at `max(64, 2 * cores)`, and its depth is bounded by the distinct
+        // uncached hashes a chunk carries, so a chunk narrower than the cap's worth of
+        // keys buys an earlier start by giving up depth for the whole block.
+        let parallelism = std::thread::available_parallelism().map_or(8, |p| p.get());
+        let warm_chunk_accounts = 256_usize.saturating_mul(parallelism.saturating_mul(2).max(64));
 
         for chunk in accounts.chunks(warm_chunk_accounts) {
             if cancelled.load(Ordering::Relaxed) {
