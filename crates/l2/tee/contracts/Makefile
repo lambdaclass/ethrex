@@ -17,11 +17,8 @@ ON_CHAIN_PROPOSER ?= 0x0
 # transitive contract tree.
 # lambdaclass/automata-on-chain-pccs, merge commit of its PR #2, on main.
 PCCS_REV = 903fd1bcfd4609f7d7a2c0cb809a3240a927db2b
-# lambdaclass/automata-dcap-attestation.
-# NOTE: still a commit on that fork's `chore/pin-dependency-revisions` branch (its
-# PR #2), not main. Repoint at the merge commit once it lands, so a default clone
-# can still reach it if the branch is deleted.
-DCAP_ATTESTATION_REV = 44b5a6def41c9f482402bab65ed84134ef369f1f
+# lambdaclass/automata-dcap-attestation, merge commit of its PR #2, on main.
+DCAP_ATTESTATION_REV = 089a947708585dc5ee8f51f5d8d9d0342d58954a
 # OpenZeppelin/openzeppelin-contracts v5.7.0
 OPENZEPPELIN_REV = cab19933c33c2ad1d4c7a84864a3601dddfd16f3
 # automata-network/automata-dcap-qpl, main tip as of 2026-08-03
