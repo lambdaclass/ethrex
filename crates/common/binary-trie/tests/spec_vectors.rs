@@ -184,6 +184,41 @@ fn incremental_matches_spec_roots() {
     }
 }
 
+/// The spec roots, built in one bottom-up pass from sorted leaves
+/// rather than one insertion at a time.
+///
+/// `overwrite_takes_last_value` deliberately repeats a key, which is
+/// not valid bulk input — the fold takes a distinct key set and cannot
+/// deduplicate for the caller. Rather than excluding the case, each
+/// case's entries are reduced to the surviving value per key first,
+/// which is the shape a real caller (a genesis alloc, a state snapshot)
+/// already has; that reduction is a no-op for every other case.
+#[test]
+fn spec_vectors_build_by_bulk_load() {
+    use ethrex_binary_trie::trie::{BinaryTrie, InMemoryBinaryTrieDB};
+
+    for case in load().trie_roots {
+        // Last write wins, and a `BTreeMap` hands the leaves back in
+        // ascending key order — which for prefix-free keys is
+        // ascending bit order.
+        let mut surviving: BTreeMap<Vec<u8>, [u8; 32]> = BTreeMap::new();
+        for e in &case.entries {
+            surviving.insert(unhex(&e.key), unhex(&e.value).try_into().unwrap());
+        }
+        let leaves: Vec<(Vec<u8>, [u8; 32])> = surviving.into_iter().collect();
+
+        let trie =
+            BinaryTrie::from_sorted_leaves(Box::new(InMemoryBinaryTrieDB::new_empty()), leaves)
+                .unwrap();
+        assert_eq!(
+            trie.root().as_bytes(),
+            unhex(&case.root).as_slice(),
+            "trie case {}",
+            case.name
+        );
+    }
+}
+
 /// The spec roots survive a full storage round trip.
 ///
 /// `incremental_matches_spec_roots` builds in memory and hashes what it

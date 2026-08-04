@@ -11,6 +11,13 @@
 //! are inverses: the one moves bits from a prefix into a new branch
 //! above, the other folds them back into the survivor below.
 //!
+//! A whole trie can also be built at once, by
+//! [`BinaryTrie::from_sorted_leaves`], from leaves already in bit
+//! order. That the structure is canonical is what makes this possible:
+//! sorted input determines the tree, so a single bottom-up fold builds
+//! every node in its final shape rather than splitting and re-splitting
+//! its way there.
+//!
 //! Subtrees need not be in memory. A [`NodeRef`] is either a loaded
 //! node or the hash of one that lives in the database under its bit
 //! path; reads and writes resolve stored references as they descend,
@@ -112,6 +119,15 @@ impl NodeRef {
     }
 }
 
+/// A leaf awaiting its place in a bulk build, with its key expanded to
+/// bits once up front rather than at every level of the fold that
+/// passes over it.
+struct SortedLeaf {
+    bits: Vec<u8>,
+    key: Vec<u8>,
+    value: [u8; 32],
+}
+
 /// What a removal did to the subtree it was applied to, reported back
 /// up the descent.
 enum Removal {
@@ -166,6 +182,145 @@ impl BinaryTrie {
     /// An empty trie over a fresh in-memory backend.
     pub fn new_temp() -> Self {
         Self::new(Box::new(InMemoryBinaryTrieDB::new_empty()))
+    }
+
+    /// Build a trie over `leaves`, which must already be in ascending
+    /// bit order and hold each key once.
+    ///
+    /// One bottom-up pass instead of one descent per key. Repeated
+    /// [`BinaryTrie::insert`] reaches the same tree, but walks from the
+    /// root every time and may split a branch that a later insertion
+    /// splits again; a sorted fold visits each node once and builds it
+    /// in its final shape. Genesis needs this — the whole state arrives
+    /// at once as an alloc — and so, later, does snapshot import.
+    ///
+    /// **Ordering.** Sort by bytes: for the prefix-free keys this trie
+    /// accepts, plain lexicographic byte order *is* bit order. The two
+    /// disagree only when one key's bits are a prefix of another's —
+    /// byte order puts the shorter first, bit order has nothing to say
+    /// — and that is exactly the case the trie rejects.
+    ///
+    /// **Why sorting is enough to determine the shape.** A run of
+    /// leaves agreeing on their first `depth` bits is one subtree; it
+    /// is a single [`Node::Leaf`] if it holds one leaf, and otherwise a
+    /// [`Node::Branch`] whose prefix runs from `depth` to the first bit
+    /// the run disagrees on, splitting there. Because the input is
+    /// sorted, the two sides of that split are contiguous — a boundary
+    /// index, not a filter — and the run's shared prefix is whatever
+    /// its first and last leaves share, with no need to look between.
+    ///
+    /// A constructor rather than an `extend`: merging a sorted stream
+    /// into an existing tree is a different and harder problem, so
+    /// there is no API here to misuse for it.
+    ///
+    /// Nothing is written to the database — every node comes out dirty
+    /// with its hash unknown, and [`BinaryTrie::commit`] writes the
+    /// tree. The whole input is held in memory as well; that is fine
+    /// for the callers this has (mainnet's genesis alloc is under ten
+    /// thousand accounts), and truly streaming construction, which
+    /// would flush finished subtrees as the fold leaves them behind, is
+    /// a later concern.
+    ///
+    /// # Errors
+    ///
+    /// The input is validated rather than trusted, and no trie is
+    /// returned unless all of it is sound:
+    /// - [`BinaryTrieError::EmptyKey`] if any key is empty.
+    /// - [`BinaryTrieError::KeyTooLong`] if any key exceeds
+    ///   [`MAX_KEY_LENGTH`] bytes.
+    /// - [`BinaryTrieError::UnsortedInput`] if a key does not follow
+    ///   its predecessor, or repeats it.
+    /// - [`BinaryTrieError::PrefixViolation`] if one key's bits are a
+    ///   prefix of another's.
+    pub fn from_sorted_leaves(
+        db: Box<dyn BinaryTrieDB>,
+        leaves: Vec<(Vec<u8>, [u8; 32])>,
+    ) -> Result<Self, BinaryTrieError> {
+        let mut run: Vec<SortedLeaf> = Vec::with_capacity(leaves.len());
+        for (key, value) in leaves {
+            if key.is_empty() {
+                return Err(BinaryTrieError::EmptyKey);
+            }
+            if key.len() > MAX_KEY_LENGTH {
+                return Err(BinaryTrieError::KeyTooLong);
+            }
+            if let Some(previous) = run.last() {
+                Self::check_ascending(&previous.key, &key)?;
+            }
+            run.push(SortedLeaf {
+                bits: bytes_to_bits(&key),
+                key,
+                value,
+            });
+        }
+        Ok(Self {
+            db,
+            root: (!run.is_empty()).then(|| NodeRef::loaded(Self::fold(&mut run, 0))),
+            pending_removal: BTreeSet::new(),
+        })
+    }
+
+    /// Check that `next` follows `previous` in bit order and that
+    /// neither is a prefix of the other.
+    ///
+    /// Checking consecutive pairs catches *every* prefix relation, not
+    /// only adjacent ones: if `a` is a proper prefix of `b`, then every
+    /// key between them in sort order also starts with `a` — one that
+    /// did not would differ from `a` inside `a`'s own length, and so
+    /// would fall outside the interval entirely. So `a`'s immediate
+    /// successor starts with `a`, and this pairwise walk sees it.
+    fn check_ascending(previous: &[u8], next: &[u8]) -> Result<(), BinaryTrieError> {
+        if previous == next {
+            return Err(BinaryTrieError::UnsortedInput);
+        }
+        // Keys are whole bytes, so a bit-prefix is a byte-prefix. The
+        // reversed case is out of order too, but the structural fault
+        // is the more specific answer — sorting the input would not
+        // make that pair representable.
+        if next.starts_with(previous) || previous.starts_with(next) {
+            return Err(BinaryTrieError::PrefixViolation);
+        }
+        if previous > next {
+            return Err(BinaryTrieError::UnsortedInput);
+        }
+        Ok(())
+    }
+
+    /// Build the subtree over `run`, a non-empty group of validated
+    /// leaves that all agree on their first `depth` bits.
+    ///
+    /// Consumes each leaf's key on the way past, which is safe because
+    /// the recursion partitions `run` into disjoint slices and reaches
+    /// every leaf exactly once.
+    fn fold(run: &mut [SortedLeaf], depth: usize) -> Node {
+        if let [only] = run {
+            return Node::Leaf {
+                key: std::mem::take(&mut only.key),
+                value: only.value,
+            };
+        }
+        // Sorted, so everything between the ends shares whatever the
+        // ends share: the run's own prefix is `first`'s bits from
+        // `depth` up to the first one `last` disagrees on. Validation
+        // rules out the two ways that search could fall off the end —
+        // the keys are distinct and neither is a prefix of the other,
+        // so they diverge at a bit both of them have.
+        let (first, last) = (&run[0].bits, &run[run.len() - 1].bits);
+        let split = (depth..first.len())
+            .find(|&i| first[i] != last[i])
+            .expect("validated leaves are distinct and prefix-free, so they diverge");
+        let prefix = first[depth..split].to_vec();
+
+        // `first` sorts below `last`, so the bit they disagree on is 0
+        // in one and 1 in the other, and the 0-side is an initial
+        // segment of the run: both sides are non-empty.
+        let boundary = run.partition_point(|leaf| leaf.bits[split] == 0);
+        let (zeros, ones) = run.split_at_mut(boundary);
+        Node::Branch {
+            prefix,
+            left: NodeRef::loaded(Self::fold(zeros, split + 1)),
+            right: NodeRef::loaded(Self::fold(ones, split + 1)),
+        }
     }
 
     /// Insert `key` with `value`, overwriting any existing value for
@@ -1546,5 +1701,213 @@ mod tests {
             reverse.insert(k.to_vec(), [9; 32]).unwrap();
         }
         assert_eq!(forward.root(), reverse.root());
+    }
+
+    /// A set of key/value leaves, in whatever order a test wants them.
+    type Entries = Vec<(Vec<u8>, [u8; 32])>;
+
+    /// A fresh, empty in-memory backend, boxed for the constructors.
+    fn empty_db() -> Box<dyn BinaryTrieDB> {
+        Box::new(InMemoryBinaryTrieDB::new_empty())
+    }
+
+    /// `entries` in ascending key order — which, for the prefix-free
+    /// keys this trie accepts, is also ascending *bit* order.
+    fn sorted(entries: &[(Vec<u8>, [u8; 32])]) -> Entries {
+        let mut sorted = entries.to_vec();
+        sorted.sort_by(|(a, _), (b, _)| a.cmp(b));
+        sorted
+    }
+
+    /// `entries` in an order that is neither the input's nor sorted, so
+    /// the insertion side of a bulk-versus-insert comparison cannot
+    /// accidentally be handed the sorted sequence: every third entry,
+    /// then the ones after those, then the ones before.
+    fn scrambled(entries: &[(Vec<u8>, [u8; 32])]) -> Entries {
+        let mut out: Vec<_> = entries.iter().skip(2).step_by(3).cloned().collect();
+        out.extend(entries.iter().skip(1).step_by(3).cloned());
+        out.extend(entries.iter().step_by(3).cloned());
+        out
+    }
+
+    /// 34-byte keys distinguished by their first two bytes, so `n` of
+    /// them nest several branches deep while staying prefix-free.
+    fn two_byte_entries(n: u16) -> Entries {
+        (0..n)
+            .map(|i| {
+                let mut key = vec![0x00; 34];
+                key[0] = (i >> 8) as u8;
+                key[1] = i as u8;
+                (key, [i as u8; 32])
+            })
+            .collect()
+    }
+
+    /// Named key sets for the bulk-load tests, chosen to exercise the
+    /// fold's boundaries: divergence at the very first bit, divergence
+    /// only in the last byte after a long shared prefix, the
+    /// embedding's mixed 34/66-byte shapes, and enough keys to nest.
+    fn bulk_key_sets() -> Vec<(&'static str, Entries)> {
+        let first_bit = vec![(vec![0x00; 34], [1u8; 32]), (vec![0x80; 34], [2u8; 32])];
+        let deep_shared_prefix: Vec<_> = [0x00u8, 0x01, 0x02, 0x80, 0xff]
+            .into_iter()
+            .map(|last| {
+                let mut key = vec![0x33; 34];
+                key[33] = last;
+                (key, [last; 32])
+            })
+            .collect();
+        vec![
+            ("divergence at the first bit", first_bit),
+            ("deep shared prefix", deep_shared_prefix),
+            ("wide", wide_entries()),
+            ("mixed key lengths", sample_entries()),
+            ("two-byte fan-out", two_byte_entries(64)),
+        ]
+    }
+
+    #[test]
+    fn empty_input_builds_an_empty_trie() {
+        let mut trie = BinaryTrie::from_sorted_leaves(empty_db(), vec![]).unwrap();
+        assert_eq!(trie.root(), EMPTY_TRIE_ROOT);
+        assert_eq!(trie.get(&[0xab; 34]).unwrap(), None);
+        assert_eq!(trie.commit().unwrap(), EMPTY_TRIE_ROOT);
+    }
+
+    #[test]
+    fn single_leaf_builds_by_bulk_load() {
+        let mut trie =
+            BinaryTrie::from_sorted_leaves(empty_db(), vec![(vec![0u8; 34], [0x01; 32])]).unwrap();
+        // The same spec vector `single_leaf_matches_spec_vector` pins.
+        assert_eq!(
+            trie.root().0,
+            hex!("4b60a28dce9f3529d103a26e00fadb98514cbd16ce03b7df752426addef9bbc7")
+        );
+        assert_eq!(trie.get(&[0u8; 34]).unwrap(), Some([0x01; 32]));
+    }
+
+    #[test]
+    fn bulk_matches_insertion_for_the_same_keys() {
+        for (name, entries) in bulk_key_sets() {
+            let mut bulk = BinaryTrie::from_sorted_leaves(empty_db(), sorted(&entries)).unwrap();
+
+            // Fed in a different order, to re-confirm that the answer
+            // the fold must match is itself order-independent.
+            let mut inserted = BinaryTrie::new_temp();
+            for (key, value) in scrambled(&entries) {
+                inserted.insert(key, value).unwrap();
+            }
+
+            assert_ne!(bulk.root(), EMPTY_TRIE_ROOT, "key set {name}");
+            assert_eq!(bulk.root(), inserted.root(), "key set {name}");
+            for (key, value) in &entries {
+                assert_eq!(
+                    bulk.get(key).unwrap(),
+                    Some(*value),
+                    "key set {name}, key {key:02x?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn rejects_unsorted_input() {
+        let descending = vec![(vec![0x80; 34], [1; 32]), (vec![0x00; 34], [2; 32])];
+        assert_eq!(
+            BinaryTrie::from_sorted_leaves(empty_db(), descending).err(),
+            Some(BinaryTrieError::UnsortedInput)
+        );
+    }
+
+    #[test]
+    fn rejects_duplicate_keys() {
+        let repeated = vec![(vec![0x42; 34], [1; 32]), (vec![0x42; 34], [2; 32])];
+        assert_eq!(
+            BinaryTrie::from_sorted_leaves(empty_db(), repeated).err(),
+            Some(BinaryTrieError::UnsortedInput)
+        );
+    }
+
+    #[test]
+    fn rejects_prefix_violating_input() {
+        // Sorted, distinct, and still impossible: a leaf terminates its
+        // path, so no key can lie below another.
+        let prefixed = vec![(vec![0xaa], [1; 32]), (vec![0xaa, 0xbb], [2; 32])];
+        assert_eq!(
+            BinaryTrie::from_sorted_leaves(empty_db(), prefixed).err(),
+            Some(BinaryTrieError::PrefixViolation)
+        );
+        // And the other way round, which is out of order as well; the
+        // structural fault is the more specific answer.
+        let reversed = vec![(vec![0xaa, 0xbb], [1; 32]), (vec![0xaa], [2; 32])];
+        assert_eq!(
+            BinaryTrie::from_sorted_leaves(empty_db(), reversed).err(),
+            Some(BinaryTrieError::PrefixViolation)
+        );
+    }
+
+    #[test]
+    fn rejects_empty_and_oversized_keys() {
+        assert_eq!(
+            BinaryTrie::from_sorted_leaves(empty_db(), vec![(vec![], [0; 32])]).err(),
+            Some(BinaryTrieError::EmptyKey)
+        );
+        assert_eq!(
+            BinaryTrie::from_sorted_leaves(empty_db(), vec![(vec![0; 8193], [0; 32])]).err(),
+            Some(BinaryTrieError::KeyTooLong)
+        );
+    }
+
+    #[test]
+    fn bulk_built_trie_round_trips_through_storage() {
+        let entries = sorted(&sample_entries());
+        let db = InMemoryBinaryTrieDB::new_empty();
+        let map = db.inner();
+
+        let mut trie = BinaryTrie::from_sorted_leaves(Box::new(db), entries.clone()).unwrap();
+        let root = trie.commit().unwrap();
+        assert_eq!(root, trie.root(), "commit and root must agree");
+        assert_eq!(
+            root,
+            root_from_scratch(&entries),
+            "the bulk root must be the canonical one"
+        );
+
+        // A fresh handle on the same nodes: every answer below comes
+        // from what the commit wrote.
+        let mut reopened = BinaryTrie::open(Box::new(InMemoryBinaryTrieDB::new(map)), root);
+        assert_eq!(reopened.root(), root);
+        for (key, value) in &entries {
+            assert_eq!(reopened.get(key).unwrap(), Some(*value));
+        }
+        assert_eq!(reopened.get(&[0x7f; 34]).unwrap(), None);
+    }
+
+    #[test]
+    fn bulk_load_writes_exactly_the_canonical_node_count() {
+        // A canonical binary radix trie over `n` distinct keys has `n`
+        // leaves and `n - 1` branches: a branch exists exactly where
+        // two subtrees diverge, and `n` leaves diverge `n - 1` times.
+        // A fold that is off by a bit somewhere can still produce a
+        // well-formed trie, but not one of the right size.
+        let entries = two_byte_entries(1000);
+        let (db, counts) = CountingDB::over(InMemoryBinaryTrieDB::new_empty().inner());
+
+        let mut trie = BinaryTrie::from_sorted_leaves(Box::new(db), sorted(&entries)).unwrap();
+        let root = trie.commit().unwrap();
+
+        assert_eq!(root, root_from_scratch(&entries));
+        assert_eq!(
+            counts.writes(),
+            2 * entries.len() - 1,
+            "{} leaves plus {} branches",
+            entries.len(),
+            entries.len() - 1
+        );
+        assert_eq!(
+            counts.reads(),
+            0,
+            "bulk construction builds from its input alone"
+        );
     }
 }

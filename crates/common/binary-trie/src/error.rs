@@ -15,6 +15,12 @@ pub enum BinaryTrieError {
     /// which the tree cannot represent (a leaf terminates its path).
     #[error("key is a prefix of another key in the trie")]
     PrefixViolation,
+    /// Bulk construction was handed leaves that are not in ascending
+    /// bit order, or that repeat a key. The bottom-up fold reads its
+    /// input once and trusts the order to tell it where a subtree
+    /// ends, so it cannot sort or deduplicate on the caller's behalf.
+    #[error("bulk input must be in ascending bit order and distinct")]
+    UnsortedInput,
     /// A stored node could not be decoded. Since a node's stored bytes
     /// are its hashing preimage, this means the store returned
     /// something the tree never wrote.

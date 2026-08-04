@@ -31,6 +31,17 @@ of the removed leaf into its surviving sibling, which absorbs the bits
 the branch consumed. Correctness is pinned by the spec conformance
 vectors rather than by a second in-crate implementation.
 
+`BinaryTrie::from_sorted_leaves` builds a whole trie at once from
+leaves already in bit order — which, for prefix-free keys, is plain
+ascending byte order. Because the structure is canonical, sorted input
+determines it: one bottom-up fold builds every node in its final shape,
+instead of descending from the root once per key and splitting branches
+that a later key splits again. It is what genesis wants, and later
+snapshot import. Input is validated, not trusted: keys out of order or
+repeated are rejected. The build is in-memory — nothing is written
+until `commit()` — so it suits allocs and snapshots that fit in memory
+rather than an unbounded stream.
+
 ### Storage
 
 The trie is storage-backed. `trie::BinaryTrieDB` is the node store —
