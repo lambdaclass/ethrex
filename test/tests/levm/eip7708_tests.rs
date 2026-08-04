@@ -223,6 +223,7 @@ impl TestBuilder {
             LevmCallTracer::disabled(),
             VMType::L1,
             &NativeCrypto,
+            None,
         )
         .unwrap();
         vm.execute().unwrap()
