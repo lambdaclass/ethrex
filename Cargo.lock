@@ -4418,6 +4418,7 @@ version = "22.0.0"
 dependencies = [
  "anyhow",
  "bytes",
+ "ethrex-binary-trie",
  "ethrex-common",
  "ethrex-crypto",
  "ethrex-rlp",

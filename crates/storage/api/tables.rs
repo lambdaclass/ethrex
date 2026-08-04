@@ -73,6 +73,24 @@ pub const ACCOUNT_TRIE_NODES: &str = "account_trie_nodes";
 /// - [`Vec<u8>`] = `node_data`
 pub const STORAGE_TRIE_NODES: &str = "storage_trie_nodes";
 
+/// EIP-8297 binary trie nodes column family: [`Vec<u8>`] => [`Vec<u8>`]
+/// - [`Vec<u8>`] = `BitPath::to_db_key()` — the node's **bit path from the
+///   root**, not a node hash: a four-byte big-endian bit count followed by the
+///   path's bits packed MSB-first. The count is what makes the key injective;
+///   without it `[1]` and `[1, 0]` pack to identical bytes.
+/// - [`Vec<u8>`] = the node's stored encoding (leaf or branch), which is also
+///   its hashing preimage.
+///
+/// An **empty value is a tombstone**, not a stored node: it means the node at
+/// that path left the tree and the key must be deleted, so a later read answers
+/// `None`. No node encodes to zero bytes — every encoding starts with a tag —
+/// so the two cannot be confused. See `BackendBinaryTrieDB` in
+/// `crates/storage/binary_trie.rs`.
+///
+/// Single-version and path-keyed, the same storage model the MPT node tables
+/// use: a node that changes overwrites itself in place.
+pub const BINARY_TRIE_NODES: &str = "binary_trie_nodes";
+
 /// Pending blocks column family: [`Vec<u8>`] => [`Vec<u8>`]
 /// - [`Vec<u8>`] = `BlockHashRLP::from(block.hash()).bytes().clone()`
 /// - [`Vec<u8>`] = `BlockRLP::from(block).bytes().clone()`
@@ -129,7 +147,7 @@ pub const BLOCK_ACCESS_LISTS: &str = "block_access_lists";
 /// - [`Vec<u8>`] = RLP-encoded `Vec<Block>` (sorted by descending block number)
 pub const BAD_BLOCKS: &str = "bad_blocks";
 
-pub const TABLES: [&str; 22] = [
+pub const TABLES: [&str; 23] = [
     CHAIN_DATA,
     ACCOUNT_CODES,
     ACCOUNT_CODE_METADATA,
@@ -144,6 +162,7 @@ pub const TABLES: [&str; 22] = [
     INVALID_CHAINS,
     ACCOUNT_TRIE_NODES,
     STORAGE_TRIE_NODES,
+    BINARY_TRIE_NODES,
     FULLSYNC_HEADERS,
     ACCOUNT_FLATKEYVALUE,
     STORAGE_FLATKEYVALUE,
