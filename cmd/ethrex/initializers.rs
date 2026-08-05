@@ -26,7 +26,8 @@ use ethrex_p2p::{
     utils::public_key_from_signing_key,
 };
 use ethrex_storage::{
-    EngineType, Store, StoreConfig, error::StoreError, has_valid_db, read_chain_id_from_db,
+    DB_COMMIT_THRESHOLD, EngineType, Store, StoreConfig, error::StoreError, has_valid_db,
+    read_chain_id_from_db,
 };
 use local_ip_address::{local_ip, local_ipv6};
 use rand::rngs::OsRng;
@@ -403,13 +404,23 @@ pub async fn init_dev_network(
 ) {
     info!("Running in DEV_MODE");
 
-    let head_block_hash = {
+    let chain_config = store.get_chain_config();
+
+    let (head_block_hash, target_gas_limit) = {
         let current_block_number = store.get_latest_block_number().await.unwrap();
-        store
+        let head_block_hash = store
             .get_canonical_block_hash(current_block_number)
             .await
             .unwrap()
+            .unwrap();
+        // Use the head block's gas limit as the V4 target so the dev chain holds
+        // its configured gas limit (execution-apis#796 requires target_gas_limit).
+        let target_gas_limit = store
+            .get_block_header(current_block_number)
             .unwrap()
+            .unwrap()
+            .gas_limit;
+        (head_block_hash, target_gas_limit)
     };
 
     let max_tries = 3;
@@ -426,6 +437,8 @@ pub async fn init_dev_network(
         max_tries,
         1000,
         ethrex_common::Address::default(),
+        chain_config.amsterdam_time,
+        target_gas_limit,
     );
     // The dev block producer is fatal: if it exhausts its retries, abort the dev node.
     spawn_fatal(
@@ -783,6 +796,7 @@ pub async fn init_l1(
             bal_parallel_exec_enabled: !opts.no_bal_parallel_exec,
             bal_prefetch_enabled: !opts.no_bal_prefetch,
             bal_parallel_trie_enabled: !opts.no_bal_parallel_trie,
+            max_reorg_depth: opts.max_reorg_depth,
             gap_admit_occupancy_threshold: opts.mempool_gap_admit_occupancy_threshold,
         },
     );
@@ -1053,7 +1067,10 @@ pub async fn regenerate_head_state(
             .await?
             .ok_or_else(|| eyre::eyre!("Block {i} not found"))?;
 
-        blockchain.add_block_pipeline(block, None)?;
+        // Single canonical chain: commit by depth so the in-memory trie-layer
+        // backlog stays bounded (~DB_COMMIT_THRESHOLD) instead of growing with the
+        // regeneration gap and OOMing on a large gap.
+        blockchain.add_block_pipeline_bounded(block, None, DB_COMMIT_THRESHOLD)?;
     }
 
     info!("Finished regenerating state");

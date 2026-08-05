@@ -90,7 +90,7 @@ pub const EIP8025_VERSION_CANONICAL: u8 = 0x01;
 /// Returns an error if rkyv serialization of the execution witness fails.
 #[cfg(feature = "eip-8025")]
 pub fn encode_eip8025(
-    new_payload_request: &ethrex_common::types::eip8025_ssz::NewPayloadRequest,
+    new_payload_request: &ethrex_common::types::stateless_ssz::NewPayloadRequest,
     execution_witness: &ExecutionWitness,
 ) -> Result<Vec<u8>, ProgramInputEncodeError> {
     use libssz::SszEncode;
@@ -111,19 +111,19 @@ pub fn encode_eip8025(
 // ── canonical SSZ schema ───────────────────────────────────────────
 
 #[cfg(feature = "eip-8025")]
-const MAX_WITNESS_NODES: usize = 1 << 20;
+const MAX_WITNESS_NODES: usize = 1 << 22;
 #[cfg(feature = "eip-8025")]
-const MAX_WITNESS_CODES: usize = 1 << 16;
+const MAX_WITNESS_CODES: usize = 1 << 18;
 #[cfg(feature = "eip-8025")]
 const MAX_WITNESS_HEADERS: usize = 256;
 #[cfg(feature = "eip-8025")]
-const MAX_BYTES_PER_WITNESS_NODE: usize = 1 << 20;
+const MAX_BYTES_PER_WITNESS_NODE: usize = 1 << 10;
 #[cfg(feature = "eip-8025")]
-const MAX_BYTES_PER_CODE: usize = 1 << 24;
+const MAX_BYTES_PER_CODE: usize = 1 << 16;
 #[cfg(feature = "eip-8025")]
 const MAX_BYTES_PER_HEADER: usize = 1 << 10;
 #[cfg(feature = "eip-8025")]
-const MAX_PUBLIC_KEYS: usize = 1 << 20;
+const MAX_PUBLIC_KEYS: usize = 1 << 15;
 #[cfg(feature = "eip-8025")]
 const BYTES_PER_PUBLIC_KEY: usize = 65;
 
