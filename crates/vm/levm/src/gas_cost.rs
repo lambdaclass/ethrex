@@ -210,9 +210,9 @@ pub const BLOB_GAS_PER_BLOB: u64 = 131072;
 pub const ACCESS_LIST_STORAGE_KEY_COST: u64 = 1900;
 pub const ACCESS_LIST_ADDRESS_COST: u64 = 2400;
 
-// ===== EIP-8038 Amsterdam values (merged EIPs#11802) =====
+// ===== EIP-8038 Amsterdam values =====
 pub const COLD_ACCOUNT_ACCESS_AMSTERDAM: u64 = 3000;
-pub const COLD_STORAGE_ACCESS_AMSTERDAM: u64 = 3000;
+pub const COLD_STORAGE_ACCESS_AMSTERDAM: u64 = 2100;
 // Prepaying an access-list entry is gas neutral with the cold access it replaces:
 // the entry costs the cold charge minus the WARM_ACCESS the later touch still pays.
 // EIP-2930's extra 100 discount is deliberately not restored.
@@ -221,10 +221,11 @@ pub const ACCESS_LIST_ADDRESS_COST_AMSTERDAM: u64 =
 pub const ACCESS_LIST_STORAGE_KEY_COST_AMSTERDAM: u64 =
     COLD_STORAGE_ACCESS_AMSTERDAM - WARM_ADDRESS_ACCESS_COST;
 pub const STORAGE_WRITE_AMSTERDAM: u64 = 10000;
-pub const ACCOUNT_WRITE_AMSTERDAM: u64 = 8000;
-pub const CALL_VALUE_AMSTERDAM: u64 = 10300;
-pub const STORAGE_CLEAR_REFUND_AMSTERDAM: i64 = 12480;
-pub const CREATE_ACCESS_AMSTERDAM: u64 = 11000;
+pub const ACCOUNT_WRITE_AMSTERDAM: u64 = 9000;
+pub const CALL_VALUE_AMSTERDAM: u64 = ACCOUNT_WRITE_AMSTERDAM + CALL_POSITIVE_VALUE_STIPEND;
+pub const STORAGE_CLEAR_REFUND_AMSTERDAM: i64 =
+    ((STORAGE_WRITE_AMSTERDAM + COLD_STORAGE_ACCESS_AMSTERDAM) * 4800 / 5000) as i64;
+pub const CREATE_ACCESS_AMSTERDAM: u64 = ACCOUNT_WRITE_AMSTERDAM + COLD_ACCOUNT_ACCESS_AMSTERDAM;
 
 // ===== EIP-2780 Amsterdam values =====
 // Resource-based intrinsic transaction gas. The flat 21000 base is decomposed
@@ -293,7 +294,7 @@ pub fn access_list_storage_key_cost(fork: Fork) -> u64 {
 }
 
 /// Upfront positive-value cost for CALL / CALLCODE. EIP-8038 raises this from
-/// 9000 to 10300 (`CALL_VALUE_AMSTERDAM`) at Amsterdam. This is the charge
+/// 9000 to `CALL_VALUE_AMSTERDAM` at Amsterdam. This is the charge
 /// applied to the *caller* before the call; it is NOT the 2300 stipend
 /// (`CALL_POSITIVE_VALUE_STIPEND`) forwarded to the callee, which is unchanged.
 pub fn call_positive_value_cost(fork: Fork) -> u64 {
@@ -722,8 +723,8 @@ fn compute_gas_create(
         0
     };
 
-    // EIP-8038: CREATE/CREATE2 opcode regular base is CREATE_ACCESS (11000);
-    // the new-account leaf is charged separately in state gas.
+    // EIP-8038: CREATE/CREATE2 opcode regular base is CREATE_ACCESS; the
+    // new-account leaf is charged separately in state gas.
     let create_base_cost = if fork >= Fork::Amsterdam {
         CREATE_ACCESS_AMSTERDAM
     } else {
