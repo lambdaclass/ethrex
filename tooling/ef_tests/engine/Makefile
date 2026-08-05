@@ -10,6 +10,13 @@ AMSTERDAM_FIXTURES_FILE := ../.fixtures_url_amsterdam
 AMSTERDAM_ARTIFACT := amsterdam-tests.tar.gz
 AMSTERDAM_URL := $(shell cat $(AMSTERDAM_FIXTURES_FILE))
 
+# Subtrees the Amsterdam bundle contributes. `for_bpo2toamsterdamattime15k` holds the
+# fork-activation fixtures (a header field appearing mid-chain, the gas schedule
+# switching between blocks); it exists only in this bundle, so omitting it leaves the
+# whole fork boundary untested.
+AMSTERDAM_SUBTREES := for_amsterdam for_bpo2toamsterdamattime15k
+AMSTERDAM_STAMP := $(SPECTEST_VECTORS_DIR)/.amsterdam_overlay
+
 VECTORS_TARGETS := $(SPECTEST_VECTORS_DIR)
 
 $(SPECTEST_ARTIFACT): $(FIXTURES_FILE)
@@ -21,13 +28,22 @@ $(SPECTEST_VECTORS_DIR): $(SPECTEST_ARTIFACT)
 	mkdir -p $(SPECTEST_VECTORS_DIR)
 	tar -xzf $(SPECTEST_ARTIFACT) --strip-components=2 -C $(SPECTEST_VECTORS_DIR) fixtures/blockchain_tests_engine
 
-$(AMSTERDAM_ARTIFACT): $(AMSTERDAM_FIXTURES_FILE)
+# Order-only on $(SPECTEST_VECTORS_DIR): building it runs clean-vectors, which deletes
+# $(AMSTERDAM_ARTIFACT). Downloading afterwards keeps the bundle from being wiped
+# between the curl and the extract.
+$(AMSTERDAM_ARTIFACT): $(AMSTERDAM_FIXTURES_FILE) | $(SPECTEST_VECTORS_DIR)
 	curl -L -o $(AMSTERDAM_ARTIFACT) $(AMSTERDAM_URL)
 
-$(SPECTEST_VECTORS_DIR)/for_amsterdam: $(AMSTERDAM_ARTIFACT) $(SPECTEST_VECTORS_DIR)
-	tar -xzf $(AMSTERDAM_ARTIFACT) --strip-components=2 -C $(SPECTEST_VECTORS_DIR) fixtures/blockchain_tests_engine/for_amsterdam
+# Clear the subtrees first: the bundle is overlaid onto an existing `vectors/eest`, so
+# fixtures renamed or dropped between devnet releases would otherwise survive as stale
+# leftovers and run against the current client.
+$(AMSTERDAM_STAMP): $(AMSTERDAM_ARTIFACT) $(SPECTEST_VECTORS_DIR)
+	rm -rf $(addprefix $(SPECTEST_VECTORS_DIR)/,$(AMSTERDAM_SUBTREES))
+	tar -xzf $(AMSTERDAM_ARTIFACT) --strip-components=2 -C $(SPECTEST_VECTORS_DIR) \
+		$(addprefix fixtures/blockchain_tests_engine/,$(AMSTERDAM_SUBTREES))
+	touch $@
 
-amsterdam-vectors: $(SPECTEST_VECTORS_DIR)/for_amsterdam ## 📥 Overlay glamsterdam-devnet-6 engine fixtures onto vectors/eest
+amsterdam-vectors: $(AMSTERDAM_STAMP) ## 📥 Overlay Amsterdam engine fixtures onto vectors/eest
 
 help: ## 📚 Show help for each Makefile target
 	@grep -E '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-30s\033[0m %s\n", $$1, $$2}'
