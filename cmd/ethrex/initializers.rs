@@ -793,6 +793,8 @@ pub async fn init_l1(
             precompute_witnesses: opts.precompute_witnesses,
             private_mempool: opts.mempool_private,
             precompile_cache_enabled: !opts.no_precompile_cache,
+            price_bump_percent: opts.mempool_price_bump,
+            blob_price_bump_percent: opts.mempool_blob_price_bump,
             max_queued_txs_per_account: opts.mempool_max_queued_txs_per_account,
             bal_parallel_exec_enabled: !opts.no_bal_parallel_exec,
             bal_prefetch_enabled: !opts.no_bal_prefetch,
