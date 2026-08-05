@@ -91,6 +91,27 @@ jobs:
           # guard is asserted to fail with its OWN diagnostic, not merely to
           # exit non-zero: a guard whose removal is masked by some later failure
           # has silently stopped being tested.
+          # The committed public key is the trust anchor consumers verify
+          # against, and the release now hard-fails if it does not match the
+          # signing key. A corrupted or truncated commit of it must therefore
+          # surface here, not at release time.
+          python3 - <<'EOF'
+          import base64, pathlib, sys
+          path = pathlib.Path(".github/minisign.pub")
+          if not path.is_file():
+              sys.exit("::error::.github/minisign.pub is missing")
+          lines = [l for l in path.read_text().splitlines() if l.strip()]
+          if len(lines) != 2 or not lines[0].startswith("untrusted comment:"):
+              sys.exit("::error::.github/minisign.pub is not a minisign public key file")
+          raw = base64.b64decode(lines[1], validate=True)
+          if len(raw) != 42 or raw[:2] != b"Ed":
+              sys.exit(f"::error::.github/minisign.pub is not a 42-byte Ed25519 minisign key (got {len(raw)} bytes, algo {raw[:2]!r})")
+          key_id = format(int.from_bytes(raw[2:10], "little"), "016X")
+          if key_id not in lines[0]:
+              sys.exit(f"::error::.github/minisign.pub comment does not name its key id {key_id}")
+          print(f"ok  committed public key is well-formed (key id {key_id})")
+          EOF
+
           work="$(mktemp -d)"
           minisign -G -W -p "$work/pub" -s "$work/key" > /dev/null
           minisign -G -W -p "$work/other.pub" -s "$work/other.key" > /dev/null
