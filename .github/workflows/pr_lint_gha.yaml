@@ -182,6 +182,30 @@ jobs:
           fi
           echo "ok  tampered artifact fails verification"
 
+          # ── MINISIGN_PUBLIC_KEY cross-check ────────────────────────────────
+          # The secret is a recorded copy, not a substitute for the derived key:
+          # a matching one is confirmed, a stale one fails rather than being
+          # published in place of the real key.
+          make_tree "$work/bin-sec"
+          out="$(mktemp)"
+          MINISIGN_PUBLIC_KEY="$(cat "$work/pub")" COMMITTED_PUBLIC_KEY="$work/absent.pub" \
+            bash "$SCRIPT" "$work/bin-sec" > "$out" 2>&1
+          verify_all "$work/bin-sec" "$work/pub"
+          grep -qF "matches the MINISIGN_PUBLIC_KEY secret" "$out" || {
+            echo "::error::a matching MINISIGN_PUBLIC_KEY was not confirmed"; cat "$out"; exit 1; }
+          echo "ok  confirms a matching MINISIGN_PUBLIC_KEY secret"
+
+          make_tree "$work/bin-stale"
+          out="$(mktemp)"
+          if MINISIGN_PUBLIC_KEY="$(cat "$work/other.pub")" COMMITTED_PUBLIC_KEY="$work/absent.pub" \
+               bash "$SCRIPT" "$work/bin-stale" > "$out" 2>&1; then
+            echo "::error::a stale MINISIGN_PUBLIC_KEY was accepted"
+            exit 1
+          fi
+          grep -qF "the MINISIGN_PUBLIC_KEY secret" "$out" || {
+            echo "::error::stale secret failed for the wrong reason:"; cat "$out"; exit 1; }
+          echo "ok  rejects: a stale MINISIGN_PUBLIC_KEY secret"
+
           # ── Guards ─────────────────────────────────────────────────────────
           make_tree "$work/bin3"
           expect_fail "a committed key from a different keypair" "$work/other.pub" "$work/bin3" \

@@ -465,10 +465,12 @@ jobs:
       - name: Sign stateless-validator artifacts
         if: env.HAS_MINISIGN_SECRET_KEY == 'true'
         env:
-          # No MINISIGN_PUBLIC_KEY secret: the script derives the public key from
-          # the secret key, so the two cannot drift apart.
           MINISIGN_SECRET_KEY: ${{ secrets.MINISIGN_SECRET_KEY }}
           MINISIGN_PASSWORD: ${{ secrets.MINISIGN_PASSWORD }}
+          # Not used to sign or to publish: the script derives the public key
+          # from the secret key, and cross-checks this against it so a stale
+          # secret is caught rather than trusted.
+          MINISIGN_PUBLIC_KEY: ${{ secrets.MINISIGN_PUBLIC_KEY }}
           # Signed alongside the artifact, so the signature also attests which
           # tag and commit produced it.
           TRUSTED_COMMENT_SUFFIX: "ethrex ${{ github.ref_name }} ${{ github.sha }}"

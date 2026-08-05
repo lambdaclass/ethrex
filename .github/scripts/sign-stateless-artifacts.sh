@@ -16,16 +16,20 @@
 #   MINISIGN_SECRET_KEY  minisign private key, as stored in the repo secret
 #   MINISIGN_PASSWORD    password for the private key (empty for a `-W` key)
 #
-# The public key is *derived* from the secret key with `minisign -R` rather than
-# read from a third secret. That is one less secret to configure, and it makes a
-# key that disagrees with the signing key impossible by construction.
+# The public key is always *derived* from the secret key with `minisign -R`, so
+# the key published with a release can never disagree with the key that signed
+# it. Any other copy is treated as a claim to be checked against that, never as
+# a substitute for it.
 #
 # Optional environment:
 #   TRUSTED_COMMENT_SUFFIX  appended to each signed trusted comment, e.g. the tag
 #                           and commit. Signed, so it is a provenance claim.
+#   MINISIGN_PUBLIC_KEY     the public key as recorded in the repo secret. Not
+#                           required — it is cross-checked against the derived
+#                           key so a stale or mistyped secret is caught.
 #   COMMITTED_PUBLIC_KEY    path to the in-repo public key (default
-#                           .github/minisign.pub). When present it is the trust
-#                           anchor and must match the derived key.
+#                           .github/minisign.pub). The out-of-band trust anchor;
+#                           when present it must match the derived key.
 set -euo pipefail
 
 ARTIFACT_DIR="${1:?usage: sign-stateless-artifacts.sh <artifact-dir>}"
@@ -64,32 +68,47 @@ key_line() {
 }
 DERIVED_KEY="$(key_line "$WORK_DIR/minisign.pub")"
 
-# A public key shipped inside the same release it authenticates proves nothing:
-# anyone able to replace the artifacts can replace the key beside them. The
-# signature is only meaningful against a key published out-of-band, so the
-# in-repo copy is the trust anchor and the released copy is a convenience.
-#
-# It is not yet required, because requiring it would fail the first release made
-# after the signing secrets were configured. Once committed it is enforced: a
-# mismatch is a hard failure, since it means consumers hold a key the release
-# does not verify against.
-PUBLIC_KEY_SOURCE="$WORK_DIR/minisign.pub"
-if [ -f "$COMMITTED_PUBLIC_KEY" ]; then
-  if [ "$DERIVED_KEY" != "$(key_line "$COMMITTED_PUBLIC_KEY")" ]; then
+# Cross-check any other recorded copy of the public key against the derived one.
+# Neither is used *instead of* the derived key — the point is to catch a copy
+# that has gone stale, which is a sign the key was rotated somewhere and not
+# everywhere.
+check_matches_derived() { # check_matches_derived <file> <what>
+  local recorded
+  recorded="$(key_line "$1")"
+  if [ "$DERIVED_KEY" != "$recorded" ]; then
     cat >&2 <<EOF
-error: the signing key does not match '$COMMITTED_PUBLIC_KEY'.
+error: the signing key does not match $2.
 
 MINISIGN_SECRET_KEY derives to:
   $DERIVED_KEY
-but the committed public key is:
-  $(key_line "$COMMITTED_PUBLIC_KEY")
+but $2 records:
+  $recorded
 
-Consumers verify against the committed key, so this release's signatures would
-not verify for them. Either update the committed key (if the signing key was
-rotated on purpose) or fix the secret.
+They are different keypairs. Either the signing key was rotated without updating
+$2, or the wrong value was recorded. Consumers verify against the recorded key,
+so this release's signatures would not verify for them.
 EOF
     exit 1
   fi
+}
+
+if [ -n "${MINISIGN_PUBLIC_KEY:-}" ]; then
+  printf '%s\n' "$MINISIGN_PUBLIC_KEY" > "$WORK_DIR/secret-copy.pub"
+  check_matches_derived "$WORK_DIR/secret-copy.pub" "the MINISIGN_PUBLIC_KEY secret"
+  echo "Signing key matches the MINISIGN_PUBLIC_KEY secret"
+fi
+
+# A public key shipped inside the same release it authenticates proves nothing:
+# anyone able to replace the artifacts can replace the key beside them, and a
+# repo secret is no better — it is not something a downloader can consult. The
+# signature is only meaningful against a key published out-of-band, which is why
+# the in-repo copy is the trust anchor and everything else is a convenience.
+#
+# It is not required, because requiring it would fail the first release made
+# after the signing secrets were configured. Once committed it is enforced.
+PUBLIC_KEY_SOURCE="$WORK_DIR/minisign.pub"
+if [ -f "$COMMITTED_PUBLIC_KEY" ]; then
+  check_matches_derived "$COMMITTED_PUBLIC_KEY" "'$COMMITTED_PUBLIC_KEY'"
   echo "Signing key matches $COMMITTED_PUBLIC_KEY"
   PUBLIC_KEY_SOURCE="$COMMITTED_PUBLIC_KEY"
 else
