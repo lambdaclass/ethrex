@@ -1440,6 +1440,15 @@ fn a_batch_proof_spends_a_utxo_whose_ring_entry_aged_out() {
 /// A self-funded spend is single-frame by rule, so the sibling-failure case needs
 /// a sponsored spend: [pay-frame, UTXO, failing DEFAULT].
 fn sponsored_fixture(sibling: Option<Frame>) -> (SpendFixture, Address) {
+    sponsored_fixture_paying(sibling, Vec::new())
+}
+
+/// As `sponsored_fixture`, but with explicit `account_outs` so a test can make a
+/// sponsored spend pay out more than its inputs prove.
+fn sponsored_fixture_paying(
+    sibling: Option<Frame>,
+    account_outs: Vec<SpendOutput>,
+) -> (SpendFixture, Address) {
     let (actor_key, actor) = key_and_address(0x44);
     let sponsor = Address::from_low_u64_be(0x5907);
     let source = Address::from_low_u64_be(0x5011);
@@ -1465,7 +1474,7 @@ fn sponsored_fixture(sibling: Option<Frame>) -> (SpendFixture, Address) {
             recipient: actor,
             value: U256::zero(),
         }],
-        account_outs: vec![],
+        account_outs,
         change_index: 0,
         payer: Bytes::copy_from_slice(sponsor.as_bytes()),
         max_fee_per_gas: U256::from(1_000_000u64),
@@ -1972,4 +1981,277 @@ fn empty_block_openings_root_write_survives_finalization() {
     // A zero written over an unset slot is a no-op diff, so the vault may be absent
     // from the updates; what must not happen is an error.
     let _ = updates;
+}
+
+// ---------------------------------------------------------------------------
+// Conservation and multi-input spends.
+//
+// A mutation audit found the sponsored conservation check and the self-funded
+// conservation boundary were both unconstrained: deleting the sponsored check
+// outright, or loosening the self-funded one by a wei, left the whole suite
+// green. Multi-frame and multi-input spends had no coverage at all, so the
+// intra-transaction double-spend defence was asserted only in a comment.
+// ---------------------------------------------------------------------------
+
+/// A sponsored spend may not pay out more than its inputs prove.
+///
+/// The sponsor covers the fee, so this frame's conservation reduces to
+/// `spent >= signed_out` — the only thing standing between a sponsored spend and
+/// minting value, since the vault would otherwise credit account outputs it never
+/// received. Deleting that single comparison used to leave every test passing.
+#[test]
+fn a_sponsored_spend_cannot_pay_out_more_than_its_inputs() {
+    let payee = Address::from_low_u64_be(0xBEEF);
+    let input_value = U256::from(10u64).pow(U256::from(18u64));
+
+    // Exactly the input value is fine: the sponsor pays the fee separately.
+    let (exact, _) = sponsored_fixture_paying(
+        None,
+        vec![SpendOutput {
+            recipient: payee,
+            value: input_value,
+        }],
+    );
+    let (result, _) = run_spend(&exact);
+    assert!(
+        result.is_ok(),
+        "a sponsored spend paying out exactly its inputs must execute; got {result:?}"
+    );
+
+    // One wei more than the inputs prove must not.
+    let (over, _) = sponsored_fixture_paying(
+        None,
+        vec![SpendOutput {
+            recipient: payee,
+            value: input_value + U256::one(),
+        }],
+    );
+    let (result, mut db) = run_spend(&over);
+    assert!(
+        result.is_err(),
+        "a sponsored spend paying out more than its inputs must be rejected"
+    );
+    assert!(
+        vault_slot_word(&mut db, over.spent_slot).is_zero(),
+        "the rejected spend must leave no spent bit"
+    );
+    assert!(
+        db.current_accounts_state
+            .get(&payee)
+            .is_none_or(|acc| acc.info.balance.is_zero()),
+        "the over-paid recipient must receive nothing"
+    );
+}
+
+/// Two UTXO frames in one transaction cannot spend the same input.
+///
+/// The spent bit is staged, not written, while the frame loop runs, so the second
+/// frame can only see the first frame's bit through the durable-write overlay in
+/// `read_vault_slot`. Without that lookup both frames would verify their proof
+/// against an unset bit and the transaction would pay the input out twice.
+#[test]
+fn two_utxo_frames_cannot_spend_the_same_input() {
+    let (mut fixture, _sponsor) = sponsored_fixture(None);
+    // frames = [VERIFY pay, UTXO]; append a byte-identical second UTXO frame. The
+    // spend hash is unchanged, so the actor's existing signature still covers it.
+    let duplicate = fixture.tx.frames[1].clone();
+    fixture.tx.frames.push(duplicate);
+
+    let (result, mut db) = run_spend(&fixture);
+    assert!(
+        result.is_err(),
+        "the second frame must fail on the already-staged spent bit, invalidating \
+         the transaction; got {result:?}"
+    );
+    assert!(
+        vault_slot_word(&mut db, fixture.spent_slot).is_zero(),
+        "an invalidated transaction must leave no spent bit"
+    );
+}
+
+// NOT WRITTEN: an exact-to-the-wei self-funded conservation test.
+//
+// A mutation that loosens `spent_value < needed` by one wei still survives the
+// suite. The obvious test — bisect for the largest accepted payout, then assert
+// one wei more is rejected — cannot catch it: the bisection re-derives the
+// boundary under whatever comparison is in force, so a shifted boundary shifts
+// the test with it. Self-calibrating coverage is worse than none, so it is not
+// here.
+//
+// A real test needs a pinned expected value, which first needs an answer to why
+// the observed boundary is not a multiple of `max_fee_per_gas`: for a 1e18 input
+// the largest accepted payout ends in ...029, while `signed_out + max_cost`
+// would end in ...000. Some constraint other than conservation binds first
+// (settlement against the vault balance, most likely), so it is not even clear
+// the boundary measures the comparison under test. Worth resolving; not worth
+// faking.
+
+/// Build a consolidation spend: `n` UTXOs, each owned by a different actor, all
+/// committed in one block's openings tree, merged into a single payout plus
+/// change. This is the multi-actor form the EIP's bundling rationale is about.
+fn consolidation_fixture(n: usize, payout: U256) -> (SpendFixture, Vec<Address>, U256, Address) {
+    let per_input = U256::from(10u64).pow(U256::from(18u64));
+    let source = Address::from_low_u64_be(0x5011);
+    let payee = Address::from_low_u64_be(0xC0FFEE);
+
+    let mut keys = Vec::new();
+    let mut actors = Vec::new();
+    for i in 0..n {
+        let (k, a) = key_and_address(0x70 + u8::try_from(i).unwrap());
+        keys.push(k);
+        actors.push(a);
+    }
+    let indices: Vec<u64> = (0..u64::try_from(n).unwrap()).map(|i| 20 + i).collect();
+
+    // One tree for the creation block, holding every input's leaf, so each input
+    // carries a real sibling path rather than a degenerate one.
+    let leaves: Vec<H256> = indices
+        .iter()
+        .zip(&actors)
+        .map(|(index, actor)| opening_leaf(*index, source, *actor, per_input))
+        .collect();
+    let root = merkle_root(&leaves);
+    let inputs: Vec<SpendInput> = indices
+        .iter()
+        .zip(&actors)
+        .enumerate()
+        .map(|(position, (index, actor))| SpendInput {
+            index: *index,
+            creation_block: CREATION_BLOCK,
+            source,
+            recipient: *actor,
+            value: per_input,
+            position: u64::try_from(position).unwrap(),
+            siblings: merkle_proof(&leaves, position).expect("proof"),
+            batch_siblings: vec![],
+        })
+        .collect();
+
+    // Change goes to the first actor; the signed change entry carries value 0.
+    let spend = Spend {
+        actors: actors.clone(),
+        inputs,
+        utxo_outs: vec![SpendOutput {
+            recipient: actors[0],
+            value: U256::zero(),
+        }],
+        account_outs: vec![SpendOutput {
+            recipient: payee,
+            value: payout,
+        }],
+        change_index: 0,
+        payer: Bytes::new(), // self-funded: the inputs pay the fee
+        max_fee_per_gas: U256::from(1_000_000u64),
+        max_priority_fee_per_gas: U256::from(1_000_000u64),
+        max_gas_limit: 30_000_000,
+    };
+
+    let mut tx = FrameTransaction {
+        chain_id: 1,
+        nonce_keys: vec![],
+        nonce_seq: 0,
+        sender: utxo_vault(),
+        frames: vec![Frame {
+            mode: FrameMode::Utxo as u8,
+            flags: 0,
+            target: None,
+            gas_limit: 3_000_000,
+            value: U256::zero(),
+            data: Bytes::from(spend.encode_to_vec()),
+        }],
+        signatures: vec![],
+        max_priority_fee_per_gas: 1,
+        max_fee_per_gas: 1_000,
+        ..Default::default()
+    };
+    // Every actor signs the same spend hash: witness fields are outside it, so one
+    // digest authorises the whole bundle.
+    let digest = spend.spend_hash(tx.chain_id);
+    for (key, actor) in keys.iter().zip(&actors) {
+        tx.signatures.push(sign_digest(key, digest, *actor));
+    }
+
+    let total = per_input * U256::from(u64::try_from(n).unwrap());
+    let mut vault_storage = FxHashMap::default();
+    vault_storage.insert(
+        H256(ring_slot(CREATION_BLOCK).to_big_endian()),
+        U256::from_big_endian(root.as_bytes()),
+    );
+    let vault_acc = Account::new(
+        total,
+        Code::from_bytecode(
+            Bytes::from_static(&UTXO_VAULT_RUNTIME_BYTECODE),
+            &NativeCrypto,
+        ),
+        1,
+        vault_storage,
+    );
+    let (first_spent_slot, _) = spent_bit_location(indices[0]);
+    (
+        SpendFixture {
+            tx,
+            accounts: [(utxo_vault(), vault_acc)].into_iter().collect(),
+            input_index: indices[0],
+            spent_slot: H256(first_spent_slot.to_big_endian()),
+        },
+        actors,
+        total,
+        payee,
+    )
+}
+
+/// A consolidation spend merges three separately-owned UTXOs into one payout.
+///
+/// This is the bundling case the EIP's rationale rests on — several one-time
+/// payments to the same owner (or a group) collapsed into a single spend, one
+/// fee, one signature set. It exercises multi-input value summation, multi-actor
+/// authorisation against a single spend hash, and several spent bits staged and
+/// flushed within one frame.
+#[test]
+fn a_consolidation_spend_merges_three_inputs_from_three_actors() {
+    let payout = U256::from(10u64).pow(U256::from(18u64)); // one input's worth
+    let (fixture, actors, total, payee) = consolidation_fixture(3, payout);
+
+    let (result, mut db) = run_spend(&fixture);
+    let report = result.expect("a consolidation spend must execute");
+    assert!(matches!(report.result, TxResult::Success));
+
+    // The payee is credited exactly the signed account output.
+    assert_eq!(
+        db.current_accounts_state
+            .get(&payee)
+            .map(|acc| acc.info.balance)
+            .unwrap_or_default(),
+        payout,
+        "the account output must be credited exactly its signed value"
+    );
+
+    // Every input is now spent — not just the first.
+    for offset in 0..3u64 {
+        let (slot_u256, mask) = spent_bit_location(20 + offset);
+        let word = vault_slot_word(&mut db, H256(slot_u256.to_big_endian()));
+        assert!(
+            !(word & mask).is_zero(),
+            "input {} must be marked spent",
+            20 + offset
+        );
+    }
+
+    // Value is conserved: the vault keeps the change and nothing more. Everything
+    // it still holds beyond the payout is the change plus the unspent fee
+    // headroom, so it must be strictly less than the pooled inputs.
+    let vault_left = db
+        .current_accounts_state
+        .get(&utxo_vault())
+        .map(|acc| acc.info.balance)
+        .unwrap_or_default();
+    assert!(
+        vault_left < total && vault_left + payout <= total,
+        "the vault must retain only the change: left={vault_left}, total={total}"
+    );
+    assert_eq!(
+        actors.len(),
+        3,
+        "three distinct actors authorised the spend"
+    );
 }
