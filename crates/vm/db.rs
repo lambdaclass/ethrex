@@ -13,6 +13,13 @@ pub trait VmDatabase: Send + Sync + DynClone {
     fn get_account_code(&self, code_hash: H256) -> Result<Code, EvmError>;
     fn get_code_metadata(&self, code_hash: H256) -> Result<CodeMetadata, EvmError>;
 
+    /// Capacity of this backend's bytecode cache, in [`Code::size`] bytes, which bounds
+    /// how much a block warm can usefully read ahead: past it the warm evicts what it
+    /// just inserted. Default is the floor for a backend holding no such cache.
+    fn code_cache_budget_bytes(&self) -> u64 {
+        64 * 1024 * 1024
+    }
+
     /// Batch account-state lookup. Default impl loops `get_account_state`.
     /// Backends that can amortize per-key cost (e.g. rocksdb `multi_get_cf` on
     /// the flat key-value table) should override this.

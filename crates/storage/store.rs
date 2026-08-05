@@ -1055,6 +1055,19 @@ impl Store {
             .map_err(StoreError::from)
     }
 
+    /// Capacity of the bytecode cache, in [`Code::size`] bytes. Bounds how much bytecode
+    /// a block warm can usefully read ahead of the executor: past this the warm evicts
+    /// what it just inserted, so the reads cannot become an executor cache hit.
+    ///
+    /// A poisoned cache reports zero, which stops warming rather than warming into a
+    /// cache no reader can reach.
+    pub fn code_cache_budget_bytes(&self) -> u64 {
+        self.account_code_cache
+            .lock()
+            .map(|cache| cache.max_size)
+            .unwrap_or(0)
+    }
+
     /// Get account code by its hash.
     ///
     /// Checks the in-memory block-data buffer first, then the LRU cache

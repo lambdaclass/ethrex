@@ -130,6 +130,10 @@ impl StoreVmDatabase {
 }
 
 impl VmDatabase for StoreVmDatabase {
+    fn code_cache_budget_bytes(&self) -> u64 {
+        self.store.code_cache_budget_bytes()
+    }
+
     #[instrument(
         level = "trace",
         name = "Account read",
