@@ -628,21 +628,16 @@ impl ChainConfig {
     }
 
     pub fn get_blob_schedule_for_fork(&self, fork: Fork) -> Option<ForkBlobSchedule> {
-        match fork {
-            Fork::Cancun => Some(self.blob_schedule.cancun),
-            Fork::Prague => Some(self.blob_schedule.prague),
-            Fork::Osaka => Some(self.blob_schedule.osaka),
-            Fork::BPO1 => Some(self.blob_schedule.bpo1),
-            Fork::BPO2 => Some(self.blob_schedule.bpo2),
-            Fork::BPO3 => self.blob_schedule.bpo3,
-            Fork::BPO4 => self.blob_schedule.bpo4,
-            Fork::BPO5 => self.blob_schedule.bpo5,
-            Fork::Amsterdam => self.blob_schedule.amsterdam,
-            // Hegotá inherits Amsterdam's blob schedule unless an explicit
-            // Hegotá entry is added to BlobSchedule in a future change.
-            Fork::Hegota => self.blob_schedule.amsterdam,
-            _ => None,
+        // Blob params are timestamp-scheduled from Cancun onward; earlier forks are
+        // activated by block number and have no blob schedule. Resolving through the
+        // fork's activation timestamp keeps this in step with the inheritance rules in
+        // `get_fork_blob_schedule`, so a named fork that declares no entry of its own
+        // reports the entry actually in force at its activation.
+        if fork < Fork::Cancun {
+            return None;
         }
+        self.get_activation_timestamp_for_fork(fork)
+            .and_then(|timestamp| self.get_fork_blob_schedule(timestamp))
     }
 
     pub fn gather_forks(&self, genesis_header: BlockHeader) -> (Vec<u64>, Vec<u64>) {
@@ -1412,6 +1407,28 @@ mod tests {
         };
         assert_eq!(config.get_fork_blob_schedule(99), Some(bpo1));
         assert_eq!(config.get_fork_blob_schedule(100), Some(bpo1));
+    }
+
+    #[test]
+    fn blob_schedule_for_fork_reports_the_inherited_entry() {
+        // `eth_config` (EIP-7910) must report the blob params actually in force at a
+        // fork's activation, which for Amsterdam is the highest activated BPO entry.
+        let config = ChainConfig {
+            osaka_time: Some(0),
+            bpo1_time: Some(0),
+            amsterdam_time: Some(100),
+            ..Default::default()
+        };
+
+        let schedule = config
+            .get_blob_schedule_for_fork(Fork::Amsterdam)
+            .expect("Amsterdam must report a blob schedule");
+        assert_eq!((schedule.target, schedule.max), (10, 15));
+
+        // Forks that were never scheduled have nothing to report, and pre-Cancun forks
+        // are activated by block number rather than timestamp.
+        assert_eq!(config.get_blob_schedule_for_fork(Fork::BPO2), None);
+        assert_eq!(config.get_blob_schedule_for_fork(Fork::London), None);
     }
 
     #[test]
