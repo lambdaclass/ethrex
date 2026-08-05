@@ -335,3 +335,11 @@ These are lessons from the manual benchmarking that preceded this tool, not pref
   restarts on it with state available; otherwise the previous generation is kept.
 - **Never compare across machines.** The same binary has measured 62 s and 81 s on
   different CI runners; only same-box comparisons mean anything.
+- **Do not `--force-recreate` a `consensus-*` service on its own.** That re-runs its
+  `setup-jwt-*` dependency, which writes a fresh `jwt.hex`, while the already-running
+  execution node keeps the secret it read at startup. Engine API calls then fail with
+  `Auth failed`, the node stops being told where the chain tip is, and the sync quietly
+  goes nowhere. Restart the matching `ethrex-*` container afterwards.
+- **During snap sync `eth_blockNumber` stays at 0** and jumps to the tip only once the
+  pivot state has landed. A runner sitting at `0 / <tip>` for hours is normal, not a
+  stall; `docker logs ethrex-<net>` is where the real progress is.
