@@ -306,6 +306,22 @@ impl<'a> VM<'a> {
                 continue;
             };
 
+            // BSC/Parlia: bsc-geth's `validateAuthorization` (core/state_transition.go)
+            // rejects a recovered authority that is in `NanoBlackList`
+            // (core/types/blacklist.go) at this exact point — after signature recovery
+            // but before the access-list add, the code/nonce checks, and the
+            // existing-authority refund. A blacklisted authority skips the whole tuple:
+            // no access-list add, no nonce bump, no delegation, no refund. The check is
+            // NOT gated by the Nano fork in bsc-geth (unlike the sender/recipient
+            // freeze), so it applies on any Prague+ block. Mirror the ordering exactly
+            // so the refund is never credited for a blacklisted authority.
+            #[cfg(feature = "bsc")]
+            if (self.env.chain_id == U256::from(56) || self.env.chain_id == U256::from(97))
+                && ethrex_bsc::blacklist::is_bsc_nano_blacklisted(&authority_address)
+            {
+                continue;
+            }
+
             // 4. Add authority to accessed_addresses (as defined in EIP-2929).
             let authority_account = self.db.get_account(authority_address)?;
             let authority_exists = authority_account.exists;

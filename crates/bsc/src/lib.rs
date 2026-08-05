@@ -1,3 +1,4 @@
+pub mod blacklist;
 pub mod consensus;
 pub mod fork_id;
 pub mod genesis;
