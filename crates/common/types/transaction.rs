@@ -50,7 +50,8 @@ use ethrex_rlp::{
 #[cfg(all(feature = "eip-8025", target_arch = "riscv64"))]
 use super::eip8025_cell::OnceCell;
 use crate::types::{
-    AccessList, AuthorizationList, BlobsBundle, constants::VERSIONED_HASH_VERSION_KZG,
+    AccessList, AuthorizationList, BlobsBundle,
+    constants::{MAX_BLOBS_PER_TX, VERSIONED_HASH_VERSION_KZG},
 };
 #[cfg(not(all(feature = "eip-8025", target_arch = "riscv64")))]
 use once_cell::sync::OnceCell;
@@ -88,6 +89,7 @@ pub enum P2PTransaction {
     EIP7702Transaction(EIP7702Transaction),
     FeeTokenTransaction(FeeTokenTransaction),
     FrameTransaction(FrameTransaction),
+    FrameTransactionWithBlobs(WrappedFrameTransaction),
 }
 
 impl TryInto<Transaction> for P2PTransaction {
@@ -135,9 +137,12 @@ impl RLPDecode for P2PTransaction {
                 EnvelopeTxType::EIP7702 => {
                     P2PTransaction::EIP7702Transaction(EIP7702Transaction::decode(tx_encoding)?)
                 }
-                EnvelopeTxType::Frame => {
-                    P2PTransaction::FrameTransaction(FrameTransaction::decode(tx_encoding)?)
-                }
+                EnvelopeTxType::Frame => match FramePayload::decode(tx_encoding)? {
+                    FramePayload::WithBlobs(wrapped) => {
+                        P2PTransaction::FrameTransactionWithBlobs(wrapped)
+                    }
+                    FramePayload::Plain(tx) => P2PTransaction::FrameTransaction(tx),
+                },
                 EnvelopeTxType::FeeToken => {
                     P2PTransaction::FeeTokenTransaction(FeeTokenTransaction::decode(tx_encoding)?)
                 }
@@ -200,6 +205,100 @@ impl RLPDecode for WrappedEIP4844Transaction {
         let (proofs, decoder) = decoder.decode_field("proofs")?;
 
         let wrapped = WrappedEIP4844Transaction {
+            tx,
+            wrapper_version,
+            blobs_bundle: BlobsBundle {
+                blobs,
+                commitments,
+                proofs,
+                version: wrapper_version.unwrap_or_default(),
+            },
+        };
+        Ok((wrapped, decoder.finish()?))
+    }
+}
+
+/// An EIP-8141 frame transaction together with its blob sidecar, as it appears in a
+/// `PooledTransactions` response.
+///
+/// Per EIP-8141 §Networking, a frame transaction with non-empty
+/// `blob_versioned_hashes` is propagated exactly like an EIP-4844 blob
+/// transaction: its payload is wrapped per EIP-7594 as
+/// `rlp([tx_payload_body, wrapper_version, blobs, commitments, cell_proofs])`.
+/// A frame transaction with no blobs uses the plain payload with no wrapper, so
+/// it never reaches this type.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct WrappedFrameTransaction {
+    pub tx: FrameTransaction,
+    pub wrapper_version: Option<u8>,
+    pub blobs_bundle: BlobsBundle,
+}
+
+/// The two EIP-8141 §Networking payload shapes of a frame transaction: wrapped
+/// with its EIP-7594 sidecar when it carries blobs, plain when it does not.
+pub enum FramePayload {
+    Plain(FrameTransaction),
+    WithBlobs(WrappedFrameTransaction),
+}
+
+impl FramePayload {
+    /// Decode a frame transaction payload (the EIP-2718 `TransactionPayload`,
+    /// with the type byte already stripped) in whichever of the two shapes is on
+    /// the wire, then require the shape to agree with the declared versioned
+    /// hashes. The shapes are unambiguous: the wrapper's first field is a list,
+    /// a bare transaction's is `chain_id`.
+    ///
+    /// A mismatch is rejected rather than coerced: a blob-carrying transaction
+    /// sent unwrapped has irrecoverably lost its sidecar, and a sidecar on a
+    /// blobless transaction is unaccounted data.
+    pub fn decode(payload: &[u8]) -> Result<Self, RLPDecodeError> {
+        match WrappedFrameTransaction::decode(payload) {
+            Ok(wrapped) => {
+                if wrapped.tx.blob_versioned_hashes.is_empty() {
+                    return Err(RLPDecodeError::Custom(
+                        "frame transaction without blobs must not carry a sidecar".to_string(),
+                    ));
+                }
+                Ok(FramePayload::WithBlobs(wrapped))
+            }
+            Err(_) => {
+                let tx = FrameTransaction::decode(payload)?;
+                if !tx.blob_versioned_hashes.is_empty() {
+                    return Err(RLPDecodeError::Custom(
+                        "blob-carrying frame transaction must be wrapped with its sidecar"
+                            .to_string(),
+                    ));
+                }
+                Ok(FramePayload::Plain(tx))
+            }
+        }
+    }
+}
+
+impl RLPEncode for WrappedFrameTransaction {
+    fn encode(&self, buf: &mut dyn bytes::BufMut) {
+        Encoder::new(buf)
+            .encode_field(&self.tx)
+            .encode_optional_field(&self.wrapper_version)
+            .encode_field(&self.blobs_bundle.blobs)
+            .encode_field(&self.blobs_bundle.commitments)
+            .encode_field(&self.blobs_bundle.proofs)
+            .finish();
+    }
+}
+
+impl RLPDecode for WrappedFrameTransaction {
+    /// Strict: requires the EIP-7594 wrapper. An unwrapped frame transaction is
+    /// decoded as a plain `FrameTransaction` by `P2PTransaction`, which is what
+    /// distinguishes the two forms on the wire.
+    fn decode_unfinished(rlp: &[u8]) -> Result<(WrappedFrameTransaction, &[u8]), RLPDecodeError> {
+        let decoder = Decoder::new(rlp)?;
+        let (tx, decoder) = decoder.decode_field("tx")?;
+        let (wrapper_version, decoder) = decoder.decode_optional_field();
+        let (blobs, decoder) = decoder.decode_field("blobs")?;
+        let (commitments, decoder) = decoder.decode_field("commitments")?;
+        let (proofs, decoder) = decoder.decode_field("proofs")?;
+        let wrapped = WrappedFrameTransaction {
             tx,
             wrapper_version,
             blobs_bundle: BlobsBundle {
@@ -1535,16 +1634,31 @@ impl Transaction {
     }
 
     pub fn blob_versioned_hashes(&self) -> Vec<H256> {
+        self.blob_versioned_hashes_ref().to_vec()
+    }
+
+    /// The declared blob versioned hashes, borrowed. Prefer this over
+    /// `blob_versioned_hashes`, which clones.
+    pub fn blob_versioned_hashes_ref(&self) -> &[H256] {
         match self {
-            Transaction::LegacyTransaction(_) => Vec::new(),
-            Transaction::EIP2930Transaction(_) => Vec::new(),
-            Transaction::EIP1559Transaction(_) => Vec::new(),
-            Transaction::EIP4844Transaction(tx) => tx.blob_versioned_hashes.clone(),
-            Transaction::EIP7702Transaction(_) => Vec::new(),
-            Transaction::PrivilegedL2Transaction(_) => Vec::new(),
-            Transaction::FeeTokenTransaction(_) => Vec::new(),
-            Transaction::FrameTransaction(tx) => tx.blob_versioned_hashes.clone(),
+            Transaction::EIP4844Transaction(tx) => &tx.blob_versioned_hashes,
+            Transaction::FrameTransaction(tx) => &tx.blob_versioned_hashes,
+            Transaction::LegacyTransaction(_)
+            | Transaction::EIP2930Transaction(_)
+            | Transaction::EIP1559Transaction(_)
+            | Transaction::EIP7702Transaction(_)
+            | Transaction::PrivilegedL2Transaction(_)
+            | Transaction::FeeTokenTransaction(_) => &[],
         }
+    }
+
+    /// Whether the transaction is pooled, served over p2p and built as a
+    /// blob-carrying transaction. EIP-4844 transactions always are; an EIP-8141
+    /// frame transaction only when it declares blobs, since per EIP-8141 blobs
+    /// are optional for frame transactions.
+    pub fn is_blob_carrying(&self) -> bool {
+        matches!(self, Transaction::EIP4844Transaction(_))
+            || !self.blob_versioned_hashes_ref().is_empty()
     }
 
     pub fn max_fee_per_blob_gas(&self) -> Option<U256> {
@@ -2186,6 +2300,17 @@ impl FrameTransaction {
                 return Err(format!("Blob versioned hash {i}: wrong version byte"));
             }
         }
+        // The EIP-7594 per-transaction blob limit applies to frame transactions
+        // unchanged (EIP-8141 §Blob-carrying frame transactions). No fork gate is
+        // needed: frame transactions exist only from forks where EIP-7594 is
+        // active. Enforced here rather than on the sidecar so it also binds on
+        // the execution path, which has no sidecar to check.
+        if self.blob_versioned_hashes.len() > MAX_BLOBS_PER_TX {
+            return Err(format!(
+                "Blob count must not exceed {MAX_BLOBS_PER_TX}, got {}",
+                self.blob_versioned_hashes.len()
+            ));
+        }
         if self.blob_versioned_hashes.is_empty() && !self.max_fee_per_blob_gas.is_zero() {
             return Err(
                 "max_fee_per_blob_gas must be zero when the transaction carries no blobs"
@@ -2766,7 +2891,8 @@ mod canonic_encoding {
                 P2PTransaction::EIP4844TransactionWithBlobs(_) => TxType::EIP4844,
                 P2PTransaction::EIP7702Transaction(_) => TxType::EIP7702,
                 P2PTransaction::FeeTokenTransaction(_) => TxType::FeeToken,
-                P2PTransaction::FrameTransaction(_) => TxType::Frame,
+                P2PTransaction::FrameTransaction(_)
+                | P2PTransaction::FrameTransactionWithBlobs(_) => TxType::Frame,
             }
         }
 
@@ -2784,6 +2910,7 @@ mod canonic_encoding {
                 P2PTransaction::EIP7702Transaction(t) => t.encode(buf),
                 P2PTransaction::FeeTokenTransaction(t) => t.encode(buf),
                 P2PTransaction::FrameTransaction(t) => t.encode(buf),
+                P2PTransaction::FrameTransactionWithBlobs(t) => t.encode(buf),
             };
         }
 
@@ -2810,6 +2937,7 @@ mod canonic_encoding {
                 P2PTransaction::EIP7702Transaction(t) => t.length(),
                 P2PTransaction::FeeTokenTransaction(t) => t.length(),
                 P2PTransaction::FrameTransaction(t) => t.length(),
+                P2PTransaction::FrameTransactionWithBlobs(t) => t.length(),
             };
             prefix_len + inner_len
         }
@@ -2836,6 +2964,10 @@ mod canonic_encoding {
                 }
                 P2PTransaction::FrameTransaction(t) => {
                     Transaction::FrameTransaction(t.clone()).compute_hash(&NativeCrypto)
+                }
+                // The sidecar is not part of the transaction's identity.
+                P2PTransaction::FrameTransactionWithBlobs(t) => {
+                    Transaction::FrameTransaction(t.tx.clone()).compute_hash(&NativeCrypto)
                 }
             }
         }

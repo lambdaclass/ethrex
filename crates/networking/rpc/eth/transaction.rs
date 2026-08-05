@@ -606,19 +606,26 @@ impl RpcHandler for SendRawTransactionRequest {
     }
 
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
-        let hash = if let SendRawTransactionRequest::EIP4844(wrapped_blob_tx) = self {
-            context
-                .blockchain
-                .add_blob_transaction_to_pool(
-                    wrapped_blob_tx.tx.clone(),
-                    wrapped_blob_tx.blobs_bundle.clone(),
-                )
-                .await
-        } else {
-            context
-                .blockchain
-                .add_transaction_to_pool(self.to_transaction())
-                .await
+        // Blob-carrying transactions take the blob admission path so their sidecar
+        // is stored with them: EIP-4844 and EIP-8141 frame transactions alike.
+        let blobs_bundle = match self {
+            SendRawTransactionRequest::EIP4844(wrapped) => Some(&wrapped.blobs_bundle),
+            SendRawTransactionRequest::FrameWithBlobs(wrapped) => Some(&wrapped.blobs_bundle),
+            _ => None,
+        };
+        let hash = match blobs_bundle {
+            Some(blobs_bundle) => {
+                context
+                    .blockchain
+                    .add_blob_transaction_to_pool(self.to_transaction(), blobs_bundle.clone())
+                    .await
+            }
+            None => {
+                context
+                    .blockchain
+                    .add_transaction_to_pool(self.to_transaction())
+                    .await
+            }
         }?;
         serde_json::to_value(format!("{hash:#x}"))
             .map_err(|error| RpcErr::Internal(error.to_string()))
