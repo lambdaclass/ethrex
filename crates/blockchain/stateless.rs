@@ -4,8 +4,8 @@
 //! (projects/zkevm branch). It is invoked by the EXECUTE precompile via the
 //! `StatelessValidator` trait (see `StatelessExecutor` below).
 //!
-//! Note: the zkVM guest binaries validate via the separate `validate_eip8025_*`
-//! path, not this module.
+//! Note: the zkVM guest binaries reach this same code through
+//! `l1::run_stateless_guest`; there is no longer a separate validation family.
 
 use std::sync::Arc;
 

@@ -388,6 +388,13 @@ pub const STATELESS_INPUT_SCHEMA_ID: u16 = 0x1501;
 /// Byte length of the big-endian [`STATELESS_INPUT_SCHEMA_ID`] prefix.
 pub const STATELESS_INPUT_SCHEMA_ID_SIZE: usize = 2;
 
+/// SSZ shape of `SszStatelessInput::public_keys`: one fixed-size 65-byte
+/// uncompressed secp256k1 key per transaction.
+///
+/// Aliased so consumers can name the type without restating the list bounds, and
+/// so the bounds stay private to this module.
+pub type SszPublicKeys = SszList<SszVector<u8, PUBLIC_KEY_BYTES>, MAX_PUBLIC_KEYS>;
+
 /// SSZ `ExecutionWitness` container matching the execution-specs definition.
 ///
 /// Contains all data needed for stateless execution:
@@ -413,11 +420,11 @@ pub struct SszStatelessInput {
     /// activation info and blob schedules are guest-internal, keyed by
     /// `(chain_id, fork)`, with the fork coming from the schema-id prefix.
     pub chain_id: u64,
-    pub public_keys: SszList<SszVector<u8, PUBLIC_KEY_BYTES>, MAX_PUBLIC_KEYS>,
+    pub public_keys: SszPublicKeys,
 }
 
 /// SSZ `StatelessValidationResult` — the output of `verify_stateless_new_payload`.
-#[derive(Debug, Clone, PartialEq, Eq, SszEncode, SszDecode, HashTreeRoot)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, SszEncode, SszDecode, HashTreeRoot)]
 pub struct SszStatelessValidationResult {
     pub new_payload_request_root: [u8; 32],
     pub successful_validation: bool,
@@ -869,195 +876,6 @@ mod tests {
             ),
             0x7843,
             "slot_number must be readable at EP+532",
-        );
-    }
-
-    /// Equivalence guard for the duplicated SSZ wire-format definitions in
-    /// `stateless_ssz` vs `eip8025_ssz`. The two modules independently define
-    /// the same containers; they are byte-identical today, but nothing in the
-    /// type system forces them to stay that way. If someone edits one (field
-    /// order, a type, a `MAX_*` bound affecting offsets) without the other, the
-    /// EXECUTE precompile path (`stateless_ssz`) and the zk-guest path
-    /// (`eip8025_ssz`) would silently disagree on the wire format. This test
-    /// fails loudly when that happens by encoding equivalent values in both
-    /// modules and asserting the bytes match. Gated on `eip-8025` because
-    /// `eip8025_ssz` (the zk-guest path) only exists under that feature.
-    #[test]
-    #[cfg(feature = "eip-8025")]
-    fn stateless_ssz_matches_eip8025_ssz_wire_format() {
-        use crate::types::eip8025_ssz as e;
-
-        fn enc<T: SszEncode>(x: &T) -> Vec<u8> {
-            let mut b = Vec::new();
-            x.ssz_append(&mut b);
-            b
-        }
-
-        // Withdrawal
-        assert_eq!(
-            enc(&Withdrawal {
-                index: 1,
-                validator_index: 2,
-                address: Bytes20([3u8; 20]),
-                amount: 4,
-            }),
-            enc(&e::Withdrawal {
-                index: 1,
-                validator_index: 2,
-                address: e::Bytes20([3u8; 20]),
-                amount: 4,
-            }),
-            "Withdrawal wire format diverged between stateless_ssz and eip8025_ssz",
-        );
-
-        // DepositRequest
-        assert_eq!(
-            enc(&DepositRequest {
-                pubkey: [5u8; 48],
-                withdrawal_credentials: [6u8; 32],
-                amount: 7,
-                signature: [8u8; 96],
-                index: 9,
-            }),
-            enc(&e::DepositRequest {
-                pubkey: [5u8; 48],
-                withdrawal_credentials: [6u8; 32],
-                amount: 7,
-                signature: [8u8; 96],
-                index: 9,
-            }),
-            "DepositRequest wire format diverged",
-        );
-
-        // WithdrawalRequest
-        assert_eq!(
-            enc(&WithdrawalRequest {
-                source_address: Bytes20([10u8; 20]),
-                validator_pubkey: [11u8; 48],
-                amount: 12,
-            }),
-            enc(&e::WithdrawalRequest {
-                source_address: e::Bytes20([10u8; 20]),
-                validator_pubkey: [11u8; 48],
-                amount: 12,
-            }),
-            "WithdrawalRequest wire format diverged",
-        );
-
-        // ConsolidationRequest
-        assert_eq!(
-            enc(&ConsolidationRequest {
-                source_address: Bytes20([13u8; 20]),
-                source_pubkey: [14u8; 48],
-                target_pubkey: [15u8; 48],
-            }),
-            enc(&e::ConsolidationRequest {
-                source_address: e::Bytes20([13u8; 20]),
-                source_pubkey: [14u8; 48],
-                target_pubkey: [15u8; 48],
-            }),
-            "ConsolidationRequest wire format diverged",
-        );
-
-        // ExecutionRequests (one of each; exercises the offset layout too)
-        let reqs = ExecutionRequests {
-            deposits: vec![DepositRequest {
-                pubkey: [5u8; 48],
-                withdrawal_credentials: [6u8; 32],
-                amount: 7,
-                signature: [8u8; 96],
-                index: 9,
-            }]
-            .try_into()
-            .expect("deposits fit"),
-            withdrawals: vec![WithdrawalRequest {
-                source_address: Bytes20([10u8; 20]),
-                validator_pubkey: [11u8; 48],
-                amount: 12,
-            }]
-            .try_into()
-            .expect("withdrawals fit"),
-            consolidations: vec![ConsolidationRequest {
-                source_address: Bytes20([13u8; 20]),
-                source_pubkey: [14u8; 48],
-                target_pubkey: [15u8; 48],
-            }]
-            .try_into()
-            .expect("consolidations fit"),
-        };
-        let e_reqs = e::ExecutionRequests {
-            deposits: vec![e::DepositRequest {
-                pubkey: [5u8; 48],
-                withdrawal_credentials: [6u8; 32],
-                amount: 7,
-                signature: [8u8; 96],
-                index: 9,
-            }]
-            .try_into()
-            .expect("deposits fit"),
-            withdrawals: vec![e::WithdrawalRequest {
-                source_address: e::Bytes20([10u8; 20]),
-                validator_pubkey: [11u8; 48],
-                amount: 12,
-            }]
-            .try_into()
-            .expect("withdrawals fit"),
-            consolidations: vec![e::ConsolidationRequest {
-                source_address: e::Bytes20([13u8; 20]),
-                source_pubkey: [14u8; 48],
-                target_pubkey: [15u8; 48],
-            }]
-            .try_into()
-            .expect("consolidations fit"),
-        };
-        assert_eq!(
-            enc(&reqs),
-            enc(&e_reqs),
-            "ExecutionRequests wire format diverged",
-        );
-
-        // Full payload: stateless_ssz::ExecutionPayload must be byte-identical to
-        // eip8025_ssz::ExecutionPayloadV4 (both are the Electra payload + EIP-7928
-        // block_access_list + EIP-7843 slot_number).
-        let ep = sample_payload();
-        let e_ep = e::ExecutionPayloadV4 {
-            parent_hash: ep.parent_hash,
-            fee_recipient: e::Bytes20(ep.fee_recipient.0),
-            state_root: ep.state_root,
-            receipts_root: ep.receipts_root,
-            logs_bloom: vec![0u8; 256].try_into().expect("logs_bloom length"),
-            prev_randao: ep.prev_randao,
-            block_number: ep.block_number,
-            gas_limit: ep.gas_limit,
-            gas_used: ep.gas_used,
-            timestamp: ep.timestamp,
-            extra_data: vec![0xAB, 0xCD].try_into().expect("extra_data fits"),
-            base_fee_per_gas: ep.base_fee_per_gas,
-            block_hash: ep.block_hash,
-            transactions: vec![
-                vec![0xDE, 0xAD, 0xBE, 0xEF]
-                    .try_into()
-                    .expect("tx bytes fit"),
-            ]
-            .try_into()
-            .expect("txs fit"),
-            withdrawals: vec![e::Withdrawal {
-                index: 0,
-                validator_index: 1,
-                address: e::Bytes20([7u8; 20]),
-                amount: 1_000_000,
-            }]
-            .try_into()
-            .expect("withdrawals fit"),
-            blob_gas_used: ep.blob_gas_used,
-            excess_blob_gas: ep.excess_blob_gas,
-            block_access_list: ProgressiveList::new(),
-            slot_number: ep.slot_number,
-        };
-        assert_eq!(
-            enc(&ep),
-            enc(&e_ep),
-            "ExecutionPayload(V4) wire format diverged between stateless_ssz and eip8025_ssz",
         );
     }
 }

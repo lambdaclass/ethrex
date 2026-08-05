@@ -28,7 +28,7 @@ pub type BlockNumber = u64;
 pub type BlockHash = H256;
 
 #[cfg(all(feature = "zisk", target_arch = "riscv64"))]
-use super::eip8025_cell::OnceCell;
+use super::unsync_cell::OnceCell;
 #[cfg(not(all(feature = "zisk", target_arch = "riscv64")))]
 use once_cell::sync::OnceCell;
 

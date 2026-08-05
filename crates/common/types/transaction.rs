@@ -48,7 +48,7 @@ use ethrex_rlp::{
 };
 
 #[cfg(all(feature = "zisk", target_arch = "riscv64"))]
-use super::eip8025_cell::OnceCell;
+use super::unsync_cell::OnceCell;
 use crate::types::{
     AccessList, AuthorizationList, BlobsBundle, constants::VERSIONED_HASH_VERSION_KZG,
 };

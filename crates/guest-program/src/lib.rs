@@ -4,9 +4,15 @@ pub mod l1;
 pub mod l2;
 pub mod methods;
 
-// Backward-compatible re-exports based on feature flag.
-// The prover backend uses `ethrex_guest_program::input::ProgramInput`, etc.
-// These re-exports allow existing code to work without changes.
+// Input/output aliases, selected by the `l2` feature.
+//
+// The L2 batch prover keeps its own rkyv-serialized `ProgramInput` and its own
+// commitment shape — the on-chain verifier needs state roots and blob/message
+// commitments that `statelessOutputBytes` does not carry.
+//
+// The L1 guest's input is the spec's `statelessInputBytes`: an opaque blob the
+// host passes straight through, aliased here so `ProverBackend` stays
+// generic-free. Its output is the spec's `SszStatelessValidationResult`.
 
 #[cfg(feature = "l2")]
 pub mod input {
@@ -14,7 +20,7 @@ pub mod input {
 }
 #[cfg(not(feature = "l2"))]
 pub mod input {
-    pub use crate::l1::ProgramInput;
+    pub type ProgramInput = Vec<u8>;
 }
 
 #[cfg(feature = "l2")]
@@ -23,16 +29,12 @@ pub mod output {
 }
 #[cfg(not(feature = "l2"))]
 pub mod output {
-    pub use crate::l1::ProgramOutput;
+    pub use ethrex_common::types::stateless_ssz::SszStatelessValidationResult as ProgramOutput;
 }
 
 #[cfg(feature = "l2")]
 pub mod execution {
     pub use crate::l2::execution_program;
-}
-#[cfg(not(feature = "l2"))]
-pub mod execution {
-    pub use crate::l1::execution_program;
 }
 
 // When running clippy, the ELFs are not built, so we define them empty.

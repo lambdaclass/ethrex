@@ -4280,6 +4280,7 @@ dependencies = [
  "ethrex-guest-program",
  "ethrex-rlp",
  "ethrex-vm",
+ "libssz",
  "openvm-continuations",
  "openvm-sdk",
  "openvm-stark-sdk 1.2.1",
