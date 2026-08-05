@@ -1291,6 +1291,55 @@ fn a_spend_whose_inputs_do_not_cover_the_max_cost_is_rejected() {
     );
 }
 
+/// The new-account reserve is returned exactly when the recipient already exists.
+///
+/// Every account output is charged `GAS_NEW_ACCOUNT_STATE` up front, because
+/// whether the recipient exists is not known until settlement. Settlement's first
+/// phase returns that reserve for recipients that turn out to already exist —
+/// before gas finalization, so the return lands in `gas_used`.
+///
+/// Both directions were unconstrained: returning the reserve for a *new* recipient
+/// and never returning it at all each left the whole suite green. Both are
+/// consensus-visible, since `gas_used` is in the receipt and the header — returning
+/// it wrongly means the transaction underpays for state it created, and withholding
+/// it means the user overpays 183,600 gas.
+///
+/// The assertion is the difference between two otherwise identical spends, which
+/// pins the constant rather than restating the implementation.
+#[test]
+fn the_new_account_reserve_is_returned_only_for_an_existing_recipient() {
+    let payee = Address::from_low_u64_be(0xBEEF);
+    let input_value = U256::from(10u64).pow(U256::from(18u64));
+    let payout = U256::from(1_000_000u64);
+
+    // Fresh recipient: no account, so the reserve is consumed and kept.
+    let fresh = self_funded_fixture(input_value, Some((payee, payout)), None);
+    let (fresh_result, _) = run_spend(&fresh);
+    let fresh_gas = fresh_result.expect("the spend must settle").gas_used;
+
+    // Same spend, but the recipient already exists (non-empty: it has a balance),
+    // so the reserve must come back.
+    let mut existing = self_funded_fixture(input_value, Some((payee, payout)), None);
+    existing.accounts.insert(
+        payee,
+        Account::new(U256::from(1u64), Code::default(), 0, FxHashMap::default()),
+    );
+    let (existing_result, _) = run_spend(&existing);
+    let existing_gas = existing_result
+        .expect("the spend must settle for an existing recipient")
+        .gas_used;
+
+    assert!(
+        existing_gas < fresh_gas,
+        "an existing recipient must cost less: existing={existing_gas} fresh={fresh_gas}"
+    );
+    assert_eq!(
+        fresh_gas - existing_gas,
+        ethrex_common::types::GAS_NEW_ACCOUNT_STATE,
+        "the returned reserve must be exactly GAS_NEW_ACCOUNT_STATE"
+    );
+}
+
 /// A ring proof is refused once the ring entry has aged out.
 ///
 /// The ring holds one root per block for `RING_SIZE` blocks, then wraps: the slot
