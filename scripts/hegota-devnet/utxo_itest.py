@@ -46,6 +46,7 @@ RING_SIZE = 8192
 BATCH_SIZE = 8192
 SLOT_RING_BASE = 1
 SLOT_NEXT_INDEX = 0
+SLOT_BATCH_BASE = 1 << 128
 SLOT_SPENT_BASE = 1 << 129
 UTXO_CREATED_TOPIC = "0x" + keccak(b"UtxoCreated(address,address,uint64,uint256)").hex()
 
@@ -165,6 +166,10 @@ def fold(node, position, siblings):
 
 def ring_slot(block_number):
     return SLOT_RING_BASE + (block_number % RING_SIZE)
+
+
+def batch_slot_for_block(block_number):
+    return SLOT_BATCH_BASE + (block_number // BATCH_SIZE)
 
 
 def spent_bit_location(index):
@@ -331,7 +336,7 @@ def make_utxo(ctx, recipient, value):
 
 def build_spend_tx(ctx, actor_key, actor_addr, utxo, creation_block,
                    utxo_outs=None, account_outs=None, payer=None,
-                   frames_prefix=None, tamper=None):
+                   frames_prefix=None, tamper=None, batch_siblings=None):
     """A self-funded spend of `utxo`, with the change going back to the actor.
 
     The witness is built by reconstructing the creation block's whole openings
@@ -357,7 +362,7 @@ def build_spend_tx(ctx, actor_key, actor_addr, utxo, creation_block,
         "value": utxo["value"],
         "position": position,
         "siblings": proof,
-        "batch_siblings": [],
+        "batch_siblings": list(batch_siblings or []),
     }
     if tamper:
         tamper(inp)
@@ -524,6 +529,91 @@ def t_not_yet_spendable(ctx):
     return None
 
 
+def ring_roots_of_batch(rpc, batch_index, block="latest"):
+    """Every ring root of `batch_index`, in block order — the batch tree's leaves.
+
+    The ring holds one root per block for RING_SIZE blocks and then wraps, so these
+    are only readable while the batch's blocks are still the ones occupying the
+    ring. Right after a batch seals is exactly that window, which is why a wallet is
+    expected to upgrade its witness promptly.
+
+    Batched JSON-RPC: 8192 individual calls is minutes of round trips.
+    """
+    first = batch_index * BATCH_SIZE
+    roots = []
+    CHUNK = 256
+    for start in range(first, first + BATCH_SIZE, CHUNK):
+        batch = []
+        for n in range(start, min(start + CHUNK, first + BATCH_SIZE)):
+            slot = "0x" + ring_slot(n).to_bytes(32, "big").hex()
+            batch.append({"jsonrpc": "2.0", "id": n, "method": "eth_getStorageAt",
+                          "params": [VAULT_ADDR, slot, block]})
+        req = urllib.request.Request(
+            rpc.url, data=json.dumps(batch).encode(),
+            headers={"Content-Type": "application/json"})
+        with urllib.request.urlopen(req, timeout=120) as resp:
+            out = json.loads(resp.read())
+        by_id = {o["id"]: o for o in out}
+        for n in range(start, min(start + CHUNK, first + BATCH_SIZE)):
+            roots.append(bytes.fromhex(by_id[n]["result"].removeprefix("0x").zfill(64)))
+    return roots
+
+
+@case("a sealed batch proof spends a UTXO (needs a chain older than BATCH_SIZE)")
+def t_batch_proof(ctx):
+    """The second witness form. A ring proof is only good for RING_SIZE blocks; past
+    that the holder must fold the creation block's openings root up through the
+    sealed batch tree and prove against the batch slot instead. Nothing but a real
+    chain older than a batch can exercise it, which is why it is last.
+
+    The spend hash deliberately excludes witness fields, so the batch path must
+    verify under the SAME signature a ring proof would have used — that is what lets
+    a third party refresh a witness on the holder's behalf.
+    """
+    head = ctx.rpc.block_number()
+    if head < BATCH_SIZE:
+        record(t_batch_proof._case_name, True,
+               f"skipped: head {head} < BATCH_SIZE {BATCH_SIZE}, no batch has sealed yet")
+        return None
+
+    # A UTXO from a batch that has already sealed.
+    batch_index = 0
+    key, actor = ctx.new_actor(0xB2)
+    blk, utxo = make_utxo(ctx, actor, 10**17)
+    if blk // BATCH_SIZE != batch_index:
+        record(t_batch_proof._case_name, True,
+               f"skipped: deposit landed in batch {blk // BATCH_SIZE}, which has not sealed")
+        return None
+    wait_blocks(ctx.rpc, 1)
+
+    # The batch tree over that batch's ring roots, and the path to our block.
+    leaves = ring_roots_of_batch(ctx.rpc, batch_index)
+    stored_batch = ctx.rpc.storage_at(VAULT_ADDR, batch_slot_for_block(blk))
+    computed = merkle_root(leaves)
+    if stored_batch != int.from_bytes(computed, "big"):
+        record(t_batch_proof._case_name, False,
+               f"batch root mismatch: stored {stored_batch:#x}, "
+               f"recomputed {int.from_bytes(computed, 'big'):#x} — the ring may have "
+               f"wrapped past this batch already")
+        return None
+    batch_path = merkle_proof(leaves, blk % BATCH_SIZE)
+
+    payee = ctx.new_actor(0xB3)[1]
+    tx = build_spend_tx(ctx, key, actor, utxo, blk,
+                        account_outs=[(payee, 10**15)],
+                        batch_siblings=batch_path)
+    h = send_frame_tx(ctx.rpc, tx)
+    r = wait_receipt(ctx.rpc, h, timeout=180)
+    ok = r is not None and int(r["status"], 16) == 1
+    spent = ctx.rpc.storage_at(VAULT_ADDR, spent_bit_location(utxo["index"])[0])
+    mask = spent_bit_location(utxo["index"])[1]
+    record(t_batch_proof._case_name, ok and bool(spent & mask),
+           f"batch {batch_index} sealed root verified over {len(leaves)} ring roots; "
+           f"spend via batch path {'mined' if ok else 'FAILED'}, "
+           f"spent bit {'set' if spent & mask else 'NOT set'}")
+    return None
+
+
 @case("permanent state written: a UTXO cycle vs a plain transfer to a fresh account")
 def t_state_growth(ctx):
     """The economic claim, measured on the live chain rather than asserted. Counts
@@ -596,7 +686,7 @@ def t_consensus(ctx):
 
 
 CASES = [t_openings_root, t_zero_eth_spend, t_double_spend, t_forged_proof,
-         t_not_yet_spendable, t_state_growth, t_consensus]
+         t_not_yet_spendable, t_state_growth, t_batch_proof, t_consensus]
 
 
 def main():
