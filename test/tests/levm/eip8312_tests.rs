@@ -170,6 +170,7 @@ fn call_vault(
             LevmCallTracer::disabled(),
             VMType::L1,
             &NativeCrypto,
+            None,
         )
         .expect("VM::new");
         vm.execute().expect("execution should not error")
@@ -609,6 +610,7 @@ where
             LevmCallTracer::disabled(),
             VMType::L1,
             &NativeCrypto,
+            None,
         )
         .expect("VM::new");
         body(&mut vm);
@@ -981,6 +983,7 @@ fn run_spend(fixture: &SpendFixture) -> (Result<ExecutionReport, VMError>, Gener
             LevmCallTracer::disabled(),
             VMType::L1,
             &NativeCrypto,
+            None,
         )
         .expect("VM::new");
         vm.execute()
@@ -1413,6 +1416,7 @@ fn a_batch_proof_spends_a_utxo_whose_ring_entry_aged_out() {
             LevmCallTracer::disabled(),
             VMType::L1,
             &NativeCrypto,
+            None,
         )
         .expect("VM::new");
         vm.execute()
