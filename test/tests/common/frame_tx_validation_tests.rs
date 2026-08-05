@@ -1488,6 +1488,39 @@ fn batch_path_depth_matches_the_batch_size() {
 }
 
 #[test]
+fn batch_slot_matches_the_specified_formula() {
+    // The spec puts a batch root at `2**128 + block_number / BATCH_SIZE`. Pinned
+    // against that arithmetic written out, NOT against `batch_slot_for_block`
+    // itself: the batch-sealing test computes its expected slot with that helper,
+    // so a helper that shifts by a whole batch shifts the assertion with it and
+    // the sealing test still passes. Mutating the offset used to survive the suite
+    // for exactly that reason.
+    assert_eq!(
+        slot_batch_base(),
+        U256::one() << 128,
+        "the batch region must start at 2**128"
+    );
+    // Every block of batch 0 maps to the base slot, and batch 1 to base + 1.
+    for block in [0u64, 1, BATCH_SIZE - 1] {
+        assert_eq!(
+            batch_slot_for_block(block),
+            slot_batch_base(),
+            "block {block} is in batch 0"
+        );
+    }
+    assert_eq!(
+        batch_slot_for_block(BATCH_SIZE),
+        slot_batch_base() + U256::one(),
+        "the first block of batch 1 must map to base + 1"
+    );
+    assert_eq!(
+        batch_slot_for_block(BATCH_SIZE * 2 + 7),
+        slot_batch_base() + U256::from(2u64),
+        "batch index is block / BATCH_SIZE, floored"
+    );
+}
+
+#[test]
 fn vault_slot_regions_are_disjoint() {
     // next-index 0 | ring 1..=8192 | batch 2**128.. | spent 2**129..
     assert_eq!(U256::from(SLOT_NEXT_INDEX), U256::zero());

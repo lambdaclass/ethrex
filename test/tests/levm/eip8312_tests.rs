@@ -935,6 +935,15 @@ fn self_funded_fixture(
 }
 
 fn run_spend(fixture: &SpendFixture) -> (Result<ExecutionReport, VMError>, GeneralizedDatabase) {
+    run_spend_at(fixture, SPEND_BLOCK)
+}
+
+/// As `run_spend`, but executing at an explicit block number, so a test can place
+/// the spend outside the ring window.
+fn run_spend_at(
+    fixture: &SpendFixture,
+    spend_block: u64,
+) -> (Result<ExecutionReport, VMError>, GeneralizedDatabase) {
     let mut db = GeneralizedDatabase::new_with_account_state(
         Arc::new(TestDatabase),
         fixture.accounts.clone(),
@@ -950,7 +959,7 @@ fn run_spend(fixture: &SpendFixture) -> (Result<ExecutionReport, VMError>, Gener
             config.utxo_frames_active = true;
             config
         },
-        block_number: SPEND_BLOCK,
+        block_number: spend_block,
         coinbase: Address::from_low_u64_be(0xCCC),
         timestamp: 1000,
         prev_randao: Some(H256::zero()),
@@ -1279,6 +1288,45 @@ fn a_spend_whose_inputs_do_not_cover_the_max_cost_is_rejected() {
     assert!(
         result.is_err(),
         "inputs must cover signed outputs plus the transaction's maximum cost"
+    );
+}
+
+/// A ring proof is refused once the ring entry has aged out.
+///
+/// The ring holds one root per block for `RING_SIZE` blocks, then wraps: the slot
+/// that held block N's root now holds a later block's. So a ring proof older than
+/// the window must be refused even when the slot still happens to contain the
+/// matching root — which is exactly the situation this fixture creates, since it
+/// seeds the slot directly and nothing has overwritten it. Honouring it would mean
+/// accepting a proof against a slot that on a real chain belongs to another block.
+///
+/// Loosening the `age > RING_SIZE` comparison used to survive the whole suite; the
+/// batch-proof test below only covers the case where a batch path IS supplied.
+#[test]
+fn a_ring_proof_is_refused_once_the_ring_entry_has_aged_out() {
+    let payee = Address::from_low_u64_be(0xBEEF);
+    let input_value = U256::from(10u64).pow(U256::from(18u64));
+    let fixture = self_funded_fixture(input_value, Some((payee, U256::from(1u64))), None);
+
+    // Inside the window it is spendable: this is the control, without which the
+    // rejection below could be caused by anything.
+    let (inside, _) = run_spend_at(&fixture, CREATION_BLOCK + 1);
+    assert!(
+        inside.is_ok(),
+        "a fresh ring proof must be accepted; got {inside:?}"
+    );
+
+    // One block past the window, with no batch path supplied, it must not be.
+    let aged = CREATION_BLOCK + RING_SIZE + 1;
+    let (result, mut db) = run_spend_at(&fixture, aged);
+    assert!(
+        result.is_err(),
+        "a ring proof {} blocks old must be refused (RING_SIZE = {RING_SIZE})",
+        aged - CREATION_BLOCK
+    );
+    assert!(
+        vault_slot_word(&mut db, fixture.spent_slot).is_zero(),
+        "the refused spend must leave no spent bit"
     );
 }
 
