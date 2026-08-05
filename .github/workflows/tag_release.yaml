@@ -419,6 +419,90 @@ jobs:
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.build-docker.outputs.tag }}-l2-arm64
 
   # Creates a release on GitHub with the binaries
+  # Everything `finalize-release` does except publishing, on `workflow_dispatch`.
+  #
+  # The build and conformance-verify jobs above already run on every trigger, so
+  # before this the only part of the release path that could not be exercised
+  # without cutting a tag was the last one: download, sign, attach. That is also
+  # the part holding the signing key, so it is the part most worth rehearsing.
+  #
+  # Signs the REAL ELFs and verification keys from this run, with the REAL
+  # secrets, through the same composite action `finalize-release` uses — then
+  # uploads the signed set as a workflow artifact instead of creating a release.
+  dry-run-release-assets:
+    if: github.event_name == 'workflow_dispatch'
+    needs:
+      - build-stateless-validator-guest
+      - verify-stateless-validator-guest
+    runs-on: ubuntu-latest
+    env:
+      HAS_MINISIGN_SECRET_KEY: ${{ secrets.MINISIGN_SECRET_KEY != '' }}
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v6
+
+      - name: Download artifacts
+        uses: actions/download-artifact@v6
+        with:
+          path: ./bin
+          pattern: "*ethrex*"
+
+      - name: Skip notice
+        if: env.HAS_MINISIGN_SECRET_KEY != 'true'
+        run: |
+          echo "::warning::MINISIGN_SECRET_KEY is not configured; nothing to rehearse."
+
+      - name: Sign stateless-validator artifacts
+        if: env.HAS_MINISIGN_SECRET_KEY == 'true'
+        uses: ./.github/actions/sign-stateless
+        with:
+          artifact-dir: ./bin
+          secret-key: ${{ secrets.MINISIGN_SECRET_KEY }}
+          password: ${{ secrets.MINISIGN_PASSWORD }}
+          public-key: ${{ secrets.MINISIGN_PUBLIC_KEY }}
+          # Marked as a rehearsal so a signature produced here can never be
+          # mistaken for one covering a released artifact.
+          trusted-comment-suffix: "ethrex DRY-RUN ${{ github.ref_name }} ${{ github.sha }}"
+
+      # Verify independently of the script, against the committed key rather
+      # than anything this run produced — the check a downloader would perform.
+      - name: Verify every signature as a consumer would
+        if: env.HAS_MINISIGN_SECRET_KEY == 'true'
+        run: |
+          set -euo pipefail
+          count=0
+          while IFS= read -r -d '' file; do
+            minisign -V -m "$file" -p .github/minisign.pub -x "$file.minisig"
+            count=$((count + 1))
+          done < <(find ./bin -type f -name 'stateless-validator-ethrex-*' \
+                     \( -name '*.elf' -o -name '*.vk' \) -print0)
+          if [ "$count" -eq 0 ]; then
+            echo "::error::no stateless-validator artifacts were verified"
+            exit 1
+          fi
+          echo "Verified $count signature(s) against the committed public key."
+
+      - name: Summarise
+        if: env.HAS_MINISIGN_SECRET_KEY == 'true'
+        run: |
+          {
+            echo "### Release-asset dry run"
+            echo
+            echo "Signed and verified against \`.github/minisign.pub\`; nothing was published."
+            echo
+            echo '```'
+            find ./bin -type f \( -name '*.minisig' -o -name 'minisign.pub' \) | sort
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload the signed set
+        if: env.HAS_MINISIGN_SECRET_KEY == 'true'
+        uses: actions/upload-artifact@v6
+        with:
+          name: dry-run-signed-release-assets
+          path: ./bin
+          if-no-files-found: error
+
   finalize-release:
     if: github.ref_type == 'tag' && github.event_name != 'workflow_dispatch'
     needs:
@@ -456,25 +540,20 @@ jobs:
       # signing key is exposed to one job instead of three, and this job needs
       # `verify-stateless-validator-guest`, so an ELF that failed its
       # conformance check is never signed.
-      - name: Install minisign
-        if: env.HAS_MINISIGN_SECRET_KEY == 'true'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y minisign
-
       - name: Sign stateless-validator artifacts
         if: env.HAS_MINISIGN_SECRET_KEY == 'true'
-        env:
-          MINISIGN_SECRET_KEY: ${{ secrets.MINISIGN_SECRET_KEY }}
-          MINISIGN_PASSWORD: ${{ secrets.MINISIGN_PASSWORD }}
+        uses: ./.github/actions/sign-stateless
+        with:
+          artifact-dir: ./bin
+          secret-key: ${{ secrets.MINISIGN_SECRET_KEY }}
+          password: ${{ secrets.MINISIGN_PASSWORD }}
           # Not used to sign or to publish: the script derives the public key
           # from the secret key, and cross-checks this against it so a stale
           # secret is caught rather than trusted.
-          MINISIGN_PUBLIC_KEY: ${{ secrets.MINISIGN_PUBLIC_KEY }}
+          public-key: ${{ secrets.MINISIGN_PUBLIC_KEY }}
           # Signed alongside the artifact, so the signature also attests which
           # tag and commit produced it.
-          TRUSTED_COMMENT_SUFFIX: "ethrex ${{ github.ref_name }} ${{ github.sha }}"
-        run: .github/scripts/sign-stateless-artifacts.sh ./bin
+          trusted-comment-suffix: "ethrex ${{ github.ref_name }} ${{ github.sha }}"
 
       - name: Get previous tag
         run: |
