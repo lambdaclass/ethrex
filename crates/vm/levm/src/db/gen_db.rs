@@ -608,11 +608,23 @@ impl GeneralizedDatabase {
     /// which have no VM to go through but must not skip that bookkeeping — the
     /// account-updates builder errors out on a current-state slot with no recorded
     /// pre-value.
+    /// An account present in `current_accounts_state` but absent from
+    /// `initial_accounts_state` was created in this block: `load_account` populates
+    /// the initial map only on the cold path that reads the store, and returns early
+    /// on a cache hit. Such an account has no committed baseline, so every slot of it
+    /// reads zero and there is no pre-value to record. Falling through to the store
+    /// would instead trip its "the account was fetched first" invariant and fail the
+    /// block — which is exactly what happened to a block that both activated
+    /// EIP-8312 (installing the vault) and carried a deposit: it built, then could
+    /// not be imported.
     pub fn get_storage_slot(&mut self, address: Address, key: H256) -> Result<U256, InternalError> {
-        if let Some(account) = self.current_accounts_state.get(&address)
-            && let Some(value) = account.storage.get(&key)
-        {
-            return Ok(*value);
+        if let Some(account) = self.current_accounts_state.get(&address) {
+            if let Some(value) = account.storage.get(&key) {
+                return Ok(*value);
+            }
+            if !self.initial_accounts_state.contains_key(&address) {
+                return Ok(U256::zero());
+            }
         }
         self.get_value_from_database(address, key)
     }
