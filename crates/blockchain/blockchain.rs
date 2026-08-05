@@ -48,6 +48,7 @@ pub mod fork_choice;
 pub mod mempool;
 pub mod payload;
 pub mod prewarm;
+pub mod stateless;
 pub mod tracing;
 pub mod vm;
 
@@ -96,6 +97,8 @@ use ethrex_storage::{
 };
 use ethrex_trie::node::{BranchNode, ExtensionNode, LeafNode};
 use ethrex_trie::{Nibbles, Node, NodeRef, Trie, TrieError, TrieLogger, TrieNode};
+#[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+use ethrex_vm::backends::BLOATED_BATCH_THRESHOLD;
 use ethrex_vm::backends::CachingDatabase;
 #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
 use ethrex_vm::backends::levm::LEVM;
@@ -135,6 +138,10 @@ const MAX_MEMPOOL_SIZE_DEFAULT: usize = 10_000;
 /// Default mempool occupancy percentage (0-100) at which gapped-nonce
 /// transaction admission is denied. Set to 100 to disable the check.
 pub const DEFAULT_GAP_ADMIT_OCCUPANCY_THRESHOLD: u8 = 90;
+
+/// Merkle write set for the trie-node prefetch: written storage slots and changed accounts.
+#[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+type TriePrefetchInput = (Vec<(Address, H256)>, Vec<Address>);
 
 /// Background thread for dropping large tree structures off the critical path.
 /// Accepts any `Send` value and drops it on a dedicated thread, avoiding
@@ -781,6 +788,9 @@ impl Blockchain {
         // Gated by `--no-bal-prefetch`: when the operator disables BAL-driven
         // prefetching, skip the synchronous storage warm too. The warmer thread
         // below already honors the same toggle.
+        // Flat-KV warm for execution (SLOAD and SSTORE original values). Uses the
+        // full BAL access set, since execution genuinely reads every accessed slot.
+        //
         // Witness collection records every read that reaches the store-backed
         // logger beneath the shared cache. The warmer's speculative reads would
         // be recorded as state accesses the canonical execution never makes,
@@ -796,6 +806,42 @@ impl Blockchain {
                 let _ = caching_store.prefetch_storage(&slots);
             }
         }
+
+        // Prepare the trie-node prefetch input: the MERKLE WRITE SET (changed
+        // accounts + written slots), which is exactly what the merkleizer walks.
+        // `optimistic_updates` (synthesize_bal_updates) already drops read-only
+        // accesses and read-only slots, so warming is scoped to nodes the merkleizer
+        // will actually read; using the access set instead regressed read-heavy
+        // blocks (value-0 CALLs to existing accounts, bloated SLOADs). The prefetch
+        // runs on its own thread inside the scope below (`trie_prefetch_handle`),
+        // overlapping execution rather than preceding it. Gated so ordinary
+        // merkle-light blocks skip the probe cost; the payoff is on blocks that WRITE
+        // many distinct slots or modify many accounts, where merkle walks a large set
+        // of scattered, cold nodes. See `BLOATED_BATCH_THRESHOLD`.
+        //
+        // Unlike the flat-KV warm above, this needs no `!collect_witness` guard:
+        // `prefetch_trie_nodes` reads the trie-node CFs directly via
+        // `backend.begin_read()`, bypassing the witness-recording caching layer, so
+        // it cannot pollute the witness.
+        #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+        let trie_prefetch_input: Option<TriePrefetchInput> = if self.options.bal_prefetch_enabled
+            && let Some(updates) = optimistic_updates.as_ref()
+        {
+            let mut write_slots: Vec<(Address, H256)> = Vec::new();
+            for (addr, item) in updates {
+                for slot in item.added_storage.keys() {
+                    write_slots.push((*addr, *slot));
+                }
+            }
+            let write_accounts: Vec<Address> = updates.keys().copied().collect();
+            if write_slots.len() + write_accounts.len() >= BLOATED_BATCH_THRESHOLD {
+                Some((write_slots, write_accounts))
+            } else {
+                None
+            }
+        } else {
+            None
+        };
 
         // Each thread that captures `bal` needs its own Arc clone (cheap pointer bump).
         #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
@@ -833,6 +879,9 @@ impl Blockchain {
                                         // warmer races ahead of the serial executor. With parallel
                                         // exec still on, we skip warming instead — two parallel passes
                                         // over the same txs would just fight for cores.
+                                        // Warming is best-effort (non-fatal): a warm tx hitting the
+                                        // EXECUTE precompile without a validator just fails and is
+                                        // logged; the real execution path carries the validator.
                                         if let Err(e) = LEVM::warm_block(
                                             block,
                                             caching_store,
@@ -862,6 +911,35 @@ impl Blockchain {
                             })
                     })
                     .transpose()?;
+
+                // Warm the merkleizer's trie-node reads concurrently with execution
+                // instead of up front. Touches different CFs than execution, so no
+                // exec contention; as a high-queue-depth batch it races ahead of the
+                // merkleizer's per-account walk so those reads land warm. Best-effort:
+                // any node it misses is just cold-read by the walk. The scope joins it
+                // before the block returns, but it shares the trie-node cold reads with
+                // the merkleizer at higher aggregate queue depth, so it completes
+                // within the exec/merkle window rather than extending it.
+                #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+                let trie_prefetch_handle = match trie_prefetch_input {
+                    Some((slots, accounts)) => {
+                        let storage = &self.storage;
+                        std::thread::Builder::new()
+                            .name("block_executor_trie_prefetch".to_string())
+                            .spawn_scoped(s, move || {
+                                // Result deliberately discarded: this is best-effort
+                                // cache warming. A read error (or any node it fails to
+                                // warm) just means the merkleizer cold-reads that node;
+                                // it never affects block output, so a failure must not
+                                // propagate into block processing.
+                                let _ = storage.prefetch_trie_nodes(&slots, &accounts);
+                            })
+                            .inspect_err(|e| debug!("trie-node prefetch spawn failed: {e}"))
+                            .ok()
+                    }
+                    None => None,
+                };
+
                 let max_queue_length_ref = &mut max_queue_length;
                 // Channel is needed whenever the merkleizer takes the streaming
                 // branch OR LEVM falls into the sequential path:
@@ -1051,6 +1129,15 @@ impl Blockchain {
                     .unwrap_or(Duration::ZERO);
                 #[cfg(any(not(feature = "rayon"), feature = "eip-8025"))]
                 let warmer_duration = Duration::ZERO;
+                // Best-effort prefetch: join so the scope's borrows end cleanly.
+                // The warming result is discarded, but surface a panic so a failing
+                // prefetch (e.g. a RocksDB error) is observable rather than silent.
+                #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+                if let Some(h) = trie_prefetch_handle
+                    && let Err(e) = h.join()
+                {
+                    warn!("trie-node prefetch thread panicked (best-effort, ignored): {e:?}");
+                }
                 Ok((execution_result, merkleization_result, warmer_duration))
             },
         )?;
@@ -1649,6 +1736,17 @@ impl Blockchain {
         blocks: &[Block],
         fee_configs: Option<&[FeeConfig]>,
     ) -> Result<ExecutionWitness, ChainError> {
+        let (witness, _bals) = self
+            .generate_witness_and_bal_for_blocks_with_fee_configs(blocks, fee_configs)
+            .await?;
+        Ok(witness)
+    }
+
+    pub async fn generate_witness_and_bal_for_blocks_with_fee_configs(
+        &self,
+        blocks: &[Block],
+        fee_configs: Option<&[FeeConfig]>,
+    ) -> Result<(ExecutionWitness, Vec<Option<BlockAccessList>>), ChainError> {
         let first_block_header = &blocks
             .first()
             .ok_or(ChainError::WitnessGeneration(
@@ -1687,6 +1785,7 @@ impl Blockchain {
 
         let mut blockhash_opcode_references = HashMap::new();
         let mut codes = Vec::new();
+        let mut block_access_lists: Vec<Option<BlockAccessList>> = Vec::with_capacity(blocks.len());
 
         for (i, block) in blocks.iter().enumerate() {
             let parent_hash = block.header.parent_hash;
@@ -1724,9 +1823,16 @@ impl Blockchain {
                     Evm::new_from_db_for_l2(logger.clone(), *l2_config, Arc::new(NativeCrypto))
                 }
             };
+            // I2: witness-gen must attach the stateless validator too, so
+            // re-executing an L1 block that itself contains an EXECUTE call
+            // (native-rollup advance) does not fail with "requires a
+            // StatelessValidator". Mirrors the sibling paths at the other
+            // `new_from_db_for_l1` sites (block import + witness gen).
+            attach_stateless_validator(&mut vm);
 
             // Re-execute block with logger
-            let (execution_result, _bal) = vm.execute_block(block)?;
+            let (execution_result, bal) = vm.execute_block(block)?;
+            block_access_lists.push(bal);
 
             // Gather account updates
             let account_updates = vm.get_state_transitions()?;
@@ -1962,14 +2068,17 @@ impl Blockchain {
             storage_trie_roots.insert(hashed_address_h256, (*node).clone());
         }
 
-        Ok(ExecutionWitness {
-            codes,
-            block_headers_bytes,
-            first_block_number: first_block_header.number,
-            chain_config: self.storage.get_chain_config(),
-            state_trie_root,
-            storage_trie_roots,
-        })
+        Ok((
+            ExecutionWitness {
+                codes,
+                block_headers_bytes,
+                first_block_number: first_block_header.number,
+                chain_config: self.storage.get_chain_config(),
+                state_trie_root,
+                storage_trie_roots,
+            },
+            block_access_lists,
+        ))
     }
 
     pub fn generate_witness_from_account_updates(
@@ -2389,7 +2498,7 @@ impl Blockchain {
 
             let logger = Arc::new(DatabaseLogger::new(Arc::new(vm_db)));
 
-            let vm = match self.options.r#type.clone() {
+            let mut vm = match self.options.r#type.clone() {
                 BlockchainType::L1 => {
                     Evm::new_from_db_for_l1(logger.clone(), Arc::new(NativeCrypto))
                 }
@@ -2401,6 +2510,7 @@ impl Blockchain {
                     Arc::new(NativeCrypto),
                 ),
             };
+            attach_stateless_validator(&mut vm);
             (vm, Some(logger))
         } else {
             let vm_db = StoreVmDatabase::new(self.storage.clone(), parent_header.clone())?;
@@ -4258,7 +4368,7 @@ fn handle_subtrie(
 }
 
 pub fn new_evm(blockchain_type: &BlockchainType, vm_db: StoreVmDatabase) -> Result<Evm, EvmError> {
-    let evm = match blockchain_type {
+    let mut evm = match blockchain_type {
         BlockchainType::L1 => Evm::new_for_l1(vm_db, Arc::new(NativeCrypto)),
         BlockchainType::L2(l2_config) => {
             let fee_config = *l2_config
@@ -4269,7 +4379,25 @@ pub fn new_evm(blockchain_type: &BlockchainType, vm_db: StoreVmDatabase) -> Resu
             Evm::new_for_l2(vm_db, fee_config, Arc::new(NativeCrypto))?
         }
     };
+    attach_stateless_validator(&mut evm);
     Ok(evm)
+}
+
+/// Attach the stateless validator to an `Evm` so its `EXECUTE` precompile
+/// can delegate to `verify_stateless_new_payload` when processing native-rollup
+/// `advance()` calls.
+///
+/// Lives here (not in `Evm`'s constructor) because `StatelessExecutor` is
+/// implemented by the blockchain crate and calls back into `Evm::new_for_l1`
+/// when verifying — an auto-inject in the constructor would recurse. Other
+/// callers that build `Evm::new_for_l1` without blockchain access (the
+/// guest-program crate, the stateless verifier itself, witness generation,
+/// the prover backend) also rely on the constructor staying validator-less.
+///
+fn attach_stateless_validator(evm: &mut Evm) {
+    evm.stateless_validator = Some(Arc::new(stateless::StatelessExecutor {
+        crypto: Arc::new(NativeCrypto),
+    }));
 }
 
 /// Performs post-execution checks
@@ -4536,6 +4664,65 @@ pub fn compute_sharded_storage_root(
     let _ = DROP_SENDER.send(Box::new(root_ref));
 
     Ok((root_hash.finalize(&NativeCrypto), nodes))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::payload::{BuildPayloadArgs, create_payload};
+    use bytes::Bytes;
+    use ethrex_common::{
+        H160, H256,
+        types::{DEFAULT_BUILDER_GAS_CEIL, ELASTICITY_MULTIPLIER, Genesis},
+    };
+    use ethrex_storage::EngineType;
+    use std::path::Path;
+
+    async fn build_test_blockchain_with_one_block() -> (Blockchain, Vec<Block>) {
+        let genesis_path = Path::new(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../fixtures/genesis/execution-api.json"
+        ));
+        let genesis = Genesis::try_from(genesis_path).expect("Failed to load genesis");
+        let mut store =
+            Store::new("store.db", EngineType::InMemory).expect("Failed to build store");
+        store
+            .add_initial_state(genesis)
+            .await
+            .expect("Failed to add genesis");
+        let blockchain = Blockchain::default_with_store(store.clone());
+        let genesis_header = store.get_block_header(0).unwrap().unwrap();
+        let args = BuildPayloadArgs {
+            parent: genesis_header.hash(),
+            timestamp: genesis_header.timestamp + 12,
+            fee_recipient: H160::zero(),
+            random: H256::zero(),
+            withdrawals: Some(Vec::new()),
+            beacon_root: Some(H256::zero()),
+            slot_number: None,
+            version: 1,
+            elasticity_multiplier: ELASTICITY_MULTIPLIER,
+            gas_ceil: DEFAULT_BUILDER_GAS_CEIL,
+        };
+        let block_template = create_payload(&args, &store, Bytes::new()).unwrap();
+        let result = blockchain.build_payload(block_template).unwrap();
+        (blockchain, vec![result.payload])
+    }
+
+    #[tokio::test]
+    async fn generate_witness_and_bal_returns_none_at_prague() {
+        let (blockchain, blocks) = build_test_blockchain_with_one_block().await;
+
+        let (_witness, bals) = blockchain
+            .generate_witness_and_bal_for_blocks_with_fee_configs(&blocks, None)
+            .await
+            .expect("witness+bal generation");
+
+        // One BAL slot per input block, aligned by index.
+        assert_eq!(bals.len(), blocks.len());
+        // Pre-Amsterdam: no BAL is produced.
+        assert!(bals.iter().all(|b| b.is_none()));
+    }
 }
 
 #[cfg(test)]
