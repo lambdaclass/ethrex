@@ -34,7 +34,7 @@
             const path_to_root = "../../";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "../../searchindex-e4ac3429.js";
+            window.path_to_searchindex_js = "../../searchindex-244f4738.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../../toc-ec0f4f2d.js"></script>
@@ -294,16 +294,27 @@
 <p><strong>Gapped-nonce rejection under pressure.</strong> When the pool is heavily occupied, a new <em>non-replacement</em> transaction whose nonce is not the sender’s on-chain nonce is rejected with <code>GapAdmissionDeniedUnderPressure { occupancy_pct, nonce_gap }</code>. The gate fires only when <code>occupancy_pct ≥ gap_admit_occupancy_threshold</code> (default 90; a threshold of 100 disables it), so nonce-gap parking spam is bounded without affecting normal load.</p>
 <p><strong>Per-sender queued cap.</strong> Enforced inside <code>add_transaction</code> (see <a href="#insertion-path">Insertion path</a>), not here, so it re-checks the live pool atomically with the insert.</p>
 <h2 id="replacement-by-fee-rbf"><a class="header" href="#replacement-by-fee-rbf">Replacement by Fee (RBF)</a></h2>
-<p><code>Mempool::find_tx_to_replace</code> decides whether a new transaction at an existing <code>(sender, nonce)</code> is accepted as a replacement. The condition is:</p>
-<pre><code>blob_fee_ok &amp;&amp; (both_1559_fields_higher || gas_price_higher)
-</code></pre>
-<ul>
-<li><strong><code>gas_price_higher</code></strong> — <code>Transaction::gas_price()</code> strictly greater. That accessor returns the <code>gas_price</code> field for legacy and <strong>EIP-2930</strong> transactions, and <code>max_fee_per_gas</code> for every typed-fee transaction (EIP-1559 / 4844 / 7702 / fee-token / frame).</li>
-<li><strong><code>both_1559_fields_higher</code></strong> — <code>max_fee_per_gas</code> <em>and</em> <code>max_priority_fee_per_gas</code> both strictly greater. Legacy and EIP-2930 transactions can never satisfy this arm: their <code>max_fee_per_gas()</code> / <code>max_priority_fee()</code> accessors return <code>None</code>, so their replacement is governed entirely by the <code>gas_price</code> comparison.</li>
-<li><strong><code>blob_fee_ok</code></strong> — when both the in-pool and incoming transaction carry <code>max_fee_per_blob_gas</code> (EIP-4844), the new one must be strictly greater; otherwise this term is vacuously true.</li>
-</ul>
-<p>Because the two fee arms are OR-ed, raising only <code>max_fee_per_gas</code> on an EIP-1559 transaction is already sufficient, since its <code>gas_price()</code> tracks <code>max_fee_per_gas</code>.</p>
-<p>If the bump condition isn’t met, the replacement is rejected with <code>UnderpricedReplacement</code>. A configurable minimum-percentage bump is in flight (#6601).</p>
+<p><code>Mempool::find_tx_to_replace</code> decides whether a new transaction at an existing <code>(sender, nonce)</code> is accepted as a replacement. Replacement is gated in three stages, all of which must pass.</p>
+<p><strong>1. Category gate.</strong> A replacement may not cross the blob boundary: a blob-carrying transaction cannot displace a non-blob one or vice versa, since the two differ enormously in propagation cost. Mismatches are rejected with <code>ReplacementTypeMismatch</code>. “Blob-carrying” means <code>Transaction::is_blob_carrying()</code> — EIP-4844, <em>or</em> an EIP-8141 frame transaction with a non-empty <code>blob_versioned_hashes</code>, since those carry a sidecar too. Type changes <em>within</em> the regular pool (legacy ↔ 2930 ↔ 1559 ↔ 7702) remain allowed, matching geth/reth/nethermind.</p>
+<p><strong>2. Strict increase.</strong> The incoming transaction must strictly out-bid the pooled one on <strong>both</strong> <code>gas_fee_cap</code> and <code>gas_tip_cap</code>. This is not redundant with the percentage threshold below — see the note on rounding.</p>
+<p><strong>3. Percentage bump.</strong> Each fee dimension must additionally clear <code>floor(existing × (100 + bump) / 100)</code>:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Dimension</th><th>Applies to</th></tr>
+</thead>
+<tbody>
+<tr><td><code>gas_fee_cap</code></td><td>all transactions</td></tr>
+<tr><td><code>gas_tip_cap</code></td><td>all transactions</td></tr>
+<tr><td><code>max_fee_per_blob_gas</code></td><td>blob-carrying transactions only</td></tr>
+</tbody>
+</table>
+</div>
+<p>The bump percentage is <code>--mempool.price-bump</code> (default 10) for regular transactions and <code>--mempool.blob-price-bump</code> (default 100) for blob-carrying ones, matching geth’s <code>PriceBump</code> and its stricter blob equivalent. The higher blob figure reflects that re-propagating a sidecar is far more expensive than a plain transaction.</p>
+<blockquote>
+<p><strong>Why stage 2 exists.</strong> The threshold in stage 3 is computed with integer division, so it collapses onto the existing value whenever <code>existing × bump / 100 &lt; 1</code> — with the default 10% bump, that is every fee below 10 wei. For a 1 wei tip, <code>floor(1 × 110 / 100) == 1</code>, so an <em>identical-fee</em> transaction would satisfy <code>new &gt;= threshold</code> and be admitted as a “bump”, evicting the pooled transaction and re-gossiping the replacement for free. geth guards this the same way, with a strict-increase check ahead of the threshold in <code>legacypool</code>’s <code>list.Add</code>.</p>
+</blockquote>
+<p>If any stage fails, the replacement is rejected with <code>UnderpricedReplacement</code> (or <code>ReplacementTypeMismatch</code> for stage 1).</p>
 <h2 id="per-sender-queued-cap"><a class="header" href="#per-sender-queued-cap">Per-sender Queued Cap</a></h2>
 <p>A per-sender cap bounds only the <strong>queued</strong> (future / nonce-gapped) sub-pool, aligned with geth’s <code>AccountQueue</code>: transactions whose nonce is beyond the sender’s contiguous executable run from the on-chain nonce. <code>BlockchainOptions::max_queued_txs_per_account</code> (default <code>DEFAULT_MAX_QUEUED_TXS_PER_ACCOUNT = 64</code>, <code>--mempool.max-queued-txs-per-account</code>). Executable (contiguous-nonce) transactions are <strong>never</strong> capped, so a single high-throughput sender is unaffected. Exceeding the cap yields <code>MaxQueuedTxsPerAccountExceeded { sender, count, limit }</code>.</p>
 <p>The check runs inside <code>Mempool::add_transaction</code> under the same write lock as the insertion — the queued count is computed atomically with the insert, so two concurrent submissions from one sender cannot both pass a stale count and race past the cap. A <code>QueuedCap { account_nonce, max }</code> value, computed by <code>validate_transaction</code> (which holds the sender’s on-chain nonce), is threaded through. Replacements are exempt: a same-<code>(sender, nonce)</code> replace doesn’t grow the queue.</p>
@@ -365,6 +376,8 @@
 </thead>
 <tbody>
 <tr><td><code>--mempool.maxsize</code></td><td><code>ETHREX_MEMPOOL_MAX_SIZE</code></td><td><code>10_000</code></td><td>Cap on the regular pool — eviction starts at this size.</td></tr>
+<tr><td><code>--mempool.price-bump</code></td><td><code>ETHREX_MEMPOOL_PRICE_BUMP</code></td><td><code>10</code> (<code>DEFAULT_PRICE_BUMP_PERCENT</code>)</td><td>Minimum fee bump (percent) to replace a non-blob pooled tx at the same <code>(sender, nonce)</code>.</td></tr>
+<tr><td><code>--mempool.blob-price-bump</code></td><td><code>ETHREX_MEMPOOL_BLOB_PRICE_BUMP</code></td><td><code>100</code> (<code>DEFAULT_BLOB_PRICE_BUMP_PERCENT</code>)</td><td>Minimum fee bump (percent) to replace a blob-carrying pooled tx; higher because sidecars are costly to re-propagate.</td></tr>
 <tr><td><code>--mempool.max-queued-txs-per-account</code></td><td><code>ETHREX_MEMPOOL_MAX_QUEUED_TXS_PER_ACCOUNT</code></td><td><code>64</code> (<code>DEFAULT_MAX_QUEUED_TXS_PER_ACCOUNT</code>)</td><td>Per-sender cap on queued (future-nonce) transactions; executable txs are never capped.</td></tr>
 <tr><td><code>--mempool.gap-admit-occupancy-threshold</code></td><td><code>ETHREX_MEMPOOL_GAP_ADMIT_OCCUPANCY_THRESHOLD</code></td><td><code>90</code> (<code>DEFAULT_GAP_ADMIT_OCCUPANCY_THRESHOLD</code>)</td><td>Occupancy percentage (<code>0..=100</code>) at/above which gapped-nonce txs are rejected; <code>100</code> disables the gate.</td></tr>
 <tr><td><code>--p2p.tx-broadcasting-interval</code></td><td><code>ETHREX_P2P_TX_BROADCASTING_INTERVAL</code></td><td><code>1000</code> ms (<code>BROADCAST_INTERVAL_MS</code>)</td><td>Period of the <code>TxBroadcaster</code> actor tick.</td></tr>
@@ -392,7 +405,8 @@
 <tr><td><code>SenderIsContract</code></td><td>EIP-3607: sender has non-empty code that isn’t a valid EIP-7702 delegation.</td></tr>
 <tr><td><code>NotEnoughBalance</code></td><td>Single-tx cost exceeds balance, or sender absent from state.</td></tr>
 <tr><td><code>InsufficientCumulativeBalance { required, available }</code></td><td>Sum of the sender’s pending-tx costs plus this one exceeds balance.</td></tr>
-<tr><td><code>UnderpricedReplacement</code></td><td>RBF candidate doesn’t strictly out-bid the in-pool tx on all fee fields.</td></tr>
+<tr><td><code>UnderpricedReplacement</code></td><td>RBF candidate doesn’t strictly out-bid the in-pool tx on every fee field, or doesn’t clear the configured percentage bump.</td></tr>
+<tr><td><code>ReplacementTypeMismatch</code></td><td>RBF candidate crosses the blob boundary (blob-carrying ↔ non-blob) at the same <code>(sender, nonce)</code>.</td></tr>
 <tr><td><code>InvalidChainId(expected)</code></td><td><code>tx.chain_id</code> set and doesn’t match the configured chain.</td></tr>
 <tr><td><code>GapAdmissionDeniedUnderPressure { occupancy_pct, nonce_gap }</code></td><td>Non-replacement gapped-nonce tx while occupancy ≥ threshold.</td></tr>
 <tr><td><code>MaxQueuedTxsPerAccountExceeded { sender, count, limit }</code></td><td>Per-sender queued (future-nonce) cap would be exceeded.</td></tr>
@@ -407,7 +421,6 @@
 <p>The mempool today is a single combined pool with FIFO regular eviction and the admission checks above. Areas with hardening work in flight or planned (tracked in their own PRs, which carry their own documentation):</p>
 <ul>
 <li><strong>Tip-aware regular eviction.</strong> Regular eviction is arrival-order FIFO; a high-tip transaction can be evicted for a low-tip one. Heap/tip-aware eviction is in flight (#6607).</li>
-<li><strong>RBF percentage fee bump.</strong> RBF currently accepts any strict fee increase; a configurable minimum-percentage bump (and cross-type replacement rejection) is in flight (#6601).</li>
 <li><strong>Minimum priority-fee floor at admission</strong> (#6604).</li>
 <li><strong>Non-propagating local transactions</strong> (<code>--mempool.private</code>) (#6576).</li>
 <li><strong>Local-vs-P2P origin threading</strong> through admission (#6608).</li>
