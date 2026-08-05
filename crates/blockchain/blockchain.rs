@@ -105,8 +105,8 @@ use ethrex_vm::backends::levm::LEVM;
 use ethrex_vm::backends::levm::db::DatabaseLogger;
 use ethrex_vm::{BlockExecutionResult, DynVmDatabase, Evm, EvmError, VmDatabase};
 use mempool::{
-    BalanceCheck, FRAME_CANONICAL_PAYMASTER_CODE_HASH, FramePaymasterReservation, Mempool,
-    SenderAdmission, is_canonical_paymaster,
+    BalanceCheck, FRAME_CANONICAL_PAYMASTER_CODE_HASH, FramePaymasterReservation, KeyedConcurrency,
+    Mempool, SenderAdmission, is_canonical_paymaster, keyed_concurrency_verdict,
 };
 use payload::PayloadOrTask;
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -2997,7 +2997,7 @@ impl Blockchain {
         // per-sender gate inputs, re-checked atomically inside `add_transaction`,
         // which also removes any same-nonce tx being replaced under the same lock
         // (#6938) — so no separate pre-removal here.
-        let (frame_reservation, sender_admission) =
+        let (frame_reservation, sender_admission, keyed_concurrency) =
             self.validate_transaction(&transaction, sender).await?;
 
         // Add blobs bundle before the transaction so that when add_transaction
@@ -3013,6 +3013,7 @@ impl Blockchain {
             MempoolTransaction::new(transaction, sender),
             frame_reservation,
             sender_admission,
+            keyed_concurrency,
         ) {
             let _ = self.mempool.remove_blobs_bundle(&hash);
             return Err(e);
@@ -3053,7 +3054,7 @@ impl Blockchain {
         // removal, and the insert are one atomic scope (#6938). For a frame tx
         // the removal happens only after the locked paymaster re-check, so a
         // rejected fee-bump leaves the original pending tx intact.
-        let (frame_reservation, sender_admission) =
+        let (frame_reservation, sender_admission, keyed_concurrency) =
             self.validate_transaction(&transaction, sender).await?;
 
         // Add transaction to storage
@@ -3063,6 +3064,7 @@ impl Blockchain {
             MempoolTransaction::new(transaction, sender),
             frame_reservation,
             sender_admission,
+            keyed_concurrency,
         )?;
 
         Ok(hash)
@@ -3304,7 +3306,14 @@ impl Blockchain {
         &self,
         tx: &Transaction,
         sender: Address,
-    ) -> Result<(Option<FramePaymasterReservation>, Option<SenderAdmission>), MempoolError> {
+    ) -> Result<
+        (
+            Option<FramePaymasterReservation>,
+            Option<SenderAdmission>,
+            KeyedConcurrency,
+        ),
+        MempoolError,
+    > {
         let nonce = tx.nonce();
 
         // On an L1 node, reject L2-only transaction types (FeeToken 0x7d,
@@ -3317,11 +3326,16 @@ impl Blockchain {
         }
 
         if matches!(tx, &Transaction::PrivilegedL2Transaction(_)) {
-            return Ok((None, None));
+            return Ok((None, None, KeyedConcurrency::Denied));
         }
 
         // Frame transactions: skip balance/EOA checks (payer unknown until execution)
         let is_frame_tx = matches!(tx, Transaction::FrameTransaction(_));
+        // EIP-8250: a non-zero-keyed frame tx carries per-key nonces in the
+        // NONCE_MANAGER domain, so the sender's linear account nonce is the
+        // wrong yardstick — the validation-prefix simulation checks each key's
+        // nonce. Skip the linear-nonce guards below for these.
+        let is_keyed_frame_tx = matches!(tx, Transaction::FrameTransaction(ft) if ft.is_keyed());
 
         let header_no = self.storage.get_latest_block_number().await?;
         let header = self
@@ -3336,6 +3350,14 @@ impl Blockchain {
         if is_frame_tx && !config.is_hegota_activated(header.timestamp) {
             return Err(MempoolError::FrameTxPreFork);
         }
+
+        // EIP-8250: non-zero-keyed frame transactions are admitted. Their nonces
+        // live in the NONCE_MANAGER key domain, so they are tracked per
+        // `(sender, keyset)` in the mempool (disjoint key sets are independent)
+        // and their per-key nonce validity is checked by the validation-prefix
+        // simulation, not the linear account nonce. Static validation still
+        // enforces the key-set shape (key 0 only as the sole key; non-zero keys
+        // strictly increasing, 1..=16).
 
         // EIP-8141 expiry: drop frame txs whose expiry
         // verifier deadline is already behind the current head timestamp.
@@ -3353,6 +3375,9 @@ impl Blockchain {
         // frame txs after simulation + availability pass; `None` for every other
         // tx type and threaded to the locked insert in `add_transaction`.
         let mut frame_reservation: Option<FramePaymasterReservation> = None;
+        // EIP-8250 keyed-concurrency verdict; set once the prefix simulation below
+        // has shown the prefix to be independent of the sender's mutable state.
+        let mut keyed_concurrency = KeyedConcurrency::Denied;
 
         if let Transaction::FrameTransaction(frame_tx) = tx {
             // EIP-8141 static constraints at admission (mirrors the VM check)
@@ -3510,7 +3535,10 @@ impl Blockchain {
         let sender_account_nonce = maybe_sender_acc_info.as_ref().map(|info| info.nonce);
 
         let sender_balance = if let Some(sender_acc_info) = maybe_sender_acc_info {
-            if nonce < sender_acc_info.nonce || nonce == u64::MAX {
+            // A keyed frame tx carries `nonce_seq` in the NONCE_MANAGER domain, so
+            // it is unrelated to the sender's account nonce and cannot be compared
+            // against it (EIP-8250 §Stateful validity checks it per key instead).
+            if !is_keyed_frame_tx && (nonce < sender_acc_info.nonce || nonce == u64::MAX) {
                 return Err(MempoolError::NonceTooLow);
             }
 
@@ -3575,8 +3603,9 @@ impl Blockchain {
             // nonce sanity guard as the existing-account path instead of skipping
             // nonce validation entirely. `nonce < 0` is impossible for a u64, so
             // only the u64::MAX sentinel is rejectable here; a fresh sender's
-            // nonce-0 tx still passes.
-            if nonce == u64::MAX {
+            // nonce-0 tx still passes. A non-zero-keyed frame tx is exempt: its
+            // nonce_seq is a NONCE_MANAGER key value, validated by the prefix sim.
+            if !is_keyed_frame_tx && nonce == u64::MAX {
                 return Err(MempoolError::NonceTooLow);
             }
             // Frame txs skip the cumulative balance check below, so this
@@ -3642,8 +3671,15 @@ impl Blockchain {
         // error message — taking the read lock twice (a separate check plus a
         // re-read for the message) would allow TOCTOU drift where the reported
         // occupancy differs from the value the gate fired on.
+        // A keyed frame tx (EIP-8250) is exempt: its `nonce_seq` lives in the
+        // NONCE_MANAGER domain, so differing from the sender's account nonce is
+        // the normal case and says nothing about contiguity.
         let threshold = self.options.gap_admit_occupancy_threshold;
-        if tx_to_replace_hash.is_none() && nonce != sender_acc_nonce && threshold < 100 {
+        if !is_keyed_frame_tx
+            && tx_to_replace_hash.is_none()
+            && nonce != sender_acc_nonce
+            && threshold < 100
+        {
             let occupancy_pct = self.mempool.occupancy_pct()?;
             if occupancy_pct >= threshold {
                 let nonce_gap = nonce.saturating_sub(sender_acc_nonce);
@@ -3689,6 +3725,36 @@ impl Blockchain {
                 ));
             }
 
+            // EIP-8250 keyed-concurrency eligibility. Several keyed transactions
+            // from one sender may only be pending together when this transaction's
+            // validation prefix cannot be invalidated by the sender's other
+            // transactions, which needs all four to hold:
+            //   1. the sender runs real contract code, not an EIP-7702 delegation
+            //      (an EOA's default-code prefix authenticates with the sender's
+            //      own nonce, and a delegation can be retargeted at any time),
+            //   2. no deploy frame, which would install that code mid-flight,
+            //   3. the prefix read no sender storage, so no sibling transaction's
+            //      SSTORE can invalidate it,
+            //   4. the prefix did not read TXPARAM(0x0C), the legacy account nonce
+            //      that a key-0 transaction bumps on inclusion.
+            // Anything else stays under EIP-8141's one-pending-per-sender rule.
+            if is_keyed_frame_tx {
+                let sender_code = self
+                    .storage
+                    .get_code_by_account_address(header_no, sender)
+                    .await?
+                    .map(|code| code.code_bytes())
+                    .unwrap_or_default();
+                let sender_runs_contract_code =
+                    !sender_code.is_empty() && !is_eip7702_delegation(&sender_code);
+                keyed_concurrency = keyed_concurrency_verdict(
+                    sender_runs_contract_code,
+                    prefix.deploy_index.is_some(),
+                    !outcome.touched_sender_slots.is_empty(),
+                    outcome.read_legacy_nonce,
+                );
+            }
+
             // Paymaster availability accounting (EIP-8141). The simulation
             // identified the payer (paymaster) and whether its code matched the
             // canonical paymaster hash (always false today, OQ1). Reserve the
@@ -3713,6 +3779,11 @@ impl Blockchain {
                         .unwrap_or_default();
                     code_is_canonical || is_canonical_paymaster(&paymaster_code)
                 };
+
+                // Self-pay (payer == sender): exempt from the non-canonical COUNT
+                // limit (see FramePaymasterReservation::is_self_pay). The balance
+                // reservation below still applies so the sender can't overdraw.
+                let is_self_pay = paymaster == sender;
 
                 let paymaster_balance = self
                     .storage
@@ -3754,8 +3825,9 @@ impl Blockchain {
                         if available < max_cost {
                             return Err(MempoolError::FrameTxPaymasterUnderfunded);
                         }
-                        if self.mempool.noncanonical_paymaster_pending(paymaster)?
-                            >= ethrex_common::types::FRAME_TX_MAX_PENDING_NONCANONICAL_PAYMASTER
+                        if !is_self_pay
+                            && self.mempool.noncanonical_paymaster_pending(paymaster)?
+                                >= ethrex_common::types::FRAME_TX_MAX_PENDING_NONCANONICAL_PAYMASTER
                         {
                             return Err(MempoolError::FrameTxNonCanonicalPaymasterLimit);
                         }
@@ -3771,6 +3843,7 @@ impl Blockchain {
                     reserved_cost: max_cost,
                     is_canonical,
                     paymaster_balance,
+                    is_self_pay,
                 });
             }
         }
@@ -3781,18 +3854,27 @@ impl Blockchain {
         // above are an unlocked pre-filter (issue #6938). `None` when the sender
         // has no account (only frame txs reach here in that case, and they are
         // not per-sender rate-limited on nonce/balance).
-        let sender_admission = sender_account_nonce.map(|account_nonce| SenderAdmission {
-            account_nonce,
-            queued_max: self.options.max_queued_txs_per_account,
-            gap_threshold: self.options.gap_admit_occupancy_threshold,
-            // Frame txs are not balance-gated (payer unknown until execution).
-            balance_check: (!is_frame_tx).then_some(BalanceCheck {
-                tx_cost,
-                sender_balance,
-            }),
-        });
+        // EIP-8250: a keyed frame tx carries `nonce_seq` in the NONCE_MANAGER
+        // domain, which is not comparable to the sender's account nonce. Every
+        // gate in `SenderAdmission` is keyed on the linear nonce domain (the
+        // balance gate is already skipped for frame txs), so none of them
+        // applies and the guard is omitted entirely.
+        let sender_admission = if is_keyed_frame_tx {
+            None
+        } else {
+            sender_account_nonce.map(|account_nonce| SenderAdmission {
+                account_nonce,
+                queued_max: self.options.max_queued_txs_per_account,
+                gap_threshold: self.options.gap_admit_occupancy_threshold,
+                // Frame txs are not balance-gated (payer unknown until execution).
+                balance_check: (!is_frame_tx).then_some(BalanceCheck {
+                    tx_cost,
+                    sender_balance,
+                }),
+            })
+        };
 
-        Ok((frame_reservation, sender_admission))
+        Ok((frame_reservation, sender_admission, keyed_concurrency))
     }
 
     /// Marks the node's chain as up to date with the current chain

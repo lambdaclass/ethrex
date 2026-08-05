@@ -206,6 +206,8 @@ impl Evm {
         // payload-build path; the block-import path is hooked in prepare_block.
         if fork >= Fork::Hegota && matches!(self.vm_type, VMType::L1) {
             LEVM::install_expiry_verifier_code(&mut self.db, self.crypto.as_ref())?;
+            // EIP-8250: the keyed-nonce manager predeploy.
+            LEVM::install_nonce_manager_code(&mut self.db, self.crypto.as_ref())?;
         }
 
         if block_header.parent_beacon_block_root.is_some() && fork >= Fork::Cancun {
@@ -390,8 +392,11 @@ pub struct FrameValidationOutcome {
     /// identified (e.g. self-funded self_verify).
     pub accessed_paymaster: Option<(Address, bool)>,
     /// Sender storage slots touched during the prefix, recorded for the
-    /// admission-time revalidation affected-set (Phase 3).
+    /// admission-time revalidation affected-set.
     pub touched_sender_slots: Vec<ethrex_common::H256>,
+    /// Whether the prefix read `TXPARAM(0x0C)`, the sender's legacy account nonce
+    /// (EIP-8250 §Mempool).
+    pub read_legacy_nonce: bool,
 }
 
 #[derive(Clone, Debug)]

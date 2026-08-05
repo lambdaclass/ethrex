@@ -6,7 +6,8 @@ use crate::system_contracts::{
     AMSTERDAM_REQUEST_PREDEPLOYS, BEACON_ROOTS_ADDRESS, BUILDER_DEPOSIT_CONTRACT_ADDRESS,
     BUILDER_EXIT_CONTRACT_ADDRESS, CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS,
     EXPIRY_VERIFIER_PREDEPLOY, EXPIRY_VERIFIER_RUNTIME_BYTECODE, HISTORY_STORAGE_ADDRESS,
-    PRAGUE_SYSTEM_CONTRACTS, SYSTEM_ADDRESS, WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS,
+    NONCE_MANAGER_PREDEPLOY, NONCE_MANAGER_RUNTIME_BYTECODE, PRAGUE_SYSTEM_CONTRACTS,
+    SYSTEM_ADDRESS, WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS,
 };
 use crate::{EvmError, ExecutionResult};
 use bytes::Bytes;
@@ -3177,12 +3178,14 @@ impl LEVM {
                     max_cost: Self::frame_tx_max_cost(frame_tx),
                     accessed_paymaster: None,
                     touched_sender_slots: Vec::new(),
+                    read_legacy_nonce: false,
                 });
             }
         };
 
         let max_cost = Self::frame_tx_max_cost(frame_tx);
         let touched_sender_slots = vm.validation_observer.touched_sender_slots.clone();
+        let read_legacy_nonce = vm.validation_observer.read_legacy_nonce;
         // The payer established by the prefix is the paymaster (OQ2: the
         // APPROVE-payment address is treated uniformly as "paymaster", including
         // the self-funded sender). Its canonical flag is always false (OQ1: no
@@ -3199,6 +3202,7 @@ impl LEVM {
                 max_cost,
                 accessed_paymaster,
                 touched_sender_slots,
+                read_legacy_nonce,
             });
         }
 
@@ -3210,6 +3214,7 @@ impl LEVM {
                 max_cost,
                 accessed_paymaster,
                 touched_sender_slots,
+                read_legacy_nonce,
             });
         }
 
@@ -3222,6 +3227,7 @@ impl LEVM {
                 max_cost,
                 accessed_paymaster,
                 touched_sender_slots,
+                read_legacy_nonce,
             });
         }
 
@@ -3235,6 +3241,7 @@ impl LEVM {
                     max_cost,
                     accessed_paymaster,
                     touched_sender_slots,
+                    read_legacy_nonce,
                 });
             }
         }
@@ -3250,6 +3257,7 @@ impl LEVM {
                 max_cost,
                 accessed_paymaster,
                 touched_sender_slots,
+                read_legacy_nonce,
             });
         }
 
@@ -3259,6 +3267,7 @@ impl LEVM {
             max_cost,
             accessed_paymaster,
             touched_sender_slots,
+            read_legacy_nonce,
         })
     }
 
@@ -3403,6 +3412,48 @@ impl LEVM {
             .map_err(EvmError::from)?;
         acc.info.code_hash = code_hash;
         acc.info.nonce = PREDEPLOY_NONCE;
+        db.codes.entry(code_hash).or_insert(code);
+        Ok(())
+    }
+
+    /// Install the EIP-8250 NONCE_MANAGER predeploy at Hegota activation.
+    /// Idempotent: writes only when the existing code differs, so exactly one
+    /// account update is produced (at the first Hegota block) and none after.
+    pub fn install_nonce_manager_code(
+        db: &mut GeneralizedDatabase,
+        crypto: &dyn Crypto,
+    ) -> Result<(), EvmError> {
+        // Predeploy convention (matches the genesis predeploys 4788/2935/7002/7251).
+        const PREDEPLOY_NONCE: u64 = 1;
+
+        let current = db.get_account_code(NONCE_MANAGER_PREDEPLOY.address)?;
+        if current.code() == NONCE_MANAGER_RUNTIME_BYTECODE.as_slice() {
+            return Ok(());
+        }
+        // EIP-8250 activation (spec's 3-case rule). Case 1 (account absent): create
+        // with nonce 1. Case 2 (exists with empty code + empty storage): set the code,
+        // nonce = max(existing_nonce, 1), preserve balance, leave storage empty. Case 3
+        // (pre-existing code/storage) is undefined by the spec — the address is chosen
+        // so it cannot occur — so it is not special-cased; the idempotent guard above
+        // already returns early when our code is already installed. Balance is preserved
+        // because only code_hash and nonce are written; storage is never added here.
+        let existing_nonce = db
+            .get_account(NONCE_MANAGER_PREDEPLOY.address)
+            .map_err(EvmError::from)?
+            .info
+            .nonce;
+        let new_nonce = existing_nonce.max(PREDEPLOY_NONCE);
+        let code = Code::from_bytecode(Bytes::from_static(&NONCE_MANAGER_RUNTIME_BYTECODE), crypto);
+        let code_hash = code.hash;
+        if let Some(recorder) = db.bal_recorder_mut() {
+            recorder.record_code_change(NONCE_MANAGER_PREDEPLOY.address, code.code_bytes());
+            recorder.record_nonce_change(NONCE_MANAGER_PREDEPLOY.address, new_nonce);
+        }
+        let acc = db
+            .get_account_mut(NONCE_MANAGER_PREDEPLOY.address)
+            .map_err(EvmError::from)?;
+        acc.info.code_hash = code_hash;
+        acc.info.nonce = new_nonce;
         db.codes.entry(code_hash).or_insert(code);
         Ok(())
     }
@@ -3583,6 +3634,8 @@ impl LEVM {
         // hooked in apply_system_calls for the payload-build path.
         if fork >= Fork::Hegota {
             Self::install_expiry_verifier_code(db, crypto)?;
+            // EIP-8250: the keyed-nonce manager predeploy.
+            Self::install_nonce_manager_code(db, crypto)?;
         }
 
         if block_header.parent_beacon_block_root.is_some() && fork >= Fork::Cancun {
