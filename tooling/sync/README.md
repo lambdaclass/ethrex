@@ -260,6 +260,7 @@ each network's real block production and absorbs missed slots.
 ### Usage
 
 ```bash
+make fullsync-bench-bootstrap                              # first base per network (once)
 make fullsync-bench-once                                   # one cycle, then exit
 make fullsync-bench-watch                                  # continuous
 make fullsync-bench-watch FULLSYNC_BENCH_NETWORKS=mainnet,sepolia,hoodi
@@ -272,13 +273,39 @@ lock.
 
 ### Bootstrap
 
-Each network needs a starting base at `<state-root>/<network>/base.0` — a gracefully
-stopped, snap-synced datadir at least `GAP` blocks behind head. The runner records the
-base's head in `bench-base.json` on first use and maintains it from then on.
+`make fullsync-bench-bootstrap` snap-syncs each network to the tip, stops it gracefully and
+records it as `base.0` plus a `bench-base.json` holding its block number. Snap is used for
+this initial fill only — full-syncing from genesis would take weeks; the measurement legs
+themselves always run full, since that is the thing being measured.
 
-Run **observe-only for 2–3 weeks** before wiring up alerting: the real day-to-day σ is
-unknown, and thresholds should come from measured data rather than a guess. Alerting and
-step detection (trailing median + persistence, not day-vs-day) land after that.
+The node is then simply left stopped. The gap opens on its own at one day per day as the
+chain moves on, so nothing needs anchoring by hand. Cycles skip themselves with a log line
+until `head − base ≥ M`; with the default `M` of 3 days that means roughly a three-day wait
+after bootstrap before the first real measurement (six to reach the steady-state `GAP`).
+
+Run **observe-only for 2–3 weeks** after that before wiring up alerting: the real
+day-to-day σ is unknown, and thresholds should come from measured data rather than a guess.
+Alerting and step detection (trailing median + persistence, not day-vs-day) land later.
+
+### Storage layout
+
+Everything lives under `BENCH_DATA_ROOT` (default `/mnt/raid10/fullsync-bench`):
+
+```
+<root>/data/<net>/         bind-mounted into the container as /data
+<root>/consensus/<net>/    beacon node database
+<root>/state/<net>/base.N  retained base generations
+<root>/results/<net>/      one JSON + log per leg
+```
+
+Node data and bases **must stay on one filesystem**. `snapshot()` hardlinks unchanged SST
+files between generations with `rsync --link-dest`, which only works within a filesystem;
+across two, rsync silently copies instead and every retained generation costs a full
+database rather than a delta. The runner asserts this at startup rather than trusting it.
+
+Bind mounts are used instead of named Docker volumes for the same reason: Docker's
+`data-root` is usually on the OS disk, which is both smaller and a different filesystem
+from the array holding the bases.
 
 ### Metrics
 

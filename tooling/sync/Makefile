@@ -5,7 +5,7 @@ start-sepolia-metrics-docker start-holesky-metrics-docker start-hoodi-metrics-do
 start-metrics-docker tail-syncing-logs tail-metrics-logs copy_flamegraph import-with-metrics \
 multisync-up multisync-down multisync-clean multisync-logs multisync-status \
 multisync-restart multisync-monitor multisync-run multisync-loop multisync-loop-auto \
-fullsync-bench-watch fullsync-bench-once fullsync-bench-test
+fullsync-bench-bootstrap fullsync-bench-watch fullsync-bench-once fullsync-bench-test
 
 ETHREX_DIR ?= "../.."
 
@@ -358,9 +358,21 @@ multisync-loop-auto: ## Continuous loop with auto-update: pull latest, build, an
 # floor. Runs are serial across networks by design — concurrent legs contend and both
 # results are junk.
 
+# Node data, bases and results share one filesystem so `rsync --link-dest` can hardlink
+# unchanged SSTs between base generations; see docker-compose.fullsync-bench.yaml.
+BENCH_DATA_ROOT ?= /mnt/raid10/fullsync-bench
+export BENCH_DATA_ROOT
+
 FULLSYNC_BENCH_NETWORKS ?= mainnet
-FULLSYNC_BENCH_STATE ?= /root/fullsync-bench/state
-FULLSYNC_BENCH_RESULTS ?= /root/fullsync-bench/results
+FULLSYNC_BENCH_STATE ?= $(BENCH_DATA_ROOT)/state
+FULLSYNC_BENCH_RESULTS ?= $(BENCH_DATA_ROOT)/results
+
+fullsync-bench-bootstrap: ## Snap-sync to the tip and record the first base per network.
+	python3 fullsync_bench.py \
+		--networks $(FULLSYNC_BENCH_NETWORKS) \
+		--state-root $(FULLSYNC_BENCH_STATE) \
+		--results-dir $(FULLSYNC_BENCH_RESULTS) \
+		--bootstrap
 
 fullsync-bench-watch: ## Continuous full-sync throughput watch (observe-only).
 	python3 fullsync_bench.py \

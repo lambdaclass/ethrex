@@ -34,6 +34,11 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 COMPOSE_FILES = ["docker-compose.multisync.yaml", "docker-compose.fullsync-bench.yaml"]
 COMPOSE_PROJECT = "fullsync-bench"
 
+# Node data, base generations and results all live under here, and must stay on one
+# filesystem — see `assert_same_filesystem`. Kept in step with BENCH_DATA_ROOT in the
+# compose override, which bind-mounts `<root>/data/<net>` into each container.
+DATA_ROOT = os.environ.get("BENCH_DATA_ROOT", "/mnt/raid10/fullsync-bench")
+
 # One lock for the whole box: two legs running at once contend for CPU and disk and both
 # results are junk. This also excludes the A/B tool (#7112), which must take the same lock.
 LOCK_PATH = "/tmp/ethrex-fullsync-bench.lock"
@@ -81,12 +86,28 @@ def compose(args, check=True):
 
 
 def data_dir(net):
-    """Host path of the node's data volume."""
-    return f"/var/lib/docker/volumes/{COMPOSE_PROJECT}_ethrex-{net}/_data"
+    """Host path bind-mounted into the node as /data."""
+    return os.path.join(DATA_ROOT, "data", net)
 
 
 def base_dir(state_root, net, generation=0):
     return os.path.join(state_root, net, f"base.{generation}")
+
+
+def assert_same_filesystem(net, state_root):
+    """Bases and live data must share a filesystem.
+
+    `snapshot` relies on `rsync --link-dest` hardlinking unchanged SST files, which only
+    works within one filesystem. Across two, rsync copies instead — no error, just every
+    retained generation quietly costing a full database.
+    """
+    os.makedirs(data_dir(net), exist_ok=True)
+    os.makedirs(os.path.join(state_root, net), exist_ok=True)
+    if os.stat(data_dir(net)).st_dev != os.stat(os.path.join(state_root, net)).st_dev:
+        raise SystemExit(
+            f"{net}: data dir {data_dir(net)} and base dir {state_root}/{net} are on "
+            "different filesystems; --link-dest would silently fall back to full copies"
+        )
 
 
 # ------------------------------------------------------------------- node control
@@ -112,6 +133,15 @@ def cl_head(net, timeout=8):
 
 def start_node(net):
     compose(["up", "-d", "--no-deps", f"ethrex-{net}"])
+
+
+def start_consensus(net):
+    """Bring up the beacon node (and its JWT setup) and leave it running.
+
+    The consensus client stays up across cycles: it is what holds the chain tip the
+    execution node syncs toward, and restarting it would mean re-syncing it as well.
+    """
+    compose(["up", "-d", f"consensus-{net}"])
 
 
 def stop_node(net):
@@ -165,6 +195,70 @@ def rotate_generations(state_root, net):
         src = base_dir(state_root, net, gen)
         if os.path.isdir(src):
             os.rename(src, base_dir(state_root, net, gen + 1))
+
+
+# ----------------------------------------------------------------------- bootstrap
+
+
+# Snap-syncing mainnet from scratch is an overnight job, and a stall should not hang the
+# runner forever.
+BOOTSTRAP_TIMEOUT_SECONDS = 48 * 3600
+
+# How close to the consensus tip counts as "caught up" — a couple of epochs of slack, so a
+# node still importing the last few blocks is not called done early.
+SYNCED_MARGIN_BLOCKS = 64
+
+
+def bootstrap(net, state_root):
+    """Create the first base for a network.
+
+    Snap-syncs to the tip and snapshots the result. The node is then left stopped, and the
+    gap the watch needs opens by itself at one day per day as the chain moves on — no
+    manual anchoring. Cycles can start once head - base >= measure_blocks, which `cycle`
+    checks and waits for.
+    """
+    cfg = NETWORKS[net]
+    base = base_dir(state_root, net, 0)
+    if os.path.isdir(base):
+        raise SystemExit(f"{net}: base already exists at {base}; remove it to re-bootstrap")
+    assert_same_filesystem(net, state_root)
+
+    # Snap for the initial fill only: full-syncing from genesis would take weeks. The
+    # measurement legs themselves always run full — that is the thing being measured.
+    os.environ["BENCH_SYNCMODE"] = "snap"
+    start_consensus(net)
+    start_node(net)
+    log(f"{net}: snap-syncing to tip; expect hours")
+
+    deadline = time.time() + BOOTSTRAP_TIMEOUT_SECONDS
+    head = None
+    try:
+        while True:
+            try:
+                head, tip = rpc_block_number(cfg["rpc_port"]), cl_head(net)
+                if head >= tip - SYNCED_MARGIN_BLOCKS:
+                    log(f"{net}: caught up at {head} (tip {tip})")
+                    break
+                log(f"{net}: {head} / {tip} ({tip - head} behind)")
+            except Exception as exc:
+                log(f"{net}: waiting for RPC/beacon ({exc})")
+            if time.time() > deadline:
+                raise SystemExit(f"{net}: bootstrap timed out after "
+                                 f"{BOOTSTRAP_TIMEOUT_SECONDS}s at head {head}")
+            time.sleep(60)
+    finally:
+        os.environ.pop("BENCH_SYNCMODE", None)
+        stop_node(net)
+
+    if not exited_cleanly(net):
+        raise SystemExit(f"{net}: node did not exit cleanly; refusing to promote the base")
+
+    os.makedirs(os.path.dirname(base), exist_ok=True)
+    snapshot(net, base)
+    write_base_head(base, head)
+    log(f"{net}: base created at {base} (block {head}); "
+        f"first cycle once the chain is {cfg['measure_blocks']} blocks past it")
+    return head
 
 
 # --------------------------------------------------------------------- the primitive
@@ -228,14 +322,29 @@ def cycle(net, state_root, results_dir):
     cfg = NETWORKS[net]
     base = base_dir(state_root, net, 0)
     if not os.path.isdir(base):
-        raise SystemExit(f"no base for {net} at {base}; bootstrap it first (see --help)")
+        raise SystemExit(f"no base for {net} at {base}; run with --bootstrap first")
 
+    assert_same_filesystem(net, state_root)
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     os.makedirs(os.path.join(results_dir, net), exist_ok=True)
 
+    base_head = read_base_head(net, base, cfg)
+
+    # The whole measurement window has to exist on-chain already. A base less than M
+    # blocks behind the tip would send the leg after a target nobody has produced yet,
+    # which can only end in its timeout hours later.
+    try:
+        tip = cl_head(net)
+    except Exception as exc:
+        log(f"{net}: could not read consensus head ({exc}); skipping cycle")
+        return None
+    if tip - base_head < cfg["measure_blocks"]:
+        log(f"{net}: gap is {tip - base_head} blocks, need {cfg['measure_blocks']}; "
+            "waiting for it to open")
+        return None
+
     # --- measurement leg: fixed M blocks, resulting state thrown away -----------
     restore(net, base)
-    base_head = read_base_head(net, base, cfg)
     measure_target = base_head + cfg["measure_blocks"]
     measure_log = os.path.join(results_dir, net, f"{stamp}.measure.log")
     result = run_leg(net, measure_target, measure_log,
@@ -298,8 +407,9 @@ def read_base_head(net, base, cfg):
         with open(meta_path) as fh:
             return json.load(fh)["head"]
 
-    # Bootstrap only: an externally-created base has no metadata yet.
+    # Only for a base created outside `bootstrap`, which has no metadata yet.
     log(f"{net}: base has no {BASE_META}; reading head once and recording it")
+    restore(net, base)
     start_node(net)
     try:
         for _ in range(60):
@@ -451,9 +561,12 @@ def main():
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--networks", default="mainnet",
                         help="comma-separated (mainnet,sepolia,hoodi). Run serially.")
-    parser.add_argument("--state-root", default="/root/fullsync-bench/state",
+    parser.add_argument("--state-root", default=os.path.join(DATA_ROOT, "state"),
                         help="where per-network base generations live")
-    parser.add_argument("--results-dir", default="/root/fullsync-bench/results")
+    parser.add_argument("--results-dir", default=os.path.join(DATA_ROOT, "results"))
+    parser.add_argument("--bootstrap", action="store_true",
+                        help="snap-sync each network to the tip and record it as the first "
+                             "base, then exit. Run once per network before watching.")
     parser.add_argument("--once", action="store_true",
                         help="run a single cycle per network and exit")
     args = parser.parse_args()
@@ -465,16 +578,24 @@ def main():
 
     take_lock()
     try:
+        if args.bootstrap:
+            for net in nets:
+                bootstrap(net, args.state_root)
+            return 0
+
         while True:
             lines = []
             for net in nets:  # serial on purpose: concurrent legs contend and both are junk
                 try:
                     result = cycle(net, args.state_root, args.results_dir)
+                    if result is None:  # gap not open yet, or no tip to compare against
+                        continue
                     lines.append(summarise(result, load_history(args.results_dir, net)))
                 except Exception as exc:  # isolate: one network must not stop the others
                     log(f"{net}: cycle failed: {exc}")
                     lines.append(f"*{net}*: cycle failed — `{exc}`")
-            post_slack(lines)
+            if lines:
+                post_slack(lines)
             if args.once:
                 return 0
             time.sleep(3600)

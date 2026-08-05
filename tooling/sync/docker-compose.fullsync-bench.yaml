@@ -6,56 +6,105 @@
 #   docker compose -p fullsync-bench \
 #     -f docker-compose.multisync.yaml -f docker-compose.fullsync-bench.yaml ...
 #
-# Three differences from multisync:
-#   1. `--syncmode full` — this measures execution, not snap-sync completion.
+# Differences from multisync:
+#   1. `--syncmode` defaults to full — this measures execution, not snap-sync completion.
+#      Bootstrapping the first base overrides it to snap via BENCH_SYNCMODE.
 #   2. `mem_limit` — a memory leak must OOM-kill the container, not take down the box.
 #   3. the beacon APIs are published, because the runner reads the consensus head to
 #      compute each cycle's gap-maintaining advance target.
+#   4. data lives in bind mounts under BENCH_DATA_ROOT rather than named volumes, so the
+#      node data and the base snapshots share one filesystem. `rsync --link-dest` only
+#      hardlinks within a filesystem; split across two it degrades to full copies without
+#      saying so, and every retained generation costs a whole DB instead of a delta.
+#   5. the consensus client keeps its database across restarts — multisync's `--purge-db`
+#      forces a fresh checkpoint sync each time, which here would only delay cycles.
 services:
   consensus-hoodi:
+    volumes:
+      - secrets-hoodi:/secrets
+      - ${BENCH_DATA_ROOT:-/mnt/raid10/fullsync-bench}/consensus/hoodi:/root/.lighthouse
     ports:
       - "5052:5052"
+    command: >
+      lighthouse bn
+      --network hoodi
+      --http --http-address 0.0.0.0
+      --execution-endpoint http://ethrex-hoodi:8551
+      --execution-jwt /secrets/jwt.hex
+      --checkpoint-sync-url https://checkpoint-sync.hoodi.ethpandaops.io
+      --checkpoint-sync-url-timeout 600
 
   consensus-sepolia:
+    volumes:
+      - secrets-sepolia:/secrets
+      - ${BENCH_DATA_ROOT:-/mnt/raid10/fullsync-bench}/consensus/sepolia:/root/.lighthouse
     ports:
       - "5053:5052"
+    command: >
+      lighthouse bn
+      --network sepolia
+      --http --http-address 0.0.0.0
+      --execution-endpoint http://ethrex-sepolia:8551
+      --execution-jwt /secrets/jwt.hex
+      --checkpoint-sync-url https://sepolia.beaconstate.info
+      --checkpoint-sync-url-timeout 600
 
   consensus-mainnet:
+    volumes:
+      - secrets-mainnet:/secrets
+      - ${BENCH_DATA_ROOT:-/mnt/raid10/fullsync-bench}/consensus/mainnet:/root/.lighthouse
     ports:
       - "5054:5052"
+    command: >
+      lighthouse bn
+      --network mainnet
+      --http --http-address 0.0.0.0
+      --execution-endpoint http://ethrex-mainnet:8551
+      --execution-jwt /secrets/jwt.hex
+      --checkpoint-sync-url https://mainnet-checkpoint-sync.attestant.io
+      --checkpoint-sync-url-timeout 600
 
   ethrex-hoodi: &bench-el
     mem_limit: 48g
+    volumes:
+      - secrets-hoodi:/secrets
+      - ${BENCH_DATA_ROOT:-/mnt/raid10/fullsync-bench}/data/hoodi:/data
     command: >
       --http.addr 0.0.0.0
       --http.api eth,net,web3,admin
       --network hoodi
       --authrpc.addr 0.0.0.0
       --authrpc.jwtsecret /secrets/jwt.hex
-      --syncmode full
+      --syncmode ${BENCH_SYNCMODE:-full}
       --datadir /data
       --metrics --metrics.addr 0.0.0.0 --metrics.port 3701
 
   ethrex-sepolia:
     <<: *bench-el
+    volumes:
+      - secrets-sepolia:/secrets
+      - ${BENCH_DATA_ROOT:-/mnt/raid10/fullsync-bench}/data/sepolia:/data
     command: >
       --http.addr 0.0.0.0
       --http.api eth,net,web3,admin
       --network sepolia
       --authrpc.addr 0.0.0.0
       --authrpc.jwtsecret /secrets/jwt.hex
-      --syncmode full
+      --syncmode ${BENCH_SYNCMODE:-full}
       --datadir /data
       --metrics --metrics.addr 0.0.0.0 --metrics.port 3701
 
   ethrex-mainnet:
     <<: *bench-el
+    volumes:
+      - secrets-mainnet:/secrets
+      - ${BENCH_DATA_ROOT:-/mnt/raid10/fullsync-bench}/data/mainnet:/data
     command: >
       --http.addr 0.0.0.0
       --http.api eth,net,web3,admin
       --network mainnet
       --authrpc.addr 0.0.0.0
       --authrpc.jwtsecret /secrets/jwt.hex
-      --syncmode full
+      --syncmode ${BENCH_SYNCMODE:-full}
       --datadir /data
       --metrics --metrics.addr 0.0.0.0 --metrics.port 3701
