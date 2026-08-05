@@ -74,11 +74,12 @@ pub trait Database: Send + Sync {
             .collect()
     }
 
-    /// Byte budget for warming bytecode ahead of execution, as measured by
-    /// [`Code::size`]. A warm that reads past its bytecode cache's capacity evicts what
-    /// it just inserted, so those reads cannot turn into an executor cache hit however
-    /// early they are issued. Backends holding a bytecode cache report its capacity; the
-    /// default is the floor a backend without one can still absorb.
+    /// Byte budget for warming bytecode ahead of execution, as measured by [`Code::size`].
+    ///
+    /// Bounds the bytecode a block warm reads speculatively, since a block access list
+    /// does not say which of its addresses were accessed for their code. Backends holding
+    /// a bytecode cache report its capacity, which is how much the node was configured to
+    /// keep resident; the default is the floor for a backend without one.
     fn code_cache_budget_bytes(&self) -> u64 {
         64 * 1024 * 1024
     }

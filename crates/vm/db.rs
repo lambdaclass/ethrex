@@ -14,8 +14,8 @@ pub trait VmDatabase: Send + Sync + DynClone {
     fn get_code_metadata(&self, code_hash: H256) -> Result<CodeMetadata, EvmError>;
 
     /// Capacity of this backend's bytecode cache, in [`Code::size`] bytes, which bounds
-    /// how much a block warm can usefully read ahead: past it the warm evicts what it
-    /// just inserted. Default is the floor for a backend holding no such cache.
+    /// how much bytecode a block warm reads speculatively. Default is the floor for a
+    /// backend holding no such cache.
     fn code_cache_budget_bytes(&self) -> u64 {
         64 * 1024 * 1024
     }
