@@ -2891,12 +2891,17 @@ impl LEVM {
         let parallelism = std::thread::available_parallelism().map_or(8, |p| p.get());
         let warm_chunk_accounts = warm_chunk_accounts(parallelism);
 
-        // Warming more bytecode than the cache can hold evicts what it just inserted, so
-        // those reads cannot become an executor cache hit however early they are issued.
-        // They are not free either: a BAL carries every accessed address, and an opcode
-        // that reads only account state (BALANCE, EXTCODEHASH) leaves the whole of that
-        // block's bytecode unread, so an unbounded warm spends the block's I/O budget on
-        // bytes nothing consumes. Bound it by what the cache can actually retain.
+        // A BAL carries every accessed address, and it does not say which of them were
+        // accessed for their bytecode: an opcode reading only account state (BALANCE,
+        // EXTCODEHASH) leaves the whole of a block's bytecode unread. So an unbounded warm
+        // can spend the block's entire read bandwidth on bytes nothing consumes, competing
+        // with the account reads the executor is waiting on, and hold all of it in the
+        // per-block cache besides.
+        //
+        // The bound is the bytecode cache's capacity, which is the one dial already sized
+        // against host memory. Normal blocks sit orders of magnitude under it and warm
+        // exactly as they did before; it binds only where a block's distinct bytecode
+        // outgrows what the node was configured to keep resident at all.
         let code_budget_bytes = store.code_cache_budget_bytes();
         let mut code_warmed_bytes = 0u64;
 
@@ -4200,6 +4205,42 @@ mod warm_budget_tests {
             counter.codes_read.load(Ordering::Relaxed),
             super::CODE_SLICE_HASHES,
             "the warm should stop after the slice that spends the budget"
+        );
+    }
+
+    /// The budget must not touch ordinary blocks. A block whose distinct bytecode fits the
+    /// smallest budget any backend reports warms every code exactly once, in one batch,
+    /// which is what the warm did before there was a budget at all.
+    ///
+    /// A 60M-gas block reaches at most ~23k cold account accesses at 2600 gas each, and a
+    /// real one spreads those over a few hundred distinct contracts of a few KB: single
+    /// digit MB against a 64 MiB floor. Only the adversarial shape, every access landing on
+    /// its own max-size contract, reaches ~567 MB and outgrows the budget, which is the
+    /// case it exists for and the one where warming all of it was measured to buy nothing.
+    #[test]
+    fn a_normal_block_warms_every_bytecode() {
+        const MIN_BUDGET: u64 = 64 * 1024 * 1024;
+        let accounts = 2048;
+        assert!(
+            accounts < super::CODE_SLICE_HASHES,
+            "a normal block must fit one batch"
+        );
+        assert!(
+            (accounts as u64).saturating_mul(CODE_LEN as u64) < MIN_BUDGET,
+            "a normal block must fit the smallest budget"
+        );
+
+        let bal = bal_with_accounts(accounts as u64);
+        let store = Arc::new(CountingStore::with_budget(MIN_BUDGET));
+        let counter = store.clone();
+
+        LEVM::warm_block_from_bal(&bal, store, &AtomicBool::new(false)).expect("warm");
+
+        assert_eq!(counter.states_read.load(Ordering::Relaxed), accounts);
+        assert_eq!(
+            counter.codes_read.load(Ordering::Relaxed),
+            accounts,
+            "every bytecode should still be warmed, once each"
         );
     }
 
