@@ -65,6 +65,16 @@ pub struct ExecutionPayload {
         default
     )]
     pub block_access_list: Option<BlockAccessList>,
+    // burned_fees (EIP-8079, LStar+): total base + blob fees burned in the block.
+    // Part of the header hash at LStar, so it must survive the getPayload →
+    // newPayload round-trip or a producer's own LStar block fails its block-hash
+    // check on import. `None` for pre-LStar payloads (skipped in serialization).
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        with = "serde_utils::u64::hex_str_opt",
+        default
+    )]
+    pub burned_fees: Option<u64>,
 }
 
 #[derive(Clone, Debug)]
@@ -153,6 +163,7 @@ impl ExecutionPayload {
             requests_hash,
             slot_number: self.slot_number,
             block_access_list_hash,
+            burned_fees: self.burned_fees,
             ..Default::default()
         };
 
@@ -185,6 +196,7 @@ impl ExecutionPayload {
             excess_blob_gas: block.header.excess_blob_gas,
             slot_number: block.header.slot_number,
             block_access_list,
+            burned_fees: block.header.burned_fees,
         }
     }
 }

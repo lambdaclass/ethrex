@@ -1855,6 +1855,7 @@ mod tests {
                             "bpo5Time": null,
                             "amsterdamTime": null,
                             "hegotaTime": null,
+                            "lstarTime": null,
                             "terminalTotalDifficulty": "0x0",
                             "terminalTotalDifficultyPassed": true,
                             "blobSchedule": blob_schedule,

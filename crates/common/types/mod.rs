@@ -17,6 +17,7 @@ pub mod payload;
 pub mod prover;
 mod receipt;
 pub mod requests;
+pub mod stateless_ssz;
 pub mod transaction;
 pub mod tx_fields;
 

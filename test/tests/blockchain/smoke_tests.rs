@@ -713,6 +713,7 @@ async fn store_block_l2_style(store: &Store, parent: &BlockHeader) -> H256 {
         receipts: result.receipts,
         requests: Vec::new(),
         block_gas_used: block.header.gas_used,
+        burned_fees: None,
         tx_gas_breakdowns: Vec::new(),
     };
     blockchain
