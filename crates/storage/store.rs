@@ -4275,6 +4275,14 @@ impl Store {
         .expect("block_data_buffer lock poisoned");
     }
 
+    #[cfg(any(test, feature = "testing"))]
+    pub fn buffer_block_with_receipts_for_test(&self, block: &Block, receipts: Vec<Receipt>) {
+        mutate_block_buffer(&self.block_data_buffer, |b| {
+            b.insert(block.clone(), receipts, vec![])
+        })
+        .expect("block_data_buffer lock poisoned");
+    }
+
     /// Mark a state root as in-flight (build pending) without doing a build.
     /// For testing only — simulates the window where the persist worker has not
     /// yet installed the layer, so reads at this root must block in
@@ -4497,7 +4505,7 @@ fn flush_block_data(
             tx.put(
                 RECEIPTS_V2,
                 &receipt_key(&hash, index as u64),
-                &receipt.encode_to_vec(),
+                &receipt.encode_storage(),
             )?;
         }
         max_number = max_number.max(b.number);
