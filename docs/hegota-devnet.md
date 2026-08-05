@@ -8,7 +8,7 @@
 hegota-devnet = main       (EIP-8141 frame transactions)
               + eip-8250   (Keyed Nonces)
               + eip-8272   (Recent Roots)
-              + eip-7906   (Tx Assertions, opcodes renumbered)
+              + eip-7906   (Tx Assertions, opcode bytes allocated)
               + devnet-only config, docs, scripts and the
                 ethrex-only extensions listed below
 ```
@@ -28,26 +28,26 @@ All included EIPs activate together under the existing single `Fork::Hegota` / `
 |------|--------|-----|------|
 | `0xAA` | `APPROVE` | 8141 | |
 | `0xB0`–`0xB4` | `TXPARAM`/`FRAMEDATALOAD`/`FRAMEDATACOPY`/`FRAMEPARAM`/`SIGPARAM` | 8141 | |
-| `0xB5` | `RECENTROOTREFLOAD` | 8272 | spec says `0xB4` (collides with `SIGPARAM`) → ethrex uses `0xB5` |
-| `0xB6` | `TXTRACE` | 7906 | **renumbered** from `0xB5` here |
-| `0xB7` | `EVENTDATACOPY` | 7906 | **renumbered** from `0xB6` here |
-| `0xB8` | `TXDIFF` | 7906 | **renumbered** from `0xB7` here |
+| `0xB5` | `RECENTROOTREFLOAD` | 8272 | spec-conformant; EIP-8272 assigns `0xB5` itself, to avoid the `SIGPARAM` collision |
+| `0xB6` | `TXTRACE` | 7906 | ethrex allocation; EIP-7906 assigns no opcode bytes |
+| `0xB7` | `EVENTDATACOPY` | 7906 | as above |
+| `0xB8` | `TXDIFF` | 7906 | as above |
 | `0xB9` | `NONCEKEYLOAD` | 8250 | **ethrex-only extension** — indexed `nonce_keys[i]`; spec defines no per-index accessor (see `docs/eip-8250.md`) |
 
-The EIP-7906 renumber lives **only on this branch** — the standalone `eip-7906` PR keeps the spec's `0xB5`/`0xB6`/`0xB7` (it has no knowledge of EIP-8272). The dedup is intentional and documented; `test/tests/levm/eip7906_tests.rs` and `crates/vm/levm/src/opcode_handlers/tx_trace.rs` carry the shifted bytes accordingly.
+EIP-7906's Constants table carries only `TXTRACE_GAS_COST`, `EVENTDATACOPY_GAS_COST` and `POST_TX`, so `0xB6`/`0xB7`/`0xB8` are ethrex's allocation, chosen to leave `0xB5` to EIP-8272. The standalone `eip-7906` branch uses the same three bytes, so the two agree; `test/tests/levm/eip7906_tests.rs` and `crates/vm/levm/src/opcode_handlers/tx_trace.rs` carry them. Flag upstream so the 8141-family drafts settle non-overlapping bytes.
 
 ## Per-EIP divergences
 
 ### EIP-8250 (Keyed Nonces) — see `docs/eip-8250.md`
-- TXPARAM `nonce_keys[0]` at **`0x10`**, not the spec's `0x0B` (which ethrex keeps for `len(signatures)`); pending an upstream TXPARAM registry.
-- `NONCE_MANAGER` predeploy at **`0x…8250`** (spec `TBD`).
+- TXPARAM `nonce_keys[0]` at **`0x10`**: no longer a divergence, the spec assigns `0x10` and keeps `0x0B = len(signatures)`.
+- `NONCE_MANAGER` predeploy at **`0x…8250`**: no longer a divergence, the spec pins this value.
 - ⚠️ **Strict atomic-batch consumption durability not yet implemented** — flagged for devnet/interop validation.
 
 ### EIP-8272 (Recent Roots) — see `docs/eip-8272.md`
-- `RECENTROOTREFLOAD` at **`0xB5`** (spec `0xB4`); TXPARAM **`0x0F`** (spec summary-table bug says `0x0D`); `RECENT_ROOT_ADDRESS` at **`0x…8272`** (spec `TBD`); `RECENT_ROOT_CODE` handled **natively** (spec `TBD`).
+- `RECENT_ROOT_CODE` handled **natively** (spec `TBD`). No longer divergences: `RECENTROOTREFLOAD` at `0xB5`, TXPARAM `0x0F`, and `RECENT_ROOT_ADDRESS` at `0x…8272` all match the current spec.
 
 ### EIP-7906 (Tx Assertions)
-- Opcodes renumbered as above. Behaviour otherwise unchanged.
+- Opcode bytes allocated as above, the spec assigning none. Behaviour otherwise unchanged.
 
 ## Spec pins
 
