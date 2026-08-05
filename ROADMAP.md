@@ -157,6 +157,7 @@ This is a WIP document and it requires better descriptions; it's supposed to be 
 | Item | Priority | Status | Description |
 |-----|----------|--------|-------------|
 | Block-Level Access Lists | 2 | Done | Implement [EIP-7928](https://eips.ethereum.org/EIPS/eip-7928) |
+| FOCIL (EIP-7805) | 2 | In Progress | Implement [EIP-7805](https://eips.ethereum.org/EIPS/eip-7805) — fork-choice enforced inclusion lists for the Hegotá fork. Behind the `eip-7805` Cargo feature. |
 | Disc V5 | 2 | In Progress | Add discV5 Support |
 | Sparse Blobpool  | — | Pending | Implement [EIP-8070](https://eips.ethereum.org/EIPS/eip-8070) |
 | Pre merge blocks | — | Pending | Be able to process pre merge blocks |

@@ -3,5 +3,6 @@ mod block_access_list_tests;
 mod client_version_tests;
 mod fork_choice_tests;
 mod http_batch_tests;
+mod inclusion_list_engine_tests;
 mod send_raw_transaction_tests;
 mod subscription_manager_tests;

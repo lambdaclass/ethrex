@@ -45,6 +45,8 @@
 pub mod constants;
 pub mod error;
 pub mod fork_choice;
+pub mod inclusion_list_builder;
+pub mod inclusion_list_validator;
 pub mod mempool;
 pub mod payload;
 pub mod prewarm;
@@ -351,6 +353,13 @@ pub struct BlockchainOptions {
     /// transactions with a nonce gap relative to the sender's on-chain nonce
     /// are rejected. Setting to 100 disables the check.
     pub gap_admit_occupancy_threshold: u8,
+    /// If true, transactions submitted via this node's RPC (e.g.
+    /// `eth_sendRawTransaction`) are kept private: they enter the mempool and
+    /// can be included in blocks built locally, but are not propagated to
+    /// peers via `Transactions` / `NewPooledTransactionHashes`. Equivalent to
+    /// reth's `--txpool.no-local-transactions-propagation`.
+    /// P2P-received transactions are unaffected.
+    pub private_mempool: bool,
 }
 
 impl Default for BlockchainOptions {
@@ -368,6 +377,7 @@ impl Default for BlockchainOptions {
             bal_parallel_trie_enabled: true,
             max_reorg_depth: None,
             gap_admit_occupancy_threshold: DEFAULT_GAP_ADMIT_OCCUPANCY_THRESHOLD,
+            private_mempool: false,
         }
     }
 }
@@ -2442,6 +2452,109 @@ impl Blockchain {
         })
     }
 
+    /// EIP-7805 (FOCIL) variant of [`add_block_pipeline`]. Runs the standard
+    /// import pipeline and, if the chain has activated Hegotá and the
+    /// caller-provided context carries a non-empty inclusion list, runs the
+    /// satisfaction algorithm against the post-execution state.
+    ///
+    /// Returns `Err(ChainError::IlUnsatisfied { tx_hash })` if the block
+    /// imports successfully but fails the IL satisfaction check. The V6
+    /// `engine_newPayloadV6` handler maps this to
+    /// `PayloadStatus::inclusion_list_unsatisfied()`.
+    ///
+    /// Per Decision 4 in `design.md`, the satisfaction algorithm is a pure
+    /// state-comparison pass — no EVM re-execution. The validator is
+    /// initialized from post-state directly (one read per IL sender) rather
+    /// than incrementally tracked during execution; this keeps the hot path
+    /// untouched while preserving spec correctness (a missing IL tx is
+    /// classified by post-state regardless of how it was reached).
+    pub fn add_block_pipeline_with_il(
+        &self,
+        block: Block,
+        bal: Option<Arc<BlockAccessList>>,
+        context: &ethrex_common::validation::BlockValidationContext,
+    ) -> Result<(), ChainError> {
+        use std::collections::HashSet;
+
+        let block_timestamp = block.header.timestamp;
+        let chain_config = self.storage.get_chain_config();
+        let parent_hash = block.header.parent_hash;
+        // Snapshot what we need for the satisfaction check BEFORE the inner
+        // pipeline consumes `block`. (`block` is moved into
+        // `add_block_pipeline_inner`.)
+        let pre_state_root = self
+            .storage
+            .get_block_header_by_hash(parent_hash)?
+            .map(|h| h.state_root);
+        let block_tx_hashes: HashSet<H256> = block
+            .body
+            .transactions
+            .iter()
+            .map(|tx| tx.hash(&NativeCrypto))
+            .collect();
+        let post_state_root = block.header.state_root;
+        let gas_left = block.header.gas_limit.saturating_sub(block.header.gas_used);
+        // Snapshot the header for the satisfaction check (intrinsic-gas fork +
+        // base fee) before `block` is moved into the inner pipeline.
+        let header = block.header.clone();
+
+        let (_, _, result) = self.add_block_pipeline_inner(block, bal, false, None)?;
+        result?;
+
+        // Only run the satisfaction check on the V6 path: Hegotá-active
+        // chain AND a non-empty IL was carried in the context.
+        if !chain_config.is_hegota_activated(block_timestamp) {
+            return Ok(());
+        }
+        let Some(il) = context.inclusion_list.as_ref() else {
+            return Ok(());
+        };
+        if il.is_empty() {
+            return Ok(());
+        }
+        let Some(pre_state_root) = pre_state_root else {
+            // Unreachable — the inner pipeline would have failed if the
+            // parent header wasn't found.
+            return Ok(());
+        };
+
+        let pre_state = inclusion_list_validator::StoreIlStateProvider {
+            store: &self.storage,
+            state_root: pre_state_root,
+        };
+        let post_state = inclusion_list_validator::StoreIlStateProvider {
+            store: &self.storage,
+            state_root: post_state_root,
+        };
+        let crypto = NativeCrypto;
+
+        let mut validator = inclusion_list_validator::InclusionListSatisfactionValidator::new(
+            il, &pre_state, &crypto,
+        )
+        .map_err(|e| ChainError::Custom(format!("IL validator init failed: {e}")))?;
+
+        // Initialize tracker from POST-state: equivalent to "observe every
+        // executed tx" since the post-state already reflects all updates.
+        // O(|IL senders|) reads, not O(block_size).
+        validator
+            .refresh_all_from(&post_state, &crypto)
+            .map_err(|e| ChainError::Custom(format!("IL validator refresh failed: {e}")))?;
+
+        match validator.check(
+            il,
+            &block_tx_hashes,
+            gas_left,
+            &header,
+            &chain_config,
+            &crypto,
+        ) {
+            Ok(()) => Ok(()),
+            Err(unsat) => Err(ChainError::IlUnsatisfied {
+                tx_hash: unsat.tx_hash,
+            }),
+        }
+    }
+
     /// Runs the full block pipeline (execute + merkleize + store).
     ///
     /// Returns a two-level Result:
@@ -2957,12 +3070,44 @@ impl Blockchain {
         Ok(())
     }
 
-    /// Add a blob transaction and its blobs bundle to the mempool checking that the transaction is valid
+    /// Add a blob transaction and its blobs bundle to the mempool checking that the transaction is valid.
+    ///
+    /// This is the P2P entry point: the transaction's hash is queued for
+    /// broadcast to peers regardless of `BlockchainOptions::private_mempool`.
+    /// For the local-RPC path that honors `private_mempool`, use
+    /// [`Self::add_local_blob_transaction_to_pool`].
     #[cfg(feature = "c-kzg")]
     pub async fn add_blob_transaction_to_pool(
         &self,
         transaction: EIP4844Transaction,
         blobs_bundle: BlobsBundle,
+    ) -> Result<H256, MempoolError> {
+        self.add_blob_transaction_to_pool_inner(transaction, blobs_bundle, true)
+            .await
+    }
+
+    /// EIP-equivalent of `add_blob_transaction_to_pool` for transactions
+    /// submitted via this node's local RPC. When
+    /// `BlockchainOptions::private_mempool` is `true`, the transaction is
+    /// added to the mempool but is NOT queued for P2P broadcast — it stays
+    /// available only for blocks built locally.
+    #[cfg(feature = "c-kzg")]
+    pub async fn add_local_blob_transaction_to_pool(
+        &self,
+        transaction: EIP4844Transaction,
+        blobs_bundle: BlobsBundle,
+    ) -> Result<H256, MempoolError> {
+        let broadcast = !self.options.private_mempool;
+        self.add_blob_transaction_to_pool_inner(transaction, blobs_bundle, broadcast)
+            .await
+    }
+
+    #[cfg(feature = "c-kzg")]
+    async fn add_blob_transaction_to_pool_inner(
+        &self,
+        transaction: EIP4844Transaction,
+        blobs_bundle: BlobsBundle,
+        broadcast: bool,
     ) -> Result<H256, MempoolError> {
         let fork = self.current_fork().await?;
 
@@ -3007,23 +3152,61 @@ impl Blockchain {
         // orphaned bundle so it isn't leaked in the pool. Best-effort: keep the
         // original error (a failing insert means the write lock is poisoned or
         // eviction failed, in which case the cleanup can't do better anyway).
-        if let Err(e) = self.mempool.add_transaction(
-            hash,
-            sender,
-            MempoolTransaction::new(transaction, sender),
-            frame_reservation,
-            sender_admission,
-        ) {
+        let mempool_tx = MempoolTransaction::new(transaction, sender);
+        let insert = if broadcast {
+            self.mempool.add_transaction(
+                hash,
+                sender,
+                mempool_tx,
+                frame_reservation,
+                sender_admission,
+            )
+        } else {
+            self.mempool.add_transaction_no_broadcast(
+                hash,
+                sender,
+                mempool_tx,
+                frame_reservation,
+                sender_admission,
+            )
+        };
+        if let Err(e) = insert {
             let _ = self.mempool.remove_blobs_bundle(&hash);
             return Err(e);
         }
         Ok(hash)
     }
 
-    /// Add a transaction to the mempool checking that the transaction is valid
+    /// Add a transaction to the mempool checking that the transaction is valid.
+    ///
+    /// This is the P2P entry point: the transaction's hash is queued for
+    /// broadcast to peers regardless of `BlockchainOptions::private_mempool`.
+    /// For the local-RPC path that honors `private_mempool`, use
+    /// [`Self::add_local_transaction_to_pool`].
     pub async fn add_transaction_to_pool(
         &self,
         transaction: Transaction,
+    ) -> Result<H256, MempoolError> {
+        self.add_transaction_to_pool_inner(transaction, true).await
+    }
+
+    /// Equivalent of `add_transaction_to_pool` for transactions submitted via
+    /// this node's local RPC. When `BlockchainOptions::private_mempool` is
+    /// `true`, the transaction is added to the mempool but is NOT queued for
+    /// P2P broadcast — it stays available only for blocks built locally.
+    pub async fn add_local_transaction_to_pool(
+        &self,
+        transaction: Transaction,
+    ) -> Result<H256, MempoolError> {
+        let broadcast = !self.options.private_mempool;
+        self.add_transaction_to_pool_inner(transaction, broadcast)
+            .await
+    }
+
+    async fn add_transaction_to_pool_inner(
+        &self,
+        transaction: Transaction,
+        broadcast: bool,
     ) -> Result<H256, MempoolError> {
         // Blob transactions should be submitted via add_blob_transaction along with the corresponding blobs bundle
         if matches!(transaction, Transaction::EIP4844Transaction(_)) {
@@ -3057,13 +3240,24 @@ impl Blockchain {
             self.validate_transaction(&transaction, sender).await?;
 
         // Add transaction to storage
-        self.mempool.add_transaction(
-            hash,
-            sender,
-            MempoolTransaction::new(transaction, sender),
-            frame_reservation,
-            sender_admission,
-        )?;
+        let mempool_tx = MempoolTransaction::new(transaction, sender);
+        if broadcast {
+            self.mempool.add_transaction(
+                hash,
+                sender,
+                mempool_tx,
+                frame_reservation,
+                sender_admission,
+            )?;
+        } else {
+            self.mempool.add_transaction_no_broadcast(
+                hash,
+                sender,
+                mempool_tx,
+                frame_reservation,
+                sender_admission,
+            )?;
+        }
 
         Ok(hash)
     }
@@ -4677,6 +4871,7 @@ mod tests {
             version: 1,
             elasticity_multiplier: ELASTICITY_MULTIPLIER,
             gas_ceil: DEFAULT_BUILDER_GAS_CEIL,
+            inclusion_list_transactions: None,
         };
         let block_template = create_payload(&args, &store, Bytes::new()).unwrap();
         let result = blockchain.build_payload(block_template).unwrap();

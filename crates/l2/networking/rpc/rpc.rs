@@ -135,6 +135,8 @@ pub async fn bind_api(
             block_worker_channel,
             ws: ws.clone(),
             allowed_namespaces: Arc::new(allowed_namespaces),
+            il_config: ethrex_rpc::IlConfig::default(),
+            retained_inclusion_lists: Default::default(),
         },
         valid_delegation_addresses,
         sponsor_pk,

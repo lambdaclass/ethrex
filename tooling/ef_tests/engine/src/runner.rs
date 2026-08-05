@@ -3,7 +3,9 @@ use std::fmt;
 use ethrex_common::H256;
 use serde_json::Value;
 
-use crate::fixture::{EngineFixture, FixturePayload, ValidationError, is_pre_paris};
+use crate::fixture::{
+    EngineFixture, FixturePayload, IL_UNSATISFIED_STATUS, ValidationError, is_pre_paris,
+};
 use crate::harness::{Backend, EngineApiHarness};
 
 // ─── Public types ─────────────────────────────────────────────────────────────
@@ -237,15 +239,19 @@ pub async fn run_fixture(
 
     // 5. Per-payload loop (mirrors test_via_engine.py:124–240)
     for (i, payload) in fix.engine_new_payloads.iter().enumerate() {
+        // `engine_call()` resolves the version and params, appending the
+        // FOCIL inclusion list (and remapping to V6) when present.
+        let (np_version, np_params) = payload.engine_call();
         // zkevm fixtures carry an expected witness per payload: route those
         // through `engine_newPayloadWithWitnessV5` (same params, same status
         // semantics) so the engine-side witness generation is exercised and
-        // its output verified against the fixture.
-        let with_witness = payload.new_payload_version == 5 && payload.execution_witness.is_some();
+        // its output verified against the fixture. FOCIL fixtures (np_version
+        // == 6) never carry a witness, so the two paths don't overlap.
+        let with_witness = np_version == 5 && payload.execution_witness.is_some();
         let resp = if with_witness {
-            Box::pin(harness.new_payload_with_witness(&payload.params)).await
+            Box::pin(harness.new_payload_with_witness(&np_params)).await
         } else {
-            Box::pin(harness.new_payload(payload.new_payload_version, &payload.params)).await
+            Box::pin(harness.new_payload(np_version, &np_params)).await
         }
         .map_err(|e| FixtureFailure::PayloadRpc {
             index: i,
@@ -457,8 +463,31 @@ fn check_payload_response(
         })?
         .to_string();
 
-    let expected = if payload.valid() { "VALID" } else { "INVALID" };
-    if status != expected {
+    // Expected status: VALID / INVALID, or a FOCIL `INCLUSION_LIST_UNSATISFIED`
+    // when the fixture sets an explicit `status`.
+    let expected = payload.expected_status();
+    if expected == IL_UNSATISFIED_STATUS {
+        // EIP-7805: `PayloadStatusV2` reports an unsatisfied inclusion list as a
+        // `VALID` payload carrying `inclusionListSatisfied: false` — the block is
+        // valid, the consensus layer just will not attest to it. The fixtures
+        // predate that structure and still name a third status value, so the
+        // fixture's sentinel is checked against the pair that now carries the
+        // same verdict.
+        let satisfied = result
+            .get("inclusionListSatisfied")
+            .and_then(|v| v.as_bool());
+        if status != "VALID" || satisfied != Some(false) {
+            return Err(FixtureFailure::WrongStatus {
+                index,
+                expected: format!("VALID + inclusionListSatisfied=false ({IL_UNSATISFIED_STATUS})"),
+                got: format!("{status} + inclusionListSatisfied={satisfied:?}"),
+                validation_error: result
+                    .get("validationError")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string()),
+            });
+        }
+    } else if status != expected {
         let validation_error = result
             .get("validationError")
             .and_then(|v| v.as_str())

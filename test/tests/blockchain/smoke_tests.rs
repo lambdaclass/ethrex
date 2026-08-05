@@ -671,6 +671,7 @@ async fn new_block(store: &Store, parent: &BlockHeader) -> Block {
         version: 1,
         elasticity_multiplier: ELASTICITY_MULTIPLIER,
         gas_ceil: DEFAULT_BUILDER_GAS_CEIL,
+        inclusion_list_transactions: None,
     };
 
     // Create blockchain
@@ -697,6 +698,7 @@ async fn store_block_l2_style(store: &Store, parent: &BlockHeader) -> H256 {
         version: 1,
         elasticity_multiplier: ELASTICITY_MULTIPLIER,
         gas_ceil: DEFAULT_BUILDER_GAS_CEIL,
+        inclusion_list_transactions: None,
     };
     let blockchain = Blockchain::default_with_store(store.clone());
     let block = create_payload(&args, store, Bytes::new()).unwrap();
