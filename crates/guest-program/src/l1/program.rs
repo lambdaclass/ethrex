@@ -527,6 +527,77 @@ pub fn new_payload_request_to_block(
 /// Core stateless block validation for the native-rollup EXECUTE path.
 ///
 /// Sole caller: `ethrex-blockchain`'s `verify_stateless_new_payload`
+/// Validate the per-transaction public keys carried by a stateless input.
+///
+/// The spec's `StatelessInput` supplies one uncompressed secp256k1 key per
+/// transaction so a guest can skip `ecrecover`; a key that does not derive to
+/// the recovered sender must reject the payload (issue #6716).
+///
+/// Hoisted out of the `eip8025_ssz` validation family, which was the only place
+/// this check existed. Two consequences worth being explicit about:
+///
+/// 1. The **guest** path must call this, or deduplicating the two validation
+///    families silently drops a spec-required check.
+/// 2. The **EXECUTE precompile** path ([`verify_stateless_block`]) deliberately
+///    does *not* call it, and never has. `build_ssz_stateless_input` in the L2
+///    advancer sends `public_keys` empty ("Empty for now") while L2 blocks do
+///    carry transactions, so enforcing the length check there would reject every
+///    native-rollup block. Enabling it requires the producer to populate real
+///    keys first.
+///
+/// TODO(#6716): populate `public_keys` in the native-rollup producer and call
+/// this from `verify_stateless_block`, so both paths enforce the spec.
+///
+/// Upstream `build_stateless_input` *skips* keys for undecodable or
+/// bad-signature transactions, so `public_keys.len()` can legitimately be
+/// shorter than the transaction count. Such payloads are invalid on both sides
+/// and both emit `successful_validation = false`, so the strict length check
+/// stays output-compatible with the reference — but it is compared before any
+/// zip so a short list fails cleanly rather than panicking.
+/// Generic over the SSZ list bounds so it serves both the guest's
+/// `PublicKeysList` and `stateless_ssz`'s field without a feature gate or a
+/// duplicated alias.
+pub fn validate_public_keys<const KEY_BYTES: usize, const MAX_KEYS: usize>(
+    public_keys: &libssz_types::SszList<libssz_types::SszVector<u8, KEY_BYTES>, MAX_KEYS>,
+    block: &ethrex_common::types::Block,
+    crypto: &dyn Crypto,
+) -> Result<(), ExecutionError> {
+    if public_keys.len() != block.body.transactions.len() {
+        return Err(ExecutionError::Internal(format!(
+            "Found {} public keys in the stateless input, but there are {} transactions",
+            public_keys.len(),
+            block.body.transactions.len()
+        )));
+    }
+    for (public_key, tx) in public_keys.iter().zip(block.body.transactions.iter()) {
+        // SSZ decode fixes the length at 65; uncompressed secp256k1 is 0x04 || X || Y.
+        let pk_bytes: &[u8] = public_key;
+        let Some((tag, xy)) = pk_bytes.split_first() else {
+            return Err(ExecutionError::Internal(
+                "Stateless input public key is empty".to_string(),
+            ));
+        };
+        if *tag != 0x04 {
+            return Err(ExecutionError::Internal(
+                "Stateless input public key is not a 65-byte uncompressed secp256k1 key"
+                    .to_string(),
+            ));
+        }
+        let hashed = ethrex_common::utils::keccak(xy);
+        let derived = ethrex_common::Address::from_slice(&hashed[12..]);
+        let recovered = tx.sender(crypto).map_err(|e| {
+            ExecutionError::Internal(format!("failed to recover transaction sender: {e}"))
+        })?;
+        if recovered != derived {
+            return Err(ExecutionError::Internal(
+                "Stateless input public key does not match recovered transaction sender"
+                    .to_string(),
+            ));
+        }
+    }
+    Ok(())
+}
+
 /// (`StatelessExecutor`, the `StatelessValidator` trait impl invoked by the
 /// EXECUTE precompile). NOTE: the zkVM guest binaries do **not** call this —
 /// they validate via the separate `validate_eip8025_*` path
