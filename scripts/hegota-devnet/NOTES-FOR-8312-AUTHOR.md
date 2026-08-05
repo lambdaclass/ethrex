@@ -33,6 +33,14 @@ These are all cheap to fix and worth addressing before more implementations star
 
 1.10. **Prose vs pseudocode on the vault-sender nonce.** "The sender nonce check is skipped" sits against `assert tx.nonce == 0`. Suggestion: "the envelope `nonce` field MUST be zero (static well-formedness); the comparison against the sender account's state nonce is skipped and no nonce is incremented."
 
+1.11. **`RING_SIZE == BATCH_SIZE` is normative in effect but stated only in the Rationale.** The gap-free ring→batch witness upgrade depends on the equality, and `len(batch_siblings) in (0, 13)` hardcodes `log2(BATCH_SIZE)` rather than deriving it. A client picking different constants — or a later revision changing one — breaks witness refresh without failing any stated rule. Suggestion: state the relationship normatively and derive the path length from it.
+
+1.12. **The index counter is bounded on the spend side but not on the creation side.** Spends require `index < 2**64`, while the vault code and settlement both increment freely, and `to_bytes(8, "big")` is undefined at `2**64`. Suggestion: close the asymmetry at the creation site and state the slot-layout non-collision invariant it implies.
+
+1.13. **Activation semantics for a pre-existing account at `0x8312` are unstated.** Needed: that a pre-existing balance is preserved as inert surplus (solvency is unaffected — conservation bounds every frame's outflows by its proven inputs), how the nonce is handled, and that the account's storage MUST be empty at activation.
+
+1.14. **The per-frame settlement loop reads a transaction-level `fee`.** That is well-defined only because a nonzero fee implies a single frame (the self-funded case); the invariant is load-bearing but unstated. Suggestion: say so beside the pseudocode.
+
 ## 2. Economic design
 
 2.1. **For vault-sender spends, the signed fee cap is the fee, and spends never expire.** Because re-wrapping is permissionless and a cap-maxed wrap pays the proposer strictly more, every observer rationally re-wraps mempool spends at the signed caps — the change output is *always* drained to the cap, not "at most". "Actors should sign tight caps" is structurally unavailable: caps need basefee headroom to stay includable, and `max_gas_limit` must budget the larger batch-path witness that anyone may substitute (the Witness-refresh property), so the headroom is exactly the extractable surplus. And with no validity horizon ("a signed spend can be kept valid indefinitely"), a spend signed during a fee spike is a perpetual standing order; the only cancel path is racing a self-spend of the same input. Suggestions: (a) an optional signed `min_change_value` (or `max_total_fee` in wei) folded into conservation — `assert spent_value >= signed_out + max_cost + min_change_value` — bounds the loss exactly while leaving fee selection and witness refresh free, and preserves "settlement cannot fail"; (b) an optional signed `valid_until` block (0 = none); (c) rewrite the Envelope-malleability paragraph to state plainly that the signed priority cap is the *expected* fee for vault-sender transactions. Related: EIP-8141's expiry-verifier frame cannot substitute (the self-funded shape is single-frame, and in any vault-sender transaction an envelope frame is submitter-strippable) — worth a sentence.
@@ -46,6 +54,8 @@ These are all cheap to fix and worth addressing before more implementations star
 2.5. **Mempool interoperability.** "Keep at most one pending transaction per index, with replacement subject to the node's fee bump rules" leaves open: the common case of the *same* signed spend under a different wrap (identical spend hash, different tx hash — is it a replacement, measured against which fee?); overlapping-but-unequal index sets; multi-conflict replacements (bump over each, the max, or the sum? atomic eviction?); and any bound on pending vault-sender transactions, which share one sender and so escape all per-sender pool limits. Suggestion: specify a minimum interoperable rule (e.g. a replacement MUST pay a higher effective priority fee than every transaction it conflicts with and evicts all of them; identical-spend re-wraps are the expected replacement form), and note the need for an implementation-defined bound on pending vault-sender transactions.
 
 2.6. **Bundling weakens the Mass-invalidation claim as stated.** The claim holds per frame, but an N-spend sponsored bundle is jointly invalidated by any single input being spent elsewhere (one cheap self-funded spend voids the whole bundle's admission work, repeatably), and a sponsored transaction's *transaction-level* validity does depend on third-party state through the sponsor's `APPROVE` code. Suggestion: scope the claim to a frame's own checks and add bundler guidance in Security Considerations.
+
+2.7. **Duplicate recipients within one frame's `account_outs` double-charge the reserve.** Both existence checks run before any transfer, so the same new recipient is charged `GAS_NEW_ACCOUNT_STATE` twice and only one leaf is written. Suggestion: dedupe the reserve by recipient within a frame, or forbid duplicates. The cross-frame behavior ("a frame's checks see the effects of frames settled before it") is correct and should not change.
 
 ## 3. Composition with the frame-transaction family
 
@@ -83,13 +93,14 @@ These are all cheap to fix and worth addressing before more implementations star
 
 4.6. Smaller items: recommend standard node RPCs for openings/proof/spent-bit serving and for wrapping a bare `(spend, signatures)` into a vault-sender envelope — proofs are trustlessly verifiable (a served witness either folds to the committed root or fails), so the spec can say third-party serving is safe, and the zero-ETH recipient's submission path currently has no standard form; soften or qualify "stealth payments" (no derivation scheme is specified, and the `topics[2]` discovery scan is exactly what stealth addresses negate — cite a companion like ERC-5564); add a Rationale sentence for the `source = actors[0] / UTXO_VAULT` attribution rule, which currently exists only as a pseudocode side effect.
 
-## 5. Editorial
+## 5. Wording
 
-- `RING_SIZE == BATCH_SIZE` is normative in effect (the gap-free ring→batch upgrade depends on it) but stated only in the Rationale; `len(batch_siblings) in (0, 13)` hardcodes `log2(BATCH_SIZE)`. Use one constant or assert the relationship.
-- Backwards Compatibility says "No existing transaction type or opcode changes behavior," but the draft changes the frame type's validity rule (mode table) and adds envelope carve-outs; rephrase as "only turns previously-invalid transactions valid."
-- `max_cost` is defined only by pointer to `TXPARAM(0x06)`; give its arithmetic. The bare `payer` execution variable (vs `spend.payer`) should be introduced ("let `payer` be the transaction's payer as defined by EIP-8141, initially unset").
-- Duplicate recipients within one frame's `account_outs` double-charge the reserve (both existence checks run before any transfer); dedupe the reserve by recipient within a frame, or forbid duplicates. Note the cross-frame behavior ("a frame's checks see the effects of frames settled before it") is correct and should not change.
-- The per-frame settlement loop reads the transaction-level `fee` — well-defined only because a nonzero fee implies a single frame (self-funded); say so beside the pseudocode.
-- The index counter is bounded on the spend side (`index < 2**64`) but unbounded on the creation side (vault code and settlement both increment freely; `to_bytes(8, "big")` is undefined at 2^64). Close the asymmetry and state the slot-layout non-collision invariant it implies.
-- State activation semantics for a pre-existing account at `0x8312`: balance preserved as inert surplus (solvency unaffected — conservation bounds outflows), nonce handling, and that its storage MUST be empty at activation.
-- **Test vectors** would be the cheapest disambiguator for §1: `spend_hash` preimages, the 80-byte leaf encoding, `merkle_root` with zero/odd leaf counts, full spend RLP examples (self-funded, sponsored, batch-path witness), and one worked settlement gas-return computation.
+- Backwards Compatibility says "No existing transaction type or opcode changes behavior," but the draft changes the frame type's validity rule (the mode table) and adds envelope carve-outs. "Only turns previously-invalid transactions valid" would be accurate.
+- `max_cost` is defined only by pointer to `TXPARAM(0x06)`; giving its arithmetic inline would help. Likewise the bare `payer` execution variable (as distinct from `spend.payer`) is used before it is introduced — "let `payer` be the transaction's payer as defined by EIP-8141, initially unset".
+
+## 6. The cheapest fix: test vectors
+
+Most of §1 disappears with published vectors rather than prose: `spend_hash` preimages, the
+80-byte leaf encoding, `merkle_root` for zero and non-power-of-two leaf counts, full spend RLP
+for the self-funded / sponsored / batch-path-witness cases, and one worked settlement gas-return
+computation. Any two implementations that agree on those cannot split on the ambiguities above.
