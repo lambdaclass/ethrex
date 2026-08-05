@@ -461,10 +461,17 @@ impl ChainConfig {
     /// activation from different expressions (a config-field check on one side, a
     /// fork-ordinal check on the other) has already caused a
     /// consensus-vs-admission stall on this codebase; do not reintroduce it.
+    /// The Hegotá half is resolved through the fork ordinal, not
+    /// `is_hegota_activated`. The two agree only while Hegotá is the newest fork:
+    /// once a successor exists, a chain that schedules it without an explicit
+    /// `hegotaTime` has `fork >= Hegota` while the field is unset, so a field-based
+    /// gate diverges from execution. Every other admission gate on this branch was
+    /// converted to the ordinal for exactly that reason; this one must not be the
+    /// remaining exception.
     pub fn is_utxo_frames_activated(&self, block_timestamp: u64) -> bool {
         self.utxo_frames_time
             .is_some_and(|time| time <= block_timestamp)
-            && self.is_hegota_activated(block_timestamp)
+            && self.get_fork(block_timestamp) >= Fork::Hegota
     }
 
     /// The effective EIP-7843 beacon slot for a block, used by EIP-8272

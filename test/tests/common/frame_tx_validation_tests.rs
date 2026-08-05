@@ -18,7 +18,7 @@ use ethrex_common::types::{
     hash_pair, is_spent, merkle_proof, merkle_root, opening_leaf, ring_slot, seals_batch,
     slot_batch_base, slot_spent_base, spent_bit_location, utxo_vault,
 };
-use ethrex_common::types::{BlobsBundle, MAX_BLOBS_PER_TX, TxType};
+use ethrex_common::types::{BlobsBundle, Fork, MAX_BLOBS_PER_TX, TxType};
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_rlp::encode::RLPEncode;
 
@@ -1607,6 +1607,38 @@ fn utxo_activation_also_requires_hegota() {
     assert!(!knob_first.is_utxo_frames_activated(100));
     assert!(!knob_first.is_utxo_frames_activated(299));
     assert!(knob_first.is_utxo_frames_activated(300));
+}
+
+#[test]
+fn utxo_activation_resolves_hegota_through_the_fork_ordinal() {
+    // The Hegotá half must be resolved the way execution resolves it — through the
+    // fork ordinal — not through a per-field `hegota_time` check. The two coincide
+    // only while Hegotá is the newest fork. Once a successor exists, a chain that
+    // schedules it without an explicit `hegotaTime` has `fork >= Hegota` while the
+    // field is `None`, and a field-based gate would diverge from execution: the
+    // admission-vs-consensus stall class this branch converted every other gate
+    // away from.
+    //
+    // The expectation is derived from `get_fork` rather than restated as literals,
+    // so this test starts failing the moment the predicate reverts to a field check
+    // on a chain that has a fork above Hegotá.
+    for (hegota, utxo, timestamp) in [
+        (Some(100u64), Some(500u64), 499u64),
+        (Some(100), Some(500), 500),
+        (None, Some(500), u64::MAX),
+        (Some(300), Some(100), 299),
+        (Some(300), Some(100), 300),
+    ] {
+        let config = config_with(hegota, utxo);
+        let expected = config.utxo_frames_time.is_some_and(|t| t <= timestamp)
+            && config.get_fork(timestamp) >= Fork::Hegota;
+        assert_eq!(
+            config.is_utxo_frames_activated(timestamp),
+            expected,
+            "the predicate must equal (knob scheduled AND fork >= Hegota); \
+             hegota={hegota:?} utxo={utxo:?} timestamp={timestamp}"
+        );
+    }
 }
 
 #[test]

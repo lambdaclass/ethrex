@@ -250,6 +250,64 @@ under any circumstances.** Preserve state, always.
 - Everything else uses Path 1 (binary swap) or Path 1b (wrapper) — both
   state-preserving; neither recreates the container.
 
+## Runbook: activating EIP-8312 on the live devnet
+
+EIP-8312 is scheduled on its own config field, `utxoFramesTime`, so it takes
+Path 2 plus the generator-cannot-emit variant above. What follows is only what is
+specific to it; the general checklist below still applies in full.
+
+### The rollback deadline
+
+**Rollback stops being possible the moment the timestamp passes.** Before `T` the
+change is inert and a node can be reverted to a binary without EIP-8312 freely.
+From the first block at or after `T`, blocks carry the vault install and the
+openings-root writes, and a binary that does not implement them recomputes
+different state roots for that history — the node exits with
+`Invalid Block: World State Root does not match` and cannot resync. Re-genesis is
+forbidden here, so there is no recovery.
+
+Practical consequence: the rollback plan is "move `T` further out", and it only
+works while `T` is still in the future. Decide the timestamp with enough margin to
+abort.
+
+### Pre-flight, all before `T`
+
+1. Every EL runs a binary that implements EIP-8312 — verify with
+   `web3_clientVersion` on each, not on one.
+2. Every EL's chain config carries the same `utxoFramesTime`. A node missing it
+   treats EIP-8312 as unscheduled and will reject UTXO transactions its peers
+   accept. The field is invisible to ForkId, so nothing at the peer layer catches
+   a straggler.
+3. `T` is comfortably after the current head's timestamp and after Hegotá.
+   Scheduling it at or before an existing block's timestamp retroactively
+   redefines that block.
+4. Confirm the vault address is empty or, if not, that its storage is empty:
+   activation preserves a pre-existing balance as inert surplus but assumes no
+   storage.
+
+### At the boundary
+
+5. `eth_getCode` on `0x…8312` returns exactly **76 bytes**, and the account's
+   nonce is 1.
+6. The ring slot for the activation block, `1 + N % 8192`, is written — the
+   all-zeros root of an empty block still counts and must be present.
+7. The activation block's hash agrees on all three ELs, and the chain keeps
+   advancing across it without a pause in block production.
+8. Restart one EL (not the bootnode) and confirm its replay tail crosses the
+   boundary with **no** `World State Root does not match`. This is the check that
+   proves the history stays re-executable.
+
+### End-to-end, after the boundary
+
+9. Deposit, then spend it in a later block via a ring proof — the suite
+   `utxo_itest.py` in this directory covers this and six other cases; run it
+   against one EL with `--peers` naming the other two.
+10. A sponsored spend (a sponsor pays, the spend keeps its full change).
+11. A consolidation spend: several separately-owned UTXOs merged into one payout.
+12. A batch-proof spend, which needs a chain older than `BATCH_SIZE` (8,192)
+    blocks — roughly 14 hours at 6-second slots, so it is a follow-up rather
+    than a boundary-day check.
+
 ## Post-upgrade verification checklist (every path)
 
 Run all of it; a node that starts is not a node that works. Verify on the
