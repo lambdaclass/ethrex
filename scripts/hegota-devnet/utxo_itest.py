@@ -6,7 +6,7 @@ the spent bit, settlement, and multi-client agreement only exist once blocks are
 produced. Cases that a unit test already covers are not repeated.
 
 Usage:
-  ./utxo_itest.py --rpc http://127.0.0.1:31403 [--peers URL,URL] [--only NAME]
+  ./utxo_itest.py --rpc <el-rpc> --funder-key <key> [--peers URL,URL] [--only NAME]
 """
 import argparse
 import json
@@ -14,13 +14,11 @@ import os
 import sys
 import time
 import urllib.request
-from pathlib import Path
 
 from eth_hash.auto import keccak
 from eth_keys import keys
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "hegota-devnet"))
-from frametx import (  # noqa: E402
+from frametx import (
     Frame,
     FrameSig,
     FrameTx,

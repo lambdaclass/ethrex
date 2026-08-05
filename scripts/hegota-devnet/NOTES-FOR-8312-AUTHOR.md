@@ -1,41 +1,13 @@
 # EIP-8312 on the Hegotá Devnet — Notes for the Spec Author
 
-ethrex has implemented EIP-8312 (UTXO Frame) on top of its EIP-8141 frame-transaction
-stack and deployed it to a private devnet, where the full deposit → spend cycle runs
-end to end. This note collects what we found: places where two conforming clients
-could diverge, economic properties we think are unintended, composition rules the
-draft leaves open, and the deviations we had to make.
+Findings from implementing EIP-8312 on ethrex's EIP-8141 frame-transaction stack and
+running the full deposit → spend cycle on a devnet: places two conforming clients
+could split, economic properties that look unintended, and composition rules the
+draft leaves open.
 
-- **Spec read:** `nerolation/EIPs` `EIPS/eip-8312.md` @ commit
-  `a5da3f608c6dfbf353bea264054d99fc164ab10c` (2026-07-11), plus the
-  ethresear.ch thread "Native UTXOs on Ethereum".
-- **Status:** implemented and live-tested on a 3-EL devnet (three independent ethrex
-  instances in consensus). Self-funded spends, sponsored spends, the openings-root
-  commitment, the spent bit, and settlement all work; batch-path spends are
-  implemented but not yet exercised on a chain older than `BATCH_SIZE` blocks.
-- **What we did NOT implement:** token-carrying openings (the draft defers them),
-  and UTXO frames sharing a transaction with EIP-7906 POST_TX frames (we forbid the
-  combination pending a ruling — see §3.6).
-
-## What the live deployment measured
-
-Every figure below is from receipts on our devnet, not from the draft's estimates:
-
-| Flow | Gas | Permanent state |
-|---|---|---|
-| Vault deposit (create one UTXO) | 36,334 | none |
-| Spend (1 input, depth-1 proof, 1 account out + change) | 56,094 | one spent bit |
-| Full cycle | 92,428 | ~0.3 B |
-| Plain transfer to a fresh account, same chain | 204,600 | ~120 B account leaf |
-
-The draft's ≈36,500 deposit estimate is accurate. The full cycle costs ~2.2× less
-than a single fresh-account transfer, matching the draft's "half the gas" claim, and
-a UTXO recipient has no account leaf at all (verified: `nonce = 0`, `balance = 0`
-for an address that had just been paid).
-
-We also confirmed the headline claim directly: an address holding **zero wei**
-successfully spent its UTXO, paying a third party, with the fee taken from the
-payment itself.
+Spec read: `nerolation/EIPs` `EIPS/eip-8312.md` @ `a5da3f608c6dfbf353bea264054d99fc164ab10c`,
+plus the ethresear.ch thread "Native UTXOs on Ethereum". Batch-path spends are
+implemented but not yet exercised on a chain older than `BATCH_SIZE` blocks.
 
 ## 1. Ambiguities where two conforming clients can split
 
@@ -121,7 +93,3 @@ These are all cheap to fix and worth addressing before more implementations star
 - The index counter is bounded on the spend side (`index < 2**64`) but unbounded on the creation side (vault code and settlement both increment freely; `to_bytes(8, "big")` is undefined at 2^64). Close the asymmetry and state the slot-layout non-collision invariant it implies.
 - State activation semantics for a pre-existing account at `0x8312`: balance preserved as inert surplus (solvency unaffected — conservation bounds outflows), nonce handling, and that its storage MUST be empty at activation.
 - **Test vectors** would be the cheapest disambiguator for §1: `spend_hash` preimages, the 80-byte leaf encoding, `merkle_root` with zero/odd leaf counts, full spend RLP examples (self-funded, sponsored, batch-path witness), and one worked settlement gas-return computation.
-
-## Verified and found exactly right
-
-For balance: all seven gas constants re-derive exactly from EIP-2780/8037/8038 primitives (including the 48-gas keccak of the 80-byte leaf and ⌈97,920/256⌉ = 383); `GAS_UTXO_ACCOUNT_OUT = 9000` decomposes precisely into cold access + value cost + transfer-log cost; the published vault runtime (76 bytes) decodes exactly to the geas listing, enforces exactly the three prose conditions, and its jump target is the only JUMPDEST; `UTXO_CREATED_TOPIC` matches its event signature; the ring→batch upgrade window is tight at both edges and the fixed 13-level batch path is complete for all time; leaf/inner-node domain separation holds (80- vs 64-byte keccak preimages) and the zero sentinel is unforgeable; the slot regions cannot collide; strictly-increasing indices plus journal-external bits close intra-frame, cross-frame, and cross-transaction double spends; `change_value` cannot underflow; the vault stays solvent under the payer-fronting flow; and a builder cannot steal a spend — `spend_hash` covers all outputs and `change_index`, so extraction is bounded to the fee surface discussed in §2.1.

@@ -209,6 +209,31 @@ devnet it is the REQUIRED path** for changing already-active behavior, because
 re-genesis is forbidden (below). Fresh chains must keep working with the knob
 unset (fall back to F).
 
+### Variant: a config field the genesis generator cannot emit
+
+Some behavior is gated on a chain-config field `ethereum-genesis-generator` knows
+nothing about (EIP-8312's `utxoFramesTime` is the current example). Path 2 applies
+unchanged — schedule it in the future, swap binaries while still pre-activation —
+plus one step: write the field into each EL's `/network-configs/genesis.json` after
+the enclave is up, then restart that EL.
+
+Three things make this step go wrong quietly rather than loudly:
+
+- **Patch the JSON on the host** (`docker cp` out, edit, `docker cp` back). The EL
+  containers have no Python. And a `sed` anchored on a fork name is a trap: the
+  execution config calls the Hegotá fork `bogotaTime` — `heze` is only the
+  consensus-layer name — so anchoring on `hezeTime` matches nothing while the
+  command still reports success.
+- **Select containers by enclave label**, `--filter label=com.kurtosistech.enclave-name=<enclave>`.
+  Kurtosis container names share the `el-N-<el>-<cl>` prefix across enclaves and
+  differ only by a UUID suffix, so a name-prefix filter can silently patch a
+  different network's nodes.
+- **The field is invisible to ForkId**, so there is no peer-level protection at the
+  boundary: every EL needs both the new binary and the patched config before the
+  timestamp. An un-patched node degrades by rejecting the new transaction shape, never
+  by rewriting history — so the failure looks like "the feature doesn't work" rather
+  than a split.
+
 ## Re-genesis — FORBIDDEN
 
 Re-genesis (`kurtosis enclave rm -f` + `kurtosis run`) wipes all chain state —
