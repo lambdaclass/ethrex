@@ -52,7 +52,24 @@ EIP-7906's Constants table carries only `TXTRACE_GAS_COST`, `EVENTDATACOPY_GAS_C
 
 ## Spec pins
 
-EIP-8250 / EIP-8272 → `eips.ethereum.org` master at implementation time (pin the exact commit when frozen). EIP-7906 → its branch. EIP-8141 → `docs/eip-8141.md`'s pin.
+The upstream `ethereum/EIPs` commit each implementation has been reconciled against,
+per `EIPS/eip-<n>.md`. Bump a line only after verifying the implementation against
+that revision, since the point of the pin is to make "what changed since we aligned"
+an exact question. `/hegota-eips` diffs these against upstream `master`.
+
+```pins
+eip-8141  4a9ad32cf2  core      2026-07-30
+eip-8250  81b976ac01  core      2026-08-03
+eip-8272  d8636a330d  core      2026-08-03
+eip-7906  ab022ace2a  core      2026-07-29
+eip-7805  9a345f96c2  focil     2026-02-20
+eip-7928  6c666b8d64  adjacent  2026-07-09
+eip-8037  5a8c80897a  adjacent  2026-07-31
+```
+
+`core` is the frame-tx stack this branch carries. `focil` is implemented on the
+`focil` branch, not here. `adjacent` EIPs are not part of the frame-tx envelope but
+the devnet depends on them, so drift still matters.
 
 ## Upstream items
 
