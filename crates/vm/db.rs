@@ -25,6 +25,18 @@ pub trait VmDatabase: Send + Sync + DynClone {
             .map(|a| self.get_account_state(*a))
             .collect()
     }
+
+    /// Batch storage-slot lookup. Default impl loops `get_storage_slot`.
+    /// Backends that can amortize per-key cost (e.g. rocksdb `multi_get_cf` on
+    /// the flat key-value table) should override this.
+    fn get_storage_slots_batch(
+        &self,
+        keys: &[(Address, H256)],
+    ) -> Result<Vec<Option<U256>>, EvmError> {
+        keys.iter()
+            .map(|&(addr, key)| self.get_storage_slot(addr, key))
+            .collect()
+    }
 }
 
 dyn_clone::clone_trait_object!(VmDatabase);

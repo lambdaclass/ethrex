@@ -2769,10 +2769,11 @@ impl<'a> VM<'a> {
         // Specialize the dispatch loop on whether a struct-log tracer is active.
         // The `!TRACED` variant compiles out every tracer branch and capture call,
         // leaving a minimal hot loop (the common, non-traced case).
-        if self.opcode_tracer.active {
-            self.run_dispatch::<true>()
-        } else {
-            self.run_dispatch::<false>()
+        match (self.opcode_tracer.active, self.validation_observer.active) {
+            (false, false) => self.run_dispatch::<false, false>(),
+            (false, true) => self.run_dispatch::<false, true>(),
+            (true, false) => self.run_dispatch::<true, false>(),
+            (true, true) => self.run_dispatch::<true, true>(),
         }
     }
 
@@ -2780,7 +2781,9 @@ impl<'a> VM<'a> {
     /// active. With `TRACED = false` the compiler eliminates the tracer branches
     /// and the cold `trace_*_step` calls entirely, so the hot loop body stays
     /// minimal; the traced variant keeps the cold helpers out of line.
-    fn run_dispatch<const TRACED: bool>(&mut self) -> Result<ContextResult, VMError> {
+    fn run_dispatch<const TRACED: bool, const VALIDATING: bool>(
+        &mut self,
+    ) -> Result<ContextResult, VMError> {
         let mut error = OnceCell::<VMError>::new();
 
         #[cfg(feature = "perf_opcode_timings")]
@@ -2799,7 +2802,7 @@ impl<'a> VM<'a> {
             // EIP-8141 mempool validation-trace observer (single branch on the
             // fast path when inactive). Enforces the banned-opcode set and the
             // sequential `GAS`-before-`*CALL` rule before the handler runs.
-            if self.validation_observer.active {
+            if VALIDATING {
                 self.check_validation_banned_opcode(opcode);
             }
 
