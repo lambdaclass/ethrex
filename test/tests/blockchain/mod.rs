@@ -7,6 +7,7 @@ mod deep_reorg_state_tests;
 mod eip7702_revert_authority_tests;
 mod eip7702_zero_transfer_tests;
 mod eip8312_cross_path_tests;
+mod eip8312_mempool_tests;
 mod explicit_blob_tx_tests;
 #[cfg(feature = "c-kzg")]
 mod frame_blob_tx_tests;

@@ -1231,6 +1231,21 @@ impl Mempool {
             // does; keying off `existing_frame_hash` here would skip the removal
             // and double-count the reservation.
             match &keyed_keys {
+                // EIP-8312: a vault-sender spend is in neither of the maps the two
+                // branches below consult. It carries no nonce keys, and `is_keyed`
+                // reads an empty key set as keyed, so it never takes the linear
+                // `(sender, nonce)` slot either — its claim is the per-index map
+                // alone. Without this branch a replaced spend stays in the pool
+                // holding no claim: the per-index rule can no longer evict it, and
+                // the builder keeps being offered a spend of an index that a
+                // different pending transaction now owns.
+                _ if is_vault_sender => {
+                    if let Some(old_hash) = existing_frame_hash
+                        && old_hash != hash
+                    {
+                        inner.remove_transaction_with_lock(&old_hash)?;
+                    }
+                }
                 Some(keys) => {
                     if let Some(old_hash) = inner.keyed_frame_key_holder(sender, keys) {
                         inner.remove_transaction_with_lock(&old_hash)?;
