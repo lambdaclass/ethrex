@@ -46,7 +46,7 @@ services:
       --http --http-address 0.0.0.0
       --execution-endpoint http://ethrex-sepolia:8551
       --execution-jwt /secrets/jwt.hex
-      --checkpoint-sync-url https://sepolia.beaconstate.info
+      --checkpoint-sync-url https://checkpoint-sync.sepolia.ethpandaops.io
       --checkpoint-sync-url-timeout 600
 
   consensus-mainnet:
