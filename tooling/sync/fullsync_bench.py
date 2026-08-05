@@ -17,6 +17,7 @@ A/B tool (issue #7112) reuse it unchanged.
 """
 
 import argparse
+import fcntl
 import json
 import os
 import shutil
@@ -39,8 +40,9 @@ COMPOSE_PROJECT = "fullsync-bench"
 # compose override, which bind-mounts `<root>/data/<net>` into each container.
 DATA_ROOT = os.environ.get("BENCH_DATA_ROOT", "/mnt/raid10/fullsync-bench")
 
-# One lock for the whole box: two legs running at once contend for CPU and disk and both
-# results are junk. This also excludes the A/B tool (#7112), which must take the same lock.
+# One lock for the whole box: two measurement legs at once contend for CPU and disk and
+# both results are junk. Cycles take it exclusively, bootstraps share it (see `take_lock`).
+# The A/B tool (#7112) must take the same lock exclusively.
 LOCK_PATH = "/tmp/ethrex-fullsync-bench.lock"
 
 # Blocks are ~12s on all three networks, so a nominal day is ~7200 blocks. `measure_blocks`
@@ -540,20 +542,38 @@ def post_slack(lines):
 # --------------------------------------------------------------------------- main
 
 
-def take_lock():
+_LOCK_FD = None
+
+
+def take_lock(shared=False):
+    """Serialise against other runs on this box.
+
+    Measurement legs must never overlap with anything else that loads the machine, so
+    cycles take the lock exclusively. Bootstraps only take it shared: several networks can
+    snap-sync at once — nothing is being measured yet — but a cycle still cannot start
+    while one is in flight.
+
+    Uses flock rather than an O_EXCL lockfile so the kernel drops the lock when the process
+    dies. A lockfile outlives a SIGKILL or a reboot, which for an unattended watch means
+    every later run refuses to start until someone removes it by hand.
+    """
+    global _LOCK_FD
+    _LOCK_FD = os.open(LOCK_PATH, os.O_CREAT | os.O_RDWR)
     try:
-        fd = os.open(LOCK_PATH, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-    except FileExistsError:
-        raise SystemExit(f"another bench run holds {LOCK_PATH}; refusing to run concurrently")
-    os.write(fd, str(os.getpid()).encode())
-    os.close(fd)
+        fcntl.flock(_LOCK_FD, (fcntl.LOCK_SH if shared else fcntl.LOCK_EX) | fcntl.LOCK_NB)
+    except BlockingIOError:
+        held = "a measurement cycle" if shared else "another run"
+        raise SystemExit(f"{held} holds {LOCK_PATH}; refusing to run concurrently")
+    os.truncate(_LOCK_FD, 0)
+    os.write(_LOCK_FD, str(os.getpid()).encode())
 
 
 def release_lock():
-    try:
-        os.unlink(LOCK_PATH)
-    except FileNotFoundError:
-        pass
+    global _LOCK_FD
+    if _LOCK_FD is not None:
+        fcntl.flock(_LOCK_FD, fcntl.LOCK_UN)
+        os.close(_LOCK_FD)
+        _LOCK_FD = None
 
 
 def main():
@@ -576,7 +596,8 @@ def main():
         if net not in NETWORKS:
             raise SystemExit(f"unknown network {net!r}; known: {', '.join(NETWORKS)}")
 
-    take_lock()
+    # Bootstraps may overlap each other; cycles get the box to themselves.
+    take_lock(shared=args.bootstrap)
     try:
         if args.bootstrap:
             for net in nets:
