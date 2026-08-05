@@ -1665,6 +1665,7 @@ mod burned_fees_payload_tests {
             version: 1,
             elasticity_multiplier: ELASTICITY_MULTIPLIER,
             gas_ceil: DEFAULT_BUILDER_GAS_CEIL,
+            inclusion_list_transactions: None,
         };
         let block_template =
             create_payload(&args, &store, Bytes::new()).expect("create_payload failed");
@@ -1767,6 +1768,7 @@ mod tests {
             version: 2,
             elasticity_multiplier: 2,
             gas_ceil: 30_000_000,
+            inclusion_list_transactions: None,
         };
         let block = create_payload(&args, &store, Bytes::new()).expect("payload");
 
