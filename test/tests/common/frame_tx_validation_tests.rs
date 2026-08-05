@@ -1162,6 +1162,75 @@ fn spend_sig_entry(signer: Address, msg: H256) -> FrameSignature {
 }
 
 #[test]
+fn an_actor_is_covered_only_by_its_own_signature_over_the_spend_hash() {
+    // Two independent conditions guard an actor: the signature's scheme must carry
+    // a cryptographic binding, and the resolved signer must BE that actor. Dropping
+    // either is theft, and both were unconstrained — the existing per-actor test
+    // builds its ARBITRARY case with `signer: None`, so it fails the SIGNER check
+    // and never exercises the scheme check. Both conditions also produce the same
+    // error message, so each case here is built so only one of them can be failing.
+
+    // --- the scheme condition, and why it is reachable ---------------------
+    // EIP-8141 forbids an ARBITRARY entry from naming a signer, so such an entry
+    // always resolves to `tx.sender` — which for any UTXO transaction is the vault.
+    // Nothing forbids the vault from being an actor, and nothing forbids an output
+    // naming the vault as recipient. So a spend of a vault-owned UTXO, with the
+    // vault as its actor, is covered by an *unsigned* ARBITRARY entry unless the
+    // scheme is checked. That check is the only reason "a UTXO paid to the vault can
+    // never be spent" holds.
+    let mut vault_spend = valid_spend();
+    vault_spend.actors = vec![utxo_vault()];
+    vault_spend.inputs[0].recipient = utxo_vault();
+    // The self-funded shape: vault sender, empty payer, and the UTXO frame as the
+    // transaction's only frame. That is what makes `tx.sender` the vault, which is
+    // what an unnamed ARBITRARY signer resolves to.
+    let mut unsigned_vault = base_frame_tx_with_frames(vec![utxo_frame_with(&vault_spend)]);
+    unsigned_vault.sender = utxo_vault();
+    unsigned_vault.nonce_keys = vec![];
+    unsigned_vault.nonce_seq = 0;
+    let vault_hash = vault_spend.spend_hash(unsigned_vault.chain_id);
+    unsigned_vault.signatures.push(FrameSignature {
+        scheme: FRAME_SIG_SCHEME_ARBITRARY,
+        signer: None, // resolves to tx.sender == the vault == the actor
+        msg: Bytes::copy_from_slice(vault_hash.as_bytes()),
+        signature: Bytes::from(vec![0u8; 8]),
+    });
+    assert!(
+        unsigned_vault
+            .validate_static_constraints(true)
+            .unwrap_err()
+            .contains("no spend-hash signature entry"),
+        "an ARBITRARY entry carries no binding and must not cover the vault as actor"
+    );
+
+    // --- the signer condition ----------------------------------------------
+    // A protocol scheme over the right digest, signed by a third party. Scheme and
+    // msg both match, so the signer binding is the only thing that can reject it.
+    let spend = valid_spend();
+    let tx = base_frame_tx_with_frames(vec![self_verify_frame(), utxo_frame_with(&spend)]);
+    let hash = spend.spend_hash(tx.chain_id);
+
+    let mut ok = tx.clone();
+    ok.signatures.push(spend_sig_entry(actor_addr(), hash));
+    assert!(
+        ok.validate_static_constraints(true).is_ok(),
+        "the correctly-signed spend must pass, or the rejection below proves nothing"
+    );
+
+    let mut wrong_signer = tx.clone();
+    wrong_signer
+        .signatures
+        .push(spend_sig_entry(Address::from_low_u64_be(0x5151), hash));
+    assert!(
+        wrong_signer
+            .validate_static_constraints(true)
+            .unwrap_err()
+            .contains("no spend-hash signature entry"),
+        "a third party's signature over the spend hash must not authorise an actor"
+    );
+}
+
+#[test]
 fn utxo_frame_requires_a_spend_hash_signature_per_actor() {
     let spend = valid_spend();
     let mut tx = base_frame_tx_with_frames(vec![self_verify_frame(), utxo_frame_with(&spend)]);
