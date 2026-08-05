@@ -2399,8 +2399,8 @@ mod frame_validation_prefix_tests {
     use bytes::Bytes;
     use ethrex_common::types::Transaction;
     use ethrex_common::types::{
-        Account, AccountState, BlockHeader, ChainConfig, Code, CodeMetadata, Frame,
-        FrameTransaction, PrefixShape, ValidationPrefix,
+        Account, AccountState, BlockHeader, ChainConfig, Code, CodeMetadata,
+        FRAME_TX_MAX_VERIFY_GAS, Frame, FrameTransaction, PrefixShape, ValidationPrefix,
     };
     use ethrex_common::{Address, H256, U256};
     use ethrex_crypto::NativeCrypto;
@@ -2571,6 +2571,7 @@ mod frame_validation_prefix_tests {
             &NativeCrypto,
             &prefix,
             None,
+            FRAME_TX_MAX_VERIFY_GAS,
         )
         .expect("simulation runs");
         assert!(
@@ -2607,6 +2608,7 @@ mod frame_validation_prefix_tests {
             &NativeCrypto,
             &prefix,
             None,
+            FRAME_TX_MAX_VERIFY_GAS,
         )
         .expect("simulation runs");
         assert!(

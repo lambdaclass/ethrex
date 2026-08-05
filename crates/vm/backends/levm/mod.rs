@@ -3119,11 +3119,15 @@ impl LEVM {
     ///   - each verify/pay frame that must APPROVE did (the prefix established a
     ///     payer);
     ///   - the deploy frame (if any) left non-empty code at the sender;
-    ///   - total simulated prefix gas <= MAX_VERIFY_GAS;
+    ///   - total simulated prefix gas <= `max_verify_gas`;
     ///   - no validation-trace rule was violated.
     ///
     /// `canonical_paymaster_code_hash` is the pinned canonical paymaster code
     /// hash, when known (always `None` today, OQ1).
+    ///
+    /// `max_verify_gas` is the node's `MAX_VERIFY_GAS` budget; the EIP-8141 spec
+    /// value is `FRAME_TX_MAX_VERIFY_GAS`, but it is mempool policy and therefore
+    /// operator-tunable.
     #[allow(clippy::too_many_arguments)]
     pub fn simulate_frame_validation_prefix(
         tx: &Transaction,
@@ -3133,9 +3137,8 @@ impl LEVM {
         crypto: &dyn Crypto,
         prefix: &ethrex_common::types::ValidationPrefix,
         _canonical_paymaster_code_hash: Option<H256>,
+        max_verify_gas: u64,
     ) -> Result<FrameValidationOutcome, EvmError> {
-        use ethrex_common::types::FRAME_TX_MAX_VERIFY_GAS;
-
         let frame_tx = match tx {
             Transaction::FrameTransaction(ft) => ft,
             _ => {
@@ -3240,12 +3243,12 @@ impl LEVM {
         }
 
         // Assertion: total simulated prefix gas within the verify-gas budget.
-        if sim.total_gas_used > FRAME_TX_MAX_VERIFY_GAS {
+        if sim.total_gas_used > max_verify_gas {
             return Ok(FrameValidationOutcome {
                 passed: false,
                 violation: Some(format!(
                     "validation prefix gas {} exceeds MAX_VERIFY_GAS {}",
-                    sim.total_gas_used, FRAME_TX_MAX_VERIFY_GAS
+                    sim.total_gas_used, max_verify_gas
                 )),
                 max_cost,
                 accessed_paymaster,
