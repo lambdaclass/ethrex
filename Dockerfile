@@ -2,7 +2,7 @@
 
 # --- Chef base ---
 # Slim rust image + apt deps needed to compile native crates (rocksdb, openssl-sys, bindgen).
-FROM rust:1.91-slim-bookworm AS chef
+FROM rust:1.93-slim-bookworm AS chef
 
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt,sharing=locked \
