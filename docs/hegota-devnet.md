@@ -17,7 +17,8 @@ EIP-8141 itself lives on `main`; this branch adds only the three extension EIPs
 on top of it, plus the devnet infrastructure and the ethrex-only extensions.
 
 **Not yet included:**
-- **FOCIL (EIP-7805)** — **deferred.** The EIP-8141 + FOCIL integration is non-trivial and depends on documentation that is not yet public; it will be merged in a later dedicated step (the `focil` branch's main overlap with frame-tx is `payload.rs`).
+- **FOCIL (EIP-7805)** — **deferred**, on the `focil` branch (PR #7039). The blocking condition was documentation that was not public; it now is, as the *FOCIL 🤝 Native Account Abstraction* write-up plus ethereum/EIPs#12086 (*frame-aware inclusion-list (FOCIL) validity*), which is still a draft and still disagrees with the write-up on whether an eligibility filter exists at all. `focil` already excludes frame transactions from the IL satisfaction check, so combining the two is possible before that settles, with frame-tx omission always excused.
+  The merge surface is 18 files, not just `payload.rs`: `crates/blockchain/{blockchain,payload,mempool,error}.rs`, `crates/networking/rpc/{lib,rpc,utils}.rs` and `rpc/eth/transaction.rs`, `crates/networking/p2p/rlpx/connection/server.rs`, `crates/common/types/genesis.rs`, `cmd/ethrex/{cli,initializers}.rs`, `cmd/ethrex/l2/initializers.rs`, `docs/CLI.md`, and four test module files.
 - **EIP-8288** (PQ sig + STARK aggregation) — deferred (upstream-blocked: no Lean leanSTARK/leanSPHINCS tooling; `AGGREGATED_VK`/hash TBD).
 
 All included EIPs activate together under the existing single `Fork::Hegota` / `hegota_time`.
