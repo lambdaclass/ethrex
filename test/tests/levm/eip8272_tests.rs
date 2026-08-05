@@ -122,6 +122,7 @@ fn run_at_slot_bal(
             LevmCallTracer::disabled(),
             VMType::L1,
             &NativeCrypto,
+            None,
         )
         .expect("VM::new");
         vm.execute()
@@ -176,6 +177,7 @@ fn run_with_committed_roots(
         LevmCallTracer::disabled(),
         VMType::L1,
         &NativeCrypto,
+        None,
     )
     .expect("VM::new");
     vm.execute()
@@ -355,6 +357,7 @@ fn committed_reference_validates_and_executes() {
             LevmCallTracer::disabled(),
             VMType::L1,
             &NativeCrypto,
+            None,
         )
         .expect("VM::new");
         vm.execute()
@@ -594,6 +597,7 @@ fn valid_references_are_recorded_as_bal_storage_reads() {
             LevmCallTracer::disabled(),
             VMType::L1,
             &NativeCrypto,
+            None,
         )
         .expect("VM::new");
         vm.execute()

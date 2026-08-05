@@ -1838,6 +1838,7 @@ mod tests {
                             "payerTxparamTime": null,
                             "genesisTimestamp": null,
                             "secondsPerSlot": null,
+                            "lstarTime": null,
                             "terminalTotalDifficulty": "0x0",
                             "terminalTotalDifficultyPassed": true,
                             "blobSchedule": blob_schedule,

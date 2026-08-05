@@ -252,6 +252,7 @@ fn run_frame_tx_with_db(
             LevmCallTracer::disabled(),
             VMType::L1,
             &NativeCrypto,
+            None,
         )
         .expect("VM::new should succeed for a frame tx");
         vm.execute()
@@ -464,6 +465,7 @@ fn run_posttx_in_both_paths(
             LevmCallTracer::disabled(),
             VMType::L1,
             &NativeCrypto,
+            None,
         )
         .expect("VM::new should succeed for a frame tx");
         vm.execute()
@@ -761,6 +763,7 @@ fn txtrace_halts_in_normal_tx() {
             LevmCallTracer::disabled(),
             VMType::L1,
             &NativeCrypto,
+            None,
         )
         .expect("VM::new");
         vm.execute().expect("execute returns Ok even on halt")
@@ -1359,6 +1362,7 @@ fn run_normal_tx(code: Vec<u8>, fork: Fork) -> bool {
         LevmCallTracer::disabled(),
         VMType::L1,
         &NativeCrypto,
+        None,
     )
     .expect("VM::new");
     vm.execute()

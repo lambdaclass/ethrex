@@ -131,6 +131,7 @@ fn run_frame_tx(
             LevmCallTracer::disabled(),
             VMType::L1,
             &NativeCrypto,
+            None,
         )
         .expect("VM::new should succeed for a frame tx");
         vm.execute()
