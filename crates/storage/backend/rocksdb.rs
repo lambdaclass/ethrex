@@ -49,18 +49,9 @@ impl RocksDBBackend {
 
         opts.set_max_background_jobs(8);
 
-        opts.set_level_zero_file_num_compaction_trigger(2);
-        opts.set_level_zero_slowdown_writes_trigger(10);
-        opts.set_level_zero_stop_writes_trigger(16);
-        opts.set_target_file_size_base(512 * 1024 * 1024); // 512MB
-        opts.set_max_bytes_for_level_base(2 * 1024 * 1024 * 1024); // 2GB L1
-        opts.set_max_bytes_for_level_multiplier(10.0);
-        opts.set_level_compaction_dynamic_level_bytes(true);
-
+        // Only DBOptions belong here. Column-family options must be set on each
+        // ColumnFamilyDescriptor — open_cf_descriptors ignores CF fields on `opts`.
         opts.set_db_write_buffer_size(1024 * 1024 * 1024); // 1GB
-        opts.set_write_buffer_size(128 * 1024 * 1024); // 128MB
-        opts.set_max_write_buffer_number(4);
-        opts.set_min_write_buffer_number_to_merge(2);
 
         opts.set_wal_recovery_mode(rocksdb::DBRecoveryMode::PointInTime);
         opts.set_max_total_wal_size(2 * 1024 * 1024 * 1024); // 2GB
@@ -73,7 +64,6 @@ impl RocksDBBackend {
         opts.set_enable_write_thread_adaptive_yield(true);
         opts.set_compaction_readahead_size(4 * 1024 * 1024); // 4MB
         opts.set_advise_random_on_open(false);
-        opts.set_compression_type(rocksdb::DBCompressionType::None);
 
         let compressible_tables = [
             BLOCK_NUMBERS,
@@ -187,6 +177,9 @@ impl RocksDBBackend {
                     cf_opts.set_max_write_buffer_number(6);
                     cf_opts.set_min_write_buffer_number_to_merge(2);
                     cf_opts.set_target_file_size_base(256 * 1024 * 1024); // 256MB
+                    // Base level target ≈ expected L0 size under memory-pressure flushes
+                    // (db_write_buffer_size often flushes before a full 512MB×2 merge).
+                    cf_opts.set_max_bytes_for_level_base(2 * 1024 * 1024 * 1024); // 2GB
                     cf_opts.set_memtable_prefix_bloom_ratio(0.2); // Bloom filter
 
                     let mut block_opts = BlockBasedOptions::default();
@@ -200,6 +193,9 @@ impl RocksDBBackend {
                     cf_opts.set_max_write_buffer_number(6);
                     cf_opts.set_min_write_buffer_number_to_merge(2);
                     cf_opts.set_target_file_size_base(256 * 1024 * 1024); // 256MB
+                    // Base level target ≈ expected L0 size under memory-pressure flushes
+                    // (db_write_buffer_size often flushes before a full 512MB×2 merge).
+                    cf_opts.set_max_bytes_for_level_base(2 * 1024 * 1024 * 1024); // 2GB
                     cf_opts.set_memtable_prefix_bloom_ratio(0.2); // Bloom filter
 
                     let mut block_opts = BlockBasedOptions::default();
