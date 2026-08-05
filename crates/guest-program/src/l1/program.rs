@@ -172,9 +172,6 @@ pub fn new_payload_request_to_block(
     Ok(Block::new(header, body))
 }
 
-/// Core stateless block validation for the native-rollup EXECUTE path.
-///
-/// Sole caller: `ethrex-blockchain`'s `verify_stateless_new_payload`
 /// Validate the per-transaction public keys carried by a stateless input.
 ///
 /// The spec's `StatelessInput` supplies one uncompressed secp256k1 key per
@@ -182,19 +179,10 @@ pub fn new_payload_request_to_block(
 /// the recovered sender must reject the payload (issue #6716).
 ///
 /// Hoisted out of the now-deleted duplicate validation family, which was the
-/// only place this check existed. Two consequences worth being explicit about:
-///
-/// 1. The **guest** path must call this, or deduplicating the two validation
-///    families silently drops a spec-required check.
-/// 2. The **EXECUTE precompile** path ([`verify_stateless_block`]) deliberately
-///    does *not* call it, and never has. `build_ssz_stateless_input` in the L2
-///    advancer sends `public_keys` empty ("Empty for now") while L2 blocks do
-///    carry transactions, so enforcing the length check there would reject every
-///    native-rollup block. Enabling it requires the producer to populate real
-///    keys first.
-///
-/// TODO(#6716): populate `public_keys` in the native-rollup producer and call
-/// this from `verify_stateless_block`, so both paths enforce the spec.
+/// only place this check existed. It is called from [`verify_stateless_block`],
+/// which is the single point both the zkVM guest and the EXECUTE precompile pass
+/// through, so neither path can drop it (#6716). That placement is deliberate:
+/// while the check lived in a caller, one of the two callers did not have it.
 ///
 /// Upstream `build_stateless_input` *skips* keys for undecodable or
 /// bad-signature transactions, so `public_keys.len()` can legitimately be
@@ -243,21 +231,20 @@ pub fn validate_public_keys(
     Ok(())
 }
 
-/// (`StatelessExecutor`, the `StatelessValidator` trait impl invoked by the
-/// EXECUTE precompile). NOTE: the zkVM guest binaries do **not** call this —
-/// the zkVM guest binaries now route here too, via [`run_stateless_guest`] —
-/// there is no longer a separate duplicate validation family.
+/// Stateless validation of a single payload, shared by every entrypoint.
 ///
 /// Implements the `verify_stateless_new_payload` logic from execution-specs:
-/// reconstruct block → validate versioned hashes → execute statelessly →
-/// inject recomputed `burned_fees` → validate the recomputed block access list
-/// hash (Amsterdam+) → verify `block_hash`.
+/// reconstruct block → check the supplied public keys → validate versioned
+/// hashes → execute statelessly → inject recomputed `burned_fees` → validate the
+/// recomputed block access list hash (Amsterdam+) → verify `block_hash`.
 ///
-/// Always compiled: `verify_inner` in `ethrex-blockchain` calls this on the
-/// EXECUTE precompile path, and the zkVM guest reaches it through
-/// [`run_stateless_guest`].
+/// Always compiled, and reached by both entrypoints: the zkVM guests via
+/// [`run_stateless_guest`], and the EXECUTE precompile via `verify_inner` in
+/// `ethrex-blockchain`. Everything a payload must satisfy belongs here rather
+/// than in a caller — see [`validate_public_keys`] for what splitting it cost.
 pub fn verify_stateless_block(
     new_payload_request: &ethrex_common::types::stateless_ssz::NewPayloadRequest,
+    public_keys: &SszPublicKeys,
     execution_witness: ethrex_common::types::block_execution_witness::ExecutionWitness,
     crypto: Arc<dyn Crypto>,
 ) -> Result<(), ExecutionError> {
@@ -269,6 +256,10 @@ pub fn verify_stateless_block(
     // cached value would be stale.
     let block = new_payload_request_to_block(new_payload_request, crypto.as_ref())
         .map_err(|e| ExecutionError::Internal(format!("payload conversion: {e}")))?;
+
+    // Check the supplied keys against the recovered senders before committing to
+    // execution, so a mismatched key rejects without paying for a block.
+    validate_public_keys(public_keys, &block, crypto.as_ref())?;
 
     // Keep block in a fixed-size array so we can reclaim it after execute_blocks
     // (which borrows it as &[Block] without consuming it).
@@ -365,8 +356,8 @@ pub fn run_stateless_guest(input_bytes: &[u8], crypto: Arc<dyn Crypto>) -> Vec<u
 }
 
 /// Validate a decoded stateless input: rebuild the `ExecutionWitness`, derive the
-/// `ChainConfig` from `(chain_id, Amsterdam)`, check the supplied public keys, and
-/// execute the payload statelessly.
+/// `ChainConfig` from `(chain_id, Amsterdam)`, and hand off to
+/// [`verify_stateless_block`], which checks the public keys and executes.
 pub fn validate_stateless_execution(
     input: &SszStatelessInput,
     crypto: Arc<dyn Crypto>,
@@ -375,13 +366,12 @@ pub fn validate_stateless_execution(
         ethrex_common::types::block_execution_witness::ExecutionWitness::from_ssz(input)
             .map_err(|e| ExecutionError::Internal(format!("witness rebuild: {e}")))?;
 
-    // Reconstruct the block once so the public keys can be checked against its
-    // recovered senders before committing to execution.
-    let block = new_payload_request_to_block(&input.new_payload_request, crypto.as_ref())
-        .map_err(|e| ExecutionError::Internal(format!("payload conversion: {e}")))?;
-    validate_public_keys(&input.public_keys, &block, crypto.as_ref())?;
-
-    verify_stateless_block(&input.new_payload_request, execution_witness, crypto)
+    verify_stateless_block(
+        &input.new_payload_request,
+        &input.public_keys,
+        execution_witness,
+        crypto,
+    )
 }
 
 /// Validate blocks statelessly against an in-memory witness.

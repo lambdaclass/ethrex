@@ -10,9 +10,7 @@
 use std::sync::Arc;
 
 use ethrex_common::types::block_execution_witness::ExecutionWitness;
-use ethrex_common::types::stateless_ssz::{
-    NewPayloadRequest, SszStatelessInput, SszStatelessValidationResult,
-};
+use ethrex_common::types::stateless_ssz::{SszStatelessInput, SszStatelessValidationResult};
 use ethrex_crypto::Crypto;
 use ethrex_guest_program::common::ExecutionError;
 use ethrex_guest_program::l1::verify_stateless_block;
@@ -21,20 +19,23 @@ use libssz_merkle::{HashTreeRoot, Sha2Hasher};
 
 /// Core stateless validation function matching the execution-specs definition.
 ///
-/// Takes a `NewPayloadRequest`, `ExecutionWitness`, and `ChainConfig`, and:
+/// Takes the decoded `StatelessInput` plus the `ExecutionWitness` rebuilt from
+/// it, and:
 /// 1. Computes `hash_tree_root` of the `NewPayloadRequest`
-/// 2. Converts the payload to a `Block`
+/// 2. Converts the payload to a `Block` and checks the supplied public keys
 /// 3. Executes the block statelessly
 /// 4. Returns the validation result
+///
+/// The witness is rebuilt by the caller rather than here so that a malformed
+/// witness maps to a precompile-level failure — see [`StatelessExecutor::verify`].
 pub fn verify_stateless_new_payload(
-    new_payload_request: &NewPayloadRequest,
+    input: &SszStatelessInput,
     execution_witness: ExecutionWitness,
-    chain_id: u64,
     crypto: Arc<dyn Crypto>,
 ) -> SszStatelessValidationResult {
-    let request_root = new_payload_request.hash_tree_root(&Sha2Hasher);
+    let request_root = input.new_payload_request.hash_tree_root(&Sha2Hasher);
 
-    let successful = match verify_inner(new_payload_request, execution_witness, crypto) {
+    let successful = match verify_inner(input, execution_witness, crypto) {
         Ok(()) => true,
         Err(e) => {
             tracing::error!("stateless validation failed: {e}");
@@ -47,17 +48,22 @@ pub fn verify_stateless_new_payload(
     SszStatelessValidationResult {
         new_payload_request_root: request_root,
         successful_validation: successful,
-        chain_id,
+        chain_id: input.chain_id,
         schema_id: ethrex_common::types::stateless_ssz::STATELESS_INPUT_SCHEMA_ID,
     }
 }
 
 fn verify_inner(
-    new_payload_request: &NewPayloadRequest,
+    input: &SszStatelessInput,
     execution_witness: ExecutionWitness,
     crypto: Arc<dyn Crypto>,
 ) -> Result<(), ExecutionError> {
-    verify_stateless_block(new_payload_request, execution_witness, crypto)
+    verify_stateless_block(
+        &input.new_payload_request,
+        &input.public_keys,
+        execution_witness,
+        crypto,
+    )
 }
 
 /// Concrete `StatelessValidator` used by the EXECUTE precompile: deserializes
@@ -91,12 +97,7 @@ impl ethrex_vm::StatelessValidator for StatelessExecutor {
         let execution_witness = ExecutionWitness::from_ssz(input)
             .map_err(|_| VMError::from(PrecompileError::ExecuteInvalidInput))?;
 
-        let result = verify_stateless_new_payload(
-            &input.new_payload_request,
-            execution_witness,
-            input.chain_id,
-            self.crypto.clone(),
-        );
+        let result = verify_stateless_new_payload(input, execution_witness, self.crypto.clone());
 
         let mut buf = Vec::new();
         result.ssz_append(&mut buf);
