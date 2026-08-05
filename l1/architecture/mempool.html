@@ -34,7 +34,7 @@
             const path_to_root = "../../";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "../../searchindex-244f4738.js";
+            window.path_to_searchindex_js = "../../searchindex-3053871c.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../../toc-ec0f4f2d.js"></script>
@@ -234,6 +234,7 @@
 <tbody>
 <tr><td><code>transaction_pool</code></td><td><code>FxHashMap&lt;H256, MempoolTransaction&gt;</code></td><td>The authoritative set of pooled transactions, keyed by hash.</td></tr>
 <tr><td><code>broadcast_pool</code></td><td><code>FxHashSet&lt;H256&gt;</code></td><td>Hashes still pending the next P2P broadcast tick. Drained by <code>tx_broadcaster</code>.</td></tr>
+<tr><td><code>private_pool</code></td><td><code>FxHashSet&lt;H256&gt;</code></td><td>Hashes admitted under <code>--mempool.private</code>. Never propagated by any P2P path. Cleared on removal alongside <code>broadcast_pool</code>.</td></tr>
 <tr><td><code>blobs_bundle_pool</code></td><td><code>FxHashMap&lt;H256, BlobsBundle&gt;</code></td><td>EIP-4844 sidecars, keyed by the owning transaction hash. Its key set is the blob txs currently held.</td></tr>
 <tr><td><code>blobs_bundle_by_versioned_hash</code></td><td><code>FxHashMap&lt;H256, FxHashMap&lt;H256, usize&gt;&gt;</code></td><td>Reverse index: <code>versioned_hash → { tx_hash → position_in_bundle }</code>. A blob can be referenced by more than one transaction, so each referencing tx has its own inner entry.</td></tr>
 <tr><td><code>in_flight_txs</code></td><td><code>FxHashSet&lt;H256&gt;</code></td><td>Hashes for which a <code>GetPooledTransactions</code> request was sent but no response has arrived. Prevents duplicate requests across peers.</td></tr>
@@ -361,11 +362,25 @@
 <li><strong>Paymaster reservation accounting</strong> — <code>reserved_pending_cost</code> sums each paymaster’s reserved max-cost across pending frame txs so concurrent sponsored txs can’t collectively overdraw it (<code>FrameTxPaymasterUnderfunded</code>); <code>noncanonical_paymaster_pending</code> bounds the number of pending frame txs a non-canonical paymaster may sponsor (<code>FrameTxNonCanonicalPaymasterLimit</code>); <code>frame_tx_paymaster</code> records each tx’s reservation so removal (eviction / inclusion / reorg) releases it exactly once.</li>
 </ul>
 <p>The unlocked checks in <code>validate_transaction</code> (availability, non-canonical limit) are a pre-filter; the authoritative re-check runs under the write lock in <code>add_transaction</code>, matching the pattern used by the per-sender gates.</p>
+<h2 id="private-mempool"><a class="header" href="#private-mempool">Private Mempool</a></h2>
+<p><code>--mempool.private</code> makes transactions submitted through <em>this node’s own RPC</em> non-propagating: they
+enter the pool and are available to the local payload builder, but no P2P path discloses them.
+Transactions received from peers are unaffected — the flag is about what this node originates, not
+what it relays. It is node-local policy, not protocol behavior.</p>
+<p>The split is at the entry point, not the admission rules. <code>eth_sendRawTransaction</code> calls the
+<code>add_local_*</code> entry points, which consult the flag and pick <code>Mempool::add_transaction</code> (queues the
+hash in <code>broadcast_pool</code>) or <code>add_transaction_no_broadcast</code> (records it in <code>private_pool</code> instead).
+Both funnel into the same <code>add_transaction_inner</code>, so <strong>admission gating is identical either way</strong> —
+only propagation differs.</p>
+<p>Because a private tx never enters <code>broadcast_pool</code>, all three propagation paths below exclude it
+by construction; <code>Mempool::is_private</code> exists for the paths that read the pool directly rather than
+the broadcast set. A transaction already gossiped before the flag took effect cannot be recalled —
+the node logs a warning rather than pretending otherwise.</p>
 <h2 id="p2p-propagation"><a class="header" href="#p2p-propagation">P2P Propagation</a></h2>
 <p>Three P2P paths interact with the mempool:</p>
 <p><strong>Periodic broadcast.</strong> <code>TxBroadcaster</code> (<code>crates/networking/p2p/tx_broadcaster.rs</code>) runs an actor on a <code>--p2p.tx-broadcasting-interval</code>-millisecond tick. Each tick it snapshots <code>broadcast_pool</code> via <code>Mempool::get_txs_for_broadcast</code>, sends full transaction bodies to ~<code>sqrt(peers)</code> peers and <code>NewPooledTransactionHashes</code> announcements to the rest, then calls <code>Mempool::remove_broadcasted_txs</code> to clear the set. Blob (EIP-4844) and frame (EIP-8141) transactions are announced by hash only; privileged transactions are filtered out. Per-peer deduplication is tracked with a broadcast record keyed by hash and a peer bitset.</p>
-<p><strong>New-peer hash dump.</strong> On a fresh RLPx connection, <code>send_all_pooled_tx_hashes</code> (<code>crates/networking/p2p/rlpx/connection/server.rs</code>) sends the node’s known pooled-transaction hashes to the new peer. It reads them via <code>Mempool::get_all_txs_by_sender</code>, flattens, and skips privileged transactions.</p>
-<p><strong>GetPooledTransactions responses.</strong> <code>GetPooledTransactions::handle</code> (<code>crates/networking/p2p/rlpx/eth/transactions.rs</code>) serves requested hashes through <code>Blockchain::get_p2p_transaction_by_hash</code>, which reads the pooled transaction (and its blobs bundle for blob txs) and returns a <code>not found</code> path for missing hashes and for privileged transactions (which are not served over P2P).</p>
+<p><strong>New-peer hash dump.</strong> On a fresh RLPx connection, <code>send_all_pooled_tx_hashes</code> (<code>crates/networking/p2p/rlpx/connection/server.rs</code>) sends the node’s known pooled-transaction hashes to the new peer. It reads them via <code>Mempool::get_txs_for_new_peer_dump</code>, which takes a single read lock and filters out privileged <strong>and</strong> private transactions inline — note the general-purpose <code>get_all_txs_by_sender</code> applies no private filter, so it must not be substituted here.</p>
+<p><strong>GetPooledTransactions responses.</strong> <code>GetPooledTransactions::handle</code> (<code>crates/networking/p2p/rlpx/eth/transactions.rs</code>) serves requested hashes through <code>Blockchain::get_p2p_transaction_by_hash</code>, which reads the pooled transaction (and its blobs bundle for blob txs) and returns a <code>not found</code> path for missing hashes, privileged transactions, and private (<code>--mempool.private</code>) transactions — none of which are served over P2P.</p>
 <p>Incoming gossip flows the other way: <code>Mempool::reserve_unknown_hashes</code> filters incoming <code>NewPooledTransactionHashes</code> against <code>transaction_pool</code> and <code>in_flight_txs</code> in one locked pass, marking unknown hashes in-flight so concurrent peer handlers don’t issue duplicate <code>GetPooledTransactions</code> requests. <code>clear_in_flight_txs</code> clears the marker when the response arrives or the connection drops; <code>alternates</code> records fallback announcers to retry against.</p>
 <h2 id="operator-facing-cli"><a class="header" href="#operator-facing-cli">Operator-Facing CLI</a></h2>
 <p>Mempool-related flags in <code>cmd/ethrex/cli.rs</code>:</p>
@@ -379,6 +394,7 @@
 <tr><td><code>--mempool.price-bump</code></td><td><code>ETHREX_MEMPOOL_PRICE_BUMP</code></td><td><code>10</code> (<code>DEFAULT_PRICE_BUMP_PERCENT</code>)</td><td>Minimum fee bump (percent) to replace a non-blob pooled tx at the same <code>(sender, nonce)</code>.</td></tr>
 <tr><td><code>--mempool.blob-price-bump</code></td><td><code>ETHREX_MEMPOOL_BLOB_PRICE_BUMP</code></td><td><code>100</code> (<code>DEFAULT_BLOB_PRICE_BUMP_PERCENT</code>)</td><td>Minimum fee bump (percent) to replace a blob-carrying pooled tx; higher because sidecars are costly to re-propagate.</td></tr>
 <tr><td><code>--mempool.max-queued-txs-per-account</code></td><td><code>ETHREX_MEMPOOL_MAX_QUEUED_TXS_PER_ACCOUNT</code></td><td><code>64</code> (<code>DEFAULT_MAX_QUEUED_TXS_PER_ACCOUNT</code>)</td><td>Per-sender cap on queued (future-nonce) transactions; executable txs are never capped.</td></tr>
+<tr><td><code>--mempool.private</code></td><td><code>ETHREX_MEMPOOL_PRIVATE</code></td><td><code>false</code></td><td>Keep RPC-submitted txs out of P2P propagation; they still enter the pool and can be included in locally-built blocks.</td></tr>
 <tr><td><code>--mempool.gap-admit-occupancy-threshold</code></td><td><code>ETHREX_MEMPOOL_GAP_ADMIT_OCCUPANCY_THRESHOLD</code></td><td><code>90</code> (<code>DEFAULT_GAP_ADMIT_OCCUPANCY_THRESHOLD</code>)</td><td>Occupancy percentage (<code>0..=100</code>) at/above which gapped-nonce txs are rejected; <code>100</code> disables the gate.</td></tr>
 <tr><td><code>--p2p.tx-broadcasting-interval</code></td><td><code>ETHREX_P2P_TX_BROADCASTING_INTERVAL</code></td><td><code>1000</code> ms (<code>BROADCAST_INTERVAL_MS</code>)</td><td>Period of the <code>TxBroadcaster</code> actor tick.</td></tr>
 </tbody>
@@ -422,7 +438,6 @@
 <ul>
 <li><strong>Tip-aware regular eviction.</strong> Regular eviction is arrival-order FIFO; a high-tip transaction can be evicted for a low-tip one. Heap/tip-aware eviction is in flight (#6607).</li>
 <li><strong>Minimum priority-fee floor at admission</strong> (#6604).</li>
-<li><strong>Non-propagating local transactions</strong> (<code>--mempool.private</code>) (#6576).</li>
 <li><strong>Local-vs-P2P origin threading</strong> through admission (#6608).</li>
 <li><strong>Periodic re-validation / sweep</strong> of stale or dormant pending transactions (#6610).</li>
 <li><strong>Single combined pool.</strong> Blob and non-blob transactions share <code>transaction_pool</code> with separate caps and eviction, but there is no full pending/queued sub-pool separation.</li>
