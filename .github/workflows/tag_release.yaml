@@ -465,8 +465,9 @@ jobs:
       - name: Sign stateless-validator artifacts
         if: env.HAS_MINISIGN_SECRET_KEY == 'true'
         env:
+          # No MINISIGN_PUBLIC_KEY secret: the script derives the public key from
+          # the secret key, so the two cannot drift apart.
           MINISIGN_SECRET_KEY: ${{ secrets.MINISIGN_SECRET_KEY }}
-          MINISIGN_PUBLIC_KEY: ${{ secrets.MINISIGN_PUBLIC_KEY }}
           MINISIGN_PASSWORD: ${{ secrets.MINISIGN_PASSWORD }}
           # Signed alongside the artifact, so the signature also attests which
           # tag and commit produced it.

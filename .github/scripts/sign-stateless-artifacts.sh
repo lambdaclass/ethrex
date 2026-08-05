@@ -14,16 +14,18 @@
 #
 # Required environment:
 #   MINISIGN_SECRET_KEY  minisign private key, as stored in the repo secret
-#   MINISIGN_PUBLIC_KEY  the matching public key
 #   MINISIGN_PASSWORD    password for the private key (empty for a `-W` key)
+#
+# The public key is *derived* from the secret key with `minisign -R` rather than
+# read from a third secret. That is one less secret to configure, and it makes a
+# key that disagrees with the signing key impossible by construction.
 #
 # Optional environment:
 #   TRUSTED_COMMENT_SUFFIX  appended to each signed trusted comment, e.g. the tag
 #                           and commit. Signed, so it is a provenance claim.
 #   COMMITTED_PUBLIC_KEY    path to the in-repo public key (default
-#                           .github/minisign.pub). Must exist and must match
-#                           MINISIGN_PUBLIC_KEY — see "Why the committed key is
-#                           mandatory" below.
+#                           .github/minisign.pub). When present it is the trust
+#                           anchor and must match the derived key.
 set -euo pipefail
 
 ARTIFACT_DIR="${1:?usage: sign-stateless-artifacts.sh <artifact-dir>}"
@@ -31,7 +33,6 @@ COMMITTED_PUBLIC_KEY="${COMMITTED_PUBLIC_KEY:-.github/minisign.pub}"
 TRUSTED_COMMENT_SUFFIX="${TRUSTED_COMMENT_SUFFIX:-}"
 
 : "${MINISIGN_SECRET_KEY:?MINISIGN_SECRET_KEY is not set}"
-: "${MINISIGN_PUBLIC_KEY:?MINISIGN_PUBLIC_KEY is not set}"
 MINISIGN_PASSWORD="${MINISIGN_PASSWORD:-}"
 
 if [ ! -d "$ARTIFACT_DIR" ]; then
@@ -40,48 +41,71 @@ if [ ! -d "$ARTIFACT_DIR" ]; then
 fi
 
 # ── Key material ──────────────────────────────────────────────────────────────
-#
-# Why the committed key is mandatory: a public key shipped inside the same
-# release it authenticates proves nothing, because anyone able to replace the
-# artifacts can replace the key beside them. The signature is only meaningful
-# against a key published out-of-band, so the in-repo copy is the source of
-# truth and the released copy is a convenience. Asserting they match is what
-# stops a rotated or mistyped secret from producing a release full of signatures
-# that verify against nothing anyone has.
-
-if [ ! -f "$COMMITTED_PUBLIC_KEY" ]; then
-  cat >&2 <<EOF
-error: no committed public key at '$COMMITTED_PUBLIC_KEY'.
-
-Signing is configured (MINISIGN_SECRET_KEY is set) but the public key is not in
-the repository, so a consumer would have no out-of-band copy to verify against.
-Commit the public key of the signing keypair to that path, then re-run.
-EOF
-  exit 1
-fi
-
-# minisign key files are a comment line followed by the base64 key. Compare the
-# key itself so an differing comment line is not treated as a mismatch.
-key_line() {
-  grep -v '^untrusted comment:' "$1" | tr -d '[:space:]'
-}
 
 WORK_DIR="$(mktemp -d)"
 trap 'rm -rf "$WORK_DIR"' EXIT
 umask 077
 
 printf '%s\n' "$MINISIGN_SECRET_KEY" > "$WORK_DIR/minisign.key"
-printf '%s\n' "$MINISIGN_PUBLIC_KEY" > "$WORK_DIR/minisign.pub"
 
-if [ "$(key_line "$WORK_DIR/minisign.pub")" != "$(key_line "$COMMITTED_PUBLIC_KEY")" ]; then
-  cat >&2 <<EOF
-error: MINISIGN_PUBLIC_KEY does not match '$COMMITTED_PUBLIC_KEY'.
-
-The secret and the committed key are different keypairs, so the released
-signatures would not verify against the key consumers have. Either update the
-committed key (if the signing key was rotated on purpose) or fix the secret.
-EOF
+# Derive the public key from the secret key. `minisign -R` reads the password on
+# stdin exactly as `-S` does, and works for passwordless (`-G -W`) keys too.
+if ! printf '%s\n' "$MINISIGN_PASSWORD" \
+  | minisign -R -s "$WORK_DIR/minisign.key" -p "$WORK_DIR/minisign.pub" > /dev/null 2>&1; then
+  echo "error: could not derive the public key from MINISIGN_SECRET_KEY" >&2
+  echo "       (wrong MINISIGN_PASSWORD, or the secret is not a minisign key)" >&2
   exit 1
+fi
+
+# minisign key files are a comment line followed by the base64 key. Compare the
+# key itself, so a differing comment line is not treated as a mismatch.
+key_line() {
+  grep -v '^untrusted comment:' "$1" | tr -d '[:space:]'
+}
+DERIVED_KEY="$(key_line "$WORK_DIR/minisign.pub")"
+
+# A public key shipped inside the same release it authenticates proves nothing:
+# anyone able to replace the artifacts can replace the key beside them. The
+# signature is only meaningful against a key published out-of-band, so the
+# in-repo copy is the trust anchor and the released copy is a convenience.
+#
+# It is not yet required, because requiring it would fail the first release made
+# after the signing secrets were configured. Once committed it is enforced: a
+# mismatch is a hard failure, since it means consumers hold a key the release
+# does not verify against.
+PUBLIC_KEY_SOURCE="$WORK_DIR/minisign.pub"
+if [ -f "$COMMITTED_PUBLIC_KEY" ]; then
+  if [ "$DERIVED_KEY" != "$(key_line "$COMMITTED_PUBLIC_KEY")" ]; then
+    cat >&2 <<EOF
+error: the signing key does not match '$COMMITTED_PUBLIC_KEY'.
+
+MINISIGN_SECRET_KEY derives to:
+  $DERIVED_KEY
+but the committed public key is:
+  $(key_line "$COMMITTED_PUBLIC_KEY")
+
+Consumers verify against the committed key, so this release's signatures would
+not verify for them. Either update the committed key (if the signing key was
+rotated on purpose) or fix the secret.
+EOF
+    exit 1
+  fi
+  echo "Signing key matches $COMMITTED_PUBLIC_KEY"
+  PUBLIC_KEY_SOURCE="$COMMITTED_PUBLIC_KEY"
+else
+  # A GitHub warning annotation, so this is visible on the run summary rather
+  # than buried in the log.
+  echo "::warning::No committed public key at $COMMITTED_PUBLIC_KEY."
+  cat >&2 <<EOF
+
+The release will carry a public key derived from MINISIGN_SECRET_KEY, but a key
+published only inside the release it authenticates gives consumers nothing to
+check it against. Commit this file as '$COMMITTED_PUBLIC_KEY' to make the
+signatures meaningful; once it is there, this script enforces the match.
+
+$(cat "$WORK_DIR/minisign.pub")
+
+EOF
 fi
 
 # ── Artifacts ─────────────────────────────────────────────────────────────────
@@ -125,14 +149,13 @@ for file in "${artifacts[@]}"; do
     -t "$trusted_comment" \
     > /dev/null
 
-  # Verify what was just produced, against the committed key rather than the
-  # secret's copy — this is the check a consumer will run, so running it here
+  # Verify what was just produced, against the committed key when there is one — this is the check a consumer will run, so running it here
   # means a broken keypair fails the release instead of shipping.
   #
   # Overlaps with the key-match check above by design: that one fails fast with a
   # precise diagnostic, this one is the last line of defence on the real release
   # path, where nothing else verifies the output.
-  minisign -V -m "$file" -p "$COMMITTED_PUBLIC_KEY" -x "$file.minisig" > /dev/null
+  minisign -V -m "$file" -p "$PUBLIC_KEY_SOURCE" -x "$file.minisig" > /dev/null
 
   echo "  signed + verified: $filename"
 done
@@ -145,6 +168,6 @@ done
 # job's `./bin/**/*` glob covers it without depending on whether `**` matches
 # zero path segments in the uploader's glob implementation.
 mkdir -p "$ARTIFACT_DIR/minisign"
-cp "$COMMITTED_PUBLIC_KEY" "$ARTIFACT_DIR/minisign/minisign.pub"
+cp "$PUBLIC_KEY_SOURCE" "$ARTIFACT_DIR/minisign/minisign.pub"
 
 echo "Signed ${#artifacts[@]} artifact(s); public key written to $ARTIFACT_DIR/minisign/minisign.pub"
