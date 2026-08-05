@@ -429,6 +429,10 @@ jobs:
       - publish-docker
       - package-contracts
     runs-on: ubuntu-latest
+    env:
+      # Signing is skipped entirely when the secret is absent, so forks and
+      # repos that have not configured a keypair still produce a release.
+      HAS_MINISIGN_SECRET_KEY: ${{ secrets.MINISIGN_SECRET_KEY != '' }}
     steps:
       - name: Checkout Code
         uses: actions/checkout@v6
@@ -443,6 +447,31 @@ jobs:
           # stateless-validator-ethrex-<zkvm>-<version>, so a leading-anchor
           # pattern would silently omit them from the release.
           pattern: "*ethrex*"
+
+      # The zkEVM guest handbook requires the stateless-validator ELF and
+      # verification key to ship as signed release assets:
+      # https://github.com/eth-act/zkevm-standards/blob/main/handbooks/guest-handbook.md
+      #
+      # This runs here rather than in the matrix build for two reasons: the
+      # signing key is exposed to one job instead of three, and this job needs
+      # `verify-stateless-validator-guest`, so an ELF that failed its
+      # conformance check is never signed.
+      - name: Install minisign
+        if: env.HAS_MINISIGN_SECRET_KEY == 'true'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y minisign
+
+      - name: Sign stateless-validator artifacts
+        if: env.HAS_MINISIGN_SECRET_KEY == 'true'
+        env:
+          MINISIGN_SECRET_KEY: ${{ secrets.MINISIGN_SECRET_KEY }}
+          MINISIGN_PUBLIC_KEY: ${{ secrets.MINISIGN_PUBLIC_KEY }}
+          MINISIGN_PASSWORD: ${{ secrets.MINISIGN_PASSWORD }}
+          # Signed alongside the artifact, so the signature also attests which
+          # tag and commit produced it.
+          TRUSTED_COMMENT_SUFFIX: "ethrex ${{ github.ref_name }} ${{ github.sha }}"
+        run: .github/scripts/sign-stateless-artifacts.sh ./bin
 
       - name: Get previous tag
         run: |

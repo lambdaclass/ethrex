@@ -7,6 +7,9 @@ on:
       - ".github/**.yaml"
       - ".github/*.yml"
       - ".github/actions/**"
+      # Without this, editing a script under .github/scripts would not run the
+      # jobs below that exercise those scripts.
+      - ".github/scripts/**"
 
 permissions:
   contents: read
@@ -64,3 +67,115 @@ jobs:
           check "final tag"     tag    v18.0.0      ""     "release|18.0.0"
           check "main push"     branch main         ""     "main|dev-deadbeef"
           check "PR build"      branch main         feat/x "feat/x|dev-deadbeef"
+
+  stateless-signing:
+    name: sign-stateless-artifacts
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v6
+
+      - name: Install minisign
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y minisign
+
+      - name: Assert the signing script signs and refuses to no-op
+        env:
+          SCRIPT: .github/scripts/sign-stateless-artifacts.sh
+        run: |
+          set -euo pipefail
+          # Exercises the REAL script finalize-release runs, with a throwaway
+          # keypair. Its value is entirely in its guards — an unsigned release
+          # that still looks green is the failure it exists to prevent — so each
+          # guard is asserted to exit non-zero rather than merely to print.
+          work="$(mktemp -d)"
+          minisign -G -W -p "$work/pub" -s "$work/key" > /dev/null
+          minisign -G -W -p "$work/other.pub" -s "$work/other.key" > /dev/null
+          export MINISIGN_SECRET_KEY MINISIGN_PUBLIC_KEY
+          MINISIGN_SECRET_KEY="$(cat "$work/key")"
+          MINISIGN_PUBLIC_KEY="$(cat "$work/pub")"
+
+          # Rebuild the layout download-artifact produces: one directory per
+          # artifact, including a non-stateless one that must be left alone.
+          make_tree() {
+            local root="$1"
+            rm -rf "$root"
+            for name in stateless-validator-ethrex-sp1-6.3.1 stateless-validator-ethrex-zisk-1.0.0-alpha; do
+              mkdir -p "$root/$name"
+              head -c 256 /dev/urandom > "$root/$name/$name.elf"
+              head -c 64 /dev/urandom > "$root/$name/$name.vk"
+            done
+            mkdir -p "$root/ethrex-linux-x86_64"
+            head -c 64 /dev/urandom > "$root/ethrex-linux-x86_64/ethrex"
+          }
+
+          # Asserts the message too, not just a non-zero exit. Without that, a
+          # removed guard passes as long as *something* later happens to fail,
+          # which is how a guard silently stops being tested.
+          expect_fail() { # expect_fail <desc> <committed-pub> <dir> <expected-msg>
+            local out
+            out="$(mktemp)"
+            if COMMITTED_PUBLIC_KEY="$2" bash "$SCRIPT" "$3" > "$out" 2>&1; then
+              echo "::error::$1: script succeeded but must fail"
+              exit 1
+            fi
+            if ! grep -qF "$4" "$out"; then
+              echo "::error::$1: failed for the wrong reason; expected '$4', got:"
+              cat "$out"
+              exit 1
+            fi
+            echo "ok  rejects: $1"
+          }
+
+          # Happy path.
+          make_tree "$work/bin"
+          COMMITTED_PUBLIC_KEY="$work/pub" TRUSTED_COMMENT_SUFFIX="ethrex v0.0.0-test deadbeef" \
+            bash "$SCRIPT" "$work/bin" > /dev/null
+
+          signed=0
+          for f in "$work"/bin/stateless-validator-*/*.elf "$work"/bin/stateless-validator-*/*.vk; do
+            minisign -V -m "$f" -p "$work/pub" -x "$f.minisig" > /dev/null
+            signed=$((signed + 1))
+          done
+          if [ "$signed" -ne 4 ]; then
+            echo "::error::expected 4 signed artifacts, verified $signed"
+            exit 1
+          fi
+          echo "ok  signs and verifies 4 artifacts"
+
+          # The public key must be published one directory deep, so the release
+          # job's ./bin/**/* glob covers it regardless of how ** treats an empty
+          # path segment.
+          test -f "$work/bin/minisign/minisign.pub"
+          echo "ok  publishes minisign/minisign.pub"
+
+          # Scoped to the stateless artifacts: the node binary is not signed.
+          if [ -e "$work/bin/ethrex-linux-x86_64/ethrex.minisig" ]; then
+            echo "::error::signed a non-stateless artifact"
+            exit 1
+          fi
+          echo "ok  leaves non-stateless artifacts unsigned"
+
+          # A tampered artifact must stop verifying, proving the signature binds
+          # the bytes rather than just existing.
+          printf 'x' >> "$work/bin/stateless-validator-ethrex-sp1-6.3.1/stateless-validator-ethrex-sp1-6.3.1.elf"
+          if minisign -V -m "$work/bin/stateless-validator-ethrex-sp1-6.3.1/stateless-validator-ethrex-sp1-6.3.1.elf" \
+               -p "$work/pub" > /dev/null 2>&1; then
+            echo "::error::a tampered artifact still verified"
+            exit 1
+          fi
+          echo "ok  tampered artifact fails verification"
+
+          # Guards.
+          make_tree "$work/bin2"
+          expect_fail "a keypair that does not match the committed key" "$work/other.pub" "$work/bin2" \
+            "does not match"
+          expect_fail "a missing committed public key" "$work/absent.pub" "$work/bin2" \
+            "no committed public key"
+          mkdir -p "$work/empty/ethrex-linux-x86_64"
+          head -c 8 /dev/urandom > "$work/empty/ethrex-linux-x86_64/ethrex"
+          expect_fail "an artifact set with nothing to sign" "$work/pub" "$work/empty" \
+            "no stateless-validator .elf/.vk artifacts found"
+          expect_fail "a missing artifact directory" "$work/pub" "$work/nonexistent" \
+            "does not exist"
