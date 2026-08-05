@@ -2073,22 +2073,98 @@ fn two_utxo_frames_cannot_spend_the_same_input() {
     );
 }
 
-// NOT WRITTEN: an exact-to-the-wei self-funded conservation test.
-//
-// A mutation that loosens `spent_value < needed` by one wei still survives the
-// suite. The obvious test — bisect for the largest accepted payout, then assert
-// one wei more is rejected — cannot catch it: the bisection re-derives the
-// boundary under whatever comparison is in force, so a shifted boundary shifts
-// the test with it. Self-calibrating coverage is worse than none, so it is not
-// here.
-//
-// A real test needs a pinned expected value, which first needs an answer to why
-// the observed boundary is not a multiple of `max_fee_per_gas`: for a 1e18 input
-// the largest accepted payout ends in ...029, while `signed_out + max_cost`
-// would end in ...000. Some constraint other than conservation binds first
-// (settlement against the vault balance, most likely), so it is not even clear
-// the boundary measures the comparison under test. Worth resolving; not worth
-// faking.
+/// The self-funded conservation boundary is exact to the wei.
+///
+/// A self-funded spend must cover its signed outputs AND the transaction's
+/// maximum cost: `spent >= signed_out + max_cost`. Loosening that comparison by a
+/// single wei once survived the whole suite, so both sides of the boundary are
+/// pinned here.
+///
+/// Two things make this work where the obvious version does not. Bisecting for the
+/// boundary and then asserting one-past-it fails is self-calibrating — it
+/// re-derives the boundary under whatever comparison is in force, so a loosened
+/// check moves the boundary and the test with it. And varying the *payout* cannot
+/// express a one-wei violation at all: the payout is part of the frame's calldata,
+/// so raising it by a wei can raise `total_gas_limit` (and hence `max_cost`) by a
+/// whole gas unit, stepping `needed` across the boundary 36,001 wei at a time.
+///
+/// So the payout is held fixed — pinning `signed_out` and `max_cost` — and the
+/// *input* is varied, which moves `spent` in steps of one. `max_cost` is derived
+/// from the transaction's own fields rather than hardcoded, so a repricing tracks
+/// automatically; what is asserted is the arithmetic relation, which is what a
+/// loosened comparison breaks.
+#[test]
+fn self_funded_conservation_is_exact_to_the_wei() {
+    let payee = Address::from_low_u64_be(0xBEEF);
+    // Round and fixed: the payout must not change length as the input moves, or
+    // `max_cost` would move with it.
+    let payout = U256::from(500_000_000_000_000_000u64);
+
+    // Solve for the boundary input `V` such that `V == payout + max_cost(V)`.
+    //
+    // It has to be a fixed point rather than one calculation: `max_cost` is
+    // `max_fee_per_gas * total_gas_limit`, and the total includes the frame's
+    // calldata cost, which under EIP-8038 depends on the *byte content* of the
+    // encoded spend — zero and non-zero bytes are priced differently. So changing
+    // the input value changes `max_cost`, which changes the boundary. The iteration
+    // converges in a couple of rounds because the dependence is weak.
+    //
+    // This does not make the test self-calibrating: `max_cost` is derived from the
+    // transaction's own encoding, never from the conservation comparison. What is
+    // asserted below is that `spent >= signed_out + max_cost` holds exactly at that
+    // point — which is precisely what a loosened comparison violates.
+    let max_cost_at = |input: U256| {
+        let fixture = self_funded_fixture(input, Some((payee, payout)), None);
+        U256::from(fixture.tx.max_fee_per_gas) * U256::from(fixture.tx.total_gas_limit())
+    };
+    let mut boundary = payout + max_cost_at(payout + U256::from(3_000_000_000u64));
+    for _ in 0..8 {
+        let next = payout + max_cost_at(boundary);
+        if next == boundary {
+            break;
+        }
+        boundary = next;
+    }
+    assert_eq!(
+        boundary,
+        payout + max_cost_at(boundary),
+        "the boundary solve must reach a fixed point"
+    );
+    let max_cost = boundary - payout;
+    assert!(!max_cost.is_zero(), "the fixture must have a real max cost");
+
+    let accepts = |input: U256| {
+        run_spend(&self_funded_fixture(input, Some((payee, payout)), None))
+            .0
+            .is_ok()
+    };
+
+    // Exactly enough: the inputs cover the payout and the whole fee cap.
+    assert!(
+        accepts(boundary),
+        "spent == signed_out + max_cost must be accepted (boundary {boundary})"
+    );
+
+    // One wei short must be rejected, and must leave nothing behind. This is the
+    // assertion a comparison loosened by a wei fails.
+    let short = boundary - U256::one();
+    let fixture = self_funded_fixture(short, Some((payee, payout)), None);
+    let (result, mut db) = run_spend(&fixture);
+    assert!(
+        result.is_err(),
+        "one wei short of signed_out + max_cost must be rejected, not absorbed"
+    );
+    assert!(
+        vault_slot_word(&mut db, fixture.spent_slot).is_zero(),
+        "the rejected spend must leave no spent bit"
+    );
+    assert!(
+        db.current_accounts_state
+            .get(&payee)
+            .is_none_or(|acc| acc.info.balance.is_zero()),
+        "the rejected spend must pay nobody"
+    );
+}
 
 /// Build a consolidation spend: `n` UTXOs, each owned by a different actor, all
 /// committed in one block's openings tree, merged into a single payout plus
