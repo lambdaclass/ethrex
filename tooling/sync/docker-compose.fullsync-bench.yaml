@@ -1,0 +1,61 @@
+# Overrides multisync's compose for the full-sync throughput bench (issue #7111).
+#
+# Applied on top of docker-compose.multisync.yaml so the per-network service pairs, JWT
+# setup and volumes are defined in exactly one place:
+#
+#   docker compose -p fullsync-bench \
+#     -f docker-compose.multisync.yaml -f docker-compose.fullsync-bench.yaml ...
+#
+# Three differences from multisync:
+#   1. `--syncmode full` — this measures execution, not snap-sync completion.
+#   2. `mem_limit` — a memory leak must OOM-kill the container, not take down the box.
+#   3. the beacon APIs are published, because the runner reads the consensus head to
+#      compute each cycle's gap-maintaining advance target.
+services:
+  consensus-hoodi:
+    ports:
+      - "5052:5052"
+
+  consensus-sepolia:
+    ports:
+      - "5053:5052"
+
+  consensus-mainnet:
+    ports:
+      - "5054:5052"
+
+  ethrex-hoodi: &bench-el
+    mem_limit: 48g
+    command: >
+      --http.addr 0.0.0.0
+      --http.api eth,net,web3,admin
+      --network hoodi
+      --authrpc.addr 0.0.0.0
+      --authrpc.jwtsecret /secrets/jwt.hex
+      --syncmode full
+      --datadir /data
+      --metrics --metrics.addr 0.0.0.0 --metrics.port 3701
+
+  ethrex-sepolia:
+    <<: *bench-el
+    command: >
+      --http.addr 0.0.0.0
+      --http.api eth,net,web3,admin
+      --network sepolia
+      --authrpc.addr 0.0.0.0
+      --authrpc.jwtsecret /secrets/jwt.hex
+      --syncmode full
+      --datadir /data
+      --metrics --metrics.addr 0.0.0.0 --metrics.port 3701
+
+  ethrex-mainnet:
+    <<: *bench-el
+    command: >
+      --http.addr 0.0.0.0
+      --http.api eth,net,web3,admin
+      --network mainnet
+      --authrpc.addr 0.0.0.0
+      --authrpc.jwtsecret /secrets/jwt.hex
+      --syncmode full
+      --datadir /data
+      --metrics --metrics.addr 0.0.0.0 --metrics.port 3701

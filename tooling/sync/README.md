@@ -231,3 +231,80 @@ Notifications include:
 - Host, branch, and commit info
 - Per-network status with sync time and blocks processed
 - Link to the commit on GitHub
+
+## Full-sync throughput regression watch
+
+Tracks execution throughput on real mainnet/testnet blocks over time, to catch performance
+regressions that land on `main`. Complements the existing coverage rather than duplicating
+it: the per-PR CI benchmark runs a synthetic dense-ERC20 import, and multisync validates
+*snap* sync completion — neither watches execution throughput drift. Design: issue #7111.
+
+### How it works
+
+A node is kept permanently a fixed distance behind head. Per cycle, per network:
+
+```
+restore base → run M blocks              (MEASURE; resulting state discarded)
+restore base → advance to head − GAP     (becomes the new base)
+```
+
+The base creeps forward at chain rate, so the node never ages out of relevance and there
+is no anchor or reference commit to maintain. `M` is fixed and independent of how fast the
+base moves, so consecutive measurements overlap heavily — which is what keeps day-to-day
+workload variation small enough for the series to mean something. **`M` must not change
+once a series has started**, or the history stops being comparable.
+
+The advance targets `head − GAP` rather than a fixed block count, so it self-calibrates to
+each network's real block production and absorbs missed slots.
+
+### Usage
+
+```bash
+make fullsync-bench-once                                   # one cycle, then exit
+make fullsync-bench-watch                                  # continuous
+make fullsync-bench-watch FULLSYNC_BENCH_NETWORKS=mainnet,sepolia,hoodi
+make fullsync-bench-test                                   # unit-test metric parsing
+```
+
+Networks run **serially** on purpose: two legs at once contend for CPU and disk and both
+results are junk. A lockfile enforces this, and the manual A/B tool (#7112) takes the same
+lock.
+
+### Bootstrap
+
+Each network needs a starting base at `<state-root>/<network>/base.0` — a gracefully
+stopped, snap-synced datadir at least `GAP` blocks behind head. The runner records the
+base's head in `bench-base.json` on first use and maintains it from then on.
+
+Run **observe-only for 2–3 weeks** before wiring up alerting: the real day-to-day σ is
+unknown, and thresholds should come from measured data rather than a guess. Alerting and
+step detection (trailing median + persistence, not day-vs-day) land after that.
+
+### Metrics
+
+Each cycle writes one JSON per leg under `<results-dir>/<network>/`:
+
+| field | why |
+|---|---|
+| `throughput_ggas_s` (mean/median/stdev/samples) | headline; the **per-batch mean**, not blocks ÷ wall clock |
+| `blocks_per_s_mean` | likely the better primary on light testnet blocks |
+| `phase_ms_per_mgas` (`validate`/`exec`/`merkle`/`store`) | catches phase-localised regressions invisible end-to-end |
+| `state_regen_seconds` | restart cost; sensitive to commit cadence |
+| `wall_seconds`, `status`, `reached_block`, `commit`, `host` | validity and attribution |
+
+Wall clock is deliberately *not* the throughput metric: it includes startup state
+regeneration, which is a real signal but a separate one, so it is reported on its own.
+
+### Operational invariants
+
+These are lessons from the manual benchmarking that preceded this tool, not preferences:
+
+- **Graceful stop only** (`docker stop -t 300`). Repeated abrupt stops previously left the
+  canonical head ahead of any durably-flushed state, after which the node could not
+  regenerate and needed a full re-sync.
+- **Stop condition reads `eth_blockNumber`**, never `eth_syncing.currentBlock` — the latter
+  goes stale during catch-up and once let a leg run far past its target.
+- **Health-gate base rotation**: a new base is promoted only after the node demonstrably
+  restarts on it with state available; otherwise the previous generation is kept.
+- **Never compare across machines.** The same binary has measured 62 s and 81 s on
+  different CI runners; only same-box comparisons mean anything.

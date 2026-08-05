@@ -4,7 +4,8 @@ flamegraph-hoodi start-lighthouse start-ethrex backup-db start-mainnet-metrics-d
 start-sepolia-metrics-docker start-holesky-metrics-docker start-hoodi-metrics-docker \
 start-metrics-docker tail-syncing-logs tail-metrics-logs copy_flamegraph import-with-metrics \
 multisync-up multisync-down multisync-clean multisync-logs multisync-status \
-multisync-restart multisync-monitor multisync-run multisync-loop multisync-loop-auto
+multisync-restart multisync-monitor multisync-run multisync-loop multisync-loop-auto \
+fullsync-bench-watch fullsync-bench-once fullsync-bench-test
 
 ETHREX_DIR ?= "../.."
 
@@ -347,3 +348,32 @@ multisync-loop-auto: ## Continuous loop with auto-update: pull latest, build, an
 		--image-tag "$(MULTISYNC_LOCAL_IMAGE)" \
 		--ethrex-dir "$(ETHREX_DIR)" \
 		$(if $(MULTISYNC_WATCHED_PHASES),--watched-phases "$(MULTISYNC_WATCHED_PHASES)")
+
+# =============================================================================
+# FULL-SYNC THROUGHPUT REGRESSION WATCH (issue #7111)
+# =============================================================================
+# Keeps a node a fixed distance behind head and, per cycle, measures a fixed window of
+# blocks then advances the base by one gap-maintaining step. Observe-only for now:
+# thresholds and step detection land once the bootstrap period yields the real noise
+# floor. Runs are serial across networks by design — concurrent legs contend and both
+# results are junk.
+
+FULLSYNC_BENCH_NETWORKS ?= mainnet
+FULLSYNC_BENCH_STATE ?= /root/fullsync-bench/state
+FULLSYNC_BENCH_RESULTS ?= /root/fullsync-bench/results
+
+fullsync-bench-watch: ## Continuous full-sync throughput watch (observe-only).
+	python3 fullsync_bench.py \
+		--networks $(FULLSYNC_BENCH_NETWORKS) \
+		--state-root $(FULLSYNC_BENCH_STATE) \
+		--results-dir $(FULLSYNC_BENCH_RESULTS)
+
+fullsync-bench-once: ## One measure+advance cycle per network, then exit.
+	python3 fullsync_bench.py \
+		--networks $(FULLSYNC_BENCH_NETWORKS) \
+		--state-root $(FULLSYNC_BENCH_STATE) \
+		--results-dir $(FULLSYNC_BENCH_RESULTS) \
+		--once
+
+fullsync-bench-test: ## Unit-test the metric extraction (no node or box needed).
+	python3 test_fullsync_metrics.py
