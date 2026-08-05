@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>EIP-8312 — Native UTXOs on Ethereum</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div class="app">
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="brand-title">EIP-8312</div>
+        <div class="brand-sub">Native UTXOs &amp; the UTXO Frame</div>
+      </div>
+      <nav class="nav">
+        <div class="nav-group">Documentation</div>
+        <a href="#/welcome" class="nav-item" data-page="welcome"><span class="ic" data-ic="home"></span>Welcome</a>
+        <a href="#/explained" class="nav-item" data-page="explained"><span class="ic" data-ic="book"></span>EIP-8312 Explained</a>
+        <a href="#/how" class="nav-item" data-page="how"><span class="ic" data-ic="layers"></span>How It Works</a>
+        <a href="#/limits" class="nav-item" data-page="limits"><span class="ic" data-ic="alert"></span>Where It Doesn't Fit</a>
+        <div class="nav-group">Live Demos</div>
+        <a href="#/overview" class="nav-item" data-page="overview"><span class="ic" data-ic="grid"></span>Demo Overview</a>
+        <a href="#/setup" class="nav-item" data-page="setup"><span class="ic" data-ic="key"></span>Set Up Your Account</a>
+        <a href="#/demo1" class="nav-item" data-page="demo1"><span class="ic" data-ic="user"></span>Pay Someone Who Has Nothing</a>
+        <a href="#/demo2" class="nav-item" data-page="demo2"><span class="ic" data-ic="eye"></span>Stealth Payments</a>
+        <a href="#/demo3" class="nav-item" data-page="demo3"><span class="ic" data-ic="users"></span>Batch Payroll</a>
+        <a href="#/demo4" class="nav-item" data-page="demo4"><span class="ic" data-ic="shield"></span>Trustless Sponsorship</a>
+        <a href="#/demo5" class="nav-item" data-page="demo5"><span class="ic" data-ic="chart"></span>State That Never Grows</a>
+      </nav>
+      <div class="sidebar-foot">
+        <a href="#/welcome" class="restart">↻ Restart tour</a>
+        <div id="wallet-box"><button class="btn primary wallet-btn" id="wallet-btn">Connect Wallet</button></div>
+        <div id="mode-badge"></div>
+      </div>
+    </aside>
+
+    <div class="main-col">
+      <div class="topbar">
+        <div class="topbar-status"><span id="page-pos"></span><span id="page-hint"></span></div>
+        <div class="topbar-btns">
+          <button class="btn ghost" id="nav-prev">Back</button>
+          <button class="btn primary" id="nav-next">Next</button>
+        </div>
+      </div>
+
+      <main class="content">
+        <section class="page" id="page-welcome">
+          <h1>Can a payment leave nothing behind?</h1>
+          <p>On Ethereum, receiving a payment writes <b>permanent state</b>: the first ETH to an address creates a
+            ~120-byte account leaf forever; the first ERC-20, a storage slot. A one-shot payment needs none of
+            that — only a value, a recipient, and double-spend protection.</p>
+          <div class="callout">
+            <b>The core idea:</b> a UTXO is a one-shot payment object. Its <i>existence</i> lives in append-only
+            history — a log plus a per-block openings root you prove against — and its <i>consumption</i> is a
+            single bit in a packed bitfield. Gas lives inside the frame's conservation rule, so a recipient can
+            spend while holding <b>zero ETH</b>. That is EIP-8312's UTXO frame, built on EIP-8141 frame
+            transactions — and this demo runs it for real on an ethrex PoC devnet.
+          </div>
+          <p>You'll watch a zero-ETH recipient spend, stealth payments consolidate into one frame, a payroll run
+            that leaves three bytes of permanent state, and a sponsor get repaid without trusting anyone.</p>
+          <div class="stat-strip">
+            <div class="stat"><b>120 B → 0.25 B</b><span>permanent state per payment</span></div>
+            <div class="stat"><b>0 ETH</b><span>needed in the recipient's account</span></div>
+            <div class="stat"><b>½ gas · 1/480 state</b><span>UTXO cycle vs fresh-account transfer</span></div>
+          </div>
+          <p class="ext-links">
+            <a href="https://github.com/nerolation/EIPs/blob/a5da3f608c6dfbf353bea264054d99fc164ab10c/EIPS/eip-8312.md">EIP-8312 spec</a> ·
+            <a href="https://ethresear.ch/t/native-utxos-on-ethereum/25368">ethresear.ch post</a>
+          </p>
+          <button class="btn primary big" id="start-tour">Start the tour ▶</button>
+        </section>
+
+        <section class="page" id="page-explained">
+          <h1>EIP-8312, explained</h1>
+          <p>A UTXO is an <i>opening</i> — <span class="mono">(source, value, recipient)</span> — plus a
+            protocol-assigned global index. It is created by depositing to the vault system contract at
+            <span class="mono">0x…8312</span>, spent whole, and never partially.</p>
+          <div class="callout">
+            <b>Rule 1 · Store consumption, prove existence.</b> A “can this still be spent?” check answers two
+            questions: <i>did it exist?</i> and <i>was it used?</i> Bitcoin answers both with presence in the
+            UTXO set, forcing every unspent object into state. EIP-8312 splits them: existence is proven from
+            history against per-block <b>openings roots</b>; only the “used” fact — one bit, 256 flags per
+            32-byte word — stays in state. The permanent cost moves from creation to consumption.
+          </div>
+          <div class="callout">
+            <b>Rule 2 · Declare transitions, don't execute.</b> A spend is a signed, value-conserving transition
+            declared as <b>inspectable data</b>, not code. “Does this conserve value?” and “does this output
+            repay me?” are answered by <i>reading</i> the frame — which is what makes self-funded spends and
+            trustless sponsorship a clean primitive instead of a relayer workaround.
+          </div>
+          <p>The spend frame carries <span class="mono">actors, inputs, utxo_outs, account_outs, change_index,
+            payer</span> and fee caps. Conservation: <span class="mono">Σ inputs ≥ Σ outputs + max_cost</span> —
+            gas is inside the rule, so a zero-ETH recipient can spend. Spent bits are the replay protection; a
+            UTXO is spendable from the block after its creation.</p>
+        </section>
+
+        <section class="page" id="page-how">
+          <h1>How it works</h1>
+          <div class="flow">
+            <div class="flow-box"><b>1 · Create</b><span>call UTXO_VAULT (0x…8312) with value + recipient; the vault assigns a global index and emits UtxoCreated</span></div>
+            <div class="flow-arrow">→</div>
+            <div class="flow-box"><b>2 · Commit</b><span>at block end the client hashes each opening into the block's openings root (ring of 8192; sealed batches of 8192 roots)</span></div>
+            <div class="flow-arrow">→</div>
+            <div class="flow-box"><b>3 · Spend frame</b><span>actors sign inputs, outputs, change, payer, fee caps; VERIFY proves openings + unset bits + conservation</span></div>
+            <div class="flow-arrow">→</div>
+            <div class="flow-box"><b>4 · Settle</b><span>spent bits flip journal-externally; outputs become new UTXOs or account credits; the fee comes from the consumed value</span></div>
+          </div>
+          <div class="card">
+            <h4>The spend, as declared data (RLP)</h4>
+            <table class="kv schema">
+              <tr><td class="mono">actors</td><td>addresses backing the spend, each with a scheme-tagged signature over the spend hash (secp256k1, P-256 passkeys, PQ later)</td></tr>
+              <tr><td class="mono">inputs</td><td>[index, creation_block] signed; source, recipient, value and Merkle path supplied as witness, read from the proven opening</td></tr>
+              <tr><td class="mono">utxo_outs</td><td>new UTXOs to create (recipient, value)</td></tr>
+              <tr><td class="mono">account_outs</td><td>credits back into the account model — the escape hatch</td></tr>
+              <tr><td class="mono">change_index</td><td>one output, signed with value 0, receives the remainder after the actual fee — like Bitcoin change</td></tr>
+              <tr><td class="mono">payer</td><td>empty = self-funded (the UTXO pays its own gas); an address = sponsored, repaid by a signed output</td></tr>
+              <tr><td class="mono">fee caps</td><td>max_fee_per_gas · max_priority_fee_per_gas · max_gas_limit, all signed</td></tr>
+            </table>
+          </div>
+        </section>
+
+        <section class="page" id="page-limits">
+          <h1>Where it doesn't fit</h1>
+          <ul class="limits">
+            <li><b>Already-funded accounts doing ordinary transfers.</b> If the recipient keeps an account anyway, a plain transfer is simpler — UTXOs add nothing.</li>
+            <li><b>Contract-account recipients.</b> UTXO ownership is key-only: no signature verifies to a contract's address, so a UTXO sent to one (including counterfactual CREATE2 accounts) is unspendable by construction.</li>
+            <li><b>Recurring, stateful relationships.</b> Balances you reuse, allowances, DeFi positions — the object is deliberately one-shot; <span class="mono">account_outs</span> is the way back.</li>
+            <li><b>Tokens (for now).</b> EIP-8312 is ETH-only. A token extension is sketched in the research post, but token UTXOs can't pay ETH gas and always need a sponsor.</li>
+            <li><b>History availability.</b> Existence lives in logs and openings roots: wallets must keep openings provable, and under history expiry the openings need a retention story.</li>
+          </ul>
+        </section>
+
+        <section class="page" id="page-overview">
+          <h1>Demo overview</h1>
+          <p>Five standalone live demos, each running against the backend. In live mode every step is a real
+            transaction on an ethrex EIP-8312 PoC devnet; in simulated mode the same transitions run in-process.</p>
+          <div class="ov-grid">
+            <a class="ov-card" href="#/demo1"><b>1 · Pay someone who has nothing</b><span>A zero-ETH recipient receives 1 ETH and spends it — the UTXO pays its own gas.</span></a>
+            <a class="ov-card" href="#/demo2"><b>2 · Stealth payments</b><span>Three fresh stealth addresses, discovered by view tag, consolidated in one frame, one fee.</span></a>
+            <a class="ov-card" href="#/demo3"><b>3 · Batch payroll</b><span>Twelve first-time recipients. Permanent state: 1,440 B vs 3 B.</span></a>
+            <a class="ov-card" href="#/demo4"><b>4 · Trustless sponsorship</b><span>A sponsor fronts gas and is repaid by a signed output — attack toggle included.</span></a>
+            <a class="ov-card" href="#/demo5"><b>5 · State that never grows</b><span>From one payment to a billion: 120 B vs 0.3 B each.</span></a>
+          </div>
+        </section>
+
+        <section class="page" id="page-setup">
+          <h1>Set up your account</h1>
+          <p class="sub">One-time setup: connect your wallet, fund it with devnet ETH, and play Alice yourself in
+            Demo 1 — the vault deposit is signed by your MetaMask, on-chain.</p>
+          <div id="setup-body"></div>
+        </section>
+
+        <section class="page" id="page-demo1">
+          <h1>Pay someone who has nothing</h1>
+          <p class="sub">The flagship case: a fresh recipient with zero ETH spends a UTXO that pays its own gas.</p>
+          <div class="demo" id="demo1-app"></div>
+        </section>
+        <section class="page" id="page-demo2">
+          <h1>Stealth payments that consolidate</h1>
+          <p class="sub">ERC-5564-style fresh addresses per payment, discovered by view tag, merged in one multi-actor frame.</p>
+          <div class="demo" id="demo2-app"></div>
+        </section>
+        <section class="page" id="page-demo3">
+          <h1>Batch payroll</h1>
+          <p class="sub">Twelve first-time recipients: one creation transaction, twelve self-funded spends, three bytes of permanent state.</p>
+          <div class="demo" id="demo3-app"></div>
+        </section>
+        <section class="page" id="page-demo4">
+          <h1>Trustless sponsorship</h1>
+          <p class="sub">A sponsor fronts gas and approves only when the declared frame repays it.</p>
+          <div class="demo" id="demo4-app"></div>
+        </section>
+        <section class="page" id="page-demo5">
+          <h1>State that never grows</h1>
+          <p class="sub">From one payment to a billion: what each model leaves behind.</p>
+          <div class="demo" id="demo5-app"></div>
+        </section>
+      </main>
+    </div>
+  </div>
+
+  <script type="module" src="js/main.js"></script>
+</body>
+</html>
