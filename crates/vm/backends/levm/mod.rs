@@ -67,7 +67,7 @@ use ethrex_levm::{
     vm::VM,
 };
 #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
-use rayon::iter::{IntoParallelIterator, IntoParallelRefIterator, ParallelIterator};
+use rayon::iter::{IntoParallelIterator, ParallelIterator};
 #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::cmp::min;
@@ -2878,36 +2878,79 @@ impl LEVM {
             return Ok(());
         }
 
-        // Phase 1: Prefetch all account states — parallel inner fetch + single write-lock.
-        // This warms the CachingDatabase account cache and the TrieLayerCache with
-        // state trie nodes. Storage slots are prefetched synchronously before the
-        // executor starts (see `bal_storage_slots` at the call site), so this warmer
-        // only needs to cover account states and contract code, which overlap exec.
-        let account_addresses: Vec<Address> = accounts.iter().map(|ac| ac.address).collect();
-        store
-            .prefetch_accounts(&account_addresses)
-            .map_err(|e| EvmError::Custom(format!("prefetch_accounts: {e}")))?;
+        // Accounts and their code are warmed in chunks rather than as two whole-block
+        // phases. Code hashes come from account states, so a phase that reads every
+        // address before the first code read leaves the executor faulting in code itself
+        // for the whole of that phase, however early the warmer finishes in aggregate.
+        // Chunking starts the code reads after the first slice of addresses instead.
+        //
+        // Storage slots are prefetched synchronously before the executor starts (see
+        // `bal_storage_slots` at the call site), so this warmer covers only account
+        // states and contract code, which overlap execution.
+        //
+        let parallelism = std::thread::available_parallelism().map_or(8, |p| p.get());
+        let warm_chunk_accounts = warm_chunk_accounts(parallelism);
 
-        if cancelled.load(Ordering::Relaxed) {
-            return Ok(());
+        // A BAL carries every accessed address, and it does not say which of them were
+        // accessed for their bytecode: an opcode reading only account state (BALANCE,
+        // EXTCODEHASH) leaves the whole of a block's bytecode unread. So an unbounded warm
+        // can spend the block's entire read bandwidth on bytes nothing consumes, competing
+        // with the account reads the executor is waiting on, and hold all of it in the
+        // per-block cache besides.
+        //
+        // The bound is the bytecode cache's capacity, which is the one dial already sized
+        // against host memory. Normal blocks sit orders of magnitude under it and warm
+        // exactly as they did before; it binds only where a block's distinct bytecode
+        // outgrows what the node was configured to keep resident at all.
+        let code_budget_bytes = store.code_cache_budget_bytes();
+        let mut code_warmed_bytes = 0u64;
+
+        for chunk in accounts.chunks(warm_chunk_accounts) {
+            if cancelled.load(Ordering::Relaxed) {
+                return Ok(());
+            }
+
+            let addresses: Vec<Address> = chunk.iter().map(|ac| ac.address).collect();
+            // Returns the states as well as caching them, so the code hashes come out
+            // of this read instead of costing a second lookup per account.
+            let states = store
+                .get_account_states_batch(&addresses)
+                .map_err(|e| EvmError::Custom(format!("get_account_states_batch: {e}")))?;
+
+            // Accounts stay warmed for the rest of the block once the code budget is
+            // spent: they are a fraction of the bytes, and every opcode reaching an
+            // address needs its state whether or not it reads the bytecode.
+            if code_warmed_bytes >= code_budget_bytes {
+                continue;
+            }
+
+            // Distinct hashes only: accounts sharing one bytecode are common, and
+            // without this the same code would be requested once per account holding it.
+            let mut code_hashes: Vec<ethrex_common::H256> = states
+                .iter()
+                .map(|s| s.code_hash)
+                .filter(|h| *h != *EMPTY_KECCAK_HASH)
+                .collect();
+            code_hashes.sort_unstable();
+            code_hashes.dedup();
+
+            for slice in code_hashes.chunks(CODE_SLICE_HASHES) {
+                if code_warmed_bytes >= code_budget_bytes {
+                    break;
+                }
+
+                // Re-checked between the two reads, not only per chunk: a cancelled
+                // warmer should not still issue a slice's worth of code reads.
+                if cancelled.load(Ordering::Relaxed) {
+                    return Ok(());
+                }
+
+                // Best-effort: a code hash present in a BAL but absent from the database
+                // must not fail the warmer, since the executor reports that itself.
+                code_warmed_bytes =
+                    code_warmed_bytes.saturating_add(store.prefetch_codes(slice).unwrap_or(0));
+            }
         }
-
-        // Phase 2: Code prefetch — collect code hashes from Phase 1 account states
-        // (already cached after Phase 1 prefetch), then batch-fetch codes in parallel.
-        // Uses par_iter for collection since blocks can have thousands of accounts.
-        let code_hashes: Vec<ethrex_common::H256> = accounts
-            .par_iter()
-            .filter_map(|ac| {
-                store
-                    .get_account_state(ac.address)
-                    .ok()
-                    .filter(|s| s.code_hash != *EMPTY_KECCAK_HASH)
-                    .map(|s| s.code_hash)
-            })
-            .collect();
-        code_hashes.par_iter().for_each(|&h| {
-            let _ = store.get_account_code(h);
-        });
 
         Ok(())
     }
@@ -4024,6 +4067,196 @@ fn describe_balance_diff(expected: U256, actual: U256) -> String {
         }
     }
     format!("{sign}{mag_u128} wei")
+}
+
+/// Addresses per chunk in [`LEVM::warm_block_from_bal`].
+///
+/// Sized to saturate the read depth of the batched code fetch, because on the blocks the
+/// warmer targets it is throughput-bound rather than latency-bound: it occupies the whole
+/// execution window, so total read concurrency matters more than how soon the first code
+/// lands. That fetch shards at 256 keys and caps its shard count at `max(64, 2 * cores)`,
+/// and its depth is bounded by the distinct uncached hashes a chunk carries, so a chunk
+/// narrower than the cap's worth of keys buys an earlier start by giving up depth for the
+/// whole block.
+///
+/// The width also routes the account read, which is why it must not shrink:
+/// `prefetch_accounts` sends a chunk to the sorted sharded batch only once its cold
+/// addresses reach [`BLOATED_BATCH_THRESHOLD`] and to parallel point-gets below that, and
+/// on a cold account-heavy block the sharded batch is worth several times the point-gets.
+#[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+fn warm_chunk_accounts(parallelism: usize) -> usize {
+    256_usize.saturating_mul(parallelism.saturating_mul(2).max(64))
+}
+
+/// Code hashes per batched fetch in [`LEVM::warm_block_from_bal`].
+///
+/// A chunk's code hashes are fetched in slices rather than in one call, because the chunk
+/// has to stay wide for the account batch (see [`warm_chunk_accounts`]) while the byte
+/// budget and the cancellation flag are only observed between calls. The slice is
+/// therefore what bounds how far a warm can overshoot its budget and how much I/O a
+/// cancelled warmer still commits to; a whole chunk of max-size bytecode is an order of
+/// magnitude past the budget itself.
+#[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+const CODE_SLICE_HASHES: usize = 4096;
+
+#[cfg(all(test, feature = "rayon", not(feature = "eip-8025")))]
+mod warm_budget_tests {
+    use super::{warm_chunk_accounts, *};
+    use ethrex_common::H256;
+    use ethrex_common::types::{AccountState, CodeMetadata, block_access_list::AccountChanges};
+    use ethrex_levm::db::BLOATED_BATCH_THRESHOLD;
+    use ethrex_levm::errors::DatabaseError;
+    use std::sync::atomic::AtomicUsize;
+
+    /// A chunk narrower than the threshold would route every account read to the
+    /// point-gets path and leave the sharded batch permanently unreachable.
+    #[test]
+    fn chunk_reaches_the_sharded_account_batch_at_every_core_count() {
+        for parallelism in [1, 2, 4, 8, 16, 32, 64, 128, 256] {
+            assert!(
+                warm_chunk_accounts(parallelism) >= BLOATED_BATCH_THRESHOLD,
+                "chunk of {} accounts is below the batch threshold {BLOATED_BATCH_THRESHOLD} \
+                 at {parallelism} cores",
+                warm_chunk_accounts(parallelism),
+            );
+        }
+    }
+
+    const CODE_LEN: usize = 1024;
+
+    /// Every account holds a distinct bytecode of [`CODE_LEN`], and both read paths are
+    /// counted so a test can tell warmed code from warmed account state.
+    struct CountingStore {
+        budget: u64,
+        states_read: AtomicUsize,
+        codes_read: AtomicUsize,
+    }
+
+    impl CountingStore {
+        fn with_budget(budget: u64) -> Self {
+            Self {
+                budget,
+                states_read: AtomicUsize::new(0),
+                codes_read: AtomicUsize::new(0),
+            }
+        }
+    }
+
+    impl Database for CountingStore {
+        fn code_cache_budget_bytes(&self) -> u64 {
+            self.budget
+        }
+        fn get_account_state(&self, address: Address) -> Result<AccountState, DatabaseError> {
+            self.states_read.fetch_add(1, Ordering::Relaxed);
+            Ok(AccountState {
+                // A distinct hash per address, so no dedup collapses the batch.
+                code_hash: H256::from_low_u64_be(address.to_low_u64_be() + 1),
+                ..Default::default()
+            })
+        }
+        fn get_account_code(&self, hash: H256) -> Result<Code, DatabaseError> {
+            self.codes_read.fetch_add(1, Ordering::Relaxed);
+            Ok(Code::from_bytecode_unchecked(
+                Bytes::from(vec![0u8; CODE_LEN]),
+                hash,
+            ))
+        }
+        fn get_storage_value(&self, _: Address, _: H256) -> Result<U256, DatabaseError> {
+            Ok(U256::zero())
+        }
+        fn get_block_hash(&self, _: u64) -> Result<H256, DatabaseError> {
+            Ok(H256::zero())
+        }
+        fn get_chain_config(&self) -> Result<ethrex_common::types::ChainConfig, DatabaseError> {
+            Err(DatabaseError::Custom("not implemented".into()))
+        }
+        fn get_code_metadata(&self, _: H256) -> Result<CodeMetadata, DatabaseError> {
+            Ok(CodeMetadata {
+                length: CODE_LEN as u64,
+            })
+        }
+    }
+
+    fn bal_with_accounts(n: u64) -> BlockAccessList {
+        BlockAccessList::from_accounts(
+            (0..n)
+                .map(|i| AccountChanges::new(Address::from_low_u64_be(i)))
+                .collect(),
+        )
+    }
+
+    /// Two slices' worth of distinct bytecodes against a budget the first slice already
+    /// exceeds: the second slice must not be read.
+    #[test]
+    fn code_warming_stops_once_the_budget_is_spent() {
+        let accounts = 2 * super::CODE_SLICE_HASHES;
+        let bal = bal_with_accounts(accounts as u64);
+        let store = Arc::new(CountingStore::with_budget(1024 * 1024));
+        let counter = store.clone();
+
+        LEVM::warm_block_from_bal(&bal, store, &AtomicBool::new(false)).expect("warm");
+
+        assert_eq!(
+            counter.states_read.load(Ordering::Relaxed),
+            accounts,
+            "every account state should still be warmed"
+        );
+        assert_eq!(
+            counter.codes_read.load(Ordering::Relaxed),
+            super::CODE_SLICE_HASHES,
+            "the warm should stop after the slice that spends the budget"
+        );
+    }
+
+    /// The budget must not touch ordinary blocks. A block whose distinct bytecode fits the
+    /// smallest budget any backend reports warms every code exactly once, in one batch,
+    /// which is what the warm did before there was a budget at all.
+    ///
+    /// A 60M-gas block reaches at most ~23k cold account accesses at 2600 gas each, and a
+    /// real one spreads those over a few hundred distinct contracts of a few KB: single
+    /// digit MB against a 64 MiB floor. Only the adversarial shape, every access landing on
+    /// its own max-size contract, reaches ~567 MB and outgrows the budget, which is the
+    /// case it exists for and the one where warming all of it was measured to buy nothing.
+    #[test]
+    fn a_normal_block_warms_every_bytecode() {
+        const MIN_BUDGET: u64 = 64 * 1024 * 1024;
+        let accounts = 2048;
+        assert!(
+            accounts < super::CODE_SLICE_HASHES,
+            "a normal block must fit one batch"
+        );
+        assert!(
+            (accounts as u64).saturating_mul(CODE_LEN as u64) < MIN_BUDGET,
+            "a normal block must fit the smallest budget"
+        );
+
+        let bal = bal_with_accounts(accounts as u64);
+        let store = Arc::new(CountingStore::with_budget(MIN_BUDGET));
+        let counter = store.clone();
+
+        LEVM::warm_block_from_bal(&bal, store, &AtomicBool::new(false)).expect("warm");
+
+        assert_eq!(counter.states_read.load(Ordering::Relaxed), accounts);
+        assert_eq!(
+            counter.codes_read.load(Ordering::Relaxed),
+            accounts,
+            "every bytecode should still be warmed, once each"
+        );
+    }
+
+    /// A backend reporting no bytecode cache gets no bytecode warming, while its account
+    /// states are still warmed.
+    #[test]
+    fn a_zero_budget_warms_accounts_and_no_code() {
+        let bal = bal_with_accounts(64);
+        let store = Arc::new(CountingStore::with_budget(0));
+        let counter = store.clone();
+
+        LEVM::warm_block_from_bal(&bal, store, &AtomicBool::new(false)).expect("warm");
+
+        assert_eq!(counter.states_read.load(Ordering::Relaxed), 64);
+        assert_eq!(counter.codes_read.load(Ordering::Relaxed), 0);
+    }
 }
 
 // Exercises the rayon-parallel-BAL execution path (and shares its
