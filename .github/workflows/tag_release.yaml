@@ -149,17 +149,91 @@ jobs:
           name: verification_keys
           path: verification_keys/
 
-  # There's a separate job to build the guest programs for SP1, RISC0, and ZisK
-  # since they need to be built without the l2 features.
-  build-ethrex-guest:
+  # Builds the stateless-validator guest ELFs and verification keys through the
+  # Ere toolchain, so the published artifacts are what eth-act/ere-guests can
+  # consume directly. Replaces the old build-ethrex-guest/package-ethrex-guest
+  # pair, which built the L1 batch guest that no longer exists. See issue #7011.
+  build-stateless-validator-guest:
     strategy:
+      fail-fast: false
       matrix:
-        # risc0 temporarily disabled: c-kzg 2.1.8 floor exceeds the highest risc0 c-kzg fork tag
-        # (v2.1.7-risczero.0), so the guest can't build. Re-add "- risc0" once a >=2.1.8 tag exists.
         zkvm:
-          - sp1
           - zisk
+          - sp1
+          - openvm
     runs-on: ubuntu-latest
+    env:
+      ERE_TAG: 0.14.0
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Free Disk Space
+        uses: ./.github/actions/free-disk
+
+      - name: Resolve artifact name
+        id: artifact
+        run: |
+          VERSION=$(.github/scripts/zkvm-version.sh ${{ matrix.zkvm }})
+          NAME=stateless-validator-ethrex-${{ matrix.zkvm }}-${VERSION}
+          echo "name=${NAME}" >> $GITHUB_OUTPUT
+          echo "Artifact name: ${NAME}"
+
+      - name: Pull Ere images
+        run: |
+          docker pull ghcr.io/eth-act/ere/ere-compiler-${{ matrix.zkvm }}:${ERE_TAG}
+          docker pull ghcr.io/eth-act/ere/ere-server-${{ matrix.zkvm }}:${ERE_TAG}
+
+      - name: Compile guest
+        run: |
+          mkdir -p output
+          docker run \
+            ${{ matrix.zkvm == 'zisk' && '-e ERE_PROFILE=ethrex' || '' }} \
+            -e OPENVM_RUST_TOOLCHAIN=nightly-2026-01-18 \
+            -e RUST_LOG=info \
+            -v $PWD:/ethrex \
+            -v $PWD/output:/output \
+            ghcr.io/eth-act/ere/ere-compiler-${{ matrix.zkvm }}:${ERE_TAG} \
+            --compiler-kind rust-customized \
+            --guest-dir /ethrex/crates/guest-program/stateless-validator/bin/${{ matrix.zkvm }} \
+            --output-dir /output \
+            --elf-name ${{ steps.artifact.outputs.name }}.elf
+
+      - name: Generate program VK
+        run: |
+          docker run \
+            -e RUST_LOG=info \
+            -v $PWD/output:/output \
+            ghcr.io/eth-act/ere/ere-server-${{ matrix.zkvm }}:${ERE_TAG} \
+            --elf-path /output/${{ steps.artifact.outputs.name }}.elf \
+            keygen \
+            --program-vk-path ${{ steps.artifact.outputs.name }}.vk
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v6
+        with:
+          name: ${{ steps.artifact.outputs.name }}
+          path: |
+            output/${{ steps.artifact.outputs.name }}.elf
+            output/${{ steps.artifact.outputs.name }}.vk
+          if-no-files-found: error
+
+  # Proves eth-act/ere-guests can consume the published ELF: runs it under
+  # ere-server against a generated conformance vector and requires the returned
+  # statelessOutputBytes to match byte-for-byte. This is the only check that
+  # exercises the real zkVM IO path, so it is what catches a framing mismatch.
+  verify-stateless-validator-guest:
+    needs: build-stateless-validator-guest
+    strategy:
+      fail-fast: false
+      matrix:
+        zkvm:
+          - zisk
+          - sp1
+          - openvm
+    runs-on: ubuntu-latest
+    env:
+      ERE_TAG: 0.14.0
     steps:
       - name: Checkout code
         uses: actions/checkout@v6
@@ -169,109 +243,51 @@ jobs:
 
       - name: Setup Rust Environment
         uses: ./.github/actions/setup-rust
-        with:
-          cache-pool: l2
 
-      - name: Install SP1
-        if: ${{ matrix.zkvm == 'sp1' }}
-        env:
-          SHELL: /bin/bash
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        uses: ./.github/actions/install-sp1
+      - name: Install uv
+        run: curl -LsSf https://astral.sh/uv/install.sh | sh
 
-      - name: Install RISC0
-        if: ${{ matrix.zkvm == 'risc0' }}
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        uses: ./.github/actions/install-risc0
-
-      - name: Install ZisK
-        if: ${{ matrix.zkvm == 'zisk' }}
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          SETUP_KEY: none
-        uses: ./.github/actions/install-zisk
-
-      - name: Build ethrex elf - ${{ matrix.zkvm }}
-        env:
-          REF_NAME: ${{ github.ref_name }}
+      - name: Resolve artifact name
+        id: artifact
         run: |
-          # Sanitize ref name by replacing '/' with '-' for valid file names
-          SANITIZED_REF=$(echo "$REF_NAME" | tr '/' '-')
-          cargo build --release --package ethrex-guest-program --features "${{ matrix.zkvm }}-build-elf,ci"
-          mkdir -p ${{ matrix.zkvm }}_verification_keys
-          if [ "${{ matrix.zkvm }}" = "sp1" ]; then
-            mv crates/guest-program/bin/${{ matrix.zkvm }}/out/riscv32im-succinct-zkvm-elf ethrex-riscv32im-${{ matrix.zkvm }}-elf-$SANITIZED_REF
-            mv crates/guest-program/bin/${{ matrix.zkvm }}/out/riscv32im-succinct-zkvm-vk-bn254 ${{ matrix.zkvm }}_verification_keys/ethrex-riscv32im-${{ matrix.zkvm }}-vk-bn254-$SANITIZED_REF
-            mv crates/guest-program/bin/${{ matrix.zkvm }}/out/riscv32im-succinct-zkvm-vk-u32 ${{ matrix.zkvm }}_verification_keys/ethrex-riscv32im-${{ matrix.zkvm }}-vk-u32-$SANITIZED_REF
-            echo "ELF_ARTIFACT=ethrex-riscv32im-${{ matrix.zkvm }}-elf-$SANITIZED_REF" >> $GITHUB_ENV
-          elif [ "${{ matrix.zkvm }}" = "risc0" ]; then
-            mv crates/guest-program/bin/${{ matrix.zkvm }}/out/riscv32im-risc0-elf ethrex-riscv32im-${{ matrix.zkvm }}-elf-$SANITIZED_REF
-            mv crates/guest-program/bin/${{ matrix.zkvm }}/out/riscv32im-risc0-vk ${{ matrix.zkvm }}_verification_keys/ethrex-riscv32im-${{ matrix.zkvm }}-vk-$SANITIZED_REF
-            echo "ELF_ARTIFACT=ethrex-riscv32im-${{ matrix.zkvm }}-elf-$SANITIZED_REF" >> $GITHUB_ENV
-          elif [ "${{ matrix.zkvm }}" = "zisk" ]; then
-            mv crates/guest-program/bin/${{ matrix.zkvm }}/out/riscv64ima-zisk-elf ethrex-riscv64ima-${{ matrix.zkvm }}-elf-$SANITIZED_REF
-            echo "ELF_ARTIFACT=ethrex-riscv64ima-${{ matrix.zkvm }}-elf-$SANITIZED_REF" >> $GITHUB_ENV
+          VERSION=$(.github/scripts/zkvm-version.sh ${{ matrix.zkvm }})
+          echo "name=stateless-validator-ethrex-${{ matrix.zkvm }}-${VERSION}" >> $GITHUB_OUTPUT
+
+      - name: Download ELF
+        uses: actions/download-artifact@v6
+        with:
+          name: ${{ steps.artifact.outputs.name }}
+          path: output/
+
+      # execution-specs #3248+#3278 has no tests-zkevm release, so the oracle is
+      # generated from the pinned spec commit rather than downloaded.
+      - name: Generate conformance vectors
+        run: make -C tooling/ef_tests/blockchain stateless-vector
+
+      - name: Extract a true-success fixture
+        run: .github/scripts/extract-stateless-fixture.sh
+
+      - name: Execute ELF under ere-server
+        run: |
+          docker pull ghcr.io/eth-act/ere/ere-server-${{ matrix.zkvm }}:${ERE_TAG}
+          docker run \
+            -e RUST_LOG=info \
+            -v $PWD/output:/output \
+            ghcr.io/eth-act/ere/ere-server-${{ matrix.zkvm }}:${ERE_TAG} \
+            --elf-path /output/${{ steps.artifact.outputs.name }}.elf \
+            execute \
+            --input-path /output/stateless-input.bin \
+            --output-path /output/stateless-output.bin
+
+      - name: Compare against the fixture
+        run: |
+          if ! cmp -s output/stateless-output.bin output/expected-output.bin; then
+            echo "statelessOutputBytes mismatch"
+            echo "expected: $(xxd -p output/expected-output.bin | tr -d '\n')"
+            echo "actual:   $(xxd -p output/stateless-output.bin | tr -d '\n')"
+            exit 1
           fi
-
-      - name: Upload ethrex guest elf artifact - ${{ matrix.zkvm }}
-        uses: actions/upload-artifact@v6
-        with:
-          name: ${{ env.ELF_ARTIFACT }}
-          path: ${{ env.ELF_ARTIFACT }}
-
-      - name: Upload ethrex guest verification keys - ${{ matrix.zkvm }}
-        uses: actions/upload-artifact@v6
-        with:
-          name: ${{ matrix.zkvm }}_verification_keys
-          path: ${{ matrix.zkvm }}_verification_keys/
-
-  # Creates ethrex-guests.tar.gz artifact including SP1, RISC0, and ZisK
-  # elf and verification keys.
-  package-ethrex-guest:
-    needs:
-      - build-ethrex-guest
-    runs-on: ubuntu-latest
-    env:
-      # Sanitize ref name by replacing '/' with '-' to match artifact names
-      SANITIZED_REF: ${{ github.ref_name }}
-    steps:
-      - name: Sanitize ref name
-        run: |
-          SANITIZED=$(echo "${{ github.ref_name }}" | tr '/' '-')
-          echo "SANITIZED_REF=$SANITIZED" >> $GITHUB_ENV
-
-      - name: Download SP1 elf artifact
-        uses: actions/download-artifact@v6
-        with:
-          name: ethrex-riscv32im-sp1-elf-${{ env.SANITIZED_REF }}
-          path: ethrex_guests/sp1/
-
-      - name: Download SP1 verification keys artifacts
-        uses: actions/download-artifact@v6
-        with:
-          name: sp1_verification_keys
-          path: ethrex_guests/sp1/
-
-      # risc0 elf/vk downloads temporarily removed: risc0 is disabled (c-kzg 2.1.8 floor exceeds
-      # the highest risc0 c-kzg fork tag), so build-ethrex-guest no longer produces these artifacts.
-
-      - name: Download ZisK elf artifact
-        uses: actions/download-artifact@v6
-        with:
-          name: ethrex-riscv64ima-zisk-elf-${{ env.SANITIZED_REF }}
-          path: ethrex_guests/zisk/
-
-      - name: Archive ethrex guests
-        run: |
-          cd ethrex_guests/
-          tar -czvf ../ethrex-guests.tar.gz .
-
-      - name: Upload ethrex guests artifact
-        uses: actions/upload-artifact@v6
-        with:
-          name: ethrex-guests.tar.gz
-          path: ethrex-guests.tar.gz
+          echo "statelessOutputBytes match"
 
   package-contracts:
     needs:
@@ -407,11 +423,11 @@ jobs:
     if: github.ref_type == 'tag' && github.event_name != 'workflow_dispatch'
     needs:
       - build-ethrex
-      - build-ethrex-guest
+      - build-stateless-validator-guest
+      - verify-stateless-validator-guest
       - build-docker
       - publish-docker
       - package-contracts
-      - package-ethrex-guest
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Code
@@ -423,7 +439,10 @@ jobs:
         uses: actions/download-artifact@v6
         with:
           path: ./bin
-          pattern: "ethrex*" # This includes the binaries, elf files, ethrex-verification-keys.tar.gz, and ethrex-contracts.tar.gz
+          # `*ethrex*`, not `ethrex*`: the stateless-validator artifacts are named
+          # stateless-validator-ethrex-<zkvm>-<version>, so a leading-anchor
+          # pattern would silently omit them from the release.
+          pattern: "*ethrex*"
 
       - name: Get previous tag
         run: |
