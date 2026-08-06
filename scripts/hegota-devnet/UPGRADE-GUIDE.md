@@ -230,10 +230,11 @@ unset (fall back to F).
 ### Variant: a config field the genesis generator cannot emit
 
 Some behavior is gated on a chain-config field `ethereum-genesis-generator` knows
-nothing about (EIP-8312's `utxoFramesTime` is the current example). Path 2 applies
-unchanged — schedule it in the future, swap binaries while still pre-activation —
-plus one step: write the field into each EL's `/network-configs/genesis.json` after
-the enclave is up, then restart that EL.
+nothing about. EIP-8312's `utxoFramesTime` and EIP-7805's `focilTime` are the two
+current examples. Path 2 applies unchanged — schedule it in the future, swap
+binaries while still pre-activation — plus one step: write the field into each
+EL's `/network-configs/genesis.json` after the enclave is up, then restart that
+EL.
 
 Three things make this step go wrong quietly rather than loudly:
 
@@ -251,6 +252,42 @@ Three things make this step go wrong quietly rather than loudly:
   timestamp. An un-patched node degrades by rejecting the new transaction shape, never
   by rewriting history — so the failure looks like "the feature doesn't work" rather
   than a split.
+
+#### `focilTime` is not like the others: it halts the node it is set on
+
+`utxoFramesTime` widens what the EL accepts, so a node that has it while its peers
+do not still follows the chain. `focilTime` changes the **Engine API contract**:
+from `T`, `engine_newPayloadV5` and `engine_forkchoiceUpdatedV4` return
+`UnsupportedFork`, because only V6/V5 carry `inclusionListTransactions`. A
+consensus client that cannot drive V6 has nothing left to call, so that EL stops
+importing and stops building. This is per-node liveness loss at a timestamp, not a
+degraded feature.
+
+So `focilTime` has a prerequisite the other fields do not: **the consensus client
+must implement EIP-7805 before the field is set at all**, and this devnet runs
+`ethpandaops/lighthouse:glamsterdam-devnet-7`, which does not.
+
+`sigp/lighthouse@focil` is the candidate, and on the axes that matter it is a
+strict superset of `unstable` (the branch the devnet-7 images build from): the
+same `ForkName` list through `Gloas` and `Heze`, `JsonPayloadAttributesV4` and
+`V5` both carrying `slot_number` and `target_gas_limit`, and the engine set
+extended with `forkchoiceUpdatedV5`, `newPayloadV6` and `getInclusionListV1`.
+Teku's `prototype/focil` matches on all of it too. What is unproven is whether
+either handles the rest of the devnet-7 network config, since both branches sit
+~100+ commits behind their own master; branch dates alone do not settle it, so
+measure rather than infer.
+
+Test that on a scratch enclave with `focilTime` set, never on the live chain.
+Swapping the CL image on the running devnet is a separate question from Path 1:
+that path covers ELs, and the CL genesis state is frozen because re-genesis is
+forbidden. Settle the swap procedure before scheduling a timestamp.
+
+Verify the prerequisite before scheduling, not after: with `focilTime` unset the
+EL omits `engine_getInclusionListV1`, `engine_forkchoiceUpdatedV5` and
+`engine_newPayloadV6` from `engine_exchangeCapabilities`, so a FOCIL-capable CL
+fails negotiation rather than half-enabling itself. That makes "does this CL
+actually speak FOCIL" answerable on a scratch enclave with `focilTime` set,
+without touching the live chain.
 
 ## Re-genesis — FORBIDDEN
 
