@@ -267,17 +267,48 @@ jobs:
       - name: Extract a true-success fixture
         run: .github/scripts/extract-stateless-fixture.sh
 
-      - name: Execute ELF under ere-server
+      # `ere-server` has no `execute` subcommand: its only commands are the
+      # server itself and `keygen`. Execution is the Twirp RPC
+      # `/twirp/api.ZkvmService/Execute`, served while it runs in server mode.
+      - name: Start ere-server
         run: |
           docker pull ghcr.io/eth-act/ere/ere-server-${{ matrix.zkvm }}:${ERE_TAG}
-          docker run \
+          docker run -d --name ere-server \
             -e RUST_LOG=info \
+            -p 3000:3000 \
             -v $PWD/output:/output \
             ghcr.io/eth-act/ere/ere-server-${{ matrix.zkvm }}:${ERE_TAG} \
+            --port 3000 \
             --elf-path /output/${{ steps.artifact.outputs.name }}.elf \
-            execute \
-            --input-path /output/stateless-input.bin \
-            --output-path /output/stateless-output.bin
+            cpu
+
+          # `/health` flips to 200 once the ELF is loaded and the server is up.
+          for _ in $(seq 1 60); do
+            if curl -sf http://localhost:3000/health > /dev/null; then
+              echo "ere-server is up"
+              exit 0
+            fi
+            if [ -z "$(docker ps -q -f name=ere-server)" ]; then
+              echo "::error::ere-server exited before becoming healthy"
+              docker logs ere-server
+              exit 1
+            fi
+            sleep 2
+          done
+          echo "::error::ere-server did not become healthy within 120s"
+          docker logs ere-server
+          exit 1
+
+      - name: Execute ELF under ere-server
+        run: |
+          .github/scripts/ere-execute.py \
+            http://localhost:3000/twirp/api.ZkvmService/Execute \
+            output/stateless-input.bin \
+            output/stateless-output.bin
+
+      - name: ere-server logs
+        if: always()
+        run: docker logs ere-server 2>&1 | tail -50 || true
 
       - name: Compare against the fixture
         run: |
