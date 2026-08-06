@@ -26,7 +26,7 @@ async fn test_server(peer_table: Option<PeerTable>) -> DiscoveryServer {
         PeerTableServer::spawn(
             local_node.node_id(),
             10,
-            Store::new("", EngineType::InMemory).expect("Failed to create store"),
+            Some(Store::new("", EngineType::InMemory).expect("Failed to create store")),
         )
     });
     DiscoveryServer::new_for_discv5_test(
@@ -178,7 +178,7 @@ async fn test_enr_update_request_on_pong() {
     let peer_table = PeerTableServer::spawn(
         local_node.node_id(),
         10,
-        Store::new("", EngineType::InMemory).expect("Failed to create store"),
+        Some(Store::new("", EngineType::InMemory).expect("Failed to create store")),
     );
 
     peer_table.new_contact_records(vec![remote_record]).unwrap();

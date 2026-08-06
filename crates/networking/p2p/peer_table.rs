@@ -477,7 +477,7 @@ pub struct PeerTableServer {
     peers: IndexMap<H256, PeerData>,
     already_tried_peers: FxHashSet<H256>,
     target_peers: usize,
-    store: Store,
+    store: Option<Store>,
     /// Standalone session store, independent of contacts.
     /// Allows sessions to be stored even before the contact's ENR is known/parseable.
     sessions: FxHashMap<H256, Session>,
@@ -491,11 +491,11 @@ pub struct PeerTableServer {
 
 #[actor(protocol = PeerTableServerProtocol)]
 impl PeerTableServer {
-    pub fn spawn(local_node_id: H256, target_peers: usize, store: Store) -> PeerTable {
+    pub fn spawn(local_node_id: H256, target_peers: usize, store: Option<Store>) -> PeerTable {
         PeerTableServer::new(local_node_id, target_peers, store).start()
     }
 
-    pub(crate) fn new(local_node_id: H256, target_peers: usize, store: Store) -> Self {
+    pub(crate) fn new(local_node_id: H256, target_peers: usize, store: Option<Store>) -> Self {
         Self {
             local_node_id,
             buckets: vec![KBucket::default(); NUMBER_OF_BUCKETS],
@@ -1480,7 +1480,7 @@ impl PeerTableServer {
                         })
                         .unwrap_or(false);
                     let is_fork_id_valid = if should_update {
-                        Self::evaluate_fork_id(&node_record, &self.store).await
+                        Self::evaluate_fork_id(&node_record, self.store.as_ref()).await
                     } else {
                         None
                     };
@@ -1498,7 +1498,7 @@ impl PeerTableServer {
                         }
                     }
                 } else {
-                    let is_fork_id_valid = Self::evaluate_fork_id(&node_record, &self.store).await;
+                    let is_fork_id_valid = Self::evaluate_fork_id(&node_record, self.store.as_ref()).await;
                     let mut contact = Contact::new(node, DiscoveryProtocol::Discv5);
                     contact.is_fork_id_valid = is_fork_id_valid;
                     contact.record = Some(node_record);
@@ -1509,7 +1509,14 @@ impl PeerTableServer {
         }
     }
 
-    async fn evaluate_fork_id(record: &NodeRecord, store: &Store) -> Option<bool> {
+    /// Judges the remote's `eth` ENR entry against our chain.
+    ///
+    /// Returns `None` when there is no `Store`: a caller running discovery for a
+    /// non-Ethereum chain has no fork id to compare against, and `None` means
+    /// "not applicable" rather than `Some(false)`'s "known bad", which
+    /// `do_get_contact_to_initiate` treats as permanently unusable.
+    async fn evaluate_fork_id(record: &NodeRecord, store: Option<&Store>) -> Option<bool> {
+        let store = store?;
         if let Some(remote_fork_id) = record.get_fork_id() {
             backend::is_fork_id_valid(store, remote_fork_id)
                 .await
@@ -1776,5 +1783,31 @@ mod tests {
         let mut remote = H256::zero();
         remote.0[0] = 0x80;
         assert_eq!(bucket_index(&local, &remote), Some(255));
+    }
+
+    #[tokio::test]
+    async fn store_less_table_leaves_fork_id_unevaluated() {
+        // A peer table with no Store cannot judge fork ids, so it must report
+        // "unknown" (None) rather than "invalid" (Some(false)). Some(false)
+        // would make do_get_contact_to_initiate skip the contact forever.
+        let mut table = PeerTableServer::new(H256::zero(), 10, None);
+        let signer = secp256k1::SecretKey::new(&mut rand::rngs::OsRng);
+        let node = Node::new(
+            "127.0.0.1".parse().unwrap(),
+            30303,
+            30303,
+            H512::from_slice(
+                &secp256k1::PublicKey::from_secret_key(secp256k1::SECP256K1, &signer)
+                    .serialize_uncompressed()[1..],
+            ),
+        );
+        let record = NodeRecord::from_node(&node, 1, &signer).unwrap();
+
+        table.do_new_contact_records(vec![record]).await;
+
+        let contact = table
+            .get_contact(&node.node_id())
+            .expect("contact was inserted");
+        assert_eq!(contact.is_fork_id_valid, None);
     }
 }

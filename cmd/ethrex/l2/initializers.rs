@@ -286,7 +286,7 @@ pub async fn init_l2(
         let peer_table = PeerTableServer::spawn(
             local_p2p_node.node_id(),
             opts.node_opts.target_peers,
-            store.clone(),
+            Some(store.clone()),
         );
         let p2p_context = P2PContext::new(
             local_p2p_node.clone(),

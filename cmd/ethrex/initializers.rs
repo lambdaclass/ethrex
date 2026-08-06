@@ -812,8 +812,11 @@ pub async fn init_l1(
 
     let local_node_record = get_local_node_record(&datadir, &local_p2p_node, &signer);
 
-    let peer_table =
-        PeerTableServer::spawn(local_p2p_node.node_id(), opts.target_peers, store.clone());
+    let peer_table = PeerTableServer::spawn(
+        local_p2p_node.node_id(),
+        opts.target_peers,
+        Some(store.clone()),
+    );
 
     // TODO: Check every module starts properly.
     let tracker = TaskTracker::new();
