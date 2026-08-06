@@ -28,7 +28,7 @@ use crate::{
         message::{EthCapVersion, SnapCapVersion},
         p2p::{
             self, Capability, DisconnectMessage, DisconnectReason, PingMessage, PongMessage,
-            SUPPORTED_ETH_CAPABILITIES, SUPPORTED_SNAP_CAPABILITIES,
+            SUPPORTED_ETH_CAPABILITIES, advertised_snap_capabilities,
         },
         snap::{Snap2BlockAccessLists, Snap2GetBlockAccessLists, TrieNodes},
     },
@@ -1115,12 +1115,10 @@ where
 {
     // This allow is because in l2 we mut the capabilities
     // to include the l2 cap
+    let snap_capabilities = advertised_snap_capabilities(state.blockchain.is_synced());
     #[allow(unused_mut)]
-    let mut supported_capabilities: Vec<Capability> = [
-        &SUPPORTED_ETH_CAPABILITIES[..],
-        &SUPPORTED_SNAP_CAPABILITIES[..],
-    ]
-    .concat();
+    let mut supported_capabilities: Vec<Capability> =
+        [&SUPPORTED_ETH_CAPABILITIES[..], snap_capabilities].concat();
     #[cfg(feature = "l2")]
     if state.l2_state.is_supported() {
         supported_capabilities.push(crate::rlpx::l2::SUPPORTED_BASED_CAPABILITIES[0].clone());
@@ -1161,8 +1159,10 @@ where
                         }
                     }
                     "snap" => {
-                        if SUPPORTED_SNAP_CAPABILITIES.contains(cap)
-                            && cap.version > negotiated_snap_version
+                        // Match against what this connection actually advertised, not the
+                        // full set: negotiating a version we withheld would hand back the
+                        // snap/2 the sync gate above deliberately kept off the wire.
+                        if snap_capabilities.contains(cap) && cap.version > negotiated_snap_version
                         {
                             negotiated_snap_version = cap.version;
                         }

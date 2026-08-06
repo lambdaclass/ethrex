@@ -15,10 +15,26 @@ for the `block_access_list_hash` header field.
 
 ## Capability negotiation
 
-`SUPPORTED_SNAP_CAPABILITIES = [snap(1), snap(2)]`. The Hello exchange picks
-the highest mutually supported snap version (see
-`rlpx/connection/server.rs`). The negotiated version lives on
-`Established.negotiated_snap_capability` and is mirrored into the codec via
+What a connection advertises depends on sync state, via
+`advertised_snap_capabilities(is_synced)`. EIP-8189 ("Backwards Compatibility")
+says a node synchronizing data should use one snap version for state sync and
+serve both only once synchronization is complete. ethrex's state sync reconciles
+the trie with `GetTrieNodes`, which snap/2 removes, so a node that offered
+snap/2 while still syncing would negotiate away its only healing mechanism and
+then find no peer able to serve it — `heal_state_trie` would re-queue its batch
+and spin. So an unsynced node advertises `snap/1` alone and a synced one
+advertises both.
+
+The consequence is that BAL replay is currently reachable only on the serving
+side: state sync always runs unsynced, so it always negotiates snap/1. The
+client half becomes live once the download-loop catch-up (EIP-8189 step 4) lands
+and healing is no longer required.
+
+The Hello exchange picks the highest snap version common to the peer's list and
+the set this connection advertised — matching against the advertised set rather
+than `SUPPORTED_SNAP_CAPABILITIES`, so a version withheld by the gate above is
+not negotiated back. The result lives on `Established.negotiated_snap_capability`
+and is mirrored into the codec via
 `RLPxCodec.snap_version: Arc<RwLock<Option<SnapCapVersion>>>` so cross-version
 codes are rejected at decode time. `SnapCapVersion::V1` accepts codes
 `0x00..=0x07`; `V2` accepts `0x00..=0x05` plus `0x08`, `0x09`.
