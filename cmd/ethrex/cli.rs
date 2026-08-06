@@ -468,6 +468,19 @@ pub struct Options {
         env = "ETHREX_MAX_REORG_DEPTH"
     )]
     pub max_reorg_depth: Option<u64>,
+    #[arg(
+        long = "experimental.binary-tree-delay",
+        value_name = "SECONDS",
+        help = "EXPERIMENTAL: schedule the EIP-8297 binary-tree state commitment this many seconds after the genesis timestamp.",
+        long_help = "EXPERIMENTAL, devnets only. Schedules the EIP-8297 binary-tree state commitment at `genesis.timestamp + SECONDS`; from the first block at or after that time, header.state_root is the binary-trie root instead of the Merkle-Patricia-Trie root.\n\
+                     \n\
+                     The delay is relative, not an absolute timestamp, so that a network definition written before genesis exists still gives every node the same absolute schedule. Mutually exclusive with a `binaryTreeTime` in the genesis config; passing both is rejected.\n\
+                     \n\
+                     NOT PERSISTED. The derived timestamp lives only in the running process, so every boot must re-supply the identical value. A node restarted without it reopens unscheduled and will reject the first post-activation block.",
+        help_heading = "Node options",
+        env = "ETHREX_EXPERIMENTAL_BINARY_TREE_DELAY"
+    )]
+    pub experimental_binary_tree_delay: Option<u64>,
 }
 
 impl Options {
@@ -563,6 +576,7 @@ impl Default for Options {
             no_bal_prefetch: false,
             no_bal_parallel_trie: false,
             max_reorg_depth: None,
+            experimental_binary_tree_delay: None,
         }
     }
 }
@@ -1470,5 +1484,19 @@ mod tests {
                 RpcNamespace::Admin,
             ]
         );
+    }
+
+    /// The exact spelling is load-bearing: scheduled devnet definitions pass it
+    /// verbatim, and every node in the network must agree on the value.
+    #[test]
+    fn experimental_binary_tree_delay_parses_and_defaults_to_unset() {
+        assert_eq!(
+            CLI::parse_from(["ethrex"])
+                .opts
+                .experimental_binary_tree_delay,
+            None
+        );
+        let cli = CLI::parse_from(["ethrex", "--experimental.binary-tree-delay=120"]);
+        assert_eq!(cli.opts.experimental_binary_tree_delay, Some(120));
     }
 }

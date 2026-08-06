@@ -28,6 +28,7 @@ fn sort_config(genesis_map: &Map<String, Value>) -> Result<Map<String, Value>, S
         "pragueTime",
         "osakaTime",
         "verkleTime",
+        "binaryTreeTime",
         "ethash",
         "depositContractAddress",
         "blobSchedule",

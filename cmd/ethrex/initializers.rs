@@ -701,6 +701,41 @@ pub fn get_ws_socket_addr(opts: &Options) -> SocketAddr {
     resolved
 }
 
+/// Resolves the EIP-8297 binary-tree activation timestamp from the two inputs
+/// that can supply it: a `binaryTreeTime` in the genesis JSON, and the
+/// `--experimental.binary-tree-delay` flag.
+///
+/// The flag is a *relative* delay off the genesis timestamp, so every node given
+/// the same genesis and the same delay derives the identical absolute schedule
+/// even though the yaml that carries the flag is written before genesis exists.
+///
+/// Supplying both is ambiguous, so it is rejected rather than resolved by
+/// precedence.
+fn resolve_binary_tree_time(
+    genesis_timestamp: u64,
+    genesis_binary_tree_time: Option<u64>,
+    delay: Option<u64>,
+) -> eyre::Result<Option<u64>> {
+    match (genesis_binary_tree_time, delay) {
+        (Some(configured), Some(_)) => Err(eyre::eyre!(
+            "--experimental.binary-tree-delay was passed, but the genesis config already sets \
+             binaryTreeTime ({configured}). Supply exactly one of the two: remove the flag to use \
+             the genesis schedule, or remove binaryTreeTime from the genesis config to derive the \
+             schedule from the delay."
+        )),
+        (configured, None) => Ok(configured),
+        (None, Some(delay)) => {
+            let time = genesis_timestamp.checked_add(delay).ok_or_else(|| {
+                eyre::eyre!(
+                    "--experimental.binary-tree-delay of {delay}s overflows past the genesis \
+                     timestamp ({genesis_timestamp})"
+                )
+            })?;
+            Ok(Some(time))
+        }
+    }
+}
+
 #[cfg(feature = "sync-test")]
 async fn set_sync_block(store: &Store) {
     if let Ok(block_number) = env::var("SYNC_BLOCK_NUM") {
@@ -734,7 +769,12 @@ pub async fn init_l1(
         init_datadir(&datadir);
     }
 
-    let genesis = network.get_genesis()?;
+    let mut genesis = network.get_genesis()?;
+    genesis.config.binary_tree_time = resolve_binary_tree_time(
+        genesis.timestamp,
+        genesis.config.binary_tree_time,
+        opts.experimental_binary_tree_delay,
+    )?;
     display_chain_initialization(&genesis);
     debug!("Preloading KZG trusted setup");
     ethrex_crypto::kzg::warm_up_trusted_setup();
@@ -1210,5 +1250,62 @@ mod tests {
     #[should_panic(expected = "--p2p.addr and --nat.extip must use the same address family")]
     fn family_mismatch_panics() {
         let _ = resolve_p2p_endpoints(Some("0.0.0.0"), Some("::1"), None, None);
+    }
+
+    // --- --experimental.binary-tree-delay ---------------------------------
+
+    use super::resolve_binary_tree_time;
+
+    /// Neither input: the chain stays unscheduled and behaves exactly as before.
+    #[test]
+    fn no_genesis_time_and_no_delay_leaves_the_chain_unscheduled() {
+        assert_eq!(
+            resolve_binary_tree_time(1_700_000_000, None, None).unwrap(),
+            None
+        );
+    }
+
+    /// The delay is relative so that every node given the same genesis and the
+    /// same delay derives the identical absolute schedule.
+    #[test]
+    fn delay_is_added_to_the_genesis_timestamp() {
+        assert_eq!(
+            resolve_binary_tree_time(1_700_000_000, None, Some(120)).unwrap(),
+            Some(1_700_000_120)
+        );
+        // A zero delay schedules at genesis itself, which is legal in-process.
+        assert_eq!(
+            resolve_binary_tree_time(1_700_000_000, None, Some(0)).unwrap(),
+            Some(1_700_000_000)
+        );
+    }
+
+    /// A `binaryTreeTime` already in the genesis JSON is honoured untouched when
+    /// no flag is passed.
+    #[test]
+    fn genesis_binary_tree_time_is_kept_without_the_flag() {
+        assert_eq!(
+            resolve_binary_tree_time(1_700_000_000, Some(1_700_000_500), None).unwrap(),
+            Some(1_700_000_500)
+        );
+    }
+
+    /// Genesis JSON and flag together are ambiguous; reject rather than pick a
+    /// winner, and name both inputs in the error.
+    #[test]
+    fn genesis_binary_tree_time_plus_the_flag_is_rejected() {
+        let err = resolve_binary_tree_time(1_700_000_000, Some(1_700_000_500), Some(120))
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("--experimental.binary-tree-delay"), "{err}");
+        assert!(err.contains("binaryTreeTime"), "{err}");
+    }
+
+    #[test]
+    fn an_overflowing_delay_is_rejected() {
+        let err = resolve_binary_tree_time(u64::MAX, None, Some(1))
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("--experimental.binary-tree-delay"), "{err}");
     }
 }
