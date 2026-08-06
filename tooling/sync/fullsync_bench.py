@@ -52,6 +52,7 @@ COMPOSE_PROJECT = "fullsync-bench"
 # filesystem — see `assert_same_filesystem`. Kept in step with BENCH_DATA_ROOT in the
 # compose override, which bind-mounts `<root>/data/<net>` into each container.
 DATA_ROOT = os.environ.get("BENCH_DATA_ROOT", "/mnt/raid10/fullsync-bench")
+DEFAULT_RESULTS_DIR = os.path.join(DATA_ROOT, "results")
 
 # One lock for the whole box: two measurement legs at once contend for CPU and disk and
 # both results are junk. Cycles take it exclusively, bootstraps share it (see `take_lock`).
@@ -578,14 +579,29 @@ def summarise(result, history):
     return line
 
 
-def post_slack(lines):
-    url = os.environ.get("SLACK_WEBHOOK_URL_SUCCESS")
+def post_slack(lines, all_ok=True):
+    """Report a round of cycles.
+
+    A round where something broke goes to the failure webhook. Note what this does *not*
+    mean while the watch is observe-only: a throughput number being low is not a failure,
+    because there is no baseline to judge it against yet. Only a cycle that could not
+    produce a valid measurement at all counts — a crashed or OOM-killed node, an unclean
+    exit, a leg that never reached its target.
+    """
+    key = "SLACK_WEBHOOK_URL_FAILED" if not all_ok else "SLACK_WEBHOOK_URL_SUCCESS"
+    url = os.environ.get(key)
+    if not url and not all_ok:
+        # Never drop a failure report just because the failure webhook is unconfigured.
+        url = os.environ.get("SLACK_WEBHOOK_URL_SUCCESS")
+        if url:
+            log(f"{key} unset; sending the failure report to the success webhook")
     if not url:
-        log("SLACK_WEBHOOK_URL_SUCCESS unset; skipping Slack")
+        log(f"{key} unset; skipping Slack")
         return
     # Observe-only by design for now: thresholds and step detection land once the
     # bootstrap period has produced enough data to derive them (see #7111).
-    header = "Full-sync throughput (observe-only)"
+    header = ("Full-sync throughput (observe-only)" if all_ok
+              else "Full-sync watch: cycle problem")
     message = {"blocks": [
         {"type": "header", "text": {"type": "plain_text", "text": header}},
         {"type": "section", "text": {"type": "mrkdwn", "text": "\n".join(lines)}},
@@ -643,13 +659,27 @@ def main():
                         help="comma-separated (mainnet,sepolia,hoodi). Run serially.")
     parser.add_argument("--state-root", default=os.path.join(DATA_ROOT, "state"),
                         help="where per-network base generations live")
-    parser.add_argument("--results-dir", default=os.path.join(DATA_ROOT, "results"))
+    parser.add_argument("--results-dir", default=DEFAULT_RESULTS_DIR)
     parser.add_argument("--bootstrap", action="store_true",
                         help="snap-sync each network to the tip and record it as the first "
                              "base, then exit. Run once per network before watching.")
     parser.add_argument("--once", action="store_true",
                         help="run a single cycle per network and exit")
+    parser.add_argument("--measure-blocks", type=int,
+                        help="override the measurement window. SMOKE TESTS ONLY — the "
+                             "series is only comparable if this stays fixed, so a run "
+                             "using it must also use a throwaway --results-dir.")
+    parser.add_argument("--gap-blocks", type=int,
+                        help="override the base's distance behind the tip. Smoke tests "
+                             "only, for the same reason.")
     args = parser.parse_args()
+
+    if (args.measure_blocks or args.gap_blocks) and args.results_dir == DEFAULT_RESULTS_DIR:
+        # Mixing a 2k-block sample into a series of 21.6k-block ones would shift the
+        # trailing median the comparison depends on.
+        raise SystemExit("--measure-blocks/--gap-blocks change what is being measured; "
+                         "point --results-dir somewhere throwaway so the real series is "
+                         "not polluted")
 
     nets = [n.strip() for n in args.networks.split(",") if n.strip()]
     for net in nets:
@@ -657,6 +687,12 @@ def main():
             raise SystemExit(f"unknown network {net!r}; known: {', '.join(NETWORKS)}")
 
     # Bootstraps may overlap each other; cycles get the box to themselves.
+    for net in nets:
+        if args.measure_blocks:
+            NETWORKS[net]["measure_blocks"] = args.measure_blocks
+        if args.gap_blocks:
+            NETWORKS[net]["gap_blocks"] = args.gap_blocks
+
     take_lock(shared=args.bootstrap)
     try:
         if args.bootstrap:
@@ -665,18 +701,21 @@ def main():
             return 0
 
         while True:
-            lines = []
+            lines, all_ok = [], True
             for net in nets:  # serial on purpose: concurrent legs contend and both are junk
                 try:
                     result = cycle(net, args.state_root, args.results_dir)
                     if result is None:  # gap not open yet, or no tip to compare against
                         continue
+                    if result.get("status") != "ok":
+                        all_ok = False
                     lines.append(summarise(result, load_history(args.results_dir, net)))
                 except Exception as exc:  # isolate: one network must not stop the others
                     log(f"{net}: cycle failed: {exc}")
                     lines.append(f"*{net}*: cycle failed — `{exc}`")
+                    all_ok = False
             if lines:
-                post_slack(lines)
+                post_slack(lines, all_ok=all_ok)
             if args.once:
                 return 0
             time.sleep(3600)

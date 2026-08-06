@@ -292,6 +292,31 @@ Run **observe-only for 2–3 weeks** after that before wiring up alerting: the r
 day-to-day σ is unknown, and thresholds should come from measured data rather than a guess.
 Alerting and step detection (trailing median + persistence, not day-vs-day) land later.
 
+### Rehearsing a cycle
+
+Waiting `M` days to discover that a log format moved or a webhook is wrong is a poor
+feedback loop, so `make fullsync-bench-smoke` runs one complete cycle immediately against
+a small window:
+
+```bash
+make fullsync-bench-smoke                          # hoodi, 2048-block window
+make fullsync-bench-smoke FULLSYNC_SMOKE_NET=sepolia
+```
+
+It exercises the real path end to end — restore, a genuine full-sync leg, graceful stop,
+metric extraction from live logs, the result JSON, base rotation and the Slack post — on a
+`cp -al` hardlink copy of a real base, so it costs almost no disk and cannot damage the
+live series. Stop the watch first; it holds the lock, and the smoke run will refuse.
+
+Keep the window at or above ~2048 blocks. Throughput is read from the per-batch metric
+line, which ethrex emits every 1024 blocks, so a smaller window can finish having logged
+no batch at all and be reported `no_batches`.
+
+`--measure-blocks` and `--gap-blocks` exist for this and nothing else. The runner refuses
+to accept them alongside the default results directory, because folding a 2k-block sample
+into a series of 21.6k-block ones would drag the trailing median that the comparison rests
+on.
+
 ### Storage layout
 
 Everything lives under `BENCH_DATA_ROOT` (default `/mnt/raid10/fullsync-bench`):

@@ -5,7 +5,8 @@ start-sepolia-metrics-docker start-holesky-metrics-docker start-hoodi-metrics-do
 start-metrics-docker tail-syncing-logs tail-metrics-logs copy_flamegraph import-with-metrics \
 multisync-up multisync-down multisync-clean multisync-logs multisync-status \
 multisync-restart multisync-monitor multisync-run multisync-loop multisync-loop-auto \
-fullsync-bench-bootstrap fullsync-bench-watch fullsync-bench-once fullsync-bench-test
+fullsync-bench-bootstrap fullsync-bench-watch fullsync-bench-once fullsync-bench-smoke \
+fullsync-bench-test
 
 ETHREX_DIR ?= "../.."
 
@@ -385,6 +386,32 @@ fullsync-bench-once: ## One measure+advance cycle per network, then exit.
 		--networks $(FULLSYNC_BENCH_NETWORKS) \
 		--state-root $(FULLSYNC_BENCH_STATE) \
 		--results-dir $(FULLSYNC_BENCH_RESULTS) \
+		--once
+
+FULLSYNC_SMOKE_NET ?= hoodi
+FULLSYNC_SMOKE_ROOT ?= $(BENCH_DATA_ROOT)/smoke
+FULLSYNC_SMOKE_MEASURE ?= 2048
+FULLSYNC_SMOKE_GAP ?= 4096
+
+fullsync-bench-smoke: ## Rehearse a full cycle now, on a throwaway copy of a real base.
+	@test -d "$(FULLSYNC_BENCH_STATE)/$(FULLSYNC_SMOKE_NET)/base.0" \
+		|| { echo "no base for $(FULLSYNC_SMOKE_NET); run fullsync-bench-bootstrap first"; exit 1; }
+	rm -rf "$(FULLSYNC_SMOKE_ROOT)"
+	mkdir -p "$(FULLSYNC_SMOKE_ROOT)/state/$(FULLSYNC_SMOKE_NET)"
+# Hardlink copy, so rehearsing costs no real disk and cannot touch the live series.
+	cp -al "$(FULLSYNC_BENCH_STATE)/$(FULLSYNC_SMOKE_NET)/base.0" \
+		"$(FULLSYNC_SMOKE_ROOT)/state/$(FULLSYNC_SMOKE_NET)/base.0"
+# bench-base.json is rewritten in place, and truncating a hardlink would take the real
+# base's metadata with it. Break that one link.
+	cp --remove-destination \
+		"$(FULLSYNC_BENCH_STATE)/$(FULLSYNC_SMOKE_NET)/base.0/bench-base.json" \
+		"$(FULLSYNC_SMOKE_ROOT)/state/$(FULLSYNC_SMOKE_NET)/base.0/bench-base.json"
+	python3 fullsync_bench.py \
+		--networks $(FULLSYNC_SMOKE_NET) \
+		--state-root "$(FULLSYNC_SMOKE_ROOT)/state" \
+		--results-dir "$(FULLSYNC_SMOKE_ROOT)/results" \
+		--measure-blocks $(FULLSYNC_SMOKE_MEASURE) \
+		--gap-blocks $(FULLSYNC_SMOKE_GAP) \
 		--once
 
 fullsync-bench-test: ## Unit-test metric extraction and the tip oracle (no node needed).
