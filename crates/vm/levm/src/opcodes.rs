@@ -2,7 +2,7 @@ use crate::{
     errors::{OpcodeResult, VMError},
     opcode_handlers::{
         OpInvalidHandler, OpStopHandler, OpcodeHandler, arithmetic::*, bitwise_comparison::*,
-        block::*, dup::*, environment::*, exchange::*, keccak::*, logging::*, push::*,
+        block::*, dup::*, environment::*, exchange::*, frame_tx::*, keccak::*, logging::*, push::*,
         stack_memory_storage_flow::*, system::*,
     },
     vm::VM,
@@ -172,6 +172,13 @@ pub enum Opcode {
     LOG2 = 0xA2,
     LOG3 = 0xA3,
     LOG4 = 0xA4,
+    // EIP-8141 Frame Transaction opcodes
+    APPROVE = 0xAA,
+    TXPARAM = 0xB0,
+    FRAMEDATALOAD = 0xB1,
+    FRAMEDATACOPY = 0xB2,
+    FRAMEPARAM = 0xB3,
+    SIGPARAM = 0xB4,
     // EIP-8024
     DUPN = 0xE6,
     SWAPN = 0xE7,
@@ -327,6 +334,12 @@ impl From<u8> for Opcode {
             table[0xA2] = Opcode::LOG2;
             table[0xA3] = Opcode::LOG3;
             table[0xA4] = Opcode::LOG4;
+            table[0xAA] = Opcode::APPROVE;
+            table[0xB0] = Opcode::TXPARAM;
+            table[0xB1] = Opcode::FRAMEDATALOAD;
+            table[0xB2] = Opcode::FRAMEDATACOPY;
+            table[0xB3] = Opcode::FRAMEPARAM;
+            table[0xB4] = Opcode::SIGPARAM;
             table[0x51] = Opcode::MLOAD;
             table[0x52] = Opcode::MSTORE;
             table[0x53] = Opcode::MSTORE8;
@@ -411,13 +424,16 @@ impl<'a> VM<'a> {
     pub(crate) fn build_opcode_table(fork: Fork) -> &'static [OpCodeFn; 256] {
         // Built once at compile time; immutable, so sharing across all VMs is trivially safe.
         // Instantiated with `'static` so the initializers don't reference the impl's `'a`.
+        static HEGOTA: [OpCodeFn; 256] = VM::<'static>::build_opcode_table_hegota();
         static AMSTERDAM: [OpCodeFn; 256] = VM::<'static>::build_opcode_table_amsterdam();
         static OSAKA: [OpCodeFn; 256] = VM::<'static>::build_opcode_table_osaka();
         static PRE_OSAKA: [OpCodeFn; 256] = VM::<'static>::build_opcode_table_pre_osaka();
         static PRE_CANCUN: [OpCodeFn; 256] = VM::<'static>::build_opcode_table_pre_cancun();
         static PRE_SHANGHAI: [OpCodeFn; 256] = VM::<'static>::build_opcode_table_pre_shanghai();
 
-        if fork >= Fork::Amsterdam {
+        if fork >= Fork::Hegota {
+            &HEGOTA
+        } else if fork >= Fork::Amsterdam {
             &AMSTERDAM
         } else if fork >= Fork::Osaka {
             &OSAKA
@@ -635,5 +651,50 @@ impl<'a> VM<'a> {
         // EIP-7843 opcode
         opcode_table[Opcode::SLOTNUM as usize] = OpCodeFn::new::<OpSlotNumHandler>();
         opcode_table
+    }
+
+    #[expect(clippy::as_conversions, clippy::indexing_slicing)]
+    const fn build_opcode_table_hegota() -> [OpCodeFn; 256] {
+        let mut opcode_table: [OpCodeFn; 256] = Self::build_opcode_table_amsterdam();
+
+        // EIP-8141 Frame Transaction opcodes (Hegota)
+        opcode_table[Opcode::APPROVE as usize] = OpCodeFn::new::<OpApproveHandler>();
+        opcode_table[Opcode::TXPARAM as usize] = OpCodeFn::new::<OpTxParamHandler>();
+        opcode_table[Opcode::FRAMEDATALOAD as usize] = OpCodeFn::new::<OpFrameDataLoadHandler>();
+        opcode_table[Opcode::FRAMEDATACOPY as usize] = OpCodeFn::new::<OpFrameDataCopyHandler>();
+        opcode_table[Opcode::FRAMEPARAM as usize] = OpCodeFn::new::<OpFrameParamHandler>();
+        opcode_table[Opcode::SIGPARAM as usize] = OpCodeFn::new::<OpSigParamHandler>();
+
+        opcode_table
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    #[allow(
+        clippy::indexing_slicing,
+        reason = "fixed 256-entry table indexed by u8"
+    )]
+    fn frame_opcodes_not_installed_before_hegota() {
+        fn same_handler(a: OpCodeFn, b: OpCodeFn) -> bool {
+            // Compare handler identity by fn-pointer address without an `as`
+            // cast (the workspace denies clippy::as_conversions).
+            std::ptr::fn_addr_eq(a.0, b.0)
+        }
+        // 0xEF is never assigned in any table -> it holds the invalid handler.
+        for fork in [Fork::Osaka, Fork::Amsterdam] {
+            let table = VM::build_opcode_table(fork);
+            for byte in [0xAAusize, 0xB0, 0xB1, 0xB2, 0xB3, 0xB4] {
+                assert!(
+                    same_handler(table[byte], table[0xEF]),
+                    "frame opcode {byte:#x} must be invalid at {fork:?}"
+                );
+            }
+        }
+        let hegota = VM::build_opcode_table(Fork::Hegota);
+        assert!(!same_handler(hegota[0xAA], hegota[0xEF]));
     }
 }

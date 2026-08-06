@@ -4,8 +4,8 @@ use ethrex_common::{
     Address, Bloom, H160,
     constants::{EMPTY_KECCAK_HASH, EMPTY_TRIE_HASH},
     types::{
-        AccountState, BlockBody, BlockHeader, ChainConfig, Code, Genesis, Receipt, Transaction,
-        TxType,
+        AccountState, Block, BlockBody, BlockHeader, ChainConfig, Code, Genesis, Receipt,
+        Transaction, TxType,
     },
     utils::keccak,
 };
@@ -56,6 +56,7 @@ async fn test_store_suite(engine_type: EngineType) {
     run_test(test_genesis_block, engine_type).await;
     run_test(test_iter_accounts, engine_type).await;
     run_test(test_iter_storage, engine_type).await;
+    run_test(test_bad_blocks, engine_type).await;
 }
 
 async fn test_iter_accounts(store: Store) {
@@ -234,6 +235,46 @@ async fn test_store_block(store: Store) {
     assert_eq!(stored_body, block_body);
 }
 
+async fn test_bad_blocks(store: Store) {
+    // Empty store returns no bad blocks.
+    assert!(store.get_bad_blocks().await.unwrap().is_empty());
+
+    let (_, body) = create_block_for_testing();
+    let make_block = |number: u64| {
+        let header = BlockHeader {
+            number,
+            ..Default::default()
+        };
+        Block::new(header, body.clone())
+    };
+
+    // Insert out of order; the list must come back sorted by descending number.
+    let block_a = make_block(5);
+    let block_b = make_block(9);
+    let block_c = make_block(2);
+    store.add_bad_block(block_a.clone()).await.unwrap();
+    store.add_bad_block(block_b.clone()).await.unwrap();
+    store.add_bad_block(block_c.clone()).await.unwrap();
+
+    let bad_blocks = store.get_bad_blocks().await.unwrap();
+    let numbers: Vec<u64> = bad_blocks.iter().map(|b| b.header.number).collect();
+    assert_eq!(numbers, vec![9, 5, 2]);
+
+    // Duplicate (number, hash) is ignored.
+    store.add_bad_block(block_b.clone()).await.unwrap();
+    assert_eq!(store.get_bad_blocks().await.unwrap().len(), 3);
+
+    // The list is bounded: inserting many more evicts the lowest-numbered blocks.
+    for number in 100..140u64 {
+        store.add_bad_block(make_block(number)).await.unwrap();
+    }
+    let bounded = store.get_bad_blocks().await.unwrap();
+    assert_eq!(bounded.len(), 16);
+    // Highest kept is the most recent insert; lowest kept is above the evicted range.
+    assert_eq!(bounded.first().unwrap().header.number, 139);
+    assert_eq!(bounded.last().unwrap().header.number, 124);
+}
+
 fn create_block_for_testing() -> (BlockHeader, BlockBody) {
     let block_header = BlockHeader {
         parent_hash: H256::from_str(
@@ -306,6 +347,8 @@ async fn test_store_block_receipt(store: Store) {
         succeeded: true,
         cumulative_gas_used: 1747,
         logs: vec![],
+        payer: None,
+        frame_receipts: None,
     };
     let block_number = 6;
     let index = 4;

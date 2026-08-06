@@ -2,14 +2,15 @@ use crate::sequencer::errors::BlockProducerError;
 use ethrex_blockchain::{
     Blockchain,
     constants::TX_GAS_COST,
-    payload::{PayloadBuildContext, PayloadBuildResult, TransactionQueue, apply_plain_transaction},
+    payload::{
+        PayloadBuildContext, PayloadBuildResult, TransactionQueue, apply_plain_transaction,
+        is_deterministic_invalid,
+    },
 };
 use ethrex_common::NativeCrypto;
 use ethrex_common::{
     U256,
-    types::{
-        Block, EIP1559_DEFAULT_SERIALIZED_LENGTH, Fork, SAFE_BYTES_PER_BLOB, Transaction, TxKind,
-    },
+    types::{Block, EIP1559_DEFAULT_SERIALIZED_LENGTH, SAFE_BYTES_PER_BLOB, Transaction, TxKind},
 };
 use ethrex_l2_common::{
     messages::get_block_l2_out_messages, privileged_transactions::PRIVILEGED_TX_BUDGET,
@@ -235,7 +236,6 @@ pub async fn fill_transactions(
         if is_amsterdam
             && let Err(e) = check_2d_gas_allowance(
                 &head_tx.tx,
-                Fork::Amsterdam,
                 context.block_regular_gas_used,
                 context.block_state_gas_used,
                 configured_block_gas_limit,
@@ -291,6 +291,15 @@ pub async fn fill_transactions(
                     (context.vm.db.bal_recorder_mut(), bal_checkpoint)
                 {
                     recorder.tx_restore(checkpoint);
+                }
+                // A deterministically-invalid tx would otherwise re-occupy its
+                // sender's queue head on every build and starve that sender's
+                // other txs, exactly as on the L1 path. The L2-specific transient
+                // failure (gas limit vs the reserved `l1_gas`) is a distinct levm
+                // variant, so it is not mistaken for a permanent one here.
+                if is_deterministic_invalid(&e) {
+                    debug!("Evicting deterministically-invalid transaction {tx_hash}: {e}");
+                    blockchain.remove_transaction_from_pool(&tx_hash)?;
                 }
                 // Ignore following txs from sender
                 txs.pop();

@@ -38,6 +38,8 @@ const PATTERNS: &[Entry] = &[
         text: "Gas limit changed more than allowed from the parent" },
     Entry { canonical: "TransactionException.TYPE_3_TX_MAX_BLOB_GAS_ALLOWANCE_EXCEEDED", kind: Kind::Sub,
         text: "Exceeded MAX_BLOB_GAS_PER_BLOCK" },
+    Entry { canonical: "TransactionException.INVALID_CHAINID", kind: Kind::Sub,
+        text: "Transaction has invalid chain id" },
     Entry { canonical: "BlockException.INVALID_DEPOSIT_EVENT_LAYOUT", kind: Kind::Sub,
         text: "Invalid deposit request layout" },
     Entry { canonical: "BlockException.INVALID_REQUESTS", kind: Kind::Sub,
@@ -64,6 +66,8 @@ const PATTERNS: &[Entry] = &[
         text: "Base fee per gas is incorrect" },
 
     // ─── mapping_regex ────────────────────────────────────────────────────────────
+    Entry { canonical: "TransactionException.INVALID_SIGNATURE_VRS", kind: Kind::Re,
+        text: r"Couldn't recover addresses with error: invalid signature|Error decoding field 'signature_y_parity' of type bool: MalformedBoolean" },
     Entry { canonical: "TransactionException.PRIORITY_GREATER_THAN_MAX_FEE_PER_GAS", kind: Kind::Re,
         text: r"(?i)priority fee.* is greater than max fee.*" },
     Entry { canonical: "TransactionException.TYPE_4_EMPTY_AUTHORIZATION_LIST", kind: Kind::Re,
@@ -133,7 +137,7 @@ const PATTERNS: &[Entry] = &[
     Entry { canonical: "BlockException.INVALID_BAL_HASH", kind: Kind::Re,
         text: r"BAL validation failed" },
     Entry { canonical: "BlockException.INVALID_BLOCK_ACCESS_LIST", kind: Kind::Re,
-        text: r"Block access list contains index \d+ exceeding max valid index \d+|Failed to RLP decode BAL|Block access list .+ not in strictly ascending order.*|BAL validation failed for (tx \d+|system_tx|withdrawal): .*|BAL validation failed: .*|absent from BAL|Block access list slot .+ is in both storage_changes and storage_reads.*|Invalid block hash" },
+        text: r"Block access list contains index \d+ exceeding max valid index \d+|Failed to RLP decode BAL|Block access list .+ not in strictly ascending order.*|BAL validation failed for (tx \d+|system_tx|withdrawal): .*|BAL validation failed: .*|absent from BAL|Block access list slot .+ is in both storage_changes and storage_reads.*|Block access list .+ has an empty change set|Invalid block hash" },
     Entry { canonical: "BlockException.INCORRECT_BLOCK_FORMAT", kind: Kind::Re,
         text: r"Block access list hash does not match the one in the header after executing|Block access list contains index \d+ exceeding max valid index \d+|Failed to RLP decode BAL|Block access list accounts not in strictly ascending order.*" },
 ];
@@ -221,6 +225,20 @@ mod tests {
         assert!(!matches_canonical(
             "TransactionException.DOES_NOT_EXIST",
             "anything at all",
+        ));
+    }
+
+    #[test]
+    fn regex_match_invalid_signature_vrs() {
+        // Legacy tx with out-of-range v (sender recovery rejects the signature).
+        assert!(matches_canonical(
+            "TransactionException.INVALID_SIGNATURE_VRS",
+            "Invalid transaction: Couldn't recover addresses with error: invalid signature",
+        ));
+        // Typed tx with a non-bool y_parity (RLP decode rejects the signature).
+        assert!(matches_canonical(
+            "TransactionException.INVALID_SIGNATURE_VRS",
+            "Error decoding field 'signature_y_parity' of type bool: MalformedBoolean",
         ));
     }
 

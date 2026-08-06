@@ -51,6 +51,13 @@ pub trait StorageBackend: Debug + Send + Sync {
     // TODO: remove this and provide historic data via diff-layers
     /// Creates a checkpoint of the current database state at the specified path.
     fn create_checkpoint(&self, path: &Path) -> Result<(), StoreError>;
+
+    /// Durably persists all buffered writes to disk, so a subsequent process
+    /// start needs no crash recovery. Called on graceful shutdown. Defaults to a
+    /// no-op for backends that are already durable or purely in-memory.
+    fn flush(&self) -> Result<(), StoreError> {
+        Ok(())
+    }
 }
 
 /// Read-only transaction interface.
@@ -58,6 +65,21 @@ pub trait StorageBackend: Debug + Send + Sync {
 pub trait StorageReadView: Send + Sync {
     /// Retrieves a value by key from the specified table.
     fn get(&self, table: &'static str, key: &[u8]) -> Result<Option<Vec<u8>>, StoreError>;
+
+    /// Retrieves multiple values by key from the specified table.
+    /// Returns results in the same order as the input keys.
+    /// Backends that support batched reads (e.g. RocksDB `multi_get_cf`)
+    /// should override this for better throughput. Callers should not
+    /// assume `multi_get` is asymptotically faster than `get`; on backends
+    /// without a batched read primitive (e.g. the in-memory backend) the
+    /// default impl below is equivalent to N independent `get` calls.
+    fn multi_get(
+        &self,
+        table: &'static str,
+        keys: &[&[u8]],
+    ) -> Vec<Result<Option<Vec<u8>>, StoreError>> {
+        keys.iter().map(|k| self.get(table, k)).collect()
+    }
 
     /// Returns an iterator over all key-value pairs with the given prefix.
     fn prefix_iterator(
@@ -77,6 +99,16 @@ pub trait StorageReadView: Send + Sync {
         &self,
         table: &'static str,
     ) -> Result<Box<dyn Iterator<Item = PrefixResult> + '_>, StoreError>;
+
+    /// Returns the lowest key in `table` by lexicographic order, or `None` if the table is
+    /// empty. Backends that support forward iteration (e.g. RocksDB `IteratorMode::Start`)
+    /// should implement this in O(1).
+    fn first_key(&self, table: &'static str) -> Result<Option<Vec<u8>>, StoreError>;
+
+    /// Returns the highest key in `table` by lexicographic order, or `None` if the table is
+    /// empty. Backends that support reverse iteration (e.g. RocksDB `IteratorMode::End`) should
+    /// implement this in O(1).
+    fn last_key(&self, table: &'static str) -> Result<Option<Vec<u8>>, StoreError>;
 }
 
 /// Write transaction interface.
@@ -100,15 +132,17 @@ pub trait StorageWriteBatch: Send {
     /// Removes a key-value pair from the specified table.
     fn delete(&mut self, table: &'static str, key: &[u8]) -> Result<(), StoreError>;
 
-    /// Removes every key in `[start, end)` from the specified table, compared
-    /// **lexicographically** (`start` inclusive, `end` exclusive). On RocksDB
-    /// this is a single range tombstone, dramatically cheaper than issuing N
-    /// point deletes for a large contiguous range.
+    /// Removes every key in `[start, end)` from the specified table.
     ///
-    /// Precondition: the table's keys must be encoded so lexicographic order
-    /// matches the intended range order (e.g. big-endian numbers). A
-    /// little-endian-keyed CF (such as `CANONICAL_BLOCK_HASHES`) would delete
-    /// the wrong set of keys.
+    /// Half-open range; `end` is exclusive. Equivalent to enumerating each key
+    /// in the range and calling [`delete`], but backends with native range-delete
+    /// support (e.g. RocksDB's `delete_range_cf`) can implement it more efficiently
+    /// — a single range tombstone instead of N point deletes.
+    ///
+    /// Lexicographic byte order is used for the range bounds — callers using
+    /// numeric keys must encode them in a representation whose lex order matches
+    /// numeric order (e.g. `u64::to_be_bytes()`). A little-endian-keyed CF (such
+    /// as `CANONICAL_BLOCK_HASHES`) would delete the wrong set of keys.
     fn delete_range(
         &mut self,
         table: &'static str,

@@ -11,7 +11,10 @@ use crate::{
     utils::RpcErr,
 };
 use ethereum_types::{Bloom, BloomInput};
-use ethrex_common::{H160, H256};
+use ethrex_common::{
+    H160, H256,
+    types::{BlockBody, BlockHeader},
+};
 use ethrex_crypto::NativeCrypto;
 use ethrex_storage::Store;
 use serde::Deserialize;
@@ -50,9 +53,14 @@ pub struct LogsFilter {
     /// Up to which block to stop retrieving logs.
     /// Will default to `latest` if not provided.
     pub to_block: BlockIdentifier,
+    /// Restricts the filter to a single block, by hash. The spec defines this as
+    /// an alternative to the `fromBlock`/`toBlock` range, so the two forms are
+    /// mutually exclusive and this one takes precedence when present.
+    pub block_hash: Option<H256>,
     /// The addresses from where the logs origin from.
     pub address_filters: Option<AddressFilter>,
-    /// Which topics to filter.
+    /// Which topics to filter. Empty means "match any topic", which is also what
+    /// an absent `topics` field means.
     pub topics: Vec<TopicFilter>,
 }
 impl RpcHandler for LogsFilter {
@@ -82,18 +90,41 @@ impl RpcHandler for LogsFilter {
                     })
                     .transpose()?
                     .flatten();
+                let block_hash = param
+                    .get("blockHash")
+                    .map(
+                        |block_hash| match serde_json::from_value::<H256>(block_hash.clone()) {
+                            Ok(hash) => Ok(hash),
+                            _ => Err(RpcErr::WrongParam("blockHash".to_string())),
+                        },
+                    )
+                    .transpose()?;
+                // Every field of the filter object is optional in the spec, so an
+                // absent `topics` means "match any topic" rather than an error.
                 let topics_filters = param
                     .get("topics")
-                    .ok_or_else(|| RpcErr::MissingParam("topics".to_string()))
-                    .and_then(|topics| {
+                    .map(|topics| {
                         match serde_json::from_value::<Option<Vec<TopicFilter>>>(topics.clone()) {
                             Ok(filters) => Ok(filters),
                             _ => Err(RpcErr::WrongParam("topics".to_string())),
                         }
-                    })?;
+                    })
+                    .transpose()?
+                    .flatten();
+                // The spec models the filter as one of two shapes: a block range,
+                // or a single block by hash. Combining them is a malformed request
+                // rather than a silent precedence rule.
+                if block_hash.is_some()
+                    && (param.contains_key("fromBlock") || param.contains_key("toBlock"))
+                {
+                    return Err(RpcErr::BadParams(
+                        "`blockHash` cannot be combined with `fromBlock` or `toBlock`".to_string(),
+                    ));
+                }
                 Ok(LogsFilter {
                     from_block,
                     to_block,
+                    block_hash,
                     address_filters,
                     topics: topics_filters.unwrap_or_else(Vec::new),
                 })
@@ -125,94 +156,97 @@ pub(crate) async fn fetch_logs_with_filter(
     filter: &LogsFilter,
     storage: Store,
 ) -> Result<Vec<RpcLog>, RpcErr> {
-    let from = filter
-        .from_block
-        .resolve_block_number(&storage)
-        .await?
-        .ok_or(RpcErr::WrongParam("fromBlock".to_string()))?;
-    let to = filter
-        .to_block
-        .resolve_block_number(&storage)
-        .await?
-        .ok_or(RpcErr::WrongParam("toBlock".to_string()))?;
-    // Malformed user range (e.g. fromBlock=100, toBlock=50) — reject before
-    // clamping so we don't silently accept inverted ranges.
-    if from > to {
-        return Err(RpcErr::BadParams("Empty range".to_string()));
-    }
-    // Clamp `from` up to the earliest unpruned block so that we don't attempt
-    // to load block bodies / receipts that have already been pruned.
-    let earliest = storage.get_earliest_block_number().await?;
-    let from = from.max(earliest);
-    // Entire requested range is below the prune cutoff — no logs to return.
-    if from > to {
-        return Ok(vec![]);
-    }
     let address_filter: HashSet<_> = match &filter.address_filters {
         Some(AddressFilter::Single(address)) => std::iter::once(address).collect(),
         Some(AddressFilter::Many(addresses)) => addresses.iter().collect(),
         None => HashSet::new(),
     };
+    // Derive the filter's address/topic blooms once, up front, so the per-block
+    // header-bloom check below is a cheap bit-subset test instead of re-hashing
+    // every address and topic for each block in the range.
+    let bloom_matcher = BloomFilterMatcher::new(&address_filter, &filter.topics);
 
     let mut logs: Vec<RpcLog> = Vec::new();
-    // The idea here is to fetch every log and filter by address, if given.
-    // For that, we'll need each block in range, and its transactions,
-    // and for each transaction, we'll need its receipts, which
-    // contain the actual logs we want.
-    for block_num in from..=to {
-        // The block header carries a bloom filter over every (address, topic)
-        // pair logged in the block. If it can't possibly contain a log matching
-        // this filter, skip the block without loading its body or receipts.
-        let block_header = storage
-            .get_block_header(block_num)?
-            .ok_or(RpcErr::Internal(format!(
-                "Could not get header for block {block_num}"
-            )))?;
-        if !block_bloom_matches(&block_header.logs_bloom, &address_filter, &filter.topics) {
-            continue;
+    match filter.block_hash {
+        Some(block_hash) => {
+            let block_header = storage
+                .get_block_header_by_hash(block_hash)?
+                .ok_or_else(|| RpcErr::BadParams(format!("Unknown block hash {block_hash:#x}")))?;
+            if bloom_matcher.matches(&block_header.logs_bloom) {
+                let block_body =
+                    storage
+                        .get_block_body_by_hash(block_hash)
+                        .await?
+                        .ok_or(RpcErr::Internal(format!(
+                            "Could not get body for block {block_hash:#x}"
+                        )))?;
+                collect_block_logs(
+                    &storage,
+                    &block_header,
+                    &block_body,
+                    &address_filter,
+                    &mut logs,
+                )
+                .await?;
+            }
         }
-        // Take the body of the block, we
-        // will use it to access the transactions.
-        let block_body = storage
-            .get_block_body(block_num)
-            .await?
-            .ok_or(RpcErr::Internal(format!(
-                "Could not get body for block {block_num}"
-            )))?;
-        let block_hash = block_header.hash();
-
-        // Fetch all of the block's receipts in a single bulk read instead of a
-        // point lookup per transaction (each of which also re-resolved the
-        // canonical block hash). For mainnet blocks with hundreds of txs this
-        // is the dominant cost of eth_getLogs.
-        let receipts = storage.get_receipts_for_block(&block_hash).await?;
-
-        let mut block_log_index = 0_u64;
-
-        // Transactions share indices with their receipts; pair them by index.
-        for (tx_index, tx) in block_body.transactions.iter().enumerate() {
-            let tx_hash = tx.hash(&NativeCrypto);
-            let receipt = receipts.get(tx_index).ok_or(RpcErr::Internal(format!(
-                "Missing receipt for block {block_num} tx {tx_index}"
-            )))?;
-
-            if receipt.succeeded {
-                for log in &receipt.logs {
-                    if address_filter.is_empty() || address_filter.contains(&log.address) {
-                        // Some extra data is needed when
-                        // forming the RPC response.
-                        logs.push(RpcLog {
-                            log: log.clone().into(),
-                            log_index: block_log_index,
-                            transaction_hash: tx_hash,
-                            transaction_index: tx_index as u64,
-                            block_number: block_num,
-                            block_hash,
-                            removed: false,
-                        });
-                    }
-                    block_log_index += 1;
+        None => {
+            let from = filter
+                .from_block
+                .resolve_block_number(&storage)
+                .await?
+                .ok_or(RpcErr::WrongParam("fromBlock".to_string()))?;
+            let to = filter
+                .to_block
+                .resolve_block_number(&storage)
+                .await?
+                .ok_or(RpcErr::WrongParam("toBlock".to_string()))?;
+            // Malformed user range (e.g. fromBlock=100, toBlock=50) — reject before
+            // clamping so we don't silently accept inverted ranges.
+            if from > to {
+                return Err(RpcErr::BadParams("Empty range".to_string()));
+            }
+            // Clamp `from` up to the earliest unpruned block so that we don't attempt
+            // to load block bodies / receipts that have already been pruned.
+            let earliest = storage.get_earliest_block_number().await?;
+            let from = from.max(earliest);
+            // Entire requested range is below the prune cutoff — no logs to return.
+            if from > to {
+                return Ok(vec![]);
+            }
+            // The idea here is to fetch every log and filter by address, if given.
+            // For that, we'll need each block in range, and its transactions,
+            // and for each transaction, we'll need its receipts, which
+            // contain the actual logs we want.
+            for block_num in from..=to {
+                // The block header carries a bloom filter over every (address, topic)
+                // pair logged in the block. If it can't possibly contain a log matching
+                // this filter, skip the block without loading its body or receipts.
+                let block_header = storage
+                    .get_block_header(block_num)?
+                    .ok_or(RpcErr::Internal(format!(
+                        "Could not get header for block {block_num}"
+                    )))?;
+                if !bloom_matcher.matches(&block_header.logs_bloom) {
+                    continue;
                 }
+                // Take the body of the block, we
+                // will use it to access the transactions.
+                let block_body =
+                    storage
+                        .get_block_body(block_num)
+                        .await?
+                        .ok_or(RpcErr::Internal(format!(
+                            "Could not get body for block {block_num}"
+                        )))?;
+                collect_block_logs(
+                    &storage,
+                    &block_header,
+                    &block_body,
+                    &address_filter,
+                    &mut logs,
+                )
+                .await?;
             }
         }
     }
@@ -253,45 +287,138 @@ pub(crate) async fn fetch_logs_with_filter(
     Ok(filtered_logs)
 }
 
-/// Necessary-condition check: returns `true` if the block's header bloom could
-/// contain a log matching the filter, `false` only when it provably cannot.
-///
-/// A log matches when its address is one of the requested addresses (or none
-/// were requested) AND, for every constrained topic position, the log's topic
-/// equals one of the allowed values. Since the header bloom records every
-/// logged address and topic (position-agnostic), a matching log implies its
-/// address and each constrained topic are present in the bloom. We therefore
-/// require: at least one requested address present (if any), and at least one
-/// allowed topic present for each constrained position. Bloom false positives
-/// are fine — exact filtering still runs on the blocks we don't skip.
-fn block_bloom_matches(
-    bloom: &Bloom,
+/// Collect every address-matching log of one block into `logs`, pairing the
+/// block's transactions with their receipts by index.
+async fn collect_block_logs(
+    storage: &Store,
+    block_header: &BlockHeader,
+    block_body: &BlockBody,
     address_filter: &HashSet<&H160>,
-    topics: &[TopicFilter],
-) -> bool {
-    if !address_filter.is_empty()
-        && !address_filter
+    logs: &mut Vec<RpcLog>,
+) -> Result<(), RpcErr> {
+    let block_num = block_header.number;
+    let block_hash = block_header.hash();
+
+    // Fetch all of the block's receipts in a single bulk read instead of a
+    // point lookup per transaction (each of which also re-resolved the
+    // canonical block hash). For mainnet blocks with hundreds of txs this
+    // is the dominant cost of eth_getLogs.
+    let receipts = storage.get_receipts_for_block(&block_hash).await?;
+
+    let mut block_log_index = 0_u64;
+
+    // Transactions share indices with their receipts; pair them by index.
+    for (tx_index, tx) in block_body.transactions.iter().enumerate() {
+        let tx_hash = tx.hash(&NativeCrypto);
+        let receipt = receipts.get(tx_index).ok_or(RpcErr::Internal(format!(
+            "Missing receipt for block {block_num} tx {tx_index}"
+        )))?;
+
+        if receipt.succeeded {
+            for log in &receipt.logs {
+                if address_filter.is_empty() || address_filter.contains(&log.address) {
+                    // Some extra data is needed when
+                    // forming the RPC response.
+                    logs.push(RpcLog {
+                        log: log.clone().into(),
+                        log_index: block_log_index,
+                        transaction_hash: tx_hash,
+                        transaction_index: tx_index as u64,
+                        block_number: block_num,
+                        block_hash,
+                        removed: false,
+                    });
+                }
+                block_log_index += 1;
+            }
+        }
+    }
+    Ok(())
+}
+
+/// A log filter's addresses and topic positions pre-derived into header-bloom
+/// `Bloom`s once, so the per-block check is a cheap bit-subset test rather than
+/// re-hashing every address/topic for each block in the range.
+///
+/// `Bloom::contains_input` internally builds a `Bloom` from the input (a keccak
+/// hash plus bit extraction) before testing it; for wide-range queries that skip
+/// most blocks that derivation dominates the per-block cost. We do it once here.
+struct BloomFilterMatcher {
+    /// One bloom per requested address; empty means no address constraint.
+    addresses: Vec<Bloom>,
+    /// One entry per *constrained* topic position, each holding that position's
+    /// alternatives; at least one must be present. Wildcard positions impose no
+    /// constraint and are dropped (a no-op in the all-positions check), so the
+    /// position index is irrelevant — the header bloom is position-agnostic.
+    topic_positions: Vec<Vec<Bloom>>,
+}
+
+impl BloomFilterMatcher {
+    fn new(address_filter: &HashSet<&H160>, topics: &[TopicFilter]) -> Self {
+        let to_bloom = |bytes: &[u8]| Bloom::from(BloomInput::Raw(bytes));
+        let addresses = address_filter
             .iter()
-            .any(|address| bloom.contains_input(BloomInput::Raw(address.as_bytes())))
-    {
-        return false;
+            .map(|address| to_bloom(address.as_bytes()))
+            .collect();
+        let topic_positions = topics
+            .iter()
+            .filter_map(|topic_filter| match topic_filter {
+                // A wildcard position imposes no constraint; drop it.
+                TopicFilter::Topic(None) => None,
+                TopicFilter::Topic(Some(topic)) => Some(vec![to_bloom(topic.as_bytes())]),
+                // An empty alternatives list, or one containing any `None`, is a
+                // wildcard for this position (the `None` means "any topic" —
+                // without it, `topics: [[null, T]]` would skip blocks matching
+                // via the wildcard and drop valid logs); drop it.
+                TopicFilter::Topics(sub_topics)
+                    if sub_topics.is_empty() || sub_topics.iter().any(Option::is_none) =>
+                {
+                    None
+                }
+                // Otherwise OR over the concrete alternatives.
+                TopicFilter::Topics(sub_topics) => Some(
+                    sub_topics
+                        .iter()
+                        .flatten()
+                        .map(|topic| to_bloom(topic.as_bytes()))
+                        .collect(),
+                ),
+            })
+            .collect();
+        Self {
+            addresses,
+            topic_positions,
+        }
     }
 
-    let topic_in_bloom = |topic: &H256| bloom.contains_input(BloomInput::Raw(topic.as_bytes()));
-    topics.iter().all(|topic_filter| match topic_filter {
-        // A wildcard position imposes no constraint.
-        TopicFilter::Topic(None) => true,
-        TopicFilter::Topic(Some(topic)) => topic_in_bloom(topic),
-        // An empty alternatives list, or one containing any `None`, is a
-        // wildcard for this position (the `None` means "any topic" — without
-        // it, `topics: [[null, T]]` would skip blocks matching via the wildcard
-        // and drop valid logs). Otherwise OR over the concrete alternatives.
-        TopicFilter::Topics(sub_topics) => {
-            sub_topics.is_empty()
-                || sub_topics.iter().any(Option::is_none)
-                || sub_topics.iter().flatten().any(topic_in_bloom)
+    /// Necessary-condition check: returns `true` if the block's header bloom
+    /// could contain a log matching the filter, `false` only when it provably
+    /// cannot.
+    ///
+    /// A log matches when its address is one of the requested addresses (or none
+    /// were requested) AND, for every constrained topic position, the log's
+    /// topic equals one of the allowed values. Since the header bloom records
+    /// every logged address and topic (position-agnostic), a matching log
+    /// implies its address and each constrained topic are present in the bloom.
+    /// We therefore require: at least one requested address present (if any), and
+    /// at least one allowed topic present for each constrained position. Bloom
+    /// false positives are fine — exact filtering still runs on the blocks we
+    /// don't skip.
+    fn matches(&self, block_bloom: &Bloom) -> bool {
+        if !self.addresses.is_empty()
+            && !self
+                .addresses
+                .iter()
+                .any(|address| block_bloom.contains_bloom(address))
+        {
+            return false;
         }
-    })
+        self.topic_positions.iter().all(|alternatives| {
+            alternatives
+                .iter()
+                .any(|topic| block_bloom.contains_bloom(topic))
+        })
+    }
 }
 
 #[cfg(test)]
@@ -356,6 +483,7 @@ mod pruning_log_tests {
         let filter = LogsFilter {
             from_block: BlockIdentifier::Number(0),
             to_block: BlockIdentifier::Number(5),
+            block_hash: None,
             address_filters: None,
             topics: vec![],
         };
@@ -379,6 +507,7 @@ mod pruning_log_tests {
         let filter = LogsFilter {
             from_block: BlockIdentifier::Number(0),
             to_block: BlockIdentifier::Number(5),
+            block_hash: None,
             address_filters: None,
             topics: vec![],
         };
@@ -398,6 +527,7 @@ mod pruning_log_tests {
         let filter = LogsFilter {
             from_block: BlockIdentifier::Number(100),
             to_block: BlockIdentifier::Number(50),
+            block_hash: None,
             address_filters: None,
             topics: vec![],
         };
@@ -432,6 +562,167 @@ mod tests {
             "{request:?}"
         );
         assert_eq!(request.topics, vec![TopicFilter::Topic(Some(H256::zero()))]);
+    }
+
+    #[test]
+    fn test_get_logs_without_topics() {
+        // Every field of the filter object is optional; an absent `topics` asks
+        // for every log in range.
+        let params = Some(vec![json!({"fromBlock": "0x1", "toBlock": "0x2"})]);
+        let request = LogsFilter::parse(&params).unwrap();
+
+        assert!(request.topics.is_empty(), "{request:?}");
+        assert!(request.block_hash.is_none(), "{request:?}");
+    }
+
+    #[test]
+    fn test_get_logs_with_empty_filter() {
+        let params = Some(vec![json!({})]);
+        let request = LogsFilter::parse(&params).unwrap();
+
+        assert!(request.topics.is_empty(), "{request:?}");
+        assert!(request.address_filters.is_none(), "{request:?}");
+        assert!(
+            matches!(request.from_block, BlockIdentifier::Tag(BlockTag::Latest)),
+            "{request:?}"
+        );
+    }
+
+    #[test]
+    fn test_get_logs_by_block_hash() {
+        let params = Some(vec![json!({
+            "blockHash": "0x0000000000000000000000000000000000000000000000000000000000000001"
+        })]);
+        let request = LogsFilter::parse(&params).unwrap();
+
+        assert_eq!(request.block_hash, Some(H256::from_low_u64_be(1)));
+        assert!(request.topics.is_empty(), "{request:?}");
+    }
+
+    #[test]
+    fn test_get_logs_block_hash_with_range_is_rejected() {
+        // The spec models the two forms as mutually exclusive.
+        for extra in ["fromBlock", "toBlock"] {
+            let params = Some(vec![json!({
+                "blockHash": "0x0000000000000000000000000000000000000000000000000000000000000001",
+                extra: "0x1"
+            })]);
+            assert!(
+                matches!(LogsFilter::parse(&params), Err(RpcErr::BadParams(_))),
+                "expected {extra} alongside blockHash to be rejected"
+            );
+        }
+    }
+
+    #[test]
+    fn test_get_logs_malformed_block_hash_is_rejected() {
+        let params = Some(vec![json!({"blockHash": "not a hash"})]);
+        assert!(matches!(
+            LogsFilter::parse(&params),
+            Err(RpcErr::WrongParam(_))
+        ));
+    }
+
+    /// A `blockHash` filter must return the logs of exactly that block, even
+    /// when the block is no longer canonical. Resolving the hash through the
+    /// canonical number index would instead return the logs of whatever block
+    /// replaced it at the same height after a reorg, silently, which is the
+    /// substitution EIP-234 exists to prevent.
+    #[tokio::test]
+    async fn test_get_logs_by_block_hash_survives_reorg() {
+        use ethrex_common::types::{Block, BlockBody, LegacyTransaction, Log, Receipt, TxType};
+        use ethrex_storage::EngineType;
+
+        let storage =
+            Store::new("temp.db", EngineType::InMemory).expect("Failed to create test DB");
+
+        // Two competing blocks at height 1, distinguished by their extra_data
+        // and by the address their single log comes from.
+        let make_block = |tag: u8| {
+            let header = BlockHeader {
+                number: 1,
+                extra_data: vec![tag].into(),
+                ..Default::default()
+            };
+            let body = BlockBody {
+                transactions: vec![ethrex_common::types::Transaction::LegacyTransaction(
+                    LegacyTransaction::default(),
+                )],
+                ommers: Default::default(),
+                withdrawals: Default::default(),
+            };
+            Block::new(header, body)
+        };
+        let reorged_out = make_block(1);
+        let canonical = make_block(2);
+        let reorged_hash = reorged_out.hash();
+        let canonical_hash = canonical.hash();
+        assert_ne!(reorged_hash, canonical_hash);
+
+        let receipt_logging_from = |address: H160| {
+            Receipt::new(
+                TxType::Legacy,
+                true,
+                21000,
+                vec![Log {
+                    address,
+                    topics: vec![],
+                    data: Default::default(),
+                }],
+            )
+        };
+        storage.add_block(reorged_out).await.unwrap();
+        storage.add_block(canonical).await.unwrap();
+        storage
+            .add_receipts(
+                reorged_hash,
+                vec![receipt_logging_from(H160::repeat_byte(1))],
+            )
+            .await
+            .unwrap();
+        storage
+            .add_receipts(
+                canonical_hash,
+                vec![receipt_logging_from(H160::repeat_byte(2))],
+            )
+            .await
+            .unwrap();
+        // Make the second block the canonical one at height 1, demoting the first.
+        storage
+            .forkchoice_update(vec![(1, canonical_hash)], 1, canonical_hash, None, None)
+            .await
+            .unwrap();
+
+        let filter_for = |block_hash| LogsFilter {
+            from_block: BlockIdentifier::Tag(BlockTag::Latest),
+            to_block: BlockIdentifier::Tag(BlockTag::Latest),
+            block_hash: Some(block_hash),
+            address_filters: None,
+            topics: vec![],
+        };
+
+        // The demoted block's hash returns the demoted block's own logs.
+        let logs = fetch_logs_with_filter(&filter_for(reorged_hash), storage.clone())
+            .await
+            .unwrap();
+        assert_eq!(logs.len(), 1, "{logs:?}");
+        assert_eq!(logs[0].block_hash, reorged_hash);
+        assert_eq!(logs[0].log.address, H160::repeat_byte(1));
+
+        // The canonical block's hash returns its logs, not the demoted one's.
+        let logs = fetch_logs_with_filter(&filter_for(canonical_hash), storage.clone())
+            .await
+            .unwrap();
+        assert_eq!(logs.len(), 1, "{logs:?}");
+        assert_eq!(logs[0].block_hash, canonical_hash);
+        assert_eq!(logs[0].log.address, H160::repeat_byte(2));
+
+        // A hash the node has never seen is an error, not an empty result.
+        let unknown = H256::repeat_byte(0xff);
+        assert!(matches!(
+            fetch_logs_with_filter(&filter_for(unknown), storage).await,
+            Err(RpcErr::BadParams(_))
+        ));
     }
 
     #[test]
@@ -485,44 +776,40 @@ mod tests {
         addresses.iter().collect()
     }
 
+    fn bloom_matches(bloom: &Bloom, addresses: &HashSet<&H160>, topics: &[TopicFilter]) -> bool {
+        BloomFilterMatcher::new(addresses, topics).matches(bloom)
+    }
+
     #[test]
     fn bloom_match_empty_filter_always_matches() {
         // No address and no topic constraints: never skip a block.
-        assert!(block_bloom_matches(&Bloom::zero(), &HashSet::new(), &[]));
+        assert!(bloom_matches(&Bloom::zero(), &HashSet::new(), &[]));
     }
 
     #[test]
     fn bloom_match_address_present_and_absent() {
         let bloom = bloom_with(&[addr(1)], &[]);
-        assert!(block_bloom_matches(&bloom, &addr_set(&[addr(1)]), &[]));
-        assert!(!block_bloom_matches(&bloom, &addr_set(&[addr(2)]), &[]));
+        assert!(bloom_matches(&bloom, &addr_set(&[addr(1)]), &[]));
+        assert!(!bloom_matches(&bloom, &addr_set(&[addr(2)]), &[]));
     }
 
     #[test]
     fn bloom_match_multiple_addresses_is_or() {
         let bloom = bloom_with(&[addr(1)], &[]);
         // Only one of the requested addresses needs to be present.
-        assert!(block_bloom_matches(
-            &bloom,
-            &addr_set(&[addr(1), addr(2)]),
-            &[]
-        ));
-        assert!(!block_bloom_matches(
-            &bloom,
-            &addr_set(&[addr(2), addr(3)]),
-            &[]
-        ));
+        assert!(bloom_matches(&bloom, &addr_set(&[addr(1), addr(2)]), &[]));
+        assert!(!bloom_matches(&bloom, &addr_set(&[addr(2), addr(3)]), &[]));
     }
 
     #[test]
     fn bloom_match_topic_present_and_absent() {
         let bloom = bloom_with(&[], &[topic(1)]);
-        assert!(block_bloom_matches(
+        assert!(bloom_matches(
             &bloom,
             &HashSet::new(),
             &[TopicFilter::Topic(Some(topic(1)))]
         ));
-        assert!(!block_bloom_matches(
+        assert!(!bloom_matches(
             &bloom,
             &HashSet::new(),
             &[TopicFilter::Topic(Some(topic(2)))]
@@ -532,12 +819,12 @@ mod tests {
     #[test]
     fn bloom_match_wildcard_topic_ignored() {
         // A `None` (wildcard) topic position imposes no constraint.
-        assert!(block_bloom_matches(
+        assert!(bloom_matches(
             &Bloom::zero(),
             &HashSet::new(),
             &[TopicFilter::Topic(None)]
         ));
-        assert!(block_bloom_matches(
+        assert!(bloom_matches(
             &Bloom::zero(),
             &HashSet::new(),
             &[TopicFilter::Topics(vec![])]
@@ -551,7 +838,7 @@ mod tests {
         // even when the sibling topic is absent from the bloom. Regression test for
         // a false-negative that dropped valid logs for `topics: [[null, T]]` queries.
         let bloom = bloom_with(&[], &[]); // contains neither topic
-        assert!(block_bloom_matches(
+        assert!(bloom_matches(
             &bloom,
             &HashSet::new(),
             &[TopicFilter::Topics(vec![Some(topic(2)), None])]
@@ -562,13 +849,13 @@ mod tests {
     fn bloom_match_topic_position_is_or_across_positions_is_and() {
         let bloom = bloom_with(&[], &[topic(1), topic(2)]);
         // OR within a position: any allowed value present is enough.
-        assert!(block_bloom_matches(
+        assert!(bloom_matches(
             &bloom,
             &HashSet::new(),
             &[TopicFilter::Topics(vec![Some(topic(2)), Some(topic(9))])]
         ));
         // AND across positions: every constrained position must be satisfied.
-        assert!(block_bloom_matches(
+        assert!(bloom_matches(
             &bloom,
             &HashSet::new(),
             &[
@@ -576,7 +863,7 @@ mod tests {
                 TopicFilter::Topic(Some(topic(2))),
             ]
         ));
-        assert!(!block_bloom_matches(
+        assert!(!bloom_matches(
             &bloom,
             &HashSet::new(),
             &[
@@ -589,13 +876,13 @@ mod tests {
     #[test]
     fn bloom_match_requires_both_address_and_topic() {
         let bloom = bloom_with(&[addr(1)], &[topic(1)]);
-        assert!(block_bloom_matches(
+        assert!(bloom_matches(
             &bloom,
             &addr_set(&[addr(1)]),
             &[TopicFilter::Topic(Some(topic(1)))]
         ));
         // Address matches but topic does not.
-        assert!(!block_bloom_matches(
+        assert!(!bloom_matches(
             &bloom,
             &addr_set(&[addr(1)]),
             &[TopicFilter::Topic(Some(topic(2)))]

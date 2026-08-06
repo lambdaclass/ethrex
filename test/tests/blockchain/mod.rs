@@ -1,9 +1,17 @@
+mod bal_content_validation_tests;
 mod bal_hash_parallel_skip;
+mod bal_validate_tx_execution_tests;
 mod batch_tests;
+mod canonical_commit_gate_tests;
 mod eip7702_revert_authority_tests;
 mod eip7702_zero_transfer_tests;
+mod explicit_blob_tx_tests;
 mod l1_tx_type_tests;
 mod logs_bloom_tests;
 mod mempool_tests;
+mod payload_build_loop_tests;
+mod payload_tests;
 mod smoke_tests;
+mod storage_sharding_tests;
+mod typed_zero_transaction_tests;
 mod wrong_chain_id_tests;

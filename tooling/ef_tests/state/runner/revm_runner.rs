@@ -188,22 +188,19 @@ pub fn prepare_revm_for_tx<'state>(
         .chain_config()
         .map_err(|err| EFTestRunnerError::VMInitializationFailed(err.to_string()))?;
 
-    let blob_excess_gas_and_price = if test.env.current_excess_blob_gas.is_none() {
-        None
-    } else {
-        Some(BlobExcessGasAndPrice::new(
-            test.env
-                .current_excess_blob_gas
-                .unwrap()
-                .try_into()
-                .unwrap(),
-            if fork >= &Fork::Prague {
-                BLOB_BASE_FEE_UPDATE_FRACTION_PRAGUE
-            } else {
-                BLOB_BASE_FEE_UPDATE_FRACTION
-            },
-        ))
-    };
+    let blob_excess_gas_and_price =
+        test.env
+            .current_excess_blob_gas
+            .map(|current_excess_blob_gas| {
+                BlobExcessGasAndPrice::new(
+                    current_excess_blob_gas.try_into().unwrap(),
+                    if fork >= &Fork::Prague {
+                        BLOB_BASE_FEE_UPDATE_FRACTION_PRAGUE
+                    } else {
+                        BLOB_BASE_FEE_UPDATE_FRACTION
+                    },
+                )
+            });
     let block_env = RevmBlockEnv {
         number: RevmU256::from_limbs(test.env.current_number.0),
         beneficiary: RevmAddress(test.env.current_coinbase.0.into()),
@@ -620,6 +617,8 @@ pub async fn _ensure_post_state_revm(
                             state_gas_used: 0,
                             logs: vec![],
                             output: Bytes::new(),
+                            payer_address: None,
+                            frame_results: None,
                         }),
                         //TODO: This is not a TransactionReport because it is REVM
                         error_reason,
@@ -643,6 +642,8 @@ pub async fn _ensure_post_state_revm(
                                 state_gas_used: 0,
                                 logs: vec![],
                                 output: Bytes::new(),
+                                payer_address: None,
+                                frame_results: None,
                             }),
                             //TODO: This is not a TransactionReport because it is REVM
                             format!("Post-state root mismatch on REVM runner, line: {}", line!())
@@ -709,6 +710,8 @@ pub fn fork_to_spec_id(fork: Fork) -> SpecId {
         Fork::BPO4 => SpecId::OSAKA,
         Fork::BPO5 => SpecId::OSAKA,
         Fork::Amsterdam => SpecId::OSAKA, // Amsterdam maps to OSAKA until revm adds AMSTERDAM SpecId
+        Fork::Hegota => SpecId::OSAKA,    // Hegota maps to OSAKA until revm adds a newer SpecId
+        Fork::LStar => SpecId::OSAKA, // LStar (native rollups) maps to OSAKA; revm has no LStar SpecId
     }
 }
 
