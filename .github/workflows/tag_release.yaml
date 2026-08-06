@@ -369,6 +369,13 @@ jobs:
           dockerhub_username: ${{ vars.DOCKERHUB_USERNAME }}
           dockerhub_password: ${{ secrets.DOCKERHUB_TOKEN }}
           push: ${{ github.event_name != 'workflow_dispatch'}}
+          # A manual dispatch must not write shared state. `push` alone is not
+          # enough: buildkit's `cache-to` writes cache layers to the registry
+          # independently of it, and for any ref that is neither main nor a PR
+          # the cache scope resolves to `main` — so a dispatch from a feature
+          # branch would overwrite main's cache tags. Falling back to the GHA
+          # cache keeps the build warm without touching GHCR.
+          cache_write: ${{ github.event_name != 'workflow_dispatch' }}
           tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.TAG_VERSION }}-${{ matrix.arch }}
           platforms: linux/${{ matrix.arch }}
           variant: l1
@@ -383,6 +390,13 @@ jobs:
           dockerhub_username: ${{ vars.DOCKERHUB_USERNAME }}
           dockerhub_password: ${{ secrets.DOCKERHUB_TOKEN }}
           push: ${{ github.event_name != 'workflow_dispatch'}}
+          # A manual dispatch must not write shared state. `push` alone is not
+          # enough: buildkit's `cache-to` writes cache layers to the registry
+          # independently of it, and for any ref that is neither main nor a PR
+          # the cache scope resolves to `main` — so a dispatch from a feature
+          # branch would overwrite main's cache tags. Falling back to the GHA
+          # cache keeps the build warm without touching GHCR.
+          cache_write: ${{ github.event_name != 'workflow_dispatch' }}
           tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.TAG_VERSION }}-l2-${{ matrix.arch }}
           build_args: BUILD_FLAGS=--features l2,l2-sql
           platforms: linux/${{ matrix.arch }}
