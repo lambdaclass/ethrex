@@ -775,6 +775,25 @@ impl Blockchain {
             for updates in rx {
                 let current_length = queue_length.fetch_sub(1, Ordering::Acquire);
                 *max_queue_length = current_length.max(*max_queue_length);
+                // DEBUG(sr-120346349): dump ethrex's computed account diff for the
+                // target block (parent 120346348) so it can be diffed vs canonical.
+                if parent_header.number == 120346348 {
+                    for u in &updates {
+                        match &u.info {
+                            Some(info) => error!(
+                                "DEBUG-DIFF addr={:?} removed={} nonce={} balance={} code_hash={:?} nslots={}",
+                                u.address, u.removed, info.nonce, info.balance, info.code_hash, u.added_storage.len()
+                            ),
+                            None => error!(
+                                "DEBUG-DIFF addr={:?} removed={} info=None nslots={}",
+                                u.address, u.removed, u.added_storage.len()
+                            ),
+                        }
+                        for (k, v) in &u.added_storage {
+                            error!("DEBUG-SLOT addr={:?} slot={:?} val={:?}", u.address, k, v);
+                        }
+                    }
+                }
                 // Accumulate updates for witness generation if enabled
                 if let Some(acc) = &mut accumulator {
                     for update in updates.clone() {
