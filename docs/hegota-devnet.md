@@ -18,7 +18,7 @@ EIP-8141 itself lives on `main`; this branch adds only the three extension EIPs
 on top of it, plus the devnet infrastructure and the ethrex-only extensions.
 
 **Not yet included:**
-- **FOCIL (EIP-7805)** — **deferred**, on the `focil` branch (PR #7039). The eligibility boundary is now specified: EIP-8369 (*VOPS Profiles for FOCIL Eligibility*, ethereum/EIPs#12110) puts frame transactions in Profile 2, judged at a builder-claimed transaction index, and states that FOCIL eligibility and public mempool admission are separate policies. It is Informational, so enforcement still needs a Standards Track extension to EIP-7805 that does not exist yet, and `AA_VOPS_SLOT_COUNT` is unset, which blocks conformant Profile 2 classification. `focil` already excludes frame transactions from the IL satisfaction check, so combining the two is possible meanwhile, with frame-tx omission always excused.
+- **FOCIL (EIP-7805)** — **deferred**, on the `focil` branch (PR #7039). The eligibility boundary is now specified: EIP-8369 (*VOPS Profiles for FOCIL Eligibility*, ethereum/EIPs#12110) puts frame transactions in Profile 2, judged at a builder-claimed transaction index, and states that FOCIL eligibility and public mempool admission are separate policies. It is Informational, so enforcement still needs a Standards Track extension to EIP-7805 that does not exist yet; `AA_VOPS_SLOT_COUNT` is unset upstream and this branch picks a value (see below). `focil` already excludes frame transactions from the IL satisfaction check, so combining the two is possible meanwhile, with frame-tx omission always excused.
   The merge surface is 18 files, not just `payload.rs`: `crates/blockchain/{blockchain,payload,mempool,error}.rs`, `crates/networking/rpc/{lib,rpc,utils}.rs` and `rpc/eth/transaction.rs`, `crates/networking/p2p/rlpx/connection/server.rs`, `crates/common/types/genesis.rs`, `cmd/ethrex/{cli,initializers}.rs`, `cmd/ethrex/l2/initializers.rs`, `docs/CLI.md`, and four test module files.
 - **EIP-8288** (PQ sig + STARK aggregation) — deferred (upstream-blocked: no Lean leanSTARK/leanSPHINCS tooling; `AGGREGATED_VK`/hash TBD).
 
@@ -57,6 +57,13 @@ EIP-7906's Constants table carries only `TXTRACE_GAS_COST`, `EVENTDATACOPY_GAS_C
 - **Does not activate at `Fork::Hegota`**: its fork assignment is undecided upstream, so it gets its own `utxoFramesTime` chain-config timestamp. Absent by default, so the whole surface is inert until a chain opts in — and a future timestamp keeps the upgrade state-preserving (no new genesis).
 - A UTXO frame and a POST_TX frame may not share a transaction (v1 composition rule; neither upstream draft defines it).
 - `payer` is length-tested, never compared to numeric zero — closes a consensus-split ambiguity in the spec's pseudocode.
+
+### EIP-8369 (FOCIL Eligibility) — applies to the `focil` branch, not yet merged here
+- `AA_VOPS_SLOT_COUNT` = **4**, as a chain-config parameter rather than a constant. EIP-8369 leaves the value unset with a candidate range of 2 to 4 "pending benchmarks", so this fills a blank the spec left open rather than diverging from it.
+- Chosen at the top of the range for two reasons. It is the worst case for attester replay, so a result that fits the attestation deadline at 4 also fits at 2 and 3; and it is a superset, so no transaction eligible at a lower value becomes unreachable. A low value would make wallets ineligible, which presents as fewer enforcement obligations and reads as success.
+- The range covers the realistic validation surface: 1 slot for an address owner, 2 for a P256 pubkey, a third for a threshold or module word, with the fourth as headroom. Keyed nonces and recent roots already live in protocol state, so they cost no slots.
+- **This measures replay cost only.** EIP-8369 names two costs, replay time and the growth of the globally held surface. A devnet has too few accounts for the "first `AA_VOPS_SLOT_COUNT` slots of every account" storage cost to register, so no number produced here is evidence about that side.
+- The value is permissive relative to any final choice: a transaction eligible here may be ineligible once upstream settles the constant.
 
 ## Spec pins
 
