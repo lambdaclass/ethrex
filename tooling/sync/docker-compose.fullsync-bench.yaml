@@ -22,6 +22,23 @@
 #      node do bulk 1024-block batch sync. Without it the pair crawl forward together ~30
 #      blocks at a time and no throughput metric is emitted at all.
 services:
+  # Generate the JWT once and keep it. Multisync mints a fresh one on every start, which is
+  # fine there because it wipes its volumes between runs — but here the beacon node is
+  # recreated before every leg, and a new secret would leave the already-running execution
+  # node holding the old one. Engine auth then fails, fork choice never reaches the node,
+  # and it sits there syncing nothing while looking healthy.
+  # Also writes with `>` rather than `tee`, to keep the secret out of the container log.
+  setup-jwt-hoodi: &bench-jwt
+    command: >
+      sh -c 'apk add openssl &&
+      { [ -s /secrets/jwt.hex ] || openssl rand -hex 32 | tr -d "\n" > /secrets/jwt.hex; }'
+
+  setup-jwt-sepolia:
+    <<: *bench-jwt
+
+  setup-jwt-mainnet:
+    <<: *bench-jwt
+
   consensus-hoodi:
     volumes:
       - secrets-hoodi:/secrets
