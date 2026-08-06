@@ -92,7 +92,7 @@ use ethrex_rlp::constants::RLP_NULL;
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_storage::{
-    AccountUpdatesList, DB_COMMIT_THRESHOLD, Store, UpdateBatch, error::StoreError, hash_address,
+    AccountUpdatesList, Store, UpdateBatch, error::StoreError, hash_address,
     hash_key,
 };
 use ethrex_trie::node::{BranchNode, ExtensionNode, LeafNode};
@@ -2900,11 +2900,12 @@ impl Blockchain {
                 .cloned()
                 .map(Arc::new);
 
-            // Single canonical chain: commit trie layers by depth so the in-memory backlog
-            // stays bounded (~DB_COMMIT_THRESHOLD) instead of growing with the sync range.
-            // The now per-block granularity is why this uses DB_COMMIT_THRESHOLD (128), not
-            // the batch-layer threshold.
-            if let Err(err) = self.add_block_pipeline_bounded(block, bal, DB_COMMIT_THRESHOLD) {
+            // EXPERIMENT (resume bug): commit by the canonical safe-commit gate instead of
+            // by depth. The depth gate persists state for blocks above the canonical head —
+            // full sync only canonicalizes at batch end — and the single-version path-keyed
+            // trie then has no copy of the head's state, so a restart cannot regenerate.
+            // Costs memory: layers now accumulate to ~1 batch + 128 rather than ~128.
+            if let Err(err) = self.add_block_pipeline(block, bal) {
                 return Err((
                     err,
                     Some(BatchBlockProcessingFailure {
