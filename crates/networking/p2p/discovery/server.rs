@@ -87,7 +87,7 @@ pub struct DiscoveryServer {
     pub local_node_record: NodeRecord,
     pub(crate) signer: SecretKey,
     pub(crate) udp_socket: Arc<UdpSocket>,
-    pub(crate) store: Store,
+    pub(crate) store: Option<Store>,
     pub peer_table: PeerTable,
     pub(crate) config: DiscoveryConfig,
     pub discv4: Option<Discv4State>,
@@ -107,7 +107,7 @@ impl std::fmt::Debug for DiscoveryServer {
 #[actor(protocol = DiscoveryServerProtocol)]
 impl DiscoveryServer {
     pub async fn spawn(
-        storage: Store,
+        storage: Option<Store>,
         local_node: Node,
         signer: SecretKey,
         udp_socket: Arc<UdpSocket>,
@@ -119,7 +119,9 @@ impl DiscoveryServer {
 
         let mut local_node_record = NodeRecord::from_node(&local_node, INITIAL_ENR_SEQ, &signer)
             .expect("Failed to create local node record");
-        if let Ok(fork_id) = storage.get_fork_id().await {
+        if let Some(storage) = &storage
+            && let Ok(fork_id) = storage.get_fork_id().await
+        {
             local_node_record
                 .set_fork_id(fork_id, &signer)
                 .expect("Failed to set fork_id on local node record");
@@ -451,8 +453,10 @@ impl DiscoveryServer {
             local_node_record,
             signer,
             udp_socket,
-            store: Store::new("", ethrex_storage::EngineType::InMemory)
-                .expect("Failed to create store"),
+            store: Some(
+                Store::new("", ethrex_storage::EngineType::InMemory)
+                    .expect("Failed to create store"),
+            ),
             peer_table,
             config: DiscoveryConfig {
                 discv4_enabled: false,

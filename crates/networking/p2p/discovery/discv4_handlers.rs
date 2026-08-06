@@ -519,14 +519,21 @@ impl DiscoveryServer {
             return Ok(());
         };
 
-        let chain_config = self.store.get_chain_config();
-        let genesis_header = self
-            .store
+        // No local chain to compare against: leave the contact's fork-id
+        // validity unevaluated (`None`, the `Contact` default) instead of
+        // asserting it one way or the other, mirroring
+        // `PeerTableServer::evaluate_fork_id`.
+        let Some(store) = &self.store else {
+            debug!(protocol = "discv4", received = "ENRResponse", from = %format!("{sender_public_key:#x}"), "no local store, skipping fork id validation");
+            return Ok(());
+        };
+
+        let chain_config = store.get_chain_config();
+        let genesis_header = store
             .get_block_header(0)?
             .ok_or(DiscoveryServerError::InvalidContact)?;
-        let latest_block_number = self.store.get_latest_block_number().await?;
-        let latest_block_header = self
-            .store
+        let latest_block_number = store.get_latest_block_number().await?;
+        let latest_block_header = store
             .get_block_header(latest_block_number)?
             .ok_or(DiscoveryServerError::InvalidContact)?;
 
@@ -537,7 +544,7 @@ impl DiscoveryServer {
             latest_block_number,
         );
 
-        if !backend::is_fork_id_valid(&self.store, &remote_fork_id).await? {
+        if !backend::is_fork_id_valid(store, &remote_fork_id).await? {
             self.peer_table.set_is_fork_id_valid(node_id, false)?;
             debug!(protocol = "discv4", received = "ENRResponse", from = %format!("{sender_public_key:#x}"), local_fork_id=%local_fork_id, remote_fork_id=%remote_fork_id, "fork id mismatch in ENR response, skipping");
             return Ok(());

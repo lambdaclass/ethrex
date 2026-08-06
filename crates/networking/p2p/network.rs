@@ -131,7 +131,7 @@ pub async fn start_network(
     );
 
     DiscoveryServer::spawn(
-        context.storage.clone(),
+        Some(context.storage.clone()),
         context.local_node.clone(),
         context.signer,
         udp_socket,
