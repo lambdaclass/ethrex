@@ -387,5 +387,6 @@ fullsync-bench-once: ## One measure+advance cycle per network, then exit.
 		--results-dir $(FULLSYNC_BENCH_RESULTS) \
 		--once
 
-fullsync-bench-test: ## Unit-test the metric extraction (no node or box needed).
+fullsync-bench-test: ## Unit-test metric extraction and the tip oracle (no node needed).
 	python3 test_fullsync_metrics.py
+	python3 test_fullsync_bench.py

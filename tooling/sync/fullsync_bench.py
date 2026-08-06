@@ -133,6 +133,50 @@ def cl_head(net, timeout=8):
     return int(resp["data"]["message"]["body"]["execution_payload"]["block_number"])
 
 
+SLOT_SECONDS = 12
+
+# Slots that actually carry a block. Deliberately below the real figure (~99% on mainnet):
+# under-estimating the tip only makes a cycle wait a little longer, while over-estimating
+# would aim a leg at a block nobody has produced, which costs its full timeout.
+SLOT_FILL_RATIO = 0.97
+
+
+def cl_is_current(net, timeout=8):
+    """Whether the beacon node's head can be believed right now."""
+    url = f"http://localhost:{NETWORKS[net]['cl_port']}/eth/v1/node/syncing"
+    data = requests.get(url, timeout=timeout).json()["data"]
+    return not data["el_offline"] and int(data["sync_distance"]) <= SYNCED_MARGIN_BLOCKS
+
+
+def chain_tip(net, base):
+    """Best available estimate of the network's current execution head.
+
+    The beacon node cannot be asked for this between cycles. With the execution node
+    stopped it reports `el_offline` and stops advancing its head — it sat 17 hours behind
+    and unmoving on all three networks the first time this ran — so `tip - base` would read
+    zero forever and every cycle would skip itself. Its head is therefore used only when it
+    is demonstrably current, which in practice means during or just after a leg.
+
+    Otherwise extrapolate from when the base was recorded. Slot timing is fixed and known,
+    so elapsed wall clock gives a good enough tip for both callers: a "has enough chain
+    accumulated yet" check, and an advance target a whole GAP below the tip.
+    """
+    try:
+        if cl_is_current(net):
+            return cl_head(net)
+    except Exception:
+        pass
+
+    meta_path = os.path.join(base, BASE_META)
+    with open(meta_path) as fh:
+        meta = json.load(fh)
+    # Bases written before `created_at` existed fall back to the metadata file's mtime,
+    # which is when the base was recorded.
+    created = meta.get("created_at", os.path.getmtime(meta_path))
+    elapsed = max(0.0, time.time() - created)
+    return meta["head"] + int(elapsed / SLOT_SECONDS * SLOT_FILL_RATIO)
+
+
 def start_node(net):
     compose(["up", "-d", "--no-deps", f"ethrex-{net}"])
 
@@ -336,9 +380,9 @@ def cycle(net, state_root, results_dir):
     # blocks behind the tip would send the leg after a target nobody has produced yet,
     # which can only end in its timeout hours later.
     try:
-        tip = cl_head(net)
+        tip = chain_tip(net, base)
     except Exception as exc:
-        log(f"{net}: could not read consensus head ({exc}); skipping cycle")
+        log(f"{net}: could not determine the chain tip ({exc}); skipping cycle")
         return None
     if tip - base_head < cfg["measure_blocks"]:
         log(f"{net}: gap is {tip - base_head} blocks, need {cfg['measure_blocks']}; "
@@ -361,10 +405,12 @@ def cycle(net, state_root, results_dir):
     # --- advance leg: gap-maintaining, becomes the next base --------------------
     # Target head-GAP rather than a fixed block count, so the advance self-calibrates to
     # the network's real block production and absorbs missed slots.
+    # Re-read rather than reusing the tip from before the measurement leg: that leg has
+    # just spent hours running, and the chain moved on while it did.
     try:
-        advance_target = cl_head(net) - cfg["gap_blocks"]
+        advance_target = chain_tip(net, base) - cfg["gap_blocks"]
     except Exception as exc:
-        log(f"{net}: could not read consensus head ({exc}); skipping advance this cycle")
+        log(f"{net}: could not determine the chain tip ({exc}); skipping advance this cycle")
         return result
     if advance_target <= base_head:
         log(f"{net}: gap has not opened yet (base {base_head} >= target {advance_target}); "
@@ -427,8 +473,9 @@ def read_base_head(net, base, cfg):
 
 
 def write_base_head(base, head):
+    # `created_at` is what lets the tip be extrapolated while the beacon node is frozen.
     with open(os.path.join(base, BASE_META), "w") as fh:
-        json.dump({"head": head}, fh)
+        json.dump({"head": head, "created_at": time.time()}, fh)
 
 
 def base_is_healthy(net, expected_head):
