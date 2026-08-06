@@ -139,6 +139,10 @@ pub enum MempoolError {
         "EIP-4844 replacement carries fewer blobs ({new_count}) than the in-pool tx ({old_count})"
     )]
     ReplacementShrinksBlobs { old_count: usize, new_count: usize },
+    #[error(
+        "Attempted to replace a pooled transaction with one of a different category (blob vs. non-blob)"
+    )]
+    ReplacementTypeMismatch,
     #[error("Frame transactions (EIP-8141) are not supported before the Hegota fork")]
     FrameTxPreFork,
     #[error("Frame transaction expiry deadline has passed")]
