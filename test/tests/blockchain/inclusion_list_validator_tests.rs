@@ -1,11 +1,12 @@
 use std::cell::Cell;
 use std::collections::HashSet;
 
+use ethrex_blockchain::focil_eligibility::SenderCode;
 use ethrex_blockchain::inclusion_list_builder::{
     AccountStateView, IlStateProvider, IlStateProviderError,
 };
 use ethrex_blockchain::inclusion_list_validator::{
-    IlUnsatisfied, InclusionListSatisfactionValidator,
+    IlSenderState, IlUnsatisfied, InclusionListSatisfactionValidator,
 };
 use ethrex_common::types::{BlockHeader, ChainConfig, EIP1559Transaction, Transaction, TxKind};
 use ethrex_common::{Address, H256, U256};
@@ -14,10 +15,13 @@ use rustc_hash::FxHashMap;
 
 /// In-memory `IlStateProvider` for tests. `panic_on_read` flips the
 /// provider into a mode that panics if any read happens — used to
-/// confirm that `check()` does not touch state.
+/// confirm that `check()` does not touch state. `codes` is keyed by
+/// `code_hash` and consulted by `classify_code`; a hash not registered
+/// there is treated as `Unknown`, matching an unregistered/absent code.
 #[derive(Debug, Default)]
 struct MockState {
     accounts: FxHashMap<Address, AccountStateView>,
+    codes: FxHashMap<H256, SenderCode>,
     panic_on_read: bool,
     read_count: Cell<usize>,
 }
@@ -26,9 +30,17 @@ impl MockState {
     fn with(accounts: FxHashMap<Address, AccountStateView>) -> Self {
         Self {
             accounts,
+            codes: FxHashMap::default(),
             panic_on_read: false,
             read_count: Cell::new(0),
         }
+    }
+
+    /// Register `code_hash -> classification` so `classify_code` returns it
+    /// instead of the `Unknown` default.
+    fn with_code(mut self, code_hash: H256, code: SenderCode) -> Self {
+        self.codes.insert(code_hash, code);
+        self
     }
 }
 
@@ -46,11 +58,24 @@ impl IlStateProvider for MockState {
         self.read_count.set(self.read_count.get() + 1);
         Ok(self.accounts.get(&address).copied())
     }
+
+    fn classify_code(&self, code_hash: H256) -> Result<SenderCode, IlStateProviderError> {
+        if self.panic_on_read {
+            panic!(
+                "MockState::classify_code called during a no-EVM/no-state phase \
+                 for code_hash {code_hash:?} — the satisfaction check must not read state"
+            );
+        }
+        self.codes
+            .get(&code_hash)
+            .copied()
+            .ok_or_else(|| IlStateProviderError::Read(format!("unregistered code {code_hash:?}")))
+    }
 }
 
-/// `IlStateProvider` whose `get_account` panics on every call. Used to
-/// confirm that `check()` is purely state-tracker-driven and does not
-/// reach into the provider.
+/// `IlStateProvider` whose `get_account`/`classify_code` panic on every
+/// call. Used to confirm that `check()` is purely state-tracker-driven and
+/// does not reach into the provider.
 #[derive(Debug, Default)]
 struct PanicState;
 
@@ -59,6 +84,10 @@ impl IlStateProvider for PanicState {
         &self,
         _address: Address,
     ) -> Result<Option<AccountStateView>, IlStateProviderError> {
+        panic!("check() must not invoke the state provider — pure tracker comparison only");
+    }
+
+    fn classify_code(&self, _code_hash: H256) -> Result<SenderCode, IlStateProviderError> {
         panic!("check() must not invoke the state provider — pure tracker comparison only");
     }
 }
@@ -111,8 +140,35 @@ fn config() -> ChainConfig {
     ChainConfig::default()
 }
 
+/// An EOA account view (empty code, i.e. the `AccountStateView::default`
+/// code hash), which is the shape every pre-existing test in this file
+/// assumes.
 fn account(nonce: u64, balance: U256) -> AccountStateView {
-    AccountStateView { nonce, balance }
+    AccountStateView {
+        nonce,
+        balance,
+        ..Default::default()
+    }
+}
+
+/// Account view with an explicit `code_hash`, for tests that exercise
+/// sender-code classification via `MockState::with_code`.
+fn account_with_code(nonce: u64, balance: U256, code_hash: H256) -> AccountStateView {
+    AccountStateView {
+        nonce,
+        balance,
+        code_hash,
+    }
+}
+
+/// Build the tracker's `IlSenderState` shape for assertions against
+/// `validator.il_senders`.
+fn sender_state(nonce: u64, balance: U256, code: SenderCode) -> IlSenderState {
+    IlSenderState {
+        nonce,
+        balance,
+        code,
+    }
 }
 
 /// Generous balance enough to fund any default-cost test tx.
@@ -267,7 +323,7 @@ fn tracker_updates_when_executed_tx_touches_il_sender() {
     // Pre-condition: tracker has alice's pre-state nonce/balance.
     assert_eq!(
         validator.il_senders.get(&alice),
-        Some(&(5u64, rich_balance()))
+        Some(&sender_state(5, rich_balance(), SenderCode::Eoa))
     );
 
     // Executed tx by bob (NOT in IL set) should NOT update the tracker.
@@ -283,7 +339,7 @@ fn tracker_updates_when_executed_tx_touches_il_sender() {
     // alice unchanged
     assert_eq!(
         validator.il_senders.get(&alice),
-        Some(&(5u64, rich_balance()))
+        Some(&sender_state(5, rich_balance(), SenderCode::Eoa))
     );
     // bob_state was queried 0 times because bob is not tracked.
     assert_eq!(bob_state.read_count.get(), 0);
@@ -298,7 +354,7 @@ fn tracker_updates_when_executed_tx_touches_il_sender() {
         .expect("observe-alice");
     assert_eq!(
         validator.il_senders.get(&alice),
-        Some(&(6u64, U256::from(123u64)))
+        Some(&sender_state(6, U256::from(123u64), SenderCode::Eoa))
     );
     // alice_state should have been read exactly once.
     assert_eq!(alice_state.read_count.get(), 1);
@@ -375,7 +431,7 @@ fn algorithm_is_idempotent_over_il() {
     // state level, not just the verdict level.
     assert_eq!(
         validator.il_senders.get(&alice),
-        Some(&(0u64, rich_balance()))
+        Some(&sender_state(0, rich_balance(), SenderCode::Eoa))
     );
 }
 
@@ -673,4 +729,151 @@ fn omitted_below_base_fee_il_tx_is_satisfied() {
     hdr_ok.base_fee_per_gas = Some(1);
     let control = validator.check(&il, &block_txs, 30_000_000, &hdr_ok, &config(), &crypto);
     assert!(matches!(control, Err(IlUnsatisfied { .. })));
+}
+
+/// Regression for the EIP-8369 Profile 1 sender-validity gate (EIP-3607): a
+/// contract sender cannot originate a transaction, so an IL tx from one can
+/// never have been validly appended — its omission is excused even though
+/// every other gate (nonce, balance, gas, fee) would pass.
+#[test]
+fn an_omitted_tx_from_a_contract_sender_is_excused() {
+    let crypto = NativeCrypto;
+    let alice = addr(1);
+    let code_hash = H256::repeat_byte(0xc0);
+
+    let il = vec![make_tx(alice, 0, 21_000, U256::from(1))];
+    let mut accounts: FxHashMap<Address, AccountStateView> = Default::default();
+    accounts.insert(alice, account_with_code(0, rich_balance(), code_hash));
+    let state = MockState::with(accounts).with_code(code_hash, SenderCode::Contract);
+
+    let validator =
+        InclusionListSatisfactionValidator::new(&il, &state, &crypto).expect("construct");
+
+    // Empty block, matching nonce, ample balance, plenty of gas, fee above
+    // base — every gate except sender validity would pass.
+    let block_txs: HashSet<H256> = HashSet::new();
+    let result = validator.check(&il, &block_txs, 30_000_000, &header(), &config(), &crypto);
+    assert!(
+        matches!(result, Ok(())),
+        "an otherwise-appendable tx from a contract sender must be excused"
+    );
+}
+
+/// The mirror image of the contract case: a valid EIP-7702 delegation
+/// indicator keeps the sender in the "EOA in spirit" category, so its
+/// omission is judged exactly like a plain EOA's — unsatisfied here since
+/// every gate passes. Pins the direction of EIP-8369's rule: an inverted
+/// implementation (delegated excused, contract punished) must fail this.
+#[test]
+fn an_omitted_tx_from_a_7702_delegated_sender_is_unsatisfied() {
+    let crypto = NativeCrypto;
+    let alice = addr(1);
+    let code_hash = H256::repeat_byte(0xd0);
+
+    let il = vec![make_tx(alice, 0, 21_000, U256::from(1))];
+    let mut accounts: FxHashMap<Address, AccountStateView> = Default::default();
+    accounts.insert(alice, account_with_code(0, rich_balance(), code_hash));
+    let state = MockState::with(accounts).with_code(code_hash, SenderCode::Delegated);
+
+    let validator =
+        InclusionListSatisfactionValidator::new(&il, &state, &crypto).expect("construct");
+
+    let block_txs: HashSet<H256> = HashSet::new();
+    let result = validator.check(&il, &block_txs, 30_000_000, &header(), &config(), &crypto);
+    match result {
+        Err(IlUnsatisfied { tx_hash }) => assert_eq!(tx_hash, il[0].hash(&NativeCrypto)),
+        other => panic!("expected Unsatisfied for a delegated EOA sender, got {other:?}"),
+    }
+}
+
+/// Proves the existing EOA path is unchanged by the sender-code gate, and
+/// catches the `AccountStateView::default` empty-code-hash trap: a derived
+/// `Default` would give `H256::zero()` instead of `EMPTY_KECCAK_HASH`,
+/// misclassifying every absent/EOA account as a contract and excusing
+/// everything.
+#[test]
+fn an_omitted_tx_from_an_eoa_sender_is_still_unsatisfied() {
+    let crypto = NativeCrypto;
+    let alice = addr(1);
+
+    let il = vec![make_tx(alice, 0, 21_000, U256::from(1))];
+    let mut accounts: FxHashMap<Address, AccountStateView> = Default::default();
+    accounts.insert(alice, account(0, rich_balance()));
+    let state = MockState::with(accounts);
+
+    let validator =
+        InclusionListSatisfactionValidator::new(&il, &state, &crypto).expect("construct");
+
+    let block_txs: HashSet<H256> = HashSet::new();
+    let result = validator.check(&il, &block_txs, 30_000_000, &header(), &config(), &crypto);
+    match result {
+        Err(IlUnsatisfied { tx_hash }) => assert_eq!(tx_hash, il[0].hash(&NativeCrypto)),
+        other => panic!("expected Unsatisfied for a plain EOA sender, got {other:?}"),
+    }
+}
+
+/// A `classify_code` failure must not abort construction/refresh nor turn a
+/// justified omission into an unjustified one: it resolves to
+/// `SenderCode::Unknown`, which does not originate, so the omission is
+/// excused. This is the governing asymmetry from the type-level doc: a
+/// code-read failure must neither abort the check nor punish.
+#[test]
+fn an_unclassifiable_sender_is_excused() {
+    let crypto = NativeCrypto;
+    let alice = addr(1);
+    let code_hash = H256::repeat_byte(0xee);
+
+    let il = vec![make_tx(alice, 0, 21_000, U256::from(1))];
+    let mut accounts: FxHashMap<Address, AccountStateView> = Default::default();
+    accounts.insert(alice, account_with_code(0, rich_balance(), code_hash));
+    // `code_hash` is never registered via `with_code`, so `MockState`'s
+    // `classify_code` errors for it.
+    let state = MockState::with(accounts);
+
+    let mut validator = InclusionListSatisfactionValidator::new(&il, &state, &crypto)
+        .expect("new must not propagate a classify_code error");
+    assert_eq!(
+        validator.il_senders.get(&alice),
+        Some(&sender_state(0, rich_balance(), SenderCode::Unknown))
+    );
+
+    validator
+        .refresh_all_from(&state, &crypto)
+        .expect("refresh_all_from must not propagate a classify_code error");
+    assert_eq!(
+        validator.il_senders.get(&alice),
+        Some(&sender_state(0, rich_balance(), SenderCode::Unknown))
+    );
+
+    let block_txs: HashSet<H256> = HashSet::new();
+    let result = validator.check(&il, &block_txs, 30_000_000, &header(), &config(), &crypto);
+    assert!(
+        matches!(result, Ok(())),
+        "an unclassifiable sender's omission must be excused"
+    );
+}
+
+/// `check` never reaches back into a state provider. Its signature carries
+/// no provider parameter, so this is a static guarantee, but building the
+/// tracker directly (bypassing `new`) with a `Contract` classification and
+/// handing `check` a `PanicState` in scope proves the sender-code gate added
+/// by this change reads only the tracker, never the provider.
+#[test]
+fn check_reads_no_state_after_the_code_classification_landed() {
+    let crypto = NativeCrypto;
+    let alice = addr(1);
+
+    let il = vec![make_tx(alice, 0, 21_000, U256::from(1))];
+
+    let mut il_senders: FxHashMap<Address, IlSenderState> = Default::default();
+    il_senders.insert(alice, sender_state(0, rich_balance(), SenderCode::Contract));
+    let validator = InclusionListSatisfactionValidator { il_senders };
+
+    let _panic_state = PanicState;
+    let block_txs: HashSet<H256> = HashSet::new();
+    let result = validator.check(&il, &block_txs, 30_000_000, &header(), &config(), &crypto);
+    assert!(
+        matches!(result, Ok(())),
+        "a contract-sender omission must be excused with no state read"
+    );
 }

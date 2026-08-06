@@ -1,9 +1,9 @@
 //! EIP-8369 VOPS profile classification and the per-inclusion-list budget fill.
 
 use ethrex_blockchain::focil_eligibility::{
-    FillOutcome, MAX_VERIFY_GAS_PER_IL, MAX_VERIFY_GAS_PER_TX, VopsProfile, classify,
-    default_evaluation_index, evaluation_index, fee_valid, fill_il_budget, profile_2_payer,
-    verify_budget_cost,
+    FillOutcome, MAX_VERIFY_GAS_PER_IL, MAX_VERIFY_GAS_PER_TX, SenderCode, VopsProfile, classify,
+    classify_sender_code, default_evaluation_index, evaluation_index, fee_valid, fill_il_budget,
+    profile_2_payer, verify_budget_cost,
 };
 use ethrex_common::types::{
     APPROVE_EXECUTION, APPROVE_EXECUTION_AND_PAYMENT, APPROVE_PAYMENT, EIP1559Transaction,
@@ -377,4 +377,43 @@ fn the_evaluation_index_falls_back_to_end_of_payload() {
     assert_eq!(evaluation_index(Some(0), 7), 0);
     assert_eq!(evaluation_index(Some(3), 7), 3);
     assert_eq!(evaluation_index(Some(7), 7), 7);
+}
+
+/// EIP-8369 Profile 1 sender validity: "EOAs with empty code and EOAs with a
+/// valid EIP-7702 delegation indicator can originate transactions; accounts
+/// with any other code cannot" (EIP-3607, with EIP-7702 delegation
+/// indicators treated as the valid delegated EOA case).
+#[test]
+fn classify_sender_code_matches_the_eip_3607_rule() {
+    // Empty code: an ordinary EOA.
+    assert_eq!(classify_sender_code(&[]), SenderCode::Eoa);
+
+    // Exactly 23 bytes, `0xef0100 || address`: a valid EIP-7702 delegation
+    // indicator.
+    let mut delegation = vec![0xef, 0x01, 0x00];
+    delegation.extend_from_slice(&[0xaa; 20]);
+    assert_eq!(delegation.len(), 23);
+    assert_eq!(classify_sender_code(&delegation), SenderCode::Delegated);
+
+    // The bare 3-byte prefix alone, with no address, is not a valid
+    // delegation indicator (wrong length) — it's a (degenerate) contract.
+    let bare_prefix = vec![0xef, 0x01, 0x00];
+    assert_eq!(classify_sender_code(&bare_prefix), SenderCode::Contract);
+
+    // A 24-byte body starting with the delegation prefix is one byte too
+    // long to be a delegation indicator — wrong length, so `Contract`.
+    let mut oversized = vec![0xef, 0x01, 0x00];
+    oversized.extend_from_slice(&[0xbb; 21]);
+    assert_eq!(oversized.len(), 24);
+    assert_eq!(classify_sender_code(&oversized), SenderCode::Contract);
+
+    // An ordinary contract body (unrelated bytecode) is `Contract`.
+    let contract_code = vec![0x60, 0x00, 0x60, 0x00, 0xf3];
+    assert_eq!(classify_sender_code(&contract_code), SenderCode::Contract);
+
+    // `can_originate` is true exactly for `Eoa` and `Delegated`.
+    assert!(SenderCode::Eoa.can_originate());
+    assert!(SenderCode::Delegated.can_originate());
+    assert!(!SenderCode::Contract.can_originate());
+    assert!(!SenderCode::Unknown.can_originate());
 }

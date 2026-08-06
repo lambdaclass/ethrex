@@ -25,7 +25,7 @@
 //! verdict splits between nodes.
 
 use ethrex_common::Address;
-use ethrex_common::types::{FrameTransaction, Transaction, TxType};
+use ethrex_common::types::{FrameTransaction, Transaction, TxType, is_eip7702_delegation};
 
 /// EIP-8369 `MAX_VERIFY_GAS_PER_TX`: the largest VERIFY budget a single
 /// Profile 2 candidate may declare.
@@ -39,6 +39,51 @@ pub const MAX_VERIFY_GAS_PER_TX: u64 = 1 << 20;
 /// EIP-8369 `MAX_VERIFY_GAS_PER_IL`: the VERIFY budget one inclusion list may
 /// consume across all of its Profile 2 occurrences.
 pub const MAX_VERIFY_GAS_PER_IL: u64 = 1 << 20;
+
+/// Coarse classification of a sender account's code, per EIP-8369 Profile 1
+/// sender validity: "Sender validity requires the sender to satisfy
+/// [EIP-3607](https://eips.ethereum.org/EIPS/eip-3607), with
+/// [EIP-7702](https://eips.ethereum.org/EIPS/eip-7702) delegation indicators
+/// treated as the valid delegated EOA case."
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SenderCode {
+    /// Empty code: an ordinary EOA.
+    Eoa,
+    /// A valid EIP-7702 delegation designation (`0xef0100 || address`); the
+    /// account is still an EOA in spirit, just pointing at delegate code.
+    Delegated,
+    /// Any other non-empty code: an EIP-3607 contract account.
+    Contract,
+    /// Classification unavailable, e.g. a state-read failure. Treated as
+    /// non-originating so the omission is excused: a code-read failure must
+    /// never turn a justified omission into an unjustified one.
+    Unknown,
+}
+
+impl SenderCode {
+    /// True iff a sender with this classification may originate a
+    /// transaction under EIP-3607/EIP-7702: an EOA or a valid delegation.
+    /// `Unknown` is deliberately excluded.
+    pub fn can_originate(self) -> bool {
+        matches!(self, SenderCode::Eoa | SenderCode::Delegated)
+    }
+}
+
+/// Classify a sender account's code per EIP-3607 / EIP-7702, as required by
+/// EIP-8369 Profile 1 sender validity: "EOAs with empty code and EOAs with a
+/// valid EIP-7702 delegation indicator can originate transactions; accounts
+/// with any other code cannot." Delegation detection defers to
+/// [`is_eip7702_delegation`] rather than re-deriving the `0xef0100` prefix
+/// rule.
+pub fn classify_sender_code(code: &[u8]) -> SenderCode {
+    if code.is_empty() {
+        SenderCode::Eoa
+    } else if is_eip7702_delegation(code) {
+        SenderCode::Delegated
+    } else {
+        SenderCode::Contract
+    }
+}
 
 /// Which VOPS profile a transaction falls into, for FOCIL enforcement.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

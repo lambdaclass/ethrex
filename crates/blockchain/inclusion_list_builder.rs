@@ -19,11 +19,13 @@
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use ethrex_common::{
-    Address, U256,
+    Address, H256, U256,
+    constants::EMPTY_KECCAK_HASH,
     types::{MempoolTransaction, Transaction, utxo_vault},
 };
 use rustc_hash::FxHashMap;
 
+use crate::focil_eligibility::SenderCode;
 use crate::mempool::Mempool;
 
 /// Hard byte cap on the total RLP-encoded size of the returned inclusion list.
@@ -37,11 +39,26 @@ pub const DEFAULT_PER_SENDER_CAP: usize = 2;
 
 /// Account snapshot used to validate IL candidates against parent-state.
 /// `None` from [`IlStateProvider::get_account`] means the account is empty
-/// (`nonce = 0`, `balance = 0`).
-#[derive(Clone, Copy, Debug, Default)]
+/// (`nonce = 0`, `balance = 0`, empty code).
+#[derive(Clone, Copy, Debug)]
 pub struct AccountStateView {
     pub nonce: u64,
     pub balance: U256,
+    pub code_hash: H256,
+}
+
+impl Default for AccountStateView {
+    /// An absent account: nonce 0, balance 0, and — load-bearing — the
+    /// *empty-code* hash, not `H256::zero()`. A derived `Default` would
+    /// yield `H256::zero()`, which is not `EMPTY_KECCAK_HASH`, so every
+    /// absent account would misclassify as code-bearing.
+    fn default() -> Self {
+        Self {
+            nonce: 0,
+            balance: U256::zero(),
+            code_hash: *EMPTY_KECCAK_HASH,
+        }
+    }
 }
 
 /// Synchronous, account-only state read used by the IL builder against a
@@ -53,6 +70,15 @@ pub trait IlStateProvider {
         &self,
         address: Address,
     ) -> Result<Option<AccountStateView>, IlStateProviderError>;
+
+    /// Classify the code at `code_hash` per EIP-3607/EIP-7702. Callers MUST
+    /// short-circuit `code_hash == EMPTY_KECCAK_HASH` to `SenderCode::Eoa`
+    /// themselves before calling this; an implementation may assume
+    /// `code_hash` is always non-empty here. Implementations may consult a
+    /// code-length index rather than loading the code body, since only a
+    /// body of exactly `EIP7702_DELEGATED_CODE_LEN` bytes can be a
+    /// delegation indicator.
+    fn classify_code(&self, code_hash: H256) -> Result<SenderCode, IlStateProviderError>;
 }
 
 #[derive(Debug, thiserror::Error)]

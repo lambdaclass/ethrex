@@ -1,11 +1,12 @@
 //! EIP-7805 (FOCIL) inclusion-list satisfaction validator. Tracks per-sender
-//! `(nonce, balance)` during block execution and, after execution, decides
-//! whether each IL transaction is `present | not-Profile-1 | unrecoverable |
-//! intrinsic_gas_too_low | insufficient_gas | fee_invalid | invalid_nonce |
-//! invalid_balance | unsatisfied`. Which omissions are enforceable at all is
-//! decided by [`crate::focil_eligibility`] per EIP-8369. Returns `Err(IlUnsatisfied)` if any IL
-//! transaction is missing AND could still have been validly appended to the
-//! block (mirrors EELS `check_inclusion_list_transactions`).
+//! `(nonce, balance, code)` during block execution and, after execution,
+//! decides whether each IL transaction is `present | not-Profile-1 |
+//! unrecoverable | intrinsic_gas_too_low | insufficient_gas | fee_invalid |
+//! invalid_sender | invalid_nonce | invalid_balance | unsatisfied`. Which
+//! omissions are enforceable at all is decided by [`crate::focil_eligibility`]
+//! per EIP-8369. Returns `Err(IlUnsatisfied)` if any IL transaction is missing
+//! AND could still have been validly appended to the block (mirrors EELS
+//! `check_inclusion_list_transactions`).
 //!
 //! ## State abstraction
 //!
@@ -32,13 +33,16 @@ use std::collections::HashSet;
 
 use ethrex_common::{
     Address, H256, U256,
-    types::{BlockHeader, ChainConfig, Transaction},
+    constants::EMPTY_KECCAK_HASH,
+    types::{BlockHeader, ChainConfig, EIP7702_DELEGATED_CODE_LEN, Transaction},
 };
 use ethrex_crypto::Crypto;
 use ethrex_storage::Store;
 use rustc_hash::FxHashMap;
 
-use crate::focil_eligibility::{VopsProfile, classify, fee_valid};
+use crate::focil_eligibility::{
+    SenderCode, VopsProfile, classify, classify_sender_code, fee_valid,
+};
 use crate::inclusion_list_builder::{AccountStateView, IlStateProvider, IlStateProviderError};
 use crate::mempool::transaction_intrinsic_gas;
 
@@ -62,12 +66,51 @@ impl<'a> IlStateProvider for StoreIlStateProvider<'a> {
         Ok(acct.map(|a| AccountStateView {
             nonce: a.nonce,
             balance: a.balance,
+            code_hash: a.code_hash,
         }))
+    }
+
+    /// Mirrors the EIP-3607 gate at `Blockchain::add_transaction_to_pool`
+    /// (mempool admission): a length-based fast path avoids loading the code
+    /// body for every contract sender, since only a body of exactly
+    /// `EIP7702_DELEGATED_CODE_LEN` bytes can be a delegation indicator.
+    fn classify_code(&self, code_hash: H256) -> Result<SenderCode, IlStateProviderError> {
+        if code_hash == *EMPTY_KECCAK_HASH {
+            return Ok(SenderCode::Eoa);
+        }
+        let metadata_len = self
+            .store
+            .get_code_metadata(code_hash)
+            .map_err(|e| IlStateProviderError::Read(e.to_string()))?
+            .map(|m| m.length);
+        if metadata_len != Some(EIP7702_DELEGATED_CODE_LEN as u64) {
+            return Ok(SenderCode::Contract);
+        }
+        let code = self
+            .store
+            .get_account_code(code_hash)
+            .map_err(|e| IlStateProviderError::Read(e.to_string()))?;
+        Ok(match code {
+            Some(code) => classify_sender_code(code.code()),
+            // Metadata claims a delegation-shaped body but the body is
+            // missing. Per the governing asymmetry, resolve to the
+            // non-originating side (`Contract`) rather than erroring: it
+            // excuses the omission instead of risking a wrong punishment.
+            None => SenderCode::Contract,
+        })
     }
 }
 
-/// Tracker of per-sender `(nonce, balance)` for senders appearing in the
-/// inclusion list. Built once before block execution from the parent's
+/// A tracked IL sender's `(nonce, balance, code)` as of the last refresh.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct IlSenderState {
+    pub nonce: u64,
+    pub balance: U256,
+    pub code: SenderCode,
+}
+
+/// Tracker of per-sender `(nonce, balance, code)` for senders appearing in
+/// the inclusion list. Built once before block execution from the parent's
 /// pre-state, refreshed incrementally during block execution as IL senders'
 /// transactions are applied, and consulted once after block execution by
 /// [`Self::check`].
@@ -76,7 +119,32 @@ impl<'a> IlStateProvider for StoreIlStateProvider<'a> {
 /// IL byte cap), NOT by block transaction count.
 #[derive(Debug, Default, Clone)]
 pub struct InclusionListSatisfactionValidator {
-    pub il_senders: FxHashMap<Address, (u64, U256)>,
+    pub il_senders: FxHashMap<Address, IlSenderState>,
+}
+
+/// Resolve `(nonce, balance, code)` from an account snapshot. Short-circuits
+/// the empty-code hash to `SenderCode::Eoa` without a `classify_code` call.
+/// A `classify_code` error is mapped to `SenderCode::Unknown` and never
+/// propagated: per the governing asymmetry, a code-read failure must not
+/// abort the check nor turn a justified omission into an unjustified one.
+///
+/// This is the only place `SenderCode` is derived for the tracker, so
+/// `new`, `observe_executed_tx`, and `refresh_all_from` all route through it
+/// — a mid-block delegation set or cleared on an IL sender is reflected the
+/// same way regardless of which of the three touched it.
+fn resolve(view: &AccountStateView, state: &dyn IlStateProvider) -> IlSenderState {
+    let code = if view.code_hash == *EMPTY_KECCAK_HASH {
+        SenderCode::Eoa
+    } else {
+        state
+            .classify_code(view.code_hash)
+            .unwrap_or(SenderCode::Unknown)
+    };
+    IlSenderState {
+        nonce: view.nonce,
+        balance: view.balance,
+        code,
+    }
 }
 
 /// Errors returned by the validator surface itself (separate from
@@ -136,11 +204,11 @@ impl InclusionListSatisfactionValidator {
             }
         }
 
-        let mut il_senders: FxHashMap<Address, (u64, U256)> =
+        let mut il_senders: FxHashMap<Address, IlSenderState> =
             FxHashMap::with_capacity_and_hasher(unique_senders.len(), Default::default());
         for sender in unique_senders {
             let view = pre_state.get_account(sender)?.unwrap_or_default();
-            il_senders.insert(sender, (view.nonce, view.balance));
+            il_senders.insert(sender, resolve(&view, pre_state));
         }
 
         Ok(Self { il_senders })
@@ -163,7 +231,7 @@ impl InclusionListSatisfactionValidator {
             return Ok(());
         }
         let view = post_state.get_account(sender)?.unwrap_or_default();
-        self.il_senders.insert(sender, (view.nonce, view.balance));
+        self.il_senders.insert(sender, resolve(&view, post_state));
         Ok(())
     }
 
@@ -184,7 +252,7 @@ impl InclusionListSatisfactionValidator {
         let senders: Vec<Address> = self.il_senders.keys().copied().collect();
         for sender in senders {
             let view = state.get_account(sender)?.unwrap_or_default();
-            self.il_senders.insert(sender, (view.nonce, view.balance));
+            self.il_senders.insert(sender, resolve(&view, state));
         }
         Ok(())
     }
@@ -192,7 +260,7 @@ impl InclusionListSatisfactionValidator {
     /// Return `Ok(())` iff every inclusion-list transaction is classified as
     /// non-appendable (`present | blob | frame | unrecoverable |
     /// intrinsic_gas_too_low | insufficient_gas | below_base_fee |
-    /// invalid_nonce | invalid_balance`).
+    /// invalid_sender | invalid_nonce | invalid_balance`).
     /// Return `Err(IlUnsatisfied)` for the first IL transaction that is missing
     /// AND could still have been validly appended to the end of the block.
     ///
@@ -271,19 +339,37 @@ impl InclusionListSatisfactionValidator {
             }
 
             // From here on, classify by tracked sender state.
-            let (tracker_nonce, tracker_balance) = match self.il_senders.get(&sender) {
+            let entry = match self.il_senders.get(&sender) {
                 Some(entry) => *entry,
                 // The sender was not registered at construction. This means
                 // the IL handed to `check` differs from the one handed to
                 // `new`, which is a caller bug. Be defensive: treat the
-                // sender as having empty state, which makes the tx unable
-                // to be included (nonce/balance mismatch) and counts as
-                // satisfied. This branch is unreachable in normal flow.
-                None => (0, U256::zero()),
+                // sender as having empty state (an EOA with nonce 0, balance
+                // 0), which makes the tx unable to be included (nonce/balance
+                // mismatch) and counts as satisfied. This branch is
+                // unreachable in normal flow.
+                None => IlSenderState {
+                    nonce: 0,
+                    balance: U256::zero(),
+                    code: SenderCode::Eoa,
+                },
             };
 
+            // invalid_sender → satisfied. EIP-8369 Profile 1 sender validity
+            // requires the sender to satisfy EIP-3607, with EIP-7702
+            // delegation indicators treated as the valid delegated EOA case:
+            // "EOAs with empty code and EOAs with a valid EIP-7702 delegation
+            // indicator can originate transactions; accounts with any other
+            // code cannot." `SenderCode::Unknown` (classification
+            // unavailable) deliberately lands here too, per the governing
+            // asymmetry: an unclassifiable sender must never make an
+            // omission look unjustified.
+            if !entry.code.can_originate() {
+                continue;
+            }
+
             // invalid_nonce → satisfied
-            if tx_il.nonce() != tracker_nonce {
+            if tx_il.nonce() != entry.nonce {
                 continue;
             }
 
@@ -294,7 +380,7 @@ impl InclusionListSatisfactionValidator {
             let Some(cost) = tx_il.cost_without_base_fee() else {
                 continue;
             };
-            if cost > tracker_balance {
+            if cost > entry.balance {
                 continue;
             }
 

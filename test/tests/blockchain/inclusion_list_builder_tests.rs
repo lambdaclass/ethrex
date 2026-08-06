@@ -1,6 +1,7 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
 
+use ethrex_blockchain::focil_eligibility::SenderCode;
 use ethrex_blockchain::inclusion_list_builder::{
     AccountStateView, DEFAULT_PER_SENDER_CAP, IlPolicy, IlStateProvider, IlStateProviderError,
     InclusionListBuilder, MAX_BYTES_PER_INCLUSION_LIST,
@@ -15,17 +16,25 @@ use ethrex_common::types::{
 use ethrex_common::{Address, H256, U256};
 use ethrex_crypto::NativeCrypto;
 
-/// In-memory state provider for unit tests.
+/// In-memory state provider for unit tests. `codes` is keyed by `code_hash`;
+/// none of these builder tests exercise sender-code classification, so
+/// `classify_code` defaults to `Eoa` for any hash not explicitly registered.
 #[derive(Default)]
 struct FakeState {
     accounts: RefCell<HashMap<Address, AccountStateView>>,
+    codes: RefCell<HashMap<H256, SenderCode>>,
 }
 
 impl FakeState {
     fn set(&self, addr: Address, nonce: u64, balance: U256) {
-        self.accounts
-            .borrow_mut()
-            .insert(addr, AccountStateView { nonce, balance });
+        self.accounts.borrow_mut().insert(
+            addr,
+            AccountStateView {
+                nonce,
+                balance,
+                ..Default::default()
+            },
+        );
     }
 }
 
@@ -35,6 +44,15 @@ impl IlStateProvider for FakeState {
         address: Address,
     ) -> Result<Option<AccountStateView>, IlStateProviderError> {
         Ok(self.accounts.borrow().get(&address).copied())
+    }
+
+    fn classify_code(&self, code_hash: H256) -> Result<SenderCode, IlStateProviderError> {
+        Ok(self
+            .codes
+            .borrow()
+            .get(&code_hash)
+            .copied()
+            .unwrap_or(SenderCode::Eoa))
     }
 }
 

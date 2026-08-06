@@ -14,6 +14,7 @@ mod focil_tests;
 #[cfg(feature = "c-kzg")]
 mod frame_blob_tx_tests;
 mod inclusion_list_builder_tests;
+mod inclusion_list_store_provider_tests;
 mod inclusion_list_validator_tests;
 mod l1_tx_type_tests;
 mod logs_bloom_tests;
