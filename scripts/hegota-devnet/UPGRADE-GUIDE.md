@@ -117,14 +117,32 @@ non-consensus change — computes identical state roots.
    binary into *every* EL first (`docker cp` to all of them, no restarts), then
    restart them back to back, and verify only afterwards. The window where a
    POST_TX-carrying transaction could be included is what you are minimising.
-4. Per EL: `docker cp /tmp/ethrex-new <ctr>:/usr/local/bin/ethrex` then
+4. **Check what `/usr/local/bin/ethrex` actually is first.** If Path 1b has ever
+   been applied to this enclave, that path is a ~240-byte shell **wrapper** that
+   appends flags and execs the real binary at `/usr/local/bin/ethrex-real`. Copying
+   the new binary over `ethrex` then silently discards the wrapper, and the flags it
+   added (for us, `--http.api=…,ethrex`) vanish on the next restart — the RPC
+   namespace disappears and the cause is three steps back. Confirm before copying:
+
+   ```bash
+   docker exec <ctr> ls -la /usr/local/bin/ | grep ethrex
+   # ethrex (239)  ethrex-real (41895680)   <- wrapper present: target ethrex-real
+   # ethrex (41895680)                      <- no wrapper: target ethrex
+   ```
+
+   The size is the tell — a wrapper is bytes, a binary is tens of megabytes. Save
+   both before overwriting either, and put the new binary where the *old binary*
+   was, not where the entrypoint points.
+
+5. Per EL: `docker cp /tmp/ethrex-new <ctr>:/usr/local/bin/ethrex-real` (or
+   `…/ethrex` if there is no wrapper), `docker exec <ctr> chmod +x` it, then
    `docker restart -t 20 <ctr>`.
-5. **Host ports:** enclaves with `port_publisher` set have **deterministic**
+6. **Host ports:** enclaves with `port_publisher` set have **deterministic**
    ports that survive restart. Enclaves that publish dynamically (older kurtosis)
    **remap the host port on every restart** — re-read it with
    `docker port <ctr> 8545` (or `kurtosis port print`) before verifying.
-6. Verify (checklist below) before touching the next EL.
-7. Rollback: keep the previous image (`docker tag ethrex:<current> ethrex:rollback-<sha>`)
+7. Verify (checklist below) before touching the next EL.
+8. Rollback: keep the previous image (`docker tag ethrex:<current> ethrex:rollback-<sha>`)
    so you can `docker cp` the old binary back and restart.
 
 **Durability:** the swapped binary lives in the writable layer — it survives
@@ -315,6 +333,10 @@ node's **current** host RPC port (re-derive it after restart on dynamic-publish
 enclaves — see Path 1 step 5).
 
 1. `web3_clientVersion` on **every** EL shows the expected commit.
+1b. If a wrapper is in play, the flags it adds still take effect — for the `ethrex`
+   namespace, a bad-input call to one of its methods returns a handler error
+   (`-32000`), **not** `-32601 Method not found`. A swap that clobbered the wrapper
+   passes every other check on this list and fails only this one.
 2. 3-EL consensus: same head number **and hash** on all ELs (cross-check a
    recent block's hash across el-1/2/3 — this also proves a partially-upgraded
    fleet still agrees, i.e. the change really is non-consensus).
