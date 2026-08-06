@@ -334,6 +334,7 @@ impl SimulateFrameTransactionRequest {
             prefix,
             None,
             context.blockchain.options.max_verify_gas,
+            None,
         )
         .map_err(RpcErr::from)
     }

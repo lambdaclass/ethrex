@@ -3631,6 +3631,7 @@ impl Blockchain {
                         &prefix,
                         None,
                         self.options.max_verify_gas,
+                        None,
                     ) {
                         // Simulation passed for this tx in isolation. The
                         // per-tx validation prefix only catches a single-tx
@@ -4189,6 +4190,7 @@ impl Blockchain {
                     &prefix,
                     None,
                     self.options.max_verify_gas,
+                    None,
                 )
                 .map_err(|err| MempoolError::FrameTxValidationFailed(err.to_string()))?;
             if !outcome.passed {

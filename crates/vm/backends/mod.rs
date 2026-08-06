@@ -323,6 +323,7 @@ impl Evm {
         prefix: &ethrex_common::types::ValidationPrefix,
         canonical_paymaster_code_hash: Option<ethrex_common::H256>,
         max_verify_gas: u64,
+        focil_surface: Option<ethrex_levm::validation_observer::FocilVopsSurface>,
     ) -> Result<FrameValidationOutcome, EvmError> {
         LEVM::simulate_frame_validation_prefix(
             tx,
@@ -333,6 +334,7 @@ impl Evm {
             prefix,
             canonical_paymaster_code_hash,
             max_verify_gas,
+            focil_surface,
         )
     }
 

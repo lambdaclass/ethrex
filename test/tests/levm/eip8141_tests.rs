@@ -1938,7 +1938,7 @@ mod validation_observer_tests {
     use ethrex_levm::environment::{EVMConfig, Environment};
     use ethrex_levm::errors::DatabaseError;
     use ethrex_levm::tracing::LevmCallTracer;
-    use ethrex_levm::validation_observer::FrameSimViolation;
+    use ethrex_levm::validation_observer::{FocilVopsSurface, FrameSimViolation};
     use ethrex_levm::vm::{PrefixSimResult, VM, VMType};
     use rustc_hash::FxHashMap;
     use std::sync::Arc;
@@ -2109,6 +2109,7 @@ mod validation_observer_tests {
         sender: Address,
         frame_indices: &[usize],
         deploy_index: Option<usize>,
+        focil_surface: Option<FocilVopsSurface>,
     ) -> (PrefixSimResult, Option<FrameSimViolation>) {
         let env = hegota_env(sender);
         let mut vm = VM::new(
@@ -2122,7 +2123,7 @@ mod validation_observer_tests {
         )
         .unwrap();
         let result = vm
-            .run_frame_validation_prefix(frame_indices, deploy_index, None)
+            .run_frame_validation_prefix(frame_indices, deploy_index, None, focil_surface)
             .unwrap();
         (result, vm.validation_observer.violation.clone())
     }
@@ -2135,7 +2136,7 @@ mod validation_observer_tests {
             vec![verify_frame_obs(sender, 50_000, 0x03, Bytes::new())],
         );
         let mut db = build_db(vec![(sender, account_with_code(0, approve_code(0x03)))]);
-        let (result, violation) = run(&tx, &mut db, sender, &[0], None);
+        let (result, violation) = run(&tx, &mut db, sender, &[0], None, None);
         assert!(violation.is_none(), "self_verify must not violate any rule");
         assert!(!result.any_revert, "self_verify frame must not revert");
         assert_eq!(
@@ -2155,7 +2156,7 @@ mod validation_observer_tests {
             vec![verify_frame_obs(sender, 50_000, 0x03, Bytes::new())],
         );
         let mut db = build_db(vec![(sender, account_with_code(0, code))]);
-        let (_result, violation) = run(&tx, &mut db, sender, &[0], None);
+        let (_result, violation) = run(&tx, &mut db, sender, &[0], None, None);
         assert_eq!(
             violation,
             Some(FrameSimViolation::BannedOpcode(0x42)),
@@ -2187,7 +2188,9 @@ mod validation_observer_tests {
             None,
         )
         .unwrap();
-        let _ = vm.run_frame_validation_prefix(&[0], None, None).unwrap();
+        let _ = vm
+            .run_frame_validation_prefix(&[0], None, None, None)
+            .unwrap();
         assert!(
             vm.validation_observer.violation.is_none(),
             "TIMESTAMP inside the expiry verifier must be allowed, got {:?}",
@@ -2204,7 +2207,7 @@ mod validation_observer_tests {
             vec![default_frame_obs(sender, 100_000, Bytes::new())],
         );
         let mut db = build_db(vec![(sender, account_with_code(0, code))]);
-        let (_result, violation) = run(&tx, &mut db, sender, &[0], None);
+        let (_result, violation) = run(&tx, &mut db, sender, &[0], None, None);
         assert_eq!(
             violation,
             Some(FrameSimViolation::StateWriteOutsideDeploy),
@@ -2228,7 +2231,7 @@ mod validation_observer_tests {
             (sender, account_with_code(0, Bytes::new())),
             (other, account_with_code(0, code)),
         ]);
-        let (_result, violation) = run(&tx, &mut db, sender, &[0], None);
+        let (_result, violation) = run(&tx, &mut db, sender, &[0], None, None);
         assert_eq!(
             violation,
             Some(FrameSimViolation::StorageReadNonSender),
@@ -2256,7 +2259,7 @@ mod validation_observer_tests {
             vec![verify_frame_obs(sender, 200_000, 0x03, Bytes::new())],
         );
         let mut db = build_db(vec![(sender, account_with_code(0, code))]);
-        let (_result, violation) = run(&tx, &mut db, sender, &[0], None);
+        let (_result, violation) = run(&tx, &mut db, sender, &[0], None, None);
         assert_eq!(
             violation,
             Some(FrameSimViolation::CallToNonexistentOrDelegated(ghost)),
@@ -2273,7 +2276,7 @@ mod validation_observer_tests {
             vec![verify_frame_obs(sender, 50_000, 0x03, Bytes::new())],
         );
         let mut db = build_db(vec![(sender, account_with_code(0, code))]);
-        let (result, violation) = run(&tx, &mut db, sender, &[0], None);
+        let (result, violation) = run(&tx, &mut db, sender, &[0], None, None);
         assert!(
             violation.is_none(),
             "a revert is a frame outcome, not a trace violation"
@@ -2297,7 +2300,7 @@ mod validation_observer_tests {
             vec![verify_frame_obs(sender, 50_000, 0x03, Bytes::new())],
         );
         let mut db = build_db(vec![(sender, account_with_code(0, code))]);
-        let (result, violation) = run(&tx, &mut db, sender, &[0], None);
+        let (result, violation) = run(&tx, &mut db, sender, &[0], None, None);
         assert!(violation.is_none(), "a no-op VERIFY frame violates no rule");
         assert!(!result.any_revert, "an empty VERIFY frame succeeds");
         assert!(
@@ -2327,7 +2330,9 @@ mod validation_observer_tests {
             None,
         )
         .unwrap();
-        let result = vm.run_frame_validation_prefix(&[0], Some(0), None).unwrap();
+        let result = vm
+            .run_frame_validation_prefix(&[0], Some(0), None, None)
+            .unwrap();
         assert!(
             vm.validation_observer.violation.is_none(),
             "SSTORE to the sender inside the deploy frame must be allowed, got {:?}",
@@ -2417,12 +2422,14 @@ mod frame_validation_prefix_tests {
     use ethrex_common::types::Transaction;
     use ethrex_common::types::{
         Account, AccountState, BlockHeader, ChainConfig, Code, CodeMetadata,
-        FRAME_TX_MAX_VERIFY_GAS, Frame, FrameTransaction, PrefixShape, ValidationPrefix,
+        DEFAULT_AA_VOPS_SLOT_COUNT, FRAME_TX_MAX_VERIFY_GAS, Frame, FrameTransaction, PrefixShape,
+        ValidationPrefix,
     };
     use ethrex_common::{Address, H256, U256};
     use ethrex_crypto::NativeCrypto;
     use ethrex_levm::db::{Database, gen_db::GeneralizedDatabase};
     use ethrex_levm::errors::DatabaseError;
+    use ethrex_levm::validation_observer::FocilVopsSurface;
     use ethrex_levm::vm::VMType;
     use ethrex_vm::backends::levm::LEVM;
     use rustc_hash::FxHashMap;
@@ -2511,6 +2518,20 @@ mod frame_validation_prefix_tests {
         ])
     }
 
+    /// SLOAD `slot`, discard it, then APPROVE scope 3 (self_verify) and STOP.
+    fn sload_then_approve_code(slot: u8) -> Bytes {
+        Bytes::from(vec![
+            0x60, slot, // PUSH1 slot
+            0x54, // SLOAD
+            0x50, // POP
+            0x60, 0x03, // PUSH1 scope (self_verify)
+            0x60, 0x00, // PUSH1 0 (length)
+            0x60, 0x00, // PUSH1 0 (offset)
+            0xAA, // APPROVE
+            0x00, // STOP
+        ])
+    }
+
     fn db_with(accounts: Vec<(Address, Account)>) -> GeneralizedDatabase {
         let map: FxHashMap<Address, Account> = accounts.into_iter().collect();
         GeneralizedDatabase::new_with_account_state(
@@ -2590,6 +2611,7 @@ mod frame_validation_prefix_tests {
             &prefix,
             None,
             FRAME_TX_MAX_VERIFY_GAS,
+            None,
         )
         .expect("simulation runs");
         assert!(
@@ -2627,6 +2649,7 @@ mod frame_validation_prefix_tests {
             &prefix,
             None,
             FRAME_TX_MAX_VERIFY_GAS,
+            None,
         )
         .expect("simulation runs");
         assert!(
@@ -2676,6 +2699,7 @@ mod frame_validation_prefix_tests {
             &prefix,
             None,
             FRAME_TX_MAX_VERIFY_GAS,
+            None,
         )
         .expect("simulation runs");
         assert!(
@@ -2687,6 +2711,129 @@ mod frame_validation_prefix_tests {
             outcome.accessed_paymaster,
             Some((sponsor, false)),
             "the sponsor must be identified as the paymaster"
+        );
+    }
+
+    /// EIP-8369 Profile 2: a self_verify prefix reading `sender` storage slot
+    /// `AA_VOPS_SLOT_COUNT` (one past the admitted `[0, AA_VOPS_SLOT_COUNT)`
+    /// bound) must be rejected once a Profile 2 surface is configured.
+    #[test]
+    fn storage_read_at_vops_bound_violates_configured_surface() {
+        let sender = addr(0x5E_11_03);
+        #[expect(clippy::as_conversions, reason = "test fixture, slot fits u8")]
+        let slot = DEFAULT_AA_VOPS_SLOT_COUNT as u8;
+        let frames = vec![frame(1, 0x03, sender, 50_000)];
+        let tx = frame_tx_prefix(sender, frames);
+        let mut db = db_with(vec![(sender, account(0, sload_then_approve_code(slot)))]);
+        let prefix = ValidationPrefix {
+            shape: PrefixShape::SelfVerify,
+            frame_indices: vec![0],
+            deploy_index: None,
+            pay_index: Some(0),
+        };
+        let surface = FocilVopsSurface {
+            payer: sender,
+            slot_count: DEFAULT_AA_VOPS_SLOT_COUNT,
+        };
+        let outcome = LEVM::simulate_frame_validation_prefix(
+            &tx,
+            &header(),
+            &mut db,
+            VMType::L1,
+            &NativeCrypto,
+            &prefix,
+            None,
+            FRAME_TX_MAX_VERIFY_GAS,
+            Some(surface),
+        )
+        .expect("simulation runs");
+        assert!(
+            !outcome.passed,
+            "a read at slot AA_VOPS_SLOT_COUNT must fall outside the Profile 2 surface"
+        );
+        assert_eq!(
+            outcome.violation.as_deref(),
+            Some("StorageOutsideVopsSurface"),
+            "got {:?}",
+            outcome.violation
+        );
+    }
+
+    /// The same prefix as above (reading slot `AA_VOPS_SLOT_COUNT`) must still
+    /// pass when no Profile 2 surface is configured: EIP-8141's plain
+    /// sender-storage rule places no numeric bound on the slot, so this same
+    /// transaction may pass the EIP-8141 mempool rule and fail Profile 2
+    /// eligibility, or vice versa, per EIP-8369.
+    #[test]
+    fn storage_read_at_vops_bound_passes_without_surface() {
+        let sender = addr(0x5E_11_04);
+        #[expect(clippy::as_conversions, reason = "test fixture, slot fits u8")]
+        let slot = DEFAULT_AA_VOPS_SLOT_COUNT as u8;
+        let frames = vec![frame(1, 0x03, sender, 50_000)];
+        let tx = frame_tx_prefix(sender, frames);
+        let mut db = db_with(vec![(sender, account(0, sload_then_approve_code(slot)))]);
+        let prefix = ValidationPrefix {
+            shape: PrefixShape::SelfVerify,
+            frame_indices: vec![0],
+            deploy_index: None,
+            pay_index: Some(0),
+        };
+        let outcome = LEVM::simulate_frame_validation_prefix(
+            &tx,
+            &header(),
+            &mut db,
+            VMType::L1,
+            &NativeCrypto,
+            &prefix,
+            None,
+            FRAME_TX_MAX_VERIFY_GAS,
+            None,
+        )
+        .expect("simulation runs");
+        assert!(
+            outcome.passed,
+            "without a configured surface the plain EIP-8141 sender-storage rule applies, got {:?}",
+            outcome.violation
+        );
+    }
+
+    /// A read at slot `AA_VOPS_SLOT_COUNT - 1` (the last admitted slot) must
+    /// pass under a configured Profile 2 surface, pinning the boundary on the
+    /// admitted side.
+    #[test]
+    fn storage_read_below_vops_bound_passes_configured_surface() {
+        let sender = addr(0x5E_11_05);
+        #[expect(clippy::as_conversions, reason = "test fixture, slot fits u8")]
+        let slot = (DEFAULT_AA_VOPS_SLOT_COUNT - 1) as u8;
+        let frames = vec![frame(1, 0x03, sender, 50_000)];
+        let tx = frame_tx_prefix(sender, frames);
+        let mut db = db_with(vec![(sender, account(0, sload_then_approve_code(slot)))]);
+        let prefix = ValidationPrefix {
+            shape: PrefixShape::SelfVerify,
+            frame_indices: vec![0],
+            deploy_index: None,
+            pay_index: Some(0),
+        };
+        let surface = FocilVopsSurface {
+            payer: sender,
+            slot_count: DEFAULT_AA_VOPS_SLOT_COUNT,
+        };
+        let outcome = LEVM::simulate_frame_validation_prefix(
+            &tx,
+            &header(),
+            &mut db,
+            VMType::L1,
+            &NativeCrypto,
+            &prefix,
+            None,
+            FRAME_TX_MAX_VERIFY_GAS,
+            Some(surface),
+        )
+        .expect("simulation runs");
+        assert!(
+            outcome.passed,
+            "a read at slot AA_VOPS_SLOT_COUNT - 1 must lie inside the Profile 2 surface, got {:?}",
+            outcome.violation
         );
     }
 }

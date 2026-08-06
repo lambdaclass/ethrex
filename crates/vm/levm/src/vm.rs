@@ -3085,6 +3085,7 @@ impl<'a> VM<'a> {
         frame_indices: &[usize],
         deploy_index: Option<usize>,
         canonical_paymaster_pay_frame: Option<usize>,
+        focil_surface: Option<crate::validation_observer::FocilVopsSurface>,
     ) -> Result<PrefixSimResult, VMError> {
         use crate::validation_observer::ValidationObserver;
 
@@ -3174,6 +3175,7 @@ impl<'a> VM<'a> {
         let expiry_verifier = ethrex_common::types::frame_tx_expiry_verifier();
         let mut observer = ValidationObserver::new(sender, deploy_index, expiry_verifier);
         observer.canonical_paymaster_pay_frame = canonical_paymaster_pay_frame;
+        observer.focil_surface = focil_surface;
         self.validation_observer = observer;
 
         self.simulate_validation_prefix(frame_indices)

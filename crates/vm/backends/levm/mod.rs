@@ -3165,6 +3165,7 @@ impl LEVM {
         prefix: &ethrex_common::types::ValidationPrefix,
         _canonical_paymaster_code_hash: Option<H256>,
         max_verify_gas: u64,
+        focil_surface: Option<ethrex_levm::validation_observer::FocilVopsSurface>,
     ) -> Result<FrameValidationOutcome, EvmError> {
         let frame_tx = match tx {
             Transaction::FrameTransaction(ft) => ft,
@@ -3196,6 +3197,7 @@ impl LEVM {
             &prefix.frame_indices,
             prefix.deploy_index,
             canonical_pay_frame,
+            focil_surface,
         ) {
             Ok(sim) => sim,
             Err(err) => {
