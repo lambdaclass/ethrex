@@ -1,0 +1,846 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>The Hegotá EIP stack, explained</title>
+<style>
+  :root {
+    --paper: #f5f6f8;
+    --paper-2: #ffffff;
+    --paper-3: #eceef2;
+    --ink: #191b21;
+    --ink-2: #40454f;
+    --ink-3: #6b7280;
+    --rule: #d8dbe2;
+    --core: #8c2f39;
+    --core-soft: #f3e6e7;
+    --adj: #2f6f6b;
+    --adj-soft: #e2efed;
+    --shadow: 0 1px 2px rgba(25, 27, 33, .06), 0 8px 24px rgba(25, 27, 33, .05);
+
+    --serif: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, "Times New Roman", serif;
+    --sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --paper: #101218;
+      --paper-2: #171a21;
+      --paper-3: #1e222b;
+      --ink: #e7e9ee;
+      --ink-2: #b3b9c6;
+      --ink-3: #838b9b;
+      --rule: #2b303b;
+      --core: #d98b93;
+      --core-soft: #2a1c1f;
+      --adj: #78bdb6;
+      --adj-soft: #162624;
+      --shadow: 0 1px 2px rgba(0, 0, 0, .4), 0 8px 24px rgba(0, 0, 0, .3);
+    }
+  }
+
+  :root[data-theme="dark"] {
+    --paper: #101218;
+    --paper-2: #171a21;
+    --paper-3: #1e222b;
+    --ink: #e7e9ee;
+    --ink-2: #b3b9c6;
+    --ink-3: #838b9b;
+    --rule: #2b303b;
+    --core: #d98b93;
+    --core-soft: #2a1c1f;
+    --adj: #78bdb6;
+    --adj-soft: #162624;
+    --shadow: 0 1px 2px rgba(0, 0, 0, .4), 0 8px 24px rgba(0, 0, 0, .3);
+  }
+
+  :root[data-theme="light"] {
+    --paper: #f5f6f8;
+    --paper-2: #ffffff;
+    --paper-3: #eceef2;
+    --ink: #191b21;
+    --ink-2: #40454f;
+    --ink-3: #6b7280;
+    --rule: #d8dbe2;
+    --core: #8c2f39;
+    --core-soft: #f3e6e7;
+    --adj: #2f6f6b;
+    --adj-soft: #e2efed;
+    --shadow: 0 1px 2px rgba(25, 27, 33, .06), 0 8px 24px rgba(25, 27, 33, .05);
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--paper);
+    color: var(--ink);
+    font-family: var(--serif);
+    font-size: 17px;
+    line-height: 1.65;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .wrap {
+    display: grid;
+    grid-template-columns: 220px minmax(0, 1fr);
+    gap: 48px;
+    max-width: 1300px;
+    margin: 0 auto;
+    padding: 0 28px 120px;
+  }
+
+  /* ---------- sticky dependency rail ---------- */
+  .rail {
+    position: sticky;
+    top: 0;
+    align-self: start;
+    max-height: 100vh;
+    overflow-y: auto;
+    padding: 40px 0;
+    font-family: var(--sans);
+    font-size: 12.5px;
+    line-height: 1.45;
+  }
+  .rail h2 {
+    font-size: 10.5px;
+    letter-spacing: .13em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+    font-weight: 600;
+    margin: 0 0 14px;
+    font-family: var(--sans);
+  }
+  .rail ol { list-style: none; margin: 0 0 26px; padding: 0; display: flex; flex-direction: column; gap: 3px; }
+  .rail a {
+    display: block;
+    padding: 5px 10px 5px 12px;
+    color: var(--ink-2);
+    text-decoration: none;
+    border-left: 2px solid var(--rule);
+    border-radius: 0 3px 3px 0;
+  }
+  .rail a:hover, .rail a:focus-visible { background: var(--paper-3); color: var(--ink); }
+  .rail a .n { font-family: var(--mono); font-size: 11.5px; color: var(--ink-3); }
+  .rail li.depth-1 a { padding-left: 22px; }
+  .rail li.core a { border-left-color: var(--core); }
+  .rail li.adj a { border-left-color: var(--adj); }
+
+  /* ---------- masthead ---------- */
+  header.top { padding: 72px 0 8px; max-width: 44rem; }
+  .eyebrow {
+    font-family: var(--sans);
+    font-size: 11px;
+    letter-spacing: .15em;
+    text-transform: uppercase;
+    color: var(--core);
+    font-weight: 650;
+    margin: 0 0 18px;
+  }
+  h1 {
+    font-size: clamp(34px, 5vw, 52px);
+    line-height: 1.06;
+    letter-spacing: -.018em;
+    margin: 0 0 22px;
+    text-wrap: balance;
+    font-weight: 600;
+  }
+  .standfirst { font-size: 20px; line-height: 1.55; color: var(--ink-2); margin: 0 0 20px; }
+
+  main { max-width: 54rem; }
+  /* Prose keeps a comfortable measure; tables, code and figures use the full column. */
+  main > p,
+  main > ul,
+  main > ol,
+  main > h2,
+  main > h3,
+  main > h4,
+  main > .oneline,
+  main > .note { max-width: 44rem; }
+
+  h2 {
+    font-size: 29px;
+    line-height: 1.2;
+    letter-spacing: -.012em;
+    margin: 72px 0 8px;
+    text-wrap: balance;
+    font-weight: 600;
+    scroll-margin-top: 24px;
+  }
+  h3 {
+    font-size: 20px;
+    margin: 38px 0 6px;
+    line-height: 1.3;
+    text-wrap: balance;
+    font-weight: 600;
+    scroll-margin-top: 24px;
+  }
+  h4 {
+    font-family: var(--sans);
+    font-size: 12px;
+    letter-spacing: .1em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+    font-weight: 650;
+    margin: 26px 0 6px;
+  }
+  p { margin: 14px 0; }
+  a { color: var(--core); text-decoration-thickness: 1px; text-underline-offset: 2px; }
+  strong { font-weight: 650; }
+
+  code {
+    font-family: var(--mono);
+    font-size: .855em;
+    background: var(--paper-3);
+    padding: .12em .36em;
+    border-radius: 3px;
+    border: 1px solid var(--rule);
+    word-break: break-word;
+  }
+  pre {
+    font-family: var(--mono);
+    font-size: 12.5px;
+    line-height: 1.6;
+    background: var(--paper-2);
+    border: 1px solid var(--rule);
+    border-radius: 6px;
+    padding: 16px 18px;
+    overflow-x: auto;
+    margin: 18px 0;
+    box-shadow: var(--shadow);
+  }
+  pre code { background: none; border: 0; padding: 0; font-size: inherit; }
+
+  ul, ol { padding-left: 22px; margin: 14px 0; }
+  li { margin: 7px 0; }
+  li::marker { color: var(--ink-3); }
+
+  /* ---------- EIP header block ---------- */
+  .eip {
+    display: flex;
+    align-items: baseline;
+    gap: 12px;
+    flex-wrap: wrap;
+    margin: 76px 0 0;
+    padding-top: 22px;
+    border-top: 2px solid var(--core);
+    scroll-margin-top: 24px;
+  }
+  .eip.is-adj { border-top-color: var(--adj); }
+  .eip .num {
+    font-family: var(--mono);
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--core);
+    letter-spacing: .01em;
+  }
+  .eip.is-adj .num { color: var(--adj); }
+  .eip .layer {
+    font-family: var(--sans);
+    font-size: 10.5px;
+    letter-spacing: .11em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+    margin-left: auto;
+  }
+  .eip + h2 { margin-top: 4px; }
+
+  .oneline {
+    font-family: var(--sans);
+    font-size: 15px;
+    line-height: 1.5;
+    color: var(--ink-2);
+    background: var(--core-soft);
+    border-radius: 5px;
+    padding: 12px 15px;
+    margin: 16px 0 4px;
+  }
+  .oneline.is-adj { background: var(--adj-soft); }
+  .oneline b { color: var(--ink); font-weight: 650; }
+
+  /* ---------- tables ---------- */
+  .scroll { overflow-x: auto; margin: 20px 0; }
+  table {
+    border-collapse: collapse;
+    width: 100%;
+    font-family: var(--sans);
+    font-size: 13.5px;
+    line-height: 1.45;
+  }
+  th, td {
+    text-align: left;
+    padding: 9px 14px 9px 0;
+    border-bottom: 1px solid var(--rule);
+    vertical-align: top;
+  }
+  th {
+    font-size: 10.5px;
+    letter-spacing: .1em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+    font-weight: 650;
+    border-bottom-color: var(--ink-3);
+    white-space: nowrap;
+  }
+  td code { font-size: 12px; }
+  tbody tr:last-child td { border-bottom: 0; }
+
+  /* ---------- callouts ---------- */
+  .note {
+    border-left: 3px solid var(--rule);
+    padding: 2px 0 2px 18px;
+    margin: 22px 0;
+    color: var(--ink-2);
+    font-size: 16px;
+  }
+  .note.ours { border-left-color: var(--core); }
+  .note .tag {
+    display: block;
+    font-family: var(--sans);
+    font-size: 10.5px;
+    letter-spacing: .11em;
+    text-transform: uppercase;
+    color: var(--core);
+    font-weight: 650;
+    margin-bottom: 3px;
+  }
+  .note.plain .tag { color: var(--ink-3); }
+
+  figure { margin: 30px 0; }
+  figcaption {
+    font-family: var(--sans);
+    font-size: 12.5px;
+    color: var(--ink-3);
+    margin-top: 10px;
+    line-height: 1.5;
+  }
+  svg { max-width: 100%; height: auto; display: block; }
+
+  footer {
+    max-width: 44rem;
+    margin-top: 84px;
+    padding-top: 22px;
+    border-top: 1px solid var(--rule);
+    font-family: var(--sans);
+    font-size: 13px;
+    color: var(--ink-3);
+  }
+
+  @media (max-width: 900px) {
+    .wrap { grid-template-columns: minmax(0, 1fr); gap: 0; padding: 0 20px 80px; }
+    .rail { position: static; max-height: none; padding: 32px 0 0; border-bottom: 1px solid var(--rule); }
+    .rail ol { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 2px; }
+    header.top { padding-top: 40px; }
+    body { font-size: 16.5px; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    * { animation: none !important; transition: none !important; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+<nav class="rail" aria-label="Contents">
+  <h2>Start here</h2>
+  <ol>
+    <li><a href="#idea">The one idea</a></li>
+    <li><a href="#map">How they fit together</a></li>
+  </ol>
+
+  <h2>The stack</h2>
+  <ol>
+    <li class="core"><a href="#eip8141"><span class="n">8141</span> Frame Transactions</a></li>
+    <li class="core depth-1"><a href="#eip8250"><span class="n">8250</span> Keyed Nonces</a></li>
+    <li class="core depth-1"><a href="#eip8272"><span class="n">8272</span> Recent Roots</a></li>
+    <li class="core depth-1"><a href="#eip7906"><span class="n">7906</span> Tx Assertions</a></li>
+    <li class="core depth-1"><a href="#eip8312"><span class="n">8312</span> UTXO Frames</a></li>
+  </ol>
+
+  <h2>Other axis</h2>
+  <ol>
+    <li class="adj"><a href="#eip7805"><span class="n">7805</span> FOCIL</a></li>
+    <li class="adj depth-1"><a href="#eip8369"><span class="n">8369</span> Eligibility</a></li>
+  </ol>
+
+  <h2>The ground</h2>
+  <ol>
+    <li class="adj"><a href="#ground">7928 · 8037 · 7843</a></li>
+  </ol>
+
+  <h2>In practice</h2>
+  <ol>
+    <li><a href="#compose">One transaction, end to end</a></li>
+    <li><a href="#branch">What this branch changes</a></li>
+    <li><a href="#activation">How it switches on</a></li>
+  </ol>
+</nav>
+
+<div>
+<header class="top">
+  <p class="eyebrow">ethrex · hegota-devnet</p>
+  <h1>The Hegotá EIP stack, explained</h1>
+  <p class="standfirst">Seven EIPs that together replace Ethereum&rsquo;s transaction signature with a small program, and one that decides whether the network is allowed to censor the result. This is a study guide to what each one does, why it exists, and how they lean on each other.</p>
+</header>
+
+<main>
+
+<h2 id="idea">The one idea everything hangs off</h2>
+
+<p>An ordinary Ethereum transaction proves who sent it with a single ECDSA signature. The protocol checks that signature, charges the sender for gas, and runs the call. Authentication is fixed, and the person who authenticates is always the person who pays.</p>
+
+<p><strong>Frame transactions replace that signature with a sequence of small execution steps called frames.</strong> Instead of the protocol verifying a signature, the transaction carries code that runs on-chain and calls an opcode, <code>APPROVE</code>, to say &ldquo;yes, this is authorised, and here is who pays.&rdquo;</p>
+
+<p>Once authentication is a program rather than a fixed algorithm, three things fall out that were previously impossible:</p>
+
+<ul>
+  <li><strong>Any verification scheme works.</strong> A passkey, a multisig, a social-recovery rule, a zero-knowledge proof. If you can express it in EVM code, it can authorise a transaction.</li>
+  <li><strong>The sender and the payer can differ.</strong> One account proves identity, a different account settles the gas bill. This is what people mean by &ldquo;sponsored&rdquo; or &ldquo;paymaster&rdquo; transactions, done natively instead of bolted on.</li>
+  <li><strong>Several operations become one atomic unit.</strong> Approve a token and swap it in a single transaction that either fully happens or fully does not.</li>
+</ul>
+
+<p>Everything else in this document is either an extension of that idea, a piece of plumbing it needs, or a rule about how the network is permitted to treat the result.</p>
+
+<div class="note plain">
+  <span class="tag">Naming</span>
+  <p style="margin:0">Hegotá is the fork name on the execution side. The consensus side calls the same fork <code>heze</code>. They activate at the same moment; you will see both names in configs and they are not two things.</p>
+</div>
+
+<h2 id="map">How they fit together</h2>
+
+<p>The eight EIPs are not a flat list. There is a base, a set of extensions that widen it, a separate axis about censorship resistance, and a layer of pre-existing machinery they all stand on.</p>
+
+<figure>
+<svg viewBox="0 0 720 430" role="img" aria-labelledby="maptitle mapdesc">
+  <title id="maptitle">Dependency map of the Hegotá EIP stack</title>
+  <desc id="mapdesc">EIP-8141 sits at the centre. EIP-8250, EIP-8272, EIP-7906 and EIP-8312 each extend it. EIP-7805 and EIP-8369 form a separate consensus axis that constrains it. EIP-7928, EIP-8037 and EIP-7843 sit underneath as existing machinery.</desc>
+
+  <g font-family="ui-sans-serif, system-ui, sans-serif">
+
+    <!-- ground layer -->
+    <rect x="30" y="336" width="660" height="66" rx="6" fill="var(--adj-soft)" stroke="var(--adj)" stroke-width="1" stroke-dasharray="4 3"/>
+    <text x="46" y="358" font-size="10.5" letter-spacing="1.4" fill="var(--adj)" font-weight="650">THE GROUND · already in Amsterdam</text>
+    <text x="46" y="382" font-size="13" fill="var(--ink-2)" font-family="ui-monospace, monospace">7928 block access lists · 8037 two-dimensional gas · 7843 slot number</text>
+
+    <!-- base -->
+    <rect x="212" y="176" width="296" height="66" rx="6" fill="var(--core-soft)" stroke="var(--core)" stroke-width="2"/>
+    <text x="360" y="203" font-size="14" font-weight="650" fill="var(--ink)" text-anchor="middle">EIP-8141 · Frame Transactions</text>
+    <text x="360" y="223" font-size="11.5" fill="var(--ink-2)" text-anchor="middle">the base: type 0x06, frames, APPROVE</text>
+
+    <!-- extensions -->
+    <g font-size="11.5">
+      <rect x="30" y="60" width="150" height="58" rx="5" fill="var(--paper-2)" stroke="var(--rule)"/>
+      <text x="105" y="82" font-size="12.5" font-weight="650" fill="var(--ink)" text-anchor="middle">EIP-8250</text>
+      <text x="105" y="100" fill="var(--ink-3)" text-anchor="middle">keyed nonces</text>
+
+      <rect x="196" y="60" width="150" height="58" rx="5" fill="var(--paper-2)" stroke="var(--rule)"/>
+      <text x="271" y="82" font-size="12.5" font-weight="650" fill="var(--ink)" text-anchor="middle">EIP-8272</text>
+      <text x="271" y="100" fill="var(--ink-3)" text-anchor="middle">recent roots</text>
+
+      <rect x="362" y="60" width="150" height="58" rx="5" fill="var(--paper-2)" stroke="var(--rule)"/>
+      <text x="437" y="82" font-size="12.5" font-weight="650" fill="var(--ink)" text-anchor="middle">EIP-7906</text>
+      <text x="437" y="100" fill="var(--ink-3)" text-anchor="middle">tx assertions</text>
+
+      <rect x="528" y="60" width="162" height="58" rx="5" fill="var(--paper-2)" stroke="var(--rule)" stroke-dasharray="4 3"/>
+      <text x="609" y="82" font-size="12.5" font-weight="650" fill="var(--ink)" text-anchor="middle">EIP-8312</text>
+      <text x="609" y="100" fill="var(--ink-3)" text-anchor="middle">UTXO frames</text>
+    </g>
+
+    <!-- connectors up -->
+    <g stroke="var(--core)" stroke-width="1.4" fill="none" opacity=".75">
+      <path d="M105 118 L105 150 Q105 176 212 190"/>
+      <path d="M271 118 L271 176"/>
+      <path d="M437 118 L437 176"/>
+      <path d="M609 118 L609 150 Q609 176 508 190"/>
+    </g>
+
+    <!-- focil axis -->
+    <rect x="30" y="262" width="296" height="56" rx="6" fill="var(--adj-soft)" stroke="var(--adj)" stroke-width="1.6"/>
+    <text x="178" y="285" font-size="12.5" font-weight="650" fill="var(--ink)" text-anchor="middle">EIP-7805 · FOCIL</text>
+    <text x="178" y="303" font-size="11.5" fill="var(--ink-2)" text-anchor="middle">forced inclusion, anti-censorship</text>
+
+    <rect x="352" y="262" width="296" height="56" rx="6" fill="var(--paper-2)" stroke="var(--adj)" stroke-width="1" stroke-dasharray="4 3"/>
+    <text x="500" y="285" font-size="12.5" font-weight="650" fill="var(--ink)" text-anchor="middle">EIP-8369 · eligibility</text>
+    <text x="500" y="303" font-size="11.5" fill="var(--ink-2)" text-anchor="middle">which omissions are enforceable</text>
+
+    <g stroke="var(--adj)" stroke-width="1.4" fill="none" opacity=".8">
+      <path d="M326 290 L352 290"/>
+      <path d="M290 262 L320 242"/>
+    </g>
+    <text x="330" y="252" font-size="10.5" fill="var(--adj)" font-style="italic">constrains</text>
+  </g>
+</svg>
+<figcaption>Solid boxes activate together at Hegotá. Dashed boxes are scheduled separately or not yet binding. The FOCIL pair runs on a different axis: it does not extend frame transactions, it limits what a block builder is allowed to leave out.</figcaption>
+</figure>
+
+<p>Read it in four groups:</p>
+
+<ul>
+  <li><strong>The base.</strong> EIP-8141 defines the new transaction type. Nothing else in the stack means anything without it.</li>
+  <li><strong>The extensions.</strong> 8250, 8272 and 7906 each add a field or a frame kind to that base. 8312 does too, but on its own schedule.</li>
+  <li><strong>The other axis.</strong> 7805 and 8369 are about censorship, not authentication. They say what a builder must include and what happens when it does not.</li>
+  <li><strong>The ground.</strong> 7928, 8037 and 7843 already shipped in the previous fork. The stack borrows their machinery rather than reinventing it.</li>
+</ul>
+
+<!-- ============================================ -->
+<div class="eip" id="eip8141">
+  <span class="num">EIP-8141</span>
+  <span class="layer">Base · activates at Hegotá</span>
+</div>
+<h2>Frame Transactions</h2>
+
+<p class="oneline"><b>The problem:</b> a transaction&rsquo;s signature check is hard-coded, and whoever signs must also pay. <b>The fix:</b> a new transaction type whose authentication is a small program you supply.</p>
+
+<h3>What a frame transaction looks like</h3>
+
+<p>It is transaction type <code>0x06</code>. Where a normal transaction has <code>v, r, s</code>, this one has a list of <strong>frames</strong>:</p>
+
+<pre><code>0x06 || rlp([chain_id, nonce, sender, frames, signatures,
+             max_priority_fee_per_gas, max_fee_per_gas,
+             max_fee_per_blob_gas, blob_versioned_hashes])
+
+each frame = [mode, flags, target, gas_limit, value, data]</code></pre>
+
+<p>A frame is one execution step. It has its own gas limit and its own target, and the <code>mode</code> byte says what role it plays:</p>
+
+<div class="scroll">
+<table>
+  <thead><tr><th>Mode</th><th>Name</th><th>What it is for</th></tr></thead>
+  <tbody>
+    <tr><td><code>0</code></td><td>DEFAULT</td><td>Ordinary execution. Also used for a &ldquo;deploy&rdquo; frame that installs code at the sender.</td></tr>
+    <tr><td><code>1</code></td><td>VERIFY</td><td>Authentication. Runs before anything else and must call <code>APPROVE</code>.</td></tr>
+    <tr><td><code>2</code></td><td>SENDER</td><td>The actual work, run as the sender.</td></tr>
+    <tr><td><code>3</code></td><td>POST_TX</td><td>Added by EIP-7906. Checks the result afterwards.</td></tr>
+    <tr><td><code>5</code></td><td>UTXO</td><td>Added by EIP-8312 on this branch. Spends a payment object.</td></tr>
+  </tbody>
+</table>
+</div>
+
+<h3>The validation prefix, and why it matters everywhere else</h3>
+
+<p>The leading VERIFY frames are called the <strong>validation prefix</strong>. This is the part that establishes two facts before any real work happens: that the transaction is authorised, and who the <code>payer</code> is.</p>
+
+<p>The prefix must match one of exactly four recognised shapes. This restriction is not cosmetic; it is what lets a node reason about an unfamiliar transaction cheaply.</p>
+
+<div class="scroll">
+<table>
+  <thead><tr><th>Shape</th><th>Meaning</th></tr></thead>
+  <tbody>
+    <tr><td><code>self_verify</code></td><td>One VERIFY frame. The sender authorises and pays for itself.</td></tr>
+    <tr><td><code>deploy | self_verify</code></td><td>Same, but first installs the sender&rsquo;s verification code.</td></tr>
+    <tr><td><code>only_verify | pay</code></td><td>One frame authorises, a second frame gets a sponsor to pay.</td></tr>
+    <tr><td><code>deploy | only_verify | pay</code></td><td>Both of the above.</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>Remember the prefix. Nearly every hard question later in this document is really a question about it: how much gas it is allowed to burn, what state it is allowed to read, and whether a validator can afford to re-run it.</p>
+
+<h3>The opcodes it adds</h3>
+
+<div class="scroll">
+<table>
+  <thead><tr><th>Byte</th><th>Opcode</th><th>Does what</th></tr></thead>
+  <tbody>
+    <tr><td><code>0xAA</code></td><td><code>APPROVE</code></td><td>Declares the transaction authorised, and collects the payer&rsquo;s maximum possible cost up front.</td></tr>
+    <tr><td><code>0xB0</code></td><td><code>TXPARAM</code></td><td>Reads a field of the transaction envelope.</td></tr>
+    <tr><td><code>0xB1</code>–<code>0xB2</code></td><td><code>FRAMEDATALOAD</code> / <code>COPY</code></td><td>Reads the current frame&rsquo;s data.</td></tr>
+    <tr><td><code>0xB3</code></td><td><code>FRAMEPARAM</code></td><td>Reads a field of a frame.</td></tr>
+    <tr><td><code>0xB4</code></td><td><code>SIGPARAM</code></td><td>Reads the supplied signature material.</td></tr>
+  </tbody>
+</table>
+</div>
+
+<div class="note ours">
+  <span class="tag">Detail worth holding on to</span>
+  <p style="margin:0"><code>APPROVE</code> charges the payer the <em>maximum</em> cost, <code>max_gas &times; max_fee_per_gas</code>, not the eventual actual cost. The difference comes back as a refund after execution. Any shortcut that estimates the real cost instead will declare a payer solvent who then reverts in practice. This exact mistake was found and removed from a draft spec; see EIP-8369 below.</p>
+</div>
+
+<h3>Receipts change too</h3>
+
+<p>One frame transaction produces one receipt containing a receipt <em>per frame</em>, plus the payer&rsquo;s address. So you can see that frame 1 succeeded, frame 2 reverted, and frame 3 never ran, all inside one transaction.</p>
+
+<!-- ============================================ -->
+<div class="eip" id="eip8250">
+  <span class="num">EIP-8250</span>
+  <span class="layer">Extends 8141 · activates at Hegotá</span>
+</div>
+<h2>Keyed Nonces</h2>
+
+<p class="oneline"><b>The problem:</b> one account has one nonce counter, so its transactions must execute in a strict line. <b>The fix:</b> give an account many independent counters.</p>
+
+<p>A nonce stops replay attacks by forcing transaction <var>n+1</var> to follow transaction <var>n</var>. That is fine for a personal wallet, and painful for anything shared. A sponsor paying for thousands of users, or a contract acting for many people, has one counter and therefore one queue: everything serialises behind everything else.</p>
+
+<p>EIP-8250 replaces the single <code>nonce</code> field with two:</p>
+
+<pre><code>nonce_keys : 1..16 strictly increasing uint256   // which counters
+nonce_seq  : u64                                 // the value they must all be at</code></pre>
+
+<p>Each key is its own independent replay domain. Two transactions from the same sender on <em>disjoint</em> key sets have no ordering relationship at all and can be included in either order, or simultaneously.</p>
+
+<div class="scroll">
+<table>
+  <thead><tr><th>Where it lives</th><th>Detail</th></tr></thead>
+  <tbody>
+    <tr><td>Key <code>0</code></td><td>The account&rsquo;s ordinary nonce. Backwards compatible.</td></tr>
+    <tr><td>Any other key</td><td>Stored in the <code>NONCE_MANAGER</code> predeploy at <code>0x…8250</code>.</td></tr>
+    <tr><td>Slot formula</td><td><code>keccak256(pad32(sender) || pad32(key))</code></td></tr>
+    <tr><td>Extra cost</td><td>A one-off charge the first time a given key is used.</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>Note the address convention, which recurs: a predeploy for EIP-<var>N</var> lives at <code>0x…N</code>. It makes the constants self-documenting.</p>
+
+<!-- ============================================ -->
+<div class="eip" id="eip8272">
+  <span class="num">EIP-8272</span>
+  <span class="layer">Extends 8141 · activates at Hegotá</span>
+</div>
+<h2>Recent Roots</h2>
+
+<p class="oneline"><b>The problem:</b> verification code often needs to check a proof against a recent commitment, but reading another contract&rsquo;s mutable storage during validation is dangerous. <b>The fix:</b> declare the commitment in the signed envelope instead.</p>
+
+<p>Consider a privacy protocol. To spend, you prove membership in a Merkle tree whose root lives in some contract&rsquo;s storage. Your validation code needs that root.</p>
+
+<p>Reading it directly creates a problem the whole network feels. That storage slot is shared: it changes whenever anyone else uses the protocol. So a single change can invalidate every pending transaction that read it at once, which is exactly the mass-invalidation behaviour a mempool cannot tolerate.</p>
+
+<p>EIP-8272 lets the transaction carry the roots it depends on, as signed data:</p>
+
+<pre><code>recent_root_references : [ (source_id, slot, root), ... ]   // up to 16</code></pre>
+
+<p>The protocol validates these against the <code>RECENT_ROOT_ADDRESS</code> predeploy at <code>0x…8272</code>, which keeps a ring buffer of recent commitments. A reference is valid while its slot is within roughly the last 8191 slots. Validation code reads its own envelope with <code>RECENTROOTREFLOAD</code> (<code>0xB5</code>) and never touches shared storage.</p>
+
+<div class="note plain">
+  <span class="tag">Why the ring buffer is bounded</span>
+  <p style="margin:0">Roots expire so the predeploy&rsquo;s storage cannot grow forever. Roughly 8191 slots is about a day. Long enough that a transaction sitting in the mempool stays valid, short enough that the state stays bounded.</p>
+</div>
+
+<!-- ============================================ -->
+<div class="eip" id="eip7906">
+  <span class="num">EIP-7906</span>
+  <span class="layer">Extends 8141 · activates at Hegotá</span>
+</div>
+<h2>Transaction Assertions</h2>
+
+<p class="oneline"><b>The problem:</b> you cannot tell what a transaction actually did until it is already mined. <b>The fix:</b> attach a check that runs afterwards and can undo the work.</p>
+
+<p>A wallet simulates a transaction, sees a fair-looking swap, and submits it. Between simulation and inclusion the world moves, and what lands is worse. Or a contract sneaks in a token approval the user never intended.</p>
+
+<p>EIP-7906 adds <strong>POST_TX</strong> frames (mode <code>3</code>): trailing frames that run read-only after the transaction body, can inspect everything it did, and can revert it.</p>
+
+<p>Three opcodes let them see the result:</p>
+
+<div class="scroll">
+<table>
+  <thead><tr><th>Byte</th><th>Opcode</th><th>Reads</th></tr></thead>
+  <tbody>
+    <tr><td><code>0xB6</code></td><td><code>TXTRACE</code></td><td>Gas context and execution facts.</td></tr>
+    <tr><td><code>0xB7</code></td><td><code>EVENTDATACOPY</code></td><td>Events the transaction emitted.</td></tr>
+    <tr><td><code>0xB8</code></td><td><code>TXDIFF</code></td><td>The state changes it made, per address.</td></tr>
+  </tbody>
+</table>
+</div>
+
+<div class="note ours">
+  <span class="tag">The subtle part</span>
+  <p style="margin:0">A POST_TX revert reverts <em>the body</em>, not the transaction. The transaction is still included, gets <code>status = 0</code>, and <strong>the payer is still fully charged</strong>. The validation prefix stays committed. That is the correct behaviour: the authentication really did happen and consumed real work, so it is paid for even though the intended effect was rolled back.</p>
+</div>
+
+<!-- ============================================ -->
+<div class="eip" id="eip8312">
+  <span class="num">EIP-8312</span>
+  <span class="layer">Extends 8141 · separate schedule</span>
+</div>
+<h2>UTXO Frames</h2>
+
+<p class="oneline"><b>The problem:</b> paying someone who has no account yet costs a permanent account entry in the world state. <b>The fix:</b> a one-shot payment object that leaves almost nothing behind.</p>
+
+<p>Ethereum uses accounts. Bitcoin uses UTXOs: discrete coins that are created once and spent once. EIP-8312 adds a UTXO-shaped payment primitive alongside the account model.</p>
+
+<p>You deposit to a vault at <code>0x…8312</code> naming a recipient. The protocol assigns an index and, at the end of the block, commits that block&rsquo;s creations into a Merkle root. Spending is a new frame mode that runs <strong>no EVM code at all</strong>: the frame carries Merkle proofs, and the protocol checks them, flips an irreversible spent bit, and pays out.</p>
+
+<div class="scroll">
+<table>
+  <thead><tr><th>Flow</th><th>Gas</th><th>Permanent state left behind</th></tr></thead>
+  <tbody>
+    <tr><td>Create one payment object</td><td>36,334</td><td>none</td></tr>
+    <tr><td>Spend it</td><td>56,094</td><td>one spent bit</td></tr>
+    <tr><td>Full cycle</td><td>92,428</td><td>~0.3 bytes</td></tr>
+    <tr><td>Plain transfer to a fresh account</td><td>204,600</td><td>~120 bytes</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>So the complete create-and-spend cycle is about 2.2&times; cheaper in gas than a single ordinary transfer to a new account, and hundreds of times cheaper in permanent state. The state gap matters more than the gas gap, because under two-dimensional gas it is the state dimension that fills a block first.</p>
+
+<p>The value is concentrated rather than general. This is a payments primitive, strongest for one-shot, high-volume payouts to recipients who do not exist on chain yet. It is not a replacement for accounts.</p>
+
+<!-- ============================================ -->
+<div class="eip is-adj" id="eip7805">
+  <span class="num">EIP-7805</span>
+  <span class="layer">Consensus axis · FOCIL</span>
+</div>
+<h2>Fork-Choice Enforced Inclusion Lists</h2>
+
+<p class="oneline is-adj"><b>The problem:</b> a block builder can quietly refuse to include your transaction forever. <b>The fix:</b> let a committee publish a list of transactions the next block must contain.</p>
+
+<p>Everything above this point is about the execution layer. FOCIL is about the consensus layer, and it answers a different question: not &ldquo;is this transaction valid&rdquo; but &ldquo;is the network allowed to ignore it&rdquo;.</p>
+
+<p>Each slot, a committee of 16 <strong>includers</strong> each publish an inclusion list. The next block builder is expected to include those transactions. Attesters check afterwards, and a builder that left one out without a good reason does not get their votes.</p>
+
+<p>&ldquo;Without a good reason&rdquo; is the whole design. An omission is excused when the transaction genuinely could not have been added: it would not fit in the remaining gas, its nonce is wrong, its balance is too low. Those checks are cheap for ordinary transactions, which is why FOCIL works today.</p>
+
+<div class="note plain">
+  <span class="tag">The collision</span>
+  <p style="margin:0">Frame transactions break that assumption. Their validity depends on running a program, so &ldquo;could this have been included?&rdquo; is no longer a cheap arithmetic check. Every attester would have to re-execute somebody else&rsquo;s validation code, for every omitted transaction, before the attestation deadline. Resolving that is what the next EIP is for.</p>
+</div>
+
+<!-- ============================================ -->
+<div class="eip is-adj" id="eip8369">
+  <span class="num">EIP-8369</span>
+  <span class="layer">Consensus axis · informational</span>
+</div>
+<h2>VOPS Profiles for FOCIL Eligibility</h2>
+
+<p class="oneline is-adj"><b>The problem:</b> checking whether a frame transaction was unfairly excluded could cost more work than validators can afford. <b>The fix:</b> only enforce the subset that is cheap enough to check.</p>
+
+<p>The answer is to sort transactions into <strong>profiles</strong>. If a transaction fits a profile, its omission is enforceable. If it does not, it can still be listed and included, but nobody is punished for leaving it out.</p>
+
+<div class="scroll">
+<table>
+  <thead><tr><th>Profile</th><th>Covers</th><th>Omission judged</th></tr></thead>
+  <tbody>
+    <tr><td>1 &middot; Base</td><td>Ordinary transactions, no blobs</td><td>At the end of the block, as FOCIL already does.</td></tr>
+    <tr><td>2 &middot; AA-VOPS</td><td>Frame transactions inside a fixed state surface</td><td>At a position in the block the builder names.</td></tr>
+    <tr><td>&mdash;</td><td>Everything else, including anything with blobs</td><td>Never. Always excused.</td></tr>
+  </tbody>
+</table>
+</div>
+
+<h3>The three limits that make it affordable</h3>
+
+<p><strong>A bounded state surface.</strong> A qualifying validation prefix may read the sender&rsquo;s and payer&rsquo;s balance and nonce, and only their first few storage slots, a count called <code>AA_VOPS_SLOT_COUNT</code>. Reading anything else does not make the transaction expensive, it makes it <em>ineligible</em>. That numeric bound is also what excludes mapping entries, whose slots are keccak hashes and therefore enormous numbers.</p>
+
+<p><strong>A gas budget.</strong> Each transaction may declare at most 2<sup>20</sup> gas of validation work, and each inclusion list may hold 2<sup>20</sup> in total. Across 16 includers that is about 16.8M gas of replay per slot, roughly 28% of a 60M block. The EIP states that figure and openly flags that it is not yet a settled number.</p>
+
+<p><strong>A named index.</strong> Instead of forcing builders into a quadratic &ldquo;try appending at every position&rdquo; loop, the builder simply commits to a position and attesters check there. If the builder names nothing, the default is the end of the block.</p>
+
+<div class="note ours">
+  <span class="tag">What the index costs you</span>
+  <p style="margin:0">The party choosing the block contents also chooses the state the transaction is judged against. So the guarantee only fully holds for transactions whose validity is <em>position-stable</em>, meaning it cannot be flipped by reordering. Single-use nonces qualify. A shared sponsor&rsquo;s balance does not: another sponsored transaction can drain it first. The EIP accepts this openly rather than papering over it.</p>
+</div>
+
+<p>EIP-8369 is Informational, which means it describes the model but binds nobody. Actual enforcement needs a further Standards Track EIP that does not exist yet, and <code>AA_VOPS_SLOT_COUNT</code> has no agreed value.</p>
+
+<!-- ============================================ -->
+<div class="eip is-adj" id="ground">
+  <span class="num">EIP-7928 · 8037 · 7843</span>
+  <span class="layer">The ground · already shipped</span>
+</div>
+<h2>The machinery underneath</h2>
+
+<p>These arrived in the previous fork. The stack leans on them heavily, and several things above only make sense once you know they exist.</p>
+
+<h3>EIP-7928 &mdash; Block Access Lists</h3>
+<p>Every block carries a structured record of the state it touched: which accounts, which storage slots, what changed. It was built for parallel execution and stateless clients. FOCIL reuses it for something else entirely: reconstructing what the world looked like at a given position inside a block, which is exactly what judging an omission at a named index requires.</p>
+
+<h3>EIP-8037 &mdash; Two-dimensional gas</h3>
+<p>Gas splits into an execution dimension and a state-growth dimension, each with its own limit. This is why EIP-8312&rsquo;s tiny state footprint matters so much: a block runs out of state room before it runs out of compute, so the cheap-in-state option raises real throughput rather than just saving fees.</p>
+
+<h3>EIP-7843 &mdash; Slot number</h3>
+<p>The execution layer can read the current consensus slot. EIP-8272&rsquo;s expiry window is expressed in slots, so recent roots depend directly on this.</p>
+
+<!-- ============================================ -->
+<h2 id="compose">One transaction, end to end</h2>
+
+<p>Here is a sponsored, passkey-authenticated, privacy-preserving payment that uses five of the eight at once. Follow the ordering, because the ordering is the design.</p>
+
+<pre><code>type 0x06 frame transaction
+  nonce_keys  [0x9f3a…]        ← 8250: an independent replay lane
+  recent_root_references [(…)] ← 8272: the commitment its proof needs
+
+  frame 0  VERIFY  only_verify   ← the validation prefix
+  frame 1  VERIFY  pay             establishes authorisation + payer
+  ──────────────────────────────
+  frame 2  SENDER                ← the body: the actual transfer
+  frame 3  POST_TX               ← 7906: check nothing unexpected happened</code></pre>
+
+<ol>
+  <li><strong>Before any code runs</strong>, the protocol checks the keyed nonces (8250) and validates the recent-root references (8272). Both are decided up front, not during execution.</li>
+  <li><strong>Frame 0</strong> verifies the passkey signature. It reads its proof material from the envelope with <code>RECENTROOTREFLOAD</code>, never from shared storage, so no other user&rsquo;s activity can invalidate it.</li>
+  <li><strong>Frame 1</strong> runs the sponsor&rsquo;s logic and calls <code>APPROVE</code>. The sponsor is now the payer and is charged the maximum possible cost.</li>
+  <li><strong>Frame 2</strong> does the real work as the sender.</li>
+  <li><strong>Frame 3</strong> inspects the finished result with <code>TXDIFF</code>. If an invariant broke, it reverts frame 2 &mdash; but frames 0 and 1 stay committed and the sponsor still pays.</li>
+  <li><strong>Separately</strong>, FOCIL (7805) may have listed this transaction. Whether a builder can be punished for omitting it is decided by 8369: frames 0 and 1 must fit the bounded state surface and the gas budget.</li>
+</ol>
+
+<p>Notice that the validation prefix, frames 0 and 1, is doing three jobs at once. It authenticates, it decides who pays, and it is the thing FOCIL has to be able to afford to re-run. Every difficult constraint in the stack lands on those two frames.</p>
+
+<!-- ============================================ -->
+<h2 id="branch">What this branch changes</h2>
+
+<p>These are all draft EIPs, so parts collide or are simply blank. <code>hegota-devnet</code> records every place it had to decide something the specs do not settle.</p>
+
+<div class="scroll">
+<table>
+  <thead><tr><th>Where</th><th>Spec says</th><th>This branch does</th><th>Why</th></tr></thead>
+  <tbody>
+    <tr>
+      <td>UTXO frame mode</td><td><code>3</code></td><td><code>5</code></td>
+      <td>EIP-7906 already shipped mode <code>3</code> for POST_TX. Renumbering would invalidate signed transactions and every tool that makes them.</td>
+    </tr>
+    <tr>
+      <td><code>AA_VOPS_SLOT_COUNT</code></td><td>unset, &ldquo;2 to 4, pending benchmarks&rdquo;</td><td><code>4</code>, as a config value</td>
+      <td>Top of the range is the worst case for validator work, so a result that passes at 4 passes at 2 and 3. Configurable so the range can be measured.</td>
+    </tr>
+    <tr>
+      <td>Storage rule when a node does both jobs</td><td>silent</td><td>Whichever check is running picks its own rule</td>
+      <td>The mempool rule and the FOCIL rule overlap without either containing the other. Raised upstream as an open question.</td>
+    </tr>
+    <tr>
+      <td><code>NONCEKEYLOAD</code> at <code>0xB9</code></td><td>no such opcode</td><td>added</td>
+      <td>EIP-8250 defines no way to read an individual nonce key. This is an ethrex-only convenience.</td>
+    </tr>
+  </tbody>
+</table>
+</div>
+
+<p>Two of these are worth understanding as a pattern rather than trivia. The mode <code>3</code> collision happens because two draft EIPs picked the same byte without a shared registry. The blank <code>AA_VOPS_SLOT_COUNT</code> happens because the spec author correctly refused to guess a number that needs measurement. Both are the ordinary texture of implementing drafts, and writing the decision down is what keeps the divergence honest.</p>
+
+<!-- ============================================ -->
+<h2 id="activation">How it switches on</h2>
+
+<p>Almost everything here activates together at the Hegotá fork, using one timestamp. Two things do not.</p>
+
+<div class="scroll">
+<table>
+  <thead><tr><th>Feature</th><th>Switch</th><th>Notes</th></tr></thead>
+  <tbody>
+    <tr><td>8141, 8250, 8272, 7906</td><td><code>hegotaTime</code></td><td>One fork, all at once. Also called <code>heze</code> on the consensus side.</td></tr>
+    <tr><td>8312 UTXO frames</td><td><code>utxoFramesTime</code></td><td>Its fork assignment is undecided upstream, so it gets its own switch and stays completely inert until a chain opts in.</td></tr>
+    <tr><td>7805 FOCIL</td><td><code>hegotaTime</code></td><td>Same fork, but it is the one feature that is not purely execution-layer.</td></tr>
+  </tbody>
+</table>
+</div>
+
+<div class="note ours">
+  <span class="tag">The one that bites</span>
+  <p style="margin:0">Every other feature here is invisible to the consensus client: it schedules the fork and the execution layer does the rest. FOCIL is different. It needs a consensus client that builds and gossips inclusion lists and calls new engine methods. So turning FOCIL on means upgrading <em>both</em> layers at the same moment, with no working state in between. That, rather than any of the code, is the real obstacle to running it.</p>
+</div>
+
+<h3>A useful habit</h3>
+
+<p>Giving a feature its own future timestamp, rather than folding it into a fork, means every block already produced re-executes identically. A running chain can adopt the feature without starting over. That is why EIP-8312 could be added to a live devnet, and it is a technique worth reaching for whenever a change is not yet certain.</p>
+
+</main>
+
+<footer>
+  <p>Study notes for the ethrex <code>hegota-devnet</code> branch. All eight EIPs are drafts and are still moving; treat specific constants as current-as-of rather than final. Deeper implementation notes live in <code>docs/</code> beside the code, one file per EIP.</p>
+</footer>
+</div>
+</div>
+</body>
+</html>

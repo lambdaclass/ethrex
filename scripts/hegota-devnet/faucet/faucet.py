@@ -270,6 +270,21 @@ def render_page():
 PAGE = render_page()
 
 
+def load_guide():
+    """The EIP guide, served as a static page. Read once at startup like PAGE.
+
+    Returns None when the file is absent so an older image, or a build that
+    omitted it, keeps serving the faucet instead of failing to boot.
+    """
+    try:
+        return pathlib.Path(__file__).with_name("eips.html").read_bytes()
+    except OSError:
+        return None
+
+
+GUIDE = load_guide()
+
+
 def client_bucket(handler):
     """Rate-limit bucket for the caller.
 
@@ -355,6 +370,12 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("content-length", str(len(PAGE)))
             self.end_headers()
             self.wfile.write(PAGE)
+        elif path in ("/eips", "/eips.html") and GUIDE is not None:
+            self.send_response(200)
+            self.send_header("content-type", "text/html; charset=utf-8")
+            self.send_header("content-length", str(len(GUIDE)))
+            self.end_headers()
+            self.wfile.write(GUIDE)
         elif path == "/healthz":
             self._reply(200, {"ok": True, "faucet": ACCT.address})
         else:
