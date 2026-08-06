@@ -204,8 +204,8 @@ def start_consensus(net):
 CL_REFRESH_TIMEOUT_SECONDS = 900
 
 
-def refresh_consensus(net, timeout=CL_REFRESH_TIMEOUT_SECONDS):
-    """Put the beacon node back at the chain tip before a leg, and wait for it.
+def refresh_consensus(net, min_block, timeout=CL_REFRESH_TIMEOUT_SECONDS):
+    """Put the beacon node far enough ahead of the base to drive a real leg, and wait.
 
     This is load-bearing, not hygiene. The execution node only does bulk 1024-block batch
     sync when fork choice hands it a head far ahead of where it is. A beacon node that was
@@ -213,21 +213,25 @@ def refresh_consensus(net, timeout=CL_REFRESH_TIMEOUT_SECONDS):
     forward together and the node imports ~30 blocks at a time: that measures incremental
     block import, not full sync, and emits no batch throughput metric at all.
 
-    Recreating the container re-runs its `--purge-db` checkpoint sync, which lands it at
-    the tip in a couple of minutes. It also regenerates the JWT, which is precisely why
+    Recreating the container re-runs its `--purge-db-force` checkpoint sync, which lands it
+    near the tip in a couple of minutes. It also regenerates the JWT, which is precisely why
     the execution node must be started *after* this returns.
+
+    The wait is for the beacon node to know a block at or above this leg's target, not for
+    it to reach the tip. It cannot reach the tip: with no execution node it has nothing to
+    verify payloads against, so it parks at its checkpoint anchor a couple of epochs back
+    and from there falls further behind at one slot per slot. Waiting for a small
+    `sync_distance` would simply time out every time.
     """
     compose(["up", "-d", "--force-recreate", f"consensus-{net}"])
-    url = f"http://localhost:{NETWORKS[net]['cl_port']}/eth/v1/node/syncing"
     deadline = time.time() + timeout
     while time.time() < deadline:
         try:
-            data = requests.get(url, timeout=8).json()["data"]
-            # `el_offline` is expected and fine here — the execution node is deliberately
-            # not running yet. Only the distance to the tip matters.
-            if int(data["sync_distance"]) <= SYNCED_MARGIN_BLOCKS:
-                log(f"{net}: beacon node at the tip (distance {data['sync_distance']})")
+            head = cl_head(net)
+            if head >= min_block:
+                log(f"{net}: beacon node at block {head}, ahead of the target {min_block}")
                 return True
+            log(f"{net}: beacon node at {head}, needs {min_block}")
         except Exception:
             pass
         time.sleep(10)
@@ -364,9 +368,9 @@ def run_leg(net, target_block, log_path, timeout_seconds):
 
     # Before the clock starts: the node must be handed a distant head, or this measures
     # the wrong thing entirely. Costs a couple of minutes and is excluded from the timing.
-    if not refresh_consensus(net):
-        log(f"{net}: beacon node did not reach the tip; refusing to run a leg that would "
-            "measure incremental import instead of full sync")
+    if not refresh_consensus(net, target_block):
+        log(f"{net}: beacon node never learned block {target_block}; refusing to run a leg "
+            "that would measure incremental import instead of full sync")
         return {"network": net, "target_block": target_block, "reached_block": None,
                 "wall_seconds": 0.0, "status": "cl_not_synced", "log": log_path,
                 **parse_run([])}
