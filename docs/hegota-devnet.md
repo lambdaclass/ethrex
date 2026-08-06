@@ -60,16 +60,17 @@ EIP-7906's Constants table carries only `TXTRACE_GAS_COST`, `EVENTDATACOPY_GAS_C
 
 ## Spec pins
 
-The upstream `ethereum/EIPs` commit each implementation has been reconciled against,
-per `EIPS/eip-<n>.md`. Bump a line only after verifying the implementation against
-that revision, since the point of the pin is to make "what changed since we aligned"
-an exact question. `/hegota-eips` diffs these against upstream `master`.
+The commit each implementation has been reconciled against, per `EIPS/eip-<n>.md`.
+Bump a line only after verifying the implementation against that revision, since the
+point of the pin is to make "what changed since we aligned" an exact question.
+`/hegota-eips` diffs these against the head of each pinned source.
 
 ```pins
 eip-8141  4a9ad32cf2  core      2026-07-30
 eip-8250  81b976ac01  core      2026-08-03
 eip-8272  d8636a330d  core      2026-08-03
 eip-7906  ab022ace2a  core      2026-07-29
+eip-8312  a5da3f608c  core      2026-08-05  nerolation/EIPs@nerolation/utxo-frame
 eip-7805  9a345f96c2  focil     2026-02-20
 eip-7928  6c666b8d64  adjacent  2026-07-09
 eip-8037  5a8c80897a  adjacent  2026-07-31
@@ -78,6 +79,13 @@ eip-8037  5a8c80897a  adjacent  2026-07-31
 `core` is the frame-tx stack this branch carries. `focil` is implemented on the
 `focil` branch, not here. `adjacent` EIPs are not part of the frame-tx envelope but
 the devnet depends on them, so drift still matters.
+
+The fifth column is the source, `owner/repo` or `owner/repo@ref`, and defaults to
+`ethereum/EIPs` at its default branch. EIP-8312 needs it: the draft exists only in its
+author's fork and has no upstream pull request, so there is no `EIPS/eip-8312.md` in
+`ethereum/EIPs` to diff against. A fork branch can be rewritten under a pin in a way an
+upstream branch cannot, so the report distinguishes "pin not found" from drift rather
+than reporting the whole history as new. Drop the column when the EIP is upstreamed.
 
 ## Upstream items
 
