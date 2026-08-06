@@ -3718,6 +3718,18 @@ impl<'a> VM<'a> {
         if self.validation_observer.in_canonical_pay_frame() {
             return;
         }
+        if let Some(surface) = self.validation_observer.focil_surface {
+            // EIP-8369 Profile 2 replaces the mempool rule wholesale: `payer` is
+            // readable too, but only within the first `slot_count` slots.
+            if self.validation_observer.within_vops_surface(address, slot) {
+                self.validation_observer.touched_sender_slots.push(slot);
+            } else {
+                let _ = surface;
+                self.validation_observer
+                    .record_violation(FrameSimViolation::StorageOutsideVopsSurface);
+            }
+            return;
+        }
         if address == self.validation_observer.sender {
             self.validation_observer.touched_sender_slots.push(slot);
         } else {
@@ -3733,6 +3745,20 @@ impl<'a> VM<'a> {
     pub fn validation_check_sstore(&mut self, address: Address, slot: H256) {
         use crate::validation_observer::FrameSimViolation;
         if self.validation_observer.in_canonical_pay_frame() {
+            return;
+        }
+        if self.validation_observer.focil_surface.is_some() {
+            // A write still has to be inside the deploy frame, and additionally
+            // inside the Profile 2 surface: EIP-8369 admits a deploy frame only
+            // if "all storage it touches stays within the Profile 2 surface".
+            if self.validation_observer.in_deploy_frame()
+                && self.validation_observer.within_vops_surface(address, slot)
+            {
+                self.validation_observer.touched_sender_slots.push(slot);
+            } else {
+                self.validation_observer
+                    .record_violation(FrameSimViolation::StorageOutsideVopsSurface);
+            }
             return;
         }
         if self.validation_observer.in_deploy_frame() && address == self.validation_observer.sender

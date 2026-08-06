@@ -24,6 +24,7 @@
 //! self-contained and computed identically by every client, or the omission
 //! verdict splits between nodes.
 
+use ethrex_common::Address;
 use ethrex_common::types::{FrameTransaction, Transaction, TxType};
 
 /// EIP-8369 `MAX_VERIFY_GAS_PER_TX`: the largest VERIFY budget a single
@@ -169,6 +170,31 @@ pub fn is_profile_2_candidate(tx: &FrameTransaction, utxo_frames_active: bool) -
     }
 
     verify_budget_cost(tx).is_some_and(|cost| cost <= MAX_VERIFY_GAS_PER_TX)
+}
+
+/// The `payer` a Profile 2 candidate will establish, resolved from the prefix
+/// shape alone.
+///
+/// EIP-8369: "`payer` is `sender` for the `self_verify` shapes and the `pay`
+/// frame's EIP-8141 `resolved_target` otherwise. A null `pay` target resolves to
+/// `sender`."
+///
+/// Static resolution is what makes the Profile 2 storage surface knowable before
+/// replay begins, which is why the surface can be enforced from the first opcode
+/// rather than discovered part-way through.
+///
+/// Returns `None` when the transaction has no recognized prefix.
+pub fn profile_2_payer(tx: &FrameTransaction) -> Option<Address> {
+    let prefix = tx.validation_prefix().ok()?;
+    match prefix.pay_index {
+        Some(idx) => Some(
+            tx.frames
+                .get(idx)
+                .and_then(|f| f.target)
+                .unwrap_or(tx.sender),
+        ),
+        None => Some(tx.sender),
+    }
 }
 
 /// Outcome of the per-inclusion-list static budget fill for one occurrence.

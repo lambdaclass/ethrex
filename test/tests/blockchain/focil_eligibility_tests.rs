@@ -2,7 +2,7 @@
 
 use ethrex_blockchain::focil_eligibility::{
     FillOutcome, MAX_VERIFY_GAS_PER_IL, MAX_VERIFY_GAS_PER_TX, VopsProfile, classify, fee_valid,
-    fill_il_budget, verify_budget_cost,
+    fill_il_budget, profile_2_payer, verify_budget_cost,
 };
 use ethrex_common::types::{
     APPROVE_EXECUTION, APPROVE_EXECUTION_AND_PAYMENT, APPROVE_PAYMENT, EIP1559Transaction,
@@ -292,4 +292,73 @@ fn the_only_verify_pay_shape_is_a_candidate() {
     );
     // Both prefix frames are priced, plus the one signature.
     assert_eq!(verify_budget_cost(&tx), Some(20_000 + 30_000 + 2_800));
+}
+
+/// EIP-8369: "`payer` is `sender` for the `self_verify` shapes and the `pay`
+/// frame's EIP-8141 `resolved_target` otherwise." Static resolution is what makes
+/// the Profile 2 storage surface knowable before replay starts.
+#[test]
+fn the_payer_resolves_from_the_prefix_shape_alone() {
+    assert_eq!(profile_2_payer(&self_verify_tx(10_000)), Some(sender()));
+
+    let sponsor = Address::repeat_byte(0x22);
+    let sponsored = frame_tx(vec![
+        verify_frame(Some(sender()), APPROVE_EXECUTION, 10_000),
+        verify_frame(Some(sponsor), APPROVE_PAYMENT, 10_000),
+    ]);
+    assert_eq!(profile_2_payer(&sponsored), Some(sponsor));
+}
+
+/// "A null `pay` target resolves to `sender`."
+#[test]
+fn a_null_pay_target_resolves_to_the_sender() {
+    let tx = frame_tx(vec![
+        verify_frame(Some(sender()), APPROVE_EXECUTION, 10_000),
+        verify_frame(None, APPROVE_PAYMENT, 10_000),
+    ]);
+    assert_eq!(profile_2_payer(&tx), Some(sender()));
+}
+
+/// The Profile 2 surface both widens and narrows EIP-8141's mempool rule: the
+/// payer becomes readable, but only slots below `AA_VOPS_SLOT_COUNT`, which is
+/// what puts keccak-derived mapping slots outside the profile.
+#[test]
+fn the_vops_surface_admits_sender_and_payer_low_slots_only() {
+    use ethrex_levm::validation_observer::{FocilVopsSurface, ValidationObserver};
+
+    let payer = Address::repeat_byte(0x22);
+    let mut obs = ValidationObserver::new(sender(), None, Address::zero());
+    obs.focil_surface = Some(FocilVopsSurface {
+        payer,
+        slot_count: 4,
+    });
+
+    let slot = |n: u64| ethrex_common::H256::from_low_u64_be(n);
+
+    assert!(obs.within_vops_surface(sender(), slot(0)));
+    assert!(obs.within_vops_surface(sender(), slot(3)));
+    assert!(obs.within_vops_surface(payer, slot(2)));
+
+    assert!(
+        !obs.within_vops_surface(sender(), slot(4)),
+        "slot_count is exclusive"
+    );
+    assert!(
+        !obs.within_vops_surface(Address::repeat_byte(0x33), slot(0)),
+        "a third account is outside the surface"
+    );
+
+    // A keccak-derived mapping slot is numerically enormous, so the bound
+    // excludes it without any special case.
+    let mapping_slot = ethrex_common::H256::repeat_byte(0xab);
+    assert!(!obs.within_vops_surface(sender(), mapping_slot));
+}
+
+/// Without a configured surface the predicate rejects, so a caller that reaches
+/// it outside Profile 2 fails closed rather than silently permitting a read.
+#[test]
+fn the_surface_predicate_fails_closed_when_unconfigured() {
+    use ethrex_levm::validation_observer::ValidationObserver;
+    let obs = ValidationObserver::new(sender(), None, Address::zero());
+    assert!(!obs.within_vops_surface(sender(), ethrex_common::H256::zero()));
 }

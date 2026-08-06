@@ -56,6 +56,27 @@ pub enum FrameSimViolation {
     /// A deploy frame finished without leaving non-empty code installed at the
     /// sender's address.
     DeployInstalledNoCode,
+    /// EIP-8369 Profile 2 only: storage was accessed outside the FOCIL AA-VOPS
+    /// surface, i.e. an account other than `sender`/`payer`, or a slot at or
+    /// above `AA_VOPS_SLOT_COUNT`. Such a read makes the transaction ineligible
+    /// for inclusion-list enforcement rather than merely expensive.
+    StorageOutsideVopsSurface,
+}
+
+/// EIP-8369 Profile 2 (FOCIL AA-VOPS) storage surface.
+///
+/// Present only when replaying a validation prefix to decide inclusion-list
+/// eligibility. It both widens and narrows EIP-8141's mempool rule: reads of
+/// `payer` are permitted where the mempool allows only `sender`, but every
+/// access must fall in the first `slot_count` slots, so "a mapping value at a
+/// `keccak256`-derived slot is outside Profile 2".
+#[derive(Debug, Clone, Copy)]
+pub struct FocilVopsSurface {
+    /// Resolved statically from the prefix: `sender` for the `self_verify`
+    /// shapes, the pay frame's resolved target otherwise.
+    pub payer: Address,
+    /// `AA_VOPS_SLOT_COUNT` for the chain being judged.
+    pub slot_count: u64,
 }
 
 /// EIP-8141 validation-trace observer. Inert (`active == false`) in every VM
@@ -106,6 +127,9 @@ pub struct ValidationObserver {
     pub read_legacy_nonce: bool,
     /// First violation observed, if any.
     pub violation: Option<FrameSimViolation>,
+    /// EIP-8369 Profile 2 storage surface. `None` during ordinary mempool
+    /// simulation, where EIP-8141's sender-only rule applies instead.
+    pub focil_surface: Option<FocilVopsSurface>,
 }
 
 impl ValidationObserver {
@@ -124,6 +148,7 @@ impl ValidationObserver {
             touched_sender_slots: Vec::new(),
             read_legacy_nonce: false,
             violation: None,
+            focil_surface: None,
         }
     }
 
@@ -147,7 +172,26 @@ impl ValidationObserver {
             touched_sender_slots: Vec::new(),
             read_legacy_nonce: false,
             violation: None,
+            focil_surface: None,
         }
+    }
+
+    /// Whether `(address, slot)` lies inside the EIP-8369 Profile 2 surface:
+    /// `sender` or `payer`, and a slot index below `AA_VOPS_SLOT_COUNT`.
+    ///
+    /// Returns `false` when no surface is configured, so a caller that reaches
+    /// this without Profile 2 in play rejects rather than silently permitting.
+    /// The numeric slot bound is what puts `keccak256`-derived mapping slots
+    /// outside the profile.
+    pub fn within_vops_surface(&self, address: Address, slot: H256) -> bool {
+        let Some(surface) = self.focil_surface else {
+            return false;
+        };
+        if address != self.sender && address != surface.payer {
+            return false;
+        }
+        ethrex_common::U256::from_big_endian(slot.as_bytes())
+            < ethrex_common::U256::from(surface.slot_count)
     }
 
     /// Records the first violation observed; later violations are ignored (the
