@@ -1340,6 +1340,54 @@ fn the_new_account_reserve_is_returned_only_for_an_existing_recipient() {
     );
 }
 
+/// A spend's spent bits are billed in the state dimension.
+///
+/// Spent-bit state gas is deliberately accumulated in `durable_state_gas` rather
+/// than `state_gas_used`, so the per-frame, per-batch and body resets cannot drop it
+/// — those resets assume "reverted state ⇒ no state grew", which a durable write
+/// falsifies. It is folded into the transaction's state gas after the loop.
+///
+/// That fold had no coverage: suppressing it left the whole suite green while the
+/// block underbilled for state that is permanently there. Since the block's gas is
+/// `max(sum(regular), sum(state))` under EIP-8037, an underbilled state dimension is
+/// consensus-visible.
+///
+/// Asserted as a difference against a spend of the same shape with one more input,
+/// so it pins the per-bit constant rather than the whole transaction's accounting.
+#[test]
+fn spent_bits_are_billed_in_the_state_dimension() {
+    let payee = Address::from_low_u64_be(0xBEEF);
+    let value = U256::from(10u64).pow(U256::from(18u64));
+
+    let one = self_funded_fixture(value, Some((payee, U256::from(1u64))), None);
+    let one_state = run_spend(&one)
+        .0
+        .expect("the one-input spend must settle")
+        .state_gas_used;
+
+    // Two inputs, so two spent bits: the state dimension must grow by exactly one
+    // more bit's worth.
+    let two = consolidation_fixture(2, U256::from(1u64)).0;
+    let two_state = run_spend(&two)
+        .0
+        .expect("the two-input spend must settle")
+        .state_gas_used;
+
+    assert!(
+        two_state > one_state,
+        "a second spent bit must cost state gas: one={one_state} two={two_state}"
+    );
+    assert_eq!(
+        two_state - one_state,
+        ethrex_common::types::GAS_UTXO_SPENT_STATE,
+        "the extra spent bit must bill exactly GAS_UTXO_SPENT_STATE"
+    );
+    assert!(
+        one_state >= ethrex_common::types::GAS_UTXO_SPENT_STATE,
+        "even one spent bit must be billed: {one_state}"
+    );
+}
+
 /// A ring proof is refused once the ring entry has aged out.
 ///
 /// The ring holds one root per block for `RING_SIZE` blocks, then wraps: the slot
