@@ -1,7 +1,15 @@
-use ethrex_common::types::{EIP1559Transaction, FrameTransaction, Transaction};
+use std::{fs::File, io::BufReader, path::PathBuf};
+
+use ethrex_common::types::{
+    APPROVE_EXECUTION_AND_PAYMENT, EIP1559Transaction, FRAME_SIG_SCHEME_SECP256K1, Frame,
+    FrameMode, FrameSignature, FrameTransaction, Transaction,
+};
+use ethrex_common::{Address, U256};
 use ethrex_rpc::ethrex::SimulateFrameTransactionRequest;
-use ethrex_rpc::rpc::RpcHandler;
+use ethrex_rpc::rpc::{RpcApiContext, RpcHandler};
+use ethrex_rpc::test_utils::default_context_with_storage;
 use ethrex_rpc::utils::RpcErr;
+use ethrex_storage::{EngineType, Store};
 use serde_json::json;
 
 /// Canonical (`type || payload`) hex, `0x`-prefixed, for a transaction.
@@ -66,4 +74,111 @@ fn parse_rejects_too_many_params() {
         SimulateFrameTransactionRequest::parse(&params),
         Err(RpcErr::BadParams(_))
     ));
+}
+
+fn workspace_root() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..")
+}
+
+async fn context() -> RpcApiContext {
+    let file = File::open(workspace_root().join("fixtures/genesis/execution-api.json"))
+        .expect("open genesis");
+    let genesis = serde_json::from_reader(BufReader::new(file)).expect("parse genesis");
+    let mut store = Store::new("store.db", EngineType::InMemory).expect("build store");
+    store
+        .add_initial_state(genesis)
+        .await
+        .expect("genesis state");
+    default_context_with_storage(store).await
+}
+
+fn sender() -> Address {
+    Address::repeat_byte(0x11)
+}
+
+/// A frame tx whose prefix is one `SelfVerify` frame — the simplest of the four
+/// admitted shapes — so anything reported invalid comes from the gate under test.
+fn self_verify_tx() -> FrameTransaction {
+    FrameTransaction {
+        chain_id: 1,
+        nonce_keys: vec![U256::zero()],
+        nonce_seq: 0,
+        sender: sender(),
+        frames: vec![Frame {
+            mode: FrameMode::Verify as u8,
+            flags: APPROVE_EXECUTION_AND_PAYMENT,
+            target: Some(sender()),
+            gas_limit: 21_000,
+            value: U256::zero(),
+            data: Default::default(),
+        }],
+        signatures: vec![FrameSignature {
+            scheme: FRAME_SIG_SCHEME_SECP256K1,
+            signer: Some(sender()),
+            msg: Default::default(),
+            signature: Default::default(),
+        }],
+        max_priority_fee_per_gas: 1,
+        max_fee_per_gas: 1_000,
+        ..Default::default()
+    }
+}
+
+async fn simulate(tx: FrameTransaction) -> serde_json::Value {
+    let params = Some(vec![json!(raw_hex(&Transaction::FrameTransaction(tx)))]);
+    SimulateFrameTransactionRequest::parse(&params)
+        .expect("parse")
+        .handle(context().await)
+        .await
+        .expect("handle")
+}
+
+#[tokio::test]
+async fn simulate_rejects_nonce_keys_that_are_not_strictly_increasing() {
+    // EIP-8250 static rule. Before the admission gates were wired in, a prefix
+    // that simulated cleanly reported `valid: true` for a transaction the
+    // mempool would refuse outright.
+    let mut tx = self_verify_tx();
+    tx.nonce_keys = vec![U256::from(5u64), U256::from(5u64)];
+
+    let result = simulate(tx).await;
+
+    assert_eq!(result["valid"], json!(false));
+    let violation = result["violation"].as_str().expect("violation");
+    assert!(
+        violation.contains("nonce_keys"),
+        "expected a nonce-key violation, got: {violation}"
+    );
+}
+
+#[tokio::test]
+async fn simulate_rejects_an_unauthenticated_sender() {
+    // EIP-8141: `sender` is an unauthenticated field until the signature list
+    // recovers to it. An empty SECP256K1 signature can never do that.
+    let result = simulate(self_verify_tx()).await;
+
+    assert_eq!(result["valid"], json!(false));
+    let violation = result["violation"].as_str().expect("violation");
+    assert!(
+        violation.contains("signature"),
+        "expected a signature violation, got: {violation}"
+    );
+}
+
+#[tokio::test]
+async fn simulate_reports_max_cost_even_when_a_gate_rejects() {
+    // `maxCost` is a pure function of the transaction fields, so a caller still
+    // learns what the transaction would have cost.
+    let mut tx = self_verify_tx();
+    tx.nonce_keys = vec![];
+
+    let result = simulate(tx).await;
+
+    assert_eq!(result["valid"], json!(false));
+    assert!(
+        result["maxCost"]
+            .as_str()
+            .is_some_and(|c| c.starts_with("0x")),
+        "maxCost must be reported on every path"
+    );
 }

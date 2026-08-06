@@ -13,6 +13,7 @@ use ethrex_common::{
         calculate_base_fee_per_blob_gas,
     },
 };
+use ethrex_crypto::NativeCrypto;
 use ethrex_vm::backends::{FrameValidationOutcome, levm::get_max_allowed_gas_limit};
 use serde::Serialize;
 use serde_json::Value;
@@ -40,11 +41,15 @@ pub struct SimulateFrameTransactionRequest {
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct SimulateFrameTransactionResult {
-    /// Whether the EIP-8141 validation prefix passed — the frame-specific
-    /// admission check the mempool runs. This is NECESSARY but not SUFFICIENT
-    /// for admission: standard gates (outer signatures, nonce, fees, per-tx gas
-    /// cap, paymaster funding) are not all re-checked here. A `false` never
-    /// under-rejects (the mempool uses this same prefix simulation).
+    /// Whether every frame-specific admission gate passed: EIP-8141 static
+    /// constraints and signature authentication, EIP-8250 nonce-key rules,
+    /// EIP-8272 recent-root references, EIP-8312 UTXO openings, and the
+    /// validation-prefix simulation — the same checks the mempool runs, in the
+    /// same order, so a `false` never under-rejects.
+    ///
+    /// Still NECESSARY but not SUFFICIENT for admission: the gates shared with
+    /// every other transaction type (linear nonce, fee floor, wire size) and the
+    /// per-sender pending-frame-transaction rule are not replayed here.
     valid: bool,
     /// Recognized validation-prefix shape, or `null` if the prefix is
     /// structurally invalid.
@@ -164,18 +169,82 @@ impl RpcHandler for SimulateFrameTransactionRequest {
         );
         let max_cost = to_hex_u256(frame_tx.max_cost(blob_base_fee));
 
+        // Run the frame-specific admission gates in the order the mempool applies
+        // them, so `valid` answers the question a sender actually asks — "will
+        // this be accepted?" — rather than only "is the prefix well-formed?".
+        // Everything up to the prefix simulation is stateless or a bounded number
+        // of native storage reads.
+        //
+        // EIP-8141 static constraints, which is also where EIP-8250's nonce-key
+        // rules and EIP-8312's fork gating are enforced.
+        let config = context.storage.get_chain_config();
+        let utxo_frames_active = config.is_utxo_frames_activated(header.timestamp);
+        if let Err(error) = frame_tx.validate_static_constraints(utxo_frames_active) {
+            return structurally_invalid(error, max_cost);
+        }
+
+        // EIP-8141 §Mempool rule #6: signature verification is charged against
+        // MAX_VERIFY_GAS, so a transaction whose signature cost alone exceeds the
+        // budget can never satisfy the prefix gas limit.
+        let max_verify_gas = context.blockchain.options.max_verify_gas;
+        if frame_tx.signature_verification_cost() > max_verify_gas {
+            return structurally_invalid(
+                format!(
+                    "signature verification cost {} exceeds MAX_VERIFY_GAS {max_verify_gas}",
+                    frame_tx.signature_verification_cost()
+                ),
+                max_cost,
+            );
+        }
+
+        // EIP-8141: authenticate the signature list. `sender` is an unauthenticated
+        // field until these check out, so reporting a transaction valid without
+        // this would report on a sender the submitter does not control.
+        let fork = config.fork(header.timestamp);
+        if !ethrex_vm::validate_frame_signatures(
+            &frame_tx.signatures,
+            frame_tx.compute_sig_hash(),
+            frame_tx.sender,
+            fork,
+            &NativeCrypto,
+        ) {
+            return structurally_invalid(
+                "frame signature list does not authenticate the sender".to_owned(),
+                max_cost,
+            );
+        }
+
         // Derive and structurally validate the prefix. A structural error means
         // the transaction is invalid without needing an EVM pass.
         let prefix = match frame_tx.validation_prefix() {
             Ok(prefix) => prefix,
             Err(error) => return structurally_invalid(error.to_string(), max_cost),
         };
-        if let Err(error) =
-            frame_tx.validate_prefix_structure(&prefix, context.blockchain.options.max_verify_gas)
-        {
+        if let Err(error) = frame_tx.validate_prefix_structure(&prefix, max_verify_gas) {
             return structurally_invalid(error.to_string(), max_cost);
         }
         let prefix_shape = Some(prefix_shape_name(&prefix.shape).to_owned());
+
+        // EIP-8312 UTXO admission and EIP-8272 recent-root references. Both read
+        // head state natively rather than through the EVM, and both sit behind
+        // static validation and signature authentication for the reason the
+        // mempool orders them that way: a bounded number of storage reads must
+        // not be reachable by a transaction that fails a cheap check first.
+        if utxo_frames_active
+            && let Err(error) =
+                context
+                    .blockchain
+                    .check_utxo_admission(frame_tx, header.number, header.number + 1)
+        {
+            return structurally_invalid(error.to_string(), max_cost);
+        }
+        if let Err(error) =
+            context
+                .blockchain
+                .check_recent_root_references(frame_tx, &header, header.number)
+        {
+            return structurally_invalid(error.to_string(), max_cost);
+        }
 
         // DoS guard, applied BEFORE any EVM work. Both the prefix simulation and
         // the full execution below run real opcodes bounded only by the tx's own
