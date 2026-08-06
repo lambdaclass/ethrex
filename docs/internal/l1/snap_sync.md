@@ -126,32 +126,41 @@ snap/1 healing for the remainder.
 
 ## Snap-sync integration
 
-`sync/snap_sync.rs` has two `heal_state_trie_wrap` call sites. Only the
-second (post-bulk-download healing pass) uses snap/2; the first (healing
-inside the storage-ranges download loop) stays as snap/1 because local
-state is partial during bulk download and a diff like `balance(X): a→b` may
-target an account that hasn't been downloaded yet.
+BAL replay implements EIP-8189 steps 5 and 7, and runs only in the
+post-bulk-download healing loop. The healing pass inside the storage-ranges
+download loop stays on snap/1: a BAL carries state changes, not the state trie,
+so a diff like `balance(X): a→b` needs an existing local value to apply to, and
+during bulk download most accounts do not have one yet.
 
-The decision is made by `should_use_bal_replay(peers, &pivot_header)`,
-which returns true only when a snap/2 peer is connected AND
-`pivot_header.block_access_list_hash.is_some()` (i.e. post-Amsterdam). On
-success `heal_state_trie_wrap` is skipped but `heal_storage_trie` still runs:
-reaching the head state root proves the account trie is complete, yet accounts
-untouched by any replayed BAL keep whatever storage the bulk download left,
-and the state root commits only each account's `storage_root` hash. It is run
-against `pivot_header.state_root`, not the post-replay root, because the
-incomplete-storage work queue was captured at pivot time. On any `Err` the path
-falls through to the existing `heal_state_trie_wrap` + `heal_storage_trie`
-sequence.
+The loop tracks `completed_pivot` — the pivot whose state a healing pass
+verified in full. That is the only valid starting point for a replay, because
+the diffs are applied on top of it. Replaying from the *current* pivot instead
+would apply a span of changes to a state that does not correspond to its first
+block, and the resulting root would be wrong in a way the per-block check
+cannot attribute.
+
+While `completed_pivot` is `None` — the first pass, and after any reorg — the
+loop heals. Once a pass sets it and the chain advances, a later pivot is reached
+by replaying the span between them and checking the result against
+`pivot_header.state_root` (step 7). A short root, a peer failure, or an
+unavailable BAL falls back to healing for that pass; `SyncError::ChainReorgDetected`
+additionally clears the anchor, since a reorg past the pivot means the state it
+names belongs to an abandoned fork.
+
+Note that a BAL cannot supply an account's `storage_root`: EIP-7928's
+`AccountChanges` is `[address, storage_changes, storage_reads, balance_changes,
+nonce_changes, code_changes]`, with no root. A root is only re-derivable by
+re-hashing the storage trie, which is why replay is placed after the storage
+download rather than before it.
 
 ## Pre-Amsterdam handling
 
 `block_access_list_hash` is absent in pre-Amsterdam headers, so snap/2 is
 functionally dormant before the fork: the server returns `None` for every
-pre-Amsterdam hash, and `should_use_bal_replay` returns false so the
-driver never starts. A peer returning `Some(bal)` for a header whose
-`block_access_list_hash` is `None` is a protocol violation; the §68 hash
-check (`unwrap_or(EMPTY_BLOCK_ACCESS_LIST_HASH)`) catches it.
+pre-Amsterdam hash, and the catch-up requires the anchoring pivot to carry a
+`block_access_list_hash`, so the driver never starts. A peer returning
+`Some(bal)` for a header whose `block_access_list_hash` is `None` is a protocol
+violation; the hash check against `EMPTY_BLOCK_ACCESS_LIST_HASH` catches it.
 
 ## Errors
 

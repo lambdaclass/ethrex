@@ -178,8 +178,8 @@ fn snap2_server_truncates_from_tail_on_size_cap() {
 
 #[test]
 fn snap2_server_caps_excess_hashes_to_max_request_size() {
-    // EIP-8189 §51 + DoS defense: cap per-request hash list at
-    // `BAL_MAX_REQUEST_HASHES` (1024, matching geth's `maxAccessListLookups`).
+    // EIP-8189 leaves the per-request hash count to implementations; bounding it
+    // defends against a flood of hashes sent to force expensive storage lookups.
     // A request with more hashes must produce at most `BAL_MAX_REQUEST_HASHES`
     // slots in the response.
     use ethrex_p2p::snap::constants::BAL_MAX_REQUEST_HASHES;
