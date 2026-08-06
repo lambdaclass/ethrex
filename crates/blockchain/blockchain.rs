@@ -434,6 +434,20 @@ impl Blockchain {
         // LEVM backend handling the drain+credit pre-work for each system tx.
         // No separate system-call phase is needed here during validation.
 
+        // BSC hardfork system-contract upgrades (e.g. Pasteur): a pure consensus
+        // state change (`SetCode`) applied after all block transactions run and
+        // before the state root is computed — mirrors bsc-geth Parlia `Finalize`.
+        // Applied before `get_state_transitions` so the code change is captured.
+        // No-op on non-BSC chains and on every block except the fork transition.
+        for (address, code) in ethrex_bsc::system_contract_upgrades::system_contract_code_upgrades(
+            &chain_config,
+            parent_header.timestamp,
+            block.header.timestamp,
+        ) {
+            vm.set_account_code(address, bytes::Bytes::from_static(code))
+                .map_err(ChainError::EvmError)?;
+        }
+
         let account_updates = vm.get_state_transitions()?;
 
         // Validate execution went alright
