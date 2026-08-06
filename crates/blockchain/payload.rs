@@ -21,6 +21,7 @@ use ethrex_common::{
         calculate_base_fee_per_gas, compute_receipts_root, compute_transactions_root,
         compute_withdrawals_root,
         requests::{EncodedRequests, compute_requests_hash},
+        utxo_vault,
     },
 };
 
@@ -933,7 +934,7 @@ impl Blockchain {
                     head_tx.tx.hash(&NativeCrypto)
                 );
                 // We don't have enough gas left for the transaction, so we skip all txs from this account
-                txs.pop();
+                txs.pop()?;
                 continue;
             }
 
@@ -959,7 +960,7 @@ impl Blockchain {
                 // Ignore replay protected tx & all txs from the sender
                 // Pull transaction from the mempool
                 debug!("Ignoring replay-protected transaction: {}", tx_hash);
-                txs.pop();
+                txs.pop()?;
                 self.remove_transaction_from_pool(&tx_hash)?;
                 continue;
             }
@@ -971,7 +972,7 @@ impl Blockchain {
                 && !chain_config.is_hegota_activated(context.payload.header.timestamp)
             {
                 debug!("Skipping frame transaction before Hegota fork: {}", tx_hash);
-                txs.pop();
+                txs.pop()?;
                 self.remove_transaction_from_pool(&tx_hash)?;
                 continue;
             }
@@ -985,7 +986,7 @@ impl Blockchain {
                     .is_some_and(|deadline| deadline < context.payload.header.timestamp)
             {
                 debug!("Skipping expired frame transaction: {}", tx_hash);
-                txs.pop();
+                txs.pop()?;
                 self.remove_transaction_from_pool(&tx_hash)?;
                 continue;
             }
@@ -1026,7 +1027,7 @@ impl Blockchain {
                         debug!("Evicting transaction {tx_hash} from the pool: {e}");
                         self.remove_transaction_from_pool(&tx_hash)?;
                     }
-                    txs.pop()
+                    txs.pop()?
                 }
             }
         }
@@ -1566,7 +1567,7 @@ impl From<HeadTransaction> for Transaction {
 
 impl TransactionQueue {
     /// Creates a new TransactionQueue from a set of transactions grouped by sender and sorted by nonce
-    fn new(
+    pub fn new(
         mut txs: FxHashMap<Address, Vec<MempoolTransaction>>,
         base_fee: Option<u64>,
     ) -> Result<Self, ChainError> {
@@ -1611,12 +1612,27 @@ impl TransactionQueue {
         self.heads.first().cloned()
     }
 
-    /// Removes current head transaction and all transactions from the given sender
-    pub fn pop(&mut self) {
-        if !self.is_empty() {
-            let sender = self.heads.remove(0).tx.sender();
-            self.txs.remove(&sender);
+    /// Removes the current head transaction, and with it every remaining
+    /// transaction from that sender that depended on it.
+    ///
+    /// A sender's queue is ordered by nonce, so dropping one transaction
+    /// normally invalidates all the later ones. That reasoning holds only in the
+    /// linear account-nonce domain. An [EIP-8250] keyed frame transaction owns
+    /// its own `(sender, nonce_key)` sequence and the mempool admits at most one
+    /// pending transaction per key set, and every [EIP-8312] UTXO spend shares
+    /// the vault sender while carrying no nonce at all. Neither has dependents,
+    /// so only the head is dropped — otherwise one unusable UTXO spend would
+    /// evict every other user's spend from the block.
+    pub fn pop(&mut self) -> Result<(), ChainError> {
+        let Some(head) = self.heads.first() else {
+            return Ok(());
+        };
+        if !head_has_dependents(head.tx.transaction(), head.tx.sender()) {
+            return self.shift();
         }
+        let sender = self.heads.remove(0).tx.sender();
+        self.txs.remove(&sender);
+        Ok(())
     }
 
     /// Remove the top transaction
@@ -1646,6 +1662,21 @@ impl TransactionQueue {
         }
         Ok(())
     }
+}
+
+/// Whether the rest of `sender`'s queue is ordered behind `tx` and becomes
+/// unusable if `tx` is dropped.
+///
+/// True for the linear account-nonce domain, where a queue is a nonce chain.
+/// False for [EIP-8250] keyed frame transactions, whose `nonce_seq` counts
+/// within a `(sender, nonce_key)` sequence of its own, and for [EIP-8312] UTXO
+/// spends, which all share the vault sender and are keyed by their input indices
+/// rather than by any nonce.
+fn head_has_dependents(tx: &Transaction, sender: Address) -> bool {
+    if sender == utxo_vault() {
+        return false;
+    }
+    !matches!(tx, Transaction::FrameTransaction(frame_tx) if frame_tx.is_keyed())
 }
 
 // Orders transactions by highest tip, if tip is equal, orders by lowest timestamp

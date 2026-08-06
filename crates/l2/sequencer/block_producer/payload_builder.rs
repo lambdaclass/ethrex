@@ -162,7 +162,7 @@ pub async fn fill_transactions(
                 head_tx.tx.hash(&NativeCrypto)
             );
             // We don't have enough gas left for the transaction, so we skip all txs from this account
-            txs.pop();
+            txs.pop()?;
             continue;
         }
 
@@ -173,7 +173,7 @@ pub async fn fill_transactions(
                 head_tx.tx.hash(&NativeCrypto)
             );
             // We don't have enough gas left for the transaction, so we skip all txs from this account
-            txs.pop();
+            txs.pop()?;
             continue;
         }
 
@@ -188,7 +188,7 @@ pub async fn fill_transactions(
         if let Transaction::PrivilegedL2Transaction(privileged_tx) = &head_tx.clone().into() {
             if privileged_tx_count >= PRIVILEGED_TX_BUDGET {
                 debug!("Ran out of space for privileged transactions");
-                txs.pop();
+                txs.pop()?;
                 continue;
             }
             let id = head_tx.nonce();
@@ -197,7 +197,7 @@ pub async fn fill_transactions(
                 .or_insert(None);
             if (*entry).is_some_and(|last_nonce| id != last_nonce + 1) {
                 debug!("Ignoring out-of-order privileged transaction");
-                txs.pop();
+                txs.pop()?;
                 continue;
             }
         }
@@ -210,7 +210,7 @@ pub async fn fill_transactions(
             // Ignore replay protected tx & all txs from the sender
             // Pull transaction from the mempool
             debug!("Ignoring replay-protected transaction: {}", tx_hash);
-            txs.pop();
+            txs.pop()?;
             blockchain.remove_transaction_from_pool(&tx_hash)?;
             continue;
         }
@@ -223,7 +223,7 @@ pub async fn fill_transactions(
             && !head_tx.is_privileged()
         {
             debug!("Removing transaction with nonce too low from mempool: {tx_hash:#x}");
-            txs.pop();
+            txs.pop()?;
             blockchain.remove_transaction_from_pool(&tx_hash)?;
             continue;
         }
@@ -242,7 +242,7 @@ pub async fn fill_transactions(
             )
         {
             debug!("Skipping tx {tx_hash:#x}: fails 2D inclusion check: {e}");
-            txs.pop();
+            txs.pop()?;
             continue;
         }
 
@@ -302,7 +302,7 @@ pub async fn fill_transactions(
                     blockchain.remove_transaction_from_pool(&tx_hash)?;
                 }
                 // Ignore following txs from sender
-                txs.pop();
+                txs.pop()?;
                 continue;
             }
         };
@@ -311,7 +311,7 @@ pub async fn fill_transactions(
         let mut found_invalid_message = false;
         for msg in l2_messages {
             if !registered_chains.contains(&msg.dest_chain_id) {
-                txs.pop();
+                txs.pop()?;
                 context.vm.undo_last_tx()?;
                 context.remaining_gas = previous_remaining_gas;
                 context.block_value = previous_block_value;
@@ -378,7 +378,7 @@ fn fetch_mempool_transactions(
     while let Some(blob_tx) = blob_txs.peek() {
         let tx_hash = blob_tx.hash(&NativeCrypto);
         blockchain.remove_transaction_from_pool(&tx_hash)?;
-        blob_txs.pop();
+        blob_txs.pop()?;
     }
     Ok(plain_txs)
 }
