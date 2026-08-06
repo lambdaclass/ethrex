@@ -427,6 +427,7 @@ pub trait PeerTableServerProtocol: Send + Sync {
     fn target_peers_reached(&self) -> Response<bool>;
     fn target_peers_completion(&self) -> Response<f64>;
     fn get_contact_to_initiate(&self) -> Response<Option<Box<Contact>>>;
+    fn get_contacts_to_initiate(&self, count: usize) -> Response<Vec<Contact>>;
     fn get_contact_for_enr_lookup(&self) -> Response<Option<Box<Contact>>>;
     fn get_closest_from_pool(&self, target: H256, count: usize) -> Response<Vec<(H256, Node)>>;
     fn get_contact(&self, node_id: H256) -> Response<Option<Box<Contact>>>;
@@ -800,6 +801,15 @@ impl PeerTableServer {
         _ctx: &Context<Self>,
     ) -> Option<Box<Contact>> {
         self.do_get_contact_to_initiate().map(Box::new)
+    }
+
+    #[request_handler]
+    async fn handle_get_contacts_to_initiate(
+        &mut self,
+        msg: peer_table_server_protocol::GetContactsToInitiate,
+        _ctx: &Context<Self>,
+    ) -> Vec<Contact> {
+        self.do_get_contacts_to_initiate(msg.count)
     }
 
     #[request_handler]
@@ -1268,14 +1278,24 @@ impl PeerTableServer {
     }
 
     fn do_get_contact_to_initiate(&mut self) -> Option<Contact> {
+        self.do_get_contacts_to_initiate(1).pop()
+    }
+
+    /// Draw up to `count` eligible candidates from the flat connection pool.
+    ///
+    /// Every returned contact is marked as tried, exactly as the single-contact
+    /// form does: the caller is expected to attempt all of them, even if it
+    /// spreads the attempts over time.
+    fn do_get_contacts_to_initiate(&mut self, count: usize) -> Vec<Contact> {
         // Draw from the flat connection pool using O(1) random index probing.
         // Pick a random start index and scan forward (wrapping) until we find
-        // an eligible candidate or complete a full loop.
+        // `count` eligible candidates or complete a full loop.
         let pool_len = self.connection_pool.len();
-        if pool_len == 0 {
-            return None;
+        if pool_len == 0 || count == 0 {
+            return Vec::new();
         }
 
+        let mut found = Vec::with_capacity(count);
         let start = rand::random::<usize>() % pool_len;
         for offset in 0..pool_len {
             let idx = (start + offset) % pool_len;
@@ -1300,13 +1320,18 @@ impl PeerTableServer {
                 .get_contact_or_replacement(&node_id)
                 .cloned()
                 .unwrap_or_else(|| Contact::new(node, DiscoveryProtocol::Discv4));
-            return Some(contact);
+            found.push(contact);
+            if found.len() == count {
+                return found;
+            }
         }
 
-        // Exhausted all candidates — reset tried set for next cycle.
-        tracing::trace!("Resetting list of tried peers.");
-        self.already_tried_peers.clear();
-        None
+        if found.is_empty() {
+            // Exhausted all candidates — reset tried set for next cycle.
+            tracing::trace!("Resetting list of tried peers.");
+            self.already_tried_peers.clear();
+        }
+        found
     }
 
     /// Get the `count` closest nodes from the connection pool, sorted by XOR distance to `target`.
@@ -1809,5 +1834,35 @@ mod tests {
             .get_contact(&node.node_id())
             .expect("contact was inserted");
         assert_eq!(contact.is_fork_id_valid, None);
+    }
+
+    // --- do_get_contacts_to_initiate ---
+
+    #[test]
+    fn get_contacts_to_initiate_returns_a_batch_without_repeats() {
+        let mut table = PeerTableServer::new(H256::zero(), 10, None);
+        for seed in 1..=5u8 {
+            let (node_id, contact) = dummy_contact(seed);
+            table.insert_to_connection_pool(node_id, contact.node.clone());
+            table.insert_contact(node_id, contact);
+        }
+
+        let batch = table.do_get_contacts_to_initiate(3);
+        assert_eq!(batch.len(), 3);
+
+        let mut ids: Vec<_> = batch.iter().map(|c| c.node.node_id()).collect();
+        ids.sort();
+        ids.dedup();
+        assert_eq!(ids.len(), 3, "batch must not repeat a contact");
+
+        // The batch marked all three as tried, so the next call yields the rest.
+        let rest = table.do_get_contacts_to_initiate(5);
+        assert_eq!(rest.len(), 2);
+    }
+
+    #[test]
+    fn get_contacts_to_initiate_on_empty_pool_is_empty() {
+        let mut table = PeerTableServer::new(H256::zero(), 10, None);
+        assert!(table.do_get_contacts_to_initiate(4).is_empty());
     }
 }
