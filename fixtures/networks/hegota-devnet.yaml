@@ -95,12 +95,19 @@ network_params:
 # Frame-transaction-aware Dora: decodes the type-0x06 envelope and shows per-frame
 # receipts. Stock `ethpandaops/dora` renders frame txs as opaque blobs.
 dora_params:
-  # bbusa/dora:focil is the only explorer build that decodes heze blocks. Our own
-  # ghcr.io/lambdaclass/dora:frame-tx-view fork, and ethpandaops/dora:master, both
-  # fail with a 2-byte SSZ offset error because their ExecutionPayloadBid lacks
-  # heze's inclusion_list_bits. Switch back once the fork gains heze support: it
-  # carries the frame-transaction rendering this devnet exists to show.
-  image: bbusa/dora:focil
+  # Carries the frame-transaction and inclusion-list rendering this devnet exists
+  # to show, over a go-eth2-client fork that decodes what this chain's consensus
+  # client actually writes: heze's `inclusion_list_bits` on the bid, plus a
+  # three-field `ExecutionRequests` and a `BuilderPendingPayment` without
+  # `proposer_index`, both of which that client predates. Stock
+  # `ethpandaops/dora` fails on all three.
+  image: ghcr.io/lambdaclass/dora:heze-decode
+  # Kurtosis derives the explorer's chain name from `network_params.network`,
+  # which defaults to `kurtosis`. That field also selects how genesis is built,
+  # so it is the wrong dial for a label; override the display strings directly.
+  env:
+    CHAIN_DISPLAY_NAME: "Hegotá"
+    FRONTEND_SITE_SUBTITLE: "Hegotá devnet"
 
 additional_services:
   - dora
