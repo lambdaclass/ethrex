@@ -33,6 +33,36 @@
 //! mode). Layers are linked via a `parent` state-root field to form a
 //! singly-linked chain from newest to oldest.
 //!
+//! ## Two node sets in one layer
+//!
+//! On a chain that schedules EIP-8297 (`binaryTreeTime`), a layer carries the
+//! same block's **binary-trie** node writes alongside the MPT's, and the cache
+//! keeps a secondary index from binary root to layer key so a reader holding
+//! only a binary root can find the layer.
+//!
+//! One layer rather than two parallel caches, because the two node sets must
+//! flush atomically — persisting the MPT at block N alongside the binary trie
+//! at block N-5 is a recovery problem — and because a single layer gives one
+//! reorg mechanism instead of two that have to be kept in step. The secondary
+//! index is populated from the root the store *recorded* for the block, never
+//! from its header: through the whole pre-activation window a block's header
+//! carries an MPT root and its binary root exists only in `BINARY_TRIE_ROOTS`.
+//!
+//! Binary reads cascade layer chain -> disk through
+//! [`LayeredBinaryTrieDB`](crate::binary_trie::LayeredBinaryTrieDB), mirroring
+//! [`TrieWrapper`], with one difference the binary trie's storage model forces:
+//! an empty value in a layer is a **tombstone**, and answers "absent" without
+//! falling through, because the path-keyed single-version node table still
+//! holds the node the block removed.
+//!
+//! **The overlay does not cover binary nodes.** It is reconstructed from
+//! `STATE_HISTORY`, whose reverse diffs span the four MPT/flat-KV column
+//! families only. Every reorg inside the layer window is covered — those nodes
+//! were never written — but a reorg deeper than the cache edge leaves the
+//! on-disk binary trie on the abandoned chain.
+//! `Store::install_overlay_for_reorg` logs a warning when that happens on a
+//! scheduled chain.
+//!
 //! ## `TrieLayerCache` — the forward cache
 //!
 //! [`TrieLayerCache`] is a `HashMap<state_root, Arc<TrieLayer>>` with a
@@ -89,6 +119,7 @@ use ethrex_trie::{Nibbles, TrieDB, TrieError};
 
 use crate::{
     api::{StorageBackend, tables::STATE_HISTORY},
+    binary_trie::BinaryTrieNodes,
     error::StoreError,
     journal::{JournalDecodeError, JournalEntry},
     trie::classify_trie_key,
@@ -100,6 +131,32 @@ const FALSE_POSITIVE_RATE: f64 = 0.02;
 #[derive(Debug, Clone)]
 struct TrieLayer {
     nodes: FxHashMap<Vec<u8>, Vec<u8>>,
+    /// The same block's EIP-8297 binary-trie node writes, keyed by
+    /// `BitPath::to_db_key()` — the exact `BINARY_TRIE_NODES` key.
+    ///
+    /// Held in the *same* layer as `nodes` rather than in a parallel cache, so
+    /// the two node sets are staged, flushed and discarded as one unit. They
+    /// have to be: persisting the MPT at block N alongside the binary trie at
+    /// block N-5 is a recovery problem, and a single layer gets atomicity by
+    /// construction instead of by keeping two structures in step.
+    ///
+    /// Empty on every chain that does not schedule `binaryTreeTime`, which is
+    /// the whole cost an unscheduled chain pays for this.
+    ///
+    /// An empty *value* is a tombstone, matching `BinaryTrieDB`'s convention:
+    /// the node left the tree, so a reader must answer "absent" and must not
+    /// fall through to the stale node still on disk at that path.
+    binary_nodes: FxHashMap<Vec<u8>, Vec<u8>>,
+    /// Binary-trie root this layer's `binary_nodes` produce, i.e. the root the
+    /// block's binary post-state is addressed by. `H256::zero()` when the chain
+    /// is not binary-tree-scheduled and this layer holds no binary nodes.
+    ///
+    /// Layers are keyed by *header* state root, which through the whole
+    /// pre-activation window is the MPT root — a block's binary root is not in
+    /// its header until activation. So the binary root cannot be recovered from
+    /// the key and is recorded here, feeding
+    /// [`TrieLayerCache::binary_index`](TrieLayerCache).
+    binary_root: H256,
     parent: H256,
     id: usize,
     /// Number of the block whose post-state this layer represents. Used by the
@@ -108,6 +165,30 @@ struct TrieLayer {
     block_number: BlockNumber,
     /// Hash of the block whose post-state this layer represents.
     block_hash: H256,
+}
+
+/// One block's binary-trie contribution to a diff layer: the root its writes
+/// produce, and the writes themselves as `BINARY_TRIE_NODES` key/value pairs
+/// (an empty value being a tombstone).
+///
+/// [`Default`] is the "this chain does not schedule the commitment" case: a
+/// zero root and no nodes, which stages nothing and indexes nothing.
+#[derive(Debug, Clone, Default)]
+pub struct BinaryLayerUpdate {
+    /// Binary-trie root after this block's writes. `H256::zero()` means "no
+    /// binary state for this block".
+    pub root: H256,
+    /// `(BINARY_TRIE_NODES key, encoded node)` pairs; empty value = tombstone.
+    pub nodes: BinaryTrieNodes,
+}
+
+impl BinaryLayerUpdate {
+    /// Whether this update carries binary state at all. A zero root means the
+    /// chain does not schedule the commitment; nodes without a root would be
+    /// unaddressable, so both are required.
+    fn is_present(&self) -> bool {
+        !self.root.is_zero()
+    }
 }
 
 /// In-memory cache of trie diff-layers, one per block (or batch in full sync), forming a
@@ -131,6 +212,28 @@ pub struct TrieLayerCache {
     /// Used to avoid looking up all layers when the given path doesn't exist in any
     /// layer, thus going directly to the database.
     bloom: AtomicBloomFilter<FxBuildHasher>,
+    /// Secondary index over the same layers: binary-trie root -> the layer's
+    /// key (its block's header state root).
+    ///
+    /// It exists because layers are keyed by header state root and, before
+    /// activation, a block's binary root is *not* in its header — it is only
+    /// the root the store recorded for it. So the index is populated from that
+    /// recorded root ([`BinaryLayerUpdate::root`]) at insertion time, never
+    /// derived from the header. Post-activation the two roots coincide and the
+    /// index maps a root to itself, which costs one entry and keeps one code
+    /// path for both regimes.
+    ///
+    /// Rebuilt from the surviving layers whenever [`Self::commit`] prunes, so a
+    /// discarded branch's binary root stops resolving at exactly the moment its
+    /// nodes are dropped.
+    binary_index: FxHashMap<H256, H256>,
+    /// Bloom filter over every binary-trie key in every layer, the binary
+    /// counterpart of `bloom`.
+    ///
+    /// Separate rather than shared so that an unscheduled chain's MPT lookups
+    /// keep exactly the false-positive rate they had: binary keys are 34 bytes
+    /// and would otherwise crowd the same filter.
+    binary_bloom: AtomicBloomFilter<FxBuildHasher>,
     /// Optional in-memory overlay bridging on-disk state at the cache edge `D` to the
     /// virtual state at a deep-reorg pivot. When installed, reads that miss the layer
     /// chain consult the overlay before falling through to disk. `None` in steady state.
@@ -153,6 +256,7 @@ impl fmt::Debug for TrieLayerCache {
             .field("commit_threshold", &self.commit_threshold)
             .field("layers", &self.layers)
             .field("bloom", &"AtomicBloomFilter")
+            .field("binary_index_len", &self.binary_index.len())
             .field("overlay", &self.overlay)
             .field("safe_commit_root", &safe_commit)
             .finish()
@@ -163,6 +267,8 @@ impl Default for TrieLayerCache {
     fn default() -> Self {
         Self {
             bloom: Self::create_filter(BLOOM_SIZE),
+            binary_index: Default::default(),
+            binary_bloom: Self::create_filter(BLOOM_SIZE),
             last_id: 0,
             layers: Default::default(),
             // TODO (issue #6345): this is coupled with DB_COMMIT_THRESHOLD in store.rs — unify them.
@@ -185,6 +291,8 @@ impl TrieLayerCache {
     ) -> Self {
         Self {
             bloom: Self::create_filter(BLOOM_SIZE),
+            binary_index: Default::default(),
+            binary_bloom: Self::create_filter(BLOOM_SIZE),
             last_id: 0,
             layers: Default::default(),
             commit_threshold,
@@ -294,6 +402,54 @@ impl TrieLayerCache {
         None
     }
 
+    /// Looks up an EIP-8297 binary-trie node `key` (a `BINARY_TRIE_NODES` key)
+    /// as of `binary_root`, walking the same layer chain the MPT walks.
+    ///
+    /// Three-state return, because the binary trie's tombstone convention makes
+    /// "absent" load-bearing:
+    /// - `None` — no layer on this chain wrote the key. The caller falls
+    ///   through to disk.
+    /// - `Some(None)` — a layer tombstoned it. The node left the tree, so the
+    ///   caller must answer "absent" and must **not** consult disk, which is
+    ///   path-keyed and single-version and still holds the superseded node.
+    /// - `Some(Some(v))` — the newest layer that wrote it holds `v`.
+    ///
+    /// `binary_root` resolves through [`Self::binary_index`](Self) to the
+    /// layer's own key, after which the walk follows `parent` exactly as
+    /// [`Self::get`] does: the binary chain and the MPT chain are the same
+    /// chain of blocks, so one set of parent links serves both. Layers with no
+    /// binary nodes (an unscheduled stretch) simply miss and the walk goes on.
+    pub fn binary_get(&self, binary_root: H256, key: &[u8]) -> Option<Option<Vec<u8>>> {
+        // Same fast path as `get`: a bloom miss is proof no layer has the key.
+        if !self.binary_bloom.contains(key) {
+            return None;
+        }
+        let mut current = *self.binary_index.get(&binary_root)?;
+        let mut steps = 0usize;
+        // Bounded walk, matching `get_commitable`: a malformed parent link must
+        // terminate rather than spin, and unlike `get` this path has no
+        // "state cycle" invariant to lean on (the index is a second entry point
+        // into the same links).
+        let max_steps = self.layers.len();
+        while let Some(layer) = self.layers.get(&current) {
+            if let Some(value) = layer.binary_nodes.get(key) {
+                return Some((!value.is_empty()).then(|| value.clone()));
+            }
+            current = layer.parent;
+            steps += 1;
+            if steps > max_steps {
+                return None;
+            }
+        }
+        None
+    }
+
+    /// Whether `binary_root` has a diff layer holding its binary state. The
+    /// binary counterpart of [`Self::has_layer`].
+    pub fn has_binary_layer(&self, binary_root: H256) -> bool {
+        self.binary_index.contains_key(&binary_root)
+    }
+
     /// Determines whether a disk commit should happen by checking whether the safe-commit root
     /// appears on the ancestor chain starting from `parent_state_root`.
     ///
@@ -383,7 +539,39 @@ impl TrieLayerCache {
         block_hash: H256,
         key_values: Vec<(Nibbles, Vec<u8>)>,
     ) {
-        if parent == state_root && key_values.is_empty() {
+        self.put_batch_with_binary(
+            parent,
+            state_root,
+            block_number,
+            block_hash,
+            key_values,
+            BinaryLayerUpdate::default(),
+        )
+    }
+
+    /// [`Self::put_batch`] carrying the same block's EIP-8297 binary-trie
+    /// writes into the same layer.
+    ///
+    /// One layer, two node sets: they are staged together, flushed together by
+    /// [`Self::commit`] and discarded together when a branch is abandoned. The
+    /// binary root is additionally recorded in
+    /// [`binary_index`](Self::binary_get) so a reader holding only a binary
+    /// root can find the layer — necessary because before activation a block's
+    /// binary root is nowhere in its header.
+    ///
+    /// The empty-block guard below is shared: an MPT root that does not move
+    /// means the state did not change, which means the binary root did not move
+    /// either, so there is nothing to stage on either side.
+    pub fn put_batch_with_binary(
+        &mut self,
+        parent: H256,
+        state_root: H256,
+        block_number: BlockNumber,
+        block_hash: H256,
+        key_values: Vec<(Nibbles, Vec<u8>)>,
+        binary: BinaryLayerUpdate,
+    ) {
+        if parent == state_root && key_values.is_empty() && binary.nodes.is_empty() {
             return;
         } else if parent == state_root {
             // L1 always changes the state root (system contracts run even on empty blocks), so
@@ -401,41 +589,74 @@ impl TrieLayerCache {
         for (p, _) in &key_values {
             self.bloom.insert(p.as_ref());
         }
+        for (p, _) in &binary.nodes {
+            self.binary_bloom.insert(p);
+        }
 
         let nodes: FxHashMap<Vec<u8>, Vec<u8>> = key_values
             .into_iter()
             .map(|(path, value)| (path.into_vec(), value))
             .collect();
+        let binary_present = binary.is_present();
+        let binary_root = binary.root;
+        let binary_nodes: FxHashMap<Vec<u8>, Vec<u8>> = binary.nodes.into_iter().collect();
 
         self.last_id += 1;
         let entry = TrieLayer {
             nodes,
+            binary_nodes,
+            binary_root,
             parent,
             id: self.last_id,
             block_number,
             block_hash,
         };
         self.layers.insert(state_root, Arc::new(entry));
+        if binary_present {
+            self.binary_index.insert(binary_root, state_root);
+        }
     }
 
     /// Rebuilds the global bloom filter from scratch using all keys across all remaining layers.
     ///
     /// Called after [`commit`](Self::commit) removes layers, since the old filter may contain
     /// keys from the removed layers (producing unnecessary false positives).
+    ///
+    /// Rebuilds the binary-trie filter and the binary-root index in the same
+    /// pass, for the same reason and with a stronger requirement: a stale
+    /// `binary_index` entry would let an abandoned branch's root resolve to a
+    /// layer that is no longer its own, so the index must be derived from the
+    /// surviving layers rather than patched.
     pub fn rebuild_bloom(&mut self) {
         // Pre-compute total keys for optimal filter sizing
         let total_keys: usize = self.layers.values().map(|layer| layer.nodes.len()).sum();
+        let total_binary_keys: usize = self
+            .layers
+            .values()
+            .map(|layer| layer.binary_nodes.len())
+            .sum();
 
         let filter = Self::create_filter(total_keys.max(BLOOM_SIZE));
+        let binary_filter = Self::create_filter(total_binary_keys.max(BLOOM_SIZE));
 
         // Parallel insertion - AtomicBloomFilter allows concurrent insert via &self
         self.layers.par_iter().for_each(|(_, layer)| {
             for path in layer.nodes.keys() {
                 filter.insert(path);
             }
+            for path in layer.binary_nodes.keys() {
+                binary_filter.insert(path);
+            }
         });
 
         self.bloom = filter;
+        self.binary_bloom = binary_filter;
+        self.binary_index = self
+            .layers
+            .iter()
+            .filter(|(_, layer)| !layer.binary_root.is_zero())
+            .map(|(state_root, layer)| (layer.binary_root, *state_root))
+            .collect();
     }
 
     /// Whether `state_root` has a diff layer. Not every canonical root does: [`Self::put_batch`]
@@ -511,6 +732,7 @@ impl TrieLayerCache {
                 block_hash: layer.block_hash,
                 parent_state_root: layer.parent,
                 nodes: layer.nodes.into_iter().collect(),
+                binary_nodes: layer.binary_nodes.into_iter().collect(),
             })
             .collect();
         Some(committed)
@@ -532,6 +754,13 @@ pub struct CommittedLayer {
     pub parent_state_root: H256,
     /// Merged trie node updates in oldest-first order, ready for a sequential disk write.
     pub nodes: Vec<(Vec<u8>, Vec<u8>)>,
+    /// The same block's EIP-8297 binary-trie node updates, as
+    /// `BINARY_TRIE_NODES` key/value pairs with an empty value meaning
+    /// "delete this key". Empty on unscheduled chains.
+    ///
+    /// Written into the same `write_tx` as `nodes`, which is the point: the two
+    /// tries advance on disk in one atomic step, never independently.
+    pub binary_nodes: BinaryTrieNodes,
 }
 
 /// [`TrieDB`] adapter that checks in-memory diff-layers ([`TrieLayerCache`]) first,
@@ -1642,6 +1871,206 @@ mod tests {
             cache.get_commitable_by_depth(tip, 4),
             Some(roots[1]),
             "batch depth gate must flush the layer 4 deep, bounding memory"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Binary-trie node sets, secondary index and tombstones.
+    // -----------------------------------------------------------------------
+
+    use super::BinaryLayerUpdate;
+
+    /// A binary-trie node key of the shape `BitPath::to_db_key` produces.
+    fn bkey(b: u8) -> Vec<u8> {
+        let mut key = vec![0u8; 34];
+        key[0] = b;
+        key
+    }
+
+    /// One block's layer carrying both node sets. `n` names the MPT root, and
+    /// the binary root is deliberately a *different* value (`0x80 + n`) so no
+    /// test can pass by accidentally treating the two as interchangeable —
+    /// which is exactly the pre-activation regime.
+    fn put_dual(cache: &mut TrieLayerCache, parent: H256, n: u8, binary: Vec<(Vec<u8>, Vec<u8>)>) {
+        cache.put_batch_with_binary(
+            parent,
+            h256(n),
+            n as u64,
+            h256(n),
+            vec![(key(n), vec![n])],
+            BinaryLayerUpdate {
+                root: h256(0x80 + n),
+                nodes: binary,
+            },
+        );
+    }
+
+    /// The secondary index is what makes a binary root addressable at all: the
+    /// layer is keyed by the MPT root, and before activation nothing in the
+    /// block's header names its binary root.
+    #[test]
+    fn a_binary_root_resolves_through_the_secondary_index() {
+        let (mut cache, _cell) = cache_with_cell(4, H256::zero());
+        put_dual(&mut cache, H256::zero(), 1, vec![(bkey(0xa), vec![0x11])]);
+
+        assert!(cache.has_binary_layer(h256(0x81)));
+        assert_eq!(
+            cache.binary_get(h256(0x81), &bkey(0xa)),
+            Some(Some(vec![0x11]))
+        );
+        // The MPT root is not a binary root: asking with the layer's own key
+        // must find nothing, or the two indexes have been conflated.
+        assert_eq!(cache.binary_get(h256(1), &bkey(0xa)), None);
+        // An unknown binary root falls through to disk.
+        assert_eq!(cache.binary_get(h256(0xff), &bkey(0xa)), None);
+    }
+
+    /// The walk follows the MPT parent links — one chain of blocks serves both
+    /// node sets — and the newest layer that wrote a key wins.
+    #[test]
+    fn the_binary_walk_follows_the_layer_parent_chain() {
+        let (mut cache, _cell) = cache_with_cell(4, H256::zero());
+        put_dual(
+            &mut cache,
+            H256::zero(),
+            1,
+            vec![(bkey(0xa), vec![0x11]), (bkey(0xb), vec![0xbb])],
+        );
+        put_dual(&mut cache, h256(1), 2, vec![(bkey(0xa), vec![0x22])]);
+        put_dual(&mut cache, h256(2), 3, vec![(bkey(0xc), vec![0xcc])]);
+
+        let tip = h256(0x83);
+        assert_eq!(
+            cache.binary_get(tip, &bkey(0xa)),
+            Some(Some(vec![0x22])),
+            "the newest layer that wrote the key must win"
+        );
+        assert_eq!(
+            cache.binary_get(tip, &bkey(0xb)),
+            Some(Some(vec![0xbb])),
+            "a key only the oldest layer wrote must still be found"
+        );
+        // Reading at an older root must not see a newer layer's write.
+        assert_eq!(
+            cache.binary_get(h256(0x81), &bkey(0xa)),
+            Some(Some(vec![0x11]))
+        );
+        assert_eq!(cache.binary_get(h256(0x81), &bkey(0xc)), None);
+    }
+
+    /// The tombstone rule, which the MPT does not need: an empty value means
+    /// the node left the tree, and the reader must answer "absent" rather than
+    /// fall through to the superseded node still on the path-keyed disk.
+    #[test]
+    fn an_empty_binary_value_reads_as_absent_and_does_not_fall_through() {
+        let (mut cache, _cell) = cache_with_cell(4, H256::zero());
+        put_dual(&mut cache, H256::zero(), 1, vec![(bkey(0xa), vec![0x11])]);
+        put_dual(&mut cache, h256(1), 2, vec![(bkey(0xa), vec![])]);
+
+        assert_eq!(
+            cache.binary_get(h256(0x82), &bkey(0xa)),
+            Some(None),
+            "Some(None) is 'deleted here'; a bare None would send the caller to disk"
+        );
+        // The layer below still holds the value at its own root.
+        assert_eq!(
+            cache.binary_get(h256(0x81), &bkey(0xa)),
+            Some(Some(vec![0x11]))
+        );
+    }
+
+    /// Committing removes both node sets from memory together and stops the
+    /// committed binary root resolving — its nodes are on disk now.
+    #[test]
+    fn commit_hands_back_both_node_sets_and_drops_the_index_entry() {
+        let safe = h256(1);
+        let (mut cache, _cell) = cache_with_cell(4, safe);
+        put_dual(&mut cache, H256::zero(), 1, vec![(bkey(0xa), vec![0x11])]);
+        put_dual(&mut cache, h256(1), 2, vec![(bkey(0xb), vec![0x22])]);
+
+        let committed = cache.commit(safe).expect("layer 1 is committable");
+        assert_eq!(committed.len(), 1);
+        assert_eq!(committed[0].binary_nodes, vec![(bkey(0xa), vec![0x11])]);
+        assert!(
+            !committed[0].nodes.is_empty(),
+            "the same CommittedLayer must carry the MPT nodes: one flush, not two"
+        );
+
+        assert!(!cache.has_binary_layer(h256(0x81)));
+        assert_eq!(cache.binary_get(h256(0x81), &bkey(0xa)), None);
+        // The layer above survives, index entry intact.
+        assert!(cache.has_binary_layer(h256(0x82)));
+        assert_eq!(
+            cache.binary_get(h256(0x82), &bkey(0xb)),
+            Some(Some(vec![0x22]))
+        );
+    }
+
+    /// A reorg: two branches off one fork point, the canonical one extended and
+    /// then committed. `commit` prunes every layer older than the one it
+    /// flushed, which is what discards the abandoned branch — and because that
+    /// branch's binary nodes were only ever staged, they are dropped without
+    /// ever being handed to the disk writer.
+    ///
+    /// Both branches write the *same* path (`0xff`) with different values, the
+    /// collision the single-version on-disk table cannot represent and that
+    /// made write-through unsafe.
+    #[test]
+    fn committing_one_branch_discards_the_abandoned_branchs_binary_nodes() {
+        let base = h256(1);
+        let (mut cache, _cell) = cache_with_cell(4, H256::zero());
+        put_dual(&mut cache, H256::zero(), 1, vec![(bkey(0x01), vec![0x01])]);
+        // The branch that loses, imported first.
+        put_dual(&mut cache, base, 9, vec![(bkey(0xff), vec![0x99])]);
+        // The branch that wins, imported after it and then extended, so the
+        // commit at its first block sits above the abandoned layer's id.
+        put_dual(&mut cache, base, 2, vec![(bkey(0xff), vec![0x22])]);
+        put_dual(&mut cache, h256(2), 3, vec![(bkey(0x03), vec![0x33])]);
+
+        assert!(
+            cache.has_binary_layer(h256(0x89)),
+            "the losing branch is resident before the commit"
+        );
+
+        let committed = cache.commit(h256(2)).expect("the winner's first block");
+        let flushed: Vec<(&Vec<u8>, &Vec<u8>)> = committed
+            .iter()
+            .flat_map(|layer| layer.binary_nodes.iter().map(|(k, v)| (k, v)))
+            .collect();
+        assert_eq!(
+            flushed,
+            vec![(&bkey(0x01), &vec![0x01]), (&bkey(0xff), &vec![0x22])],
+            "only the fork point and the winning branch may be flushed, and the shared \
+             path must carry the winner's value"
+        );
+        assert!(
+            !cache.has_binary_layer(h256(0x89)),
+            "the abandoned branch's binary root must stop resolving"
+        );
+        assert_eq!(cache.binary_get(h256(0x89), &bkey(0xff)), None);
+        assert_eq!(
+            cache.binary_get(h256(0x83), &bkey(0x03)),
+            Some(Some(vec![0x33])),
+            "the surviving branch's still-resident layer is untouched"
+        );
+    }
+
+    /// An unscheduled chain's layers carry no binary state at all: no index
+    /// entry, no nodes handed to the flush, nothing.
+    #[test]
+    fn an_unscheduled_layer_carries_no_binary_state() {
+        let safe = h256(1);
+        let (mut cache, _cell) = cache_with_cell(4, safe);
+        build_chain(&mut cache, 2);
+
+        assert!(!cache.has_binary_layer(h256(1)));
+        assert!(!cache.has_binary_layer(H256::zero()));
+        assert_eq!(cache.binary_get(h256(1), &bkey(0xa)), None);
+
+        let committed = cache.commit(safe).expect("committable");
+        assert!(
+            committed.iter().all(|layer| layer.binary_nodes.is_empty()),
+            "an unscheduled chain must flush no binary nodes"
         );
     }
 }

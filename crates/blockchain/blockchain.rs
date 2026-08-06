@@ -91,8 +91,8 @@ use ethrex_rlp::constants::RLP_NULL;
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_storage::{
-    AccountUpdatesList, DB_COMMIT_THRESHOLD, Store, UpdateBatch, error::StoreError, hash_address,
-    hash_key,
+    AccountUpdatesList, BinaryTrieAdvance, DB_COMMIT_THRESHOLD, Store, UpdateBatch,
+    error::StoreError, hash_address, hash_key,
 };
 use ethrex_trie::node::{BranchNode, ExtensionNode, LeafNode};
 use ethrex_trie::{Nibbles, Node, NodeRef, Trie, TrieError, TrieLogger, TrieNode};
@@ -2310,34 +2310,50 @@ impl Blockchain {
             .get_chain_config()
             .is_binary_tree_active(block.header.timestamp);
 
+        // The staged binary-trie advance, carried into this block's
+        // `UpdateBatch` so it joins the same diff layer as the MPT's nodes.
+        // Nothing here has written a node: dropping it on the error paths below
+        // discards the block's binary state completely.
+        let binary_update;
+
         if binary_tree_active {
             let (binary_root, recorded_here) = match account_updates {
-                Some(updates) => (
-                    self.storage
-                        .advance_binary_trie_for_block(block_hash, parent_hash, updates)?,
-                    true,
-                ),
+                Some(updates) => {
+                    let advance = self.storage.advance_binary_trie_for_block(
+                        block_hash,
+                        parent_hash,
+                        updates,
+                    )?;
+                    let root = advance.root;
+                    binary_update = Some(advance);
+                    (root, true)
+                }
                 // Re-storing a block the binary trie already advanced through
                 // (witness regeneration). Its recorded root is the answer; a
                 // missing one means the caller never shadow-tracked, which the
-                // header cannot be validated against.
-                None => (
-                    self.storage
-                        .get_binary_trie_root(block_hash)?
-                        .ok_or_else(|| {
-                            ChainError::Custom(format!(
-                                "block {block_hash:#x} is past the binary-tree activation but has \
-                                 no recorded binary root to validate its header against"
-                            ))
-                        })?,
-                    false,
-                ),
+                // header cannot be validated against. Nothing is re-staged: the
+                // nodes are already in a layer or on disk.
+                None => {
+                    binary_update = None;
+                    (
+                        self.storage
+                            .get_binary_trie_root(block_hash)?
+                            .ok_or_else(|| {
+                                ChainError::Custom(format!(
+                                    "block {block_hash:#x} is past the binary-tree activation but \
+                                     has no recorded binary root to validate its header against"
+                                ))
+                            })?,
+                        false,
+                    )
+                }
             };
             if let Err(err) = validate_state_root(&block.header, binary_root) {
                 if recorded_here {
                     // The block is not entering the chain, so nothing may keep
                     // pointing at the root it would have had — a later block
-                    // naming it as parent must not find one.
+                    // naming it as parent must not find one. The staged nodes go
+                    // with it: they are dropped here, unwritten.
                     self.storage.remove_binary_trie_root(block_hash)?;
                 }
                 return Err(err);
@@ -2346,9 +2362,10 @@ impl Blockchain {
             // Pre-activation: the header commits the MPT root, exactly as it did
             // before the commitment was ever scheduled.
             validate_state_root(&block.header, account_updates_list.state_trie_hash)?;
-            if let Some(updates) = account_updates {
-                self.shadow_track_binary_trie(block_hash, parent_hash, updates)?;
-            }
+            binary_update = match account_updates {
+                Some(updates) => self.shadow_track_binary_trie(block_hash, parent_hash, updates)?,
+                None => None,
+            };
         }
 
         // Task D2 — the MPT keeps advancing after activation. Decided, not
@@ -2393,6 +2410,8 @@ impl Blockchain {
             receipts: vec![(block.hash(), execution_result.receipts)],
             blocks: vec![block],
             code_updates: account_updates_list.code_updates,
+            // Staged with the MPT's nodes, flushed with them, dropped with them.
+            binary_update,
             commit_depth,
             // Per-block path: ack after staging so the next block's execution overlaps this
             // block's flush. Memory is bounded by `commit_depth` and the persist channel.
@@ -2448,13 +2467,15 @@ impl Blockchain {
         block_hash: BlockHash,
         parent_hash: BlockHash,
         account_updates: &[AccountUpdate],
-    ) -> Result<(), ChainError> {
+    ) -> Result<Option<BinaryTrieAdvance>, ChainError> {
         if !self.storage.get_chain_config().binary_tree_scheduled() {
-            return Ok(());
+            return Ok(None);
         }
-        self.storage
-            .advance_binary_trie_for_block(block_hash, parent_hash, account_updates)?;
-        Ok(())
+        Ok(Some(self.storage.advance_binary_trie_for_block(
+            block_hash,
+            parent_hash,
+            account_updates,
+        )?))
     }
 
     pub fn add_block(&self, block: Block) -> Result<(), ChainError> {

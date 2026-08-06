@@ -1066,8 +1066,11 @@ impl Blockchain {
             // Computed, not committed: most proposals are never imported, and the
             // path-keyed trie has no second version to keep a discarded one in. The
             // block that does get imported persists the same root.
-            self.storage
-                .compute_binary_trie_root(parent_binary_root, &account_updates)?
+            self.storage.compute_binary_trie_root(
+                context.parent_hash(),
+                parent_binary_root,
+                &account_updates,
+            )?
         } else {
             ret_acount_updates_list.state_trie_hash
         };

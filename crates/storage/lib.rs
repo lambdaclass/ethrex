@@ -79,7 +79,7 @@ pub mod utils;
 
 pub use layering::apply_prefix;
 pub use store::{
-    AccountUpdatesList, BATCH_COMMIT_THRESHOLD, DB_COMMIT_THRESHOLD,
+    AccountUpdatesList, BATCH_COMMIT_THRESHOLD, BinaryTrieAdvance, DB_COMMIT_THRESHOLD,
     DEFAULT_ROCKSDB_BLOCK_CACHE_SIZE_BYTES, EngineType, Store, StoreConfig, UpdateBatch,
     has_valid_db, hash_address, hash_key, read_chain_id_from_db,
 };

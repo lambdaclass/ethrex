@@ -14,9 +14,11 @@
 use crate::api::tables::BINARY_TRIE_NODES;
 use crate::api::{StorageBackend, StorageReadView};
 use crate::error::StoreError;
+use crate::layering::TrieLayerCache;
 use ethrex_binary_trie::BinaryTrieError;
 use ethrex_binary_trie::trie::{BinaryTrieDB, BitPath};
-use std::sync::Arc;
+use ethrex_common::H256;
+use std::sync::{Arc, Mutex};
 
 /// [`BinaryTrieDB`] holding a pre-acquired read view for a whole trie
 /// traversal, so a descent costs one lock acquisition rather than one
@@ -81,6 +83,100 @@ impl BinaryTrieDB for BackendBinaryTrieDB {
         tx.put_batch(BINARY_TRIE_NODES, writes)
             .map_err(backend_error)?;
         tx.commit().map_err(backend_error)
+    }
+}
+
+/// Binary-trie node writes as they are stored and flushed: `BINARY_TRIE_NODES`
+/// key/value pairs, with an **empty value meaning "delete this key"** per
+/// [`BinaryTrieDB::put_batch`]'s tombstone convention.
+pub type BinaryTrieNodes = Vec<(Vec<u8>, Vec<u8>)>;
+
+/// Shared buffer a [`LayeredBinaryTrieDB`] writes into. The trie owns its
+/// `Box<dyn BinaryTrieDB>`, so the caller keeps a handle on the buffer to
+/// collect the staged writes after committing.
+pub type StagedBinaryNodes = Arc<Mutex<BinaryTrieNodes>>;
+
+/// [`BinaryTrieDB`] that reads through the in-memory diff-layer chain before
+/// disk, and **stages** its writes into a buffer instead of writing them.
+///
+/// The binary-trie counterpart of [`TrieWrapper`]: nodes for recently imported
+/// blocks live in [`TrieLayerCache`] until the commit gate says a layer is deep
+/// enough to be safe, so a reader that went straight to disk would not see the
+/// state of the block it is executing on. Reads therefore cascade layer chain
+/// -> disk, and writes never reach disk here at all — the layer they are staged
+/// into is flushed by `commit_to_disk`, in the same write batch as the same
+/// block's MPT nodes.
+///
+/// Staging rather than writing is not an optimisation. The binary trie is
+/// path-keyed and single-version: a block that writes through has no second
+/// version to fall back on, so a reorg would strand the abandoned branch's
+/// nodes on disk and two blocks at one height would overwrite each other at
+/// shared paths.
+///
+/// [`TrieWrapper`]: crate::layering::TrieWrapper
+pub struct LayeredBinaryTrieDB {
+    /// Binary-trie root this handle reads at; the entry point for the
+    /// layer-chain walk.
+    binary_root: H256,
+    /// Snapshot of the layer cache, taken once for the whole traversal.
+    cache: Arc<TrieLayerCache>,
+    /// The on-disk trie, consulted only when the layer chain misses.
+    db: BackendBinaryTrieDB,
+    /// Where [`BinaryTrieDB::put_batch`] deposits this block's node writes.
+    staged: StagedBinaryNodes,
+}
+
+impl LayeredBinaryTrieDB {
+    /// A handle reading at `binary_root` through `cache`, falling back to `db`,
+    /// and staging writes into `staged`.
+    pub fn new(
+        binary_root: H256,
+        cache: Arc<TrieLayerCache>,
+        db: BackendBinaryTrieDB,
+        staged: StagedBinaryNodes,
+    ) -> Self {
+        Self {
+            binary_root,
+            cache,
+            db,
+            staged,
+        }
+    }
+
+    /// A fresh, empty staging buffer.
+    pub fn staging_buffer() -> StagedBinaryNodes {
+        Arc::new(Mutex::new(Vec::new()))
+    }
+}
+
+impl BinaryTrieDB for LayeredBinaryTrieDB {
+    /// Read cascade: layer chain first, then disk.
+    ///
+    /// A layer hit is authoritative in both directions. `Some(None)` is a
+    /// tombstone — the node left the tree in one of these blocks — and must
+    /// answer `None` *without* falling through, because the single-version
+    /// on-disk trie still holds the node this block removed.
+    fn get(&self, path: &BitPath) -> Result<Option<Vec<u8>>, BinaryTrieError> {
+        match self.cache.binary_get(self.binary_root, &path.to_db_key()) {
+            Some(value) => Ok(value),
+            None => self.db.get(path),
+        }
+    }
+
+    /// Stages every entry, writing nothing. Tombstones are staged verbatim as
+    /// empty values so the layer represents "this key is deleted" faithfully —
+    /// both for a reader walking the chain and for the eventual disk flush,
+    /// which turns an empty value back into a `delete`.
+    fn put_batch(&self, entries: Vec<(BitPath, Vec<u8>)>) -> Result<(), BinaryTrieError> {
+        let mut staged = self
+            .staged
+            .lock()
+            .map_err(|_| BinaryTrieError::Backend("binary staging buffer poisoned".to_string()))?;
+        staged.reserve(entries.len());
+        for (path, encoded) in entries {
+            staged.push((path.to_db_key(), encoded));
+        }
+        Ok(())
     }
 }
 

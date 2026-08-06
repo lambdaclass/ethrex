@@ -6,19 +6,19 @@ use crate::{
         StorageBackend, StorageReadView, StorageWriteBatch,
         tables::{
             ACCOUNT_CODE_METADATA, ACCOUNT_CODES, ACCOUNT_FLATKEYVALUE, ACCOUNT_TRIE_NODES,
-            BAD_BLOCKS, BINARY_TRIE_ROOTS, BLOCK_ACCESS_LISTS, BLOCK_NUMBERS, BODIES,
-            CANONICAL_BLOCK_HASHES, CHAIN_DATA, EXECUTION_WITNESSES, FULLSYNC_HEADERS, HEADERS,
-            INVALID_CHAINS, MISC_VALUES, PENDING_BLOCKS, RECEIPTS_V2, SNAP_STATE, STATE_HISTORY,
-            STORAGE_FLATKEYVALUE, STORAGE_TRIE_NODES, TRANSACTION_LOCATIONS,
+            BAD_BLOCKS, BINARY_TRIE_NODES, BINARY_TRIE_ROOTS, BLOCK_ACCESS_LISTS, BLOCK_NUMBERS,
+            BODIES, CANONICAL_BLOCK_HASHES, CHAIN_DATA, EXECUTION_WITNESSES, FULLSYNC_HEADERS,
+            HEADERS, INVALID_CHAINS, MISC_VALUES, PENDING_BLOCKS, RECEIPTS_V2, SNAP_STATE,
+            STATE_HISTORY, STORAGE_FLATKEYVALUE, STORAGE_TRIE_NODES, TRANSACTION_LOCATIONS,
         },
     },
     apply_prefix,
     backend::in_memory::InMemoryBackend,
-    binary_trie::BackendBinaryTrieDB,
+    binary_trie::{BackendBinaryTrieDB, BinaryTrieNodes, LayeredBinaryTrieDB, StagedBinaryNodes},
     block_data_buffer::BlockDataBuffer,
     error::StoreError,
     journal::{FlatDiff, JournalEntry},
-    layering::{Overlay, TrieLayerCache, TrieWrapper},
+    layering::{BinaryLayerUpdate, Overlay, TrieLayerCache, TrieWrapper},
     rlp::{BlockBodyRLP, BlockHeaderRLP, BlockRLP},
     trie::{BackendTrieDB, BackendTrieDBLocked, classify_trie_key},
     utils::{ChainDataIndex, SnapStateIndex},
@@ -307,6 +307,16 @@ pub struct UpdateBatch {
     pub receipts: Vec<(H256, Vec<Receipt>)>,
     /// Contract code updates (code hash -> bytecode).
     pub code_updates: Vec<(H256, Code)>,
+    /// This block's EIP-8297 binary-trie advance, staged rather than written.
+    ///
+    /// `None` on every chain that does not schedule `binaryTreeTime`, and on
+    /// the re-store paths that do not re-advance the trie (witness
+    /// regeneration), where the nodes are already staged or on disk.
+    ///
+    /// Carried in the *same* batch as the MPT's nodes so both land in one
+    /// diff layer and one disk write. See
+    /// [`Store::advance_binary_trie_for_block`].
+    pub binary_update: Option<BinaryTrieAdvance>,
     /// Commit gate for this batch's trie layers (independent of `wait_for_flush`).
     ///
     /// - `None`: live path (`newPayload`). The persist worker commits by the canonical
@@ -326,6 +336,34 @@ pub struct UpdateBatch {
     ///   batch path, where a single message carries ~1024 blocks (~1 GB of trie diff) and two
     ///   in flight would be a real memory cost.
     pub wait_for_flush: bool,
+}
+
+/// One block's EIP-8297 binary-trie advance: the root it reached and the node
+/// writes that got it there, **staged** rather than written.
+///
+/// Produced by [`Store::advance_binary_trie_for_block`] and carried through
+/// [`UpdateBatch`] into the block's diff layer. Nothing here has touched disk;
+/// dropping it (a rejected block, an abandoned branch) discards the block's
+/// binary state completely, which is the property the whole staging exercise
+/// exists for.
+#[derive(Debug, Clone)]
+pub struct BinaryTrieAdvance {
+    /// Binary-trie root after this block's updates. Recorded in
+    /// `BINARY_TRIE_ROOTS` by the producer, and the key the layer's secondary
+    /// index uses.
+    pub root: H256,
+    /// `(BINARY_TRIE_NODES key, encoded node)` pairs; an empty value is a
+    /// tombstone, per `BinaryTrieDB`'s convention.
+    pub nodes: BinaryTrieNodes,
+}
+
+impl From<BinaryTrieAdvance> for BinaryLayerUpdate {
+    fn from(advance: BinaryTrieAdvance) -> Self {
+        BinaryLayerUpdate {
+            root: advance.root,
+            nodes: advance.nodes,
+        }
+    }
 }
 
 /// Storage trie updates grouped by account address hash.
@@ -1777,6 +1815,7 @@ impl Store {
             blocks,
             receipts,
             code_updates,
+            binary_update,
             commit_depth,
             wait_for_flush,
         } = update_batch;
@@ -1822,6 +1861,7 @@ impl Store {
                 child_state_root: last_state_root,
                 account_updates,
                 storage_updates,
+                binary_update,
                 commit_depth,
                 wait_for_flush,
                 block_number: last_block_number,
@@ -2066,6 +2106,7 @@ impl Store {
                             bp.block_hash,
                             bp.account_updates,
                             bp.storage_updates,
+                            bp.binary_update,
                         ) {
                             error!("persist worker trie phase-1 failed: {err}");
                             if bp.wait_for_flush {
@@ -2630,9 +2671,12 @@ impl Store {
     /// but the EVM fetches whole bytecode by hash, and only
     /// `ACCOUNT_CODES` answers that.
     ///
-    /// No diff layer is involved: nodes land on disk immediately. Layer
-    /// integration keyed by binary-trie root is its own step, and this
-    /// method is the consumer it will wrap.
+    /// **No diff layer is involved: nodes land on disk immediately.** This is
+    /// the direct-write primitive, kept for the paths that genuinely have no
+    /// block and therefore no layer to stage into — the genesis anchor and the
+    /// storage-layer tests that exercise the trie in isolation. Block import
+    /// does *not* use it; it goes through
+    /// [`Store::advance_binary_trie_for_block`], which stages.
     ///
     /// # Errors
     ///
@@ -2669,23 +2713,7 @@ impl Store {
         // Codes first and in a single batch: the EVM fetches whole
         // bytecode by hash and only `ACCOUNT_CODES` answers that, while
         // the trie only ever commits to code as chunks.
-        let codes: Vec<_> = account_updates
-            .iter()
-            .filter_map(|update| update.code.as_ref())
-            .collect();
-        if !codes.is_empty() {
-            let mut tx = self.backend.begin_write()?;
-            for code in codes {
-                let hash_key = code.hash.0.to_vec();
-                tx.put(ACCOUNT_CODES, &hash_key, &encode_code(code))?;
-                tx.put(
-                    ACCOUNT_CODE_METADATA,
-                    &hash_key,
-                    &(code.len() as u64).to_be_bytes(),
-                )?;
-            }
-            tx.commit()?;
-        }
+        self.write_account_codes(account_updates)?;
 
         let mut trie = BinaryTrie::open(
             Box::new(BackendBinaryTrieDB::new(self.backend.clone())?),
@@ -2696,20 +2724,21 @@ impl Store {
     }
 
     /// The binary-trie root `account_updates` produce on top of
-    /// `parent_root`, **without persisting anything**.
+    /// `parent_root`, **without persisting or staging anything**.
     ///
     /// [`BinaryTrie::root`] merkleizes the in-memory overlay; only the
     /// root-to-leaf paths the updates reach are loaded, and no node,
     /// code entry or root mapping is written. That is what payload
     /// building needs: a proposed block's root has to be known before
-    /// the block exists, and most proposals are never imported. Writing
-    /// them would be worse than wasteful — the binary trie is
-    /// path-keyed and single-version, so committing a payload that is
-    /// then discarded overwrites nodes the canonical branch still
-    /// needs.
+    /// the block exists, and most proposals are never imported.
+    ///
+    /// The reads still go through the diff layers, gated on `parent_hash`, or
+    /// a payload built on a parent whose own nodes are still in memory would be
+    /// merkleized over stale on-disk state and commit a root no importer can
+    /// reproduce.
     ///
     /// The block that *is* imported recomputes the same root through
-    /// [`Store::advance_binary_trie_for_block`], which does persist.
+    /// [`Store::advance_binary_trie_for_block`], which stages it.
     ///
     /// # Errors
     ///
@@ -2717,27 +2746,84 @@ impl Store {
     /// [`Store::apply_account_updates_to_binary_trie_blocking`].
     pub fn compute_binary_trie_root(
         &self,
+        parent_hash: BlockHash,
         parent_root: H256,
         account_updates: &[AccountUpdate],
     ) -> Result<H256, StoreError> {
         let mut trie = BinaryTrie::open(
-            Box::new(BackendBinaryTrieDB::new(self.backend.clone())?),
+            Box::new(self.layered_binary_trie_db(
+                parent_root,
+                self.binary_layer_gate(parent_hash, parent_root)?,
+                LayeredBinaryTrieDB::staging_buffer(),
+            )?),
             parent_root,
         );
         apply_account_updates(&mut trie, account_updates)?;
         Ok(trie.root())
     }
 
-    /// Open the persistent binary trie at `root`.
+    /// A [`LayeredBinaryTrieDB`] reading at `binary_root` through the layer
+    /// cache snapshot taken at `gate_root`, staging its writes into `staged`.
+    ///
+    /// `gate_root` is the *layer* key to wait on before snapshotting (see
+    /// [`Self::binary_layer_gate`]); `binary_root` is what the read walk starts
+    /// from. They differ for every pre-activation block.
+    fn layered_binary_trie_db(
+        &self,
+        binary_root: H256,
+        gate_root: H256,
+        staged: StagedBinaryNodes,
+    ) -> Result<LayeredBinaryTrieDB, StoreError> {
+        Ok(LayeredBinaryTrieDB::new(
+            binary_root,
+            self.gated_snapshot(gate_root)?,
+            BackendBinaryTrieDB::new(self.backend.clone())?,
+            staged,
+        ))
+    }
+
+    /// The root to gate a binary read at `parent_hash` on: the parent's
+    /// *header* state root, because that is what its diff layer is keyed by and
+    /// what [`PendingTrieRoots`] tracks.
+    ///
+    /// This is the one place the two roots genuinely diverge. Before activation
+    /// a block's header carries an MPT root while its binary root lives only in
+    /// `BINARY_TRIE_ROOTS`, so gating on the binary root would wait for nothing
+    /// and could snapshot a cache that does not yet hold the parent's layer —
+    /// the reader would then fall through to disk, where the parent's binary
+    /// nodes are not. After activation the two coincide and this is a no-op.
+    ///
+    /// Falls back to `binary_root` when the parent header is unknown (genesis
+    /// on a fresh store, tests driving the storage layer directly): there is no
+    /// layer to wait for in that case.
+    fn binary_layer_gate(
+        &self,
+        parent_hash: BlockHash,
+        binary_root: H256,
+    ) -> Result<H256, StoreError> {
+        Ok(self
+            .get_block_header_by_hash(parent_hash)?
+            .map(|header| header.state_root)
+            .unwrap_or(binary_root))
+    }
+
+    /// Open the persistent binary trie at `root` for reading.
     ///
     /// Opening loads nothing: the root is a bare stored reference until a
-    /// traversal touches it, so this costs a backend handle and nothing else.
-    /// Each read therefore opens its own trie rather than sharing one — the
-    /// node cache a shared trie would give lives in the Phase E diff layers,
-    /// which do not exist yet.
+    /// traversal touches it, so this costs a cache snapshot and a backend
+    /// handle. Reads cascade diff layers -> disk, so a block whose nodes are
+    /// still staged is readable at its own root.
+    ///
+    /// The gate is `root` itself, which is correct because every caller is a
+    /// read at an *active* header, where the header state root and the binary
+    /// root are the same value.
     fn open_binary_trie(&self, root: H256) -> Result<BinaryTrie, StoreError> {
         Ok(BinaryTrie::open(
-            Box::new(BackendBinaryTrieDB::new(self.backend.clone())?),
+            Box::new(self.layered_binary_trie_db(
+                root,
+                root,
+                LayeredBinaryTrieDB::staging_buffer(),
+            )?),
             root,
         ))
     }
@@ -2800,11 +2886,18 @@ impl Store {
     /// exactly [`BINARY_TRIE_ROOTS`]. An active header whose own recorded root
     /// matches the one it commits to is a header this node has binary state for.
     ///
-    /// **What it cannot catch**, and Phase E will: the binary trie is path-keyed
-    /// and single-version, so after a reorg the nodes on disk hold the abandoned
-    /// branch's state while both branches' roots are still recorded. The recorded
-    /// mapping cannot see that; it is the same exposure the write path already
-    /// has (see [`Self::advance_binary_trie_for_block`]).
+    /// **What used to sit behind this, and no longer does.** The write path
+    /// once committed straight to disk, so after a reorg the path-keyed,
+    /// single-version node table held the abandoned branch's state while both
+    /// branches' roots stayed recorded, and this check could not tell them
+    /// apart. Diff layers removed the cause: a reorg within the layer window
+    /// discards the abandoned branch's nodes before they are ever written, so
+    /// the recorded root and the nodes agree again
+    /// (see [`Self::advance_binary_trie_for_block`]).
+    ///
+    /// **What remains**: a reorg *deeper* than the layer cache, where the
+    /// abandoned branch's nodes were already flushed and the binary trie has no
+    /// journal to unwind them with. The recorded mapping still cannot see that.
     ///
     /// [`BINARY_TRIE_ROOTS`]: crate::api::tables::BINARY_TRIE_ROOTS
     pub fn has_binary_trie_state(
@@ -2857,11 +2950,10 @@ impl Store {
     /// block that never entered the chain — and a later block naming it
     /// as parent would then extend a branch nobody accepted.
     ///
-    /// Only the mapping is undone. The nodes the rejected block wrote
-    /// stay on disk, because the trie is path-keyed and single-version
-    /// and has nowhere to put a second copy; that is the same exposure
-    /// a reorg already has, and it is what the diff-layer work (Phase E)
-    /// exists to close. Removing the mapping is still the right thing:
+    /// Only the mapping needs undoing. The nodes the rejected block produced
+    /// were staged into a [`BinaryTrieAdvance`] the caller is about to drop,
+    /// never written, so there is nothing on disk to undo — which is exactly
+    /// what the diff layers bought. Removing the mapping is still required:
     /// it is the only thing a later block consults.
     pub fn remove_binary_trie_root(&self, block_hash: BlockHash) -> Result<(), StoreError> {
         self.delete(BINARY_TRIE_ROOTS, block_hash.as_bytes().to_vec())
@@ -2891,17 +2983,34 @@ impl Store {
     /// nothing more: no header carries it and nothing is compared
     /// against it until activation.
     ///
-    /// **No diff layers yet, so no reorg story yet.** Nodes commit
-    /// straight to disk here while the MPT's are staged into the layer
-    /// chain and flushed behind the safe-commit gate. Two consequences,
-    /// both deliberate and both resolved by the diff-layer work (Phase E
-    /// of the activation plan, which this method is the consumer for):
-    /// the two structures are not persisted atomically, and a reorg
-    /// leaves the on-disk binary trie holding the abandoned branch's
-    /// state — the path-keyed single-version layout has no other version
-    /// to fall back to. Until then, only the recorded roots distinguish
-    /// branches; the nodes do not. Harmless while nothing reads the
-    /// binary trie, which is exactly the Phase C window.
+    /// **Staged, not written.** The nodes this produces go into the returned
+    /// [`BinaryTrieAdvance`], which the caller carries in the block's
+    /// [`UpdateBatch`]; from there they join the same diff layer as the block's
+    /// MPT nodes and reach disk only when that layer clears the safe-commit
+    /// gate, in the same write batch. Three things follow, and they are the
+    /// point of Phase E:
+    ///
+    /// - the two tries are persisted atomically, so disk never holds the MPT at
+    ///   block N alongside the binary trie at block N-5;
+    /// - a reorg discards the abandoned branch's binary nodes with its layer,
+    ///   instead of stranding them on a path-keyed store with no other version
+    ///   to fall back to;
+    /// - competing blocks at one height cannot overwrite each other at shared
+    ///   paths, because neither has written anything.
+    ///
+    /// Reads during the advance cascade through the layer chain, so a parent
+    /// whose own nodes are still staged resolves correctly.
+    ///
+    /// The recorded root *is* written immediately, because it is what a later
+    /// block consults to find the root it must extend, and because a rejected
+    /// block un-records it ([`Self::remove_binary_trie_root`]).
+    ///
+    /// **Not covered:** a reorg deeper than the layer window, which the MPT
+    /// bridges with the `STATE_HISTORY` journal and the deep-reorg overlay.
+    /// Binary nodes are not journaled, so a deep reorg past the cache edge
+    /// leaves the on-disk binary trie on the abandoned chain — the same
+    /// exposure every reorg had before this change, now narrowed to reorgs
+    /// deeper than the cache. See the module docs in `layering.rs`.
     ///
     /// # Errors
     ///
@@ -2917,14 +3026,55 @@ impl Store {
         block_hash: BlockHash,
         parent_hash: BlockHash,
         account_updates: &[AccountUpdate],
-    ) -> Result<H256, StoreError> {
+    ) -> Result<BinaryTrieAdvance, StoreError> {
         let parent_root = self
             .get_binary_trie_root(parent_hash)?
             .ok_or(StoreError::MissingBinaryTrieRoot { parent_hash })?;
-        let root =
-            self.apply_account_updates_to_binary_trie_blocking(parent_root, account_updates)?;
+
+        // Codes first and in a single batch, exactly as the direct-write path
+        // does: the EVM fetches whole bytecode by hash and only `ACCOUNT_CODES`
+        // answers that, while the trie only ever commits to code as chunks.
+        // Content-addressed, so writing them ahead of the layer flush is safe —
+        // an abandoned branch leaves unreferenced code, never wrong code.
+        self.write_account_codes(account_updates)?;
+
+        let staged = LayeredBinaryTrieDB::staging_buffer();
+        let gate_root = self.binary_layer_gate(parent_hash, parent_root)?;
+        let mut trie = BinaryTrie::open(
+            Box::new(self.layered_binary_trie_db(parent_root, gate_root, staged.clone())?),
+            parent_root,
+        );
+        apply_account_updates(&mut trie, account_updates)?;
+        let root = trie.commit()?;
+        drop(trie);
+
+        let nodes = std::mem::take(&mut *staged.lock().map_err(|_| StoreError::LockError)?);
         self.set_binary_trie_root(block_hash, root)?;
-        Ok(root)
+        Ok(BinaryTrieAdvance { root, nodes })
+    }
+
+    /// Write every code carried by `account_updates` into `ACCOUNT_CODES` and
+    /// `ACCOUNT_CODE_METADATA`, in one batch. Shared by the direct-write and
+    /// staged binary-trie paths.
+    fn write_account_codes(&self, account_updates: &[AccountUpdate]) -> Result<(), StoreError> {
+        let codes: Vec<_> = account_updates
+            .iter()
+            .filter_map(|update| update.code.as_ref())
+            .collect();
+        if codes.is_empty() {
+            return Ok(());
+        }
+        let mut tx = self.backend.begin_write()?;
+        for code in codes {
+            let hash_key = code.hash.0.to_vec();
+            tx.put(ACCOUNT_CODES, &hash_key, &encode_code(code))?;
+            tx.put(
+                ACCOUNT_CODE_METADATA,
+                &hash_key,
+                &(code.len() as u64).to_be_bytes(),
+            )?;
+        }
+        tx.commit()
     }
 
     // Key format: block_number (8 bytes, big-endian) + block_hash (32 bytes)
@@ -4333,10 +4483,34 @@ impl Store {
             TrieLayerCache::new_with_safe_commit(threshold, self.safe_commit_root.clone());
         fresh.set_overlay(Arc::new(overlay));
 
+        // The overlay bridges the MPT and flat-KV CFs only: it is built from
+        // `STATE_HISTORY`, whose reverse diffs cover those four column families
+        // and not `BINARY_TRIE_NODES`. Binary-trie nodes are staged in the same
+        // diff layers as the MPT's and discarded with them, which covers every
+        // reorg inside the layer window; a reorg deeper than that window,
+        // however, unwinds an MPT the journal can rebuild and a binary trie it
+        // cannot, leaving the on-disk binary state on the abandoned chain.
+        //
+        // Loud rather than silent: a scheduled chain reaching here has a real
+        // hole, and the operator should see it. Closing it needs a binary
+        // reverse-diff journal, which is deliberately not part of this change.
+        if self.chain_config.binary_tree_scheduled() {
+            warn!(
+                from_block,
+                to_block,
+                "deep reorg on a binary-tree-scheduled chain: the STATE_HISTORY overlay rebuilds \
+                 MPT and flat-KV state only, so the on-disk binary trie is NOT unwound past the \
+                 layer-cache edge and may hold the abandoned chain's state"
+            );
+        }
+
         // Wait for the persist worker to be idle before swapping the cache (see
         // [`Self::rendezvous_persist_worker`]).
         self.rendezvous_persist_worker("install_overlay_for_reorg")?;
 
+        // The fresh cache starts with no layers, so its binary-root index and
+        // binary bloom start empty too: the abandoned chain's staged binary
+        // nodes go away with its MPT layers, in one step, by construction.
         let mut guard = self.trie_cache.write().map_err(|_| StoreError::LockError)?;
         *guard = Arc::new(fresh);
         Ok(())
@@ -4622,6 +4796,49 @@ impl Store {
         Ok(count)
     }
 
+    /// Every `(key, value)` pair in the binary-trie node table. For testing
+    /// only — the counterpart of [`Store::binary_trie_node_count_for_test`] for
+    /// tests that must compare *which* nodes reached disk, not just how many
+    /// (the reorg-discard assertion).
+    #[cfg(any(test, feature = "testing"))]
+    pub fn binary_trie_nodes_for_test(&self) -> Result<BinaryTrieNodes, StoreError> {
+        use crate::api::tables::BINARY_TRIE_NODES;
+        let read = self.backend.begin_read()?;
+        read.prefix_iterator(BINARY_TRIE_NODES, &[])?
+            .map(|entry| entry.map(|(k, v)| (k.into_vec(), v.into_vec())))
+            .collect()
+    }
+
+    /// Number of entries in the MPT's account-trie node table. For testing
+    /// only — the MPT baseline the binary-trie flush is compared against, so a
+    /// test can state that the two land at the same commit point rather than
+    /// independently.
+    #[cfg(any(test, feature = "testing"))]
+    pub fn account_trie_node_count_for_test(&self) -> Result<usize, StoreError> {
+        let read = self.backend.begin_read()?;
+        let count = read.prefix_iterator(ACCOUNT_TRIE_NODES, &[])?.count();
+        Ok(count)
+    }
+
+    /// Force the trie-layer commit gate at `root` and wait for the flush.
+    ///
+    /// For testing only. Live nodes reach this through `forkchoice_update`,
+    /// which advances the safe-commit cell to the canonical `head - 128` root
+    /// and pokes the persist worker; a test that wants to observe a flush
+    /// without building 128 blocks needs the same two steps without the depth
+    /// requirement. `root` must be a canonical state root, exactly as the real
+    /// gate's would be.
+    #[cfg(any(test, feature = "testing"))]
+    pub async fn commit_trie_layers_for_test(&self, root: H256) -> Result<(), StoreError> {
+        self.set_safe_commit_root(root)?;
+        let tx = self.persist_tx.clone();
+        tokio::task::spawn_blocking(move || tx.send(PersistMessage::Commit(root)))
+            .await
+            .map_err(|e| StoreError::Custom(format!("commit poke join failed: {e}")))?
+            .map_err(|e| StoreError::Custom(format!("commit poke send failed: {e}")))?;
+        self.wait_for_persistence_idle().await
+    }
+
     /// Insert a block plus associated codes into the in-memory buffer without
     /// writing to disk.  For testing only — proves the buffer overlay resolves
     /// code that has not been persisted yet.
@@ -4765,6 +4982,10 @@ struct BlockPersist {
     child_state_root: H256,
     account_updates: TrieNodesUpdate,
     storage_updates: Vec<(H256, TrieNodesUpdate)>,
+    /// The same unit's staged EIP-8297 binary-trie advance, if the chain
+    /// schedules the commitment. Installed into the same diff layer as
+    /// `account_updates` / `storage_updates`.
+    binary_update: Option<BinaryTrieAdvance>,
     commit_depth: Option<usize>,
     wait_for_flush: bool,
     /// Number of the block whose layer this update represents (the last block in
@@ -4944,6 +5165,7 @@ fn apply_trie_phase1(
     block_hash: H256,
     account_updates: TrieNodesUpdate,
     storage_updates: Vec<(H256, TrieNodesUpdate)>,
+    binary_update: Option<BinaryTrieAdvance>,
 ) -> Result<(), StoreError> {
     let build: Result<(), StoreError> = (|| {
         let new_layer = storage_updates
@@ -4960,12 +5182,17 @@ fn apply_trie_phase1(
             .map_err(|_| StoreError::LockError)?
             .clone();
         let mut trie_mut = (*trie).clone();
-        trie_mut.put_batch(
+        // One layer, both node sets: they must be staged, flushed and dropped
+        // as a unit, so there is exactly one insertion here and never two.
+        trie_mut.put_batch_with_binary(
             parent_state_root,
             child_state_root,
             block_number,
             block_hash,
             new_layer,
+            binary_update
+                .map(BinaryLayerUpdate::from)
+                .unwrap_or_default(),
         );
         *trie_cache.write().map_err(|_| StoreError::LockError)? = Arc::new(trie_mut);
         Ok(())
@@ -5267,6 +5494,31 @@ fn commit_to_disk(
                 // Advance the overlay so a later block in this same commit sees this
                 // block's write as its pre-image.
                 overlay.insert(key.clone(), new_value);
+            }
+        }
+
+        // The same block's EIP-8297 binary-trie nodes, into the SAME write
+        // batch. That is the whole flush-parity guarantee: `write_tx` commits
+        // once at the end, so the two tries advance on disk together or not at
+        // all, and a crash can never leave the MPT at block N with the binary
+        // trie at some earlier block.
+        //
+        // Empty on unscheduled chains, so they do exactly the work they did.
+        //
+        // Not journaled: `STATE_HISTORY` reverse-diffs cover the four MPT/flat-KV
+        // CFs only, so a reorg deeper than the layer cache cannot rebuild binary
+        // state. Reorgs within the cache — every reorg the layer chain covers —
+        // never write these nodes at all, so they need no reverse diff.
+        for (key, value) in &layer.binary_nodes {
+            result = if value.is_empty() {
+                // Tombstone: the node left the tree. Storing zero bytes would
+                // make the path read back as a node the trie never wrote.
+                write_tx.delete(BINARY_TRIE_NODES, key)
+            } else {
+                write_tx.put(BINARY_TRIE_NODES, key, value)
+            };
+            if result.is_err() {
+                break 'layers;
             }
         }
 
@@ -5862,6 +6114,7 @@ mod state_history_tests {
                 blocks: vec![block1],
                 receipts: vec![],
                 code_updates: vec![],
+                binary_update: None,
                 commit_depth: None,
                 wait_for_flush: false,
             })
@@ -5880,6 +6133,7 @@ mod state_history_tests {
                 blocks: vec![block2],
                 receipts: vec![],
                 code_updates: vec![],
+                binary_update: None,
                 commit_depth: None,
                 wait_for_flush: false,
             })
@@ -5907,6 +6161,7 @@ mod state_history_tests {
                 blocks: vec![block3],
                 receipts: vec![],
                 code_updates: vec![],
+                binary_update: None,
                 commit_depth: None,
                 wait_for_flush: false,
             })
@@ -5959,6 +6214,7 @@ mod state_history_tests {
                     blocks: vec![block],
                     receipts: vec![],
                     code_updates: vec![],
+                    binary_update: None,
                     commit_depth: Some(3),
                     wait_for_flush: false,
                 })
@@ -6031,6 +6287,7 @@ mod state_history_tests {
                     blocks: vec![block],
                     receipts: vec![],
                     code_updates: vec![],
+                    binary_update: None,
                     commit_depth: Some(BATCH_COMMIT_THRESHOLD),
                     wait_for_flush: true,
                 })
@@ -6078,6 +6335,7 @@ mod state_history_tests {
                 blocks: vec![block1],
                 receipts: vec![],
                 code_updates: vec![],
+                binary_update: None,
                 commit_depth: None,
                 wait_for_flush: false,
             })
@@ -6095,6 +6353,7 @@ mod state_history_tests {
                 blocks: vec![block2],
                 receipts: vec![],
                 code_updates: vec![],
+                binary_update: None,
                 commit_depth: None,
                 wait_for_flush: false,
             })

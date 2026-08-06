@@ -1996,3 +1996,568 @@ async fn unscheduled_chains_read_exactly_as_they_did() {
         blocks
     );
 }
+
+// ===========================================================================
+// Phase E — binary-trie diff layers.
+//
+// Until now the binary trie committed straight to disk on every block while
+// the MPT's nodes were staged into the in-memory layer chain and flushed only
+// once a layer was deep enough to be safe. That was survivable while nothing
+// read the binary trie; it is not survivable now that it is consensus state,
+// because the store is path-keyed and single-version: a reorg would leave the
+// abandoned branch's nodes on disk with no other version to fall back to, and
+// two blocks at the same height would overwrite each other at shared paths.
+//
+// Phase E gives binary-trie nodes the same treatment: staged in memory per
+// block in the *same* diff layer as that block's MPT nodes, indexed by binary
+// root as well as by header state root, flushed on the same commit gate, and
+// dropped together on reorg.
+//
+// The properties:
+//
+// 1. a just-imported block's binary state is readable before any flush (the
+//    layer-chain read cascade);
+// 2. nothing reaches `BINARY_TRIE_NODES` until the commit gate allows it;
+// 3. a reorg discards the abandoned branch's binary nodes, and the surviving
+//    branch's state is exactly what a node that only ever saw it would hold;
+// 4. binary and MPT nodes land on disk at the same commit point, not
+//    independently;
+// 5. all three import paths still agree and an unscheduled chain still does
+//    zero binary work (the existing tests above, unchanged).
+// ===========================================================================
+
+/// A scheduled chain that flips at [`FLIP_BLOCK`], together with the disk node
+/// counts genesis left behind.
+///
+/// Genesis is the one binary-trie write that is *not* staged — there is no
+/// block and therefore no diff layer to stage it into — so it is the floor
+/// every "nothing has been flushed yet" assertion is measured against. Reading
+/// it before any block is imported is what makes those assertions non-vacuous.
+struct StagedChain {
+    store: Store,
+    blockchain: Blockchain,
+    genesis: Genesis,
+    blocks: Vec<Block>,
+    /// `BINARY_TRIE_NODES` entries present after genesis and before block 1.
+    genesis_binary_nodes: usize,
+    /// `ACCOUNT_TRIE_NODES` entries present after genesis and before block 1.
+    genesis_account_nodes: usize,
+    activation: u64,
+    chain_id: u64,
+}
+
+/// Build `count` blocks on a scheduled chain whose activation lands on
+/// [`FLIP_BLOCK`], recording the on-disk node counts genesis produced first.
+async fn build_staged_chain(count: u64) -> StagedChain {
+    let sender = sender_from_key(&test_secret_key());
+    let activation = load_funded_genesis(sender, None).timestamp + FLIP_BLOCK * BLOCK_TIME;
+    let genesis = load_funded_genesis(sender, Some(activation));
+    let chain_id = genesis.config.chain_id;
+
+    let store = store_from_genesis(genesis.clone()).await;
+    store.wait_for_persistence_idle().await.expect("idle");
+    let genesis_binary_nodes = store.binary_trie_node_count_for_test().expect("node count");
+    let genesis_account_nodes = store
+        .account_trie_node_count_for_test()
+        .expect("account node count");
+
+    let blockchain = Blockchain::default_with_store(store.clone());
+    let blocks = build_chain(&store, &blockchain, chain_id, count).await;
+    store.wait_for_persistence_idle().await.expect("idle");
+
+    StagedChain {
+        store,
+        blockchain,
+        genesis,
+        blocks,
+        genesis_binary_nodes,
+        genesis_account_nodes,
+        activation,
+        chain_id,
+    }
+}
+
+/// Every `(key, value)` pair currently in `BINARY_TRIE_NODES`, as the ground
+/// truth for "what actually reached disk".
+fn binary_nodes_on_disk(store: &Store) -> BTreeMap<Vec<u8>, Vec<u8>> {
+    store
+        .binary_trie_nodes_for_test()
+        .expect("binary node dump")
+        .into_iter()
+        .collect()
+}
+
+// ---------------------------------------------------------------------------
+// E.1 A just-imported block's binary state is readable before any flush.
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn a_just_imported_blocks_binary_state_is_readable_before_any_flush() {
+    let chain = build_staged_chain(FLIP_BLOCK + 2).await;
+    let head = chain.blocks.last().unwrap();
+    assert_eq!(
+        head.header.state_root,
+        binary_root(&chain.store, head),
+        "the head must be past the flip, so its reads resolve through the binary trie"
+    );
+
+    // Precondition, and the whole point: none of these blocks' binary nodes are
+    // on disk. Anything read below therefore came out of the layer chain.
+    assert_eq!(
+        chain.store.binary_trie_node_count_for_test().unwrap(),
+        chain.genesis_binary_nodes,
+        "no block's binary nodes may reach disk before the commit gate fires"
+    );
+
+    let db = StoreVmDatabase::new(chain.store.clone(), head.header.clone())
+        .expect("a post-flip header must open a readable state");
+    let sender = sender_from_key(&test_secret_key());
+    assert_eq!(
+        db.get_account_state(sender).unwrap().unwrap().nonce,
+        chain.blocks.len() as u64,
+        "the sender's nonce must be readable from the layer chain alone"
+    );
+    assert_eq!(
+        db.get_account_state(test_recipient())
+            .unwrap()
+            .unwrap()
+            .balance,
+        U256::from(chain.blocks.len()),
+        "the recipient's balance must be readable from the layer chain alone"
+    );
+    // Genesis storage still resolves, which means the cascade falls through to
+    // disk when the layers miss rather than reporting the key absent.
+    for slot in 1u64..=3 {
+        assert_eq!(
+            db.get_storage_slot(storage_fixture_account(), H256::from_low_u64_be(slot))
+                .expect("binary storage read"),
+            Some(U256::from(slot)),
+            "slot {slot} lives on disk from genesis and must survive the layer miss"
+        );
+    }
+
+    // The state RPCs read through the same cascade.
+    make_canonical(&chain.store, &chain.blocks).await;
+    let reads = state_reads(
+        &chain.store,
+        head.header.number,
+        storage_fixture_account(),
+        &[1, 2, 3],
+    )
+    .await;
+    assert_eq!(
+        reads.storage,
+        vec![
+            Some(U256::from(1u64)),
+            Some(U256::from(2u64)),
+            Some(U256::from(3u64))
+        ]
+    );
+}
+
+// ---------------------------------------------------------------------------
+// E.2 Nothing is written to BINARY_TRIE_NODES until the commit gate allows it.
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn binary_nodes_are_not_written_until_the_commit_gate_allows_it() {
+    // Fewer blocks than the commit threshold, and no forkchoice update, so the
+    // safe-commit root never advances and nothing is committable.
+    let chain = build_staged_chain(FLIP_BLOCK + BLOCKS_PAST_THE_FLIP).await;
+    assert_eq!(
+        chain.store.binary_trie_node_count_for_test().unwrap(),
+        chain.genesis_binary_nodes,
+        "{} blocks of binary-trie writes must still be in memory",
+        chain.blocks.len()
+    );
+    // Not vacuous: the blocks really did produce binary nodes, they are just
+    // staged. Committing them puts them on disk.
+    let head = chain.blocks.last().unwrap();
+    chain
+        .store
+        .commit_trie_layers_for_test(head.header.state_root)
+        .await
+        .expect("forcing the gate must flush the whole backlog");
+    assert!(
+        chain.store.binary_trie_node_count_for_test().unwrap() > chain.genesis_binary_nodes,
+        "flushing the layer backlog must put this chain's binary nodes on disk"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// E.3 A reorg discards the abandoned branch's binary nodes.
+// ---------------------------------------------------------------------------
+
+/// Two competing branches past the activation boundary, one of which is then
+/// made canonical and flushed. The surviving branch's on-disk binary trie must
+/// be byte-for-byte what a node that only ever saw that branch would hold —
+/// which is only true if the abandoned branch's nodes never reached disk.
+///
+/// This is the heavier divergence the single-flip-block version of this test
+/// could not exercise: each branch carries several blocks of its own
+/// transactions, so the two write overlapping paths at many depths.
+#[tokio::test]
+async fn a_reorg_discards_the_abandoned_branchs_binary_nodes() {
+    let chain = build_staged_chain(FLIP_BLOCK).await;
+    let fork_point = chain.blocks.last().unwrap().header.clone();
+    let sender = sender_from_key(&test_secret_key());
+    let signer: Signer = LocalSigner::new(test_secret_key()).into();
+    let base_nonce = chain.blocks.len() as u64;
+
+    // Branch A: three blocks, one transfer each, starting one second after the
+    // fork point so it is distinguishable from B.
+    // Branch B: three blocks with a different cadence, so every block's state
+    // (and therefore every binary root) differs from A's at the same height.
+    let mut branch_a = Vec::new();
+    let mut branch_b = Vec::new();
+    for (branch, offset) in [(&mut branch_a, 1u64), (&mut branch_b, 2)] {
+        let mut parent = fork_point.clone();
+        for i in 0..3u64 {
+            let tx = transfer_tx(chain.chain_id, base_nonce + i, &signer).await;
+            chain
+                .blockchain
+                .add_transaction_to_pool(tx)
+                .await
+                .expect("tx should enter pool");
+            let block = build_block_at(
+                &chain.store,
+                &chain.blockchain,
+                &parent,
+                parent.timestamp + BLOCK_TIME + offset,
+            )
+            .await;
+            chain
+                .blockchain
+                .add_block(block.clone())
+                .unwrap_or_else(|err| panic!("branch block must import: {err:?}"));
+            chain
+                .blockchain
+                .remove_block_transactions_from_pool(&block)
+                .expect("remove block txs from pool");
+            parent = block.header.clone();
+            branch.push(block);
+        }
+    }
+
+    // Both branches really are past the flip, really do fork at the same point,
+    // and really do differ — otherwise nothing below means anything.
+    for block in branch_a.iter().chain(branch_b.iter()) {
+        assert!(block.header.timestamp >= chain.activation);
+        assert_eq!(
+            block.header.state_root,
+            binary_root(&chain.store, block),
+            "block {} must commit its own binary root",
+            block.header.number
+        );
+    }
+    assert_eq!(
+        branch_a[0].header.parent_hash,
+        branch_b[0].header.parent_hash
+    );
+    for (a, b) in branch_a.iter().zip(branch_b.iter()) {
+        assert_ne!(
+            a.header.state_root, b.header.state_root,
+            "the branches must diverge at every height, not just the first"
+        );
+    }
+
+    // Branch B wins: make it canonical and flush its layers to disk.
+    let canonical: Vec<Block> = chain
+        .blocks
+        .iter()
+        .cloned()
+        .chain(branch_b.iter().cloned())
+        .collect();
+    make_canonical(&chain.store, &canonical).await;
+    let winner = branch_b.last().unwrap();
+    chain
+        .store
+        .commit_trie_layers_for_test(winner.header.state_root)
+        .await
+        .expect("flush the surviving branch");
+
+    // The oracle: a fresh node that only ever saw branch B, flushed the same way.
+    let clean_store = store_from_genesis(chain.genesis.clone()).await;
+    let clean_chain = Blockchain::default_with_store(clean_store.clone());
+    for block in &canonical {
+        clean_chain
+            .add_block(block.clone())
+            .unwrap_or_else(|err| panic!("clean replay of branch B must import: {err:?}"));
+    }
+    make_canonical(&clean_store, &canonical).await;
+    clean_store
+        .commit_trie_layers_for_test(winner.header.state_root)
+        .await
+        .expect("flush the clean replay");
+
+    assert_eq!(
+        binary_nodes_on_disk(&chain.store),
+        binary_nodes_on_disk(&clean_store),
+        "the reorged node's on-disk binary trie must be exactly what a node that \
+         only ever saw the surviving branch holds: any extra or differing entry is \
+         an abandoned-branch node that reached disk"
+    );
+
+    // And the surviving branch's state is correct after the flush, read from
+    // disk now rather than from a layer.
+    let db = StoreVmDatabase::new(chain.store.clone(), winner.header.clone())
+        .expect("the surviving head must open");
+    assert_eq!(
+        db.get_account_state(sender).unwrap().unwrap().nonce,
+        canonical.len() as u64,
+        "the surviving branch's sender nonce must count one transfer per canonical block"
+    );
+    assert_eq!(
+        db.get_account_state(test_recipient())
+            .unwrap()
+            .unwrap()
+            .balance,
+        U256::from(canonical.len()),
+        "the surviving branch's recipient balance must count one wei per canonical block"
+    );
+}
+
+/// The pre-existing sibling-branch test, strengthened: with the nodes staged
+/// per layer rather than written straight through, the two branches no longer
+/// merely record different roots — neither branch's nodes are on disk at all,
+/// and each root's state is separately readable.
+#[tokio::test]
+async fn competing_branches_keep_separate_readable_binary_state() {
+    let chain = build_staged_chain(FLIP_BLOCK - 1).await;
+    let parent = chain.blocks.last().unwrap().header.clone();
+
+    let branch_a = build_block_at(&chain.store, &chain.blockchain, &parent, chain.activation).await;
+    chain
+        .blockchain
+        .add_block(branch_a.clone())
+        .expect("the first branch's flip block must import");
+    let branch_b = build_block_at(
+        &chain.store,
+        &chain.blockchain,
+        &parent,
+        chain.activation + 1,
+    )
+    .await;
+    chain
+        .blockchain
+        .add_block(branch_b.clone())
+        .expect("the sibling branch's flip block must import too");
+    chain.store.wait_for_persistence_idle().await.unwrap();
+
+    assert_ne!(branch_a.hash(), branch_b.hash());
+    assert_eq!(branch_a.header.parent_hash, branch_b.header.parent_hash);
+    assert_ne!(
+        binary_root(&chain.store, &branch_a),
+        binary_root(&chain.store, &branch_b),
+        "the two branches must not collapse onto the same recorded root"
+    );
+
+    // Neither branch wrote a node: both are staged, so neither can have
+    // overwritten the other at a shared path.
+    assert_eq!(
+        chain.store.binary_trie_node_count_for_test().unwrap(),
+        chain.genesis_binary_nodes,
+        "competing blocks must not write binary nodes at all before the gate fires"
+    );
+
+    // Each branch's state resolves through its own layer, at its own root.
+    // EIP-4788 writes the beacon root at `timestamp % 8191`, and the two blocks
+    // have different timestamps, so each branch has a slot the other does not.
+    let beacon_roots =
+        Address::from_slice(&hex::decode("000f3df6d732807ef1319fb7b8bb8522d0beac02").unwrap());
+    for (label, block) in [("a", &branch_a), ("b", &branch_b)] {
+        let db = StoreVmDatabase::new(chain.store.clone(), block.header.clone())
+            .unwrap_or_else(|err| panic!("branch {label} must open: {err:?}"));
+        let slot = H256::from_low_u64_be(block.header.timestamp % 8191);
+        assert_eq!(
+            db.get_storage_slot(beacon_roots, slot).unwrap(),
+            Some(U256::from_big_endian(
+                block.header.timestamp.to_be_bytes().as_slice()
+            )),
+            "branch {label} must read its own EIP-4788 timestamp slot"
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
+// E.4 Flush parity: binary and MPT nodes land at the same commit point.
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn binary_and_mpt_nodes_land_on_disk_at_the_same_commit_point() {
+    let chain = build_staged_chain(FLIP_BLOCK + BLOCKS_PAST_THE_FLIP).await;
+
+    // Before the gate: neither trie has advanced past genesis.
+    assert_eq!(
+        chain.store.binary_trie_node_count_for_test().unwrap(),
+        chain.genesis_binary_nodes,
+        "binary nodes must be staged, not written"
+    );
+    assert_eq!(
+        chain.store.account_trie_node_count_for_test().unwrap(),
+        chain.genesis_account_nodes,
+        "MPT nodes must be staged, not written — the parity baseline"
+    );
+
+    // Flush the layer containing block N only. Both node sets for that block
+    // must appear, and neither trie may run ahead of the other.
+    let target = &chain.blocks[1];
+    chain
+        .store
+        .commit_trie_layers_for_test(target.header.state_root)
+        .await
+        .expect("commit up to block 2");
+
+    let binary_after_first = chain.store.binary_trie_node_count_for_test().unwrap();
+    let account_after_first = chain.store.account_trie_node_count_for_test().unwrap();
+    assert!(
+        binary_after_first > chain.genesis_binary_nodes,
+        "the flushed layers' binary nodes must be on disk"
+    );
+    assert!(
+        account_after_first > chain.genesis_account_nodes,
+        "the flushed layers' MPT nodes must be on disk"
+    );
+
+    // The two are one write: the binary trie must be at exactly the block the
+    // MPT is at, not ahead of it. Reading the binary state at the flushed
+    // block's root with the layer cache emptied of everything below it proves
+    // that — and reading it at the *unflushed* head still works because those
+    // layers are still resident.
+    let head = chain.blocks.last().unwrap();
+    let head_db = StoreVmDatabase::new(chain.store.clone(), head.header.clone())
+        .expect("the unflushed head must still open");
+    assert_eq!(
+        head_db
+            .get_account_state(test_recipient())
+            .unwrap()
+            .unwrap()
+            .balance,
+        U256::from(chain.blocks.len()),
+        "the head's state is still layer-resident and must read correctly after a partial flush"
+    );
+
+    // Flushing the rest advances both again, together.
+    chain
+        .store
+        .commit_trie_layers_for_test(head.header.state_root)
+        .await
+        .expect("commit the rest");
+    assert!(
+        chain.store.binary_trie_node_count_for_test().unwrap() >= binary_after_first,
+        "binary nodes must only ever grow across commits"
+    );
+    assert!(
+        chain.store.account_trie_node_count_for_test().unwrap() >= account_after_first,
+        "MPT nodes must only ever grow across commits"
+    );
+
+    // After the full flush the whole chain's state is on disk and still correct.
+    let disk_db = StoreVmDatabase::new(chain.store.clone(), head.header.clone())
+        .expect("the fully flushed head must open");
+    assert_eq!(
+        disk_db
+            .get_account_state(sender_from_key(&test_secret_key()))
+            .unwrap()
+            .unwrap()
+            .nonce,
+        chain.blocks.len() as u64,
+        "the flushed binary trie must hold the same state the layers served"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// E.5 All three import paths still agree once the nodes are staged, and an
+//     unscheduled chain still does zero binary work through the whole gate.
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn all_import_paths_agree_and_flush_the_same_binary_nodes() {
+    let chain = build_staged_chain(FLIP_BLOCK + 2).await;
+    let head = chain.blocks.last().unwrap();
+    make_canonical(&chain.store, &chain.blocks).await;
+    chain
+        .store
+        .commit_trie_layers_for_test(head.header.state_root)
+        .await
+        .expect("flush the plain path");
+
+    // Path B: the pipelined engine-API route. Path C: batch import.
+    let pipeline_store = store_from_genesis(chain.genesis.clone()).await;
+    let pipeline_chain = Blockchain::default_with_store(pipeline_store.clone());
+    for block in &chain.blocks {
+        pipeline_chain
+            .add_block_pipeline(block.clone(), None)
+            .expect("pipelined import past the flip");
+    }
+    make_canonical(&pipeline_store, &chain.blocks).await;
+    pipeline_store
+        .commit_trie_layers_for_test(head.header.state_root)
+        .await
+        .expect("flush the pipelined path");
+
+    let batch_store = store_from_genesis(chain.genesis.clone()).await;
+    let batch_chain = Blockchain::default_with_store(batch_store.clone());
+    batch_chain
+        .add_blocks_in_batch(chain.blocks.clone(), &[], CancellationToken::new())
+        .await
+        .expect("batch import past the flip");
+    make_canonical(&batch_store, &chain.blocks).await;
+    batch_store
+        .commit_trie_layers_for_test(head.header.state_root)
+        .await
+        .expect("flush the batch path");
+
+    let expected = binary_nodes_on_disk(&chain.store);
+    assert!(
+        expected.len() > chain.genesis_binary_nodes,
+        "the plain path must have flushed something"
+    );
+    for (label, store) in [("pipelined", &pipeline_store), ("batch", &batch_store)] {
+        for block in &chain.blocks {
+            assert_eq!(
+                binary_root(store, block),
+                binary_root(&chain.store, block),
+                "{label}: block {} must record the same binary root",
+                block.header.number
+            );
+        }
+        assert_eq!(
+            binary_nodes_on_disk(store),
+            expected,
+            "{label}: the flushed binary trie must be byte-for-byte the plain path's"
+        );
+    }
+}
+
+#[tokio::test]
+async fn an_unscheduled_chain_stages_and_flushes_no_binary_nodes() {
+    let sender = sender_from_key(&test_secret_key());
+    let genesis = load_funded_genesis(sender, None);
+    let chain_id = genesis.config.chain_id;
+    let store = store_from_genesis(genesis).await;
+    let blockchain = Blockchain::default_with_store(store.clone());
+    let blocks = build_chain(&store, &blockchain, chain_id, 4).await;
+
+    make_canonical(&store, &blocks).await;
+    store
+        .commit_trie_layers_for_test(blocks.last().unwrap().header.state_root)
+        .await
+        .expect("flush an unscheduled chain");
+    store.wait_for_persistence_idle().await.unwrap();
+
+    assert_eq!(
+        store.binary_trie_node_count_for_test().unwrap(),
+        0,
+        "an unscheduled chain must write no binary-trie nodes, even across a flush"
+    );
+    assert_eq!(
+        store.binary_trie_root_count_for_test().unwrap(),
+        0,
+        "an unscheduled chain must record no binary-trie roots"
+    );
+    assert!(
+        store.account_trie_node_count_for_test().unwrap() > 0,
+        "its MPT must still have been flushed, so the gate really did fire"
+    );
+}
