@@ -282,10 +282,15 @@ jobs:
             --elf-path /output/${{ steps.artifact.outputs.name }}.elf \
             cpu
 
-          # `/health` flips to 200 once the ELF is loaded and the server is up.
-          for _ in $(seq 1 60); do
+          # `/health` flips to 200 once the server is ready. Allow a long window:
+          # openvm runs a full STARK keygen on startup before it serves, which is
+          # minutes of work, and it does so even though we only ever execute. The
+          # container-exit check below means a genuine crash still fails fast
+          # instead of burning the whole window.
+          deadline=$((SECONDS + 900))
+          while [ "$SECONDS" -lt "$deadline" ]; do
             if curl -sf http://localhost:3000/health > /dev/null; then
-              echo "ere-server is up"
+              echo "ere-server is up after ${SECONDS}s"
               exit 0
             fi
             if [ -z "$(docker ps -q -f name=ere-server)" ]; then
@@ -293,10 +298,13 @@ jobs:
               docker logs ere-server
               exit 1
             fi
-            sleep 2
+            if [ $((SECONDS % 60)) -lt 3 ]; then
+              echo "  still waiting for ere-server (${SECONDS}s elapsed)"
+            fi
+            sleep 3
           done
-          echo "::error::ere-server did not become healthy within 120s"
-          docker logs ere-server
+          echo "::error::ere-server did not become healthy within 900s"
+          docker logs ere-server 2>&1 | tail -50
           exit 1
 
       - name: Execute ELF under ere-server
@@ -312,13 +320,49 @@ jobs:
 
       - name: Compare against the fixture
         run: |
-          if ! cmp -s output/stateless-output.bin output/expected-output.bin; then
-            echo "statelessOutputBytes mismatch"
+          set -euo pipefail
+          expected_len=$(wc -c < output/expected-output.bin | tr -d ' ')
+          actual_len=$(wc -c < output/stateless-output.bin | tr -d ' ')
+
+          # The committed public values must BEGIN with the spec's
+          # statelessOutputBytes, and anything after them must be zero.
+          #
+          # Not a loosening for its own sake: ZisK enforces a fixed 256-byte
+          # output at the runtime level (see ere's zisk platform.rs), so its
+          # 43 meaningful bytes always arrive zero-padded. Requiring an exact
+          # length would fail ZisK on every correct run. The rule still pins
+          # every meaningful byte, so it cannot accept a wrong value — only
+          # trailing zeroes the runtime added.
+          if [ "$actual_len" -lt "$expected_len" ]; then
+            echo "::error::output is $actual_len bytes, shorter than the expected $expected_len"
             echo "expected: $(xxd -p output/expected-output.bin | tr -d '\n')"
             echo "actual:   $(xxd -p output/stateless-output.bin | tr -d '\n')"
             exit 1
           fi
-          echo "statelessOutputBytes match"
+
+          # `head -c | cmp -` rather than `cmp -n`: BSD cmp reports EOF on the
+          # shorter file as a difference even inside the byte limit, so `-n`
+          # would fail every padded ZisK run. This form is unambiguous on both
+          # BSD and GNU.
+          if ! head -c "$expected_len" output/stateless-output.bin \
+               | cmp -s - output/expected-output.bin; then
+            echo "::error::statelessOutputBytes mismatch in the first $expected_len bytes"
+            echo "expected: $(xxd -p output/expected-output.bin | tr -d '\n')"
+            echo "actual:   $(xxd -p output/stateless-output.bin | tr -d '\n')"
+            exit 1
+          fi
+
+          if [ "$actual_len" -gt "$expected_len" ]; then
+            nonzero=$(tail -c "+$((expected_len + 1))" output/stateless-output.bin | tr -d '\000' | wc -c | tr -d ' ')
+            if [ "$nonzero" -ne 0 ]; then
+              echo "::error::$nonzero non-zero byte(s) past the expected $expected_len"
+              echo "actual: $(xxd -p output/stateless-output.bin | tr -d '\n')"
+              exit 1
+            fi
+            echo "statelessOutputBytes match ($expected_len bytes, plus $((actual_len - expected_len)) bytes of runtime zero padding)"
+          else
+            echo "statelessOutputBytes match ($expected_len bytes, exact)"
+          fi
 
   package-contracts:
     needs:
