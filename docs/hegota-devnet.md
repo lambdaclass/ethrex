@@ -18,7 +18,7 @@ EIP-8141 itself lives on `main`; this branch adds only the three extension EIPs
 on top of it, plus the devnet infrastructure and the ethrex-only extensions.
 
 **Not yet included:**
-- **FOCIL (EIP-7805)** — **deferred**, on the `focil` branch (PR #7039). The blocking condition was documentation that was not public; it now is, as the *FOCIL 🤝 Native Account Abstraction* write-up plus ethereum/EIPs#12086 (*frame-aware inclusion-list (FOCIL) validity*), which is still a draft and still disagrees with the write-up on whether an eligibility filter exists at all. `focil` already excludes frame transactions from the IL satisfaction check, so combining the two is possible before that settles, with frame-tx omission always excused.
+- **FOCIL (EIP-7805)** — **deferred**, on the `focil` branch (PR #7039). The eligibility boundary is now specified: EIP-8369 (*VOPS Profiles for FOCIL Eligibility*, ethereum/EIPs#12110) puts frame transactions in Profile 2, judged at a builder-claimed transaction index, and states that FOCIL eligibility and public mempool admission are separate policies. It is Informational, so enforcement still needs a Standards Track extension to EIP-7805 that does not exist yet, and `AA_VOPS_SLOT_COUNT` is unset, which blocks conformant Profile 2 classification. `focil` already excludes frame transactions from the IL satisfaction check, so combining the two is possible meanwhile, with frame-tx omission always excused.
   The merge surface is 18 files, not just `payload.rs`: `crates/blockchain/{blockchain,payload,mempool,error}.rs`, `crates/networking/rpc/{lib,rpc,utils}.rs` and `rpc/eth/transaction.rs`, `crates/networking/p2p/rlpx/connection/server.rs`, `crates/common/types/genesis.rs`, `cmd/ethrex/{cli,initializers}.rs`, `cmd/ethrex/l2/initializers.rs`, `docs/CLI.md`, and four test module files.
 - **EIP-8288** (PQ sig + STARK aggregation) — deferred (upstream-blocked: no Lean leanSTARK/leanSPHINCS tooling; `AGGREGATED_VK`/hash TBD).
 
@@ -72,6 +72,7 @@ eip-8272  d8636a330d  core      2026-08-03
 eip-7906  ab022ace2a  core      2026-07-29
 eip-8312  a5da3f608c  core      2026-08-05  nerolation/EIPs@nerolation/utxo-frame
 eip-7805  9a345f96c2  focil     2026-02-20
+eip-8369  8c9326fc05  focil     2026-08-06  soispoke/EIPs@codex/vops-profiles-focil
 eip-7928  6c666b8d64  adjacent  2026-07-09
 eip-8037  5a8c80897a  adjacent  2026-07-31
 ```
@@ -81,11 +82,18 @@ eip-8037  5a8c80897a  adjacent  2026-07-31
 the devnet depends on them, so drift still matters.
 
 The fifth column is the source, `owner/repo` or `owner/repo@ref`, and defaults to
-`ethereum/EIPs` at its default branch. EIP-8312 needs it: the draft exists only in its
-author's fork and has no upstream pull request, so there is no `EIPS/eip-8312.md` in
-`ethereum/EIPs` to diff against. A fork branch can be rewritten under a pin in a way an
-upstream branch cannot, so the report distinguishes "pin not found" from drift rather
-than reporting the whole history as new. Drop the column when the EIP is upstreamed.
+`ethereum/EIPs` at its default branch. Two entries need it, for different reasons:
+EIP-8312 exists only in its author's fork with no upstream pull request at all, and
+EIP-8369 is an open pull request (ethereum/EIPs#12110) not yet merged to master. Either
+way there is no `EIPS/eip-<n>.md` upstream to diff against. A fork branch can also be
+rewritten under a pin in a way an upstream branch cannot, so the report distinguishes
+"pin not found" from drift rather than reporting the whole history as new. Drop the
+column when the EIP is upstreamed.
+
+EIP-8369 (*VOPS Profiles for FOCIL Eligibility*) is Informational and defines no
+consensus rules by itself, so its pin records the revision the FOCIL notes are
+reconciled against rather than an implementation. It is the eligibility boundary any
+FOCIL work on the `focil` branch must target.
 
 ## Upstream items
 
