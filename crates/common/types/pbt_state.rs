@@ -69,11 +69,17 @@ use ethrex_binary_trie::trie::BinaryTrie;
 
 use crate::constants::EMPTY_KECCAK_HASH;
 use crate::types::{AccountInfo, AccountUpdate};
-use crate::{Address, U256};
+use crate::{Address, H256, U256};
 
 /// Byte range of the code size field inside an encoded basic-data leaf,
 /// as laid out by [`encode_basic_data`].
 const BASIC_DATA_CODE_SIZE_RANGE: std::ops::Range<usize> = 4..8;
+
+/// Byte range of the nonce field inside an encoded basic-data leaf.
+const BASIC_DATA_NONCE_RANGE: std::ops::Range<usize> = 8..16;
+
+/// Byte range of the balance field inside an encoded basic-data leaf.
+const BASIC_DATA_BALANCE_RANGE: std::ops::Range<usize> = 16..32;
 
 #[derive(Debug, thiserror::Error)]
 pub enum PbtStateError {
@@ -115,6 +121,87 @@ pub fn apply_account_updates(
     Ok(())
 }
 
+// ---------------------------------------------------------------------------
+// Reads
+//
+// The counterpart of [`apply_account_updates`], and in this module for one
+// reason: a read has to look under exactly the key the write put the value on.
+// Both sides therefore derive their keys through the same `embedding` calls, a
+// few lines apart, so the two cannot drift; a second copy of the key layout
+// somewhere else could disagree with this one, and the disagreement would show
+// up as silently missing state rather than as a failure.
+// ---------------------------------------------------------------------------
+
+/// The account `trie` holds at `address`, or `None` if it holds none.
+///
+/// # What counts as existing
+///
+/// The code-hash leaf is the account's tombstone-proof marker: every write
+/// that creates or updates an account emits it, and it can never collapse to
+/// absence, because no code hash is 32 zero bytes — an account with no code
+/// carries `EMPTY_KECCAK_HASH`. The basic-data leaf cannot play that role: an
+/// account with zero nonce, zero balance and no code encodes to 32 zero bytes,
+/// which [`state_write`] resolves to absence. So an account is present when
+/// *either* leaf is, and the basic data missing means zeros rather than
+/// nonexistence.
+///
+/// # No storage root
+///
+/// [`AccountInfo`] has no `storage_root`, and that is why it is what this
+/// returns. The binary trie has no such value to report: storage is not a
+/// per-account subtrie there, it is leaves of the one unified tree. Callers
+/// that need an `AccountState` have to decide what to put in that field, and
+/// the decision belongs to them rather than here — see `StoreVmDatabase` in
+/// `crates/blockchain/vm.rs`, which makes it and documents what it costs.
+pub fn get_account_info(
+    trie: &mut BinaryTrie,
+    address: Address,
+) -> Result<Option<AccountInfo>, PbtStateError> {
+    let address32 = address20_to_address32(address);
+    let code_hash = trie.get(&get_tree_key_for_code_hash(&address32))?;
+    let basic_data = trie.get(&get_tree_key_for_basic_data(&address32))?;
+    if code_hash.is_none() && basic_data.is_none() {
+        return Ok(None);
+    }
+    let (nonce, balance) = basic_data.map_or((0, U256::zero()), |data| decode_basic_data(&data));
+    Ok(Some(AccountInfo {
+        code_hash: code_hash.map_or(*EMPTY_KECCAK_HASH, H256),
+        balance,
+        nonce,
+    }))
+}
+
+/// The value `trie` holds for `address`'s storage `slot`, or `None` if it
+/// holds none.
+///
+/// `None` is the same answer the MPT gives for an unwritten slot, and for the
+/// same reason: a slot written to zero is stored as absent (see
+/// [`state_write`]), so absence and zero are one state on both sides. Callers
+/// read either as zero, which is what the EVM does.
+pub fn get_storage_slot(
+    trie: &mut BinaryTrie,
+    address: Address,
+    slot: &H256,
+) -> Result<Option<U256>, PbtStateError> {
+    let address32 = address20_to_address32(address);
+    let key = get_tree_key_for_storage_slot(&address32, slot_index(slot));
+    Ok(trie.get(&key)?.map(|value| U256::from_big_endian(&value)))
+}
+
+/// The nonce and balance packed into an encoded basic-data leaf.
+///
+/// The inverse of [`encode_basic_data`] for the two fields a read needs; the
+/// code size is only ever consumed by [`resolve_code_size`], which reads it
+/// straight out of the leaf.
+fn decode_basic_data(basic_data: &[u8; 32]) -> (u64, U256) {
+    let mut nonce = [0u8; 8];
+    nonce.copy_from_slice(&basic_data[BASIC_DATA_NONCE_RANGE]);
+    (
+        u64::from_be_bytes(nonce),
+        U256::from_big_endian(&basic_data[BASIC_DATA_BALANCE_RANGE]),
+    )
+}
+
 /// Addresses this batch writes an overflow-zone storage slot for.
 ///
 /// The whole batch is scanned before anything is applied, so the answer
@@ -133,7 +220,7 @@ fn accounts_with_overflow_storage(updates: &[AccountUpdate]) -> HashSet<Address>
         .collect()
 }
 
-fn slot_index(slot: &crate::H256) -> U256 {
+fn slot_index(slot: &H256) -> U256 {
     U256::from_big_endian(slot.as_bytes())
 }
 
@@ -305,8 +392,8 @@ fn resolve_code_size(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::Bytes;
     use crate::types::Code;
-    use crate::{Bytes, H256};
     use ethrex_binary_trie::embedding::{
         ACCOUNT_ZONE, BASIC_DATA_LEAF_KEY, CODE_HASH_LEAF_KEY, CODE_ZONE, STORAGE_ZONE,
     };
@@ -732,6 +819,121 @@ mod tests {
             ),
             Err(PbtStateError::UnknownCodeSize(_))
         ));
+    }
+
+    #[test]
+    fn reads_return_what_the_writes_put_there() {
+        let code = plain_code(31 * 3);
+        let code_hash = code.hash;
+        let mut trie = applied(&[
+            AccountUpdate {
+                added_storage: storage(&[
+                    // One slot on each side of the header/overflow boundary,
+                    // so both key derivations are exercised.
+                    (U256::from(5), U256::from(0x55u64)),
+                    (U256::from(5_000), U256::from(0x5000u64)),
+                ]),
+                ..contract_update(ADDR_A, code)
+            },
+            eoa_update(ADDR_B, 9, 900),
+        ]);
+
+        assert_eq!(
+            get_account_info(&mut trie, ADDR_A).unwrap(),
+            Some(AccountInfo {
+                code_hash,
+                balance: U256::from(7u64),
+                nonce: 1,
+            })
+        );
+        assert_eq!(
+            get_account_info(&mut trie, ADDR_B).unwrap(),
+            Some(AccountInfo {
+                code_hash: *EMPTY_KECCAK_HASH,
+                balance: U256::from(900u64),
+                nonce: 9,
+            })
+        );
+        for (slot, value) in [(5u64, 0x55u64), (5_000, 0x5000)] {
+            assert_eq!(
+                get_storage_slot(&mut trie, ADDR_A, &H256(U256::from(slot).to_big_endian()))
+                    .unwrap(),
+                Some(U256::from(value)),
+                "slot {slot}"
+            );
+        }
+
+        // Absence, on both axes.
+        assert_eq!(
+            get_account_info(&mut trie, Address::repeat_byte(0xcc)).unwrap(),
+            None
+        );
+        assert_eq!(
+            get_storage_slot(&mut trie, ADDR_A, &H256(U256::from(6u64).to_big_endian())).unwrap(),
+            None
+        );
+        // A slot written to zero is stored as absent and reads back as absent,
+        // which is the same state the MPT reports for it.
+        apply_account_updates(
+            &mut trie,
+            &[AccountUpdate {
+                added_storage: storage(&[(U256::from(5), U256::zero())]),
+                ..AccountUpdate::new(ADDR_A)
+            }],
+        )
+        .unwrap();
+        assert_eq!(
+            get_storage_slot(&mut trie, ADDR_A, &H256(U256::from(5u64).to_big_endian())).unwrap(),
+            None
+        );
+    }
+
+    /// The counterpart of `leaves_encoding_to_zero_are_left_absent`: an account
+    /// whose basic data collapsed to absence is still an account, and the read
+    /// path has to find it by its code-hash leaf.
+    #[test]
+    fn an_account_whose_basic_data_is_absent_is_still_found() {
+        let mut trie = applied(&[AccountUpdate {
+            added_storage: storage(&[(U256::from(1), U256::from(1u64))]),
+            ..eoa_update(ADDR_A, 0, 0)
+        }]);
+        let a32 = address20_to_address32(ADDR_A);
+        assert_eq!(
+            trie.get(&get_tree_key_for_basic_data(&a32)).unwrap(),
+            None,
+            "the premise: this account has no basic-data leaf"
+        );
+
+        assert_eq!(
+            get_account_info(&mut trie, ADDR_A).unwrap(),
+            Some(AccountInfo {
+                code_hash: *EMPTY_KECCAK_HASH,
+                balance: U256::zero(),
+                nonce: 0,
+            }),
+            "an absent basic-data leaf means zeros, not a missing account"
+        );
+    }
+
+    #[test]
+    fn basic_data_decodes_to_what_it_was_encoded_from() {
+        for (code_size, nonce, balance) in [
+            (0u32, 0u64, U256::zero()),
+            (1, 1, U256::one()),
+            (u32::MAX, u64::MAX, (U256::from(1) << 128) - 1),
+        ] {
+            let encoded = encode_basic_data(code_size, nonce, balance).unwrap();
+            assert_eq!(decode_basic_data(&encoded), (nonce, balance));
+        }
+    }
+
+    #[test]
+    fn a_removed_account_reads_back_as_absent() {
+        let mut trie = applied(&[eoa_update(ADDR_A, 3, 300), eoa_update(ADDR_B, 4, 400)]);
+        apply_account_updates(&mut trie, &[AccountUpdate::removed(ADDR_A)]).unwrap();
+
+        assert_eq!(get_account_info(&mut trie, ADDR_A).unwrap(), None);
+        assert!(get_account_info(&mut trie, ADDR_B).unwrap().is_some());
     }
 
     #[test]

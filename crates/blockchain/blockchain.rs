@@ -2241,9 +2241,152 @@ impl Blockchain {
         execution_result: BlockExecutionResult,
         commit_depth: Option<usize>,
     ) -> Result<(), ChainError> {
-        // Check state root matches the one in block header
-        validate_state_root(&block.header, account_updates_list.state_trie_hash)?;
+        // No raw account updates in hand, so nothing to advance the binary trie
+        // *with*. Callers that extend the chain on a scheduled network go through
+        // [`Self::store_block_tracking_binary_trie`]; the ones that reach here
+        // re-store blocks the binary trie already holds (witness regeneration) or
+        // belong to an L2, which never schedules the commitment.
+        self.store_block_inner(
+            block,
+            account_updates_list,
+            execution_result,
+            commit_depth,
+            None,
+        )
+    }
 
+    /// [`Self::store_block_with_depth`] for the paths that also own the block's
+    /// raw account updates, and must therefore advance the EIP-8297 binary trie
+    /// with them.
+    ///
+    /// See [`Self::store_block_inner`] for the ordering this buys and why it
+    /// matters from activation onward.
+    fn store_block_tracking_binary_trie(
+        &self,
+        block: Block,
+        account_updates_list: AccountUpdatesList,
+        execution_result: BlockExecutionResult,
+        commit_depth: Option<usize>,
+        account_updates: &[AccountUpdate],
+    ) -> Result<(), ChainError> {
+        self.store_block_inner(
+            block,
+            account_updates_list,
+            execution_result,
+            commit_depth,
+            Some(account_updates),
+        )
+    }
+
+    /// Validate the header's state root, advance the EIP-8297 binary trie, and
+    /// stage the block.
+    ///
+    /// **Which root the header commits to is a per-header question.** It is
+    /// answered by `is_binary_tree_active(block.header.timestamp)` — the
+    /// timestamp of *this* header — never by a chain-level "has the commitment
+    /// been scheduled/reached" flag. Pre-activation headers genuinely carry MPT
+    /// roots and must keep validating and resolving against the MPT forever,
+    /// including after the flip, across restarts and across reorgs. A
+    /// chain-level check makes every pre-flip block in the chain's history
+    /// unimportable and its state unreadable.
+    ///
+    /// **Ordering.** For an *active* block the binary root has to exist before
+    /// the header can be validated, so shadow tracking runs first and a failed
+    /// validation un-records it. For a pre-activation block the order is the one
+    /// Phase C had — validate against the MPT root, then shadow-track — so a
+    /// block rejected before the flip still never touches the binary trie.
+    fn store_block_inner(
+        &self,
+        block: Block,
+        account_updates_list: AccountUpdatesList,
+        execution_result: BlockExecutionResult,
+        commit_depth: Option<usize>,
+        account_updates: Option<&[AccountUpdate]>,
+    ) -> Result<(), ChainError> {
+        let (block_hash, parent_hash) = (block.hash(), block.header.parent_hash);
+        // Per-header rule: ask the header being stored, not the chain.
+        let binary_tree_active = self
+            .storage
+            .get_chain_config()
+            .is_binary_tree_active(block.header.timestamp);
+
+        if binary_tree_active {
+            let (binary_root, recorded_here) = match account_updates {
+                Some(updates) => (
+                    self.storage
+                        .advance_binary_trie_for_block(block_hash, parent_hash, updates)?,
+                    true,
+                ),
+                // Re-storing a block the binary trie already advanced through
+                // (witness regeneration). Its recorded root is the answer; a
+                // missing one means the caller never shadow-tracked, which the
+                // header cannot be validated against.
+                None => (
+                    self.storage
+                        .get_binary_trie_root(block_hash)?
+                        .ok_or_else(|| {
+                            ChainError::Custom(format!(
+                                "block {block_hash:#x} is past the binary-tree activation but has \
+                                 no recorded binary root to validate its header against"
+                            ))
+                        })?,
+                    false,
+                ),
+            };
+            if let Err(err) = validate_state_root(&block.header, binary_root) {
+                if recorded_here {
+                    // The block is not entering the chain, so nothing may keep
+                    // pointing at the root it would have had — a later block
+                    // naming it as parent must not find one.
+                    self.storage.remove_binary_trie_root(block_hash)?;
+                }
+                return Err(err);
+            }
+        } else {
+            // Pre-activation: the header commits the MPT root, exactly as it did
+            // before the commitment was ever scheduled.
+            validate_state_root(&block.header, account_updates_list.state_trie_hash)?;
+            if let Some(updates) = account_updates {
+                self.shadow_track_binary_trie(block_hash, parent_hash, updates)?;
+            }
+        }
+
+        // Task D2 — the MPT keeps advancing after activation. Decided, not
+        // overlooked.
+        //
+        // Once the flip has happened, post-activation headers address the binary
+        // trie, so the MPT's only remaining consensus job is serving pre-flip
+        // blocks still inside the retention window (~128 blocks; see
+        // `docs/known-issue-stale-state-root-reads.md`). Past that window nothing
+        // reads it for consensus at all.
+        //
+        // The cost of keeping it: post-activation it is dead weight, and freezing
+        // it at the flip would roughly halve steady-state state-write work — every
+        // touched account and slot is currently written into two tries where one
+        // would do.
+        //
+        // Why it is kept anyway, for now: `eth_getBalance` and every other
+        // state-reading RPC still resolves through the MPT, so freezing it would
+        // have to land together with binary-trie-backed *RPC* reads (D3 moved
+        // execution's reads, not those), and the layer cache and safe-commit-root
+        // machinery would have to tolerate a trie that stops advancing —
+        // `store_block_updates` stages a layer keyed by the new MPT root each
+        // block and the commit gate walks those layers by depth, neither of which
+        // has a meaning for a trie whose root never moves again. That is a bigger
+        // change than the flip itself, and it is not required for the flip to be
+        // correct. Keeping both tries is the conservative choice and costs only
+        // throughput.
+        //
+        // What "keeps advancing" means past the flip, since it is not obvious:
+        // merkleization opens the parent's state at `parent_header.state_root`,
+        // which is now a binary root, and the trie *layers* are keyed by header
+        // state roots — so the layer chain stays continuous across the boundary
+        // and the MPT goes on holding correct state. It just stops being
+        // addressable by root: `Store::has_state_root` is false for every active
+        // header, which is why execution resolves through the binary trie instead
+        // (`StoreVmDatabase`) and why root-guarded MPT readers fail loudly at a
+        // post-flip block rather than answering from the wrong state. Pinned by
+        // `the_mpt_keeps_advancing_after_the_flip_but_is_no_longer_addressable_by_header_root`.
         let update_batch = UpdateBatch {
             account_updates: account_updates_list.state_updates,
             storage_updates: account_updates_list.storage_updates,
@@ -2270,21 +2413,25 @@ impl Blockchain {
     ///
     /// When it *is* scheduled, every block advances the binary trie regardless
     /// of whether the commitment is active yet, so the state is complete and
-    /// carried over when activation arrives. The header still commits the MPT
-    /// root and the binary root computed here is recorded but validated
-    /// against nothing — the flip is Phase D. See
+    /// carried over when activation arrives. See
     /// [`Store::advance_binary_trie_for_block`] for the cost this adds and why
     /// a missing parent is fatal rather than a fresh start.
     ///
-    /// Called after the block has been stored, so a block rejected on its MPT
-    /// state root never reaches the binary trie.
+    /// This is the **pre-activation** half only. It runs after the header has
+    /// been validated against the MPT root, so a block rejected before the flip
+    /// never reaches the binary trie. From activation onward
+    /// [`Self::store_block_inner`] advances the trie itself, *before*
+    /// validation, because the header is validated against the root this
+    /// produces.
     ///
-    /// **Every path that advances the chain must call this.** One that does not
-    /// leaves a hole in the shadow trie which nothing detects until the flip
-    /// block, where it is unrecoverable. The callers are [`Self::add_block`]
-    /// and [`Self::add_block_pipeline_inner`] — the latter covering the
-    /// pipelined engine-API route, the depth-bounded route and batch import,
-    /// which all funnel through it.
+    /// **Every path that advances the chain must reach this (or the active-side
+    /// branch of [`Self::store_block_inner`]).** One that does not leaves a hole
+    /// in the shadow trie which nothing detects until the flip block, where it
+    /// is unrecoverable. Both are fed by [`Self::store_block_tracking_binary_trie`],
+    /// whose callers are [`Self::add_block`] and
+    /// [`Self::add_block_pipeline_inner`] — the latter covering the pipelined
+    /// engine-API route, the depth-bounded route and batch import, which all
+    /// funnel through it.
     ///
     /// Three other `store_block` callers deliberately do *not*:
     /// - [`Self::generate_witness_for_blocks`] re-executes and re-stores blocks
@@ -2327,12 +2474,9 @@ impl Blockchain {
             block.header.number,
             block.body.transactions.len(),
         );
-        let (block_hash, parent_hash) = (block.hash(), block.header.parent_hash);
-
         let merkleized = Instant::now();
-        let result = self
-            .store_block(block, account_updates_list, res)
-            .and_then(|()| self.shadow_track_binary_trie(block_hash, parent_hash, &updates));
+        let result =
+            self.store_block_tracking_binary_trie(block, account_updates_list, res, None, &updates);
         let stored = Instant::now();
 
         if self.options.perf_logs_enabled {
@@ -2485,7 +2629,6 @@ impl Blockchain {
             block.body.transactions.len(),
         );
         let block_hash = block.hash();
-        let parent_hash = block.header.parent_hash;
 
         // EIP-8297 shadow tracking needs the same raw updates the witness
         // generator consumes, and the generator takes them by value. Only clone
@@ -2535,24 +2678,27 @@ impl Blockchain {
             warn!("Failed to store block access list for block {block_hash}: {err}");
         }
 
-        let result = self
-            .store_block_with_depth(block, account_updates_list, res, commit_depth)
-            .and_then(|()| {
-                if !binary_tree_scheduled {
-                    return Ok(());
-                }
-                // `collect_updates` in `execute_block_pipeline` is exactly this
-                // predicate OR witness collection, so on a scheduled chain the
-                // accumulator always ran. Absent updates here would mean that
-                // pairing has drifted, which would silently leave the binary
-                // trie with a hole; refuse rather than skip the block.
-                let account_updates = accumulated_updates.as_deref().ok_or_else(|| {
-                    ChainError::Custom(
-                        "binary-tree shadow tracking is scheduled but the block pipeline produced no raw account updates".to_string(),
-                    )
-                })?;
-                self.shadow_track_binary_trie(block_hash, parent_hash, account_updates)
-            });
+        let result = if binary_tree_scheduled {
+            // `collect_updates` in `execute_block_pipeline` is exactly this
+            // predicate OR witness collection, so on a scheduled chain the
+            // accumulator always ran. Absent updates here would mean that
+            // pairing has drifted, which would silently leave the binary
+            // trie with a hole; refuse rather than skip the block.
+            match accumulated_updates.as_deref() {
+                Some(account_updates) => self.store_block_tracking_binary_trie(
+                    block,
+                    account_updates_list,
+                    res,
+                    commit_depth,
+                    account_updates,
+                ),
+                None => Err(ChainError::Custom(
+                    "binary-tree shadow tracking is scheduled but the block pipeline produced no raw account updates".to_string(),
+                )),
+            }
+        } else {
+            self.store_block_with_depth(block, account_updates_list, res, commit_depth)
+        };
 
         let stored = Instant::now();
 

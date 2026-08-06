@@ -12,9 +12,12 @@ use std::{
 };
 use tracing::warn;
 
+use ethrex_binary_trie::trie::{BinaryTrie, InMemoryBinaryTrieDB};
+
 use super::{
-    AccountState, Block, BlockBody, BlockHeader, BlockNumber, INITIAL_BASE_FEE,
-    compute_receipts_root, compute_transactions_root, compute_withdrawals_root,
+    AccountInfo, AccountState, AccountUpdate, Block, BlockBody, BlockHeader, BlockNumber, Code,
+    INITIAL_BASE_FEE, compute_receipts_root, compute_transactions_root, compute_withdrawals_root,
+    pbt_state::apply_account_updates,
 };
 use crate::{
     constants::{DEFAULT_OMMERS_HASH, DEFAULT_REQUESTS_HASH, EMPTY_BLOCK_ACCESS_LIST_HASH},
@@ -859,6 +862,18 @@ impl Genesis {
     }
 
     pub fn compute_state_root(&self) -> H256 {
+        // Per-header rule, applied to the only header a `Genesis` describes: ask
+        // whether the commitment is active at *genesis' own timestamp*, not
+        // whether the chain schedules one. A chain scheduling `binaryTreeTime`
+        // for later has an MPT-committed genesis, forever — that is what keeps
+        // the genesis hash, and hence the chain's identity and its fork-id
+        // checksum, the one standard tooling computed.
+        //
+        // Activation at or before genesis is therefore a test-only shape; see
+        // `docs/binary-trie-genesis-hash-problem.md`.
+        if self.config.is_binary_tree_active(self.timestamp) {
+            return self.compute_binary_state_root();
+        }
         let iter = self.alloc.iter().map(|(addr, account)| {
             (
                 keccak_hash(addr).to_vec(),
@@ -866,6 +881,54 @@ impl Genesis {
             )
         });
         Trie::compute_hash_from_unsorted_iter(iter, &NativeCrypto)
+    }
+
+    /// The EIP-8297 binary-trie root over the genesis alloc.
+    ///
+    /// Built in memory and thrown away: this answers "what does the genesis
+    /// header commit to", which is a pure function of the alloc. Seeding the
+    /// *persistent* binary trie is `Store::setup_genesis_binary_trie`'s job, and
+    /// it routes through the same `pbt_state::apply_account_updates` embedding,
+    /// so the two agree by construction.
+    ///
+    /// # Panics
+    ///
+    /// If the alloc cannot be embedded — in practice a balance at or above
+    /// `2^128`, which the 16-byte basic-data field cannot hold. Startup rejects
+    /// such an alloc outright whenever `binary_tree_scheduled()`
+    /// (`validate_genesis_binary_tree_embeddable` in `cmd/ethrex/initializers.rs`),
+    /// so nothing that reaches here can fail silently, and a caller that built a
+    /// `Genesis` in memory without that guard has a bug rather than a runtime
+    /// condition.
+    fn compute_binary_state_root(&self) -> H256 {
+        let updates: Vec<AccountUpdate> = self
+            .alloc
+            .iter()
+            .map(|(address, account)| {
+                let code = Code::from_bytecode(account.code.clone(), &NativeCrypto);
+                AccountUpdate {
+                    address: *address,
+                    removed: false,
+                    info: Some(AccountInfo {
+                        code_hash: code.hash,
+                        balance: account.balance,
+                        nonce: account.nonce,
+                    }),
+                    code: Some(code),
+                    added_storage: account
+                        .storage
+                        .iter()
+                        .map(|(slot, value)| (H256(slot.to_big_endian()), *value))
+                        .collect(),
+                    removed_storage: false,
+                }
+            })
+            .collect();
+
+        let mut trie = BinaryTrie::new(Box::new(InMemoryBinaryTrieDB::new_empty()));
+        apply_account_updates(&mut trie, &updates)
+            .expect("genesis alloc must be embeddable in the binary trie");
+        trie.root()
     }
 }
 #[cfg(test)]
@@ -1478,6 +1541,44 @@ mod tests {
         assert!(config.is_binary_tree_active(1_000));
         assert!(config.is_binary_tree_active(1_001));
         assert!(config.is_binary_tree_active(u64::MAX));
+    }
+
+    /// `Genesis::compute_state_root` follows the same per-header rule every
+    /// other header does, asked of genesis' own timestamp.
+    #[test]
+    fn genesis_state_root_is_the_binary_root_only_when_active_at_genesis() {
+        let mut genesis = Genesis {
+            timestamp: 1_000,
+            ..Default::default()
+        };
+        genesis.alloc.insert(
+            H160::from_low_u64_be(0xABCD),
+            GenesisAccount {
+                balance: U256::from(42u64),
+                nonce: 7,
+                code: Bytes::new(),
+                storage: BTreeMap::from([(U256::one(), U256::from(9u64))]),
+            },
+        );
+
+        let mpt_root = genesis.compute_state_root();
+
+        // Scheduled but not yet reached: genesis keeps its MPT root, which is
+        // what keeps the genesis hash (and the fork-id checksum seeded by it)
+        // the one standard tooling computed.
+        genesis.config.binary_tree_time = Some(genesis.timestamp + 1);
+        assert_eq!(genesis.compute_state_root(), mpt_root);
+
+        // Active at genesis' own second (test-only shape): the binary root.
+        genesis.config.binary_tree_time = Some(genesis.timestamp);
+        let binary_root = genesis.compute_state_root();
+        assert_ne!(binary_root, mpt_root);
+        // ...and the header that `get_block` builds carries it.
+        assert_eq!(genesis.get_block().header.state_root, binary_root);
+
+        // Activation strictly before genesis is active too.
+        genesis.config.binary_tree_time = Some(genesis.timestamp - 1);
+        assert_eq!(genesis.compute_state_root(), binary_root);
     }
 
     #[test]

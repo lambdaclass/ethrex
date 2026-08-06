@@ -1039,7 +1039,38 @@ impl Blockchain {
             .apply_account_updates_batch(context.parent_hash(), &account_updates)?
             .ok_or(ChainError::ParentStateNotFound)?;
 
-        let state_root = ret_acount_updates_list.state_trie_hash;
+        // Which root this header commits to is a **per-header** question, asked of
+        // the payload's own timestamp — never of a chain-level "is the commitment
+        // scheduled / have we passed it" flag. A payload built one second before
+        // `binaryTreeTime` genuinely commits the MPT root, and the importer
+        // validates it that way (see `Blockchain::store_block_inner`). Producer and
+        // validator have to ask the identical question of the identical header, or
+        // a node cannot import its own block.
+        let state_root = if context
+            .chain_config()
+            .is_binary_tree_active(context.payload.header.timestamp)
+        {
+            // The binary trie is already current through the parent — every block
+            // since the schedule was set advanced it — so the first active payload
+            // commits the full carried-over state, with no conversion event.
+            let parent_binary_root = self
+                .storage
+                .get_binary_trie_root(context.parent_hash())?
+                .ok_or_else(|| {
+                    ChainError::Custom(format!(
+                        "cannot build a binary-tree payload on parent {:#x}: it has no recorded \
+                         binary-trie root",
+                        context.parent_hash()
+                    ))
+                })?;
+            // Computed, not committed: most proposals are never imported, and the
+            // path-keyed trie has no second version to keep a discarded one in. The
+            // block that does get imported persists the same root.
+            self.storage
+                .compute_binary_trie_root(parent_binary_root, &account_updates)?
+        } else {
+            ret_acount_updates_list.state_trie_hash
+        };
 
         context.payload.header.state_root = state_root;
         context.payload.header.transactions_root =

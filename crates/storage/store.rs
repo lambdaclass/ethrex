@@ -33,7 +33,7 @@ use ethrex_common::{
         Receipt, Transaction,
         block_access_list::BlockAccessList,
         block_execution_witness::{ExecutionWitness, RpcExecutionWitness},
-        pbt_state::apply_account_updates,
+        pbt_state::{self, apply_account_updates},
     },
     utils::keccak,
 };
@@ -2681,6 +2681,126 @@ impl Store {
         Ok(trie.commit()?)
     }
 
+    /// The binary-trie root `account_updates` produce on top of
+    /// `parent_root`, **without persisting anything**.
+    ///
+    /// [`BinaryTrie::root`] merkleizes the in-memory overlay; only the
+    /// root-to-leaf paths the updates reach are loaded, and no node,
+    /// code entry or root mapping is written. That is what payload
+    /// building needs: a proposed block's root has to be known before
+    /// the block exists, and most proposals are never imported. Writing
+    /// them would be worse than wasteful — the binary trie is
+    /// path-keyed and single-version, so committing a payload that is
+    /// then discarded overwrites nodes the canonical branch still
+    /// needs.
+    ///
+    /// The block that *is* imported recomputes the same root through
+    /// [`Store::advance_binary_trie_for_block`], which does persist.
+    ///
+    /// # Errors
+    ///
+    /// [`StoreError::PbtState`] if the updates cannot be embedded — see
+    /// [`Store::apply_account_updates_to_binary_trie_blocking`].
+    pub fn compute_binary_trie_root(
+        &self,
+        parent_root: H256,
+        account_updates: &[AccountUpdate],
+    ) -> Result<H256, StoreError> {
+        let mut trie = BinaryTrie::open(
+            Box::new(BackendBinaryTrieDB::new(self.backend.clone())?),
+            parent_root,
+        );
+        apply_account_updates(&mut trie, account_updates)?;
+        Ok(trie.root())
+    }
+
+    /// Open the persistent binary trie at `root`.
+    ///
+    /// Opening loads nothing: the root is a bare stored reference until a
+    /// traversal touches it, so this costs a backend handle and nothing else.
+    /// Each read therefore opens its own trie rather than sharing one — the
+    /// node cache a shared trie would give lives in the Phase E diff layers,
+    /// which do not exist yet.
+    fn open_binary_trie(&self, root: H256) -> Result<BinaryTrie, StoreError> {
+        Ok(BinaryTrie::open(
+            Box::new(BackendBinaryTrieDB::new(self.backend.clone())?),
+            root,
+        ))
+    }
+
+    /// Root-addressed account read against the binary trie: the counterpart of
+    /// [`Self::get_account_state_by_root`] for a header past the binary-tree
+    /// activation, whose `state_root` addresses the binary trie and no MPT.
+    ///
+    /// Returns an [`AccountInfo`] rather than an `AccountState` because the
+    /// binary trie has no storage root to put in one — storage is not a
+    /// per-account subtrie there. The caller that needs an `AccountState`
+    /// decides what to do about that; see `StoreVmDatabase` in
+    /// `crates/blockchain/vm.rs`.
+    ///
+    /// Deliberately unchecked, exactly as [`Self::get_account_state_by_root`]
+    /// is: `StoreVmDatabase::new` gates on [`Self::has_binary_trie_state`] once
+    /// up front.
+    pub fn get_binary_account_info(
+        &self,
+        state_root: H256,
+        address: Address,
+    ) -> Result<Option<AccountInfo>, StoreError> {
+        let mut trie = self.open_binary_trie(state_root)?;
+        Ok(pbt_state::get_account_info(&mut trie, address)?)
+    }
+
+    /// Root-addressed storage read against the binary trie, the counterpart of
+    /// [`Self::get_storage_at_root`].
+    ///
+    /// No account lookup precedes it: the slot's key is derived from the
+    /// address and the slot alone, so unlike the MPT there is no storage root
+    /// to fetch first and no second trie to open.
+    pub fn get_binary_storage_slot(
+        &self,
+        state_root: H256,
+        address: Address,
+        storage_key: H256,
+    ) -> Result<Option<U256>, StoreError> {
+        let mut trie = self.open_binary_trie(state_root)?;
+        Ok(pbt_state::get_storage_slot(
+            &mut trie,
+            address,
+            &storage_key,
+        )?)
+    }
+
+    /// Whether this node holds the binary-trie state `state_root` names for
+    /// `block_hash` — the binary-trie counterpart of [`Self::has_state_root`],
+    /// and the gate `StoreVmDatabase::new` runs before executing on an active
+    /// header.
+    ///
+    /// **Why it takes a block hash and not just a root.** [`Self::has_state_root`]
+    /// can verify an MPT root against the nodes on disk: it reads the root node
+    /// by path and hashes it. The same trick is not available here —
+    /// [`BinaryTrie::open`] records the root it was given and caches it as the
+    /// hash of whatever node it later resolves at that path, so a wrong root is
+    /// indistinguishable from a right one through the public API, and this crate
+    /// does not reach inside `ethrex_binary_trie` to hash nodes itself. What the
+    /// node does know is which binary root it computed for which block, which is
+    /// exactly [`BINARY_TRIE_ROOTS`]. An active header whose own recorded root
+    /// matches the one it commits to is a header this node has binary state for.
+    ///
+    /// **What it cannot catch**, and Phase E will: the binary trie is path-keyed
+    /// and single-version, so after a reorg the nodes on disk hold the abandoned
+    /// branch's state while both branches' roots are still recorded. The recorded
+    /// mapping cannot see that; it is the same exposure the write path already
+    /// has (see [`Self::advance_binary_trie_for_block`]).
+    ///
+    /// [`BINARY_TRIE_ROOTS`]: crate::api::tables::BINARY_TRIE_ROOTS
+    pub fn has_binary_trie_state(
+        &self,
+        block_hash: BlockHash,
+        state_root: H256,
+    ) -> Result<bool, StoreError> {
+        Ok(self.get_binary_trie_root(block_hash)? == Some(state_root))
+    }
+
     /// The binary-trie root recorded for `block_hash`, if any.
     ///
     /// See [`BINARY_TRIE_ROOTS`] for why this mapping exists and how
@@ -2712,6 +2832,25 @@ impl Store {
             block_hash.as_bytes().to_vec(),
             root.as_bytes().to_vec(),
         )
+    }
+
+    /// Forget the binary-trie root recorded for `block_hash`.
+    ///
+    /// Used when a block is rejected *after* its binary root was
+    /// computed. From activation onward the root has to exist before the
+    /// header can be validated against it, so a header carrying the
+    /// wrong root would otherwise leave a recorded root behind for a
+    /// block that never entered the chain — and a later block naming it
+    /// as parent would then extend a branch nobody accepted.
+    ///
+    /// Only the mapping is undone. The nodes the rejected block wrote
+    /// stay on disk, because the trie is path-keyed and single-version
+    /// and has nowhere to put a second copy; that is the same exposure
+    /// a reorg already has, and it is what the diff-layer work (Phase E)
+    /// exists to close. Removing the mapping is still the right thing:
+    /// it is the only thing a later block consults.
+    pub fn remove_binary_trie_root(&self, block_hash: BlockHash) -> Result<(), StoreError> {
+        self.delete(BINARY_TRIE_ROOTS, block_hash.as_bytes().to_vec())
     }
 
     /// Shadow-tracking step: advance the binary trie by one block and
@@ -3004,9 +3143,10 @@ impl Store {
         // the EIP-8297 binary trie, so shadow tracking has an anchor to extend
         // from: block 1 looks up genesis' recorded binary root and builds on
         // the alloc, exactly as it builds on the alloc in the MPT. Genesis
-        // itself still commits the MPT root in its header — activation at
-        // genesis would change the genesis hash and hence the chain's
-        // identity, which is why the schedule is always in the future.
+        // itself normally still commits the MPT root in its header — activation
+        // at genesis would change the genesis hash and hence the chain's
+        // identity, which is why the schedule is always in the future on any
+        // real network.
         //
         // The alloc is cloned only when scheduled; unscheduled chains keep the
         // move into `setup_genesis_state_trie` and do no binary-trie work.
@@ -3014,8 +3154,16 @@ impl Store {
             .config
             .binary_tree_scheduled()
             .then(|| genesis.alloc.clone());
+        // Per-header rule, at genesis: the header commits whichever root is
+        // active at *genesis' own timestamp*. Under the degenerate, test-only
+        // genesis activation that is the binary root, and the MPT root computed
+        // here is then a shadow root that no header names — so it is only
+        // compared against the header when the header is actually MPT-committed.
+        let binary_tree_active_at_genesis = genesis.config.is_binary_tree_active(genesis.timestamp);
         let genesis_state_root = self.setup_genesis_state_trie(genesis.alloc).await?;
-        debug_assert_eq!(genesis_state_root, genesis_block.header.state_root);
+        debug_assert!(
+            binary_tree_active_at_genesis || genesis_state_root == genesis_block.header.state_root
+        );
 
         // Reached only on a fresh datadir: the branches above return early when
         // a genesis header is already stored. That is the right behaviour for a
