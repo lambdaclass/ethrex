@@ -268,8 +268,13 @@ make fullsync-bench-test                                   # unit-test metric pa
 ```
 
 Networks run **serially** on purpose: two legs at once contend for CPU and disk and both
-results are junk. A lockfile enforces this, and the manual A/B tool (#7112) takes the same
-lock.
+results are junk. An flock enforces this; bootstraps share it, cycles take it exclusively,
+and the manual A/B tool (#7112) takes it exclusively too.
+
+Reporting goes to `SLACK_WEBHOOK_URL_SUCCESS`, read from `tooling/sync/.env` (same format
+as multisync) or the environment, which wins. Without it the runner logs the summary and
+carries on. While the watch is observe-only, failed cycles are reported on that same
+webhook rather than `SLACK_WEBHOOK_URL_FAILED` — there is nothing to page about yet.
 
 ### Bootstrap
 

@@ -32,6 +32,19 @@ import requests
 from fullsync_metrics import parse_run_file
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+
+# Same `.env` convention as docker_monitor.py, but resolved against this file rather than
+# the working directory: the watch runs unattended from wherever a service manager put it,
+# and silently losing the Slack webhook to a `cd` is not a good failure.
+_ENV_FILE = os.path.join(HERE, ".env")
+if os.path.exists(_ENV_FILE):
+    with open(_ENV_FILE) as _fh:
+        for _line in _fh:
+            _line = _line.strip()
+            if _line and not _line.startswith("#"):
+                _key, _, _value = _line.partition("=")
+                os.environ.setdefault(_key.strip(), _value.strip())
+
 COMPOSE_FILES = ["docker-compose.multisync.yaml", "docker-compose.fullsync-bench.yaml"]
 COMPOSE_PROJECT = "fullsync-bench"
 
