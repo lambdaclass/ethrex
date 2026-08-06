@@ -20,6 +20,11 @@
 //! Target: execution-specs `3c3b6f4af315b268a61e20d5a4da8aa4f24c91f0`
 //! (#3248 progressive SSZ + #3278 `ChainConfig` removal).
 
+// The zkVM crypto providers are written against `alloc` rather than `std`,
+// because a guest may be built without std. Declaring the crate here makes those
+// imports resolve in either configuration; it is a no-op for host builds.
+extern crate alloc;
+
 #[cfg(any(feature = "ere", feature = "zkvm-interface", feature = "openvm"))]
 pub mod crypto;
 #[cfg(feature = "ere")]
