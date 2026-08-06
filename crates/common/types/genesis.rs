@@ -21,6 +21,19 @@ use crate::{
     rkyv_utils,
 };
 
+/// Default for [`ChainConfig::aa_vops_slot_count`], at the top of EIP-8369's
+/// candidate range.
+///
+/// The top of the range is the worst case for attester replay, so a run that
+/// fits the attestation deadline at 4 also fits at 2 and 3; and it is a superset,
+/// so no transaction eligible at a lower value becomes unreachable. Choosing low
+/// makes wallets ineligible, which presents as fewer enforcement obligations and
+/// so reads as success. The range covers the realistic validation surface: one
+/// slot for an address owner, two for a P256 public key, a third for a threshold
+/// or module word, the fourth as headroom. Keyed nonces and recent roots live in
+/// protocol state and cost no slots.
+pub const DEFAULT_AA_VOPS_SLOT_COUNT: u64 = 4;
+
 #[allow(unused)]
 #[derive(Debug, Deserialize, Serialize, Clone, Default)]
 #[serde(rename_all = "camelCase")]
@@ -332,6 +345,22 @@ pub struct ChainConfig {
     #[serde(default)]
     pub utxo_frames_time: Option<u64>,
 
+    /// EIP-8369 `AA_VOPS_SLOT_COUNT`: how many leading storage slots of `sender`
+    /// and `payer` sit inside the FOCIL Profile 2 validation surface. A read
+    /// outside the surface makes a transaction ineligible for inclusion-list
+    /// enforcement rather than merely expensive.
+    ///
+    /// EIP-8369 leaves the value unset with a candidate range of 2 to 4 "pending
+    /// benchmarks", and states that no implementation can classify Profile 2 for
+    /// enforcement until the enforcing Standards Track EIP selects one. It is a
+    /// chain-config parameter rather than a constant so a devnet can sweep the
+    /// range and produce that benchmark, and so adopting the settled value is a
+    /// genesis change rather than a code change.
+    ///
+    /// `None` selects [`DEFAULT_AA_VOPS_SLOT_COUNT`].
+    #[serde(default)]
+    pub aa_vops_slot_count: Option<u64>,
+
     /// Amount of total difficulty reached by the network that triggers the consensus upgrade.
     #[serde(default, with = "crate::serde_utils::u128::hex_str_opt")]
     pub terminal_total_difficulty: Option<u128>,
@@ -472,6 +501,17 @@ impl ChainConfig {
         self.utxo_frames_time
             .is_some_and(|time| time <= block_timestamp)
             && self.get_fork(block_timestamp) >= Fork::Hegota
+    }
+
+    /// EIP-8369 `AA_VOPS_SLOT_COUNT`, falling back to
+    /// [`DEFAULT_AA_VOPS_SLOT_COUNT`] when the chain does not pin one.
+    ///
+    /// Every Profile 2 storage bound MUST resolve through this accessor rather
+    /// than reading the field, so a chain that omits it and one that sets it to
+    /// the default classify identically.
+    pub fn aa_vops_slot_count(&self) -> u64 {
+        self.aa_vops_slot_count
+            .unwrap_or(DEFAULT_AA_VOPS_SLOT_COUNT)
     }
 
     /// The effective EIP-7843 beacon slot for a block, used by EIP-8272

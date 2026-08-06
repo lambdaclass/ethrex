@@ -44,6 +44,7 @@
 
 pub mod constants;
 pub mod error;
+pub mod focil_eligibility;
 pub mod fork_choice;
 pub mod inclusion_list_builder;
 pub mod inclusion_list_validator;

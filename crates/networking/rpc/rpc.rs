@@ -1880,6 +1880,7 @@ mod tests {
                             "derivedSlotTime": null,
                             "payerTxparamTime": null,
                             "utxoFramesTime": null,
+                            "aaVopsSlotCount": null,
                             "genesisTimestamp": null,
                             "secondsPerSlot": null,
                             "lstarTime": null,

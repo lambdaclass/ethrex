@@ -26,9 +26,10 @@ use rustc_hash::FxHashMap;
 
 use crate::mempool::Mempool;
 
-/// Hard byte cap on the total RLP-encoded size of the returned inclusion list,
-/// matching `MAX_BYTES_PER_INCLUSION_LIST` in the execution-apis spec.
-pub const MAX_BYTES_PER_INCLUSION_LIST: usize = 8192;
+/// Hard byte cap on the total RLP-encoded size of the returned inclusion list.
+/// Re-exported so builder callers do not depend on a second definition drifting
+/// from the one the decoder enforces.
+pub use ethrex_common::types::MAX_BYTES_PER_INCLUSION_LIST;
 
 /// Default per-sender cap for the IL builder. Matches the `--il-per-sender-cap`
 /// CLI default.
