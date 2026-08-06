@@ -27,6 +27,13 @@ codes are rejected at decode time. `SnapCapVersion::V1` accepts codes
 that sends them must restrict peer selection to snap/1 via
 `SNAP1_ONLY_CAPABILITIES` in `rlpx/p2p.rs`.
 
+That restriction only works because peer selection filters on
+`PeerData.negotiated_capabilities` rather than on the advertised
+`supported_capabilities`. A peer advertising both snap/1 and snap/2 negotiates
+snap/2 and would reject `GetTrieNodes`, so matching the advertised list would
+route trie-node healing straight into a protocol error. `supported_capabilities`
+remains the full advertised list because `admin_peers` reports it.
+
 ## Wire format
 
 `Snap2GetBlockAccessLists` carries `[id, [hashes...], response_bytes]`.
@@ -55,11 +62,10 @@ pub struct Snap2BlockAccessLists {
 ## Server handler
 
 `build_snap2_bal_response` in `rlpx/connection/server.rs` builds the response
-from a batched `Store::iter_block_access_lists_by_hashes` followed by a
-per-hash header lookup. The header lookup decides whether each slot is
-`Some` or `None`: a pre-Amsterdam header (`block_access_list_hash.is_none()`)
-always yields `None`; an unknown hash yields `None`; a known post-Amsterdam
-header yields whatever storage holds (which may itself be `None`).
+from a batched `Store::iter_block_access_lists_by_hashes`. No per-hash header
+lookup is needed: BAL storage is gated on the Amsterdam fork, so a stored BAL
+implies a post-Amsterdam block and is served directly, while a pre-Amsterdam,
+pruned, or unknown block has nothing stored and yields `None`.
 
 The byte budget is tracked via `bal.length()` (the zero-allocation
 `RLPEncode` trait method) and capped at `min(response_bytes, 2 MiB)`. When
@@ -105,16 +111,18 @@ classified as recoverable so the outer loop can retry with a different peer.
 
 `advance_state_via_bals` in `sync/bal_healing/mod.rs` loads canonical
 headers from `start_block.number + 1` to the target, then requests BALs in
-batches of `BAL_REQUEST_BATCH_SIZE` (64), retrying each block up to
-`BAL_MAX_RETRIES_PER_BLOCK` (3) times. Strict in-batch ordering: a slot is
-only applied once all prior slots in the batch have been applied. A
-parent-hash check before each apply returns
+batches of `BAL_REQUEST_BATCH_SIZE` — derived from the response soft cap and
+EIP-7928's average BAL size so a typical response is not truncated — retrying
+each block up to `BAL_MAX_RETRIES_PER_BLOCK` (3) times. Strict in-batch
+ordering: a slot is only applied once all prior slots in the batch have been
+applied. A parent-hash check before each apply returns
 `SyncError::ChainReorgDetected` (non-recoverable) on mismatch.
 
-On all-retries-exhausted for a slot the driver calls
-`fallback_to_snap1_healing` with the caller-supplied `staleness_timestamp`
-so the fallback respects the same staleness budget as the normal snap/1
-healing path.
+A response covering no slot at all is charged to the first pending slot's retry
+budget, so a peer that truncates everything cannot stall the driver. Once any
+slot exhausts its retries the driver returns the partial state root reached so
+far; the caller in `snap_sync.rs` compares it against the target and runs
+snap/1 healing for the remainder.
 
 ## Snap-sync integration
 
@@ -127,9 +135,13 @@ target an account that hasn't been downloaded yet.
 The decision is made by `should_use_bal_replay(peers, &pivot_header)`,
 which returns true only when a snap/2 peer is connected AND
 `pivot_header.block_access_list_hash.is_some()` (i.e. post-Amsterdam). On
-success the subsequent `heal_storage_trie` call is also skipped — storage
-tries are already populated by the BAL apply. On any `Err` the path falls
-through to the existing `heal_state_trie_wrap` + `heal_storage_trie`
+success `heal_state_trie_wrap` is skipped but `heal_storage_trie` still runs:
+reaching the head state root proves the account trie is complete, yet accounts
+untouched by any replayed BAL keep whatever storage the bulk download left,
+and the state root commits only each account's `storage_root` hash. It is run
+against `pivot_header.state_root`, not the post-replay root, because the
+incomplete-storage work queue was captured at pivot time. On any `Err` the path
+falls through to the existing `heal_state_trie_wrap` + `heal_storage_trie`
 sequence.
 
 ## Pre-Amsterdam handling
@@ -143,18 +155,20 @@ check (`unwrap_or(EMPTY_BLOCK_ACCESS_LIST_HASH)`) catches it.
 
 ## Errors
 
-`SyncError` gains three variants in `sync.rs`:
+`SyncError` gains four variants in `sync.rs`:
 
 - `StateRootMismatch(expected, got)` — applied BAL produced a different
   state root from `header.state_root`. Recoverable.
 - `MissingHeaderForBal(BlockHash)` — local header missing for a BAL we
   need to apply. Non-recoverable (DB inconsistency).
+- `MissingCanonicalBlock(number)` — no canonical hash recorded at a block
+  number in the replay range. Non-recoverable (DB inconsistency).
 - `ChainReorgDetected { expected_parent, actual_parent }` — peer's BAL
   chain doesn't connect to our local view. Non-recoverable; the caller
   falls back to snap/1.
 
 ## Diagnostics
 
-`SyncDiagnostics` carries four counters bumped by the driver:
-`snap2_bal_requests_sent`, `snap2_blocks_replayed`,
+`SyncDiagnostics` carries five counters bumped by the driver:
+`snap2_bal_requests_sent`, `snap2_blocks_replayed`, `snap2_bals_unavailable`,
 `snap2_validation_failures`, `snap2_peer_failures`.

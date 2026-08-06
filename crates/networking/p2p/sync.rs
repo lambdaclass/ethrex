@@ -83,6 +83,8 @@ pub struct SyncDiagnostics {
     pub snap2_blocks_replayed: u64,
     /// Number of BAL validation failures (hash mismatch or state-root mismatch).
     pub snap2_validation_failures: u64,
+    /// Number of requested BALs a peer reported as unavailable (`0x80` sentinel).
+    pub snap2_bals_unavailable: u64,
     /// Number of snap/2 peer-level failures.
     pub snap2_peer_failures: u64,
 }

@@ -836,10 +836,18 @@ where
         handle: ctx.actor_ref(),
     };
 
+    let negotiated_capabilities: Vec<Capability> = state
+        .negotiated_eth_capability
+        .iter()
+        .chain(state.negotiated_snap_capability.iter())
+        .cloned()
+        .collect();
+
     state.peer_table.new_connected_peer(
         state.node.clone(),
         connection.clone(),
         state.capabilities.clone(),
+        negotiated_capabilities,
         state.is_inbound,
     )?;
 

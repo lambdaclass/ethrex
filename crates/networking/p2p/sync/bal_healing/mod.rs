@@ -185,6 +185,29 @@ pub async fn advance_state_via_bals(
                     return Ok(current_root);
                 }
                 Ok(Some((response_bals, peer_id))) => {
+                    // EIP-8189 permits truncating a response from the tail, but a
+                    // response covering no slot at all makes no progress. Charge it to
+                    // the first pending slot so the retry budget stays finite and the
+                    // loop cannot spin forever against an unhelpful peer.
+                    if response_bals.is_empty() {
+                        warn!(
+                            "advance_state_via_bals: peer {peer_id} returned no entries for {} pending slots",
+                            pending_indices.len()
+                        );
+                        if let Some(&first) = pending_indices.first() {
+                            retry_counts[first] += 1;
+                            let _ = if retry_counts[first] >= BAL_MAX_RETRIES_PER_BLOCK {
+                                peers.peer_table.record_critical_failure(peer_id)
+                            } else {
+                                peers.peer_table.record_failure(peer_id)
+                            };
+                        }
+                        {
+                            let mut diag = diagnostics.write().await;
+                            diag.snap2_peer_failures += 1;
+                        }
+                    }
+
                     // Buffer every returned BAL by batch index; a missing slot
                     // bumps its retry count and penalizes the serving peer.
                     for (bal_opt, &batch_idx) in
@@ -198,7 +221,7 @@ pub async fn advance_state_via_bals(
                                 retry_counts[batch_idx] += 1;
                                 {
                                     let mut diag = diagnostics.write().await;
-                                    diag.snap2_validation_failures += 1;
+                                    diag.snap2_bals_unavailable += 1;
                                 }
                                 if retry_counts[batch_idx] >= BAL_MAX_RETRIES_PER_BLOCK {
                                     let _ = peers.peer_table.record_critical_failure(peer_id);
