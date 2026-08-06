@@ -35,19 +35,27 @@
 //!
 //! 3 000  (`params.CometBFTLightBlockValidateGas`)
 //!
-//! # Implementation status
+//! # Implementation
 //!
-//! Input parsing (outer envelope + v2 consensus-state binary structure) is
-//! fully implemented.  The protobuf `LightBlock` decoding and the
-//! CometBFT commit-signature verification (Ed25519, >2/3 voting power) are
-//! **not yet implemented** — they would require either vendoring the full
-//! CometBFT protobuf types via `prost` or linking against a C library.
+//! Full light-client validation against **greenfield-cometbft v1.3.2** (the
+//! fork bsc-geth vendors): protobuf `LightBlock` decode ([`proto`]), the
+//! RFC-6962 SHA256 Merkle validator-set/header hashes ([`merkle`]), the
+//! `CanonicalVote` sign-bytes, and Ed25519 commit verification with the
+//! adjacent (≥2/3) / non-adjacent (≥1/3 trusting) branches ([`verify`]).
+//! Pasteur (BEP-682) adds the unique-validator-set check and the per-byte gas.
 //!
 //! Reference: `core/vm/lightclient/v2/lightclient.go`
 //! (`DecodeLightBlockValidationInput`, `ConsensusState.ApplyLightBlock`,
-//! `EncodeLightBlockValidationResult`).
+//! `EncodeLightBlockValidationResult`) and greenfield-cometbft `types/*`.
 
 use super::PrecompileError;
+
+mod merkle;
+mod proto;
+mod verify;
+
+use prost::Message;
+use verify::ValidatorInfo;
 
 /// Gas cost for cometBFTLightBlockValidate.  Matches `params.CometBFTLightBlockValidateGas`.
 pub const COMETBFT_VALIDATE_GAS: u64 = 3_000;
@@ -124,18 +132,11 @@ pub fn run(
     // forwarded gas when a precompile errors. See the matching note in
     // `tm_header_validate::run`.
     //
-    // TODO(BEP-682): when `is_pasteur`, bsc-geth also enforces unique validator
-    // sets (reject duplicate address/pubkey, and non-zero duplicate bls-key /
-    // relayer-address) on both the consensus-state and light-block validator
-    // sets. Full CometBFT `LightBlock` decoding + Ed25519 commit verification
-    // are already unimplemented here (see module docs), so this stricter check
-    // is deferred with them; it only affects adversarial duplicate-validator
-    // inputs, not normal cross-chain traffic.
-    let output = run_inner(input)?;
+    let output = run_inner(input, is_pasteur)?;
     Ok((gas_cost, output))
 }
 
-fn run_inner(input: &[u8]) -> Result<Vec<u8>, PrecompileError> {
+fn run_inner(input: &[u8], is_pasteur: bool) -> Result<Vec<u8>, PrecompileError> {
     if input.is_empty() || input.len() <= CS_LEN_WORD {
         return Err(PrecompileError::InvalidInput);
     }
@@ -155,15 +156,233 @@ fn run_inner(input: &[u8]) -> Result<Vec<u8>, PrecompileError> {
     let cs_bytes = &input[CS_LEN_WORD..cs_end];
     let light_block_bytes = &input[cs_end..];
 
-    parse_consensus_state_v2(cs_bytes)?;
+    let cs = parse_consensus_state_v2(cs_bytes)?;
 
     if light_block_bytes.is_empty() {
         return Err(PrecompileError::InvalidInput);
     }
 
-    // TODO: Decode protobuf LightBlock and run ConsensusState.ApplyLightBlock.
-    // Until then, signal failure so bsc-geth's all-gas-burn behavior is matched.
-    Err(PrecompileError::NotImplemented)
+    let light_block =
+        proto::LightBlock::decode(light_block_bytes).map_err(|_| PrecompileError::InvalidInput)?;
+
+    // Trusted (consensus-state) validators, common representation.
+    let trusted: Vec<ValidatorInfo> = cs
+        .validators
+        .iter()
+        .map(|v| ValidatorInfo {
+            pubkey: v.pubkey.to_vec(),
+            voting_power: v.voting_power,
+            bls_key: v.bls_key.to_vec(),
+            relayer_address: v.relayer_address.to_vec(),
+        })
+        .collect();
+
+    // BEP-682 (Pasteur): reject duplicate validators in the trusted set.
+    if is_pasteur {
+        validate_unique_validator_set(&trusted)?;
+    }
+
+    apply_light_block(&cs, &trusted, &light_block, is_pasteur)
+}
+
+/// `ConsensusState.ApplyLightBlock` + `EncodeLightBlockValidationResult`.
+///
+/// `isHertz` is always true here (0x67 is Hertz-era onward on BSC), so the
+/// returned `validatorSetChanged` flag is the real pre-update value.
+fn apply_light_block(
+    cs: &ConsensusStateV2<'_>,
+    trusted: &[ValidatorInfo],
+    light_block: &proto::LightBlock,
+    is_pasteur: bool,
+) -> Result<Vec<u8>, PrecompileError> {
+    let signed_header = light_block
+        .signed_header
+        .as_ref()
+        .ok_or(PrecompileError::InvalidInput)?;
+    let header = signed_header
+        .header
+        .as_ref()
+        .ok_or(PrecompileError::InvalidInput)?;
+    let commit = signed_header
+        .commit
+        .as_ref()
+        .ok_or(PrecompileError::InvalidInput)?;
+    let block_val_set = light_block
+        .validator_set
+        .as_ref()
+        .ok_or(PrecompileError::InvalidInput)?;
+
+    // Block validators in the common representation.
+    let block_vals: Vec<ValidatorInfo> = block_val_set
+        .validators
+        .iter()
+        .map(|v| {
+            let pubkey = v
+                .pub_key
+                .as_ref()
+                .and_then(|k| k.ed25519.clone())
+                .ok_or(PrecompileError::InvalidInput)?;
+            Ok(ValidatorInfo {
+                pubkey,
+                voting_power: v.voting_power,
+                bls_key: v.bls_key.clone(),
+                relayer_address: v.relayer_address.clone(),
+            })
+        })
+        .collect::<Result<_, PrecompileError>>()?;
+
+    if is_pasteur {
+        validate_unique_validator_set(&block_vals)?;
+    }
+
+    // Height must advance.
+    let block_height = header.height;
+    if block_height <= cs.height as i64 {
+        return Err(PrecompileError::InvalidInput);
+    }
+
+    // block.ValidateBasic(cs.ChainID) — the consensus-critical checks.
+    let cs_chain_id = trim_nul(cs.chain_id);
+    if header.chain_id.as_bytes() != cs_chain_id {
+        return Err(PrecompileError::InvalidInput);
+    }
+    if commit.height != header.height {
+        return Err(PrecompileError::InvalidInput);
+    }
+    // Header.Hash() == Commit.BlockID.Hash
+    let commit_block_id = commit.block_id.clone().unwrap_or_default();
+    if verify::header_hash(header).as_slice() != commit_block_id.hash.as_slice() {
+        return Err(PrecompileError::InvalidInput);
+    }
+    // ValidatorSet.Hash() == Header.ValidatorsHash
+    if verify::validator_set_hash(&block_vals).as_slice() != header.validators_hash.as_slice() {
+        return Err(PrecompileError::InvalidInput);
+    }
+
+    // Commit verification, branching on adjacency.
+    let chain_id_str =
+        std::str::from_utf8(cs_chain_id).map_err(|_| PrecompileError::InvalidInput)?;
+    let commit_bid = commit.block_id.clone().unwrap_or_default();
+    if cs.height as i64 == block_height - 1 {
+        // Adjacent: next-set hash must match, then ≥2/3 of the new set.
+        if cs.next_validator_set_hash != header.validators_hash.as_slice() {
+            return Err(PrecompileError::InvalidInput);
+        }
+        if !verify::verify_commit_light(
+            chain_id_str,
+            &commit_bid,
+            block_height,
+            commit,
+            &block_vals,
+        ) {
+            return Err(PrecompileError::InvalidInput);
+        }
+    } else {
+        // Non-adjacent: ≥1/3 of the trusted set, then ≥2/3 of the new set.
+        if !verify::verify_commit_light_trusting(chain_id_str, commit, trusted) {
+            return Err(PrecompileError::InvalidInput);
+        }
+        if !verify::verify_commit_light(
+            chain_id_str,
+            &commit_bid,
+            block_height,
+            commit,
+            &block_vals,
+        ) {
+            return Err(PrecompileError::InvalidInput);
+        }
+    }
+
+    // validatorSetChanged: old set hash vs new header's ValidatorsHash (pre-update).
+    let validator_set_changed =
+        verify::validator_set_hash(trusted).as_slice() != header.validators_hash.as_slice();
+
+    // Encode the UPDATED consensus state (height, nextValidatorSetHash, new set).
+    let updated_cs =
+        encode_updated_consensus_state(cs_chain_id, block_height, header, &block_vals)?;
+
+    // EncodeLightBlockValidationResult: [flag(1)][pad(23)][len(8 BE)][cs bytes].
+    let mut out = vec![0u8; 32];
+    out[0] = u8::from(validator_set_changed);
+    out[24..32].copy_from_slice(&(updated_cs.len() as u64).to_be_bytes());
+    out.extend_from_slice(&updated_cs);
+    Ok(out)
+}
+
+/// Re-encode the updated consensus state in the v2 wire format:
+/// chainID(32, NUL-padded) | height(8 BE) | nextValidatorSetHash(32) |
+/// N × (pubkey 32 | votingPower 8 BE | relayerAddress 20 | blsKey 48).
+fn encode_updated_consensus_state(
+    chain_id: &[u8],
+    height: i64,
+    header: &proto::Header,
+    validators: &[ValidatorInfo],
+) -> Result<Vec<u8>, PrecompileError> {
+    if validators.len() > MAX_VALIDATORS {
+        return Err(PrecompileError::InvalidInput);
+    }
+    if header.next_validators_hash.len() != NEXT_VAL_SET_HASH_LEN {
+        return Err(PrecompileError::InvalidInput);
+    }
+    let mut out = vec![0u8; CS_FIXED_LEN + validators.len() * VALIDATOR_ENTRY_LEN];
+    let mut pos = 0;
+    let cid_len = chain_id.len().min(CHAIN_ID_LEN);
+    out[pos..pos + cid_len].copy_from_slice(&chain_id[..cid_len]);
+    pos += CHAIN_ID_LEN;
+    out[pos..pos + HEIGHT_LEN].copy_from_slice(&(height as u64).to_be_bytes());
+    pos += HEIGHT_LEN;
+    out[pos..pos + NEXT_VAL_SET_HASH_LEN].copy_from_slice(&header.next_validators_hash);
+    pos += NEXT_VAL_SET_HASH_LEN;
+    for v in validators {
+        if v.pubkey.len() != 32 || v.relayer_address.len() != 20 || v.bls_key.len() != 48 {
+            return Err(PrecompileError::InvalidInput);
+        }
+        out[pos..pos + 32].copy_from_slice(&v.pubkey);
+        pos += 32;
+        out[pos..pos + 8].copy_from_slice(&(v.voting_power as u64).to_be_bytes());
+        pos += 8;
+        out[pos..pos + 20].copy_from_slice(&v.relayer_address);
+        pos += 20;
+        out[pos..pos + 48].copy_from_slice(&v.bls_key);
+        pos += 48;
+    }
+    Ok(out)
+}
+
+/// Trim NUL bytes from both ends (`bytes.Trim(_, "\x00")`).
+fn trim_nul(b: &[u8]) -> &[u8] {
+    let start = b.iter().position(|&x| x != 0).unwrap_or(b.len());
+    let end = b.iter().rposition(|&x| x != 0).map_or(start, |i| i + 1);
+    &b[start..end]
+}
+
+/// BEP-682 `validateUniqueValidatorSet`: reject duplicate `address` and
+/// `pubkey` always; duplicate `bls_key` / `relayer_address` only when non-zero.
+fn validate_unique_validator_set(validators: &[ValidatorInfo]) -> Result<(), PrecompileError> {
+    use std::collections::HashSet;
+    let mut addrs = HashSet::new();
+    let mut pubkeys = HashSet::new();
+    let mut bls = HashSet::new();
+    let mut relayers = HashSet::new();
+    let is_zero = |b: &[u8]| b.iter().all(|&x| x == 0);
+    for v in validators {
+        if !addrs.insert(v.address()) {
+            return Err(PrecompileError::InvalidInput);
+        }
+        if !pubkeys.insert(v.pubkey.clone()) {
+            return Err(PrecompileError::InvalidInput);
+        }
+        if !v.bls_key.is_empty() && !is_zero(&v.bls_key) && !bls.insert(v.bls_key.clone()) {
+            return Err(PrecompileError::InvalidInput);
+        }
+        if !v.relayer_address.is_empty()
+            && !is_zero(&v.relayer_address)
+            && !relayers.insert(v.relayer_address.clone())
+        {
+            return Err(PrecompileError::InvalidInput);
+        }
+    }
+    Ok(())
 }
 
 // ── Internal helpers ──────────────────────────────────────────────────────────
@@ -372,11 +591,14 @@ mod tests {
     }
 
     #[test]
-    fn test_valid_parse_returns_not_implemented() {
+    fn test_undecodable_light_block_rejected() {
+        // A single 0x00 byte is not a decodable protobuf `LightBlock`
+        // (field number 0 is invalid), so validation fails → the CALL burns all
+        // forwarded gas, matching bsc-geth.
         let input = build_input(&build_cs_bytes(1), &[0x00]);
         assert_eq!(
             run(&input, COMETBFT_VALIDATE_GAS, false),
-            Err(PrecompileError::NotImplemented)
+            Err(PrecompileError::InvalidInput)
         );
     }
 

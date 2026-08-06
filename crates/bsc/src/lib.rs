@@ -1,10 +1,10 @@
 pub mod blacklist;
 pub mod consensus;
 pub mod fork_id;
-pub mod system_contract_upgrades;
 pub mod genesis;
 pub mod parlia_config;
 pub mod precompiles;
 pub mod system_calls;
+pub mod system_contract_upgrades;
 pub mod timestamps;
 pub mod validation;
