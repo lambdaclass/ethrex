@@ -2017,6 +2017,22 @@ impl Blockchain {
                 return Ok(());
             }
         }
+        // BSC hardfork system-contract upgrade (Pasteur) transition block: the
+        // streaming pipeline path (`execute_block_pipeline`) captures only
+        // per-transaction state deltas, so it misses the non-transaction
+        // `SetCode` the fork applies. Route just this one block through the
+        // non-pipeline `add_block`, whose full-state `get_state_transitions`
+        // captures the upgrade. All later blocks stay on the pipeline.
+        if matches!(self.options.r#type, BlockchainType::Bsc)
+            && let Ok(parent) = find_parent_header(&block.header, &self.storage)
+            && ethrex_bsc::system_contract_upgrades::is_on_pasteur(
+                &self.storage.get_chain_config(),
+                parent.timestamp,
+                block.header.timestamp,
+            )
+        {
+            return self.add_block(block);
+        }
         let (_, result) = self.add_block_pipeline_inner(block, bal)?;
         result
     }

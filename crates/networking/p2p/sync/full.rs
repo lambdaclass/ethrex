@@ -647,11 +647,7 @@ async fn execute_blocks_per_block_fc(
         let number = block.header.number;
         let hash = block.hash();
         let blockchain_ref = blockchain.clone();
-        // Use the non-pipeline `add_block`: it captures BSC hardfork
-        // system-contract upgrades (Pasteur) via `execute_block`'s full-state
-        // `get_state_transitions`, whereas the streaming pipeline path does not
-        // see the non-transaction `SetCode`.
-        tokio::task::spawn_blocking(move || blockchain_ref.add_block(block))
+        tokio::task::spawn_blocking(move || blockchain_ref.add_block_pipeline(block, None))
             .await
             .map_err(SyncError::JoinHandle)??;
         // Route via advance_canonical_head so the no-op-on-old-block guard
