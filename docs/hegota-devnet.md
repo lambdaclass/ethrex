@@ -10,7 +10,7 @@ hegota-devnet = main       (EIP-8141 frame transactions)
               + eip-8272   (Recent Roots)
               + eip-7906   (Tx Assertions, opcodes renumbered)
               + eip-8312   (UTXO Frames, own activation timestamp)
-              + eip-7805   (FOCIL inclusion lists, own activation timestamp)
+              + eip-7805   (FOCIL inclusion lists)
               + devnet-only config, docs, scripts and the
                 ethrex-only extensions listed below
 ```
@@ -21,9 +21,9 @@ of it, plus the devnet infrastructure and the ethrex-only extensions.
 **Not yet included:**
 - **EIP-8288** (PQ sig + STARK aggregation) — deferred (upstream-blocked: no Lean leanSTARK/leanSPHINCS tooling; `AGGREGATED_VK`/hash TBD).
 
-The frame-transaction EIPs (8141/8250/8272/7906) activate together under the
-single `Fork::Hegota` / `hegota_time`. EIP-8312 and EIP-7805 each carry their own
-timestamp and are inert until a chain opts in.
+EIP-8141/8250/8272/7906 and EIP-7805 all activate together under the single
+`Fork::Hegota` / `hegota_time`, which is what the consensus layer calls `heze`.
+EIP-8312 carries its own timestamp and is inert until a chain opts in.
 
 ## Opcode allocation (0xB region)
 
@@ -60,11 +60,13 @@ EIP-7906's Constants table carries only `TXTRACE_GAS_COST`, `EVENTDATACOPY_GAS_C
 - `payer` is length-tested, never compared to numeric zero — closes a consensus-split ambiguity in the spec's pseudocode.
 
 ### EIP-7805 (FOCIL) — see `crates/blockchain/inclusion_list_{builder,validator}.rs`
-- **Does not activate at `Fork::Hegota`**: it gets its own `focilTime` chain-config timestamp. Unlike the frame-transaction EIPs, FOCIL is not EL-internal — it requires a consensus client that builds and gossips inclusion lists and drives `engine_getInclusionListV1` / `newPayloadV6` / `forkchoiceUpdatedV5`. The beacon fork carrying it upstream is `heze`, which this chain already uses to schedule `Fork::Hegota`, so riding the Hegotá ordinal would start inclusion-list duties for any FOCIL-capable CL that connected, with no way to opt out.
-- **The engine version guards resolve through `focilTime`, not Hegotá.** `newPayloadV5` and `forkchoiceUpdatedV4` are rejected only once FOCIL is active, because only V6/V5 carry `inclusionListTransactions`. Gating them on Hegotá would stop a frame-transaction chain from importing or building under a CL that speaks V4/V5, which is every CL that does not implement EIP-7805.
-- While `focilTime` is unset the FOCIL engine methods are not advertised at all, so a FOCIL-capable CL fails capability negotiation rather than half-enabling the feature.
+- **Activates at `Fork::Hegota`, with no separate knob.** `hegota_time` and the consensus layer's `heze` fork are the same activation point by construction: the devnet fixture sets `heze_fork_epoch`, and `ethereum-genesis-generator` derives the execution genesis's `bogotaTime` from it. Introducing a second timestamp would create two clocks for one fork, and any gap between them is a halt window.
+- The engine version guards resolve through `is_hegota_activated`: `newPayloadV5` and `forkchoiceUpdatedV4` are rejected from Hegotá on, because only V6/V5 carry `inclusionListTransactions`. This mirrors how a consensus client picks the version from its own fork — Lighthouse maps `ForkName::Gloas` to `newPayloadV5` + V4 attributes and `ForkName::Heze` to `newPayloadV6` + V5 attributes, with **no fallback** (every branch is `if capability { call } else { Err(RequiredMethodUnsupported) }`).
+- **Consequence: the execution and consensus upgrades are atomic.** Hegotá is already active on the running devnet, so a node on this branch demands V6/V5 immediately. Deploying it under a client that speaks only V5/V4 halts that node, and swapping the client first halts it the other way. Plan the two as one operation; there is no inert intermediate state.
 - Frame transactions are excluded from the IL satisfaction check, so frame-tx omission is always excused. That is the correct interim behaviour under EIP-8369 until Profile 2 enforcement is specified.
-- **The consensus client is the gating dependency.** The running `ethpandaops/lighthouse:glamsterdam-devnet-7` has no FOCIL support at all: its `unstable` base carries no `getInclusionListV1`, `forkchoiceUpdatedV5` or `newPayloadV6`. `sigp/lighthouse@focil` is a strict superset of that base — same `ForkName` list through `Gloas`/`Heze`, `JsonPayloadAttributesV4`/`V5` both carrying `slot_number` and `target_gas_limit`, plus the three FOCIL methods — and Teku's `prototype/focil` matches. Whether either also handles the rest of the devnet-7 network config is unproven, since both sit ~100+ commits behind their own master. Because the two timestamps are independent, this is testable on a scratch enclave without touching the live chain.
+- **`heze` is already scheduled on the live devnet; only the client binary is behind.** `/network-configs/config.yaml` carries `HEZE_FORK_VERSION: 0x90000038` and `HEZE_FORK_EPOCH: 2`, but `ethpandaops/lighthouse:glamsterdam-devnet-7` is built from a branch whose `ForkName` ends at `Gloas`, so it parses neither and `/eth/v1/config/spec` reports no heze. That is why a stock client has been driving the frame-transaction stack. **No re-genesis is needed** — only a heze-aware image. The epoch is long past (heze is epoch 2, the chain is past epoch 3400), so such an image enters heze the moment it starts.
+
+- **The client to move to is `sigp/lighthouse@focil`.** It is a strict superset of the `unstable` base the devnet-7 images build from: the same `ForkName` list through `Gloas`/`Heze`, `JsonPayloadAttributesV4`/`V5` both carrying `slot_number` (EIP-7843) and `target_gas_limit`, plus `getInclusionListV1`, `forkchoiceUpdatedV5` and `newPayloadV6`. Teku's `prototype/focil` matches, including `slotNumber` and `targetGasLimit` on `PayloadAttributesV4`. A newer stock build is not a substitute: `unstable` rejects a Heze payload outright with `UnsupportedForkVariant`. What remains unproven is the rest of the devnet-7 network config, since both branches sit ~100+ commits behind their own master; measure on a scratch enclave rather than inferring from branch dates.
 
 ### EIP-8369 (FOCIL Eligibility)
 - `AA_VOPS_SLOT_COUNT` = **4**, as a chain-config parameter rather than a constant. EIP-8369 leaves the value unset with a candidate range of 2 to 4 "pending benchmarks", so this fills a blank the spec left open rather than diverging from it.

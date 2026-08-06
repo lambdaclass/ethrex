@@ -230,11 +230,10 @@ unset (fall back to F).
 ### Variant: a config field the genesis generator cannot emit
 
 Some behavior is gated on a chain-config field `ethereum-genesis-generator` knows
-nothing about. EIP-8312's `utxoFramesTime` and EIP-7805's `focilTime` are the two
-current examples. Path 2 applies unchanged — schedule it in the future, swap
-binaries while still pre-activation — plus one step: write the field into each
-EL's `/network-configs/genesis.json` after the enclave is up, then restart that
-EL.
+nothing about (EIP-8312's `utxoFramesTime` is the current example). Path 2 applies
+unchanged — schedule it in the future, swap binaries while still pre-activation —
+plus one step: write the field into each EL's `/network-configs/genesis.json` after
+the enclave is up, then restart that EL.
 
 Three things make this step go wrong quietly rather than loudly:
 
@@ -253,41 +252,68 @@ Three things make this step go wrong quietly rather than loudly:
   by rewriting history — so the failure looks like "the feature doesn't work" rather
   than a split.
 
-#### `focilTime` is not like the others: it halts the node it is set on
+## FOCIL (EIP-7805): the one upgrade that is not EL-only
 
-`utxoFramesTime` widens what the EL accepts, so a node that has it while its peers
-do not still follows the chain. `focilTime` changes the **Engine API contract**:
-from `T`, `engine_newPayloadV5` and `engine_forkchoiceUpdatedV4` return
-`UnsupportedFork`, because only V6/V5 carry `inclusionListTransactions`. A
-consensus client that cannot drive V6 has nothing left to call, so that EL stops
-importing and stops building. This is per-node liveness loss at a timestamp, not a
-degraded feature.
+Every other change in this guide is state-preserving on the execution side and
+invisible to the consensus client. FOCIL is not, and it does not fit Path 1, Path
+1b or Path 2.
 
-So `focilTime` has a prerequisite the other fields do not: **the consensus client
-must implement EIP-7805 before the field is set at all**, and this devnet runs
-`ethpandaops/lighthouse:glamsterdam-devnet-7`, which does not.
+EIP-7805 activates at `Fork::Hegota`, which the consensus layer calls `heze`.
+There is no separate config knob and deliberately so: `hegota_time` is derived
+from `heze_fork_epoch` by `ethereum-genesis-generator`, so the two layers already
+share one activation point, and a second timestamp would create two clocks for one
+fork with a halt window between them.
 
-`sigp/lighthouse@focil` is the candidate, and on the axes that matter it is a
-strict superset of `unstable` (the branch the devnet-7 images build from): the
-same `ForkName` list through `Gloas` and `Heze`, `JsonPayloadAttributesV4` and
-`V5` both carrying `slot_number` and `target_gas_limit`, and the engine set
-extended with `forkchoiceUpdatedV5`, `newPayloadV6` and `getInclusionListV1`.
-Teku's `prototype/focil` matches on all of it too. What is unproven is whether
-either handles the rest of the devnet-7 network config, since both branches sit
-~100+ commits behind their own master; branch dates alone do not settle it, so
-measure rather than infer.
+**Both layers must move together.** From Hegotá on, an EL carrying FOCIL returns
+`UnsupportedFork` for `engine_newPayloadV5` and `engine_forkchoiceUpdatedV4`,
+because only V6/V5 carry `inclusionListTransactions`. Hegotá is long past on this
+devnet, so:
 
-Test that on a scratch enclave with `focilTime` set, never on the live chain.
-Swapping the CL image on the running devnet is a separate question from Path 1:
-that path covers ELs, and the CL genesis state is frozen because re-genesis is
-forbidden. Settle the swap procedure before scheduling a timestamp.
+- new EL under the current client → that node demands V6, the client speaks only
+  V5/V4, the node stops importing and building;
+- new client under the current EL → the client demands V6, the EL does not
+  advertise it, same outcome.
 
-Verify the prerequisite before scheduling, not after: with `focilTime` unset the
-EL omits `engine_getInclusionListV1`, `engine_forkchoiceUpdatedV5` and
-`engine_newPayloadV6` from `engine_exchangeCapabilities`, so a FOCIL-capable CL
-fails negotiation rather than half-enabling itself. That makes "does this CL
-actually speak FOCIL" answerable on a scratch enclave with `focilTime` set,
-without touching the live chain.
+There is no inert intermediate state and no ordering that avoids one. Consensus
+clients have no fallback either: every branch is `if capability { call } else {
+Err(RequiredMethodUnsupported) }`.
+
+### The consensus side is already scheduled
+
+`/network-configs/config.yaml` on the live devnet already carries
+`HEZE_FORK_VERSION: 0x90000038` and `HEZE_FORK_EPOCH: 2`. The running
+`ethpandaops/lighthouse:glamsterdam-devnet-7` is built from a branch whose
+`ForkName` stops at `Gloas`, so it parses neither and `/eth/v1/config/spec`
+reports no heze at all — which is exactly why a stock client has been driving the
+frame-transaction stack this whole time.
+
+So this needs **no re-genesis**, only a heze-aware image. Note the epoch is long
+past (heze is epoch 2, the chain is past epoch 3400), so a FOCIL-capable client
+enters heze the moment it starts; there is no scheduling margin to work with.
+
+### What to move to
+
+`sigp/lighthouse@focil` is a strict superset of `unstable` (the branch the
+devnet-7 images build from) on every axis that matters: the same `ForkName` list
+through `Gloas` and `Heze`, `JsonPayloadAttributesV4` and `V5` both carrying
+`slot_number` and `target_gas_limit`, and the engine set extended with
+`forkchoiceUpdatedV5`, `newPayloadV6` and `getInclusionListV1`. Teku's
+`prototype/focil` matches on all of it. A newer stock build is not a substitute:
+`unstable` rejects a Heze payload outright with `UnsupportedForkVariant`.
+
+What is unproven is whether either handles the rest of the devnet-7 network
+config, since both branches sit ~100+ commits behind their own master. Branch
+dates do not settle it. Measure on a scratch enclave, never on the live chain.
+
+### Before attempting this
+
+Two things are unresolved and must be settled first, not discovered mid-upgrade:
+
+- **The client swap procedure itself.** Path 1 covers ELs. Replacing a running
+  consensus container is a different operation, and the CL genesis state is frozen
+  because re-genesis is forbidden.
+- **The rollback.** Because both layers move at once and Hegotá is already active,
+  reverting means reverting both. Establish that path before starting.
 
 ## Re-genesis — FORBIDDEN
 
