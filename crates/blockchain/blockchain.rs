@@ -45,6 +45,7 @@
 pub mod constants;
 pub mod error;
 pub mod focil_eligibility;
+pub mod focil_profile2;
 pub mod fork_choice;
 pub mod inclusion_list_builder;
 pub mod inclusion_list_validator;
@@ -2554,16 +2555,39 @@ impl Blockchain {
             .refresh_all_from(&post_state, &crypto)
             .map_err(|e| ChainError::Custom(format!("IL validator refresh failed: {e}")))?;
 
-        match validator.check(
+        let profile_2 = focil_profile2::BlockchainProfile2Evaluator::new(self, &header, gas_left);
+        let report = validator.check_with_profile_2(
             il,
             &block_tx_hashes,
             gas_left,
             &header,
             &chain_config,
             &crypto,
-        ) {
-            Ok(()) => Ok(()),
-            Err(unsat) => Err(ChainError::IlUnsatisfied {
+            Some(&profile_2),
+        );
+
+        // EIP-8369 Profile 2 is observe-only here: only `unsatisfied` (the
+        // Profile 1 verdict) may affect the payload's outcome.
+        for tx_hash in &report.profile_2_unjustified {
+            info!(
+                target: "focil::profile2",
+                %tx_hash,
+                block_hash = %header.hash(),
+                "profile_2_unjustified: omitted frame tx would have passed EIP-8369 Profile 2 eligibility replay"
+            );
+        }
+        for tx_hash in &report.profile_2_undecided {
+            info!(
+                target: "focil::profile2",
+                %tx_hash,
+                block_hash = %header.hash(),
+                "profile_2_undecided: omitted frame tx's EIP-8369 Profile 2 eligibility could not be decided"
+            );
+        }
+
+        match report.unsatisfied {
+            None => Ok(()),
+            Some(unsat) => Err(ChainError::IlUnsatisfied {
                 tx_hash: unsat.tx_hash,
             }),
         }

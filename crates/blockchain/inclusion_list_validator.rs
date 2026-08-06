@@ -23,28 +23,73 @@
 //! crypto surface needed). The Phase 5 caller already has a `NativeCrypto` in
 //! scope, so this adds no new dependency at the call site.
 //!
-//! ## No EVM
+//! ## No EVM — except where EIP-8369 requires one
 //!
-//! The satisfaction check NEVER calls into the EVM. Every classification is a
-//! state comparison against the per-sender tracker, exactly per the spec's
-//! "No re-execution of IL transactions" requirement.
+//! Two different specs govern the two VOPS profiles, and each is followed to
+//! the letter:
+//!
+//! - **Profile 1** is governed by EIP-7805's "No re-execution of IL
+//!   transactions". [`InclusionListSatisfactionValidator::check`] /
+//!   [`InclusionListSatisfactionValidator::check_with_profile_2`]'s Profile 1
+//!   path NEVER calls into the EVM: every classification is a state
+//!   comparison against the per-sender tracker.
+//! - **Profile 2** is governed by EIP-8369, which instead requires replaying
+//!   the transaction's validation prefix to decide stateful eligibility. That
+//!   replay runs entirely behind the [`IlProfile2Evaluator`] trait — this
+//!   module has no `ethrex-vm` dependency and never runs it directly — and
+//!   its verdict ([`Profile2Eligibility`]) never feeds back into the Profile 1
+//!   path or into `unsatisfied`. See [`crate::focil_profile2`] for the
+//!   concrete evaluator and [`IlCheckReport`] for what its verdict may and may
+//!   not affect.
 
 use std::collections::HashSet;
 
 use ethrex_common::{
     Address, H256, U256,
     constants::EMPTY_KECCAK_HASH,
-    types::{BlockHeader, ChainConfig, EIP7702_DELEGATED_CODE_LEN, Transaction},
+    types::{BlockHeader, ChainConfig, EIP7702_DELEGATED_CODE_LEN, FrameTransaction, Transaction},
 };
 use ethrex_crypto::Crypto;
 use ethrex_storage::Store;
 use rustc_hash::FxHashMap;
 
 use crate::focil_eligibility::{
-    SenderCode, VopsProfile, classify, classify_sender_code, fee_valid,
+    SenderCode, VopsProfile, classify, classify_sender_code, fee_valid, fill_il_budget,
 };
 use crate::inclusion_list_builder::{AccountStateView, IlStateProvider, IlStateProviderError};
 use crate::mempool::transaction_intrinsic_gas;
+
+/// Verdict from an [`IlProfile2Evaluator`] for one omitted EIP-8369 Profile 2
+/// (`VopsProfile::TwoCandidate`) inclusion-list transaction.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Profile2Eligibility {
+    /// The transaction would have passed EIP-8369 Profile 2 stateful
+    /// eligibility replay (recent-root references, payer resolution, and the
+    /// AA-VOPS validation-prefix replay) at the evaluation index: its
+    /// omission is the kind EIP-8369 makes enforceable.
+    Eligible,
+    /// A Profile 2 eligibility condition failed (budget, recent-root
+    /// reference, payer resolution, or a validation-trace violation such as
+    /// [`ethrex_levm::validation_observer::FrameSimViolation::StorageOutsideVopsSurface`]):
+    /// the omission is excused.
+    Ineligible(String),
+    /// Eligibility could not be decided (e.g. an EIP-8312 UTXO frame, which
+    /// EIP-8369 does not model, or a VM construction failure). Per the
+    /// governing asymmetry, an undecidable omission is excused rather than
+    /// risking an unjustified verdict.
+    Undecided(String),
+}
+
+/// Decides whether an omitted Profile 2 (`VopsProfile::TwoCandidate`)
+/// inclusion-list transaction would have passed EIP-8369 stateful
+/// eligibility replay.
+///
+/// Kept as a narrow trait, exactly like [`IlStateProvider`], so the validator
+/// gains no dependency on `ethrex-vm` and stays testable against an
+/// in-memory fake.
+pub trait IlProfile2Evaluator {
+    fn evaluate(&self, tx: &FrameTransaction) -> Profile2Eligibility;
+}
 
 /// Adapter from `Store` (keyed by state root) to the IL builder/validator's
 /// narrow `IlStateProvider` trait. Used by `add_block_pipeline_with_il` to
@@ -182,6 +227,27 @@ impl std::fmt::Display for IlUnsatisfied {
 
 impl std::error::Error for IlUnsatisfied {}
 
+/// Result of [`InclusionListSatisfactionValidator::check_with_profile_2`].
+///
+/// `unsatisfied` alone is the consensus verdict — identical to what
+/// [`InclusionListSatisfactionValidator::check`] returns for the same inputs.
+/// The two `Vec`s are observational only (Phase 5 of EIP-8369 Profile 2
+/// support): nothing reads them to decide `unsatisfied`, and no caller may
+/// turn an entry in either of them into an `IlUnsatisfied` verdict.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct IlCheckReport {
+    /// The Profile 1 verdict, exactly as [`InclusionListSatisfactionValidator::check`]
+    /// would have produced it.
+    pub unsatisfied: Option<IlUnsatisfied>,
+    /// Omitted Profile 2 candidates an [`IlProfile2Evaluator`] classified
+    /// [`Profile2Eligibility::Eligible`]: the omission EIP-8369 would make
+    /// enforceable, were Profile 2 enforcement wired to the verdict.
+    pub profile_2_unjustified: Vec<H256>,
+    /// Omitted Profile 2 candidates an [`IlProfile2Evaluator`] classified
+    /// [`Profile2Eligibility::Undecided`].
+    pub profile_2_undecided: Vec<H256>,
+}
+
 impl InclusionListSatisfactionValidator {
     /// Build the per-sender tracker from the unique senders in `il`. A read
     /// of `Ok(None)` is treated as an empty account (nonce 0, balance 0) per
@@ -257,23 +323,10 @@ impl InclusionListSatisfactionValidator {
         Ok(())
     }
 
-    /// Return `Ok(())` iff every inclusion-list transaction is classified as
-    /// non-appendable (`present | blob | frame | unrecoverable |
-    /// intrinsic_gas_too_low | insufficient_gas | below_base_fee |
-    /// invalid_sender | invalid_nonce | invalid_balance`).
-    /// Return `Err(IlUnsatisfied)` for the first IL transaction that is missing
-    /// AND could still have been validly appended to the end of the block.
-    ///
-    /// This mirrors EELS `check_inclusion_list_transactions` +
-    /// `check_transaction` (forks/amsterdam/fork.py): for each missing IL tx it
-    /// replays exactly the validity gates that block inclusion would apply, and
-    /// reports the block as unsatisfied only when every gate passes.
-    ///
-    /// `block_txs` is the set of transaction hashes included in the block;
-    /// position within the block does not matter (per the EIP rationale).
-    /// `gas_left` is `block.gas_limit - cumulative_gas_used` post-execution.
-    /// `header` and `config` describe the block under check; they supply the
-    /// fork (for the intrinsic-gas calculation) and the `base_fee_per_gas`.
+    /// `Ok(())` wrapper over [`Self::check_with_profile_2`] with no Profile 2
+    /// evaluator: the Profile 1 path — the only one that decides the returned
+    /// verdict — is byte-identical to a version of this method that never
+    /// mentions Profile 2.
     ///
     /// This method MUST NOT call into the EVM. It is a pure state-comparison
     /// pass over the per-sender tracker plus stateless transaction validity
@@ -287,25 +340,91 @@ impl InclusionListSatisfactionValidator {
         config: &ChainConfig,
         crypto: &dyn Crypto,
     ) -> Result<(), IlUnsatisfied> {
-        for tx_il in il {
+        self.check_with_profile_2(il, block_txs, gas_left, header, config, crypto, None)
+            .unsatisfied
+            .map_or(Ok(()), Err)
+    }
+
+    /// The Profile 1 satisfaction pass, extended with an observational EIP-8369
+    /// Profile 2 pass over the same inclusion list.
+    ///
+    /// `unsatisfied` is `Ok(())`/`Err` iff every inclusion-list transaction is
+    /// classified as non-appendable (`present | blob | frame |
+    /// unrecoverable | intrinsic_gas_too_low | insufficient_gas |
+    /// below_base_fee | invalid_sender | invalid_nonce | invalid_balance`),
+    /// for the first IL transaction that is missing AND could still have been
+    /// validly appended to the end of the block. This mirrors EELS
+    /// `check_inclusion_list_transactions` + `check_transaction`
+    /// (forks/amsterdam/fork.py): for each missing IL tx it replays exactly
+    /// the validity gates that block inclusion would apply, and reports the
+    /// block as unsatisfied only when every gate passes. `unsatisfied` alone
+    /// is the consensus verdict; see [`IlCheckReport`] for what the rest of
+    /// the report is (and is not) for.
+    ///
+    /// `profile_2`, when present, is consulted for every omitted Profile 2
+    /// candidate (`VopsProfile::TwoCandidate`) whose EIP-8369 static budget
+    /// fill admitted it and whose fee would have been valid against `header`
+    /// — the same two conditions EIP-8369 requires before a candidate's
+    /// eligibility is even worth replaying. `fill_il_budget` runs once, before
+    /// the loop, and its outcomes are indexed positionally against `il`,
+    /// exactly mirroring EIP-8369's own ordered, single-pass budget fill.
+    ///
+    /// `block_txs` is the set of transaction hashes included in the block;
+    /// position within the block does not matter (per the EIP rationale).
+    /// `gas_left` is `block.gas_limit - cumulative_gas_used` post-execution.
+    /// `header` and `config` describe the block under check; they supply the
+    /// fork (for the intrinsic-gas calculation) and the `base_fee_per_gas`.
+    #[allow(clippy::too_many_arguments)]
+    pub fn check_with_profile_2(
+        &self,
+        il: &[Transaction],
+        block_txs: &HashSet<H256>,
+        gas_left: u64,
+        header: &BlockHeader,
+        config: &ChainConfig,
+        crypto: &dyn Crypto,
+        profile_2: Option<&dyn IlProfile2Evaluator>,
+    ) -> IlCheckReport {
+        let utxo_frames_active = config.is_utxo_frames_activated(header.timestamp);
+        let base_fee = header.base_fee_per_gas.unwrap_or_default();
+        let fill_outcomes = fill_il_budget(il, utxo_frames_active);
+
+        let mut report = IlCheckReport::default();
+
+        for (tx_il, fill_outcome) in il.iter().zip(fill_outcomes.iter()) {
             // present in block (anywhere) → satisfied
             if block_txs.contains(&tx_il.hash(crypto)) {
                 continue;
             }
 
-            // EIP-8369 decides which omissions are enforceable at all. Anything
-            // that is not Profile 1 is excused here:
-            //
-            // - `Ineligible` covers every blob carrier (blob gas has its own
-            //   target and maximum, and EIP-8369 defines no omission check over
-            //   that second budget) and any frame transaction that is not a
-            //   Profile 2 candidate.
-            // - `TwoCandidate` is enforceable in principle, but only after
-            //   stateful eligibility replay at the evaluation index. This pass
-            //   never calls into the EVM, so it cannot decide that, and an
-            //   omission that cannot be shown unjustified is excused.
-            let utxo_frames_active = config.is_utxo_frames_activated(header.timestamp);
-            if classify(tx_il, utxo_frames_active) != VopsProfile::One {
+            let profile = classify(tx_il, utxo_frames_active);
+
+            // EIP-8369 Profile 2: observational only (see `IlCheckReport`).
+            // Never contributes to `report.unsatisfied`.
+            if profile == VopsProfile::TwoCandidate {
+                if let Some(evaluator) = profile_2
+                    && fill_outcome.is_admitted()
+                    && fee_valid(tx_il, base_fee)
+                    && let Transaction::FrameTransaction(frame_tx) = tx_il
+                {
+                    match evaluator.evaluate(frame_tx) {
+                        Profile2Eligibility::Eligible => {
+                            report.profile_2_unjustified.push(tx_il.hash(crypto));
+                        }
+                        Profile2Eligibility::Undecided(_) => {
+                            report.profile_2_undecided.push(tx_il.hash(crypto));
+                        }
+                        Profile2Eligibility::Ineligible(_) => {}
+                    }
+                }
+                continue;
+            }
+
+            // EIP-8369 decides which omissions are enforceable at all.
+            // `Ineligible` covers every blob carrier (blob gas has its own
+            // target and maximum, and EIP-8369 defines no omission check over
+            // that second budget) and everything else outside both profiles.
+            if profile != VopsProfile::One {
                 continue;
             }
 
@@ -334,7 +453,7 @@ impl InclusionListSatisfactionValidator {
             // above the max fee, means the transaction could never be validly
             // appended → satisfied. The priority-versus-max condition is part of
             // the rule and not implied by the base-fee comparison.
-            if !fee_valid(tx_il, header.base_fee_per_gas.unwrap_or_default()) {
+            if !fee_valid(tx_il, base_fee) {
                 continue;
             }
 
@@ -342,12 +461,12 @@ impl InclusionListSatisfactionValidator {
             let entry = match self.il_senders.get(&sender) {
                 Some(entry) => *entry,
                 // The sender was not registered at construction. This means
-                // the IL handed to `check` differs from the one handed to
-                // `new`, which is a caller bug. Be defensive: treat the
-                // sender as having empty state (an EOA with nonce 0, balance
-                // 0), which makes the tx unable to be included (nonce/balance
-                // mismatch) and counts as satisfied. This branch is
-                // unreachable in normal flow.
+                // the IL handed to `check_with_profile_2` differs from the one
+                // handed to `new`, which is a caller bug. Be defensive: treat
+                // the sender as having empty state (an EOA with nonce 0,
+                // balance 0), which makes the tx unable to be included
+                // (nonce/balance mismatch) and counts as satisfied. This
+                // branch is unreachable in normal flow.
                 None => IlSenderState {
                     nonce: 0,
                     balance: U256::zero(),
@@ -384,11 +503,16 @@ impl InclusionListSatisfactionValidator {
                 continue;
             }
 
-            // unsatisfied
-            return Err(IlUnsatisfied {
-                tx_hash: tx_il.hash(crypto),
-            });
+            // unsatisfied. Keep the FIRST one found (matches the short-circuit
+            // `check` used before Profile 2 observation existed); keep
+            // scanning the rest of `il` regardless, so later Profile 2
+            // candidates are still observed.
+            if report.unsatisfied.is_none() {
+                report.unsatisfied = Some(IlUnsatisfied {
+                    tx_hash: tx_il.hash(crypto),
+                });
+            }
         }
-        Ok(())
+        report
     }
 }

@@ -15,6 +15,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use bytes::Bytes;
+use ethrex_blockchain::focil_profile2::BlockchainProfile2Evaluator;
 use ethrex_blockchain::inclusion_list_builder::InclusionListBuilder;
 use ethrex_blockchain::inclusion_list_validator::{
     InclusionListSatisfactionValidator, StoreIlStateProvider,
@@ -23,7 +24,7 @@ use ethrex_common::H256;
 use ethrex_common::types::{MAX_BYTES_PER_INCLUSION_LIST, Transaction};
 use ethrex_crypto::NativeCrypto;
 use serde_json::Value;
-use tracing::debug;
+use tracing::{debug, info};
 
 use crate::{
     rpc::{RpcApiContext, RpcHandler},
@@ -135,16 +136,37 @@ pub async fn block_satisfies_inclusion_list(
     let gas_left = header.gas_limit.saturating_sub(header.gas_used);
     let chain_config = context.storage.get_chain_config();
 
-    Ok(validator
-        .check(
-            inclusion_list,
-            &block_tx_hashes,
-            gas_left,
-            &header,
-            &chain_config,
-            &crypto,
-        )
-        .is_ok())
+    let profile_2 = BlockchainProfile2Evaluator::new(&context.blockchain, &header, gas_left);
+    let report = validator.check_with_profile_2(
+        inclusion_list,
+        &block_tx_hashes,
+        gas_left,
+        &header,
+        &chain_config,
+        &crypto,
+        Some(&profile_2),
+    );
+
+    // EIP-8369 Profile 2 is observe-only here: only `unsatisfied` (the
+    // Profile 1 verdict) may affect the returned satisfaction result.
+    for tx_hash in &report.profile_2_unjustified {
+        info!(
+            target: "focil::profile2",
+            %tx_hash,
+            %block_hash,
+            "profile_2_unjustified: omitted frame tx would have passed EIP-8369 Profile 2 eligibility replay"
+        );
+    }
+    for tx_hash in &report.profile_2_undecided {
+        info!(
+            target: "focil::profile2",
+            %tx_hash,
+            %block_hash,
+            "profile_2_undecided: omitted frame tx's EIP-8369 Profile 2 eligibility could not be decided"
+        );
+    }
+
+    Ok(report.unsatisfied.is_none())
 }
 
 #[derive(Debug)]

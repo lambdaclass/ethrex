@@ -10,6 +10,7 @@ mod eip8312_cross_path_tests;
 mod eip8312_mempool_tests;
 mod explicit_blob_tx_tests;
 mod focil_eligibility_tests;
+mod focil_profile2_tests;
 mod focil_tests;
 #[cfg(feature = "c-kzg")]
 mod frame_blob_tx_tests;

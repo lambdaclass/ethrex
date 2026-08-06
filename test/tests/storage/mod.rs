@@ -1,5 +1,6 @@
 mod deferred_persistence_tests;
 mod fcu_race_tests;
+mod fkv_noncanonical_root_tests;
 mod frame_receipt_persistence_tests;
 mod storage_batch_tests;
 mod store_tests;
