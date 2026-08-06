@@ -2189,18 +2189,37 @@ impl Store {
         }
     }
 
-    /// Serves `eth_getBalance` (and the mempool's sender lookups). Errors with
-    /// [`StoreError::MissingStateRoot`] for a known block whose state this node
-    /// no longer holds, rather than answering from the on-disk trie's current
-    /// state; `Ok(None)` keeps meaning "no such account".
+    /// Serves `eth_getBalance` (and the mempool's sender lookups), and through
+    /// [`Self::get_code_by_account_address`] and
+    /// [`Self::get_nonce_by_account_address`] also `eth_getCode` and
+    /// `eth_getTransactionCount`. Errors with [`StoreError::MissingStateRoot`]
+    /// for a known block whose state this node no longer holds, rather than
+    /// answering from the on-disk trie's current state; `Ok(None)` keeps meaning
+    /// "no such account".
+    ///
+    /// Resolves against whichever trie *this block's header* addresses — see
+    /// [`Self::header_addresses_binary_trie`] — so a pre-activation block keeps
+    /// answering out of the MPT after the chain has flipped, and both sides
+    /// carry their own availability guard.
+    ///
+    /// [`AccountInfo`] rather than an `AccountState` is what makes one shared
+    /// path possible across the two tries: it has no `storage_root`, which the
+    /// binary trie has no way to report (see `pbt_state::get_account_info` and
+    /// `StoreVmDatabase::account_state_from_binary_trie`). All three account
+    /// RPCs only ever wanted the balance, the nonce and the code hash.
     pub fn get_account_info_by_hash(
         &self,
         block_hash: BlockHash,
         address: Address,
     ) -> Result<Option<AccountInfo>, StoreError> {
-        let Some(state_trie) = self.state_trie_checked(block_hash)? else {
+        let Some(header) = self.get_block_header_by_hash(block_hash)? else {
             return Ok(None);
         };
+        if self.header_addresses_binary_trie(&header) {
+            self.ensure_binary_trie_state(block_hash, &header)?;
+            return self.get_binary_account_info(header.state_root, address);
+        }
+        let state_trie = self.state_trie_checked_for_header(&header)?;
         let hashed_address = hash_address_fixed(&address);
 
         let Some(encoded_state) = state_trie.get(hashed_address.as_bytes())? else {
@@ -2245,8 +2264,13 @@ impl Store {
         ))
     }
 
-    /// Serves `eth_getCode`. See [`Self::state_trie_checked`] for the behaviour
-    /// at a block whose state this node no longer holds.
+    /// Serves `eth_getCode`. See [`Self::get_account_info_by_hash`] for which
+    /// trie the block's header resolves against, and for the behaviour at a
+    /// block whose state this node no longer holds.
+    ///
+    /// The bytecode itself is unaffected by the activation: it is fetched from
+    /// the code table by hash, which is one table for both tries. Only reaching
+    /// the hash goes through state.
     pub async fn get_code_by_account_address(
         &self,
         block_number: BlockNumber,
@@ -2255,19 +2279,15 @@ impl Store {
         let Some(block_hash) = self.get_canonical_block_hash(block_number).await? else {
             return Ok(None);
         };
-        let Some(state_trie) = self.state_trie_checked(block_hash)? else {
+        let Some(account_info) = self.get_account_info_by_hash(block_hash, address)? else {
             return Ok(None);
         };
-        let hashed_address = hash_address_fixed(&address);
-        let Some(encoded_state) = state_trie.get(hashed_address.as_bytes())? else {
-            return Ok(None);
-        };
-        let account_state = AccountState::decode(&encoded_state)?;
-        self.get_account_code(account_state.code_hash)
+        self.get_account_code(account_info.code_hash)
     }
 
-    /// Serves `eth_getTransactionCount`. See [`Self::state_trie_checked`] for the
-    /// behaviour at a block whose state this node no longer holds.
+    /// Serves `eth_getTransactionCount`. See [`Self::get_account_info_by_hash`]
+    /// for which trie the block's header resolves against, and for the behaviour
+    /// at a block whose state this node no longer holds.
     pub async fn get_nonce_by_account_address(
         &self,
         block_number: BlockNumber,
@@ -2276,15 +2296,9 @@ impl Store {
         let Some(block_hash) = self.get_canonical_block_hash(block_number).await? else {
             return Ok(None);
         };
-        let Some(state_trie) = self.state_trie_checked(block_hash)? else {
-            return Ok(None);
-        };
-        let hashed_address = hash_address_fixed(&address);
-        let Some(encoded_state) = state_trie.get(hashed_address.as_bytes())? else {
-            return Ok(None);
-        };
-        let account_state = AccountState::decode(&encoded_state)?;
-        Ok(Some(account_state.nonce))
+        Ok(self
+            .get_account_info_by_hash(block_hash, address)?
+            .map(|account_info| account_info.nonce))
     }
 
     /// Applies account updates based on the block's latest storage state
@@ -3208,21 +3222,35 @@ impl Store {
     /// Serves `eth_getStorageAt`. Guarded: a known block whose state this node no
     /// longer holds is [`StoreError::MissingStateRoot`], not a successful read of
     /// the on-disk trie's current slot value.
+    ///
+    /// Resolves against whichever trie *this block's header* addresses — see
+    /// [`Self::header_addresses_binary_trie`].
+    ///
+    /// The binary side does no account lookup first, and does not need one: the
+    /// slot's leaf key is derived from the address and the slot alone, so there
+    /// is no storage root to fetch and no second trie to open (see
+    /// [`Self::get_binary_storage_slot`]). The two paths still agree on the
+    /// answer for a nonexistent account, because an account with no state has no
+    /// slot leaves either, so both report `None`.
     pub fn get_storage_at(
         &self,
         block_number: BlockNumber,
         address: Address,
         storage_key: H256,
     ) -> Result<Option<U256>, StoreError> {
-        match self.get_block_header(block_number)? {
-            Some(header) => self.get_storage_at_root_inner(
-                header.state_root,
-                address,
-                storage_key,
-                RootCheck::Verify(Some(header.number)),
-            ),
-            None => Ok(None),
+        let Some(header) = self.get_block_header(block_number)? else {
+            return Ok(None);
+        };
+        if self.header_addresses_binary_trie(&header) {
+            self.ensure_binary_trie_state(header.hash(), &header)?;
+            return self.get_binary_storage_slot(header.state_root, address, storage_key);
         }
+        self.get_storage_at_root_inner(
+            header.state_root,
+            address,
+            storage_key,
+            RootCheck::Verify(Some(header.number)),
+        )
     }
 
     /// Root-addressed storage read.
@@ -3505,9 +3533,67 @@ impl Store {
         let Some(header) = self.get_block_header_by_hash(block_hash)? else {
             return Ok(None);
         };
+        Ok(Some(self.state_trie_checked_for_header(&header)?))
+    }
+
+    /// [`Self::state_trie_checked`] for a header the caller already has, so the
+    /// state-reading RPCs can decide which trie a header addresses (see
+    /// [`Self::header_addresses_binary_trie`]) without reading the header twice.
+    fn state_trie_checked_for_header(&self, header: &BlockHeader) -> Result<Trie, StoreError> {
         let trie = self.open_state_trie(header.state_root)?;
         Self::ensure_trie_holds_state_root(&trie, header.state_root, Some(header.number))?;
-        Ok(Some(trie))
+        Ok(trie)
+    }
+
+    /// The per-header trie question: does *this header's* `state_root` address
+    /// the EIP-8297 binary trie, or the MPT?
+    ///
+    /// **Per header, never per chain**, and this is the whole rule the state
+    /// RPCs turn on. It mirrors `StoreVmDatabase::open` (`crates/blockchain/vm.rs`),
+    /// which decides the same thing the same way for block execution; the two
+    /// must not drift, or a block would execute against one trie and be queried
+    /// against the other.
+    ///
+    /// A header from before the activation genuinely carries an MPT root and has
+    /// to keep resolving against the MPT forever — after the flip, across
+    /// restarts, and on either side of a reorg. Asking a chain-level question
+    /// instead (`binary_tree_scheduled()`, "have we passed it") makes the whole
+    /// pre-flip history unqueryable, which is what
+    /// `state_rpc_reads_at_pre_flip_blocks_keep_using_the_mpt_after_the_flip`
+    /// (in `test/tests/blockchain/binary_tree_shadow_tests.rs`) falsifies.
+    ///
+    /// Nothing maps a block hash to an MPT root here or anywhere else: each
+    /// header names the trie that answers for it through `header.state_root`
+    /// alone.
+    fn header_addresses_binary_trie(&self, header: &BlockHeader) -> bool {
+        self.chain_config.is_binary_tree_active(header.timestamp)
+    }
+
+    /// The binary-trie counterpart of [`Self::ensure_trie_holds_state_root`]:
+    /// refuse a header whose binary state this node does not hold.
+    ///
+    /// Without it the binary reads below would answer from whatever the
+    /// single-version binary trie currently holds — the same silently-wrong
+    /// answer the MPT guard was added to stop, just on the other trie. What
+    /// "holding it" means, and the reorg case it cannot yet see, are documented
+    /// on [`Self::has_binary_trie_state`].
+    ///
+    /// The error is [`StoreError::MissingStateRoot`], identical in shape to the
+    /// MPT side, so a caller cannot tell (and does not need to tell) which trie
+    /// was missing.
+    fn ensure_binary_trie_state(
+        &self,
+        block_hash: BlockHash,
+        header: &BlockHeader,
+    ) -> Result<(), StoreError> {
+        if self.has_binary_trie_state(block_hash, header.state_root)? {
+            Ok(())
+        } else {
+            Err(StoreError::MissingStateRoot {
+                block: Some(header.number),
+                state_root: header.state_root,
+            })
+        }
     }
 
     /// Obtain the storage trie for the given account on the given block
@@ -3539,6 +3625,15 @@ impl Store {
 
     /// Block-addressed account read. See [`Self::state_trie_checked`] for the
     /// behaviour at a block whose state this node no longer holds.
+    ///
+    /// **MPT only, deliberately.** It returns an `AccountState`, whose
+    /// `storage_root` the binary trie cannot report (see
+    /// `StoreVmDatabase::account_state_from_binary_trie` in
+    /// `crates/blockchain/vm.rs` for what filling it in costs), so past the
+    /// activation this fails loudly with [`StoreError::MissingStateRoot`] rather
+    /// than answering with a fabricated field. Nothing on the RPC path uses it:
+    /// the account RPCs go through [`Self::get_account_info_by_hash`], which is
+    /// `AccountInfo`-shaped and therefore has no such field to invent.
     pub async fn get_account_state(
         &self,
         block_number: BlockNumber,

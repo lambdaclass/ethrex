@@ -52,7 +52,7 @@ use ethrex_common::{
     Address, H160, H256, U256,
     constants::EMPTY_TRIE_HASH,
     types::{
-        AccountState, Block, BlockHeader, DEFAULT_BUILDER_GAS_CEIL, EIP1559Transaction,
+        AccountState, Block, BlockBody, BlockHeader, DEFAULT_BUILDER_GAS_CEIL, EIP1559Transaction,
         ELASTICITY_MULTIPLIER, Genesis, GenesisAccount, Transaction, TxKind,
     },
     utils::keccak,
@@ -1552,13 +1552,14 @@ async fn a_binary_read_reports_no_storage_root_even_when_the_account_has_storage
 //   * but it is no longer *addressable*: `has_state_root(header.state_root)` is
 //     false for every active header, because that root belongs to the binary
 //     trie. Execution must therefore not resolve through it (it does not — see
-//     the tests above), and every root-guarded MPT reader, which is most of the
-//     state-reading RPC surface, fails loudly at a post-flip block instead of
-//     answering from some other block's state.
+//     the tests above), and any root-guarded MPT reader still pointed at an
+//     active header's root fails loudly instead of answering from some other
+//     block's state.
 //
-// Serving those RPC reads from the binary trie is its own piece of work; this
-// test is here so that the day the MPT is frozen (or the RPC reads are moved),
-// the change is deliberate.
+// The state-reading RPCs no longer are pointed at it: Phase D4 below moves them
+// onto the same per-header rule execution uses. This test stays because the MPT
+// is still advancing underneath, and the day it is frozen the change should be
+// deliberate.
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
@@ -1602,5 +1603,396 @@ async fn the_mpt_keeps_advancing_after_the_flip_but_is_no_longer_addressable_by_
         scheduled.nonce,
         FLIP_BLOCK + BLOCKS_PAST_THE_FLIP,
         "guard against a vacuous pass: this is the end state, not a stale one"
+    );
+}
+
+// ===========================================================================
+// Phase D4 — the state-reading RPCs follow the header past the flip.
+//
+// `eth_getBalance`, `eth_getTransactionCount`, `eth_getCode` and
+// `eth_getStorageAt` are served by `Store` methods that used to open the MPT at
+// `header.state_root` unconditionally. Past the flip that root names no MPT, so
+// they failed loudly (correctly — see D3.5 — but the chain was unqueryable past
+// the boundary). They now resolve the same way execution does: per header, from
+// the timestamp of the header being queried.
+//
+// The tests below drive a real chain across the boundary rather than the
+// degenerate activation-at-genesis shape the RPC-crate unit tests use, so they
+// cover what only a mixed history can: a *pre*-flip block still answering out of
+// the MPT while the head is already past the flip.
+// ===========================================================================
+
+/// Make `blocks` the canonical chain, which the helpers above deliberately do
+/// not do: `add_block` imports and executes but leaves the canonical pointers
+/// alone (that is the consensus layer's call). The state RPCs address blocks by
+/// *number*, and a number only resolves through the canonical chain, so these
+/// tests have to supply the forkchoice the other Phase D tests do not need.
+async fn make_canonical(store: &Store, blocks: &[Block]) {
+    let head = blocks.last().expect("a chain with at least one block");
+    store
+        .forkchoice_update(
+            blocks
+                .iter()
+                .map(|block| (block.header.number, block.hash()))
+                .collect(),
+            head.header.number,
+            head.hash(),
+            None,
+            None,
+        )
+        .await
+        .expect("forkchoice update");
+}
+
+/// The four block-addressed state reads the RPC layer makes, gathered so the
+/// scheduled chain and its MPT-committing twin can be compared field by field.
+#[derive(Debug, PartialEq, Eq)]
+struct StateReads {
+    balance: U256,
+    nonce: u64,
+    code: Bytes,
+    storage: Vec<Option<U256>>,
+}
+
+/// Reads `address` at `number` through exactly the `Store` entry points
+/// `eth_getBalance` / `eth_getTransactionCount` / `eth_getCode` /
+/// `eth_getStorageAt` use — three separate guarded call sites plus the storage
+/// one, not one shared path, which is why all four are exercised.
+async fn state_reads(store: &Store, number: u64, address: Address, slots: &[u64]) -> StateReads {
+    let info = store
+        .get_account_info(number, address)
+        .await
+        .expect("balance read")
+        .unwrap_or_else(|| panic!("{address:#x} must exist at block {number}"));
+    let nonce = store
+        .get_nonce_by_account_address(number, address)
+        .await
+        .expect("nonce read")
+        .unwrap_or_else(|| panic!("{address:#x} must exist at block {number}"));
+    let code = store
+        .get_code_by_account_address(number, address)
+        .await
+        .expect("code read")
+        .map(|code| Bytes::copy_from_slice(code.code()))
+        .unwrap_or_default();
+    let storage = slots
+        .iter()
+        .map(|slot| {
+            store
+                .get_storage_at(number, address, H256::from_low_u64_be(*slot))
+                .expect("storage read")
+        })
+        .collect();
+    StateReads {
+        balance: info.balance,
+        nonce,
+        code,
+        storage,
+    }
+}
+
+// ---------------------------------------------------------------------------
+// D4.1 Balance, nonce, code and storage all read correctly at a post-flip
+//      block — both for state written before the flip and state written after.
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn state_rpc_reads_at_a_post_flip_block_match_an_mpt_committing_node() {
+    let chains = build_boundary_chains(FLIP_BLOCK + BLOCKS_PAST_THE_FLIP).await;
+    make_canonical(&chains.scheduled_store, &chains.scheduled_blocks).await;
+    make_canonical(&chains.twin_store, &chains.twin_blocks).await;
+    let blocks = FLIP_BLOCK + BLOCKS_PAST_THE_FLIP;
+    let head = chains.scheduled_blocks.last().unwrap();
+    assert_eq!(
+        head.header.state_root,
+        binary_root(&chains.scheduled_store, head),
+        "the head must be past the flip, or this test is about the MPT"
+    );
+
+    let sender = sender_from_key(&test_secret_key());
+    let slots = [1u64, 2, 3, 4];
+    for address in [sender, test_recipient(), storage_fixture_account()] {
+        let scheduled = state_reads(&chains.scheduled_store, blocks, address, &slots).await;
+        let twin = state_reads(&chains.twin_store, blocks, address, &slots).await;
+        assert_eq!(
+            scheduled, twin,
+            "{address:#x}: a post-flip read must agree with an MPT-committing node at the same height"
+        );
+    }
+
+    // Guard against a vacuous pass. These values only exist because the chain
+    // ran: the sender's nonce counts one transfer per block (state written both
+    // before *and* after the flip), and the fixture account's slots are genesis
+    // state carried across the boundary.
+    let sender_reads = state_reads(&chains.scheduled_store, blocks, sender, &[]).await;
+    assert_eq!(sender_reads.nonce, blocks);
+    assert!(sender_reads.balance < U256::from(10).pow(U256::from(20)));
+    let recipient_reads = state_reads(&chains.scheduled_store, blocks, test_recipient(), &[]).await;
+    assert_eq!(recipient_reads.balance, U256::from(blocks));
+
+    let fixture_reads = state_reads(
+        &chains.scheduled_store,
+        blocks,
+        storage_fixture_account(),
+        &slots,
+    )
+    .await;
+    assert_eq!(
+        fixture_reads.storage,
+        vec![
+            Some(U256::from(1u64)),
+            Some(U256::from(2u64)),
+            Some(U256::from(3u64)),
+            None,
+        ],
+        "genesis storage must survive the flip, and an unwritten slot must stay absent"
+    );
+
+    // Code comes from the code table by hash, but reaching it needs the account,
+    // and the account now comes from the binary trie.
+    let beacon_roots =
+        Address::from_slice(&hex::decode("000f3df6d732807ef1319fb7b8bb8522d0beac02").unwrap());
+    let code = chains
+        .scheduled_store
+        .get_code_by_account_address(blocks, beacon_roots)
+        .await
+        .expect("code read past the flip")
+        .expect("the beacon-roots contract must exist after the flip");
+    assert!(!code.code().is_empty());
+}
+
+// ---------------------------------------------------------------------------
+// D4.2 Pre-activation blocks keep resolving through the MPT after the chain has
+//      moved past the flip. The per-header rule, and the falsification target:
+//      a chain-level `binary_tree_scheduled()` here sends every one of these
+//      reads at the binary trie holding an MPT root, and they all fail.
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn state_rpc_reads_at_pre_flip_blocks_keep_using_the_mpt_after_the_flip() {
+    let chains = build_boundary_chains(FLIP_BLOCK + BLOCKS_PAST_THE_FLIP).await;
+    make_canonical(&chains.scheduled_store, &chains.scheduled_blocks).await;
+    make_canonical(&chains.twin_store, &chains.twin_blocks).await;
+    let sender = sender_from_key(&test_secret_key());
+    let head = chains.scheduled_blocks.last().unwrap();
+    assert_eq!(
+        head.header.state_root,
+        binary_root(&chains.scheduled_store, head),
+        "the flip has happened"
+    );
+
+    let slots = [1u64, 2, 3];
+    let mut pre_flip_blocks = 0;
+    for (index, block) in chains.scheduled_blocks.iter().enumerate() {
+        if block.header.timestamp >= chains.activation {
+            break;
+        }
+        pre_flip_blocks += 1;
+        let number = block.header.number;
+
+        // Genesis' own alloc, addressed at a pre-flip height, out of the MPT.
+        let scheduled = state_reads(
+            &chains.scheduled_store,
+            number,
+            storage_fixture_account(),
+            &slots,
+        )
+        .await;
+        let twin = state_reads(
+            &chains.twin_store,
+            number,
+            storage_fixture_account(),
+            &slots,
+        )
+        .await;
+        assert_eq!(
+            scheduled, twin,
+            "block {number}: a pre-flip block must read exactly as the unscheduled twin does"
+        );
+
+        // And the *history* at that height, which is what makes this a per-block
+        // read rather than a read of whatever the head holds.
+        assert_eq!(
+            chains
+                .scheduled_store
+                .get_nonce_by_account_address(number, sender)
+                .await
+                .expect("nonce read")
+                .expect("the sender exists"),
+            index as u64 + 1,
+            "block {number} must show exactly one transfer per block so far"
+        );
+        assert_eq!(
+            chains
+                .scheduled_store
+                .get_account_info(number, test_recipient())
+                .await
+                .expect("balance read")
+                .expect("the recipient exists")
+                .balance,
+            U256::from(index as u64 + 1),
+            "block {number} must show the recipient's balance at that height"
+        );
+    }
+    assert!(
+        pre_flip_blocks > 0,
+        "the chain must actually have pre-flip blocks for this test to mean anything"
+    );
+
+    // Genesis too, which is the oldest pre-activation header there is.
+    assert_eq!(
+        state_reads(&chains.scheduled_store, 0, sender, &[])
+            .await
+            .nonce,
+        0,
+        "genesis must still resolve against the MPT once the chain is past the flip"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// D4.3 The staleness guard survives on both sides of the boundary.
+//
+// The guard these reads carry is the reason they were hardened in the first
+// place: a block whose state this node no longer holds must error, not answer
+// from whatever the single-version trie currently contains. Adding a binary
+// branch must not loosen that — on the binary side the equivalent question is
+// `has_binary_trie_state`, and it has to be asked.
+// ---------------------------------------------------------------------------
+
+/// Appends a canonical block on top of genesis at `timestamp` whose header
+/// claims a state root no state of *either* shape stands behind.
+async fn append_stateless_block(store: &Store, timestamp: u64) -> u64 {
+    let genesis_hash = store
+        .get_canonical_block_hash(0)
+        .await
+        .expect("genesis lookup")
+        .expect("genesis is canonical");
+    let header = BlockHeader {
+        number: 1,
+        parent_hash: genesis_hash,
+        state_root: H256::repeat_byte(0xAA),
+        timestamp,
+        ..Default::default()
+    };
+    let hash = header.hash();
+    store
+        .add_block(Block::new(header, BlockBody::default()))
+        .await
+        .expect("add fabricated block");
+    store
+        .forkchoice_update(vec![(1, hash)], 1, hash, None, None)
+        .await
+        .expect("make it canonical");
+    1
+}
+
+#[track_caller]
+fn assert_missing_state<T: std::fmt::Debug>(
+    result: Result<T, ethrex_storage::error::StoreError>,
+    label: &str,
+) {
+    match result {
+        Err(err) => {
+            let message = err.to_string();
+            assert!(
+                message.contains("state root missing"),
+                "{label}: expected a missing-state error, got {message:?}"
+            );
+        }
+        Ok(value) => panic!(
+            "{label}: answered {value:?} from a state this node does not hold. \
+             The staleness guard was lost."
+        ),
+    }
+}
+
+#[tokio::test]
+async fn state_rpc_reads_still_refuse_a_block_whose_state_is_gone_on_both_sides_of_the_flip() {
+    let sender = sender_from_key(&test_secret_key());
+    let genesis = load_funded_genesis(sender, None);
+    let activation = genesis.timestamp + FLIP_BLOCK * BLOCK_TIME;
+    let scheduled_genesis = load_funded_genesis(sender, Some(activation));
+
+    for (label, timestamp) in [
+        // Before the flip: the MPT guard has to fire, exactly as it did before
+        // the binary branch existed.
+        ("pre-activation", activation - 1),
+        // At and after the flip: the binary guard has to fire, because no binary
+        // root was ever recorded for this fabricated block.
+        ("post-activation", activation),
+    ] {
+        let store = store_from_genesis(scheduled_genesis.clone()).await;
+        let number = append_stateless_block(&store, timestamp).await;
+
+        assert_missing_state(
+            store.get_account_info(number, sender).await,
+            &format!("{label}: eth_getBalance"),
+        );
+        assert_missing_state(
+            store.get_nonce_by_account_address(number, sender).await,
+            &format!("{label}: eth_getTransactionCount"),
+        );
+        assert_missing_state(
+            store.get_code_by_account_address(number, sender).await,
+            &format!("{label}: eth_getCode"),
+        );
+        assert_missing_state(
+            store.get_storage_at(number, storage_fixture_account(), H256::from_low_u64_be(1)),
+            &format!("{label}: eth_getStorageAt"),
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
+// D4.4 An unscheduled chain is untouched.
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn unscheduled_chains_read_exactly_as_they_did() {
+    let chains = build_boundary_chains(FLIP_BLOCK + BLOCKS_PAST_THE_FLIP).await;
+    make_canonical(&chains.twin_store, &chains.twin_blocks).await;
+    let blocks = FLIP_BLOCK + BLOCKS_PAST_THE_FLIP;
+    let sender = sender_from_key(&test_secret_key());
+    let slots = [1u64, 2, 3];
+
+    // No binary root is recorded anywhere on the twin, so nothing here can be
+    // answering from one.
+    for block in &chains.twin_blocks {
+        assert_eq!(
+            chains
+                .twin_store
+                .get_binary_trie_root(block.hash())
+                .expect("binary root read"),
+            None,
+            "an unscheduled chain records no binary roots"
+        );
+    }
+
+    for number in [0, 1, blocks] {
+        let reads = state_reads(
+            &chains.twin_store,
+            number,
+            storage_fixture_account(),
+            &slots,
+        )
+        .await;
+        assert_eq!(
+            reads.storage,
+            vec![
+                Some(U256::from(1u64)),
+                Some(U256::from(2u64)),
+                Some(U256::from(3u64))
+            ],
+            "block {number}: the fixture account's genesis storage reads unchanged"
+        );
+    }
+    assert_eq!(
+        chains
+            .twin_store
+            .get_nonce_by_account_address(blocks, sender)
+            .await
+            .expect("nonce read")
+            .expect("the sender exists"),
+        blocks
     );
 }

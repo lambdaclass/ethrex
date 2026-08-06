@@ -221,6 +221,42 @@ impl RpcHandler for GetProofRequest {
         let Some(header) = storage.get_block_header(block_number)? else {
             return Ok(Value::Null);
         };
+        // Past the EIP-8297 activation `header.state_root` is a binary-trie
+        // root, and there is no MPT behind it to prove against. Refuse, rather
+        // than serve anything.
+        //
+        // The other four state RPCs can follow the header into the binary trie
+        // because their answers are values, and a value is the same value out of
+        // either trie. A proof is not: it is a witness of a *shape*, and this
+        // response type is the MPT's shape — a list of RLP-encoded MPT nodes
+        // from root to leaf, plus a `storageHash` naming a per-account storage
+        // subtrie. The binary trie has neither. Producing a binary-trie proof
+        // format is a separate piece of work with its own wire type, and
+        // inventing one here would be worse than an error: clients verify these
+        // against `header.stateRoot`, so any shape we improvise would either
+        // fail verification or, worse, be accepted by a client that does not
+        // check what it is verifying.
+        //
+        // What must never happen is the third option, and it is the reason this
+        // check is here rather than left to fail somewhere downstream: an
+        // account object beside an empty `accountProof` array reads as a valid
+        // *exclusion* proof for an account that exists. `Store::get_account_proof`
+        // guards its own root for exactly that reason; this makes the refusal say
+        // why instead of reporting a missing state root for state that is
+        // present, just in the other trie.
+        //
+        // Per header, never per chain: a pre-activation block on the same chain
+        // still has a real MPT proof, and still serves it.
+        if storage
+            .get_chain_config()
+            .is_binary_tree_active(header.timestamp)
+        {
+            return Err(RpcErr::UnsupportedFork(format!(
+                "eth_getProof is not available at block {block_number}: the chain has reached \
+                 the binary-tree commitment (EIP-8297), whose state root cannot be proven in \
+                 the Merkle-Patricia format this method returns"
+            )));
+        }
         // Create account proof
         let Some(account_proof) = storage
             .get_account_proof(header.state_root, self.address, &self.storage_keys)
@@ -537,5 +573,382 @@ mod tests {
             .unwrap();
 
         assert_eq!(pending, json!("0x5a"));
+    }
+
+    // =======================================================================
+    // EIP-8297 — the state RPCs past the binary-tree activation.
+    //
+    // From `binaryTreeTime` onward a header's `state_root` is a binary-trie
+    // root, which names no MPT. Every handler below therefore has to ask
+    // `is_binary_tree_active(header.timestamp)` of *the header being queried*
+    // and read the trie that root actually addresses. The question is never
+    // chain-level: a chain that merely *schedules* the commitment still has a
+    // pre-activation history whose headers commit MPT roots forever, which
+    // `scheduled_but_pre_activation_blocks_still_read_the_mpt` pins.
+    //
+    // Activation at genesis is a test-only shape — it changes the genesis hash,
+    // and hence the chain's identity (see `Genesis::compute_state_root`) — but
+    // it is the cheapest way to get an *active header* without building blocks,
+    // and one active header is all a per-header branch needs to be exercised.
+    // The cross-boundary version, on a real chain that flips mid-history, lives
+    // in `test/tests/blockchain/binary_tree_shadow_tests.rs`.
+    // =======================================================================
+
+    /// Address of the account the binary-tree tests probe.
+    fn probe_address() -> Address {
+        Address::from_low_u64_be(0x5eed)
+    }
+
+    const PROBE_BALANCE: u64 = 0x1234;
+    const PROBE_NONCE: u64 = 7;
+    const PROBE_SLOT: u64 = 1;
+    const PROBE_SLOT_VALUE: u64 = 0x2a;
+
+    /// A probe account carrying all four things the state RPCs read: a balance,
+    /// a nonce, code, and one non-zero storage slot.
+    fn probe_account() -> ethrex_common::types::GenesisAccount {
+        use ethrex_common::types::GenesisAccount;
+        GenesisAccount {
+            code: bytes::Bytes::from_static(&[0x60, 0x00, 0x60, 0x00, 0xf3]),
+            storage: [(U256::from(PROBE_SLOT), U256::from(PROBE_SLOT_VALUE))]
+                .into_iter()
+                .collect(),
+            balance: U256::from(PROBE_BALANCE),
+            nonce: PROBE_NONCE,
+        }
+    }
+
+    /// Builds a context whose genesis carries [`probe_account`] and whose chain
+    /// config schedules `binaryTreeTime` at `binary_tree_time`.
+    ///
+    /// Passing genesis' own timestamp makes genesis itself active, so its header
+    /// commits the binary root and `add_initial_state` seeds the persistent
+    /// binary trie from the alloc. Passing a far-future timestamp gives a
+    /// *scheduled but not active* chain; `None` gives an ordinary MPT chain.
+    async fn binary_tree_context(binary_tree_time: Option<u64>) -> RpcApiContext {
+        use crate::test_utils::{TEST_GENESIS, default_context_with_storage};
+        use ethrex_common::types::Genesis;
+        use ethrex_storage::{EngineType, Store};
+
+        let mut genesis: Genesis = serde_json::from_str(TEST_GENESIS).unwrap();
+        genesis.alloc.insert(probe_address(), probe_account());
+        genesis.config.binary_tree_time = binary_tree_time;
+        let mut store = Store::new("", EngineType::InMemory).unwrap();
+        store.add_initial_state(genesis).await.unwrap();
+        default_context_with_storage(store).await
+    }
+
+    /// A context whose genesis header is already past the activation.
+    async fn active_at_genesis_context() -> RpcApiContext {
+        let context = binary_tree_context(Some(genesis_timestamp())).await;
+        // Guard against a vacuous pass: if genesis were not active the whole
+        // section below would be testing the MPT path under a binary name.
+        assert!(
+            context
+                .storage
+                .get_chain_config()
+                .is_binary_tree_active(genesis_timestamp()),
+            "genesis must be past the activation for these tests to mean anything"
+        );
+        context
+    }
+
+    /// The fixture genesis' timestamp, read from the fixture rather than pinned
+    /// here so a change to it cannot silently un-schedule these tests.
+    fn genesis_timestamp() -> u64 {
+        use crate::test_utils::TEST_GENESIS;
+        use ethrex_common::types::Genesis;
+        let genesis: Genesis = serde_json::from_str(TEST_GENESIS).unwrap();
+        genesis.timestamp
+    }
+
+    /// Appends a canonical block at `timestamp` whose header claims
+    /// [`UNHELD_STATE_ROOT`], with no state of either shape behind it. On an
+    /// active timestamp that means no *binary* state is recorded for it, which
+    /// is the binary-side counterpart of the unheld-MPT-root case.
+    async fn append_block_at(context: &RpcApiContext, timestamp: u64) -> u64 {
+        use ethrex_common::types::{Block, BlockBody, BlockHeader};
+        let storage = &context.storage;
+        let genesis_hash = storage
+            .get_canonical_block_hash(0)
+            .await
+            .unwrap()
+            .expect("genesis is canonical");
+        let header = BlockHeader {
+            number: 1,
+            parent_hash: genesis_hash,
+            state_root: UNHELD_STATE_ROOT,
+            timestamp,
+            ..Default::default()
+        };
+        let hash = header.hash();
+        storage
+            .add_block(Block::new(header, BlockBody::default()))
+            .await
+            .unwrap();
+        storage
+            .forkchoice_update(vec![(1, hash)], 1, hash, None, None)
+            .await
+            .unwrap();
+        1
+    }
+
+    /// 1. Balance, nonce, code and storage all answer at an active header, out
+    ///    of the binary trie, with the values the alloc put there.
+    #[tokio::test]
+    async fn state_reads_answer_from_the_binary_trie_at_an_active_header() {
+        let context = active_at_genesis_context().await;
+        let address = probe_address();
+
+        let balance = GetBalanceRequest {
+            address,
+            block: block_id(0),
+        }
+        .handle(context.clone())
+        .await
+        .expect("eth_getBalance must resolve through the binary trie");
+        assert_eq!(balance, json!(format!("{:#x}", PROBE_BALANCE)));
+
+        let nonce = GetTransactionCountRequest {
+            address,
+            block: block_id(0),
+        }
+        .handle(context.clone())
+        .await
+        .expect("eth_getTransactionCount must resolve through the binary trie");
+        assert_eq!(nonce, json!(format!("0x{:x}", PROBE_NONCE)));
+
+        let code = GetCodeRequest {
+            address,
+            block: block_id(0),
+        }
+        .handle(context.clone())
+        .await
+        .expect("eth_getCode must resolve through the binary trie");
+        assert_eq!(code, json!("0x60006000f3"));
+
+        let slot = GetStorageAtRequest {
+            address,
+            storage_slot: H256::from_low_u64_be(PROBE_SLOT),
+            block: block_id(0),
+        }
+        .handle(context.clone())
+        .await
+        .expect("eth_getStorageAt must resolve through the binary trie");
+        assert_eq!(
+            slot,
+            json!(format!("{:#x}", H256::from_low_u64_be(PROBE_SLOT_VALUE)))
+        );
+
+        // An unwritten slot reads as zero, not as some other slot's value.
+        let empty_slot = GetStorageAtRequest {
+            address,
+            storage_slot: H256::from_low_u64_be(0xdead),
+            block: block_id(0),
+        }
+        .handle(context.clone())
+        .await
+        .expect("an absent slot is not an error");
+        assert_eq!(empty_slot, json!(format!("{:#x}", H256::zero())));
+
+        // An account the alloc never mentioned is absent, not a stray hit.
+        let absent = GetBalanceRequest {
+            address: Address::from_low_u64_be(0xffff_ffff),
+            block: block_id(0),
+        }
+        .handle(context.clone())
+        .await
+        .expect("an absent account is not an error");
+        assert_eq!(absent, json!("0x0"));
+    }
+
+    /// 2. A chain that merely *schedules* the commitment still reads its
+    ///    pre-activation headers through the MPT. This is the falsification
+    ///    target: swapping the per-header `is_binary_tree_active(timestamp)` for
+    ///    a chain-level `binary_tree_scheduled()` makes every read here try the
+    ///    binary trie at an MPT root and fail.
+    #[tokio::test]
+    async fn scheduled_but_pre_activation_blocks_still_read_the_mpt() {
+        let far_future = genesis_timestamp() + 1_000_000;
+        let context = binary_tree_context(Some(far_future)).await;
+        assert!(context.storage.get_chain_config().binary_tree_scheduled());
+        assert!(
+            !context
+                .storage
+                .get_chain_config()
+                .is_binary_tree_active(genesis_timestamp())
+        );
+        let address = probe_address();
+
+        let balance = GetBalanceRequest {
+            address,
+            block: block_id(0),
+        }
+        .handle(context.clone())
+        .await
+        .expect("a scheduled-but-inactive header still resolves against the MPT");
+        assert_eq!(balance, json!(format!("{:#x}", PROBE_BALANCE)));
+
+        let nonce = GetTransactionCountRequest {
+            address,
+            block: block_id(0),
+        }
+        .handle(context.clone())
+        .await
+        .expect("a scheduled-but-inactive header still resolves against the MPT");
+        assert_eq!(nonce, json!(format!("0x{:x}", PROBE_NONCE)));
+
+        let slot = GetStorageAtRequest {
+            address,
+            storage_slot: H256::from_low_u64_be(PROBE_SLOT),
+            block: block_id(0),
+        }
+        .handle(context.clone())
+        .await
+        .expect("a scheduled-but-inactive header still resolves against the MPT");
+        assert_eq!(
+            slot,
+            json!(format!("{:#x}", H256::from_low_u64_be(PROBE_SLOT_VALUE)))
+        );
+
+        // And `eth_getProof` is a real MPT proof here, not the binary-tree
+        // refusal: the block is before the flip.
+        let proof = GetProofRequest {
+            address,
+            storage_keys: vec![H256::from_low_u64_be(PROBE_SLOT)],
+            block: block_id(0),
+        }
+        .handle(context.clone())
+        .await
+        .expect("a pre-activation header still has an MPT proof");
+        assert!(
+            !proof["accountProof"]
+                .as_array()
+                .expect("accountProof array")
+                .is_empty()
+        );
+    }
+
+    /// 3. The staleness guard still fires on the binary side: an active header
+    ///    whose binary state this node does not hold must error rather than
+    ///    answer from whatever the single-version binary trie currently holds.
+    #[tokio::test]
+    async fn active_header_without_binary_state_errors() {
+        let context = active_at_genesis_context().await;
+        let address = probe_address();
+        // One second past genesis, so the header is active — and no binary root
+        // was ever recorded for it.
+        let number = append_block_at(&context, genesis_timestamp() + 1).await;
+
+        assert_state_unavailable(
+            GetBalanceRequest {
+                address,
+                block: block_id(number),
+            }
+            .handle(context.clone())
+            .await,
+            "eth_getBalance",
+        );
+        assert_state_unavailable(
+            GetCodeRequest {
+                address,
+                block: block_id(number),
+            }
+            .handle(context.clone())
+            .await,
+            "eth_getCode",
+        );
+        assert_state_unavailable(
+            GetTransactionCountRequest {
+                address,
+                block: block_id(number),
+            }
+            .handle(context.clone())
+            .await,
+            "eth_getTransactionCount",
+        );
+        assert_state_unavailable(
+            GetStorageAtRequest {
+                address,
+                storage_slot: H256::from_low_u64_be(PROBE_SLOT),
+                block: block_id(number),
+            }
+            .handle(context.clone())
+            .await,
+            "eth_getStorageAt",
+        );
+    }
+
+    /// 4. `eth_getProof` on an active header refuses, clearly and permanently.
+    ///
+    /// The binary trie has no MPT-shaped proof to give and this branch does not
+    /// invent one, so the only two honest answers are "refuse" and "serve a
+    /// different format". What must never happen is the third thing — an
+    /// account object beside an empty `accountProof`, which reads as a valid
+    /// exclusion proof for an account that exists.
+    #[tokio::test]
+    async fn get_proof_refuses_on_an_active_header_and_is_never_self_inconsistent() {
+        let context = active_at_genesis_context().await;
+        let result = GetProofRequest {
+            address: probe_address(),
+            storage_keys: vec![H256::from_low_u64_be(PROBE_SLOT)],
+            block: block_id(0),
+        }
+        .handle(context.clone())
+        .await;
+
+        match result {
+            Err(RpcErr::UnsupportedFork(message)) => {
+                assert!(
+                    message.contains("eth_getProof"),
+                    "the refusal must name the method, got {message:?}"
+                );
+                assert!(
+                    message.to_lowercase().contains("binary"),
+                    "the refusal must say why, got {message:?}"
+                );
+            }
+            Err(other) => panic!("expected an unsupported-fork refusal, got {other:?}"),
+            Ok(value) => panic!(
+                "eth_getProof answered {value} at a binary-tree block. \
+                 A proof over a trie whose shape it cannot express is never a valid answer."
+            ),
+        }
+    }
+
+    /// 5. An unscheduled chain is untouched: no branch, no behaviour change.
+    #[tokio::test]
+    async fn unscheduled_chains_are_unchanged() {
+        let context = binary_tree_context(None).await;
+        assert!(!context.storage.get_chain_config().binary_tree_scheduled());
+        let address = probe_address();
+
+        let balance = GetBalanceRequest {
+            address,
+            block: block_id(0),
+        }
+        .handle(context.clone())
+        .await
+        .unwrap();
+        assert_eq!(balance, json!(format!("{:#x}", PROBE_BALANCE)));
+
+        let proof = GetProofRequest {
+            address,
+            storage_keys: vec![H256::from_low_u64_be(PROBE_SLOT)],
+            block: block_id(0),
+        }
+        .handle(context.clone())
+        .await
+        .expect("an unscheduled chain still proves");
+        assert!(
+            !proof["accountProof"]
+                .as_array()
+                .expect("accountProof array")
+                .is_empty()
+        );
+        assert_eq!(
+            proof["storageProof"][0]["value"],
+            json!(format!("{:#x}", PROBE_SLOT_VALUE))
+        );
     }
 }
