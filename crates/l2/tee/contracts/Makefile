@@ -77,12 +77,21 @@ pin-openzeppelin:
 	mkdir -p lib
 	$(call pin,lib/openzeppelin-contracts,https://github.com/OpenZeppelin/openzeppelin-contracts,$(OPENZEPPELIN_REV))
 
-solc_out/TDXVerifier.bin: src/TDXVerifier.sol | pin-openzeppelin
-	mkdir -p solc_out
-	solc src/TDXVerifier.sol --bin --allow-paths lib/,../../.. --base-path . --include-path ../../ @openzeppelin/=lib/openzeppelin-contracts/ -o solc_out/ --overwrite
+# Bytecode goes under the openzeppelin revision it was compiled against, so bumping
+# OPENZEPPELIN_REV asks for a target that does not exist yet instead of leaving a stale
+# one Make considers up to date. pin-openzeppelin can only be order-only here, since it
+# is .PHONY and a normal prerequisite would recompile on every run, and an order-only
+# prerequisite runs its recipe without invalidating the target. Keeping the revision out
+# of the path would therefore let `make deploy` ship bytecode built against the previous
+# checkout.
+SOLC_OUT := solc_out/$(OPENZEPPELIN_REV)
 
-deploy: solc_out/TDXVerifier.bin
-	$(eval CONTRACT_BIN := $(shell cat solc_out/TDXVerifier.bin))
+$(SOLC_OUT)/TDXVerifier.bin: src/TDXVerifier.sol | pin-openzeppelin
+	mkdir -p $(SOLC_OUT)
+	solc src/TDXVerifier.sol --bin --allow-paths lib/,../../.. --base-path . --include-path ../../ @openzeppelin/=lib/openzeppelin-contracts/ -o $(SOLC_OUT)/ --overwrite
+
+deploy: $(SOLC_OUT)/TDXVerifier.bin
+	$(eval CONTRACT_BIN := $(shell cat $(SOLC_OUT)/TDXVerifier.bin))
 	$(eval DCAP_ADDRESS := $(shell cat ${DEPLOYMENT_PATH}/AutomataDcapAttestationFee))
 	rex deploy --print-address $(CONTRACT_BIN) 0 $(PRIVATE_KEY) -- \
 		"constructor(address,address,bool)" $(DCAP_ADDRESS) $(ON_CHAIN_PROPOSER) $(ETHREX_TDX_DEV_MODE) \
