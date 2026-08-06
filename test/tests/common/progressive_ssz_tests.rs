@@ -63,8 +63,13 @@ const REMERKLEABLE_UINT64_ROOTS: &[(usize, &str)] = &[
     ),
 ];
 
-/// KNOWN FAILING — `libssz-merkle 0.2.2` has the progressive subtree children
-/// swapped relative to the spec, so every progressive root it computes is wrong.
+/// Guards the EIP-7916 progressive child order against `remerkleable`.
+///
+/// This failed against `libssz-merkle 0.2.2`, which had the two children of each
+/// progressive subtree swapped, making every progressive root ethrex computed
+/// disagree with the spec. Fixed upstream in libssz 0.3.0; the root workspace
+/// pins the branch carrying it. Keep this test passing rather than deleting it:
+/// it is what pins the pin.
 ///
 /// `merkleize_progressive_inner` (libssz-merkle-0.2.2/src/lib.rs:151) ends with
 /// `hash_nodes(hasher, &rest, &subtree)` — remainder left, subtree right — and a
@@ -90,13 +95,9 @@ const REMERKLEABLE_UINT64_ROOTS: &[(usize, &str)] = &[
 /// remerkleable's `depth + 2`); only the child order differs. The fix is to swap
 /// that one `hash_nodes` argument pair in `libssz-merkle`.
 ///
-/// This blocks adopting execution-specs #3248: ethrex cannot compute a correct
-/// `new_payload_request_root` until it is fixed, because `SszExecutionPayload`
-/// and `SszExecutionRequests` are progressive containers and every payload's
-/// root flows through this function. Remove `#[ignore]` once `libssz` is fixed —
-/// the assertion is already correct.
+/// `SszExecutionPayload` and `SszExecutionRequests` are progressive containers,
+/// so every `new_payload_request_root` the guest commits flows through this.
 #[test]
-#[ignore = "libssz-merkle 0.2.2 swaps progressive subtree children; see doc comment"]
 fn progressive_list_roots_match_remerkleable() {
     let hasher = CryptoHasher(NativeCrypto);
 
@@ -136,7 +137,6 @@ fn progressive_list_roots_match_remerkleable() {
 /// PC(active_fields=[1;5],   a=1, b=2, c=3, d=4, e=5)   -> 5a167eaf…
 /// ```
 #[test]
-#[ignore = "libssz-merkle 0.2.2 swaps progressive subtree children; see doc comment"]
 fn progressive_container_roots_match_remerkleable() {
     use libssz_merkle::{Node, merkleize_progressive, mix_in_active_fields};
 

@@ -19,9 +19,12 @@ ethrex-guest-program = { path = "../", default-features = false }
 # SSZ encode/decode and merkleization. The mirror spike reached these through
 # eth-act's `stateless-validator-common`; ethrex owns the wire types natively, so
 # they are declared here directly. Versions match the root workspace.
-libssz = "0.2.2"
-libssz-merkle = "0.2.2"
-libssz-types = "0.2.2"
+# Must track the root workspace exactly: these are the same containers the host
+# encodes, and two libssz versions in one binary would have the guest merkleize
+# with a different progressive child order than ethrex-common does.
+libssz = { git = "https://github.com/lambdaclass/libssz", branch = "update-consensus-specs-v1.7.0-alpha.13" }
+libssz-merkle = { git = "https://github.com/lambdaclass/libssz", branch = "update-consensus-specs-v1.7.0-alpha.13" }
+libssz-types = { git = "https://github.com/lambdaclass/libssz", branch = "update-consensus-specs-v1.7.0-alpha.13" }
 
 # ere platform abstraction (entrypoint / IO / cycle scopes) used by the per-zkVM
 # bins. Pinned to one ere rev; the ere-compiler and ere-server image tags in
