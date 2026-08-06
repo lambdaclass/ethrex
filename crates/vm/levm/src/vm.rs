@@ -940,6 +940,18 @@ pub fn find_batch_end(frames: &[Frame], failed_idx: usize) -> usize {
         .unwrap_or(failed_idx)
 }
 
+/// The EIP-8250 nonce manager storage slot holding the sequence number of
+/// `(sender, key)`: `keccak256(zeros(12) || sender || key)`.
+///
+/// The pre-check that prices a first use and the consumption that performs it
+/// must address the same slot, so both derive it here.
+fn keyed_nonce_slot(sender: Address, key: &U256) -> H256 {
+    let mut preimage = [0u8; 64];
+    preimage[12..32].copy_from_slice(sender.as_bytes());
+    preimage[32..64].copy_from_slice(&key.to_big_endian());
+    H256(ethrex_crypto::keccak::keccak_hash(preimage))
+}
+
 /// EIP-7906: install the transaction prestate map on `db` for `tx`, or clear it.
 ///
 /// The map is needed only by transactions that can execute TXTRACE /
@@ -1807,10 +1819,7 @@ impl<'a> VM<'a> {
                 self.increment_account_nonce(sender)?;
                 continue;
             }
-            let mut preimage = [0u8; 64];
-            preimage[12..32].copy_from_slice(sender.as_bytes());
-            preimage[32..64].copy_from_slice(&key.to_big_endian());
-            let slot = H256(ethrex_crypto::keccak::keccak_hash(preimage));
+            let slot = keyed_nonce_slot(sender, key);
             let _ = self.db.get_account(nonce_manager)?;
             let current = self.get_storage_value(nonce_manager, slot)?;
             if current.is_zero() {
@@ -1840,10 +1849,7 @@ impl<'a> VM<'a> {
             if key.is_zero() {
                 continue;
             }
-            let mut preimage = [0u8; 64];
-            preimage[12..32].copy_from_slice(sender.as_bytes());
-            preimage[32..64].copy_from_slice(&key.to_big_endian());
-            let slot = H256(ethrex_crypto::keccak::keccak_hash(preimage));
+            let slot = keyed_nonce_slot(sender, key);
             if self.get_storage_value(nonce_manager, slot)?.is_zero() {
                 surcharge = surcharge.saturating_add(crate::gas_cost::KEYED_NONCE_FIRST_USE_GAS);
             }

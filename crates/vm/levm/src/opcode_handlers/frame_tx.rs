@@ -898,13 +898,13 @@ fn execute_default_verify(
     }
 
     // The surcharge comes out of this frame's budget like any other gas, so a frame that cannot
-    // afford it approves nothing.
-    let surcharge = vm.keyed_nonce_first_use_surcharge()?;
-    if surcharge > frame.gas_limit {
+    // afford it approves nothing. The affordability gate has to run before any state is touched,
+    // hence the estimate here; what is charged below is what consumption actually took.
+    if vm.keyed_nonce_first_use_surcharge()? > frame.gas_limit {
         return Ok((false, frame.gas_limit, Vec::new()));
     }
 
-    apply_approve(vm, allowed_scope, target)?;
+    let charged = apply_approve(vm, allowed_scope, target)?;
 
     let ctx = vm
         .frame_tx_context
@@ -912,7 +912,7 @@ fn execute_default_verify(
         .ok_or(ExceptionalHalt::InvalidOpcode)?;
     ctx.approve_called_in_current_frame = true;
 
-    Ok((true, surcharge, Vec::new()))
+    Ok((true, charged, Vec::new()))
 }
 
 #[cfg(test)]
