@@ -249,16 +249,17 @@ return the full block and its receipts.
 ## Cost
 
 Enabling backfill adds a substantial amount of disk usage, since it stores the
-bodies and receipts a headers-only node omits. On mainnet the measured cost is
-**~125 KiB per block** filled, at a rate of ~600 k blocks/day (~70 GiB/day), so
-the full `postmerge` range needs on the order of **0.7–1.2 TB of history on top of
-state**. See [Hardware requirements](../../getting-started/hardware_requirements.md#with-historical-chain-backfill-enabled)
-for the current figures and recommended disk sizes (the `postmerge` numbers are
-provisional while the reference run completes; `all` is not yet measured).
+bodies and receipts a headers-only node omits. A complete `postmerge` run measured
+on mainnet filled 9,993,456 blocks in about 14 days and added **~1.0 TB of history
+on top of state**, averaging **~105 KiB per block**. See
+[Hardware requirements](../../getting-started/hardware_requirements.md#with-historical-chain-backfill-enabled)
+for the per-column-family breakdown and recommended disk sizes.
 
-Because backfill walks from the pivot downward, the earliest blocks it fills are
-the most recent and largest; per-block cost drops as it reaches older blocks, so
-throughput in blocks/day rises over the course of a run.
+Because backfill walks from the pivot downward, the first blocks it fills are the
+most recent and largest. Per-block cost drops as it reaches older blocks (recent
+blocks measured ~125 KiB against the ~105 KiB full-range average), so throughput in
+blocks/day rises over the course of a run and an early sample overestimates the
+final total.
 
 The [DB observability](../../developers/l1/db-observability.md) dashboard breaks
 this growth down per column family (`bodies`, `receipts_v2`,

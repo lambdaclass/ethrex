@@ -40,35 +40,51 @@ background task that yields to chain-head following.
 | `--history.chain` | Extra disk (history) | Total disk, Mainnet | Status |
 |---|---|---|---|
 | `off` (default) | — | see table above | Measured |
-| `postmerge` | ~0.7–1.2 TB | ~2 TB minimum, 3–4 TB recommended | **Provisional — run in progress** |
-| `all` | TBD | TBD | TBD |
+| `postmerge` | ~1.0 TB | **2 TB minimum, 3 TB recommended** | Measured |
+| `all` | not measured | not measured | Bounded by the Byzantium block |
 
-### Measured so far — Mainnet, `postmerge`
+### Measured — Mainnet, `postmerge`, complete run
 
-Sampled over 4.75 days on a mainnet node backfilling with
-`--history.chain postmerge`:
+A mainnet node backfilled the entire post-merge range, from its sync pivot down to
+the merge block, and stopped there:
 
 | Metric | Value |
 |---|---|
-| Blocks backfilled | 2.85 M (frontier 25,530,850 → 22,685,024) |
-| History added (`bodies` + `receipts_v2` + `transaction_locations`) | 340 GiB |
-| Cost per block | ~125 KiB |
-| Fill rate | ~600 k blocks/day (~70 GiB/day) |
-| Remaining to the merge block (15,537,394) | ~7.1 M blocks |
-| Database total at ~40% filled | 825 GiB (of which ~460 GiB is state) |
+| Blocks backfilled | 9,993,456 (25,530,850 → 15,537,394) |
+| Wall-clock duration | ~14 days |
+| Average cost per block | ~105 KiB |
+| History on disk (`bodies` + `receipts_v2` + `transaction_locations` + `headers`) | ~1,019 GB |
+| State on disk (unchanged by backfill) | ~459 GB |
+| **Database total** | **1,490 GiB** |
 
-Extrapolating that per-block cost over the remaining range gives roughly 1.2 TB
-of history for the full post-merge span, but this is an **upper bound**: the
-blocks measured so far are the most recent and therefore the largest, and the
-fill rate has been accelerating (107 k → 253 k blocks per 6 h) as it reaches
-older, smaller blocks. The true total is expected toward the lower end of the
-range above.
+Per column family, for sizing a disk:
 
-> These `postmerge` numbers are provisional and will be replaced with final
-> measured totals once the reference run reaches the merge block. The `all`
-> profile has not been measured yet; it additionally depends on peer
-> availability for pre-merge history, which is limited after the 2025 history
-> expiry rollout.
+| Column family | Size | |
+|---|---|---|
+| `bodies` | 592 GB | history |
+| `receipts_v2` | 265 GB | history |
+| `transaction_locations` | 148 GB | history |
+| `headers` | 12 GB | history |
+| `storage_trie_nodes` | 190 GB | state |
+| `storage_flatkeyvalue` | 141 GB | state |
+| `account_trie_nodes` | 72 GB | state |
+| `account_flatkeyvalue` | 56 GB | state |
+
+Backfill inverts where the database spends its space. A headers-only node is
+roughly 82% state and 18% history; the same node fully backfilled is 31% state and
+69% history.
+
+Two things worth knowing when sizing from these numbers. The per-block cost is not
+uniform: recent blocks measured ~125 KiB each, while the full post-merge average
+came out ~105 KiB, because older post-merge blocks are smaller. And the figures
+above are a completed `postmerge` run, so a node also needs headroom for RocksDB
+compaction and for continued head-following growth; 2 TB is the point at which the
+run fits, not the point at which it is comfortable.
+
+> `all` has not been measured. It backfills further, down to the Byzantium block
+> rather than genesis (pre-EIP-658 receipts use a format ethrex does not
+> represent), and how far it actually gets depends on peer availability for
+> pre-merge history, which is limited after the 2025 history expiry rollout.
 
 ---
 
