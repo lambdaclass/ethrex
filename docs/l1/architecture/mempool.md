@@ -60,6 +60,7 @@ The inner state, mutated only under the write lock:
 |-------|------|---------|
 | `transaction_pool` | `FxHashMap<H256, MempoolTransaction>` | The authoritative set of pooled transactions, keyed by hash. |
 | `broadcast_pool` | `FxHashSet<H256>` | Hashes still pending the next P2P broadcast tick. Drained by `tx_broadcaster`. |
+| `private_pool` | `FxHashSet<H256>` | Hashes admitted under `--mempool.private`. Never propagated by any P2P path. Cleared on removal alongside `broadcast_pool`. |
 | `blobs_bundle_pool` | `FxHashMap<H256, BlobsBundle>` | EIP-4844 sidecars, keyed by the owning transaction hash. Its key set is the blob txs currently held. |
 | `blobs_bundle_by_versioned_hash` | `FxHashMap<H256, FxHashMap<H256, usize>>` | Reverse index: `versioned_hash → { tx_hash → position_in_bundle }`. A blob can be referenced by more than one transaction, so each referencing tx has its own inner entry. |
 | `in_flight_txs` | `FxHashSet<H256>` | Hashes for which a `GetPooledTransactions` request was sent but no response has arrived. Prevents duplicate requests across peers. |
@@ -141,19 +142,25 @@ Notes on individual checks:
 
 ## Replacement by Fee (RBF)
 
-`Mempool::find_tx_to_replace` decides whether a new transaction at an existing `(sender, nonce)` is accepted as a replacement. The condition is:
+`Mempool::find_tx_to_replace` decides whether a new transaction at an existing `(sender, nonce)` is accepted as a replacement. Replacement is gated in three stages, all of which must pass.
 
-```
-blob_fee_ok && (both_1559_fields_higher || gas_price_higher)
-```
+**1. Category gate.** A replacement may not cross the blob boundary: a blob-carrying transaction cannot displace a non-blob one or vice versa, since the two differ enormously in propagation cost. Mismatches are rejected with `ReplacementTypeMismatch`. "Blob-carrying" means `Transaction::is_blob_carrying()` — EIP-4844, *or* an EIP-8141 frame transaction with a non-empty `blob_versioned_hashes`, since those carry a sidecar too. Type changes *within* the regular pool (legacy ↔ 2930 ↔ 1559 ↔ 7702) remain allowed, matching geth/reth/nethermind.
 
-- **`gas_price_higher`** — `Transaction::gas_price()` strictly greater. That accessor returns the `gas_price` field for legacy and **EIP-2930** transactions, and `max_fee_per_gas` for every typed-fee transaction (EIP-1559 / 4844 / 7702 / fee-token / frame).
-- **`both_1559_fields_higher`** — `max_fee_per_gas` *and* `max_priority_fee_per_gas` both strictly greater. Legacy and EIP-2930 transactions can never satisfy this arm: their `max_fee_per_gas()` / `max_priority_fee()` accessors return `None`, so their replacement is governed entirely by the `gas_price` comparison.
-- **`blob_fee_ok`** — when both the in-pool and incoming transaction carry `max_fee_per_blob_gas` (EIP-4844), the new one must be strictly greater; otherwise this term is vacuously true.
+**2. Strict increase.** The incoming transaction must strictly out-bid the pooled one on **both** `gas_fee_cap` and `gas_tip_cap`. This is not redundant with the percentage threshold below — see the note on rounding.
 
-Because the two fee arms are OR-ed, raising only `max_fee_per_gas` on an EIP-1559 transaction is already sufficient, since its `gas_price()` tracks `max_fee_per_gas`.
+**3. Percentage bump.** Each fee dimension must additionally clear `floor(existing × (100 + bump) / 100)`:
 
-If the bump condition isn't met, the replacement is rejected with `UnderpricedReplacement`. A configurable minimum-percentage bump is in flight (#6601).
+| Dimension | Applies to |
+|---|---|
+| `gas_fee_cap` | all transactions |
+| `gas_tip_cap` | all transactions |
+| `max_fee_per_blob_gas` | blob-carrying transactions only |
+
+The bump percentage is `--mempool.price-bump` (default 10) for regular transactions and `--mempool.blob-price-bump` (default 100) for blob-carrying ones, matching geth's `PriceBump` and its stricter blob equivalent. The higher blob figure reflects that re-propagating a sidecar is far more expensive than a plain transaction.
+
+> **Why stage 2 exists.** The threshold in stage 3 is computed with integer division, so it collapses onto the existing value whenever `existing × bump / 100 < 1` — with the default 10% bump, that is every fee below 10 wei. For a 1 wei tip, `floor(1 × 110 / 100) == 1`, so an *identical-fee* transaction would satisfy `new >= threshold` and be admitted as a "bump", evicting the pooled transaction and re-gossiping the replacement for free. geth guards this the same way, with a strict-increase check ahead of the threshold in `legacypool`'s `list.Add`.
+
+If any stage fails, the replacement is rejected with `UnderpricedReplacement` (or `ReplacementTypeMismatch` for stage 1).
 
 ## Per-sender Queued Cap
 
@@ -213,15 +220,33 @@ Frame transactions carry a validation prefix and may be sponsored by a paymaster
 
 The unlocked checks in `validate_transaction` (availability, non-canonical limit) are a pre-filter; the authoritative re-check runs under the write lock in `add_transaction`, matching the pattern used by the per-sender gates.
 
+## Private Mempool
+
+`--mempool.private` makes transactions submitted through *this node's own RPC* non-propagating: they
+enter the pool and are available to the local payload builder, but no P2P path discloses them.
+Transactions received from peers are unaffected — the flag is about what this node originates, not
+what it relays. It is node-local policy, not protocol behavior.
+
+The split is at the entry point, not the admission rules. `eth_sendRawTransaction` calls the
+`add_local_*` entry points, which consult the flag and pick `Mempool::add_transaction` (queues the
+hash in `broadcast_pool`) or `add_transaction_no_broadcast` (records it in `private_pool` instead).
+Both funnel into the same `add_transaction_inner`, so **admission gating is identical either way** —
+only propagation differs.
+
+Because a private tx never enters `broadcast_pool`, all three propagation paths below exclude it
+by construction; `Mempool::is_private` exists for the paths that read the pool directly rather than
+the broadcast set. A transaction already gossiped before the flag took effect cannot be recalled —
+the node logs a warning rather than pretending otherwise.
+
 ## P2P Propagation
 
 Three P2P paths interact with the mempool:
 
 **Periodic broadcast.** `TxBroadcaster` (`crates/networking/p2p/tx_broadcaster.rs`) runs an actor on a `--p2p.tx-broadcasting-interval`-millisecond tick. Each tick it snapshots `broadcast_pool` via `Mempool::get_txs_for_broadcast`, sends full transaction bodies to ~`sqrt(peers)` peers and `NewPooledTransactionHashes` announcements to the rest, then calls `Mempool::remove_broadcasted_txs` to clear the set. Blob (EIP-4844) and frame (EIP-8141) transactions are announced by hash only; privileged transactions are filtered out. Per-peer deduplication is tracked with a broadcast record keyed by hash and a peer bitset.
 
-**New-peer hash dump.** On a fresh RLPx connection, `send_all_pooled_tx_hashes` (`crates/networking/p2p/rlpx/connection/server.rs`) sends the node's known pooled-transaction hashes to the new peer. It reads them via `Mempool::get_all_txs_by_sender`, flattens, and skips privileged transactions.
+**New-peer hash dump.** On a fresh RLPx connection, `send_all_pooled_tx_hashes` (`crates/networking/p2p/rlpx/connection/server.rs`) sends the node's known pooled-transaction hashes to the new peer. It reads them via `Mempool::get_txs_for_new_peer_dump`, which takes a single read lock and filters out privileged **and** private transactions inline — note the general-purpose `get_all_txs_by_sender` applies no private filter, so it must not be substituted here.
 
-**GetPooledTransactions responses.** `GetPooledTransactions::handle` (`crates/networking/p2p/rlpx/eth/transactions.rs`) serves requested hashes through `Blockchain::get_p2p_transaction_by_hash`, which reads the pooled transaction (and its blobs bundle for blob txs) and returns a `not found` path for missing hashes and for privileged transactions (which are not served over P2P).
+**GetPooledTransactions responses.** `GetPooledTransactions::handle` (`crates/networking/p2p/rlpx/eth/transactions.rs`) serves requested hashes through `Blockchain::get_p2p_transaction_by_hash`, which reads the pooled transaction (and its blobs bundle for blob txs) and returns a `not found` path for missing hashes, privileged transactions, and private (`--mempool.private`) transactions — none of which are served over P2P.
 
 Incoming gossip flows the other way: `Mempool::reserve_unknown_hashes` filters incoming `NewPooledTransactionHashes` against `transaction_pool` and `in_flight_txs` in one locked pass, marking unknown hashes in-flight so concurrent peer handlers don't issue duplicate `GetPooledTransactions` requests. `clear_in_flight_txs` clears the marker when the response arrives or the connection drops; `alternates` records fallback announcers to retry against.
 
@@ -232,8 +257,11 @@ Mempool-related flags in `cmd/ethrex/cli.rs`:
 | Flag | Env | Default | Controls |
 |------|-----|---------|----------|
 | `--mempool.maxsize` | `ETHREX_MEMPOOL_MAX_SIZE` | `10_000` | Cap on the regular pool — eviction starts at this size. |
+| `--mempool.price-bump` | `ETHREX_MEMPOOL_PRICE_BUMP` | `10` (`DEFAULT_PRICE_BUMP_PERCENT`) | Minimum fee bump (percent) to replace a non-blob pooled tx at the same `(sender, nonce)`. |
+| `--mempool.blob-price-bump` | `ETHREX_MEMPOOL_BLOB_PRICE_BUMP` | `100` (`DEFAULT_BLOB_PRICE_BUMP_PERCENT`) | Minimum fee bump (percent) to replace a blob-carrying pooled tx; higher because sidecars are costly to re-propagate. |
 | `--mempool.max-queued-txs-per-account` | `ETHREX_MEMPOOL_MAX_QUEUED_TXS_PER_ACCOUNT` | `64` (`DEFAULT_MAX_QUEUED_TXS_PER_ACCOUNT`) | Per-sender cap on queued (future-nonce) transactions; executable txs are never capped. |
 | `--mempool.min-tip` | `ETHREX_MEMPOOL_MIN_TIP` | `1` (`DEFAULT_MIN_TIP_WEI`) | Minimum raw tip cap (wei) for admission; matches geth's `PriceLimit`. `0` disables the floor. |
+| `--mempool.private` | `ETHREX_MEMPOOL_PRIVATE` | `false` | Keep RPC-submitted txs out of P2P propagation; they still enter the pool and can be included in locally-built blocks. |
 | `--mempool.gap-admit-occupancy-threshold` | `ETHREX_MEMPOOL_GAP_ADMIT_OCCUPANCY_THRESHOLD` | `90` (`DEFAULT_GAP_ADMIT_OCCUPANCY_THRESHOLD`) | Occupancy percentage (`0..=100`) at/above which gapped-nonce txs are rejected; `100` disables the gate. |
 | `--p2p.tx-broadcasting-interval` | `ETHREX_P2P_TX_BROADCASTING_INTERVAL` | `1000` ms (`BROADCAST_INTERVAL_MS`) | Period of the `TxBroadcaster` actor tick. |
 
@@ -257,7 +285,8 @@ Mempool-related flags in `cmd/ethrex/cli.rs`:
 | `SenderIsContract` | EIP-3607: sender has non-empty code that isn't a valid EIP-7702 delegation. |
 | `NotEnoughBalance` | Single-tx cost exceeds balance, or sender absent from state. |
 | `InsufficientCumulativeBalance { required, available }` | Sum of the sender's pending-tx costs plus this one exceeds balance. |
-| `UnderpricedReplacement` | RBF candidate doesn't strictly out-bid the in-pool tx on all fee fields. |
+| `UnderpricedReplacement` | RBF candidate doesn't strictly out-bid the in-pool tx on every fee field, or doesn't clear the configured percentage bump. |
+| `ReplacementTypeMismatch` | RBF candidate crosses the blob boundary (blob-carrying ↔ non-blob) at the same `(sender, nonce)`. |
 | `InvalidChainId(expected)` | `tx.chain_id` set and doesn't match the configured chain. |
 | `GapAdmissionDeniedUnderPressure { occupancy_pct, nonce_gap }` | Non-replacement gapped-nonce tx while occupancy ≥ threshold. |
 | `MaxQueuedTxsPerAccountExceeded { sender, count, limit }` | Per-sender queued (future-nonce) cap would be exceeded. |
@@ -271,8 +300,6 @@ Mempool-related flags in `cmd/ethrex/cli.rs`:
 The mempool today is a single combined pool with FIFO regular eviction and the admission checks above. Areas with hardening work in flight or planned (tracked in their own PRs, which carry their own documentation):
 
 - **Tip-aware regular eviction.** Regular eviction is arrival-order FIFO; a high-tip transaction can be evicted for a low-tip one. Heap/tip-aware eviction is in flight (#6607).
-- **RBF percentage fee bump.** RBF currently accepts any strict fee increase; a configurable minimum-percentage bump (and cross-type replacement rejection) is in flight (#6601).
-- **Non-propagating local transactions** (`--mempool.private`) (#6576).
 - **Local-vs-P2P origin threading** through admission (#6608).
 - **Periodic re-validation / sweep** of stale or dormant pending transactions (#6610).
 - **Single combined pool.** Blob and non-blob transactions share `transaction_pool` with separate caps and eviction, but there is no full pending/queued sub-pool separation.
