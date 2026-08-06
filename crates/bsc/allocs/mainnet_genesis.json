@@ -43,6 +43,7 @@
     "fermiTime": 1768357800,
     "osakaTime": 1777343400,
     "mendelTime": 1777343400,
+    "pasteurTime": 1787625000,
     "blobSchedule": {
       "cancun": {
         "target": 3,

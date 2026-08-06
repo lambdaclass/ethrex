@@ -312,6 +312,8 @@ pub struct ChainConfig {
     pub fermi_time: Option<u64>,
     #[serde(default)]
     pub mendel_time: Option<u64>,
+    #[serde(default)]
+    pub pasteur_time: Option<u64>,
 
     /// Amount of total difficulty reached by the network that triggers the consensus upgrade.
     #[serde(default, with = "crate::serde_utils::u128::hex_str_opt")]
@@ -727,6 +729,7 @@ impl ChainConfig {
             self.maxwell_time,
             self.fermi_time,
             self.mendel_time,
+            self.pasteur_time,
         ]
         .into_iter()
         .flatten()

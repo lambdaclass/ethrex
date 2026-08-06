@@ -20,6 +20,11 @@ pub const STAKE_HUB_CONTRACT: Address = H160([
     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x20, 0x02,
 ]);
 
+/// Governor contract address on BSC (0x0000...2004).
+pub const GOVERNOR_CONTRACT: Address = H160([
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x20, 0x04,
+]);
+
 // ── Epoch lengths ────────────────────────────────────────────────────────────
 
 /// Default epoch length: 200 blocks per validator election cycle.

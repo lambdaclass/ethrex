@@ -1231,6 +1231,20 @@ impl Blockchain {
         // Validate the block pre-execution
         validate_block_pre_execution(block, parent_header, chain_config, ELASTICITY_MULTIPLIER)?;
         let (execution_result, bal) = vm.execute_block(block)?;
+
+        // BSC hardfork system-contract upgrades (e.g. Pasteur): a pure consensus
+        // state change (`SetCode`) applied after all block transactions run and
+        // before the state root is computed — mirrors bsc-geth Parlia `Finalize`.
+        // No-op on non-BSC chains and on every block except the fork transition.
+        for (address, code) in ethrex_bsc::system_contract_upgrades::system_contract_code_upgrades(
+            chain_config,
+            parent_header.timestamp,
+            block.header.timestamp,
+        ) {
+            vm.set_account_code(address, bytes::Bytes::from_static(code))
+                .map_err(ChainError::EvmError)?;
+        }
+
         // Validate execution went alright
         if let Err(e) = validate_gas_used(execution_result.block_gas_used, &block.header) {
             ethrex_vm::log_gas_used_mismatch(

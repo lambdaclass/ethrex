@@ -71,6 +71,7 @@ pub fn gather_bsc_forks(
         chain_config.maxwell_time,
         chain_config.fermi_time,
         chain_config.mendel_time,
+        chain_config.pasteur_time,
     ]
     .into_iter()
     .flatten()

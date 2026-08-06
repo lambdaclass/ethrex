@@ -198,6 +198,23 @@ impl GeneralizedDatabase {
         Ok(acc)
     }
 
+    /// Replace an account's bytecode.
+    ///
+    /// Used for BSC hardfork system-contract upgrades (e.g. Pasteur), which
+    /// patch system-contract code as a pure consensus state change rather than
+    /// via EVM execution. The account is marked modified (via `get_account_mut`)
+    /// so the code change is captured in `get_state_transitions`.
+    pub fn set_account_bytecode(
+        &mut self,
+        address: Address,
+        code: Code,
+    ) -> Result<(), InternalError> {
+        let hash = code.hash;
+        self.get_account_mut(address)?.info.code_hash = hash;
+        self.codes.entry(hash).or_insert(code);
+        Ok(())
+    }
+
     /// Gets code immutably given the code hash.
     /// Use this only inside of the VM, when we don't surely know if the code is in the cache or not
     /// But e.g. in `get_state_transitions` just do `db.codes.get(code_hash)` because we know for sure code is there.

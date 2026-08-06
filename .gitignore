@@ -83,6 +83,8 @@ openspec/
 
 # RKYV
 *.bin
+# BSC Pasteur system-contract bytecode (source assets embedded via include_bytes!)
+!crates/bsc/src/pasteur/*.bin
 
 # Documentation Graphs
 !docs/internal/l1/healing/*.svg
