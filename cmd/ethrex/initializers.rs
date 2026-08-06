@@ -7,8 +7,9 @@ use crate::{
     },
 };
 use ethrex_blockchain::{Blockchain, BlockchainOptions, BlockchainType};
+use ethrex_common::U256;
 use ethrex_common::fd_limit::raise_fd_limit;
-use ethrex_common::types::Genesis;
+use ethrex_common::types::{ChainConfig, Genesis};
 use ethrex_config::networks::Network;
 use ethrex_rpc::WebSocketConfig;
 
@@ -736,6 +737,79 @@ fn resolve_binary_tree_time(
     }
 }
 
+/// Refuses snap sync on a chain that schedules the EIP-8297 binary-tree
+/// commitment.
+///
+/// Snap sync is MPT-shaped: it pivots on a recent header and downloads the
+/// trie behind that header's `state_root`. Once `binaryTreeTime` has passed,
+/// a header's `state_root` is a binary-trie root that addresses no MPT, so
+/// the pivot resolves to nothing and the node fails in a way nobody can
+/// debug. Binary-trie snap sync is tracked separately; until it exists, full
+/// sync is the only supported mode on a scheduled chain.
+///
+/// No auto-fallback to full sync — a silent mode switch surprises operators —
+/// so the error names the fix instead.
+///
+/// Callers must pass the *finalized* chain config (after
+/// [`resolve_binary_tree_time`], so both a genesis-JSON `binaryTreeTime` and
+/// `--experimental.binary-tree-delay` are covered) and the *effective* sync
+/// mode: `--dev` never p2p-syncs and forces full in `init_rpc_api`, so it
+/// must not trip this.
+fn validate_sync_mode(config: &ChainConfig, syncmode: &SyncMode) -> eyre::Result<()> {
+    if config.binary_tree_scheduled() && *syncmode == SyncMode::Snap {
+        return Err(eyre::eyre!(
+            "snap sync is not supported on a binary-tree-scheduled chain (binaryTreeTime is set): \
+             snap sync downloads the MPT behind a pivot header's state root, but from the \
+             activation timestamp onwards a state root is a binary-trie root that addresses no \
+             MPT. Restart with --syncmode full."
+        ));
+    }
+    Ok(())
+}
+
+/// Rejects a genesis alloc the binary tree cannot represent, on any chain
+/// that schedules the commitment.
+///
+/// The basic-data leaf packs an account balance into 16 bytes (see
+/// `crates/common/binary-trie/src/embedding.rs`, which returns
+/// `BinaryTrieError::BalanceTooLarge` at or above `2^128`), and a
+/// `"balance": "0xffff…"` sentinel account is a common genesis idiom. Such an
+/// alloc is inert until something computes a binary-trie root over it — which,
+/// on a chain scheduled to activate later, is the *activation block*: every
+/// node fails to import it, the chain halts, and a genesis balance cannot be
+/// changed retroactively. Startup is the last point at which it is still
+/// fixable, so check whenever the commitment is merely *scheduled*, not only
+/// when it is already active at the genesis timestamp.
+///
+/// Deliberately not gated on `--skip-genesis-validation`: that flag waives the
+/// genesis header/state-root comparison for a datadir built out-of-band, which
+/// is a statement about what is already stored. This is a statement about
+/// whether a scheduled consensus change can succeed at all, and skipping it
+/// only converts a startup error into an unrecoverable chain halt.
+fn validate_genesis_binary_tree_embeddable(genesis: &Genesis) -> eyre::Result<()> {
+    let Some(activation) = genesis.config.binary_tree_time else {
+        return Ok(());
+    };
+    // Exclusive: `2^128 - 1` is the largest balance the 16-byte field holds.
+    let limit = U256::one() << 128;
+    for (address, account) in &genesis.alloc {
+        if account.balance >= limit {
+            let balance = account.balance;
+            return Err(eyre::eyre!(
+                "genesis account {address:#x} holds a balance of {balance}, at or above the 2^128 \
+                 limit of the experimental EIP-8297 binary-tree basic-data leaf, which packs a \
+                 balance into 16 bytes. The binary-tree commitment is scheduled for timestamp \
+                 {activation}, and this balance is carried into the first block at or after it, \
+                 whose binary-tree root would then be uncomputable: every node would fail to \
+                 import that block and the chain would halt at activation, with no way to change \
+                 a genesis balance retroactively. Fix the genesis alloc now — every account \
+                 balance must be below 2^128 (about 3.4e38 wei)."
+            ));
+        }
+    }
+    Ok(())
+}
+
 #[cfg(feature = "sync-test")]
 async fn set_sync_block(store: &Store) {
     if let Ok(block_number) = env::var("SYNC_BLOCK_NUM") {
@@ -775,6 +849,18 @@ pub async fn init_l1(
         genesis.config.binary_tree_time,
         opts.experimental_binary_tree_delay,
     )?;
+    // Guards on the finalized schedule, before any store or network work so a
+    // misconfigured node fails at the cheapest possible point.
+    //
+    // `--dev` never p2p-syncs and its SyncManager is forced to full (see
+    // `init_rpc_api`), so validate the same effective mode the node will run.
+    let effective_syncmode = if opts.dev {
+        &SyncMode::Full
+    } else {
+        &opts.syncmode
+    };
+    validate_sync_mode(&genesis.config, effective_syncmode)?;
+    validate_genesis_binary_tree_embeddable(&genesis)?;
     display_chain_initialization(&genesis);
     debug!("Preloading KZG trusted setup");
     ethrex_crypto::kzg::warm_up_trusted_setup();
@@ -1307,5 +1393,149 @@ mod tests {
             .unwrap_err()
             .to_string();
         assert!(err.contains("--experimental.binary-tree-delay"), "{err}");
+    }
+
+    // --- snap sync on a scheduled chain (Task B1) -------------------------
+
+    use super::validate_sync_mode;
+    use ethrex_common::types::ChainConfig;
+    use ethrex_p2p::sync::SyncMode;
+
+    /// A config with the commitment scheduled for a timestamp well after
+    /// genesis: `binary_tree_scheduled()` holds, which is what the guard keys
+    /// off.
+    fn scheduled_config() -> ChainConfig {
+        ChainConfig {
+            binary_tree_time: Some(1_700_000_120),
+            ..Default::default()
+        }
+    }
+
+    /// Snap sync pivots on a recent header's `state_root` and downloads the
+    /// MPT behind it. After the flip that root is a binary-trie root
+    /// addressing no MPT, so refuse at startup rather than fail
+    /// undebuggably later — and name the fix.
+    #[test]
+    fn snap_sync_on_a_scheduled_chain_is_rejected_naming_the_fix() {
+        let err = validate_sync_mode(&scheduled_config(), &SyncMode::Snap)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains("--syncmode full"),
+            "the error must tell the operator the fix (--syncmode full), got: {err}"
+        );
+    }
+
+    /// Full sync is binary-tree aware, so a scheduled chain boots normally.
+    #[test]
+    fn full_sync_on_a_scheduled_chain_is_accepted() {
+        validate_sync_mode(&scheduled_config(), &SyncMode::Full)
+            .expect("full sync is the supported mode on a scheduled chain");
+    }
+
+    /// Today's default (snap, no `binaryTreeTime`) must be untouched.
+    #[test]
+    fn snap_sync_on_an_unscheduled_chain_is_accepted() {
+        let config = ChainConfig::default();
+        assert!(!config.binary_tree_scheduled());
+        validate_sync_mode(&config, &SyncMode::Snap)
+            .expect("an unscheduled chain must be unaffected by this guard");
+    }
+
+    // --- genesis balance bound (Task B2) ----------------------------------
+
+    use super::validate_genesis_binary_tree_embeddable;
+    use ethrex_common::types::{Genesis, GenesisAccount};
+    use ethrex_common::{Address, U256};
+
+    /// The exclusive bound: `2^128` is the first balance the 16-byte
+    /// basic-data field cannot hold.
+    fn balance_limit() -> U256 {
+        U256::one() << 128
+    }
+
+    /// Address of the account the balance-bound tests over-fund.
+    fn overfunded() -> Address {
+        Address::from_low_u64_be(0xcc)
+    }
+
+    /// A genesis holding one account at `balance`, with the commitment
+    /// scheduled at `binary_tree_time`.
+    fn genesis_with_balance(balance: U256, binary_tree_time: Option<u64>) -> Genesis {
+        let mut genesis = Genesis {
+            timestamp: 1_700_000_000,
+            ..Default::default()
+        };
+        genesis.config.binary_tree_time = binary_tree_time;
+        genesis.alloc.insert(
+            overfunded(),
+            GenesisAccount {
+                code: bytes::Bytes::new(),
+                storage: std::collections::BTreeMap::new(),
+                balance,
+                nonce: 0,
+            },
+        );
+        genesis
+    }
+
+    /// Scheduled for later plus an unembeddable alloc balance: nothing would
+    /// look at it until the flip block, where every node fails to import and
+    /// the chain halts with no retroactive fix. Refuse at startup, naming the
+    /// account so the operator can find it.
+    #[test]
+    fn a_scheduled_chain_rejects_an_alloc_balance_at_the_binary_tree_limit() {
+        let genesis = genesis_with_balance(balance_limit(), Some(1_700_000_120));
+        assert!(!genesis.config.is_binary_tree_active(genesis.timestamp));
+
+        let err = validate_genesis_binary_tree_embeddable(&genesis)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains(&format!("{:#x}", overfunded())),
+            "the error must name the offending account: {err}"
+        );
+        assert!(
+            err.contains(&balance_limit().to_string()),
+            "the error must report the offending balance: {err}"
+        );
+        assert!(
+            err.contains("halt"),
+            "the error must say the chain would halt at activation: {err}"
+        );
+    }
+
+    /// The boundary: `2^128 - 1` is the largest balance the basic-data field
+    /// holds, so the guard must not reject it.
+    #[test]
+    fn a_scheduled_chain_accepts_the_largest_embeddable_balance() {
+        let genesis = genesis_with_balance(balance_limit() - 1, Some(1_700_000_120));
+        validate_genesis_binary_tree_embeddable(&genesis)
+            .expect("a balance one below the limit must be accepted");
+    }
+
+    /// No `binaryTreeTime` means no binary-tree involvement: an over-large
+    /// balance stays legal, exactly as before this guard.
+    #[test]
+    fn an_unscheduled_chain_ignores_an_over_large_alloc_balance() {
+        let genesis = genesis_with_balance(balance_limit(), None);
+        assert!(!genesis.config.binary_tree_scheduled());
+        validate_genesis_binary_tree_embeddable(&genesis)
+            .expect("an unscheduled chain must be behaviourally unchanged");
+    }
+
+    /// Genesis-time activation (the degenerate in-process case) is scheduled
+    /// too, so it is caught by the same guard.
+    #[test]
+    fn a_genesis_time_activation_is_caught_as_well() {
+        let genesis = genesis_with_balance(balance_limit(), Some(1_700_000_000));
+        assert!(genesis.config.is_binary_tree_active(genesis.timestamp));
+        let err = validate_genesis_binary_tree_embeddable(&genesis)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains(&format!("{:#x}", overfunded())),
+            "the error must name the offending account: {err}"
+        );
     }
 }
