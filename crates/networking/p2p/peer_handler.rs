@@ -668,46 +668,60 @@ impl PeerHandler {
 
     /// Request block access lists via snap/2 (`GetBlockAccessLists`/`BlockAccessLists`).
     ///
-    /// Returns `None` when no snap/2 peer is available. On success returns
-    /// `(bals, peer_id)` where `peer_id` identifies the responding peer so
-    /// callers can call `record_failure` on the right peer.
+    /// Tries up to `REQUEST_RETRY_ATTEMPTS` distinct snap/2 peers, skipping any that
+    /// already failed this call. EIP-8189 ("Security Considerations") asks implementations
+    /// to deprioritize unreliable peers rather than let one determine the outcome, so a
+    /// timeout or a malformed reply moves on to another peer instead of ending the replay.
     ///
-    /// B2: uses `Message::Snap2GetBlockAccessLists` to send and
-    /// `Message::Snap2BlockAccessLists` to receive — NOT the eth/71 variants.
+    /// Returns `None` only once no untried snap/2 peer remains. On success returns
+    /// `(bals, peer_id)` identifying the responding peer, so the caller can attribute a
+    /// later validation failure to whoever served the data.
     pub async fn request_snap2_bals(
         &mut self,
         block_hashes: &[H256],
     ) -> Result<Option<(Vec<Option<BlockAccessList>>, H256)>, PeerHandlerError> {
-        let request_id: u64 = rand::random();
-        let request = RLPxMessage::Snap2GetBlockAccessLists(Snap2GetBlockAccessLists {
-            id: request_id,
-            block_hashes: block_hashes.to_vec(),
-            response_bytes: BAL_RESPONSE_SOFT_CAP_BYTES,
-        });
-        let Some((peer_id, mut connection, permit)) = self
-            .peer_table
-            .get_best_peer(vec![Capability::snap(2)])
-            .await?
-        else {
-            return Ok(None);
-        };
-        let response = connection
-            .outgoing_request(request, PEER_REPLY_TIMEOUT)
-            .await;
-        drop(permit);
-        match response {
-            Ok(RLPxMessage::Snap2BlockAccessLists(Snap2BlockAccessLists { id, bals }))
-                if id == request_id =>
-            {
-                self.peer_table.record_success(peer_id)?;
-                Ok(Some((bals, peer_id)))
-            }
-            _ => {
-                warn!("[SYNCING] didn't receive snap/2 BALs from peer {peer_id}");
-                self.peer_table.record_failure(peer_id)?;
-                Ok(None)
+        let mut failed_peers: Vec<H256> = Vec::new();
+
+        for _ in 0..REQUEST_RETRY_ATTEMPTS {
+            let Some((peer_id, mut connection, permit)) = self
+                .peer_table
+                .get_best_peer_excluding(vec![Capability::snap(2)], failed_peers.clone())
+                .await?
+            else {
+                break;
+            };
+
+            // A fresh id per attempt: reusing one would let a late reply from an
+            // abandoned peer satisfy the request meant for its replacement.
+            let request_id: u64 = rand::random();
+            let request = RLPxMessage::Snap2GetBlockAccessLists(Snap2GetBlockAccessLists {
+                id: request_id,
+                block_hashes: block_hashes.to_vec(),
+                response_bytes: BAL_RESPONSE_SOFT_CAP_BYTES,
+            });
+
+            let response = connection
+                .outgoing_request(request, PEER_REPLY_TIMEOUT)
+                .await;
+            drop(permit);
+
+            match response {
+                Ok(RLPxMessage::Snap2BlockAccessLists(Snap2BlockAccessLists { id, bals }))
+                    if id == request_id =>
+                {
+                    self.peer_table.record_success(peer_id)?;
+                    return Ok(Some((bals, peer_id)));
+                }
+                _ => {
+                    debug!("didn't receive snap/2 BALs from peer {peer_id}, trying another");
+                    self.peer_table.record_failure(peer_id)?;
+                    failed_peers.push(peer_id);
+                }
             }
         }
+
+        warn!("[SYNCING] no snap/2 peer served block access lists");
+        Ok(None)
     }
 
     /// Returns diagnostic snapshots for all connected peers (scores, requests, eligibility).
