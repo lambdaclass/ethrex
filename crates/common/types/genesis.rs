@@ -332,6 +332,27 @@ pub struct ChainConfig {
     #[serde(default)]
     pub utxo_frames_time: Option<u64>,
 
+    /// EIP-7805 (FOCIL) activation timestamp.
+    ///
+    /// FOCIL is the one member of this stack that is not EL-internal: it needs a
+    /// consensus client that builds and gossips inclusion lists and drives
+    /// `engine_getInclusionListV1` / `newPayloadV6` / `forkchoiceUpdatedV5`. The
+    /// beacon fork carrying it upstream is `heze`, which this chain already uses
+    /// to schedule `Fork::Hegota`, so riding the Hegota ordinal would turn FOCIL on
+    /// for any FOCIL-capable CL the moment it connected, with no way to opt out.
+    ///
+    /// A separate timestamp keeps "merged but inert" an explicit configuration
+    /// rather than an accident of which CL happens to be running. While unset the
+    /// FOCIL engine methods are not advertised, so a FOCIL-capable CL fails
+    /// capability negotiation instead of silently half-enabling the feature.
+    ///
+    /// `None` = EIP-7805 is not scheduled on this chain (the default). Setting it
+    /// also requires Hegota to be scheduled, since inclusion-list eligibility is
+    /// defined over EIP-8141 frame transactions; see
+    /// [`ChainConfig::is_focil_activated`].
+    #[serde(default)]
+    pub focil_time: Option<u64>,
+
     /// Amount of total difficulty reached by the network that triggers the consensus upgrade.
     #[serde(default, with = "crate::serde_utils::u128::hex_str_opt")]
     pub terminal_total_difficulty: Option<u128>,
@@ -471,6 +492,26 @@ impl ChainConfig {
     pub fn is_utxo_frames_activated(&self, block_timestamp: u64) -> bool {
         self.utxo_frames_time
             .is_some_and(|time| time <= block_timestamp)
+            && self.get_fork(block_timestamp) >= Fork::Hegota
+    }
+
+    /// Whether EIP-7805 (FOCIL) is active at `block_timestamp`.
+    ///
+    /// Requires both its own activation timestamp (see
+    /// [`ChainConfig::focil_time`]) and Hegota, because inclusion-list eligibility
+    /// for this stack is defined over EIP-8141 frame transactions.
+    ///
+    /// This is the single predicate every per-block FOCIL gate MUST use: the V5/V6
+    /// handlers and inclusion-list satisfaction. Engine capability advertisement
+    /// has no block to resolve against and keys off `focil_time.is_some()`, i.e.
+    /// whether the feature is scheduled at all, matching how Hegotá itself is
+    /// advertised. As with
+    /// [`ChainConfig::is_utxo_frames_activated`], the Hegotá half resolves through
+    /// the fork ordinal rather than `is_hegota_activated`, so a chain scheduling a
+    /// successor fork without an explicit `hegotaTime` does not diverge from
+    /// execution.
+    pub fn is_focil_activated(&self, block_timestamp: u64) -> bool {
+        self.focil_time.is_some_and(|time| time <= block_timestamp)
             && self.get_fork(block_timestamp) >= Fork::Hegota
     }
 
