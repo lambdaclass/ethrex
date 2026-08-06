@@ -29,6 +29,14 @@ use tracing::{debug, error, info, warn};
 #[cfg(feature = "metrics")]
 use ethrex_metrics::l2::metrics::METRICS;
 
+/// Max time to read a complete prover message before dropping the connection. Prevents a
+/// stalled or misbehaving prover from keeping a ConnectionHandler actor (and its socket) alive
+/// forever. Generous, so slow-but-honest provers sending large payloads aren't dropped.
+const READ_TIMEOUT: Duration = Duration::from_secs(120);
+/// Max concurrent ConnectionHandler actors. Bounds how many handler actors/sockets can
+/// accumulate if provers connect but stall or never send a valid message.
+const MAX_CONCURRENT_HANDLERS: usize = 256;
+
 #[protocol]
 pub trait ProofCoordinatorProtocol: Send + Sync {
     fn incoming_connection(
@@ -54,6 +62,9 @@ pub struct ProofCoordinator {
     /// assignment doesn't block an SP1 prover from working on the same batch.
     assignments: Arc<std::sync::Mutex<HashMap<(u64, ProverType), Instant>>>,
     prover_timeout: Duration,
+    /// Bounds concurrent ConnectionHandler actors. Incremented when a connection is admitted,
+    /// decremented in the handler's stopped() hook. See `MAX_CONCURRENT_HANDLERS`.
+    concurrent_handlers: Arc<std::sync::atomic::AtomicUsize>,
 }
 
 #[actor(protocol = ProofCoordinatorProtocol)]
@@ -95,6 +106,7 @@ impl ProofCoordinator {
             qpl_tool_path: config.proof_coordinator.qpl_tool_path.clone(),
             assignments: Arc::new(std::sync::Mutex::new(HashMap::new())),
             prover_timeout: Duration::from_millis(config.proof_coordinator.prover_timeout_ms),
+            concurrent_handlers: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
         })
     }
 
@@ -139,6 +151,24 @@ impl ProofCoordinator {
         msg: proof_coordinator_protocol::IncomingConnection,
         _ctx: &Context<Self>,
     ) {
+        // Bound concurrent connection handlers so a burst of (or stalled) prover connections
+        // can't spawn handler actors/sockets without limit. The slot is released in the
+        // handler's stopped() hook.
+        if self
+            .concurrent_handlers
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+            >= MAX_CONCURRENT_HANDLERS
+        {
+            self.concurrent_handlers
+                .fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
+            debug!(
+                "Proof coordinator handler cap reached, dropping connection from {}",
+                msg.addr
+            );
+            return;
+        }
+        // On any path after a successful start the handler runs its stopped() hook exactly
+        // once, which releases the slot — so we do not decrement here.
         let _ = ConnectionHandler::spawn(self.clone(), msg.stream, msg.addr)
             .await
             .inspect_err(|err| {
@@ -388,6 +418,14 @@ impl ConnectionHandler {
             .map_err(ConnectionHandlerError::InternalError)
     }
 
+    #[stopped]
+    async fn stopped(&mut self, _ctx: &Context<Self>) {
+        // Release the admission slot taken in ProofCoordinator::handle_incoming_connection.
+        self.proof_coordinator
+            .concurrent_handlers
+            .fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
+    }
+
     #[send_handler]
     async fn handle_connection_msg(
         &mut self,
@@ -410,7 +448,13 @@ impl ConnectionHandler {
         // TODO: This should be fixed in https://github.com/lambdaclass/ethrex/issues/3316
         // (stream should not be wrapped in an Arc)
         if let Some(mut stream) = Arc::into_inner(stream) {
-            stream.read_to_end(&mut buffer).await?;
+            // Bound the read so a stalled/misbehaving prover can't keep this handler (and the
+            // socket) alive indefinitely.
+            tokio::time::timeout(READ_TIMEOUT, stream.read_to_end(&mut buffer))
+                .await
+                .map_err(|_| {
+                    ProofCoordinatorError::Custom("prover connection read timed out".to_string())
+                })??;
 
             let data: Result<ProofData<ProverInputData>, _> = serde_json::from_slice(&buffer);
             match data {
