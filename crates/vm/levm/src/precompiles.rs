@@ -306,12 +306,17 @@ impl PrecompileCache {
     }
 }
 
-#[expect(clippy::as_conversions, clippy::indexing_slicing)]
+#[expect(
+    clippy::as_conversions,
+    clippy::indexing_slicing,
+    clippy::too_many_arguments
+)]
 pub fn execute_precompile(
     address: Address,
     calldata: &Bytes,
     gas_remaining: &mut u64,
     fork: Fork,
+    is_pasteur: bool,
     vm_type: VMType,
     cache: Option<&PrecompileCache>,
     crypto: &dyn Crypto,
@@ -320,11 +325,13 @@ pub fn execute_precompile(
     // table so they run in addition to the standard set (0x01-0x0a), not
     // instead of them.
     #[cfg(not(feature = "bsc"))]
-    let _ = vm_type;
+    let _ = (vm_type, is_pasteur);
     #[cfg(feature = "bsc")]
     if matches!(vm_type, VMType::Bsc) && ethrex_bsc::precompiles::is_bsc_precompile(&address) {
         let gas_limit = *gas_remaining;
-        match ethrex_bsc::precompiles::run_bsc_precompile(&address, calldata, gas_limit, fork) {
+        match ethrex_bsc::precompiles::run_bsc_precompile(
+            &address, calldata, gas_limit, fork, is_pasteur,
+        ) {
             Ok((gas_used, output)) => {
                 increase_precompile_consumed_gas(gas_used, gas_remaining)?;
                 return Ok(Bytes::from(output));

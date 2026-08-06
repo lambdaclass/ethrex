@@ -970,6 +970,7 @@ impl<'a> VM<'a> {
                 gas_limit,
                 &mut gas_remaining,
                 self.env.config.fork,
+                self.env.config.is_pasteur,
                 self.vm_type,
                 self.db.store.precompile_cache(),
                 self.crypto,

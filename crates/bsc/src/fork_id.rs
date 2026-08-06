@@ -217,14 +217,14 @@ mod tests {
             "last block fork: hertzfixBlock"
         );
 
-        // Chapel has 12 distinct timestamp forks after genesis.
+        // Chapel has 13 distinct timestamp forks after genesis.
         // Sorted: 1702972800 (shanghai/kepler), 1710136800, 1711342800, 1713330442,
         //         1716962820, 1719986788, 1724116996, 1740452880, 1744097580,
-        //         1748243100, 1762741500, 1774319400
+        //         1748243100, 1762741500, 1774319400, 1784601000 (pasteur)
         assert_eq!(
             time_forks.len(),
-            12,
-            "expected 12 distinct timestamp forks after genesis for Chapel"
+            13,
+            "expected 13 distinct timestamp forks after genesis for Chapel"
         );
         assert_eq!(
             time_forks[0], 1_702_972_800,

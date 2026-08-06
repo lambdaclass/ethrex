@@ -82,12 +82,21 @@ pub fn run_bsc_precompile(
     input: &[u8],
     gas_limit: u64,
     fork: Fork,
+    is_pasteur: bool,
 ) -> Result<(u64, Vec<u8>), PrecompileError> {
     match address_to_u64(address) {
+        // Pasteur sunsets the BC cross-chain precompiles: tmHeaderValidate (0x64)
+        // and iavlMerkleProofValidate (0x65) become always-erroring stubs. In
+        // bsc-geth the error propagates through the CALL and burns ALL forwarded
+        // gas (the same all-gas-burn path as any precompile error on BSC).
+        // Reference: bsc-geth core/vm/contracts.go `PrecompiledContractsPasteur`
+        // + contracts_lightclient.go `*Deprecated`.
+        0x64 if is_pasteur => Err(PrecompileError::InvalidInput),
+        0x65 if is_pasteur => Err(PrecompileError::InvalidInput),
         0x64 => tm_header_validate::run(input, gas_limit),
         0x65 => iavl_merkle_proof::run(input, gas_limit),
         0x66 => bls_verify::run(input, gas_limit),
-        0x67 => cometbft_validate::run(input, gas_limit),
+        0x67 => cometbft_validate::run(input, gas_limit, is_pasteur),
         0x68 => double_sign::run(input, gas_limit),
         0x69 => secp256k1_recover::run(input, gas_limit),
         0x100 => p256_verify::run(input, gas_limit, fork),

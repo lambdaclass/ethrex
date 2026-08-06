@@ -62,6 +62,11 @@ pub struct Environment {
 pub struct EVMConfig {
     pub fork: Fork,
     pub blob_schedule: ForkBlobSchedule,
+    /// BSC Pasteur fork active at this block. Gates the deprecated cross-chain
+    /// precompiles (0x64/0x65) and the BEP-682 change to 0x67. `false` on all
+    /// non-BSC chains and pre-Pasteur BSC blocks. Not part of the `Fork` enum
+    /// because Pasteur is a BSC-only fork with no standard-fork equivalent.
+    pub is_pasteur: bool,
 }
 
 impl EVMConfig {
@@ -69,6 +74,7 @@ impl EVMConfig {
         EVMConfig {
             fork,
             blob_schedule,
+            is_pasteur: false,
         }
     }
 
@@ -79,7 +85,14 @@ impl EVMConfig {
             .get_fork_blob_schedule(block_header.timestamp)
             .unwrap_or_else(|| EVMConfig::canonical_values(fork));
 
-        EVMConfig::new(fork, blob_schedule)
+        let is_pasteur =
+            matches!(chain_config.pasteur_time, Some(t) if block_header.timestamp >= t);
+
+        EVMConfig {
+            fork,
+            blob_schedule,
+            is_pasteur,
+        }
     }
 
     /// This function is used for running the EF tests. If you don't
@@ -132,6 +145,7 @@ impl Default for EVMConfig {
         EVMConfig {
             fork,
             blob_schedule: Self::canonical_values(fork),
+            is_pasteur: false,
         }
     }
 }

@@ -52,6 +52,10 @@ use super::PrecompileError;
 /// Gas cost for cometBFTLightBlockValidate.  Matches `params.CometBFTLightBlockValidateGas`.
 pub const COMETBFT_VALIDATE_GAS: u64 = 3_000;
 
+/// Per-input-byte gas added by Pasteur (BEP-682).
+/// Matches `params.CometBFTLightBlockValidatePerByteGas`.
+pub const COMETBFT_VALIDATE_PER_BYTE_GAS: u64 = 16;
+
 // ── Layout constants ──────────────────────────────────────────────────────────
 
 /// Outer 32-byte word carrying the consensus-state length in its last 8 bytes.
@@ -99,16 +103,36 @@ pub(crate) struct ConsensusStateV2<'a> {
 /// [`PrecompileError::NotEnoughGas`].  Structural parsing of the consensus
 /// state is complete; protobuf `LightBlock` decoding and Ed25519
 /// commit-signature verification are not yet implemented.
-pub fn run(input: &[u8], gas_limit: u64) -> Result<(u64, Vec<u8>), PrecompileError> {
-    if gas_limit < COMETBFT_VALIDATE_GAS {
+pub fn run(
+    input: &[u8],
+    gas_limit: u64,
+    is_pasteur: bool,
+) -> Result<(u64, Vec<u8>), PrecompileError> {
+    // Pasteur (BEP-682) changes the gas from a flat 3000 to
+    // `3000 + 16 * len(input)`. Pre-Pasteur keeps the flat cost.
+    let gas_cost = if is_pasteur {
+        COMETBFT_VALIDATE_GAS
+            .saturating_add(COMETBFT_VALIDATE_PER_BYTE_GAS.saturating_mul(input.len() as u64))
+    } else {
+        COMETBFT_VALIDATE_GAS
+    };
+    if gas_limit < gas_cost {
         return Err(PrecompileError::NotEnoughGas);
     }
     // bsc-geth's `cometBFTLightBlockValidate.Run` returns an error on
     // parse/validation failures, and the BSC CALL implementation burns ALL
     // forwarded gas when a precompile errors. See the matching note in
     // `tm_header_validate::run`.
+    //
+    // TODO(BEP-682): when `is_pasteur`, bsc-geth also enforces unique validator
+    // sets (reject duplicate address/pubkey, and non-zero duplicate bls-key /
+    // relayer-address) on both the consensus-state and light-block validator
+    // sets. Full CometBFT `LightBlock` decoding + Ed25519 commit verification
+    // are already unimplemented here (see module docs), so this stricter check
+    // is deferred with them; it only affects adversarial duplicate-validator
+    // inputs, not normal cross-chain traffic.
     let output = run_inner(input)?;
-    Ok((COMETBFT_VALIDATE_GAS, output))
+    Ok((gas_cost, output))
 }
 
 fn run_inner(input: &[u8]) -> Result<Vec<u8>, PrecompileError> {
@@ -302,7 +326,7 @@ mod tests {
     fn test_not_enough_gas() {
         let input = build_input(&build_cs_bytes(1), &[0x00]);
         assert_eq!(
-            run(&input, COMETBFT_VALIDATE_GAS - 1),
+            run(&input, COMETBFT_VALIDATE_GAS - 1, false),
             Err(PrecompileError::NotEnoughGas)
         );
     }
@@ -310,7 +334,7 @@ mod tests {
     #[test]
     fn test_empty_input_rejected() {
         assert_eq!(
-            run(&[], COMETBFT_VALIDATE_GAS),
+            run(&[], COMETBFT_VALIDATE_GAS, false),
             Err(PrecompileError::InvalidInput)
         );
     }
@@ -320,7 +344,7 @@ mod tests {
         // Input is exactly 32 bytes — no room for cs_bytes or light block.
         let input = vec![0u8; CS_LEN_WORD];
         assert_eq!(
-            run(&input, COMETBFT_VALIDATE_GAS),
+            run(&input, COMETBFT_VALIDATE_GAS, false),
             Err(PrecompileError::InvalidInput)
         );
     }
@@ -331,7 +355,7 @@ mod tests {
         let mut input = vec![0u8; CS_LEN_WORD + 1];
         input[CS_LEN_OFFSET..CS_LEN_WORD].copy_from_slice(&u64::MAX.to_be_bytes());
         assert_eq!(
-            run(&input, COMETBFT_VALIDATE_GAS),
+            run(&input, COMETBFT_VALIDATE_GAS, false),
             Err(PrecompileError::InvalidInput)
         );
     }
@@ -342,7 +366,7 @@ mod tests {
         let bad_cs = vec![0u8; CS_FIXED_LEN + 1];
         let input = build_input(&bad_cs, &[0x00]);
         assert_eq!(
-            run(&input, COMETBFT_VALIDATE_GAS),
+            run(&input, COMETBFT_VALIDATE_GAS, false),
             Err(PrecompileError::InvalidInput)
         );
     }
@@ -351,7 +375,7 @@ mod tests {
     fn test_valid_parse_returns_not_implemented() {
         let input = build_input(&build_cs_bytes(1), &[0x00]);
         assert_eq!(
-            run(&input, COMETBFT_VALIDATE_GAS),
+            run(&input, COMETBFT_VALIDATE_GAS, false),
             Err(PrecompileError::NotImplemented)
         );
     }
