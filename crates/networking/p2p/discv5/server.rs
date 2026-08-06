@@ -211,16 +211,22 @@ impl Discv5State {
 }
 
 /// Updates local node IP and re-signs the ENR with incremented seq.
+///
+/// `extra_pairs` must be passed back in: the record is rebuilt from scratch, so
+/// anything outside the predefined dictionary would otherwise be lost.
 pub(crate) fn update_local_ip(
     local_node: &mut Node,
     local_node_record: &mut NodeRecord,
     signer: &secp256k1::SecretKey,
     new_ip: IpAddr,
+    extra_pairs: Vec<(bytes::Bytes, bytes::Bytes)>,
 ) {
     let mut updated_node = local_node.clone();
     updated_node.ip = new_ip;
     let new_seq = local_node_record.seq + 1;
-    let Ok(mut new_record) = NodeRecord::from_node(&updated_node, new_seq, signer) else {
+    let Ok(mut new_record) =
+        NodeRecord::from_node_with_extra_pairs(&updated_node, new_seq, signer, extra_pairs)
+    else {
         tracing::error!(%new_ip, "Failed to create new ENR for IP update");
         return;
     };

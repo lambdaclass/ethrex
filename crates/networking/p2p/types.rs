@@ -425,13 +425,32 @@ impl NodeRecord {
     }
 
     pub fn from_node(node: &Node, seq: u64, signer: &SecretKey) -> Result<Self, NodeError> {
+        Self::from_node_with_extra_pairs(node, seq, signer, Vec::new())
+    }
+
+    /// Builds a signed record for `node`, merging `extra_pairs` into the
+    /// record's key/value list.
+    ///
+    /// `extra_pairs` values must already be RLP-encoded, matching how
+    /// `NodeRecordPairs::other` is decoded. This is how a consumer advertises
+    /// entries outside the EIP-778 predefined dictionary, such as `quic`.
+    ///
+    /// A `tcp_port` of 0 means "no TCP listener" and omits the `tcp` entry
+    /// entirely, rather than advertising a port nothing is bound to.
+    pub fn from_node_with_extra_pairs(
+        node: &Node,
+        seq: u64,
+        signer: &SecretKey,
+        extra_pairs: Vec<(Bytes, Bytes)>,
+    ) -> Result<Self, NodeError> {
         let mut pairs = NodeRecordPairs {
             id: Some("v4".to_string()),
             secp256k1: Some(H264::from_slice(
                 &PublicKey::from_secret_key(secp256k1::SECP256K1, signer).serialize(),
             )),
-            tcp_port: Some(node.tcp_port),
+            tcp_port: (node.tcp_port != 0).then_some(node.tcp_port),
             udp_port: Some(node.udp_port),
+            other: extra_pairs,
             ..Default::default()
         };
         match node.ip.to_canonical() {
@@ -580,5 +599,58 @@ impl RLPEncode for Node {
             .encode_field(&self.tcp_port)
             .encode_field(&self.public_key)
             .finish();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_node(tcp_port: u16) -> (Node, SecretKey) {
+        let signer = SecretKey::new(&mut rand::rngs::OsRng);
+        let public_key = H512::from_slice(
+            &PublicKey::from_secret_key(secp256k1::SECP256K1, &signer).serialize_uncompressed()
+                [1..],
+        );
+        let node = Node::new("127.0.0.1".parse().unwrap(), 9000, tcp_port, public_key);
+        (node, signer)
+    }
+
+    #[test]
+    fn from_node_omits_tcp_when_port_is_zero() {
+        let (node, signer) = test_node(0);
+        let record = NodeRecord::from_node(&node, 1, &signer).unwrap();
+        assert_eq!(record.pairs().tcp_port, None);
+        assert_eq!(record.pairs().udp_port, Some(9000));
+        assert!(record.verify_signature());
+    }
+
+    #[test]
+    fn from_node_keeps_tcp_when_port_is_set() {
+        let (node, signer) = test_node(30303);
+        let record = NodeRecord::from_node(&node, 1, &signer).unwrap();
+        assert_eq!(record.pairs().tcp_port, Some(30303));
+    }
+
+    #[test]
+    fn extra_pairs_survive_encode_decode_and_signing() {
+        let (node, signer) = test_node(0);
+        let extra = vec![(
+            Bytes::from_static(b"quic"),
+            Bytes::from(9001u16.encode_to_vec()),
+        )];
+        let record =
+            NodeRecord::from_node_with_extra_pairs(&node, 1, &signer, extra.clone()).unwrap();
+
+        assert!(record.verify_signature());
+
+        let decoded = NodeRecord::decode(&record.encode_to_vec()).unwrap();
+        let (_, quic) = decoded
+            .pairs()
+            .other
+            .iter()
+            .find(|(k, _)| k.as_ref() == b"quic")
+            .expect("quic pair present");
+        assert_eq!(u16::decode(quic).unwrap(), 9001);
     }
 }

@@ -465,6 +465,7 @@ impl DiscoveryServer {
                 &mut self.local_node_record,
                 &self.signer,
                 winning_ip,
+                self.extra_enr_pairs.clone(),
             );
         }
 

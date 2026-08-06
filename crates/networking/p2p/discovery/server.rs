@@ -92,6 +92,10 @@ pub struct DiscoveryServer {
     pub(crate) config: DiscoveryConfig,
     pub discv4: Option<Discv4State>,
     pub discv5: Option<Discv5State>,
+    /// ENR entries outside the predefined dictionary, advertised by the local
+    /// record. Retained so `update_local_ip` can reapply them when the record
+    /// is rebuilt.
+    pub(crate) extra_enr_pairs: Vec<(bytes::Bytes, bytes::Bytes)>,
 }
 
 impl std::fmt::Debug for DiscoveryServer {
@@ -114,11 +118,17 @@ impl DiscoveryServer {
         peer_table: PeerTable,
         bootnodes: Vec<Node>,
         config: DiscoveryConfig,
+        extra_enr_pairs: Vec<(bytes::Bytes, bytes::Bytes)>,
     ) -> Result<(), DiscoveryServerError> {
         debug!("Starting discovery server");
 
-        let mut local_node_record = NodeRecord::from_node(&local_node, INITIAL_ENR_SEQ, &signer)
-            .expect("Failed to create local node record");
+        let mut local_node_record = NodeRecord::from_node_with_extra_pairs(
+            &local_node,
+            INITIAL_ENR_SEQ,
+            &signer,
+            extra_enr_pairs.clone(),
+        )
+        .expect("Failed to create local node record");
         if let Some(storage) = &storage
             && let Ok(fork_id) = storage.get_fork_id().await
         {
@@ -161,6 +171,7 @@ impl DiscoveryServer {
             config,
             discv4,
             discv5,
+            extra_enr_pairs,
         };
 
         // Ping discv4 bootnodes
@@ -407,6 +418,7 @@ impl DiscoveryServer {
                 &mut self.local_node_record,
                 &self.signer,
                 winning_ip,
+                self.extra_enr_pairs.clone(),
             );
         }
         Ok(())
@@ -465,6 +477,7 @@ impl DiscoveryServer {
             },
             discv4: None,
             discv5: Some(Discv5State::default()),
+            extra_enr_pairs: Vec::new(),
         }
     }
 }

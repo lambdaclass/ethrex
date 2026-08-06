@@ -141,6 +141,7 @@ pub async fn start_network(
             initial_lookup_interval: context.initial_lookup_interval,
             ..config
         },
+        Vec::new(),
     )
     .await
     .inspect_err(|e| {
