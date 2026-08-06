@@ -402,8 +402,10 @@ fullsync-bench-smoke: ## Rehearse a full cycle now, on a throwaway copy of a rea
 	cp -al "$(FULLSYNC_BENCH_STATE)/$(FULLSYNC_SMOKE_NET)/base.0" \
 		"$(FULLSYNC_SMOKE_ROOT)/state/$(FULLSYNC_SMOKE_NET)/base.0"
 # bench-base.json is rewritten in place, and truncating a hardlink would take the real
-# base's metadata with it. Break that one link.
-	cp --remove-destination \
+# base's metadata with it. Break that one link — with -p, because a base predating
+# `created_at` has its age inferred from this file's mtime, and a plain copy resets it to
+# now, which reads as a zero-length gap.
+	cp -p --remove-destination \
 		"$(FULLSYNC_BENCH_STATE)/$(FULLSYNC_SMOKE_NET)/base.0/bench-base.json" \
 		"$(FULLSYNC_SMOKE_ROOT)/state/$(FULLSYNC_SMOKE_NET)/base.0/bench-base.json"
 	python3 fullsync_bench.py \
