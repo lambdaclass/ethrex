@@ -18,23 +18,28 @@
 # `--mempool.max-verify-gas` raises the EIP-8141 MAX_VERIFY_GAS mempool budget
 # above the 100_000 default: sponsored transactions run a paymaster VERIFY frame
 # in the validation prefix, whose gas is charged against that budget at admission.
+#
+# `--http.api` adds the `ethrex` namespace to the `eth,net,web3` default so
+# `ethrex_simulateFrameTransaction` is reachable: senders need to dry-run a
+# validation prefix before paying for it. The namespace is separate from `debug`
+# precisely so it can be exposed publicly on its own.
 participants:
   - el_type: ethrex
     el_image: ethrex:local
-    el_extra_params: ["--syncmode", "full", "--mempool.max-verify-gas", "500000"]
+    el_extra_params: ["--syncmode", "full", "--mempool.max-verify-gas", "500000", "--http.api", "eth,net,web3,ethrex"]
     cl_type: lighthouse
     cl_image: ethpandaops/lighthouse:glamsterdam-devnet-7
     validator_count: 32
     supernode: true
   - el_type: ethrex
     el_image: ethrex:local
-    el_extra_params: ["--syncmode", "full", "--mempool.max-verify-gas", "500000"]
+    el_extra_params: ["--syncmode", "full", "--mempool.max-verify-gas", "500000", "--http.api", "eth,net,web3,ethrex"]
     cl_type: lighthouse
     cl_image: ethpandaops/lighthouse:glamsterdam-devnet-7
     validator_count: 32
   - el_type: ethrex
     el_image: ethrex:local
-    el_extra_params: ["--syncmode", "full", "--mempool.max-verify-gas", "500000"]
+    el_extra_params: ["--syncmode", "full", "--mempool.max-verify-gas", "500000", "--http.api", "eth,net,web3,ethrex"]
     cl_type: lighthouse
     cl_image: ethpandaops/lighthouse:glamsterdam-devnet-7
     validator_count: 32
