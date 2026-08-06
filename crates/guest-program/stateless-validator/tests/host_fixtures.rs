@@ -13,19 +13,33 @@
 //! stateless-vector` run — not its parent, which also holds a `.meta/index.json`
 //! that is not a fixture.
 //!
-//! MEASURED BASELINE, 2026-08-05, against the 769-block generated vector set:
-//! 8 exact matches, 755 differing **only** in bytes 0..32
-//! (`new_payload_request_root`), 6 differing more widely.
+//! MEASURED BASELINE, 2026-08-06, against the 768-block generated vector set,
+//! with libssz 0.3.0 (the EIP-7916 progressive child-order fix): **762 exact
+//! matches, 6 differing — all of them in `successful_validation` only**.
 //!
-//! The 755 are all explained by one upstream defect: `libssz-merkle 0.2.2`
-//! reverses the progressive-merkleization subtree children, so every
-//! `hash_tree_root` over a `ProgressiveContainer` is wrong. On those blocks
-//! `successful_validation`, `chain_id` and `schema_id` are already byte-identical
-//! to the reference — including on true-success cases — so decode, witness
-//! rebuild, public-key validation, block reconstruction and execution all agree
-//! with execution-specs today. See `test/tests/common/progressive_ssz_tests.rs`
-//! for the proof and the one-line fix. Expect ~763/769 once it lands; the
-//! remaining 6 need separate investigation.
+//! Every root now matches, so decode, witness rebuild, public-key validation,
+//! block reconstruction, merkleization and encoding all agree with
+//! execution-specs. What is left is six genuine disagreements about whether a
+//! block is valid. Under libssz 0.2.2 this was 8 exact / 755 root-only / 6, and
+//! the 755 were entirely the reversed progressive subtree children; see
+//! `test/tests/common/progressive_ssz_tests.rs`.
+//!
+//! Five are ethrex being too strict — the spec accepts, we reject:
+//!   - `test_witness_7702::test_witness_codes_auth_nonce_mismatch`
+//!   - `test_witness_7702::test_witness_codes_redelegation_old_marker_included_new_marker_excluded`
+//!   - `test_witness_7702::test_witness_codes_reset_delegation`
+//!   - `test_witness_bytecodes_contract_creation::test_witness_codes_failed_create_after_initcode_read`
+//!   - `test_witness_validation_state::test_validation_state_extra_unused_trie_node`
+//!
+//! One is ethrex being too lax, which is the one that matters — the spec
+//! rejects, we accept:
+//!   - `test_witness_validation_headers::test_validation_headers_non_contiguous_chain` (block5)
+//!
+//! A guest that accepts a payload the spec rejects can prove an invalid state
+//! transition, so the non-contiguous-chain case is a correctness bug rather than
+//! a conformance gap. Tracked separately; this test stays red until all six are
+//! resolved rather than being pinned to the current count, so no regression can
+//! hide behind an expected-failure list.
 #![cfg(feature = "host")]
 
 mod common;
@@ -57,7 +71,11 @@ fn eest_fixture_equivalence() {
     for fixture in &fixtures {
         let output = run_stateless_validation(&fixture.stateless_input_bytes, crypto.clone());
         if output != fixture.stateless_output_bytes {
-            failures.push(fixture.name.clone());
+            failures.push(format!(
+                "{}\n      {}",
+                fixture.name,
+                describe_divergence(&output, &fixture.stateless_output_bytes)
+            ));
         }
     }
     assert!(
@@ -68,4 +86,46 @@ fn eest_fixture_equivalence() {
         fixtures.len(),
     );
     println!("{} fixtures matched expected output bytes", fixtures.len());
+}
+
+/// Name the diverging fields of an `SszStatelessValidationResult`.
+///
+/// The output is a fixed 43-byte layout: root[0..32], successful_validation[32],
+/// chain_id[33..41], schema_id[41..43]. Which field differs says what kind of
+/// bug it is — a root-only difference is an encoding or merkleization problem,
+/// whereas `successful_validation` is a disagreement about the block itself.
+fn describe_divergence(got: &[u8], want: &[u8]) -> String {
+    if got.len() != want.len() {
+        return format!("length {} != expected {}", got.len(), want.len());
+    }
+    let mut parts = Vec::new();
+    if got[..32] != want[..32] {
+        parts.push(format!(
+            "root {} != {}",
+            hex::encode(&got[..32]),
+            hex::encode(&want[..32])
+        ));
+    }
+    if got[32] != want[32] {
+        parts.push(format!(
+            "successful_validation {} != {}",
+            got[32] != 0,
+            want[32] != 0
+        ));
+    }
+    if got[33..41] != want[33..41] {
+        parts.push(format!(
+            "chain_id {} != {}",
+            u64::from_le_bytes(got[33..41].try_into().expect("8 bytes")),
+            u64::from_le_bytes(want[33..41].try_into().expect("8 bytes"))
+        ));
+    }
+    if got[41..43] != want[41..43] {
+        parts.push(format!(
+            "schema_id {:#06x} != {:#06x}",
+            u16::from_le_bytes(got[41..43].try_into().expect("2 bytes")),
+            u16::from_le_bytes(want[41..43].try_into().expect("2 bytes"))
+        ));
+    }
+    parts.join(", ")
 }
