@@ -197,6 +197,37 @@ pub fn profile_2_payer(tx: &FrameTransaction) -> Option<Address> {
     }
 }
 
+/// The evaluation index to judge an omitted Profile 2 candidate at, when the
+/// builder supplies no usable claim.
+///
+/// EIP-8369 lets a builder commit an index in `[0, len(block.transactions)]`, and
+/// pins the fallback: "A missing, malformed, or out-of-range index defaults to
+/// `len(block.transactions)`, the end of the payload." That default is not a
+/// stub. For a position-stable transaction, one whose validation dependencies
+/// are constant within the payload or change monotonically, invalidity at any
+/// index persists to the end, so judging at the end is equivalent to EIP-7805's
+/// existing rule.
+///
+/// No claimed index can reach the execution layer yet: EIP-7805 defines no
+/// beacon-block field and the Engine API has no parameter, and the EIP-8369
+/// extension that would define the encoding does not exist. Until it does, every
+/// omission is judged here.
+pub fn default_evaluation_index(block_tx_count: usize) -> usize {
+    block_tx_count
+}
+
+/// Clamp a builder-claimed index to the range EIP-8369 allows, falling back to
+/// [`default_evaluation_index`] when it is out of range.
+///
+/// Kept separate from the default so that wiring a claim in later is a change at
+/// the call site rather than a change to the rule.
+pub fn evaluation_index(claimed: Option<usize>, block_tx_count: usize) -> usize {
+    match claimed {
+        Some(idx) if idx <= block_tx_count => idx,
+        _ => default_evaluation_index(block_tx_count),
+    }
+}
+
 /// Outcome of the per-inclusion-list static budget fill for one occurrence.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FillOutcome {

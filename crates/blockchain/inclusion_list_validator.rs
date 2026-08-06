@@ -1,8 +1,9 @@
 //! EIP-7805 (FOCIL) inclusion-list satisfaction validator. Tracks per-sender
 //! `(nonce, balance)` during block execution and, after execution, decides
-//! whether each IL transaction is `present | blob | frame | unrecoverable |
-//! intrinsic_gas_too_low | insufficient_gas | below_base_fee | invalid_nonce |
-//! invalid_balance | unsatisfied`. Returns `Err(IlUnsatisfied)` if any IL
+//! whether each IL transaction is `present | not-Profile-1 | unrecoverable |
+//! intrinsic_gas_too_low | insufficient_gas | fee_invalid | invalid_nonce |
+//! invalid_balance | unsatisfied`. Which omissions are enforceable at all is
+//! decided by [`crate::focil_eligibility`] per EIP-8369. Returns `Err(IlUnsatisfied)` if any IL
 //! transaction is missing AND could still have been validly appended to the
 //! block (mirrors EELS `check_inclusion_list_transactions`).
 //!
@@ -31,12 +32,13 @@ use std::collections::HashSet;
 
 use ethrex_common::{
     Address, H256, U256,
-    types::{BlockHeader, ChainConfig, Transaction, TxType},
+    types::{BlockHeader, ChainConfig, Transaction},
 };
 use ethrex_crypto::Crypto;
 use ethrex_storage::Store;
 use rustc_hash::FxHashMap;
 
+use crate::focil_eligibility::{VopsProfile, classify, fee_valid};
 use crate::inclusion_list_builder::{AccountStateView, IlStateProvider, IlStateProviderError};
 use crate::mempool::transaction_intrinsic_gas;
 
@@ -217,26 +219,25 @@ impl InclusionListSatisfactionValidator {
         config: &ChainConfig,
         crypto: &dyn Crypto,
     ) -> Result<(), IlUnsatisfied> {
-        let base_fee = U256::from(header.base_fee_per_gas.unwrap_or_default());
-
         for tx_il in il {
             // present in block (anywhere) → satisfied
             if block_txs.contains(&tx_il.hash(crypto)) {
                 continue;
             }
 
-            // Blob (EIP-4844) txs are excluded from the IL satisfaction check
-            // (EELS skips `BlobTransaction`) → satisfied.
-            if tx_il.tx_type() == TxType::EIP4844 {
-                continue;
-            }
-
-            // EIP-8141 frame txs are excluded from the IL satisfaction check:
-            // validity depends on executing VERIFY frames to discover `payer`,
-            // which this state-only pass cannot do. Eligibility rules for frame
-            // txs in inclusion lists are not yet specified, and an ineligible tx
-            // is excused.
-            if tx_il.tx_type() == TxType::Frame {
+            // EIP-8369 decides which omissions are enforceable at all. Anything
+            // that is not Profile 1 is excused here:
+            //
+            // - `Ineligible` covers every blob carrier (blob gas has its own
+            //   target and maximum, and EIP-8369 defines no omission check over
+            //   that second budget) and any frame transaction that is not a
+            //   Profile 2 candidate.
+            // - `TwoCandidate` is enforceable in principle, but only after
+            //   stateful eligibility replay at the evaluation index. This pass
+            //   never calls into the EVM, so it cannot decide that, and an
+            //   omission that cannot be shown unjustified is excused.
+            let utxo_frames_active = config.is_utxo_frames_activated(header.timestamp);
+            if classify(tx_il, utxo_frames_active) != VopsProfile::One {
                 continue;
             }
 
@@ -261,17 +262,11 @@ impl InclusionListSatisfactionValidator {
                 continue;
             }
 
-            // below_base_fee → satisfied. Legacy/2930/privileged use
-            // `gas_price`; all other types use `max_fee_per_gas`. A typed tx
-            // with no recoverable max fee is unpriceable and not includable.
-            let max_price = match tx_il.tx_type() {
-                TxType::Legacy | TxType::EIP2930 | TxType::Privileged => tx_il.gas_price(),
-                _ => match tx_il.max_fee_per_gas() {
-                    Some(fee) => U256::from(fee),
-                    None => continue,
-                },
-            };
-            if max_price < base_fee {
+            // EIP-8369 `fee_valid(tx, block)`: below base fee, or a priority fee
+            // above the max fee, means the transaction could never be validly
+            // appended → satisfied. The priority-versus-max condition is part of
+            // the rule and not implied by the base-fee comparison.
+            if !fee_valid(tx_il, header.base_fee_per_gas.unwrap_or_default()) {
                 continue;
             }
 

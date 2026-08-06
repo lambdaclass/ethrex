@@ -1,8 +1,9 @@
 //! EIP-8369 VOPS profile classification and the per-inclusion-list budget fill.
 
 use ethrex_blockchain::focil_eligibility::{
-    FillOutcome, MAX_VERIFY_GAS_PER_IL, MAX_VERIFY_GAS_PER_TX, VopsProfile, classify, fee_valid,
-    fill_il_budget, profile_2_payer, verify_budget_cost,
+    FillOutcome, MAX_VERIFY_GAS_PER_IL, MAX_VERIFY_GAS_PER_TX, VopsProfile, classify,
+    default_evaluation_index, evaluation_index, fee_valid, fill_il_budget, profile_2_payer,
+    verify_budget_cost,
 };
 use ethrex_common::types::{
     APPROVE_EXECUTION, APPROVE_EXECUTION_AND_PAYMENT, APPROVE_PAYMENT, EIP1559Transaction,
@@ -361,4 +362,19 @@ fn the_surface_predicate_fails_closed_when_unconfigured() {
     use ethrex_levm::validation_observer::ValidationObserver;
     let obs = ValidationObserver::new(sender(), None, Address::zero());
     assert!(!obs.within_vops_surface(sender(), ethrex_common::H256::zero()));
+}
+
+/// EIP-8369 pins the fallback: "A missing, malformed, or out-of-range index
+/// defaults to `len(block.transactions)`, the end of the payload."
+#[test]
+fn the_evaluation_index_falls_back_to_end_of_payload() {
+    assert_eq!(default_evaluation_index(7), 7);
+    // No claim, and an out-of-range claim, both fall back.
+    assert_eq!(evaluation_index(None, 7), 7);
+    assert_eq!(evaluation_index(Some(8), 7), 7);
+    // In-range claims are honoured, including index 0 (before the first tx) and
+    // exactly len(block.transactions).
+    assert_eq!(evaluation_index(Some(0), 7), 0);
+    assert_eq!(evaluation_index(Some(3), 7), 3);
+    assert_eq!(evaluation_index(Some(7), 7), 7);
 }
