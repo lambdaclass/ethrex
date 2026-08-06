@@ -3,6 +3,12 @@
 # Prints the zkVM SDK version the stateless-validator guest is built against, for
 # use in release asset names.
 #
+# The `v` prefix is part of the name, not decoration: eth-act/ere-guests
+# publishes `stateless-validator-<guest>-<zkvm>-v<version>.{elf,vk}` (see its
+# v0.15.0 assets, and the example commands in ere's docs/vk-generation.md), and
+# it republishes guest ELFs verbatim. Dropping the `v` makes our assets not
+# drop-in for that pipeline.
+#
 # The guests reach their SDK through `ere-platform-{zisk,sp1,openvm}`, so there is
 # no direct `tag = "vX.Y.Z"` in their manifests to read. The versions are instead
 # fixed by the pinned `ere` revision below, mirroring what `ere-catalog` resolves
@@ -19,9 +25,9 @@ ERE_REV=a25f1aed9664c3b63e73ef05360090a4c41da31b
 # SDK versions resolved by ere-catalog at ERE_REV.
 zkvm_version() {
     case "$1" in
-        zisk)   echo "1.0.0-alpha" ;;
-        sp1)    echo "6.3.1" ;;
-        openvm) echo "2.0.0" ;;
+        zisk)   echo "v1.0.0-alpha" ;;
+        sp1)    echo "v6.3.1" ;;
+        openvm) echo "v2.0.0" ;;
         *)      echo "unknown zkvm: $1" >&2; return 1 ;;
     esac
 }

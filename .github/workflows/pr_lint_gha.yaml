@@ -124,7 +124,7 @@ jobs:
           make_tree() {
             local root="$1"
             rm -rf "$root"
-            for name in stateless-validator-ethrex-sp1-6.3.1 stateless-validator-ethrex-zisk-1.0.0-alpha; do
+            for name in stateless-validator-ethrex-sp1-v6.3.1 stateless-validator-ethrex-zisk-v1.0.0-alpha; do
               mkdir -p "$root/$name"
               head -c 256 /dev/urandom > "$root/$name/$name.elf"
               head -c 64 /dev/urandom > "$root/$name/$name.vk"
@@ -195,7 +195,7 @@ jobs:
 
           # A tampered artifact must stop verifying, proving the signature binds
           # the bytes rather than just existing.
-          elf="$work/bin2/stateless-validator-ethrex-sp1-6.3.1/stateless-validator-ethrex-sp1-6.3.1.elf"
+          elf="$work/bin2/stateless-validator-ethrex-sp1-v6.3.1/stateless-validator-ethrex-sp1-v6.3.1.elf"
           printf 'x' >> "$elf"
           if minisign -V -m "$elf" -p "$work/pub" > /dev/null 2>&1; then
             echo "::error::a tampered artifact still verified"
