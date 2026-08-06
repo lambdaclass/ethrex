@@ -3544,7 +3544,9 @@ impl<'a> VM<'a> {
 
         // EIP-8272: the predeploy is codeless, so a transaction sent straight to it would
         // otherwise run as a transfer to an ordinary account and write nothing. Same native
-        // write the CALL-opcode and frame paths perform.
+        // write the CALL-opcode and frame paths perform. Only the top-level entry reaches
+        // here: a frame targeting the predeploy is codeless, so it takes the default-code
+        // path, where `execute_default_code` performs the write and never calls back in.
         if self.env.config.fork >= Fork::Hegota
             && self.current_call_frame.to == ethrex_common::types::frame_tx_recent_root()
         {
