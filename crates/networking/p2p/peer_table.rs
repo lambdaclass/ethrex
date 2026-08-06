@@ -1523,7 +1523,8 @@ impl PeerTableServer {
                         }
                     }
                 } else {
-                    let is_fork_id_valid = Self::evaluate_fork_id(&node_record, self.store.as_ref()).await;
+                    let is_fork_id_valid =
+                        Self::evaluate_fork_id(&node_record, self.store.as_ref()).await;
                     let mut contact = Contact::new(node, DiscoveryProtocol::Discv5);
                     contact.is_fork_id_valid = is_fork_id_valid;
                     contact.record = Some(node_record);
