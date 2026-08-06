@@ -606,9 +606,11 @@ impl RpcHandler for SendRawTransactionRequest {
     }
 
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
-        // RPC-submitted transactions are tagged as `TxOrigin::Local` so they may
-        // bypass admission gates (such as the min-tip floor) intended to protect
-        // against P2P spam. See `Blockchain::add_local_transaction_to_pool`.
+        // RPC submissions go through the *local* entry points, which does two
+        // things: tags them `TxOrigin::Local` so they may bypass admission gates
+        // aimed at P2P spam (e.g. the min-tip floor), and lets
+        // `BlockchainOptions::private_mempool` decide whether they are gossiped.
+        // P2P-received txs use the non-local methods elsewhere.
         let hash = match self {
             #[cfg(feature = "c-kzg")]
             SendRawTransactionRequest::EIP4844(wrapped_blob_tx) => {
