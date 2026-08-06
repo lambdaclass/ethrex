@@ -241,21 +241,59 @@ it: the per-PR CI benchmark runs a synthetic dense-ERC20 import, and multisync v
 
 ### How it works
 
-A node is kept permanently a fixed distance behind head. Per cycle, per network:
+A node is kept permanently a fixed distance behind the tip. Each cycle both *consumes* a
+saved database and *produces* the next one, so the whole thing is a loop that bootstrap
+seeds once and never needs re-anchoring:
 
 ```
-restore base → run M blocks              (MEASURE; resulting state discarded)
-restore base → advance to head − GAP     (becomes the new base)
+        ┌────────────────────────────────────────────────┐
+        │                                                │
+        ▼                                                │
+   base.0  (a stopped node's datadir, at block B)        │
+        │                                                │
+        ├── restore ─► MEASURE  B → B+M ──► throughput; datadir discarded
+        │                                                │
+        └── restore ─► ADVANCE  B → T−GAP ─► new base.0 ─┘
 ```
 
-The base creeps forward at chain rate, so the node never ages out of relevance and there
-is no anchor or reference commit to maintain. `M` is fixed and independent of how fast the
-base moves, so consecutive measurements overlap heavily — which is what keeps day-to-day
-workload variation small enough for the series to mean something. **`M` must not change
-once a series has started**, or the history stops being comparable.
+One cycle, per network, once a day:
 
-The advance targets `head − GAP` rather than a fixed block count, so it self-calibrates to
+1. **Gate.** Read B from the base's `bench-base.json` and estimate the tip T. If
+   `T − B < M` the whole window has not been produced yet, so skip and try later.
+2. **Measure leg.** Restore `base.0` into the datadir — a *copy*; no node ever opens the
+   base itself. Re-sync the beacon node ahead of B, drop the page cache, start the node,
+   let it full-sync `B → B+M`, stop it gracefully, and read the per-batch throughput out
+   of its log. **The resulting database is thrown away**; only the number is kept.
+3. **Advance leg.** Restore `base.0` again, back to B. Sync `B → T−GAP`, stop, then
+   health-check the result by reopening it. Only if it comes back up with state available
+   does it rotate `base.0→base.1→…` and become the new `base.0`.
+4. **Report** the measurement.
+
+```
+     B (7d behind)        B+M (4d behind)                 T (tip)
+     │                        │                            │
+     ├──── measure: 21,600 ──►│  discarded
+     ├─ advance: 7,200 ─►│
+                  new base (6d behind)
+```
+
+**Why two runs from the same point.** The measurement window `M` must never change or the
+history stops being comparable, while the base has to advance at exactly chain rate — one
+day per day — or it either catches the tip or falls away forever. Those are two different
+distances, so they need two different runs. Promoting the measurement leg's database
+instead would advance the base by `M` every day, closing the gap within days and breaking
+the mechanism. The measurement is therefore deliberately sterile: it starts from the base,
+yields a number, and its state is destroyed.
+
+The overlap is the payoff. Consecutive three-day windows measured from a base that moved
+only one day share **two-thirds of their blocks**, so day-to-day workload variation stays
+small and a real regression shows up as a step in the series rather than as noise.
+
+The advance targets `T − GAP` rather than a fixed block count, so it self-calibrates to
 each network's real block production and absorbs missed slots.
+
+Rough cost per network per day on mainnet: two restores at ~6 min each, ~50 min measuring,
+~17 min advancing.
 
 ### Usage
 
