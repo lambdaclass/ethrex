@@ -1,4 +1,6 @@
 use ethrex_binary_trie::BinaryTrieError;
+use ethrex_common::H256;
+use ethrex_common::types::BlockNumber;
 use ethrex_common::types::pbt_state::PbtStateError;
 use ethrex_rlp::error::RLPDecodeError;
 use ethrex_trie::TrieError;
@@ -27,6 +29,25 @@ pub enum StoreError {
     PbtState(#[from] PbtStateError),
     #[error("missing store: is an execution DB being used instead?")]
     MissingStore,
+    /// A read was requested against a state root this node does not hold.
+    ///
+    /// ethrex keeps one version of the state trie on disk plus a bounded chain
+    /// of in-memory diff layers, so state older than the retention window (and
+    /// state on abandoned forks) is simply gone. Because trie nodes are keyed by
+    /// path rather than by hash, reading at such a root would otherwise silently
+    /// answer from whatever version the on-disk trie currently holds.
+    ///
+    /// The message deliberately mirrors the one `StoreVmDatabase::new` produces
+    /// for the same condition, so `eth_call` and the account-reading RPCs report
+    /// an unavailable state identically.
+    #[error(
+        "state root missing for block {} (state_root {state_root:#x})",
+        block.map_or_else(|| "<unknown>".to_string(), |number| number.to_string())
+    )]
+    MissingStateRoot {
+        block: Option<BlockNumber>,
+        state_root: H256,
+    },
     #[error("Could not open DB for reading")]
     ReadError,
     #[error("Could not instantiate cursor for table {0}")]

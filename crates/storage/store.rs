@@ -277,6 +277,21 @@ pub enum EngineType {
     RocksDB,
 }
 
+/// Whether a root-addressed read must first prove that this node actually holds
+/// the state behind that root.
+///
+/// Trie nodes are keyed by path, so a read at a root the store no longer holds
+/// silently falls through to whatever version the on-disk trie currently is.
+/// See [`Store::ensure_trie_holds_state_root`].
+#[derive(Clone, Copy)]
+enum RootCheck {
+    /// Verify the root, naming the given block in the error when it is known.
+    Verify(Option<BlockNumber>),
+    /// Skip the check: the caller has already verified the root, or deliberately
+    /// addresses state by root with no block behind it.
+    Skip,
+}
+
 /// Batch of updates to apply to the store atomically.
 ///
 /// Used during block execution to collect all state changes before
@@ -2174,12 +2189,16 @@ impl Store {
         }
     }
 
+    /// Serves `eth_getBalance` (and the mempool's sender lookups). Errors with
+    /// [`StoreError::MissingStateRoot`] for a known block whose state this node
+    /// no longer holds, rather than answering from the on-disk trie's current
+    /// state; `Ok(None)` keeps meaning "no such account".
     pub fn get_account_info_by_hash(
         &self,
         block_hash: BlockHash,
         address: Address,
     ) -> Result<Option<AccountInfo>, StoreError> {
-        let Some(state_trie) = self.state_trie(block_hash)? else {
+        let Some(state_trie) = self.state_trie_checked(block_hash)? else {
             return Ok(None);
         };
         let hashed_address = hash_address_fixed(&address);
@@ -2226,6 +2245,8 @@ impl Store {
         ))
     }
 
+    /// Serves `eth_getCode`. See [`Self::state_trie_checked`] for the behaviour
+    /// at a block whose state this node no longer holds.
     pub async fn get_code_by_account_address(
         &self,
         block_number: BlockNumber,
@@ -2234,7 +2255,7 @@ impl Store {
         let Some(block_hash) = self.get_canonical_block_hash(block_number).await? else {
             return Ok(None);
         };
-        let Some(state_trie) = self.state_trie(block_hash)? else {
+        let Some(state_trie) = self.state_trie_checked(block_hash)? else {
             return Ok(None);
         };
         let hashed_address = hash_address_fixed(&address);
@@ -2245,6 +2266,8 @@ impl Store {
         self.get_account_code(account_state.code_hash)
     }
 
+    /// Serves `eth_getTransactionCount`. See [`Self::state_trie_checked`] for the
+    /// behaviour at a block whose state this node no longer holds.
     pub async fn get_nonce_by_account_address(
         &self,
         block_number: BlockNumber,
@@ -2253,7 +2276,7 @@ impl Store {
         let Some(block_hash) = self.get_canonical_block_hash(block_number).await? else {
             return Ok(None);
         };
-        let Some(state_trie) = self.state_trie(block_hash)? else {
+        let Some(state_trie) = self.state_trie_checked(block_hash)? else {
             return Ok(None);
         };
         let hashed_address = hash_address_fixed(&address);
@@ -2875,6 +2898,9 @@ impl Store {
         Ok(())
     }
 
+    /// Serves `eth_getStorageAt`. Guarded: a known block whose state this node no
+    /// longer holds is [`StoreError::MissingStateRoot`], not a successful read of
+    /// the on-disk trie's current slot value.
     pub fn get_storage_at(
         &self,
         block_number: BlockNumber,
@@ -2882,16 +2908,38 @@ impl Store {
         storage_key: H256,
     ) -> Result<Option<U256>, StoreError> {
         match self.get_block_header(block_number)? {
-            Some(header) => self.get_storage_at_root(header.state_root, address, storage_key),
+            Some(header) => self.get_storage_at_root_inner(
+                header.state_root,
+                address,
+                storage_key,
+                RootCheck::Verify(Some(header.number)),
+            ),
             None => Ok(None),
         }
     }
 
+    /// Root-addressed storage read.
+    ///
+    /// Deliberately unchecked, for store-internal callers that address state by
+    /// root directly and expect a root with no diff layer to fall through to disk
+    /// (the deep-reorg overlay tests read at roots the overlay does not serve, and
+    /// assert exactly that). [`Self::get_storage_at`], the block-addressed entry
+    /// point the RPC layer uses, is the guarded one.
     pub fn get_storage_at_root(
         &self,
         state_root: H256,
         address: Address,
         storage_key: H256,
+    ) -> Result<Option<U256>, StoreError> {
+        self.get_storage_at_root_inner(state_root, address, storage_key, RootCheck::Skip)
+    }
+
+    fn get_storage_at_root_inner(
+        &self,
+        state_root: H256,
+        address: Address,
+        storage_key: H256,
+        check: RootCheck,
     ) -> Result<Option<U256>, StoreError> {
         let account_hash = hash_address_fixed(&address);
 
@@ -2909,6 +2957,21 @@ impl Store {
             && !cache.overlay_serves(state_root);
 
         let storage_root = if use_fkv {
+            // The flat-KV fast path reads the account by path and never touches
+            // the state root, so a guarded read has to check it explicitly.
+            // Opening a state trie here is wrapper construction only — the read
+            // view, layer snapshot and FKV cursor it needs are already in hand —
+            // so the guard costs one root-node read plus one keccak, not a second
+            // trie setup.
+            if let RootCheck::Verify(block) = check {
+                let state_trie = self.open_state_trie_shared(
+                    state_root,
+                    read_view.clone(),
+                    cache.clone(),
+                    last_written.clone(),
+                )?;
+                Self::ensure_trie_holds_state_root(&state_trie, state_root, block)?;
+            }
             // We will use FKVs, we don't need the root
             EMPTY_TRIE_HASH
         } else {
@@ -2918,6 +2981,11 @@ impl Store {
                 cache.clone(),
                 last_written.clone(),
             )?;
+            // Runs against the trie already opened for the account lookup, so the
+            // guard adds no second open here either.
+            if let RootCheck::Verify(block) = check {
+                Self::ensure_trie_holds_state_root(&state_trie, state_root, block)?;
+            }
             let Some(encoded_account) = state_trie.get(account_hash.as_bytes())? else {
                 return Ok(None);
             };
@@ -3100,12 +3168,39 @@ impl Store {
         Ok(Some(header.state_root))
     }
 
-    /// Obtain the storage trie for the given block
+    /// Obtain the storage trie for the given block.
+    ///
+    /// Unchecked: the returned trie will happily read through to the on-disk
+    /// trie even when this node no longer holds the block's state (see
+    /// [`Self::trie_holds_state_root`]). Kept unchecked for the block-execution
+    /// and L2 callers that open a parent's trie to build state on top of it, and
+    /// for snap sync, where the pivot's state is incomplete by construction.
+    /// Read paths that answer user queries must use [`Self::state_trie_checked`].
     pub fn state_trie(&self, block_hash: BlockHash) -> Result<Option<Trie>, StoreError> {
         let Some(header) = self.get_block_header_by_hash(block_hash)? else {
             return Ok(None);
         };
         Ok(Some(self.open_state_trie(header.state_root)?))
+    }
+
+    /// [`Self::state_trie`], but refusing to serve a block whose state this node
+    /// no longer holds.
+    ///
+    /// `Ok(None)` still means "no such block". A known block whose state has
+    /// fallen out of the retention window (or belongs to an abandoned fork) is
+    /// now [`StoreError::MissingStateRoot`] instead of a successful read of some
+    /// other block's state.
+    ///
+    /// Costs one root-node read and one keccak over the happy path — no extra
+    /// header lookup and no extra trie open, since the check runs against the
+    /// trie this function had to open anyway.
+    fn state_trie_checked(&self, block_hash: BlockHash) -> Result<Option<Trie>, StoreError> {
+        let Some(header) = self.get_block_header_by_hash(block_hash)? else {
+            return Ok(None);
+        };
+        let trie = self.open_state_trie(header.state_root)?;
+        Self::ensure_trie_holds_state_root(&trie, header.state_root, Some(header.number))?;
+        Ok(Some(trie))
     }
 
     /// Obtain the storage trie for the given account on the given block
@@ -3135,6 +3230,8 @@ impl Store {
         )?))
     }
 
+    /// Block-addressed account read. See [`Self::state_trie_checked`] for the
+    /// behaviour at a block whose state this node no longer holds.
     pub async fn get_account_state(
         &self,
         block_number: BlockNumber,
@@ -3143,12 +3240,21 @@ impl Store {
         let Some(block_hash) = self.get_canonical_block_hash(block_number).await? else {
             return Ok(None);
         };
-        let Some(state_trie) = self.state_trie(block_hash)? else {
+        let Some(state_trie) = self.state_trie_checked(block_hash)? else {
             return Ok(None);
         };
         self.get_account_state_from_trie(&state_trie, address)
     }
 
+    /// Root-addressed account read.
+    ///
+    /// Deliberately unchecked. This is the per-account read `StoreVmDatabase`
+    /// issues for every account an execution touches, and that caller has already
+    /// gated on [`Self::has_state_root`] once at `StoreVmDatabase::new`
+    /// (`crates/blockchain/vm.rs`). Verifying here would add a root-node read and
+    /// a keccak to every account access during block execution to re-prove
+    /// something established before the first one. Callers that address state by
+    /// block should use [`Self::get_account_state`], which is guarded.
     pub fn get_account_state_by_root(
         &self,
         state_root: H256,
@@ -3286,11 +3392,17 @@ impl Store {
         address: Address,
         storage_keys: &[H256],
     ) -> Result<Option<AccountProof>, StoreError> {
-        // TODO: check state root
-        // let Some(state_trie) = self.open_state_trie(state_trie)? else {
-        //     return Ok(None);
-        // };
         let state_trie = self.open_state_trie(state_root)?;
+        // Without this the response contradicts itself at a root this node does
+        // not hold: `Trie::get_proof` uses the *checked* node accessor and bails
+        // to an empty proof, while the account lookup beside it goes through the
+        // unchecked `Trie::get` and returns the on-disk trie's current account.
+        // `eth_getProof` would then answer with a live-looking account and no
+        // proof at all. Blocked at the source instead.
+        //
+        // The block number is not reported here because this method is addressed
+        // by root; the state root in the message identifies it.
+        Self::ensure_trie_holds_state_root(&state_trie, state_root, None)?;
         let address_path = hash_address_fixed(&address);
         let proof = state_trie.get_proof(address_path.as_bytes())?;
         let account_opt = state_trie
@@ -3649,6 +3761,28 @@ impl Store {
             return Ok(true);
         }
         let trie = self.open_state_trie(state_root)?;
+        Self::trie_holds_state_root(&trie, state_root)
+    }
+
+    /// Whether `trie`, already opened at `state_root`, really resolves to that
+    /// root on this node.
+    ///
+    /// This is the body of [`Self::has_state_root`] with the trie open factored
+    /// out, so read paths that have *already* opened the state trie can run the
+    /// check without paying for a second open — a second layer-cache snapshot, a
+    /// second `last_written` read and a second backend read view. What is left is
+    /// one read of the root node plus one keccak over it.
+    ///
+    /// The check is necessary because trie nodes are keyed by path, not by hash:
+    /// `Trie::open` records the requested root without validating it, and
+    /// `Trie::get` re-reads the root by path and discards that hash. An unheld
+    /// root therefore reads whatever the on-disk trie's current root is, and
+    /// answers from the wrong version of state instead of failing.
+    fn trie_holds_state_root(trie: &Trie, state_root: H256) -> Result<bool, StoreError> {
+        // Empty state trie is always available
+        if state_root == EMPTY_TRIE_HASH {
+            return Ok(true);
+        }
         // NOTE: here we hash the root because the trie doesn't check the state root is correct
         let Some(root) = trie.db().get(Nibbles::default())? else {
             return Ok(false);
@@ -3657,6 +3791,25 @@ impl Store {
             .compute_hash(&NativeCrypto)
             .finalize(&NativeCrypto);
         Ok(state_root == root_hash)
+    }
+
+    /// [`Self::trie_holds_state_root`] as a guard.
+    ///
+    /// Fails with [`StoreError::MissingStateRoot`] when this node does not hold
+    /// the state behind `state_root`, mirroring what `StoreVmDatabase::new`
+    /// already reports for `eth_call` at the same block, so a single node cannot
+    /// answer "what was the balance at block N" and "run this call at block N"
+    /// two different ways.
+    fn ensure_trie_holds_state_root(
+        trie: &Trie,
+        state_root: H256,
+        block: Option<BlockNumber>,
+    ) -> Result<(), StoreError> {
+        if Self::trie_holds_state_root(trie, state_root)? {
+            Ok(())
+        } else {
+            Err(StoreError::MissingStateRoot { block, state_root })
+        }
     }
 
     // ===========================================================================
@@ -4941,12 +5094,14 @@ fn state_trie_locked_backend(
     BackendTrieDBLocked::new(backend, last_written)
 }
 
+#[derive(Debug)]
 pub struct AccountProof {
     pub proof: Vec<NodeRLP>,
     pub account: AccountState,
     pub storage_proof: Vec<StorageSlotProof>,
 }
 
+#[derive(Debug)]
 pub struct StorageSlotProof {
     pub proof: Vec<NodeRLP>,
     pub key: H256,
@@ -7306,5 +7461,373 @@ mod binary_trie_block_tests {
             .expect("the block's code is stored");
         assert_eq!(stored.code(), bytecode.as_slice());
         assert_eq!(stored.hash, code.hash);
+    }
+}
+
+/// Regression tests for stale state-root reads.
+///
+/// ethrex keeps exactly one version of the state trie on disk — trie nodes are
+/// keyed by *path*, not by node hash, so block N+1 overwrites block N's node at
+/// the same path — plus a chain of in-memory diff layers keyed by state root
+/// ([`TrieLayerCache`]). A read at a state root the store no longer holds
+/// therefore falls through to whatever the on-disk trie currently is, and
+/// neither [`Trie::open`] nor [`Trie::get`] validate the root against the data
+/// they read. Left ungated, an account read at a pre-retention-window block
+/// answers from the wrong state and reports success.
+///
+/// `eth_call` has never had this problem: `StoreVmDatabase::new` gates on
+/// [`Store::has_state_root`] and errors. These tests pin the same contract on
+/// the account read paths, so one node cannot answer the same question two
+/// different ways.
+///
+/// The tests construct the failure directly rather than mining past
+/// `DB_COMMIT_THRESHOLD`: the bug is "a root with no diff layer and no matching
+/// on-disk root serves data anyway", and a fabricated root is exactly that
+/// (the in-memory backend also raises the threshold to
+/// `IN_MEMORY_COMMIT_THRESHOLD` precisely so tests can reach old state, which
+/// would otherwise have to be defeated first).
+#[cfg(test)]
+mod stale_state_root_read_tests {
+    use super::*;
+    use bytes::Bytes;
+
+    const ADDRESS: Address = Address::repeat_byte(0xa1);
+    const SLOT: u64 = 7;
+    const SLOT_VALUE: u64 = 0x1234;
+    const BALANCE: u64 = 0xbeef;
+    const NONCE: u64 = 3;
+    const CODE: &[u8] = &[0x60, 0x00, 0x60, 0x00, 0xf3];
+
+    /// A state root no block on this chain ever produced: the layer cache holds
+    /// no layer for it and it is not the root of the on-disk trie. This is the
+    /// same situation a caller lands in when it asks for a block whose state has
+    /// fallen out of the retention window, or for a superseded fork's root.
+    fn unheld_root() -> H256 {
+        H256::repeat_byte(0xaa)
+    }
+
+    fn slot_key() -> H256 {
+        H256::from_low_u64_be(SLOT)
+    }
+
+    async fn store_with_genesis_account() -> Store {
+        let mut genesis = Genesis::default();
+        genesis.alloc.insert(
+            ADDRESS,
+            GenesisAccount {
+                code: Bytes::from_static(CODE),
+                storage: BTreeMap::from([(U256::from(SLOT), U256::from(SLOT_VALUE))]),
+                balance: U256::from(BALANCE),
+                nonce: NONCE,
+            },
+        );
+        let mut store = Store::new("", EngineType::InMemory).expect("open in-memory store");
+        store.add_initial_state(genesis).await.expect("genesis");
+        store
+    }
+
+    /// Appends a canonical block whose header *claims* `state_root` while no such
+    /// state is ever written. This is what a node looks like when asked for a
+    /// block past the retention window: the header is still on disk, the state
+    /// behind it is not.
+    async fn append_block_claiming_root(store: &Store, state_root: H256) -> BlockNumber {
+        let genesis_hash = store
+            .get_canonical_block_hash(0)
+            .await
+            .expect("canonical hash")
+            .expect("genesis is canonical");
+        let header = BlockHeader {
+            number: 1,
+            parent_hash: genesis_hash,
+            state_root,
+            ..Default::default()
+        };
+        let hash = header.hash();
+        store
+            .add_block(Block::new(header, BlockBody::default()))
+            .await
+            .expect("add block");
+        store
+            .forkchoice_update(vec![(1, hash)], 1, hash, None, None)
+            .await
+            .expect("forkchoice");
+        1
+    }
+
+    #[track_caller]
+    fn assert_missing_state_root<T: Debug>(result: Result<T, StoreError>, what: &str) {
+        match result {
+            Err(StoreError::MissingStateRoot { state_root, .. }) => {
+                assert_eq!(state_root, unheld_root(), "{what}: wrong root reported");
+            }
+            Err(other) => panic!("{what}: expected MissingStateRoot, got {other:?}"),
+            Ok(value) => panic!(
+                "{what}: served state at a root the store does not hold: {value:?}. \
+                 This is the stale-state-root read bug: the on-disk trie answered \
+                 for a root it is not the root of."
+            ),
+        }
+    }
+
+    // ---------------------------------------------------------------------
+    // 1. Reads at a root the store does not hold must error, not serve data.
+    // ---------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn get_account_info_errors_at_unheld_root() {
+        let store = store_with_genesis_account().await;
+        let block = append_block_claiming_root(&store, unheld_root()).await;
+        assert_missing_state_root(
+            store.get_account_info(block, ADDRESS).await,
+            "eth_getBalance",
+        );
+    }
+
+    #[tokio::test]
+    async fn get_account_info_by_hash_errors_at_unheld_root() {
+        let store = store_with_genesis_account().await;
+        let block = append_block_claiming_root(&store, unheld_root()).await;
+        let hash = store
+            .get_canonical_block_hash(block)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_missing_state_root(
+            store.get_account_info_by_hash(hash, ADDRESS),
+            "get_account_info_by_hash",
+        );
+    }
+
+    #[tokio::test]
+    async fn get_code_errors_at_unheld_root() {
+        let store = store_with_genesis_account().await;
+        let block = append_block_claiming_root(&store, unheld_root()).await;
+        assert_missing_state_root(
+            store.get_code_by_account_address(block, ADDRESS).await,
+            "eth_getCode",
+        );
+    }
+
+    #[tokio::test]
+    async fn get_nonce_errors_at_unheld_root() {
+        let store = store_with_genesis_account().await;
+        let block = append_block_claiming_root(&store, unheld_root()).await;
+        assert_missing_state_root(
+            store.get_nonce_by_account_address(block, ADDRESS).await,
+            "eth_getTransactionCount",
+        );
+    }
+
+    #[tokio::test]
+    async fn get_storage_at_errors_at_unheld_root() {
+        let store = store_with_genesis_account().await;
+        let block = append_block_claiming_root(&store, unheld_root()).await;
+        assert_missing_state_root(
+            store.get_storage_at(block, ADDRESS, slot_key()),
+            "eth_getStorageAt",
+        );
+    }
+
+    #[tokio::test]
+    async fn get_account_state_errors_at_unheld_root() {
+        let store = store_with_genesis_account().await;
+        let block = append_block_claiming_root(&store, unheld_root()).await;
+        assert_missing_state_root(
+            store.get_account_state(block, ADDRESS).await,
+            "get_account_state",
+        );
+    }
+
+    // ---------------------------------------------------------------------
+    // 3. eth_getProof must error rather than return an account object beside
+    //    an empty proof array.
+    // ---------------------------------------------------------------------
+
+    /// Before the guard this returned `Ok(Some(..))` holding the *current*
+    /// account (read through the unchecked `Trie::get`) next to an **empty**
+    /// `proof` (`Trie::get_proof` does use the checked accessor and bails), i.e.
+    /// a response that contradicts itself.
+    #[tokio::test]
+    async fn get_account_proof_errors_at_unheld_root() {
+        let store = store_with_genesis_account().await;
+        assert_missing_state_root(
+            store
+                .get_account_proof(unheld_root(), ADDRESS, &[slot_key()])
+                .await,
+            "eth_getProof",
+        );
+    }
+
+    // ---------------------------------------------------------------------
+    // 2. The happy path is untouched: reads at a root the store does hold
+    //    return the real values.
+    // ---------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn reads_at_a_held_root_still_work() {
+        let store = store_with_genesis_account().await;
+        let genesis_hash = store.get_canonical_block_hash(0).await.unwrap().unwrap();
+        let state_root = store
+            .get_block_header_by_hash(genesis_hash)
+            .unwrap()
+            .unwrap()
+            .state_root;
+
+        let info = store
+            .get_account_info(0, ADDRESS)
+            .await
+            .expect("balance read")
+            .expect("account exists");
+        assert_eq!(info.balance, U256::from(BALANCE));
+        assert_eq!(info.nonce, NONCE);
+
+        assert_eq!(
+            store
+                .get_account_info_by_hash(genesis_hash, ADDRESS)
+                .unwrap()
+                .unwrap()
+                .balance,
+            U256::from(BALANCE)
+        );
+
+        assert_eq!(
+            store
+                .get_nonce_by_account_address(0, ADDRESS)
+                .await
+                .unwrap()
+                .unwrap(),
+            NONCE
+        );
+
+        assert_eq!(
+            store
+                .get_code_by_account_address(0, ADDRESS)
+                .await
+                .unwrap()
+                .unwrap()
+                .code(),
+            CODE
+        );
+
+        assert_eq!(
+            store
+                .get_storage_at(0, ADDRESS, slot_key())
+                .unwrap()
+                .unwrap(),
+            U256::from(SLOT_VALUE)
+        );
+
+        assert_eq!(
+            store
+                .get_account_state(0, ADDRESS)
+                .await
+                .unwrap()
+                .unwrap()
+                .nonce,
+            NONCE
+        );
+
+        let proof = store
+            .get_account_proof(state_root, ADDRESS, &[slot_key()])
+            .await
+            .expect("proof read")
+            .expect("state trie present");
+        assert_eq!(proof.account.balance, U256::from(BALANCE));
+        assert!(
+            !proof.proof.is_empty(),
+            "a held root must produce a non-empty account proof"
+        );
+        assert_eq!(proof.storage_proof.len(), 1);
+        assert_eq!(proof.storage_proof[0].value, U256::from(SLOT_VALUE));
+    }
+
+    /// A block that exists but whose account is absent still reports "no such
+    /// account" rather than an error: the guard must only fire on missing
+    /// *state*, never on a missing account within present state.
+    #[tokio::test]
+    async fn absent_account_at_a_held_root_is_still_none() {
+        let store = store_with_genesis_account().await;
+        let other = Address::repeat_byte(0xb2);
+        assert!(store.get_account_info(0, other).await.unwrap().is_none());
+        assert!(
+            store
+                .get_storage_at(0, other, slot_key())
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    /// An unknown block still yields `Ok(None)` — "I have no such block" is a
+    /// different answer from "I have the block but not its state".
+    #[tokio::test]
+    async fn unknown_block_is_still_none() {
+        let store = store_with_genesis_account().await;
+        assert!(store.get_account_info(99, ADDRESS).await.unwrap().is_none());
+        assert!(
+            store
+                .get_account_info_by_hash(H256::repeat_byte(0xcd), ADDRESS)
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            store
+                .get_storage_at(99, ADDRESS, slot_key())
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    // ---------------------------------------------------------------------
+    // 4. The deliberately unchecked variants stay unchecked.
+    // ---------------------------------------------------------------------
+
+    /// `get_account_state_by_root` is the per-account read `StoreVmDatabase`
+    /// issues for every account an execution touches. Its caller has *already*
+    /// gated on `has_state_root` once, at `StoreVmDatabase::new`
+    /// (`crates/blockchain/vm.rs`), so re-verifying the root here would add a
+    /// root-node read and a keccak to every single account access during block
+    /// execution. It stays unchecked on purpose.
+    #[tokio::test]
+    async fn get_account_state_by_root_stays_unchecked() {
+        let store = store_with_genesis_account().await;
+        assert!(
+            store
+                .get_account_state_by_root(unheld_root(), ADDRESS)
+                .unwrap()
+                .is_some(),
+            "the VM's hot per-account read must stay unguarded; \
+             StoreVmDatabase::new checks the root once up front"
+        );
+    }
+
+    /// `get_storage_at_root` is the root-addressed sibling of `get_storage_at`
+    /// and is used by store-internal callers that address state by root directly
+    /// (see the deep-reorg overlay tests, which read at roots the overlay
+    /// deliberately does not serve). `get_storage_at`, the block-addressed entry
+    /// point the RPC layer uses, is the guarded one.
+    #[tokio::test]
+    async fn get_storage_at_root_stays_unchecked() {
+        let store = store_with_genesis_account().await;
+        assert_eq!(
+            store
+                .get_storage_at_root(unheld_root(), ADDRESS, slot_key())
+                .unwrap(),
+            Some(U256::from(SLOT_VALUE)),
+            "the root-addressed storage read must stay unguarded"
+        );
+    }
+
+    /// `has_state_root`, the detector all of the above now share, must agree
+    /// with them about what is and is not held.
+    #[tokio::test]
+    async fn has_state_root_agrees_with_the_guards() {
+        let store = store_with_genesis_account().await;
+        let genesis_root = store.get_block_header(0).unwrap().unwrap().state_root;
+        assert!(store.has_state_root(genesis_root).unwrap());
+        assert!(!store.has_state_root(unheld_root()).unwrap());
+        assert!(
+            store.has_state_root(EMPTY_TRIE_HASH).unwrap(),
+            "the empty trie is always available"
+        );
     }
 }

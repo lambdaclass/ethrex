@@ -365,6 +365,164 @@ mod tests {
         assert_eq!(pending, json!("0x59"));
     }
 
+    /// A state root no block on this chain ever produced. ethrex keeps one
+    /// version of the state trie on disk plus a bounded chain of in-memory diff
+    /// layers, so this is the shape of any block past the retention window: the
+    /// header survives, the state behind it does not.
+    const UNHELD_STATE_ROOT: H256 = H256::repeat_byte(0xaa);
+
+    /// Appends a canonical block whose header claims [`UNHELD_STATE_ROOT`]
+    /// without that state ever being written. Returns its number.
+    async fn append_block_with_unheld_state_root(context: &RpcApiContext) -> u64 {
+        use ethrex_common::types::{Block, BlockBody, BlockHeader};
+        let storage = &context.storage;
+        let genesis_hash = storage
+            .get_canonical_block_hash(0)
+            .await
+            .unwrap()
+            .expect("genesis is canonical");
+        let header = BlockHeader {
+            number: 1,
+            parent_hash: genesis_hash,
+            state_root: UNHELD_STATE_ROOT,
+            ..Default::default()
+        };
+        let hash = header.hash();
+        storage
+            .add_block(Block::new(header, BlockBody::default()))
+            .await
+            .unwrap();
+        storage
+            .forkchoice_update(vec![(1, hash)], 1, hash, None, None)
+            .await
+            .unwrap();
+        1
+    }
+
+    fn block_id(number: u64) -> BlockIdentifierOrHash {
+        use crate::types::block_identifier::BlockIdentifier;
+        BlockIdentifierOrHash::Identifier(BlockIdentifier::Number(number))
+    }
+
+    #[track_caller]
+    fn assert_state_unavailable(result: Result<Value, RpcErr>, method: &str) {
+        match result {
+            Err(RpcErr::Internal(message)) => assert!(
+                message.contains("state root missing"),
+                "{method}: expected a missing-state error, got {message:?}"
+            ),
+            Err(other) => panic!("{method}: expected a missing-state error, got {other:?}"),
+            Ok(value) => panic!(
+                "{method}: answered {value} from a state this node does not hold. \
+                 The store-level guard did not reach the caller."
+            ),
+        }
+    }
+
+    /// The store-level guard has to survive the trip out through the RPC layer.
+    /// Every one of these handlers ends in an `unwrap_or_default()` over an
+    /// `Option`, so a guard that only reported "no such account" would be
+    /// flattened into `0x0` / `0x` and the user-visible bug would be untouched.
+    /// What must happen instead is what `eth_call` has always done at the same
+    /// block: fail, and say why.
+    #[tokio::test]
+    async fn account_reads_at_an_unheld_state_root_error() {
+        let address = Address::from_low_u64_be(0xabcd);
+        let context = context_with_account_nonce(address, 0x59).await;
+        let number = append_block_with_unheld_state_root(&context).await;
+
+        assert_state_unavailable(
+            GetBalanceRequest {
+                address,
+                block: block_id(number),
+            }
+            .handle(context.clone())
+            .await,
+            "eth_getBalance",
+        );
+        assert_state_unavailable(
+            GetCodeRequest {
+                address,
+                block: block_id(number),
+            }
+            .handle(context.clone())
+            .await,
+            "eth_getCode",
+        );
+        assert_state_unavailable(
+            GetTransactionCountRequest {
+                address,
+                block: block_id(number),
+            }
+            .handle(context.clone())
+            .await,
+            "eth_getTransactionCount",
+        );
+        assert_state_unavailable(
+            GetStorageAtRequest {
+                address,
+                storage_slot: H256::from_low_u64_be(1),
+                block: block_id(number),
+            }
+            .handle(context.clone())
+            .await,
+            "eth_getStorageAt",
+        );
+        assert_state_unavailable(
+            GetProofRequest {
+                address,
+                storage_keys: vec![H256::from_low_u64_be(1)],
+                block: block_id(number),
+            }
+            .handle(context.clone())
+            .await,
+            "eth_getProof",
+        );
+    }
+
+    /// The same handlers at a block whose state the node does hold keep working.
+    #[tokio::test]
+    async fn account_reads_at_a_held_state_root_still_answer() {
+        let address = Address::from_low_u64_be(0xabcd);
+        let context = context_with_account_nonce(address, 0x59).await;
+        // Genesis is still canonical and its state is on disk.
+        append_block_with_unheld_state_root(&context).await;
+
+        let balance = GetBalanceRequest {
+            address,
+            block: block_id(0),
+        }
+        .handle(context.clone())
+        .await
+        .expect("genesis state is held");
+        assert_eq!(balance, json!("0x56bc75e2d63100000"));
+
+        let nonce = GetTransactionCountRequest {
+            address,
+            block: block_id(0),
+        }
+        .handle(context.clone())
+        .await
+        .expect("genesis state is held");
+        assert_eq!(nonce, json!("0x59"));
+
+        let proof = GetProofRequest {
+            address,
+            storage_keys: vec![],
+            block: block_id(0),
+        }
+        .handle(context.clone())
+        .await
+        .expect("genesis state is held");
+        assert!(
+            !proof["accountProof"]
+                .as_array()
+                .expect("accountProof array")
+                .is_empty(),
+            "a held root must produce a non-empty account proof"
+        );
+    }
+
     /// A pending tx above the on-chain nonce still advances `pending`.
     #[tokio::test]
     async fn pending_nonce_advances_past_latest() {
