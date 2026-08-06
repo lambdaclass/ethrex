@@ -293,6 +293,13 @@ enters heze the moment it starts; there is no scheduling margin to work with.
 
 ### What to move to
 
+The image is **`ethpandaops/lighthouse:focil`**, built from `sigp/lighthouse`
+branch `focil`. The fallback is `ethpandaops/teku:focil`, built from
+`Consensys/teku` branch `prototype/focil`. Both are auto-built: the source of
+truth is `ethpandaops/eth-client-docker-image-builder`, file `branches.yaml`, key
+`cl.clients.<client>.branches`, which lists `focil` for both today. Replace
+`cl_image: ethpandaops/lighthouse:glamsterdam-devnet-7` with the `:focil` tag.
+
 `sigp/lighthouse@focil` is a strict superset of `unstable` (the branch the
 devnet-7 images build from) on every axis that matters: the same `ForkName` list
 through `Gloas` and `Heze`, `JsonPayloadAttributesV4` and `V5` both carrying
@@ -304,6 +311,13 @@ through `Gloas` and `Heze`, `JsonPayloadAttributesV4` and `V5` both carrying
 What is unproven is whether either handles the rest of the devnet-7 network
 config, since both branches sit ~100+ commits behind their own master. Branch
 dates do not settle it. Measure on a scratch enclave, never on the live chain.
+
+Check the tag's build date before planning around it: as of 2026-08 the images
+are `lighthouse:focil` from 2026-06-16 and `teku:focil` from 2026-06-25, both
+predating glamsterdam-devnet-7. Because the images track their branches, the
+lever for a fresher one is getting the upstream branch rebased, not a rebuild
+request. Teku's is the cheaper ask, being only ~7 commits ahead of its own
+master.
 
 ### Before attempting this
 
