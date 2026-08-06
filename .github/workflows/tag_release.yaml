@@ -207,7 +207,32 @@ jobs:
             ghcr.io/eth-act/ere/ere-server-${{ matrix.zkvm }}:${ERE_TAG} \
             --elf-path /output/${{ steps.artifact.outputs.name }}.elf \
             keygen \
-            --program-vk-path ${{ steps.artifact.outputs.name }}.vk
+            --program-vk-path /output/${{ steps.artifact.outputs.name }}.vk
+
+      # `if-no-files-found: error` only fires when NOTHING matches, so a
+      # multi-line `path:` where one pattern matches and another does not
+      # uploads a subset and still reports success. That is how the verification
+      # keys went missing: `--program-vk-path` was relative, so ere-server wrote
+      # each .vk inside the container and it died with it, while the .elf still
+      # matched and the upload went green. Assert both files explicitly.
+      - name: Assert the ELF and VK both exist
+        run: |
+          set -euo pipefail
+          missing=0
+          for ext in elf vk; do
+            file="output/${{ steps.artifact.outputs.name }}.$ext"
+            if [ ! -s "$file" ]; then
+              echo "::error::$file is missing or empty"
+              missing=1
+            else
+              echo "  $file  $(wc -c < "$file" | tr -d ' ') bytes"
+            fi
+          done
+          if [ "$missing" -ne 0 ]; then
+            echo "--- contents of output/ ---"
+            ls -la output/
+            exit 1
+          fi
 
       - name: Upload artifact
         uses: actions/upload-artifact@v6
@@ -565,8 +590,20 @@ jobs:
             count=$((count + 1))
           done < <(find ./bin -type f -name 'stateless-validator-ethrex-*' \
                      \( -name '*.elf' -o -name '*.vk' \) -print0)
-          if [ "$count" -eq 0 ]; then
-            echo "::error::no stateless-validator artifacts were verified"
+          # Both kinds must be present: the handbook requires the ELF *and* the
+          # verification key to ship signed, and an ELF-only release is exactly
+          # what a silently-partial upload produces.
+          elfs=$(find ./bin -type f -name 'stateless-validator-ethrex-*.elf' | wc -l | tr -d ' ')
+          vks=$(find ./bin -type f -name 'stateless-validator-ethrex-*.vk' | wc -l | tr -d ' ')
+          echo "signed $elfs ELF(s) and $vks verification key(s)"
+          if [ "$count" -eq 0 ] || [ "$elfs" -eq 0 ] || [ "$vks" -eq 0 ]; then
+            echo "::error::expected both ELFs and verification keys; got $elfs ELF(s), $vks VK(s)"
+            find ./bin -type f | sort
+            exit 1
+          fi
+          if [ "$elfs" -ne "$vks" ]; then
+            echo "::error::$elfs ELF(s) but $vks verification key(s) — every ELF needs its VK"
+            find ./bin -type f | sort
             exit 1
           fi
           echo "Verified $count signature(s) against the committed public key."
