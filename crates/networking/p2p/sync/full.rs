@@ -17,7 +17,7 @@ use ethrex_common::{
 use ethrex_storage::Store;
 use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, info, warn};
+use tracing::{debug, error, info, warn};
 
 use crate::peer_handler::{BlockRequestOrder, PeerHandler};
 use crate::snap::constants::MAX_HEADER_FETCH_ATTEMPTS;
@@ -120,7 +120,9 @@ pub async fn sync_cycle_full(
             // commit each block individually so the canonical head advances
             // per block. Large batches keep using the batched path for
             // throughput (amortized forkchoice + storage flush).
-            const SMALL_BATCH_THRESHOLD: usize = 16;
+            // DEBUG(sr-120345646): forced per-block so the per-block state-root
+            // check pinpoints the exact diverging block instead of the batch.
+            const SMALL_BATCH_THRESHOLD: usize = 100_000;
             if blocks.len() < SMALL_BATCH_THRESHOLD {
                 execute_blocks_per_block_fc(blockchain.clone(), blocks, store.clone()).await?;
             } else {
@@ -647,9 +649,14 @@ async fn execute_blocks_per_block_fc(
         let number = block.header.number;
         let hash = block.hash();
         let blockchain_ref = blockchain.clone();
-        tokio::task::spawn_blocking(move || blockchain_ref.add_block_pipeline(block, None))
+        let res = tokio::task::spawn_blocking(move || blockchain_ref.add_block_pipeline(block, None))
             .await
-            .map_err(SyncError::JoinHandle)??;
+            .map_err(SyncError::JoinHandle)?;
+        if let Err(ref e) = res {
+            // DEBUG(sr-120345646): surface the exact diverging block number.
+            error!("DEBUG per-block add failed at block {number} hash {hash:?}: {e:?}");
+        }
+        res?;
         // Route via advance_canonical_head so the no-op-on-old-block guard
         // applies here too. Direct `forkchoice_update` would rewind the
         // head if a newer NewBlock raced ahead via direct-fetch, deleting
