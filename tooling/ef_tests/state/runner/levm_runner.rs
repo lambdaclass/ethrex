@@ -329,6 +329,7 @@ pub fn prepare_vm_for_tx<'a>(
             is_privileged: false,
             fee_token: None,
             disable_balance_check: false,
+            disable_nonce_check: false,
             is_system_call: false,
         },
         db,
@@ -336,6 +337,7 @@ pub fn prepare_vm_for_tx<'a>(
         LevmCallTracer::disabled(),
         VMType::L1, // TODO: Should we run the EF tests with L2?
         &NativeCrypto,
+        None,
     )
     .map_err(|e| EFTestRunnerError::FailedToEnsurePreState(format!("Failed to initialize VM: {e}")))
 }

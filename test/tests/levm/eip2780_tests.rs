@@ -123,6 +123,7 @@ fn intrinsic_env(fork: Fork) -> Environment {
         is_privileged: false,
         fee_token: None,
         disable_balance_check: true,
+        disable_nonce_check: false,
         is_system_call: false,
     }
 }
@@ -145,6 +146,7 @@ fn intrinsic_with_parity(fork: Fork, tx: &Transaction) -> (u64, u64) {
         LevmCallTracer::disabled(),
         VMType::L1,
         &NativeCrypto,
+        None,
     )
     .expect("VM::new");
     let intrinsic = vm.get_intrinsic_gas().expect("get_intrinsic_gas");
@@ -388,6 +390,7 @@ fn run_amsterdam_call(recipient: Address, accounts: FxHashMap<Address, Account>)
         LevmCallTracer::disabled(),
         VMType::L1,
         &NativeCrypto,
+        None,
     )
     .expect("VM::new");
 
@@ -528,6 +531,7 @@ fn run_amsterdam_call_al(
         LevmCallTracer::disabled(),
         VMType::L1,
         &NativeCrypto,
+        None,
     )
     .expect("VM::new");
 

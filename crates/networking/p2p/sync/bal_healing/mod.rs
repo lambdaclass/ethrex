@@ -340,13 +340,11 @@ mod tests {
     use ethrex_common::types::BlockHeader;
     use ethrex_storage::{EngineType, Store};
 
-    /// `PeerHandler` requires an `RLPxInitiator` actor to construct; that makes
-    /// it impractical to directly unit-test `advance_state_via_bals` here. The
-    /// orchestration is covered by the deferred E2E test (M4 — Phase 3). What
-    /// we test instead are the deterministic inputs to that orchestration:
-    /// `load_headers_range`, which feeds every downstream apply / validate
-    /// step, and the `MissingHeaderForBal` short-circuit that the function
-    /// produces before any peer interaction.
+    // `PeerHandler` requires an `RLPxInitiator` actor to construct, which makes it
+    // impractical to directly unit-test `advance_state_via_bals` here. What we test
+    // instead are the deterministic inputs to that orchestration: `load_headers_range`,
+    // which feeds every downstream apply / validate step, and the `MissingHeaderForBal`
+    // short-circuit it produces before any peer interaction.
 
     async fn store_canonical_header(store: &Store, header: BlockHeader) -> H256 {
         let number = header.number;

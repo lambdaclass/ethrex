@@ -14,6 +14,7 @@
 //! This matches EVM account deletion semantics (EIP-161 empty-account removal)
 //! and avoids any spec ambiguity.
 
+use crate::sync::SyncError;
 use ethrex_common::{
     H256,
     constants::{EMPTY_KECCAK_HASH, EMPTY_TRIE_HASH},
@@ -27,9 +28,6 @@ use ethrex_storage::{
     api::tables::{ACCOUNT_CODE_METADATA, ACCOUNT_CODES, ACCOUNT_TRIE_NODES, STORAGE_TRIE_NODES},
     apply_prefix, encode_code, hash_address, hash_key,
 };
-use ethrex_trie::EMPTY_TRIE_HASH as TRIE_EMPTY;
-
-use crate::sync::SyncError;
 
 /// Apply a single `BlockAccessList` to the state trie rooted at `parent_state_root`.
 ///
@@ -145,8 +143,7 @@ pub fn apply_bal(
         let is_destroyed = account_state.balance.is_zero()
             && account_state.nonce == 0
             && account_state.code_hash == *EMPTY_KECCAK_HASH
-            && (account_state.storage_root == *EMPTY_TRIE_HASH
-                || account_state.storage_root == *TRIE_EMPTY);
+            && account_state.storage_root == *EMPTY_TRIE_HASH;
 
         if is_destroyed {
             state_trie.remove(&hashed_addr_bytes)?;

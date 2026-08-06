@@ -111,6 +111,22 @@ Node options:
           [env: ETHREX_MEMPOOL_MAX_SIZE=]
           [default: 10000]
 
+      --mempool.private
+          Node-level config (not a protocol/EIP behavior): keep RPC-submitted transactions private. They enter the mempool and may be included in blocks built locally, but are not propagated to peers. P2P-received transactions are unaffected.
+
+          [env: ETHREX_MEMPOOL_PRIVATE=]
+      --mempool.price-bump <PERCENT>
+          Minimum fee bump (in percent) required to replace a non-blob pooled transaction at the same (sender, nonce).
+
+          [env: ETHREX_MEMPOOL_PRICE_BUMP=]
+          [default: 10]
+
+      --mempool.blob-price-bump <PERCENT>
+          Minimum fee bump (in percent) required to replace an EIP-4844 blob pooled transaction.
+
+          [env: ETHREX_MEMPOOL_BLOB_PRICE_BUMP=]
+          [default: 100]
+
       --mempool.gap-admit-occupancy-threshold <PERCENTAGE>
           Mempool occupancy percentage (0-100) at or above which incoming transactions with a nonce gap relative to the sender's on-chain nonce are rejected. Setting to 100 disables the check.
 
@@ -127,6 +143,11 @@ Node options:
           Once synced, computes execution witnesses upon receiving newPayload messages and stores them in local storage
           
           [env: ETHREX_PRECOMPUTE_WITNESSES=]
+
+      --max-reorg-depth <MAX_REORG_DEPTH>
+          Optional operator override for the maximum reorg depth. Omit for finality-bounded cap. Set to 0 to disable deep reorgs entirely. Set to d to reject reorgs of depth > d.
+          
+          [env: ETHREX_MAX_REORG_DEPTH=]
 
 P2P options:
       --bootnodes <BOOTNODE_LIST>...
@@ -263,7 +284,7 @@ Block building options:
           Block extra data message.
           
           [env: ETHREX_BUILDER_EXTRA_DATA=]
-          [default: "ethrex 21.0.0"]
+          [default: "ethrex 23.0.0"]
 
       --builder.gas-limit <GAS_LIMIT>
           Target block gas limit.
@@ -315,7 +336,7 @@ Options:
 
 Node options:
       --network <GENESIS_FILE_PATH>
-          Alternatively, the name of a known network can be provided instead to use its preset genesis file and include its preset bootnodes. The networks currently supported include holesky, sepolia, hoodi and mainnet. If not specified, defaults to mainnet.
+          Alternatively, the name of a known network can be provided instead to use its preset genesis file and include its preset bootnodes. The networks currently supported include sepolia, hoodi and mainnet. If not specified, defaults to mainnet.
 
           [env: ETHREX_NETWORK=]
 
@@ -477,7 +498,7 @@ Block building options:
           Block extra data message.
 
           [env: ETHREX_BUILDER_EXTRA_DATA=]
-          [default: "ethrex 21.0.0"]
+          [default: "ethrex 23.0.0"]
 
       --builder.gas-limit <GAS_LIMIT>
           Target block gas limit.

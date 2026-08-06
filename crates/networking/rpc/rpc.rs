@@ -95,7 +95,7 @@ use tokio::sync::{
 use tokio::time::timeout;
 use tokio_util::sync::CancellationToken;
 use tower_http::cors::CorsLayer;
-use tracing::{error, info, warn};
+use tracing::{info, warn};
 use tracing_subscriber::{EnvFilter, Registry, reload};
 
 #[cfg(all(feature = "jemalloc_profiling", target_os = "linux"))]
@@ -1457,10 +1457,10 @@ pub async fn map_engine_requests(
 ) -> Result<Value, RpcErr> {
     match req.method.as_str() {
         "engine_exchangeCapabilities" => ExchangeCapabilitiesRequest::call(req, context).await,
-        "engine_forkchoiceUpdatedV1" => ForkChoiceUpdatedV1::call(req, context).await,
-        "engine_forkchoiceUpdatedV2" => ForkChoiceUpdatedV2::call(req, context).await,
-        "engine_forkchoiceUpdatedV3" => ForkChoiceUpdatedV3::call(req, context).await,
-        "engine_forkchoiceUpdatedV4" => ForkChoiceUpdatedV4::call(req, context).await,
+        "engine_forkchoiceUpdatedV1" => Box::pin(ForkChoiceUpdatedV1::call(req, context)).await,
+        "engine_forkchoiceUpdatedV2" => Box::pin(ForkChoiceUpdatedV2::call(req, context)).await,
+        "engine_forkchoiceUpdatedV3" => Box::pin(ForkChoiceUpdatedV3::call(req, context)).await,
+        "engine_forkchoiceUpdatedV4" => Box::pin(ForkChoiceUpdatedV4::call(req, context)).await,
         // The newPayload handlers carry the largest futures of any engine arm
         // (block execution + optional witness collection). Because this `match`
         // awaits each arm inline, the future of `map_engine_requests` is sized to
@@ -1812,6 +1812,7 @@ mod tests {
                             "bpo5Time": null,
                             "amsterdamTime": null,
                             "hegotaTime": null,
+                            "lstarTime": null,
                             "terminalTotalDifficulty": "0x0",
                             "terminalTotalDifficultyPassed": true,
                             "blobSchedule": blob_schedule,

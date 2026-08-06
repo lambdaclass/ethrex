@@ -102,16 +102,39 @@ pub struct FramePaymasterReservation {
 /// revalidation pass.
 pub type PendingFrameTx = (H256, Address, Address);
 
-/// Inputs for the per-account queued (future-nonce) cap, checked atomically
-/// inside [`Mempool::add_transaction`] under the insertion write lock. Computed
-/// by `Blockchain::validate_transaction` (which has the sender's on-chain nonce)
-/// and passed through so the check and the insert share one lock scope.
+/// Precomputed inputs for the per-sender admission gates, re-checked atomically
+/// inside [`Mempool::add_transaction`] under the insertion write lock so the
+/// checks and the insert share one lock scope. `Blockchain::validate_transaction`
+/// (which has the sender's on-chain nonce, balance, and the tx cost) computes
+/// these and threads them through, closing the read-lock/write-lock TOCTOU where
+/// two concurrent same-sender submissions could both pass against a stale
+/// snapshot and then both insert, busting the per-sender budget (issue #6938).
+///
+/// The unlocked checks in `validate_transaction` remain as a cheap pre-filter;
+/// this guard is the authoritative re-check under the write lock.
 #[derive(Debug, Clone, Copy)]
-pub struct QueuedCap {
-    /// The sender's on-chain nonce, used to tell executable txs from future ones.
+pub struct SenderAdmission {
+    /// The sender's on-chain nonce, used to tell executable txs from future
+    /// ones and to measure the nonce gap.
     pub account_nonce: u64,
-    /// The maximum number of queued (future) txs allowed for the sender.
-    pub max: usize,
+    /// Maximum number of queued (future/nonce-gapped) txs allowed for the
+    /// sender (#6603).
+    pub queued_max: usize,
+    /// Mempool occupancy percentage at or above which a gapped-nonce tx is
+    /// rejected; `100` disables the gate (#6609).
+    pub gap_threshold: u8,
+    /// Cumulative-balance inputs (#6606). `None` for frame txs, whose payer is
+    /// unknown until execution and which are therefore not balance-gated.
+    pub balance_check: Option<BalanceCheck>,
+}
+
+/// Inputs for the cumulative-balance gate (#6606): the incoming tx's cost and
+/// the sender's on-chain balance, checked against the summed cost of the
+/// sender's pooled txs.
+#[derive(Debug, Clone, Copy)]
+pub struct BalanceCheck {
+    pub tx_cost: U256,
+    pub sender_balance: U256,
 }
 
 /// An alternate announcer for a known-in-flight transaction hash. Carries the
@@ -135,6 +158,11 @@ struct MempoolInner {
     /// but whose responses haven't arrived yet. Used to avoid sending duplicate
     /// requests when multiple peers announce the same transaction.
     in_flight_txs: FxHashSet<H256>,
+    /// Hashes of transactions admitted with `--mempool.private` set: they
+    /// MUST NOT be propagated to peers via any P2P path (broadcast,
+    /// new-peer pooled-hash dump, or `GetPooledTransactions` responses).
+    /// Cleared on transaction removal alongside `broadcast_pool`.
+    private_pool: FxHashSet<H256>,
     /// For each announced hash, the queue of *alternate* announcers that also
     /// advertised it while the hash was already in-flight from someone else.
     /// Each entry carries the announcer's own announced type and size so the
@@ -202,6 +230,7 @@ impl MempoolInner {
 
         self.txs_by_sender_nonce.remove(&(tx.sender(), tx.nonce()));
         self.broadcast_pool.remove(hash);
+        self.private_pool.remove(hash);
 
         // Clear ALL frame-tx reservation state in this single removal path
         // (eviction / inclusion / reorg all funnel through here), so no outer
@@ -303,6 +332,123 @@ impl MempoolInner {
         self.txs_by_sender_nonce
             .range((sender, gap)..=(sender, u64::MAX))
             .count()
+    }
+
+    /// Pool occupancy as an integer percentage of the configured maximum, in
+    /// `[0, 100]`; `0` when the pool is unbounded (`max_mempool_size == 0`). See
+    /// [`Mempool::occupancy_pct`] for the rationale; this is the lock-free core
+    /// so it can be reused under an already-held write lock.
+    fn occupancy_pct_inner(&self) -> u8 {
+        if self.max_mempool_size == 0 {
+            return 0;
+        }
+        let pct = self.transaction_pool.len().saturating_mul(100) / self.max_mempool_size;
+        pct.min(100) as u8
+    }
+
+    /// Sum of the cost (`cost_without_base_fee`) of `sender`'s pooled txs at or
+    /// above `account_nonce`, optionally excluding one hash. See
+    /// [`Mempool::sum_cost_for_sender`] for the fail-closed rationale; this is
+    /// the lock-free core so it can be reused under an already-held write lock.
+    fn sum_cost_for_sender_inner(
+        &self,
+        sender: Address,
+        account_nonce: u64,
+        exclude: Option<H256>,
+    ) -> Result<U256, MempoolError> {
+        let mut total = U256::zero();
+        for (_key, hash) in self
+            .txs_by_sender_nonce
+            .range((sender, account_nonce)..=(sender, u64::MAX))
+        {
+            if Some(*hash) == exclude {
+                continue;
+            }
+            let tx = self.transaction_pool.get(hash).ok_or_else(|| {
+                MempoolError::StoreError(StoreError::Custom(format!(
+                    "mempool index/pool inconsistency: hash {hash:?} in sender-nonce index but missing from transaction_pool",
+                )))
+            })?;
+            let cost = tx
+                .cost_without_base_fee()
+                .ok_or(MempoolError::InvalidTxGasvalues)?;
+            total = total
+                .checked_add(cost)
+                .ok_or(MempoolError::InvalidTxGasvalues)?;
+        }
+        Ok(total)
+    }
+
+    /// Authoritative per-sender admission re-check, run under the insertion
+    /// write lock so each gate reads the live pool state that the insert will
+    /// mutate — closing the TOCTOU against the unlocked pre-filter in
+    /// `validate_transaction` (issue #6938). The incoming tx is not yet in the
+    /// pool; the caller removes any replaced tx *after* this check (under the
+    /// same lock), so a same-`(sender, nonce)` predecessor is still present here.
+    fn check_admission(
+        &self,
+        sender: Address,
+        tx_nonce: u64,
+        admission: &SenderAdmission,
+    ) -> Result<(), MempoolError> {
+        // Whether this insert replaces a tx already occupying the sender's nonce
+        // slot, determined *live* under the write lock rather than precomputed in
+        // `validate_transaction` — otherwise a concurrent removal in the
+        // validate→insert window could leave a stale "is replacement" flag and
+        // let a now-fresh gapped/future tx skip the gates below (issue #6938).
+        let replaced = self.txs_by_sender_nonce.get(&(sender, tx_nonce)).copied();
+
+        // A replacement neither grows the queue nor introduces a nonce gap, so it
+        // is exempt from the queued cap and the gap gate.
+        if replaced.is_none() {
+            // Per-account queued (future/nonce-gapped) cap (#6603). Only future
+            // txs count; executable/contiguous ones are never capped.
+            if self.is_future(sender, admission.account_nonce, tx_nonce) {
+                let queued = self.queued_count_for_sender(sender, admission.account_nonce);
+                if queued >= admission.queued_max {
+                    return Err(MempoolError::MaxQueuedTxsPerAccountExceeded {
+                        sender,
+                        count: queued,
+                        limit: admission.queued_max,
+                    });
+                }
+            }
+            // Gapped-nonce rejection under pool pressure (#6609). A gap is a
+            // forward jump (`>`); `tx_nonce < account_nonce` was already rejected
+            // as `NonceTooLow` in `validate_transaction`, so `>` and `!=` coincide
+            // here, but `>` states the intent and is robust to future refactors.
+            if tx_nonce > admission.account_nonce && admission.gap_threshold < 100 {
+                let occupancy_pct = self.occupancy_pct_inner();
+                if occupancy_pct >= admission.gap_threshold {
+                    return Err(MempoolError::GapAdmissionDeniedUnderPressure {
+                        occupancy_pct,
+                        nonce_gap: tx_nonce.saturating_sub(admission.account_nonce),
+                    });
+                }
+            }
+        }
+        // Cumulative balance across the sender's pending txs (#6606). Runs for
+        // replacements too — `replaced` (the predecessor at this nonce, still in
+        // the pool) is excluded from the sum so the bump isn't double-counted.
+        // Skipped for frame txs (`None`).
+        if let Some(BalanceCheck {
+            tx_cost,
+            sender_balance,
+        }) = admission.balance_check
+        {
+            let existing =
+                self.sum_cost_for_sender_inner(sender, admission.account_nonce, replaced)?;
+            let total = existing
+                .checked_add(tx_cost)
+                .ok_or(MempoolError::InvalidTxGasvalues)?;
+            if total > sender_balance {
+                return Err(MempoolError::InsufficientCumulativeBalance {
+                    required: total,
+                    available: sender_balance,
+                });
+            }
+        }
+        Ok(())
     }
 
     /// Number of non-blob txs currently in the pool.
@@ -485,41 +631,95 @@ impl Mempool {
     /// one-pending-frame-tx-per-sender policy which must run under this lock to
     /// avoid a TOCTOU race (EIP-8141, review fix 1.6).
     ///
-    /// The per-account **queued** (future/nonce-gapped) cap is enforced *here*,
-    /// atomically under the write lock, when a [`QueuedCap`] is passed (see the
-    /// check below). `Blockchain::validate_transaction` supplies the sender's
-    /// on-chain nonce via that `QueuedCap` so future txs can be distinguished
-    /// from executable ones. Executable (contiguous-nonce) txs are never capped,
-    /// so a single sender can hold arbitrarily many (bounded only by the global
-    /// mempool size).
+    /// The per-sender admission gates (queued cap, gapped-nonce, cumulative
+    /// balance) are re-checked *here*, atomically under the write lock, when a
+    /// [`SenderAdmission`] is passed (see [`MempoolInner::check_admission`]).
+    /// `Blockchain::validate_transaction` supplies the precomputed inputs so the
+    /// gates read the live pool state the insert will mutate. Executable
+    /// (contiguous-nonce) txs are never queued-capped, so a single sender can
+    /// hold arbitrarily many (bounded only by the global mempool size).
+    ///
+    /// The transaction's hash is queued for P2P broadcast. Use
+    /// [`Self::add_transaction_no_broadcast`] for the private-mempool path.
     pub fn add_transaction(
         &self,
         hash: H256,
         sender: Address,
         transaction: MempoolTransaction,
         frame_reservation: Option<FramePaymasterReservation>,
-        queued_cap: Option<QueuedCap>,
+        sender_admission: Option<SenderAdmission>,
+    ) -> Result<(), MempoolError> {
+        self.add_transaction_inner(
+            hash,
+            sender,
+            transaction,
+            frame_reservation,
+            sender_admission,
+            true,
+        )
+    }
+
+    /// Add transaction to the pool without queueing it for P2P broadcast.
+    /// Used by the private-mempool path: the tx is available to the local
+    /// payload builder but never gossiped to peers. Admission gating is
+    /// identical to [`Self::add_transaction`] — only propagation differs.
+    pub fn add_transaction_no_broadcast(
+        &self,
+        hash: H256,
+        sender: Address,
+        transaction: MempoolTransaction,
+        frame_reservation: Option<FramePaymasterReservation>,
+        sender_admission: Option<SenderAdmission>,
+    ) -> Result<(), MempoolError> {
+        self.add_transaction_inner(
+            hash,
+            sender,
+            transaction,
+            frame_reservation,
+            sender_admission,
+            false,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn add_transaction_inner(
+        &self,
+        hash: H256,
+        sender: Address,
+        transaction: MempoolTransaction,
+        frame_reservation: Option<FramePaymasterReservation>,
+        sender_admission: Option<SenderAdmission>,
+        broadcast: bool,
     ) -> Result<(), MempoolError> {
         let mut inner = self.write()?;
         let is_frame = matches!(transaction.tx_type(), TxType::Frame);
         let is_blob = matches!(transaction.tx_type(), TxType::EIP4844);
 
-        // Per-account queued (future/nonce-gapped) cap, enforced atomically under
-        // the same write lock as the insertion so two concurrent submissions from
-        // one sender can't both pass a stale count and race past the limit.
-        // Only *future* txs count (executable/contiguous ones are never capped).
-        // Replacements pass `None` (the caller sets it when `find_tx_to_replace`
-        // matched), since a same-`(sender, nonce)` replace never grows the queue.
-        if let Some(QueuedCap { account_nonce, max }) = queued_cap
-            && inner.is_future(sender, account_nonce, transaction.nonce())
-        {
-            let queued = inner.queued_count_for_sender(sender, account_nonce);
-            if queued >= max {
-                return Err(MempoolError::MaxQueuedTxsPerAccountExceeded {
-                    sender,
-                    count: queued,
-                    limit: max,
-                });
+        // Per-sender admission gates (queued cap #6603, gapped-nonce #6609,
+        // cumulative balance #6606), re-checked atomically under the same write
+        // lock as the insertion so two concurrent submissions from one sender
+        // can't both pass against a stale snapshot and race past the budget
+        // (issue #6938). Runs before any mutation so a rejection has no side
+        // effect. `None` for direct/test inserts that bypass admission.
+        if let Some(admission) = &sender_admission {
+            inner.check_admission(sender, transaction.nonce(), admission)?;
+
+            // Non-frame replacement: remove the tx currently occupying this
+            // sender's nonce slot (if any) under this same lock, *after*
+            // `check_admission` observed it (for the replacement exemption and the
+            // excluded-cost sum). Doing the removal here — rather than in the
+            // caller before the lock — keeps replacement detection, the gates, the
+            // removal, and the insert in one atomic scope (issue #6938). Gated on
+            // the admission guard, so raw index-only inserts (`None`, used by
+            // direct callers) keep their existing behavior. Frame txs defer their
+            // slot removal to the paymaster re-check below, so a rejected fee-bump
+            // leaves the old tx intact.
+            if !is_frame
+                && let Some(&old_hash) = inner
+                    .txs_by_sender_nonce
+                    .get(&(sender, transaction.nonce()))
+            {
+                inner.remove_transaction_with_lock(&old_hash)?;
             }
         }
 
@@ -629,7 +829,13 @@ impl Mempool {
         let tx_nonce = transaction.nonce();
         inner.txs_by_sender_nonce.insert((sender, tx_nonce), hash);
         inner.transaction_pool.insert(hash, transaction);
-        inner.broadcast_pool.insert(hash);
+        // Private txs are held for local block building only: they never enter
+        // the broadcast pool, so no P2P path can pick them up.
+        if broadcast {
+            inner.broadcast_pool.insert(hash);
+        } else {
+            inner.private_pool.insert(hash);
+        }
         inner.alternates.remove(&hash);
 
         // Track per-sender pending frame tx for EIP-8141 admission gating.
@@ -869,10 +1075,17 @@ impl Mempool {
 
         let mut inner = self.write()?;
 
+        // `seen` dedups within this announcement: `in_flight_txs` isn't updated until after the
+        // filter runs, so a duplicated hash (e.g. `[h, h]`) would otherwise be returned twice and
+        // requested twice — an honest responder then echoes the tx twice, which the response-side
+        // duplicate guard (`PooledTransactions::validate_requested`) would wrongly treat as a fault.
+        let mut seen = FxHashSet::default();
         let unknown: Vec<H256> = hashes
             .iter()
             .filter(|hash| {
-                !inner.in_flight_txs.contains(hash) && !inner.transaction_pool.contains_key(hash)
+                seen.insert(**hash)
+                    && !inner.in_flight_txs.contains(hash)
+                    && !inner.transaction_pool.contains_key(hash)
             })
             .copied()
             .collect();
@@ -992,31 +1205,11 @@ impl Mempool {
         account_nonce: u64,
         exclude: Option<H256>,
     ) -> Result<U256, MempoolError> {
-        let inner = self.read()?;
-        let mut total = U256::zero();
         // Start at `account_nonce`, not 0, so obsoleted txs (nonce below the
         // sender's on-chain nonce — already executed but not yet pruned from the
         // pool) don't count toward the sender's required balance.
-        for (_key, hash) in inner
-            .txs_by_sender_nonce
-            .range((sender, account_nonce)..=(sender, u64::MAX))
-        {
-            if Some(*hash) == exclude {
-                continue;
-            }
-            let tx = inner.transaction_pool.get(hash).ok_or_else(|| {
-                MempoolError::StoreError(StoreError::Custom(format!(
-                    "mempool index/pool inconsistency: hash {hash:?} in sender-nonce index but missing from transaction_pool",
-                )))
-            })?;
-            let cost = tx
-                .cost_without_base_fee()
-                .ok_or(MempoolError::InvalidTxGasvalues)?;
-            total = total
-                .checked_add(cost)
-                .ok_or(MempoolError::InvalidTxGasvalues)?;
-        }
-        Ok(total)
+        self.read()?
+            .sum_cost_for_sender_inner(sender, account_nonce, exclude)
     }
 
     pub fn get_mempool_size(&self) -> Result<(u64, u64), MempoolError> {
@@ -1043,12 +1236,7 @@ impl Mempool {
     /// boundary comparisons are deterministic — float rounding from a prior
     /// `f64`-based implementation could misclassify near-boundary cases.
     pub fn occupancy_pct(&self) -> Result<u8, MempoolError> {
-        let inner = self.read()?;
-        if inner.max_mempool_size == 0 {
-            return Ok(0);
-        }
-        let pct = inner.transaction_pool.len().saturating_mul(100) / inner.max_mempool_size;
-        Ok(pct.min(100) as u8)
+        Ok(self.read()?.occupancy_pct_inner())
     }
 
     /// Returns all transactions currently in the pool
@@ -1125,6 +1313,38 @@ impl Mempool {
         Ok(contains)
     }
 
+    /// Returns `true` if the transaction was admitted with `--mempool.private`
+    /// set (via [`Self::add_transaction_no_broadcast`]). Callers on the P2P
+    /// path MUST consult this before serving the tx to peers — the private
+    /// pool intentionally bypasses gossip, the new-peer pooled-hash dump,
+    /// and `GetPooledTransactions` responses.
+    pub fn is_private(&self, hash: H256) -> Result<bool, StoreError> {
+        Ok(self.read()?.private_pool.contains(&hash))
+    }
+
+    /// Returns all broadcast-eligible txs under a single read lock. Excludes
+    /// privileged txs and any tx in the private pool. Used by the new-peer
+    /// pooled-hashes dump so the caller takes one lock instead of one per tx.
+    pub fn get_txs_for_new_peer_dump(&self) -> Result<Vec<MempoolTransaction>, StoreError> {
+        let inner = self.read()?;
+        let mut txs: Vec<MempoolTransaction> = inner
+            .transaction_pool
+            .iter()
+            .filter(|(hash, tx)| !inner.private_pool.contains(hash) && !tx.is_privileged())
+            .map(|(_, tx)| tx.clone())
+            .collect();
+        // Announce grouped by sender and ascending by nonce, matching what the
+        // previous `get_all_txs_by_sender`-based dump produced. This is NOT
+        // cosmetic: `transaction_pool` is a hash map, so an unsorted dump
+        // announces a sender's transactions in arbitrary order, and a peer that
+        // fetches them in that order sees nonce gaps. Gapped transactions are
+        // future/queued on the receiving side, so they can be turned away by
+        // the gap-admission gate or counted against the per-sender queued cap
+        // and never enter the peer's pool at all.
+        txs.sort_by(|a, b| a.sender().cmp(&b.sender()).then_with(|| a.cmp(b)));
+        Ok(txs)
+    }
+
     /// For the per-account **queued** (future-nonce) cap: if a tx at `tx_nonce`
     /// from `sender` would be a future/queued tx given the on-chain
     /// `account_nonce`, returns `Some(current_queued_count)` for the caller to
@@ -1147,40 +1367,88 @@ impl Mempool {
         sender: Address,
         nonce: u64,
         tx: &Transaction,
+        price_bump_percent: u64,
+        blob_price_bump_percent: u64,
     ) -> Result<Option<H256>, MempoolError> {
         let Some(tx_in_pool) = self.contains_sender_nonce(sender, nonce, tx.hash(&NativeCrypto))?
         else {
             return Ok(None);
         };
-        let is_a_replacement_tx = {
-            // EIP-1559 values
-            let old_tx_max_fee_per_gas = tx_in_pool.max_fee_per_gas().unwrap_or_default();
-            let old_tx_max_priority_fee_per_gas = tx_in_pool.max_priority_fee().unwrap_or_default();
-            let new_tx_max_fee_per_gas = tx.max_fee_per_gas().unwrap_or_default();
-            let new_tx_max_priority_fee_per_gas = tx.max_priority_fee().unwrap_or_default();
 
-            // Legacy tx values
-            let old_tx_gas_price = tx_in_pool.gas_price();
-            let new_tx_gas_price = tx.gas_price();
+        // Reject blob ↔ non-blob category changes. Peer clients keep blob
+        // and non-blob transactions in separate sub-pools precisely so a
+        // cheap-to-replicate non-blob tx can't displace a blob tx (with its
+        // expensive sidecar) or vice versa. ethrex has a single pool, so the
+        // same guarantee has to be enforced here. Type changes WITHIN the
+        // regular pool (legacy ↔ 2930 ↔ 1559 ↔ 7702) are allowed, matching
+        // geth/reth/nethermind.
+        //
+        // "Blob" here means *carries a sidecar*, not "is type 0x03": an
+        // EIP-8141 frame tx with a non-empty `blob_versioned_hashes` carries
+        // one too. Matching on `EIP4844Transaction` alone would classify such
+        // a frame tx as non-blob, so a frame↔frame replacement would take the
+        // 10% bump and skip the blob-fee comparison entirely — the cheap
+        // sidecar re-propagation the 100% bump exists to prevent. Admission
+        // rejects blob-carrying frame txs today (`FrameTxBlobsUnsupported`),
+        // so this is not yet reachable, but it goes live with #7038.
+        let new_is_blob = tx.is_blob_carrying();
+        let old_is_blob = tx_in_pool.transaction().is_blob_carrying();
+        if new_is_blob != old_is_blob {
+            return Err(MempoolError::ReplacementTypeMismatch);
+        }
 
-            // EIP-4844 values
-            let old_tx_max_fee_per_blob = tx_in_pool.max_fee_per_blob_gas();
-            let new_tx_max_fee_per_blob = tx.max_fee_per_blob_gas();
-
-            let eip4844_higher_fees = if let (Some(old_blob_fee), Some(new_blob_fee)) =
-                (old_tx_max_fee_per_blob, new_tx_max_fee_per_blob)
-            {
-                new_blob_fee > old_blob_fee
-            } else {
-                true // We are marking it as always true if the tx is not eip-4844
-            };
-
-            let eip1559_higher_fees = new_tx_max_fee_per_gas > old_tx_max_fee_per_gas
-                && new_tx_max_priority_fee_per_gas > old_tx_max_priority_fee_per_gas;
-            let legacy_higher_fees = new_tx_gas_price > old_tx_gas_price;
-
-            eip4844_higher_fees && (eip1559_higher_fees || legacy_higher_fees)
+        // Blob replacements use a stricter bump (default 100%) because blob
+        // sidecars are expensive to re-propagate; all other tx types use the
+        // base bump (default 10%). The category gate above makes the two
+        // sides share blob-ness, so keying on the new tx is sufficient.
+        let bump = if new_is_blob {
+            blob_price_bump_percent
+        } else {
+            price_bump_percent
         };
+
+        // A replacement must STRICTLY out-bid the pooled tx on both fee
+        // dimensions before the percentage threshold is even considered —
+        // geth applies exactly this guard in `legacypool`'s `list.Add`:
+        //
+        //     if old.GasFeeCapCmp(tx) >= 0 || old.GasTipCapCmp(tx) >= 0 { reject }
+        //
+        // It is load-bearing, not redundant with the threshold below. The
+        // threshold is computed with integer division, so it collapses onto
+        // the existing value whenever `existing * bump / 100 < 1` — with the
+        // default 10% bump that is every value below 10. For a 1 wei tip,
+        // `floor(1 * 110 / 100) == 1`, so an identical-fee tx would satisfy
+        // `new >= threshold` and be admitted as a "bump", silently evicting
+        // the pooled tx and re-gossiping the replacement. The devp2p
+        // `InvalidTxs` conformance test hits precisely this: it submits
+        // several invalid txs at an already-pooled nonce with `GasTipCap: 1`
+        // and expects none of them to propagate.
+        if tx.gas_fee_cap() <= tx_in_pool.gas_fee_cap()
+            || tx.gas_tip_cap() <= tx_in_pool.gas_tip_cap()
+        {
+            return Err(MempoolError::UnderpricedReplacement);
+        }
+
+        // The new tx must bump every applicable fee dimension by at least
+        // `bump` percent. Fee cap and tip are compared uniformly across
+        // types: a legacy tx's gas price acts as both its fee cap and its
+        // tip (geth's `GasFeeCap`/`GasTipCap` translation), so a legacy ↔
+        // typed replacement is compared on the same two dimensions and a
+        // typed replacement can't slip in underpriced against a legacy
+        // pooled tx (whose per-field maxes are `None`).
+        let bumped_fee_cap = is_bumped_u256(tx_in_pool.gas_fee_cap(), tx.gas_fee_cap(), bump);
+        let bumped_tip = is_bumped_u256(tx_in_pool.gas_tip_cap(), tx.gas_tip_cap(), bump);
+        // Blob fee dimension (both sides are blob txs here, per the gate).
+        let bumped_blob = if new_is_blob {
+            is_bumped_u256(
+                tx_in_pool.max_fee_per_blob_gas().unwrap_or_default(),
+                tx.max_fee_per_blob_gas().unwrap_or_default(),
+                bump,
+            )
+        } else {
+            true
+        };
+        let is_a_replacement_tx = bumped_fee_cap && bumped_tip && bumped_blob;
 
         if !is_a_replacement_tx {
             return Err(MempoolError::UnderpricedReplacement);
@@ -1252,6 +1520,31 @@ impl Mempool {
     }
 }
 
+/// Returns true iff `new >= floor(existing * (100 + bump_percent) / 100)`.
+///
+/// Used for every fee dimension compared during replacement: fee cap, tip
+/// (both via the `gas_fee_cap`/`gas_tip_cap` U256 accessors) and
+/// `max_fee_per_blob_gas`.
+///
+/// Threshold rounds down (toward zero), so `new == floor(existing * (100 +
+/// bump) / 100)` is admitted — matches geth's and reth's replacement rules.
+/// A `bump_percent` of 0 collapses to `new >= existing`.
+///
+/// Both the multiplier and the product are computed in `U256`, so neither the
+/// `100 + bump_percent` addition nor the multiplication can wrap into a
+/// smaller threshold. An overflow of the product is treated as "reject"
+/// rather than silently admitting an under-priced replacement.
+fn is_bumped_u256(existing: U256, new: U256, bump_percent: u64) -> bool {
+    let multiplier = U256::from(100u64) + U256::from(bump_percent);
+    let Some(threshold) = existing
+        .checked_mul(multiplier)
+        .map(|v| v / U256::from(100u64))
+    else {
+        return false;
+    };
+    new >= threshold
+}
+
 /// Filter applied by the payload builder when querying pending transactions
 /// from the pool. NOT a mempool admission gate — all fields here are
 /// query-time filters used to pick block-includable transactions. Admission
@@ -1318,7 +1611,7 @@ pub fn transaction_intrinsic_gas(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ethrex_common::types::{EIP1559Transaction, Transaction, TxKind};
+    use ethrex_common::types::{EIP1559Transaction, EIP4844Transaction, Transaction, TxKind};
     use ethrex_common::{Address, Bytes};
 
     fn dummy_mempool_tx(sender: Address, nonce: u64) -> MempoolTransaction {
@@ -1371,6 +1664,65 @@ mod tests {
             nonce,
             ..Default::default()
         })
+    }
+
+    #[test]
+    fn new_peer_dump_is_grouped_by_sender_and_nonce_ordered() {
+        // Regression: the dump reads from `transaction_pool`, a hash map, so
+        // without an explicit sort it emits a sender's txs in arbitrary order.
+        // The peer then fetches them out of nonce order, sees gaps, and its own
+        // gap-admission / queued-cap gates can turn them away — transactions
+        // silently never reach the peer's pool.
+        let pool = Mempool::new(64);
+        let a = Address::from_low_u64_be(0xA);
+        let b = Address::from_low_u64_be(0xB);
+
+        // Insert deliberately out of order, interleaving senders. `to` is
+        // derived from the sender so the two senders' txs hash differently —
+        // `dummy_mempool_tx` doesn't embed the sender, so same-nonce txs from
+        // different senders would otherwise collide on hash.
+        let make = |sender: Address, nonce: u64| {
+            let tx = Transaction::EIP1559Transaction(EIP1559Transaction {
+                nonce,
+                gas_limit: 21_000,
+                to: TxKind::Call(sender),
+                ..Default::default()
+            });
+            MempoolTransaction::new(tx, sender)
+        };
+        for (sender, nonce) in [(a, 2u64), (b, 1), (a, 0), (b, 0), (a, 1)] {
+            let mtx = make(sender, nonce);
+            let hash = mtx.hash(&NativeCrypto);
+            pool.add_transaction(hash, sender, mtx, None, None).unwrap();
+        }
+
+        let dumped = pool.get_txs_for_new_peer_dump().unwrap();
+        assert_eq!(dumped.len(), 5);
+
+        // Each sender's slice must be strictly ascending by nonce.
+        for sender in [a, b] {
+            let nonces: Vec<u64> = dumped
+                .iter()
+                .filter(|tx| tx.sender() == sender)
+                .map(|tx| tx.nonce())
+                .collect();
+            let mut sorted = nonces.clone();
+            sorted.sort_unstable();
+            assert_eq!(
+                nonces, sorted,
+                "dump must be nonce-ordered per sender, got {nonces:?} for {sender:?}"
+            );
+        }
+
+        // And a sender's txs must be contiguous, not interleaved with the other's.
+        let senders: Vec<Address> = dumped.iter().map(|tx| tx.sender()).collect();
+        let mut deduped = senders.clone();
+        deduped.dedup();
+        assert_eq!(
+            deduped.len(),
+            2,
+            "each sender's txs must form one contiguous run, got {senders:?}"
+        );
     }
 
     fn add_tx(pool: &Mempool, sender: Address, nonce: u64) -> H256 {
@@ -1463,7 +1815,8 @@ mod tests {
         assert_eq!(pool.queued_count_if_future(a, 0, 9).unwrap(), Some(2));
     }
 
-    // Adds a future tx through `add_transaction` with an explicit `QueuedCap`,
+    // Adds a future tx through `add_transaction` with a `SenderAdmission` that
+    // enables only the queued cap (gap gate disabled, no balance check),
     // exercising the atomic cap enforcement (not just the count helper).
     fn add_future_with_cap(
         pool: &Mempool,
@@ -1479,7 +1832,12 @@ mod tests {
             sender,
             mtx,
             None,
-            Some(QueuedCap { account_nonce, max }),
+            Some(SenderAdmission {
+                account_nonce,
+                queued_max: max,
+                gap_threshold: 100, // disabled
+                balance_check: None,
+            }),
         )
     }
 
@@ -1534,5 +1892,596 @@ mod tests {
                 "contiguous (executable) tx at nonce {nonce} must never be capped"
             );
         }
+    }
+
+    // #6938: the cumulative-balance (#6606) and gapped-nonce (#6609) gates are
+    // re-checked atomically inside `add_transaction` under the write lock, not
+    // only in the unlocked `validate_transaction` pre-filter. These exercise
+    // that locked path directly through a `SenderAdmission`.
+
+    // For EIP-1559, `cost_without_base_fee = max_fee_per_gas * gas_limit + value`,
+    // so `max_fee_per_gas = 1, gas_limit = cost` yields a tx of exactly `cost`.
+    fn build_tx_cost(nonce: u64, cost: u64) -> Transaction {
+        Transaction::EIP1559Transaction(EIP1559Transaction {
+            nonce,
+            max_fee_per_gas: 1,
+            gas_limit: cost,
+            ..Default::default()
+        })
+    }
+
+    // Seed a cost-bearing tx directly into the pool (no admission gate).
+    fn add_tx_cost(pool: &Mempool, sender: Address, nonce: u64, cost: u64) -> H256 {
+        let mtx = MempoolTransaction::new(build_tx_cost(nonce, cost), sender);
+        let hash = mtx.hash(&NativeCrypto);
+        pool.add_transaction(hash, sender, mtx, None, None).unwrap();
+        hash
+    }
+
+    // Add a tx through `add_transaction` with only the cumulative-balance gate
+    // active (queued cap and gap gate disabled).
+    fn add_with_balance(
+        pool: &Mempool,
+        sender: Address,
+        nonce: u64,
+        account_nonce: u64,
+        tx_cost: u64,
+        sender_balance: u64,
+    ) -> Result<(), MempoolError> {
+        let mtx = MempoolTransaction::new(build_tx_cost(nonce, tx_cost), sender);
+        let hash = mtx.hash(&NativeCrypto);
+        pool.add_transaction(
+            hash,
+            sender,
+            mtx,
+            None,
+            Some(SenderAdmission {
+                account_nonce,
+                queued_max: usize::MAX,
+                gap_threshold: 100, // disabled
+                balance_check: Some(BalanceCheck {
+                    tx_cost: U256::from(tx_cost),
+                    sender_balance: U256::from(sender_balance),
+                }),
+            }),
+        )
+    }
+
+    // Add a tx through `add_transaction` with only the gap gate active. Whether
+    // it counts as a replacement is derived live from the pool (slot occupancy),
+    // so callers seed a same-nonce tx first to exercise the replacement path.
+    fn add_with_gap_gate(
+        pool: &Mempool,
+        sender: Address,
+        nonce: u64,
+        account_nonce: u64,
+        gap_threshold: u8,
+    ) -> Result<(), MempoolError> {
+        let mtx = MempoolTransaction::new(build_tx_cost(nonce, 1), sender);
+        let hash = mtx.hash(&NativeCrypto);
+        pool.add_transaction(
+            hash,
+            sender,
+            mtx,
+            None,
+            Some(SenderAdmission {
+                account_nonce,
+                queued_max: usize::MAX,
+                gap_threshold,
+                balance_check: None,
+            }),
+        )
+    }
+
+    #[test]
+    fn add_transaction_rejects_over_cumulative_balance() {
+        // Three pending txs of cost 100 (sum 300) + a 4th of cost 100 = 400,
+        // over a balance of 350 → rejected under the write lock.
+        let pool = Mempool::new(10_000);
+        let sender = Address::from_low_u64_be(1);
+        for nonce in 0..3 {
+            add_tx_cost(&pool, sender, nonce, 100);
+        }
+        let res = add_with_balance(&pool, sender, 3, 0, 100, 350);
+        assert!(
+            matches!(
+                res,
+                Err(MempoolError::InsufficientCumulativeBalance { required, available })
+                    if required == U256::from(400) && available == U256::from(350)
+            ),
+            "expected InsufficientCumulativeBalance(required=400, available=350), got {res:?}"
+        );
+    }
+
+    #[test]
+    fn add_transaction_accepts_within_cumulative_balance() {
+        // Same 300 pooled + 100 new = 400, under a balance of 500 → accepted.
+        let pool = Mempool::new(10_000);
+        let sender = Address::from_low_u64_be(1);
+        for nonce in 0..3 {
+            add_tx_cost(&pool, sender, nonce, 100);
+        }
+        assert!(
+            add_with_balance(&pool, sender, 3, 0, 100, 500).is_ok(),
+            "cumulative cost within balance must be accepted"
+        );
+    }
+
+    #[test]
+    fn add_transaction_rejects_gapped_tx_under_pressure() {
+        // Pool at 100% occupancy; a gapped tx (nonce 5, on-chain 0) with a 90%
+        // threshold is rejected atomically under the write lock.
+        let pool = Mempool::new(10);
+        fill_mempool(&pool, 10);
+        let sender = Address::from_low_u64_be(0xAAA);
+        let res = add_with_gap_gate(&pool, sender, 5, 0, 90);
+        assert!(
+            matches!(
+                res,
+                Err(MempoolError::GapAdmissionDeniedUnderPressure { .. })
+            ),
+            "expected GapAdmissionDeniedUnderPressure, got {res:?}"
+        );
+    }
+
+    #[test]
+    fn add_transaction_accepts_gapped_tx_below_pressure() {
+        // Pool at 50% occupancy, below the 90% threshold → gapped tx accepted.
+        let pool = Mempool::new(10);
+        fill_mempool(&pool, 5);
+        let sender = Address::from_low_u64_be(0xAAA);
+        assert!(
+            add_with_gap_gate(&pool, sender, 5, 0, 90).is_ok(),
+            "gapped tx below the occupancy threshold must be accepted"
+        );
+    }
+
+    #[test]
+    fn add_transaction_replacement_bypasses_gap_gate() {
+        // A tx already occupying the sender's nonce slot makes the next insert a
+        // replacement, detected live under the lock — so it bypasses the gap gate
+        // even at 100% occupancy (whereas a fresh gapped tx would be rejected, per
+        // `add_transaction_rejects_gapped_tx_under_pressure`).
+        let pool = Mempool::new(10);
+        fill_mempool(&pool, 9);
+        let sender = Address::from_low_u64_be(0xAAA);
+        // Seed the sender's own tx at nonce 5 (10th tx → pool now at 100%).
+        add_tx_cost(&pool, sender, 5, 100);
+        // A higher-cost tx at the same nonce is a replacement and must be admitted.
+        assert!(
+            add_with_gap_gate(&pool, sender, 5, 0, 90).is_ok(),
+            "a replacement must bypass the gap gate under pressure"
+        );
+    }
+
+    #[test]
+    fn rejected_balance_replacement_keeps_original() {
+        // A replacement that fails the *locked* cumulative-balance re-check must
+        // leave the original same-nonce tx intact: the replaced tx is removed only
+        // after `check_admission` passes, inside the same write lock as the insert
+        // (mirroring the frame-tx path), so a rejected fee-bump can't leave the
+        // sender with neither tx (issue #6938 / Codex + Claude review).
+        let pool = Mempool::new(10_000);
+        let sender = Address::from_low_u64_be(1);
+        // Original at nonce 5 (cost 50) and another pending tx at nonce 6 (cost
+        // 100). The replacement's balance sum excludes the original (nonce 5) but
+        // still includes nonce 6.
+        let original = add_tx_cost(&pool, sender, 5, 50);
+        add_tx_cost(&pool, sender, 6, 100);
+        // Replacement at nonce 5, cost 100, balance 150: excluded-sum is 100
+        // (nonce 6), 100 + 100 = 200 > 150 → rejected under the write lock.
+        let res = add_with_balance(&pool, sender, 5, 0, 100, 150);
+        assert!(
+            matches!(res, Err(MempoolError::InsufficientCumulativeBalance { .. })),
+            "expected the replacement to be rejected on cumulative balance, got {res:?}"
+        );
+        assert!(
+            pool.contains_tx(original).unwrap(),
+            "a rejected fee-bump must leave the original same-nonce tx in the pool"
+        );
+    }
+
+    #[test]
+    fn reserve_unknown_hashes_dedups_within_announcement() {
+        // A duplicated hash in one announcement must be reserved (and thus requested) only once,
+        // otherwise an honest responder echoes the tx twice and trips the response-side dup guard.
+        let pool = Mempool::new(64);
+        let h = H256::from_low_u64_be(0xabc);
+        let announcer = H256::from_low_u64_be(1);
+        let unknown = pool
+            .reserve_unknown_hashes(&[h, h], &[0, 0], &[100, 100], announcer)
+            .unwrap();
+        assert_eq!(
+            unknown,
+            vec![h],
+            "duplicate announced hash must be reserved once"
+        );
+    }
+
+    // --- RBF price-bump helpers --------------------------------------------
+
+    fn add_to_pool(pool: &Mempool, sender: Address, tx: Transaction) -> H256 {
+        let mtx = MempoolTransaction::new(tx, sender);
+        let hash = mtx.hash(&NativeCrypto);
+        pool.add_transaction(hash, sender, mtx, None, None).unwrap();
+        hash
+    }
+
+    fn eip1559(nonce: u64, max_fee: u64, max_priority: u64) -> Transaction {
+        Transaction::EIP1559Transaction(EIP1559Transaction {
+            nonce,
+            max_fee_per_gas: max_fee,
+            max_priority_fee_per_gas: max_priority,
+            ..Default::default()
+        })
+    }
+
+    fn eip4844(nonce: u64, max_fee: u64, max_priority: u64, blob_fee: u64) -> Transaction {
+        Transaction::EIP4844Transaction(EIP4844Transaction {
+            nonce,
+            max_fee_per_gas: max_fee,
+            max_priority_fee_per_gas: max_priority,
+            max_fee_per_blob_gas: U256::from(blob_fee),
+            ..Default::default()
+        })
+    }
+
+    fn legacy(nonce: u64, gas_price: u64) -> Transaction {
+        Transaction::LegacyTransaction(ethrex_common::types::LegacyTransaction {
+            nonce,
+            gas_price: U256::from(gas_price),
+            ..Default::default()
+        })
+    }
+
+    // --- is_bumped_u256 ------------------------------------------------
+
+    #[test]
+    fn is_bumped_u256_blob_100_percent_accepted() {
+        assert!(is_bumped_u256(U256::from(50u64), U256::from(100u64), 100));
+    }
+
+    #[test]
+    fn is_bumped_u256_blob_99_percent_rejected() {
+        assert!(!is_bumped_u256(U256::from(100u64), U256::from(199u64), 100));
+    }
+
+    #[test]
+    fn is_bumped_u256_exact_10_percent_accepted() {
+        assert!(is_bumped_u256(U256::from(100u64), U256::from(110u64), 10));
+    }
+
+    #[test]
+    fn is_bumped_u256_just_below_10_percent_rejected() {
+        assert!(!is_bumped_u256(U256::from(100u64), U256::from(109u64), 10));
+    }
+
+    #[test]
+    fn is_bumped_u256_zero_bump_allows_equal() {
+        assert!(is_bumped_u256(U256::from(100u64), U256::from(100u64), 0));
+    }
+
+    #[test]
+    fn is_bumped_u256_zero_existing_always_accepted() {
+        assert!(is_bumped_u256(U256::zero(), U256::zero(), 100));
+        assert!(is_bumped_u256(U256::one(), U256::one(), 0));
+    }
+
+    #[test]
+    fn is_bumped_u256_rounds_threshold_down() {
+        // floor(101 * 110 / 100) = floor(111.1) = 111, so exactly 111 is
+        // admitted and 110 is not. Pins the round-down + `>=` boundary that
+        // matches geth/reth.
+        assert!(is_bumped_u256(U256::from(101u64), U256::from(111u64), 10));
+        assert!(!is_bumped_u256(U256::from(101u64), U256::from(110u64), 10));
+    }
+
+    #[test]
+    fn is_bumped_u256_overflowing_threshold_rejects() {
+        // At `existing = U256::MAX` the 100%-bumped product overflows U256,
+        // so `checked_mul` returns None and the helper must REJECT rather
+        // than admit. This is the branch production actually reaches on an
+        // absurd in-pool fee; a saturating implementation would instead
+        // collapse the threshold to ~U256::MAX/100 and wrongly admit.
+        assert!(!is_bumped_u256(U256::MAX, U256::MAX, 100));
+        // A huge `bump_percent` must not wrap the `100 + bump` multiplier
+        // into something small; the threshold stays unreachable.
+        assert!(!is_bumped_u256(U256::MAX, U256::MAX, u64::MAX));
+        // And no panics on extreme inputs.
+        let _ = is_bumped_u256(U256::MAX, U256::zero(), u64::MAX);
+    }
+
+    // --- find_tx_to_replace ---------------------------------------------
+
+    #[test]
+    fn replacement_1_wei_bump_rejected_at_10_percent() {
+        // Spec scenario: "Strict-greater-than but below 10% bump rejected"
+        let pool = Mempool::new(64);
+        let sender = Address::from_low_u64_be(1);
+        let old = eip1559(0, 1_000, 100);
+        add_to_pool(&pool, sender, old);
+
+        let new = eip1559(0, 1_001, 100); // +1 wei on max_fee, no bump on tip
+        let err = pool
+            .find_tx_to_replace(sender, 0, &new, 10, 100)
+            .unwrap_err();
+        assert!(matches!(err, MempoolError::UnderpricedReplacement));
+    }
+
+    #[test]
+    fn identical_fees_rejected_even_when_threshold_rounds_down() {
+        // Regression for the devp2p `InvalidTxs` conformance failure.
+        //
+        // The percentage threshold uses integer division, so for any fee
+        // below 10 a 10% bump rounds back onto the original value:
+        // `floor(1 * 110 / 100) == 1`. A pure `new >= threshold` test would
+        // therefore accept an IDENTICAL-fee tx as a valid replacement, evict
+        // the pooled tx and re-gossip the replacement. devp2p submits invalid
+        // txs at an already-pooled nonce with `GasTipCap: 1` and fails if any
+        // of them propagate.
+        //
+        // geth guards this in `list.Add` by requiring a strict increase on
+        // both fee fields before the threshold is consulted.
+        // A distinct tx (different gas limit → different hash, so it is not
+        // deduplicated) carrying the SAME fees as the pooled one. This is the
+        // devp2p shape: same sender, same nonce, same 1 wei fees, different
+        // payload.
+        let same_fees_other_tx = |gas: u64| {
+            Transaction::EIP1559Transaction(EIP1559Transaction {
+                nonce: 0,
+                max_fee_per_gas: 1,
+                max_priority_fee_per_gas: 1,
+                gas_limit: gas,
+                ..Default::default()
+            })
+        };
+
+        let pool = Mempool::new(64);
+        let sender = Address::from_low_u64_be(1);
+        add_to_pool(&pool, sender, same_fees_other_tx(21_000));
+
+        // Equal fees must never count as a bump.
+        let err = pool
+            .find_tx_to_replace(sender, 0, &same_fees_other_tx(100_000), 10, 100)
+            .unwrap_err();
+        assert!(
+            matches!(err, MempoolError::UnderpricedReplacement),
+            "equal fees must be rejected even where the 10% threshold rounds down to a no-op, got {err:?}"
+        );
+
+        // Same trap with a zero bump configured: geth still demands a strict
+        // increase, so equality must not slip through.
+        let err = pool
+            .find_tx_to_replace(sender, 0, &same_fees_other_tx(200_000), 0, 0)
+            .unwrap_err();
+        assert!(
+            matches!(err, MempoolError::UnderpricedReplacement),
+            "equal fees must be rejected under a zero bump too, got {err:?}"
+        );
+
+        // A genuine strict increase that also clears the threshold still works
+        // at these magnitudes (floor(1 * 110/100) == 1, and 2 >= 1).
+        assert!(
+            pool.find_tx_to_replace(sender, 0, &eip1559(0, 2, 2), 10, 100)
+                .is_ok(),
+            "a strictly higher replacement must still be accepted"
+        );
+    }
+
+    #[test]
+    fn replacement_full_10_percent_bump_on_both_axes_accepted() {
+        // Spec scenario: "10% bump on both axes accepted"
+        let pool = Mempool::new(64);
+        let sender = Address::from_low_u64_be(1);
+        let old = eip1559(0, 1_000, 100);
+        let old_hash = add_to_pool(&pool, sender, old);
+
+        let new = eip1559(0, 1_100, 110);
+        let found = pool
+            .find_tx_to_replace(sender, 0, &new, 10, 100)
+            .unwrap()
+            .expect("replacement should be admitted");
+        assert_eq!(found, old_hash);
+    }
+
+    #[test]
+    fn replacement_asymmetric_bump_rejected() {
+        // Spec scenario: "10% bump on only one axis rejected"
+        let pool = Mempool::new(64);
+        let sender = Address::from_low_u64_be(1);
+        let old = eip1559(0, 1_000, 100);
+        add_to_pool(&pool, sender, old);
+
+        let new = eip1559(0, 1_100, 105); // 10% on fee cap, 5% on tip
+        let err = pool
+            .find_tx_to_replace(sender, 0, &new, 10, 100)
+            .unwrap_err();
+        assert!(matches!(err, MempoolError::UnderpricedReplacement));
+    }
+
+    #[test]
+    fn blob_replacement_50_percent_bump_rejected() {
+        // Spec scenario: "Blob 50% bump rejected"
+        let pool = Mempool::new(64);
+        let sender = Address::from_low_u64_be(2);
+        let old = eip4844(0, 1_000, 100, 50);
+        add_to_pool(&pool, sender, old);
+
+        // 50% bump on all three fields, but blob threshold is 100%.
+        let new = eip4844(0, 1_500, 150, 75);
+        let err = pool
+            .find_tx_to_replace(sender, 0, &new, 10, 100)
+            .unwrap_err();
+        assert!(matches!(err, MempoolError::UnderpricedReplacement));
+    }
+
+    #[test]
+    fn blob_replacement_100_percent_bump_on_three_axes_accepted() {
+        // Spec scenario: "Blob 100% bump on three axes accepted"
+        let pool = Mempool::new(64);
+        let sender = Address::from_low_u64_be(2);
+        let old = eip4844(0, 1_000, 100, 50);
+        let old_hash = add_to_pool(&pool, sender, old);
+
+        let new = eip4844(0, 2_000, 200, 100);
+        let found = pool
+            .find_tx_to_replace(sender, 0, &new, 10, 100)
+            .unwrap()
+            .expect("blob replacement should be admitted");
+        assert_eq!(found, old_hash);
+    }
+
+    #[test]
+    fn no_existing_tx_returns_none() {
+        let pool = Mempool::new(64);
+        let sender = Address::from_low_u64_be(1);
+        let new = eip1559(0, 1_000, 100);
+        let res = pool.find_tx_to_replace(sender, 0, &new, 10, 100).unwrap();
+        assert!(res.is_none());
+    }
+
+    // --- type-change rejection -----------------------------------------
+
+    #[test]
+    fn blob_cannot_be_replaced_by_non_blob() {
+        // An EIP-4844 tx with a blob sidecar must not be displaced by a
+        // cheaper non-blob tx at the same (sender, nonce), regardless of
+        // the fee bump.
+        let pool = Mempool::new(64);
+        let sender = Address::from_low_u64_be(3);
+        add_to_pool(&pool, sender, eip4844(0, 1_000, 100, 50));
+
+        let new = eip1559(0, u64::MAX, u64::MAX); // very high non-blob fees
+        let err = pool
+            .find_tx_to_replace(sender, 0, &new, 10, 100)
+            .unwrap_err();
+        assert!(matches!(err, MempoolError::ReplacementTypeMismatch));
+    }
+
+    #[test]
+    fn non_blob_cannot_be_replaced_by_blob() {
+        // The inverse: a 1559 tx in the pool can't be replaced by a 4844
+        // tx that suddenly demands sidecar handling.
+        let pool = Mempool::new(64);
+        let sender = Address::from_low_u64_be(3);
+        add_to_pool(&pool, sender, eip1559(0, 1_000, 100));
+
+        let new = eip4844(0, 2_000, 200, 100);
+        let err = pool
+            .find_tx_to_replace(sender, 0, &new, 10, 100)
+            .unwrap_err();
+        assert!(matches!(err, MempoolError::ReplacementTypeMismatch));
+    }
+
+    // --- cross-type replacements within the regular pool ------------------
+
+    #[test]
+    fn legacy_to_1559_replacement_allowed_when_bumped() {
+        // Type changes WITHIN the regular pool are allowed — geth/reth/
+        // nethermind all accept legacy → 1559 with a sufficient bump. The
+        // legacy gas price acts as both fee cap and tip (geth's
+        // GasFeeCap/GasTipCap translation).
+        let pool = Mempool::new(64);
+        let sender = Address::from_low_u64_be(5);
+        add_to_pool(&pool, sender, legacy(0, 1_000));
+
+        // +10% on the translated dimensions → accepted.
+        let ok = eip1559(0, 1_100, 1_100);
+        let found = pool
+            .find_tx_to_replace(sender, 0, &ok, 10, 100)
+            .unwrap()
+            .expect("legacy → 1559 replacement at 10% bump should be admitted");
+        assert!(!found.is_zero());
+
+        // Fee cap bumped but tip below the translated floor → rejected.
+        let bad = eip1559(0, 1_100, 1_099);
+        assert!(matches!(
+            pool.find_tx_to_replace(sender, 0, &bad, 10, 100)
+                .unwrap_err(),
+            MempoolError::UnderpricedReplacement
+        ));
+    }
+
+    #[test]
+    fn typed_replacement_against_legacy_pool_tx_uses_translated_dimensions() {
+        // Regression (review): previously the pooled legacy tx's per-field
+        // maxes were `None` → 0, so an underpriced typed replacement was
+        // accepted. The gas_fee_cap/gas_tip_cap translation closes the hole.
+        let pool = Mempool::new(64);
+        let sender = Address::from_low_u64_be(6);
+        add_to_pool(&pool, sender, legacy(0, 1_000));
+
+        let underpriced = eip1559(0, 1_050, 1_050); // +5% < 10%
+        assert!(matches!(
+            pool.find_tx_to_replace(sender, 0, &underpriced, 10, 100)
+                .unwrap_err(),
+            MempoolError::UnderpricedReplacement
+        ));
+    }
+
+    #[test]
+    fn legacy_to_legacy_and_1559_to_legacy_bump_rules() {
+        // 1559 → legacy: the pooled typed tx's fee cap/tip are compared
+        // against the legacy gas price (translated to both dimensions).
+        let pool = Mempool::new(64);
+        let sender = Address::from_low_u64_be(7);
+        add_to_pool(&pool, sender, eip1559(0, 1_000, 100));
+
+        // gas_price 1_100 = +10% over the pooled fee cap (1_000) and well
+        // above the tip floor (110) → accepted.
+        let ok = legacy(0, 1_100);
+        assert!(
+            pool.find_tx_to_replace(sender, 0, &ok, 10, 100)
+                .unwrap()
+                .is_some()
+        );
+
+        // gas_price 1_050 clears the tip floor but not the fee-cap bump → rejected.
+        let bad = legacy(0, 1_050);
+        assert!(matches!(
+            pool.find_tx_to_replace(sender, 0, &bad, 10, 100)
+                .unwrap_err(),
+            MempoolError::UnderpricedReplacement
+        ));
+    }
+
+    // --- legacy path ---------------------------------------------------
+
+    #[test]
+    fn legacy_replacement_requires_10_percent_bump() {
+        // The legacy branch was missing test coverage. Pin it.
+        let pool = Mempool::new(64);
+        let sender = Address::from_low_u64_be(4);
+
+        let old = Transaction::LegacyTransaction(ethrex_common::types::LegacyTransaction {
+            nonce: 0,
+            gas_price: U256::from(1_000u64),
+            ..Default::default()
+        });
+        add_to_pool(&pool, sender, old);
+
+        // 1-wei bump rejected.
+        let too_small = Transaction::LegacyTransaction(ethrex_common::types::LegacyTransaction {
+            nonce: 0,
+            gas_price: U256::from(1_001u64),
+            ..Default::default()
+        });
+        assert!(matches!(
+            pool.find_tx_to_replace(sender, 0, &too_small, 10, 100)
+                .unwrap_err(),
+            MempoolError::UnderpricedReplacement
+        ));
+
+        // 10% bump accepted.
+        let ok = Transaction::LegacyTransaction(ethrex_common::types::LegacyTransaction {
+            nonce: 0,
+            gas_price: U256::from(1_100u64),
+            ..Default::default()
+        });
+        let found = pool
+            .find_tx_to_replace(sender, 0, &ok, 10, 100)
+            .unwrap()
+            .expect("legacy replacement at 10% bump should be admitted");
+        assert!(!found.is_zero());
     }
 }

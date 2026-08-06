@@ -49,7 +49,9 @@ use ethrex_rlp::{
 
 #[cfg(all(feature = "eip-8025", target_arch = "riscv64"))]
 use super::eip8025_cell::OnceCell;
-use crate::types::{AccessList, AuthorizationList, BlobsBundle};
+use crate::types::{
+    AccessList, AuthorizationList, BlobsBundle, constants::VERSIONED_HASH_VERSION_KZG,
+};
 #[cfg(not(all(feature = "eip-8025", target_arch = "riscv64")))]
 use once_cell::sync::OnceCell;
 
@@ -116,35 +118,37 @@ impl RLPDecode for P2PTransaction {
     fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
         let (is_list, payload, remainder) = decode_rlp_item(rlp)?;
         if !is_list {
-            let tx_type = payload.first().ok_or(RLPDecodeError::InvalidLength)?;
-            let tx_encoding = &payload.get(1..).ok_or(RLPDecodeError::InvalidLength)?;
-            // Look at the first byte to check if it corresponds to a TransactionType
-            match *tx_type {
-                // Legacy
-                0x0 => LegacyTransaction::decode(tx_encoding)
-                    .map(|tx| (P2PTransaction::LegacyTransaction(tx), remainder)), // TODO: check if this is a real case scenario
-                // EIP2930
-                0x1 => EIP2930Transaction::decode(tx_encoding)
-                    .map(|tx| (P2PTransaction::EIP2930Transaction(tx), remainder)),
-                // EIP1559
-                0x2 => EIP1559Transaction::decode(tx_encoding)
-                    .map(|tx| (P2PTransaction::EIP1559Transaction(tx), remainder)),
-                // EIP4844
-                0x3 => WrappedEIP4844Transaction::decode(tx_encoding)
-                    .map(|tx| (P2PTransaction::EIP4844TransactionWithBlobs(tx), remainder)),
-                // EIP7702
-                0x4 => EIP7702Transaction::decode(tx_encoding)
-                    .map(|tx| (P2PTransaction::EIP7702Transaction(tx), remainder)),
-                // FeeToken
-                0x7d => FeeTokenTransaction::decode(tx_encoding)
-                    .map(|tx| (P2PTransaction::FeeTokenTransaction(tx), remainder)),
-                // Frame (EIP-8141)
-                0x06 => FrameTransaction::decode(tx_encoding)
-                    .map(|tx| (P2PTransaction::FrameTransaction(tx), remainder)),
-                ty => Err(RLPDecodeError::Custom(format!(
-                    "Invalid transaction type: {ty}"
-                ))),
-            }
+            let tx_type = *payload.first().ok_or(RLPDecodeError::InvalidLength)?;
+            let tx_encoding = payload.get(1..).ok_or(RLPDecodeError::InvalidLength)?;
+            // `from_type_byte` is the single gate for valid envelope types: it rejects 0x00
+            // (legacy is the bare-list branch below) and any unassigned type byte.
+            let tx = match EnvelopeTxType::from_type_byte(tx_type)? {
+                EnvelopeTxType::EIP2930 => {
+                    P2PTransaction::EIP2930Transaction(EIP2930Transaction::decode(tx_encoding)?)
+                }
+                EnvelopeTxType::EIP1559 => {
+                    P2PTransaction::EIP1559Transaction(EIP1559Transaction::decode(tx_encoding)?)
+                }
+                EnvelopeTxType::EIP4844 => P2PTransaction::EIP4844TransactionWithBlobs(
+                    WrappedEIP4844Transaction::decode(tx_encoding)?,
+                ),
+                EnvelopeTxType::EIP7702 => {
+                    P2PTransaction::EIP7702Transaction(EIP7702Transaction::decode(tx_encoding)?)
+                }
+                EnvelopeTxType::Frame => {
+                    P2PTransaction::FrameTransaction(FrameTransaction::decode(tx_encoding)?)
+                }
+                EnvelopeTxType::FeeToken => {
+                    P2PTransaction::FeeTokenTransaction(FeeTokenTransaction::decode(tx_encoding)?)
+                }
+                // Privileged (L2) transactions are never gossiped over p2p.
+                EnvelopeTxType::Privileged => {
+                    return Err(RLPDecodeError::Custom(
+                        "privileged transactions are not sent over p2p".to_string(),
+                    ));
+                }
+            };
+            Ok((tx, remainder))
         } else {
             // LegacyTransaction
             LegacyTransaction::decode_unfinished(rlp)
@@ -387,6 +391,37 @@ pub enum TxType {
     Privileged = 0x7e,
 }
 
+/// The EIP-2718 typed-transaction **envelope** types — the subset of [`TxType`] that
+/// can be encoded as a `0x{type} || payload` envelope. Excludes [`TxType::Legacy`]:
+/// a legacy transaction is a bare RLP list, never a typed envelope. Decoders that
+/// dispatch on the leading type byte match this exhaustively, so there is no
+/// impossible `Legacy` arm to handle.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EnvelopeTxType {
+    EIP2930,
+    EIP1559,
+    EIP4844,
+    EIP7702,
+    Frame,
+    FeeToken,
+    Privileged,
+}
+
+impl EnvelopeTxType {
+    /// Resolve a typed-transaction **envelope** type byte (EIP-2718) to its type.
+    ///
+    /// Reuses [`TxType::from_u8`] for the byte mapping (single source of truth) and
+    /// [`TxType::as_envelope`] to reject non-envelope types. **Rejects `0x00`**: per EIP-2718
+    /// a legacy transaction is a bare RLP list, never a `0x00`-typed envelope, so
+    /// `0x00 || rlp(..)` is non-canonical and must be rejected (matching go-ethereum) rather
+    /// than silently decoded as legacy. Unassigned type bytes are rejected too.
+    pub fn from_type_byte(byte: u8) -> Result<Self, RLPDecodeError> {
+        TxType::from_u8(byte)
+            .and_then(TxType::as_envelope)
+            .ok_or_else(|| RLPDecodeError::Custom(format!("Invalid transaction type: {byte}")))
+    }
+}
+
 impl From<TxType> for u8 {
     fn from(val: TxType) -> Self {
         match val {
@@ -534,38 +569,35 @@ impl RLPDecode for Transaction {
     fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
         let (is_list, payload, remainder) = decode_rlp_item(rlp)?;
         if !is_list {
-            let tx_type = payload.first().ok_or(RLPDecodeError::InvalidLength)?;
-            let tx_encoding = &payload.get(1..).ok_or(RLPDecodeError::InvalidLength)?;
-            // Look at the first byte to check if it corresponds to a TransactionType
-            match *tx_type {
-                // Legacy
-                0x0 => LegacyTransaction::decode(tx_encoding)
-                    .map(|tx| (Transaction::LegacyTransaction(tx), remainder)), // TODO: check if this is a real case scenario
-                // EIP2930
-                0x1 => EIP2930Transaction::decode(tx_encoding)
-                    .map(|tx| (Transaction::EIP2930Transaction(tx), remainder)),
-                // EIP1559
-                0x2 => EIP1559Transaction::decode(tx_encoding)
-                    .map(|tx| (Transaction::EIP1559Transaction(tx), remainder)),
-                // EIP4844
-                0x3 => EIP4844Transaction::decode(tx_encoding)
-                    .map(|tx| (Transaction::EIP4844Transaction(tx), remainder)),
-                // EIP7702
-                0x4 => EIP7702Transaction::decode(tx_encoding)
-                    .map(|tx| (Transaction::EIP7702Transaction(tx), remainder)),
-                // FeeToken
-                0x7d => FeeTokenTransaction::decode(tx_encoding)
-                    .map(|tx| (Transaction::FeeTokenTransaction(tx), remainder)),
-                // Frame (EIP-8141)
-                0x6 => FrameTransaction::decode(tx_encoding)
-                    .map(|tx| (Transaction::FrameTransaction(tx), remainder)),
-                // PrivilegedL2
-                0x7e => PrivilegedL2Transaction::decode(tx_encoding)
-                    .map(|tx| (Transaction::PrivilegedL2Transaction(tx), remainder)),
-                ty => Err(RLPDecodeError::Custom(format!(
-                    "Invalid transaction type: {ty}"
-                ))),
-            }
+            let tx_type = *payload.first().ok_or(RLPDecodeError::InvalidLength)?;
+            let tx_encoding = payload.get(1..).ok_or(RLPDecodeError::InvalidLength)?;
+            // `from_type_byte` is the single gate for valid envelope types: it rejects 0x00
+            // (a legacy tx is a bare RLP list, handled below, not a typed envelope) and any
+            // unassigned type byte.
+            let tx = match EnvelopeTxType::from_type_byte(tx_type)? {
+                EnvelopeTxType::EIP2930 => {
+                    Transaction::EIP2930Transaction(EIP2930Transaction::decode(tx_encoding)?)
+                }
+                EnvelopeTxType::EIP1559 => {
+                    Transaction::EIP1559Transaction(EIP1559Transaction::decode(tx_encoding)?)
+                }
+                EnvelopeTxType::EIP4844 => {
+                    Transaction::EIP4844Transaction(EIP4844Transaction::decode(tx_encoding)?)
+                }
+                EnvelopeTxType::EIP7702 => {
+                    Transaction::EIP7702Transaction(EIP7702Transaction::decode(tx_encoding)?)
+                }
+                EnvelopeTxType::Frame => {
+                    Transaction::FrameTransaction(FrameTransaction::decode(tx_encoding)?)
+                }
+                EnvelopeTxType::FeeToken => {
+                    Transaction::FeeTokenTransaction(FeeTokenTransaction::decode(tx_encoding)?)
+                }
+                EnvelopeTxType::Privileged => Transaction::PrivilegedL2Transaction(
+                    PrivilegedL2Transaction::decode(tx_encoding)?,
+                ),
+            };
+            Ok((tx, remainder))
         } else {
             // LegacyTransaction
             LegacyTransaction::decode_unfinished(rlp)
@@ -1534,6 +1566,16 @@ impl Transaction {
         }
     }
 
+    /// Whether this transaction carries blob data, and therefore an expensive
+    /// EIP-4844 sidecar. True for EIP-4844 transactions and for EIP-8141 frame
+    /// transactions with a non-empty `blob_versioned_hashes` — matching for
+    /// which types [`Self::max_fee_per_blob_gas`] yields a fee. Prefer this
+    /// over matching on `EIP4844Transaction` alone when the question is "does
+    /// this tx have a sidecar to re-propagate".
+    pub fn is_blob_carrying(&self) -> bool {
+        self.max_fee_per_blob_gas().is_some()
+    }
+
     pub fn is_contract_creation(&self) -> bool {
         match &self {
             Transaction::LegacyTransaction(t) => matches!(t.to, TxKind::Create),
@@ -1646,6 +1688,23 @@ impl TxType {
             0x7d => Some(Self::FeeToken),
             0x7e => Some(Self::Privileged),
             _ => None,
+        }
+    }
+
+    /// The typed-envelope form of this transaction type, or `None` for [`TxType::Legacy`]
+    /// (a bare RLP list, not a `0x{type} || payload` envelope). Exhaustive over `TxType`
+    /// with no wildcard, so adding a new variant won't compile until it's classified here —
+    /// keeping envelope decoding in step with the transaction-type set.
+    pub fn as_envelope(self) -> Option<EnvelopeTxType> {
+        match self {
+            TxType::EIP2930 => Some(EnvelopeTxType::EIP2930),
+            TxType::EIP1559 => Some(EnvelopeTxType::EIP1559),
+            TxType::EIP4844 => Some(EnvelopeTxType::EIP4844),
+            TxType::EIP7702 => Some(EnvelopeTxType::EIP7702),
+            TxType::Frame => Some(EnvelopeTxType::Frame),
+            TxType::FeeToken => Some(EnvelopeTxType::FeeToken),
+            TxType::Privileged => Some(EnvelopeTxType::Privileged),
+            TxType::Legacy => None,
         }
     }
 
@@ -1767,8 +1826,8 @@ impl From<FrameMode> for u8 {
 /// EIP-8141 Frame: a single execution step within a frame transaction.
 ///
 /// `mode` is the execution mode (0=DEFAULT, 1=VERIFY, 2=SENDER; 3-255 reserved).
-/// `flags` bits: 0-1 = APPROVE scope restriction, 2 = atomic batch flag
-/// (valid with any mode per spec commit 8b61fdc4), 3-7 reserved (must be zero).
+/// `flags` bits: 0-1 = APPROVE scope restriction, 2 = atomic batch flag (valid
+/// on DEFAULT and SENDER frames only), 3-7 reserved (must be zero).
 #[derive(Clone, Debug, PartialEq, Eq, Default, RSerialize, RDeserialize, Archive)]
 pub struct Frame {
     pub mode: u8,
@@ -1777,7 +1836,7 @@ pub struct Frame {
     pub target: Option<Address>,
     pub gas_limit: u64,
     // Per EIP-8141 the frame is a 6-tuple [mode, flags, target, gas_limit, value, data].
-    // Only SENDER frames may carry a non-zero value (spec line 140); see
+    // Only SENDER frames may carry a non-zero value; see
     // `validate_static_constraints`.
     #[rkyv(with=crate::rkyv_utils::U256Wrapper)]
     pub value: U256,
@@ -1802,7 +1861,7 @@ impl Frame {
     }
 
     /// An expiry verifier frame is a VERIFY frame targeting EXPIRY_VERIFIER
-    /// (EIP-8141, spec commit 0b197156).
+    /// (EIP-8141).
     pub fn is_expiry_verifier(&self) -> bool {
         self.execution_mode() == FrameMode::Verify
             && self.target == Some(frame_tx_expiry_verifier())
@@ -1856,15 +1915,18 @@ impl RLPDecode for Frame {
     }
 }
 
-/// EIP-8141 transaction signature (spec commit fe0940cae2). RLP: `[scheme, signer, msg, signature]`.
-/// `scheme`: 0 = SECP256K1 (sig = v||r||s, 65 bytes), 1 = P256 (sig = r||s||qx||qy, 128 bytes).
+/// EIP-8141 transaction signature. RLP: `[scheme, signer, msg, signature]`.
+/// `scheme`: 0 = ARBITRARY (`signer` MUST be empty; `signature` is arbitrary bytes),
+/// 1 = SECP256K1 (sig = v||r||s, 65 bytes), 2 = P256 (sig = r||s||qx||qy, 128 bytes).
+/// `signer`: `None` (empty) is required for ARBITRARY and allowed for SECP256K1/P256
+/// (empty ⇒ the resolved signer is `tx.sender`, for introspection too); `Some(addr)` pins it.
 /// `msg`: empty = signs compute_sig_hash(tx); 32 bytes = signs that explicit digest.
 /// Raw `signature` bytes are intentionally not EVM-introspectable.
 #[derive(Clone, Debug, PartialEq, Eq, Default, RSerialize, RDeserialize, Archive)]
 pub struct FrameSignature {
     pub scheme: u8,
-    #[rkyv(with=crate::rkyv_utils::H160Wrapper)]
-    pub signer: Address,
+    #[rkyv(with=rkyv::with::Map<crate::rkyv_utils::H160Wrapper>)]
+    pub signer: Option<Address>,
     #[rkyv(with=crate::rkyv_utils::BytesWrapper)]
     pub msg: Bytes,
     #[rkyv(with=crate::rkyv_utils::BytesWrapper)]
@@ -1873,9 +1935,15 @@ pub struct FrameSignature {
 
 impl RLPEncode for FrameSignature {
     fn encode(&self, buf: &mut dyn bytes::BufMut) {
+        // `signer` encodes as an address or RLP null (empty) for `None`, mirroring
+        // `Frame.target`; an empty signer is required for ARBITRARY signatures.
+        let signer_kind = match self.signer {
+            Some(addr) => TxKind::Call(addr),
+            None => TxKind::Create,
+        };
         Encoder::new(buf)
             .encode_field(&self.scheme)
-            .encode_field(&self.signer)
+            .encode_field(&signer_kind)
             .encode_field(&self.msg)
             .encode_field(&self.signature)
             .finish();
@@ -1886,7 +1954,11 @@ impl RLPDecode for FrameSignature {
     fn decode_unfinished(rlp: &[u8]) -> Result<(FrameSignature, &[u8]), RLPDecodeError> {
         let decoder = Decoder::new(rlp)?;
         let (scheme, decoder) = decoder.decode_field("scheme")?;
-        let (signer, decoder) = decoder.decode_field("signer")?;
+        let (signer_kind, decoder): (TxKind, _) = decoder.decode_field("signer")?;
+        let signer = match signer_kind {
+            TxKind::Call(addr) => Some(addr),
+            TxKind::Create => None,
+        };
         let (msg, decoder) = decoder.decode_field("msg")?;
         let (signature, decoder) = decoder.decode_field("signature")?;
         Ok((
@@ -1911,7 +1983,7 @@ pub struct FrameTransaction {
     #[rkyv(with=crate::rkyv_utils::H160Wrapper)]
     pub sender: Address,
     pub frames: Vec<Frame>,
-    /// EIP-8141 outer signature list (spec commit fe0940cae2). Validated
+    /// EIP-8141 outer signature list. Validated
     /// before any frame executes; referenced by VERIFY frames and SIGPARAM.
     pub signatures: Vec<FrameSignature>,
     pub max_priority_fee_per_gas: u64,
@@ -1934,10 +2006,16 @@ pub const FRAME_TX_PER_FRAME_COST: u64 = 475;
 pub const FRAME_TX_ENTRY_POINT_U64: u64 = 0xaa;
 /// Maximum number of frames allowed per EIP-8141 frame transaction.
 pub const FRAME_TX_MAX_FRAMES: usize = 64;
-/// EIP-8141 signature schemes (spec commit fe0940cae2).
-pub const FRAME_SIG_SCHEME_SECP256K1: u8 = 0;
-pub const FRAME_SIG_SCHEME_P256: u8 = 1;
-/// EIP-8141 §Mempool `MAX_VERIFY_GAS` (spec commit fe0940cae2): the maximum gas
+/// EIP-7623 `STANDARD_TOKEN_COST`, and the EIP-7976 floor per token. Frame
+/// transactions exist only from Hegota onward, which is after Amsterdam, so the
+/// raised EIP-7976 floor always applies and neither needs a fork parameter.
+const FRAME_TX_STANDARD_TOKEN_COST: u64 = 4;
+const FRAME_TX_TOTAL_COST_FLOOR_PER_TOKEN: u64 = 16;
+/// EIP-8141 signature schemes: ARBITRARY=0, SECP256K1=1, P256=2.
+pub const FRAME_SIG_SCHEME_ARBITRARY: u8 = 0;
+pub const FRAME_SIG_SCHEME_SECP256K1: u8 = 1;
+pub const FRAME_SIG_SCHEME_P256: u8 = 2;
+/// EIP-8141 §Mempool `MAX_VERIFY_GAS`: the maximum gas
 /// a public-mempool node should expend validating signatures and simulating the
 /// validation prefix. Signature validation counts against this budget (rule #6),
 /// so a frame tx whose `signature_verification_cost()` alone exceeds it can never
@@ -1960,7 +2038,7 @@ pub fn frame_tx_entry_point() -> Address {
     Address::from_low_u64_be(FRAME_TX_ENTRY_POINT_U64)
 }
 
-/// EXPIRY_VERIFIER predeploy address (EIP-8141, spec commit 0b197156).
+/// EXPIRY_VERIFIER predeploy address (EIP-8141).
 pub const FRAME_TX_EXPIRY_VERIFIER_U64: u64 = 0x8141;
 /// Required `data` length for an expiry verifier frame (8-byte BE deadline).
 pub const FRAME_TX_EXPIRY_DATA_LENGTH: usize = 8;
@@ -1971,7 +2049,7 @@ pub fn frame_tx_expiry_verifier() -> Address {
 }
 
 impl FrameTransaction {
-    /// Canonical signature hash (EIP-8141, spec commit fe0940cae2): the raw
+    /// Canonical signature hash (EIP-8141): the raw
     /// `signature` bytes of every signature with empty `msg` are elided (a
     /// signature over this hash cannot commit to its own bytes). Frame data is
     /// NO LONGER elided — it is fully covered. Signatures with an explicit
@@ -2009,13 +2087,14 @@ impl FrameTransaction {
         keccak(&buf)
     }
 
-    /// Per EIP-8141 (spec commit fe0940cae2): 2800 gas per SECP256K1 signature,
-    /// 6700 per P256. Unknown schemes are rejected by static validation, so
-    /// they are treated as 0 here (validation runs first).
+    /// Per EIP-8141: 100 gas per ARBITRARY signature, 2800 per SECP256K1, 6700
+    /// per P256. Unknown schemes are rejected by static validation, so they are
+    /// treated as 0 here (validation runs first).
     pub fn signature_verification_cost(&self) -> u64 {
         self.signatures
             .iter()
             .map(|s| match s.scheme {
+                FRAME_SIG_SCHEME_ARBITRARY => 100u64,
                 FRAME_SIG_SCHEME_SECP256K1 => 2800u64,
                 FRAME_SIG_SCHEME_P256 => 6700u64,
                 _ => 0,
@@ -2023,26 +2102,61 @@ impl FrameTransaction {
             .sum()
     }
 
-    /// Compute total gas limit: intrinsic + calldata cost (frames + signatures)
-    /// + signature verification cost + sum of frame gas limits.
-    pub fn total_gas_limit(&self) -> u64 {
-        let mut calldata_gas: u64 = 0;
-        // RLP-encode frames to compute calldata cost
-        let mut frames_buf = Vec::new();
-        self.frames.encode(&mut frames_buf);
-        for byte in &frames_buf {
-            calldata_gas = calldata_gas.saturating_add(if *byte == 0 { 4 } else { 16 });
-        }
-        // RLP-encode signatures to compute their calldata cost
-        let mut sigs_buf = Vec::new();
-        self.signatures.encode(&mut sigs_buf);
-        for byte in &sigs_buf {
-            calldata_gas = calldata_gas.saturating_add(if *byte == 0 { 4 } else { 16 });
-        }
+    /// Iterate the EIP-8141 data fields the calldata cost is charged over:
+    /// each frame's `data`, and each signature's `signer`, `msg` and `signature`.
+    /// The RLP framing and the remaining scalar fields are not included.
+    fn data_fields(&self) -> impl Iterator<Item = &[u8]> {
+        const EMPTY: &[u8] = &[];
+        self.frames
+            .iter()
+            .map(|f| f.data.as_ref())
+            .chain(self.signatures.iter().flat_map(|s| {
+                [
+                    s.signer.as_ref().map_or(EMPTY, |a| a.as_bytes()),
+                    s.msg.as_ref(),
+                    s.signature.as_ref(),
+                ]
+            }))
+    }
+
+    /// EIP-7623 calldata cost over the frame and signature data: 4 gas per zero
+    /// byte, 16 per non-zero byte.
+    pub fn data_cost(&self) -> u64 {
+        self.data_fields().flatten().fold(0u64, |acc, byte| {
+            acc.saturating_add(if *byte == 0 { 4 } else { 16 })
+        })
+    }
+
+    /// EIP-7623 token count over the frame and signature data, used for the
+    /// calldata floor. Frame transactions exist only from Hegota onward, which is
+    /// after Amsterdam, so EIP-7976's unweighted count (every byte costs
+    /// `STANDARD_TOKEN_COST`) always applies.
+    pub fn calldata_tokens(&self) -> u64 {
+        self.data_fields()
+            .fold(0u64, |acc, field| acc.saturating_add(field.len() as u64))
+            .saturating_mul(FRAME_TX_STANDARD_TOKEN_COST)
+    }
+
+    /// The EIP-7623 calldata floor: the least the frame and signature data may
+    /// cost, whatever execution actually consumes.
+    pub fn calldata_floor_gas(&self) -> u64 {
+        self.calldata_tokens()
+            .saturating_mul(FRAME_TX_TOTAL_COST_FLOOR_PER_TOKEN)
+    }
+
+    /// The mandatory costs, always charged in full: the intrinsic cost, the
+    /// per-frame cost, and signature verification.
+    pub fn mandatory_gas(&self) -> u64 {
         FRAME_TX_INTRINSIC_COST
             .saturating_add((self.frames.len() as u64).saturating_mul(FRAME_TX_PER_FRAME_COST))
-            .saturating_add(calldata_gas)
             .saturating_add(self.signature_verification_cost())
+    }
+
+    /// Compute total gas limit: mandatory costs + data cost + sum of frame gas
+    /// limits.
+    pub fn total_gas_limit(&self) -> u64 {
+        self.mandatory_gas()
+            .saturating_add(self.data_cost())
             .saturating_add(
                 self.frames
                     .iter()
@@ -2075,11 +2189,36 @@ impl FrameTransaction {
                 "Frame count must be between 1 and {FRAME_TX_MAX_FRAMES}"
             ));
         }
-        // EIP-8141 signature list validation (spec commit fe0940cae2): scheme
-        // must be a known value; msg must be empty or a non-zero 32-byte digest.
+        // Per EIP-8141, every versioned hash must carry the EIP-4844 KZG version
+        // byte, and a transaction carrying no blobs must not name a blob fee.
+        for (i, hash) in self.blob_versioned_hashes.iter().enumerate() {
+            if hash.0.first() != Some(&VERSIONED_HASH_VERSION_KZG) {
+                return Err(format!("Blob versioned hash {i}: wrong version byte"));
+            }
+        }
+        if self.blob_versioned_hashes.is_empty() && !self.max_fee_per_blob_gas.is_zero() {
+            return Err(
+                "max_fee_per_blob_gas must be zero when the transaction carries no blobs"
+                    .to_string(),
+            );
+        }
+        // EIP-8141 signature list validation: scheme must be a known value; msg
+        // must be empty or a non-zero 32-byte digest.
         for (i, sig) in self.signatures.iter().enumerate() {
-            if sig.scheme != FRAME_SIG_SCHEME_SECP256K1 && sig.scheme != FRAME_SIG_SCHEME_P256 {
-                return Err(format!("Signature {i}: unsupported scheme {}", sig.scheme));
+            match sig.scheme {
+                // ARBITRARY (0) carries no recoverable signer; per EIP-8141 the
+                // signer MUST be empty.
+                FRAME_SIG_SCHEME_ARBITRARY => {
+                    if sig.signer.is_some() {
+                        return Err(format!(
+                            "Signature {i}: ARBITRARY signatures must not name a signer"
+                        ));
+                    }
+                }
+                FRAME_SIG_SCHEME_SECP256K1 | FRAME_SIG_SCHEME_P256 => {}
+                other => {
+                    return Err(format!("Signature {i}: unsupported scheme {other}"));
+                }
             }
             match sig.msg.len() {
                 0 => {}
@@ -2113,7 +2252,7 @@ impl FrameTransaction {
                     frame.flags
                 ));
             }
-            // Expiry verifier frames (EIP-8141, spec commit 0b197156): VERIFY
+            // Expiry verifier frames (EIP-8141): VERIFY
             // frames targeting EXPIRY_VERIFIER must have flags == 0, value == 0
             // (already enforced by the non-SENDER value rule below), and exactly
             // EXPIRY_DATA_LENGTH bytes of data; at most one per transaction.
@@ -2133,7 +2272,7 @@ impl FrameTransaction {
                     ));
                 }
             }
-            // Per EIP-8141 spec line 140, only SENDER frames may carry a
+            // Per EIP-8141, only SENDER frames may carry a
             // non-zero value. DEFAULT and VERIFY frames with a non-zero
             // value are statically invalid.
             if frame.mode != FrameMode::Sender as u8 && !frame.value.is_zero() {
@@ -2164,12 +2303,42 @@ impl FrameTransaction {
                     total_frame_gas
                 ));
             }
-            // Atomic batch flag (bit 2 of flags) requires a subsequent frame
-            // to batch with. Valid with any mode per EIP-8141 (spec commit
-            // 8b61fdc4, "Support atomic batching with any frames").
-            if frame.is_atomic_batch() && i + 1 >= self.frames.len() {
-                return Err(format!("Frame {i}: atomic batch flag on last frame"));
+            // Per EIP-8141, approval of execution is only allowed when the
+            // frame's target is empty or `tx.sender`.
+            if frame.flags & APPROVE_EXECUTION != 0
+                && frame.target.is_some_and(|target| target != self.sender)
+            {
+                return Err(format!(
+                    "Frame {i}: APPROVE_EXECUTION requires an empty target or tx.sender"
+                ));
             }
+            // Per EIP-8141, the atomic batch flag (bit 2 of flags) is only valid
+            // on a non-VERIFY frame, requires a subsequent frame to batch with,
+            // and that frame must be non-VERIFY too: batches never contain
+            // VERIFY frames.
+            if frame.is_atomic_batch() {
+                if frame.mode == FrameMode::Verify as u8 {
+                    return Err(format!("Frame {i}: atomic batch flag on a VERIFY frame"));
+                }
+                match self.frames.get(i.saturating_add(1)) {
+                    None => return Err(format!("Frame {i}: atomic batch flag on last frame")),
+                    Some(next) if next.mode == FrameMode::Verify as u8 => {
+                        return Err(format!(
+                            "Frame {i}: atomic batch flag followed by a VERIFY frame"
+                        ));
+                    }
+                    Some(_) => {}
+                }
+            }
+        }
+        // Per EIP-8141, the EIP-7623 calldata floor must be reserved independently
+        // of execution: the derived `tx_gas_limit` has to cover the mandatory costs
+        // plus the floor, or the transaction cannot pay for the data it carries.
+        let floor_gas = self.calldata_floor_gas();
+        if self.total_gas_limit() < self.mandatory_gas().saturating_add(floor_gas) {
+            return Err(format!(
+                "Total gas limit does not reserve the calldata floor of {floor_gas}"
+            ));
         }
         Ok(())
     }
@@ -2505,38 +2674,26 @@ mod canonic_encoding {
             match bytes.first() {
                 // First byte is a valid TransactionType
                 Some(tx_type) if *tx_type < 0x7f => {
-                    // Decode tx based on type
+                    // Decode tx based on type. `from_type_byte` is the single gate for valid
+                    // envelope types: it rejects 0x00 (legacy is the bare-list branch below) and
+                    // any unassigned type byte.
                     let tx_bytes = &bytes[1..];
-                    match *tx_type {
-                        // Legacy
-                        0x0 => {
-                            LegacyTransaction::decode(tx_bytes).map(Transaction::LegacyTransaction)
-                        } // TODO: check if this is a real case scenario
-                        // EIP2930
-                        0x1 => EIP2930Transaction::decode(tx_bytes)
+                    match EnvelopeTxType::from_type_byte(*tx_type)? {
+                        EnvelopeTxType::EIP2930 => EIP2930Transaction::decode(tx_bytes)
                             .map(Transaction::EIP2930Transaction),
-                        // EIP1559
-                        0x2 => EIP1559Transaction::decode(tx_bytes)
+                        EnvelopeTxType::EIP1559 => EIP1559Transaction::decode(tx_bytes)
                             .map(Transaction::EIP1559Transaction),
-                        // EIP4844
-                        0x3 => EIP4844Transaction::decode(tx_bytes)
+                        EnvelopeTxType::EIP4844 => EIP4844Transaction::decode(tx_bytes)
                             .map(Transaction::EIP4844Transaction),
-                        // EIP7702
-                        0x4 => EIP7702Transaction::decode(tx_bytes)
+                        EnvelopeTxType::EIP7702 => EIP7702Transaction::decode(tx_bytes)
                             .map(Transaction::EIP7702Transaction),
-                        // Frame (EIP-8141)
-                        0x6 => {
+                        EnvelopeTxType::Frame => {
                             FrameTransaction::decode(tx_bytes).map(Transaction::FrameTransaction)
                         }
-                        // FeeTokenTransaction
-                        0x7d => FeeTokenTransaction::decode(tx_bytes)
+                        EnvelopeTxType::FeeToken => FeeTokenTransaction::decode(tx_bytes)
                             .map(Transaction::FeeTokenTransaction),
-                        // PrivilegedL2Transaction
-                        0x7e => PrivilegedL2Transaction::decode(tx_bytes)
+                        EnvelopeTxType::Privileged => PrivilegedL2Transaction::decode(tx_bytes)
                             .map(Transaction::PrivilegedL2Transaction),
-                        ty => Err(RLPDecodeError::Custom(format!(
-                            "Invalid transaction type: {ty}"
-                        ))),
                     }
                 }
                 // LegacyTransaction
@@ -2644,6 +2801,27 @@ mod canonic_encoding {
             let mut buf = Vec::new();
             self.encode_canonical(&mut buf);
             buf
+        }
+
+        /// Canonical encoded length without allocating (mirrors
+        /// [`P2PTransaction::encode_canonical`]); equals
+        /// `encode_canonical_to_vec().len()`. For the blob variant this includes
+        /// the full sidecar, since `EIP4844TransactionWithBlobs` encodes it.
+        pub fn encode_canonical_len(&self) -> usize {
+            let prefix_len = match self {
+                P2PTransaction::LegacyTransaction(_) => 0,
+                _ => 1,
+            };
+            let inner_len = match self {
+                P2PTransaction::LegacyTransaction(t) => t.length(),
+                P2PTransaction::EIP2930Transaction(t) => t.length(),
+                P2PTransaction::EIP1559Transaction(t) => t.length(),
+                P2PTransaction::EIP4844TransactionWithBlobs(t) => t.length(),
+                P2PTransaction::EIP7702Transaction(t) => t.length(),
+                P2PTransaction::FeeTokenTransaction(t) => t.length(),
+                P2PTransaction::FrameTransaction(t) => t.length(),
+            };
+            prefix_len + inner_len
         }
 
         pub fn compute_hash(&self) -> H256 {
@@ -2817,13 +2995,13 @@ mod serde_impl {
         pub data: Bytes,
     }
 
-    /// JSON shape of an EIP-8141 outer signature (spec commit fe0940cae2).
+    /// JSON shape of an EIP-8141 outer signature.
     #[derive(Serialize, Deserialize, Debug, PartialEq, Clone)]
     #[serde(rename_all = "camelCase")]
     pub struct SignatureEntry {
         #[serde(with = "crate::serde_utils::u64::hex_str")]
         pub scheme: u64,
-        pub signer: Address,
+        pub signer: Option<Address>,
         #[serde(with = "crate::serde_utils::bytes")]
         pub msg: Bytes,
         #[serde(with = "crate::serde_utils::bytes")]
@@ -4175,6 +4353,33 @@ mod tests {
     use std::str::FromStr;
 
     #[test]
+    fn is_blob_carrying_covers_frame_txs_with_blob_hashes() {
+        // An EIP-8141 frame tx carries `max_fee_per_blob_gas` +
+        // `blob_versioned_hashes` of its own, so blob-ness cannot be decided
+        // by matching on `EIP4844Transaction` alone: a blob-bearing frame tx
+        // would otherwise be treated as a plain tx by the mempool's
+        // replacement rules and skip the blob-fee comparison entirely.
+        let plain_frame = Transaction::FrameTransaction(FrameTransaction::default());
+        assert!(!plain_frame.is_blob_carrying());
+
+        let blob_frame = Transaction::FrameTransaction(FrameTransaction {
+            max_fee_per_blob_gas: U256::from(7u64),
+            blob_versioned_hashes: vec![H256::from_low_u64_be(1)],
+            ..Default::default()
+        });
+        assert!(blob_frame.is_blob_carrying());
+
+        let blob_tx = Transaction::EIP4844Transaction(EIP4844Transaction {
+            blob_versioned_hashes: vec![H256::from_low_u64_be(1)],
+            ..Default::default()
+        });
+        assert!(blob_tx.is_blob_carrying());
+
+        let plain = Transaction::EIP1559Transaction(EIP1559Transaction::default());
+        assert!(!plain.is_blob_carrying());
+    }
+
+    #[test]
     fn nonce_over_u64_max_maps_to_nonce_is_max() {
         // RLP list [ 0x010000000000000000 ] — nonce = 2**64 (9 significant bytes),
         // one past u64::MAX. EEST expects TransactionException.NONCE_IS_MAX here.
@@ -4849,7 +5054,7 @@ mod tests {
             ],
             signatures: vec![FrameSignature {
                 scheme: FRAME_SIG_SCHEME_SECP256K1,
-                signer: Address::from_low_u64_be(0xABCD),
+                signer: Some(Address::from_low_u64_be(0xABCD)),
                 msg: Bytes::new(),
                 signature: Bytes::from(vec![0u8; 65]),
             }],
@@ -4863,8 +5068,9 @@ mod tests {
     }
 
     #[test]
-    fn atomic_batch_flag_valid_on_default_and_verify_frames() {
-        // Spec commit 8b61fdc4: the atomic batch flag is valid with any mode.
+    fn atomic_batch_flag_valid_on_default_and_sender_frames() {
+        // Per EIP-8141 the atomic batch flag is valid on DEFAULT and SENDER
+        // frames, and a batch never contains a VERIFY frame.
         let mut tx = make_test_frame_tx();
         tx.frames = vec![
             Frame {
@@ -4876,9 +5082,9 @@ mod tests {
                 data: Bytes::new(),
             },
             Frame {
-                mode: FrameMode::Verify as u8,
-                flags: 0x04 | 0x03, // atomic batch + scope bits
-                target: None,
+                mode: FrameMode::Sender as u8,
+                flags: 0x04, // atomic batch
+                target: Some(Address::from_low_u64_be(0xB0B)),
                 gas_limit: 21_000,
                 value: U256::zero(),
                 data: Bytes::new(),
@@ -5015,7 +5221,7 @@ mod tests {
 
     #[test]
     fn test_frame_transaction_sig_hash_covers_all_frame_data() {
-        // Updated for spec commit fe0940cae2: frame data is NO LONGER elided.
+        // Updated for frame data is NO LONGER elided.
         let tx = make_test_frame_tx();
         let hash1 = tx.compute_sig_hash();
 
@@ -5095,7 +5301,7 @@ mod tests {
             .as_array()
             .expect("signatures serialized as an array");
         assert_eq!(sigs.len(), tx.signatures.len());
-        assert_eq!(sigs[0].get("scheme").unwrap(), "0x0");
+        assert_eq!(sigs[0].get("scheme").unwrap(), "0x1");
         assert!(sigs[0].get("signer").is_some());
         assert!(sigs[0].get("signature").is_some());
         assert!(sigs[0].get("msg").is_some());
@@ -5164,7 +5370,7 @@ mod tests {
     #[test]
     fn sig_hash_covers_frame_value() {
         // Changing `value` on any frame (SENDER or VERIFY) must change the
-        // canonical signature hash (spec commit fe0940cae2: all frame data covered).
+        // canonical signature hash (all frame data covered).
         let tx = make_test_frame_tx();
         let baseline = tx.compute_sig_hash();
 
@@ -5184,7 +5390,7 @@ mod tests {
             "sig_hash must change when a VERIFY frame's value changes"
         );
 
-        // VERIFY.data is now covered too (spec commit fe0940cae2 removed elision).
+        // VERIFY.data is now covered too (EIP-8141 removed elision).
         let mut with_verify_data = tx;
         with_verify_data.frames[0].data = Bytes::from_static(b"different_verify_data");
         assert_ne!(
@@ -5310,7 +5516,7 @@ mod tests {
         assert_eq!(decoded.sender, tx.sender);
     }
 
-    // ── EIP-8141 expiry verifier frame tests (spec commit 0b197156) ──
+    // ── EIP-8141 expiry verifier frame tests ──
 
     fn expiry_frame(deadline: u64) -> Frame {
         Frame {
@@ -5361,7 +5567,7 @@ mod tests {
 
     #[test]
     fn verify_frame_with_zero_scope_is_now_statically_valid() {
-        // Spec commit 0b197156 removed the VERIFY-needs-nonzero-scope rule.
+        // EIP-8141 has no the VERIFY-needs-nonzero-scope rule.
         // make_test_frame_tx() frame[0] is VERIFY with flags=0x03 targeting sender;
         // setting flags to 0 makes it a zero-scope VERIFY (not an expiry frame,
         // since target is the sender address, not EXPIRY_VERIFIER).
@@ -5372,7 +5578,7 @@ mod tests {
 
     #[test]
     fn sig_hash_covers_expiry_deadline_and_all_verify_data() {
-        // Updated for spec commit fe0940cae2: all frame data is now covered.
+        // Updated for all frame data is now covered.
         let mut tx_a = make_test_frame_tx();
         tx_a.frames.insert(0, expiry_frame(100));
         let mut tx_b = make_test_frame_tx();
@@ -5399,7 +5605,7 @@ mod tests {
     fn signature_rlp_roundtrip() {
         let sig = FrameSignature {
             scheme: FRAME_SIG_SCHEME_P256,
-            signer: Address::from_low_u64_be(0x1234),
+            signer: Some(Address::from_low_u64_be(0x1234)),
             msg: Bytes::from(vec![7u8; 32]),
             signature: Bytes::from(vec![9u8; 128]),
         };
@@ -5447,11 +5653,33 @@ mod tests {
     #[test]
     fn static_validation_rejects_unknown_scheme() {
         let mut tx = make_test_frame_tx();
-        tx.signatures[0].scheme = 2;
+        tx.signatures[0].scheme = 3;
         assert!(
             tx.validate_static_constraints()
                 .unwrap_err()
                 .contains("unsupported scheme"),
+        );
+    }
+
+    #[test]
+    fn static_validation_accepts_arbitrary_with_empty_signer() {
+        let mut tx = make_test_frame_tx();
+        // ARBITRARY (scheme 0) requires an empty signer and costs 100 verify gas.
+        tx.signatures[0].scheme = FRAME_SIG_SCHEME_ARBITRARY;
+        tx.signatures[0].signer = None;
+        assert!(tx.validate_static_constraints().is_ok());
+        assert_eq!(tx.signature_verification_cost(), 100);
+    }
+
+    #[test]
+    fn static_validation_rejects_arbitrary_with_signer() {
+        let mut tx = make_test_frame_tx();
+        tx.signatures[0].scheme = FRAME_SIG_SCHEME_ARBITRARY;
+        tx.signatures[0].signer = Some(Address::from_low_u64_be(0xABCD));
+        assert!(
+            tx.validate_static_constraints()
+                .unwrap_err()
+                .contains("ARBITRARY signatures must not name a signer"),
         );
     }
 
@@ -5517,7 +5745,7 @@ mod tests {
         // Add a P256 signature; cost must rise by at least 6700 + its calldata.
         tx.signatures.push(FrameSignature {
             scheme: FRAME_SIG_SCHEME_P256,
-            signer: Address::from_low_u64_be(1),
+            signer: Some(Address::from_low_u64_be(1)),
             msg: Bytes::new(),
             signature: Bytes::from(vec![0u8; 128]),
         });
@@ -5527,8 +5755,8 @@ mod tests {
 
     #[test]
     fn golden_frame_tx_rlp_and_sig_hash() {
-        // Regression lock for the EIP-8141 signatures-list wire format (spec
-        // commit fe0940cae2). No external EEST reference vectors exist yet;
+        // Regression lock for the EIP-8141 signatures-list wire format. No
+        // external EEST reference vectors exist yet;
         // these values are the current canonical output and must only change
         // with a deliberate, reviewed format change.
         let tx = FrameTransaction {
@@ -5555,7 +5783,7 @@ mod tests {
             ],
             signatures: vec![FrameSignature {
                 scheme: FRAME_SIG_SCHEME_SECP256K1,
-                signer: Address::from_low_u64_be(0xABCD),
+                signer: Some(Address::from_low_u64_be(0xABCD)),
                 msg: Bytes::new(),
                 signature: Bytes::from(vec![0x01u8; 65]),
             }],
@@ -5573,7 +5801,7 @@ mod tests {
         // GOLDEN_RLP: obtained from first run
         assert_eq!(
             rlp_hex,
-            "f8ab010794000000000000000000000000000000000000abcde8ca01038082520880821122dc0280940000000000000000000000000000000000001234829c408080f85cf85a8094000000000000000000000000000000000000abcd80b8410101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101843b9aca008506fc23ac0080c0"
+            "f8ab010794000000000000000000000000000000000000abcde8ca01038082520880821122dc0280940000000000000000000000000000000000001234829c408080f85cf85a0194000000000000000000000000000000000000abcd80b8410101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101843b9aca008506fc23ac0080c0"
         );
 
         // Round-trips losslessly.
@@ -5585,7 +5813,7 @@ mod tests {
         // GOLDEN_SIG_HASH: obtained from first run
         assert_eq!(
             format!("{:#x}", sig_hash),
-            "0x87d1a9ce8a1f242345bb20deab5e5111a41780814ea497fbd20700a60a2ecd8d",
+            "0xe7dc3f33413fc69c09f9c690be154ded294954e497aeea6ce0010ba513f2f26d",
         );
 
         // Elision invariant: changing empty-msg signature bytes must NOT change sig_hash.
