@@ -91,6 +91,29 @@ pub const STORAGE_TRIE_NODES: &str = "storage_trie_nodes";
 /// use: a node that changes overwrites itself in place.
 pub const BINARY_TRIE_NODES: &str = "binary_trie_nodes";
 
+/// EIP-8297 binary-trie root by block hash: [`Vec<u8>`] => [`Vec<u8>`]
+/// - [`Vec<u8>`] = `block_hash.as_bytes()`
+/// - [`Vec<u8>`] = the block's binary-trie root, 32 raw bytes.
+///
+/// **Scope: block import only, and only while the commitment is scheduled but
+/// not yet active.** During that window a header commits the *MPT* root, so
+/// nothing in a header names the binary root a block must extend from; this
+/// table is how a block finds its parent's. It is consulted by exactly one
+/// caller — [`Store::advance_binary_trie_for_block`] — and by no read path:
+/// nothing resolving state from a header ever looks here. Once headers carry
+/// the binary root (activation), a post-flip header addresses the binary trie
+/// the same way a pre-flip header addresses the MPT and this table becomes
+/// redundant.
+///
+/// Deliberately *not* the `mpt_lookup_roots` registry the earlier in-memory
+/// branch needed: that one had to be swept through fork choice, `newPayload`,
+/// `eth_syncing`, sync resume points, tracing and the L2 committer, because a
+/// post-flip header no longer named an MPT root. With the binary trie
+/// persisted and path-keyed, `header.state_root` keeps resolving on its own.
+///
+/// [`Store::advance_binary_trie_for_block`]: crate::Store::advance_binary_trie_for_block
+pub const BINARY_TRIE_ROOTS: &str = "binary_trie_roots";
+
 /// Pending blocks column family: [`Vec<u8>`] => [`Vec<u8>`]
 /// - [`Vec<u8>`] = `BlockHashRLP::from(block.hash()).bytes().clone()`
 /// - [`Vec<u8>`] = `BlockRLP::from(block).bytes().clone()`
@@ -147,7 +170,7 @@ pub const BLOCK_ACCESS_LISTS: &str = "block_access_lists";
 /// - [`Vec<u8>`] = RLP-encoded `Vec<Block>` (sorted by descending block number)
 pub const BAD_BLOCKS: &str = "bad_blocks";
 
-pub const TABLES: [&str; 23] = [
+pub const TABLES: [&str; 24] = [
     CHAIN_DATA,
     ACCOUNT_CODES,
     ACCOUNT_CODE_METADATA,
@@ -163,6 +186,7 @@ pub const TABLES: [&str; 23] = [
     ACCOUNT_TRIE_NODES,
     STORAGE_TRIE_NODES,
     BINARY_TRIE_NODES,
+    BINARY_TRIE_ROOTS,
     FULLSYNC_HEADERS,
     ACCOUNT_FLATKEYVALUE,
     STORAGE_FLATKEYVALUE,

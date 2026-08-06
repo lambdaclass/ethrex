@@ -664,6 +664,21 @@ impl Blockchain {
 
         let chain_config = self.storage.get_chain_config();
 
+        // The raw, per-block `Vec<AccountUpdate>` is accumulated for two
+        // independent reasons, and the merkleizer must be told to keep it
+        // whenever *either* holds:
+        //
+        // - witness generation needs it to replay the block's state diff;
+        // - EIP-8297 shadow tracking needs it to advance the binary trie
+        //   (`AccountUpdatesList` is already MPT-shaped and cannot serve).
+        //
+        // This condition used to be `collect_witness` alone. A scheduled chain
+        // that happened not to be collecting witnesses would then reach
+        // `add_block_pipeline_inner` with no updates at all and silently skip
+        // the binary-trie advance, producing a trie with holes that only fails
+        // at activation.
+        let collect_updates = collect_witness || chain_config.binary_tree_scheduled();
+
         // Validate the block pre-execution
         validate_block_pre_execution(block, parent_header, &chain_config, ELASTICITY_MULTIPLIER)?;
         self.validate_l1_transaction_types(block)?;
@@ -725,8 +740,13 @@ impl Blockchain {
         // executor (see `bal_parallel_exec_enabled` below) streams per-tx
         // updates over the channel, which only the streaming merkleizer
         // consumes — the synthesized path would leave the receiver dropped.
+        // A binary-tree-scheduled chain forces it for the same structural
+        // reason: only the streaming merkleizer accumulates the raw updates,
+        // and BAL synthesis is not a substitute (it never sets `removed` /
+        // `removed_storage`, so it cannot express account deletion to the
+        // binary trie).
         let optimistic_updates: Option<FxHashMap<Address, BalSynthesisItem>> =
-            if self.options.bal_parallel_trie_enabled && !collect_witness {
+            if self.options.bal_parallel_trie_enabled && !collect_updates {
                 bal.as_deref().map(synthesize_bal_updates)
             } else {
                 None
@@ -997,7 +1017,7 @@ impl Blockchain {
                                 parent_header_ref,
                                 queue_length_ref,
                                 max_queue_length_ref,
-                                collect_witness,
+                                collect_updates,
                             )?,
                         };
                         let merkle_end_instant = Instant::now();
@@ -1038,9 +1058,9 @@ impl Blockchain {
             merkleization_result?;
         let (execution_result, produced_bal, exec_end_instant) = execution_result?;
 
-        // Witness collection forces the streaming merkleizer (synthesized
-        // updates are disabled above), so the streaming witness is the only
-        // possible source of accumulated updates.
+        // Anything that needs the raw updates (witness generation, EIP-8297
+        // shadow tracking) forces the streaming merkleizer above, so the
+        // streaming accumulator is the only possible source of them.
         let accumulated_updates = streaming_witness;
 
         let exec_merkle_end_instant = Instant::now();
@@ -1070,13 +1090,18 @@ impl Blockchain {
         skip_all,
         fields(namespace = "block_execution")
     )]
+    /// `collect_updates` asks for the block's raw, merged
+    /// `Vec<AccountUpdate>` to be accumulated alongside the MPT work and
+    /// returned. Witness generation and EIP-8297 shadow tracking are the two
+    /// consumers; neither can be served from the `AccountUpdatesList`, which is
+    /// already MPT-shaped.
     fn handle_merkleization(
         &self,
         rx: Receiver<Vec<AccountUpdate>>,
         parent_header: &BlockHeader,
         queue_length: &AtomicUsize,
         max_queue_length: &mut usize,
-        collect_witness: bool,
+        collect_updates: bool,
     ) -> Result<(AccountUpdatesList, Option<Vec<AccountUpdate>>), StoreError> {
         let parent_state_root = parent_header.state_root;
 
@@ -1149,12 +1174,12 @@ impl Blockchain {
             let mut has_storage: FxHashSet<H256> = Default::default();
 
             let mut accumulator: Option<FxHashMap<Address, AccountUpdate>> =
-                collect_witness.then(FxHashMap::default);
+                collect_updates.then(FxHashMap::default);
 
             for updates in rx {
                 let current_length = queue_length.fetch_sub(1, Ordering::Acquire);
                 *max_queue_length = current_length.max(*max_queue_length);
-                // Accumulate updates for witness generation if enabled
+                // Accumulate the raw updates when a consumer asked for them
                 if let Some(acc) = &mut accumulator {
                     for update in updates.clone() {
                         match acc.entry(update.address) {
@@ -2236,6 +2261,55 @@ impl Blockchain {
             .map_err(|e| e.into())
     }
 
+    /// EIP-8297 shadow tracking: advance the binary trie by this block.
+    ///
+    /// A no-op unless `binaryTreeTime` is scheduled. On a chain that never
+    /// schedules the commitment this costs one `Option::is_some` and touches
+    /// no column family, so importing a block is byte-for-byte the work it was
+    /// before.
+    ///
+    /// When it *is* scheduled, every block advances the binary trie regardless
+    /// of whether the commitment is active yet, so the state is complete and
+    /// carried over when activation arrives. The header still commits the MPT
+    /// root and the binary root computed here is recorded but validated
+    /// against nothing — the flip is Phase D. See
+    /// [`Store::advance_binary_trie_for_block`] for the cost this adds and why
+    /// a missing parent is fatal rather than a fresh start.
+    ///
+    /// Called after the block has been stored, so a block rejected on its MPT
+    /// state root never reaches the binary trie.
+    ///
+    /// **Every path that advances the chain must call this.** One that does not
+    /// leaves a hole in the shadow trie which nothing detects until the flip
+    /// block, where it is unrecoverable. The callers are [`Self::add_block`]
+    /// and [`Self::add_block_pipeline_inner`] — the latter covering the
+    /// pipelined engine-API route, the depth-bounded route and batch import,
+    /// which all funnel through it.
+    ///
+    /// Three other `store_block` callers deliberately do *not*:
+    /// - [`Self::generate_witness_for_blocks`] re-executes and re-stores blocks
+    ///   that were already imported, purely to repair state for the witness; the
+    ///   binary trie already holds them, and advancing again from the same
+    ///   parent root would recompute the identical root.
+    /// - the L2 sequencer's block producer and L1 committer checkpoints. An L2
+    ///   chain does not schedule `binaryTreeTime`; if one ever does, those need
+    ///   the same call.
+    ///
+    /// [`Store::advance_binary_trie_for_block`]: ethrex_storage::Store::advance_binary_trie_for_block
+    fn shadow_track_binary_trie(
+        &self,
+        block_hash: BlockHash,
+        parent_hash: BlockHash,
+        account_updates: &[AccountUpdate],
+    ) -> Result<(), ChainError> {
+        if !self.storage.get_chain_config().binary_tree_scheduled() {
+            return Ok(());
+        }
+        self.storage
+            .advance_binary_trie_for_block(block_hash, parent_hash, account_updates)?;
+        Ok(())
+    }
+
     pub fn add_block(&self, block: Block) -> Result<(), ChainError> {
         let since = Instant::now();
         let (res, updates) = self.execute_block(&block)?;
@@ -2253,9 +2327,12 @@ impl Blockchain {
             block.header.number,
             block.body.transactions.len(),
         );
+        let (block_hash, parent_hash) = (block.hash(), block.header.parent_hash);
 
         let merkleized = Instant::now();
-        let result = self.store_block(block, account_updates_list, res);
+        let result = self
+            .store_block(block, account_updates_list, res)
+            .and_then(|()| self.shadow_track_binary_trie(block_hash, parent_hash, &updates));
         let stored = Instant::now();
 
         if self.options.perf_logs_enabled {
@@ -2408,10 +2485,21 @@ impl Blockchain {
             block.body.transactions.len(),
         );
         let block_hash = block.hash();
+        let parent_hash = block.header.parent_hash;
 
+        // EIP-8297 shadow tracking needs the same raw updates the witness
+        // generator consumes, and the generator takes them by value. Only clone
+        // when both want them; a chain that is not binary-tree-scheduled keeps
+        // the move it always had.
+        let binary_tree_scheduled = self.storage.get_chain_config().binary_tree_scheduled();
+        let mut accumulated_updates = accumulated_updates;
         let mut witness = None;
         if let Some(logger) = logger
-            && let Some(account_updates) = accumulated_updates
+            && let Some(account_updates) = if binary_tree_scheduled {
+                accumulated_updates.clone()
+            } else {
+                accumulated_updates.take()
+            }
         {
             let block_hash = block.hash();
             let generated_witness = self.generate_witness_from_account_updates(
@@ -2447,7 +2535,24 @@ impl Blockchain {
             warn!("Failed to store block access list for block {block_hash}: {err}");
         }
 
-        let result = self.store_block_with_depth(block, account_updates_list, res, commit_depth);
+        let result = self
+            .store_block_with_depth(block, account_updates_list, res, commit_depth)
+            .and_then(|()| {
+                if !binary_tree_scheduled {
+                    return Ok(());
+                }
+                // `collect_updates` in `execute_block_pipeline` is exactly this
+                // predicate OR witness collection, so on a scheduled chain the
+                // accumulator always ran. Absent updates here would mean that
+                // pairing has drifted, which would silently leave the binary
+                // trie with a hole; refuse rather than skip the block.
+                let account_updates = accumulated_updates.as_deref().ok_or_else(|| {
+                    ChainError::Custom(
+                        "binary-tree shadow tracking is scheduled but the block pipeline produced no raw account updates".to_string(),
+                    )
+                })?;
+                self.shadow_track_binary_trie(block_hash, parent_hash, account_updates)
+            });
 
         let stored = Instant::now();
 

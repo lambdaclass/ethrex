@@ -27,6 +27,19 @@ pub enum StoreError {
     /// Mapping ethrex account state onto binary trie leaves failed.
     #[error(transparent)]
     PbtState(#[from] PbtStateError),
+    /// Shadow tracking reached a block whose parent has no recorded
+    /// binary-trie root.
+    ///
+    /// On a chain with `binaryTreeTime` scheduled this is fatal, not
+    /// recoverable: every block from genesis onwards must have advanced the
+    /// binary trie, so a gap means the shadow state is incomplete and the
+    /// commitment could not be honoured at activation. Seeding from an empty
+    /// trie instead would hide the gap until the flip block, where it would
+    /// halt the chain with no remedy.
+    #[error(
+        "no binary-trie root recorded for parent block {parent_hash:#x}: the binary trie is incomplete and cannot be extended (a chain with binaryTreeTime scheduled must have processed every block from genesis)"
+    )]
+    MissingBinaryTrieRoot { parent_hash: H256 },
     #[error("missing store: is an execution DB being used instead?")]
     MissingStore,
     /// A read was requested against a state root this node does not hold.

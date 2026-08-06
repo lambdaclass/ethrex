@@ -6,9 +6,9 @@ use crate::{
         StorageBackend, StorageReadView, StorageWriteBatch,
         tables::{
             ACCOUNT_CODE_METADATA, ACCOUNT_CODES, ACCOUNT_FLATKEYVALUE, ACCOUNT_TRIE_NODES,
-            BAD_BLOCKS, BLOCK_ACCESS_LISTS, BLOCK_NUMBERS, BODIES, CANONICAL_BLOCK_HASHES,
-            CHAIN_DATA, EXECUTION_WITNESSES, FULLSYNC_HEADERS, HEADERS, INVALID_CHAINS,
-            MISC_VALUES, PENDING_BLOCKS, RECEIPTS_V2, SNAP_STATE, STATE_HISTORY,
+            BAD_BLOCKS, BINARY_TRIE_ROOTS, BLOCK_ACCESS_LISTS, BLOCK_NUMBERS, BODIES,
+            CANONICAL_BLOCK_HASHES, CHAIN_DATA, EXECUTION_WITNESSES, FULLSYNC_HEADERS, HEADERS,
+            INVALID_CHAINS, MISC_VALUES, PENDING_BLOCKS, RECEIPTS_V2, SNAP_STATE, STATE_HISTORY,
             STORAGE_FLATKEYVALUE, STORAGE_TRIE_NODES, TRANSACTION_LOCATIONS,
         },
     },
@@ -2596,13 +2596,11 @@ impl Store {
     /// anchor.
     ///
     /// **Storage layer only, deliberately.** Nothing here reads or
-    /// writes a block header, and no caller in `crates/blockchain`
-    /// invokes it yet. That is not an oversight: on this branch no
-    /// header commits to a binary-trie root and there is no activation
-    /// predicate to ask whether one should, so validating an imported
-    /// header's root or producing one while building a payload would
-    /// have nothing to hook into. Both arrive with the activation
-    /// config, and this method is what they will call.
+    /// writes a block header. Block import reaches it through
+    /// [`Store::advance_binary_trie_for_block`], which is what supplies
+    /// the parent root and records the result; no header commits to a
+    /// binary-trie root yet, so there is still nothing to validate
+    /// against.
     ///
     /// **Why this is cheap.** Opening at `parent_root` loads no nodes —
     /// the root is a bare [`NodeRef::Stored`] hash until something
@@ -2633,10 +2631,46 @@ impl Store {
         parent_root: H256,
         account_updates: &[AccountUpdate],
     ) -> Result<H256, StoreError> {
-        for update in account_updates {
-            if let Some(code) = &update.code {
-                self.add_account_code(code.clone()).await?;
+        self.apply_account_updates_to_binary_trie_blocking(parent_root, account_updates)
+    }
+
+    /// [`Store::apply_account_updates_to_binary_trie`] without the `async`.
+    ///
+    /// The async form is the ergonomic one for callers already in a
+    /// runtime; this one exists because block import is not. Every entry
+    /// point that advances the chain — [`crate::Store::add_block`]'s
+    /// callers in `crates/blockchain` — is a synchronous function called
+    /// from inside a tokio worker, so `block_on` is not available to it
+    /// and making the whole import path async for one storage call is
+    /// not a trade worth making.
+    ///
+    /// The two are the same work: the trie itself is CPU-bound and was
+    /// never awaited, and the code writes go through one write batch
+    /// instead of one `spawn_blocking` per account.
+    pub fn apply_account_updates_to_binary_trie_blocking(
+        &self,
+        parent_root: H256,
+        account_updates: &[AccountUpdate],
+    ) -> Result<H256, StoreError> {
+        // Codes first and in a single batch: the EVM fetches whole
+        // bytecode by hash and only `ACCOUNT_CODES` answers that, while
+        // the trie only ever commits to code as chunks.
+        let codes: Vec<_> = account_updates
+            .iter()
+            .filter_map(|update| update.code.as_ref())
+            .collect();
+        if !codes.is_empty() {
+            let mut tx = self.backend.begin_write()?;
+            for code in codes {
+                let hash_key = code.hash.0.to_vec();
+                tx.put(ACCOUNT_CODES, &hash_key, &encode_code(code))?;
+                tx.put(
+                    ACCOUNT_CODE_METADATA,
+                    &hash_key,
+                    &(code.len() as u64).to_be_bytes(),
+                )?;
             }
+            tx.commit()?;
         }
 
         let mut trie = BinaryTrie::open(
@@ -2645,6 +2679,99 @@ impl Store {
         );
         apply_account_updates(&mut trie, account_updates)?;
         Ok(trie.commit()?)
+    }
+
+    /// The binary-trie root recorded for `block_hash`, if any.
+    ///
+    /// See [`BINARY_TRIE_ROOTS`] for why this mapping exists and how
+    /// narrow its scope is: block import consults it to find the root a
+    /// block must extend from, and nothing else ever reads it.
+    ///
+    /// [`BINARY_TRIE_ROOTS`]: crate::api::tables::BINARY_TRIE_ROOTS
+    pub fn get_binary_trie_root(&self, block_hash: BlockHash) -> Result<Option<H256>, StoreError> {
+        let Some(raw) = self.read(BINARY_TRIE_ROOTS, block_hash.as_bytes().to_vec())? else {
+            return Ok(None);
+        };
+        if raw.len() != 32 {
+            return Err(StoreError::Custom(format!(
+                "malformed binary-trie root recorded for block {block_hash:#x}: {} bytes",
+                raw.len()
+            )));
+        }
+        Ok(Some(H256::from_slice(&raw)))
+    }
+
+    /// Record `root` as `block_hash`'s binary-trie root.
+    pub fn set_binary_trie_root(
+        &self,
+        block_hash: BlockHash,
+        root: H256,
+    ) -> Result<(), StoreError> {
+        self.write(
+            BINARY_TRIE_ROOTS,
+            block_hash.as_bytes().to_vec(),
+            root.as_bytes().to_vec(),
+        )
+    }
+
+    /// Shadow-tracking step: advance the binary trie by one block and
+    /// record where it landed.
+    ///
+    /// Looks up `parent_hash`'s recorded binary root, applies
+    /// `account_updates` on top of it, and records the resulting root
+    /// under `block_hash`. Callers gate this on
+    /// [`ChainConfig::binary_tree_scheduled`]; on a chain that never
+    /// schedules the commitment it is not called at all, so an
+    /// unscheduled node pays nothing — no lookup, no write, no column
+    /// family touched.
+    ///
+    /// **Cost.** On a scheduled chain this roughly doubles the per-block
+    /// state-write work for the whole pre-activation period: every
+    /// account and slot a block touches is written into two tries rather
+    /// than one. That is the price of carry-over — the first active
+    /// block commits the *full* state, so the binary trie has to have
+    /// been kept current all along. The alternative is a stop-the-world
+    /// conversion at the flip, which does not scale and which EIP-8297
+    /// does not specify.
+    ///
+    /// **Not a validation step.** The returned root is recorded and
+    /// nothing more: no header carries it and nothing is compared
+    /// against it until activation.
+    ///
+    /// **No diff layers yet, so no reorg story yet.** Nodes commit
+    /// straight to disk here while the MPT's are staged into the layer
+    /// chain and flushed behind the safe-commit gate. Two consequences,
+    /// both deliberate and both resolved by the diff-layer work (Phase E
+    /// of the activation plan, which this method is the consumer for):
+    /// the two structures are not persisted atomically, and a reorg
+    /// leaves the on-disk binary trie holding the abandoned branch's
+    /// state — the path-keyed single-version layout has no other version
+    /// to fall back to. Until then, only the recorded roots distinguish
+    /// branches; the nodes do not. Harmless while nothing reads the
+    /// binary trie, which is exactly the Phase C window.
+    ///
+    /// # Errors
+    ///
+    /// [`StoreError::MissingBinaryTrieRoot`] when the parent has no
+    /// recorded root. That is a hard error by design: it means the
+    /// shadow trie has a gap, and quietly restarting from an empty trie
+    /// would defer the failure to the flip block, where it is
+    /// unrecoverable.
+    ///
+    /// [`ChainConfig::binary_tree_scheduled`]: ethrex_common::types::ChainConfig::binary_tree_scheduled
+    pub fn advance_binary_trie_for_block(
+        &self,
+        block_hash: BlockHash,
+        parent_hash: BlockHash,
+        account_updates: &[AccountUpdate],
+    ) -> Result<H256, StoreError> {
+        let parent_root = self
+            .get_binary_trie_root(parent_hash)?
+            .ok_or(StoreError::MissingBinaryTrieRoot { parent_hash })?;
+        let root =
+            self.apply_account_updates_to_binary_trie_blocking(parent_root, account_updates)?;
+        self.set_binary_trie_root(block_hash, root)?;
+        Ok(root)
     }
 
     // Key format: block_number (8 bytes, big-endian) + block_hash (32 bytes)
@@ -2872,8 +2999,40 @@ impl Store {
         }
         // Store genesis accounts
         // TODO: Should we use this root instead of computing it before the block hash check?
+        //
+        // On a chain with `binaryTreeTime` scheduled the same alloc also seeds
+        // the EIP-8297 binary trie, so shadow tracking has an anchor to extend
+        // from: block 1 looks up genesis' recorded binary root and builds on
+        // the alloc, exactly as it builds on the alloc in the MPT. Genesis
+        // itself still commits the MPT root in its header — activation at
+        // genesis would change the genesis hash and hence the chain's
+        // identity, which is why the schedule is always in the future.
+        //
+        // The alloc is cloned only when scheduled; unscheduled chains keep the
+        // move into `setup_genesis_state_trie` and do no binary-trie work.
+        let binary_tree_alloc = genesis
+            .config
+            .binary_tree_scheduled()
+            .then(|| genesis.alloc.clone());
         let genesis_state_root = self.setup_genesis_state_trie(genesis.alloc).await?;
         debug_assert_eq!(genesis_state_root, genesis_block.header.state_root);
+
+        // Reached only on a fresh datadir: the branches above return early when
+        // a genesis header is already stored. That is the right behaviour for a
+        // reopen — the binary trie is persistent, so a restarted node resumes
+        // from what is on disk with no replay. It also means enabling the
+        // schedule on a datadir that was synced without it does not silently
+        // half-seed: genesis is skipped, and the next block fails loudly with
+        // `MissingBinaryTrieRoot` naming its parent, which is accurate — the
+        // shadow trie cannot be built without reprocessing from genesis.
+        if let Some(alloc) = binary_tree_alloc {
+            let genesis_binary_root = self.setup_genesis_binary_trie(alloc).await?;
+            self.set_binary_trie_root(genesis_hash, genesis_binary_root)?;
+            info!(
+                genesis_binary_root = %genesis_binary_root,
+                "Seeded the EIP-8297 binary trie from the genesis alloc"
+            );
+        }
 
         // Store genesis block
         info!(hash = %genesis_hash, "Storing genesis block");
@@ -4197,6 +4356,27 @@ impl Store {
             STORAGE_TRIE_NODES
         };
         self.backend.begin_read()?.get(table, key)
+    }
+
+    /// Number of entries in the binary-trie node table. For testing only —
+    /// lets a test assert that an *unscheduled* chain does literally no
+    /// binary-trie work, which is the property that makes shadow tracking safe
+    /// to land.
+    #[cfg(any(test, feature = "testing"))]
+    pub fn binary_trie_node_count_for_test(&self) -> Result<usize, StoreError> {
+        use crate::api::tables::BINARY_TRIE_NODES;
+        let read = self.backend.begin_read()?;
+        let count = read.prefix_iterator(BINARY_TRIE_NODES, &[])?.count();
+        Ok(count)
+    }
+
+    /// Number of recorded block-hash -> binary-root entries. For testing only;
+    /// companion to [`Store::binary_trie_node_count_for_test`].
+    #[cfg(any(test, feature = "testing"))]
+    pub fn binary_trie_root_count_for_test(&self) -> Result<usize, StoreError> {
+        let read = self.backend.begin_read()?;
+        let count = read.prefix_iterator(BINARY_TRIE_ROOTS, &[])?.count();
+        Ok(count)
     }
 
     /// Insert a block plus associated codes into the in-memory buffer without
