@@ -16,8 +16,10 @@
 #      node data and the base snapshots share one filesystem. `rsync --link-dest` only
 #      hardlinks within a filesystem; split across two it degrades to full copies without
 #      saying so, and every retained generation costs a whole DB instead of a delta.
-#   5. the consensus client keeps its database across restarts — multisync's `--purge-db`
-#      forces a fresh checkpoint sync each time, which here would only delay cycles.
+#   5. `--purge-db` is kept from multisync, and is load-bearing: recreating the beacon node
+#      before each leg re-checkpoint-syncs it to the tip, which is what makes the execution
+#      node do bulk 1024-block batch sync. Without it the pair crawl forward together ~30
+#      blocks at a time and no throughput metric is emitted at all.
 services:
   consensus-hoodi:
     volumes:
@@ -33,6 +35,7 @@ services:
       --execution-jwt /secrets/jwt.hex
       --checkpoint-sync-url https://checkpoint-sync.hoodi.ethpandaops.io
       --checkpoint-sync-url-timeout 600
+      --purge-db
 
   consensus-sepolia:
     volumes:
@@ -48,6 +51,7 @@ services:
       --execution-jwt /secrets/jwt.hex
       --checkpoint-sync-url https://checkpoint-sync.sepolia.ethpandaops.io
       --checkpoint-sync-url-timeout 600
+      --purge-db
 
   consensus-mainnet:
     volumes:
@@ -63,6 +67,7 @@ services:
       --execution-jwt /secrets/jwt.hex
       --checkpoint-sync-url https://mainnet-checkpoint-sync.attestant.io
       --checkpoint-sync-url-timeout 600
+      --purge-db
 
   ethrex-hoodi: &bench-el
     mem_limit: 48g

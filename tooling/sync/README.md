@@ -271,10 +271,19 @@ Networks run **serially** on purpose: two legs at once contend for CPU and disk 
 results are junk. An flock enforces this; bootstraps share it, cycles take it exclusively,
 and the manual A/B tool (#7112) takes it exclusively too.
 
-Reporting goes to `SLACK_WEBHOOK_URL_SUCCESS`, read from `tooling/sync/.env` (same format
-as multisync) or the environment, which wins. Without it the runner logs the summary and
-carries on. While the watch is observe-only, failed cycles are reported on that same
-webhook rather than `SLACK_WEBHOOK_URL_FAILED` — there is nothing to page about yet.
+Reporting goes to `SLACK_WEBHOOK_URL_SUCCESS`, or `SLACK_WEBHOOK_URL_FAILED` for a round
+where a cycle could not produce a valid measurement — a crashed node, an unclean exit, a
+leg that never reached its target. A merely *low* number is not a failure while the watch
+is observe-only: there is no baseline to judge it against yet. Both are read from
+`tooling/sync/.env` (same format as multisync) or the environment, which wins.
+
+**Each leg re-checkpoint-syncs the beacon node to the tip first, and this is load-bearing.**
+The execution node only does bulk 1024-block batch sync when fork choice hands it a head
+far ahead of itself. A beacon node stopped alongside it knows nothing newer than the base,
+so the pair crawl forward together importing ~30 blocks at a time — which measures
+incremental block import rather than full sync, and emits no throughput metric at all. A
+leg whose beacon node cannot reach the tip is reported `cl_not_synced` rather than
+recording a number that means something else.
 
 ### Bootstrap
 
