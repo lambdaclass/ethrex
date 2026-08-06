@@ -1866,4 +1866,49 @@ mod tests {
         let mut table = PeerTableServer::new(H256::zero(), 10, None);
         assert!(table.do_get_contacts_to_initiate(4).is_empty());
     }
+
+    #[test]
+    fn get_contacts_to_initiate_resets_tried_set_only_on_fully_empty_batch() {
+        // `already_tried_peers` must only be reset when a call finds nothing
+        // at all, not merely when it returns fewer than `count` contacts.
+        // An underfull-but-nonempty batch (pool exhausted before hitting
+        // `count`) must leave the tried set alone; otherwise a caller
+        // polling in a loop would have already-tried, still-failing
+        // contacts re-offered on every partially-filled poll, defeating the
+        // retry backoff.
+        let mut table = PeerTableServer::new(H256::zero(), 10, None);
+        for seed in 1..=3u8 {
+            let (node_id, contact) = dummy_contact(seed);
+            table.insert_to_connection_pool(node_id, contact.node.clone());
+            table.insert_contact(node_id, contact);
+        }
+
+        // Ask for more than exist: an underfull batch (3 of 5 requested),
+        // but not empty. All 3 are now marked as tried.
+        let batch = table.do_get_contacts_to_initiate(5);
+        assert_eq!(batch.len(), 3);
+
+        // The underfull batch above must NOT have reset the tried set: every
+        // candidate is already tried and none are new, so this call finds
+        // nothing. This is the assertion that kills a mutant guard of
+        // `found.len() < count`, which would reset here and re-offer the
+        // same 3 contacts instead.
+        assert!(
+            table.do_get_contacts_to_initiate(3).is_empty(),
+            "an underfull-but-nonempty batch must not reset already_tried_peers"
+        );
+
+        // That last call returned fully empty, which is exactly the
+        // condition that clears `already_tried_peers` (the clear happens
+        // before the empty Vec is returned, so the very next call already
+        // sees a clean tried set). This kills a mutant that deletes the
+        // reset guard entirely, and pins that the cycle takes exactly one
+        // more call to recover.
+        let batch_again = table.do_get_contacts_to_initiate(3);
+        assert_eq!(
+            batch_again.len(),
+            3,
+            "a fully empty batch must reset already_tried_peers for the next cycle"
+        );
+    }
 }
