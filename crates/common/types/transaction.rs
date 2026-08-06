@@ -5774,9 +5774,26 @@ mod tests {
 
     #[test]
     fn empty_recent_root_reference_list_is_charged_the_byte_it_occupies() {
+        // Pins the floor consumer, which recent_root_references_are_charged_calldata_gas does not
+        // reach: an is_empty early return in calldata_tokens leaves the 0xc0 outside the floor, and
+        // the delta measured from the empty baseline grows by exactly that byte.
         let mut tx = make_test_frame_tx();
         tx.recent_root_references = vec![];
         assert_eq!(tx.recent_root_calldata(), vec![0xc0]);
+        let empty_floor = tx.calldata_floor_gas();
+
+        tx.recent_root_references = vec![RecentRootReference {
+            source_id: H256::repeat_byte(0x11),
+            slot: 7,
+            root: H256::repeat_byte(0x22),
+        }];
+        let added_bytes = tx.recent_root_calldata().len() as u64 - 1;
+
+        assert_eq!(
+            tx.calldata_floor_gas() - empty_floor,
+            added_bytes * FRAME_TX_STANDARD_TOKEN_COST * FRAME_TX_TOTAL_COST_FLOOR_PER_TOKEN,
+            "the empty list's 0xc0 must already be inside the floor",
+        );
     }
 
     fn make_frame_tx_with_gas_limits(limits: Vec<u64>) -> FrameTransaction {
