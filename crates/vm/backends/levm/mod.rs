@@ -2697,6 +2697,33 @@ impl LEVM {
             //eip 2935: stores parent block hash in system contract
             Self::process_block_hash_history(block_header, db, vm_type, crypto)?;
         }
+
+        // BSC hardfork system-contract upgrades (Pasteur): a consensus `SetCode`
+        // of the StakeHub (0x…2002) and Governor (0x…2004) contracts — the code
+        // delivery of BEP-695. Applied here in `prepare_block` so both the
+        // sequential (`execute_block`) and pipeline (`execute_block_pipeline`)
+        // paths capture it in the block's state transitions, exactly like the
+        // EIP-2935 write above. Idempotent: a target is rewritten only while its
+        // on-chain code still differs from the fork bytecode — i.e. once, on the
+        // fork transition block. Reference: bsc-geth
+        // `core/systemcontracts/upgrade.go` (`applySystemContractUpgrade`).
+        #[cfg(feature = "bsc")]
+        if matches!(vm_type, VMType::Bsc)
+            && ethrex_bsc::system_contract_upgrades::is_pasteur(
+                &chain_config,
+                block_header.timestamp,
+            )
+        {
+            for upgrade in
+                ethrex_bsc::system_contract_upgrades::pasteur_upgrades(chain_config.chain_id)
+            {
+                if db.get_account(upgrade.address)?.info.code_hash != upgrade.code_hash {
+                    let code = Code::from_bytecode(Bytes::from_static(upgrade.code), crypto);
+                    db.set_account_bytecode(upgrade.address, code)?;
+                }
+            }
+        }
+
         Ok(())
     }
 }

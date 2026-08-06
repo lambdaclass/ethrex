@@ -433,20 +433,8 @@ impl Blockchain {
         // executed via the normal tx pipeline in `execute_block` above, with the
         // LEVM backend handling the drain+credit pre-work for each system tx.
         // No separate system-call phase is needed here during validation.
-
-        // BSC hardfork system-contract upgrades (e.g. Pasteur): a pure consensus
-        // state change (`SetCode`) applied after all block transactions run and
-        // before the state root is computed — mirrors bsc-geth Parlia `Finalize`.
-        // Applied before `get_state_transitions` so the code change is captured.
-        // No-op on non-BSC chains and on every block except the fork transition.
-        for (address, code) in ethrex_bsc::system_contract_upgrades::system_contract_code_upgrades(
-            &chain_config,
-            parent_header.timestamp,
-            block.header.timestamp,
-        ) {
-            vm.set_account_code(address, bytes::Bytes::from_static(code))
-                .map_err(ChainError::EvmError)?;
-        }
+        // BSC hardfork system-contract upgrades (Pasteur) are applied inside the
+        // VM's `prepare_block`, so they are captured here by all execution paths.
 
         let account_updates = vm.get_state_transitions()?;
 
@@ -1246,19 +1234,6 @@ impl Blockchain {
         validate_block_pre_execution(block, parent_header, chain_config, ELASTICITY_MULTIPLIER)?;
         let (execution_result, bal) = vm.execute_block(block)?;
 
-        // BSC hardfork system-contract upgrades (e.g. Pasteur): a pure consensus
-        // state change (`SetCode`) applied after all block transactions run and
-        // before the state root is computed — mirrors bsc-geth Parlia `Finalize`.
-        // No-op on non-BSC chains and on every block except the fork transition.
-        for (address, code) in ethrex_bsc::system_contract_upgrades::system_contract_code_upgrades(
-            chain_config,
-            parent_header.timestamp,
-            block.header.timestamp,
-        ) {
-            vm.set_account_code(address, bytes::Bytes::from_static(code))
-                .map_err(ChainError::EvmError)?;
-        }
-
         // Validate execution went alright
         if let Err(e) = validate_gas_used(execution_result.block_gas_used, &block.header) {
             ethrex_vm::log_gas_used_mismatch(
@@ -2016,22 +1991,6 @@ impl Blockchain {
             if self.storage.has_state_root(stored_header.state_root)? {
                 return Ok(());
             }
-        }
-        // BSC hardfork system-contract upgrade (Pasteur) transition block: the
-        // streaming pipeline path (`execute_block_pipeline`) captures only
-        // per-transaction state deltas, so it misses the non-transaction
-        // `SetCode` the fork applies. Route just this one block through the
-        // non-pipeline `add_block`, whose full-state `get_state_transitions`
-        // captures the upgrade. All later blocks stay on the pipeline.
-        if matches!(self.options.r#type, BlockchainType::Bsc)
-            && let Ok(parent) = find_parent_header(&block.header, &self.storage)
-            && ethrex_bsc::system_contract_upgrades::is_on_pasteur(
-                &self.storage.get_chain_config(),
-                parent.timestamp,
-                block.header.timestamp,
-            )
-        {
-            return self.add_block(block);
         }
         let (_, result) = self.add_block_pipeline_inner(block, bal)?;
         result

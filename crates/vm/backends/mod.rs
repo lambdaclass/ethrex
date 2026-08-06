@@ -308,23 +308,6 @@ impl Evm {
         Ok(())
     }
 
-    /// Replace the bytecode of `address` in the EVM state cache.
-    ///
-    /// Used by BSC hardfork system-contract upgrades (e.g. Pasteur), which
-    /// patch system-contract code as a pure consensus state change. Only the
-    /// code (and its hash) changes; nonce, balance and storage are untouched.
-    pub fn set_account_code(
-        &mut self,
-        address: Address,
-        code: bytes::Bytes,
-    ) -> Result<(), EvmError> {
-        let bytecode = ethrex_common::types::Code::from_bytecode(code, self.crypto.as_ref());
-        self.db
-            .set_account_bytecode(address, bytecode)
-            .map_err(|e| EvmError::Custom(format!("set_account_code: {e}")))?;
-        Ok(())
-    }
-
     pub fn simulate_tx_from_generic(
         &mut self,
         tx: &GenericTransaction,
