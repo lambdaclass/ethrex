@@ -630,15 +630,13 @@ fn validate_attributes_v4(
     head_block: &BlockHeader,
     chain_config: &ethrex_common::types::ChainConfig,
 ) -> Result<(), RpcErr> {
-    // Pre-FOCIL guard: V4 cannot accept payload attributes once inclusion lists
-    // are enforced, since V4 carries no `inclusionListTransactions`. Gated on
-    // EIP-7805 activation rather than Hegotá: the frame-transaction EIPs are
-    // EL-internal and leave the engine version selection untouched, so a chain
-    // running the stack without FOCIL keeps driving V4. The FCU state update is
-    // not rolled back; only the payload-build request is rejected.
-    if chain_config.is_focil_activated(attributes.timestamp) {
+    // Pre-Hegotá guard: V4 cannot accept Hegotá-timestamp payload attributes.
+    // Runs unconditionally (not feature-gated) so a non-FOCIL build still rejects
+    // when the chain config has hegota_time set. The FCU state update is not
+    // rolled back; only the payload-build request is rejected.
+    if chain_config.is_hegota_activated(attributes.timestamp) {
         return Err(RpcErr::UnsupportedFork(
-            "engine_forkchoiceUpdatedV4 cannot accept FOCIL payload attributes".to_string(),
+            "engine_forkchoiceUpdatedV4 cannot accept Hegotá payload attributes".to_string(),
         ));
     }
     if !chain_config.is_amsterdam_activated(attributes.timestamp) {
@@ -748,12 +746,11 @@ fn validate_attributes_v5(
     head_block: &BlockHeader,
     chain_config: &ethrex_common::types::ChainConfig,
 ) -> Result<(), RpcErr> {
-    // V5 is the FOCIL-and-later FCU: it is the only version carrying
-    // `inclusionListTransactions`. Reject any timestamp where EIP-7805 is not
-    // active with -38005, mirroring the spec.
-    if !chain_config.is_focil_activated(attributes.timestamp) {
+    // V5 is the Hegotá-and-later FCU. Reject any pre-Hegotá timestamp with
+    // -38005, mirroring the spec.
+    if !chain_config.is_hegota_activated(attributes.timestamp) {
         return Err(RpcErr::UnsupportedFork(
-            "V5 payload attributes used for pre-FOCIL timestamp".to_string(),
+            "V5 payload attributes used for pre-Hegotá timestamp".to_string(),
         ));
     }
     if attributes.withdrawals.is_none() {
@@ -904,7 +901,7 @@ mod tests {
     }
 
     #[test]
-    fn forkchoice_updated_v4_rejects_focil_timestamp_with_unsupported_fork() {
+    fn forkchoice_updated_v4_rejects_hegota_timestamp_with_unsupported_fork() {
         use super::validate_attributes_v4;
         use crate::types::fork_choice::PayloadAttributesV4;
         use ethereum_types::Address;
@@ -915,7 +912,6 @@ mod tests {
             deposit_contract_address: Address::default(),
             amsterdam_time: Some(500),
             hegota_time: Some(1000),
-            focil_time: Some(1000),
             ..Default::default()
         };
 
@@ -939,21 +935,17 @@ mod tests {
     }
 
     #[test]
-    fn forkchoice_updated_v4_accepts_amsterdam_timestamp_when_focil_unset() {
+    fn forkchoice_updated_v4_accepts_amsterdam_timestamp_when_hegota_unset() {
         use super::validate_attributes_v4;
         use crate::types::fork_choice::PayloadAttributesV4;
         use ethereum_types::Address;
         use ethrex_common::types::ChainConfig;
 
-        // The frame-transaction stack scheduled, EIP-7805 not. The engine version
-        // selection must be unaffected: those EIPs are EL-internal, so the
-        // consensus client keeps driving V4 and never needs to know about them.
         let chain_config = ChainConfig {
             chain_id: 1,
             deposit_contract_address: Address::default(),
             amsterdam_time: Some(500),
-            hegota_time: Some(1000),
-            focil_time: None,
+            hegota_time: None,
             ..Default::default()
         };
 
@@ -976,7 +968,7 @@ mod tests {
     }
 
     #[test]
-    fn validate_v5_rejects_pre_focil_timestamp_with_unsupported_fork() {
+    fn validate_v5_rejects_pre_hegota_timestamp_with_unsupported_fork() {
         use super::validate_attributes_v5;
         use crate::types::fork_choice::PayloadAttributesV5;
         use ethereum_types::Address;
@@ -987,11 +979,10 @@ mod tests {
             deposit_contract_address: Address::default(),
             amsterdam_time: Some(500),
             hegota_time: Some(1000),
-            focil_time: Some(1000),
             ..Default::default()
         };
 
-        // timestamp 800 is Amsterdam (post-500) but pre-FOCIL (pre-1000).
+        // timestamp 800 is Amsterdam (post-500) but pre-Hegotá (pre-1000).
         let attributes = PayloadAttributesV5 {
             timestamp: 800,
             withdrawals: Some(vec![]),
@@ -1012,7 +1003,7 @@ mod tests {
     }
 
     #[test]
-    fn validate_v5_accepts_focil_timestamp_with_empty_il() {
+    fn validate_v5_accepts_hegota_timestamp_with_empty_il() {
         use super::validate_attributes_v5;
         use crate::types::fork_choice::PayloadAttributesV5;
         use ethereum_types::Address;
@@ -1023,7 +1014,6 @@ mod tests {
             deposit_contract_address: Address::default(),
             amsterdam_time: Some(500),
             hegota_time: Some(1000),
-            focil_time: Some(1000),
             ..Default::default()
         };
 
@@ -1041,7 +1031,7 @@ mod tests {
             ..Default::default()
         };
         validate_attributes_v5(&attributes, &head_block, &chain_config)
-            .expect("V5 must accept FOCIL-active timestamp with empty IL");
+            .expect("V5 must accept Hegotá-active timestamp with empty IL");
     }
 
     #[test]
@@ -1055,7 +1045,6 @@ mod tests {
             chain_id: 1,
             deposit_contract_address: Address::default(),
             hegota_time: Some(1000),
-            focil_time: Some(1000),
             ..Default::default()
         };
 

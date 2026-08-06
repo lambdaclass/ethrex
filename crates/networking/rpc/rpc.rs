@@ -1880,7 +1880,6 @@ mod tests {
                             "derivedSlotTime": null,
                             "payerTxparamTime": null,
                             "utxoFramesTime": null,
-                            "focilTime": null,
                             "genesisTimestamp": null,
                             "secondsPerSlot": null,
                             "lstarTime": null,
@@ -2133,14 +2132,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn exchange_capabilities_advertises_focil_when_focil_configured() {
+    async fn exchange_capabilities_advertises_focil_when_hegota_configured() {
         let body =
             r#"{"jsonrpc":"2.0", "method":"engine_exchangeCapabilities", "params":[[]], "id":1}"#;
         let request: RpcRequest = serde_json::from_str(body).unwrap();
         let mut storage = Store::new("", EngineType::InMemory).expect("Failed to create test DB");
         let mut config = example_chain_config();
         config.hegota_time = Some(0);
-        config.focil_time = Some(0);
         storage.set_chain_config(&config).await.unwrap();
         let context = default_context_with_storage(storage).await;
 
@@ -2153,14 +2151,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn exchange_capabilities_omits_focil_when_only_hegota_configured() {
+    async fn exchange_capabilities_omits_focil_without_hegota_time() {
         let body =
             r#"{"jsonrpc":"2.0", "method":"engine_exchangeCapabilities", "params":[[]], "id":1}"#;
         let request: RpcRequest = serde_json::from_str(body).unwrap();
         let mut storage = Store::new("", EngineType::InMemory).expect("Failed to create test DB");
         let mut config = example_chain_config();
-        config.hegota_time = Some(0);
-        config.focil_time = None;
+        config.hegota_time = None;
         storage.set_chain_config(&config).await.unwrap();
         let context = default_context_with_storage(storage).await;
 

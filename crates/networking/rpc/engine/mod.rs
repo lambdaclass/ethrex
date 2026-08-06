@@ -45,7 +45,7 @@ pub const CAPABILITIES: [&str; 25] = [
 ];
 
 /// Engine API methods added by EIP-7805 (FOCIL). Advertised only when the
-/// running chain has `focil_time` set in its config (per
+/// running chain has `hegota_time` set in its config (per
 /// `engine-api-inclusion-list/spec.md`).
 pub const FOCIL_CAPABILITIES: [&str; 3] = [
     "engine_getInclusionListV1",
@@ -78,12 +78,10 @@ impl RpcHandler for ExchangeCapabilitiesRequest {
 
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
         let mut caps: Vec<&str> = CAPABILITIES.to_vec();
-        // Only advertise FOCIL methods when EIP-7805 is scheduled on this chain.
-        // A chain without `focil_time` cannot serve V5/V6 payloads, so a
-        // FOCIL-capable consensus client fails capability negotiation here rather
-        // than driving inclusion lists against a node that will not enforce them.
+        // Only advertise FOCIL methods when Hegotá is configured. A chain
+        // without `hegota_time` cannot serve V5/V6 payloads.
         let chain_config = context.storage.get_chain_config();
-        if chain_config.focil_time.is_some() {
+        if chain_config.hegota_time.is_some() {
             caps.extend_from_slice(&FOCIL_CAPABILITIES);
         }
         Ok(json!(caps))
