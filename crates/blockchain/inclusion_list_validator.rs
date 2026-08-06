@@ -36,11 +36,10 @@
 //! - **Profile 2** is governed by EIP-8369, which instead requires replaying
 //!   the transaction's validation prefix to decide stateful eligibility. That
 //!   replay runs entirely behind the [`IlProfile2Evaluator`] trait — this
-//!   module has no `ethrex-vm` dependency and never runs it directly — and
-//!   its verdict ([`Profile2Eligibility`]) never feeds back into the Profile 1
-//!   path or into `unsatisfied`. See [`crate::focil_profile2`] for the
-//!   concrete evaluator and [`IlCheckReport`] for what its verdict may and may
-//!   not affect.
+//!   module has no `ethrex-vm` dependency and never runs it directly. Its
+//!   verdict reaches `unsatisfied` only through [`Profile2Eligibility::Eligible`];
+//!   it never influences how a Profile 1 transaction is classified. See
+//!   [`crate::focil_profile2`] for the concrete evaluator.
 
 use std::collections::HashSet;
 
@@ -229,19 +228,21 @@ impl std::error::Error for IlUnsatisfied {}
 
 /// Result of [`InclusionListSatisfactionValidator::check_with_profile_2`].
 ///
-/// `unsatisfied` alone is the consensus verdict — identical to what
-/// [`InclusionListSatisfactionValidator::check`] returns for the same inputs.
-/// The two `Vec`s are observational only (Phase 5 of EIP-8369 Profile 2
-/// support): nothing reads them to decide `unsatisfied`, and no caller may
-/// turn an entry in either of them into an `IlUnsatisfied` verdict.
+/// `unsatisfied` is the consensus verdict, reached by either profile: Profile 1
+/// by state comparison, Profile 2 by stateful eligibility replay. It holds the
+/// first offending transaction found, in list order.
+///
+/// The two `Vec`s record every Profile 2 outcome, including those that did not
+/// reach a verdict, so an operator can see what the replay decided and why
+/// without inferring it from the single verdict.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct IlCheckReport {
     /// The Profile 1 verdict, exactly as [`InclusionListSatisfactionValidator::check`]
     /// would have produced it.
     pub unsatisfied: Option<IlUnsatisfied>,
     /// Omitted Profile 2 candidates an [`IlProfile2Evaluator`] classified
-    /// [`Profile2Eligibility::Eligible`]: the omission EIP-8369 would make
-    /// enforceable, were Profile 2 enforcement wired to the verdict.
+    /// [`Profile2Eligibility::Eligible`]: omissions EIP-8369 makes enforceable.
+    /// The first also sets `unsatisfied`.
     pub profile_2_unjustified: Vec<H256>,
     /// Omitted Profile 2 candidates an [`IlProfile2Evaluator`] classified
     /// [`Profile2Eligibility::Undecided`].
@@ -399,8 +400,15 @@ impl InclusionListSatisfactionValidator {
 
             let profile = classify(tx_il, utxo_frames_active);
 
-            // EIP-8369 Profile 2: observational only (see `IlCheckReport`).
-            // Never contributes to `report.unsatisfied`.
+            // EIP-8369 Profile 2. A transaction that passes stateful eligibility
+            // replay at the evaluation index could have been included, so its
+            // omission is unjustified and the list is unsatisfied — the same
+            // verdict Profile 1 reaches by state comparison.
+            //
+            // Only `Eligible` gets there. `Ineligible` is an excused omission,
+            // and `Undecided` is one this pass cannot decide, which the
+            // governing asymmetry also excuses: a wrong `unsatisfied` makes the
+            // consensus layer withhold an attestation from an honest block.
             if profile == VopsProfile::TwoCandidate {
                 if let Some(evaluator) = profile_2
                     && fill_outcome.is_admitted()
@@ -409,7 +417,9 @@ impl InclusionListSatisfactionValidator {
                 {
                     match evaluator.evaluate(frame_tx) {
                         Profile2Eligibility::Eligible => {
-                            report.profile_2_unjustified.push(tx_il.hash(crypto));
+                            let tx_hash = tx_il.hash(crypto);
+                            report.profile_2_unjustified.push(tx_hash);
+                            report.unsatisfied.get_or_insert(IlUnsatisfied { tx_hash });
                         }
                         Profile2Eligibility::Undecided(_) => {
                             report.profile_2_undecided.push(tx_il.hash(crypto));

@@ -16,13 +16,14 @@ use std::collections::HashSet;
 
 use bytes::Bytes;
 use ethrex_blockchain::Blockchain;
+use ethrex_blockchain::error::ChainError;
 use ethrex_blockchain::focil_eligibility::MAX_VERIFY_GAS_PER_TX;
 use ethrex_blockchain::focil_profile2::BlockchainProfile2Evaluator;
 use ethrex_blockchain::inclusion_list_builder::{
     AccountStateView, IlStateProvider, IlStateProviderError,
 };
 use ethrex_blockchain::inclusion_list_validator::{
-    IlProfile2Evaluator, InclusionListSatisfactionValidator, Profile2Eligibility,
+    IlProfile2Evaluator, IlUnsatisfied, InclusionListSatisfactionValidator, Profile2Eligibility,
     StoreIlStateProvider,
 };
 use ethrex_common::validation::BlockValidationContext;
@@ -173,7 +174,13 @@ fn eligible_profile2_omission_lands_in_unjustified_bucket() {
         Some(&evaluator),
     );
 
-    assert!(report.unsatisfied.is_none());
+    assert_eq!(
+        report.unsatisfied,
+        Some(IlUnsatisfied {
+            tx_hash: il[0].hash(&crypto)
+        }),
+        "an eligible Profile 2 omission is unjustified, so the list is unsatisfied"
+    );
     assert_eq!(report.profile_2_unjustified, vec![il[0].hash(&crypto)]);
     assert!(report.profile_2_undecided.is_empty());
     assert_eq!(evaluator.calls.borrow().as_slice(), &[sender]);
@@ -359,14 +366,14 @@ async fn setup_profile2_store(accounts: &[(Address, Bytes)]) -> (Store, Blockcha
 /// scenario). Returns the imported (NOT canonical) block's header.
 ///
 /// Asserts the payload verdict (`add_block_pipeline_with_il`'s `Result`) is
-/// `Ok(())` — the caller is expected to additionally assert on the specific
-/// Profile 2 classification via `check_with_profile_2`.
+/// Returns the imported header alongside the pipeline's verdict, so a caller can
+/// assert what Profile 2 enforcement did to it end to end.
 async fn import_block_omitting_il(
     store: &Store,
     blockchain: &Blockchain,
     parent: &BlockHeader,
     il: Vec<Transaction>,
-) -> BlockHeader {
+) -> (BlockHeader, Result<(), ChainError>) {
     use ethrex_blockchain::payload::{BuildPayloadArgs, create_payload};
     use ethrex_common::types::{DEFAULT_BUILDER_GAS_CEIL, ELASTICITY_MULTIPLIER};
 
@@ -392,11 +399,9 @@ async fn import_block_omitting_il(
     let header = block.header.clone();
 
     let context = BlockValidationContext::with_inclusion_list(il);
-    blockchain
-        .add_block_pipeline_with_il(block, None, &context)
-        .expect("Profile 2 must never affect the payload verdict");
+    let verdict = blockchain.add_block_pipeline_with_il(block, None, &context);
 
-    header
+    (header, verdict)
 }
 
 /// A `self_verify` frame tx listed and omitted from a block whose post-state
@@ -411,7 +416,8 @@ async fn self_verify_frame_tx_that_would_pass_replay_is_eligible() {
     let tx = self_verify_tx(sender, 50_000);
     let il = vec![frame_tx_transaction(tx.clone())];
 
-    let header = import_block_omitting_il(&store, &blockchain, &genesis, il.clone()).await;
+    let (header, verdict) =
+        import_block_omitting_il(&store, &blockchain, &genesis, il.clone()).await;
 
     let gas_left = header.gas_limit.saturating_sub(header.gas_used);
     let pre_state = StoreIlStateProvider {
@@ -440,12 +446,23 @@ async fn self_verify_frame_tx_that_would_pass_replay_is_eligible() {
         Some(&evaluator),
     );
 
-    assert!(
-        report.unsatisfied.is_none(),
-        "payload verdict must be unchanged"
+    assert_eq!(
+        report.unsatisfied,
+        Some(IlUnsatisfied {
+            tx_hash: il[0].hash(&crypto)
+        })
     );
     assert_eq!(report.profile_2_unjustified, vec![il[0].hash(&crypto)]);
     assert!(report.profile_2_undecided.is_empty());
+
+    // End to end: the pipeline reaches the same verdict, so a builder that drops
+    // an includable listed frame transaction has its block reported unsatisfied.
+    match verdict {
+        Err(ChainError::IlUnsatisfied { tx_hash }) => {
+            assert_eq!(tx_hash, il[0].hash(&crypto))
+        }
+        other => panic!("expected IlUnsatisfied from the pipeline, got {other:?}"),
+    }
 }
 
 /// The same shape, but the sender's code reads storage slot
@@ -464,7 +481,8 @@ async fn self_verify_frame_tx_reading_outside_the_surface_is_ineligible() {
     let tx = self_verify_tx(sender, 50_000);
     let il = vec![frame_tx_transaction(tx.clone())];
 
-    let header = import_block_omitting_il(&store, &blockchain, &genesis, il.clone()).await;
+    let (header, verdict) =
+        import_block_omitting_il(&store, &blockchain, &genesis, il.clone()).await;
 
     let gas_left = header.gas_limit.saturating_sub(header.gas_used);
     let pre_state = StoreIlStateProvider {
@@ -538,7 +556,8 @@ async fn frame_tx_with_a_utxo_frame_is_undecided() {
     });
     let il = vec![frame_tx_transaction(tx.clone())];
 
-    let header = import_block_omitting_il(&store, &blockchain, &genesis, il.clone()).await;
+    let (header, verdict) =
+        import_block_omitting_il(&store, &blockchain, &genesis, il.clone()).await;
 
     let gas_left = header.gas_limit.saturating_sub(header.gas_used);
     let evaluator = BlockchainProfile2Evaluator::new(&blockchain, &header, gas_left);
@@ -547,7 +566,6 @@ async fn frame_tx_with_a_utxo_frame_is_undecided() {
         other => panic!("expected Undecided, got {other:?}"),
     }
 
-    // The payload verdict is unaffected regardless of the classification
-    // reachable through `import_block_omitting_il`'s internal
-    // `check_with_profile_2` call — asserted there already via `expect`.
+    // Undecided is excused, so the block stands.
+    verdict.expect("an undecidable omission must not fail the block");
 }

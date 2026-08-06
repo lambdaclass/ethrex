@@ -2566,8 +2566,9 @@ impl Blockchain {
             Some(&profile_2),
         );
 
-        // EIP-8369 Profile 2 is observe-only here: only `unsatisfied` (the
-        // Profile 1 verdict) may affect the payload's outcome.
+        // Log every Profile 2 outcome, including the ones that reached no
+        // verdict, so an operator can see what the replay decided rather than
+        // inferring it from the single `unsatisfied` value.
         for tx_hash in &report.profile_2_unjustified {
             info!(
                 target: "focil::profile2",
