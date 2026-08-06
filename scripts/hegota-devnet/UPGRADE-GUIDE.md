@@ -20,6 +20,42 @@ chain.
 This is not an ethrex quirk — it is how Ethereum upgrades work everywhere:
 rules for the past are frozen; new rules activate at a scheduled future fork.
 
+## Never schedule a fork before the clients can honour it
+
+The rule above assumes new rules activate when the software is ready. Scheduling
+a fork epoch that no running client implements breaks that assumption, and it
+breaks it **silently**: the config looks correct, the chain runs, and nothing
+complains, because the only clients present agree to ignore the fork.
+
+The chain is corrupt from that epoch onward. Every block is produced under the
+old rules while the config says the new ones apply, so the first client that
+does implement the fork cannot decode its own chain's history. There is no
+recovery short of re-genesis — no binary swap, no datadir preservation, no
+rolling restart.
+
+This is not hypothetical. It is what forced the 2026-08-06 re-genesis: the chain
+carried `HEZE_FORK_EPOCH: 2` while every client ran a branch whose `ForkName`
+stopped at `Gloas`, for roughly 3450 epochs. Heze changes the SSZ layout
+(`ExecutionPayloadBid` gains a 2-byte `inclusion_list_bits`), so the history was
+unreadable to any heze-aware client.
+
+Before scheduling a fork epoch, confirm on a throwaway enclave that the clients
+you will actually run **report the fork back**. For the consensus layer that is
+one call:
+
+```bash
+curl -s http://<cl>:4000/eth/v1/config/spec | tr ',' '\n' | grep _FORK_EPOCH
+```
+
+If the fork you scheduled is absent from that output, the client is ignoring it.
+Do not proceed. Note the check is circular if you run it against a client that
+cannot parse the field — absence proves the client is blind, not that the config
+is wrong. Read the config file on disk as well.
+
+The same lag bites every component that decodes blocks, not just clients: on
+2026-08-06 the consensus clients, the block explorer and the chain itself each
+had a different idea of what `heze` contained.
+
 ### The litmus test
 
 Before any upgrade, ask of the diff:

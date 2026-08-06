@@ -90,7 +90,12 @@ network_params:
 # Frame-transaction-aware Dora: decodes the type-0x06 envelope and shows per-frame
 # receipts. Stock `ethpandaops/dora` renders frame txs as opaque blobs.
 dora_params:
-  image: ghcr.io/lambdaclass/dora:frame-tx-view
+  # bbusa/dora:focil is the only explorer build that decodes heze blocks. Our own
+  # ghcr.io/lambdaclass/dora:frame-tx-view fork, and ethpandaops/dora:master, both
+  # fail with a 2-byte SSZ offset error because their ExecutionPayloadBid lacks
+  # heze's inclusion_list_bits. Switch back once the fork gains heze support: it
+  # carries the frame-transaction rendering this devnet exists to show.
+  image: bbusa/dora:focil
 
 additional_services:
   - dora
