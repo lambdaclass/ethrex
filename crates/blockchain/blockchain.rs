@@ -100,6 +100,8 @@ use ethrex_storage::{
 };
 use ethrex_trie::node::{BranchNode, ExtensionNode, LeafNode};
 use ethrex_trie::{Nibbles, Node, NodeRef, Trie, TrieError, TrieLogger, TrieNode};
+#[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+use ethrex_vm::backends::BLOATED_BATCH_THRESHOLD;
 use ethrex_vm::backends::CachingDatabase;
 #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
 use ethrex_vm::backends::levm::LEVM;
@@ -139,6 +141,10 @@ const MAX_MEMPOOL_SIZE_DEFAULT: usize = 10_000;
 /// Default mempool occupancy percentage (0-100) at which gapped-nonce
 /// transaction admission is denied. Set to 100 to disable the check.
 pub const DEFAULT_GAP_ADMIT_OCCUPANCY_THRESHOLD: u8 = 90;
+
+/// Merkle write set for the trie-node prefetch: written storage slots and changed accounts.
+#[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+type TriePrefetchInput = (Vec<(Address, H256)>, Vec<Address>);
 
 /// Background thread for dropping large tree structures off the critical path.
 /// Accepts any `Send` value and drops it on a dedicated thread, avoiding
@@ -313,6 +319,13 @@ pub struct BlockchainOptions {
     pub max_blobs_per_block: Option<u32>,
     /// If true, computes execution witnesses upon receiving newPayload messages and stores them in local storage
     pub precompute_witnesses: bool,
+    /// If true, transactions submitted via this node's RPC (e.g.
+    /// `eth_sendRawTransaction`) are kept private: they enter the mempool and
+    /// can be included in blocks built locally, but are not propagated to
+    /// peers via `Transactions` / `NewPooledTransactionHashes`. Equivalent to
+    /// reth's `--txpool.no-local-transactions-propagation`.
+    /// P2P-received transactions are unaffected.
+    pub private_mempool: bool,
     /// If true (default), per-block execution caches precompile results between the
     /// warmer thread and the executor. Set to false (via `--no-precompile-cache`) to
     /// disable the cache for benchmarking purposes.
@@ -328,6 +341,15 @@ pub struct BlockchainOptions {
     /// when all their pool entries are older than this and the nonce gap is
     /// above [`Self::max_nonce_gap`].
     pub dormancy: Duration,
+    /// Minimum fee-field bump (in percent) required to replace a non-blob
+    /// transaction at the same `(sender, nonce)`. Matches the 10%
+    /// default of every peer EL client.
+    pub price_bump_percent: u64,
+    /// Minimum fee-field bump (in percent) required to replace an EIP-4844
+    /// blob transaction at the same `(sender, nonce)`. Matches the 100%
+    /// default of every peer EL client. Blob replacements are deliberately
+    /// expensive because blob sidecars are large to re-propagate.
+    pub blob_price_bump_percent: u64,
     /// Maximum number of *queued* (future/nonce-gapped) transactions a single
     /// sender may hold in the mempool. Executable (contiguous-nonce) txs are NOT
     /// capped — mirroring geth's `AccountQueue` (a hard cap on the future/queued
@@ -369,10 +391,13 @@ impl Default for BlockchainOptions {
             r#type: BlockchainType::default(),
             max_blobs_per_block: None,
             precompute_witnesses: false,
+            private_mempool: false,
             precompile_cache_enabled: true,
             mempool_lifetime: DEFAULT_MEMPOOL_LIFETIME,
             max_nonce_gap: DEFAULT_MAX_NONCE_GAP,
             dormancy: DEFAULT_DORMANCY,
+            price_bump_percent: DEFAULT_PRICE_BUMP_PERCENT,
+            blob_price_bump_percent: DEFAULT_BLOB_PRICE_BUMP_PERCENT,
             max_queued_txs_per_account: DEFAULT_MAX_QUEUED_TXS_PER_ACCOUNT,
             bal_parallel_exec_enabled: true,
             bal_prefetch_enabled: true,
@@ -382,6 +407,15 @@ impl Default for BlockchainOptions {
         }
     }
 }
+
+/// Default 10% bump required for non-blob RBF replacements (matches geth
+/// `PriceBump`, reth `default_price_bump`, nethermind `PriceBump`,
+/// erigon `PriceBump`, besu `DEFAULT_PRICE_BUMP`).
+pub const DEFAULT_PRICE_BUMP_PERCENT: u64 = 10;
+/// Default 100% bump required for blob RBF replacements (matches geth
+/// `blobpool.PriceBump`, reth `replace_blob_tx_price_bump`, nethermind
+/// blob comparison, erigon `BlobPriceBump`, besu `DEFAULT_BLOB_PRICE_BUMP`).
+pub const DEFAULT_BLOB_PRICE_BUMP_PERCENT: u64 = 100;
 
 /// Default per-account *queued* (future-nonce) tx cap. Matches geth's
 /// `AccountQueue` default (64) — a hard cap on the future/queued subpool only;
@@ -796,6 +830,9 @@ impl Blockchain {
         // Gated by `--no-bal-prefetch`: when the operator disables BAL-driven
         // prefetching, skip the synchronous storage warm too. The warmer thread
         // below already honors the same toggle.
+        // Flat-KV warm for execution (SLOAD and SSTORE original values). Uses the
+        // full BAL access set, since execution genuinely reads every accessed slot.
+        //
         // Witness collection records every read that reaches the store-backed
         // logger beneath the shared cache. The warmer's speculative reads would
         // be recorded as state accesses the canonical execution never makes,
@@ -811,6 +848,42 @@ impl Blockchain {
                 let _ = caching_store.prefetch_storage(&slots);
             }
         }
+
+        // Prepare the trie-node prefetch input: the MERKLE WRITE SET (changed
+        // accounts + written slots), which is exactly what the merkleizer walks.
+        // `optimistic_updates` (synthesize_bal_updates) already drops read-only
+        // accesses and read-only slots, so warming is scoped to nodes the merkleizer
+        // will actually read; using the access set instead regressed read-heavy
+        // blocks (value-0 CALLs to existing accounts, bloated SLOADs). The prefetch
+        // runs on its own thread inside the scope below (`trie_prefetch_handle`),
+        // overlapping execution rather than preceding it. Gated so ordinary
+        // merkle-light blocks skip the probe cost; the payoff is on blocks that WRITE
+        // many distinct slots or modify many accounts, where merkle walks a large set
+        // of scattered, cold nodes. See `BLOATED_BATCH_THRESHOLD`.
+        //
+        // Unlike the flat-KV warm above, this needs no `!collect_witness` guard:
+        // `prefetch_trie_nodes` reads the trie-node CFs directly via
+        // `backend.begin_read()`, bypassing the witness-recording caching layer, so
+        // it cannot pollute the witness.
+        #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+        let trie_prefetch_input: Option<TriePrefetchInput> = if self.options.bal_prefetch_enabled
+            && let Some(updates) = optimistic_updates.as_ref()
+        {
+            let mut write_slots: Vec<(Address, H256)> = Vec::new();
+            for (addr, item) in updates {
+                for slot in item.added_storage.keys() {
+                    write_slots.push((*addr, *slot));
+                }
+            }
+            let write_accounts: Vec<Address> = updates.keys().copied().collect();
+            if write_slots.len() + write_accounts.len() >= BLOATED_BATCH_THRESHOLD {
+                Some((write_slots, write_accounts))
+            } else {
+                None
+            }
+        } else {
+            None
+        };
 
         // Each thread that captures `bal` needs its own Arc clone (cheap pointer bump).
         #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
@@ -880,6 +953,35 @@ impl Blockchain {
                             })
                     })
                     .transpose()?;
+
+                // Warm the merkleizer's trie-node reads concurrently with execution
+                // instead of up front. Touches different CFs than execution, so no
+                // exec contention; as a high-queue-depth batch it races ahead of the
+                // merkleizer's per-account walk so those reads land warm. Best-effort:
+                // any node it misses is just cold-read by the walk. The scope joins it
+                // before the block returns, but it shares the trie-node cold reads with
+                // the merkleizer at higher aggregate queue depth, so it completes
+                // within the exec/merkle window rather than extending it.
+                #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+                let trie_prefetch_handle = match trie_prefetch_input {
+                    Some((slots, accounts)) => {
+                        let storage = &self.storage;
+                        std::thread::Builder::new()
+                            .name("block_executor_trie_prefetch".to_string())
+                            .spawn_scoped(s, move || {
+                                // Result deliberately discarded: this is best-effort
+                                // cache warming. A read error (or any node it fails to
+                                // warm) just means the merkleizer cold-reads that node;
+                                // it never affects block output, so a failure must not
+                                // propagate into block processing.
+                                let _ = storage.prefetch_trie_nodes(&slots, &accounts);
+                            })
+                            .inspect_err(|e| debug!("trie-node prefetch spawn failed: {e}"))
+                            .ok()
+                    }
+                    None => None,
+                };
+
                 let max_queue_length_ref = &mut max_queue_length;
                 // Channel is needed whenever the merkleizer takes the streaming
                 // branch OR LEVM falls into the sequential path:
@@ -1069,6 +1171,15 @@ impl Blockchain {
                     .unwrap_or(Duration::ZERO);
                 #[cfg(any(not(feature = "rayon"), feature = "eip-8025"))]
                 let warmer_duration = Duration::ZERO;
+                // Best-effort prefetch: join so the scope's borrows end cleanly.
+                // The warming result is discarded, but surface a panic so a failing
+                // prefetch (e.g. a RocksDB error) is observable rather than silent.
+                #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+                if let Some(h) = trie_prefetch_handle
+                    && let Err(e) = h.join()
+                {
+                    warn!("trie-node prefetch thread panicked (best-effort, ignored): {e:?}");
+                }
                 Ok((execution_result, merkleization_result, warmer_duration))
             },
         )?;
@@ -2908,18 +3019,52 @@ impl Blockchain {
         Ok(())
     }
 
-    /// Add a blob transaction and its blobs bundle to the mempool checking that the transaction is valid
+    /// Add a blob transaction and its blobs bundle to the mempool checking that the transaction is valid.
+    ///
+    /// This is the P2P entry point: the transaction's hash is queued for
+    /// broadcast to peers regardless of `BlockchainOptions::private_mempool`.
+    /// For the local-RPC path that honors `private_mempool`, use
+    /// [`Self::add_local_blob_transaction_to_pool`].
     #[cfg(feature = "c-kzg")]
     pub async fn add_blob_transaction_to_pool(
         &self,
         transaction: EIP4844Transaction,
         blobs_bundle: BlobsBundle,
     ) -> Result<H256, MempoolError> {
+        self.add_blob_transaction_to_pool_inner(transaction, blobs_bundle, true)
+            .await
+    }
+
+    /// Local-RPC counterpart of [`Self::add_blob_transaction_to_pool`].
+    /// When `BlockchainOptions::private_mempool` is `true`, the transaction
+    /// is added to the mempool but is NOT queued for P2P broadcast — it
+    /// stays available only for blocks built locally.
+    #[cfg(feature = "c-kzg")]
+    pub async fn add_local_blob_transaction_to_pool(
+        &self,
+        transaction: EIP4844Transaction,
+        blobs_bundle: BlobsBundle,
+    ) -> Result<H256, MempoolError> {
+        let broadcast = !self.options.private_mempool;
+        self.add_blob_transaction_to_pool_inner(transaction, blobs_bundle, broadcast)
+            .await
+    }
+
+    #[cfg(feature = "c-kzg")]
+    async fn add_blob_transaction_to_pool_inner(
+        &self,
+        transaction: EIP4844Transaction,
+        blobs_bundle: BlobsBundle,
+        broadcast: bool,
+    ) -> Result<H256, MempoolError> {
         let fork = self.current_fork().await?;
 
         let transaction = Transaction::EIP4844Transaction(transaction);
         let hash = transaction.hash(&NativeCrypto);
         if self.mempool.contains_tx(hash)? {
+            if !broadcast {
+                warn!(%hash, "tx already public; --mempool.private cannot retroactively un-broadcast");
+            }
             return Ok(hash);
         }
 
@@ -2958,23 +3103,61 @@ impl Blockchain {
         // orphaned bundle so it isn't leaked in the pool. Best-effort: keep the
         // original error (a failing insert means the write lock is poisoned or
         // eviction failed, in which case the cleanup can't do better anyway).
-        if let Err(e) = self.mempool.add_transaction(
-            hash,
-            sender,
-            MempoolTransaction::new(transaction, sender),
-            frame_reservation,
-            sender_admission,
-        ) {
+        let mempool_tx = MempoolTransaction::new(transaction, sender);
+        let inserted = if broadcast {
+            self.mempool.add_transaction(
+                hash,
+                sender,
+                mempool_tx,
+                frame_reservation,
+                sender_admission,
+            )
+        } else {
+            self.mempool.add_transaction_no_broadcast(
+                hash,
+                sender,
+                mempool_tx,
+                frame_reservation,
+                sender_admission,
+            )
+        };
+        if let Err(e) = inserted {
             let _ = self.mempool.remove_blobs_bundle(&hash);
             return Err(e);
         }
         Ok(hash)
     }
 
-    /// Add a transaction to the mempool checking that the transaction is valid
+    /// Add a transaction to the mempool checking that the transaction is valid.
+    ///
+    /// This is the P2P entry point: the transaction's hash is queued for
+    /// broadcast to peers regardless of `BlockchainOptions::private_mempool`.
+    /// For the local-RPC path that honors `private_mempool`, use
+    /// [`Self::add_local_transaction_to_pool`].
     pub async fn add_transaction_to_pool(
         &self,
         transaction: Transaction,
+    ) -> Result<H256, MempoolError> {
+        self.add_transaction_to_pool_inner(transaction, true).await
+    }
+
+    /// Equivalent of `add_transaction_to_pool` for transactions submitted via
+    /// this node's local RPC. When `BlockchainOptions::private_mempool` is
+    /// `true`, the transaction is added to the mempool but is NOT queued for
+    /// P2P broadcast — it stays available only for blocks built locally.
+    pub async fn add_local_transaction_to_pool(
+        &self,
+        transaction: Transaction,
+    ) -> Result<H256, MempoolError> {
+        let broadcast = !self.options.private_mempool;
+        self.add_transaction_to_pool_inner(transaction, broadcast)
+            .await
+    }
+
+    async fn add_transaction_to_pool_inner(
+        &self,
+        transaction: Transaction,
+        broadcast: bool,
     ) -> Result<H256, MempoolError> {
         // Blob transactions should be submitted via add_blob_transaction along with the corresponding blobs bundle
         if matches!(transaction, Transaction::EIP4844Transaction(_)) {
@@ -2994,6 +3177,9 @@ impl Blockchain {
         }
         let hash = transaction.hash(&NativeCrypto);
         if self.mempool.contains_tx(hash)? {
+            if !broadcast {
+                warn!(%hash, "tx already public; --mempool.private cannot retroactively un-broadcast");
+            }
             return Ok(hash);
         }
         let sender = transaction.sender(&NativeCrypto)?;
@@ -3008,13 +3194,24 @@ impl Blockchain {
             self.validate_transaction(&transaction, sender).await?;
 
         // Add transaction to storage
-        self.mempool.add_transaction(
-            hash,
-            sender,
-            MempoolTransaction::new(transaction, sender),
-            frame_reservation,
-            sender_admission,
-        )?;
+        let mempool_tx = MempoolTransaction::new(transaction, sender);
+        if broadcast {
+            self.mempool.add_transaction(
+                hash,
+                sender,
+                mempool_tx,
+                frame_reservation,
+                sender_admission,
+            )?;
+        } else {
+            self.mempool.add_transaction_no_broadcast(
+                hash,
+                sender,
+                mempool_tx,
+                frame_reservation,
+                sender_admission,
+            )?;
+        }
 
         Ok(hash)
     }
@@ -3541,7 +3738,13 @@ impl Blockchain {
 
         // Check the nonce of pendings TXs in the mempool from the same sender
         // If it exists check if the new tx has higher fees
-        let tx_to_replace_hash = self.mempool.find_tx_to_replace(sender, nonce, tx)?;
+        let tx_to_replace_hash = self.mempool.find_tx_to_replace(
+            sender,
+            nonce,
+            tx,
+            self.options.price_bump_percent,
+            self.options.blob_price_bump_percent,
+        )?;
 
         // Cumulative balance check across this sender's pending transactions.
         // Without this, a sender at the per-sender slot cap can have only one
@@ -3766,6 +3969,15 @@ impl Blockchain {
     }
 
     pub fn get_p2p_transaction_by_hash(&self, hash: &H256) -> Result<P2PTransaction, StoreError> {
+        // --mempool.private: never serve private txs over P2P, even if a peer
+        // somehow learned the hash. The spec for `GetPooledTransactions`
+        // explicitly allows skipping unavailable transactions, so we mirror
+        // the "not found" path the caller already handles.
+        if self.mempool.is_private(*hash)? {
+            return Err(StoreError::Custom(format!(
+                "Hash {hash} is private and must not propagate",
+            )));
+        }
         let Some(tx) = self.mempool.get_transaction_by_hash(*hash)? else {
             return Err(StoreError::Custom(format!(
                 "Hash {hash} not found in the mempool",

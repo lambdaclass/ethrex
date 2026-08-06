@@ -15,7 +15,7 @@ use ethrex_crypto::Crypto;
 pub use ethrex_levm::StatelessValidator;
 pub use ethrex_levm::call_frame::CallFrameBackup;
 use ethrex_levm::db::gen_db::GeneralizedDatabase;
-pub use ethrex_levm::db::{CachingDatabase, Database as LevmDatabase};
+pub use ethrex_levm::db::{BLOATED_BATCH_THRESHOLD, CachingDatabase, Database as LevmDatabase};
 pub use ethrex_levm::errors::{self, InternalError, VMError};
 use ethrex_levm::errors::{ExecutionReport, TxResult};
 pub use ethrex_levm::vm::VMType;
