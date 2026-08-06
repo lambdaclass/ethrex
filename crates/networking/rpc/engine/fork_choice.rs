@@ -720,13 +720,20 @@ fn parse_v5(
         .as_ref()
         .ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
 
-    if params.len() != 2 && params.len() != 1 {
-        return Err(RpcErr::BadParams("Expected 2 or 1 params".to_owned()));
+    // The third parameter is `custodyColumns: DATA|null`, a 16-byte bitarray of
+    // the consensus client's PeerDAS custody set (engine-api, Bogota). It is
+    // accepted and ignored: ethrex advertises no custody-dependent behaviour, and
+    // a client is free to send null, which is what Lighthouse does.
+    //
+    // One and two parameters stay accepted so a caller predating the third is not
+    // rejected.
+    if params.is_empty() || params.len() > 3 {
+        return Err(RpcErr::BadParams("Expected 1, 2 or 3 params".to_owned()));
     }
 
     let forkchoice_state: ForkChoiceState = serde_json::from_value(params[0].clone())?;
     let mut payload_attributes: Option<PayloadAttributesV5> = None;
-    if params.len() == 2 {
+    if params.len() >= 2 {
         // execution-apis#796: V5 attributes are validated strictly, mirroring
         // parse_v4. A present but malformed object (e.g. missing the required
         // targetGasLimit) is rejected rather than silently ignored; an
@@ -999,6 +1006,45 @@ mod tests {
         assert!(
             matches!(err, crate::utils::RpcErr::UnsupportedFork(_)),
             "expected UnsupportedFork, got {err:?}"
+        );
+    }
+
+    /// `engine_forkchoiceUpdatedV5` carries a third parameter, `custodyColumns`,
+    /// which Lighthouse sends as `null` because it advertises no custody bitmap.
+    /// Rejecting the arity leaves the consensus client unable to start a payload
+    /// build, which halts the chain at the fork boundary.
+    #[test]
+    fn parse_v5_accepts_the_custody_columns_parameter() {
+        use serde_json::json;
+
+        let state = json!({
+            "headBlockHash": format!("0x{:064x}", 1),
+            "safeBlockHash": format!("0x{:064x}", 1),
+            "finalizedBlockHash": format!("0x{:064x}", 1),
+        });
+
+        // Three params with a null custody bitmap: the shape Lighthouse sends.
+        let (_, attrs) = super::parse_v5(&Some(vec![
+            state.clone(),
+            serde_json::Value::Null,
+            serde_json::Value::Null,
+        ]))
+        .expect("V5 must accept the specified three-parameter form");
+        assert!(attrs.is_none());
+
+        // The one- and two-parameter forms stay accepted.
+        super::parse_v5(&Some(vec![state.clone()])).expect("one param");
+        super::parse_v5(&Some(vec![state.clone(), serde_json::Value::Null])).expect("two params");
+
+        // A fourth parameter is not defined by any revision.
+        assert!(
+            super::parse_v5(&Some(vec![
+                state,
+                serde_json::Value::Null,
+                serde_json::Value::Null,
+                serde_json::Value::Null,
+            ]))
+            .is_err()
         );
     }
 

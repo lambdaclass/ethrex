@@ -152,11 +152,19 @@ pub struct GetInclusionListV1Request;
 
 impl RpcHandler for GetInclusionListV1Request {
     fn parse(params: &Option<Vec<Value>>) -> Result<Self, RpcErr> {
-        // `engine_getInclusionListV1` takes no parameters. Both an absent and
-        // an empty array are accepted; anything else is a caller error.
+        // The engine API defines `engine_getInclusionListV1` with `params: []`.
+        //
+        // A single parameter is also accepted and ignored: every consensus client
+        // that implements FOCIL today sends a `parentHash` here, because they
+        // were written against the pre-spec design and the engine-api FOCIL
+        // methods only landed on 2026-08-03. Ignoring it is safe rather than
+        // merely lenient, because the list is built against this node's canonical
+        // head, which is exactly the block that hash identifies.
+        //
+        // Remove this once a client ships the specified signature.
         match params {
             None => Ok(Self),
-            Some(params) if params.is_empty() => Ok(Self),
+            Some(params) if params.len() <= 1 => Ok(Self),
             Some(_) => Err(RpcErr::BadParams("Expected no params".to_owned())),
         }
     }
