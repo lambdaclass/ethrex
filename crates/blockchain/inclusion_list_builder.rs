@@ -20,7 +20,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use ethrex_common::{
     Address, U256,
-    types::{MempoolTransaction, Transaction},
+    types::{MempoolTransaction, Transaction, utxo_vault},
 };
 use rustc_hash::FxHashMap;
 
@@ -91,6 +91,23 @@ impl Default for InclusionListBuilder {
     }
 }
 
+/// Whether a candidate's nonce lives in the sender's linear account-nonce
+/// domain. False only for [EIP-8250] keyed frame transactions, whose `nonce_seq`
+/// is one sequence per `(sender, nonce_key)` in the NONCE_MANAGER predeploy.
+fn is_linear_nonce_domain(tx: &Transaction) -> bool {
+    !matches!(tx, Transaction::FrameTransaction(frame_tx) if frame_tx.is_keyed())
+}
+
+/// Shape exclusions that apply to every candidate regardless of nonce domain:
+/// blob carriers (an [EIP-7805] spec rule) and L2 privileged transactions
+/// (FOCIL is L1-only).
+fn is_il_eligible_shape(tx: &Transaction) -> bool {
+    !matches!(
+        tx,
+        Transaction::EIP4844Transaction(_) | Transaction::PrivilegedL2Transaction(_)
+    )
+}
+
 impl InclusionListBuilder {
     pub fn new(policy: IlPolicy, per_sender_cap: usize, max_bytes: usize) -> Self {
         Self {
@@ -150,6 +167,14 @@ impl InclusionListBuilder {
     /// Returns the surviving candidates as a flat list of
     /// `(MempoolTransaction, Transaction)` pairs (the mempool wrapper is
     /// retained for `time()` access during scoring).
+    ///
+    /// Candidates are split by nonce domain first. Only the linear domain —
+    /// non-frame transactions and key-0 frame transactions, whose `nonce_seq`
+    /// *is* the account's linear nonce — is walked against the sender's account
+    /// nonce. [EIP-8250] keyed frame transactions carry `nonce_seq` in the
+    /// NONCE_MANAGER domain, one sequence per `(sender, nonce_key)`, so the
+    /// account nonce is the wrong yardstick and a linear walk drops them all.
+    /// This mirrors the mempool's `is_keyed_frame_tx` handling.
     fn filter_and_cap(
         &self,
         txs_by_sender: FxHashMap<Address, Vec<MempoolTransaction>>,
@@ -157,7 +182,7 @@ impl InclusionListBuilder {
     ) -> Vec<MempoolTransaction> {
         let mut survivors: Vec<MempoolTransaction> = Vec::new();
 
-        for (sender, mut sender_txs) in txs_by_sender {
+        for (sender, sender_txs) in txs_by_sender {
             // Look up the sender's account once per sender. A read failure
             // is treated as "skip this sender" — being conservative, since
             // we can't validate them.
@@ -167,9 +192,19 @@ impl InclusionListBuilder {
                 Err(_) => continue,
             };
 
+            // EIP-8312: every UTXO spend shares the vault sender, so per-sender
+            // limits there are network-wide limits. Their conflict domain is the
+            // input-index set, not the sender, and the 8 KiB list cap already
+            // bounds how many reach the list.
+            let is_vault_sender = sender == utxo_vault();
+
+            let (mut linear, non_linear): (Vec<_>, Vec<_>) = sender_txs
+                .into_iter()
+                .partition(|mtx| is_linear_nonce_domain(mtx.transaction()) && !is_vault_sender);
+
             // Sort by ascending nonce. The mempool `Ord` ranks by tip, not
             // nonce, so do not rely on it for the per-sender cap.
-            sender_txs.sort_by_key(|mtx| mtx.nonce());
+            linear.sort_by_key(|mtx| mtx.nonce());
 
             // Track the expected next nonce as we walk; if there's a gap we
             // stop accepting from this sender (the gapped tx can't be
@@ -178,19 +213,14 @@ impl InclusionListBuilder {
             let mut running_balance = acct.balance;
             let mut taken: usize = 0;
 
-            for mtx in sender_txs {
+            for mtx in linear {
                 if taken >= self.per_sender_cap {
                     break;
                 }
 
                 let tx: &Transaction = mtx.transaction();
 
-                // Blob exclusion (spec rule, non-negotiable).
-                if matches!(tx, Transaction::EIP4844Transaction(_)) {
-                    continue;
-                }
-                // L2 privileged exclusion (FOCIL is L1-only).
-                if matches!(tx, Transaction::PrivilegedL2Transaction(_)) {
+                if !is_il_eligible_shape(tx) {
                     continue;
                 }
 
@@ -203,17 +233,37 @@ impl InclusionListBuilder {
                     }
                     break; // gap: stop walking this sender
                 }
-                let cost = match tx.cost_without_base_fee() {
-                    Some(c) => c,
-                    None => continue, // malformed fee data — skip
-                };
-                if cost > running_balance {
-                    break; // sender can't afford this tx, can't afford follow-ups either
+
+                // Frame transactions are not balance-gated: the payer is a
+                // paymaster resolved during the validation prefix, so the
+                // sender's balance says nothing about affordability.
+                if !matches!(tx, Transaction::FrameTransaction(_)) {
+                    let cost = match tx.cost_without_base_fee() {
+                        Some(c) => c,
+                        None => continue, // malformed fee data — skip
+                    };
+                    if cost > running_balance {
+                        break; // sender can't afford this tx, can't afford follow-ups either
+                    }
+                    running_balance = running_balance.saturating_sub(cost);
                 }
 
                 // Account moves forward as if this tx were included next.
                 expected_nonce = expected_nonce.saturating_add(1);
-                running_balance = running_balance.saturating_sub(cost);
+                taken = taken.saturating_add(1);
+                survivors.push(mtx);
+            }
+
+            for mtx in non_linear {
+                // The per-sender cap still bounds one sender's share of the
+                // list, but a vault-sender spend belongs to whoever built it,
+                // so it is exempt.
+                if !is_vault_sender && taken >= self.per_sender_cap {
+                    break;
+                }
+                if !is_il_eligible_shape(mtx.transaction()) {
+                    continue;
+                }
                 taken = taken.saturating_add(1);
                 survivors.push(mtx);
             }
