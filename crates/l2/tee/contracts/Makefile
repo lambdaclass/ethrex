@@ -27,8 +27,11 @@ DCAP_QPL_REV = 3877d9aab99c090ad63bc71c18878e7659e26695
 PCCS_READER_REV = 926025f12cb63b6c1c50d5aad735223e71ed853b
 
 # Clone if absent, then re-assert and verify the pin on every run, so a stale or
-# half-checked-out tree is corrected rather than silently reused. After editing a
-# revision above, `make clean` to rebuild.
+# half-checked-out tree is corrected rather than silently reused. Editing a revision
+# above takes effect on the next run; `automata-dcap-qpl` is the one tree this cannot
+# re-assert, see its target below. `make clean` removes every pinned tree, for when a
+# pin cannot be re-asserted in place (local edits, an interrupted checkout, a clone
+# left pointing at another remote).
 define pin
 	@test -d $(1)/.git || git clone -q $(2) $(1)
 	@git -C $(1) cat-file -e "$(3)^{commit}" 2>/dev/null || git -C $(1) fetch -q --tags origin
@@ -107,6 +110,6 @@ deploy-all:
 	make automata-dcap-qpl
 
 clean:
-	rm -rf deploydeps cache out deployment/* automata-dcap-qpl
+	rm -rf deploydeps lib solc_out cache out deployment/* automata-dcap-qpl
 
 .PHONY: deploy-all deploy deploy-pccs deploy-dcap clean
