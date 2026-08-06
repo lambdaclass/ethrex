@@ -83,6 +83,21 @@ These are all cheap to fix and worth addressing before more implementations star
 
 4.1. **The data-availability assumption behind spendability should be stated.** Batch witnesses are derivable from state only transiently: the batch tree's leaves are the ring roots, which begin to be overwritten the block after the batch seals. After that, both the `siblings` (the creation block's full leaf set) and the `batch_siblings` exist only in history. Under EIP-4444-style history expiry, a dormant UTXO becomes unspendable without out-of-protocol archives — value can be permanently locked by losing a witness, an availability asymmetry a plain account balance does not have. Suggestion: a Security Considerations subsection naming the retention assumption, recommending wallets persist openings and witnesses at receipt time and upgrade ring proofs to batch proofs promptly; optionally consider double-buffering the ring (`RING_SIZE = 2 × BATCH_SIZE`) so batch witnesses stay state-derivable for a full extra batch.
 
+   **Measured on a live chain: the rebuild window is exactly one block.** Because
+   `RING_SIZE == BATCH_SIZE`, the whole of batch `b` is readable from the ring at
+   exactly one head — its last block, `(b+1)*BATCH_SIZE - 1`. One block earlier that
+   block's own root is not written yet; one block later the batch's first slot has
+   been overwritten. So a holder who reads the ring on demand has a single slot time
+   (6 s on our devnet) to build a batch witness, and after that the UTXO needs an
+   out-of-protocol archive. Verified by watching batch 0 age out: its stored batch
+   root still matches an independent reconstruction taken while the batch was intact,
+   but the same reconstruction from the ring now fails. This is what makes the
+   double-buffering suggestion above (`RING_SIZE = 2 * BATCH_SIZE`) concrete rather
+   than precautionary: it would widen the window from one block to a full batch.
+   Wallets can avoid the problem entirely by accumulating each block's openings root
+   as it is written, but the spec should say so, since nothing in the text hints that
+   on-demand reconstruction is a one-block affair.
+
 4.2. **Settlement can mint a zero-value UTXO, which the deposit path explicitly forbids.** `change_value` can be exactly zero; if `change_index` names a `utxo_out`, settlement emits `UtxoCreated` with `value = 0`, consumes an index, and adds a leaf — an object class the vault code was designed to exclude, surfacing as phantom payments to scanning wallets. If the change is a zero credit to a nonexistent account, the 183,600 reserve is forfeited for state that is never written (the return is conditioned on existence only). Suggestion: skip settlement outputs whose settled value is zero (no log, no index, no leaf, no transfer, reserve returned), or explicitly bless zero-value change UTXOs and warn indexers.
 
 4.3. **Outputs may name `UTXO_VAULT`.** A `utxo_out` to the vault is a live unspent claim that can never be spent (no signature can resolve to the vault); an `account_out` to the vault is a self-transfer that converts input value into inert vault surplus. The draft forbids the vault only as payer. Suggestion: `assert out.recipient != UTXO_VAULT` for both output lists (and optionally in the vault deposit code), or state the burn is intentional.
