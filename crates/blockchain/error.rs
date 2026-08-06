@@ -135,6 +135,10 @@ pub enum MempoolError {
     InvalidTxSender(#[from] ethrex_crypto::CryptoError),
     #[error("Attempted to replace a pooled transaction with an underpriced transaction")]
     UnderpricedReplacement,
+    #[error(
+        "Attempted to replace a pooled transaction with one of a different category (blob vs. non-blob)"
+    )]
+    ReplacementTypeMismatch,
     #[error("Frame transactions (EIP-8141) are not supported before the Hegota fork")]
     FrameTxPreFork,
     #[error("Frame transaction expiry deadline has passed")]
