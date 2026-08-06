@@ -10,19 +10,20 @@
 //! validator. Helpers are imported from `batch_tests` where possible to keep
 //! parity with existing patterns.
 
-use std::{fs::File, io::BufReader, path::PathBuf};
+use std::{collections::BTreeMap, fs::File, io::BufReader, path::PathBuf};
 
 use bytes::Bytes;
 use ethrex_blockchain::{
     Blockchain,
-    error::ChainError,
+    error::{ChainError, MempoolError},
     payload::{BuildPayloadArgs, create_payload},
 };
 use ethrex_common::{
     Address, H160, H256, U256,
     types::{
         Block, BlockHeader, DEFAULT_BUILDER_GAS_CEIL, EIP1559Transaction, EIP4844Transaction,
-        ELASTICITY_MULTIPLIER, GenesisAccount, Transaction, TxKind,
+        ELASTICITY_MULTIPLIER, FrameTransaction, Genesis, GenesisAccount, RecentRootReference,
+        Transaction, TxKind, frame_tx_recent_root,
     },
     validation::BlockValidationContext,
 };
@@ -462,4 +463,92 @@ async fn mixed_valid_and_invalid_omitted_il_is_unsatisfied() {
         }
         other => panic!("expected ChainError::IlUnsatisfied, got {other:?}"),
     }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// EIP-8272 recent-root judgment: `check_recent_root_references_at_root` takes
+// `current_slot` as an explicit parameter, which is what makes it usable to
+// judge a reference *inside* the block whose slot it names — a question
+// distinct from admission's "would this be valid in the next block".
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// A reference to slot `S`, committed in the RECENT_ROOT_ADDRESS predeploy at
+/// genesis, must be rejected when judged with `current_slot == S` (in-block
+/// judgment: a transaction executing inside the block at slot `S` sees the
+/// VM's own `env.slot_number == S`, and a root only becomes referenceable the
+/// slot after it was written) and accepted with `current_slot == S + 1`
+/// (admission's prospective question: would this be valid in the block that
+/// follows a head at slot `S`). Pre-fix, `check_recent_root_references` always
+/// derived `current_slot = header.slot_number + 1` regardless of which
+/// question was being asked, which would have wrongly admitted the in-block
+/// case too.
+#[tokio::test]
+async fn recent_root_reference_off_by_one_between_judgment_and_admission() {
+    const REFERENCE_SLOT: u64 = 10_000;
+
+    let reference = RecentRootReference {
+        source_id: H256::from_low_u64_be(0x1234),
+        slot: REFERENCE_SLOT,
+        root: H256::from_low_u64_be(0x5678),
+    };
+
+    let mut predeploy_storage = BTreeMap::new();
+    predeploy_storage.insert(
+        U256::from_big_endian(reference.storage_key().as_bytes()),
+        U256::from_big_endian(reference.entry_hash().as_bytes()),
+    );
+
+    let genesis = Genesis {
+        alloc: [(
+            frame_tx_recent_root(),
+            GenesisAccount {
+                // The predeploy holds no runtime bytecode; only its storage,
+                // seeded with this reference's committed entry, matters here.
+                code: Bytes::new(),
+                storage: predeploy_storage,
+                balance: U256::zero(),
+                nonce: 1,
+            },
+        )]
+        .into_iter()
+        .collect(),
+        ..Default::default()
+    };
+    let mut store = Store::new("focil-recent-root-slot-test", EngineType::InMemory)
+        .expect("Failed to build DB for testing");
+    store
+        .add_initial_state(genesis)
+        .await
+        .expect("Failed to add genesis state");
+
+    let blockchain = Blockchain::default_with_store(store.clone());
+    let state_root = store.get_block_header(0).unwrap().unwrap().state_root;
+
+    let frame_tx = FrameTransaction {
+        recent_root_references: vec![reference],
+        ..Default::default()
+    };
+
+    // Judged inside the block at slot S itself (current_slot == S): the
+    // reference names the very slot it is being evaluated in, which can never
+    // be referenceable yet.
+    let judged_in_own_slot =
+        blockchain.check_recent_root_references_at_root(&frame_tx, REFERENCE_SLOT, state_root);
+    assert!(
+        matches!(
+            judged_in_own_slot,
+            Err(MempoolError::FrameTxRecentRootTooNew { .. })
+        ),
+        "reference to slot S must be rejected when judged with current_slot == S; got {judged_in_own_slot:?}"
+    );
+
+    // Admitted against a head at slot S (current_slot == S + 1): the earliest
+    // slot the transaction could land in. The entry is in-window and
+    // committed, so admission accepts it.
+    let admitted_against_next_slot =
+        blockchain.check_recent_root_references_at_root(&frame_tx, REFERENCE_SLOT + 1, state_root);
+    assert!(
+        admitted_against_next_slot.is_ok(),
+        "reference to slot S must be accepted when current_slot == S + 1; got {admitted_against_next_slot:?}"
+    );
 }

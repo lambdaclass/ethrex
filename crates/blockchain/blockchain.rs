@@ -3331,15 +3331,14 @@ impl Blockchain {
     /// reference `frame_tx` declares would be valid in the earliest block that
     /// could include it, with `header` as the current head. `current_slot` is
     /// therefore `head.slot_number + 1`: a reference that is "too new" or expired
-    /// against that slot can never make the transaction valid right now.
+    /// against that slot can never make the transaction valid right now. This
+    /// prospective "next block" question is what all three current callers ask;
+    /// it is one slot too high for judging a reference from inside the block at
+    /// `header`'s own slot, which is what `check_recent_root_references_at_root`
+    /// is for.
     ///
-    /// The three consensus conditions mirrored here:
-    ///   1. `slot < current_slot` (a root is only referenceable from the slot
-    ///      after it was written),
-    ///   2. `current_slot - slot <= FRAME_TX_RECENT_ROOT_USABLE_WINDOW` (older
-    ///      entries may be overwritten by ring-buffer aliasing),
-    ///   3. the entry hash is committed in the RECENT_ROOT_ADDRESS predeploy at
-    ///      `header`'s state.
+    /// See `check_recent_root_references_at_root` for the three consensus
+    /// conditions this delegates to, evaluated here against `header`'s state.
     ///
     /// The storage assertion must be explicit: the validation-trace simulation
     /// runs only the validation prefix and never reaches the frame-tx
@@ -3482,6 +3481,41 @@ impl Blockchain {
         }
         let head_slot = config.effective_slot_number(header.slot_number, header.timestamp);
         let current_slot = head_slot.saturating_add(1);
+        // Mirrors `Store::get_storage_at(header_number, ...)`: resolve the
+        // canonical block at `header_number` and read its state. Every existing
+        // caller passes `header_number == header.number` for a header it already
+        // holds, so the lookup always finds `header` itself; `header.state_root`
+        // is only a fallback for the unreachable case where it doesn't.
+        let state_root = self
+            .storage
+            .get_block_header(header_number)?
+            .map(|resolved| resolved.state_root)
+            .unwrap_or(header.state_root);
+        self.check_recent_root_references_at_root(frame_tx, current_slot, state_root)
+    }
+
+    /// EIP-8272 §Public mempool handling: the reference-validity rule
+    /// `check_recent_root_references` applies, taking `current_slot` and
+    /// `state_root` explicitly instead of deriving them from a canonical
+    /// header. Reading through `Store::get_storage_at_root` (rather than
+    /// `get_storage_at`, which resolves by block *number* and so always lands
+    /// on the canonical block at that height) makes this safe to use for
+    /// judging a block that is not yet canonical: pass that block's own
+    /// post-execution state root, not its number.
+    ///
+    /// The three consensus conditions:
+    ///   1. `slot < current_slot` (a root is only referenceable from the slot
+    ///      after it was written),
+    ///   2. `current_slot - slot <= FRAME_TX_RECENT_ROOT_USABLE_WINDOW` (older
+    ///      entries may be overwritten by ring-buffer aliasing),
+    ///   3. the entry hash is committed in the RECENT_ROOT_ADDRESS predeploy at
+    ///      `state_root`.
+    pub fn check_recent_root_references_at_root(
+        &self,
+        frame_tx: &FrameTransaction,
+        current_slot: u64,
+        state_root: H256,
+    ) -> Result<(), MempoolError> {
         let recent_root_address = ethrex_common::types::frame_tx_recent_root();
         for reference in &frame_tx.recent_root_references {
             if reference.slot >= current_slot {
@@ -3505,7 +3539,7 @@ impl Blockchain {
             // fails the match.
             let stored = self
                 .storage
-                .get_storage_at(header_number, recent_root_address, reference.storage_key())?
+                .get_storage_at_root(state_root, recent_root_address, reference.storage_key())?
                 .unwrap_or_default();
             let expected = U256::from_big_endian(reference.entry_hash().as_bytes());
             if stored != expected {
