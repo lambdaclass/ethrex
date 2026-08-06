@@ -213,6 +213,13 @@ pub struct PayloadStatus {
         with = "optional_hex_bytes"
     )]
     pub witness: Option<Bytes>,
+    /// EIP-7805 (FOCIL) `PayloadStatusV2.inclusionListSatisfied`: whether the
+    /// payload satisfied the inclusion list constraints. Carries a value only
+    /// when the payload is `VALID`; an unsatisfied inclusion list leaves the
+    /// payload `VALID` with `Some(false)`. Absent for every pre-Hegotá method,
+    /// whose responses are `PayloadStatusV1`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub inclusion_list_satisfied: Option<bool>,
 }
 
 #[derive(Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -233,6 +240,7 @@ impl PayloadStatus {
             latest_valid_hash: Some(latest_valid_hash),
             validation_error: Some(error),
             witness: None,
+            inclusion_list_satisfied: None,
         }
     }
 
@@ -243,6 +251,7 @@ impl PayloadStatus {
             latest_valid_hash: None,
             validation_error: Some(error.to_string()),
             witness: None,
+            inclusion_list_satisfied: None,
         }
     }
 
@@ -253,6 +262,7 @@ impl PayloadStatus {
             latest_valid_hash: Some(hash),
             validation_error: None,
             witness: None,
+            inclusion_list_satisfied: None,
         }
     }
 
@@ -263,6 +273,7 @@ impl PayloadStatus {
             latest_valid_hash: None,
             validation_error: None,
             witness: None,
+            inclusion_list_satisfied: None,
         }
     }
 
@@ -273,6 +284,7 @@ impl PayloadStatus {
             latest_valid_hash: Some(hash),
             validation_error: None,
             witness: None,
+            inclusion_list_satisfied: None,
         }
     }
     /// Creates a PayloadStatus with valid status and latest valid hash
@@ -282,6 +294,7 @@ impl PayloadStatus {
             latest_valid_hash: None,
             validation_error: None,
             witness: None,
+            inclusion_list_satisfied: None,
         }
     }
 
@@ -295,7 +308,18 @@ impl PayloadStatus {
             latest_valid_hash: None,
             validation_error: None,
             witness: None,
+            inclusion_list_satisfied: None,
         }
+    }
+
+    /// Records the EIP-7805 (FOCIL) inclusion-list verdict on a `VALID`
+    /// payload status. Per execution-apis `PayloadStatusV2`, an unsatisfied
+    /// inclusion list does not change the status — the payload stays `VALID`
+    /// and only `inclusionListSatisfied` reports the verdict, so the consensus
+    /// layer knows not to attest to it.
+    pub fn with_inclusion_list_satisfied(mut self, satisfied: bool) -> Self {
+        self.inclusion_list_satisfied = Some(satisfied);
+        self
     }
 }
 

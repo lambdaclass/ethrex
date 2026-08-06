@@ -7,6 +7,7 @@ mod code_serde_tests;
 mod eip7702_authorization_tests;
 mod fork_schedule_tests;
 mod frame_tx_validation_tests;
+mod inclusion_list_tests;
 mod legacy_signature_tests;
 mod logs_bloom_validation_tests;
 mod requests_eip8282_tests;

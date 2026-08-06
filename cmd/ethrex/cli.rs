@@ -276,6 +276,15 @@ pub struct Options {
     )]
     pub mempool_max_utxo_verify_gas: u64,
     #[arg(
+        long = "mempool.private",
+        default_value_t = false,
+        action = ArgAction::SetTrue,
+        help = "Keep RPC-submitted transactions private. They enter the mempool and may be included in blocks built locally, but are not propagated to peers. P2P-received transactions are unaffected. Mirrors reth's --txpool.no-local-transactions-propagation.",
+        help_heading = "Node options",
+        env = "ETHREX_MEMPOOL_PRIVATE"
+    )]
+    pub mempool_private: bool,
+    #[arg(
         long = "http.addr",
         default_value = "127.0.0.1",
         value_name = "ADDRESS",
@@ -486,6 +495,33 @@ pub struct Options {
         env = "ETHREX_MAX_REORG_DEPTH"
     )]
     pub max_reorg_depth: Option<u64>,
+    #[arg(
+        long = "il-policy",
+        default_value = "production",
+        value_name = "POLICY",
+        help = "EIP-7805 (FOCIL) inclusion-list selection policy: production (default), priority-fee, or random",
+        help_heading = "EIP-7805 (FOCIL) options",
+        env = "ETHREX_IL_POLICY"
+    )]
+    pub il_policy: String,
+    #[arg(
+        long = "il-per-sender-cap",
+        default_value_t = 2,
+        value_name = "N",
+        help = "EIP-7805 (FOCIL) per-sender inclusion-list cap. Range 1..=64.",
+        help_heading = "EIP-7805 (FOCIL) options",
+        env = "ETHREX_IL_PER_SENDER_CAP"
+    )]
+    pub il_per_sender_cap: usize,
+    #[arg(
+        long = "il-max-bytes",
+        default_value_t = 8192,
+        value_name = "BYTES",
+        help = "EIP-7805 (FOCIL) inclusion-list byte cap. Hard-capped at 8192 in non-test builds; the spec mandates 8192.",
+        help_heading = "EIP-7805 (FOCIL) options",
+        env = "ETHREX_IL_MAX_BYTES"
+    )]
+    pub il_max_bytes: usize,
 }
 
 impl Options {
@@ -569,6 +605,7 @@ impl Default for Options {
             mempool_max_queued_txs_per_account: DEFAULT_MAX_QUEUED_TXS_PER_ACCOUNT,
             mempool_max_verify_gas: DEFAULT_MAX_VERIFY_GAS,
             mempool_max_utxo_verify_gas: ethrex_common::types::MAX_UTXO_VERIFY_GAS,
+            mempool_private: false,
             tx_broadcasting_time_interval: Default::default(),
             target_peers: Default::default(),
             lookup_interval: Default::default(),
@@ -583,6 +620,9 @@ impl Default for Options {
             no_bal_prefetch: false,
             no_bal_parallel_trie: false,
             max_reorg_depth: None,
+            il_policy: "production".to_string(),
+            il_per_sender_cap: 2,
+            il_max_bytes: 8192,
         }
     }
 }

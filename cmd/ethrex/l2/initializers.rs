@@ -259,6 +259,7 @@ pub async fn init_l2(
         max_reorg_depth: opts.node_opts.max_reorg_depth,
         gap_admit_occupancy_threshold: opts.node_opts.mempool_gap_admit_occupancy_threshold,
         max_verify_gas: opts.node_opts.mempool_max_verify_gas,
+        private_mempool: opts.node_opts.mempool_private,
     };
 
     let blockchain = init_blockchain(store.clone(), blockchain_opts.clone());

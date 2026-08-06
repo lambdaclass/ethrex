@@ -763,6 +763,12 @@ fn map_chain_error_for_fcu(err: ChainError, last_valid_hash: H256) -> InvalidFor
         | ChainError::EvmError(_)
         | ChainError::WitnessGeneration(_)
         | ChainError::Custom(_)
-        | ChainError::UnknownPayload => InvalidForkChoice::StateNotReachable,
+        | ChainError::UnknownPayload
+        // EIP-7805: an unsatisfied inclusion list does not make the block
+        // invalid ("Although the block is valid, the CL will not attest to
+        // it"), so it must never yield `InvalidAncestor`. Unreachable here in
+        // any case: only `engine_newPayloadV6` supplies an inclusion list, and
+        // the fork-choice replay path imports blocks without one.
+        | ChainError::IlUnsatisfied { .. } => InvalidForkChoice::StateNotReachable,
     }
 }

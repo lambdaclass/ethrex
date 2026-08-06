@@ -1039,6 +1039,9 @@ impl Mempool {
     /// Insert a transaction. `keyed_concurrency` is the EIP-8250 verdict computed
     /// during validation; it is [`KeyedConcurrency::Denied`] for everything that is
     /// not an eligible keyed frame transaction.
+    ///
+    /// The transaction's hash is queued for P2P broadcast.
+    #[allow(clippy::too_many_arguments)]
     pub fn add_transaction(
         &self,
         hash: H256,
@@ -1047,6 +1050,56 @@ impl Mempool {
         frame_reservation: Option<FramePaymasterReservation>,
         sender_admission: Option<SenderAdmission>,
         keyed_concurrency: KeyedConcurrency,
+    ) -> Result<(), MempoolError> {
+        self.add_transaction_inner(
+            hash,
+            sender,
+            transaction,
+            frame_reservation,
+            sender_admission,
+            keyed_concurrency,
+            true,
+        )
+    }
+
+    /// Add transaction to the pool without queueing it for P2P broadcast.
+    /// Used by the private-mempool path: the tx is available to the local
+    /// payload builder but never gossiped to peers.
+    ///
+    /// `keyed_concurrency` is threaded through unchanged: a private transaction
+    /// still occupies an EIP-8250 keyed slot, so skipping the verdict here would
+    /// let RPC submissions bypass the per-key concurrency limit entirely.
+    #[allow(clippy::too_many_arguments)]
+    pub fn add_transaction_no_broadcast(
+        &self,
+        hash: H256,
+        sender: Address,
+        transaction: MempoolTransaction,
+        frame_reservation: Option<FramePaymasterReservation>,
+        sender_admission: Option<SenderAdmission>,
+        keyed_concurrency: KeyedConcurrency,
+    ) -> Result<(), MempoolError> {
+        self.add_transaction_inner(
+            hash,
+            sender,
+            transaction,
+            frame_reservation,
+            sender_admission,
+            keyed_concurrency,
+            false,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn add_transaction_inner(
+        &self,
+        hash: H256,
+        sender: Address,
+        transaction: MempoolTransaction,
+        frame_reservation: Option<FramePaymasterReservation>,
+        sender_admission: Option<SenderAdmission>,
+        keyed_concurrency: KeyedConcurrency,
+        broadcast: bool,
     ) -> Result<(), MempoolError> {
         let mut inner = self.write()?;
         let is_frame = matches!(transaction.tx_type(), TxType::Frame);
@@ -1296,7 +1349,9 @@ impl Mempool {
             inner.txs_by_sender_nonce.insert((sender, tx_nonce), hash);
         }
         inner.transaction_pool.insert(hash, transaction);
-        inner.broadcast_pool.insert(hash);
+        if broadcast {
+            inner.broadcast_pool.insert(hash);
+        }
         inner.alternates.remove(&hash);
 
         // Track the pending frame tx for admission gating. Key-0 frame txs use

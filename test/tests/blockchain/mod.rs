@@ -9,8 +9,11 @@ mod eip7702_zero_transfer_tests;
 mod eip8312_cross_path_tests;
 mod eip8312_mempool_tests;
 mod explicit_blob_tx_tests;
+mod focil_tests;
 #[cfg(feature = "c-kzg")]
 mod frame_blob_tx_tests;
+mod inclusion_list_builder_tests;
+mod inclusion_list_validator_tests;
 mod l1_tx_type_tests;
 mod logs_bloom_tests;
 mod mempool_tests;
