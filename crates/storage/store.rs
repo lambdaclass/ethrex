@@ -4513,6 +4513,8 @@ fn flush_block_data(
     }
     write_flushed_upto(tx.as_mut(), max_number)?;
     tx.commit()?;
+    info!(target: "resume_dbg", blocks = to_flush.len(), flushed_upto = max_number,
+          "RESUME_DBG flush_block_data committed");
 
     // Phase 3: evict only after the commit succeeded (gap safety).
     mutate_block_buffer(buffer, |b| b.evict_flushed(max_number))
@@ -4660,6 +4662,9 @@ fn commit_trie_if_due(
         Some(depth) => trie.get_commitable_by_depth(parent_state_root, depth),
         None => trie.get_commitable(parent_state_root),
     };
+    info!(target: "resume_dbg", parent = ?parent_state_root, ?commit_depth, is_batch,
+          layers = trie.layer_count(), picked = ?commitable,
+          "RESUME_DBG commit_trie_if_due");
     let Some(root) = commitable else {
         // Nothing to commit to disk, move on.
         return Ok(());
@@ -4698,6 +4703,8 @@ fn commit_to_disk(
         return Ok(());
     }
 
+    info!(target: "resume_dbg", root = ?root, layers = trie.layer_count(), is_batch,
+          "RESUME_DBG commit_to_disk writing this root to disk");
     // Stop the flat-key-value generator thread, as the underlying trie is about to change.
     // Ignore the error, if the channel is closed it means there is no worker to notify.
     let _ = fkv_ctl.send(FKVGeneratorControlMessage::Stop);

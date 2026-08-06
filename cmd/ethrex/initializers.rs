@@ -1027,6 +1027,8 @@ pub async fn regenerate_head_state(
         unreachable!("Database is empty, genesis block should be present");
     };
 
+    info!(target: "resume_dbg", head = head_block_number, root = ?last_header.state_root,
+          "RESUME_DBG regenerate_head_state: searching from this head/root");
     let mut current_last_header = last_header;
 
     // Find the last block with a known state root
@@ -1050,6 +1052,9 @@ pub async fn regenerate_head_state(
     }
 
     let last_state_number = current_last_header.number;
+    info!(target: "resume_dbg", found_at = last_state_number,
+          root = ?current_last_header.state_root,
+          "RESUME_DBG regenerate_head_state: found an on-disk state root");
 
     if last_state_number == head_block_number {
         debug!("State is already up to date");
