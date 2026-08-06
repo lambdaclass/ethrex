@@ -100,6 +100,19 @@
         <td class="desc">Transaction assertions: a trailing read-only <code>POST_TX</code> frame
           inspects the whole transaction's effects and can revert the body if an invariant broke.</td>
       </tr>
+      <tr>
+        <td><a href="https://eips.ethereum.org/EIPS/eip-7805">EIP-7805</a></td>
+        <td class="desc">FOCIL: each slot a committee publishes inclusion lists that the next block
+          must satisfy, so a builder cannot quietly censor a transaction. The only feature here that
+          the consensus layer implements too.</td>
+      </tr>
+      <tr>
+        <td><a href="https://github.com/ethereum/EIPs/pull/12110">EIP-8312</a></td>
+        <td class="desc">UTXO frames: a one-shot payment object that is created once and spent once,
+          leaving a single spent bit rather than a permanent account. A full create-and-spend cycle
+          costs less than one ordinary transfer to a new account. Activates on its own timestamp,
+          separately from the rest.</td>
+      </tr>
     </table>
   </div>
 
@@ -108,8 +121,11 @@
     <table>
       <tr><td><a href="https://eips.ethereum.org/EIPS/eip-7928">EIP-7928</a></td>
           <td class="desc">Block-level access lists.</td></tr>
+      <tr><td><a href="https://eips.ethereum.org/EIPS/eip-8037">EIP-8037</a></td>
+          <td class="desc">Two-dimensional gas: state growth is priced separately from execution, so a
+            transfer to a fresh account costs far more than 21,000 gas.</td></tr>
       <tr><td><a href="https://eips.ethereum.org/EIPS/eip-8038">EIP-8038</a></td>
-          <td class="desc">Two-dimensional gas: state growth is priced separately from execution.</td></tr>
+          <td class="desc">Amsterdam repricing of the access, storage and access-list constants.</td></tr>
       <tr><td><a href="https://eips.ethereum.org/EIPS/eip-7843">EIP-7843</a></td>
           <td class="desc">A beacon slot number available to execution.</td></tr>
       <tr><td><a href="https://eips.ethereum.org/EIPS/eip-8282">EIP-8282</a></td>
