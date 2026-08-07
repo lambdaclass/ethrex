@@ -342,6 +342,24 @@ async fn setup_profile2_store_at_nonce(
     nonce: u64,
     db_name: &str,
 ) -> (Store, Blockchain, BlockHeader) {
+    setup_profile2_store_funded(
+        accounts,
+        nonce,
+        U256::from(10u64).pow(U256::from(18u64)),
+        db_name,
+    )
+    .await
+}
+
+/// As [`setup_profile2_store_at_nonce`], with the seeded accounts holding
+/// `balance`. `self_verify_tx` self-pays, so this is the payer's balance as far
+/// as eligibility replay is concerned.
+async fn setup_profile2_store_funded(
+    accounts: &[(Address, Bytes)],
+    nonce: u64,
+    balance: U256,
+    db_name: &str,
+) -> (Store, Blockchain, BlockHeader) {
     let file = std::fs::File::open(
         std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("..")
@@ -361,7 +379,7 @@ async fn setup_profile2_store_at_nonce(
                 // it debits `max_fee_per_gas * total_gas_limit` from this same
                 // account inside the VERIFY frame, which reverts on an
                 // underfunded sender before any surface/UTXO check runs.
-                balance: U256::from(10u64).pow(U256::from(18u64)),
+                balance,
                 nonce,
             },
         );
@@ -626,10 +644,11 @@ async fn queued_frame_tx_eligibility_flips_across_the_payload() {
 
     match (&before, &after) {
         (Profile2Eligibility::Ineligible(violation), Profile2Eligibility::Eligible) => {
-            // The flip must be the keyed nonce and nothing incidental, otherwise
-            // this passes for the wrong reason.
+            // The flip must be the keyed nonce reading 0 where the transaction
+            // wants 1, and nothing incidental, otherwise this passes for the
+            // wrong reason.
             assert!(
-                violation.contains("Nonce") || violation.contains("nonce"),
+                violation.contains("Nonce mismatch: expected 0, got 1"),
                 "expected the early verdict to fail on the keyed nonce, got: {violation}"
             );
         }
@@ -637,6 +656,72 @@ async fn queued_frame_tx_eligibility_flips_across_the_payload() {
             "expected the verdict to flip Ineligible -> Eligible across the payload, \
              got before={before:?} after={after:?}"
         ),
+    }
+}
+
+/// A transaction can be eligible at both ends of a payload and ineligible in
+/// between, which is the shape a builder-claimed evaluation index excuses and
+/// no endpoint rule does.
+///
+/// The payer's balance is not monotonic across a payload: a sponsored
+/// transaction draws it down, a top-up restores it. The same listed frame
+/// transaction is therefore eligible at the start, ineligible after the draw,
+/// and eligible again at the end.
+///
+/// This shape matters because it survives the objection that kills the queued
+/// case. An includer builds its list against the head, which is the
+/// start-of-payload state, and here the transaction is eligible there, so an
+/// honest includer does list it. Under EIP-7805's end-of-payload rule the
+/// omission is enforced, because the transaction is eligible at the end. Under
+/// a builder-claimed index the builder names the middle and is excused, at the
+/// cost of two transactions it was free to order as it liked.
+#[tokio::test]
+async fn frame_tx_eligible_at_both_endpoints_can_be_ineligible_between_them() {
+    let sender = Address::from_low_u64_be(0xE77);
+    let code = approve_code(APPROVE_EXECUTION_AND_PAYMENT);
+    let tx = self_verify_tx(sender, 50_000);
+
+    // `self_verify_tx` self-pays `max_fee_per_gas * total_gas_limit`, so this is
+    // comfortably above the cost, and the drawn-down figure below it.
+    let funded = U256::from(10u64).pow(U256::from(18u64));
+    let drawn_down = U256::from(1_000u64);
+
+    async fn verdict_at(
+        sender: Address,
+        code: Bytes,
+        tx: &FrameTransaction,
+        balance: U256,
+        db: &str,
+    ) -> Profile2Eligibility {
+        let (_store, chain, header) =
+            setup_profile2_store_funded(&[(sender, code)], 0, balance, db).await;
+        let gas_left = header.gas_limit;
+        BlockchainProfile2Evaluator::new(&chain, &header, gas_left).evaluate(tx)
+    }
+
+    let start = verdict_at(sender, code.clone(), &tx, funded, "focil-sandwich-start.db").await;
+    let middle = verdict_at(
+        sender,
+        code.clone(),
+        &tx,
+        drawn_down,
+        "focil-sandwich-middle.db",
+    )
+    .await;
+    let end = verdict_at(sender, code, &tx, funded, "focil-sandwich-end.db").await;
+
+    assert!(
+        matches!(start, Profile2Eligibility::Eligible),
+        "must be eligible at the start, or an honest includer would never list it: {start:?}"
+    );
+    assert!(
+        matches!(end, Profile2Eligibility::Eligible),
+        "must be eligible at the end, or the end-of-payload rule would excuse the omission by \
+         itself and the claimed index would not be what did it: {end:?}"
+    );
+    match &middle {
+        Profile2Eligibility::Ineligible(_) => {}
+        other => panic!("expected the drawn-down payer to be ineligible, got {other:?}"),
     }
 }
 
