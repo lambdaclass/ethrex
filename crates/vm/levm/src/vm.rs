@@ -1665,6 +1665,7 @@ impl<'a> VM<'a> {
         let mut batch_start_idx: usize = 0;
         let mut batch_logs_start: usize = 0;
         let mut batch_approval_snapshot: (bool, Option<Address>) = (false, None);
+        let mut batch_bal_checkpoint: Option<BlockAccessListCheckpoint> = None;
         // EIP-8037: snapshot the shared `state_gas_used` at batch entry so a batch
         // revert (which unrolls every in-batch frame's state) also drops the state
         // gas those frames accumulated.
@@ -1731,6 +1732,11 @@ impl<'a> VM<'a> {
             // and we're not already in one.
             if !in_atomic_batch && frame.is_atomic_batch() {
                 self.substate.push_backup(); // batch-level snapshot
+                // EIP-7928: the batch's state changes must leave the block access
+                // list as well when the batch unrolls, or the builder records
+                // writes the block does not contain and the block fails its own
+                // BAL validation on re-execution.
+                batch_bal_checkpoint = self.db.bal_recorder.as_ref().map(|r| r.checkpoint());
                 // The outer call-frame backup is already empty here: the
                 // `!in_atomic_batch` block above absorbed it into
                 // `tx_level_backup` and cleared it on entry to this frame, so
@@ -2048,29 +2054,35 @@ impl<'a> VM<'a> {
             if in_atomic_batch && !frame_success {
                 self.substate.revert_backup(); // revert batch-level snapshot
                 self.restore_cache_state()?;
+                // EIP-7928: drop the batch's recorded changes. `restore` re-files a
+                // freshly-written slot as a read and leaves `touched_addresses`
+                // alone, so the accesses the batch made still appear -- only the
+                // reverted changes go.
+                if let Some(checkpoint) = batch_bal_checkpoint.take()
+                    && let Some(recorder) = self.db.bal_recorder.as_mut()
+                {
+                    recorder.restore(checkpoint);
+                }
                 // EIP-8037: the whole batch unrolled, so none of its frames created
                 // state — drop the state gas accumulated since batch entry.
                 self.state_gas_used = state_gas_used_at_batch_entry;
 
-                // Rewrite results for all frames in this batch (inclusive) as failed,
-                // charging each frame its full gas_limit per EIP-8141.
+                // EIP-8141: frames that executed before the failure retain their
+                // execution status and gas used; only their logs are discarded,
+                // together with the state changes the unroll drops. `total_gas_used`
+                // therefore stands as executed, and the failing frame keeps the gas
+                // the single-frame path already charged it (actual `gas_used` for a
+                // `REVERT`, the full `gas_limit` for an exceptional halt).
                 let ctx = self.frame_tx_context.as_mut().ok_or(VMError::Internal(
                     InternalError::Custom("missing frame tx context".to_string()),
                 ))?;
-                for i in batch_start_idx..=frame_idx {
-                    if let (Some(result), Some(batch_frame)) =
-                        (ctx.frame_results.get_mut(i), frame_tx.frames.get(i))
-                    {
-                        let charged_gas = batch_frame.gas_limit;
-                        total_gas_used = total_gas_used
-                            .saturating_sub(result.1)
-                            .saturating_add(charged_gas);
-                        *result = (
-                            ethrex_common::types::FRAME_RECEIPT_STATUS_FAILURE,
-                            charged_gas,
-                            Vec::new(),
-                        );
-                    }
+                for result in ctx
+                    .frame_results
+                    .get_mut(batch_start_idx..=frame_idx)
+                    .into_iter()
+                    .flatten()
+                {
+                    result.2 = Vec::new();
                 }
                 // Roll back approvals granted inside the reverted batch.
                 ctx.restore_approvals(batch_approval_snapshot);
