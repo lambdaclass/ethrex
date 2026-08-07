@@ -106,3 +106,56 @@ An `info!` line names the drained range and the versions involved. That drain is
 what keeps the floor honest — left in place, the stale entries would advertise
 reach the node cannot deliver and the reorg would fail mid-flight with
 `StateNotReachable` instead of being declined up front.
+
+### Amsterdam gas schedule is behind EIP-8038, and has no fixture coverage
+
+**Where:** `crates/vm/levm/src/gas_cost.rs:213-222` (the "EIP-8038 Amsterdam
+values (merged EIPs#11802)" block), and `tooling/ef_tests/.fixtures_url_amsterdam`.
+
+**Why:** ethrex implements EIP-8038 (State Access Gas Cost Increase) as merged in
+`ethereum/EIPs#11802`, which its own comment cites. The EIP has since been
+revised: cold **account** access rose to 3000, but cold **storage** access stayed
+at **2100**. ethrex raised both.
+
+| constant | ethrex | current spec |
+|---|---|---|
+| `COLD_STORAGE_ACCESS` | 3000 | **2100** |
+| `ACCESS_LIST_STORAGE_KEY` | 3000 | **2000** (`cold_storage − warm`) |
+| `ACCESS_LIST_ADDRESS` | 3000 | **2900** (`cold_account − warm`) |
+| `ACCOUNT_WRITE` | 8000 | **9000** |
+| `CALL_VALUE` | 10300 | **11300** (`account_write + 2300`) |
+| `CREATE_ACCESS` | 11000 | **12000** (`account_write + cold_account`) |
+| `STORAGE_CLEAR_REFUND` | 12480 | **11616** |
+
+Really two root changes — `COLD_STORAGE_ACCESS` and `ACCOUNT_WRITE` — plus the
+access-list costs now being *derived* as `cold − warm` rather than flattened.
+Everything else agrees (`COLD_ACCOUNT_ACCESS` 3000, `STORAGE_WRITE` 10000,
+`TX_BASE` 12000, `PER_AUTH_BASE_COST` 7816, the EIP-8037 constants).
+
+The divergence is exactly **900 per distinct cold storage slot**. On a contract
+touching two cold slots (`PUSH2/SLOAD/PUSH1/SSTORE/STOP`):
+
+```
+spec:   12000 + 3000 + 3 + 2100 + 3 + 2100 = 19206
+ethrex: 12000 + 3000 + 3 + 3000 + 3 + 3000 = 21006
+```
+
+**Why nobody noticed: Amsterdam has no live fixture coverage.** The pinned bundle
+`tests-glamsterdam-devnet@v7.2.0` contains no `eip8037`/`eip8038` directories at
+all, and ethrex fails **560/560** of `vectors/eest/for_amsterdam` on the
+genesis-hash assertion — the bundle predates the current Amsterdam header shape.
+(`vectors/eest/amsterdam`, from `tests@v20.0.0`, fails 190/201, almost all
+`SystemContractCallFailed`.) So a `make test-levm` run cannot be catching
+Amsterdam regressions, which is exactly how the gas schedule drifted unobserved.
+
+Found while running the EIP-8297 `BinaryTree` fixtures: 22 of 24 failed on
+`GasUsedMismatch`/`ReceiptsRootMismatch`. Filling the *same* tests at `Amsterdam`
+reproduced all 35 failing cases with byte-identical error variants and gas
+numbers, and the two forks' fills are byte-identical in `gasUsed` and
+`receiptTrie`. The binary-tree work is not implicated — its genesis roots match
+the spec exactly.
+
+**Removal:** Resync the seven constants above against
+`src/ethereum/forks/amsterdam/vm/gas.py`, and re-pin
+`.fixtures_url_amsterdam` to a bundle that actually exercises Amsterdam, so the
+next drift is caught by CI rather than by accident.
