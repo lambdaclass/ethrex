@@ -547,7 +547,7 @@ fn minimal_valid_frame_tx() -> FrameTransaction {
             mode: FrameMode::Verify as u8,
             flags: APPROVE_EXECUTION_AND_PAYMENT,
             target: Some(sender),
-            // Small per-frame gas so total_gas_limit() stays below the legacy
+            // Small per-frame gas so max_gas() stays below the legacy
             // 21000 intrinsic floor: this tx is only admitted once the frame-tx
             // intrinsic-gas fix prices it correctly.
             gas_limit: 100,
@@ -1408,7 +1408,7 @@ async fn mempool_rejects_underfunded_paymaster() {
     // frame tx with FrameTxPaymasterUnderfunded.
     //
     // Note: since APPROVE now collects the tx's MAXIMUM cost during the
-    // validation-prefix simulation (max_fee_per_gas * total_gas_limit), a payer
+    // validation-prefix simulation (max_fee_per_gas * max_gas), a payer
     // that cannot cover max_cost reverts *inside* the simulation
     // (FrameTxValidationFailed), never reaching this check. The availability
     // check is therefore only reachable when the payer covers a single tx's
@@ -1423,7 +1423,7 @@ async fn mempool_rejects_underfunded_paymaster() {
     let max_fee_per_gas = 2_000_000_000u64;
     let max_priority_fee_per_gas = 1_000_000_000u64;
     let frame_tx = funded_frame_tx(max_fee_per_gas, max_priority_fee_per_gas);
-    let total_gas = frame_tx.total_gas_limit();
+    let total_gas = frame_tx.max_gas();
     let max_cost = U256::from(max_fee_per_gas) * U256::from(total_gas);
 
     let paymaster = Address::from_low_u64_be(FRAME_TX_SELF_SENDER);
@@ -1805,7 +1805,7 @@ async fn mempool_fee_bump_not_blocked_by_own_stale_reservation() {
     // old reservation before re-validating availability.
     let low_fee = 100_000_000u64;
     let high_fee = 200_000_000u64;
-    let gas = funded_frame_tx(high_fee, high_fee).total_gas_limit();
+    let gas = funded_frame_tx(high_fee, high_fee).max_gas();
     // Exactly covers the bumped tx (high_fee * gas), but not old + new together.
     let balance = U256::from(high_fee) * U256::from(gas);
     let store = setup_hegota_store_with_balance(balance).await;
@@ -1841,7 +1841,7 @@ async fn mempool_fee_bump_rejected_leaves_original_intact() {
     // non-canonical slot, isolating the AVAILABILITY rejection from the limit.
     let low_fee = 100_000_000u64;
     let high_fee = 200_000_000u64;
-    let gas = funded_frame_tx(high_fee, high_fee).total_gas_limit();
+    let gas = funded_frame_tx(high_fee, high_fee).max_gas();
     // Exactly covers one high-fee tx (high_fee * gas).
     let balance = U256::from(high_fee) * U256::from(gas);
     let store = setup_hegota_store_with_balance(balance).await;
