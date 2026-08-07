@@ -1235,11 +1235,6 @@ async fn try_execute_payload(
     };
     let block_hash = block.hash();
     let block_number = block.header.number;
-    // The consensus client telling us about block N means the chain has reached
-    // at least N. This is the only target signal a restarted node gets when its
-    // CL feeds it the gap directly instead of it syncing from peers, which is
-    // the common case; see `SyncManager::record_sync_target`.
-    syncer.record_sync_target(block_number).await;
     let storage = &context.storage;
     // A deep-reorg apply pass swaps the layer cache and replays the side chain
     // through `add_block` directly. Executing a payload concurrently can enqueue

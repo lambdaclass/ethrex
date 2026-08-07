@@ -20,3 +20,44 @@ The skip is by fork rather than by test name, since cross-fork directories such 
 **Removal:** Delete the `skip_stateless_amsterdam` branch in `parse_and_execute`
 once a `tests-zkevm` bundle filled with the devnet-7 builder predeploy addresses is
 released and `.fixtures_url_zkevm` is bumped to it.
+
+### `eth_syncing` can report a node as synced while it is behind
+
+**Where:** `crates/networking/rpc/eth/client.rs` — the `Syncing` RPC handler and
+`resolve_highest_block`.
+
+**Why:** `highestBlock` is meant to be the chain's tip, but nothing the engine
+API gives the execution client actually carries it. `forkchoiceUpdated` says
+where to go *next*, not where the chain *is*: driving a lagging client forward,
+a consensus client sends a head hash for an intermediate block and advances it
+in chunks. That hash resolves locally, so it looks like a perfectly good target
+— it is simply not the tip.
+
+When the reported target equals the local head, the distance test in the synced
+predicate compares a number against itself and is trivially true, so the
+`is_synced()` latch alone decides the answer. A node that has fallen behind then
+answers `false` — "fully synced".
+
+Measured on a 3-node devnet (2026-08-07): after a restart, a node answered
+`false` across 25 samples while more than 20 blocks behind, worst case **47**,
+for roughly 5 seconds. In 0 of 463 samples did `highestBlock` come within 2 of
+the true chain head; the shortfall ranged 69–190 blocks.
+
+Impact is confined to reporting. Execution, state roots and consensus are
+unaffected, and the node catches up normally. It matters for operators who gate
+traffic on `eth_syncing` — load balancers, readiness probes, indexers — because
+a restarting node can pass the check early and serve stale reads for a few
+seconds.
+
+`SyncTarget::{Known, Unknown}` fixes the narrower case where the client has no
+target at all (a restart leaves `last_fcu_head` zeroed) by refusing to report
+synced against a stand-in number. It does not help here: a staging head is a
+genuine `Known`, just a misleading one.
+
+**Removal:** Derive `highestBlock` from peer-advertised heads in the P2P layer,
+which is the only source that observes the actual tip — the sync cycle already
+sees them. Two attempts to derive it from engine-API signals failed on a devnet;
+a third against the same signals would fail the same way. Note also that
+recording the target from `engine_newPayload` is actively harmful and was
+reverted: during catch-up the payload's number *is* the local head, so it
+converts an honest `Unknown` into a misleading `Known`.
