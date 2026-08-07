@@ -368,6 +368,11 @@ async fn handle_forkchoice(
             // header-by-hash DB reads) to keep typical FCUs lean. Genuine
             // reorgs — where the new head's parent differs from the previous
             // head — still fall through to the spawned re-injection.
+            //
+            // The guard has three conjuncts, and the other two are also
+            // no-reorg cases worth naming: a zero `previous_head_hash` is the
+            // node's first FCU (nothing to orphan), and `previous_head_hash ==
+            // head.hash()` is a repeated FCU for the head we already have.
             if !previous_head_hash.is_zero()
                 && previous_head_hash != head.hash()
                 && head.parent_hash != previous_head_hash

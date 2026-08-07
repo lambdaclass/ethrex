@@ -115,6 +115,8 @@ Node options:
           Maximum reorg depth (in blocks) for which transactions in orphaned blocks are re-injected into the mempool. Deeper reorgs skip re-injection.
 
           [env: ETHREX_MEMPOOL_REORG_DEPTH=]
+          [default: 64]
+
       --mempool.private
           Node-level config (not a protocol/EIP behavior): keep RPC-submitted transactions private. They enter the mempool and may be included in blocks built locally, but are not propagated to peers. P2P-received transactions are unaffected.
 
