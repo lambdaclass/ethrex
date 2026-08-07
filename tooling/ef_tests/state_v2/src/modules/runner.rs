@@ -106,7 +106,7 @@ pub async fn run_test(
         let env = get_vm_env_for_test(test.env, test_case)?;
         let tx = get_tx_from_test_case(test_case).await?;
         let tracer = LevmCallTracer::disabled();
-        let mut vm = VM::new(env, &mut db, &tx, tracer, VMType::L1, &NativeCrypto)
+        let mut vm = VM::new(env, &mut db, &tx, tracer, VMType::L1, &NativeCrypto, None)
             .map_err(RunnerError::VMError)?;
 
         // Execute transaction with VM.
@@ -272,7 +272,7 @@ pub async fn get_tx_from_test_case(test_case: &TestCase) -> Result<Transaction, 
             gas_limit: test_case.gas,
             ..Default::default()
         })
-    } else if test_case.max_fee_per_blob_gas.is_some() {
+    } else if let Some(max_fee_per_blob_gas) = test_case.max_fee_per_blob_gas {
         Transaction::EIP4844Transaction(EIP4844Transaction {
             chain_id,
             nonce,
@@ -290,20 +290,19 @@ pub async fn get_tx_from_test_case(test_case: &TestCase) -> Result<Transaction, 
             value,
             data,
             access_list,
-            max_fee_per_blob_gas: test_case.max_fee_per_blob_gas.unwrap(),
+            max_fee_per_blob_gas,
             blob_versioned_hashes: test_case.blob_versioned_hashes.clone(),
             ..Default::default()
         })
-    } else if test_case.max_priority_fee_per_gas.is_some() && test_case.max_fee_per_gas.is_some() {
+    } else if let (Some(max_priority_fee_per_gas), Some(max_fee_per_gas)) = (
+        test_case.max_priority_fee_per_gas,
+        test_case.max_fee_per_gas,
+    ) {
         Transaction::EIP1559Transaction(EIP1559Transaction {
             chain_id,
             nonce,
-            max_priority_fee_per_gas: test_case
-                .max_priority_fee_per_gas
-                .unwrap()
-                .try_into()
-                .unwrap(),
-            max_fee_per_gas: test_case.max_fee_per_gas.unwrap().try_into().unwrap(),
+            max_priority_fee_per_gas: max_priority_fee_per_gas.try_into().unwrap(),
+            max_fee_per_gas: max_fee_per_gas.try_into().unwrap(),
             gas_limit: test_case.gas,
             to,
             value,
