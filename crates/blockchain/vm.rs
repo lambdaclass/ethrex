@@ -2,8 +2,8 @@ use ethrex_common::{
     Address, H256, U256,
     constants::{EMPTY_KECCAK_HASH, EMPTY_TRIE_HASH},
     types::{
-        AccountInfo, AccountState, BlockHash, BlockHeader, BlockNumber, ChainConfig, Code,
-        CodeMetadata,
+        AccountState, BlockHash, BlockHeader, BlockNumber, ChainConfig, Code, CodeMetadata,
+        pbt_state::BinaryAccount,
     },
 };
 use ethrex_crypto::keccak::keccak_hash;
@@ -16,6 +16,18 @@ use std::{
     sync::{Arc, Mutex, RwLock},
 };
 use tracing::instrument;
+
+/// What a binary-trie read puts in [`AccountState::storage_root`] for an
+/// account that holds storage.
+///
+/// **Not a root.** The binary trie has no per-account storage root to report
+/// (see [`StoreVmDatabase::account_state_from_binary_trie`]), and this names no
+/// node in any trie. It is the "yes" of a field every consumer reads as
+/// `storage_root != EMPTY_TRIE_HASH`, given a value that cannot be mistaken for
+/// a hash anything produced: nothing hashes to a run of `0xbb`, so a reader
+/// that wrongly opened a trie at it would fail to find one rather than read
+/// some other account's.
+pub const BINARY_TRIE_HAS_STORAGE: H256 = H256([0xbb; 32]);
 
 #[derive(Clone, Copy)]
 struct AccountStateCacheEntry {
@@ -156,7 +168,7 @@ impl StoreVmDatabase {
         if self.binary_tree_active {
             return Ok(self
                 .store
-                .get_binary_account_info(self.state_root, address)
+                .get_binary_account(self.state_root, address)
                 .map_err(|e| EvmError::DB(e.to_string()))?
                 .map(Self::account_state_from_binary_trie));
         }
@@ -165,62 +177,59 @@ impl StoreVmDatabase {
             .map_err(|e| EvmError::DB(e.to_string()))
     }
 
-    /// Fill an [`AccountState`] from what the binary trie can actually say
-    /// about an account.
+    /// Fill an [`AccountState`] from what the binary trie says about an
+    /// account.
     ///
-    /// # `storage_root` is reported empty, and that is a known gap
+    /// # `storage_root` is a boolean here, not a root
     ///
     /// `AccountState` is MPT-shaped: it summarises an account's storage as the
     /// root of that account's own subtrie. The binary trie has no such value
     /// and cannot grow one — storage there is not a subtrie per account, it is
     /// leaves of the one unified tree, so there is no node whose hash covers
-    /// exactly one account's slots. This reports [`EMPTY_TRIE_HASH`], which is
-    /// the same as reporting "this account has no storage".
+    /// exactly one account's slots.
     ///
-    /// **What that costs.** Every consumer of the field treats it as a
-    /// boolean — `storage_root != EMPTY_TRIE_HASH` — and each now reads *false*
-    /// for an account past the activation:
+    /// What it *can* say is whether the account holds any storage at all, which
+    /// is the only thing every consumer of the field asks it — each of them
+    /// spells it `storage_root != EMPTY_TRIE_HASH`:
     ///
     /// - `LevmAccount::has_storage`, and through it `create_would_collide`,
     ///   which is EIP-7610: a `CREATE` at an address that holds storage but no
-    ///   code and a zero nonce should fail, and after the flip it would
-    ///   succeed. Reaching that needs an account with storage and neither code
-    ///   nor nonce, which post-EIP-161 a chain can only get from its genesis
-    ///   alloc, since `CREATE` sets the nonce to 1 before any storage is
-    ///   written. Pinned by
-    ///   `a_binary_read_reports_no_storage_root_even_when_the_account_has_storage`.
+    ///   code and a zero nonce must fail. Reaching that needs an account with
+    ///   storage and neither code nor nonce, which post-EIP-161 a chain can
+    ///   only get from its genesis alloc, since `CREATE` sets the nonce to 1
+    ///   before any storage is written.
     /// - the `removed_storage` flag `gen_db` derives from `has_storage` for a
-    ///   destroyed-then-modified account. Post-EIP-6780 `SELFDESTRUCT` only
-    ///   destroys an account created in the same transaction, whose storage the
-    ///   in-memory state already describes, so the flag does not depend on this
-    ///   read there.
+    ///   destroyed-then-modified account.
     ///
-    /// Storage itself is unaffected: [`VmDatabase::get_storage_slot`] reads the
-    /// slot's own leaf and never consults this field on the binary path.
+    /// So the field carries the answer to that question and nothing more:
+    /// [`EMPTY_TRIE_HASH`] for no storage, and [`BINARY_TRIE_HAS_STORAGE`] —
+    /// which is not a root and names no node — for some. Pinned by
+    /// `a_binary_read_reports_whether_the_account_has_storage`.
     ///
-    /// # Why not answer honestly
+    /// **Why the marker is safe.** Nothing on the binary path ever opens a trie
+    /// at this value: [`VmDatabase::get_storage_slot`] reads the slot's own leaf
+    /// from the address and the key, and does not consult the field at all.
+    /// A reader that did would fail to find a trie rather than read a wrong
+    /// one, since no MPT node hashes to it.
     ///
-    /// A bounded honest answer is *almost* available — slots 0 to 63 live at
-    /// known sub-indices of the account's header stem, so 64 lookups would
-    /// settle them. It was rejected on both counts that matter. It is not
-    /// honest: slots from 64 up live in the overflow zone, which the trie can
-    /// neither enumerate nor prefix-scan (the same limitation that makes
-    /// `pbt_state` refuse to remove such an account), so the answer would still
-    /// be wrong for exactly the accounts hardest to reason about — while
-    /// *looking* right, which is worse than an absence that is documented. And
-    /// it is not cheap: 64 root-to-leaf walks on every account an execution
-    /// touches, to serve a field two rules consult.
-    ///
-    /// The real fix is a "does this account have storage" query the trie can
-    /// answer in one traversal — a prefix scan over the account's storage
-    /// zone — which is the same operation `pbt_state`'s removal TODO needs, and
-    /// belongs with it in `ethrex_binary_trie` rather than here.
-    fn account_state_from_binary_trie(info: AccountInfo) -> AccountState {
+    /// **What it costs.** Two prefix existence checks per account read — one
+    /// per storage zone, since an account's slots `0..=63` live in its header
+    /// stem and the rest in the storage zone, and no prefix short of the empty
+    /// one covers both. Neither scans: `BinaryTrie::contains_prefix` stops at
+    /// the first node whose subtree lies wholly under the prefix. The header
+    /// check is nearly free, re-walking nodes the account read just loaded; the
+    /// overflow one is a genuine extra descent, and only runs when the header
+    /// found nothing.
+    fn account_state_from_binary_trie(account: BinaryAccount) -> AccountState {
         AccountState {
-            nonce: info.nonce,
-            balance: info.balance,
-            storage_root: *EMPTY_TRIE_HASH,
-            code_hash: info.code_hash,
+            nonce: account.info.nonce,
+            balance: account.info.balance,
+            storage_root: if account.has_storage {
+                BINARY_TRIE_HAS_STORAGE
+            } else {
+                *EMPTY_TRIE_HASH
+            },
+            code_hash: account.info.code_hash,
         }
     }
 }
@@ -337,8 +346,9 @@ impl VmDatabase for StoreVmDatabase {
         };
         if self.binary_tree_active {
             // No storage root and no per-account subtrie: one leaf, one lookup.
-            // `entry.state.storage_root` is deliberately not consulted — see
-            // `Self::account_state_from_binary_trie` for why it is empty.
+            // `entry.state.storage_root` is deliberately not consulted — it is
+            // a marker rather than a root here, and opening a trie at it would
+            // find nothing; see `Self::account_state_from_binary_trie`.
             return self
                 .store
                 .get_binary_storage_slot(self.state_root, address, key)

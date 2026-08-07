@@ -47,7 +47,7 @@ use ethrex_blockchain::{
     error::{ChainError, InvalidBlockError, InvalidForkChoice},
     fork_choice::apply_fork_choice,
     payload::{BuildPayloadArgs, create_payload},
-    vm::StoreVmDatabase,
+    vm::{BINARY_TRIE_HAS_STORAGE, StoreVmDatabase},
 };
 use ethrex_common::{
     Address, H160, H256, U256,
@@ -1434,30 +1434,51 @@ async fn pre_flip_headers_keep_executing_against_the_mpt_after_the_flip() {
 }
 
 // ---------------------------------------------------------------------------
-// D3.4 The `storage_root` gap, pinned.
+// D3.4 The `storage_root` field across the flip.
 //
 // `AccountState` carries a `storage_root`; the binary trie has none, because
 // storage is not a per-account subtrie there but leaves of the one unified
-// tree. A binary read therefore reports `EMPTY_TRIE_HASH`, which every
-// "does this account have storage" consumer reads as *no storage* — see the
-// comment on the read seam in `crates/blockchain/vm.rs`. The storage itself is
-// perfectly readable; only the summary field is absent.
+// tree. What the field is actually *read* as, by every consumer, is the boolean
+// `storage_root != EMPTY_TRIE_HASH` — EIP-7610's create-collision check and the
+// destroyed-account storage wipe — and that the binary trie can answer, through
+// the prefix existence check `pbt_state::has_storage` runs over each of the two
+// storage zones. So the field carries that answer and nothing more: the empty
+// root for no storage, `BINARY_TRIE_HAS_STORAGE` — a marker, not a root — for
+// some. See the read seam in `crates/blockchain/vm.rs`.
+//
+// This test used to pin the opposite: the binary read reported the empty root
+// unconditionally, so EIP-7610 read *no storage* for every account past the
+// activation. Both accounts below are here to keep that from coming back —
+// storage-only is the case the rule turns on, and the plain one is the control
+// that says the answer is not simply always "yes".
 // ---------------------------------------------------------------------------
 
-/// An address the gap test's genesis gives **storage only**: no code, zero
-/// nonce, zero balance. In the MPT that is an account with a non-empty
-/// `storage_root`. In the binary trie it is a code-hash leaf plus one storage
-/// leaf — its basic data encodes to 32 zero bytes and is therefore not even
-/// stored — and nothing in it can answer "does this account have storage".
+/// An address the genesis gives **storage only**: no code, zero nonce, zero
+/// balance. In the MPT that is an account with a non-empty `storage_root`. In
+/// the binary trie it is a code-hash leaf plus one storage leaf — its basic
+/// data encodes to 32 zero bytes and is therefore not even stored — and only a
+/// prefix query over its storage zones can tell that it holds storage.
+///
+/// It is also exactly the shape EIP-7610 exists for: an account with storage,
+/// no code and a zero nonce is one a `CREATE` must not be allowed to land on,
+/// and post-EIP-161 a chain can only reach that shape through its genesis
+/// alloc.
 fn storage_only_account() -> Address {
     Address::from_low_u64_be(0x5707)
+}
+
+/// The control: an address the genesis gives a balance and nothing else. Its
+/// storage answer must be *no*, or a read that always says "yes" would pass the
+/// storage-only assertions below without meaning anything.
+fn storageless_account() -> Address {
+    Address::from_low_u64_be(0x5708)
 }
 
 const STORAGE_ONLY_SLOT: u64 = 7;
 const STORAGE_ONLY_VALUE: u64 = 0x2a;
 
 #[tokio::test]
-async fn a_binary_read_reports_no_storage_root_even_when_the_account_has_storage() {
+async fn a_binary_read_reports_whether_the_account_has_storage() {
     let sender = sender_from_key(&test_secret_key());
     let storage_only = (
         storage_only_account(),
@@ -1473,14 +1494,20 @@ async fn a_binary_read_reports_no_storage_root_even_when_the_account_has_storage
             .collect(),
         },
     );
-
-    let unscheduled = load_funded_genesis_with(sender, None, std::slice::from_ref(&storage_only));
-    let activation = unscheduled.timestamp + FLIP_BLOCK * BLOCK_TIME;
-    let genesis = load_funded_genesis_with(
-        sender,
-        Some(activation),
-        std::slice::from_ref(&storage_only),
+    let storageless = (
+        storageless_account(),
+        GenesisAccount {
+            balance: U256::from(1_000u64),
+            code: Bytes::new(),
+            nonce: 0,
+            storage: Default::default(),
+        },
     );
+    let extra = [storage_only.clone(), storageless];
+
+    let unscheduled = load_funded_genesis_with(sender, None, &extra);
+    let activation = unscheduled.timestamp + FLIP_BLOCK * BLOCK_TIME;
+    let genesis = load_funded_genesis_with(sender, Some(activation), &extra);
     let chain_id = genesis.config.chain_id;
     let store = store_from_genesis(genesis).await;
     let blockchain = Blockchain::default_with_store(store.clone());
@@ -1495,7 +1522,8 @@ async fn a_binary_read_reports_no_storage_root_even_when_the_account_has_storage
         "the head must be the flip block"
     );
 
-    // Before the flip, the MPT answers honestly: the account has storage.
+    // Before the flip the MPT answers, and it says the storage-only account
+    // has storage and the other does not.
     let mpt_db = StoreVmDatabase::new(store.clone(), pre_flip.header.clone())
         .expect("a pre-flip header opens against the MPT");
     let from_mpt = mpt_db
@@ -1505,6 +1533,14 @@ async fn a_binary_read_reports_no_storage_root_even_when_the_account_has_storage
     assert_ne!(
         from_mpt.storage_root, *EMPTY_TRIE_HASH,
         "the MPT read reports the account's storage"
+    );
+    assert_eq!(
+        mpt_db
+            .get_account_state(storageless_account())
+            .unwrap()
+            .expect("the control account exists in the MPT")
+            .storage_root,
+        *EMPTY_TRIE_HASH,
     );
 
     // After it, the account is still found and its storage is still readable...
@@ -1529,14 +1565,27 @@ async fn a_binary_read_reports_no_storage_root_even_when_the_account_has_storage
         "the storage itself is readable through the binary trie"
     );
 
-    // ...but the summary field is not there to be reported. This is the gap:
-    // every consumer of `storage_root` (EIP-7610's create-collision check, and
-    // the destroyed-account storage wipe) reads "no storage" for this account
-    // after the flip.
+    // ...and so is the summary the field stands for. There is no root to
+    // report, so the marker goes in its place; what matters is the boolean
+    // every consumer reads out of it, which now agrees with the MPT.
     assert_eq!(
+        from_binary.storage_root, BINARY_TRIE_HAS_STORAGE,
+        "a binary read must report that this account holds storage"
+    );
+    assert_ne!(
         from_binary.storage_root, *EMPTY_TRIE_HASH,
-        "a binary-trie read has no storage root to report, and says so by \
-         reporting the empty one"
+        "EIP-7610 reads exactly this comparison: a CREATE here must fail"
+    );
+
+    // And the control, which keeps the answer from being an unconditional yes.
+    assert_eq!(
+        binary_db
+            .get_account_state(storageless_account())
+            .unwrap()
+            .expect("the control account exists in the binary trie")
+            .storage_root,
+        *EMPTY_TRIE_HASH,
+        "an account with no storage must still read as having none"
     );
 }
 
