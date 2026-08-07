@@ -4340,7 +4340,15 @@ impl Store {
         // durable baseline, and a walked-down head lowers the marker so a later
         // crash clamps against a hash known to resolve.
         let reanchor = head != latest;
-        let rewrite_marker = marker != Some(head);
+        // Seed an absent marker, and lower it only when the loop actually walked the head
+        // down (a reorg inside the flush window). Do NOT lower it merely because the
+        // canonical head sits behind the durable frontier: during full sync, execution and
+        // its trie commits run ahead of canonicalization, and this marker is the only record
+        // of how far the database is really durable. Overwriting it here destroys the
+        // information `regenerate_head_state` needs to find a state root to resume from —
+        // the clamp itself still applies via `min(marker, latest)` above, so nothing is
+        // trusted that should not be.
+        let rewrite_marker = marker.is_none() || head < start;
         if reanchor || rewrite_marker {
             let mut tx = self.backend.begin_write()?;
             if reanchor {
