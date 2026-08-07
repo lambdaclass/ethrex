@@ -59,13 +59,20 @@
 //!
 //! [`JOURNAL_VERSION`] is a single byte at offset 0 of every entry. The decoder
 //! rejects any version other than the current one with
-//! [`JournalDecodeError::VersionMismatch`]. On a codec bump, the journal should
-//! be drained at a finality boundary so the new binary starts with an empty
-//! journal and never encounters old-format entries. A future bump that needs to
-//! keep history across the upgrade should introduce per-version `decode_vN` arms
-//! rather than re-encoding existing entries.
+//! [`JournalDecodeError::VersionMismatch`]. On a codec bump, the journal is
+//! drained on the next startup by [`drain_stale_journal_entries`], so the new
+//! binary starts without old-format entries below its own and never encounters
+//! one mid-reorg. A future bump that needs to keep history across the upgrade
+//! should introduce per-version `decode_vN` arms rather than re-encoding
+//! existing entries.
 
-use ethrex_common::H256;
+use ethrex_common::{H256, types::BlockNumber};
+use tracing::info;
+
+use crate::{
+    api::{StorageBackend, tables::STATE_HISTORY},
+    error::StoreError,
+};
 
 /// Current version of the journal entry codec.
 ///
@@ -73,9 +80,9 @@ use ethrex_common::H256;
 /// other version with [`JournalDecodeError::VersionMismatch`]: a v(N) binary
 /// will refuse to interpret v(N+1) entries (forward safety) and will also
 /// refuse to read v(N-1) entries written by a previous binary (no implicit
-/// fallback). The plan for the rollback consumer (the deep-reorg overlay) is to drain
-/// the journal at a finality boundary on upgrade, so the v(N) journal
-/// starts empty after the bump; a future bump that needs to keep history
+/// fallback). The rollback consumer (the deep-reorg overlay) is kept away from
+/// stale entries by [`drain_stale_journal_entries`], which deletes them at
+/// startup before a `Store` exists; a future bump that needs to keep history
 /// across the upgrade should introduce per-version `decode_vN` arms here
 /// rather than re-encoding existing entries.
 ///
@@ -436,6 +443,181 @@ fn decode_flat_diff(cur: &mut Cursor<'_>) -> Result<FlatDiff, JournalDecodeError
         out.push((path, value));
     }
     Ok(out)
+}
+
+// ===========================================================================
+// Startup drain
+// ===========================================================================
+
+/// What a startup drain removed. Returned so callers (and tests) can assert on
+/// the outcome; the drain logs the same facts at `info!` for operators.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct JournalDrainReport {
+    /// Number of entries deleted.
+    pub drained: u64,
+    /// `(lowest, highest)` block number of the drained range. `None` only if a
+    /// key was not the usual 8-byte big-endian block number, which no writer
+    /// produces; the entries are drained either way rather than left behind on
+    /// the strength of a key we cannot read.
+    pub range: Option<(BlockNumber, BlockNumber)>,
+    /// Distinct version bytes seen among the drained entries, in first-seen
+    /// order. An entry too short to carry a version byte contributes nothing
+    /// here but is still counted and still drained.
+    pub versions: Vec<u8>,
+}
+
+/// Deletes the contiguous *bottom* run of `STATE_HISTORY` entries whose version
+/// byte is not [`JOURNAL_VERSION`], keeping every current-version entry above
+/// them. Returns `None` when nothing was drained.
+///
+/// ## Why this has to happen, and why at startup
+///
+/// The decoder refuses both directions (see [`JOURNAL_VERSION`]), so after a
+/// restart onto a binary with a bumped codec the on-disk journal still holds
+/// old-format entries covering `[finalized+1, cache_edge]` while new blocks
+/// write the new format. A deep reorg whose unwind reaches into the old portion
+/// gets [`JournalDecodeError::VersionMismatch`], the overlay cannot be built,
+/// and the forkchoice update fails with `StateNotReachable` — the node halts and
+/// only a resync recovers it.
+///
+/// That window closes on its own once finality advances, since every forkchoice
+/// update that moves finality prunes at or below the new finalized block. But
+/// the exposure is *correlated* with the risk rather than independent of it: a
+/// reorg deeper than the layer cache essentially requires finality not to be
+/// advancing, which is exactly the condition that keeps the old entries around.
+/// So the two are not two unlikely events multiplying, and the window is worth
+/// closing deliberately.
+///
+/// Draining is what makes the refusal honest. `compute_reorg_ceiling` derives
+/// its journal reach from `Store::lowest_state_history_block_number`; if stale
+/// entries stay, that floor advertises reach the node cannot deliver and the
+/// reorg fails mid-flight. Once drained, the reach collapses to layer-cache
+/// retention and a too-deep forkchoice update is refused cleanly with
+/// `-38006 TooDeepReorg`, which the consensus layer understands. Same practical
+/// capability during the window; correct error semantics. This is the same
+/// shape as the batch-import limitation in `docs/known_issues.md` ("Deep reorgs
+/// into a full-synced range are refused").
+///
+/// ## Why the bottom run only, and not the whole table
+///
+/// A node restarting a second time mid-window has already written current-version
+/// entries above the stale ones. Wiping unconditionally would throw those away and
+/// give up reorg depth the node genuinely has. Stopping at the first current-version
+/// entry keeps them. On the first boot after an upgrade there are no such entries
+/// yet, so the run covers the whole table and the drain is total.
+///
+/// ## Cost
+///
+/// O(1) in the steady state: one `first_key` and one `get`, and if that bottom
+/// entry is current-version we stop without touching the rest of the table. Only
+/// when it is stale do we walk upward, reading entries until the first
+/// current-version one. That walk is bounded by the journal window
+/// `[finalized+1, cache_edge]` — a few hundred entries whenever finality is
+/// moving — and it happens once, on the first startup after a codec bump.
+pub fn drain_stale_journal_entries(
+    backend: &dyn StorageBackend,
+) -> Result<Option<JournalDrainReport>, StoreError> {
+    let read = backend.begin_read()?;
+
+    let Some(first_key) = read.first_key(STATE_HISTORY)? else {
+        // Empty journal: a fresh datadir, or everything pruned by finality.
+        return Ok(None);
+    };
+
+    // Steady-state fast path. The stale entries, if any, are the ones the
+    // previous binary wrote, and they sit at the bottom — so if the bottom entry
+    // is already current-version there is no stale run and no reason to read the
+    // rest of the table. This is the branch every startup after the upgrade
+    // window takes.
+    if entry_version(read.get(STATE_HISTORY, &first_key)?.as_deref()) == Some(JOURNAL_VERSION) {
+        return Ok(None);
+    }
+
+    // The bottom is stale. Walk upward to find where the current-version portion
+    // begins; that key is the exclusive upper bound of the delete.
+    let mut end_key: Option<Vec<u8>> = None;
+    let mut last_stale_key = first_key.clone();
+    let mut drained = 0u64;
+    let mut versions: Vec<u8> = Vec::new();
+    for item in read.prefix_iterator(STATE_HISTORY, &[])? {
+        let (key, value) = item?;
+        match entry_version(Some(value.as_ref())) {
+            Some(v) if v == JOURNAL_VERSION => {
+                end_key = Some(key.into_vec());
+                break;
+            }
+            other => {
+                if let Some(v) = other
+                    && !versions.contains(&v)
+                {
+                    versions.push(v);
+                }
+                drained += 1;
+                last_stale_key = key.into_vec();
+            }
+        }
+    }
+    // The iterator is borrowed from the read view; release both before writing.
+    drop(read);
+
+    let end_key = end_key.unwrap_or_else(|| {
+        // No current-version entry at all: the run is the whole table, so the
+        // exclusive bound has to sit just past the highest key. Appending a byte
+        // gives the immediate lexicographic successor of `last_stale_key`, which
+        // is above it and below nothing else that exists.
+        let mut past_the_end = last_stale_key.clone();
+        past_the_end.push(0);
+        past_the_end
+    });
+
+    let mut tx = backend.begin_write()?;
+    tx.delete_range(STATE_HISTORY, &first_key, &end_key)?;
+    tx.commit()?;
+
+    let range = key_to_block_number(&first_key).zip(key_to_block_number(&last_stale_key));
+    let report = JournalDrainReport {
+        drained,
+        range,
+        versions,
+    };
+
+    // An operator who sees a reorg refused with `-38006 TooDeepReorg` shortly
+    // after an upgrade needs this line to explain why the node's journal reach
+    // collapsed. Without it the refusal looks like a regression.
+    match report.range {
+        Some((low, high)) => info!(
+            drained = report.drained,
+            from_block = low,
+            to_block = high,
+            stale_versions = ?report.versions,
+            current_version = JOURNAL_VERSION,
+            "drained stale-version state-history entries at startup; deep-reorg reach is \
+             reduced to the layer cache until finality advances past the drained range"
+        ),
+        None => info!(
+            drained = report.drained,
+            stale_versions = ?report.versions,
+            current_version = JOURNAL_VERSION,
+            "drained stale-version state-history entries at startup (keys were not \
+             block numbers); deep-reorg reach is reduced to the layer cache"
+        ),
+    }
+
+    Ok(Some(report))
+}
+
+/// The version byte of an on-disk entry: its first byte. `None` for a missing or
+/// empty record, which cannot be current-version and so counts as stale.
+fn entry_version(value: Option<&[u8]>) -> Option<u8> {
+    value?.first().copied()
+}
+
+/// Decodes a `STATE_HISTORY` key back to its block number. `None` if the key is
+/// not the 8-byte big-endian form every writer uses.
+fn key_to_block_number(key: &[u8]) -> Option<BlockNumber> {
+    <[u8; 8]>::try_from(key)
+        .ok()
+        .map(BlockNumber::from_be_bytes)
 }
 
 #[cfg(test)]
@@ -837,6 +1019,210 @@ mod tests {
             vec(any::<u8>(), 0..200),
             proptest::option::of(vec(any::<u8>(), 0..200)),
         )
+    }
+
+    // -----------------------------------------------------------------------
+    // Startup drain
+    // -----------------------------------------------------------------------
+
+    /// A v1 entry as the previous binary wrote it: version byte 1, `block_hash`,
+    /// `parent_state_root`, then *four* diff sections — no `parent_binary_root`
+    /// and no binary section. Hand-rolled because the v1 encoder no longer
+    /// exists, and the drain must be pinned against the real predecessor shape
+    /// rather than a v2 record with its first byte overwritten.
+    fn encode_v1_entry(block_number: u64) -> Vec<u8> {
+        let mut bytes = vec![1u8];
+        bytes.extend_from_slice(H256::repeat_byte(block_number as u8).as_bytes());
+        bytes.extend_from_slice(H256::zero().as_bytes());
+        // account_trie_diff: one (path, None) pair, so the record is not trivially empty.
+        encode_varint(&mut bytes, 1);
+        encode_varint(&mut bytes, 1);
+        bytes.push(block_number as u8);
+        bytes.push(0);
+        // The remaining three v1 sections, all empty.
+        for _ in 0..3 {
+            encode_varint(&mut bytes, 0);
+        }
+        bytes
+    }
+
+    fn encode_current_entry(block_number: u64) -> Vec<u8> {
+        JournalEntry {
+            block_hash: H256::repeat_byte(block_number as u8),
+            parent_state_root: H256::zero(),
+            parent_binary_root: H256::zero(),
+            account_trie_diff: vec![(vec![block_number as u8], None)],
+            storage_trie_diff: vec![],
+            account_flat_diff: vec![],
+            storage_flat_diff: vec![],
+            binary_trie_diff: vec![],
+        }
+        .encode()
+    }
+
+    /// Seeds `STATE_HISTORY` with `(block_number, encoded_entry)` pairs.
+    fn seed(backend: &dyn StorageBackend, entries: &[(u64, Vec<u8>)]) {
+        let mut tx = backend.begin_write().unwrap();
+        for (n, encoded) in entries {
+            tx.put(STATE_HISTORY, &n.to_be_bytes(), encoded).unwrap();
+        }
+        tx.commit().unwrap();
+    }
+
+    /// The block numbers still present in `STATE_HISTORY`, ascending.
+    fn present(backend: &dyn StorageBackend) -> Vec<u64> {
+        let read = backend.begin_read().unwrap();
+        let mut out: Vec<u64> = read
+            .prefix_iterator(STATE_HISTORY, &[])
+            .unwrap()
+            .map(|item| {
+                let (key, _) = item.unwrap();
+                u64::from_be_bytes(<[u8; 8]>::try_from(key.as_ref()).unwrap())
+            })
+            .collect();
+        out.sort_unstable();
+        out
+    }
+
+    fn backend() -> crate::backend::in_memory::InMemoryBackend {
+        crate::backend::in_memory::InMemoryBackend::open().unwrap()
+    }
+
+    /// First boot after the codec bump: every entry on disk is stale, so the
+    /// whole journal goes. The floor `compute_reorg_ceiling` reads then reports
+    /// no journal reach at all, which is the truth.
+    #[test]
+    fn drain_removes_an_all_stale_journal() {
+        let backend = backend();
+        seed(
+            &backend,
+            &[
+                (10, encode_v1_entry(10)),
+                (11, encode_v1_entry(11)),
+                (12, encode_v1_entry(12)),
+            ],
+        );
+
+        let report = drain_stale_journal_entries(&backend).unwrap().unwrap();
+        assert_eq!(report.drained, 3);
+        assert_eq!(report.range, Some((10, 12)));
+        assert_eq!(report.versions, vec![1]);
+        assert!(present(&backend).is_empty(), "the journal must be empty");
+    }
+
+    /// A node restarting again mid-window: the stale bottom goes, the entries it
+    /// has since written in the current format stay, and the new floor is the
+    /// lowest surviving entry. Wiping unconditionally would pass the "no stale
+    /// entries" bar while throwing away reorg depth the node genuinely has.
+    #[test]
+    fn drain_keeps_the_current_version_portion_of_a_mixed_journal() {
+        let backend = backend();
+        seed(
+            &backend,
+            &[
+                (10, encode_v1_entry(10)),
+                (11, encode_v1_entry(11)),
+                (12, encode_current_entry(12)),
+                (13, encode_current_entry(13)),
+            ],
+        );
+
+        let report = drain_stale_journal_entries(&backend).unwrap().unwrap();
+        assert_eq!(report.drained, 2);
+        assert_eq!(report.range, Some((10, 11)));
+        assert_eq!(report.versions, vec![1]);
+        assert_eq!(
+            present(&backend),
+            vec![12, 13],
+            "the current-version portion must survive, and it sets the new floor"
+        );
+        // Every survivor must actually decode — the point of the drain is that
+        // nothing left behind can fail mid-reorg.
+        let read = backend.begin_read().unwrap();
+        for n in [12u64, 13] {
+            let bytes = read.get(STATE_HISTORY, &n.to_be_bytes()).unwrap().unwrap();
+            JournalEntry::decode(&bytes).expect("surviving entry must decode");
+        }
+    }
+
+    /// The steady state: nothing stale, nothing touched, and no write at all.
+    #[test]
+    fn drain_leaves_an_all_current_journal_untouched() {
+        let backend = backend();
+        seed(
+            &backend,
+            &[
+                (10, encode_current_entry(10)),
+                (11, encode_current_entry(11)),
+            ],
+        );
+
+        assert_eq!(drain_stale_journal_entries(&backend).unwrap(), None);
+        assert_eq!(present(&backend), vec![10, 11]);
+    }
+
+    /// A fresh datadir, or a journal fully pruned by finality. Nothing to do.
+    #[test]
+    fn drain_on_an_empty_journal_is_a_no_op() {
+        let backend = backend();
+        assert_eq!(drain_stale_journal_entries(&backend).unwrap(), None);
+        assert!(present(&backend).is_empty());
+    }
+
+    /// The run is *contiguous from the bottom*, not "every stale entry". A stale
+    /// entry sitting above a current-version one is left alone: the scan stops at
+    /// the first current-version entry.
+    ///
+    /// No writer produces this interleaving, which is exactly why it is the test
+    /// that separates the two candidate semantics — "delete the contiguous bottom
+    /// run" and "delete everything stale" agree on every shape a real node can
+    /// reach, and disagree only here.
+    #[test]
+    fn drain_stops_at_the_first_current_version_entry() {
+        let backend = backend();
+        seed(
+            &backend,
+            &[
+                (10, encode_v1_entry(10)),
+                (11, encode_current_entry(11)),
+                (12, encode_v1_entry(12)),
+            ],
+        );
+
+        let report = drain_stale_journal_entries(&backend).unwrap().unwrap();
+        assert_eq!(report.drained, 1);
+        assert_eq!(report.range, Some((10, 10)));
+        assert_eq!(
+            present(&backend),
+            vec![11, 12],
+            "the scan stops at 11; the stale entry above it is not the drain's business"
+        );
+    }
+
+    /// An entry with no bytes at all cannot carry a version byte. It is not
+    /// current-version, so it drains with the rest of the bottom run rather than
+    /// stopping the scan and pinning the floor to a record nothing can decode.
+    #[test]
+    fn drain_treats_a_versionless_entry_as_stale() {
+        let backend = backend();
+        seed(
+            &backend,
+            &[
+                (10, Vec::new()),
+                (11, encode_v1_entry(11)),
+                (12, encode_current_entry(12)),
+            ],
+        );
+
+        let report = drain_stale_journal_entries(&backend).unwrap().unwrap();
+        assert_eq!(report.drained, 2);
+        assert_eq!(report.range, Some((10, 11)));
+        assert_eq!(
+            report.versions,
+            vec![1],
+            "the empty record has no version byte to report, but it is still drained"
+        );
+        assert_eq!(present(&backend), vec![12]);
     }
 
     /// `diff_byte_estimate` must be a lower-bound that matches the actual encoded
