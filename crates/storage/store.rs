@@ -24,7 +24,9 @@ use crate::{
     utils::{ChainDataIndex, SnapStateIndex},
 };
 
-use ethrex_binary_trie::trie::BinaryTrie;
+use ethrex_binary_trie::trie::{
+    BinaryTrie, BinaryTrieDB, BitPath, EMPTY_TRIE_ROOT as BINARY_EMPTY_TRIE_ROOT, hash_stored_node,
+};
 use ethrex_common::{
     Address, H256, U256,
     types::{
@@ -2900,12 +2902,53 @@ impl Store {
     /// journal to unwind them with. The recorded mapping still cannot see that.
     ///
     /// [`BINARY_TRIE_ROOTS`]: crate::api::tables::BINARY_TRIE_ROOTS
+    /// **Two questions, both required.** The mapping answers "is `state_root`
+    /// the root this block committed", and [`Self::binary_trie_holds_root`]
+    /// answers "does this node still hold that trie". The mapping alone is not
+    /// enough, and believing it caused a devnet node to wedge permanently:
+    /// `advance_binary_trie_for_block` writes the mapping row durably at import
+    /// while the nodes behind it are only staged into the in-memory diff layer,
+    /// and `Store::shutdown` deliberately leaves those layers in memory. After
+    /// a restart the row survives for every block the node ever executed and
+    /// the nodes do not, so a bookkeeping-only check claims state that cannot
+    /// be read. The node then resumes on absent state, serves genesis values
+    /// for every post-activation block and never recovers — strictly worse than
+    /// re-executing, which is what it did when the check was merely pessimistic.
     pub fn has_binary_trie_state(
         &self,
         block_hash: BlockHash,
         state_root: H256,
     ) -> Result<bool, StoreError> {
-        Ok(self.get_binary_trie_root(block_hash)? == Some(state_root))
+        if self.get_binary_trie_root(block_hash)? != Some(state_root) {
+            return Ok(false);
+        }
+        self.binary_trie_holds_root(state_root)
+    }
+
+    /// Whether the binary trie this node can read really resolves to `root`.
+    ///
+    /// The binary counterpart of [`Self::trie_holds_state_root`], and it exists
+    /// for the same reason: binary-trie nodes are keyed by path, not by hash,
+    /// so opening a trie at a root records the request without validating it.
+    /// Reading the node at the root path and re-hashing it is what turns that
+    /// into a real answer.
+    ///
+    /// The read goes through the layered DB, so it cascades cache-then-disk
+    /// exactly as the MPT check does: state staged in a diff layer counts as
+    /// held for a running node, and only what reached disk counts for one that
+    /// has just restarted.
+    fn binary_trie_holds_root(&self, root: H256) -> Result<bool, StoreError> {
+        if root == BINARY_EMPTY_TRIE_ROOT {
+            return Ok(true);
+        }
+        let db = self.layered_binary_trie_db(root, root, LayeredBinaryTrieDB::staging_buffer())?;
+        let Some(encoded) = db
+            .get(&BitPath::new())
+            .map_err(|e| StoreError::Custom(format!("binary root node read failed: {e}")))?
+        else {
+            return Ok(false);
+        };
+        Ok(hash_stored_node(&encoded) == root)
     }
 
     /// The binary-trie root recorded for `block_hash`, if any.
@@ -4907,6 +4950,24 @@ impl Store {
             .map_err(|e| StoreError::Custom(format!("commit poke join failed: {e}")))?
             .map_err(|e| StoreError::Custom(format!("commit poke send failed: {e}")))?;
         self.wait_for_persistence_idle().await
+    }
+
+    /// Drop every in-memory trie diff-layer, keeping whatever has reached disk.
+    ///
+    /// This is what a process restart does to a node: `Store::shutdown`
+    /// force-flushes the block-data buffer but deliberately leaves the trie
+    /// diff-layers in memory, so they are simply gone on the next boot. Tests
+    /// that assert what a restarted node can still *see* need to reproduce that
+    /// loss without spawning a process.
+    #[cfg(any(test, feature = "testing"))]
+    pub fn drop_trie_layers_for_test(&self) -> Result<(), StoreError> {
+        let mut guard = self.trie_cache.write().map_err(|_| StoreError::LockError)?;
+        let threshold = guard.commit_threshold();
+        *guard = Arc::new(TrieLayerCache::new_with_safe_commit(
+            threshold,
+            self.safe_commit_root.clone(),
+        ));
+        Ok(())
     }
 
     /// Insert a block plus associated codes into the in-memory buffer without

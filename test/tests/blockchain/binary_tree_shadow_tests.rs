@@ -3049,3 +3049,117 @@ async fn the_shared_resume_walk_stops_at_the_head_on_both_chains() {
         );
     }
 }
+
+// ===========================================================================
+// Phase D9 — `has_binary_trie_state` must be a presence check, not bookkeeping.
+//
+// `advance_binary_trie_for_block` writes the block -> root mapping into
+// `BINARY_TRIE_ROOTS` *immediately and durably*, while the trie nodes backing
+// that root are only staged into the in-memory diff layer. `Store::shutdown`
+// deliberately leaves those layers in memory. So after a restart the mapping
+// row survives for every block the node ever executed, and the nodes behind it
+// do not.
+//
+// A predicate that only compares the recorded root therefore claims state the
+// node cannot read. Measured on the 2026-08-07 devnet: a node restarted at head
+// 54, resumed without replaying (the startup walk believed it held the state),
+// then served *genesis alloc values* at every post-flip block and wedged
+// permanently on `Insufficient account funds` while its peers ran to 182.
+//
+// That is strictly worse than the bug it replaced: the root-only check made the
+// node re-execute from genesis, which was wasteful but recovered. This makes it
+// fast and wrong. The MPT side has always had the real check — `has_state_root`
+// reads the root node and hashes it, precisely because trie nodes are keyed by
+// path, not by hash. The binary side needs the same.
+// ===========================================================================
+
+/// After the diff layers are lost — exactly what a restart does — a block whose
+/// binary nodes never reached disk must NOT report its state as held.
+#[tokio::test]
+async fn binary_state_lost_with_the_diff_layers_is_not_reported_as_held() {
+    let chains = build_boundary_chains(FLIP_BLOCK + 2).await;
+    let store = &chains.scheduled_store;
+    let head = chains.scheduled_blocks.last().expect("a non-empty chain");
+    assert!(
+        head.header.number > FLIP_BLOCK,
+        "the head must be past the flip for this test to say anything"
+    );
+
+    // Nothing was flushed, so this block's nodes live only in the diff layers.
+    // (Genesis seeding writes its own nodes straight to disk, so the table is
+    // not empty; what matters is that *this* block's are not in it.)
+    assert!(
+        store
+            .has_binary_trie_state(head.hash(), head.header.state_root)
+            .unwrap(),
+        "precondition: with the layers warm the state is genuinely readable"
+    );
+
+    // What a restart does: layers gone, disk keeps whatever reached it.
+    store.drop_trie_layers_for_test().unwrap();
+
+    // The bookkeeping row is durable and survives; this is the mechanism.
+    assert_eq!(
+        store.get_binary_trie_root(head.hash()).unwrap(),
+        Some(head.header.state_root),
+        "the block -> root mapping is written durably at import, so it outlives \
+         the diff layers holding the nodes it names"
+    );
+
+    assert!(
+        !store
+            .has_binary_trie_state(head.hash(), head.header.state_root)
+            .unwrap(),
+        "the block -> root mapping outlives the nodes it refers to, so a \
+         bookkeeping-only check claims state this node can no longer read. A \
+         restarted node then resumes on absent state and wedges forever \
+         instead of re-executing."
+    );
+}
+
+/// The same, one level up: the predicate every reachability caller now uses
+/// must not claim a post-flip header whose nodes are gone.
+#[tokio::test]
+async fn a_post_flip_header_with_no_nodes_on_disk_is_not_held() {
+    let chains = build_boundary_chains(FLIP_BLOCK + 2).await;
+    let store = &chains.scheduled_store;
+    let head = chains.scheduled_blocks.last().expect("a non-empty chain");
+
+    store.drop_trie_layers_for_test().unwrap();
+
+    assert!(
+        !store
+            .has_state_for_header(head.hash(), &head.header)
+            .unwrap(),
+        "has_state_for_header must answer for state the node can actually read"
+    );
+}
+
+/// The other direction, so the fix cannot be "always return false": once the
+/// nodes are genuinely flushed, the state survives losing the diff layers.
+#[tokio::test]
+async fn binary_state_flushed_to_disk_survives_losing_the_diff_layers() {
+    let chains = build_boundary_chains(FLIP_BLOCK + 2).await;
+    let store = &chains.scheduled_store;
+    let head = chains.scheduled_blocks.last().expect("a non-empty chain");
+
+    store
+        .commit_trie_layers_for_test(head.header.state_root)
+        .await
+        .expect("flush the scheduled chain");
+    store.wait_for_persistence_idle().await.expect("idle");
+    assert!(
+        store.binary_trie_node_count_for_test().unwrap() > 0,
+        "precondition: the flush really did write binary nodes"
+    );
+
+    store.drop_trie_layers_for_test().unwrap();
+
+    assert!(
+        store
+            .has_state_for_header(head.hash(), &head.header)
+            .unwrap(),
+        "flushed binary state must still be held after the layers are dropped, \
+         or every restart replays the whole chain again"
+    );
+}
