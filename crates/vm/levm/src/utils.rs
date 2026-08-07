@@ -1042,7 +1042,7 @@ pub fn account_to_levm_account(account: Account) -> (LevmAccount, Code) {
         LevmAccount {
             info: account.info,
             has_storage: !account.storage.is_empty(), // This is used in scenarios in which the storage is already all in the account. For the Levm Runner
-            storage: account.storage,
+            storage: account.storage.into_iter().collect(),
             status: AccountStatus::Unmodified,
             exists: true,
         },

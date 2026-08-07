@@ -41,7 +41,7 @@ use ethrex_crypto::Crypto;
 use ethrex_levm::EVMConfig;
 use ethrex_levm::StatelessValidator;
 #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
-use ethrex_levm::account::{AccountStatus, LevmAccount};
+use ethrex_levm::account::AccountStatus;
 use ethrex_levm::call_frame::Stack;
 use ethrex_levm::constants::{
     POST_OSAKA_GAS_LIMIT_CAP, STACK_LIMIT, SYS_CALL_GAS_LIMIT, TX_MAX_GAS_LIMIT_AMSTERDAM,
@@ -1814,7 +1814,7 @@ impl LEVM {
     pub fn validate_tx_execution(
         bal_idx: u32,
         seed_idx: u32,
-        current_state: &FxHashMap<Address, LevmAccount>,
+        current_state: &CacheDB,
         codes: &FxHashMap<H256, Code>,
         bal: &BlockAccessList,
         index: &BalAddressIndex,

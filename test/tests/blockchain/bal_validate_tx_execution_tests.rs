@@ -33,6 +33,7 @@ use ethrex_levm::{
     account::{AccountStatus, LevmAccount},
     db::{Database, gen_db::CacheDB},
     errors::DatabaseError,
+    hashers::SlotMap,
 };
 use ethrex_vm::backends::levm::{BalValidationError, LEVM};
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -90,7 +91,7 @@ fn account_with(balance: U256, nonce: u64, code_hash: H256, status: AccountStatu
             balance,
             nonce,
         },
-        storage: FxHashMap::default(),
+        storage: SlotMap::default(),
         has_storage: false,
         status,
         exists: true,
@@ -116,7 +117,7 @@ fn noop_balance_change_rejected() {
     let address = addr(1);
     let pre_balance = U256::from(100);
 
-    let mut system_seed: CacheDB = FxHashMap::default();
+    let mut system_seed: CacheDB = CacheDB::default();
     system_seed.insert(
         address,
         account_with(
@@ -128,7 +129,7 @@ fn noop_balance_change_rejected() {
     );
 
     // Post-execution state == pre-state: the "change" is a no-op.
-    let mut current_state: FxHashMap<Address, LevmAccount> = FxHashMap::default();
+    let mut current_state: CacheDB = CacheDB::default();
     current_state.insert(
         address,
         account_with(
@@ -166,7 +167,7 @@ fn noop_nonce_change_rejected() {
     let address = addr(2);
     let pre_nonce = 5u64;
 
-    let mut system_seed: CacheDB = FxHashMap::default();
+    let mut system_seed: CacheDB = CacheDB::default();
     system_seed.insert(
         address,
         account_with(
@@ -177,7 +178,7 @@ fn noop_nonce_change_rejected() {
         ),
     );
 
-    let mut current_state: FxHashMap<Address, LevmAccount> = FxHashMap::default();
+    let mut current_state: CacheDB = CacheDB::default();
     current_state.insert(
         address,
         account_with(
@@ -216,13 +217,13 @@ fn noop_code_change_rejected() {
     let code = Code::from_bytecode(code_bytes.clone(), &NativeCrypto);
     let code_hash = code.hash;
 
-    let mut system_seed: CacheDB = FxHashMap::default();
+    let mut system_seed: CacheDB = CacheDB::default();
     system_seed.insert(
         address,
         account_with(U256::zero(), 0, code_hash, AccountStatus::Unmodified),
     );
 
-    let mut current_state: FxHashMap<Address, LevmAccount> = FxHashMap::default();
+    let mut current_state: CacheDB = CacheDB::default();
     current_state.insert(
         address,
         account_with(U256::zero(), 0, code_hash, AccountStatus::Modified),
@@ -257,7 +258,7 @@ fn noop_storage_change_rejected() {
     let key = u256_to_h256(slot);
     let pre_value = U256::from(42);
 
-    let mut system_seed: CacheDB = FxHashMap::default();
+    let mut system_seed: CacheDB = CacheDB::default();
     let mut seed_account = account_with(
         U256::zero(),
         0,
@@ -267,7 +268,7 @@ fn noop_storage_change_rejected() {
     seed_account.storage.insert(key, pre_value);
     system_seed.insert(address, seed_account);
 
-    let mut current_state: FxHashMap<Address, LevmAccount> = FxHashMap::default();
+    let mut current_state: CacheDB = CacheDB::default();
     let mut current_account = account_with(
         U256::zero(),
         0,
@@ -309,7 +310,7 @@ fn genuine_balance_change_accepted() {
     let pre_balance = U256::from(100);
     let post_balance = U256::from(80);
 
-    let mut system_seed: CacheDB = FxHashMap::default();
+    let mut system_seed: CacheDB = CacheDB::default();
     system_seed.insert(
         address,
         account_with(
@@ -320,7 +321,7 @@ fn genuine_balance_change_accepted() {
         ),
     );
 
-    let mut current_state: FxHashMap<Address, LevmAccount> = FxHashMap::default();
+    let mut current_state: CacheDB = CacheDB::default();
     current_state.insert(
         address,
         account_with(
@@ -364,7 +365,7 @@ fn missing_storage_write_rejected() {
     let pre_value = U256::zero();
     let post_value = U256::from(9);
 
-    let mut system_seed: CacheDB = FxHashMap::default();
+    let mut system_seed: CacheDB = CacheDB::default();
     let mut seed_account = account_with(
         U256::zero(),
         0,
@@ -374,7 +375,7 @@ fn missing_storage_write_rejected() {
     seed_account.storage.insert(key, pre_value);
     system_seed.insert(address, seed_account);
 
-    let mut current_state: FxHashMap<Address, LevmAccount> = FxHashMap::default();
+    let mut current_state: CacheDB = CacheDB::default();
     let mut current_account = account_with(
         U256::zero(),
         0,
@@ -415,7 +416,7 @@ fn read_only_slot_not_in_changes_accepted() {
     let key = u256_to_h256(slot);
     let value = U256::from(77);
 
-    let mut system_seed: CacheDB = FxHashMap::default();
+    let mut system_seed: CacheDB = CacheDB::default();
     let mut seed_account = account_with(
         U256::zero(),
         0,
@@ -425,7 +426,7 @@ fn read_only_slot_not_in_changes_accepted() {
     seed_account.storage.insert(key, value);
     system_seed.insert(address, seed_account);
 
-    let mut current_state: FxHashMap<Address, LevmAccount> = FxHashMap::default();
+    let mut current_state: CacheDB = CacheDB::default();
     let mut current_account = account_with(
         U256::zero(),
         0,
@@ -469,7 +470,7 @@ fn written_slot_misdeclared_as_read_rejected() {
     let pre_value = U256::from(1);
     let post_value = U256::from(2);
 
-    let mut system_seed: CacheDB = FxHashMap::default();
+    let mut system_seed: CacheDB = CacheDB::default();
     let mut seed_account = account_with(
         U256::zero(),
         0,
@@ -480,7 +481,7 @@ fn written_slot_misdeclared_as_read_rejected() {
     system_seed.insert(address, seed_account);
 
     // Execution wrote the slot to a value differing from its start-of-tx value.
-    let mut current_state: FxHashMap<Address, LevmAccount> = FxHashMap::default();
+    let mut current_state: CacheDB = CacheDB::default();
     let mut current_account = account_with(
         U256::zero(),
         0,
@@ -526,7 +527,7 @@ fn noop_balance_change_absent_account_rejected() {
     let address = addr(10);
     let pre_balance = U256::from(100);
 
-    let mut system_seed: CacheDB = FxHashMap::default();
+    let mut system_seed: CacheDB = CacheDB::default();
     system_seed.insert(
         address,
         account_with(
@@ -538,7 +539,7 @@ fn noop_balance_change_absent_account_rejected() {
     );
 
     // Execution never touched the account: absent from current_state.
-    let current_state: FxHashMap<Address, LevmAccount> = FxHashMap::default();
+    let current_state: CacheDB = CacheDB::default();
 
     let bal = BlockAccessList::from_accounts(vec![
         AccountChanges::new(address).with_balance_changes(vec![BalanceChange::new(1, pre_balance)]),
@@ -567,7 +568,7 @@ fn noop_nonce_change_absent_account_rejected() {
     let address = addr(11);
     let pre_nonce = 5u64;
 
-    let mut system_seed: CacheDB = FxHashMap::default();
+    let mut system_seed: CacheDB = CacheDB::default();
     system_seed.insert(
         address,
         account_with(
@@ -578,7 +579,7 @@ fn noop_nonce_change_absent_account_rejected() {
         ),
     );
 
-    let current_state: FxHashMap<Address, LevmAccount> = FxHashMap::default();
+    let current_state: CacheDB = CacheDB::default();
 
     let bal = BlockAccessList::from_accounts(vec![
         AccountChanges::new(address).with_nonce_changes(vec![NonceChange::new(1, pre_nonce)]),
@@ -609,13 +610,13 @@ fn noop_code_change_absent_account_rejected() {
     let code = Code::from_bytecode(code_bytes.clone(), &NativeCrypto);
     let code_hash = code.hash;
 
-    let mut system_seed: CacheDB = FxHashMap::default();
+    let mut system_seed: CacheDB = CacheDB::default();
     system_seed.insert(
         address,
         account_with(U256::zero(), 0, code_hash, AccountStatus::Unmodified),
     );
 
-    let current_state: FxHashMap<Address, LevmAccount> = FxHashMap::default();
+    let current_state: CacheDB = CacheDB::default();
 
     let bal = BlockAccessList::from_accounts(vec![
         AccountChanges::new(address).with_code_changes(vec![CodeChange::new(1, code_bytes)]),
@@ -647,7 +648,7 @@ fn noop_storage_change_absent_slot_rejected() {
     let key = u256_to_h256(slot);
     let pre_value = U256::from(42);
 
-    let mut system_seed: CacheDB = FxHashMap::default();
+    let mut system_seed: CacheDB = CacheDB::default();
     let mut seed_account = account_with(
         U256::zero(),
         0,
@@ -658,7 +659,7 @@ fn noop_storage_change_absent_slot_rejected() {
     system_seed.insert(address, seed_account);
 
     // Execution never materialized this slot: absent from current_state.
-    let current_state: FxHashMap<Address, LevmAccount> = FxHashMap::default();
+    let current_state: CacheDB = CacheDB::default();
 
     let bal =
         BlockAccessList::from_accounts(vec![AccountChanges::new(address).with_storage_changes(
@@ -697,7 +698,7 @@ fn storage_change_omitted_at_this_index_rejected() {
     let pre_value = U256::zero();
     let post_value = U256::from(9);
 
-    let mut system_seed: CacheDB = FxHashMap::default();
+    let mut system_seed: CacheDB = CacheDB::default();
     let mut seed_account = account_with(
         U256::zero(),
         0,
@@ -707,7 +708,7 @@ fn storage_change_omitted_at_this_index_rejected() {
     seed_account.storage.insert(key, pre_value);
     system_seed.insert(address, seed_account);
 
-    let mut current_state: FxHashMap<Address, LevmAccount> = FxHashMap::default();
+    let mut current_state: CacheDB = CacheDB::default();
     let mut current_account = account_with(
         U256::zero(),
         0,
@@ -754,7 +755,7 @@ fn storage_read_at_this_index_with_later_change_accepted() {
     let key = u256_to_h256(slot);
     let value = U256::from(42);
 
-    let mut system_seed: CacheDB = FxHashMap::default();
+    let mut system_seed: CacheDB = CacheDB::default();
     let mut seed_account = account_with(
         U256::zero(),
         0,
@@ -764,7 +765,7 @@ fn storage_read_at_this_index_with_later_change_accepted() {
     seed_account.storage.insert(key, value);
     system_seed.insert(address, seed_account);
 
-    let mut current_state: FxHashMap<Address, LevmAccount> = FxHashMap::default();
+    let mut current_state: CacheDB = CacheDB::default();
     let mut current_account = account_with(
         U256::zero(),
         0,
@@ -815,7 +816,7 @@ fn storage_seed_uses_tx_initial_fast_path() {
     // in-memory) but deliberately leave the slot out of seed storage: the only
     // non-erroring source for the slot's seed is tx_initial. The store errors, so
     // reaching it would surface a Database error.
-    let mut system_seed: CacheDB = FxHashMap::default();
+    let mut system_seed: CacheDB = CacheDB::default();
     system_seed.insert(
         address,
         account_with(
@@ -826,7 +827,7 @@ fn storage_seed_uses_tx_initial_fast_path() {
         ),
     );
 
-    let mut current_state: FxHashMap<Address, LevmAccount> = FxHashMap::default();
+    let mut current_state: CacheDB = CacheDB::default();
     let mut current_account = account_with(
         U256::zero(),
         0,
@@ -874,9 +875,9 @@ fn storage_noop_detected_via_tx_initial() {
     let slot = U256::from(7);
     let value = U256::from(5);
 
-    let system_seed: CacheDB = FxHashMap::default();
+    let system_seed: CacheDB = CacheDB::default();
 
-    let mut current_state: FxHashMap<Address, LevmAccount> = FxHashMap::default();
+    let mut current_state: CacheDB = CacheDB::default();
     let mut current_account = account_with(
         U256::zero(),
         0,
