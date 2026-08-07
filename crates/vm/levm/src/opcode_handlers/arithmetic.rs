@@ -14,13 +14,14 @@
 //!   - `SIGNEXTEND`
 //!   - `CLZ`
 
+use crate::u256_arith;
 use crate::{
     errors::{OpcodeResult, VMError},
     gas_cost,
     opcode_handlers::OpcodeHandler,
     vm::VM,
 };
-use ethrex_common::{U256, U512};
+use ethrex_common::U256;
 
 /// Implementation for the `ADD` opcode.
 pub struct OpAddHandler;
@@ -29,8 +30,19 @@ impl OpcodeHandler for OpAddHandler {
     fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
         vm.current_call_frame.increase_consumed_gas(gas_cost::ADD)?;
 
-        let (lhs, rhs) = vm.current_call_frame.stack.pop1_and_top_mut()?;
-        *rhs = lhs.overflowing_add(*rhs).0;
+        #[cfg(feature = "zisk")]
+        {
+            // Reference operands into the live stack slots (no by-value memcpy).
+            let (lhs, rhs) = vm.current_call_frame.stack.pop1_ref_and_top_mut()?;
+            let mut out = [0u64; 4];
+            crate::zisk_u256::add_into(&lhs.0, &rhs.0, &mut out);
+            rhs.0 = out;
+        }
+        #[cfg(not(feature = "zisk"))]
+        {
+            let (lhs, rhs) = vm.current_call_frame.stack.pop1_and_top_mut()?;
+            *rhs = lhs.overflowing_add(*rhs).0;
+        }
 
         Ok(OpcodeResult::Continue)
     }
@@ -43,8 +55,18 @@ impl OpcodeHandler for OpSubHandler {
     fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
         vm.current_call_frame.increase_consumed_gas(gas_cost::SUB)?;
 
-        let (lhs, rhs) = vm.current_call_frame.stack.pop1_and_top_mut()?;
-        *rhs = lhs.overflowing_sub(*rhs).0;
+        #[cfg(feature = "zisk")]
+        {
+            let (lhs, rhs) = vm.current_call_frame.stack.pop1_ref_and_top_mut()?;
+            let mut out = [0u64; 4];
+            crate::zisk_u256::sub_into(&lhs.0, &rhs.0, &mut out);
+            rhs.0 = out;
+        }
+        #[cfg(not(feature = "zisk"))]
+        {
+            let (lhs, rhs) = vm.current_call_frame.stack.pop1_and_top_mut()?;
+            *rhs = lhs.overflowing_sub(*rhs).0;
+        }
 
         Ok(OpcodeResult::Continue)
     }
@@ -58,7 +80,7 @@ impl OpcodeHandler for OpMulHandler {
         vm.current_call_frame.increase_consumed_gas(gas_cost::MUL)?;
 
         let (lhs, rhs) = vm.current_call_frame.stack.pop1_and_top_mut()?;
-        *rhs = lhs.overflowing_mul(*rhs).0;
+        *rhs = u256_arith::wrapping_mul(lhs, *rhs);
 
         Ok(OpcodeResult::Continue)
     }
@@ -72,7 +94,7 @@ impl OpcodeHandler for OpDivHandler {
         vm.current_call_frame.increase_consumed_gas(gas_cost::DIV)?;
 
         let (lhs, rhs) = vm.current_call_frame.stack.pop1_and_top_mut()?;
-        *rhs = lhs.checked_div(*rhs).unwrap_or(U256::zero());
+        *rhs = u256_arith::div_or_zero(lhs, *rhs);
 
         Ok(OpcodeResult::Continue)
     }
@@ -92,22 +114,20 @@ impl OpcodeHandler for OpSDivHandler {
 
         let mut sign = false;
         if lhs.bit(255) {
-            lhs = U256::zero().overflowing_sub(lhs).0;
+            lhs = u256_arith::negate(lhs);
             sign = !sign;
         }
         if rhs.bit(255) {
-            rhs = U256::zero().overflowing_sub(rhs).0;
+            rhs = u256_arith::negate(rhs);
             sign = !sign;
         }
 
-        *slot = match lhs.checked_div(rhs) {
-            Some(mut res) => {
-                if sign {
-                    res = U256::zero().overflowing_sub(res).0;
-                }
-                res
-            }
-            None => U256::zero(),
+        // Negating zero is a no-op, so the `!is_zero()` guard only skips work.
+        let res = u256_arith::div_or_zero(lhs, rhs);
+        *slot = if sign && !res.is_zero() {
+            u256_arith::negate(res)
+        } else {
+            res
         };
 
         Ok(OpcodeResult::Continue)
@@ -122,7 +142,7 @@ impl OpcodeHandler for OpModHandler {
         vm.current_call_frame.increase_consumed_gas(gas_cost::MOD)?;
 
         let (lhs, rhs) = vm.current_call_frame.stack.pop1_and_top_mut()?;
-        *rhs = lhs.checked_rem(*rhs).unwrap_or(U256::zero());
+        *rhs = u256_arith::rem_or_zero(lhs, *rhs);
 
         Ok(OpcodeResult::Continue)
     }
@@ -142,20 +162,17 @@ impl OpcodeHandler for OpSModHandler {
 
         let sign = lhs.bit(255);
         if sign {
-            (lhs, _) = (!lhs).overflowing_add(U256::one());
+            lhs = u256_arith::negate(lhs);
         }
         if rhs.bit(255) {
-            (rhs, _) = (!rhs).overflowing_add(U256::one());
+            rhs = u256_arith::negate(rhs);
         }
 
-        *slot = match lhs.checked_rem(rhs) {
-            Some(mut res) => {
-                if sign {
-                    (res, _) = (!res).overflowing_add(U256::one());
-                }
-                res
-            }
-            None => U256::zero(),
+        let res = u256_arith::rem_or_zero(lhs, rhs);
+        *slot = if sign && !res.is_zero() {
+            u256_arith::negate(res)
+        } else {
+            res
         };
 
         Ok(OpcodeResult::Continue)
@@ -174,14 +191,8 @@ impl OpcodeHandler for OpAddModHandler {
         if r#mod.is_zero() || r#mod == U256::one() {
             vm.current_call_frame.stack.push_zero()?;
         } else {
-            #[expect(
-                clippy::arithmetic_side_effects,
-                reason = "mod is checked non-zero above"
-            )]
-            let res = U512::from(lhs).overflowing_add(rhs.into()).0 % r#mod;
-            vm.current_call_frame
-                .stack
-                .push(U256([res.0[0], res.0[1], res.0[2], res.0[3]]))?;
+            let res = u256_arith::addmod(lhs, rhs, r#mod);
+            vm.current_call_frame.stack.push(res)?;
         }
 
         Ok(OpcodeResult::Continue)
@@ -200,12 +211,8 @@ impl OpcodeHandler for OpMulModHandler {
         if modulus.is_zero() || multiplicand.is_zero() || multiplier.is_zero() {
             vm.current_call_frame.stack.push_zero()?;
         } else {
-            let a_bytes = multiplicand.to_big_endian();
-            let b_bytes = multiplier.to_big_endian();
-            let m_bytes = modulus.to_big_endian();
-            let result_bytes = vm.crypto.mulmod256(&a_bytes, &b_bytes, &m_bytes);
-            let product_mod = U256::from_big_endian(&result_bytes);
-            vm.current_call_frame.stack.push(product_mod)?;
+            let res = u256_arith::mulmod(vm.crypto, multiplicand, multiplier, modulus);
+            vm.current_call_frame.stack.push(res)?;
         }
 
         Ok(OpcodeResult::Continue)
@@ -236,7 +243,7 @@ impl OpcodeHandler for OpSignExtendHandler {
         vm.current_call_frame
             .increase_consumed_gas(gas_cost::SIGNEXTEND)?;
 
-        let (index, slot) = vm.current_call_frame.stack.pop1_and_top_mut()?;
+        let (index, slot) = vm.current_call_frame.stack.pop1_and_top_mut_scalars()?;
         let mut value = *slot;
         *slot = match usize::try_from(index) {
             #[expect(

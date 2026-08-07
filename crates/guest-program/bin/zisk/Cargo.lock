@@ -937,6 +937,7 @@ dependencies = [
  "serde",
  "strum",
  "thiserror",
+ "ziskos",
 ]
 
 [[package]]

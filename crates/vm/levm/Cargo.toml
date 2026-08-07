@@ -22,6 +22,8 @@ malachite = "0.6.1"
 strum = { version = "0.27.1", features = ["derive"] }
 rustc-hash.workspace = true
 rayon = { workspace = true, optional = true }
+# Native u256 arithmetic syscalls (guest only). Pinned to the toolchain version.
+ziskos = { git = "https://github.com/0xPolygonHermez/zisk.git", tag = "v1.0.0-alpha", optional = true, default-features = false, features = ["inputcpy"] }
 
 libssz = { workspace = true }
 
@@ -41,7 +43,7 @@ perf_opcode_timings = []
 # zkVM feature stubs — implementations have moved to ethrex-crypto's NativeCrypto/ZkVMCrypto
 sp1 = []
 risc0 = ["c-kzg"]
-zisk = []
+zisk = ["dep:ziskos"]
 rayon = ["dep:rayon"]
 secp256k1 = ["rayon"]
 

@@ -93,8 +93,57 @@ impl Stack {
     /// original top and `*b` the original second operand.
     #[inline]
     pub fn pop1_and_top_mut(&mut self) -> Result<(U256, &mut U256), ExceptionalHalt> {
-        let a = self.pop1()?;
-        Ok((a, self.top_mut()?))
+        // One batched underflow check (needs >=2 items) instead of `pop1()`'s +
+        // `top_mut()`'s two: `pop1_ref_and_top_mut` already validates
+        // `off+1 < STACK_LIMIT` once and returns disjoint refs. Copy the popped
+        // operand by value (matches the previous `pop1()` whole-word read).
+        let (a, top) = self.pop1_ref_and_top_mut()?;
+        Ok((*a, top))
+    }
+
+    /// Pop the top and return a REFERENCE to it (no copy) plus a mutable ref to the
+    /// new top. For binary ops that pass the operand by reference into a u256
+    /// syscall (ADD/SUB/MUL/DIV/MOD): avoids the by-value operand `memcpy` that
+    /// `overflowing_*(lhs, ..)` forces. `a` aliases the just-popped slot — valid
+    /// because no push occurs before the handler consumes it, and disjoint from the
+    /// returned mutable top (`off` != `off+1`).
+    #[inline]
+    pub fn pop1_ref_and_top_mut(&mut self) -> Result<(&U256, &mut U256), ExceptionalHalt> {
+        let off = self.offset;
+        let next = off.wrapping_add(1);
+        if next >= STACK_LIMIT {
+            return Err(ExceptionalHalt::StackUnderflow);
+        }
+        self.offset = next;
+        // SAFETY: `off` and `next` are distinct, in-bounds indices into `values`,
+        // so the two references never alias; the popped slot at `off` is not
+        // overwritten before this borrow ends (a binary-op handler does no push).
+        #[expect(unsafe_code, reason = "disjoint distinct stack indices; off < next")]
+        unsafe {
+            let base = self.values.as_mut_ptr();
+            Ok((&*base.add(off), &mut *base.add(next)))
+        }
+    }
+
+    /// [`pop1_and_top_mut`](Self::pop1_and_top_mut) whose popped value is copied
+    /// limb-wise so LLVM keeps it as four independent i64 scalars instead of
+    /// grouping limbs[1..3] into a `[24 x i8]` alloca. On riscv64 (no
+    /// unaligned-load coalescing) that alloca forces any consumer reading the whole
+    /// value to emit ~24 byte-loads + shifts/ors instead of 3 `ld`s — the same
+    /// artifact already avoided on the push path (see [`push`](Self::push)).
+    /// Verified in guest disassembly to save ~75-115 instructions each in
+    /// AND/OR/XOR/SHL/SHR/SAR/BYTE/SIGNEXTEND.
+    ///
+    /// Use ONLY for handlers that consume the popped value as a whole 256-bit word.
+    /// Do NOT use it for handlers that feed the value into a native-u256 syscall
+    /// params struct or an early per-limb compare (ADD/SUB/MUL/DIV/EQ/LT/GT/…):
+    /// there the scalarization re-materializes and regresses codegen (+13 instr
+    /// each, measured).
+    #[inline]
+    pub fn pop1_and_top_mut_scalars(&mut self) -> Result<(U256, &mut U256), ExceptionalHalt> {
+        // One batched underflow check, as in `pop1_and_top_mut`.
+        let (a, top) = self.pop1_ref_and_top_mut()?;
+        Ok((U256([a.0[0], a.0[1], a.0[2], a.0[3]]), top))
     }
 
     /// Push a single U256 value to the stack, faster than the generic push.

@@ -24,6 +24,31 @@ use crate::{
 };
 use ethrex_common::U256;
 
+/// Inline limb-wise U256 `<` (limb[3] most significant). The derived `PartialOrd`
+/// on `U256`/`[u64;4]` lowers to an out-of-line `partial_cmp`/`memcmp` **call**
+/// (a constrained AIR call body) that also forces spilling `lhs` to an address;
+/// this frameless short-circuit form deletes both.
+#[inline(always)]
+fn u256_lt(a: &[u64; 4], b: &[u64; 4]) -> bool {
+    if a[3] != b[3] {
+        return a[3] < b[3];
+    }
+    if a[2] != b[2] {
+        return a[2] < b[2];
+    }
+    if a[1] != b[1] {
+        return a[1] < b[1];
+    }
+    a[0] < b[0]
+}
+
+/// Inline limb-wise U256 `==` (branchless xor-or), avoiding the derived
+/// `PartialEq`'s out-of-line `memcmp` call.
+#[inline(always)]
+fn u256_eq(a: &[u64; 4], b: &[u64; 4]) -> bool {
+    ((a[0] ^ b[0]) | (a[1] ^ b[1]) | (a[2] ^ b[2]) | (a[3] ^ b[3])) == 0
+}
+
 /// Implementation for the `LT` opcode.
 pub struct OpLtHandler;
 impl OpcodeHandler for OpLtHandler {
@@ -31,9 +56,9 @@ impl OpcodeHandler for OpLtHandler {
     fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
         vm.current_call_frame.increase_consumed_gas(gas_cost::LT)?;
 
-        let (lhs, rhs) = vm.current_call_frame.stack.pop1_and_top_mut()?;
+        let (lhs, rhs) = vm.current_call_frame.stack.pop1_and_top_mut_scalars()?;
         #[expect(clippy::as_conversions, reason = "safe")]
-        let res = (lhs < *rhs) as u64;
+        let res = u256_lt(&lhs.0, &rhs.0) as u64;
         *rhs = res.into();
 
         Ok(OpcodeResult::Continue)
@@ -47,9 +72,9 @@ impl OpcodeHandler for OpGtHandler {
     fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
         vm.current_call_frame.increase_consumed_gas(gas_cost::GT)?;
 
-        let (lhs, rhs) = vm.current_call_frame.stack.pop1_and_top_mut()?;
+        let (lhs, rhs) = vm.current_call_frame.stack.pop1_and_top_mut_scalars()?;
         #[expect(clippy::as_conversions, reason = "safe")]
-        let res = (lhs > *rhs) as u64;
+        let res = u256_lt(&rhs.0, &lhs.0) as u64;
         *rhs = res.into();
 
         Ok(OpcodeResult::Continue)
@@ -63,7 +88,7 @@ impl OpcodeHandler for OpSLtHandler {
     fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
         vm.current_call_frame.increase_consumed_gas(gas_cost::SLT)?;
 
-        let (lhs, slot) = vm.current_call_frame.stack.pop1_and_top_mut()?;
+        let (lhs, slot) = vm.current_call_frame.stack.pop1_and_top_mut_scalars()?;
         let rhs = *slot;
         let lhs_sign = lhs.bit(255);
         let rhs_sign = rhs.bit(255);
@@ -72,7 +97,7 @@ impl OpcodeHandler for OpSLtHandler {
             (false, true) => U256::zero(),
             (true, false) => U256::one(),
             #[expect(clippy::as_conversions, reason = "safe")]
-            _ => ((lhs < rhs) as u64).into(),
+            _ => (u256_lt(&lhs.0, &rhs.0) as u64).into(),
         };
 
         Ok(OpcodeResult::Continue)
@@ -86,7 +111,7 @@ impl OpcodeHandler for OpSGtHandler {
     fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
         vm.current_call_frame.increase_consumed_gas(gas_cost::SGT)?;
 
-        let (lhs, slot) = vm.current_call_frame.stack.pop1_and_top_mut()?;
+        let (lhs, slot) = vm.current_call_frame.stack.pop1_and_top_mut_scalars()?;
         let rhs = *slot;
         let lhs_sign = lhs.bit(255);
         let rhs_sign = rhs.bit(255);
@@ -95,7 +120,7 @@ impl OpcodeHandler for OpSGtHandler {
             (false, true) => U256::one(),
             (true, false) => U256::zero(),
             #[expect(clippy::as_conversions, reason = "safe")]
-            _ => ((lhs > rhs) as u64).into(),
+            _ => (u256_lt(&rhs.0, &lhs.0) as u64).into(),
         };
 
         Ok(OpcodeResult::Continue)
@@ -109,9 +134,9 @@ impl OpcodeHandler for OpEqHandler {
     fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
         vm.current_call_frame.increase_consumed_gas(gas_cost::EQ)?;
 
-        let (lhs, rhs) = vm.current_call_frame.stack.pop1_and_top_mut()?;
+        let (lhs, rhs) = vm.current_call_frame.stack.pop1_and_top_mut_scalars()?;
         #[expect(clippy::as_conversions, reason = "safe")]
-        let res = (lhs == *rhs) as u64;
+        let res = u256_eq(&lhs.0, &rhs.0) as u64;
         *rhs = res.into();
 
         Ok(OpcodeResult::Continue)
@@ -143,7 +168,7 @@ impl OpcodeHandler for OpAndHandler {
     fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
         vm.current_call_frame.increase_consumed_gas(gas_cost::AND)?;
 
-        let (lhs, rhs) = vm.current_call_frame.stack.pop1_and_top_mut()?;
+        let (lhs, rhs) = vm.current_call_frame.stack.pop1_and_top_mut_scalars()?;
         *rhs = lhs & *rhs;
 
         Ok(OpcodeResult::Continue)
@@ -157,7 +182,7 @@ impl OpcodeHandler for OpOrHandler {
     fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
         vm.current_call_frame.increase_consumed_gas(gas_cost::OR)?;
 
-        let (lhs, rhs) = vm.current_call_frame.stack.pop1_and_top_mut()?;
+        let (lhs, rhs) = vm.current_call_frame.stack.pop1_and_top_mut_scalars()?;
         *rhs = lhs | *rhs;
 
         Ok(OpcodeResult::Continue)
@@ -171,7 +196,7 @@ impl OpcodeHandler for OpXorHandler {
     fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
         vm.current_call_frame.increase_consumed_gas(gas_cost::XOR)?;
 
-        let (lhs, rhs) = vm.current_call_frame.stack.pop1_and_top_mut()?;
+        let (lhs, rhs) = vm.current_call_frame.stack.pop1_and_top_mut_scalars()?;
         *rhs = lhs ^ *rhs;
 
         Ok(OpcodeResult::Continue)
@@ -201,7 +226,7 @@ impl OpcodeHandler for OpByteHandler {
         vm.current_call_frame
             .increase_consumed_gas(gas_cost::BYTE)?;
 
-        let (index, slot) = vm.current_call_frame.stack.pop1_and_top_mut()?;
+        let (index, slot) = vm.current_call_frame.stack.pop1_and_top_mut_scalars()?;
         let value = *slot;
         *slot = match usize::try_from(index) {
             #[expect(
@@ -223,7 +248,7 @@ impl OpcodeHandler for OpShlHandler {
     fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
         vm.current_call_frame.increase_consumed_gas(gas_cost::SHL)?;
 
-        let (shift_amount, slot) = vm.current_call_frame.stack.pop1_and_top_mut()?;
+        let (shift_amount, slot) = vm.current_call_frame.stack.pop1_and_top_mut_scalars()?;
         let value = *slot;
         *slot = match u8::try_from(shift_amount) {
             #[expect(clippy::arithmetic_side_effects, reason = "U256 shift by u8 is safe")]
@@ -242,7 +267,7 @@ impl OpcodeHandler for OpShrHandler {
     fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
         vm.current_call_frame.increase_consumed_gas(gas_cost::SHR)?;
 
-        let (shift_amount, slot) = vm.current_call_frame.stack.pop1_and_top_mut()?;
+        let (shift_amount, slot) = vm.current_call_frame.stack.pop1_and_top_mut_scalars()?;
         let value = *slot;
         *slot = match u8::try_from(shift_amount) {
             #[expect(clippy::arithmetic_side_effects, reason = "U256 shift by u8 is safe")]
@@ -261,7 +286,7 @@ impl OpcodeHandler for OpSarHandler {
     fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
         vm.current_call_frame.increase_consumed_gas(gas_cost::SAR)?;
 
-        let (shift_amount, slot) = vm.current_call_frame.stack.pop1_and_top_mut()?;
+        let (shift_amount, slot) = vm.current_call_frame.stack.pop1_and_top_mut_scalars()?;
         let value = *slot;
         #[expect(clippy::arithmetic_side_effects, reason = "U256 shift by u8 is safe")]
         {
@@ -274,5 +299,50 @@ impl OpcodeHandler for OpSarHandler {
         }
 
         Ok(OpcodeResult::Continue)
+    }
+}
+
+#[cfg(test)]
+mod u256_cmp_tests {
+    use super::{u256_eq, u256_lt};
+    use ethrex_common::U256;
+
+    struct Lcg(u64);
+    impl Lcg {
+        fn next(&mut self) -> u64 {
+            self.0 = self.0.wrapping_mul(6364136223846793005).wrapping_add(1);
+            self.0 >> 16
+        }
+        fn u256(&mut self) -> U256 {
+            // Bias toward equal high limbs to exercise short-circuit + tie paths.
+            let hi = if self.next().is_multiple_of(3) {
+                0
+            } else {
+                self.next()
+            };
+            U256([self.next(), self.next(), self.next(), hi])
+        }
+    }
+
+    #[test]
+    fn limb_cmp_matches_u256_operators() {
+        let mut rng = Lcg(0x1234_5678_9abc_def0);
+        for _ in 0..200_000 {
+            let a = rng.u256();
+            let b = rng.u256();
+            assert_eq!(u256_lt(&a.0, &b.0), a < b, "lt {a:?} {b:?}");
+            assert_eq!(u256_eq(&a.0, &b.0), a == b, "eq {a:?} {b:?}");
+        }
+        // Edge cases.
+        for (a, b) in [
+            (U256::zero(), U256::zero()),
+            (U256::zero(), U256::one()),
+            (U256::MAX, U256::MAX),
+            (U256::MAX, U256::zero()),
+            (U256([0, 0, 0, 1]), U256([u64::MAX, u64::MAX, u64::MAX, 0])),
+        ] {
+            assert_eq!(u256_lt(&a.0, &b.0), a < b);
+            assert_eq!(u256_eq(&a.0, &b.0), a == b);
+        }
     }
 }

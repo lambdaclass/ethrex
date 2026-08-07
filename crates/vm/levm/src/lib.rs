@@ -106,3 +106,9 @@ pub trait StatelessValidator: Send + Sync {
         input: &ethrex_common::types::stateless_ssz::SszStatelessInput,
     ) -> Result<Vec<u8>, errors::VMError>;
 }
+
+/// 256-bit arithmetic used by the opcode handlers; picks the ZisK syscalls or the
+/// host big-int ops internally so the handlers stay target-agnostic.
+pub mod u256_arith;
+#[cfg(feature = "zisk")]
+pub mod zisk_u256;
