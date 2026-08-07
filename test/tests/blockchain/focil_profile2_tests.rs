@@ -331,6 +331,17 @@ fn oob_sload_then_approve_code(slot: u8, scope: u8) -> Bytes {
 /// blocks already build against; only Hegotá activation and the extra
 /// contract accounts are added.
 async fn setup_profile2_store(accounts: &[(Address, Bytes)]) -> (Store, Blockchain, BlockHeader) {
+    setup_profile2_store_at_nonce(accounts, 0, "focil-profile2-store.db").await
+}
+
+/// As [`setup_profile2_store`], with the seeded accounts at `nonce`. Nonce key
+/// `0` is the account's linear nonce, so this is what a keyed-nonce sequence
+/// looks like before and after a predecessor consumes it.
+async fn setup_profile2_store_at_nonce(
+    accounts: &[(Address, Bytes)],
+    nonce: u64,
+    db_name: &str,
+) -> (Store, Blockchain, BlockHeader) {
     let file = std::fs::File::open(
         std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("..")
@@ -351,12 +362,11 @@ async fn setup_profile2_store(accounts: &[(Address, Bytes)]) -> (Store, Blockcha
                 // account inside the VERIFY frame, which reverts on an
                 // underfunded sender before any surface/UTXO check runs.
                 balance: U256::from(10u64).pow(U256::from(18u64)),
-                nonce: 0,
+                nonce,
             },
         );
     }
-    let mut store =
-        Store::new("focil-profile2-store.db", EngineType::InMemory).expect("in-memory store");
+    let mut store = Store::new(db_name, EngineType::InMemory).expect("in-memory store");
     store
         .add_initial_state(genesis)
         .await
@@ -575,6 +585,59 @@ async fn frame_tx_with_a_utxo_frame_is_undecided() {
 
     // Undecided is excused, so the block stands.
     verdict.expect("an undecidable omission must not fail the block");
+}
+
+/// Eligibility is not constant across a payload, which is what makes a
+/// builder-chosen evaluation index a censorship vector rather than a detail.
+///
+/// The same queued frame transaction (`nonce_seq == 1`, so it sits behind one
+/// predecessor) is judged against the two states a payload's endpoints resolve
+/// to. Before the predecessor consumes the sequence it is `Ineligible`; after,
+/// it is `Eligible`.
+///
+/// EIP-8369 judges an omission at an index the builder claims, falling back to
+/// end-of-payload. End-of-payload is one of the claimable indices, so the set of
+/// omissions a free claim excuses strictly contains the set end-of-payload
+/// excuses. This transaction is in the difference: enforced under the fallback,
+/// excused by a builder that claims the earlier index. EIP-8369's
+/// `a600eba447` puts exactly this shape outside the position-stable class.
+#[tokio::test]
+async fn queued_frame_tx_eligibility_flips_across_the_payload() {
+    let sender = Address::from_low_u64_be(0xE66);
+    let code = approve_code(APPROVE_EXECUTION_AND_PAYMENT);
+
+    // Nonce key 0 is the sender's linear nonce. `nonce_seq == 1` needs a
+    // predecessor to have consumed sequence 0 first.
+    let mut tx = self_verify_tx(sender, 50_000);
+    tx.nonce_seq = 1;
+
+    // Start of payload: the predecessor has not run.
+    let (_s0, chain_before, header_before) =
+        setup_profile2_store_at_nonce(&[(sender, code.clone())], 0, "focil-queued-before.db").await;
+    let gas_left = header_before.gas_limit;
+    let before =
+        BlockchainProfile2Evaluator::new(&chain_before, &header_before, gas_left).evaluate(&tx);
+
+    // End of payload: the predecessor has consumed sequence 0.
+    let (_s1, chain_after, header_after) =
+        setup_profile2_store_at_nonce(&[(sender, code)], 1, "focil-queued-after.db").await;
+    let after =
+        BlockchainProfile2Evaluator::new(&chain_after, &header_after, gas_left).evaluate(&tx);
+
+    match (&before, &after) {
+        (Profile2Eligibility::Ineligible(violation), Profile2Eligibility::Eligible) => {
+            // The flip must be the keyed nonce and nothing incidental, otherwise
+            // this passes for the wrong reason.
+            assert!(
+                violation.contains("Nonce") || violation.contains("nonce"),
+                "expected the early verdict to fail on the keyed nonce, got: {violation}"
+            );
+        }
+        _ => panic!(
+            "expected the verdict to flip Ineligible -> Eligible across the payload, \
+             got before={before:?} after={after:?}"
+        ),
+    }
 }
 
 /// EIP-8250: a listed frame tx whose `nonce_seq` does not match the current
