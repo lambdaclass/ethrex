@@ -12,7 +12,7 @@
 
 use axum::extract::FromRequestParts;
 use axum::http::request::Parts;
-use ethrex_common::types::Fork;
+use ethrex_common::types::{ChainConfig, Fork};
 
 use crate::engine_rest::error::ProblemJson;
 
@@ -36,6 +36,51 @@ pub fn parse_fork_segment(s: &str) -> Result<Fork, ProblemJson> {
         }
     };
     Ok(fork)
+}
+
+/// True when `timestamp` falls inside the active range of the engine-REST fork
+/// selected by `Eth-Execution-Version`.
+///
+/// Per execution-apis #793 the header selects a *container shape*, and the
+/// per-fork catalogue defines one entry per shape (Paris..Amsterdam). Each value
+/// therefore covers the span from its own activation up to the next fork that
+/// introduces a new shape — it is NOT a single `ChainConfig::get_fork` value.
+///
+/// This distinction is load-bearing for the BPO forks: BPO1..BPO5 introduce no
+/// engine containers of their own and ride the Osaka shapes, so `osaka` MUST
+/// accept BPO-era timestamps. An exact `get_fork(ts) == fork` test would reject
+/// every block after BPO1 activation (i.e. all of current mainnet, sepolia and
+/// hoodi). Hegota likewise has no catalogue entry yet and rides Amsterdam.
+///
+/// Used by `GET /payloads/{id}` (mismatch → 400 unsupported-fork) and by the
+/// `/bodies` handlers (mismatch → `available = false`, per the spec's rule that
+/// a body is unavailable when its timestamp "falls outside the header fork's
+/// active range"). Both callers share this predicate so they cannot drift.
+pub fn fork_covers_timestamp(chain_config: &ChainConfig, fork: Fork, timestamp: u64) -> bool {
+    match fork {
+        Fork::Paris => !chain_config.is_shanghai_activated(timestamp),
+        Fork::Shanghai => {
+            chain_config.is_shanghai_activated(timestamp)
+                && !chain_config.is_cancun_activated(timestamp)
+        }
+        Fork::Cancun => {
+            chain_config.is_cancun_activated(timestamp)
+                && !chain_config.is_prague_activated(timestamp)
+        }
+        Fork::Prague => {
+            chain_config.is_prague_activated(timestamp)
+                && !chain_config.is_osaka_activated(timestamp)
+        }
+        // Spans Osaka + BPO1..BPO5: none of the BPO forks change the engine
+        // container shapes, so they are served under the Osaka header value.
+        Fork::Osaka => {
+            chain_config.is_osaka_activated(timestamp)
+                && !chain_config.is_amsterdam_activated(timestamp)
+        }
+        Fork::Amsterdam => chain_config.is_amsterdam_activated(timestamp),
+        // `parse_fork_segment` restricts the header to the 6 catalogue forks.
+        _ => false,
+    }
 }
 
 /// Axum extractor that reads and validates the `Eth-Execution-Version` header.

@@ -8,12 +8,14 @@ use axum::response::{IntoResponse, Response};
 use ethrex_blockchain::Blockchain;
 use ethrex_common::H256;
 use ethrex_common::types::{Block, BlockBody, Fork};
+use ethrex_crypto::NativeCrypto;
 use ethrex_rlp::encode::RLPEncode;
 use serde::Deserialize;
+use tracing::warn;
 
 use crate::engine_rest::error::ProblemJson;
 use crate::engine_rest::extractors::Ssz;
-use crate::engine_rest::fork_header::ExecutionVersion;
+use crate::engine_rest::fork_header::{ExecutionVersion, fork_covers_timestamp};
 use crate::engine_rest::handlers::capabilities::BODIES_MAX_COUNT;
 use crate::engine_rest::responses::SszBody;
 use crate::engine_rest::types::bodies::{
@@ -26,7 +28,7 @@ use crate::rpc::RpcApiContext;
 
 // ── Handlers ──────────────────────────────────────────────────────────────────
 
-pub async fn bodies_by_hash(
+pub(crate) async fn bodies_by_hash(
     ExecutionVersion(fork): ExecutionVersion,
     State(ctx): State<RpcApiContext>,
     Ssz(req): Ssz<BodiesByHashRequest>,
@@ -51,12 +53,12 @@ pub async fn bodies_by_hash(
 }
 
 #[derive(Deserialize)]
-pub struct BodiesRangeParams {
-    pub from: Option<u64>,
-    pub count: Option<u64>,
+pub(crate) struct BodiesRangeParams {
+    pub(crate) from: Option<u64>,
+    pub(crate) count: Option<u64>,
 }
 
-pub async fn bodies_by_range(
+pub(crate) async fn bodies_by_range(
     ExecutionVersion(fork): ExecutionVersion,
     State(ctx): State<RpcApiContext>,
     Query(params): Query<BodiesRangeParams>,
@@ -122,18 +124,22 @@ pub async fn bodies_by_range(
 // ── Response builder ──────────────────────────────────────────────────────────
 
 /// Build the per-fork bodies response from the resolved blocks. A block is
-/// `available` only when it exists AND its timestamp falls inside the URL fork's
-/// active range (spec #793); otherwise the entry is `available == false` with a
-/// zero-valued body. The fork-shape grouping (Paris / Shanghai / Amsterdam) is
-/// independent of the per-entry era check, which always tests the specific URL
-/// fork.
+/// `available` only when it exists AND its timestamp falls inside the active
+/// range of the `Eth-Execution-Version` fork (spec #793); otherwise the entry is
+/// `available == false` with a zero-valued body. The fork-shape grouping
+/// (Paris / Shanghai / Amsterdam) is independent of the per-entry range check,
+/// which always tests the specific header fork.
 async fn build_bodies_response(
     fork: Fork,
     blocks: Vec<Option<Block>>,
     ctx: RpcApiContext,
 ) -> Response {
     let chain_config = ctx.storage.get_chain_config();
-    let in_era = |block: &Block| chain_config.get_fork(block.header.timestamp) == fork;
+    // Range test, NOT `get_fork(ts) == fork`: the header names a container shape
+    // whose span can cover several chain forks (`osaka` covers BPO1..BPO5, which
+    // add no engine containers). Exact equality marked every post-BPO1 block
+    // unavailable. Shared with `GET /payloads/{id}` so the two cannot drift.
+    let in_era = |block: &Block| fork_covers_timestamp(&chain_config, fork, block.header.timestamp);
 
     match fork {
         Fork::Paris => {
@@ -183,20 +189,40 @@ async fn build_bodies_response(
                         // the blocking-thread helper. On a normally-operating
                         // node BALs are persisted at import, so the fallback is
                         // the rare path (e.g. snap-synced pre-cutover blocks).
-                        let (bal_bytes, block) =
-                            match ctx.storage.get_block_access_list(block.hash()) {
-                                Ok(Some(bal)) => (bal.encode_to_vec(), block),
-                                Ok(None) => {
-                                    match bal_bytes_for_block(ctx.blockchain.clone(), block).await {
-                                        Ok(v) => v,
-                                        Err(resp) => return resp,
-                                    }
+                        //
+                        // EIP-8159: never serve a BAL that doesn't hash to the
+                        // header commitment — degrade to `available = false`
+                        // instead, matching `engine::payload::bal_for_block` and
+                        // `eth::block_access_list`. Every writer validates before
+                        // storing today, so this is defence in depth against a
+                        // stale entry rather than a reachable path.
+                        let commitment = block.header.block_access_list_hash;
+                        let (bal_bytes, block) = match ctx
+                            .storage
+                            .get_block_access_list(block.hash())
+                        {
+                            Ok(Some(bal)) if bal.matches_commitment(commitment, &NativeCrypto) => {
+                                (bal.encode_to_vec(), block)
+                            }
+                            Ok(Some(_)) => {
+                                warn!(
+                                    "Stored BAL for {} does not match header commitment; reporting body unavailable",
+                                    block.hash()
+                                );
+                                entries.push(BodyEntryAmsterdam::unavailable());
+                                continue;
+                            }
+                            Ok(None) => {
+                                match bal_bytes_for_block(ctx.blockchain.clone(), block).await {
+                                    Ok(v) => v,
+                                    Err(resp) => return resp,
                                 }
-                                Err(e) => {
-                                    return ProblemJson::internal(&format!("storage: {e}"))
-                                        .into_response();
-                                }
-                            };
+                            }
+                            Err(e) => {
+                                return ProblemJson::internal(&format!("storage: {e}"))
+                                    .into_response();
+                            }
+                        };
                         match amsterdam_body_from_internal(block.body, bal_bytes) {
                             Ok(body) => BodyEntryAmsterdam::available(body),
                             Err(p) => return p.into_response(),

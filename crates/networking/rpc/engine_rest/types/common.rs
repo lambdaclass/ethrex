@@ -219,11 +219,13 @@ impl FromStr for PayloadId {
                 hex.len()
             ));
         }
+        // `hex::decode_to_slice` rather than a hand-rolled `from_str_radix` loop
+        // over `&hex[i*2..i*2+2]`: the length check above counts *bytes*, so a
+        // 16-byte value containing a multibyte char (e.g. `0xa` + `é` + 13 digits)
+        // passed it and then panicked slicing mid-char. It also rejects the
+        // sign-prefixed pairs `from_str_radix` silently accepted ("+1" → 1).
         let mut bytes = [0u8; 8];
-        for (i, byte) in bytes.iter_mut().enumerate() {
-            *byte = u8::from_str_radix(&hex[i * 2..i * 2 + 2], 16)
-                .map_err(|e| format!("invalid hex: {e}"))?;
-        }
+        hex::decode_to_slice(hex, &mut bytes).map_err(|e| format!("invalid hex: {e}"))?;
         Ok(Self(bytes))
     }
 }

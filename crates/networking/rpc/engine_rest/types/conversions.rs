@@ -328,7 +328,9 @@ fn amsterdam_payload_to_json(
     // The block_access_list field carries the RLP-encoded BAL. Hash the raw bytes
     // for the header's `block_access_list_hash`, and decode the BAL itself so the
     // caller can run `validate_ordering` (matching the JSON-RPC V5 path).
-    let bal_bytes = p.block_access_list.to_vec();
+    // `into_inner()` moves the buffer out of the owned payload — `to_vec()` copied
+    // the whole RLP blob (100 KB-1 MB+ on a mainnet-scale block) for nothing.
+    let bal_bytes = p.block_access_list.into_inner();
     let (raw_bal_hash, block_access_list) = if bal_bytes.is_empty() {
         (None, None)
     } else {

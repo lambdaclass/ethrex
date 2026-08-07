@@ -1,10 +1,15 @@
 //! SSZ wire types for the engine REST bodies endpoints (execution-apis #793).
 //!
-//! Request (`POST /bodies/hash`) is a bare `List[Hash32, MAX_BODIES_REQUEST]`.
-//! Response is a bare `List[BodyEntry, MAX_BODIES_REQUEST]` — NOT wrapped in a
-//! named container — where `BodyEntry { available: Boolean, body: ExecutionPayloadBody }`.
+//! Both the request and the response are single-field SSZ **containers**, not bare
+//! top-level lists: `BodiesByHashRequest { block_hashes: List[Hash32, MAX_BODIES_REQUEST] }`
+//! and `BodiesResponse { entries: List[BodyEntry, MAX_BODIES_REQUEST] }`, where
+//! `BodyEntry { available: Boolean, body: ExecutionPayloadBody }`. A 4-byte offset
+//! therefore precedes the list on the wire.
+//!
 //! When `available == false` the `body` is zero-valued (every list empty) and CLs
-//! MUST ignore it. Each fork URL returns only its own era's blocks.
+//! MUST ignore it. `available` is false both for missing/pruned blocks and for
+//! blocks whose timestamp falls outside the active range of the
+//! `Eth-Execution-Version` fork (see `fork_header::fork_covers_timestamp`).
 
 use libssz_derive::{HashTreeRoot, SszDecode, SszEncode};
 use libssz_types::SszList;

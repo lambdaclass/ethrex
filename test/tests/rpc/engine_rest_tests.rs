@@ -109,6 +109,65 @@ mod fork_header_tests {
         assert!(parse_fork_segment("not-a-fork").is_err());
     }
 
+    /// `Eth-Execution-Version` names a *container shape*, and per execution-apis
+    /// #793 a body/payload is in range when its timestamp falls inside that
+    /// shape's **active range** — not when `ChainConfig::get_fork` equals the
+    /// header value. The BPO forks add no engine containers and ride the Osaka
+    /// shapes, so `osaka` must cover BPO-era timestamps. An exact-equality test
+    /// reported every post-BPO1 block as out-of-range (all of current mainnet).
+    #[test]
+    fn osaka_range_covers_bpo_era_timestamps() {
+        use ethrex_common::types::ChainConfig;
+        use ethrex_rpc::engine_rest::fork_header::fork_covers_timestamp;
+
+        // Osaka at 100, BPO1 at 200, BPO2 at 300, Amsterdam at 400.
+        let cc = ChainConfig {
+            shanghai_time: Some(0),
+            cancun_time: Some(0),
+            prague_time: Some(50),
+            osaka_time: Some(100),
+            bpo1_time: Some(200),
+            bpo2_time: Some(300),
+            amsterdam_time: Some(400),
+            ..Default::default()
+        };
+
+        // Sanity: these timestamps really are BPO-era, so `get_fork` does not
+        // return Osaka — which is exactly why equality was wrong.
+        assert_eq!(cc.get_fork(250), Fork::BPO1);
+        assert_eq!(cc.get_fork(350), Fork::BPO2);
+
+        // Osaka's active range spans Osaka + every BPO, up to Amsterdam.
+        assert!(fork_covers_timestamp(&cc, Fork::Osaka, 100));
+        assert!(fork_covers_timestamp(&cc, Fork::Osaka, 250)); // BPO1
+        assert!(fork_covers_timestamp(&cc, Fork::Osaka, 350)); // BPO2
+        assert!(!fork_covers_timestamp(&cc, Fork::Osaka, 400)); // Amsterdam
+        assert!(!fork_covers_timestamp(&cc, Fork::Osaka, 99)); // still Prague
+
+        // Neighbouring header values stay bounded by the next shape change.
+        assert!(fork_covers_timestamp(&cc, Fork::Prague, 50));
+        assert!(!fork_covers_timestamp(&cc, Fork::Prague, 100));
+        assert!(fork_covers_timestamp(&cc, Fork::Amsterdam, 400));
+        assert!(!fork_covers_timestamp(&cc, Fork::Amsterdam, 399));
+    }
+
+    /// The header values that carry no chain-fork of their own must still be
+    /// rejected for out-of-range timestamps, and non-catalogue forks never match.
+    #[test]
+    fn fork_range_rejects_non_catalogue_forks() {
+        use ethrex_common::types::ChainConfig;
+        use ethrex_rpc::engine_rest::fork_header::fork_covers_timestamp;
+
+        let cc = ChainConfig {
+            shanghai_time: Some(0),
+            cancun_time: Some(0),
+            ..Default::default()
+        };
+        // BPO/Hegota are never valid header values, so they never "cover" anything.
+        assert!(!fork_covers_timestamp(&cc, Fork::BPO1, 0));
+        assert!(!fork_covers_timestamp(&cc, Fork::London, 0));
+    }
+
     #[tokio::test]
     async fn extractor_rejects_unknown_fork_with_400() {
         use axum::Router;
@@ -774,6 +833,31 @@ mod common_types_tests {
         assert!("0x010203".parse::<PayloadId>().is_err()); // too short
         assert!("0xZZ02030405060708".parse::<PayloadId>().is_err()); // bad hex
         assert!("0x01020304050607080900".parse::<PayloadId>().is_err()); // too long
+    }
+
+    /// `GET /engine/v1/payloads/{id}` takes the segment as a percent-decoded
+    /// `String`, so a multibyte char can reach the parser. The length guard
+    /// counts *bytes*, so these values pass it; the previous hand-rolled
+    /// `from_str_radix` loop then byte-sliced mid-char and panicked, tearing down
+    /// the connection instead of returning 400.
+    #[test]
+    fn payload_id_parse_rejects_multibyte_without_panicking() {
+        // 16 bytes of hex, but only 15 chars — 'é' is two bytes.
+        let multibyte = "0xa\u{e9}0000000000000";
+        assert_eq!(multibyte.strip_prefix("0x").unwrap().len(), 16);
+        assert!(multibyte.parse::<PayloadId>().is_err());
+
+        // Multibyte at the tail, and a non-ASCII char that is not valid hex.
+        assert!("0x00000000000000\u{e9}".parse::<PayloadId>().is_err());
+        assert!("0x\u{ff0f}00000000000".parse::<PayloadId>().is_err());
+    }
+
+    /// `u8::from_str_radix` accepts a leading `+`, so the old per-pair loop
+    /// parsed "+1" as 1 and mapped a malformed id onto a valid `PayloadId`.
+    #[test]
+    fn payload_id_parse_rejects_sign_prefixed_pairs() {
+        assert!("0x+1+1+1+1+1+1+1+1".parse::<PayloadId>().is_err());
+        assert!("0x-1-1-1-1-1-1-1-1".parse::<PayloadId>().is_err());
     }
 
     #[test]
@@ -2109,6 +2193,28 @@ mod bodies_by_range_tests {
     };
     use tower::ServiceExt;
 
+    /// Decode a `/bodies` response into the Shanghai-shaped container that the
+    /// Shanghai/Cancun/Prague/Osaka header values all share.
+    async fn decode_entries(resp: axum::response::Response) -> Vec<bool> {
+        use ethrex_rpc::engine_rest::types::bodies::BodiesResponseShanghai;
+        use http_body_util::BodyExt;
+        use libssz::SszDecode;
+
+        let bytes = resp.into_body().collect().await.unwrap().to_bytes();
+        BodiesResponseShanghai::from_ssz_bytes(&bytes)
+            .expect("response decodes as BodiesResponseShanghai")
+            .entries
+            .iter()
+            .map(|e| e.available)
+            .collect()
+    }
+
+    /// The seeded blocks must come back **available**, not merely 200 OK.
+    ///
+    /// The test genesis activates Osaka at timestamp 0 and `test_header` stamps
+    /// blocks at 1000, so the correct header value here is `osaka`. Asserting on
+    /// `available` (rather than just the status line) is what distinguishes a
+    /// working range check from one that silently withholds every block.
     #[tokio::test]
     async fn returns_seeded_blocks_in_range() {
         let storage = setup_store().await;
@@ -2122,7 +2228,7 @@ mod bodies_by_range_tests {
         let req = axum::http::Request::builder()
             .method("GET")
             .uri("/bodies?from=1&count=3")
-            .header("eth-execution-version", "cancun")
+            .header("eth-execution-version", "osaka")
             .header("authorization", format!("Bearer {token}"))
             .body(axum::body::Body::empty())
             .unwrap();
@@ -2131,6 +2237,40 @@ mod bodies_by_range_tests {
         assert_eq!(
             resp.headers().get("content-type").unwrap(),
             "application/octet-stream"
+        );
+        assert_eq!(
+            decode_entries(resp).await,
+            vec![true, true, true],
+            "seeded in-range blocks must be reported available"
+        );
+    }
+
+    /// A header value whose active range excludes the blocks' era must report
+    /// them unavailable — the other half of the range contract.
+    #[tokio::test]
+    async fn out_of_range_fork_reports_unavailable() {
+        let storage = setup_store().await;
+        add_eip1559_tx_blocks(&storage, 3, 1).await;
+        let mut ctx = default_context_with_storage(storage).await;
+        let secret = Bytes::from(vec![0xAB; 32]);
+        ctx.node_data.jwt_secret = secret.clone();
+        let app = router(ctx);
+        let token = auth_token(&secret).await;
+
+        // Blocks are Osaka-era on the test genesis, so `cancun` is out of range.
+        let req = axum::http::Request::builder()
+            .method("GET")
+            .uri("/bodies?from=1&count=2")
+            .header("eth-execution-version", "cancun")
+            .header("authorization", format!("Bearer {token}"))
+            .body(axum::body::Body::empty())
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), 200);
+        assert_eq!(
+            decode_entries(resp).await,
+            vec![false, false],
+            "blocks outside the header fork's active range must be unavailable"
         );
     }
 

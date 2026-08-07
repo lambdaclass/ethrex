@@ -1,8 +1,11 @@
 //! SSZ wire types for the engine REST blob endpoints (execution-apis #793).
 //!
-//! Requests are bare `List[VersionedHash, MAX_BLOBS_REQUEST]` (v1/v2/v3) or a
-//! `BlobsV4Request` container (v4). Responses are bare `List[BlobV*Entry,
-//! MAX_BLOBS_REQUEST]` — NOT wrapped in a named container — matching the CL.
+//! Every request and response is a single-field SSZ **container**, not a bare
+//! top-level list: `BlobsV*Request { versioned_hashes: List[VersionedHash,
+//! MAX_BLOBS_REQUEST] }` (v4 additionally carries `indices_bitarray`) and
+//! `BlobsV*Response { entries: List[BlobV*Entry, MAX_BLOBS_REQUEST] }`. A 4-byte
+//! offset therefore precedes the list on the wire.
+//!
 //! Each entry carries an `available` boolean plus `contents`; when `available`
 //! is false the `contents` are zero-valued and CLs MUST ignore them. `/blobs/v1`
 //! (Cancun, pre-Osaka only) surfaces missing blobs as `available == false`

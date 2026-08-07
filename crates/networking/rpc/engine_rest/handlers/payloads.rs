@@ -19,7 +19,7 @@ use crate::engine::payload::{
 };
 use crate::engine_rest::error::ProblemJson;
 use crate::engine_rest::extractors::{decode_ssz, is_length_limit_error};
-use crate::engine_rest::fork_header::ExecutionVersion;
+use crate::engine_rest::fork_header::{ExecutionVersion, fork_covers_timestamp};
 use crate::engine_rest::handlers::helpers::check_content_type;
 use crate::engine_rest::responses::SszBody;
 use crate::engine_rest::types::blobs::BYTES_PER_BLOB;
@@ -37,7 +37,7 @@ use crate::types::payload::PayloadValidationStatus;
 
 // ── submit_payload ────────────────────────────────────────────────────────────
 
-pub async fn submit_payload(
+pub(crate) async fn submit_payload(
     ExecutionVersion(fork): ExecutionVersion,
     State(ctx): State<RpcApiContext>,
     req: Request,
@@ -126,9 +126,10 @@ where
     }
 
     // 3b. Fork-boundary check (mirror JSON-RPC NewPayloadV3/V4/V5 UnsupportedFork,
-    //     engine/payload.rs). The fork is pinned by the URL, so a payload whose
-    //     timestamp belongs to a different fork era is misrouted; reject it with
-    //     400 instead of letting it fall through to a block-hash-mismatch INVALID.
+    //     engine/payload.rs). The fork is pinned by the `Eth-Execution-Version`
+    //     header, so a payload whose timestamp belongs to a different fork era is
+    //     misrouted; reject it with 400 instead of letting it fall through to a
+    //     block-hash-mismatch INVALID.
     //     V4 covers Prague+Osaka (a range), so it can't use the single-fork
     //     `validate_fork` helper the way V3 (Cancun-only) effectively does here.
     let chain_config = ctx.storage.get_chain_config();
@@ -212,7 +213,7 @@ where
 
 // ── get_payload ───────────────────────────────────────────────────────────────
 
-pub async fn get_payload(
+pub(crate) async fn get_payload(
     ExecutionVersion(fork): ExecutionVersion,
     Path(id_str): Path<String>,
     State(ctx): State<RpcApiContext>,
@@ -241,24 +242,15 @@ pub async fn get_payload(
 
     // 3b. Ensure the built payload belongs to the requested fork's engine-shape
     //     era. Mirrors the JSON-RPC GetPayloadV1..V6 range guards
-    //     (engine/payload.rs): each segment accepts its fork up to the next
-    //     payload-shape boundary, so `/osaka` also accepts BPO-era blocks (which
+    //     (engine/payload.rs): each header value accepts its fork up to the next
+    //     payload-shape boundary, so `osaka` also accepts BPO-era blocks (which
     //     share the Osaka payload shape) while rejecting Amsterdam (BAL +
     //     slot_number). An exact `get_fork == fork` check would wrongly 400 a
     //     BPO-era payload; a mismatch otherwise serializes the wrong SSZ shape.
+    //     The predicate is shared with the `/bodies` handlers.
     let built_ts = result.payload.header.timestamp;
     let cc = ctx.storage.get_chain_config();
-    let fork_ok = match fork {
-        Fork::Paris => !cc.is_shanghai_activated(built_ts),
-        Fork::Shanghai => cc.is_shanghai_activated(built_ts) && !cc.is_cancun_activated(built_ts),
-        Fork::Cancun => cc.is_cancun_activated(built_ts) && !cc.is_prague_activated(built_ts),
-        Fork::Prague => cc.is_prague_activated(built_ts) && !cc.is_osaka_activated(built_ts),
-        Fork::Osaka => cc.is_osaka_activated(built_ts) && !cc.is_amsterdam_activated(built_ts),
-        Fork::Amsterdam => cc.is_amsterdam_activated(built_ts),
-        // parse_fork_segment restricts to the 6 spec forks.
-        _ => false,
-    };
-    if !fork_ok {
+    if !fork_covers_timestamp(&cc, fork, built_ts) {
         return ProblemJson::unsupported_fork(&format!(
             "built payload fork {:?} does not match Eth-Execution-Version {fork:?}",
             cc.get_fork(built_ts)
@@ -321,12 +313,7 @@ pub async fn get_payload(
             .into_response())
         })(),
         Fork::Amsterdam => (|| -> Result<Response, ProblemJson> {
-            let payload = amsterdam_envelope_from_block(
-                block,
-                &result.requests,
-                result.block_access_list.as_ref(),
-            )?
-            .execution_payload;
+            let payload = amsterdam_payload_from_block(block, result.block_access_list.as_ref())?;
             Ok(SszBody(BuiltPayloadAmsterdam {
                 payload,
                 block_value,
@@ -337,7 +324,7 @@ pub async fn get_payload(
             .into_response())
         })(),
         // Unreachable: parse_fork_segment already validated the fork.
-        _ => unreachable!("fork path validation ensures only spec forks reach here"),
+        _ => unreachable!("ExecutionVersion extractor restricts to the 6 spec forks"),
     };
     match built {
         Ok(r) => r,
@@ -659,11 +646,18 @@ fn ssz_execution_requests(
         .map_err(|_| ProblemJson::internal("execution_requests list overflow"))
 }
 
-fn amsterdam_envelope_from_block(
+/// Build the Amsterdam `ExecutionPayload` for `GET /payloads/{id}`.
+///
+/// Returns the bare payload rather than an `ExecutionPayloadEnvelope`: the
+/// envelope's `parent_beacon_block_root` and `execution_requests` belong to the
+/// `POST /payloads` submission shape, and `BuiltPayloadAmsterdam` carries its own
+/// `execution_requests`. Building the envelope here meant `ssz_execution_requests`
+/// ran twice per request (up to ~1.5 MB of discarded work at the EIP-6110 deposit
+/// ceiling). Mirrors `prague_payload_from_block`.
+fn amsterdam_payload_from_block(
     block: &Block,
-    requests: &[ethrex_common::types::requests::EncodedRequests],
     bal: Option<&ethrex_common::types::block_access_list::BlockAccessList>,
-) -> Result<amsterdam::ExecutionPayloadEnvelope, ProblemJson> {
+) -> Result<amsterdam::ExecutionPayload, ProblemJson> {
     use crate::engine_rest::types::common::MAX_BLOCK_ACCESS_LIST_BYTES;
 
     let h = &block.header;
@@ -690,36 +684,34 @@ fn amsterdam_envelope_from_block(
         MAX_TRANSACTIONS_PER_PAYLOAD
     )?;
 
-    Ok(amsterdam::ExecutionPayloadEnvelope {
-        execution_payload: amsterdam::ExecutionPayload {
-            parent_hash: h.parent_hash.0,
-            fee_recipient: Bytes20(h.coinbase.0),
-            state_root: h.state_root.0,
-            receipts_root: h.receipts_root.0,
-            logs_bloom: h
-                .logs_bloom
-                .0
-                .to_vec()
-                .try_into()
-                .expect("logs_bloom is exactly 256 bytes"),
-            prev_randao: h.prev_randao.0,
-            block_number: h.number,
-            gas_limit: h.gas_limit,
-            gas_used: h.gas_used,
-            timestamp: h.timestamp,
-            extra_data: h.extra_data.to_vec().try_into().map_err(|_| {
-                ProblemJson::internal("stored extra_data exceeds MAX_EXTRA_DATA_BYTES")
-            })?,
-            base_fee_per_gas: u64_to_ssz_base_fee(h.base_fee_per_gas.unwrap_or(0)),
-            block_hash: block.hash().0,
-            transactions: txs,
-            withdrawals: ssz_withdrawals(block)?,
-            blob_gas_used: h.blob_gas_used.unwrap_or(0),
-            excess_blob_gas: h.excess_blob_gas.unwrap_or(0),
-            block_access_list,
-            slot_number: h.slot_number.unwrap_or(0),
-        },
-        parent_beacon_block_root: h.parent_beacon_block_root.unwrap_or_default().0,
-        execution_requests: ssz_execution_requests(requests)?,
+    Ok(amsterdam::ExecutionPayload {
+        parent_hash: h.parent_hash.0,
+        fee_recipient: Bytes20(h.coinbase.0),
+        state_root: h.state_root.0,
+        receipts_root: h.receipts_root.0,
+        logs_bloom: h
+            .logs_bloom
+            .0
+            .to_vec()
+            .try_into()
+            .expect("logs_bloom is exactly 256 bytes"),
+        prev_randao: h.prev_randao.0,
+        block_number: h.number,
+        gas_limit: h.gas_limit,
+        gas_used: h.gas_used,
+        timestamp: h.timestamp,
+        extra_data: h
+            .extra_data
+            .to_vec()
+            .try_into()
+            .map_err(|_| ProblemJson::internal("stored extra_data exceeds MAX_EXTRA_DATA_BYTES"))?,
+        base_fee_per_gas: u64_to_ssz_base_fee(h.base_fee_per_gas.unwrap_or(0)),
+        block_hash: block.hash().0,
+        transactions: txs,
+        withdrawals: ssz_withdrawals(block)?,
+        blob_gas_used: h.blob_gas_used.unwrap_or(0),
+        excess_blob_gas: h.excess_blob_gas.unwrap_or(0),
+        block_access_list,
+        slot_number: h.slot_number.unwrap_or(0),
     })
 }

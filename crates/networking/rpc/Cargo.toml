@@ -52,11 +52,11 @@ spawned-concurrency.workspace = true
 # Used by test_utils to share a single merkleization pool across test contexts.
 rayon.workspace = true
 
-# EIP-8025 dependencies
+# SSZ support. Unconditional (not gated behind `eip-8025`) because the engine
+# REST/SSZ API in engine_rest/ is always compiled — see `pub mod engine_rest`
+# in lib.rs. libssz-merkle provides the `HashTreeRoot` trait that the
+# libssz-derive macros expand to impls of, so it must be a direct dep too.
 libssz = { workspace = true }
-# libssz-merkle provides the `HashTreeRoot` trait used by the SSZ derives
-# in engine_rest/types/. The libssz-derive macros expand to impls that
-# reference this trait, so it must be a direct unconditional dep.
 libssz-merkle = { workspace = true }
 libssz-derive = { workspace = true }
 libssz-types = { workspace = true }

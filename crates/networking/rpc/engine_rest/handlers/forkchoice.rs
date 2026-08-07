@@ -4,15 +4,14 @@
 use axum::RequestExt;
 use axum::extract::State;
 use axum::response::{IntoResponse, Response};
-use ethrex_blockchain::error::ChainError;
-use ethrex_blockchain::payload::{BuildPayloadArgs, create_payload};
-use ethrex_common::types::{BlockHeader, ELASTICITY_MULTIPLIER, Fork, Withdrawal};
+use ethrex_common::types::{BlockHeader, Fork, Withdrawal};
 use ethrex_common::{Address, H256};
-use tracing::{error, info};
+use tracing::error;
 
 use crate::engine::fork_choice::{
-    handle_forkchoice, validate_attributes_v1, validate_attributes_v2,
-    validate_attributes_v2_pre_shanghai, validate_attributes_v3, validate_attributes_v4,
+    build_payload, build_payload_v4, handle_forkchoice, validate_attributes_v1,
+    validate_attributes_v2, validate_attributes_v2_pre_shanghai, validate_attributes_v3,
+    validate_attributes_v4,
 };
 use crate::engine_rest::error::ProblemJson;
 use crate::engine_rest::extractors::{decode_ssz, is_length_limit_error};
@@ -40,7 +39,7 @@ enum AttrsInternal {
     V4(PayloadAttributesV4),
 }
 
-pub async fn forkchoice_update(
+pub(crate) async fn forkchoice_update(
     ExecutionVersion(fork): ExecutionVersion,
     State(ctx): State<RpcApiContext>,
     req: axum::extract::Request,
@@ -185,8 +184,9 @@ fn amsterdam_to_v4(
 ) -> PayloadAttributesV4 {
     // `slot_number` is forwarded into the built block header (it is RLP-encoded
     // into the header and thus part of the block hash). `target_gas_limit` is the
-    // CL-supplied target the payload builder uses as the gas-limit ceiling
-    // (execution-apis #793/#796; mirrors the JSON-RPC forkchoiceUpdatedV4 path).
+    // CL-supplied gas-limit ceiling required on V4 by execution-apis#796; it is
+    // consumed by the shared `engine::fork_choice::build_payload_v4`, which both
+    // this transport and JSON-RPC `engine_forkchoiceUpdatedV4` call.
     PayloadAttributesV4 {
         timestamp: a.timestamp,
         prev_randao: H256::from(a.prev_randao),
@@ -239,9 +239,9 @@ fn rpc_err_to_problem(err: RpcErr) -> ProblemJson {
 // handlers (engine/fork_choice.rs): timestamp must advance past the head, the
 // withdrawals/parent_beacon_block_root fields must match the fork, and the
 // attributes version must match the head's fork era. `version` is pinned by the
-// URL fork segment, so it selects the validator exactly as the JSON-RPC method
-// suffix does. Errors are `RpcErr` variants that `rpc_err_to_problem` maps to
-// the appropriate HTTP status (422/400), not 500.
+// `Eth-Execution-Version` header, so it selects the validator exactly as the
+// JSON-RPC method suffix does. Errors are `RpcErr` variants that
+// `rpc_err_to_problem` maps to the appropriate HTTP status (422/400), not 500.
 
 fn validate_rest_attributes(
     version: usize,
@@ -310,10 +310,11 @@ async fn run_forkchoice(
         if let Err(err) = validate_rest_attributes(version, &attrs_internal, &head, &ctx) {
             return rpc_err_to_problem(err).into_response();
         }
+        // Build through the same helpers the JSON-RPC transport uses, so payload
+        // construction (including the V4 `target_gas_limit` → `gas_ceil` mapping
+        // required by execution-apis#796) cannot diverge between transports.
         let build_result = match attrs_internal {
-            AttrsInternal::V3(v3) => {
-                build_payload_v3(&v3, ctx, &internal_state, version as u8).await
-            }
+            AttrsInternal::V3(v3) => build_payload(&v3, ctx, &internal_state, version as u8).await,
             AttrsInternal::V4(v4) => build_payload_v4(&v4, ctx, &internal_state).await,
         };
         match build_result {
@@ -347,76 +348,6 @@ async fn run_forkchoice(
     SszBody(ForkchoiceResponse::new(ssz_status, payload_id)).into_response()
 }
 
-// ── Payload build helpers ─────────────────────────────────────────────────────
-
-async fn build_payload_v3(
-    attrs: &PayloadAttributesV3,
-    ctx: RpcApiContext,
-    fork_choice_state: &ForkChoiceState,
-    version: u8,
-) -> Result<u64, RpcErr> {
-    let args = BuildPayloadArgs {
-        parent: fork_choice_state.head_block_hash,
-        timestamp: attrs.timestamp,
-        fee_recipient: attrs.suggested_fee_recipient,
-        random: attrs.prev_randao,
-        withdrawals: attrs.withdrawals.clone(),
-        beacon_root: attrs.parent_beacon_block_root,
-        slot_number: None,
-        version,
-        elasticity_multiplier: ELASTICITY_MULTIPLIER,
-        gas_ceil: ctx.gas_ceil,
-    };
-    let payload_id = args
-        .id()
-        .map_err(|error| RpcErr::Internal(error.to_string()))?;
-    info!(
-        id = payload_id,
-        version, "engine REST forkchoice: creating payload"
-    );
-    let payload = match create_payload(&args, &ctx.storage, ctx.node_data.extra_data) {
-        Ok(p) => p,
-        Err(ChainError::EvmError(error)) => return Err(error.into()),
-        Err(error) => return Err(RpcErr::Internal(error.to_string())),
-    };
-    ctx.blockchain
-        .initiate_payload_build(payload, payload_id)
-        .await;
-    Ok(payload_id)
-}
-
-async fn build_payload_v4(
-    attrs: &PayloadAttributesV4,
-    ctx: RpcApiContext,
-    fork_choice_state: &ForkChoiceState,
-) -> Result<u64, RpcErr> {
-    let args = BuildPayloadArgs {
-        parent: fork_choice_state.head_block_hash,
-        timestamp: attrs.timestamp,
-        fee_recipient: attrs.suggested_fee_recipient,
-        random: attrs.prev_randao,
-        withdrawals: attrs.withdrawals.clone(),
-        beacon_root: attrs.parent_beacon_block_root,
-        slot_number: Some(attrs.slot_number),
-        version: 4,
-        elasticity_multiplier: ELASTICITY_MULTIPLIER,
-        gas_ceil: ctx.gas_ceil,
-    };
-    let payload_id = args
-        .id()
-        .map_err(|error| RpcErr::Internal(error.to_string()))?;
-    info!(
-        id = payload_id,
-        slot = attrs.slot_number,
-        "engine REST forkchoice V4: creating payload"
-    );
-    let payload = match create_payload(&args, &ctx.storage, ctx.node_data.extra_data) {
-        Ok(p) => p,
-        Err(ChainError::EvmError(error)) => return Err(error.into()),
-        Err(error) => return Err(RpcErr::Internal(error.to_string())),
-    };
-    ctx.blockchain
-        .initiate_payload_build(payload, payload_id)
-        .await;
-    Ok(payload_id)
-}
+// Payload construction itself lives in `engine::fork_choice::build_payload` /
+// `build_payload_v4` and is shared with the JSON-RPC transport — see the call
+// site in `run_forkchoice`. This module deliberately keeps no local copy.

@@ -35,7 +35,10 @@ fn request_hashes(versioned_hashes: &[[u8; 32]]) -> Result<Vec<H256>, ProblemJso
     Ok(versioned_hashes.iter().map(|h| H256::from(*h)).collect())
 }
 
-pub async fn blobs_v1(State(ctx): State<RpcApiContext>, Ssz(req): Ssz<BlobsV1Request>) -> Response {
+pub(crate) async fn blobs_v1(
+    State(ctx): State<RpcApiContext>,
+    Ssz(req): Ssz<BlobsV1Request>,
+) -> Response {
     // Osaka gate (mirror JSON-RPC getBlobsV1, engine/blobs.rs): /blobs/v1 serves
     // whole-blob proofs and is only valid pre-Osaka. After Osaka a blob carries
     // cell proofs, so the `proofs[0]` below would be a cell proof rather than a
@@ -77,8 +80,15 @@ pub async fn blobs_v1(State(ctx): State<RpcApiContext>, Ssz(req): Ssz<BlobsV1Req
     let mut entries: Vec<BlobV1Entry> = Vec::with_capacity(tuples.len());
     for maybe_tuple in tuples {
         let entry = match maybe_tuple {
-            Some((blob, _commitment, proofs)) if !proofs.is_empty() => {
-                // Cancun blobs carry a single whole-blob proof; proofs[0] is it.
+            // Require exactly one proof, mirroring JSON-RPC `engine_getBlobsV1`
+            // (engine/blobs.rs). `!proofs.is_empty()` was too weak: a v1
+            // (EIP-7594) sidecar yields CELLS_PER_EXT_BLOB cell proofs per blob
+            // and can reach a pre-Osaka mempool (geth sends v1 pre-Osaka, see
+            // `BlobsBundle::validate_cheap`), so `proofs[0]` would put a cell
+            // proof in the EIP-4844 whole-blob `proof` field and fail KZG
+            // verification at the CL. Report unavailable so the CL re-fetches
+            // from gossip instead.
+            Some((blob, _commitment, proofs)) if proofs.len() == 1 => {
                 match blob.as_ref().to_vec().try_into() {
                     Ok(blob_ssz) => BlobV1Entry::available(BlobAndProofV1 {
                         blob: blob_ssz,
@@ -100,7 +110,10 @@ pub async fn blobs_v1(State(ctx): State<RpcApiContext>, Ssz(req): Ssz<BlobsV1Req
 
 /// `/blobs/v2` — all-or-nothing (Osaka). If any requested blob is missing the
 /// EL MUST return `204 No Content`, mirroring `engine_getBlobsV2`'s `null`.
-pub async fn blobs_v2(State(ctx): State<RpcApiContext>, Ssz(req): Ssz<BlobsV2Request>) -> Response {
+pub(crate) async fn blobs_v2(
+    State(ctx): State<RpcApiContext>,
+    Ssz(req): Ssz<BlobsV2Request>,
+) -> Response {
     let hashes = match request_hashes(&req.versioned_hashes) {
         Ok(h) => h,
         Err(p) => return p.into_response(),
@@ -147,7 +160,10 @@ pub async fn blobs_v2(State(ctx): State<RpcApiContext>, Ssz(req): Ssz<BlobsV2Req
 /// `/blobs/v3` — partial responses (Osaka). Missing blobs surface as
 /// `available == false` entries; `204 No Content` is reserved for "EL cannot
 /// serve the request at all".
-pub async fn blobs_v3(State(ctx): State<RpcApiContext>, Ssz(req): Ssz<BlobsV2Request>) -> Response {
+pub(crate) async fn blobs_v3(
+    State(ctx): State<RpcApiContext>,
+    Ssz(req): Ssz<BlobsV2Request>,
+) -> Response {
     let hashes = match request_hashes(&req.versioned_hashes) {
         Ok(h) => h,
         Err(p) => return p.into_response(),
@@ -192,7 +208,7 @@ pub async fn blobs_v3(State(ctx): State<RpcApiContext>, Ssz(req): Ssz<BlobsV2Req
 /// §`POST /blobs/v4`) rather than emitting empty/zeroed cells that would fail
 /// KZG cell-proof verification at the CL. The request is still SSZ-decoded
 /// (validating the `indices_bitarray` shape) before we respond.
-pub async fn blobs_v4(
+pub(crate) async fn blobs_v4(
     State(_ctx): State<RpcApiContext>,
     Ssz(req): Ssz<BlobsRequestV4>,
 ) -> Response {

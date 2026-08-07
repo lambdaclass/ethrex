@@ -45,9 +45,10 @@ pub struct ExecutionPayloadEnvelope {
 }
 
 /// Amsterdam payload attributes: Cancun fields + `slot_number` + `target_gas_limit`
-/// (execution-apis #793, `PayloadAttributesAmsterdam`). `target_gas_limit` is
-/// decoded for spec compliance; the value is ignored by ethrex's payload builder
-/// until gas-limit targeting lands. `custody_columns` is NOT part of these
+/// (execution-apis #793, `PayloadAttributesAmsterdam`). `target_gas_limit` is the
+/// CL-supplied gas-limit ceiling required on V4 by execution-apis#796; it is
+/// applied by the payload builder (`engine::fork_choice::build_payload_v4`, shared
+/// with the JSON-RPC transport). `custody_columns` is NOT part of these
 /// attributes — per spec it is a sibling field of `ForkchoiceUpdate` (see
 /// `forkchoice_update::AmsterdamForkchoiceUpdate`).
 #[derive(Debug, Clone, PartialEq, Eq, SszEncode, SszDecode, HashTreeRoot)]
