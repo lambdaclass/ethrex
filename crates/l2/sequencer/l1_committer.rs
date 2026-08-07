@@ -48,8 +48,7 @@ use ethrex_rpc::{
     clients::eth::{EthClient, Overrides},
     types::block_identifier::{BlockIdentifier, BlockTag},
 };
-use ethrex_storage::EngineType;
-use ethrex_storage::Store;
+use ethrex_storage::{DB_COMMIT_THRESHOLD, EngineType, Store};
 use ethrex_storage_rollup::StoreRollup;
 use ethrex_vm::BlockExecutionResult;
 use rand::Rng;
@@ -675,7 +674,11 @@ impl L1Committer {
                 *fee_config_guard = *fee_config;
             }
 
-            one_time_checkpoint_blockchain.add_block_pipeline(block.clone(), None)?;
+            // Single canonical chain: commit trie layers by depth so the in-memory backlog
+            // stays bounded instead of growing with the number of re-executed blocks.
+            one_time_checkpoint_blockchain
+                .add_block_pipeline_bounded(block.clone(), None, DB_COMMIT_THRESHOLD)
+                .map(|_| ())?;
         }
 
         Ok(())
@@ -974,7 +977,13 @@ impl L1Committer {
                     *fee_config_guard = fee_config;
                 }
 
-                checkpoint_blockchain.add_block_pipeline(potential_batch_block.clone(), None)?
+                checkpoint_blockchain
+                    .add_block_pipeline_bounded(
+                        potential_batch_block.clone(),
+                        None,
+                        DB_COMMIT_THRESHOLD,
+                    )
+                    .map(|_| ())?
             };
 
             // Accumulate block data with the rest of the batch.
@@ -1670,7 +1679,10 @@ pub async fn regenerate_state(
             *fee_config_guard = fee_config;
         }
 
-        if let Err(err) = blockchain.add_block_pipeline(block, None) {
+        // Depth-gated commit: this loop spans the whole regeneration gap, so the canonical
+        // gate (which never fires before a forkchoice update) would let one trie diff-layer
+        // per block accumulate until the process runs out of memory.
+        if let Err(err) = blockchain.add_block_pipeline_bounded(block, None, DB_COMMIT_THRESHOLD) {
             return Err(CommitterError::FailedToCreateCheckpoint(err.to_string()));
         }
     }
