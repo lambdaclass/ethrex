@@ -1997,6 +1997,22 @@ impl Store {
         persist_channel_capacity: usize,
     ) -> Result<Self, StoreError> {
         debug!("Initializing Store with {commit_threshold} in-memory diff-layers");
+
+        // Drain journal entries left by a previous codec version before the
+        // `Store` exists, which is the only point at which nothing can yet be
+        // holding a fork-choice update. `compute_reorg_ceiling` reads the journal
+        // floor via `lowest_state_history_block_number`; leaving stale entries in
+        // place would advertise reach the decoder refuses to serve, so the reorg
+        // would be accepted and then fail mid-flight with `StateNotReachable`.
+        // Draining first makes the floor honest and turns that halt into a clean
+        // `-38006 TooDeepReorg`. See `journal::drain_stale_journal_entries` for the
+        // exact semantics (contiguous bottom run only) and the cost.
+        //
+        // Every construction path funnels through here — fresh open, migration,
+        // and in-memory — so there is no second place to remember. On a journal
+        // with no stale bottom entry this is one `first_key` plus one `get`.
+        crate::journal::drain_stale_journal_entries(backend.as_ref())?;
+
         let (fkv_tx, fkv_rx) = std::sync::mpsc::sync_channel(0);
         let persist_cap = persist_channel_capacity.max(1); // clamp: 0 would be a rendezvous channel
         let (persist_tx, persist_rx) = std::sync::mpsc::sync_channel(persist_cap);
@@ -6840,6 +6856,130 @@ mod state_history_tests {
             store.lowest_state_history_block_number().unwrap(),
             Some(3),
             "min over present entries"
+        );
+    }
+
+    /// A stale-version (v1) entry as the previous binary wrote it: version byte
+    /// 1, `block_hash`, `parent_state_root`, then four diff sections — no
+    /// `parent_binary_root` and no binary section. The v1 encoder is gone, so
+    /// the shape is written out by hand.
+    fn encode_stale_journal_entry(block_number: BlockNumber) -> Vec<u8> {
+        let mut bytes = vec![1u8];
+        bytes.extend_from_slice(H256::repeat_byte(block_number as u8).as_bytes());
+        bytes.extend_from_slice(H256::zero().as_bytes());
+        // Four sections, all with a zero count.
+        bytes.extend_from_slice(&[0u8; 4]);
+        bytes
+    }
+
+    /// Seeds `STATE_HISTORY` on a raw backend, before any `Store` is built over it.
+    fn seed_raw_journal_entries(
+        backend: &Arc<dyn StorageBackend>,
+        entries: &[(BlockNumber, Vec<u8>)],
+    ) {
+        let mut tx = backend.begin_write().unwrap();
+        for (n, encoded) in entries {
+            tx.put(STATE_HISTORY, &n.to_be_bytes(), encoded).unwrap();
+        }
+        tx.commit().unwrap();
+    }
+
+    /// Opening a store over a journal written entirely by a previous codec
+    /// version SHALL drain it, so the floor `compute_reorg_ceiling` reads reports
+    /// no journal reach at all.
+    ///
+    /// Without the drain the floor would be 10 and the ceiling would advertise
+    /// reach back to block 9 — reach the decoder refuses to serve. The forkchoice
+    /// update would be accepted and then fail mid-flight with `StateNotReachable`
+    /// instead of being refused up front with `-38006 TooDeepReorg`.
+    #[tokio::test]
+    async fn startup_drains_an_all_stale_journal_and_clears_the_floor() {
+        let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::open().unwrap());
+        let dir = tempfile::tempdir().unwrap();
+        seed_raw_journal_entries(
+            &backend,
+            &[
+                (10, encode_stale_journal_entry(10)),
+                (11, encode_stale_journal_entry(11)),
+                (12, encode_stale_journal_entry(12)),
+            ],
+        );
+
+        let store = Store::from_backend(
+            backend.clone(),
+            dir.path().to_path_buf(),
+            1,
+            DEFAULT_PERSIST_CHANNEL_CAPACITY,
+        )
+        .unwrap();
+
+        assert_eq!(
+            store.lowest_state_history_block_number().unwrap(),
+            None,
+            "an all-stale journal must be gone, leaving no journal reach to advertise"
+        );
+        assert_eq!(store.highest_state_history_block_number().unwrap(), None);
+    }
+
+    /// A node restarting a second time inside the upgrade window has already
+    /// written current-version entries above the stale ones. Startup SHALL drain
+    /// only the stale bottom and report the lowest survivor as the new floor —
+    /// reach the node can actually deliver.
+    #[tokio::test]
+    async fn startup_drain_reports_the_lowest_surviving_entry_as_the_floor() {
+        let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::open().unwrap());
+        let dir = tempfile::tempdir().unwrap();
+        seed_raw_journal_entries(
+            &backend,
+            &[
+                (10, encode_stale_journal_entry(10)),
+                (11, encode_stale_journal_entry(11)),
+            ],
+        );
+        // Two entries the restarted binary wrote itself, in the current format.
+        seed_journal_entries(&backend, &[12, 13]);
+
+        let store = Store::from_backend(
+            backend.clone(),
+            dir.path().to_path_buf(),
+            1,
+            DEFAULT_PERSIST_CHANNEL_CAPACITY,
+        )
+        .unwrap();
+
+        assert_eq!(
+            store.lowest_state_history_block_number().unwrap(),
+            Some(12),
+            "the floor must be the lowest entry this binary can decode"
+        );
+        assert_eq!(
+            store.highest_state_history_block_number().unwrap(),
+            Some(13)
+        );
+        assert!(!journal_entry_exists(&backend, 10));
+        assert!(!journal_entry_exists(&backend, 11));
+    }
+
+    /// A journal written entirely by this binary SHALL survive startup intact;
+    /// the drain must not cost a node its reorg depth on an ordinary restart.
+    #[tokio::test]
+    async fn startup_leaves_a_current_version_journal_untouched() {
+        let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::open().unwrap());
+        let dir = tempfile::tempdir().unwrap();
+        seed_journal_entries(&backend, &[10, 11, 12]);
+
+        let store = Store::from_backend(
+            backend.clone(),
+            dir.path().to_path_buf(),
+            1,
+            DEFAULT_PERSIST_CHANNEL_CAPACITY,
+        )
+        .unwrap();
+
+        assert_eq!(store.lowest_state_history_block_number().unwrap(), Some(10));
+        assert_eq!(
+            store.highest_state_history_block_number().unwrap(),
+            Some(12)
         );
     }
 
