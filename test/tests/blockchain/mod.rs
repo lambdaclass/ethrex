@@ -11,6 +11,7 @@ mod logs_bloom_tests;
 mod mempool_tests;
 mod payload_build_loop_tests;
 mod payload_tests;
+mod reorg_reinjection_tests;
 mod smoke_tests;
 mod storage_sharding_tests;
 mod typed_zero_transaction_tests;
