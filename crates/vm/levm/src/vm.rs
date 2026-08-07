@@ -2768,8 +2768,13 @@ impl<'a> VM<'a> {
 
         // Specialize the dispatch loop on whether a struct-log tracer is active.
         // The `!TRACED` variant compiles out every tracer branch and capture call,
-        // leaving a minimal hot loop (the common, non-traced case).
-        match (self.opcode_tracer.active, self.validation_observer.active) {
+        // leaving a minimal hot loop (the common, non-traced case). Both flags are
+        // read through `is_active()`, so in the guest they are compile-time `false`
+        // and only the `(false, false)` variant survives monomorphization.
+        match (
+            self.opcode_tracer.is_active(),
+            self.validation_observer.is_active(),
+        ) {
             (false, false) => self.run_dispatch::<false, false>(),
             (false, true) => self.run_dispatch::<false, true>(),
             (true, false) => self.run_dispatch::<true, false>(),
@@ -3219,7 +3224,7 @@ impl<'a> VM<'a> {
 
         // Struct-log end-of-tx capture: record final output, gas used, and revert error.
         // gas matches geth's `executionResult.Gas` which is post-refund (`receipt.GasUsed`).
-        if self.opcode_tracer.active {
+        if self.opcode_tracer.is_active() {
             self.opcode_tracer.output = ctx_result.output.clone();
             self.opcode_tracer.gas_used = ctx_result.gas_spent;
             self.opcode_tracer.error = match ctx_result.result {

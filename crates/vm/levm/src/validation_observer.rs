@@ -30,6 +30,7 @@
 //! `current_frame_index == canonical_paymaster_pay_frame` skip are wired up so
 //! the exemption flips on for free once the canonical code hash is pinned.
 
+use crate::constants::IS_ZKVM_GUEST;
 use ethrex_common::{Address, H256};
 
 /// A validation-trace rule violation detected during prefix simulation.
@@ -105,8 +106,17 @@ pub struct ValidationObserver {
 }
 
 impl ValidationObserver {
+    /// Whether the hooks should run. The EIP-8141 validation-trace is host-only
+    /// (mempool prefix simulation), so in the zkVM guest this is a compile-time
+    /// `false` and every caller's branch — plus the hook bodies behind it — folds
+    /// away. Read this instead of the `active` field on any execution path.
+    #[inline(always)]
+    pub fn is_active(&self) -> bool {
+        !IS_ZKVM_GUEST && self.active
+    }
+
     /// Returns an inactive observer. No allocations; zero overhead on the hot
-    /// path (every hook is gated by `if active`).
+    /// path (every hook is gated by `if is_active()`).
     pub fn disabled() -> Self {
         Self {
             active: false,

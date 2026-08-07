@@ -298,7 +298,7 @@ impl OpcodeHandler for OpExtCodeSizeHandler {
 
         // EIP-8141 mempool validation-trace: EXTCODESIZE target must exist and
         // not be EIP-7702-delegated (sender exempt).
-        if vm.validation_observer.active {
+        if vm.validation_observer.is_active() {
             vm.validation_check_extcode_target(address)?;
         }
 
@@ -342,7 +342,7 @@ impl OpcodeHandler for OpExtCodeCopyHandler {
 
         // EIP-8141 mempool validation-trace: EXTCODECOPY target must exist and
         // not be EIP-7702-delegated (sender exempt).
-        if vm.validation_observer.active {
+        if vm.validation_observer.is_active() {
             vm.validation_check_extcode_target(address)?;
         }
 
@@ -385,7 +385,7 @@ impl OpcodeHandler for OpExtCodeHashHandler {
 
         // EIP-8141 mempool validation-trace: EXTCODEHASH target must exist and
         // not be EIP-7702-delegated (sender exempt).
-        if vm.validation_observer.active {
+        if vm.validation_observer.is_active() {
             vm.validation_check_extcode_target(address)?;
         }
 

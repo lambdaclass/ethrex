@@ -102,7 +102,11 @@ impl OpcodeHandler for OpMStoreHandler {
     fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
         let [offset, value] = *vm.current_call_frame.stack.pop()?;
 
-        // Handle debug text printing for solidity contracts that enable it.
+        // Debug text printing for solidity contracts that enable it. Compiled out
+        // unless the `debug` feature is on — the only thing that ever sets
+        // `debug_mode.enabled` — so the always-false flag load and branch vanish
+        // from every MSTORE in the guest.
+        #[cfg(feature = "debug")]
         if vm.debug_mode.enabled && vm.debug_mode.handle_debug(offset, value)? {
             return Ok(OpcodeResult::Continue);
         }
@@ -246,7 +250,7 @@ impl OpcodeHandler for OpSLoadHandler {
         vm.record_storage_slot_to_bal(address, storage_slot_key);
 
         // EIP-8141 mempool validation-trace: SLOAD restricted to the sender's storage.
-        if vm.validation_observer.active {
+        if vm.validation_observer.is_active() {
             vm.validation_check_sload(address, key);
         }
 
@@ -316,7 +320,7 @@ impl OpcodeHandler for OpSStoreHandler {
 
         // EIP-8141 mempool validation-trace: SSTORE allowed only inside the
         // deploy frame and only against the sender's own storage.
-        if vm.validation_observer.active {
+        if vm.validation_observer.is_active() {
             vm.validation_check_sstore(to, key);
         }
 
@@ -486,7 +490,7 @@ fn jump(vm: &mut VM<'_>, target: usize, parent_gas_cost: u64) -> Result<(), VMEr
                     .is_ok()
         })
     {
-        if vm.opcode_tracer.active {
+        if vm.opcode_tracer.is_active() {
             // Override the parent JUMP/JUMPI's gasCost so the dispatch loop
             // doesn't roll the upcoming JUMPDEST charge into it.
             vm.opcode_tracer.last_opcode_gas_cost = Some(parent_gas_cost);

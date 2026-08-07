@@ -114,3 +114,15 @@ pub const BURN_EVENT_TOPIC: H256 = H256([
     0xcc, 0x16, 0xf5, 0xdb, 0xb4, 0x87, 0x32, 0x80, 0x81, 0x5c, 0x1e, 0xe0, 0x9d, 0xbd, 0x06, 0x73,
     0x6c, 0xff, 0xcc, 0x18, 0x44, 0x12, 0xcf, 0x7a, 0x71, 0xa0, 0xfd, 0xb7, 0x5d, 0x39, 0x7c, 0xa5,
 ]);
+
+/// Whether this is a zkVM guest build.
+///
+/// Every supported guest targets RISC-V — ZisK is riscv64ima, SP1/risc0/openvm are
+/// riscv32im — and nothing else builds levm for RISC-V, the same assumption
+/// [`Memory::truncate_to_base`](crate::memory::Memory::truncate_to_base) and the
+/// CREATE frame-return path already make.
+///
+/// Prefer this over `cfg!(feature = "zisk")` for host-only work: only the ZisK guest
+/// propagates a levm feature (`ethrex-guest-program/zisk` -> `ethrex-vm/zisk` ->
+/// `ethrex-levm/zisk`), so a feature test silently misses the other three guests.
+pub const IS_ZKVM_GUEST: bool = cfg!(any(target_arch = "riscv32", target_arch = "riscv64"));
