@@ -1723,8 +1723,9 @@ impl<'a> VM<'a> {
                 // Absorb this frame's originals into the tx-level accumulator
                 // before clearing, so an invalid-tx exit can still roll back
                 // every committed frame's state (see `tx_level_backup`).
-                tx_level_backup.absorb(&self.current_call_frame.call_frame_backup);
-                self.current_call_frame.call_frame_backup.clear();
+                // Draining moves the originals over and empties the frame backup,
+                // which is what the explicit `clear()` here used to do.
+                tx_level_backup.absorb_drain(&mut self.current_call_frame.call_frame_backup);
             }
 
             // Start a new atomic batch if this frame has the batch flag
@@ -1977,7 +1978,8 @@ impl<'a> VM<'a> {
                 };
 
                 // Restore call frame state
-                let finished_frame = mem::replace(&mut self.current_call_frame, saved_call_frame);
+                let mut finished_frame =
+                    mem::replace(&mut self.current_call_frame, saved_call_frame);
                 self.call_frames = saved_call_frames;
 
                 // When a frame succeeds inside an atomic batch, its state
@@ -1990,12 +1992,15 @@ impl<'a> VM<'a> {
                 // directly into `tx_level_backup` here; otherwise an invalid-tx
                 // exit could not roll back this committed frame's state.
                 if result.0 {
+                    // Moved, not cloned: only `.stack` is read from the frame below.
+                    // The batch merge also propagates `inserted_code_hashes`; the
+                    // tx-level absorb deliberately does not.
                     if in_atomic_batch {
-                        self.merge_call_frame_backup_with_parent(
-                            &finished_frame.call_frame_backup,
-                        )?;
+                        self.merge_call_frame_backup_with_parent(mem::take(
+                            &mut finished_frame.call_frame_backup,
+                        ))?;
                     } else {
-                        tx_level_backup.absorb(&finished_frame.call_frame_backup);
+                        tx_level_backup.absorb_drain(&mut finished_frame.call_frame_backup);
                     }
                 }
 
@@ -2140,7 +2145,7 @@ impl<'a> VM<'a> {
             // been cleared yet), then restore every absorbed frame's effects.
             // Substate is per-VM and discarded when this VM drops, so no
             // substate revert is needed.
-            tx_level_backup.absorb(&self.current_call_frame.call_frame_backup);
+            tx_level_backup.absorb_drain(&mut self.current_call_frame.call_frame_backup);
             crate::utils::restore_cache_state(self.db, tx_level_backup)?;
             return Err(VMError::TxValidation(
                 crate::errors::TxValidationError::InvalidFrameTransaction,
@@ -2271,7 +2276,7 @@ impl<'a> VM<'a> {
         // `preserve_top_level_backup` so it is set only when a hook reads it (L2);
         // on L1 the field is never consulted.
         if self.preserve_top_level_backup {
-            tx_level_backup.absorb(&self.current_call_frame.call_frame_backup);
+            tx_level_backup.absorb_drain(&mut self.current_call_frame.call_frame_backup);
             self.db.tx_backup = Some(tx_level_backup);
         }
 
