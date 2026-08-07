@@ -4,7 +4,9 @@ flamegraph-hoodi start-lighthouse start-ethrex backup-db start-mainnet-metrics-d
 start-sepolia-metrics-docker start-holesky-metrics-docker start-hoodi-metrics-docker \
 start-metrics-docker tail-syncing-logs tail-metrics-logs copy_flamegraph import-with-metrics \
 multisync-up multisync-down multisync-clean multisync-logs multisync-status \
-multisync-restart multisync-monitor multisync-run multisync-loop multisync-loop-auto
+multisync-restart multisync-monitor multisync-run multisync-loop multisync-loop-auto \
+fullsync-bench-bootstrap fullsync-bench-watch fullsync-bench-once fullsync-bench-smoke \
+fullsync-bench-test
 
 ETHREX_DIR ?= "../.."
 
@@ -347,3 +349,73 @@ multisync-loop-auto: ## Continuous loop with auto-update: pull latest, build, an
 		--image-tag "$(MULTISYNC_LOCAL_IMAGE)" \
 		--ethrex-dir "$(ETHREX_DIR)" \
 		$(if $(MULTISYNC_WATCHED_PHASES),--watched-phases "$(MULTISYNC_WATCHED_PHASES)")
+
+# =============================================================================
+# FULL-SYNC THROUGHPUT REGRESSION WATCH (issue #7111)
+# =============================================================================
+# Keeps a node a fixed distance behind head and, per cycle, measures a fixed window of
+# blocks then advances the base by one gap-maintaining step. Observe-only for now:
+# thresholds and step detection land once the bootstrap period yields the real noise
+# floor. Runs are serial across networks by design — concurrent legs contend and both
+# results are junk.
+
+# Node data, bases and results share one filesystem so `rsync --link-dest` can hardlink
+# unchanged SSTs between base generations; see docker-compose.fullsync-bench.yaml.
+BENCH_DATA_ROOT ?= /mnt/raid10/fullsync-bench
+export BENCH_DATA_ROOT
+
+FULLSYNC_BENCH_NETWORKS ?= mainnet
+FULLSYNC_BENCH_STATE ?= $(BENCH_DATA_ROOT)/state
+FULLSYNC_BENCH_RESULTS ?= $(BENCH_DATA_ROOT)/results
+
+fullsync-bench-bootstrap: ## Snap-sync to the tip and record the first base per network.
+	python3 fullsync_bench.py \
+		--networks $(FULLSYNC_BENCH_NETWORKS) \
+		--state-root $(FULLSYNC_BENCH_STATE) \
+		--results-dir $(FULLSYNC_BENCH_RESULTS) \
+		--bootstrap
+
+fullsync-bench-watch: ## Continuous full-sync throughput watch (observe-only).
+	python3 fullsync_bench.py \
+		--networks $(FULLSYNC_BENCH_NETWORKS) \
+		--state-root $(FULLSYNC_BENCH_STATE) \
+		--results-dir $(FULLSYNC_BENCH_RESULTS)
+
+fullsync-bench-once: ## One measure+advance cycle per network, then exit.
+	python3 fullsync_bench.py \
+		--networks $(FULLSYNC_BENCH_NETWORKS) \
+		--state-root $(FULLSYNC_BENCH_STATE) \
+		--results-dir $(FULLSYNC_BENCH_RESULTS) \
+		--once
+
+FULLSYNC_SMOKE_NET ?= hoodi
+FULLSYNC_SMOKE_ROOT ?= $(BENCH_DATA_ROOT)/smoke
+FULLSYNC_SMOKE_MEASURE ?= 2048
+FULLSYNC_SMOKE_GAP ?= 4096
+
+fullsync-bench-smoke: ## Rehearse a full cycle now, on a throwaway copy of a real base.
+	@test -d "$(FULLSYNC_BENCH_STATE)/$(FULLSYNC_SMOKE_NET)/base.0" \
+		|| { echo "no base for $(FULLSYNC_SMOKE_NET); run fullsync-bench-bootstrap first"; exit 1; }
+	rm -rf "$(FULLSYNC_SMOKE_ROOT)"
+	mkdir -p "$(FULLSYNC_SMOKE_ROOT)/state/$(FULLSYNC_SMOKE_NET)"
+# Hardlink copy, so rehearsing costs no real disk and cannot touch the live series.
+	cp -al "$(FULLSYNC_BENCH_STATE)/$(FULLSYNC_SMOKE_NET)/base.0" \
+		"$(FULLSYNC_SMOKE_ROOT)/state/$(FULLSYNC_SMOKE_NET)/base.0"
+# bench-base.json is rewritten in place, and truncating a hardlink would take the real
+# base's metadata with it. Break that one link — with -p, because a base predating
+# `created_at` has its age inferred from this file's mtime, and a plain copy resets it to
+# now, which reads as a zero-length gap.
+	cp -p --remove-destination \
+		"$(FULLSYNC_BENCH_STATE)/$(FULLSYNC_SMOKE_NET)/base.0/bench-base.json" \
+		"$(FULLSYNC_SMOKE_ROOT)/state/$(FULLSYNC_SMOKE_NET)/base.0/bench-base.json"
+	python3 fullsync_bench.py \
+		--networks $(FULLSYNC_SMOKE_NET) \
+		--state-root "$(FULLSYNC_SMOKE_ROOT)/state" \
+		--results-dir "$(FULLSYNC_SMOKE_ROOT)/results" \
+		--measure-blocks $(FULLSYNC_SMOKE_MEASURE) \
+		--gap-blocks $(FULLSYNC_SMOKE_GAP) \
+		--once
+
+fullsync-bench-test: ## Unit-test metric extraction and the tip oracle (no node needed).
+	python3 test_fullsync_metrics.py
+	python3 test_fullsync_bench.py

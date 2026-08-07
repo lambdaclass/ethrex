@@ -231,3 +231,192 @@ Notifications include:
 - Host, branch, and commit info
 - Per-network status with sync time and blocks processed
 - Link to the commit on GitHub
+
+## Full-sync throughput regression watch
+
+Tracks execution throughput on real mainnet/testnet blocks over time, to catch performance
+regressions that land on `main`. Complements the existing coverage rather than duplicating
+it: the per-PR CI benchmark runs a synthetic dense-ERC20 import, and multisync validates
+*snap* sync completion — neither watches execution throughput drift. Design: issue #7111.
+
+### How it works
+
+A node is kept permanently a fixed distance behind the tip. Each cycle both *consumes* a
+saved database and *produces* the next one, so the whole thing is a loop that bootstrap
+seeds once and never needs re-anchoring:
+
+```
+        ┌────────────────────────────────────────────────┐
+        │                                                │
+        ▼                                                │
+   base.0  (a stopped node's datadir, at block B)        │
+        │                                                │
+        ├── restore ─► MEASURE  B → B+M ──► throughput; datadir discarded
+        │                                                │
+        └── restore ─► ADVANCE  B → T−GAP ─► new base.0 ─┘
+```
+
+One cycle, per network, once a day:
+
+1. **Gate.** Read B from the base's `bench-base.json` and estimate the tip T. If
+   `T − B < M` the whole window has not been produced yet, so skip and try later.
+2. **Measure leg.** Restore `base.0` into the datadir — a *copy*; no node ever opens the
+   base itself. Re-sync the beacon node ahead of B, drop the page cache, start the node,
+   let it full-sync `B → B+M`, stop it gracefully, and read the per-batch throughput out
+   of its log. **The resulting database is thrown away**; only the number is kept.
+3. **Advance leg.** Restore `base.0` again, back to B. Sync `B → T−GAP`, stop, then
+   health-check the result by reopening it. Only if it comes back up with state available
+   does it rotate `base.0→base.1→…` and become the new `base.0`.
+4. **Report** the measurement.
+
+```
+     B (7d behind)        B+M (4d behind)                 T (tip)
+     │                        │                            │
+     ├──── measure: 21,600 ──►│  discarded
+     ├─ advance: 7,200 ─►│
+                  new base (6d behind)
+```
+
+**Why two runs from the same point.** The measurement window `M` must never change or the
+history stops being comparable, while the base has to advance at exactly chain rate — one
+day per day — or it either catches the tip or falls away forever. Those are two different
+distances, so they need two different runs. Promoting the measurement leg's database
+instead would advance the base by `M` every day, closing the gap within days and breaking
+the mechanism. The measurement is therefore deliberately sterile: it starts from the base,
+yields a number, and its state is destroyed.
+
+The overlap is the payoff. Consecutive three-day windows measured from a base that moved
+only one day share **two-thirds of their blocks**, so day-to-day workload variation stays
+small and a real regression shows up as a step in the series rather than as noise.
+
+The advance targets `T − GAP` rather than a fixed block count, so it self-calibrates to
+each network's real block production and absorbs missed slots.
+
+Rough cost per network per day on mainnet: two restores at ~6 min each, ~50 min measuring,
+~17 min advancing.
+
+### Usage
+
+```bash
+make fullsync-bench-bootstrap                              # first base per network (once)
+make fullsync-bench-once                                   # one cycle, then exit
+make fullsync-bench-watch                                  # continuous
+make fullsync-bench-watch FULLSYNC_BENCH_NETWORKS=mainnet,sepolia,hoodi
+make fullsync-bench-test                                   # unit-test metric parsing
+```
+
+Networks run **serially** on purpose: two legs at once contend for CPU and disk and both
+results are junk. An flock enforces this; bootstraps share it, cycles take it exclusively,
+and the manual A/B tool (#7112) takes it exclusively too.
+
+Reporting goes to `SLACK_WEBHOOK_URL_SUCCESS`, or `SLACK_WEBHOOK_URL_FAILED` for a round
+where a cycle could not produce a valid measurement — a crashed node, an unclean exit, a
+leg that never reached its target. A merely *low* number is not a failure while the watch
+is observe-only: there is no baseline to judge it against yet. Both are read from
+`tooling/sync/.env` (same format as multisync) or the environment, which wins.
+
+**Each leg re-checkpoint-syncs the beacon node to the tip first, and this is load-bearing.**
+The execution node only does bulk 1024-block batch sync when fork choice hands it a head
+far ahead of itself. A beacon node stopped alongside it knows nothing newer than the base,
+so the pair crawl forward together importing ~30 blocks at a time — which measures
+incremental block import rather than full sync, and emits no throughput metric at all. A
+leg whose beacon node cannot reach the tip is reported `cl_not_synced` rather than
+recording a number that means something else.
+
+### Bootstrap
+
+`make fullsync-bench-bootstrap` snap-syncs each network to the tip, stops it gracefully and
+records it as `base.0` plus a `bench-base.json` holding its block number. Snap is used for
+this initial fill only — full-syncing from genesis would take weeks; the measurement legs
+themselves always run full, since that is the thing being measured.
+
+The node is then simply left stopped. The gap opens on its own at one day per day as the
+chain moves on, so nothing needs anchoring by hand. Cycles skip themselves with a log line
+until `head − base ≥ M`; with the default `M` of 3 days that means roughly a three-day wait
+after bootstrap before the first real measurement (six to reach the steady-state `GAP`).
+
+Run **observe-only for 2–3 weeks** after that before wiring up alerting: the real
+day-to-day σ is unknown, and thresholds should come from measured data rather than a guess.
+Alerting and step detection (trailing median + persistence, not day-vs-day) land later.
+
+### Rehearsing a cycle
+
+Waiting `M` days to discover that a log format moved or a webhook is wrong is a poor
+feedback loop, so `make fullsync-bench-smoke` runs one complete cycle immediately against
+a small window:
+
+```bash
+make fullsync-bench-smoke                          # hoodi, 2048-block window
+make fullsync-bench-smoke FULLSYNC_SMOKE_NET=sepolia
+```
+
+It exercises the real path end to end — restore, a genuine full-sync leg, graceful stop,
+metric extraction from live logs, the result JSON, base rotation and the Slack post — on a
+`cp -al` hardlink copy of a real base, so it costs almost no disk and cannot damage the
+live series. Stop the watch first; it holds the lock, and the smoke run will refuse.
+
+Keep the window at or above ~2048 blocks. Throughput is read from the per-batch metric
+line, which ethrex emits every 1024 blocks, so a smaller window can finish having logged
+no batch at all and be reported `no_batches`.
+
+`--measure-blocks` and `--gap-blocks` exist for this and nothing else. The runner refuses
+to accept them alongside the default results directory, because folding a 2k-block sample
+into a series of 21.6k-block ones would drag the trailing median that the comparison rests
+on.
+
+### Storage layout
+
+Everything lives under `BENCH_DATA_ROOT` (default `/mnt/raid10/fullsync-bench`):
+
+```
+<root>/data/<net>/         bind-mounted into the container as /data
+<root>/consensus/<net>/    beacon node database
+<root>/state/<net>/base.N  retained base generations
+<root>/results/<net>/      one JSON + log per leg
+```
+
+Node data and bases **must stay on one filesystem**. `snapshot()` hardlinks unchanged SST
+files between generations with `rsync --link-dest`, which only works within a filesystem;
+across two, rsync silently copies instead and every retained generation costs a full
+database rather than a delta. The runner asserts this at startup rather than trusting it.
+
+Bind mounts are used instead of named Docker volumes for the same reason: Docker's
+`data-root` is usually on the OS disk, which is both smaller and a different filesystem
+from the array holding the bases.
+
+### Metrics
+
+Each cycle writes one JSON per leg under `<results-dir>/<network>/`:
+
+| field | why |
+|---|---|
+| `throughput_ggas_s` (mean/median/stdev/samples) | headline; the **per-batch mean**, not blocks ÷ wall clock |
+| `blocks_per_s_mean` | likely the better primary on light testnet blocks |
+| `phase_ms_per_mgas` (`validate`/`exec`/`merkle`/`store`) | catches phase-localised regressions invisible end-to-end |
+| `state_regen_seconds` | restart cost; sensitive to commit cadence |
+| `wall_seconds`, `status`, `reached_block`, `commit`, `host` | validity and attribution |
+
+Wall clock is deliberately *not* the throughput metric: it includes startup state
+regeneration, which is a real signal but a separate one, so it is reported on its own.
+
+### Operational invariants
+
+These are lessons from the manual benchmarking that preceded this tool, not preferences:
+
+- **Graceful stop only** (`docker stop -t 300`). Repeated abrupt stops previously left the
+  canonical head ahead of any durably-flushed state, after which the node could not
+  regenerate and needed a full re-sync.
+- **Stop condition reads `eth_blockNumber`**, never `eth_syncing.currentBlock` — the latter
+  goes stale during catch-up and once let a leg run far past its target.
+- **Health-gate base rotation**: a new base is promoted only after the node demonstrably
+  restarts on it with state available; otherwise the previous generation is kept.
+- **Never compare across machines.** The same binary has measured 62 s and 81 s on
+  different CI runners; only same-box comparisons mean anything.
+- **Do not `--force-recreate` a `consensus-*` service on its own.** That re-runs its
+  `setup-jwt-*` dependency, which writes a fresh `jwt.hex`, while the already-running
+  execution node keeps the secret it read at startup. Engine API calls then fail with
+  `Auth failed`, the node stops being told where the chain tip is, and the sync quietly
+  goes nowhere. Restart the matching `ethrex-*` container afterwards.
+- **During snap sync `eth_blockNumber` stays at 0** and jumps to the tip only once the
+  pivot state has landed. A runner sitting at `0 / <tip>` for hours is normal, not a
+  stall; `docker logs ethrex-<net>` is where the real progress is.
