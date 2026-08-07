@@ -1024,6 +1024,20 @@ impl Mempool {
         Ok(())
     }
 
+    /// Drop every blob sidecar held in limbo, returning how many were removed.
+    ///
+    /// Used when the finalization delta can't be determined (see
+    /// `Blockchain::purge_finalized_blob_limbo`): limbo is in-memory and
+    /// best-effort, so discarding wholesale is preferable to an unbounded
+    /// chain walk, and never wrong — a missing sidecar only means one orphaned
+    /// blob tx isn't re-injected, which the re-injection path already handles.
+    pub fn clear_blob_limbo(&self) -> Result<usize, StoreError> {
+        let mut inner = self.write()?;
+        let n = inner.blobs_bundle_limbo.len();
+        inner.blobs_bundle_limbo.clear();
+        Ok(n)
+    }
+
     /// Pop a blob sidecar from limbo by tx hash. Returns the bundle if it was
     /// present. Used by reorg re-injection to recover sidecars for orphaned
     /// blob transactions.

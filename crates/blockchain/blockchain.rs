@@ -3363,18 +3363,38 @@ impl Blockchain {
         let Some(new_header) = self.storage.get_block_header_by_hash(new_finalized_hash)? else {
             return Ok(());
         };
+        // Determine where to start walking. When the previous finalized block
+        // can't be located we deliberately do NOT fall back to walking from
+        // genesis: on a synced node that is tens of millions of DB reads inside
+        // the fork-choice handler. Limbo is in-memory, bounded, and best-effort,
+        // so we clear it wholesale instead — which also avoids the opposite
+        // failure of leaking entries older than any bounded walk.
+        //
+        // On a genuine cold start limbo is empty, so this is a no-op; the case
+        // that actually matters is a sync gap, where clearing costs at most a
+        // few un-re-injectable orphaned blob txs.
         let start_number = if previous_finalized_hash.is_zero() {
-            0
+            let cleared = self.mempool.clear_blob_limbo()?;
+            if cleared > 0 {
+                debug!(cleared, "Cleared blob limbo: no previous finalized block");
+            }
+            return Ok(());
         } else {
             match self
                 .storage
                 .get_block_header_by_hash(previous_finalized_hash)?
             {
                 Some(header) => header.number.saturating_add(1),
-                // Previous finalized hash isn't known to this store (sync gap?).
-                // Fall back to a full walk from genesis so we still drain stale
-                // limbo entries.
-                None => 0,
+                None => {
+                    let cleared = self.mempool.clear_blob_limbo()?;
+                    if cleared > 0 {
+                        debug!(
+                            cleared,
+                            "Cleared blob limbo: previous finalized block unknown to this store"
+                        );
+                    }
+                    return Ok(());
+                }
             }
         };
 

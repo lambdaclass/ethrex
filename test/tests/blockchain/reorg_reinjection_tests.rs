@@ -402,6 +402,61 @@ fn included_transaction_moves_blob_sidecar_to_limbo() {
 }
 
 #[test]
+fn clear_blob_limbo_drops_everything() {
+    // Regression: `purge_finalized_blob_limbo` used to fall back to walking the
+    // chain from genesis whenever the previous finalized block couldn't be
+    // located, which on a synced node is tens of millions of DB reads inside the
+    // fork-choice handler. It now clears limbo wholesale instead, so this pins
+    // that the clear actually empties it (and is a no-op when already empty).
+    let mempool = Mempool::new(MEMPOOL_MAX_SIZE_TEST);
+    assert_eq!(mempool.clear_blob_limbo().expect("clear"), 0);
+
+    for i in 0..3u64 {
+        let tx = Transaction::EIP4844Transaction(EIP4844Transaction {
+            nonce: i,
+            max_priority_fee_per_gas: 1,
+            max_fee_per_gas: 1,
+            max_fee_per_blob_gas: 1.into(),
+            gas: 21_000,
+            to: Address::from_low_u64_be(1),
+            ..Default::default()
+        });
+        let sender = H160::random();
+        let hash = tx.hash(&NativeCrypto);
+        let bundle = BlobsBundle {
+            blobs: vec![[i as u8; BYTES_PER_BLOB]],
+            commitments: vec![[i as u8; 48]],
+            proofs: vec![[i as u8; 48]],
+            version: 0,
+        };
+        mempool.add_blobs_bundle(hash, bundle).expect("add bundle");
+        mempool
+            .add_transaction(
+                hash,
+                sender,
+                MempoolTransaction::new(tx, sender),
+                None,
+                None,
+            )
+            .expect("add tx");
+        // Inclusion moves the sidecar into limbo.
+        mempool
+            .remove_included_transaction(&hash)
+            .expect("remove included");
+    }
+
+    assert_eq!(
+        mempool.clear_blob_limbo().expect("clear"),
+        3,
+        "all limbo sidecars must be dropped"
+    );
+    assert_eq!(
+        mempool.clear_blob_limbo().expect("clear"),
+        0,
+        "clearing an empty limbo is a no-op"
+    );
+}
+#[test]
 fn purge_blob_limbo_entries_drops_sidecars() {
     let mempool = Mempool::new(MEMPOOL_MAX_SIZE_TEST);
     let tx = EIP4844Transaction {
