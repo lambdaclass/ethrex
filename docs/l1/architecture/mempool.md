@@ -143,6 +143,8 @@ Notes on individual checks:
 
 **1. Category gate.** A replacement may not cross the blob boundary: a blob-carrying transaction cannot displace a non-blob one or vice versa, since the two differ enormously in propagation cost. Mismatches are rejected with `ReplacementTypeMismatch`. "Blob-carrying" means `Transaction::is_blob_carrying()` — EIP-4844, *or* an EIP-8141 frame transaction with a non-empty `blob_versioned_hashes`, since those carry a sidecar too. Type changes *within* the regular pool (legacy ↔ 2930 ↔ 1559 ↔ 7702) remain allowed, matching geth/reth/nethermind.
 
+**1b. Blob count may not shrink.** Once both sides are known blob-carrying, the candidate may not reduce the blob count: `new.blob_versioned_hashes().len() < old...len()` is rejected with `ReplacementShrinksBlobs { old_count, new_count }`, independently of fees. Without it a sender could pin a blob slot with an N-blob transaction and then cheaply swap it for a 1-blob one, keeping the pool budget while dropping the data the network was told to expect. The cross-type case (a non-blob displacing a blob tx) never reaches this check — stage 1 already rejects it as `ReplacementTypeMismatch`. Uses the generic `Transaction::blob_versioned_hashes()` accessor, so it covers blob-carrying EIP-8141 frame transactions too.
+
 **2. Strict increase.** The incoming transaction must strictly out-bid the pooled one on **both** `gas_fee_cap` and `gas_tip_cap`. This is not redundant with the percentage threshold below — see the note on rounding.
 
 **3. Percentage bump.** Each fee dimension must additionally clear `floor(existing × (100 + bump) / 100)`:
@@ -282,6 +284,7 @@ Mempool-related flags in `cmd/ethrex/cli.rs`:
 | `InsufficientCumulativeBalance { required, available }` | Sum of the sender's pending-tx costs plus this one exceeds balance. |
 | `UnderpricedReplacement` | RBF candidate doesn't strictly out-bid the in-pool tx on every fee field, or doesn't clear the configured percentage bump. |
 | `ReplacementTypeMismatch` | RBF candidate crosses the blob boundary (blob-carrying ↔ non-blob) at the same `(sender, nonce)`. |
+| `ReplacementShrinksBlobs { old_count, new_count }` | Both sides are blob-carrying but the candidate carries fewer blobs than the in-pool tx. |
 | `InvalidChainId(expected)` | `tx.chain_id` set and doesn't match the configured chain. |
 | `GapAdmissionDeniedUnderPressure { occupancy_pct, nonce_gap }` | Non-replacement gapped-nonce tx while occupancy ≥ threshold. |
 | `MaxQueuedTxsPerAccountExceeded { sender, count, limit }` | Per-sender queued (future-nonce) cap would be exceeded. |
