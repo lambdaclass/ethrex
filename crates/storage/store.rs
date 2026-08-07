@@ -4316,6 +4316,38 @@ impl Store {
         Self::trie_holds_state_root(&trie, state_root)
     }
 
+    /// Does this node hold the state `header` commits to?
+    ///
+    /// The header-addressed form of [`Self::has_state_root`], and the one any
+    /// caller holding a header should reach for. A bare `state_root` cannot
+    /// answer this question on a scheduled chain: from the activation timestamp
+    /// onwards a header's `state_root` is a binary-trie root that resolves
+    /// against no MPT node, so [`Self::has_state_root`] reports `false` for
+    /// state the node holds perfectly well. Only the header carries the
+    /// timestamp that says which trie is being named — the same per-header rule
+    /// block execution and the state RPCs turn on (see
+    /// [`Self::header_addresses_binary_trie`]).
+    ///
+    /// `block_hash` must be `header`'s own hash; the binary side is keyed by it
+    /// because the binary trie is single-version and its recorded root is what
+    /// distinguishes "this block's state" from whatever the trie holds now.
+    ///
+    /// Forkchoice is why this exists: its reachability gate ran on the bare root
+    /// and so refused every post-activation head, halting a devnet at the flip
+    /// block with the block itself executing and validating cleanly
+    /// (`forkchoice_accepts_every_block_across_the_flip` in
+    /// `test/tests/blockchain/binary_tree_shadow_tests.rs`).
+    pub fn has_state_for_header(
+        &self,
+        block_hash: BlockHash,
+        header: &BlockHeader,
+    ) -> Result<bool, StoreError> {
+        if self.header_addresses_binary_trie(header) {
+            return self.has_binary_trie_state(block_hash, header.state_root);
+        }
+        self.has_state_root(header.state_root)
+    }
+
     /// Whether `trie`, already opened at `state_root`, really resolves to that
     /// root on this node.
     ///

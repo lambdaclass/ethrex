@@ -126,14 +126,14 @@ pub async fn apply_fork_choice(
     // (the disk root has moved forward). Treating that FCU as a no-op would let the
     // CL move on and then fail downstream during `engine_getPayload` with a confusing
     // "state root missing" error. Falling through here lets the regular path detect
-    // the missing state via the `has_state_root` check below and route the FCU into
+    // the missing state via the `has_state_for_header` check below and route the FCU into
     // the deep-reorg apply path, which installs the overlay that makes head's state
     // readable again.
     if let Some(stored_finalized) = store.get_finalized_block_number().await?
         && head.number < latest
         && head.number <= stored_finalized
         && head_is_canonical
-        && store.has_state_root(head.state_root)?
+        && store.has_state_for_header(head_hash, &head)?
     {
         return Err(InvalidForkChoice::NewHeadAlreadyCanonical);
     }
@@ -215,7 +215,11 @@ pub async fn apply_fork_choice(
     // If the state can't be constructed from the DB, the caller starts a sync
     // toward the head instead of ignoring the FCU.
     // TODO(#5564): handle arbitrary reorgs
-    if !store.has_state_root(link_header.state_root)? {
+    // Asked of the *header*, not of the bare root: past `binaryTreeTime` a
+    // header's `state_root` is a binary-trie root that resolves against no MPT
+    // node, and a root-only check reports "not held" for every post-activation
+    // head. See `Store::has_state_for_header`.
+    if !store.has_state_for_header(link_block_hash, &link_header)? {
         warn!(
             link_block=%link_block_hash,
             link_number=%link_header.number,

@@ -44,7 +44,8 @@ use std::{fs::File, io::BufReader, path::PathBuf};
 use bytes::Bytes;
 use ethrex_blockchain::{
     Blockchain,
-    error::{ChainError, InvalidBlockError},
+    error::{ChainError, InvalidBlockError, InvalidForkChoice},
+    fork_choice::apply_fork_choice,
     payload::{BuildPayloadArgs, create_payload},
     vm::StoreVmDatabase,
 };
@@ -2559,5 +2560,175 @@ async fn an_unscheduled_chain_stages_and_flushes_no_binary_nodes() {
     assert!(
         store.account_trie_node_count_for_test().unwrap() > 0,
         "its MPT must still have been flushed, so the gate really did fire"
+    );
+}
+
+// ===========================================================================
+// Phase D6 — forkchoice reachability across the boundary.
+//
+// Importing a block is only half of accepting it: the consensus layer then
+// sends a forkchoice update naming it as head, and `apply_fork_choice` gates
+// that on "do I actually hold this branch's state". That gate reads
+// `Store::has_state_root`, which opens the **MPT** and hashes its root node.
+// An active header's `state_root` is a binary-trie root, so the gate has to
+// ask the per-header question (`header_addresses_binary_trie`) exactly as
+// block execution and the state RPCs do, or it answers "not held" for state
+// the node holds perfectly well.
+//
+// Found on a devnet, not here: every other test in this file drives
+// `add_block` directly, and the whole engine-API forkchoice path — the thing
+// a real CL exercises once per slot — had no coverage across the flip. The
+// symptom was a chain that executed the flip block cleanly, with correct
+// roots on all three nodes, and then simply stopped advancing its head.
+// ===========================================================================
+
+/// The forkchoice update the consensus layer sends for `block`, with the
+/// genesis as safe and finalized so that only the head's own reachability is
+/// under test.
+async fn forkchoice_to(store: &Store, block: &Block) -> Result<BlockHeader, InvalidForkChoice> {
+    apply_fork_choice(store, block.hash(), H256::zero(), H256::zero(), None).await
+}
+
+/// A scheduled chain must accept a forkchoice update at every block, including
+/// the flip block and the ones after it.
+///
+/// The updates are applied **one block at a time**, which is not incidental:
+/// the gate reads the *link block* — the deepest block of the branch being
+/// made canonical — and only a per-block forkchoice makes that link block the
+/// new block itself. Applying a single update at the final head would link at
+/// block 1, whose root is an MPT root, and the test would pass without ever
+/// putting a binary root in front of the gate. `a_batched_forkchoice_would_not_
+/// have_caught_this` below pins that distinction so the loop is not later
+/// "simplified" into a vacuous test.
+#[tokio::test]
+async fn forkchoice_accepts_every_block_across_the_flip() {
+    let chains = build_boundary_chains(FLIP_BLOCK + 2).await;
+
+    for block in &chains.scheduled_blocks {
+        let number = block.header.number;
+        let active = number >= FLIP_BLOCK;
+        let header = forkchoice_to(&chains.scheduled_store, block)
+            .await
+            .unwrap_or_else(|err| {
+                panic!(
+                    "forkchoice at block {number} ({}) must be accepted, got {err:?}",
+                    if active { "active" } else { "pre-activation" }
+                )
+            });
+        assert_eq!(
+            header.hash(),
+            block.hash(),
+            "forkchoice at block {number} must return that block's header"
+        );
+        assert_eq!(
+            chains
+                .scheduled_store
+                .get_latest_block_number()
+                .await
+                .expect("latest block number"),
+            number,
+            "the head must advance to block {number}; a chain that executes the \
+             flip block but leaves the head behind is the devnet halt"
+        );
+    }
+}
+
+/// The unscheduled twin must behave identically, so a failure above is about
+/// the binary trie and not about the per-block forkchoice loop itself.
+#[tokio::test]
+async fn forkchoice_accepts_every_block_on_an_unscheduled_chain() {
+    let chains = build_boundary_chains(FLIP_BLOCK + 2).await;
+
+    for block in &chains.twin_blocks {
+        forkchoice_to(&chains.twin_store, block)
+            .await
+            .unwrap_or_else(|err| {
+                panic!(
+                    "forkchoice at block {} on an MPT-committing chain must be \
+                     accepted, got {err:?}",
+                    block.header.number
+                )
+            });
+    }
+}
+
+/// Falsification: a single forkchoice update at the final head links at block
+/// 1, never presents an active header's root to the reachability gate, and so
+/// passes even when the gate is MPT-only.
+///
+/// This exists to keep the per-block loop above honest. If this test ever
+/// fails, the link-block reasoning it encodes has changed and the loop's
+/// justification needs revisiting — not the other way around.
+#[tokio::test]
+async fn a_batched_forkchoice_would_not_have_caught_this() {
+    let chains = build_boundary_chains(FLIP_BLOCK + 2).await;
+    let head = chains.scheduled_blocks.last().expect("a non-empty chain");
+
+    let link = chains
+        .scheduled_blocks
+        .first()
+        .expect("a non-empty chain")
+        .header
+        .clone();
+    assert!(
+        link.number < FLIP_BLOCK,
+        "the batched update's link block ({}) must be pre-activation for this \
+         test to say anything",
+        link.number
+    );
+
+    forkchoice_to(&chains.scheduled_store, head)
+        .await
+        .expect("a single forkchoice at the head links pre-activation and passes");
+}
+
+/// The *other* reachability gate: the "head is already canonical, skip this
+/// FCU" fast path (`fork_choice.rs`, the `NewHeadAlreadyCanonical` arm) asks
+/// the same question about `head` that the link-block gate asks about the
+/// link, and needs the same per-header answer.
+///
+/// The loop above never reaches it — it passes no finalized block, and the
+/// skip requires one. Reaching it needs a finalized block at or above the head
+/// under test, with a further block on top so the head is a strict ancestor.
+///
+/// A root-only check here is not a halt but a silent behaviour change: the skip
+/// is declined, the FCU falls through to the full path and re-runs a forkchoice
+/// update that was supposed to be a no-op. Asserting the skip *fires* is what
+/// pins it.
+#[tokio::test]
+async fn the_already_canonical_skip_fires_at_a_post_flip_head() {
+    let chains = build_boundary_chains(FLIP_BLOCK + 2).await;
+    let store = &chains.scheduled_store;
+    let blocks = &chains.scheduled_blocks;
+
+    let head = blocks.last().expect("a non-empty chain");
+    let finalized = &blocks[blocks.len() - 2];
+    assert!(
+        finalized.header.number > FLIP_BLOCK,
+        "the finalized block must be past the flip for this test to say anything"
+    );
+
+    for block in blocks {
+        apply_fork_choice(store, block.hash(), H256::zero(), H256::zero(), None)
+            .await
+            .expect("building the canonical chain");
+    }
+    apply_fork_choice(store, head.hash(), finalized.hash(), finalized.hash(), None)
+        .await
+        .expect("finalizing a post-flip block");
+
+    let err = apply_fork_choice(
+        store,
+        finalized.hash(),
+        finalized.hash(),
+        finalized.hash(),
+        None,
+    )
+    .await
+    .expect_err("re-issuing an FCU at a finalized canonical head must be skipped");
+    assert!(
+        matches!(err, InvalidForkChoice::NewHeadAlreadyCanonical),
+        "the skip must fire at a post-flip head; a root-only reachability check \
+         declines it and silently re-runs the whole forkchoice path, got {err:?}"
     );
 }
