@@ -656,42 +656,68 @@ async fn add_blocks_in_batch(
             vec![None; blocks.len()]
         }
     };
-    // Run the batch
-    if let Err((err, batch_failure)) =
-        add_blocks(blockchain.clone(), blocks, bals, final_batch, cancel_token).await
-    {
-        if let Some(batch_failure) = batch_failure {
-            warn!("Failed to add block during FullSync: {err}");
-            // Since running the batch failed we set the failing block and its descendants
-            // with having an invalid ancestor on the following cases.
-            if let ChainError::InvalidBlock(_) = err {
-                let mut block_hashes_with_invalid_ancestor: Vec<H256> = vec![];
-                if let Some(index) = blocks_hashes
-                    .iter()
-                    .position(|x| x == &batch_failure.failed_block_hash)
-                {
-                    block_hashes_with_invalid_ancestor = blocks_hashes[index..].to_vec();
-                }
+    // EXPERIMENT: canonicalize every CANONICALIZE_EVERY blocks rather than only at batch end.
+    //
+    // The canonical commit gate cannot persist state above the canonical head, so
+    // canonicalizing once per 1024-block batch forces the whole batch to stay resident.
+    // Chunking keeps the retention window near the commit threshold while preserving the
+    // "never commit above the canonical head" property that makes a restart recoverable.
+    const CANONICALIZE_EVERY: usize = 128;
+    let mut blocks = blocks;
+    let mut bals = bals;
+    let mut offset = 0usize;
+    while !blocks.is_empty() {
+        let take = CANONICALIZE_EVERY.min(blocks.len());
+        let rest_blocks = blocks.split_off(take);
+        let rest_bals = if bals.len() > take {
+            bals.split_off(take)
+        } else {
+            Vec::new()
+        };
+        let chunk_blocks = std::mem::replace(&mut blocks, rest_blocks);
+        let chunk_bals = std::mem::replace(&mut bals, rest_bals);
+        let is_last_chunk = blocks.is_empty();
 
-                for hash in block_hashes_with_invalid_ancestor {
-                    store
-                        .set_latest_valid_ancestor(hash, batch_failure.last_valid_hash)
-                        .await?;
+        // Run the chunk
+        if let Err((err, batch_failure)) = add_blocks(
+            blockchain.clone(),
+            chunk_blocks,
+            chunk_bals,
+            final_batch && is_last_chunk,
+            cancel_token.clone(),
+        )
+        .await
+        {
+            if let Some(batch_failure) = batch_failure {
+                warn!("Failed to add block during FullSync: {err}");
+                // Since running the batch failed we set the failing block and its descendants
+                // with having an invalid ancestor on the following cases.
+                if let ChainError::InvalidBlock(_) = err {
+                    let mut block_hashes_with_invalid_ancestor: Vec<H256> = vec![];
+                    if let Some(index) = blocks_hashes
+                        .iter()
+                        .position(|x| x == &batch_failure.failed_block_hash)
+                    {
+                        block_hashes_with_invalid_ancestor = blocks_hashes[index..].to_vec();
+                    }
+
+                    for hash in block_hashes_with_invalid_ancestor {
+                        store
+                            .set_latest_valid_ancestor(hash, batch_failure.last_valid_hash)
+                            .await?;
+                    }
                 }
             }
+            return Err(err.into());
         }
-        return Err(err.into());
-    }
 
-    store
-        .forkchoice_update(
-            numbers_and_hashes,
-            last_block_number,
-            last_block_hash,
-            None,
-            None,
-        )
-        .await?;
+        let chunk_nh = numbers_and_hashes[offset..offset + take].to_vec();
+        let (chunk_last_number, chunk_last_hash) = chunk_nh[take - 1];
+        offset += take;
+        store
+            .forkchoice_update(chunk_nh, chunk_last_number, chunk_last_hash, None, None)
+            .await?;
+    }
 
     let execution_time: f64 = execution_start.elapsed().as_millis() as f64 / 1000.0;
     let blocks_per_second = blocks_len as f64 / execution_time;
