@@ -96,3 +96,13 @@ v2) inherits the same boundary.
 per-block reverse diffs on a path deliberately built to avoid per-block work —
 a real cost trade, not an oversight. Worth revisiting only if operators hit
 refused reorgs shortly after a full sync in practice.
+
+**Related:** a journal *format* bump reduces reach the same way and for the same
+reason. The decoder refuses entries written by another version, so on the first
+start after an upgrade `Store::from_backend` drains the stale ones; until
+finality advances past the drained range, reorg reach is the layer cache alone
+and deeper forkchoice updates are refused with `-38006` rather than attempted.
+An `info!` line names the drained range and the versions involved. That drain is
+what keeps the floor honest — left in place, the stale entries would advertise
+reach the node cannot deliver and the reorg would fail mid-flight with
+`StateNotReachable` instead of being declined up front.
