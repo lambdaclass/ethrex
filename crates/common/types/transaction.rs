@@ -1566,6 +1566,16 @@ impl Transaction {
         }
     }
 
+    /// Whether this transaction carries blob data, and therefore an expensive
+    /// EIP-4844 sidecar. True for EIP-4844 transactions and for EIP-8141 frame
+    /// transactions with a non-empty `blob_versioned_hashes` — matching for
+    /// which types [`Self::max_fee_per_blob_gas`] yields a fee. Prefer this
+    /// over matching on `EIP4844Transaction` alone when the question is "does
+    /// this tx have a sidecar to re-propagate".
+    pub fn is_blob_carrying(&self) -> bool {
+        self.max_fee_per_blob_gas().is_some()
+    }
+
     pub fn is_contract_creation(&self) -> bool {
         match &self {
             Transaction::LegacyTransaction(t) => matches!(t.to, TxKind::Create),
@@ -4341,6 +4351,33 @@ mod tests {
     use hex_literal::hex;
     use serde_impl::{AccessListEntry, GenericTransaction};
     use std::str::FromStr;
+
+    #[test]
+    fn is_blob_carrying_covers_frame_txs_with_blob_hashes() {
+        // An EIP-8141 frame tx carries `max_fee_per_blob_gas` +
+        // `blob_versioned_hashes` of its own, so blob-ness cannot be decided
+        // by matching on `EIP4844Transaction` alone: a blob-bearing frame tx
+        // would otherwise be treated as a plain tx by the mempool's
+        // replacement rules and skip the blob-fee comparison entirely.
+        let plain_frame = Transaction::FrameTransaction(FrameTransaction::default());
+        assert!(!plain_frame.is_blob_carrying());
+
+        let blob_frame = Transaction::FrameTransaction(FrameTransaction {
+            max_fee_per_blob_gas: U256::from(7u64),
+            blob_versioned_hashes: vec![H256::from_low_u64_be(1)],
+            ..Default::default()
+        });
+        assert!(blob_frame.is_blob_carrying());
+
+        let blob_tx = Transaction::EIP4844Transaction(EIP4844Transaction {
+            blob_versioned_hashes: vec![H256::from_low_u64_be(1)],
+            ..Default::default()
+        });
+        assert!(blob_tx.is_blob_carrying());
+
+        let plain = Transaction::EIP1559Transaction(EIP1559Transaction::default());
+        assert!(!plain.is_blob_carrying());
+    }
 
     #[test]
     fn nonce_over_u64_max_maps_to_nonce_is_max() {
