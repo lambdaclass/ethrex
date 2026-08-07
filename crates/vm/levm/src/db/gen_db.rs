@@ -444,8 +444,16 @@ impl GeneralizedDatabase {
         }
 
         // Store fallback.
+        //
+        // Two reads rather than one because the storage question has no room in
+        // `AccountState` on a binary-trie chain — see
+        // `LevmAccount::from_account_state`. Both are served from the same
+        // memoized entry one layer down (`StoreVmDatabase::account_state_cache`
+        // holds the pair), so this is a second map lookup rather than a second
+        // trie walk.
         let state = self.store.get_account_state(address)?;
-        let account = LevmAccount::from(state);
+        let has_storage = self.store.has_storage(address)?;
+        let account = LevmAccount::from_account_state(state, has_storage);
         if !self.skip_initial_tracking {
             self.initial_accounts_state.insert(address, account.clone());
         }

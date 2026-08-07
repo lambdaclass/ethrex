@@ -41,6 +41,23 @@ impl LevmDatabase for DatabaseLogger {
         Ok(state)
     }
 
+    /// Forwarded, and recorded as an account access.
+    ///
+    /// Recording matters even though execution always pairs this with a
+    /// `get_account_state` on the same address today: `state_accessed` is what
+    /// the execution witness is built from, and an address the block only ever
+    /// asked the storage question about would otherwise be missing from the
+    /// witness, making the proof unverifiable. Cheap insurance against that
+    /// pairing being loosened later.
+    fn has_storage(&self, address: CoreAddress) -> Result<bool, DatabaseError> {
+        self.state_accessed
+            .lock()
+            .map_err(|_| DatabaseError::Custom("Could not lock mutex".to_string()))?
+            .entry(address)
+            .or_default();
+        self.store.as_ref().has_storage(address)
+    }
+
     fn get_storage_value(
         &self,
         address: CoreAddress,
@@ -103,6 +120,15 @@ impl LevmDatabase for DynVmDatabase {
             .into_iter()
             .map(|opt| opt.unwrap_or_default())
             .collect())
+    }
+
+    /// The seam where the levm-side question reaches the trie that can answer
+    /// it. Deriving it from `get_account_state` here instead — the trait's
+    /// default — would drop the binary-trie answer on the floor, since
+    /// `AccountState` has nowhere to carry it.
+    fn has_storage(&self, address: CoreAddress) -> Result<bool, DatabaseError> {
+        <dyn VmDatabase>::has_storage(self.as_ref(), address)
+            .map_err(|e| DatabaseError::Custom(e.to_string()))
     }
 
     fn get_storage_value(

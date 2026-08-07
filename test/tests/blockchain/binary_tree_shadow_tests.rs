@@ -47,7 +47,7 @@ use ethrex_blockchain::{
     error::{ChainError, InvalidBlockError, InvalidForkChoice},
     fork_choice::apply_fork_choice,
     payload::{BuildPayloadArgs, create_payload},
-    vm::{BINARY_TRIE_HAS_STORAGE, StoreVmDatabase},
+    vm::StoreVmDatabase,
 };
 use ethrex_common::{
     Address, H160, H256, U256,
@@ -1434,23 +1434,36 @@ async fn pre_flip_headers_keep_executing_against_the_mpt_after_the_flip() {
 }
 
 // ---------------------------------------------------------------------------
-// D3.4 The `storage_root` field across the flip.
+// D3.4 The storage question across the flip.
 //
 // `AccountState` carries a `storage_root`; the binary trie has none, because
 // storage is not a per-account subtrie there but leaves of the one unified
-// tree. What the field is actually *read* as, by every consumer, is the boolean
-// `storage_root != EMPTY_TRIE_HASH` — EIP-7610's create-collision check and the
-// destroyed-account storage wipe — and that the binary trie can answer, through
-// the prefix existence check `pbt_state::has_storage` runs over each of the two
-// storage zones. So the field carries that answer and nothing more: the empty
-// root for no storage, `BINARY_TRIE_HAS_STORAGE` — a marker, not a root — for
-// some. See the read seam in `crates/blockchain/vm.rs`.
+// tree. What consumers actually want out of that field is the boolean "does
+// this account hold any storage" — EIP-7610's create-collision check and the
+// destroyed-account storage wipe — and that the binary trie *can* answer,
+// through the prefix existence check `pbt_state::has_storage` runs over each of
+// the two storage zones.
 //
-// This test used to pin the opposite: the binary read reported the empty root
-// unconditionally, so EIP-7610 read *no storage* for every account past the
-// activation. Both accounts below are here to keep that from coming back —
-// storage-only is the case the rule turns on, and the plain one is the control
-// that says the answer is not simply always "yes".
+// The answer therefore travels on its own channel, [`VmDatabase::has_storage`],
+// rather than being smuggled through a field that has no honest value to hold.
+// `storage_root` says only what it can say: on the binary path there is no
+// root, so it reports [`EMPTY_TRIE_HASH`] — the same thing a reader gets for an
+// account whose storage trie is genuinely empty, which is precisely why the
+// boolean cannot ride on it. On the MPT path it stays a real root, and the two
+// answers agree because there the root *is* the boolean.
+//
+// This test has pinned two earlier wrong answers, and exists to keep either
+// from coming back:
+//
+//   * the binary read once reported the empty root unconditionally, so
+//     EIP-7610 saw *no storage* for every account past the activation;
+//   * it then reported a magic non-root (`0xbb…bb`) to mean "yes", which made
+//     `storage_root` a field two readers disagreed about — and leaked into
+//     `prewarm`, which tried to open a storage trie at it.
+//
+// Both accounts below are load-bearing: storage-only is the case the rule turns
+// on, and the plain one is the control that says the answer is not simply
+// always "yes".
 // ---------------------------------------------------------------------------
 
 /// An address the genesis gives **storage only**: no code, zero nonce, zero
@@ -1523,7 +1536,9 @@ async fn a_binary_read_reports_whether_the_account_has_storage() {
     );
 
     // Before the flip the MPT answers, and it says the storage-only account
-    // has storage and the other does not.
+    // has storage and the other does not. There `storage_root` is a genuine
+    // root and carries the same answer `has_storage` does — asserting both is
+    // the point, since the MPT is where the two must not drift apart.
     let mpt_db = StoreVmDatabase::new(store.clone(), pre_flip.header.clone())
         .expect("a pre-flip header opens against the MPT");
     let from_mpt = mpt_db
@@ -1532,7 +1547,11 @@ async fn a_binary_read_reports_whether_the_account_has_storage() {
         .expect("the storage-only account exists in the MPT");
     assert_ne!(
         from_mpt.storage_root, *EMPTY_TRIE_HASH,
-        "the MPT read reports the account's storage"
+        "the MPT read reports the account's storage as a real root"
+    );
+    assert!(
+        mpt_db.has_storage(storage_only_account()).unwrap(),
+        "the MPT path must answer the storage question too"
     );
     assert_eq!(
         mpt_db
@@ -1542,6 +1561,7 @@ async fn a_binary_read_reports_whether_the_account_has_storage() {
             .storage_root,
         *EMPTY_TRIE_HASH,
     );
+    assert!(!mpt_db.has_storage(storageless_account()).unwrap());
 
     // After it, the account is still found and its storage is still readable...
     let binary_db = StoreVmDatabase::new(store.clone(), head.header.clone())
@@ -1565,19 +1585,28 @@ async fn a_binary_read_reports_whether_the_account_has_storage() {
         "the storage itself is readable through the binary trie"
     );
 
-    // ...and so is the summary the field stands for. There is no root to
-    // report, so the marker goes in its place; what matters is the boolean
-    // every consumer reads out of it, which now agrees with the MPT.
-    assert_eq!(
-        from_binary.storage_root, BINARY_TRIE_HAS_STORAGE,
-        "a binary read must report that this account holds storage"
+    // ...and so is the storage question — on its own channel, because the
+    // field has no honest value that could carry it.
+    assert!(
+        binary_db.has_storage(storage_only_account()).unwrap(),
+        "a binary read must report that this account holds storage; \
+         EIP-7610 reads exactly this, and a CREATE here must fail"
     );
-    assert_ne!(
+
+    // The field itself now says only what the binary trie can back: there is
+    // no per-account storage root, so it reports the empty one. This is the
+    // assertion that fails if the `0xbb…bb` marker ever comes back, and the
+    // reason the boolean above cannot be derived from it.
+    assert_eq!(
         from_binary.storage_root, *EMPTY_TRIE_HASH,
-        "EIP-7610 reads exactly this comparison: a CREATE here must fail"
+        "a binary read must not invent a storage root it cannot back"
     );
 
     // And the control, which keeps the answer from being an unconditional yes.
+    assert!(
+        !binary_db.has_storage(storageless_account()).unwrap(),
+        "an account with no storage must still read as having none"
+    );
     assert_eq!(
         binary_db
             .get_account_state(storageless_account())
@@ -1585,8 +1614,128 @@ async fn a_binary_read_reports_whether_the_account_has_storage() {
             .expect("the control account exists in the binary trie")
             .storage_root,
         *EMPTY_TRIE_HASH,
-        "an account with no storage must still read as having none"
     );
+
+    // An account that is not there at all answers "no" rather than erroring,
+    // on both paths: `has_storage` is asked for every account execution loads,
+    // including ones it is about to create.
+    let absent = Address::from_low_u64_be(0x5709);
+    assert!(binary_db.get_account_state(absent).unwrap().is_none());
+    assert!(!binary_db.has_storage(absent).unwrap());
+    assert!(!mpt_db.has_storage(absent).unwrap());
+}
+
+// ---------------------------------------------------------------------------
+// D3.4b The same question, asked the way execution asks it.
+//
+// The test above reads `VmDatabase` directly. Execution does not: it goes
+// through `DynVmDatabase` -> `CachingDatabase` -> `GeneralizedDatabase`, and
+// each of those three layers has its own chance to answer from an MPT-shaped
+// cache instead of forwarding. `CachingDatabase` in particular memoizes
+// `AccountState`, whose `storage_root` is now honestly empty on the binary
+// path — deriving the boolean there rather than forwarding would read "no
+// storage" for every post-flip account, which is the pre-existing bug this
+// whole change is undoing.
+//
+// What comes out the far end is a `LevmAccount`, and *two* of its fields are
+// at stake:
+//
+//   * `has_storage`, which EIP-7610's `create_would_collide` reads;
+//   * `exists`, which used to be derived as `state != AccountState::default()`
+//     — true for a storage-only account on the MPT only because its
+//     `storage_root` differed from empty. Making the field honest deletes that
+//     signal, so `exists` has to take the boolean instead. An account holding
+//     only storage must read as existing on both paths.
+// ---------------------------------------------------------------------------
+
+/// Load an address through the layering execution actually uses, and report
+/// the two `LevmAccount` flags this section is about.
+fn levm_account_flags(db: StoreVmDatabase, address: Address) -> (bool, bool) {
+    use ethrex_levm::db::{CachingDatabase, Database as LevmDatabase, gen_db::GeneralizedDatabase};
+    use ethrex_vm::DynVmDatabase;
+
+    let dyn_db: DynVmDatabase = Box::new(db);
+    let inner: std::sync::Arc<dyn LevmDatabase> = std::sync::Arc::new(dyn_db);
+    let caching = std::sync::Arc::new(CachingDatabase::new(inner, false));
+    let mut gen_db = GeneralizedDatabase::new(caching);
+    let account = gen_db
+        .get_account(address)
+        .expect("the account read must succeed");
+    (account.has_storage, account.exists)
+}
+
+#[tokio::test]
+async fn a_storage_only_account_exists_and_collides_on_both_paths() {
+    let sender = sender_from_key(&test_secret_key());
+    let extra = [
+        (
+            storage_only_account(),
+            GenesisAccount {
+                balance: U256::zero(),
+                code: Bytes::new(),
+                nonce: 0,
+                storage: [(
+                    U256::from(STORAGE_ONLY_SLOT),
+                    U256::from(STORAGE_ONLY_VALUE),
+                )]
+                .into_iter()
+                .collect(),
+            },
+        ),
+        (
+            storageless_account(),
+            GenesisAccount {
+                balance: U256::from(1_000u64),
+                code: Bytes::new(),
+                nonce: 0,
+                storage: Default::default(),
+            },
+        ),
+    ];
+
+    let unscheduled = load_funded_genesis_with(sender, None, &extra);
+    let activation = unscheduled.timestamp + FLIP_BLOCK * BLOCK_TIME;
+    let genesis = load_funded_genesis_with(sender, Some(activation), &extra);
+    let chain_id = genesis.config.chain_id;
+    let store = store_from_genesis(genesis).await;
+    let blockchain = Blockchain::default_with_store(store.clone());
+    let blocks = build_chain(&store, &blockchain, chain_id, FLIP_BLOCK).await;
+
+    let pre_flip = blocks[0].header.clone();
+    let post_flip = blocks.last().unwrap().header.clone();
+    assert!(pre_flip.timestamp < activation);
+    assert_eq!(
+        post_flip.state_root,
+        binary_root(&store, blocks.last().unwrap()),
+        "the head must be the flip block"
+    );
+
+    for (label, header) in [("MPT", pre_flip), ("binary", post_flip)] {
+        let db = StoreVmDatabase::new(store.clone(), header)
+            .expect("the header's own trie must hold its state");
+
+        let (has_storage, exists) = levm_account_flags(db.clone(), storage_only_account());
+        assert!(
+            has_storage,
+            "{label}: an account holding only storage must collide with a CREATE (EIP-7610)"
+        );
+        assert!(
+            exists,
+            "{label}: an account holding only storage exists, even though its \
+             balance, nonce and code are all default"
+        );
+
+        let (has_storage, exists) = levm_account_flags(db.clone(), storageless_account());
+        assert!(
+            !has_storage,
+            "{label}: the control account holds no storage"
+        );
+        assert!(exists, "{label}: the control account has a balance");
+
+        let (has_storage, exists) = levm_account_flags(db, Address::from_low_u64_be(0x570a));
+        assert!(!has_storage, "{label}: an absent account holds no storage");
+        assert!(!exists, "{label}: an absent account does not exist");
+    }
 }
 
 // ---------------------------------------------------------------------------
