@@ -355,6 +355,7 @@ class Handler(BaseHTTPRequestHandler):
             self.close_connection = True
         self.send_response(code)
         self.send_header("content-type", "application/json")
+        self.send_header("access-control-allow-origin", "*")
         self.send_header("content-length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
@@ -381,6 +382,20 @@ class Handler(BaseHTTPRequestHandler):
         else:
             self._reply(404, {"msg": "not found"})
 
+    def do_OPTIONS(self):
+        # BaseHTTPRequestHandler answers 501 for any method without a do_*
+        # handler, so without this the preflight fails and a browser never
+        # sends the claim at all.
+        if self._path() != "/api/claim":
+            return self._reply(404, {"msg": "not found"})
+        self.send_response(204)
+        self.send_header("access-control-allow-origin", "*")
+        self.send_header("access-control-allow-methods", "POST, OPTIONS")
+        self.send_header("access-control-allow-headers", "content-type")
+        self.send_header("access-control-max-age", "86400")
+        self.send_header("content-length", "0")
+        self.end_headers()
+
     def do_POST(self):
         if not SLOTS.acquire(blocking=False):
             return self._reply(503, {"msg": "busy, try again shortly"})
@@ -393,14 +408,14 @@ class Handler(BaseHTTPRequestHandler):
         if self._path() != "/api/claim":
             return self._reply(404, {"msg": "not found"})
 
-        # A cross-site form POST cannot set either of these, so requiring them
-        # stops a hostile page spending its visitors' quotas.
+        # The claim endpoint is open to any origin so a third-party demo page can
+        # call it from the browser. The per-IP rate limit is what bounds abuse;
+        # this deliberately gives up the narrower protection an origin check
+        # bought, which was stopping a hostile page from spending its visitors'
+        # quotas rather than its own.
         ctype = (self.headers.get("content-type") or "").split(";")[0].strip().lower()
         if ctype != "application/json":
             return self._reply(415, {"msg": "content-type must be application/json"})
-        origin = self.headers.get("Origin")
-        if origin and not self._same_origin(origin):
-            return self._reply(403, {"msg": "cross-origin requests are not accepted"})
 
         try:
             length = int(self.headers.get("content-length") or 0)
@@ -472,10 +487,6 @@ class Handler(BaseHTTPRequestHandler):
             return self._await_receipt(tx_hash)
         finally:
             SENDER.drop_inflight(lowered)
-
-    def _same_origin(self, origin):
-        host = (self.headers.get("Host") or "").split(":")[0].lower()
-        return origin.split("//")[-1].split(":")[0].lower() == host
 
     def _await_receipt(self, tx_hash):
         """Report what actually happened rather than assuming inclusion."""
