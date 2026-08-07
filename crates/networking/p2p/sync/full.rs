@@ -95,7 +95,11 @@ async fn request_bodies_with_retry(
 /// on them fails forever with `state root missing`, so full sync must keep and re-execute
 /// them rather than skip them as "already canonical".
 pub fn is_resume_point(store: &Store, header: &BlockHeader) -> Result<bool, SyncError> {
-    Ok(store.is_canonical_sync(header.hash())? && store.has_state_root(header.state_root)?)
+    let hash = header.hash();
+    // Per header, not per root: past `binaryTreeTime` the post-state lives in
+    // the binary trie and a root-only check calls every such block stateless,
+    // which would re-execute the whole post-activation chain every cycle.
+    Ok(store.is_canonical_sync(hash)? && store.has_state_for_header(hash, header)?)
 }
 
 /// Index of the first resume point in a single newest->oldest header batch, or `None` if the
@@ -181,7 +185,7 @@ pub async fn sync_cycle_full(
     // indefinitely, never reporting synced and answering every newPayload with SYNCING.
     if !pending_blocks.is_empty() && store.is_canonical_sync(sync_head)? {
         let parent_has_state = match store.get_block_header_by_hash(sync_head)? {
-            Some(parent) => store.has_state_root(parent.state_root)?,
+            Some(parent) => store.has_state_for_header(sync_head, &parent)?,
             None => false,
         };
         if parent_has_state {
@@ -355,7 +359,7 @@ pub async fn sync_cycle_full(
             // past it to genesis, so this guard is required to avoid a doomed re-exec from block 0.)
             let resume_parent_number = start_block_number.saturating_sub(1);
             let resume_parent_has_state = match store.get_block_header(resume_parent_number)? {
-                Some(parent) => store.has_state_root(parent.state_root)?,
+                Some(parent) => store.has_state_for_header(parent.hash(), &parent)?,
                 None => false,
             };
             if !resume_parent_has_state {
@@ -560,7 +564,9 @@ pub async fn sync_cycle_full(
     if let Some(oldest_pending) = pending_blocks.first() {
         let parent_has_state =
             match store.get_block_header_by_hash(oldest_pending.header.parent_hash)? {
-                Some(parent) => store.has_state_root(parent.state_root)?,
+                Some(parent) => {
+                    store.has_state_for_header(oldest_pending.header.parent_hash, &parent)?
+                }
                 None => false,
             };
         if !parent_has_state {

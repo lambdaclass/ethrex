@@ -2796,3 +2796,152 @@ async fn the_startup_state_walk_stops_at_the_head_on_an_unscheduled_chain() {
         "an MPT-committing chain's walk must stop at the head"
     );
 }
+
+// ===========================================================================
+// Phase D8 — the remaining root-only `has_state_root` callers.
+//
+// The forkchoice gates and the startup walk were the first two found, but the
+// same question is asked in several other places, each passing a header's
+// `state_root` to the MPT-only `Store::has_state_root`. All of them answer
+// "not held" for every post-activation header. They sit on paths a healthy
+// steady-state chain does not take — sync resume, payload re-execution,
+// tracing — which is why neither the devnet nor the earlier tests reached
+// them.
+//
+// These two are the ones reachable as units. The rest are fixed alongside and
+// pinned by `no_caller_asks_has_state_root_about_a_header` below.
+// ===========================================================================
+
+/// Full sync skips blocks it has already executed by asking `is_resume_point`.
+/// A post-flip block whose state this node holds must qualify — otherwise full
+/// sync re-downloads and re-executes the entire post-activation chain on every
+/// cycle, and `--syncmode=full` is mandatory on a scheduled chain.
+#[tokio::test]
+async fn a_post_flip_block_is_a_full_sync_resume_point() {
+    let chains = build_boundary_chains(FLIP_BLOCK + 2).await;
+    make_canonical(&chains.scheduled_store, &chains.scheduled_blocks).await;
+
+    let head = chains.scheduled_blocks.last().expect("a non-empty chain");
+    assert!(
+        head.header.number > FLIP_BLOCK,
+        "the head must be past the flip for this test to say anything"
+    );
+
+    assert!(
+        ethrex_p2p::sync::is_resume_point(&chains.scheduled_store, &head.header)
+            .expect("resume-point check"),
+        "a post-flip block whose state this node holds must be a full-sync \
+         resume point; treating it as stateless makes full sync re-execute \
+         every block after the activation, forever"
+    );
+}
+
+/// The unscheduled twin must qualify too, so a failure above is about the
+/// binary trie rather than the resume-point predicate itself.
+#[tokio::test]
+async fn a_block_on_an_unscheduled_chain_is_a_full_sync_resume_point() {
+    let chains = build_boundary_chains(FLIP_BLOCK + 2).await;
+    make_canonical(&chains.twin_store, &chains.twin_blocks).await;
+
+    let head = chains.twin_blocks.last().expect("a non-empty chain");
+    assert!(
+        ethrex_p2p::sync::is_resume_point(&chains.twin_store, &head.header)
+            .expect("resume-point check"),
+        "an MPT-committing chain's head must be a resume point"
+    );
+}
+
+/// `debug_trace*` re-executes parents until it finds one whose state it holds.
+/// At a post-flip block that walk must stop immediately: the parent's state is
+/// in the binary trie. Otherwise tracing re-executes back to the flip and then
+/// fails once the walk exceeds its `reexec` budget.
+#[tokio::test]
+async fn tracing_finds_no_missing_state_parents_at_a_post_flip_block() {
+    let chains = build_boundary_chains(FLIP_BLOCK + 2).await;
+    make_canonical(&chains.scheduled_store, &chains.scheduled_blocks).await;
+
+    let head = chains.scheduled_blocks.last().expect("a non-empty chain");
+    let missing = ethrex_blockchain::tracing::get_missing_state_parents(
+        head.header.parent_hash,
+        &chains.scheduled_store,
+        128,
+    )
+    .await
+    .expect("the parent walk must not exhaust its re-execution budget");
+
+    assert!(
+        missing.is_empty(),
+        "tracing must find the post-flip parent's state immediately; it instead \
+         wants to re-execute {} block(s), walking back across the activation",
+        missing.len()
+    );
+}
+
+/// Every remaining site is fixed the same way, but most sit inside large async
+/// sync and engine-API handlers that no unit test reaches. This pins the class
+/// instead of each site: no source file may ask the root-only
+/// `has_state_root` about a *header's* `state_root`.
+///
+/// Two answers are legitimate and allowlisted below. Everything else asking
+/// this question about a header is the bug that halted a devnet at the flip
+/// block, made every restart replay from genesis, and would have made full sync
+/// re-execute the whole post-activation chain.
+#[test]
+fn no_caller_asks_has_state_root_about_a_header() {
+    /// (path suffix, why it is allowed)
+    const ALLOWED: &[(&str, &str)] = &[
+        (
+            "crates/storage/store.rs",
+            "the MPT branch inside `has_state_for_header` itself, plus tests \
+             that deliberately probe unheld roots",
+        ),
+        (
+            "crates/blockchain/vm.rs",
+            "already branches on `binary_tree_active` explicitly, which is the \
+             pattern `has_state_for_header` packages",
+        ),
+    ];
+
+    fn scan(dir: &std::path::Path, hits: &mut Vec<String>) {
+        let entries = std::fs::read_dir(dir).expect("readable directory");
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                scan(&path, hits);
+            } else if path.extension().is_some_and(|e| e == "rs") {
+                let text = std::fs::read_to_string(&path).expect("readable source file");
+                let relative = path.to_string_lossy().replace('\\', "/");
+                if ALLOWED
+                    .iter()
+                    .any(|(allowed, _)| relative.ends_with(allowed))
+                {
+                    continue;
+                }
+                for (index, line) in text.lines().enumerate() {
+                    let trimmed = line.trim_start();
+                    if trimmed.starts_with("//") {
+                        continue;
+                    }
+                    if line.contains("has_state_root(") && line.contains(".state_root") {
+                        hits.push(format!("{relative}:{}: {}", index + 1, line.trim()));
+                    }
+                }
+            }
+        }
+    }
+
+    let root = workspace_root();
+    let mut hits = Vec::new();
+    for area in ["crates", "cmd"] {
+        scan(&root.join(area), &mut hits);
+    }
+
+    assert!(
+        hits.is_empty(),
+        "these callers ask the MPT-only `has_state_root` about a header's \
+         state_root, which answers `false` for every block after \
+         `binaryTreeTime`. Use `Store::has_state_for_header(block_hash, \
+         header)` instead:\n{}",
+        hits.join("\n")
+    );
+}

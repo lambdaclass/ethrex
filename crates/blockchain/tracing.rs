@@ -261,7 +261,9 @@ impl Blockchain {
 /// The list will be sorted from newer to older
 /// We might be missing this state due to using batch execute or other methods while syncing the chain
 /// If we are not able to find a parent block with state after going through the amount of blocks given by `reexec` an error will be returned
-async fn get_missing_state_parents(
+/// `pub` so integration tests can assert the walk terminates immediately at a
+/// block whose state this node holds; nothing outside this module calls it.
+pub async fn get_missing_state_parents(
     mut parent_hash: H256,
     store: &Store,
     reexec: u32,
@@ -276,7 +278,7 @@ async fn get_missing_state_parents(
         let Some(parent_block) = store.get_block_by_hash(parent_hash).await? else {
             return Err(ChainError::Custom("Parent Block not Found".to_string()));
         };
-        if store.has_state_root(parent_block.header.state_root)? {
+        if store.has_state_for_header(parent_hash, &parent_block.header)? {
             break;
         }
         parent_hash = parent_block.header.parent_hash;

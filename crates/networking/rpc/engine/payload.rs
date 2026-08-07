@@ -1242,7 +1242,7 @@ async fn try_execute_payload(
     // prevents subsequent FCUs from looping back into `reorg_apply_deep`.
     if let Some(known_header) = storage.get_block_header_by_hash(block_hash)? {
         let state_materialized = storage.is_state_in_layer_cache(known_header.state_root)?
-            || storage.has_state_root(known_header.state_root)?;
+            || storage.has_state_for_header(block_hash, &known_header)?;
         if state_materialized {
             return payload_status_for_existing_block(&block, context, make_witness).await;
         }
@@ -1253,7 +1253,7 @@ async fn try_execute_payload(
         let parent_reachable = match storage.get_block_header_by_hash(block.header.parent_hash)? {
             Some(parent) => {
                 storage.is_state_in_layer_cache(parent.state_root)?
-                    || storage.has_state_root(parent.state_root)?
+                    || storage.has_state_for_header(block.header.parent_hash, &parent)?
             }
             None => false,
         };
@@ -1290,7 +1290,8 @@ async fn try_execute_payload(
     if let Some(parent_header) = storage.get_block_header_by_hash(block.header.parent_hash)? {
         let parent_state = parent_header.state_root;
         let in_cache = storage.is_state_in_layer_cache(parent_state)?;
-        let on_disk = !in_cache && storage.has_state_root(parent_state)?;
+        let on_disk =
+            !in_cache && storage.has_state_for_header(block.header.parent_hash, &parent_header)?;
         if !in_cache && !on_disk {
             debug!(
                 %block_hash,

@@ -1689,8 +1689,10 @@ pub async fn find_last_known_state_root(
 
     let mut current_last_header = last_header;
 
-    // Find the last block with a known state root
-    while !store.has_state_root(current_last_header.state_root)? {
+    // Find the last block with a known state root. Per header, matching the L1
+    // startup walk; an L2 does not set `binaryTreeTime` today, so this is for
+    // consistency rather than a live fix.
+    while !store.has_state_for_header(current_last_header.hash(), &current_last_header)? {
         if current_last_header.number == 0 {
             return Err(CommitterError::FailedToCreateCheckpoint(
                 "unknown state found in DB. Please run `ethrex removedb` and restart node"

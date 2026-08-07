@@ -72,7 +72,13 @@ impl RpcHandler for Syncing {
         // recorded by the sync cycle.
         let canonical_head = context.storage.get_latest_block_number().await?;
         let current_block = match context.storage.get_block_header(canonical_head)? {
-            Some(header) if context.storage.has_state_root(header.state_root)? => canonical_head,
+            Some(header)
+                if context
+                    .storage
+                    .has_state_for_header(header.hash(), &header)? =>
+            {
+                canonical_head
+            }
             _ => syncer
                 .diagnostics()
                 .read()
