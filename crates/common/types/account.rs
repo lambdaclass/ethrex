@@ -18,11 +18,28 @@ use ethrex_rlp::{
 use super::GenesisAccount;
 use crate::constants::{EMPTY_KECCAK_HASH, EMPTY_TRIE_HASH};
 
-/// Shared empty jump-target table. `Code::default()` and any bytecode without a
-/// `JUMPDEST` clone this (a refcount bump) instead of allocating a fresh empty
-/// `Arc` header each time. This matters because the per-tx `Code::default()`
+/// Jump metadata for a bytecode: the sorted valid-JUMPDEST offsets plus an O(1)
+/// validity bitmap. Stored behind a single `Arc` on `Code` so cloning a `Code`
+/// (hot: every message-call) is one refcount bump and the struct stays small.
+#[derive(Debug, PartialEq, Eq, Hash)]
+pub struct JumpTable {
+    /// Sorted valid JUMPDEST byte-offsets (excludes 0x5B inside PUSH data).
+    pub targets: Box<[u32]>,
+    /// 1-bit-per-byte JUMPDEST validity bitmap (word i covers bytes 64i..64i+64).
+    /// Empty when `targets` is small enough that binary_search is as cheap.
+    bits: Box<[u64]>,
+}
+
+/// Shared empty jump table. `Code::default()` and any bytecode without a
+/// `JUMPDEST` clone this (a refcount bump) instead of allocating a fresh `Arc`
+/// header each time. This matters because the per-tx `Code::default()`
 /// placeholder and every EOA / empty-code load would otherwise each allocate.
-static EMPTY_JUMP_TARGETS: LazyLock<Arc<[u32]>> = LazyLock::new(|| Arc::from(Vec::new()));
+static EMPTY_JUMPS: LazyLock<Arc<JumpTable>> = LazyLock::new(|| {
+    Arc::new(JumpTable {
+        targets: Box::from([]),
+        bits: Box::from([]),
+    })
+});
 
 /// Trailing STOP bytes appended to every bytecode so the dispatch loop can read
 /// the next opcode without a bounds check. 33 is the widest single-opcode advance
@@ -42,13 +59,12 @@ pub struct Code {
     bytecode: Bytes,
     /// The real bytecode length, needed for some opcodes, `bytecode` is padded with 33 STOPs to avoid checked adds on hot loop.
     bytecode_len: usize,
-    // `Arc<[u32]>` so cloning `Code` (hot: every message-call resolves and clones
-    // the callee's code) is a refcount bump instead of deep-copying the table.
-    // Serializes via serde's `rc` feature (enabled workspace-wide).
-    // The valid addresses are 32-bit because, despite EIP-3860 restricting initcode size,
-    // this does not apply to previous forks. This is tested in the EEST tests, which would
-    // panic in debug mode.
-    pub jump_targets: Arc<[u32]>,
+    // Single `Arc<JumpTable>` (a thin pointer) holding both the JUMPDEST offset
+    // list and the O(1) validity bitmap, so cloning `Code` (hot: every
+    // message-call) is one refcount bump and the struct doesn't grow. The valid
+    // offsets are 32-bit because, despite EIP-3860 restricting initcode size, that
+    // doesn't apply to previous forks (tested by EEST, which panics in debug).
+    jumps: Arc<JumpTable>,
 }
 
 impl Code {
@@ -78,20 +94,69 @@ impl Code {
     /// `BYTECODE_PADDING` STOP bytes and records the original length in
     /// `bytecode_len`. Never pass a pre-padded buffer, or the logical length and
     /// every `JUMPDEST`/`PUSH` offset derived from it would be wrong.
-    pub fn from_parts_unchecked(hash: H256, code: &[u8], jump_targets: Arc<[u32]>) -> Self {
+    pub fn from_parts_unchecked(hash: H256, code: &[u8], jump_targets: Box<[u32]>) -> Self {
         let bytecode_len = code.len();
         let mut padded_code = Vec::with_capacity(bytecode_len + BYTECODE_PADDING);
         padded_code.extend_from_slice(code);
         padded_code.extend_from_slice(&[0u8; BYTECODE_PADDING]);
+        let jumps = Self::build_jump_table(bytecode_len, jump_targets);
         Self {
             hash,
             bytecode: Bytes::from_owner(padded_code),
             bytecode_len,
-            jump_targets,
+            jumps,
         }
     }
 
-    fn compute_jump_targets(code: &[u8]) -> Arc<[u32]> {
+    /// Builds the shared `JumpTable` from computed `jump_targets`, taking ownership
+    /// so the offsets are moved in rather than copied. The O(1) bitmap is built only
+    /// above a small threshold where it beats binary_search; below it (and for empty)
+    /// `bits` is empty and the search path is used. Jumpless bytecode (EOAs, tiny
+    /// contracts) shares the one `EMPTY_JUMPS` allocation.
+    fn build_jump_table(bytecode_len: usize, jump_targets: Box<[u32]>) -> Arc<JumpTable> {
+        if jump_targets.is_empty() {
+            return EMPTY_JUMPS.clone();
+        }
+        const BITMAP_MIN_TARGETS: usize = 16;
+        let bits: Box<[u64]> = if jump_targets.len() <= BITMAP_MIN_TARGETS {
+            Box::from([])
+        } else {
+            let mut b = vec![0u64; bytecode_len / 64 + 1];
+            for &t in jump_targets.iter() {
+                let t = t as usize;
+                b[t / 64] |= 1u64 << (t % 64);
+            }
+            b.into_boxed_slice()
+        };
+        Arc::new(JumpTable {
+            targets: jump_targets,
+            bits,
+        })
+    }
+
+    /// Sorted valid JUMPDEST offsets (for DB encoding / serialization).
+    #[inline]
+    pub fn jump_targets(&self) -> &[u32] {
+        &self.jumps.targets
+    }
+
+    /// True iff `target` is a valid JUMPDEST. O(1) bit test for large jump tables,
+    /// binary_search fallback for small/empty ones (0x5B literal avoids a circular
+    /// dep on the vm `Opcode` enum; `targets` holds only real JUMPDEST offsets).
+    #[inline]
+    pub fn is_valid_jumpdest(&self, target: usize) -> bool {
+        if self.jumps.bits.is_empty() {
+            return self.dispatch_buf().get(target).is_some_and(|&v| {
+                v == 0x5B && self.jumps.targets.binary_search(&(target as u32)).is_ok()
+            });
+        }
+        self.jumps
+            .bits
+            .get(target / 64)
+            .is_some_and(|w| (w >> (target % 64)) & 1 == 1)
+    }
+
+    fn compute_jump_targets(code: &[u8]) -> Box<[u32]> {
         debug_assert!(code.len() <= u32::MAX as usize);
         let mut targets = Vec::new();
         let mut i = 0;
@@ -111,13 +176,10 @@ impl Code {
             }
             i += 1;
         }
-        // Share the single empty table for jumpless bytecode (very common: EOAs,
-        // tiny contracts) so we don't allocate an `Arc` header for an empty slice.
-        if targets.is_empty() {
-            EMPTY_JUMP_TARGETS.clone()
-        } else {
-            Arc::from(targets)
-        }
+        // A `Box<[u32]>` hands ownership straight to `build_jump_table` (no copy),
+        // and an empty one doesn't allocate at all — jumpless bytecode (very common:
+        // EOAs, tiny contracts) ends up sharing `EMPTY_JUMPS` there.
+        targets.into_boxed_slice()
     }
 
     #[inline]
@@ -159,7 +221,9 @@ impl Code {
     pub fn size(&self) -> usize {
         let hash_size = size_of::<H256>();
         let bytes_size = size_of::<Bytes>();
-        let vec_size = size_of::<Arc<[u32]>>() + self.jump_targets.len() * size_of::<u32>();
+        let vec_size = size_of::<Arc<JumpTable>>()
+            + self.jumps.targets.len() * size_of::<u32>()
+            + self.jumps.bits.len() * size_of::<u64>();
         hash_size + bytes_size + vec_size
     }
 }
@@ -174,7 +238,7 @@ impl Code {
 struct CodeSerde {
     hash: H256,
     code: Bytes,
-    jump_targets: Arc<[u32]>,
+    jump_targets: Box<[u32]>,
 }
 
 impl Serialize for Code {
@@ -182,7 +246,7 @@ impl Serialize for Code {
         CodeSerde {
             hash: self.hash,
             code: self.code_bytes(),
-            jump_targets: self.jump_targets.clone(),
+            jump_targets: self.jump_targets().into(),
         }
         .serialize(serializer)
     }
@@ -263,7 +327,7 @@ impl Default for Code {
             bytecode: Bytes::from_static(&[0u8; BYTECODE_PADDING]),
             bytecode_len: 0,
             hash: *EMPTY_KECCAK_HASH,
-            jump_targets: EMPTY_JUMP_TARGETS.clone(),
+            jumps: EMPTY_JUMPS.clone(),
         }
     }
 }

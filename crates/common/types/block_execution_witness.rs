@@ -426,7 +426,12 @@ pub fn validate_witness_headers_chain(
     for pair in headers.windows(2) {
         let (prev, next) = (&pair[0], &pair[1]);
         if prev.number.checked_add(1) != Some(next.number)
-            || next.parent_hash != prev.compute_block_hash(crypto)
+            || next.parent_hash
+                != prev
+                    .hash
+                    .get()
+                    .copied()
+                    .unwrap_or_else(|| prev.compute_block_hash(crypto))
         {
             return Err(GuestProgramStateError::NoncontiguousBlockHeaders);
         }
@@ -653,7 +658,7 @@ impl GuestProgramState {
                         .partition(|(_k, v)| v.is_zero());
 
                     for (hashed_key, storage_value) in inserts {
-                        storage_trie.insert(hashed_key, storage_value.encode_to_vec())?;
+                        storage_trie.insert(hashed_key.to_vec(), storage_value.encode_to_vec())?;
                     }
 
                     for (hashed_key, _) in deletes {
@@ -711,7 +716,13 @@ impl GuestProgramState {
                 return Err(GuestProgramStateError::NoncontiguousBlockHeaders);
             }
 
-            if next_header.parent_hash != header.compute_block_hash(crypto) {
+            if next_header.parent_hash
+                != header
+                    .hash
+                    .get()
+                    .copied()
+                    .unwrap_or_else(|| header.compute_block_hash(crypto))
+            {
                 return Ok(Some(*number));
             }
         }
@@ -769,7 +780,13 @@ impl GuestProgramState {
     ) -> Result<H256, GuestProgramStateError> {
         self.block_headers
             .get(&block_number)
-            .map(|header| header.compute_block_hash(crypto))
+            .map(|header| {
+                header
+                    .hash
+                    .get()
+                    .copied()
+                    .unwrap_or_else(|| header.compute_block_hash(crypto))
+            })
             .ok_or_else(|| {
                 GuestProgramStateError::Database(format!(
                     "Block hash not found for block number {block_number}"
@@ -999,8 +1016,8 @@ fn hash_address(address: &Address, crypto: &dyn Crypto) -> H256 {
     H256(crypto.keccak256(&address.to_fixed_bytes()))
 }
 
-pub fn hash_key(key: &H256, crypto: &dyn Crypto) -> Vec<u8> {
-    crypto.keccak256(&key.to_fixed_bytes()).to_vec()
+pub fn hash_key(key: &H256, crypto: &dyn Crypto) -> [u8; 32] {
+    crypto.keccak256(&key.to_fixed_bytes())
 }
 
 /// Initializes hash of header or validates the hash is correct in case it's already set

@@ -19,7 +19,7 @@ fn code_serde_roundtrip_preserves_logical_code_and_repads() {
     assert_eq!(restored.code(), code.code());
     assert_eq!(restored.len(), code.len());
     assert_eq!(restored.hash, code.hash);
-    assert_eq!(restored.jump_targets, code.jump_targets);
+    assert_eq!(restored.jump_targets(), code.jump_targets());
     // The dispatch buffer must carry the trailing padding after a round-trip.
     assert_eq!(restored.dispatch_buf().len(), code.len() + BYTECODE_PADDING);
     assert_eq!(restored, code);
