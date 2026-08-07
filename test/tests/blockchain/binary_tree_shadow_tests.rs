@@ -2945,3 +2945,107 @@ fn no_caller_asks_has_state_root_about_a_header() {
         hits.join("\n")
     );
 }
+
+// ---------------------------------------------------------------------------
+// D8.2 The predicates that were previously inline.
+//
+// `engine_newPayload`'s state-materialization check, `eth_syncing`'s
+// stateful-head check and the L2 committer's resume walk were all buried in
+// handlers no unit test reaches, and were covered only by the source-scan
+// guard. Each is now a named function, so each can be asserted on directly.
+// ---------------------------------------------------------------------------
+
+/// `newPayload` replies VALID without re-execution when a known block's state
+/// is materialized, and stashes a payload as ACCEPTED when its parent's is not.
+/// Both turn on this predicate; at a post-flip block it must say "materialized".
+#[tokio::test]
+async fn a_post_flip_blocks_state_reads_as_materialized() {
+    let chains = build_boundary_chains(FLIP_BLOCK + 2).await;
+    let store = &chains.scheduled_store;
+    make_canonical(store, &chains.scheduled_blocks).await;
+
+    let head = chains.scheduled_blocks.last().expect("a non-empty chain");
+
+    // Flush first, and assert the layer cache does NOT answer for the head.
+    // `state_is_materialized` is `in_layer_cache || on_disk`; with a warm cache
+    // the first disjunct short-circuits and the disk check — the half that was
+    // wrong — is never reached, so the assertion below would hold no matter
+    // what that half returned.
+    store
+        .commit_trie_layers_for_test(head.header.state_root)
+        .await
+        .expect("flush the scheduled chain");
+    store.wait_for_persistence_idle().await.expect("idle");
+    assert!(
+        !store
+            .is_state_in_layer_cache(head.header.state_root)
+            .expect("layer-cache probe"),
+        "the head must have left the layer cache, or this test proves nothing \
+         about the on-disk half of the predicate"
+    );
+
+    assert!(
+        head.header.number > FLIP_BLOCK,
+        "the head must be past the flip for this test to say anything"
+    );
+    assert!(
+        ethrex_rpc::engine::payload::state_is_materialized(store, head.hash(), &head.header)
+            .expect("materialization check"),
+        "the post-flip head must read as materialized from disk; reading it as \
+         absent makes newPayload re-execute or stash blocks whose state this \
+         node holds"
+    );
+}
+
+/// `eth_syncing` reports the canonical head only when its state is held, and
+/// falls back to the executed head otherwise. Past the flip the canonical head
+/// is held, so the node must not under-report itself as still syncing.
+#[tokio::test]
+async fn a_post_flip_canonical_head_reads_as_stateful() {
+    let chains = build_boundary_chains(FLIP_BLOCK + 2).await;
+    make_canonical(&chains.scheduled_store, &chains.scheduled_blocks).await;
+
+    let head = chains.scheduled_blocks.last().expect("a non-empty chain");
+    assert!(
+        head.header.number > FLIP_BLOCK,
+        "the head must be past the flip for this test to say anything"
+    );
+
+    assert!(
+        ethrex_rpc::canonical_head_is_stateful(&chains.scheduled_store, head.header.number,)
+            .await
+            .expect("stateful-head check"),
+        "the post-flip canonical head holds its state; reporting otherwise \
+         makes eth_syncing advertise a head behind the real one"
+    );
+}
+
+/// The L2 committer's resume walk now shares the L1 one. An L2 sets no
+/// `binaryTreeTime`, so this asserts the shared walk stayed correct for the
+/// unscheduled case rather than fixing a live L2 bug.
+#[tokio::test]
+async fn the_shared_resume_walk_stops_at_the_head_on_both_chains() {
+    let chains = build_boundary_chains(FLIP_BLOCK + 2).await;
+    make_canonical(&chains.scheduled_store, &chains.scheduled_blocks).await;
+    make_canonical(&chains.twin_store, &chains.twin_blocks).await;
+
+    for (label, store, blocks) in [
+        (
+            "scheduled",
+            &chains.scheduled_store,
+            &chains.scheduled_blocks,
+        ),
+        ("unscheduled", &chains.twin_store, &chains.twin_blocks),
+    ] {
+        let head = blocks.last().expect("a non-empty chain").header.number;
+        let resume_from =
+            ethrex_l2::sequencer::l1_committer::find_last_known_state_root(store, head)
+                .await
+                .expect("the shared resume walk must succeed");
+
+        assert_eq!(
+            resume_from, head,
+            "the {label} chain's resume walk must stop at the head"
+        );
+    }
+}

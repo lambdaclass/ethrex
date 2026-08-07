@@ -3,9 +3,11 @@ use std::collections::BTreeMap;
 use ethrex_common::H32;
 use ethrex_common::H160;
 use ethrex_common::serde_utils;
+use ethrex_common::types::BlockNumber;
 use ethrex_common::types::Fork;
 use ethrex_common::types::ForkBlobSchedule;
 use ethrex_common::types::ForkId;
+use ethrex_storage::Store;
 use ethrex_vm::{precompiles_for_fork, system_contracts::system_contracts_for_fork};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -50,6 +52,27 @@ struct SyncingStatusRpc {
     highest_block: u64,
 }
 
+/// Whether the canonical head's post-state is one this node actually holds.
+///
+/// `eth_syncing` reports the canonical head as `current_block` only when this
+/// is true; otherwise it falls back to the executed head, so a node whose
+/// canonical pointer has run ahead of its state does not advertise itself as
+/// near-synced.
+///
+/// Extracted so it can be asserted on directly: the check must be made *per
+/// header*, since past `binaryTreeTime` the head's `state_root` is a
+/// binary-trie root that resolves against no MPT node. Inline and root-only, it
+/// silently under-reported the head on every scheduled chain.
+pub async fn canonical_head_is_stateful(
+    storage: &Store,
+    canonical_head: BlockNumber,
+) -> Result<bool, RpcErr> {
+    let Some(header) = storage.get_block_header(canonical_head)? else {
+        return Ok(false);
+    };
+    Ok(storage.has_state_for_header(header.hash(), &header)?)
+}
+
 impl RpcHandler for Syncing {
     /// Ref: https://ethereum.org/en/developers/docs/apis/json-rpc/#eth_syncing
     fn parse(_params: &Option<Vec<Value>>) -> Result<Self, RpcErr> {
@@ -71,20 +94,15 @@ impl RpcHandler for Syncing {
         // only when its post-state is on disk; otherwise report the executed head
         // recorded by the sync cycle.
         let canonical_head = context.storage.get_latest_block_number().await?;
-        let current_block = match context.storage.get_block_header(canonical_head)? {
-            Some(header)
-                if context
-                    .storage
-                    .has_state_for_header(header.hash(), &header)? =>
-            {
-                canonical_head
-            }
-            _ => syncer
+        let current_block = if canonical_head_is_stateful(&context.storage, canonical_head).await? {
+            canonical_head
+        } else {
+            syncer
                 .diagnostics()
                 .read()
                 .await
                 .executed_head
-                .min(canonical_head),
+                .min(canonical_head)
         };
 
         // `get_last_fcu_head` returns the head *hash* from the last forkchoiceUpdated.

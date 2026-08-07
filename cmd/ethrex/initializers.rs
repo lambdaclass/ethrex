@@ -1127,44 +1127,16 @@ pub fn migrate_datadir_if_needed(
 /// The highest block at or below the durable head whose post-state this node
 /// actually holds — the point [`regenerate_head_state`] replays forward from.
 ///
-/// Extracted from `regenerate_head_state` so the walk can be asserted on
-/// directly: whether it stops at the head or trudges back to genesis is the
-/// difference between a restart that resumes and one that re-executes the whole
-/// chain, and that is invisible from the outside otherwise.
+/// Thin wrapper over [`Store::last_block_with_state`] that resolves the head
+/// itself and turns "no state anywhere" into the operator-facing error.
 pub async fn last_block_with_state(store: &Store) -> eyre::Result<BlockNumber> {
     let head_block_number = store.get_latest_block_number().await?;
 
-    let Some(last_header) = store.get_block_header(head_block_number)? else {
-        unreachable!("Database is empty, genesis block should be present");
-    };
-
-    let mut current_last_header = last_header;
-
-    // Find the last block with a known state root. Asked of the *header*, not
-    // of the bare root: past `binaryTreeTime` a header's `state_root` is a
-    // binary-trie root that resolves against no MPT node, so a root-only check
-    // reports "not held" for every post-activation block and walks the node
-    // back to genesis. See `Store::has_state_for_header`.
-    while !store.has_state_for_header(current_last_header.hash(), &current_last_header)? {
-        if current_last_header.number == 0 {
-            return Err(eyre::eyre!(
-                "Unknown state found in DB. Please run `ethrex removedb` and restart node"
-            ));
-        }
-        let parent_number = current_last_header.number - 1;
-
-        debug!("Need to regenerate state for block {parent_number}");
-
-        let Some(parent_header) = store.get_block_header(parent_number)? else {
-            return Err(eyre::eyre!(
-                "Parent header for block {parent_number} not found"
-            ));
-        };
-
-        current_last_header = parent_header;
-    }
-
-    Ok(current_last_header.number)
+    store
+        .last_block_with_state(head_block_number)?
+        .ok_or_else(|| {
+            eyre::eyre!("Unknown state found in DB. Please run `ethrex removedb` and restart node")
+        })
 }
 
 /// Re-apply blocks from the last on-disk state root up to the head block,

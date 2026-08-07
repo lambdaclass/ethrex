@@ -4348,6 +4348,44 @@ impl Store {
         self.has_state_root(header.state_root)
     }
 
+    /// Walking back from `head_block_number`, the highest block whose post-state
+    /// this node holds — the point a restart can resume execution from.
+    ///
+    /// `Ok(None)` means the walk reached genesis without finding held state,
+    /// which callers report as an unrecoverable database. In practice genesis
+    /// state is always present, so a walk that reaches block 0 and stops there
+    /// returns `Ok(Some(0))` and the caller replays the whole chain.
+    ///
+    /// Lives here because there were two hand-maintained copies of this walk —
+    /// `ethrex::initializers::regenerate_head_state` and the L2 committer's
+    /// `find_last_known_state_root` — with the same structure and the same
+    /// error text. Both asked [`Self::has_state_root`] about a header, and both
+    /// had to be fixed by hand when that turned out to be wrong past
+    /// `binaryTreeTime`. One copy means one place to get it right.
+    pub fn last_block_with_state(
+        &self,
+        head_block_number: BlockNumber,
+    ) -> Result<Option<BlockNumber>, StoreError> {
+        let Some(mut header) = self.get_block_header(head_block_number)? else {
+            return Ok(None);
+        };
+
+        while !self.has_state_for_header(header.hash(), &header)? {
+            if header.number == 0 {
+                return Ok(None);
+            }
+            let Some(parent) = self.get_block_header(header.number - 1)? else {
+                return Err(StoreError::Custom(format!(
+                    "parent header for block {} not found",
+                    header.number - 1
+                )));
+            };
+            header = parent;
+        }
+
+        Ok(Some(header.number))
+    }
+
     /// Whether `trie`, already opened at `state_root`, really resolves to that
     /// root on this node.
     ///

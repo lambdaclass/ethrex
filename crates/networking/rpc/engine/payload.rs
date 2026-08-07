@@ -12,6 +12,7 @@ use ethrex_common::{H256, U256};
 use ethrex_crypto::NativeCrypto;
 use ethrex_p2p::sync::SyncMode;
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode, error::RLPDecodeError};
+use ethrex_storage::{Store, error::StoreError};
 use serde_json::Value;
 use tokio::sync::oneshot;
 use tracing::{debug, error, info, warn};
@@ -1201,6 +1202,25 @@ pub async fn add_block(
         .map_err(|e| ChainError::Custom(format!("failed to receive block execution result: {e}")))?
 }
 
+/// Whether this node can currently read the post-state that `header` commits
+/// to — from the layer cache, from disk, or through a reorg overlay.
+///
+/// Extracted and named so it can be asserted on directly. It is the predicate
+/// `newPayload` turns on three times over (fast-path VALID, re-execution
+/// gating, and the ACCEPTED stash), and the disk-side half of it must be asked
+/// *per header*: past `binaryTreeTime` a header's `state_root` is a binary-trie
+/// root that resolves against no MPT node, so a root-only check reports "not
+/// materialized" for state the node holds. Inline, that mistake was invisible
+/// to tests; see `Store::has_state_for_header`.
+pub fn state_is_materialized(
+    storage: &Store,
+    block_hash: H256,
+    header: &BlockHeader,
+) -> Result<bool, StoreError> {
+    Ok(storage.is_state_in_layer_cache(header.state_root)?
+        || storage.has_state_for_header(block_hash, header)?)
+}
+
 async fn try_execute_payload(
     block: Block,
     context: &RpcApiContext,
@@ -1241,9 +1261,7 @@ async fn try_execute_payload(
     // reachable so the re-execution can succeed. This rebuilds the layer and
     // prevents subsequent FCUs from looping back into `reorg_apply_deep`.
     if let Some(known_header) = storage.get_block_header_by_hash(block_hash)? {
-        let state_materialized = storage.is_state_in_layer_cache(known_header.state_root)?
-            || storage.has_state_for_header(block_hash, &known_header)?;
-        if state_materialized {
+        if state_is_materialized(storage, block_hash, &known_header)? {
             return payload_status_for_existing_block(&block, context, make_witness).await;
         }
         // Header known but our state was evicted. Only re-execute when we can:
@@ -1251,10 +1269,7 @@ async fn try_execute_payload(
         // for execution to make progress. Otherwise preserve the legacy
         // snap-sync fast-path and reply VALID without re-execution.
         let parent_reachable = match storage.get_block_header_by_hash(block.header.parent_hash)? {
-            Some(parent) => {
-                storage.is_state_in_layer_cache(parent.state_root)?
-                    || storage.has_state_for_header(block.header.parent_hash, &parent)?
-            }
+            Some(parent) => state_is_materialized(storage, block.header.parent_hash, &parent)?,
             None => false,
         };
         if !parent_reachable {
@@ -1287,12 +1302,10 @@ async fn try_execute_payload(
     // If the parent is itself unknown, fall through to `add_block` which
     // returns `ChainError::ParentNotFound` and stashes the block; handled
     // below as `SYNCING`, preserving existing behavior.
-    if let Some(parent_header) = storage.get_block_header_by_hash(block.header.parent_hash)? {
-        let parent_state = parent_header.state_root;
-        let in_cache = storage.is_state_in_layer_cache(parent_state)?;
-        let on_disk =
-            !in_cache && storage.has_state_for_header(block.header.parent_hash, &parent_header)?;
-        if !in_cache && !on_disk {
+    if let Some(parent_header) = storage.get_block_header_by_hash(block.header.parent_hash)?
+        && !state_is_materialized(storage, block.header.parent_hash, &parent_header)?
+    {
+        {
             debug!(
                 %block_hash,
                 %block_number,
