@@ -3489,7 +3489,9 @@ fn no_caller_asks_has_state_root_about_a_header() {
 
     let root = workspace_root();
     let mut hits = Vec::new();
-    for area in ["crates", "cmd"] {
+    // `tooling` is in scope deliberately: the ef-test runner had exactly this
+    // bug and escaped an earlier sweep because the scan stopped at the crates.
+    for area in ["crates", "cmd", "tooling"] {
         scan(&root.join(area), &mut hits);
     }
 
