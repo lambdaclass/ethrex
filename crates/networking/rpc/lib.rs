@@ -86,7 +86,9 @@ pub mod test_utils;
 /// Test-only re-export of `eth_syncing`'s stateful-head predicate, so tests can
 /// assert it answers per header across an EIP-8297 activation boundary.
 #[cfg(any(test, feature = "test-utils"))]
-pub use eth::client::{canonical_head_is_stateful, resolve_highest_block};
+pub use eth::client::{
+    SyncTarget, canonical_head_is_stateful, is_reported_synced, resolve_highest_block,
+};
 
 // TODO: These exports are needed by ethrex-l2-rpc, but we do not want to
 // export them in the public API of this crate.

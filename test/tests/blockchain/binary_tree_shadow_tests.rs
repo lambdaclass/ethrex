@@ -3265,7 +3265,8 @@ async fn eth_syncing_reports_the_recorded_target_when_the_head_is_unknown() {
         canonical_head,
     )
     .await
-    .expect("highest-block resolution");
+    .expect("highest-block resolution")
+    .number();
 
     assert_eq!(
         highest, target,
@@ -3293,7 +3294,8 @@ async fn eth_syncing_prefers_a_resolvable_forkchoice_head() {
         canonical_head,
     )
     .await
-    .expect("highest-block resolution");
+    .expect("highest-block resolution")
+    .number();
 
     assert_eq!(
         highest, head.header.number,
@@ -3312,7 +3314,8 @@ async fn eth_syncing_falls_back_to_the_canonical_head_with_no_target() {
     let highest =
         ethrex_rpc::resolve_highest_block(store, H256::repeat_byte(0xAB), None, canonical_head)
             .await
-            .expect("highest-block resolution");
+            .expect("highest-block resolution")
+            .number();
 
     assert_eq!(highest, canonical_head);
 }
@@ -3333,7 +3336,83 @@ async fn eth_syncing_never_reports_a_target_below_the_local_head() {
         canonical_head,
     )
     .await
-    .expect("highest-block resolution");
+    .expect("highest-block resolution")
+    .number();
 
     assert_eq!(highest, canonical_head);
+}
+
+/// **The test the previous attempt should have been.** It supplies no
+/// `recorded_target`, because that is production's actual state: `sync_target`
+/// is written only by the full-sync cycle, and a restarted node behind a
+/// healthy consensus client is fed its missing blocks by `engine_newPayload`
+/// and never runs one. Measured on the 2026-08-07 devnet — a restart 145 blocks
+/// behind logged zero sync cycles and caught up entirely through newPayload.
+///
+/// It also passes a zero `head_hash`, because `last_fcu_head` does not survive
+/// a restart: it is an `Arc<Mutex<H256>>` initialised to `H256::zero()`.
+///
+/// So this is exactly what the handler sees in the seconds after a restart, and
+/// in that state the node does not know where the chain head is. It must say so.
+#[tokio::test]
+async fn a_node_with_no_known_target_is_never_reported_synced() {
+    let chains = build_boundary_chains(FLIP_BLOCK + 2).await;
+    let store = &chains.scheduled_store;
+    make_canonical(store, &chains.scheduled_blocks).await;
+    let canonical_head = store.get_latest_block_number().await.unwrap();
+
+    let target = ethrex_rpc::resolve_highest_block(store, H256::zero(), None, canonical_head)
+        .await
+        .expect("highest-block resolution");
+
+    assert!(
+        !target.is_known(),
+        "a node that cannot resolve the forkchoice head and has never been \
+         told a target does not know where the chain is; reporting its own \
+         head as the target is a stand-in, not a measurement"
+    );
+    assert!(
+        !ethrex_rpc::is_reported_synced(true, canonical_head, &target),
+        "with the is_synced() latch set and highestBlock collapsed onto \
+         currentBlock, the distance test is trivially true — which is how a \
+         node 130 blocks behind answered `false` on the devnet"
+    );
+}
+
+/// The complement: with a genuinely known target, the latch and the distance
+/// test decide as before. Without this the fix could degenerate into "never
+/// report synced".
+#[tokio::test]
+async fn a_node_at_a_known_target_is_reported_synced() {
+    let chains = build_boundary_chains(FLIP_BLOCK + 2).await;
+    let store = &chains.scheduled_store;
+    make_canonical(store, &chains.scheduled_blocks).await;
+
+    let head = chains.scheduled_blocks.last().expect("a non-empty chain");
+    let canonical_head = store.get_latest_block_number().await.unwrap();
+
+    let target = ethrex_rpc::resolve_highest_block(store, head.hash(), None, canonical_head)
+        .await
+        .expect("highest-block resolution");
+
+    assert!(
+        target.is_known(),
+        "a resolvable forkchoice head is a real target"
+    );
+    assert!(
+        ethrex_rpc::is_reported_synced(true, canonical_head, &target),
+        "a latched node that has reached a known target is synced"
+    );
+    // Far below a known target. Expressed as a distant target rather than a
+    // negative offset, because these chains are shorter than
+    // SYNCED_HEAD_TOLERANCE allows for.
+    let distant = ethrex_rpc::SyncTarget::Known(canonical_head + 500);
+    assert!(
+        !ethrex_rpc::is_reported_synced(true, canonical_head, &distant),
+        "a node far below a known target is not synced, latch or no latch"
+    );
+    assert!(
+        !ethrex_rpc::is_reported_synced(false, canonical_head, &target),
+        "an unlatched node is not synced even at the target"
+    );
 }

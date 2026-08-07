@@ -97,18 +97,62 @@ pub async fn resolve_highest_block(
     head_hash: H256,
     recorded_target: Option<BlockNumber>,
     canonical_head: BlockNumber,
-) -> Result<BlockNumber, RpcErr> {
+) -> Result<SyncTarget, RpcErr> {
     if let Some(number) = storage.get_block_number(head_hash).await? {
-        return Ok(number);
+        return Ok(SyncTarget::Known(number));
     }
     if let Some(block) = storage.get_pending_block(head_hash).await? {
-        return Ok(block.header.number);
+        return Ok(SyncTarget::Known(block.header.number));
     }
-    // Never report a target *below* the canonical head: a stale recorded target
-    // would otherwise make a node that has since caught up look ahead of itself.
-    Ok(recorded_target
-        .map(|target| target.max(canonical_head))
-        .unwrap_or(canonical_head))
+    if let Some(target) = recorded_target {
+        // Never report a target *below* the canonical head: a stale one would
+        // otherwise make a node that has caught up look ahead of itself.
+        return Ok(SyncTarget::Known(target.max(canonical_head)));
+    }
+    Ok(SyncTarget::Unknown(canonical_head))
+}
+
+/// How far the consensus client says the chain has got — and crucially, whether
+/// this node actually knows.
+///
+/// The distinction is the whole point. A node that cannot resolve the forkchoice
+/// head and has never been told a target does not know where the chain is; the
+/// only number it can put in `highestBlock` is its own head, which is a stand-in,
+/// not a measurement. Collapsing those two cases into a bare `BlockNumber` is
+/// what let a node 130 blocks behind report `false` from `eth_syncing`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SyncTarget {
+    /// The consensus client's head, as far as this node can tell.
+    Known(BlockNumber),
+    /// No target known. Carries the local head purely as the number to report.
+    Unknown(BlockNumber),
+}
+
+impl SyncTarget {
+    /// The number to report as `highestBlock`.
+    pub fn number(&self) -> BlockNumber {
+        match self {
+            Self::Known(n) | Self::Unknown(n) => *n,
+        }
+    }
+
+    pub fn is_known(&self) -> bool {
+        matches!(self, Self::Known(_))
+    }
+}
+
+/// Whether `eth_syncing` should report the node as synced (i.e. return `false`).
+///
+/// Requires all three: the `is_synced()` latch, a target this node actually
+/// knows, and an executed head that has reached it within
+/// [`SYNCED_HEAD_TOLERANCE`].
+///
+/// **The middle condition is the one that was missing.** With `highest_block`
+/// derived from `canonical_head` it equalled `current_block` by construction, so
+/// the distance test was trivially true and the latch alone decided the answer.
+/// A node 130 blocks behind reported `false` the moment the latch flipped.
+pub fn is_reported_synced(latched: bool, current_block: BlockNumber, target: &SyncTarget) -> bool {
+    latched && target.is_known() && current_block + SYNCED_HEAD_TOLERANCE >= target.number()
 }
 
 impl RpcHandler for Syncing {
@@ -150,9 +194,10 @@ impl RpcHandler for Syncing {
             .get_last_fcu_head()
             .map_err(|error| RpcErr::Internal(error.to_string()))?;
         let recorded_target = syncer.diagnostics().read().await.sync_target;
-        let highest_block =
+        let target =
             resolve_highest_block(&context.storage, head_hash, recorded_target, canonical_head)
                 .await?;
+        let highest_block = target.number();
 
         // `is_synced()` is a latch: it flips true on the first successful FCU and is
         // never reset on L1 (`set_not_synced` has no L1 caller), so it does not reflect
@@ -160,10 +205,7 @@ impl RpcHandler for Syncing {
         // it alone makes `eth_syncing` report `false` for a wedged/lagging node. Treat
         // the node as synced only if the latch is set AND the executed head has reached
         // (within a small following tolerance) the forkchoice target.
-        let synced = context.blockchain.is_synced()
-            && current_block + SYNCED_HEAD_TOLERANCE >= highest_block;
-
-        if synced {
+        if is_reported_synced(context.blockchain.is_synced(), current_block, &target) {
             return Ok(Value::Bool(false));
         }
 

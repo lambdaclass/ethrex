@@ -176,6 +176,22 @@ impl SyncManager {
         &self.diagnostics
     }
 
+    /// Record the consensus client's view of the chain head, monotonically.
+    ///
+    /// `eth_syncing` reports this as `highestBlock` when it cannot resolve the
+    /// forkchoice head locally. It has to be recorded from `engine_newPayload`
+    /// and not only from the sync cycle: a restarted node behind a healthy
+    /// consensus client is fed its missing blocks by newPayload and may never
+    /// run a sync cycle at all, which is exactly how a node 130 blocks behind
+    /// came to report itself synced.
+    ///
+    /// Monotonic because newPayload can arrive for a block below the tip during
+    /// catch-up, and the target must not walk backwards.
+    pub async fn record_sync_target(&self, number: ethrex_common::types::BlockNumber) {
+        let mut diagnostics = self.diagnostics.write().await;
+        diagnostics.sync_target = Some(diagnostics.sync_target.map_or(number, |t| t.max(number)));
+    }
+
     /// Updates the last fcu head. This may be used on the next sync cycle if needed
     fn set_head(&self, fcu_head: H256) {
         if let Ok(mut latest_fcu_head) = self.last_fcu_head.try_lock() {
