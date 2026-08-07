@@ -1015,6 +1015,28 @@ pub fn migrate_datadir_if_needed(
 
 /// Re-apply blocks from the last on-disk state root up to the head block,
 /// rebuilding the in-memory trie diff-layers lost across a restart.
+/// Resolve a full block by number, falling back to the full-sync header table.
+///
+/// Same reason as [`header_by_number`]: blocks executed during full sync but not yet
+/// canonicalized have no `CANONICAL_BLOCK_HASHES` entry, so the canonical lookup misses
+/// them. The body is stored by hash and is durable up to `flushed_upto`, so once the
+/// header resolves the body is there.
+async fn block_by_number(
+    store: &Store,
+    number: ethrex_common::types::BlockNumber,
+) -> eyre::Result<Option<ethrex_common::types::Block>> {
+    if let Some(block) = store.get_block_by_number(number).await? {
+        return Ok(Some(block));
+    }
+    let Some(header) = header_by_number(store, number).await? else {
+        return Ok(None);
+    };
+    let Some(body) = store.get_block_body_by_hash(header.hash()).await? else {
+        return Ok(None);
+    };
+    Ok(Some(ethrex_common::types::Block { header, body }))
+}
+
 /// Resolve a header by block number, falling back to the full-sync header table.
 ///
 /// `get_block_header` goes through `CANONICAL_BLOCK_HASHES`, which only `forkchoice_update`
@@ -1111,8 +1133,7 @@ pub async fn regenerate_head_state(
     for i in (last_state_number + 1)..=head_block_number {
         debug!("Re-applying block {i} to regenerate state");
 
-        let block = store
-            .get_block_by_number(i)
+        let block = block_by_number(store, i)
             .await?
             .ok_or_else(|| eyre::eyre!("Block {i} not found"))?;
 
