@@ -3844,11 +3844,14 @@ impl Store {
     /// behaviour at a block whose state this node no longer holds.
     ///
     /// **MPT only, deliberately.** It returns an `AccountState`, whose
-    /// `storage_root` the binary trie cannot report (see
+    /// `storage_root` the binary trie cannot report at all (see
     /// `StoreVmDatabase::account_state_from_binary_trie` in
-    /// `crates/blockchain/vm.rs` for what filling it in costs), so past the
-    /// activation this fails loudly with [`StoreError::MissingStateRoot`] rather
-    /// than answering with a fabricated field. Nothing on the RPC path uses it:
+    /// `crates/blockchain/vm.rs`), so past the activation this fails loudly with
+    /// [`StoreError::MissingStateRoot`] rather than answering with a field that
+    /// says nothing — execution can accept the empty root there because it asks
+    /// the storage question separately through `VmDatabase::has_storage`, and a
+    /// caller of this method has no such second channel. Nothing on the RPC path
+    /// uses it:
     /// the account RPCs go through [`Self::get_account_info_by_hash`], which is
     /// `AccountInfo`-shaped and therefore has no such field to invent.
     pub async fn get_account_state(

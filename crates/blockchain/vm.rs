@@ -17,22 +17,16 @@ use std::{
 };
 use tracing::instrument;
 
-/// What a binary-trie read puts in [`AccountState::storage_root`] for an
-/// account that holds storage.
-///
-/// **Not a root.** The binary trie has no per-account storage root to report
-/// (see [`StoreVmDatabase::account_state_from_binary_trie`]), and this names no
-/// node in any trie. It is the "yes" of a field every consumer reads as
-/// `storage_root != EMPTY_TRIE_HASH`, given a value that cannot be mistaken for
-/// a hash anything produced: nothing hashes to a run of `0xbb`, so a reader
-/// that wrongly opened a trie at it would fail to find one rather than read
-/// some other account's.
-pub const BINARY_TRIE_HAS_STORAGE: H256 = H256([0xbb; 32]);
-
 #[derive(Clone, Copy)]
 struct AccountStateCacheEntry {
     state: AccountState,
     hashed_address: H256,
+    /// Whether the account holds any storage — the answer
+    /// [`VmDatabase::has_storage`] returns, cached alongside the state because
+    /// on the binary path the two come out of a single trie open and there is
+    /// no way to recover this one from `state` afterwards. See
+    /// [`StoreVmDatabase::load_account_state`].
+    has_storage: bool,
 }
 
 type AccountStateCache = FxHashMap<Address, Option<AccountStateCacheEntry>>;
@@ -152,9 +146,10 @@ impl StoreVmDatabase {
         }
 
         let loaded = self.load_account_state(address)?;
-        let cached = loaded.map(|state| AccountStateCacheEntry {
+        let cached = loaded.map(|(state, has_storage)| AccountStateCacheEntry {
             state,
             hashed_address: H256::from(keccak_hash(address.to_fixed_bytes())),
+            has_storage,
         });
         self.account_state_cache
             .write()
@@ -163,8 +158,16 @@ impl StoreVmDatabase {
         Ok(cached)
     }
 
-    /// One account, out of whichever trie this database's header addresses.
-    fn load_account_state(&self, address: Address) -> Result<Option<AccountState>, EvmError> {
+    /// One account, out of whichever trie this database's header addresses,
+    /// together with whether it holds any storage.
+    ///
+    /// The two travel as a pair because on the binary path they are one read
+    /// and the second cannot be recovered from the first; see
+    /// [`Self::account_state_from_binary_trie`].
+    fn load_account_state(
+        &self,
+        address: Address,
+    ) -> Result<Option<(AccountState, bool)>, EvmError> {
         if self.binary_tree_active {
             return Ok(self
                 .store
@@ -172,15 +175,23 @@ impl StoreVmDatabase {
                 .map_err(|e| EvmError::DB(e.to_string()))?
                 .map(Self::account_state_from_binary_trie));
         }
-        self.store
+        // On the MPT the storage root *is* the answer: an account's storage is
+        // its own subtrie, so a non-empty root means non-empty storage and
+        // nothing extra is read to find that out.
+        Ok(self
+            .store
             .get_account_state_by_root(self.state_root, address)
-            .map_err(|e| EvmError::DB(e.to_string()))
+            .map_err(|e| EvmError::DB(e.to_string()))?
+            .map(|state| {
+                let has_storage = state.storage_root != *EMPTY_TRIE_HASH;
+                (state, has_storage)
+            }))
     }
 
     /// Fill an [`AccountState`] from what the binary trie says about an
-    /// account.
+    /// account, and report the storage question separately.
     ///
-    /// # `storage_root` is a boolean here, not a root
+    /// # There is no `storage_root` here, so the field reports none
     ///
     /// `AccountState` is MPT-shaped: it summarises an account's storage as the
     /// root of that account's own subtrie. The binary trie has no such value
@@ -188,9 +199,18 @@ impl StoreVmDatabase {
     /// leaves of the one unified tree, so there is no node whose hash covers
     /// exactly one account's slots.
     ///
-    /// What it *can* say is whether the account holds any storage at all, which
-    /// is the only thing every consumer of the field asks it — each of them
-    /// spells it `storage_root != EMPTY_TRIE_HASH`:
+    /// So the field gets [`EMPTY_TRIE_HASH`] unconditionally. That is not a
+    /// claim that the account has no storage; it is the absence of a claim, and
+    /// the only value a field typed as a root can honestly hold when no root
+    /// exists. `AccountState` is also what gets RLP-encoded into MPT leaves, so
+    /// a value that names no node had no business being in it: a reader that
+    /// took it at face value would try to open a trie that is not there. One
+    /// did — see `prewarm::warm_merkle_paths`.
+    ///
+    /// # The boolean goes on its own channel
+    ///
+    /// What the trie *can* answer is whether the account holds any storage at
+    /// all, which is the only thing consumers ever wanted from the field:
     ///
     /// - `LevmAccount::has_storage`, and through it `create_would_collide`,
     ///   which is EIP-7610: a `CREATE` at an address that holds storage but no
@@ -198,19 +218,15 @@ impl StoreVmDatabase {
     ///   storage and neither code nor nonce, which post-EIP-161 a chain can
     ///   only get from its genesis alloc, since `CREATE` sets the nonce to 1
     ///   before any storage is written.
+    /// - `LevmAccount::exists`, which for exactly that account shape is *only*
+    ///   true because of its storage — its balance, nonce and code are all
+    ///   default.
     /// - the `removed_storage` flag `gen_db` derives from `has_storage` for a
     ///   destroyed-then-modified account.
     ///
-    /// So the field carries the answer to that question and nothing more:
-    /// [`EMPTY_TRIE_HASH`] for no storage, and [`BINARY_TRIE_HAS_STORAGE`] —
-    /// which is not a root and names no node — for some. Pinned by
-    /// `a_binary_read_reports_whether_the_account_has_storage`.
-    ///
-    /// **Why the marker is safe.** Nothing on the binary path ever opens a trie
-    /// at this value: [`VmDatabase::get_storage_slot`] reads the slot's own leaf
-    /// from the address and the key, and does not consult the field at all.
-    /// A reader that did would fail to find a trie rather than read a wrong
-    /// one, since no MPT node hashes to it.
+    /// All three now read [`VmDatabase::has_storage`]. Pinned by
+    /// `a_binary_read_reports_whether_the_account_has_storage` and
+    /// `a_storage_only_account_exists_and_collides_on_both_paths`.
     ///
     /// **What it costs.** Two prefix existence checks per account read — one
     /// per storage zone, since an account's slots `0..=63` live in its header
@@ -219,18 +235,19 @@ impl StoreVmDatabase {
     /// the first node whose subtree lies wholly under the prefix. The header
     /// check is nearly free, re-walking nodes the account read just loaded; the
     /// overflow one is a genuine extra descent, and only runs when the header
-    /// found nothing.
-    fn account_state_from_binary_trie(account: BinaryAccount) -> AccountState {
-        AccountState {
-            nonce: account.info.nonce,
-            balance: account.info.balance,
-            storage_root: if account.has_storage {
-                BINARY_TRIE_HAS_STORAGE
-            } else {
-                *EMPTY_TRIE_HASH
+    /// found nothing. Both happen on the account read, not on `has_storage`,
+    /// which is served from [`Self::account_state_cache`] — the pairing exists
+    /// so that asking the question separately does not cost a second walk.
+    fn account_state_from_binary_trie(account: BinaryAccount) -> (AccountState, bool) {
+        (
+            AccountState {
+                nonce: account.info.nonce,
+                balance: account.info.balance,
+                storage_root: *EMPTY_TRIE_HASH,
+                code_hash: account.info.code_hash,
             },
-            code_hash: account.info.code_hash,
-        }
+            account.has_storage,
+        )
     }
 }
 
@@ -245,6 +262,24 @@ impl VmDatabase for StoreVmDatabase {
         Ok(self
             .get_cached_account_state_entry(address)?
             .map(|entry| entry.state))
+    }
+
+    /// Served from the same cache entry the account read fills, so on the
+    /// binary path this costs no trie work of its own — the two prefix
+    /// existence checks happened when the account was first loaded. On the MPT
+    /// path it is `storage_root != EMPTY_TRIE_HASH` and always was; the
+    /// difference is that the derivation now lives here rather than at every
+    /// call site, which is what lets the binary path answer differently.
+    #[instrument(
+        level = "trace",
+        name = "Account storage presence read",
+        skip_all,
+        fields(namespace = "block_execution")
+    )]
+    fn has_storage(&self, address: Address) -> Result<bool, EvmError> {
+        Ok(self
+            .get_cached_account_state_entry(address)?
+            .is_some_and(|entry| entry.has_storage))
     }
 
     #[instrument(
@@ -292,7 +327,12 @@ impl VmDatabase for StoreVmDatabase {
         // fallback but the only form this read has past the activation; each one
         // costs two root-to-leaf walks. A batched read would need the trie to
         // offer one, and belongs with the Phase E node caching rather than here.
-        let fetched = if self.binary_tree_active {
+        //
+        // Both branches yield `(state, has_storage)` pairs so the cache entries
+        // this fills are indistinguishable from the ones the single-account
+        // path writes — otherwise a `has_storage` call that happened to land on
+        // a batch-warmed address would read a flag nobody set.
+        let fetched: Vec<Option<(AccountState, bool)>> = if self.binary_tree_active {
             miss_addrs
                 .iter()
                 .map(|address| self.load_account_state(*address))
@@ -301,6 +341,14 @@ impl VmDatabase for StoreVmDatabase {
             self.store
                 .get_account_states_batch_by_root(self.state_root, &miss_addrs)
                 .map_err(|e| EvmError::DB(e.to_string()))?
+                .into_iter()
+                .map(|state| {
+                    state.map(|state| {
+                        let has_storage = state.storage_root != *EMPTY_TRIE_HASH;
+                        (state, has_storage)
+                    })
+                })
+                .collect()
         };
 
         // Populate the per-DB cache and assemble results. `insert` (vs `or_insert`)
@@ -317,9 +365,10 @@ impl VmDatabase for StoreVmDatabase {
             .zip(miss_addrs.iter())
             .zip(fetched.into_iter())
         {
-            let cached = state.map(|state| AccountStateCacheEntry {
+            let cached = state.map(|(state, has_storage)| AccountStateCacheEntry {
                 state,
                 hashed_address: H256::from(keccak_hash(addr.to_fixed_bytes())),
+                has_storage,
             });
             cache.insert(*addr, cached);
             results[*slot] = cached.map(|e| e.state);
@@ -347,8 +396,10 @@ impl VmDatabase for StoreVmDatabase {
         if self.binary_tree_active {
             // No storage root and no per-account subtrie: one leaf, one lookup.
             // `entry.state.storage_root` is deliberately not consulted — it is
-            // a marker rather than a root here, and opening a trie at it would
-            // find nothing; see `Self::account_state_from_binary_trie`.
+            // `EMPTY_TRIE_HASH` for every account here and names no trie to
+            // open; see `Self::account_state_from_binary_trie`. In particular
+            // it must not be read as "this account has no storage" and
+            // short-circuited to `None`: that is what `has_storage` is for.
             return self
                 .store
                 .get_binary_storage_slot(self.state_root, address, key)

@@ -1,6 +1,7 @@
 use crate::{EvmError, VmDatabase};
 use ethrex_common::{
     Address, H256, U256,
+    constants::EMPTY_TRIE_HASH,
     types::{
         AccountState, AccountUpdate, Block, BlockHeader, ChainConfig, Code, CodeMetadata,
         block_execution_witness::{GuestProgramState, GuestProgramStateError},
@@ -77,6 +78,18 @@ impl VmDatabase for GuestProgramStateWrapper {
             .map_err(|_| EvmError::DB("Failed to lock db".to_string()))?
             .get_account_state(address, self.crypto.as_ref())
             .map_err(|e| EvmError::DB(e.to_string()))
+    }
+
+    /// The execution witness is an MPT through and through — its accounts come
+    /// out of state-trie nodes and their storage out of per-account subtries —
+    /// so the storage root is a genuine root here and carries the answer
+    /// directly. There is no binary-trie witness format yet; when there is,
+    /// this is one of the places that has to grow a real answer rather than
+    /// inherit this one.
+    fn has_storage(&self, address: Address) -> Result<bool, EvmError> {
+        Ok(self
+            .get_account_state(address)?
+            .is_some_and(|state| state.storage_root != *EMPTY_TRIE_HASH))
     }
 
     fn get_block_hash(&self, block_number: u64) -> Result<H256, EvmError> {

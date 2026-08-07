@@ -33,6 +33,9 @@ impl VmDatabase for StateTestVmDatabase {
     fn get_storage_slot(&self, address: Address, key: H256) -> Result<Option<U256>, EvmError> {
         self.inner.get_storage_slot(address, key)
     }
+    fn has_storage(&self, address: Address) -> Result<bool, EvmError> {
+        self.inner.has_storage(address)
+    }
     fn get_block_hash(&self, block_number: u64) -> Result<H256, EvmError> {
         Ok(keccak(block_number.to_string().as_bytes()))
     }

@@ -1,5 +1,4 @@
 use ethrex_common::H256;
-use ethrex_common::constants::EMPTY_TRIE_HASH;
 use ethrex_common::types::{AccountState, GenesisAccount};
 use ethrex_common::utils::keccak;
 use ethrex_common::{U256, constants::EMPTY_KECCAK_HASH, types::AccountInfo};
@@ -23,7 +22,9 @@ pub struct LevmAccount {
     /// Warning: This attribute should only be used for handling create collisions as it's not necessary appropriate for every scenario. Read the caveat below.
     ///
     /// How this works:
-    /// - When getting an account from the DB this is set to true if the account has non-empty storage root.
+    /// - When getting an account from the DB this is whatever `Database::has_storage` answered
+    ///   for it. On an MPT that is "non-empty storage root"; on the EIP-8297 binary trie there is
+    ///   no such root and the trie is asked directly. See `LevmAccount::from_account_state`.
     /// - Upon destruction of an account this is set to false because storage is emptied for sure.
     ///
     /// **Important Caveat**
@@ -37,7 +38,11 @@ pub struct LevmAccount {
     pub status: AccountStatus,
     /// Whether this account exists in the state trie.
     /// Used for EIP-7702 auth refund: `account_exists` (EELS) differs from `!is_empty()`.
-    /// An account can exist but be empty (e.g., has non-empty storage root only).
+    /// An account can exist but be empty — the case being an account that holds storage and
+    /// nothing else, whose balance, nonce and code are all default. That one is distinguished
+    /// from an absent account by `has_storage` alone, which is why the two fields are set
+    /// together in `LevmAccount::from_account_state` and why that is a constructor rather than
+    /// a `From` impl.
     /// Default is `false` (non-existent); set to `true` when loaded from DB with actual state.
     pub exists: bool,
 }
@@ -64,8 +69,42 @@ impl From<GenesisAccount> for LevmAccount {
         }
     }
 }
-impl From<AccountState> for LevmAccount {
-    fn from(state: AccountState) -> Self {
+impl LevmAccount {
+    /// Build an account from what the database read returned about it.
+    ///
+    /// # Why `has_storage` is a parameter and not read off `state`
+    ///
+    /// This used to be `impl From<AccountState>`, deriving the flag as
+    /// `state.storage_root != EMPTY_TRIE_HASH`. That derivation is only valid
+    /// for an `AccountState` that came out of a merkle-patricia trie, where an
+    /// account's storage is its own subtrie and the root of that subtrie is
+    /// therefore the boolean. The EIP-8297 binary trie has no per-account
+    /// storage root at all, so a read against it reports `EMPTY_TRIE_HASH`
+    /// unconditionally and the derivation would answer "no storage" for every
+    /// account on the chain. `From` has no database to ask, which is why this
+    /// is a constructor: the caller has one. See
+    /// `ethrex_vm::VmDatabase::has_storage`.
+    ///
+    /// # `exists` depends on it too, and less obviously
+    ///
+    /// Post-EIP-161 a truly empty account is pruned from the trie, so a read
+    /// that comes back all-default means "not there". But an account holding
+    /// *only* storage — zero balance, zero nonce, no code — is a real account
+    /// that must read as existing, and there is exactly one bit distinguishing
+    /// it from an absent one. On the MPT that bit used to be its non-empty
+    /// `storage_root`, which made `state != default` sufficient. With the field
+    /// honest it is `has_storage` and nothing else, so the disjunct below is
+    /// load-bearing on the binary path and merely redundant on the MPT (there,
+    /// `has_storage` implies a non-empty root implies `state != default`).
+    ///
+    /// Getting this wrong is silent and consensus-relevant: such an account
+    /// would read as non-existent, changing EIP-7702 auth-refund accounting and
+    /// letting a `CREATE` land on it. It is also the exact shape EIP-7610
+    /// exists to protect, and one a chain can only reach through its genesis
+    /// alloc, so no test that merely executes transactions will produce it —
+    /// `a_storage_only_account_exists_and_collides_on_both_paths` builds one
+    /// deliberately, on both tries.
+    pub fn from_account_state(state: AccountState, has_storage: bool) -> Self {
         let is_default = state == AccountState::default();
         LevmAccount {
             info: AccountInfo {
@@ -75,17 +114,11 @@ impl From<AccountState> for LevmAccount {
             },
             storage: Default::default(),
             status: AccountStatus::Unmodified,
-            has_storage: state.storage_root != *EMPTY_TRIE_HASH,
-            // An account with all default fields was not found in the DB.
-            // Post-EIP-161, truly empty accounts are pruned from the trie,
-            // so default == non-existent. Accounts with non-empty storage root
-            // but empty balance/nonce/code DO exist (state != default).
-            exists: !is_default,
+            has_storage,
+            exists: !is_default || has_storage,
         }
     }
-}
 
-impl LevmAccount {
     pub fn mark_destroyed(&mut self) {
         self.status = AccountStatus::Destroyed;
     }
