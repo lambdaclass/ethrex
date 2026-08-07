@@ -40,6 +40,18 @@ openvm-kzg = { git = "https://github.com/axiom-crypto/openvm-kzg.git", rev = "53
 # Must match ZISK_VERSION in .github/actions/install-zisk/action.yml.
 ziskos = { git = "https://github.com/0xPolygonHermez/zisk.git", tag = "v1.0.0-alpha", optional = true, default-features = false, features = ["inputcpy"] }
 
+# The LambdaVM ECSM / keccak ecalls only exist on the riscv64 guest target; on
+# host the crypto methods fall back to pure-Rust k256 / software keccak, so
+# this dep (which pulls riscv-only crates) is gated out of host builds.
+# Must match LAMBDA_VM_COMMIT in .github/actions/install-lambdavm/action.yml.
+[target.'cfg(target_arch = "riscv64")'.dependencies]
+lambda-vm-syscalls = { git = "https://github.com/yetanotherco/lambda_vm.git", rev = "9ccdaf28ab373da0a4a2eb79a16b90479f6686fd", optional = true }
+
+[dev-dependencies]
+# Trusted software Keccak-f[1600] used to cross-check the LambdaVM
+# keccak256_with_permute sponge in tests.
+keccak = "0.1"
+
 [build-dependencies]
 hex.workspace = true
 risc0-build = { version = "=3.0.3", optional = true }
@@ -61,6 +73,15 @@ zisk = [
     "ethrex-common/zisk", "ethrex-vm/zisk", "ethrex-l2-common/zisk",
 ]
 openvm = ["dep:k256", "dep:bls12_381", "dep:ff", "dep:openvm-kzg", "ethrex-l2-common/secp256k1"]
+lambdavm = [
+    "dep:k256",
+    # `expose-field` is required by the x-only ECSM point reconstruction.
+    "k256?/expose-field",
+    "dep:bls12_381",
+    "dep:ff",
+    "dep:lambda-vm-syscalls",
+    "ethrex-l2-common/secp256k1",
+]
 
 # Build-ELF features: base + build tooling for compiling guest ELFs.
 # Used by the prover host. Enabling these triggers the build script which
@@ -69,6 +90,7 @@ sp1-build-elf = ["sp1", "dep:sp1-build", "dep:sp1-sdk"]
 risc0-build-elf = ["risc0", "dep:risc0-build"]
 zisk-build-elf = ["zisk"]
 openvm-build-elf = ["openvm"]
+lambdavm-build-elf = ["lambdavm"]
 
 l2 = []
 eip-8025 = [

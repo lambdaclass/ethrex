@@ -18,12 +18,13 @@ The version must be updated to `X.Y.Z` in the release branch. There are multiple
 
 First, we need to update the version of the workspace package. You can find it in the `Cargo.toml` file in the root directory, under the `[workspace.package]` section. This is also the version the library crates are published under on crates.io when the release is finalized, so it must be a clean semver version (the `-rc.W` suffix lives only on the git tag).
 
-Then, we need to update five more `Cargo.toml` files that are not part of the workspace but fulfill the role of packages in the monorepo. These are located in the following paths:
+Then, we need to update six more `Cargo.toml` files that are not part of the workspace but fulfill the role of packages in the monorepo. These are located in the following paths:
 
 - `crates/guest-program/bin/sp1/Cargo.toml`
 - `crates/guest-program/bin/risc0/Cargo.toml`
 - `crates/guest-program/bin/zisk/Cargo.toml`
 - `crates/guest-program/bin/openvm/Cargo.toml`
+- `crates/guest-program/bin/lambdavm/Cargo.toml`
 - `crates/l2/tee/quote-gen/Cargo.toml`
 
 We also need to bump the **internal crate dependency version pins**. ethrex's library crates declare their workspace-internal dependencies with an explicit `version = "X.Y.Z"` (required for publishing to crates.io). These live in the root `Cargo.toml` under `[workspace.dependencies]`, plus a few crates that pin a sibling directly (`crates/vm/Cargo.toml`, `crates/blockchain/Cargo.toml`, `crates/l2/sdk/Cargo.toml`). Bump every one of them to the new version, then confirm none were missed — set `PREV` to the version you are bumping **from**:
@@ -43,6 +44,7 @@ After updating the version in the `Cargo.toml` files, we need to update the `Car
 - `crates/guest-program/bin/risc0/Cargo.lock`
 - `crates/guest-program/bin/zisk/Cargo.lock`
 - `crates/guest-program/bin/openvm/Cargo.lock`
+- `crates/guest-program/bin/lambdavm/Cargo.lock`
 - `crates/l2/tee/quote-gen/Cargo.lock`
 - `crates/vm/levm/bench/revm_comparison/Cargo.lock`
 - `tooling/Cargo.lock`
