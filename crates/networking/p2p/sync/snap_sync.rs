@@ -27,7 +27,7 @@ use tracing::{debug, error, info, warn};
 use crate::metrics::{CurrentStepValue, METRICS};
 use crate::peer_handler::PeerHandler;
 use crate::peer_table::PeerTableServerProtocol as _;
-use crate::rlpx::p2p::SUPPORTED_ETH_CAPABILITIES;
+use crate::rlpx::p2p::{Capability, SUPPORTED_ETH_CAPABILITIES};
 use crate::snap::{
     async_fs,
     constants::{
@@ -36,6 +36,7 @@ use crate::snap::{
     },
     request_account_range, request_bytecodes, request_storage_ranges,
 };
+use crate::sync::bal_healing::advance_state_via_bals;
 use crate::sync::code_collector::CodeHashCollector;
 use crate::sync::healing::{heal_state_trie_wrap, heal_storage_trie};
 use crate::utils::{
@@ -513,6 +514,9 @@ pub async fn snap_sync(
     let mut global_state_leafs_healed: u64 = 0;
     let mut global_storage_leafs_healed: u64 = 0;
     let mut healing_done = false;
+    // The pivot the local state is known to match in full. `None` until a healing pass
+    // completes, since BAL replay can only build on a state whose root was verified.
+    let mut completed_pivot: Option<BlockHeader> = None;
     while !healing_done {
         // This if is an edge case for the skip snap sync scenario
         if block_is_stale(&pivot_header) {
@@ -525,6 +529,55 @@ pub async fn snap_sync(
             )
             .await?;
         }
+
+        // EIP-8189 steps 5 and 7: once the state at a pivot is complete, a later pivot
+        // is reached by replaying that span's block access lists rather than by healing
+        // the trie again. `completed_pivot` is the pivot the local state actually
+        // corresponds to, and is the only valid starting point: the diffs are applied on
+        // top of it, not on top of whatever pivot happens to be current now.
+        let catchup_base = completed_pivot
+            .as_ref()
+            .filter(|base| base.number < pivot_header.number)
+            .filter(|base| base.block_access_list_hash.is_some())
+            .cloned();
+        let catchup_base = match catchup_base {
+            Some(base) if snap2_peer_available(peers).await => Some(base),
+            _ => None,
+        };
+
+        if let Some(base) = catchup_base {
+            match advance_state_via_bals(store, peers, base, pivot_header.hash(), diagnostics).await
+            {
+                // Step 7: the replayed span must reproduce the pivot's state root.
+                Ok(new_root) if new_root == pivot_header.state_root => {
+                    completed_pivot = Some(pivot_header.clone());
+                    healing_done = true;
+                    continue;
+                }
+                Ok(new_root) => {
+                    warn!(
+                        "snap/2 BAL replay reached {new_root:?}, want {:?}; healing the remainder",
+                        pivot_header.state_root
+                    );
+                }
+                Err(SyncError::ChainReorgDetected {
+                    expected_parent,
+                    actual_parent,
+                }) => {
+                    // A reorg past the pivot invalidates the anchor: the state it names
+                    // belongs to an abandoned fork, so replaying onto it would compound
+                    // the error. Drop it and let this pass heal against the new pivot.
+                    warn!(
+                        "snap/2 BAL replay hit a reorg (expected parent {expected_parent:?}, got {actual_parent:?}); healing against the new pivot"
+                    );
+                    completed_pivot = None;
+                }
+                Err(e) => {
+                    warn!("snap/2 BAL replay failed ({e}); healing the remainder");
+                }
+            }
+        }
+
         healing_done = heal_state_trie_wrap(
             pivot_header.state_root,
             store.clone(),
@@ -548,6 +601,10 @@ pub async fn snap_sync(
             &mut global_storage_leafs_healed,
         )
         .await?;
+        if healing_done {
+            // The state now matches this pivot in full, so it can anchor the next replay.
+            completed_pivot = Some(pivot_header.clone());
+        }
     }
     *METRICS.heal_end_time.lock().await = Some(SystemTime::now());
 
@@ -883,6 +940,16 @@ pub fn block_is_stale(block_header: &BlockHeader) -> bool {
 
 pub fn calculate_staleness_timestamp(timestamp: u64) -> u64 {
     timestamp + (SNAP_LIMIT as u64 * 12)
+}
+
+/// Whether any connected peer negotiated snap/2 and can serve block access lists.
+async fn snap2_peer_available(peers: &PeerHandler) -> bool {
+    peers
+        .peer_table
+        .peer_count_by_capabilities(vec![Capability::snap(2)])
+        .await
+        .map(|n| n > 0)
+        .unwrap_or(false)
 }
 
 pub async fn validate_state_root(store: Store, state_root: H256) -> bool {

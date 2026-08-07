@@ -154,3 +154,30 @@ pub const MISSING_SLOTS_PERCENTAGE: f64 = 0.8;
 
 /// Interval between progress reports during healing operations.
 pub const SHOW_PROGRESS_INTERVAL_DURATION: Duration = Duration::from_secs(2);
+
+// =============================================================================
+// snap/2 BAL CONFIGURATION (EIP-8189)
+// =============================================================================
+
+/// Soft response size cap for `BlockAccessLists` responses, per EIP-8189
+/// ("BlockAccessLists"): 2 MiB is the recommended limit when a request names none.
+pub const BAL_RESPONSE_SOFT_CAP_BYTES: u64 = 2 * 1024 * 1024;
+
+/// Average compressed BAL size at a 60M block gas limit, per EIP-7928
+/// ("BAL Size Considerations").
+const BAL_AVERAGE_SIZE_BYTES: u64 = 72 * 1024;
+
+/// Number of block hashes to request in a single `GetBlockAccessLists` batch,
+/// sized so an average-BAL response fits within the soft cap instead of being
+/// truncated on every round trip.
+pub const BAL_REQUEST_BATCH_SIZE: usize =
+    (BAL_RESPONSE_SOFT_CAP_BYTES / BAL_AVERAGE_SIZE_BYTES) as usize;
+
+/// Maximum retry attempts per block before falling back to snap/1 healing.
+pub const BAL_MAX_RETRIES_PER_BLOCK: u32 = 3;
+
+/// Maximum number of hashes served in a single `Snap2GetBlockAccessLists` response.
+/// EIP-8189 leaves the per-request hash count to implementations; bounding it
+/// defends against a flood of hashes sent to force expensive per-hash storage
+/// lookups, as the snap/1 handler already does for trie-node lookups.
+pub const BAL_MAX_REQUEST_HASHES: usize = 1024;

@@ -20,7 +20,46 @@ pub const SUPPORTED_ETH_CAPABILITIES: [Capability; 4] = [
     Capability::eth(70),
     Capability::eth(71),
 ];
-pub const SUPPORTED_SNAP_CAPABILITIES: [Capability; 1] = [Capability::snap(1)];
+pub const SUPPORTED_SNAP_CAPABILITIES: [Capability; 2] = [Capability::snap(1), Capability::snap(2)];
+
+/// Peers usable for `GetTrieNodes`-based healing. snap/2 (EIP-8189) removes
+/// `GetTrieNodes` / `TrieNodes`, so trie-node healing must restrict peer
+/// selection to snap/1 capability.
+pub const SNAP1_ONLY_CAPABILITIES: [Capability; 1] = [Capability::snap(1)];
+
+/// The snap versions to advertise on a new connection.
+///
+/// EIP-8189 ("Backwards Compatibility") tells a node that is synchronizing data to use a
+/// single snap version for state sync, and to serve both only once synchronization is
+/// complete. ethrex's state sync reconciles the trie with `GetTrieNodes`, which snap/2
+/// removes, so offering snap/2 before the initial sync finishes would negotiate away the
+/// only healing mechanism it has and leave the sync with no peer able to serve it.
+pub const fn advertised_snap_capabilities(is_synced: bool) -> &'static [Capability] {
+    if is_synced {
+        &SUPPORTED_SNAP_CAPABILITIES
+    } else {
+        &SNAP1_ONLY_CAPABILITIES
+    }
+}
+
+#[cfg(test)]
+mod capability_tests {
+    use super::*;
+
+    #[test]
+    fn syncing_node_withholds_snap2() {
+        let advertised = advertised_snap_capabilities(false);
+        assert!(advertised.contains(&Capability::snap(1)));
+        assert!(!advertised.contains(&Capability::snap(2)));
+    }
+
+    #[test]
+    fn synced_node_offers_both_versions() {
+        let advertised = advertised_snap_capabilities(true);
+        assert!(advertised.contains(&Capability::snap(1)));
+        assert!(advertised.contains(&Capability::snap(2)));
+    }
+}
 
 /// The version of the base P2P protocol we support.
 /// This is sent at the start of the Hello message instead of the capabilities list.

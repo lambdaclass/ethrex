@@ -5,14 +5,17 @@
 
 use super::messages::{
     AccountRange, AccountRangeUnit, ByteCodes, GetAccountRange, GetByteCodes, GetStorageRanges,
-    GetTrieNodes, StorageRanges, StorageSlot, TrieNodes,
+    GetTrieNodes, Snap2BlockAccessLists, Snap2GetBlockAccessLists, StorageRanges, StorageSlot,
+    TrieNodes,
 };
 use crate::rlpx::{
     message::RLPxMessage,
     utils::{snappy_compress, snappy_decompress},
 };
 use bytes::{BufMut, Bytes};
-use ethrex_common::{H256, U256, types::AccountStateSlimCodec};
+use ethrex_common::{
+    H256, U256, types::AccountStateSlimCodec, types::block_access_list::BlockAccessList,
+};
 use ethrex_rlp::{
     decode::RLPDecode,
     encode::RLPEncode,
@@ -34,6 +37,10 @@ pub mod codes {
     pub const BYTE_CODES: u8 = 0x05;
     pub const GET_TRIE_NODES: u8 = 0x06;
     pub const TRIE_NODES: u8 = 0x07;
+    /// snap/2 only (EIP-8189).
+    pub const SNAP2_GET_BLOCK_ACCESS_LISTS: u8 = 0x08;
+    /// snap/2 only (EIP-8189).
+    pub const SNAP2_BLOCK_ACCESS_LISTS: u8 = 0x09;
 }
 
 // =============================================================================
@@ -303,6 +310,131 @@ impl RLPxMessage for TrieNodes {
         decoder.finish()?;
 
         Ok(Self { id, nodes })
+    }
+}
+
+// =============================================================================
+// snap/2 CODEC (EIP-8189)
+// =============================================================================
+
+impl RLPxMessage for Snap2GetBlockAccessLists {
+    const CODE: u8 = codes::SNAP2_GET_BLOCK_ACCESS_LISTS;
+
+    fn encode(&self, buf: &mut dyn BufMut) -> Result<(), RLPEncodeError> {
+        let mut encoded_data = vec![];
+        Encoder::new(&mut encoded_data)
+            .encode_field(&self.id)
+            .encode_field(&self.block_hashes)
+            .encode_field(&self.response_bytes)
+            .finish();
+        let msg_data = snappy_compress(encoded_data)?;
+        buf.put_slice(&msg_data);
+        Ok(())
+    }
+
+    fn decode(msg_data: &[u8]) -> Result<Self, RLPDecodeError> {
+        let decompressed_data = snappy_decompress(msg_data)?;
+        let decoder = Decoder::new(&decompressed_data)?;
+        let (id, decoder) = decoder.decode_field("request-id")?;
+        let (block_hashes, decoder) = decoder.decode_field("blockHashes")?;
+        let (response_bytes, decoder) = decoder.decode_field("responseBytes")?;
+        decoder.finish()?;
+        Ok(Self {
+            id,
+            block_hashes,
+            response_bytes,
+        })
+    }
+}
+
+/// Per-slot wrapper for `Option<BlockAccessList>` in snap/2 responses.
+///
+/// Wire format per EIP-8189 §50, §58:
+///   `None` → RLP empty string (0x80)
+///   `Some(bal)` → RLP-encoded `BlockAccessList`
+#[derive(Debug, Clone)]
+struct Snap2OptionalBal(Option<BlockAccessList>);
+
+impl RLPEncode for Snap2OptionalBal {
+    fn encode(&self, buf: &mut dyn BufMut) {
+        match &self.0 {
+            None => buf.put_u8(0x80), // RLP empty string per EIP-8189 §50,§58
+            Some(bal) => bal.encode(buf),
+        }
+    }
+
+    fn length(&self) -> usize {
+        match &self.0 {
+            None => 1,
+            Some(bal) => bal.length(),
+        }
+    }
+}
+
+impl RLPDecode for Snap2OptionalBal {
+    fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
+        // INVARIANT: a `BlockAccessList` always encodes as an RLP list (first byte >= 0xc0),
+        // so the short-string byte 0x80 is unambiguously the `None` sentinel (§50/§58). If
+        // `BlockAccessList` is ever refactored into a type whose RLP could collapse into a
+        // short string, this peek would mis-decode and must be revisited.
+        if rlp.first() == Some(&0x80) {
+            return Ok((Snap2OptionalBal(None), &rlp[1..]));
+        }
+        let (bal, rest) = BlockAccessList::decode_unfinished(rlp)?;
+        Ok((Snap2OptionalBal(Some(bal)), rest))
+    }
+}
+
+/// Borrowing counterpart of [`Snap2OptionalBal`] for the encode path. Lets the server
+/// serialize `Option<&BlockAccessList>` without deep-cloning each (kilobyte-scale) BAL into
+/// an owned wrapper purely to encode it. Same wire format as [`Snap2OptionalBal`].
+struct Snap2OptionalBalRef<'a>(Option<&'a BlockAccessList>);
+
+impl RLPEncode for Snap2OptionalBalRef<'_> {
+    fn encode(&self, buf: &mut dyn BufMut) {
+        match self.0 {
+            None => buf.put_u8(0x80), // RLP empty string per EIP-8189 §50,§58
+            Some(bal) => bal.encode(buf),
+        }
+    }
+
+    fn length(&self) -> usize {
+        match self.0 {
+            None => 1,
+            Some(bal) => bal.length(),
+        }
+    }
+}
+
+impl RLPxMessage for Snap2BlockAccessLists {
+    const CODE: u8 = codes::SNAP2_BLOCK_ACCESS_LISTS;
+
+    fn encode(&self, buf: &mut dyn BufMut) -> Result<(), RLPEncodeError> {
+        let mut encoded_data = vec![];
+        let bals: Vec<Snap2OptionalBalRef<'_>> = self
+            .bals
+            .iter()
+            .map(|b| Snap2OptionalBalRef(b.as_ref()))
+            .collect();
+        Encoder::new(&mut encoded_data)
+            .encode_field(&self.id)
+            .encode_field(&bals)
+            .finish();
+        let msg_data = snappy_compress(encoded_data)?;
+        buf.put_slice(&msg_data);
+        Ok(())
+    }
+
+    fn decode(msg_data: &[u8]) -> Result<Self, RLPDecodeError> {
+        let decompressed_data = snappy_decompress(msg_data)?;
+        let decoder = Decoder::new(&decompressed_data)?;
+        let (id, decoder): (u64, _) = decoder.decode_field("request-id")?;
+        let (bals, decoder): (Vec<Snap2OptionalBal>, _) = decoder.decode_field("bals")?;
+        decoder.finish()?;
+        Ok(Self {
+            id,
+            bals: bals.into_iter().map(|b| b.0).collect(),
+        })
     }
 }
 
