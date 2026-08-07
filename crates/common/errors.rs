@@ -10,13 +10,15 @@ pub enum InvalidBlockError {
     #[error("Block access list hash does not match the one in the header after executing")]
     BlockAccessListHashMismatch,
     #[error("Block access list contains index {index} exceeding max valid index {max}")]
-    BlockAccessListIndexOutOfBounds { index: u16, max: u16 },
+    BlockAccessListIndexOutOfBounds { index: u32, max: u32 },
     #[error("Block access list exceeds gas limit, {items} items exceeds limit of {max_items}")]
     BlockAccessListSizeExceeded { items: u64, max_items: u64 },
     #[error("World State Root does not match the one in the header after executing")]
     StateRootMismatch,
     #[error("Receipts Root does not match the one in the header after executing")]
     ReceiptsRootMismatch,
+    #[error("Logs bloom does not match the one in the header after executing")]
+    LogsBloomMismatch,
     #[error("Invalid Header, validation failed pre-execution: {0}")]
     InvalidHeader(#[from] InvalidBlockHeaderError),
     #[error("Invalid Body, validation failed pre-execution: {0}")]
@@ -35,4 +37,8 @@ pub enum InvalidBlockError {
     MaximumRlpSizeExceeded(u64, u64),
     #[error("Invalid block fork")]
     InvalidBlockFork,
+    #[error("Transaction type {0:#x} is not allowed in an L1 block")]
+    UnsupportedTransactionType(u8),
+    #[error("Transaction has invalid chain id: have {have}, want {want}")]
+    InvalidTransactionChainId { have: u64, want: u64 },
 }

@@ -229,7 +229,9 @@ Key configuration options:
 | `--datadir` | Data directory for DB and keys | `~/.ethrex` |
 | `--syncmode` | Sync mode (`full` or `snap`) | `snap` |
 | `--authrpc.port` | Engine API port | `8551` |
+| `--http.addr` | JSON-RPC HTTP bind address | `127.0.0.1` |
 | `--http.port` | JSON-RPC HTTP port | `8545` |
+| `--http.api` | JSON-RPC namespaces enabled over HTTP/WS | `eth,net,web3` |
 | `--discovery.port` | P2P discovery port | `30303` |
 
 See [Configuration](../running/configuration.md) for the complete reference.

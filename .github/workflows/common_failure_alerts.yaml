@@ -28,20 +28,17 @@ jobs:
   notify-on-failure:
     name: Notify Slack on failure (main)
     runs-on: ubuntu-latest
+    # `cancelled` runs are deliberately not alerted: a manually cancelled run
+    # on main is not a CI failure.
     if: >-
-      ${{ github.event.workflow_run.conclusion != 'success' &&
+      ${{ contains(fromJSON('["failure", "timed_out", "startup_failure"]'), github.event.workflow_run.conclusion) &&
           (github.event.workflow_run.event == 'push' ||
            github.event.workflow_run.event == 'schedule') }}
     steps:
-      - name: Select Slack webhook
-        id: select_webhook
-        run: |
-          echo "webhook=${{ secrets.ETHREX_INTERNO_SLACK_WEBHOOK }}" >> "$GITHUB_OUTPUT"
-
       - name: Checkout sources
         uses: actions/checkout@v6
 
-      - name: Collect failed job names
+      - name: Collect failed jobs
         id: failed_jobs
         uses: actions/github-script@v8
         with:
@@ -52,12 +49,16 @@ jobs:
 
       - name: Post failure to Slack
         env:
+          SLACK_WEBHOOK_URL: ${{ secrets.ETHREX_INTERNO_SLACK_WEBHOOK }}
           REPO: ${{ github.repository }}
           WORKFLOW_NAME: ${{ github.event.workflow_run.name }}
           CONCLUSION: ${{ github.event.workflow_run.conclusion }}
+          EVENT: ${{ github.event.workflow_run.event }}
           RUN_HTML_URL: ${{ github.event.workflow_run.html_url }}
           RUN_ID: ${{ github.event.workflow_run.id }}
+          RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
           HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
-          FAILED_JOBS: ${{ steps.failed_jobs.outputs.names }}
+          COMMIT_MESSAGE: ${{ github.event.workflow_run.head_commit.message }}
+          FAILED_JOBS: ${{ steps.failed_jobs.outputs.summary }}
         run: |
-          bash .github/scripts/notify_workflow_failure.sh "${{ steps.select_webhook.outputs.webhook }}"
+          bash .github/scripts/notify_workflow_failure.sh

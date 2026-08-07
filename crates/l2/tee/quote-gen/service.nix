@@ -1,6 +1,6 @@
 { gitRev }:
-assert (builtins.stringLength gitRev == 7)
-  || throw "gitRev must be exactly 7 characters use (git rev-parse --short=7 HEAD)";
+assert (builtins.stringLength gitRev == 40)
+  || throw "gitRev must be exactly 40 characters use (git rev-parse HEAD)";
 
 let
   pkgs = import <nixpkgs> { };
@@ -12,7 +12,10 @@ let
   }) { };
   toolchain = fenix.fromToolchainFile {
       file = ../../../../rust-toolchain.toml;
-      sha256 = "sha256-2eWc3xVTKqg5wKSHGwt1XoM/kUBC6y3MWfKg74Zn+fY=";
+      # Fixed-output hash of the toolchain in rust-toolchain.toml; must be
+      # recomputed on every toolchain bump (build with lib.fakeSha256 and take
+      # the "got:" hash).
+      sha256 = "sha256-vra6TkHITpwRyA5oBKAHSX0Mi6CBDNQD+ryPSpxFsfg=";
   };
   rustPlatform = pkgs.makeRustPlatform {
     cargo = toolchain;
@@ -37,9 +40,10 @@ let
 
     cargoDeps = rustPlatform.importCargoLock {
       lockFile = ./Cargo.lock;
-      outputHashes = {
-        "bls12_381-0.8.0" = "sha256-tpKF3wxog7eH1oDbpjoFjYibvH6u2kiR/H2Ysazqeok=";
-      };
+      # No git dependencies remain in this workspace's lockfile: the bls12_381
+      # fork moved to ethrex-guest-program (not built here), so there are no
+      # git-source crates needing an output hash.
+      outputHashes = { };
     };
 
     buildInputs = [ pkgs.openssl ];

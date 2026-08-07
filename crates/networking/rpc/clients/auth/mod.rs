@@ -1,11 +1,15 @@
 use crate::{
     engine::{
         ExchangeCapabilitiesRequest,
-        fork_choice::ForkChoiceUpdatedV3,
-        payload::{GetPayloadV5Request, NewPayloadV4Request},
+        fork_choice::{ForkChoiceUpdatedV3, ForkChoiceUpdatedV4},
+        payload::{
+            GetPayloadV5Request, GetPayloadV6Request, NewPayloadV4Request, NewPayloadV5Request,
+        },
     },
     types::{
-        fork_choice::{ForkChoiceResponse, ForkChoiceState, PayloadAttributesV3},
+        fork_choice::{
+            ForkChoiceResponse, ForkChoiceState, PayloadAttributesV3, PayloadAttributesV4,
+        },
         payload::{ExecutionPayload, ExecutionPayloadResponse, PayloadStatus},
     },
     utils::{RpcRequest, RpcResponse},
@@ -96,11 +100,57 @@ impl EngineClient {
         }
     }
 
+    pub async fn engine_forkchoice_updated_v4(
+        &self,
+        state: ForkChoiceState,
+        payload_attributes: Option<PayloadAttributesV4>,
+    ) -> Result<ForkChoiceResponse, EngineClientError> {
+        let request = RpcRequest::from(ForkChoiceUpdatedV4 {
+            fork_choice_state: state,
+            payload_attributes,
+        });
+
+        match self.send_request(request).await? {
+            RpcResponse::Success(result) => serde_json::from_value(result.result)
+                .map_err(ForkChoiceUpdatedError::SerdeJSONError)
+                .map_err(EngineClientError::from),
+            RpcResponse::Error(error_response) => {
+                let error_message = if let Some(data) = error_response.error.data {
+                    format!("{}: {:?}", error_response.error.message, data)
+                } else {
+                    error_response.error.message.to_string()
+                };
+                Err(ForkChoiceUpdatedError::RPCError(error_message).into())
+            }
+        }
+    }
+
     pub async fn engine_get_payload_v5(
         &self,
         payload_id: u64,
     ) -> Result<ExecutionPayloadResponse, EngineClientError> {
         let request = GetPayloadV5Request { payload_id }.into();
+
+        match self.send_request(request).await? {
+            RpcResponse::Success(result) => serde_json::from_value(result.result)
+                .map_err(GetPayloadError::SerdeJSONError)
+                .map_err(EngineClientError::from),
+            RpcResponse::Error(error_response) => {
+                let error_message = if let Some(data) = error_response.error.data {
+                    format!("{}: {:?}", error_response.error.message, data)
+                } else {
+                    error_response.error.message.to_string()
+                };
+                Err(GetPayloadError::RPCError(error_message).into())
+            }
+        }
+    }
+
+    pub async fn engine_get_payload_v6(
+        &self,
+        payload_id: u64,
+    ) -> Result<ExecutionPayloadResponse, EngineClientError> {
+        let request = GetPayloadV6Request { payload_id }.into();
 
         match self.send_request(request).await? {
             RpcResponse::Success(result) => serde_json::from_value(result.result)
@@ -128,6 +178,42 @@ impl EngineClient {
             expected_blob_versioned_hashes,
             parent_beacon_block_root,
             execution_requests: vec![],
+        }
+        .into();
+
+        match self.send_request(request).await? {
+            RpcResponse::Success(result) => serde_json::from_value(result.result)
+                .map_err(NewPayloadError::SerdeJSONError)
+                .map_err(EngineClientError::from),
+            RpcResponse::Error(error_response) => {
+                let error_message = if let Some(data) = error_response.error.data {
+                    format!("{}: {:?}", error_response.error.message, data)
+                } else {
+                    error_response.error.message.to_string()
+                };
+                Err(NewPayloadError::RPCError(error_message).into())
+            }
+        }
+    }
+
+    /// Amsterdam (EIP-7928) variant. The Block Access List travels inside
+    /// `execution_payload.block_access_list`; the server derives its hash from
+    /// the raw payload bytes, so no separate BAL argument is needed here.
+    pub async fn engine_new_payload_v5(
+        &self,
+        execution_payload: ExecutionPayload,
+        expected_blob_versioned_hashes: Vec<H256>,
+        parent_beacon_block_root: H256,
+    ) -> Result<PayloadStatus, EngineClientError> {
+        let request = NewPayloadV5Request {
+            payload: execution_payload,
+            expected_blob_versioned_hashes,
+            parent_beacon_block_root,
+            // The dev producer does not synthesize deposits/withdrawals/consolidations,
+            // so blocks driven through this client carry no execution requests; this
+            // matches the V4 path and is not suitable for deposit-bearing Amsterdam tests.
+            execution_requests: vec![],
+            raw_bal_hash: None,
         }
         .into();
 

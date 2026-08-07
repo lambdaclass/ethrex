@@ -14,7 +14,7 @@ use tokio::{
     time::{Duration, sleep},
 };
 use tokio_util::sync::CancellationToken;
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
 
 use crate::{
     peer_handler::PeerHandler,
@@ -203,6 +203,7 @@ impl SyncManager {
             let Ok(mut syncer) = syncer.try_lock() else {
                 return;
             };
+            let mut waiting_for_fcu_logged = false;
             loop {
                 let sync_head = {
                     // Read latest fcu head without holding the lock for longer than needed
@@ -214,7 +215,16 @@ impl SyncManager {
                 };
                 // Edge case: If we are resuming a sync process after a node restart, wait until the next fcu to start
                 if sync_head.is_zero() {
-                    info!("Resuming sync after node restart, waiting for next FCU");
+                    if waiting_for_fcu_logged {
+                        debug!(
+                            "Still waiting for a forkchoice update from the consensus client to resume sync"
+                        );
+                    } else {
+                        info!(
+                            "Resuming sync after node restart, waiting for a forkchoice update from the consensus client"
+                        );
+                        waiting_for_fcu_logged = true;
+                    }
                     sleep(Duration::from_secs(5)).await;
                     continue;
                 }

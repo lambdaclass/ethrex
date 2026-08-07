@@ -2,7 +2,136 @@ mod branch;
 mod extension;
 mod leaf;
 
-use std::sync::{Arc, OnceLock};
+use alloc::sync::Arc;
+#[cfg(not(feature = "std"))]
+use alloc::{boxed::Box, vec::Vec};
+#[cfg(feature = "std")]
+pub use std::sync::OnceLock;
+
+/// Non-atomic `OnceLock` replacement used on `no_std` builds — which include the
+/// single-threaded zkVM guest (see the crate's dependency wiring in
+/// `ethrex-common`, which builds this crate without the `std` feature).
+///
+/// `std::sync::OnceLock`'s atomics are pure overhead in the single-threaded zkVM
+/// guest, so this mirrors `once_cell::unsync::OnceCell`: interior mutability
+/// through a plain `UnsafeCell`, no atomics.
+///
+/// It is deliberately **not** `Sync` — there is no `unsafe impl Sync`, so the
+/// `UnsafeCell` makes the type `!Sync` and the compiler forbids sharing it across
+/// threads. That keeps it sound without assuming `no_std` implies a single thread:
+/// a multi-threaded `no_std` consumer fails to compile instead of racing on the
+/// cell.
+#[cfg(not(feature = "std"))]
+pub struct OnceLock<T>(core::cell::UnsafeCell<Option<T>>);
+
+#[cfg(not(feature = "std"))]
+impl<T> OnceLock<T> {
+    #[inline]
+    fn new() -> Self {
+        Self(core::cell::UnsafeCell::new(None))
+    }
+
+    #[inline]
+    fn get(&self) -> Option<&T> {
+        unsafe { &*self.0.get() }.as_ref()
+    }
+
+    #[inline]
+    fn get_or_init(&self, f: impl FnOnce() -> T) -> &T {
+        match self.get_or_try_init(|| Ok::<T, core::convert::Infallible>(f())) {
+            Ok(val) => val,
+            Err(e) => match e {},
+        }
+    }
+
+    #[inline]
+    fn get_or_try_init<E>(&self, f: impl FnOnce() -> Result<T, E>) -> Result<&T, E> {
+        if let Some(val) = self.get() {
+            return Ok(val);
+        }
+        self.try_init(f)
+    }
+
+    #[inline]
+    fn set(&self, value: T) -> Result<(), T> {
+        match self.try_insert(value) {
+            Ok(_) => Ok(()),
+            Err((_, value)) => Err(value),
+        }
+    }
+
+    #[inline]
+    fn try_insert(&self, value: T) -> Result<&T, (&T, T)> {
+        if let Some(old) = self.get() {
+            return Err((old, value));
+        }
+        let slot = unsafe { &mut *self.0.get() };
+        Ok(slot.insert(value))
+    }
+
+    #[inline]
+    fn try_init<E>(&self, f: impl FnOnce() -> Result<T, E>) -> Result<&T, E> {
+        let val = f()?;
+        let slot = unsafe { &mut *self.0.get() };
+        debug_assert!(slot.is_none());
+        Ok(slot.insert(val))
+    }
+
+    #[inline]
+    fn take(&mut self) -> Option<T> {
+        self.0.get_mut().take()
+    }
+}
+
+#[cfg(not(feature = "std"))]
+impl<T: PartialEq> PartialEq for OnceLock<T> {
+    #[inline]
+    fn eq(&self, other: &Self) -> bool {
+        self.get() == other.get()
+    }
+}
+
+#[cfg(not(feature = "std"))]
+impl<T> Default for OnceLock<T> {
+    #[inline]
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[cfg(not(feature = "std"))]
+impl<T: Eq> Eq for OnceLock<T> {}
+
+#[cfg(not(feature = "std"))]
+impl<T: Clone> Clone for OnceLock<T> {
+    #[inline]
+    fn clone(&self) -> OnceLock<T> {
+        match self.get() {
+            Some(value) => OnceLock::from(value.clone()),
+            None => OnceLock::new(),
+        }
+    }
+}
+
+#[cfg(not(feature = "std"))]
+impl<T: core::fmt::Debug> core::fmt::Debug for OnceLock<T> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        let mut d = f.debug_tuple("OnceLock");
+        match self.get() {
+            Some(v) => d.field(v),
+            None => d.field(&format_args!("<uninit>")),
+        };
+        d.finish()
+    }
+}
+
+#[cfg(not(feature = "std"))]
+impl<T> From<T> for OnceLock<T> {
+    #[inline]
+    fn from(value: T) -> Self {
+        OnceLock(core::cell::UnsafeCell::new(Some(value)))
+    }
+}
 
 pub use branch::BranchNode;
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};

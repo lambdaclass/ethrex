@@ -1,3 +1,4 @@
+mod block_access_lists_tests;
 mod blocks_tests;
 mod handshake_tests;
 mod p2p_tests;

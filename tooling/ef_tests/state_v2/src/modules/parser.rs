@@ -52,8 +52,15 @@ pub fn parse_file(path: &PathBuf, log_parse_file: bool) -> Result<Vec<Test>, Run
     if log_parse_file {
         println!("Parsing file: {:?}", path);
     }
-    let test_file = std::fs::File::open(path.clone()).unwrap();
-    let mut tests: Tests = serde_json::from_reader(test_file).unwrap();
+    let test_file = std::fs::File::open(path).map_err(|e| RunnerError::ParseFixture {
+        path: path.clone(),
+        source: format!("open: {e}"),
+    })?;
+    let mut tests: Tests =
+        serde_json::from_reader(test_file).map_err(|e| RunnerError::ParseFixture {
+            path: path.clone(),
+            source: format!("deserialize: {e}"),
+        })?;
     for test in tests.0.iter_mut() {
         test.path = path.clone();
     }
@@ -71,14 +78,23 @@ pub fn parse_dir(
     if log_parse_dir {
         println!("Parsing test directory: {:?}", path);
     }
-    let dir_entries: Vec<_> = std::fs::read_dir(path.clone()).unwrap().flatten().collect();
+    let dir_entries: Vec<_> = std::fs::read_dir(path)
+        .map_err(|e| RunnerError::ParseFixture {
+            path: path.clone(),
+            source: format!("read_dir: {e}"),
+        })?
+        .flatten()
+        .collect();
 
     // Process directory entries in parallel
     let directory_tests_results: Vec<_> = dir_entries
         .into_par_iter()
         .map(|entry| -> Result<Option<Vec<Test>>, RunnerError> {
             // Check entry type
-            let entry_type = entry.file_type().unwrap();
+            let entry_type = entry.file_type().map_err(|e| RunnerError::ParseFixture {
+                path: entry.path(),
+                source: format!("file_type: {e}"),
+            })?;
             if entry_type.is_dir() {
                 let dir_tests = parse_dir(
                     &entry.path(),

@@ -30,6 +30,8 @@ x-ethrex-common: &ethrex-common
   pull_policy: "${ETHREX_PULL_POLICY:-always}"
   environment:
     RUST_LOG: "${RUST_LOG:-info,ethrex_p2p::sync=debug}"
+    # Bound RocksDB resident memory (default 12 GiB) so 3 parallel snapsyncs fit in host RAM.
+    ETHREX_ROCKSDB_BLOCK_CACHE_SIZE: "${ETHREX_ROCKSDB_BLOCK_CACHE_SIZE:-4294967296}"  # 4 GiB
   ulimits:
     nofile: 1000000
   restart: unless-stopped
@@ -80,6 +82,7 @@ services:
       - ethrex-hoodi:/data
     command: >
       --http.addr 0.0.0.0
+      --http.api eth,net,web3,admin
       --network hoodi
       --authrpc.addr 0.0.0.0
       --authrpc.jwtsecret /secrets/jwt.hex
@@ -129,6 +132,7 @@ services:
       - ethrex-sepolia:/data
     command: >
       --http.addr 0.0.0.0
+      --http.api eth,net,web3,admin
       --network sepolia
       --authrpc.addr 0.0.0.0
       --authrpc.jwtsecret /secrets/jwt.hex
@@ -178,6 +182,7 @@ services:
       - ethrex-mainnet:/data
     command: >
       --http.addr 0.0.0.0
+      --http.api eth,net,web3,admin
       --network mainnet
       --authrpc.addr 0.0.0.0
       --authrpc.jwtsecret /secrets/jwt.hex
@@ -226,6 +231,7 @@ services:
       - ethrex-hoodi-2:/data
     command: >
       --http.addr 0.0.0.0
+      --http.api eth,net,web3,admin
       --network hoodi
       --authrpc.addr 0.0.0.0
       --authrpc.jwtsecret /secrets/jwt.hex

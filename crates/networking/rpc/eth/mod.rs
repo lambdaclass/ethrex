@@ -1,5 +1,6 @@
 pub(crate) mod account;
 pub(crate) mod block;
+pub(crate) mod block_access_list;
 pub(crate) mod client;
 pub(crate) mod fee_market;
 pub(crate) mod filter;

@@ -104,7 +104,7 @@ impl Database for TestDatabase {
         for acc in self.accounts.values() {
             if acc.info.code_hash == code_hash {
                 return Ok(CodeMetadata {
-                    length: acc.code.bytecode.len() as u64,
+                    length: acc.code.len() as u64,
                 });
             }
         }
@@ -352,6 +352,7 @@ fn fee_token_ratio_cached_between_prepare_and_finalize() {
         LevmCallTracer::disabled(),
         VMType::L2(fee_config),
         &NativeCrypto,
+        None,
     )
     .expect("VM creation should succeed");
 

@@ -35,6 +35,11 @@ pub struct PayloadAttributesV4 {
     pub parent_beacon_block_root: Option<H256>,
     #[serde(with = "serde_utils::u64::hex_str")]
     pub slot_number: u64,
+    // execution-apis#796: CL-supplied target gas limit for local payload
+    // building. Required on V4; an absent field fails deserialization and the
+    // FCUv4 request is rejected (see `parse_v4`).
+    #[serde(with = "serde_utils::u64::hex_str")]
+    pub target_gas_limit: u64,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

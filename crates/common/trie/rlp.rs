@@ -1,4 +1,6 @@
-use std::array;
+#[cfg(not(feature = "std"))]
+use alloc::{string::ToString, vec::Vec};
+use core::array;
 
 // Contains RLP encoding and decoding implementations for Trie Nodes
 // This encoding is only used to store the nodes in the DB, it is not the encoding used for hash computation
@@ -25,14 +27,19 @@ use crate::{Nibbles, NodeHash};
 // where `NativeCrypto` is the correct provider.
 impl RLPEncode for BranchNode {
     fn encode(&self, buf: &mut dyn bytes::BufMut) {
+        // Resolve each child's hash once: the length pass and the encode pass
+        // both needed it, so a 16-choice branch was paying 32 resolutions.
+        let hashes: [&NodeHash; 16] =
+            array::from_fn(|i| self.choices[i].compute_hash_ref(&NativeCrypto));
+
         let value_len = <[u8] as RLPEncode>::length(&self.value);
-        let payload_len = self.choices.iter().fold(value_len, |acc, child| {
-            acc + RLPEncode::length(child.compute_hash_ref(&NativeCrypto))
-        });
+        let payload_len = hashes
+            .iter()
+            .fold(value_len, |acc, hash| acc + RLPEncode::length(*hash));
 
         encode_length(payload_len, buf);
-        for child in self.choices.iter() {
-            match child.compute_hash_ref(&NativeCrypto) {
+        for hash in hashes {
+            match hash {
                 NodeHash::Hashed(hash) => hash.0.encode(buf),
                 NodeHash::Inline((_, 0)) => buf.put_u8(RLP_NULL),
                 NodeHash::Inline((encoded, len)) => buf.put_slice(&encoded[..*len as usize]),
@@ -64,6 +71,38 @@ impl RLPEncode for BranchNode {
         <[u8] as RLPEncode>::encode(&self.value, &mut buf);
 
         buf
+    }
+}
+
+impl BranchNode {
+    /// Concrete-typed sibling of `<Self as RLPEncode>::encode`, appending into a
+    /// `Vec<u8>` rather than a `&mut dyn BufMut`.
+    ///
+    /// `RLPEncode::encode` must take a trait object, so hashing a branch paid a
+    /// vtable dispatch for each of its ~41 `put_u8`/`put_slice` calls. Hashing is
+    /// the hot consumer (every `memoize_hashes` walk re-encodes each dirty
+    /// branch), so it gets a monomorphic path; `RLPEncode::encode` is untouched
+    /// for every other caller.
+    pub fn encode_into_vec(&self, buf: &mut Vec<u8>) {
+        let hashes: [&NodeHash; 16] =
+            array::from_fn(|i| self.choices[i].compute_hash_ref(&NativeCrypto));
+
+        let value_len = <[u8] as RLPEncode>::length(&self.value);
+        let payload_len = hashes
+            .iter()
+            .fold(value_len, |acc, hash| acc + RLPEncode::length(*hash));
+
+        encode_length(payload_len, buf);
+        for hash in hashes {
+            match hash {
+                NodeHash::Hashed(hash) => hash.0.encode(&mut *buf),
+                NodeHash::Inline((_, 0)) => buf.push(RLP_NULL),
+                NodeHash::Inline((encoded, len)) => {
+                    buf.extend_from_slice(&encoded[..*len as usize])
+                }
+            }
+        }
+        <[u8] as RLPEncode>::encode(&self.value, buf);
     }
 }
 

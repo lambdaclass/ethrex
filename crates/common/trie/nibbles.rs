@@ -1,4 +1,6 @@
-use std::{cmp, mem};
+#[cfg(not(feature = "std"))]
+use alloc::vec::Vec;
+use core::{cmp, mem};
 
 use ethrex_rlp::{
     decode::RLPDecode,
@@ -45,7 +47,7 @@ unsafe fn expand_bytes_to_nibbles(bytes: &[u8], output: *mut u8) {
 #[allow(unsafe_code)]
 #[inline]
 unsafe fn expand_bytes_to_nibbles_x86_64(bytes: &[u8], output: *mut u8) {
-    use std::arch::x86_64::*;
+    use core::arch::x86_64::*;
 
     let n = bytes.len();
     let mut i = 0usize;
@@ -111,7 +113,7 @@ unsafe fn expand_bytes_to_nibbles_x86_64(bytes: &[u8], output: *mut u8) {
 #[allow(unsafe_code)]
 #[inline]
 unsafe fn expand_bytes_to_nibbles_aarch64(bytes: &[u8], output: *mut u8) {
-    use std::arch::aarch64::*;
+    use core::arch::aarch64::*;
 
     let n = bytes.len();
     let mut i = 0usize;
@@ -195,8 +197,6 @@ unsafe fn pack_nibble_pairs(nibbles: &[u8], output: *mut u8) {
 #[allow(unsafe_code)]
 #[inline]
 unsafe fn pack_nibble_pairs_x86_64(nibbles: &[u8], output: *mut u8) {
-    use std::arch::x86_64::*;
-
     let n = nibbles.len(); // always even
     let mut i = 0usize; // index into nibbles (steps of 32)
     let mut o = 0usize; // index into output (steps of 16)
@@ -207,6 +207,7 @@ unsafe fn pack_nibble_pairs_x86_64(nibbles: &[u8], output: *mut u8) {
     #[cfg(target_feature = "ssse3")]
     // SAFETY: SSSE3 enabled at compile time; pointer arithmetic stays within bounds.
     unsafe {
+        use core::arch::x86_64::*;
         // Multiplier: weight = [16, 1] repeated → multiply even nibble by 16, odd by 1
         let weights = _mm_set1_epi16(0x0110_u16 as i16); // bytes: [16, 1, 16, 1, ...]
         while i + 32 <= n {
@@ -240,7 +241,7 @@ unsafe fn pack_nibble_pairs_x86_64(nibbles: &[u8], output: *mut u8) {
 #[allow(unsafe_code)]
 #[inline]
 unsafe fn pack_nibble_pairs_aarch64(nibbles: &[u8], output: *mut u8) {
-    use std::arch::aarch64::*;
+    use core::arch::aarch64::*;
 
     let n = nibbles.len();
     let mut i = 0usize;
@@ -310,7 +311,7 @@ fn count_common_prefix(a: &[u8], b: &[u8]) -> usize {
 #[allow(unsafe_code)]
 #[inline]
 unsafe fn count_common_prefix_x86_64(a: &[u8], b: &[u8]) -> usize {
-    use std::arch::x86_64::*;
+    use core::arch::x86_64::*;
 
     let n = a.len().min(b.len());
     let mut i = 0usize;
@@ -357,7 +358,7 @@ unsafe fn count_common_prefix_x86_64(a: &[u8], b: &[u8]) -> usize {
 #[allow(unsafe_code)]
 #[inline]
 unsafe fn count_common_prefix_aarch64(a: &[u8], b: &[u8]) -> usize {
-    use std::arch::aarch64::*;
+    use core::arch::aarch64::*;
 
     let n = a.len().min(b.len());
     let mut i = 0usize;
@@ -437,8 +438,8 @@ impl Ord for Nibbles {
     }
 }
 
-impl std::hash::Hash for Nibbles {
-    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+impl core::hash::Hash for Nibbles {
+    fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
         self.data.hash(state);
     }
 }

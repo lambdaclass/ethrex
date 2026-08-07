@@ -18,6 +18,7 @@ use ethrex_common::{
         EIP4844Transaction, MempoolTransaction, Transaction, TxKind,
     },
 };
+use ethrex_crypto::NativeCrypto;
 use ethrex_storage::{EngineType, Store};
 
 const MEMPOOL_MAX_SIZE_TEST: usize = 10_000;
@@ -226,7 +227,7 @@ async fn collect_orphaned_subtracts_transactions_present_in_new_canonical() {
         .await
         .expect("collect");
     assert_eq!(orphaned.len(), 1);
-    assert_eq!(orphaned[0].hash(), tx_x.hash());
+    assert_eq!(orphaned[0].hash(&NativeCrypto), tx_x.hash(&NativeCrypto));
 }
 
 #[tokio::test]
@@ -356,7 +357,7 @@ fn included_transaction_moves_blob_sidecar_to_limbo() {
     };
     let tx = Transaction::EIP4844Transaction(tx);
     let sender = H160::random();
-    let hash = tx.hash();
+    let hash = tx.hash(&NativeCrypto);
     let bundle = BlobsBundle {
         blobs: vec![[0u8; BYTES_PER_BLOB]],
         commitments: vec![[0u8; 48]],
@@ -368,7 +369,13 @@ fn included_transaction_moves_blob_sidecar_to_limbo() {
         .add_blobs_bundle(hash, bundle.clone())
         .expect("add bundle");
     mempool
-        .add_transaction(hash, sender, MempoolTransaction::new(tx, sender))
+        .add_transaction(
+            hash,
+            sender,
+            MempoolTransaction::new(tx, sender),
+            None,
+            None,
+        )
         .expect("add tx");
 
     // Before inclusion: sidecar is in the active pool, limbo is empty.
@@ -408,7 +415,7 @@ fn purge_blob_limbo_entries_drops_sidecars() {
     };
     let tx = Transaction::EIP4844Transaction(tx);
     let sender = H160::random();
-    let hash = tx.hash();
+    let hash = tx.hash(&NativeCrypto);
     let bundle = BlobsBundle {
         blobs: vec![[1u8; BYTES_PER_BLOB]],
         commitments: vec![[1u8; 48]],
@@ -417,7 +424,13 @@ fn purge_blob_limbo_entries_drops_sidecars() {
     };
     mempool.add_blobs_bundle(hash, bundle).expect("add bundle");
     mempool
-        .add_transaction(hash, sender, MempoolTransaction::new(tx, sender))
+        .add_transaction(
+            hash,
+            sender,
+            MempoolTransaction::new(tx, sender),
+            None,
+            None,
+        )
         .expect("add tx");
     mempool
         .remove_included_transaction(&hash)
@@ -457,17 +470,17 @@ fn mempool_is_full_gates_capacity() {
     let tx_a = make_eip1559_tx(0);
     let tx_b = make_eip1559_tx(1);
 
-    let hash_a = tx_a.hash();
+    let hash_a = tx_a.hash(&NativeCrypto);
     let mempool_tx_a = MempoolTransaction::new(tx_a, sender);
     mempool
-        .add_transaction(hash_a, sender, mempool_tx_a)
+        .add_transaction(hash_a, sender, mempool_tx_a, None, None)
         .expect("add A");
     assert!(!mempool.is_full().expect("is_full after 1"));
 
-    let hash_b = tx_b.hash();
+    let hash_b = tx_b.hash(&NativeCrypto);
     let mempool_tx_b = MempoolTransaction::new(tx_b, sender);
     mempool
-        .add_transaction(hash_b, sender, mempool_tx_b)
+        .add_transaction(hash_b, sender, mempool_tx_b, None, None)
         .expect("add B");
     assert!(
         mempool.is_full().expect("is_full at capacity"),
