@@ -1,0 +1,57 @@
+# EIP-8297 binary-tree devnet: merged-from-genesis, with the commitment
+# scheduled a short way in rather than active at genesis.
+#
+# Genesis stays MPT-committed, which is what lets this run on a bone-stock
+# generator: the generator computes the EL genesis block hash under MPT rules
+# and embeds it in the beacon genesis state, so activating at genesis would
+# mint a genesis hash the consensus layer does not agree with. Scheduling the
+# flip a few slots in sidesteps that entirely — no fork ladder, no TTD games.
+#
+# Shadow tracking maintains the binary trie from genesis, so the first active
+# block commits the full carried-over state.
+#
+# Run: make localnet KURTOSIS_CONFIG_FILE=./fixtures/networks/binary-tree-devnet.yaml
+participants:
+  - el_type: ethrex
+    el_image: ethrex:local
+    cl_type: lighthouse
+    cl_image: sigp/lighthouse:v8.1.3
+    validator_count: 32
+    count: 3
+    # Fulu/PeerDAS wants at least one supernode; marking the participant
+    # makes all replicas supernodes.
+    supernode: true
+    el_extra_params:
+      - "--experimental.binary-tree-delay=30"
+      # Required on any scheduled chain: ethrex defaults to snap sync, which
+      # is MPT-shaped and is refused at startup once binaryTreeTime is set.
+      - "--syncmode=full"
+      # Devnet-only: widen the RPC namespace allowlist for test tooling.
+      - "--http.api=eth,net,web3,debug,admin,txpool"
+
+ethereum_metrics_exporter_enabled: true
+
+# Pinned explicitly even though it matches the package default: this image
+# computes the EL genesis block hash and embeds it in the beacon genesis
+# state, so it is where the consensus layer's view of genesis comes from.
+# Left implicit, its version would ride on ETHEREUM_PACKAGE_REVISION and
+# could change underneath us on a package bump.
+ethereum_genesis_generator_params:
+  image: ethpandaops/ethereum-genesis-generator:6.0.7
+
+network_params:
+  seconds_per_slot: 3
+  # No fork_epoch overrides: the package defaults are all-at-genesis, which
+  # is what keeps genesis MPT-committed and the generator's hash correct.
+
+additional_services:
+  - dora
+  - spamoor
+
+spamoor_params:
+  spammers:
+    # Gentle EOA-transfer load: enough to exercise per-block binary-trie
+    # commitment and account creation without ballooning the state.
+    - scenario: eoatx
+      config:
+        throughput: 20
