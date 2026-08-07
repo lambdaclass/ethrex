@@ -458,6 +458,7 @@ impl DiscoveryServer {
                 discv4_enabled: false,
                 discv5_enabled: true,
                 initial_lookup_interval: 1000.0,
+                dns_discovery_links: Vec::new(),
             },
             discv4: None,
             discv5: Some(Discv5State::default()),
