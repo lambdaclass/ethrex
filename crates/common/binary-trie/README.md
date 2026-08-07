@@ -14,11 +14,14 @@ The crate has two halves:
   sentinel `EMPTY_TRIE_ROOT`.
 - `embedding` — the state embedding: how accounts, storage and code map
   onto tree keys and values. Zone-prefixed keys, per-account header
-  stems (basic data, code hash, first 64 storage slots, first 128 code
-  chunks under one stem), overflow storage/code key derivation
+  stems (basic data, the code hash *or* an EIP-7702 delegation
+  indicator, and the first 64 storage slots under one stem), overflow
+  storage and content-addressed code key derivation
   (`get_tree_key_for_storage_slot`, `get_tree_key_for_code_chunk`),
   code chunking (`chunkify_code`) and basic-data packing
-  (`encode_basic_data`).
+  (`encode_basic_data`). Code is not keyed by account: every chunk
+  lives in the code zone addressed by code hash, so contracts with
+  identical bytecode share their chunk leaves.
 
 ### The trie
 

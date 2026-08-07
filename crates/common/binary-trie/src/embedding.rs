@@ -6,8 +6,8 @@
 //!
 //! The first byte of every key is a **zone** identifier labeling the
 //! category of state the key holds: account headers live in
-//! [`ACCOUNT_ZONE`], content-addressed overflow code in [`CODE_ZONE`],
-//! and overflow storage in [`STORAGE_ZONE`]. Keys are variable length,
+//! [`ACCOUNT_ZONE`], content-addressed code in [`CODE_ZONE`], and
+//! overflow storage in [`STORAGE_ZONE`]. Keys are variable length,
 //! but every key of a zone has the same length, keeping keys
 //! prefix-free as the tree requires.
 //!
@@ -15,9 +15,13 @@
 //! Keys sharing a stem form one group of up to [`STEM_SUBTREE_WIDTH`]
 //! co-located values, all reachable through the same branch of the
 //! tree. This keeps data that is accessed together cheap to prove: an
-//! account's header stem holds its basic data, code hash, first
-//! storage slots, and first code chunks, so one proof path covers
+//! account's header stem holds its basic data, its code hash or its
+//! delegation, and its first storage slots, so one proof path covers
 //! them all.
+//!
+//! Code is not keyed by account at all: every chunk lives in
+//! [`CODE_ZONE`], content-addressed by code hash, so contracts with
+//! identical bytecode share their chunk leaves.
 
 use ethereum_types::{H160, H256, U256};
 
@@ -34,15 +38,39 @@ pub const BASIC_DATA_LEAF_KEY: u8 = 0;
 pub const BASIC_DATA_VERSION: u8 = 0;
 
 /// Sub-index of the account header leaf holding the code hash.
+///
+/// An account that is delegated holds no such leaf; its code is its
+/// delegation indicator, kept at [`DELEGATION_LEAF_KEY`] instead. Every
+/// account that exists holds exactly one of the two.
 pub const CODE_HASH_LEAF_KEY: u8 = 1;
+
+/// Sub-index of the account header leaf holding a delegation indicator.
+///
+/// The leaf determines both the code and its hash: a code read takes
+/// the leading `code_size` bytes of the value, and `EXTCODEHASH` hashes
+/// them. Holding the indicator in the header rather than as
+/// content-addressed code keeps it private to one account, so replacing
+/// or clearing a delegation touches no leaf another account shares.
+pub const DELEGATION_LEAF_KEY: u8 = 2;
+
+/// Leading bytes marking an account's code as a delegation indicator,
+/// per [EIP-7702].
+///
+/// [EIP-7702]: https://eips.ethereum.org/EIPS/eip-7702
+pub const DELEGATION_MARKER: [u8; 3] = [0xef, 0x01, 0x00];
+
+/// Length of a delegation indicator: the marker and a 20-byte address.
+pub const DELEGATION_CODE_LENGTH: usize = DELEGATION_MARKER.len() + 20;
 
 /// Sub-index of storage slot `0` within the account header stem.
 /// Slots `0` through `63` live in the header.
 pub const HEADER_STORAGE_OFFSET: u64 = 64;
 
-/// Sub-index of code chunk `0` within the account header stem.
-/// Chunks `0` through `127` live in the header.
-pub const CODE_OFFSET: u64 = 128;
+/// Number of storage slots co-located in the account header stem:
+/// slots `0` through `HEADER_STORAGE_SLOTS - 1` live there, at
+/// sub-indices counted from [`HEADER_STORAGE_OFFSET`], and every later
+/// slot lives in [`STORAGE_ZONE`].
+pub const HEADER_STORAGE_SLOTS: u64 = 64;
 
 /// Maximum number of values grouped under a single stem: the size of
 /// the sub-index byte's space.
@@ -113,7 +141,9 @@ fn get_tree_key(zone: u8, tree_position: &[u8], sub_index: u8) -> Key {
 /// alone, so each account has exactly one header stem. The header is
 /// not one key: it is up to [`STEM_SUBTREE_WIDTH`] separate leaves
 /// sharing that stem, and `sub_index` selects which one; basic data,
-/// code hash, an early storage slot, or an early code chunk.
+/// code hash, delegation, or an early storage slot. The embedding
+/// derives no header key outside those sub-indices, so the rest of the
+/// stem's space is unallocated and reserved for future header fields.
 ///
 /// `sub_index` is a `u8` because the sub-index space is exactly the
 /// byte's range: every value is in bounds by construction, so callers
@@ -133,6 +163,45 @@ pub fn get_tree_key_for_basic_data(address: &Address32) -> Key {
 /// Compute the key of the account's code hash leaf.
 pub fn get_tree_key_for_code_hash(address: &Address32) -> Key {
     get_tree_key_for_header(address, CODE_HASH_LEAF_KEY)
+}
+
+/// Compute the key of the account's delegation leaf.
+pub fn get_tree_key_for_delegation(address: &Address32) -> Key {
+    get_tree_key_for_header(address, DELEGATION_LEAF_KEY)
+}
+
+/// Whether `code` is an EIP-7702 delegation indicator.
+///
+/// Deployed code may not begin with the marker's first byte, so an
+/// account holds an indicator only by delegating. Both halves of the
+/// test carry weight: real code *can* be exactly 23 bytes long, and
+/// real code *can* begin with the marker bytes if it was deployed
+/// before EIP-3541 made `0xef` a rejected prefix — only the two
+/// together identify an indicator.
+///
+/// The classification is a function of the code alone, never of its
+/// hash, which an attacker could otherwise grind to make a contract
+/// read as delegated.
+pub fn is_delegation(code: &[u8]) -> bool {
+    code.len() == DELEGATION_CODE_LENGTH && code[..DELEGATION_MARKER.len()] == DELEGATION_MARKER
+}
+
+/// Pack a delegation indicator into the 32-byte value stored at
+/// [`DELEGATION_LEAF_KEY`].
+///
+/// The indicator occupies the leading bytes and the remainder is zero.
+/// This is deliberately *not* the chunk encoding: a chunk reserves its
+/// first byte for a push-data count, which an indicator — never being
+/// executed as code — does not carry.
+///
+/// `code` is whatever [`is_delegation`] accepted, so it fits in 32
+/// bytes; a longer slice is truncated rather than panicking, since the
+/// caller has already established the bound.
+pub fn encode_delegation(code: &[u8]) -> [u8; 32] {
+    let mut out = [0u8; 32];
+    let len = code.len().min(32);
+    out[..len].copy_from_slice(&code[..len]);
+    out
 }
 
 /// Build the hash-derived position of an account's overflow storage
@@ -165,13 +234,13 @@ fn storage_tree_position(address: &Address32, tree_index: U256) -> Vec<u8> {
 
 /// Compute the key of a storage slot.
 ///
-/// Slots `0` through `63` live in the account header stem at
-/// sub-indices [`HEADER_STORAGE_OFFSET`] onward; all other slots live
-/// in [`STORAGE_ZONE`], grouped [`STEM_SUBTREE_WIDTH`] consecutive
-/// slots to a stem. This leaves group `0` (`tree_index == 0`) short:
-/// its storage-zone leaves are only sub-indices `64`-`255`.
+/// The first [`HEADER_STORAGE_SLOTS`] slots live in the account header
+/// stem at sub-indices [`HEADER_STORAGE_OFFSET`] onward; all other
+/// slots live in [`STORAGE_ZONE`], grouped [`STEM_SUBTREE_WIDTH`]
+/// consecutive slots to a stem. This leaves group `0` (`tree_index ==
+/// 0`) short: its storage-zone leaves are only sub-indices `64`-`255`.
 pub fn get_tree_key_for_storage_slot(address: &Address32, storage_key: U256) -> Key {
-    if storage_key < U256::from(CODE_OFFSET - HEADER_STORAGE_OFFSET) {
+    if storage_key < U256::from(HEADER_STORAGE_SLOTS) {
         // `low_u64` cannot truncate: the slot is below 64.
         return get_tree_key_for_header(
             address,
@@ -191,28 +260,20 @@ pub fn get_tree_key_for_storage_slot(address: &Address32, storage_key: U256) -> 
     key
 }
 
-/// Compute the key of a code chunk.
+/// Compute the key of a code chunk, which lives in [`CODE_ZONE`].
 ///
-/// Chunks `0` through `127` live in the account header stem: the start
-/// of a contract's code (usually dispatchers and entry points) is its
-/// most executed region, so the first chunks open with the same branch
-/// as the account's basic data.
+/// No address takes part: the key is content-addressed by `code_hash`,
+/// so every account running the same bytecode shares the leaf. That is
+/// also why chunks outlive the accounts referencing them — removing an
+/// account must leave its chunks alone, since another account may still
+/// be running that code.
 ///
-/// Chunks at index `128` and above live in [`CODE_ZONE`],
-/// content-addressed by `code_hash` so contracts with identical
-/// bytecode share leaves.
-pub fn get_tree_key_for_code_chunk(
-    address: &Address32,
-    code_hash: &[u8; 32],
-    chunk_id: u64,
-) -> Key {
-    let header_chunk_count = STEM_SUBTREE_WIDTH - CODE_OFFSET;
-    if chunk_id < header_chunk_count {
-        return get_tree_key_for_header(address, (CODE_OFFSET + chunk_id) as u8);
-    }
-    let overflow = chunk_id - header_chunk_count;
-    let tree_index = overflow / STEM_SUBTREE_WIDTH;
-    let sub_index = (overflow % STEM_SUBTREE_WIDTH) as u8;
+/// An aligned range of [`STEM_SUBTREE_WIDTH`] chunks sharing one
+/// `tree_index` is a *code group*: its chunks share a stem and differ
+/// only in the sub-index byte.
+pub fn get_tree_key_for_code_chunk(code_hash: &[u8; 32], chunk_id: u64) -> Key {
+    let tree_index = chunk_id / STEM_SUBTREE_WIDTH;
+    let sub_index = (chunk_id % STEM_SUBTREE_WIDTH) as u8;
     let mut preimage = Vec::with_capacity(64);
     preimage.extend_from_slice(code_hash);
     preimage.extend_from_slice(&U256::from(tree_index).to_big_endian());
@@ -340,6 +401,46 @@ mod tests {
     }
 
     #[test]
+    fn delegation_key_is_the_third_header_leaf() {
+        // fixture: embedding.delegation_key
+        let a32 = address20_to_address32(ADDR20);
+        let key = get_tree_key_for_delegation(&a32);
+        assert_eq!(key[..33], get_tree_key_for_basic_data(&a32)[..33]);
+        assert_eq!(key[33], 2);
+    }
+
+    /// The trap `code_hash_starting_with_the_delegation_marker` sets:
+    /// neither half of the test is sufficient on its own.
+    #[test]
+    fn is_delegation_needs_both_the_marker_and_the_length() {
+        let indicator = [&DELEGATION_MARKER[..], &[0xcc; 20][..]].concat();
+        assert!(is_delegation(&indicator));
+
+        // Right length, wrong prefix: ordinary 23-byte code.
+        assert!(!is_delegation(&[0x01; 23]));
+        // Right prefix, wrong length: `0xef0100` can open real code
+        // deployed before EIP-3541 reserved the `0xef` prefix.
+        assert!(!is_delegation(
+            &[&DELEGATION_MARKER[..], &[0xcc; 21][..]].concat()
+        ));
+        assert!(!is_delegation(
+            &[&DELEGATION_MARKER[..], &[0xcc; 19][..]].concat()
+        ));
+        assert!(!is_delegation(&DELEGATION_MARKER));
+        assert!(!is_delegation(&[]));
+    }
+
+    #[test]
+    fn encode_delegation_right_pads_with_zeros() {
+        let indicator = [&DELEGATION_MARKER[..], &[0xcc; 20][..]].concat();
+        let encoded = encode_delegation(&indicator);
+        assert_eq!(&encoded[..23], indicator.as_slice());
+        assert_eq!(&encoded[23..], &[0u8; 9]);
+        // Not the chunk encoding: no leading push-data count byte.
+        assert_ne!(encoded, chunkify_code(&indicator)[0]);
+    }
+
+    #[test]
     fn storage_slot_63_in_header_64_in_storage_zone() {
         let a32 = address20_to_address32(ADDR20);
         let slot63 = get_tree_key_for_storage_slot(&a32, U256::from(63));
@@ -372,17 +473,25 @@ mod tests {
         assert_eq!(key[0], STORAGE_ZONE);
     }
 
+    /// Every chunk is in the code zone, including chunk `0`: code
+    /// never shares the account header stem.
     #[test]
-    fn code_chunk_127_in_header_128_in_code_zone() {
-        let a32 = address20_to_address32(ADDR20);
+    fn code_chunks_group_256_to_a_stem_in_the_code_zone() {
         let code_hash = [0x11u8; 32];
-        let c127 = get_tree_key_for_code_chunk(&a32, &code_hash, 127);
-        let c128 = get_tree_key_for_code_chunk(&a32, &code_hash, 128);
-        assert_eq!(c127[0], ACCOUNT_ZONE);
-        assert_eq!(c127[33], 128 + 127);
-        assert_eq!(c128[0], CODE_ZONE);
-        assert_eq!(c128.len(), CODE_KEY_LENGTH);
-        assert_eq!(c128[33], 0);
+        let c0 = get_tree_key_for_code_chunk(&code_hash, 0);
+        let c255 = get_tree_key_for_code_chunk(&code_hash, 255);
+        let c256 = get_tree_key_for_code_chunk(&code_hash, 256);
+        for key in [&c0, &c255, &c256] {
+            assert_eq!(key[0], CODE_ZONE);
+            assert_eq!(key.len(), CODE_KEY_LENGTH);
+        }
+        // Chunks 0..=255 are one group, sharing a stem.
+        assert_eq!(c0[..33], c255[..33]);
+        assert_eq!(c0[33], 0);
+        assert_eq!(c255[33], 255);
+        // 256 opens the next group.
+        assert_ne!(c0[..33], c256[..33]);
+        assert_eq!(c256[33], 0);
     }
 
     #[test]
@@ -444,17 +553,15 @@ mod tests {
     }
 
     #[test]
-    fn overflow_code_is_content_addressed_not_per_account() {
-        let a = address20_to_address32(ADDR20);
-        let b = address20_to_address32(H160([0x99; 20]));
+    fn code_chunks_are_addressed_by_the_code_hash_alone() {
         let code_hash = [0x11u8; 32];
-        assert_eq!(
-            get_tree_key_for_code_chunk(&a, &code_hash, 128),
-            get_tree_key_for_code_chunk(&b, &code_hash, 128)
-        );
-        assert_ne!(
-            get_tree_key_for_code_chunk(&a, &code_hash, 0),
-            get_tree_key_for_code_chunk(&b, &code_hash, 0)
-        );
+        let other_hash = [0x22u8; 32];
+        for chunk_id in [0u64, 1, 255, 256] {
+            assert_ne!(
+                get_tree_key_for_code_chunk(&code_hash, chunk_id),
+                get_tree_key_for_code_chunk(&other_hash, chunk_id),
+                "chunk {chunk_id} of different code must not collide"
+            );
+        }
     }
 }

@@ -25,14 +25,16 @@
 //! - **Header leaves are enumerable.** An account's header stem is a
 //!   known 33 bytes and its leaves are sub-indices `0..=255`, so
 //!   clearing them is a bounded loop of at most 256 removals. That
-//!   covers basic data, the code hash, storage slots `0..=63` and code
-//!   chunks `0..=127`.
-//! - **Overflow code must not be removed.** Chunks at index `128` and
-//!   above are content-addressed, so two accounts with identical
-//!   bytecode share the very same leaves; deleting one account's
-//!   overflow chunks would corrupt the other. They are therefore left
-//!   in place — the same reason ethrex never prunes its `ACCOUNT_CODES`
-//!   table.
+//!   covers basic data, the code hash or the delegation indicator, and
+//!   storage slots `0..=63`.
+//! - **Code must not be removed.** Every chunk is content-addressed by
+//!   the code hash and lives in the code zone, so two accounts with
+//!   identical bytecode share the very same leaves; deleting one
+//!   account's chunks would take the other's code with it. They are
+//!   therefore left in place — the same reason ethrex never prunes its
+//!   `ACCOUNT_CODES` table. A delegation indicator is the exception
+//!   that proves the rule: it is not chunkified, it sits in the
+//!   account's own header, and it goes when the account does.
 //! - **Overflow storage is unbounded and cannot be enumerated.** Slots
 //!   at `64` and above live under `0xff ‖ blake3(address) ‖ …`. The
 //!   embedding deliberately makes them contiguous, but [`BinaryTrie`]
@@ -61,11 +63,13 @@ use std::collections::HashSet;
 
 use ethrex_binary_trie::BinaryTrieError;
 use ethrex_binary_trie::embedding::{
-    CODE_OFFSET, HEADER_STORAGE_OFFSET, address20_to_address32, chunkify_code, encode_basic_data,
-    get_tree_key_for_basic_data, get_tree_key_for_code_chunk, get_tree_key_for_code_hash,
-    get_tree_key_for_header, get_tree_key_for_storage_slot,
+    DELEGATION_CODE_LENGTH, HEADER_STORAGE_OFFSET, HEADER_STORAGE_SLOTS, address20_to_address32,
+    chunkify_code, encode_basic_data, encode_delegation, get_tree_key_for_basic_data,
+    get_tree_key_for_code_chunk, get_tree_key_for_code_hash, get_tree_key_for_delegation,
+    get_tree_key_for_header, get_tree_key_for_storage_slot, is_delegation,
 };
 use ethrex_binary_trie::trie::BinaryTrie;
+use ethrex_crypto::keccak::keccak_hash;
 
 use crate::constants::EMPTY_KECCAK_HASH;
 use crate::types::{AccountInfo, AccountUpdate};
@@ -145,6 +149,18 @@ pub fn apply_account_updates(
 /// *either* leaf is, and the basic data missing means zeros rather than
 /// nonexistence.
 ///
+/// A delegated account carries the delegation leaf in place of the code-hash
+/// one, so that is the third leaf whose presence proves the account. It cannot
+/// collapse either: an indicator opens with the non-zero delegation marker.
+///
+/// # A delegated account's code hash
+///
+/// The delegation leaf holds the indicator itself, so it determines the code
+/// and therefore the hash `EXTCODEHASH` must report, which is Keccak of the
+/// indicator rather than of anything the tree stores directly. It is recomputed
+/// here on the read; the alternative — storing the hash beside the indicator —
+/// would put two leaves where the EIP puts one, and they could disagree.
+///
 /// # No storage root
 ///
 /// [`AccountInfo`] has no `storage_root`, and that is why it is what this
@@ -159,13 +175,23 @@ pub fn get_account_info(
 ) -> Result<Option<AccountInfo>, PbtStateError> {
     let address32 = address20_to_address32(address);
     let code_hash = trie.get(&get_tree_key_for_code_hash(&address32))?;
+    let delegation = trie.get(&get_tree_key_for_delegation(&address32))?;
     let basic_data = trie.get(&get_tree_key_for_basic_data(&address32))?;
-    if code_hash.is_none() && basic_data.is_none() {
+    if code_hash.is_none() && delegation.is_none() && basic_data.is_none() {
         return Ok(None);
     }
     let (nonce, balance) = basic_data.map_or((0, U256::zero()), |data| decode_basic_data(&data));
     Ok(Some(AccountInfo {
-        code_hash: code_hash.map_or(*EMPTY_KECCAK_HASH, H256),
+        code_hash: match (code_hash, delegation) {
+            // The two leaves are exclusive by construction — every
+            // write that emits one removes the other — so the
+            // delegation arm's `_` covers a state the write path
+            // cannot produce, and takes the indicator's hash if some
+            // other writer ever does produce it.
+            (_, Some(indicator)) => H256(keccak_hash(&indicator[..DELEGATION_CODE_LENGTH])),
+            (Some(hash), None) => H256(hash),
+            (None, None) => *EMPTY_KECCAK_HASH,
+        },
         balance,
         nonce,
     }))
@@ -227,7 +253,7 @@ fn slot_index(slot: &H256) -> U256 {
 /// Whether a storage slot lives in the account header stem, which holds
 /// slots `0` through `63`.
 fn slot_lives_in_header(slot: U256) -> bool {
-    slot < U256::from(CODE_OFFSET - HEADER_STORAGE_OFFSET)
+    slot < U256::from(HEADER_STORAGE_SLOTS)
 }
 
 fn apply_account_update(
@@ -239,8 +265,8 @@ fn apply_account_update(
 
     if update.removed {
         refuse_if_overflow_storage(update.address, overflow_storage)?;
-        // The whole header stem goes: basic data, code hash, storage
-        // slots 0..=63 and code chunks 0..=127. Overflow code chunks
+        // The whole header stem goes: basic data, the code hash or the
+        // delegation indicator, and storage slots 0..=63. Code chunks
         // are content-addressed and shared, so they stay.
         remove_header_leaves(trie, &address32, 0..=u8::MAX)?;
         return Ok(());
@@ -256,6 +282,15 @@ fn apply_account_update(
         )?;
     }
 
+    // EIP-7702: an account's code is either an ordinary program or a
+    // delegation indicator, never both, and the two are stored quite
+    // differently — a program as content-addressed chunks in the code
+    // zone plus a code-hash header leaf, an indicator as a single
+    // header leaf at [`DELEGATION_LEAF_KEY`] and nothing else. So an
+    // account holds exactly one of the code-hash and delegation
+    // leaves, and every branch below that writes one removes the other.
+    let delegated = resolve_delegation(trie, &address32, update)?;
+
     if let Some(info) = &update.info {
         let code_size = resolve_code_size(trie, update, info)?;
         state_write(
@@ -263,27 +298,49 @@ fn apply_account_update(
             get_tree_key_for_basic_data(&address32),
             encode_basic_data(code_size, info.nonce, info.balance)?,
         )?;
-        state_write(
-            trie,
-            get_tree_key_for_code_hash(&address32),
-            info.code_hash.0,
-        )?;
+        // A delegated account has no code-hash leaf: its indicator
+        // determines both its code and that code's hash. Writing
+        // `info.code_hash` here would put back the very leaf the
+        // delegation branch below removes.
+        if !delegated {
+            state_write(
+                trie,
+                get_tree_key_for_code_hash(&address32),
+                info.code_hash.0,
+            )?;
+        }
     }
 
     if let Some(code) = &update.code {
-        // `Code::hash` is a placeholder for initcode, which never
-        // reaches an account update; where the update states the hash,
-        // that statement wins.
-        let code_hash = update
-            .info
-            .as_ref()
-            .map_or(code.hash, |info| info.code_hash);
-        for (chunk_id, chunk) in chunkify_code(code.code()).into_iter().enumerate() {
+        if delegated {
+            // The indicator goes in whole, right-padded — not
+            // chunkified. Chunks are content-addressed and shared;
+            // keeping the indicator in the account's own header means
+            // clearing a delegation touches no leaf another account
+            // holds, which matters because two authorities delegating
+            // to one target have byte-identical code.
             state_write(
                 trie,
-                get_tree_key_for_code_chunk(&address32, &code_hash.0, chunk_id as u64),
-                chunk,
+                get_tree_key_for_delegation(&address32),
+                encode_delegation(code.code()),
             )?;
+            trie.remove(&get_tree_key_for_code_hash(&address32))?;
+        } else {
+            trie.remove(&get_tree_key_for_delegation(&address32))?;
+            // `Code::hash` is a placeholder for initcode, which never
+            // reaches an account update; where the update states the
+            // hash, that statement wins.
+            let code_hash = update
+                .info
+                .as_ref()
+                .map_or(code.hash, |info| info.code_hash);
+            for (chunk_id, chunk) in chunkify_code(code.code()).into_iter().enumerate() {
+                state_write(
+                    trie,
+                    get_tree_key_for_code_chunk(&code_hash.0, chunk_id as u64),
+                    chunk,
+                )?;
+            }
         }
     }
 
@@ -343,7 +400,7 @@ fn refuse_if_overflow_storage(
 
 /// Header sub-index of storage slot `slot`, for `slot` below 64.
 fn header_storage_sub_index(slot: u8) -> u8 {
-    debug_assert!(u64::from(slot) < CODE_OFFSET - HEADER_STORAGE_OFFSET);
+    debug_assert!(u64::from(slot) < HEADER_STORAGE_SLOTS);
     HEADER_STORAGE_OFFSET as u8 + slot
 }
 
@@ -389,13 +446,35 @@ fn resolve_code_size(
     Ok(u32::from_be_bytes(size))
 }
 
+/// Whether the account is delegated in the state this update produces.
+///
+/// Delegation is a property of the bytecode alone — never of its hash,
+/// which an attacker could grind to make a contract read as delegated
+/// — so the update's own code answers it whenever the update carries
+/// any. Where it does not, the code is unchanged and so is its
+/// classification, which is then read back off the account's existing
+/// delegation leaf. This is the same shape as [`resolve_code_size`],
+/// and for the same reason: both describe the code, and an update that
+/// omits the code omits both.
+fn resolve_delegation(
+    trie: &mut BinaryTrie,
+    address32: &[u8; 32],
+    update: &AccountUpdate,
+) -> Result<bool, BinaryTrieError> {
+    if let Some(code) = &update.code {
+        return Ok(is_delegation(code.code()));
+    }
+    Ok(trie.get(&get_tree_key_for_delegation(address32))?.is_some())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::Bytes;
     use crate::types::Code;
     use ethrex_binary_trie::embedding::{
-        ACCOUNT_ZONE, BASIC_DATA_LEAF_KEY, CODE_HASH_LEAF_KEY, CODE_ZONE, STORAGE_ZONE,
+        ACCOUNT_ZONE, BASIC_DATA_LEAF_KEY, CODE_HASH_LEAF_KEY, CODE_ZONE, DELEGATION_LEAF_KEY,
+        DELEGATION_MARKER, STORAGE_ZONE,
     };
     use ethrex_binary_trie::trie::{BinaryTrie, InMemoryBinaryTrieDB};
     use ethrex_crypto::NativeCrypto;
@@ -411,6 +490,11 @@ mod tests {
     /// Bytecode with no push opcodes, so chunking is a plain split.
     fn plain_code(len: usize) -> Code {
         code_of(vec![0x01; len])
+    }
+
+    /// An EIP-7702 delegation indicator pointing at `target`.
+    fn delegation_to(target: Address) -> Code {
+        code_of([&DELEGATION_MARKER[..], target.as_bytes()].concat())
     }
 
     fn storage(slots: &[(U256, U256)]) -> FxHashMap<H256, U256> {
@@ -507,7 +591,7 @@ mod tests {
         let b32 = address20_to_address32(ADDR_B);
         for chunk_id in 0..2 {
             assert_eq!(
-                trie.get(&get_tree_key_for_code_chunk(&b32, &code_hash.0, chunk_id))
+                trie.get(&get_tree_key_for_code_chunk(&code_hash.0, chunk_id))
                     .unwrap(),
                 None,
                 "chunk {chunk_id} of zero bytes must not be committed"
@@ -519,53 +603,70 @@ mod tests {
         );
     }
 
+    /// Code lives entirely in the code zone: not one chunk, not even
+    /// chunk `0`, shares the account's header stem. Pinned against the
+    /// spec by `pbt_state`'s `code_across_the_group_boundary` and
+    /// `full_header_occupancy` cases.
     #[test]
-    fn contract_code_is_chunked_into_header_and_overflow() {
-        // 130 chunks: 128 in the header stem, 2 in the code zone.
-        let code = plain_code(31 * 130);
+    fn contract_code_is_chunked_into_the_code_zone_alone() {
+        // 257 chunks: the smallest code spanning two code groups, so
+        // both `tree_index` 0 and 1 are exercised.
+        let code = plain_code(31 * 257);
         let chunks = chunkify_code(code.code());
-        assert_eq!(chunks.len(), 130);
+        assert_eq!(chunks.len(), 257);
         let code_hash = code.hash;
         let mut trie = applied(&[contract_update(ADDR_A, code)]);
 
         let a32 = address20_to_address32(ADDR_A);
         assert_eq!(
             trie.get(&get_tree_key_for_basic_data(&a32)).unwrap(),
-            Some(encode_basic_data(31 * 130, 1, U256::from(7u64)).unwrap())
+            Some(encode_basic_data(31 * 257, 1, U256::from(7u64)).unwrap())
         );
 
+        let header_stem = &get_tree_key_for_basic_data(&a32)[..33];
         for (chunk_id, chunk) in chunks.iter().enumerate() {
-            let key = get_tree_key_for_code_chunk(&a32, &code_hash.0, chunk_id as u64);
-            if chunk_id < 128 {
-                assert_eq!(key[0], ACCOUNT_ZONE, "chunk {chunk_id} zone");
-                assert_eq!(key[..33], get_tree_key_for_basic_data(&a32)[..33]);
-            } else {
-                assert_eq!(key[0], CODE_ZONE, "chunk {chunk_id} zone");
-            }
+            let key = get_tree_key_for_code_chunk(&code_hash.0, chunk_id as u64);
+            assert_eq!(key[0], CODE_ZONE, "chunk {chunk_id} zone");
+            assert_ne!(
+                key[..33],
+                *header_stem,
+                "chunk {chunk_id} is not in the header"
+            );
             assert_eq!(trie.get(&key).unwrap(), Some(*chunk), "chunk {chunk_id}");
+        }
+
+        // The header holds only basic data and the code hash.
+        for sub_index in 0..=u8::MAX {
+            let present = trie
+                .get(&get_tree_key_for_header(&a32, sub_index))
+                .unwrap()
+                .is_some();
+            assert_eq!(
+                present,
+                sub_index == BASIC_DATA_LEAF_KEY || sub_index == CODE_HASH_LEAF_KEY,
+                "header sub-index {sub_index}"
+            );
         }
     }
 
+    /// Content addressing means two accounts running the same bytecode
+    /// write the same chunk leaves with the same values — for every
+    /// chunk, since none is per-account. Pinned by `pbt_state`'s
+    /// `shared_bytecode_two_accounts` and `short_shared_code_two_accounts`.
     #[test]
-    fn identical_bytecode_shares_overflow_leaves() {
-        let code = plain_code(31 * 130);
+    fn identical_bytecode_shares_every_chunk_leaf() {
+        // Short enough that under the old header-code layout every
+        // chunk would have been per-account, so this case only passes
+        // with chunks fully content-addressed.
+        let code = plain_code(31 * 2);
         let code_hash = code.hash;
-        let a32 = address20_to_address32(ADDR_A);
-        let b32 = address20_to_address32(ADDR_B);
 
-        let overflow_keys: Vec<_> = (128..130)
-            .map(|chunk_id| get_tree_key_for_code_chunk(&a32, &code_hash.0, chunk_id))
+        let chunk_keys: Vec<_> = (0..2)
+            .map(|chunk_id| get_tree_key_for_code_chunk(&code_hash.0, chunk_id))
             .collect();
-        for (offset, key) in overflow_keys.iter().enumerate() {
-            assert_eq!(
-                *key,
-                get_tree_key_for_code_chunk(&b32, &code_hash.0, 128 + offset as u64),
-                "overflow chunk keys are content-addressed, not per-account"
-            );
-        }
 
         let mut trie = applied(&[contract_update(ADDR_A, code.clone())]);
-        let before: Vec<_> = overflow_keys
+        let before: Vec<_> = chunk_keys
             .iter()
             .map(|key| trie.get(key).unwrap())
             .collect();
@@ -573,15 +674,249 @@ mod tests {
         let root_after_a = trie.root();
 
         apply_account_updates(&mut trie, &[contract_update(ADDR_B, code)]).unwrap();
-        let after: Vec<_> = overflow_keys
+        let after: Vec<_> = chunk_keys
             .iter()
             .map(|key| trie.get(key).unwrap())
             .collect();
-        assert_eq!(
-            before, after,
-            "shared overflow leaves must not be rewritten"
-        );
+        assert_eq!(before, after, "shared chunk leaves must not be rewritten");
         assert_ne!(root_after_a, trie.root(), "B's own leaves did land");
+    }
+
+    // -----------------------------------------------------------------
+    // EIP-7702 delegation
+    // -----------------------------------------------------------------
+
+    /// A delegation indicator is one header leaf, not chunkified code:
+    /// sub-index 2 holds it, the code-hash leaf is absent, and no chunk
+    /// leaf exists. Pinned against the spec by `pbt_state`'s
+    /// `delegation_designator` case.
+    #[test]
+    fn a_delegation_is_one_header_leaf_and_no_chunks() {
+        let code = delegation_to(Address::repeat_byte(0xcc));
+        let indicator = code.code().to_vec();
+        let code_hash = code.hash;
+        let mut trie = applied(&[contract_update(ADDR_A, code)]);
+        let a32 = address20_to_address32(ADDR_A);
+
+        assert_eq!(
+            trie.get(&get_tree_key_for_delegation(&a32)).unwrap(),
+            Some(encode_delegation(&indicator)),
+            "the indicator goes in whole, right-padded with zeros"
+        );
+        assert_eq!(
+            trie.get(&get_tree_key_for_code_hash(&a32)).unwrap(),
+            None,
+            "a delegated account holds no code-hash leaf"
+        );
+        assert_eq!(
+            trie.get(&get_tree_key_for_code_chunk(&code_hash.0, 0))
+                .unwrap(),
+            None,
+            "an indicator is never chunkified"
+        );
+
+        // Exactly basic data and the delegation, nothing else.
+        for sub_index in 0..=u8::MAX {
+            let present = trie
+                .get(&get_tree_key_for_header(&a32, sub_index))
+                .unwrap()
+                .is_some();
+            assert_eq!(
+                present,
+                sub_index == BASIC_DATA_LEAF_KEY || sub_index == DELEGATION_LEAF_KEY,
+                "header sub-index {sub_index}"
+            );
+        }
+        // The basic data still reports the indicator's own length.
+        assert_eq!(
+            trie.get(&get_tree_key_for_basic_data(&a32)).unwrap(),
+            Some(encode_basic_data(DELEGATION_CODE_LENGTH as u32, 1, U256::from(7u64)).unwrap())
+        );
+    }
+
+    /// The trap that content addressing would spring: two authorities
+    /// delegating to the same target have byte-identical code, but
+    /// their indicators are private header leaves, so neither can
+    /// clear the other's. Pinned by `pbt_state`'s
+    /// `two_authorities_one_target`.
+    #[test]
+    fn two_authorities_delegating_to_one_target_keep_separate_leaves() {
+        let target = Address::repeat_byte(0xcc);
+        let mut trie = applied(&[
+            contract_update(ADDR_A, delegation_to(target)),
+            contract_update(ADDR_B, delegation_to(target)),
+        ]);
+        let a32 = address20_to_address32(ADDR_A);
+        let b32 = address20_to_address32(ADDR_B);
+        assert_ne!(
+            get_tree_key_for_delegation(&a32),
+            get_tree_key_for_delegation(&b32)
+        );
+
+        // Clearing A's delegation leaves B's alone.
+        apply_account_updates(&mut trie, &[contract_update(ADDR_A, plain_code(31))]).unwrap();
+        assert_eq!(trie.get(&get_tree_key_for_delegation(&a32)).unwrap(), None);
+        assert!(
+            trie.get(&get_tree_key_for_delegation(&b32))
+                .unwrap()
+                .is_some(),
+            "B's delegation is its own leaf and must survive"
+        );
+    }
+
+    /// The two leaves are exclusive, and an account moving between them
+    /// must not be left holding both. The vectors only ever build state
+    /// from nothing, so they never reach either transition — only this
+    /// does.
+    #[test]
+    fn moving_between_code_and_delegation_removes_the_other_leaf() {
+        let a32 = address20_to_address32(ADDR_A);
+        let code = plain_code(31 * 2);
+        let code_hash = code.hash;
+
+        // Contract code first, then a delegation over the top.
+        let mut trie = applied(&[contract_update(ADDR_A, code)]);
+        assert!(
+            trie.get(&get_tree_key_for_code_hash(&a32))
+                .unwrap()
+                .is_some(),
+            "the premise: this account has a code-hash leaf"
+        );
+        apply_account_updates(
+            &mut trie,
+            &[contract_update(
+                ADDR_A,
+                delegation_to(Address::repeat_byte(0xcc)),
+            )],
+        )
+        .unwrap();
+        assert_eq!(
+            trie.get(&get_tree_key_for_code_hash(&a32)).unwrap(),
+            None,
+            "delegating must take the code-hash leaf with it"
+        );
+        assert!(
+            trie.get(&get_tree_key_for_delegation(&a32))
+                .unwrap()
+                .is_some()
+        );
+        // The chunks stay: they are content-addressed and may be
+        // another account's code.
+        assert!(
+            trie.get(&get_tree_key_for_code_chunk(&code_hash.0, 0))
+                .unwrap()
+                .is_some()
+        );
+
+        // And back again: clearing the delegation restores the code hash.
+        apply_account_updates(&mut trie, &[contract_update(ADDR_A, plain_code(31))]).unwrap();
+        assert_eq!(
+            trie.get(&get_tree_key_for_delegation(&a32)).unwrap(),
+            None,
+            "clearing a delegation must take the delegation leaf with it"
+        );
+        assert!(
+            trie.get(&get_tree_key_for_code_hash(&a32))
+                .unwrap()
+                .is_some()
+        );
+    }
+
+    /// An update that carries no bytecode says nothing about the code,
+    /// so it must not change the account's classification either — the
+    /// counterpart of `code_size_without_bytecode_comes_from_the_existing_leaf`.
+    #[test]
+    fn a_balance_only_update_leaves_a_delegation_in_place() {
+        let a32 = address20_to_address32(ADDR_A);
+        let delegation = delegation_to(Address::repeat_byte(0xcc));
+        let delegation_hash = delegation.hash;
+        let mut trie = applied(&[contract_update(ADDR_A, delegation)]);
+
+        apply_account_updates(
+            &mut trie,
+            &[AccountUpdate {
+                info: Some(AccountInfo {
+                    code_hash: delegation_hash,
+                    balance: U256::from(99u64),
+                    nonce: 2,
+                }),
+                ..AccountUpdate::new(ADDR_A)
+            }],
+        )
+        .unwrap();
+
+        assert_eq!(
+            trie.get(&get_tree_key_for_code_hash(&a32)).unwrap(),
+            None,
+            "the code-hash leaf must not come back on a balance change"
+        );
+        assert!(
+            trie.get(&get_tree_key_for_delegation(&a32))
+                .unwrap()
+                .is_some()
+        );
+        assert_eq!(
+            trie.get(&get_tree_key_for_basic_data(&a32)).unwrap(),
+            Some(encode_basic_data(DELEGATION_CODE_LENGTH as u32, 2, U256::from(99u64)).unwrap()),
+            "the code size is preserved across the update"
+        );
+    }
+
+    /// The read path has to reconstruct a delegated account's code hash
+    /// from the indicator, since no leaf stores it.
+    #[test]
+    fn a_delegated_account_reads_back_its_indicators_hash() {
+        let code = delegation_to(Address::repeat_byte(0xcc));
+        let code_hash = code.hash;
+        let mut trie = applied(&[contract_update(ADDR_A, code)]);
+
+        assert_eq!(
+            get_account_info(&mut trie, ADDR_A).unwrap(),
+            Some(AccountInfo {
+                code_hash,
+                balance: U256::from(7u64),
+                nonce: 1,
+            })
+        );
+    }
+
+    /// Real code can be 23 bytes long, and real code deployed before
+    /// EIP-3541 can open with `0xef0100`; only both together make an
+    /// indicator. Pinned against the spec by `pbt_state`'s
+    /// `code_hash_starting_with_the_delegation_marker`, whose account's
+    /// *hash* — not its code — opens with the marker.
+    #[test]
+    fn near_miss_code_is_chunkified_as_ordinary_code() {
+        for bytes in [
+            // Indicator length, ordinary bytes.
+            vec![0x01u8; DELEGATION_CODE_LENGTH],
+            // Marker bytes, one byte too long.
+            [&DELEGATION_MARKER[..], &[0xcc; 21][..]].concat(),
+            // Marker bytes, one byte too short.
+            [&DELEGATION_MARKER[..], &[0xcc; 19][..]].concat(),
+        ] {
+            let code = code_of(bytes.clone());
+            let code_hash = code.hash;
+            let mut trie = applied(&[contract_update(ADDR_A, code)]);
+            let a32 = address20_to_address32(ADDR_A);
+
+            assert_eq!(
+                trie.get(&get_tree_key_for_delegation(&a32)).unwrap(),
+                None,
+                "not a delegation: {bytes:x?}"
+            );
+            assert_eq!(
+                trie.get(&get_tree_key_for_code_hash(&a32)).unwrap(),
+                Some(code_hash.0),
+                "not a delegation: {bytes:x?}"
+            );
+            assert_eq!(
+                trie.get(&get_tree_key_for_code_chunk(&code_hash.0, 0))
+                    .unwrap(),
+                Some(chunkify_code(&bytes)[0]),
+                "not a delegation: {bytes:x?}"
+            );
+        }
     }
 
     #[test]
@@ -675,7 +1010,7 @@ mod tests {
     #[test]
     fn removing_an_account_clears_its_header_leaves() {
         let a32 = address20_to_address32(ADDR_A);
-        // A contract with storage in the header, code in both zones.
+        // A contract with storage in the header and code in the code zone.
         let code = plain_code(31 * 130);
         let code_hash = code.hash;
         let populated = AccountUpdate {
@@ -696,12 +1031,16 @@ mod tests {
                 "header sub-index {sub_index} survived removal"
             );
         }
-        // Content-addressed overflow code is shared and must stay.
-        assert!(
-            trie.get(&get_tree_key_for_code_chunk(&a32, &code_hash.0, 128))
-                .unwrap()
-                .is_some()
-        );
+        // Content-addressed code is shared and must stay, chunk 0
+        // included.
+        for chunk_id in [0u64, 128] {
+            assert!(
+                trie.get(&get_tree_key_for_code_chunk(&code_hash.0, chunk_id))
+                    .unwrap()
+                    .is_some(),
+                "chunk {chunk_id} must survive its account's removal"
+            );
+        }
         // The other account is untouched.
         let b32 = address20_to_address32(ADDR_B);
         assert!(
@@ -975,7 +1314,7 @@ mod tests {
         );
         assert_eq!(
             reopened
-                .get(&get_tree_key_for_code_chunk(&a32, &code_hash.0, 129))
+                .get(&get_tree_key_for_code_chunk(&code_hash.0, 129))
                 .unwrap(),
             Some(chunkify_code(plain_code(31 * 130).code())[129])
         );

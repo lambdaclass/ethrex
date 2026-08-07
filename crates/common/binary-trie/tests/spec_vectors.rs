@@ -39,10 +39,12 @@ struct EmbeddingVectors {
     address32: String,
     basic_data_key: String,
     code_hash_key: String,
-    header_sub_index_255_key: String,
+    delegation_key: String,
     /// Keyed by decimal slot number, including values past `u64`.
     storage_slot_keys: BTreeMap<String, String>,
-    /// Keyed by decimal chunk id.
+    /// Keyed by decimal chunk id. Chunk keys are content-addressed, so
+    /// the fixture derives them from `code_hash` alone; the account
+    /// above takes no part in them.
     code_chunk_keys: BTreeMap<String, String>,
     code_hash: String,
 }
@@ -101,8 +103,8 @@ fn embedding_keys_match_spec() {
         unhex(&vectors.code_hash_key)
     );
     assert_eq!(
-        embedding::get_tree_key_for_header(&address32, 255),
-        unhex(&vectors.header_sub_index_255_key)
+        embedding::get_tree_key_for_delegation(&address32),
+        unhex(&vectors.delegation_key)
     );
 
     for (slot, expected) in &vectors.storage_slot_keys {
@@ -120,7 +122,7 @@ fn embedding_keys_match_spec() {
     for (chunk_id, expected) in &vectors.code_chunk_keys {
         let chunk_id: u64 = chunk_id.parse().expect("fixture decimal chunk id");
         assert_eq!(
-            embedding::get_tree_key_for_code_chunk(&address32, &code_hash, chunk_id),
+            embedding::get_tree_key_for_code_chunk(&code_hash, chunk_id),
             unhex(expected),
             "code chunk {chunk_id}"
         );

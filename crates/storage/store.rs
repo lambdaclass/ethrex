@@ -7604,9 +7604,10 @@ mod genesis_binary_trie_tests {
                 .unwrap(),
             Some(U256::from(0xbbbbu64).to_big_endian())
         );
-        // An overflow code chunk, which lives outside the account stem.
+        // A code chunk, which lives outside the account stem: chunks
+        // are content-addressed by code hash, never keyed by account.
         assert_eq!(
-            trie.get(&get_tree_key_for_code_chunk(&a32, &code.hash.0, 129))
+            trie.get(&get_tree_key_for_code_chunk(&code.hash.0, 129))
                 .unwrap(),
             Some(chunkify_code(&bytecode)[129])
         );
