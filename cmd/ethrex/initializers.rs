@@ -9,7 +9,7 @@ use crate::{
 use ethrex_blockchain::{Blockchain, BlockchainOptions, BlockchainType};
 use ethrex_common::U256;
 use ethrex_common::fd_limit::raise_fd_limit;
-use ethrex_common::types::{ChainConfig, Genesis};
+use ethrex_common::types::{BlockNumber, ChainConfig, Genesis};
 use ethrex_config::networks::Network;
 use ethrex_rpc::WebSocketConfig;
 
@@ -1124,18 +1124,15 @@ pub fn migrate_datadir_if_needed(
     }
 }
 
-/// Re-apply blocks from the last on-disk state root up to the head block,
-/// rebuilding the in-memory trie diff-layers lost across a restart.
-pub async fn regenerate_head_state(
-    store: &Store,
-    blockchain: &Arc<Blockchain>,
-) -> eyre::Result<()> {
-    // Precondition: the store was opened via `add_initial_state`/`load_initial_state`,
-    // which clamp `LatestBlockNumber` to `flushed_upto`. All blocks up to
-    // `head_block_number` are therefore on disk; callers that skip that clamp
-    // would break this assumption.
+/// The highest block at or below the durable head whose post-state this node
+/// actually holds — the point [`regenerate_head_state`] replays forward from.
+///
+/// Extracted from `regenerate_head_state` so the walk can be asserted on
+/// directly: whether it stops at the head or trudges back to genesis is the
+/// difference between a restart that resumes and one that re-executes the whole
+/// chain, and that is invisible from the outside otherwise.
+pub async fn last_block_with_state(store: &Store) -> eyre::Result<BlockNumber> {
     let head_block_number = store.get_latest_block_number().await?;
-    debug!("regenerate_head_state head clamped to durable block {head_block_number}");
 
     let Some(last_header) = store.get_block_header(head_block_number)? else {
         unreachable!("Database is empty, genesis block should be present");
@@ -1143,8 +1140,12 @@ pub async fn regenerate_head_state(
 
     let mut current_last_header = last_header;
 
-    // Find the last block with a known state root
-    while !store.has_state_root(current_last_header.state_root)? {
+    // Find the last block with a known state root. Asked of the *header*, not
+    // of the bare root: past `binaryTreeTime` a header's `state_root` is a
+    // binary-trie root that resolves against no MPT node, so a root-only check
+    // reports "not held" for every post-activation block and walks the node
+    // back to genesis. See `Store::has_state_for_header`.
+    while !store.has_state_for_header(current_last_header.hash(), &current_last_header)? {
         if current_last_header.number == 0 {
             return Err(eyre::eyre!(
                 "Unknown state found in DB. Please run `ethrex removedb` and restart node"
@@ -1163,7 +1164,23 @@ pub async fn regenerate_head_state(
         current_last_header = parent_header;
     }
 
-    let last_state_number = current_last_header.number;
+    Ok(current_last_header.number)
+}
+
+/// Re-apply blocks from the last on-disk state root up to the head block,
+/// rebuilding the in-memory trie diff-layers lost across a restart.
+pub async fn regenerate_head_state(
+    store: &Store,
+    blockchain: &Arc<Blockchain>,
+) -> eyre::Result<()> {
+    // Precondition: the store was opened via `add_initial_state`/`load_initial_state`,
+    // which clamp `LatestBlockNumber` to `flushed_upto`. All blocks up to
+    // `head_block_number` are therefore on disk; callers that skip that clamp
+    // would break this assumption.
+    let head_block_number = store.get_latest_block_number().await?;
+    debug!("regenerate_head_state head clamped to durable block {head_block_number}");
+
+    let last_state_number = last_block_with_state(store).await?;
 
     if last_state_number == head_block_number {
         debug!("State is already up to date");

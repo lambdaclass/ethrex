@@ -2732,3 +2732,67 @@ async fn the_already_canonical_skip_fires_at_a_post_flip_head() {
          declines it and silently re-runs the whole forkchoice path, got {err:?}"
     );
 }
+
+// ===========================================================================
+// Phase D7 — the startup state walk.
+//
+// `regenerate_head_state` runs on every node start. It walks *backwards* from
+// the durable head looking for a block whose post-state this node holds, then
+// re-executes forward from there. On a post-activation chain a root-only check
+// reports "not held" for every header it tests, so the walk runs all the way to
+// genesis and the node re-executes its entire history on every restart.
+//
+// Measured on the 2026-08-07 devnet: a node stopped at head 73 and restarted
+// logged `Regenerating state from block 0 to 74` and re-executed blocks 1-74.
+// It did not fail — genesis state is always available, so the walk bottoms out
+// there and the node recovers by full replay. The cost is the whole point of
+// persisting the binary trie: state is on disk and correct, but the startup
+// check cannot see it.
+// ===========================================================================
+
+/// On a scheduled chain past the flip, the walk must stop at the head — the
+/// node holds that state and has nothing to re-execute.
+#[tokio::test]
+async fn the_startup_state_walk_stops_at_a_post_flip_head() {
+    let chains = build_boundary_chains(FLIP_BLOCK + 2).await;
+    let blocks = &chains.scheduled_blocks;
+    make_canonical(&chains.scheduled_store, blocks).await;
+
+    let head = blocks.last().expect("a non-empty chain").header.number;
+    assert!(
+        head > FLIP_BLOCK,
+        "the head must be past the flip for this test to say anything"
+    );
+
+    let resume_from = ethrex::initializers::last_block_with_state(&chains.scheduled_store)
+        .await
+        .expect("the startup walk must succeed");
+
+    assert_eq!(
+        resume_from,
+        head,
+        "the startup walk must stop at the post-flip head; walking below it \
+         means the node re-executes blocks {}..={head} on every restart, which \
+         is what persisting the binary trie exists to avoid",
+        resume_from + 1
+    );
+}
+
+/// The unscheduled twin must behave identically, so a failure above is about
+/// the binary trie and not about the walk or the test harness.
+#[tokio::test]
+async fn the_startup_state_walk_stops_at_the_head_on_an_unscheduled_chain() {
+    let chains = build_boundary_chains(FLIP_BLOCK + 2).await;
+    let blocks = &chains.twin_blocks;
+    make_canonical(&chains.twin_store, blocks).await;
+
+    let head = blocks.last().expect("a non-empty chain").header.number;
+    let resume_from = ethrex::initializers::last_block_with_state(&chains.twin_store)
+        .await
+        .expect("the startup walk must succeed");
+
+    assert_eq!(
+        resume_from, head,
+        "an MPT-committing chain's walk must stop at the head"
+    );
+}
