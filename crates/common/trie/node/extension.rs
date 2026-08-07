@@ -38,11 +38,17 @@ impl ExtensionNode {
     }
 
     /// Retrieves a value from the subtrie originating from this node given its path
-    pub fn get(&self, db: &dyn TrieDB, mut path: Nibbles) -> Result<Option<ValueRLP>, TrieError> {
-        // If the path is prefixed by this node's prefix, delegate to its child.
+    pub fn get(
+        &self,
+        db: &dyn TrieDB,
+        path: &Nibbles,
+        offset: usize,
+    ) -> Result<Option<ValueRLP>, TrieError> {
+        // If this node's prefix matches at `offset`, delegate to the child past it.
         // Otherwise, no value is present.
-        if path.skip_prefix(&self.prefix) {
-            let child_node = self.child.get_node(db, path.current())?.ok_or_else(|| {
+        if path.has_prefix_at(&self.prefix, offset) {
+            let next = offset + self.prefix.len();
+            let child_node = self.child.get_node_cursor(db, path, next)?.ok_or_else(|| {
                 TrieError::InconsistentTree(Box::new(
                     InconsistentTreeError::ExtensionNodeChildNotFound(ExtensionNodeErrorData {
                         node_hash: self
@@ -53,12 +59,12 @@ impl ExtensionNode {
                             .compute_hash(&NativeCrypto)
                             .finalize(&NativeCrypto),
                         extension_node_prefix: self.prefix.clone(),
-                        node_path: path.current(),
+                        node_path: path.slice(0, next),
                     }),
                 ))
             })?;
 
-            child_node.get(db, path)
+            child_node.get(db, path, next)
         } else {
             Ok(None)
         }
@@ -247,7 +253,7 @@ impl ExtensionNode {
     /// Computes the node's hash, using the provided buffer
     pub fn compute_hash_no_alloc(&self, buf: &mut Vec<u8>, crypto: &dyn Crypto) -> NodeHash {
         buf.clear();
-        self.encode(buf);
+        self.encode_into_vec(buf);
         let hash = NodeHash::from_encoded(buf, crypto);
         buf.clear();
         hash
@@ -269,7 +275,7 @@ impl ExtensionNode {
         };
         // Continue to child
         if path.skip_prefix(&self.prefix) {
-            let child_node = self.child.get_node(db, path.current())?.ok_or_else(|| {
+            let child_node = self.child.get_node(db, &path)?.ok_or_else(|| {
                 TrieError::InconsistentTree(Box::new(
                     InconsistentTreeError::ExtensionNodeChildNotFound(ExtensionNodeErrorData {
                         node_hash: self
@@ -327,12 +333,12 @@ mod test {
         };
 
         assert_eq!(
-            node.get(trie.db.as_ref(), Nibbles::from_bytes(&[0x00]))
+            node.get(trie.db.as_ref(), &Nibbles::from_bytes(&[0x00]), 0)
                 .unwrap(),
             Some(vec![0x12, 0x34, 0x56, 0x78]),
         );
         assert_eq!(
-            node.get(trie.db.as_ref(), Nibbles::from_bytes(&[0x01]))
+            node.get(trie.db.as_ref(), &Nibbles::from_bytes(&[0x01]), 0)
                 .unwrap(),
             Some(vec![0x34, 0x56, 0x78, 0x9A]),
         );
@@ -349,7 +355,7 @@ mod test {
         };
 
         assert_eq!(
-            node.get(trie.db.as_ref(), Nibbles::from_bytes(&[0x02]))
+            node.get(trie.db.as_ref(), &Nibbles::from_bytes(&[0x02]), 0)
                 .unwrap(),
             None,
         );
@@ -399,7 +405,7 @@ mod test {
             _ => panic!("expected a branch node"),
         };
         assert_eq!(
-            node.get(trie.db.as_ref(), Nibbles::from_bytes(&[0x10]))
+            node.get(trie.db.as_ref(), &Nibbles::from_bytes(&[0x10]), 0)
                 .unwrap(),
             Some(vec![0x20])
         );
@@ -427,7 +433,7 @@ mod test {
             _ => panic!("expected a branch node"),
         };
         assert_eq!(
-            node.get(trie.db.as_ref(), Nibbles::from_bytes(&[0x10]))
+            node.get(trie.db.as_ref(), &Nibbles::from_bytes(&[0x10]), 0)
                 .unwrap(),
             Some(vec![0x20])
         );
@@ -451,7 +457,7 @@ mod test {
             .unwrap();
 
         assert!(none.is_none());
-        assert_eq!(node.get(trie.db.as_ref(), path).unwrap(), Some(value));
+        assert_eq!(node.get(trie.db.as_ref(), &path, 0).unwrap(), Some(value));
     }
 
     #[test]
@@ -472,7 +478,7 @@ mod test {
             .unwrap();
 
         assert!(none.is_none());
-        assert_eq!(node.get(trie.db.as_ref(), path).unwrap(), Some(value));
+        assert_eq!(node.get(trie.db.as_ref(), &path, 0).unwrap(), Some(value));
     }
 
     #[test]
@@ -656,5 +662,30 @@ mod test {
         }
         .into();
         assert_eq!(Node::decode(&node.encode_to_vec()).unwrap(), node)
+    }
+    #[test]
+    fn encode_into_vec_matches_encode() {
+        // Hashed child (>= 32 byte encoding).
+        let leaf_a = LeafNode::new(Nibbles::from_hex(vec![0, 16]), vec![0x12, 0x34]);
+        let leaf_b = LeafNode::new(Nibbles::from_hex(vec![0, 16]), vec![0x56, 0x78]);
+        let mut choices = BranchNode::EMPTY_CHOICES;
+        choices[0] = leaf_a.compute_hash(&NativeCrypto).into();
+        choices[1] = leaf_b.compute_hash(&NativeCrypto).into();
+        let branch = BranchNode::new(choices);
+        let ext_hashed = ExtensionNode::new(
+            Nibbles::from_hex(vec![0, 0]),
+            branch.compute_hash(&NativeCrypto).into(),
+        );
+        // Inline child (< 32 byte encoding).
+        let small = LeafNode::new(Nibbles::from_hex(vec![16]), vec![0x01]);
+        let ext_inline = ExtensionNode::new(
+            Nibbles::from_hex(vec![1]),
+            small.compute_hash(&NativeCrypto).into(),
+        );
+        for node in [ext_hashed, ext_inline] {
+            let mut v = Vec::new();
+            node.encode_into_vec(&mut v);
+            assert_eq!(v, node.encode_to_vec(), "ext encode_into_vec mismatch");
+        }
     }
 }

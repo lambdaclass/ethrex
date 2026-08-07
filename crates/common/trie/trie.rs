@@ -152,7 +152,7 @@ impl Trie {
         }
 
         Ok(match self.root {
-            NodeRef::Node(ref node, _) => node.get(self.db.as_ref(), path)?,
+            NodeRef::Node(ref node, _) => node.get(self.db.as_ref(), &path, 0)?,
             NodeRef::Hash(hash) if hash.is_valid() => {
                 Node::decode(&self.db.get(Nibbles::default())?.ok_or_else(|| {
                     TrieError::InconsistentTree(Box::new(InconsistentTreeError::RootNotFound(
@@ -160,7 +160,7 @@ impl Trie {
                     )))
                 })?)
                 .map_err(TrieError::RLPDecode)?
-                .get(self.db.as_ref(), path)?
+                .get(self.db.as_ref(), &path, 0)?
             }
             _ => None,
         })
@@ -636,7 +636,7 @@ impl Trie {
 
     pub fn root_node(&self) -> Result<Option<Arc<Node>>, TrieError> {
         if self.root.is_valid() {
-            self.root.get_node(self.db.as_ref(), Nibbles::default())
+            self.root.get_node(self.db.as_ref(), &Nibbles::default())
         } else {
             Ok(None)
         }

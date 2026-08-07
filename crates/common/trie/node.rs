@@ -183,14 +183,59 @@ impl NodeRef {
     /// Gets a shared reference to the inner node.
     /// Requires that the trie is in a consistent state, ie that all leaves being pointed are in the database.
     /// Outside of snapsync this should always be the case.
-    pub fn get_node(&self, db: &dyn TrieDB, path: Nibbles) -> Result<Option<Arc<Node>>, TrieError> {
+    ///
+    /// Takes `path` by reference and derives the DB key from it lazily, so a
+    /// visited node that is already embedded costs no allocation (callers used to
+    /// hand over an owned `path.current()` at every node just to feed the cold
+    /// DB-backed arm).
+    pub fn get_node(
+        &self,
+        db: &dyn TrieDB,
+        path: &Nibbles,
+    ) -> Result<Option<Arc<Node>>, TrieError> {
+        self.get_node_with_key(db, || path.current())
+    }
+
+    /// [`get_node`](Self::get_node) for the cursor-based read walk
+    /// ([`Node::get`]), where `path` is the FULL immutable lookup key and `offset`
+    /// the nibbles consumed so far, so the from-root DB key is `path[..offset]`.
+    pub fn get_node_cursor(
+        &self,
+        db: &dyn TrieDB,
+        path: &Nibbles,
+        offset: usize,
+    ) -> Result<Option<Arc<Node>>, TrieError> {
+        self.get_node_with_key(db, || path.slice(0, offset))
+    }
+
+    /// [`get_node`](Self::get_node) for callers that already hold this node's
+    /// from-root DB key instead of a lookup path to derive it from. Note the
+    /// difference: `get_node` reads `path.current()` (the *consumed* prefix), so a
+    /// freshly built `Nibbles` passed there would resolve to an empty key.
+    pub fn get_node_at_key(
+        &self,
+        db: &dyn TrieDB,
+        key: Nibbles,
+    ) -> Result<Option<Arc<Node>>, TrieError> {
+        self.get_node_with_key(db, || key)
+    }
+
+    /// Shared body of the accessors above. `db_key` is called ONLY in the
+    /// DB-backed `Hash` arm, which is what keeps the from-root key off the hot
+    /// walk: each caller's key costs an allocation, and in the guest program that
+    /// arm is dead entirely (witness tries carry every node inline).
+    fn get_node_with_key(
+        &self,
+        db: &dyn TrieDB,
+        db_key: impl FnOnce() -> Nibbles,
+    ) -> Result<Option<Arc<Node>>, TrieError> {
         match self {
             NodeRef::Node(node, _) => Ok(Some(node.clone())),
             NodeRef::Hash(hash @ NodeHash::Inline(_)) => {
                 Ok(Some(Arc::new(Node::decode(hash.as_ref())?)))
             }
             NodeRef::Hash(_) => db
-                .get(path)?
+                .get(db_key())?
                 .filter(|rlp| !rlp.is_empty())
                 .map(|rlp| Ok(Arc::new(Node::decode(&rlp)?)))
                 .transpose(),
@@ -323,13 +368,29 @@ impl NodeRef {
         }
     }
 
+    /// Memoizes this reference's subtrie hash, if there is anything to do.
+    /// Guard split from the recursive body (which LLVM won't inline) so the
+    /// common no-op child (NodeRef::Hash / empty) is a load+branch, not a call.
+    #[inline]
     pub fn memoize_hashes(&self, buf: &mut Vec<u8>, crypto: &dyn Crypto) {
         if let NodeRef::Node(node, hash) = &self
             && hash.get().is_none()
         {
-            node.memoize_hashes(buf, crypto);
-            let _ = hash.set(node.compute_hash_no_alloc(buf, crypto));
+            Self::memoize_hashes_uncached(node, hash, buf, crypto);
         }
+    }
+
+    fn memoize_hashes_uncached(
+        node: &Arc<Node>,
+        hash: &OnceLock<NodeHash>,
+        buf: &mut Vec<u8>,
+        crypto: &dyn Crypto,
+    ) {
+        node.memoize_hashes(buf, crypto);
+        // Children are memoized by the call above; `compute_hash_children_memoized` runs
+        // only the per-node hash (no second full children re-scan, unlike
+        // `compute_hash_no_alloc`).
+        let _ = hash.set(node.compute_hash_children_memoized(buf, crypto));
     }
 
     /// Resets the memoized hash of this Node
@@ -445,11 +506,19 @@ impl From<LeafNode> for Node {
 
 impl Node {
     /// Retrieves a value from the subtrie originating from this node given its path
-    pub fn get(&self, db: &dyn TrieDB, path: Nibbles) -> Result<Option<ValueRLP>, TrieError> {
+    /// Cursor-based read: `path` is the full immutable lookup key, `offset` the
+    /// nibbles already matched. Avoids the per-node `data.remove(0)` memmoves and
+    /// `already_consumed` growth of the old mutating walk.
+    pub fn get(
+        &self,
+        db: &dyn TrieDB,
+        path: &Nibbles,
+        offset: usize,
+    ) -> Result<Option<ValueRLP>, TrieError> {
         match self {
-            Node::Branch(n) => n.get(db, path),
-            Node::Extension(n) => n.get(db, path),
-            Node::Leaf(n) => n.get(path),
+            Node::Branch(n) => n.get(db, path, offset),
+            Node::Extension(n) => n.get(db, path, offset),
+            Node::Leaf(n) => n.get(path, offset),
         }
     }
 
@@ -524,6 +593,17 @@ impl Node {
     /// Computes the node's hash
     pub fn compute_hash_no_alloc(&self, buf: &mut Vec<u8>, crypto: &dyn Crypto) -> NodeHash {
         self.memoize_hashes(buf, crypto);
+        match self {
+            Node::Branch(n) => n.compute_hash_no_alloc(buf, crypto),
+            Node::Extension(n) => n.compute_hash_no_alloc(buf, crypto),
+            Node::Leaf(n) => n.compute_hash_no_alloc(buf, crypto),
+        }
+    }
+
+    /// Per-node hash assuming all children are ALREADY memoized (no children
+    /// re-scan). Used by `memoize_hashes_uncached` after its own
+    /// `memoize_hashes` pass to avoid scanning children twice.
+    fn compute_hash_children_memoized(&self, buf: &mut Vec<u8>, crypto: &dyn Crypto) -> NodeHash {
         match self {
             Node::Branch(n) => n.compute_hash_no_alloc(buf, crypto),
             Node::Extension(n) => n.compute_hash_no_alloc(buf, crypto),

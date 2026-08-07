@@ -55,25 +55,34 @@ impl BranchNode {
     }
 
     /// Retrieves a value from the subtrie originating from this node given its path
-    pub fn get(&self, db: &dyn TrieDB, mut path: Nibbles) -> Result<Option<ValueRLP>, TrieError> {
-        // If path is at the end, return to its own value if present.
-        // Otherwise, check the corresponding choice and delegate accordingly if present.
-        if let Some(choice) = path.next_choice() {
+    pub fn get(
+        &self,
+        db: &dyn TrieDB,
+        path: &Nibbles,
+        offset: usize,
+    ) -> Result<Option<ValueRLP>, TrieError> {
+        // Cursor form of `next_choice`: consume one nibble iff it is a valid
+        // choice index (< 16). The leaf terminator (16) or end-of-path falls
+        // through to this node's own value.
+        if offset < path.len() && path.at(offset) < 16 {
+            let choice = path.at(offset);
             // Delegate to children if present
             let child_ref = &self.choices[choice];
             if child_ref.is_valid() {
-                let child_node = child_ref.get_node(db, path.current())?.ok_or_else(|| {
-                    TrieError::InconsistentTree(Box::new(
-                        InconsistentTreeError::NodeNotFoundOnBranchNode(
-                            child_ref
-                                .compute_hash(&NativeCrypto)
-                                .finalize(&NativeCrypto),
-                            self.compute_hash(&NativeCrypto).finalize(&NativeCrypto),
-                            path.current(),
-                        ),
-                    ))
-                })?;
-                child_node.get(db, path)
+                let child_node = child_ref
+                    .get_node_cursor(db, path, offset + 1)?
+                    .ok_or_else(|| {
+                        TrieError::InconsistentTree(Box::new(
+                            InconsistentTreeError::NodeNotFoundOnBranchNode(
+                                child_ref
+                                    .compute_hash(&NativeCrypto)
+                                    .finalize(&NativeCrypto),
+                                self.compute_hash(&NativeCrypto).finalize(&NativeCrypto),
+                                path.slice(0, offset + 1),
+                            ),
+                        ))
+                    })?;
+                child_node.get(db, path, offset + 1)
             } else {
                 Ok(None)
             }
@@ -306,7 +315,7 @@ impl BranchNode {
             // Continue to child
             let child_ref = &self.choices[choice];
             if child_ref.is_valid() {
-                let child_node = child_ref.get_node(db, path.current())?.ok_or_else(|| {
+                let child_node = child_ref.get_node(db, &path)?.ok_or_else(|| {
                     TrieError::InconsistentTree(Box::new(
                         InconsistentTreeError::NodeNotFoundOnBranchNode(
                             child_ref
@@ -379,12 +388,12 @@ mod test {
         };
 
         assert_eq!(
-            node.get(trie.db.as_ref(), Nibbles::from_bytes(&[0x00]))
+            node.get(trie.db.as_ref(), &Nibbles::from_bytes(&[0x00]), 0)
                 .unwrap(),
             Some(vec![0x12, 0x34, 0x56, 0x78]),
         );
         assert_eq!(
-            node.get(trie.db.as_ref(), Nibbles::from_bytes(&[0x10]))
+            node.get(trie.db.as_ref(), &Nibbles::from_bytes(&[0x10]), 0)
                 .unwrap(),
             Some(vec![0x34, 0x56, 0x78, 0x9A]),
         );
@@ -401,7 +410,7 @@ mod test {
         };
 
         assert_eq!(
-            node.get(trie.db.as_ref(), Nibbles::from_bytes(&[0x20]))
+            node.get(trie.db.as_ref(), &Nibbles::from_bytes(&[0x20]), 0)
                 .unwrap(),
             None,
         );
@@ -422,7 +431,7 @@ mod test {
         node.insert(trie.db.as_ref(), path.clone(), value.clone().into())
             .unwrap();
 
-        assert_eq!(node.get(trie.db.as_ref(), path).unwrap(), Some(value));
+        assert_eq!(node.get(trie.db.as_ref(), &path, 0).unwrap(), Some(value));
     }
 
     #[test]
@@ -441,7 +450,7 @@ mod test {
         node.insert(trie.db.as_ref(), path.clone(), value.clone().into())
             .unwrap();
 
-        assert_eq!(node.get(trie.db.as_ref(), path).unwrap(), Some(value));
+        assert_eq!(node.get(trie.db.as_ref(), &path, 0).unwrap(), Some(value));
     }
 
     #[test]

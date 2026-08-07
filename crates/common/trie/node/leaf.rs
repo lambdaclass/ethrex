@@ -40,8 +40,10 @@ impl LeafNode {
     }
 
     /// Returns the stored value if the given path matches the stored path
-    pub fn get(&self, path: Nibbles) -> Result<Option<ValueRLP>, TrieError> {
-        if self.partial == path {
+    pub fn get(&self, path: &Nibbles, offset: usize) -> Result<Option<ValueRLP>, TrieError> {
+        // The remaining lookup nibbles must exactly equal this leaf's partial
+        // (both carry the trailing `16` leaf terminator).
+        if path.suffix_eq(offset, &self.partial) {
             Ok(Some(self.value.clone()))
         } else {
             Ok(None)
@@ -148,7 +150,7 @@ impl LeafNode {
     /// Computes the node's hash, using the provided buffer
     pub fn compute_hash_no_alloc(&self, buf: &mut Vec<u8>, crypto: &dyn Crypto) -> NodeHash {
         buf.clear();
-        self.encode(buf);
+        self.encode_into_vec(buf);
         let hash = NodeHash::from_encoded(buf, crypto);
         buf.clear();
         hash
@@ -195,7 +197,7 @@ mod test {
         };
 
         assert_eq!(
-            node.get(Nibbles::from_bytes(&[0x12])).unwrap(),
+            node.get(&Nibbles::from_bytes(&[0x12]), 0).unwrap(),
             Some(vec![0x12, 0x34, 0x56, 0x78]),
         );
     }
@@ -206,7 +208,11 @@ mod test {
             leaf { vec![1,2,16] => vec![0x12, 0x34, 0x56, 0x78] }
         };
 
-        assert!(node.get(Nibbles::from_bytes(&[0x34])).unwrap().is_none());
+        assert!(
+            node.get(&Nibbles::from_bytes(&[0x34]), 0)
+                .unwrap()
+                .is_none()
+        );
     }
 
     #[test]
@@ -237,7 +243,7 @@ mod test {
             Some(Node::Branch(x)) => x,
             _ => panic!("expected a branch node"),
         };
-        assert_eq!(node.get(trie.db.as_ref(), path).unwrap(), Some(value));
+        assert_eq!(node.get(trie.db.as_ref(), &path, 0).unwrap(), Some(value));
     }
 
     #[test]
@@ -254,7 +260,7 @@ mod test {
 
         assert!(matches!(node, Some(Node::Extension(_))));
         assert_eq!(
-            node.unwrap().get(trie.db.as_ref(), path).unwrap(),
+            node.unwrap().get(trie.db.as_ref(), &path, 0).unwrap(),
             Some(value)
         );
     }
@@ -273,7 +279,7 @@ mod test {
 
         assert!(matches!(node, Some(Node::Extension(_))));
         assert_eq!(
-            node.unwrap().get(trie.db.as_ref(), path).unwrap(),
+            node.unwrap().get(trie.db.as_ref(), &path, 0).unwrap(),
             Some(value)
         );
     }
@@ -292,7 +298,7 @@ mod test {
 
         assert!(matches!(node, Some(Node::Extension(_))));
         assert_eq!(
-            node.unwrap().get(trie.db.as_ref(), path).unwrap(),
+            node.unwrap().get(trie.db.as_ref(), &path, 0).unwrap(),
             Some(value)
         );
     }
@@ -388,5 +394,25 @@ mod test {
         )
         .into();
         assert_eq!(Node::decode(&node.encode_to_vec()).unwrap(), node)
+    }
+    #[test]
+    fn encode_into_vec_matches_encode() {
+        let nodes = [
+            LeafNode::new(
+                Nibbles::from_bytes(b"key".as_ref()),
+                b"a comparatively long value".to_vec(),
+            ),
+            LeafNode::new(
+                Nibbles::from_bytes(&[0x12, 0x34]),
+                vec![0x12, 0x34, 0x56, 0x78],
+            ),
+            LeafNode::new(Nibbles::from_bytes(&[]), vec![]),
+            LeafNode::new(Nibbles::from_hex(vec![0, 16]), vec![0x12, 0x34]),
+        ];
+        for node in nodes {
+            let mut v = Vec::new();
+            node.encode_into_vec(&mut v);
+            assert_eq!(v, node.encode_to_vec(), "leaf encode_into_vec mismatch");
+        }
     }
 }

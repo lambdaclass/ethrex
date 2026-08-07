@@ -114,12 +114,51 @@ impl RLPEncode for ExtensionNode {
     }
 }
 
+impl ExtensionNode {
+    /// Concrete-typed sibling of `<Self as RLPEncode>::encode` appending into a
+    /// `Vec<u8>` — avoids the `Encoder`'s throwaway `temp_buf` allocation and its
+    /// final copy on the hot hashing path (`compute_hash_no_alloc`, per dirty node
+    /// each block). Byte-identical to `encode`: same two-item list
+    /// `[compact(prefix), child_hash]`, same `NodeHash::encode`. Mirrors
+    /// `BranchNode::encode_into_vec` (PR #7104).
+    pub fn encode_into_vec(&self, buf: &mut Vec<u8>) {
+        let compact = self.prefix.encode_compact();
+        let child_hash = self.child.compute_hash(&NativeCrypto);
+        let payload_len = <[u8] as RLPEncode>::length(&compact) + RLPEncode::length(&child_hash);
+        encode_length(payload_len, buf);
+        <[u8] as RLPEncode>::encode(&compact, buf);
+        // Match the child-hash embedding used by `BranchNode::encode_into_vec`:
+        // a hashed child is RLP-encoded (0xa0 + 32 bytes), while an inline child's
+        // bytes are already RLP and are written RAW (NOT re-wrapped as a string,
+        // which `RLPEncode for NodeHash` would wrongly do).
+        match &child_hash {
+            NodeHash::Hashed(hash) => hash.0.encode(&mut *buf),
+            NodeHash::Inline((_, 0)) => buf.push(RLP_NULL),
+            NodeHash::Inline((encoded, len)) => buf.extend_from_slice(&encoded[..*len as usize]),
+        }
+    }
+}
+
 impl RLPEncode for LeafNode {
     fn encode(&self, buf: &mut dyn bytes::BufMut) {
         Encoder::new(buf)
             .encode_bytes(&self.partial.encode_compact())
             .encode_bytes(&self.value)
             .finish()
+    }
+}
+
+impl LeafNode {
+    /// Concrete-typed sibling of `<Self as RLPEncode>::encode` (see
+    /// [`ExtensionNode::encode_into_vec`]). Byte-identical two-item list
+    /// `[compact(partial), value]`, written straight into `buf`.
+    pub fn encode_into_vec(&self, buf: &mut Vec<u8>) {
+        let compact = self.partial.encode_compact();
+        let payload_len =
+            <[u8] as RLPEncode>::length(&compact) + <[u8] as RLPEncode>::length(&self.value);
+        encode_length(payload_len, buf);
+        <[u8] as RLPEncode>::encode(&compact, buf);
+        <[u8] as RLPEncode>::encode(&self.value, buf);
     }
 }
 

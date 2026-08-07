@@ -507,6 +507,24 @@ impl Nibbles {
         }
     }
 
+    /// Cursor form of [`skip_prefix`](Self::skip_prefix): whether `prefix` occurs
+    /// at `offset`, without consuming anything. The read walk carries its position
+    /// in a separate `offset` instead of mutating the path, so it never pays
+    /// `skip_prefix`'s `drain` memmove or the `already_consumed` growth.
+    pub fn has_prefix_at(&self, prefix: &Nibbles, offset: usize) -> bool {
+        self.data
+            .get(offset..offset.saturating_add(prefix.len()))
+            .is_some_and(|at| at == prefix.as_ref())
+    }
+
+    /// Whether the nibbles from `offset` onwards are exactly `suffix` (the leaf
+    /// terminator included). Non-allocating counterpart of `self.offset(n) == suffix`.
+    pub fn suffix_eq(&self, offset: usize, suffix: &Nibbles) -> bool {
+        self.data
+            .get(offset..)
+            .is_some_and(|rest| rest == suffix.as_ref())
+    }
+
     /// Compares self to another, comparing prefixes only in case of unequal lengths.
     pub fn compare_prefix(&self, prefix: &Nibbles) -> cmp::Ordering {
         if self.len() > prefix.len() {
