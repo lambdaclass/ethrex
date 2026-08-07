@@ -4,9 +4,19 @@
 //! in-memory `TrieLayerCache` become possible up to the finalized boundary.
 //!
 //! Each entry captures the previous on-disk values (or absence markers) for every
-//! account-trie node, storage-trie node, account flat-key-value, and storage
-//! flat-key-value path that a single layer commit overwrites. Codes are
-//! content-addressed and not journaled.
+//! account-trie node, storage-trie node, account flat-key-value, storage
+//! flat-key-value and EIP-8297 binary-trie path that a single layer commit
+//! overwrites. Codes are content-addressed and not journaled.
+//!
+//! ## Why the binary trie is journaled too
+//!
+//! The binary trie is path-keyed and single-version, exactly like the MPT's node
+//! tables, so a commit that advances it destroys the previous version. Diff
+//! layers cover every reorg *inside* the layer window — those nodes are never
+//! written — but a reorg deeper than the cache edge has to put the on-disk trie
+//! back, and only a reverse diff can do that. Without it the overlay rebuilds an
+//! MPT that a post-activation header does not address, and re-executing the new
+//! chain fails with a state-root mismatch it can never recover from.
 //!
 //! Entries are keyed by `block_number.to_be_bytes()` in the
 //! [`STATE_HISTORY`](crate::api::tables::STATE_HISTORY) column family. Big-endian
@@ -33,11 +43,17 @@
 //! ## Codec
 //!
 //! Entries use a hand-rolled compact format: a version byte at offset 0, then
-//! `block_hash` (32 bytes), `parent_state_root` (32 bytes), then four
-//! varint-prefixed reverse-diff sections in order: account-trie, storage-trie,
-//! account flat-KV, storage flat-KV. RLP/bincode/postcard are skipped — the
-//! access pattern (write-once, read-on-reorg, large volume) makes encode/decode
-//! cost matter.
+//! `block_hash` (32 bytes), `parent_state_root` (32 bytes),
+//! `parent_binary_root` (32 bytes), then five varint-prefixed reverse-diff
+//! sections in order: account-trie, storage-trie, account flat-KV, storage
+//! flat-KV, binary-trie. RLP/bincode/postcard are skipped — the access pattern
+//! (write-once, read-on-reorg, large volume) makes encode/decode cost matter.
+//!
+//! The binary section is a fifth flat list rather than something folded into the
+//! existing four, because the reader cannot tell the column families apart by
+//! key length: a `BitPath` key is `4 + ceil(bits/8)` bytes, which overlaps the
+//! whole MPT range that `classify_trie_key` dispatches on. The section boundary
+//! is the only thing that says which table a key belongs to.
 //!
 //! ## Version strategy
 //!
@@ -62,7 +78,13 @@ use ethrex_common::H256;
 /// starts empty after the bump; a future bump that needs to keep history
 /// across the upgrade should introduce per-version `decode_vN` arms here
 /// rather than re-encoding existing entries.
-pub const JOURNAL_VERSION: u8 = 1;
+///
+/// v2 added `parent_binary_root` and the binary-trie reverse-diff section, so a
+/// deep reorg can unwind the EIP-8297 trie as well as the MPT. v1 entries are
+/// rejected outright rather than read with an empty binary section: on a
+/// scheduled chain that would silently claim the binary trie needs no unwinding,
+/// which is precisely the bug the version exists to prevent.
+pub const JOURNAL_VERSION: u8 = 2;
 
 /// A single reverse-diff entry: `(on_disk_key, previous_value_or_none)`.
 ///
@@ -78,7 +100,7 @@ pub type FlatDiff = Vec<ReverseDiffEntry>;
 
 /// A single reverse-diff entry covering one block's commit.
 ///
-/// All four diff sections are flat lists of `(on_disk_key, prev_value)` tuples.
+/// All five diff sections are flat lists of `(on_disk_key, prev_value)` tuples.
 /// On rollback, each entry can be applied directly to its column family
 /// without further interpretation: `Some(prev)` becomes a `put`, `None`
 /// becomes a `delete`.
@@ -88,6 +110,22 @@ pub struct JournalEntry {
     pub block_hash: H256,
     /// Post-state root of the parent block (the state we'd return to on rollback).
     pub parent_state_root: H256,
+    /// The parent block's EIP-8297 binary-trie root — the binary counterpart of
+    /// `parent_state_root`, and the root a rollback returns the binary trie to.
+    ///
+    /// It has to be recorded rather than derived. Through the whole
+    /// pre-activation window a header carries an MPT root, so `parent_state_root`
+    /// says nothing about the binary trie; and a reader unwinding to the pivot
+    /// holds no other handle on which binary root the reconstructed nodes make
+    /// up. [`Overlay::serves_binary_root`] gates the binary read cascade on
+    /// exactly this value.
+    ///
+    /// `H256::zero()` on a chain that does not schedule the commitment, where
+    /// `binary_trie_diff` is empty too. Zero is never a real root, so the gate
+    /// can treat it as "this overlay carries no binary state".
+    ///
+    /// [`Overlay::serves_binary_root`]: crate::layering::Overlay::serves_binary_root
+    pub parent_binary_root: H256,
     /// Reverse diff for `ACCOUNT_TRIE_NODES`.
     pub account_trie_diff: FlatDiff,
     /// Reverse diff for `STORAGE_TRIE_NODES`. Keys carry the nibble-encoded
@@ -98,6 +136,16 @@ pub struct JournalEntry {
     /// Reverse diff for `STORAGE_FLATKEYVALUE`. Keys carry the nibble-encoded
     /// account-hash prefix as written on disk.
     pub storage_flat_diff: FlatDiff,
+    /// Reverse diff for `BINARY_TRIE_NODES`, keyed by `BitPath::to_db_key()`.
+    ///
+    /// A `None` pre-image means the commit created the node, so a rollback
+    /// deletes the key — which is also how the binary trie spells a tombstone,
+    /// so the rollback and the trie's own convention agree by construction.
+    ///
+    /// Empty on every chain that does not schedule `binaryTreeTime`, which is
+    /// the whole cost an unscheduled chain pays: one extra `0` count byte per
+    /// entry.
+    pub binary_trie_diff: FlatDiff,
 }
 
 /// Errors that can occur when decoding a journal entry from disk.
@@ -131,20 +179,24 @@ impl JournalEntry {
         let approx = 1
             + 32
             + 32
+            + 32
             + diff_byte_estimate(&self.account_trie_diff)
             + diff_byte_estimate(&self.storage_trie_diff)
             + diff_byte_estimate(&self.account_flat_diff)
-            + diff_byte_estimate(&self.storage_flat_diff);
+            + diff_byte_estimate(&self.storage_flat_diff)
+            + diff_byte_estimate(&self.binary_trie_diff);
         let mut out = Vec::with_capacity(approx);
 
         out.push(JOURNAL_VERSION);
         out.extend_from_slice(self.block_hash.as_bytes());
         out.extend_from_slice(self.parent_state_root.as_bytes());
+        out.extend_from_slice(self.parent_binary_root.as_bytes());
 
         encode_flat_diff(&mut out, &self.account_trie_diff);
         encode_flat_diff(&mut out, &self.storage_trie_diff);
         encode_flat_diff(&mut out, &self.account_flat_diff);
         encode_flat_diff(&mut out, &self.storage_flat_diff);
+        encode_flat_diff(&mut out, &self.binary_trie_diff);
 
         out
     }
@@ -168,11 +220,13 @@ impl JournalEntry {
 
         let block_hash = cur.read_h256()?;
         let parent_state_root = cur.read_h256()?;
+        let parent_binary_root = cur.read_h256()?;
 
         let account_trie_diff = decode_flat_diff(&mut cur)?;
         let storage_trie_diff = decode_flat_diff(&mut cur)?;
         let account_flat_diff = decode_flat_diff(&mut cur)?;
         let storage_flat_diff = decode_flat_diff(&mut cur)?;
+        let binary_trie_diff = decode_flat_diff(&mut cur)?;
 
         // Reject trailing bytes: a corrupt or mixed-version record that happens to
         // have a valid prefix must not be silently treated as valid.
@@ -186,10 +240,12 @@ impl JournalEntry {
         Ok(Self {
             block_hash,
             parent_state_root,
+            parent_binary_root,
             account_trie_diff,
             storage_trie_diff,
             account_flat_diff,
             storage_flat_diff,
+            binary_trie_diff,
         })
     }
 }
@@ -401,14 +457,16 @@ mod tests {
         let entry = JournalEntry {
             block_hash: h(0xaa),
             parent_state_root: h(0xbb),
+            parent_binary_root: h(0xcc),
             account_trie_diff: vec![],
             storage_trie_diff: vec![],
             account_flat_diff: vec![],
             storage_flat_diff: vec![],
+            binary_trie_diff: vec![],
         };
         round_trip(&entry);
-        // 1 (version) + 32 + 32 + 1 (count=0) * 4 = 69 bytes.
-        assert_eq!(entry.encode().len(), 69);
+        // 1 (version) + 32 + 32 + 32 + 1 (count=0) * 5 = 102 bytes.
+        assert_eq!(entry.encode().len(), 102);
     }
 
     #[test]
@@ -416,6 +474,7 @@ mod tests {
         let entry = JournalEntry {
             block_hash: h(0x11),
             parent_state_root: h(0x22),
+            parent_binary_root: h(0x23),
             account_trie_diff: vec![
                 (vec![0x00, 0x01], Some(vec![0xde, 0xad, 0xbe, 0xef])),
                 (vec![0x02], None),
@@ -423,6 +482,12 @@ mod tests {
             storage_trie_diff: vec![(vec![0x0a; 67], Some(vec![0xff])), (vec![0x0b; 68], None)],
             account_flat_diff: vec![(vec![0xaa; 65], Some(vec![0x01, 0x02, 0x03]))],
             storage_flat_diff: vec![(vec![0xbb; 131], None)],
+            // 34-byte `BitPath::to_db_key()` shape, plus a tombstoned key whose
+            // pre-image is `None` (the commit created it).
+            binary_trie_diff: vec![
+                (vec![0x0c; 34], Some(vec![0xcc, 0xdd])),
+                (vec![0x0d; 5], None),
+            ],
         };
         round_trip(&entry);
     }
@@ -432,10 +497,12 @@ mod tests {
         let entry = JournalEntry {
             block_hash: h(0x55),
             parent_state_root: h(0x66),
+            parent_binary_root: h(0x67),
             account_trie_diff: vec![(vec![0x00], None), (vec![0x01], None), (vec![0x02], None)],
             storage_trie_diff: vec![],
             account_flat_diff: vec![(vec![0xaa; 32], None)],
             storage_flat_diff: vec![],
+            binary_trie_diff: vec![(vec![0x0c; 34], None)],
         };
         round_trip(&entry);
     }
@@ -455,10 +522,12 @@ mod tests {
         let entry = JournalEntry {
             block_hash: h(0xee),
             parent_state_root: h(0xff),
+            parent_binary_root: h(0xfe),
             account_trie_diff,
             storage_trie_diff: vec![],
             account_flat_diff: vec![],
             storage_flat_diff: vec![],
+            binary_trie_diff: vec![],
         };
         round_trip(&entry);
     }
@@ -468,7 +537,8 @@ mod tests {
         let mut bytes = vec![0xff];
         bytes.extend_from_slice(&[0; 32]);
         bytes.extend_from_slice(&[0; 32]);
-        bytes.extend_from_slice(&[0, 0, 0, 0]);
+        bytes.extend_from_slice(&[0; 32]);
+        bytes.extend_from_slice(&[0, 0, 0, 0, 0]);
         let err = JournalEntry::decode(&bytes).unwrap_err();
         assert_eq!(
             err,
@@ -484,10 +554,12 @@ mod tests {
         let entry = JournalEntry {
             block_hash: h(0x77),
             parent_state_root: h(0x88),
+            parent_binary_root: h(0x89),
             account_trie_diff: vec![(vec![0x00], Some(vec![0xff]))],
             storage_trie_diff: vec![],
             account_flat_diff: vec![],
             storage_flat_diff: vec![],
+            binary_trie_diff: vec![],
         };
         let bytes = entry.encode();
         let err = JournalEntry::decode(&bytes[..bytes.len() - 1]).unwrap_err();
@@ -498,6 +570,7 @@ mod tests {
     fn rejects_invalid_presence_byte() {
         let mut bytes = Vec::new();
         bytes.push(JOURNAL_VERSION);
+        bytes.extend_from_slice(&[0; 32]);
         bytes.extend_from_slice(&[0; 32]);
         bytes.extend_from_slice(&[0; 32]);
         bytes.push(1); // account_trie_diff count = 1
@@ -573,9 +646,10 @@ mod tests {
     #[test]
     fn rejects_oom_via_malformed_count() {
         // Manually craft a payload: version + 32B block_hash + 32B parent_state_root
-        // + account_trie_diff count = u64::MAX (10-byte LEB128). The remaining
-        // payload is too small to hold that many entries.
+        // + 32B parent_binary_root + account_trie_diff count = u64::MAX (10-byte
+        // LEB128). The remaining payload is too small to hold that many entries.
         let mut bytes = vec![JOURNAL_VERSION];
+        bytes.extend_from_slice(&[0; 32]);
         bytes.extend_from_slice(&[0; 32]);
         bytes.extend_from_slice(&[0; 32]);
         encode_varint(&mut bytes, u64::MAX);
@@ -592,6 +666,7 @@ mod tests {
         let mut bytes = vec![JOURNAL_VERSION];
         bytes.extend_from_slice(&[0; 32]);
         bytes.extend_from_slice(&[0; 32]);
+        bytes.extend_from_slice(&[0; 32]);
         encode_varint(&mut bytes, 1); // count = 1
         encode_varint(&mut bytes, u64::MAX); // path_len = u64::MAX
         let err = JournalEntry::decode(&bytes).unwrap_err();
@@ -605,6 +680,7 @@ mod tests {
     #[test]
     fn rejects_oom_via_malformed_value_len() {
         let mut bytes = vec![JOURNAL_VERSION];
+        bytes.extend_from_slice(&[0; 32]);
         bytes.extend_from_slice(&[0; 32]);
         bytes.extend_from_slice(&[0; 32]);
         encode_varint(&mut bytes, 1); // count = 1
@@ -626,10 +702,12 @@ mod tests {
         let entry = JournalEntry {
             block_hash: h(0xaa),
             parent_state_root: h(0xbb),
+            parent_binary_root: h(0xcc),
             account_trie_diff: vec![],
             storage_trie_diff: vec![],
             account_flat_diff: vec![],
             storage_flat_diff: vec![],
+            binary_trie_diff: vec![],
         };
         let mut bytes = entry.encode();
         bytes.push(0xff); // unexpected trailing byte
@@ -652,18 +730,22 @@ mod tests {
         let entry_strategy = (
             any::<[u8; 32]>(),
             any::<[u8; 32]>(),
+            any::<[u8; 32]>(),
+            vec(flat_diff_entry(), 0..16),
             vec(flat_diff_entry(), 0..16),
             vec(flat_diff_entry(), 0..16),
             vec(flat_diff_entry(), 0..16),
             vec(flat_diff_entry(), 0..16),
         )
-            .prop_map(|(bh, psr, a, b, c, d)| JournalEntry {
+            .prop_map(|(bh, psr, pbr, a, b, c, d, e)| JournalEntry {
                 block_hash: H256::from(bh),
                 parent_state_root: H256::from(psr),
+                parent_binary_root: H256::from(pbr),
                 account_trie_diff: a,
                 storage_trie_diff: b,
                 account_flat_diff: c,
                 storage_flat_diff: d,
+                binary_trie_diff: e,
             });
         proptest!(|(entry in entry_strategy)| {
             let bytes = entry.encode();
@@ -695,10 +777,12 @@ mod tests {
         let entry = JournalEntry {
             block_hash: h(0x42),
             parent_state_root: h(0x43),
+            parent_binary_root: h(0x44),
             account_trie_diff: vec![(vec![0x01, 0x02], Some(vec![0xaa, 0xbb]))],
             storage_trie_diff: vec![(vec![0x0a; 67], None)],
             account_flat_diff: vec![(vec![0xcc; 65], Some(vec![0xdd]))],
             storage_flat_diff: vec![],
+            binary_trie_diff: vec![(vec![0x0e; 34], Some(vec![0xef]))],
         };
         let baseline = entry.encode();
         proptest!(|(idx in 0..baseline.len(), bit in 0u8..8)| {
@@ -709,6 +793,41 @@ mod tests {
                 Ok(decoded) => prop_assert_ne!(decoded, entry.clone()),
             }
         });
+    }
+
+    /// The binary section must be addressed by its position in the record, not
+    /// by key length. A `BitPath` key is `4 + ceil(bits/8)` bytes, which lands
+    /// squarely inside every range `classify_trie_key` uses, so a key that is
+    /// byte-identical to an account-trie path must still come back in the binary
+    /// section and only there.
+    ///
+    /// This is the property that makes the fifth section necessary rather than
+    /// merely tidy: folding binary pre-images into `account_trie_diff` would put
+    /// them in `ACCOUNT_TRIE_NODES` on rollback and corrupt the MPT.
+    #[test]
+    fn binary_and_account_sections_do_not_bleed_at_a_shared_key() {
+        let shared_key = vec![0x07; 34];
+        let entry = JournalEntry {
+            block_hash: h(0x01),
+            parent_state_root: h(0x02),
+            parent_binary_root: h(0x03),
+            account_trie_diff: vec![(shared_key.clone(), Some(vec![0xa1]))],
+            storage_trie_diff: vec![],
+            account_flat_diff: vec![],
+            storage_flat_diff: vec![],
+            binary_trie_diff: vec![(shared_key.clone(), Some(vec![0xb2]))],
+        };
+        let decoded = JournalEntry::decode(&entry.encode()).unwrap();
+        assert_eq!(
+            decoded.account_trie_diff,
+            vec![(shared_key.clone(), Some(vec![0xa1]))],
+            "the account-trie pre-image must survive the shared key"
+        );
+        assert_eq!(
+            decoded.binary_trie_diff,
+            vec![(shared_key, Some(vec![0xb2]))],
+            "the binary pre-image must survive it too, with its own value"
+        );
     }
 
     fn flat_diff_entry() -> impl proptest::strategy::Strategy<Value = ReverseDiffEntry> {

@@ -355,6 +355,13 @@ async fn find_link_with_canonical_chain(
 ///    descending order to produce an `Overlay` that exposes the virtual state at
 ///    `pivot`. The layer cache is atomically replaced with a fresh empty cache
 ///    carrying the overlay. Reads now cascade: layer cache -> overlay -> disk.
+///
+///    On a chain that schedules EIP-8297 the same entries also carry the
+///    binary trie's reverse diff, so the overlay reconstructs *both*
+///    commitments at the pivot. The binary read cascade is gated on
+///    `Overlay::serves_binary_root` rather than `serves_root`, because before
+///    activation a header's state root is an MPT root and says nothing about
+///    which binary trie the pivot holds.
 /// 5. **Side-chain blocks `[T .. new_head]` are executed via the normal path.**
 ///    `Blockchain::add_block` is called for each block in ascending order. Reads
 ///    hit the layer cache (new-chain diffs) then the overlay (pivot baseline) then
@@ -362,7 +369,10 @@ async fn find_link_with_canonical_chain(
 /// 6. **First commit folds the overlay atomically.**
 ///    The first new-chain block that triggers a layer commit (via the reconciliation
 ///    path in `commit_to_disk`) writes the overlay entries plus the new layer together
-///    in a single RocksDB write batch, then clears the overlay.
+///    in a single RocksDB write batch, then clears the overlay. Binary-trie
+///    bridge entries go into the same batch but through their own list: their
+///    keys cannot be routed by length, so they are written straight to
+///    `BINARY_TRIE_NODES` instead of through the MPT's CF classifier.
 /// 7. **`AbortReorgGuard` resets cache on any failure.**
 ///    An `AbortReorgGuard` is armed immediately after overlay install. On any error
 ///    (side-chain execution failure, missing block body, fork-choice update error,
