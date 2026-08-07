@@ -3163,3 +3163,73 @@ async fn binary_state_flushed_to_disk_survives_losing_the_diff_layers() {
          or every restart replays the whole chain again"
     );
 }
+
+// ---------------------------------------------------------------------------
+// D8.3 The sync cycle's parent-state checks.
+//
+// The last three sites of this class. They gate whether the sync cycle may
+// execute the blocks stacked on top of a given block, and all three were
+// spelled out inline — which is why all three had to be found by hand, and why
+// none of them had a test until now.
+// ---------------------------------------------------------------------------
+
+/// A post-flip block whose state this node holds is a base the sync cycle can
+/// execute on, addressed either by hash or by number.
+#[tokio::test]
+async fn state_is_available_at_a_post_flip_block_by_hash_and_by_number() {
+    let chains = build_boundary_chains(FLIP_BLOCK + 2).await;
+    let store = &chains.scheduled_store;
+    make_canonical(store, &chains.scheduled_blocks).await;
+
+    let head = chains.scheduled_blocks.last().expect("a non-empty chain");
+    assert!(
+        head.header.number > FLIP_BLOCK,
+        "the head must be past the flip for this test to say anything"
+    );
+
+    assert!(
+        ethrex_p2p::sync::state_available_at(store, head.hash()).expect("by-hash check"),
+        "the sync cycle must see the post-flip head's state; not seeing it \
+         makes it skip or re-download blocks it can already build on"
+    );
+    assert!(
+        ethrex_p2p::sync::state_available_at_number(store, head.header.number)
+            .expect("by-number check"),
+        "the by-number form must agree with the by-hash one"
+    );
+}
+
+/// An unknown block is not a base to build on, and must not be reported as one.
+#[tokio::test]
+async fn state_is_not_available_at_an_unknown_block() {
+    let chains = build_boundary_chains(FLIP_BLOCK + 2).await;
+    let store = &chains.scheduled_store;
+
+    assert!(
+        !ethrex_p2p::sync::state_available_at(store, H256::repeat_byte(0xAB))
+            .expect("by-hash check"),
+        "an unknown header must answer false, not error and not true"
+    );
+    assert!(
+        !ethrex_p2p::sync::state_available_at_number(store, 9_999).expect("by-number check"),
+        "an unknown block number must answer false"
+    );
+}
+
+/// And it must track real availability: state that never reached disk is gone
+/// once the diff layers are, so the sync cycle must not try to build on it.
+#[tokio::test]
+async fn state_is_not_available_once_the_diff_layers_are_lost() {
+    let chains = build_boundary_chains(FLIP_BLOCK + 2).await;
+    let store = &chains.scheduled_store;
+    make_canonical(store, &chains.scheduled_blocks).await;
+
+    let head = chains.scheduled_blocks.last().expect("a non-empty chain");
+    store.drop_trie_layers_for_test().unwrap();
+
+    assert!(
+        !ethrex_p2p::sync::state_available_at(store, head.hash()).expect("by-hash check"),
+        "unflushed state is gone after a restart; reporting it as available \
+         makes the sync cycle execute against state that is not there"
+    );
+}

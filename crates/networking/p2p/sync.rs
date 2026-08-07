@@ -12,7 +12,9 @@ mod snap_sync;
 /// Test-only re-export of the full-sync resume-point predicate so integration tests can
 /// assert that canonical-but-stateless blocks are not treated as already-executed.
 #[cfg(feature = "test-utils")]
-pub use full::{first_resume_point_in_batch, is_resume_point};
+pub use full::{
+    first_resume_point_in_batch, is_resume_point, state_available_at, state_available_at_number,
+};
 
 use crate::metrics::METRICS;
 use crate::peer_handler::{BlockRequestOrder, HeaderFetchOutcome, PeerHandler, PeerHandlerError};
