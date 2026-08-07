@@ -196,6 +196,17 @@ image itself (`docker save … | ssh … docker load`) before retagging. Until t
 is done, the swap is restart-durable but recreate-fragile: the running chain has
 the fix and the image does not.
 
+**Reading the deployed version afterwards: only `web3_clientVersion` is
+authoritative.** A swap leaves the image tag and `docker images` frozen at the
+last full build, so `docker ps` names a commit the fleet stopped running. Uptime
+lies the same way, since the swap restarts the process and not the container: an
+enclave can report `Up 17 hours` while the binary under it is two hours old.
+Query the RPC (checklist item 1); the commit there is baked in at compile time
+and describes the process actually serving. `docker diff <ctr>` corroborates,
+showing `C /usr/local/bin/ethrex` plus an added `ethrex-real` and
+`ethrex-rollback`. Retagging as above is what stops the tag from lying, and is
+worth doing for the next reader even where recreate-fragility is acceptable.
+
 ## Path 1b — Add/change a CLI flag or RPC namespace without re-genesis (wrapper)
 
 For a **non-consensus** change that lives in the container **command**, not the
