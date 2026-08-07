@@ -130,6 +130,13 @@ fn cancun_fields_to_json(f: CommonCancunFields) -> Result<JsonExecutionPayload, 
         excess_blob_gas: f.excess_blob_gas,
         slot_number: f.slot_number,
         block_access_list: None,
+        // `burned_fees` (EIP-8079) enters the header at LStar. The execution-apis
+        // #793 per-fork catalogue stops at Amsterdam, so no SSZ container this
+        // module decodes carries the field and every fork reachable here is
+        // pre-LStar — `None` is the only correct value. Revisit when #793 gains an
+        // LStar entry: at that point the field is part of the header hash, so it
+        // would have to come off the wire rather than be defaulted.
+        burned_fees: None,
     })
 }
 
@@ -160,6 +167,8 @@ fn paris_payload_to_json(p: paris::ExecutionPayload) -> Result<JsonExecutionPayl
         excess_blob_gas: None,
         slot_number: None,
         block_access_list: None,
+        // Pre-LStar; see the note in `cancun_fields_to_json`.
+        burned_fees: None,
     })
 }
 

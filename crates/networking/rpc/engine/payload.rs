@@ -1564,6 +1564,7 @@ mod tests {
             excess_blob_gas: Some(0),
             slot_number: Some(0),
             block_access_list: Some(BlockAccessList::default()),
+            burned_fees: None,
         }
     }
 

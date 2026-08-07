@@ -40,11 +40,11 @@ ethereum-types.workspace = true
 rkyv.workspace = true
 rand.workspace = true
 secp256k1.workspace = true
+k256.workspace = true
 proptest = "1.0.0"
 cita_trie = "4.0.0"
 hasher = "0.1.4"
 p256 = { version = "0.13.2", default-features = false, features = ["ecdsa", "arithmetic"] }
-k256.workspace = true
 tokio = { workspace = true, features = ["full", "test-util"] }
 aes-gcm = "0.10.3"
 lazy_static.workspace = true
@@ -68,9 +68,12 @@ tower = "0.5"
 http-body-util = "0.1"
 jsonwebtoken.workspace = true
 serde.workspace = true
+# Shared by the engine REST/SSZ tests and the EIP-8025 stateless tests from main.
 libssz.workspace = true
 libssz-types.workspace = true
 libssz-derive.workspace = true
+ethrex-guest-program = { workspace = true, default-features = false }
+ethrex-crypto.workspace = true
 ethrex-metrics = { workspace = true, features = ["metrics"] }
 serial_test = "3"
 
