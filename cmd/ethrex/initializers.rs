@@ -793,6 +793,9 @@ pub async fn init_l1(
             precompute_witnesses: opts.precompute_witnesses,
             private_mempool: opts.mempool_private,
             precompile_cache_enabled: !opts.no_precompile_cache,
+            mempool_lifetime: opts.mempool_lifetime,
+            max_nonce_gap: opts.mempool_max_nonce_gap,
+            dormancy: opts.mempool_dormancy,
             price_bump_percent: opts.mempool_price_bump,
             blob_price_bump_percent: opts.mempool_blob_price_bump,
             max_queued_txs_per_account: opts.mempool_max_queued_txs_per_account,
@@ -803,6 +806,8 @@ pub async fn init_l1(
             gap_admit_occupancy_threshold: opts.mempool_gap_admit_occupancy_threshold,
         },
     );
+
+    blockchain.spawn_mempool_sweep();
 
     regenerate_head_state(&store, &blockchain).await?;
 
