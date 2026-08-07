@@ -4222,7 +4222,7 @@ impl Store {
 
     /// Returns `None` when the marker has never been written — a legacy or fresh
     /// DB where everything is durable and the head must not be clamped to 0.
-    fn read_flushed_upto_opt(&self) -> Result<Option<BlockNumber>, StoreError> {
+    pub fn read_flushed_upto_opt(&self) -> Result<Option<BlockNumber>, StoreError> {
         let tx = self.backend.begin_read()?;
         match tx.get(MISC_VALUES, FLUSHED_UPTO_KEY)? {
             Some(bytes) => Ok(Some(decode_flushed_upto(&bytes)?)),
