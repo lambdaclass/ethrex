@@ -44,6 +44,8 @@ pub enum RpcErr {
     Internal(String),
     #[error("Vm execution error: {0}")]
     Vm(String),
+    #[error("{0}")]
+    StateNotAvailable(String),
     #[error("execution reverted: data={data}")]
     Revert { data: String },
     #[error("execution halted: reason={reason}, gas_used={gas_used}")]
@@ -127,6 +129,14 @@ impl From<RpcErr> for RpcErrorMetadata {
                 code: -32015,
                 data: None,
                 message: format!("Vm execution error: {context}"),
+            },
+            // Generic server error, matching what other clients return when the state
+            // behind a historical query is no longer available (geth answers a pruned
+            // `eth_getBalance` with -32000 "missing trie node ...").
+            RpcErr::StateNotAvailable(context) => RpcErrorMetadata {
+                code: -32000,
+                data: None,
+                message: context,
             },
             RpcErr::Revert { data } => RpcErrorMetadata {
                 // This code (3) was hand-picked to match hive tests.
