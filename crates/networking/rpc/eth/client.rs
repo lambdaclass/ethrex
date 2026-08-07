@@ -2,6 +2,7 @@ use std::collections::BTreeMap;
 
 use ethrex_common::H32;
 use ethrex_common::H160;
+use ethrex_common::H256;
 use ethrex_common::serde_utils;
 use ethrex_common::types::BlockNumber;
 use ethrex_common::types::Fork;
@@ -73,6 +74,43 @@ pub async fn canonical_head_is_stateful(
     Ok(storage.has_state_for_header(header.hash(), &header)?)
 }
 
+/// The block number `eth_syncing` reports as `highestBlock`: how far the
+/// consensus client says the chain has got.
+///
+/// `head_hash` is the last forkchoiceUpdated head. Resolving it locally is the
+/// best answer, and a pending block is the next best. `recorded_target` is the
+/// sync cycle's own view of the target, which is the answer that matters when
+/// neither lookup succeeds — that is exactly the state of a node too far behind
+/// to have downloaded the target yet.
+///
+/// **Falling straight back to `canonical_head` is what made a wedged node
+/// invisible.** On the 2026-08-07 devnet a node stuck 128 blocks behind, failing
+/// every sync cycle, answered
+/// `{"currentBlock":"0x36","highestBlock":"0x36"}` — the target collapsed onto
+/// the local head, so the one number that would have shown the node was behind
+/// instead agreed that it had arrived. Its logs knew better
+/// (`Sync target from consensus forkchoice: block 144`); nothing carried that
+/// into the RPC. `canonical_head` survives only as a last resort, for a node
+/// that has genuinely never been told a target.
+pub async fn resolve_highest_block(
+    storage: &Store,
+    head_hash: H256,
+    recorded_target: Option<BlockNumber>,
+    canonical_head: BlockNumber,
+) -> Result<BlockNumber, RpcErr> {
+    if let Some(number) = storage.get_block_number(head_hash).await? {
+        return Ok(number);
+    }
+    if let Some(block) = storage.get_pending_block(head_hash).await? {
+        return Ok(block.header.number);
+    }
+    // Never report a target *below* the canonical head: a stale recorded target
+    // would otherwise make a node that has since caught up look ahead of itself.
+    Ok(recorded_target
+        .map(|target| target.max(canonical_head))
+        .unwrap_or(canonical_head))
+}
+
 impl RpcHandler for Syncing {
     /// Ref: https://ethereum.org/en/developers/docs/apis/json-rpc/#eth_syncing
     fn parse(_params: &Option<Vec<Value>>) -> Result<Self, RpcErr> {
@@ -106,20 +144,15 @@ impl RpcHandler for Syncing {
         };
 
         // `get_last_fcu_head` returns the head *hash* from the last forkchoiceUpdated.
-        // Resolve it to a block number (the consensus-provided sync target). If the
-        // header isn't canonical yet it may still be a pending block whose number we
-        // can read; only when neither is available (e.g. mid snap-sync, target not
-        // downloaded) fall back to the canonical head instead of reporting garbage.
+        // See `resolve_highest_block` for the fallback order and why the
+        // recorded sync target has to come before the canonical head.
         let head_hash = syncer
             .get_last_fcu_head()
             .map_err(|error| RpcErr::Internal(error.to_string()))?;
-        let highest_block = match context.storage.get_block_number(head_hash).await? {
-            Some(number) => number,
-            None => match context.storage.get_pending_block(head_hash).await? {
-                Some(block) => block.header.number,
-                None => canonical_head,
-            },
-        };
+        let recorded_target = syncer.diagnostics().read().await.sync_target;
+        let highest_block =
+            resolve_highest_block(&context.storage, head_hash, recorded_target, canonical_head)
+                .await?;
 
         // `is_synced()` is a latch: it flips true on the first successful FCU and is
         // never reset on L1 (`set_not_synced` has no L1 caller), so it does not reflect

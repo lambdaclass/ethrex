@@ -309,6 +309,11 @@ pub async fn sync_cycle_full(
             sync_target_logged = true;
             let (target, target_ts) =
                 fcu_head.unwrap_or((first_header.number, first_header.timestamp));
+            // Record it before the `behind` gate below: a node that is stuck
+            // needs `eth_syncing` to report this target precisely when it
+            // cannot resolve the head hash itself, and that is independent of
+            // whether the distance was worth logging.
+            diagnostics.write().await.sync_target = Some(target);
             let local_head = store.get_latest_block_number().await?;
             let behind = target.saturating_sub(local_head);
             if behind > FOLLOW_DISTANCE {

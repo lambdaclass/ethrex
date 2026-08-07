@@ -3233,3 +3233,107 @@ async fn state_is_not_available_once_the_diff_layers_are_lost() {
          makes the sync cycle execute against state that is not there"
     );
 }
+
+// ---------------------------------------------------------------------------
+// eth_syncing must not hide a node that is behind.
+//
+// `highestBlock` is the only number in the response that says how far the
+// chain has actually got. When the last forkchoice head cannot be resolved
+// locally — precisely the situation of a node too far behind to have
+// downloaded it — the old code fell straight back to the local canonical head,
+// so the target collapsed onto the current block and the node reported that it
+// had arrived. Observed on the 2026-08-07 devnet: a node stuck 128 blocks
+// behind, failing every sync cycle, answering
+// `{"currentBlock":"0x36","highestBlock":"0x36"}`.
+// ---------------------------------------------------------------------------
+
+/// The regression: an unresolvable forkchoice head must report the sync
+/// cycle's recorded target, not the local head.
+#[tokio::test]
+async fn eth_syncing_reports_the_recorded_target_when_the_head_is_unknown() {
+    let chains = build_boundary_chains(FLIP_BLOCK + 2).await;
+    let store = &chains.scheduled_store;
+    make_canonical(store, &chains.scheduled_blocks).await;
+
+    let canonical_head = store.get_latest_block_number().await.unwrap();
+    let target = canonical_head + 128;
+
+    let highest = ethrex_rpc::resolve_highest_block(
+        store,
+        H256::repeat_byte(0xAB), // a head this node has never seen
+        Some(target),
+        canonical_head,
+    )
+    .await
+    .expect("highest-block resolution");
+
+    assert_eq!(
+        highest, target,
+        "a node that cannot resolve the forkchoice head is behind, not \
+         arrived; reporting the local head as the target is what made a \
+         wedged node advertise itself as caught up"
+    );
+}
+
+/// A resolvable head still wins — the recorded target must not override what
+/// the node actually knows.
+#[tokio::test]
+async fn eth_syncing_prefers_a_resolvable_forkchoice_head() {
+    let chains = build_boundary_chains(FLIP_BLOCK + 2).await;
+    let store = &chains.scheduled_store;
+    make_canonical(store, &chains.scheduled_blocks).await;
+
+    let head = chains.scheduled_blocks.last().expect("a non-empty chain");
+    let canonical_head = store.get_latest_block_number().await.unwrap();
+
+    let highest = ethrex_rpc::resolve_highest_block(
+        store,
+        head.hash(),
+        Some(canonical_head + 500), // a stale/bogus recorded target
+        canonical_head,
+    )
+    .await
+    .expect("highest-block resolution");
+
+    assert_eq!(
+        highest, head.header.number,
+        "the resolved forkchoice head is authoritative when it is known"
+    );
+}
+
+/// With no target ever recorded, the canonical head is the only honest answer.
+#[tokio::test]
+async fn eth_syncing_falls_back_to_the_canonical_head_with_no_target() {
+    let chains = build_boundary_chains(FLIP_BLOCK + 2).await;
+    let store = &chains.scheduled_store;
+    make_canonical(store, &chains.scheduled_blocks).await;
+
+    let canonical_head = store.get_latest_block_number().await.unwrap();
+    let highest =
+        ethrex_rpc::resolve_highest_block(store, H256::repeat_byte(0xAB), None, canonical_head)
+            .await
+            .expect("highest-block resolution");
+
+    assert_eq!(highest, canonical_head);
+}
+
+/// A stale recorded target must never drag the reported tip below the node's
+/// own head, which would make a caught-up node look ahead of the chain.
+#[tokio::test]
+async fn eth_syncing_never_reports_a_target_below_the_local_head() {
+    let chains = build_boundary_chains(FLIP_BLOCK + 2).await;
+    let store = &chains.scheduled_store;
+    make_canonical(store, &chains.scheduled_blocks).await;
+
+    let canonical_head = store.get_latest_block_number().await.unwrap();
+    let highest = ethrex_rpc::resolve_highest_block(
+        store,
+        H256::repeat_byte(0xAB),
+        Some(1), // long-since-passed target
+        canonical_head,
+    )
+    .await
+    .expect("highest-block resolution");
+
+    assert_eq!(highest, canonical_head);
+}

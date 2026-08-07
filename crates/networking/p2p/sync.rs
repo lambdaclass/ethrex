@@ -71,6 +71,13 @@ pub struct SyncDiagnostics {
     /// this rather than the canonical pointer so the node isn't shown as near-synced
     /// while it has no state up to the tip.
     pub executed_head: u64,
+    /// The consensus-provided sync target the last cycle worked toward.
+    ///
+    /// `eth_syncing` reports this as `highestBlock` when the forkchoice head
+    /// hash cannot be resolved locally — the state of a node too far behind to
+    /// have downloaded the target. Without it that case fell back to the local
+    /// head, so a node stuck 128 blocks behind reported that it had arrived.
+    pub sync_target: Option<u64>,
     pub pivot_block_number: Option<u64>,
     pub pivot_timestamp: Option<u64>,
     pub pivot_age_seconds: Option<u64>,
