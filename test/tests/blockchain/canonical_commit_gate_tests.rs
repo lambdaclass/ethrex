@@ -368,7 +368,7 @@ async fn bounded_reexec_without_fcu_bounds_memory_and_serves_window() {
     );
 
     // Re-execute a single canonical chain through the BOUNDED path, block by block, with
-    // NO forkchoice_update — exactly what regenerate_head_state / run_blocks_pipeline /
+    // NO forkchoice_update — exactly what regenerate_head_state / full-sync batch import /
     // import do. Record each block's state root to query the retained window later.
     let mut parent_header = genesis_header;
     let mut roots: Vec<H256> = Vec::with_capacity(BLOCKS as usize); // roots[N-1] == block N
