@@ -601,7 +601,16 @@ impl Default for Options {
 #[allow(clippy::large_enum_variant)]
 #[derive(ClapSubcommand)]
 pub enum Subcommand {
-    #[command(name = "removedb", about = "Remove the database")]
+    #[command(
+        name = "removedb",
+        about = "Remove the database",
+        long_about = "Remove the network-specific database directory.\n\n\
+             Must be run with the same --network (and --datadir) the node used. \
+             Without --network, ethrex defaults to mainnet and will refuse to delete \
+             if another network's database is found under --datadir.\n\n\
+             Example:\n  \
+             ethrex --network ./genesis.json --datadir /data removedb --force"
+    )]
     RemoveDB {
         #[arg(long = "datadir", value_name = "DATABASE_DIRECTORY", default_value = default_datadir().into_os_string(), required = false)]
         datadir: PathBuf,
@@ -748,17 +757,19 @@ impl Subcommand {
         match self {
             Subcommand::RemoveDB { datadir, force } => {
                 let effective = compute_effective_datadir(&datadir, &network, opts.dev);
-                if effective != datadir && has_valid_db(&datadir) && !has_valid_db(&effective) {
-                    warn!(
-                        "Database found at old location {datadir:?} but removedb targets {effective:?}. \
-                         Run with --datadir {datadir:?} or migrate first.",
-                    );
-                }
-                remove_db(&effective, force);
+                guard_remove_datadir(&datadir, &effective)?;
+                require_datadir_present_for_removal(&effective)?;
+                remove_db(&effective, force)?;
             }
             Subcommand::Import { path, removedb, l2 } => {
                 if removedb {
-                    remove_db(&effective_datadir, opts.force);
+                    // Wipe this network's datadir if present. If it is missing, the
+                    // target is already clean — do not refuse just because a sibling
+                    // network DB (e.g. mainnet next to sepolia) exists under the base.
+                    if effective_datadir.exists() {
+                        guard_remove_datadir(&opts.datadir, &effective_datadir)?;
+                    }
+                    remove_db(&effective_datadir, opts.force)?;
                 }
 
                 let genesis = network.get_genesis()?;
@@ -787,7 +798,10 @@ impl Subcommand {
                 with_bal,
             } => {
                 if removedb {
-                    remove_db(&effective_datadir, opts.force);
+                    if effective_datadir.exists() {
+                        guard_remove_datadir(&opts.datadir, &effective_datadir)?;
+                    }
+                    remove_db(&effective_datadir, opts.force)?;
                 }
                 info!("ethrex version: {}", get_client_version());
 
@@ -881,30 +895,142 @@ impl FromStr for LogColor {
     }
 }
 
-pub fn remove_db(datadir: &Path, force: bool) {
-    init_datadir(datadir);
+/// Find directories under `base` that look like real ethrex databases
+/// (`metadata.json` with a recognized schema version).
+///
+/// Checks the unsuffixed base and every immediate subdirectory. Name-based
+/// filters (public-network lists, `chain-*`) are intentionally avoided so the
+/// removedb guard fails closed if a future network suffix is added without
+/// updating a hand-maintained list.
+pub fn find_valid_datadir_candidates(base: &Path) -> Vec<PathBuf> {
+    let mut candidates = Vec::new();
 
-    if datadir.exists() {
-        if force {
-            std::fs::remove_dir_all(datadir).expect("Failed to remove data directory");
-            info!("Database removed successfully.");
-        } else {
-            print!("Are you sure you want to remove the database? (y/n): ");
-            io::stdout().flush().unwrap();
+    if has_valid_db(base) {
+        candidates.push(base.to_path_buf());
+    }
 
-            let mut input = String::new();
-            io::stdin().read_line(&mut input).unwrap();
-
-            if input.trim().eq_ignore_ascii_case("y") {
-                std::fs::remove_dir_all(datadir).expect("Failed to remove data directory");
-                println!("Database removed successfully.");
-            } else {
-                println!("Operation canceled.");
+    if let Ok(entries) = std::fs::read_dir(base) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() && has_valid_db(&path) {
+                candidates.push(path);
             }
         }
-    } else {
-        warn!("Data directory does not exist: {datadir:?}");
     }
+
+    candidates.sort();
+    candidates.dedup();
+    candidates
+}
+
+/// Refuse to remove `effective` when it has no valid database but another valid
+/// database exists under `base` (wrong `--network`, or pre-suffix layout).
+///
+/// `--force` must not bypass this check — it only skips the interactive confirm
+/// once the target is known to be the intended database.
+pub fn guard_remove_datadir(base: &Path, effective: &Path) -> eyre::Result<()> {
+    if has_valid_db(effective) {
+        return Ok(());
+    }
+
+    let alternates: Vec<PathBuf> = find_valid_datadir_candidates(base)
+        .into_iter()
+        .filter(|path| path != effective)
+        .collect();
+
+    if alternates.is_empty() {
+        return Ok(());
+    }
+
+    let alternate_list = alternates
+        .iter()
+        .map(|path| format!("  {path:?}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    if effective != base && has_valid_db(base) {
+        eyre::bail!(
+            "refusing to remove {effective:?}: no valid database there, but found one at the old \
+             unsuffixed location {base:?}.\n\
+             Re-passing the same `--datadir` will not help while `--network` still appends a \
+             subdirectory. Migrate first (start the node once so the DB moves into the network \
+             subdirectory), then re-run removedb with the matching `--network`, or remove the old \
+             directory manually (e.g. `rm -rf {base:?}`).\n\
+             Databases found under {base:?}:\n{alternate_list}"
+        );
+    }
+
+    eyre::bail!(
+        "refusing to remove {effective:?}: no valid database there, but found:\n{alternate_list}\n\
+         hint: re-run with the node's `--network` (and matching `--datadir`), e.g.\n  \
+         ethrex --network <genesis-or-network> --datadir {base:?} removedb --force"
+    );
+}
+
+/// Error if `datadir` is missing. Used by explicit `removedb` so a no-op wipe
+/// exits non-zero. Callers like `import --removedb` should skip this and let
+/// [`remove_db`] treat a missing path as a soft no-op.
+pub fn require_datadir_present_for_removal(datadir: &Path) -> eyre::Result<()> {
+    if datadir.exists() {
+        return Ok(());
+    }
+    eyre::bail!(
+        "data directory does not exist: {datadir:?}. Nothing was removed. \
+         If the node used a custom --network, pass the same --network here."
+    )
+}
+
+/// Remove an existing database directory.
+///
+/// Does **not** create the path. Reports success only after a directory that
+/// actually existed was deleted.
+///
+/// If the path is missing, logs a warning and returns `Ok(())` so optional wipes
+/// (`import --removedb`) can continue. Explicit `removedb` must call
+/// [`require_datadir_present_for_removal`] first.
+pub fn remove_db(datadir: &Path, force: bool) -> eyre::Result<()> {
+    if is_memory_datadir(datadir) {
+        eyre::bail!("cannot remove in-memory datadir {datadir:?}");
+    }
+
+    info!(path = %datadir.display(), "resolved removedb target");
+
+    if !datadir.exists() {
+        warn!(
+            path = %datadir.display(),
+            "data directory does not exist; nothing to remove"
+        );
+        return Ok(());
+    }
+
+    let had_valid_db = has_valid_db(datadir);
+
+    if !force {
+        print!("Are you sure you want to remove the database at {datadir:?}? (y/n): ");
+        io::stdout().flush()?;
+
+        let mut input = String::new();
+        io::stdin().read_line(&mut input)?;
+
+        if !input.trim().eq_ignore_ascii_case("y") {
+            println!("Operation canceled.");
+            return Ok(());
+        }
+    }
+
+    std::fs::remove_dir_all(datadir).map_err(|error| {
+        eyre::eyre!("failed to remove data directory {datadir:?}: {error}")
+    })?;
+
+    if had_valid_db {
+        info!(path = %datadir.display(), "database removed successfully");
+    } else {
+        info!(
+            path = %datadir.display(),
+            "removed directory (it did not contain a valid ethrex database)"
+        );
+    }
+    Ok(())
 }
 
 pub async fn import_blocks(
@@ -949,7 +1075,7 @@ pub async fn import_blocks(
                 info!(path = %path_str, "Importing blocks from file");
                 utils::read_chain_file(path_str)
             })
-            .collect()
+            .collect::<Vec<Vec<Block>>>()
     } else {
         info!(path = %path, "Importing blocks from file");
         vec![utils::read_chain_file(path)]
@@ -1079,7 +1205,7 @@ pub async fn import_blocks_bench(
                 info!(path = %path_str, "Importing blocks from file");
                 utils::read_chain_file(path_str)
             })
-            .collect()
+            .collect::<Vec<Vec<Block>>>()
     } else {
         info!(path = %path, "Importing blocks from file");
         vec![utils::read_chain_file(path)]
@@ -1365,6 +1491,178 @@ mod tests {
     use super::*;
     use clap::Parser;
     use ethrex_rpc::RpcNamespace;
+    use ethrex_storage::{STORE_METADATA_FILENAME, STORE_SCHEMA_VERSION};
+    use std::fs;
+
+    fn write_valid_db_metadata(dir: &Path) {
+        fs::create_dir_all(dir).unwrap();
+        fs::write(
+            dir.join(STORE_METADATA_FILENAME),
+            format!(r#"{{"schema_version":{STORE_SCHEMA_VERSION}}}"#),
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn remove_db_does_not_create_missing_path() {
+        let tmp = tempfile::tempdir().unwrap();
+        let missing = tmp.path().join("does-not-exist");
+        // Soft no-op for optional wipes (import --removedb).
+        remove_db(&missing, true).unwrap();
+        assert!(!missing.exists(), "removedb must not create the target path");
+    }
+
+    #[test]
+    fn require_datadir_present_errors_when_missing() {
+        let tmp = tempfile::tempdir().unwrap();
+        let missing = tmp.path().join("does-not-exist");
+        let err = require_datadir_present_for_removal(&missing)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("does not exist"), "{err}");
+        assert!(err.contains("Nothing was removed"), "{err}");
+        assert!(!missing.exists());
+    }
+
+    #[test]
+    fn explicit_removedb_flow_refuses_missing_after_guard() {
+        // Mirrors `ethrex removedb` when the resolved target is absent and there
+        // are no alternate DBs: soft remove_db would continue, but explicit
+        // removedb must still exit non-zero.
+        let tmp = tempfile::tempdir().unwrap();
+        let base = tmp.path();
+        let effective = base.join("mainnet");
+        guard_remove_datadir(base, &effective).unwrap();
+        let err = require_datadir_present_for_removal(&effective)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("does not exist"), "{err}");
+    }
+
+    #[test]
+    fn remove_db_deletes_valid_database() {
+        let tmp = tempfile::tempdir().unwrap();
+        let db = tmp.path().join("mainnet");
+        write_valid_db_metadata(&db);
+        assert!(has_valid_db(&db));
+
+        remove_db(&db, true).unwrap();
+        assert!(!db.exists());
+    }
+
+    #[test]
+    fn guard_refuses_when_sibling_chain_db_exists() {
+        let tmp = tempfile::tempdir().unwrap();
+        let base = tmp.path();
+        let chain_db = base.join("chain-42");
+        write_valid_db_metadata(&chain_db);
+
+        let effective = base.join("mainnet");
+        let err = guard_remove_datadir(base, &effective)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("refusing to remove"), "{err}");
+        assert!(err.contains("chain-42"), "{err}");
+        assert!(has_valid_db(&chain_db), "sibling DB must stay untouched");
+    }
+
+    #[test]
+    fn guard_refuses_old_unsuffixed_layout_with_actionable_hint() {
+        let tmp = tempfile::tempdir().unwrap();
+        let base = tmp.path();
+        write_valid_db_metadata(base);
+
+        let effective = base.join("mainnet");
+        let err = guard_remove_datadir(base, &effective)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("unsuffixed"), "{err}");
+        assert!(
+            err.contains("Re-passing the same `--datadir` will not help"),
+            "{err}"
+        );
+        assert!(err.contains("Migrate first"), "{err}");
+        assert!(err.contains("rm -rf"), "{err}");
+        assert!(has_valid_db(base));
+    }
+
+    #[test]
+    fn import_style_wipe_allows_missing_target_when_sibling_db_exists() {
+        // Multi-network same base: mainnet present, sepolia absent. Optional
+        // import --removedb must soft-continue (already clean for sepolia), not
+        // refuse because of the sibling.
+        let tmp = tempfile::tempdir().unwrap();
+        let base = tmp.path();
+        write_valid_db_metadata(&base.join("mainnet"));
+        let sepolia = base.join("sepolia");
+        assert!(!sepolia.exists());
+
+        // Explicit removedb would refuse; import-style skips guard when missing.
+        assert!(guard_remove_datadir(base, &sepolia).is_err());
+        remove_db(&sepolia, true).unwrap();
+        assert!(!sepolia.exists());
+        assert!(has_valid_db(&base.join("mainnet")));
+    }
+
+    #[test]
+    fn guard_allows_when_effective_has_valid_db_even_with_siblings() {
+        let tmp = tempfile::tempdir().unwrap();
+        let base = tmp.path();
+        let mainnet = base.join("mainnet");
+        let chain_db = base.join("chain-42");
+        write_valid_db_metadata(&mainnet);
+        write_valid_db_metadata(&chain_db);
+
+        guard_remove_datadir(base, &mainnet).unwrap();
+        remove_db(&mainnet, true).unwrap();
+        assert!(!mainnet.exists());
+        assert!(has_valid_db(&chain_db));
+    }
+
+    #[test]
+    fn find_candidates_includes_known_suffixes_and_chain_dirs() {
+        let tmp = tempfile::tempdir().unwrap();
+        let base = tmp.path();
+        write_valid_db_metadata(&base.join("sepolia"));
+        write_valid_db_metadata(&base.join("chain-99"));
+        // Junk dir without metadata must be ignored.
+        fs::create_dir_all(base.join("chain-empty")).unwrap();
+
+        let found = find_valid_datadir_candidates(base);
+        assert_eq!(found.len(), 2);
+        assert!(found.iter().any(|p| p.ends_with("sepolia")));
+        assert!(found.iter().any(|p| p.ends_with("chain-99")));
+    }
+
+    #[test]
+    fn guard_refuses_unknown_suffix_sibling_db() {
+        // Fail-closed: a valid DB under any immediate subdirectory must trip the
+        // guard, even when the name is not in all_datadir_suffixes() / chain-*.
+        let tmp = tempfile::tempdir().unwrap();
+        let base = tmp.path();
+        let weirdnet = base.join("weirdnet");
+        write_valid_db_metadata(&weirdnet);
+
+        let effective = base.join("mainnet");
+        let err = guard_remove_datadir(base, &effective)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("refusing to remove"), "{err}");
+        assert!(err.contains("weirdnet"), "{err}");
+        assert!(has_valid_db(&weirdnet), "sibling DB must stay untouched");
+    }
+
+    #[test]
+    fn find_candidates_includes_unknown_suffix_dirs() {
+        let tmp = tempfile::tempdir().unwrap();
+        let base = tmp.path();
+        write_valid_db_metadata(&base.join("weirdnet"));
+        fs::create_dir_all(base.join("empty-junk")).unwrap();
+
+        let found = find_valid_datadir_candidates(base);
+        assert_eq!(found.len(), 1);
+        assert!(found[0].ends_with("weirdnet"));
+    }
 
     /// `--http.addr` must default to `127.0.0.1` so a fresh install on a public
     /// host is not exposed to the open internet.

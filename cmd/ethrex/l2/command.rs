@@ -77,8 +77,11 @@ impl L2Command {
 
         if l2_options.node_opts.dev {
             println!("Removing L1 and L2 databases...");
-            remove_db(DB_ETHREX_DEV_L1.as_ref(), true);
-            remove_db(DB_ETHREX_DEV_L2.as_ref(), true);
+            for path in [Path::new(DB_ETHREX_DEV_L1), Path::new(DB_ETHREX_DEV_L2)] {
+                if path.exists() {
+                    remove_db(path, true)?;
+                }
+            }
             println!("Initializing L1");
             init_l1(
                 crate::cli::Options::default_l1(),
@@ -295,7 +298,8 @@ impl Command {
                 prover_client_options,
             } => ethrex_l2_prover::init_client(prover_client_options.into()).await,
             Self::RemoveDB { datadir, force } => {
-                remove_db(&datadir, force);
+                crate::cli::require_datadir_present_for_removal(&datadir)?;
+                remove_db(&datadir, force)?;
             }
             Command::BlobsSaver {
                 l1_eth_rpc,
