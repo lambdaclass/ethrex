@@ -188,13 +188,18 @@ pub fn classify(tx: &Transaction, utxo_frames_active: bool) -> VopsProfile {
     }
 }
 
-/// The three static Profile 2 candidate conditions, "true from the transaction
+/// The four static Profile 2 candidate conditions, "true from the transaction
 /// alone":
 ///
 /// 1. a statically valid EIP-8141 frame transaction;
 /// 2. its prefix matches one of the four recognized shapes, with any expiry
 ///    verifier frame unique and first;
-/// 3. its VERIFY budget cost is at most [`MAX_VERIFY_GAS_PER_TX`].
+/// 3. no prefix frame sets `ATOMIC_BATCH_FLAG`, and no frame after the prefix
+///    has mode `VERIFY`;
+/// 4. its VERIFY budget cost is at most [`MAX_VERIFY_GAS_PER_TX`].
+///
+/// Condition 3 is enforced by [`FrameTransaction::validate_prefix_structure`],
+/// which rejects both as EIP-8141 structural violations.
 ///
 /// A self-funded EIP-8312 UTXO spend matches no recognized prefix and so is not
 /// a candidate, which is the intended outcome.
