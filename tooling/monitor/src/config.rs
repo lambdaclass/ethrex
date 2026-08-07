@@ -10,5 +10,4 @@ pub struct MonitorConfig {
     pub sequencer_registry_address: Option<ethrex_common::Address>,
     pub rpc_urls: Vec<reqwest::Url>,
     pub is_based: bool,
-    pub osaka_activation_time: Option<u64>,
 }
