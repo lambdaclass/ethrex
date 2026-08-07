@@ -72,6 +72,14 @@ pub const FRAMEDATACOPY_STATIC: u64 = 3;
 pub const FRAMEDATACOPY_DYNAMIC_BASE: u64 = 3;
 pub const FRAMEPARAM: u64 = 2;
 pub const SIGPARAM: u64 = 2;
+/// EIP-7906 `TXTRACE_GAS_COST`. Provisional value (the EIP marks the gas cost TBD;
+/// 100 matches the EIP's own example, ~warm access). Also the flat cost of the
+/// TXDIFF params answered purely from the transaction-local diff (`0x06`-`0x0A`).
+///
+/// TXDIFF has no single constant: its state-reading params (`0x00`-`0x05`) are
+/// priced through the EIP-2929 access lists via [`sload`] / [`balance`], per
+/// EIP-7906 §Gas Cost.
+pub const TXTRACE: u64 = 100;
 
 pub fn framedatacopy(
     new_memory_size: usize,

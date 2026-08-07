@@ -15,6 +15,7 @@ pub mod logging;
 pub mod push;
 pub mod stack_memory_storage_flow;
 pub mod system;
+pub mod tx_trace;
 
 pub trait OpcodeHandler {
     fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError>;
