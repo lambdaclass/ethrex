@@ -150,17 +150,33 @@ impl LayeredBinaryTrieDB {
 }
 
 impl BinaryTrieDB for LayeredBinaryTrieDB {
-    /// Read cascade: layer chain first, then disk.
+    /// Read cascade: layer chain, then the deep-reorg overlay if one is
+    /// installed and serves this root, then disk. The binary mirror of
+    /// [`TrieWrapper::get`](crate::layering::TrieWrapper), including the
+    /// precedence: a layer write supersedes the pivot value the overlay holds,
+    /// and an overlay hit supersedes disk, which during a deep reorg still
+    /// reflects the chain being abandoned.
     ///
     /// A layer hit is authoritative in both directions. `Some(None)` is a
     /// tombstone — the node left the tree in one of these blocks — and must
     /// answer `None` *without* falling through, because the single-version
-    /// on-disk trie still holds the node this block removed.
+    /// on-disk trie still holds the node this block removed. The overlay's
+    /// `Some(None)` means the same thing one level down: the node did not exist
+    /// at the pivot, so disk must not be consulted for it either.
     fn get(&self, path: &BitPath) -> Result<Option<Vec<u8>>, BinaryTrieError> {
-        match self.cache.binary_get(self.binary_root, &path.to_db_key()) {
-            Some(value) => Ok(value),
-            None => self.db.get(path),
+        let key = path.to_db_key();
+        if let Some(value) = self.cache.binary_get(self.binary_root, &key) {
+            return Ok(value);
         }
+        // Gated on the binary root, not the header state root: before activation
+        // those differ, and this reader only ever holds the binary one. See
+        // `TrieLayerCache::overlay_serves_binary`.
+        if self.cache.overlay_serves_binary(self.binary_root)
+            && let Some(value) = self.cache.lookup_binary_overlay(&key)
+        {
+            return Ok(value);
+        }
+        self.db.get(path)
     }
 
     /// Stages every entry, writing nothing. Tombstones are staged verbatim as

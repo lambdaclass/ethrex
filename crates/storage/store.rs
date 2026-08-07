@@ -354,6 +354,15 @@ pub struct BinaryTrieAdvance {
     /// `BINARY_TRIE_ROOTS` by the producer, and the key the layer's secondary
     /// index uses.
     pub root: H256,
+    /// The parent block's binary-trie root, i.e. the root these updates were
+    /// applied on top of.
+    ///
+    /// Carried alongside the new root because the reverse-diff journal has to
+    /// record it: unwinding this block's nodes returns the trie to *this* root,
+    /// and nothing else in the layer knows what it is (before activation the
+    /// parent's header carries an MPT root, and the parent layer is usually
+    /// already on disk).
+    pub parent_root: H256,
     /// `(BINARY_TRIE_NODES key, encoded node)` pairs; an empty value is a
     /// tombstone, per `BinaryTrieDB`'s convention.
     pub nodes: BinaryTrieNodes,
@@ -363,6 +372,7 @@ impl From<BinaryTrieAdvance> for BinaryLayerUpdate {
     fn from(advance: BinaryTrieAdvance) -> Self {
         BinaryLayerUpdate {
             root: advance.root,
+            parent_root: advance.parent_root,
             nodes: advance.nodes,
         }
     }
@@ -2897,9 +2907,16 @@ impl Store {
     /// the recorded root and the nodes agree again
     /// (see [`Self::advance_binary_trie_for_block`]).
     ///
-    /// **What remains**: a reorg *deeper* than the layer cache, where the
-    /// abandoned branch's nodes were already flushed and the binary trie has no
-    /// journal to unwind them with. The recorded mapping still cannot see that.
+    /// A reorg *deeper* than the layer cache — where the abandoned branch's
+    /// nodes were already flushed — is now covered too: `STATE_HISTORY` carries
+    /// a binary reverse-diff, so the deep-reorg overlay puts the on-disk trie
+    /// back at the pivot before any new-chain block executes. The presence check
+    /// below reads through that overlay like any other reader, so it answers for
+    /// the unwound trie rather than the abandoned one.
+    ///
+    /// **What remains**: the journal does not cover full sync, which writes one
+    /// layer per ~1024 blocks and skips journaling entirely, so a reorg into a
+    /// batch-imported range is out of reach on both tries alike.
     ///
     /// [`BINARY_TRIE_ROOTS`]: crate::api::tables::BINARY_TRIE_ROOTS
     /// **Two questions, both required.** The mapping answers "is `state_root`
@@ -3048,12 +3065,11 @@ impl Store {
     /// block consults to find the root it must extend, and because a rejected
     /// block un-records it ([`Self::remove_binary_trie_root`]).
     ///
-    /// **Not covered:** a reorg deeper than the layer window, which the MPT
-    /// bridges with the `STATE_HISTORY` journal and the deep-reorg overlay.
-    /// Binary nodes are not journaled, so a deep reorg past the cache edge
-    /// leaves the on-disk binary trie on the abandoned chain — the same
-    /// exposure every reorg had before this change, now narrowed to reorgs
-    /// deeper than the cache. See the module docs in `layering.rs`.
+    /// A reorg *deeper* than the layer window is covered by the other half of
+    /// the same machinery: when the layer does flush, `commit_to_disk` records a
+    /// reverse diff of these nodes in `STATE_HISTORY` alongside the MPT's, and
+    /// the deep-reorg overlay replays it to put the on-disk trie back at the
+    /// pivot. See the module docs in `layering.rs`.
     ///
     /// # Errors
     ///
@@ -3093,7 +3109,11 @@ impl Store {
 
         let nodes = std::mem::take(&mut *staged.lock().map_err(|_| StoreError::LockError)?);
         self.set_binary_trie_root(block_hash, root)?;
-        Ok(BinaryTrieAdvance { root, nodes })
+        Ok(BinaryTrieAdvance {
+            root,
+            parent_root,
+            nodes,
+        })
     }
 
     /// Write every code carried by `account_updates` into `ACCOUNT_CODES` and
@@ -4599,24 +4619,24 @@ impl Store {
             TrieLayerCache::new_with_safe_commit(threshold, self.safe_commit_root.clone());
         fresh.set_overlay(Arc::new(overlay));
 
-        // The overlay bridges the MPT and flat-KV CFs only: it is built from
-        // `STATE_HISTORY`, whose reverse diffs cover those four column families
-        // and not `BINARY_TRIE_NODES`. Binary-trie nodes are staged in the same
-        // diff layers as the MPT's and discarded with them, which covers every
-        // reorg inside the layer window; a reorg deeper than that window,
-        // however, unwinds an MPT the journal can rebuild and a binary trie it
-        // cannot, leaving the on-disk binary state on the abandoned chain.
-        //
-        // Loud rather than silent: a scheduled chain reaching here has a real
-        // hole, and the operator should see it. Closing it needs a binary
-        // reverse-diff journal, which is deliberately not part of this change.
-        if self.chain_config.binary_tree_scheduled() {
+        // The overlay bridges `BINARY_TRIE_NODES` as well as the four MPT/flat-KV
+        // CFs, so a scheduled chain's on-disk binary trie is unwound to the pivot
+        // along with its MPT and both are folded into the same reconciliation
+        // write. A zero `serves_binary_root` on a scheduled chain means the
+        // journal entry at the pivot's height carried no binary root, which
+        // should be impossible — shadow tracking runs from genesis on a
+        // scheduled chain — so it is reported rather than papered over: the
+        // replay would fall through to disk and read the abandoned branch.
+        if self.chain_config.binary_tree_scheduled()
+            && let Some(overlay) = fresh.overlay()
+            && overlay.serves_binary_root().is_zero()
+        {
             warn!(
                 from_block,
                 to_block,
-                "deep reorg on a binary-tree-scheduled chain: the STATE_HISTORY overlay rebuilds \
-                 MPT and flat-KV state only, so the on-disk binary trie is NOT unwound past the \
-                 layer-cache edge and may hold the abandoned chain's state"
+                "deep reorg on a binary-tree-scheduled chain: the journal entry at the pivot \
+                 records no binary root, so the on-disk binary trie will NOT be unwound and may \
+                 hold the abandoned chain's state"
             );
         }
 
@@ -4627,6 +4647,8 @@ impl Store {
         // The fresh cache starts with no layers, so its binary-root index and
         // binary bloom start empty too: the abandoned chain's staged binary
         // nodes go away with its MPT layers, in one step, by construction.
+        // Anything the abandoned chain already *flushed* is handled by the
+        // overlay's binary reverse-diff, not here.
         let mut guard = self.trie_cache.write().map_err(|_| StoreError::LockError)?;
         *guard = Arc::new(fresh);
         Ok(())
@@ -4693,6 +4715,13 @@ impl Store {
     /// partially-built new-chain layers are discarded. On-disk state is
     /// untouched (still at the OLD chain's `D`), so subsequent FCU evaluations
     /// start from a clean foundation.
+    ///
+    /// That holds for the binary trie too, and for the same reason: the unwind
+    /// lives entirely in the overlay until the reconciliation commit folds it
+    /// into one write batch, so an abort before that point leaves
+    /// `BINARY_TRIE_NODES` exactly as the old chain left it. There is no partial
+    /// unwind to repair — the two tries abort together because they were only
+    /// ever going to be persisted together.
     pub fn abort_reorg(&self) -> Result<(), StoreError> {
         // Rendezvous with the persist worker before swapping, exactly like
         // `install_overlay_for_reorg`: the live-path ack fires BEFORE
@@ -5520,6 +5549,25 @@ fn commit_to_disk(
         }
         None => Vec::new(),
     };
+    // The same bridge for `BINARY_TRIE_NODES`, kept as a separate list because
+    // these keys go to one fixed column family and, crucially, cannot be routed
+    // by length: a `BitPath` key overlaps every range `classify_trie_key`
+    // dispatches on, so folding them into `extra_writes` would write binary nodes
+    // into `ACCOUNT_TRIE_NODES` and corrupt the MPT.
+    let binary_extra_writes: Vec<(Vec<u8>, Vec<u8>)> = match &overlay_for_reconciliation {
+        Some(overlay) => {
+            let layer_keys: rustc_hash::FxHashSet<&Vec<u8>> = committed_layers
+                .iter()
+                .flat_map(|l| l.binary_nodes.iter().map(|(k, _)| k))
+                .collect();
+            overlay
+                .iter_binary_entries()
+                .filter(|(key, _)| !layer_keys.contains(key))
+                .map(|(key, value)| (key.clone(), value.clone().unwrap_or_default()))
+                .collect()
+        }
+        None => Vec::new(),
+    };
     // Pivot heights (T, D) for the reconciliation commit; `None` in steady state.
     let reorg_heights = overlay_for_reconciliation
         .as_ref()
@@ -5535,6 +5583,19 @@ fn commit_to_disk(
     // For large state diffs this is O(N) extra reads on the per-block critical path.
     // A follow-up could batch these via `multi_get_cf` if profiling shows it's significant.
     let mut overlay: HashMap<Vec<u8>, Option<Vec<u8>>> = HashMap::new();
+    // The same intra-batch pre-image map for `BINARY_TRIE_NODES`, and separate
+    // for the same reason the overlay's binary map is: a `BitPath` key can be
+    // byte-identical to an account-trie path, so one shared map would let a
+    // binary write supply an MPT pre-image (or the reverse) and silently
+    // corrupt whichever reverse diff read it second.
+    //
+    // PERF: same shape as above — one `read_view.get` per first-touched binary
+    // key, so a scheduled chain pays roughly twice the pre-image reads an
+    // unscheduled one does. That is the same doubling shadow tracking already
+    // imposes on the write side, and it buys the only thing that makes a deep
+    // reorg recoverable past activation. Untouched on unscheduled chains, where
+    // `layer.binary_nodes` is empty and this map stays so.
+    let mut binary_overlay: HashMap<Vec<u8>, Option<Vec<u8>>> = HashMap::new();
 
     let mut result = Ok(());
     'layers: for layer in &committed_layers {
@@ -5547,6 +5608,7 @@ fn commit_to_disk(
         let mut journal_storage_trie: FlatDiff = Vec::new();
         let mut journal_account_flat: FlatDiff = Vec::new();
         let mut journal_storage_flat: FlatDiff = Vec::new();
+        let mut journal_binary_trie: FlatDiff = Vec::new();
 
         // The reconciliation commit is single-layer at `T`; fold the overlay bridge entries
         // into that layer's writes so they land in T's journal entry. `extra` is empty in
@@ -5639,20 +5701,56 @@ fn commit_to_disk(
         //
         // Empty on unscheduled chains, so they do exactly the work they did.
         //
-        // Not journaled: `STATE_HISTORY` reverse-diffs cover the four MPT/flat-KV
-        // CFs only, so a reorg deeper than the layer cache cannot rebuild binary
-        // state. Reorgs within the cache — every reorg the layer chain covers —
-        // never write these nodes at all, so they need no reverse diff.
-        for (key, value) in &layer.binary_nodes {
-            result = if value.is_empty() {
+        // Journaled exactly as the MPT's are, into their own section of the
+        // entry: the node table is path-keyed and single-version, so this write
+        // destroys the previous version and only a recorded pre-image can put it
+        // back. Reorgs within the layer window never reach here (the nodes stay
+        // staged), so the reverse diff is only ever consumed by a reorg deeper
+        // than the cache — which is precisely the case that was unrecoverable
+        // before.
+        //
+        // `binary_extra` folds the overlay's binary bridge into the single
+        // reconciliation layer, mirroring `extra` above.
+        let binary_extra: &[(Vec<u8>, Vec<u8>)] = if is_reconciliation_layer {
+            &binary_extra_writes
+        } else {
+            &[]
+        };
+        for (key, value) in layer.binary_nodes.iter().chain(binary_extra.iter()) {
+            // Pre-image first, from the intra-batch map or disk, exactly as the
+            // MPT loop above does — a multi-layer commit must record each
+            // block's own pre-state, not the pre-batch one.
+            let prev_value = if !is_batch {
+                match binary_overlay.get(key) {
+                    Some(v) => Some(v.clone()),
+                    None => match read_view.get(BINARY_TRIE_NODES, key) {
+                        Ok(v) => Some(v),
+                        Err(e) => {
+                            result = Err(e);
+                            break 'layers;
+                        }
+                    },
+                }
+            } else {
+                None
+            };
+
+            let new_value = if value.is_empty() {
                 // Tombstone: the node left the tree. Storing zero bytes would
                 // make the path read back as a node the trie never wrote.
-                write_tx.delete(BINARY_TRIE_NODES, key)
+                result = write_tx.delete(BINARY_TRIE_NODES, key);
+                None
             } else {
-                write_tx.put(BINARY_TRIE_NODES, key, value)
+                result = write_tx.put(BINARY_TRIE_NODES, key, value);
+                Some(value.clone())
             };
             if result.is_err() {
                 break 'layers;
+            }
+
+            if let Some(prev) = prev_value {
+                journal_binary_trie.push((key.clone(), prev));
+                binary_overlay.insert(key.clone(), new_value);
             }
         }
 
@@ -5697,10 +5795,12 @@ fn commit_to_disk(
             let entry = JournalEntry {
                 block_hash: layer.block_hash,
                 parent_state_root: layer.parent_state_root,
+                parent_binary_root: layer.parent_binary_root,
                 account_trie_diff: journal_account_trie,
                 storage_trie_diff: journal_storage_trie,
                 account_flat_diff: journal_account_flat,
                 storage_flat_diff: journal_storage_flat,
+                binary_trie_diff: journal_binary_trie,
             };
             result = write_tx.put(
                 STATE_HISTORY,
@@ -6514,10 +6614,12 @@ mod state_history_tests {
             let entry = JournalEntry {
                 block_hash: H256::repeat_byte(*n as u8),
                 parent_state_root: H256::zero(),
+                parent_binary_root: H256::zero(),
                 account_trie_diff: vec![(vec![*n as u8], None)],
                 storage_trie_diff: vec![],
                 account_flat_diff: vec![],
                 storage_flat_diff: vec![],
+                binary_trie_diff: vec![],
             };
             tx.put(STATE_HISTORY, &n.to_be_bytes(), &entry.encode())
                 .unwrap();
@@ -6979,10 +7081,12 @@ mod state_history_tests {
                 let entry = JournalEntry {
                     block_hash: H256::repeat_byte(n as u8),
                     parent_state_root: parent_root,
+                    parent_binary_root: H256::zero(),
                     account_trie_diff: vec![],
                     storage_trie_diff: vec![],
                     account_flat_diff: vec![],
                     storage_flat_diff: vec![],
+                    binary_trie_diff: vec![],
                 };
                 tx.put(STATE_HISTORY, &n.to_be_bytes(), &entry.encode())
                     .unwrap();
@@ -7069,10 +7173,12 @@ mod state_history_tests {
                 let entry = JournalEntry {
                     block_hash: H256::repeat_byte(n as u8),
                     parent_state_root: parent_root,
+                    parent_binary_root: H256::zero(),
                     account_trie_diff: vec![(vec![0x00, n as u8], None)],
                     storage_trie_diff: vec![],
                     account_flat_diff: vec![],
                     storage_flat_diff: vec![],
+                    binary_trie_diff: vec![],
                 };
                 tx.put(STATE_HISTORY, &n.to_be_bytes(), &entry.encode())
                     .unwrap();

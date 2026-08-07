@@ -45,7 +45,7 @@ use bytes::Bytes;
 use ethrex_blockchain::{
     Blockchain,
     error::{ChainError, InvalidBlockError, InvalidForkChoice},
-    fork_choice::apply_fork_choice,
+    fork_choice::{apply_fork_choice, apply_fork_choice_with_deep_reorg},
     payload::{BuildPayloadArgs, create_payload},
     vm::StoreVmDatabase,
 };
@@ -2561,6 +2561,365 @@ async fn an_unscheduled_chain_stages_and_flushes_no_binary_nodes() {
         store.account_trie_node_count_for_test().unwrap() > 0,
         "its MPT must still have been flushed, so the gate really did fire"
     );
+}
+
+// ---------------------------------------------------------------------------
+// E.6 A reorg *deeper* than the layer window unwinds the on-disk binary trie.
+//
+// E.3 covers every reorg inside the diff-layer window, where the abandoned
+// branch's binary nodes are discarded before they are ever written. This is the
+// case underneath it: the abandoned branch was flushed, the layer cache is gone
+// (a restart, or simply enough commits past the fork point), and the only thing
+// that can put the binary trie back at the pivot is the `STATE_HISTORY`
+// reverse-diff journal — which is exactly what the binary sections of the
+// journal exist for.
+// ---------------------------------------------------------------------------
+
+/// The shape both deep-reorg tests below drive: a scheduled chain past the
+/// flip, forked at `fork_index`, with the losing branch already flushed to disk
+/// and every diff layer dropped, so recovering the winner is only possible
+/// through the journal.
+struct DeepReorgFixture {
+    chain: StagedChain,
+    /// The winning branch's blocks, in order, excluding the shared prefix.
+    winner: Vec<Block>,
+    /// The full winning chain from block 1, for the clean-replay oracle.
+    canonical: Vec<Block>,
+    /// Blocks of the branch that was flushed to disk and must be unwound.
+    loser: Vec<Block>,
+}
+
+/// Builds two competing branches past the activation, flushes the *loser* to
+/// disk, then drops every diff layer.
+///
+/// The drop is what makes this a deep reorg rather than the E.3 case: with no
+/// layers left, the pivot's state exists only on disk (where the loser has
+/// overwritten it) plus the journal, so nothing short of an unwind can serve
+/// the winner's first block its parent state.
+///
+/// The two branch lengths are separate on purpose. When the winner is at least
+/// as long as the loser it tends to rewrite every path the loser touched, so the
+/// unwind is invisible in the end state; a **shorter** winner leaves the loser's
+/// top blocks with nothing above them, which is what forces the reconciliation
+/// bridge to carry those keys back to their pivot values.
+async fn build_deep_reorg_fixture(
+    prefix_len: u64,
+    loser_len: u64,
+    winner_len: u64,
+) -> DeepReorgFixture {
+    let chain = build_staged_chain(prefix_len).await;
+    let fork_point = chain.blocks.last().unwrap().header.clone();
+    let signer: Signer = LocalSigner::new(test_secret_key()).into();
+    let base_nonce = chain.blocks.len() as u64;
+
+    // Two branches from the same parent with different cadences, so every
+    // block's state — and therefore every binary root — differs at every height.
+    let mut branches: Vec<Vec<Block>> = Vec::new();
+    for (offset, branch_len) in [(1u64, loser_len), (2, winner_len)] {
+        let mut parent = fork_point.clone();
+        let mut branch = Vec::new();
+        for i in 0..branch_len {
+            let tx = transfer_tx(chain.chain_id, base_nonce + i, &signer).await;
+            chain
+                .blockchain
+                .add_transaction_to_pool(tx)
+                .await
+                .expect("tx should enter pool");
+            let block = build_block_at(
+                &chain.store,
+                &chain.blockchain,
+                &parent,
+                parent.timestamp + BLOCK_TIME + offset,
+            )
+            .await;
+            chain
+                .blockchain
+                .add_block(block.clone())
+                .unwrap_or_else(|err| panic!("branch block must import: {err:?}"));
+            chain
+                .blockchain
+                .remove_block_transactions_from_pool(&block)
+                .expect("remove block txs from pool");
+            parent = block.header.clone();
+            branch.push(block);
+        }
+        branches.push(branch);
+    }
+    let winner = branches.pop().expect("two branches");
+    let loser = branches.pop().expect("two branches");
+
+    // Every branch block is past the flip whatever the fork point is, so the
+    // reorg really does turn on the binary trie rather than the MPT.
+    for block in winner.iter().chain(loser.iter()) {
+        assert!(block.header.timestamp >= chain.activation);
+        assert_eq!(
+            block.header.state_root,
+            binary_root(&chain.store, block),
+            "block {} must commit its own binary root",
+            block.header.number
+        );
+    }
+
+    // The loser becomes canonical and is flushed: its binary nodes reach disk,
+    // and the journal records the reverse diff of every block above the pivot.
+    let loser_chain: Vec<Block> = chain.blocks.iter().cloned().chain(loser.clone()).collect();
+    make_canonical(&chain.store, &loser_chain).await;
+    flush_every_layer(&chain.store, loser_chain.last().unwrap().header.state_root).await;
+
+    // And now the layers go away, exactly as a restart loses them. Everything
+    // below has to come out of disk plus the journal.
+    chain.store.drop_trie_layers_for_test().unwrap();
+
+    // The journal has to reach back past the pivot, or the deep path has nothing
+    // to unwind with and declines with `StateNotReachable` for a reason that has
+    // nothing to do with the binary trie.
+    let pivot_number = fork_point.number;
+    assert_eq!(
+        chain
+            .store
+            .highest_state_history_block_number()
+            .unwrap()
+            .expect("the flush must have journaled"),
+        loser_chain.last().unwrap().header.number,
+        "the journal's edge must be the flushed head"
+    );
+    assert!(
+        chain
+            .store
+            .lowest_state_history_block_number()
+            .unwrap()
+            .expect("the flush must have journaled")
+            <= pivot_number + 1,
+        "the journal must reach back to the block above the pivot"
+    );
+    assert!(
+        chain.store.flatkeyvalue_fully_generated().unwrap(),
+        "the deep path defers while flat-KV generation is in flight"
+    );
+
+    let canonical: Vec<Block> = chain.blocks.iter().cloned().chain(winner.clone()).collect();
+    DeepReorgFixture {
+        chain,
+        winner,
+        canonical,
+        loser,
+    }
+}
+
+/// Force the commit gate at `root` until no layer is left below it.
+///
+/// One pass is not always enough: while a deep-reorg overlay is installed
+/// `commit_to_disk` deliberately commits only the bottom layer per pass, so the
+/// backlog above it drains on subsequent passes. Iterating to a fixed point
+/// keeps the tests' "what is on disk" assertions honest either way.
+async fn flush_every_layer(store: &Store, root: H256) {
+    let mut previous = usize::MAX;
+    for _ in 0..8 {
+        store
+            .commit_trie_layers_for_test(root)
+            .await
+            .expect("forcing the commit gate");
+        let count = store.binary_trie_node_count_for_test().unwrap();
+        if !store.is_state_in_layer_cache(root).unwrap() || count == previous {
+            break;
+        }
+        previous = count;
+    }
+}
+
+/// A node that only ever saw `blocks`, flushed the same way, as the oracle for
+/// what the reorged node's disk must hold.
+async fn clean_replay(genesis: &Genesis, blocks: &[Block]) -> Store {
+    let store = store_from_genesis(genesis.clone()).await;
+    let blockchain = Blockchain::default_with_store(store.clone());
+    for block in blocks {
+        blockchain
+            .add_block(block.clone())
+            .unwrap_or_else(|err| panic!("clean replay must import: {err:?}"));
+    }
+    make_canonical(&store, blocks).await;
+    flush_every_layer(&store, blocks.last().unwrap().header.state_root).await;
+    store
+}
+
+/// A reorg deeper than the layer window must leave the on-disk binary trie
+/// byte-for-byte what a node that only ever saw the winning branch holds.
+///
+/// Without a binary reverse-diff journal the deep path cannot even get started:
+/// the pivot's binary root is not what the on-disk trie resolves to (the loser
+/// overwrote it), so the very first replayed block fails to open its parent
+/// state. With one, the overlay serves the pivot's binary nodes to the replay
+/// and the reconciliation folds the unwound nodes into the same atomic write as
+/// the new chain's.
+#[tokio::test]
+async fn a_deep_reorg_unwinds_the_on_disk_binary_trie() {
+    // Three blocks abandoned, one adopted: the reorged node's head is *below*
+    // the height the abandoned branch reached, so two blocks' worth of on-disk
+    // binary nodes have nothing above them to overwrite them and must be
+    // unwound outright.
+    let fixture = build_deep_reorg_fixture(FLIP_BLOCK + 1, 3, 1).await;
+    let head = fixture.winner.last().unwrap();
+
+    // Precondition: this really is deeper than the layer window. The pivot's
+    // state is unreachable without an unwind, which is what makes the shallow
+    // path decline it.
+    let pivot = fixture.chain.blocks.last().unwrap();
+    assert!(
+        !fixture
+            .chain
+            .store
+            .is_state_in_layer_cache(pivot.header.state_root)
+            .unwrap(),
+        "the pivot must have no diff layer, or this is the shallow reorg E.3 already covers"
+    );
+    assert!(
+        !fixture
+            .chain
+            .store
+            .has_binary_trie_state(pivot.hash(), pivot.header.state_root)
+            .unwrap(),
+        "the on-disk binary trie must currently be on the abandoned branch, or there is \
+         nothing here to unwind"
+    );
+
+    apply_fork_choice_with_deep_reorg(
+        &fixture.chain.blockchain,
+        head.hash(),
+        H256::zero(),
+        H256::zero(),
+    )
+    .await
+    .expect("the deep reorg onto the winning branch must succeed");
+
+    // Flush whatever the reconciliation left in layers, so the comparison below
+    // is against a fully-persisted trie on both sides.
+    flush_every_layer(&fixture.chain.store, head.header.state_root).await;
+
+    let clean = clean_replay(&fixture.chain.genesis, &fixture.canonical).await;
+    assert_eq!(
+        binary_nodes_on_disk(&fixture.chain.store),
+        binary_nodes_on_disk(&clean),
+        "after a deep reorg the on-disk binary trie must be exactly what a node that only \
+         ever saw the winning branch holds: any extra or differing entry is an abandoned-branch \
+         node the journal failed to unwind"
+    );
+
+    // And the winner's state is readable at its own root, from disk.
+    let db = StoreVmDatabase::new(fixture.chain.store.clone(), head.header.clone())
+        .expect("the reorged head must open");
+    assert_eq!(
+        db.get_account_state(sender_from_key(&test_secret_key()))
+            .unwrap()
+            .unwrap()
+            .nonce,
+        fixture.canonical.len() as u64,
+        "the winning chain's sender nonce must count one transfer per canonical block"
+    );
+    assert_eq!(
+        db.get_account_state(test_recipient())
+            .unwrap()
+            .unwrap()
+            .balance,
+        U256::from(fixture.canonical.len()),
+        "the winning chain's recipient balance must count one wei per canonical block"
+    );
+
+    // The abandoned branch's roots must no longer resolve: its nodes are gone.
+    for block in &fixture.loser {
+        assert!(
+            !fixture
+                .chain
+                .store
+                .has_binary_trie_state(block.hash(), block.header.state_root)
+                .unwrap(),
+            "abandoned block {} must not still have readable binary state",
+            block.header.number
+        );
+    }
+}
+
+/// The same unwind with the pivot on the **other side of the flip**: the block
+/// the reorg returns to commits an MPT root, while every block above it commits
+/// a binary one.
+///
+/// This is the per-header rule under the deep-reorg path. The overlay has to
+/// serve two different roots for the same pivot — `serves_root` for the MPT the
+/// pivot's header names, `serves_binary_root` for the shadow-tracked binary trie
+/// the blocks above it extend — and nothing in the pivot's header names the
+/// second one. A design that reused the header state root for both would find
+/// nothing here and fall through to the abandoned branch on disk.
+#[tokio::test]
+async fn a_deep_reorg_whose_pivot_is_before_the_flip_still_unwinds_the_binary_trie() {
+    let fixture = build_deep_reorg_fixture(FLIP_BLOCK - 1, 3, 1).await;
+    let head = fixture.winner.last().unwrap();
+    let pivot = fixture.chain.blocks.last().unwrap();
+
+    // The premise: the pivot is pre-flip and commits its MPT root, so its binary
+    // root exists only in `BINARY_TRIE_ROOTS`.
+    assert!(pivot.header.timestamp < fixture.chain.activation);
+    let pivot_binary_root = binary_root(&fixture.chain.store, pivot);
+    assert_ne!(
+        pivot.header.state_root, pivot_binary_root,
+        "the pivot must be an MPT-committing header, or this is the same case as above"
+    );
+
+    apply_fork_choice_with_deep_reorg(
+        &fixture.chain.blockchain,
+        head.hash(),
+        H256::zero(),
+        H256::zero(),
+    )
+    .await
+    .expect("a deep reorg across the flip boundary must succeed");
+
+    flush_every_layer(&fixture.chain.store, head.header.state_root).await;
+
+    let clean = clean_replay(&fixture.chain.genesis, &fixture.canonical).await;
+    assert_eq!(
+        binary_nodes_on_disk(&fixture.chain.store),
+        binary_nodes_on_disk(&clean),
+        "unwinding to a pre-flip pivot must land the binary trie exactly where a node that \
+         only ever saw the winning branch would have it"
+    );
+
+    // The winner's post-flip head — whose parent is the pre-flip pivot — reads
+    // its own state back off disk, which is only possible if the unwind put the
+    // pivot's *binary* trie back before that block re-executed.
+    let db = StoreVmDatabase::new(fixture.chain.store.clone(), head.header.clone())
+        .expect("the reorged head must open");
+    assert_eq!(
+        db.get_account_state(test_recipient())
+            .unwrap()
+            .unwrap()
+            .balance,
+        U256::from(fixture.canonical.len()),
+        "the winning chain's recipient balance must count one wei per canonical block"
+    );
+
+    // The pivot's shadow root is untouched by the reorg — nothing rewrote the
+    // pre-flip block's bookkeeping — and it is still the root the winner's first
+    // block extended.
+    assert_eq!(
+        binary_root(&fixture.chain.store, pivot),
+        pivot_binary_root,
+        "the pre-flip pivot's recorded binary root must survive the reorg unchanged"
+    );
+
+    // The abandoned branch is gone from the binary trie as before, and the
+    // *pre-flip* pivot's MPT state is not resurrected either: disk is
+    // single-version on both sides, and the reconciliation advanced it to the
+    // winner's head rather than leaving it at the pivot.
+    for block in &fixture.loser {
+        assert!(
+            !fixture
+                .chain
+                .store
+                .has_binary_trie_state(block.hash(), block.header.state_root)
+                .unwrap(),
+            "abandoned block {} must not still have readable binary state",
+            block.header.number
+        );
+    }
 }
 
 // ===========================================================================

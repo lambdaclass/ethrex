@@ -55,13 +55,20 @@
 //! falling through, because the path-keyed single-version node table still
 //! holds the node the block removed.
 //!
-//! **The overlay does not cover binary nodes.** It is reconstructed from
-//! `STATE_HISTORY`, whose reverse diffs span the four MPT/flat-KV column
-//! families only. Every reorg inside the layer window is covered — those nodes
-//! were never written — but a reorg deeper than the cache edge leaves the
-//! on-disk binary trie on the abandoned chain.
-//! `Store::install_overlay_for_reorg` logs a warning when that happens on a
-//! scheduled chain.
+//! **The overlay covers binary nodes too.** `STATE_HISTORY` carries a fifth
+//! reverse-diff section for `BINARY_TRIE_NODES` and the parent block's binary
+//! root, so a reorg deeper than the cache edge unwinds both tries from the same
+//! journal entries and folds both into the same reconciliation write. Reorgs
+//! inside the layer window still cost nothing extra — those nodes were never
+//! written, so there is nothing to unwind.
+//!
+//! The binary side needs its own read gate rather than reusing the MPT's:
+//! [`Overlay::serves_root`] is a header state root, which through the whole
+//! pre-activation window is an MPT root, while a binary reader holds a binary
+//! root. [`Overlay::serves_binary_root`] is the binary counterpart, recorded in
+//! the journal entry at the pivot's height for exactly this reason. It is also
+//! why binary entries live in their own map: a `BitPath` key's length overlaps
+//! the MPT's, so [`OverlayCf::classify_by_key_length`] cannot tell them apart.
 //!
 //! ## `TrieLayerCache` — the forward cache
 //!
@@ -157,6 +164,18 @@ struct TrieLayer {
     /// the key and is recorded here, feeding
     /// [`TrieLayerCache::binary_index`](TrieLayerCache).
     binary_root: H256,
+    /// Binary-trie root this layer's parent block left behind — the root a
+    /// rollback of this layer returns the binary trie to, and what the journal
+    /// entry records as `parent_binary_root`.
+    ///
+    /// Recorded rather than looked up from the parent layer, because the parent
+    /// is usually not a layer at all (it is on disk, which is the whole point of
+    /// a commit) and because through the pre-activation window `parent` is an
+    /// MPT root that says nothing about the binary trie.
+    ///
+    /// `H256::zero()` when the chain is not binary-tree-scheduled, matching
+    /// `binary_root`.
+    parent_binary_root: H256,
     parent: H256,
     id: usize,
     /// Number of the block whose post-state this layer represents. Used by the
@@ -178,6 +197,10 @@ pub struct BinaryLayerUpdate {
     /// Binary-trie root after this block's writes. `H256::zero()` means "no
     /// binary state for this block".
     pub root: H256,
+    /// Binary-trie root this block started from (its parent's). Carried into the
+    /// layer so the journal entry written when the layer flushes can name the
+    /// root a rollback returns to.
+    pub parent_root: H256,
     /// `(BINARY_TRIE_NODES key, encoded node)` pairs; empty value = tombstone.
     pub nodes: BinaryTrieNodes,
 }
@@ -346,6 +369,38 @@ impl TrieLayerCache {
         let overlay = self.overlay.as_ref()?;
         let cf = OverlayCf::classify_by_key_length(key.len());
         overlay.lookup(cf, key)
+    }
+
+    /// Whether a binary reader at `binary_root` should consult the installed
+    /// overlay. The binary counterpart of [`Self::overlay_serves`].
+    ///
+    /// Keyed on the binary root rather than the header state root, because
+    /// through the pre-activation window those are different values and the
+    /// binary reader only ever holds the former. The two admissible roots are
+    /// the pivot's ([`Overlay::serves_binary_root`]) and any new-chain layer's,
+    /// which is what `binary_index` holds — the same two-part rule the MPT gate
+    /// uses, expressed over the secondary index.
+    ///
+    /// A zero `serves_binary_root` means the overlay carries no binary state and
+    /// nothing is served; the explicit check matters because an unscheduled
+    /// chain's layers also carry a zero binary root, and `zero == zero` would
+    /// otherwise open the gate for every reader.
+    pub fn overlay_serves_binary(&self, binary_root: H256) -> bool {
+        let Some(overlay) = self.overlay.as_ref() else {
+            return false;
+        };
+        if overlay.serves_binary_root().is_zero() {
+            return false;
+        }
+        binary_root == overlay.serves_binary_root() || self.binary_index.contains_key(&binary_root)
+    }
+
+    /// Looks up a `BINARY_TRIE_NODES` key in the installed overlay, with the
+    /// same three-state contract as [`Self::lookup_overlay`]. No CF
+    /// classification: binary keys have exactly one destination table, and their
+    /// lengths could not be classified anyway.
+    pub fn lookup_binary_overlay(&self, key: &[u8]) -> Option<Option<Vec<u8>>> {
+        self.overlay.as_ref()?.binary_lookup(key)
     }
 
     /// Returns true if a layer with the given `state_root` is present in the cache.
@@ -599,6 +654,7 @@ impl TrieLayerCache {
             .collect();
         let binary_present = binary.is_present();
         let binary_root = binary.root;
+        let parent_binary_root = binary.parent_root;
         let binary_nodes: FxHashMap<Vec<u8>, Vec<u8>> = binary.nodes.into_iter().collect();
 
         self.last_id += 1;
@@ -606,6 +662,7 @@ impl TrieLayerCache {
             nodes,
             binary_nodes,
             binary_root,
+            parent_binary_root,
             parent,
             id: self.last_id,
             block_number,
@@ -731,6 +788,7 @@ impl TrieLayerCache {
                 block_number: layer.block_number,
                 block_hash: layer.block_hash,
                 parent_state_root: layer.parent,
+                parent_binary_root: layer.parent_binary_root,
                 nodes: layer.nodes.into_iter().collect(),
                 binary_nodes: layer.binary_nodes.into_iter().collect(),
             })
@@ -752,6 +810,11 @@ pub struct CommittedLayer {
     pub block_hash: H256,
     /// Pre-state root of the committed block (the state to return to on rollback).
     pub parent_state_root: H256,
+    /// Pre-state binary-trie root of the committed block: the binary
+    /// counterpart of `parent_state_root`, and what the block's journal entry
+    /// records so a deep reorg knows which binary root it is unwinding to.
+    /// `H256::zero()` on unscheduled chains.
+    pub parent_binary_root: H256,
     /// Merged trie node updates in oldest-first order, ready for a sequential disk write.
     pub nodes: Vec<(Vec<u8>, Vec<u8>)>,
     /// The same block's EIP-8297 binary-trie node updates, as
@@ -939,9 +1002,23 @@ pub struct Overlay {
     storage_trie: FxHashMap<Vec<u8>, Option<Vec<u8>>>,
     account_flat: FxHashMap<Vec<u8>, Option<Vec<u8>>>,
     storage_flat: FxHashMap<Vec<u8>, Option<Vec<u8>>>,
-    /// Bloom filter shared across all four CFs. A miss here lets readers skip the
-    /// overlay lookup and fall through to disk without touching any map.
+    /// Reverse diff for `BINARY_TRIE_NODES`, in its own map rather than one of
+    /// the four above.
+    ///
+    /// It cannot share: the four are dispatched by
+    /// [`OverlayCf::classify_by_key_length`], and a `BitPath` key is
+    /// `4 + ceil(bits/8)` bytes — a range that overlaps every MPT bucket, so a
+    /// binary key would be served as (and, on reconciliation, written as) an
+    /// account-trie node.
+    binary_trie: FxHashMap<Vec<u8>, Option<Vec<u8>>>,
+    /// Bloom filter shared across all four MPT/flat-KV CFs. A miss here lets
+    /// readers skip the overlay lookup and fall through to disk without touching
+    /// any map.
     bloom: AtomicBloomFilter<FxBuildHasher>,
+    /// Bloom filter over `binary_trie`, kept separate from `bloom` for the same
+    /// reason [`TrieLayerCache`]'s is: an unscheduled chain's MPT lookups keep
+    /// exactly the false-positive rate they had.
+    binary_bloom: AtomicBloomFilter<FxBuildHasher>,
     /// Highest block number covered by the overlay (= cache edge `D` at install time).
     from_block: BlockNumber,
     /// Lowest block number covered by the overlay (= `pivot + 1`).
@@ -953,6 +1030,18 @@ pub struct Overlay {
     /// cache do not get pivot values in place of the on-disk canonical state.
     /// `H256::zero()` for a default/empty overlay (never a real reconstructed root).
     serves_root: H256,
+    /// Binary-trie root the overlay reconstructs: the pivot's binary root, taken
+    /// from the `parent_binary_root` of the journal entry at `to_block`.
+    ///
+    /// The binary counterpart of `serves_root`, and a separate field because the
+    /// two genuinely differ for every pre-activation block — a header carries an
+    /// MPT root until the flip, so `serves_root` says nothing about which binary
+    /// trie the reconstructed nodes form.
+    ///
+    /// `H256::zero()` means the overlay carries no binary state (an unscheduled
+    /// chain, or a default/empty overlay). Zero is never a real root, so the read
+    /// gate can use it as the "do not serve" sentinel.
+    serves_binary_root: H256,
 }
 
 impl fmt::Debug for Overlay {
@@ -962,6 +1051,7 @@ impl fmt::Debug for Overlay {
             .field("storage_trie_len", &self.storage_trie.len())
             .field("account_flat_len", &self.account_flat.len())
             .field("storage_flat_len", &self.storage_flat.len())
+            .field("binary_trie_len", &self.binary_trie.len())
             .field("from_block", &self.from_block)
             .field("to_block", &self.to_block)
             .finish()
@@ -975,12 +1065,17 @@ impl Default for Overlay {
             storage_trie: FxHashMap::default(),
             account_flat: FxHashMap::default(),
             storage_flat: FxHashMap::default(),
+            binary_trie: FxHashMap::default(),
             bloom: AtomicBloomFilter::with_false_pos(FALSE_POSITIVE_RATE)
+                .hasher(FxBuildHasher)
+                .expected_items(Self::BLOOM_INITIAL_CAPACITY),
+            binary_bloom: AtomicBloomFilter::with_false_pos(FALSE_POSITIVE_RATE)
                 .hasher(FxBuildHasher)
                 .expected_items(Self::BLOOM_INITIAL_CAPACITY),
             from_block: 0,
             to_block: 0,
             serves_root: H256::zero(),
+            serves_binary_root: H256::zero(),
         }
     }
 }
@@ -1052,6 +1147,7 @@ impl Overlay {
             // `parent_state_root` is the state root the overlay reconstructs (the pivot).
             if n == to_block {
                 overlay.serves_root = entry.parent_state_root;
+                overlay.serves_binary_root = entry.parent_binary_root;
             }
             overlay.absorb(entry);
             if n == to_block {
@@ -1083,6 +1179,26 @@ impl Overlay {
             self.bloom.insert(&k);
             self.storage_flat.insert(k, v);
         }
+        // Its own map and its own filter: see the `binary_trie` field docs for
+        // why key-length dispatch cannot serve here.
+        for (k, v) in entry.binary_trie_diff {
+            self.binary_bloom.insert(&k);
+            self.binary_trie.insert(k, v);
+        }
+    }
+
+    /// Looks up a `BINARY_TRIE_NODES` key in the overlay, with the same
+    /// three-state contract as [`Self::lookup`].
+    ///
+    /// `Some(None)` is load-bearing on this side in a way it is not for the MPT:
+    /// the binary node table is path-keyed and single-version, so "absent at the
+    /// pivot" cannot be answered by falling through to disk, which still holds
+    /// the abandoned chain's node at that exact path.
+    pub fn binary_lookup(&self, key: &[u8]) -> Option<Option<Vec<u8>>> {
+        if !self.binary_bloom.contains(key) {
+            return None;
+        }
+        self.binary_trie.get(key).cloned()
     }
 
     /// Looks up `key` in the overlay's `cf` slot. Three-state return:
@@ -1104,12 +1220,13 @@ impl Overlay {
         map.get(key).cloned()
     }
 
-    /// Total number of overlay entries across all four CFs.
+    /// Total number of overlay entries across all five CFs.
     pub fn len(&self) -> usize {
         self.account_trie.len()
             + self.storage_trie.len()
             + self.account_flat.len()
             + self.storage_flat.len()
+            + self.binary_trie.len()
     }
 
     /// Whether the overlay holds any entries.
@@ -1126,6 +1243,7 @@ impl Overlay {
             &self.storage_trie,
             &self.account_flat,
             &self.storage_flat,
+            &self.binary_trie,
         ]
         .iter()
         .flat_map(|map| map.iter())
@@ -1149,14 +1267,27 @@ impl Overlay {
         self.serves_root
     }
 
+    /// Binary-trie root the overlay reconstructs (the pivot's binary root).
+    /// `H256::zero()` when the overlay carries no binary state; see the field
+    /// docs. Gates the binary read cascade in
+    /// [`LayeredBinaryTrieDB`](crate::binary_trie::LayeredBinaryTrieDB).
+    pub fn serves_binary_root(&self) -> H256 {
+        self.serves_binary_root
+    }
+
     /// Lowest block number covered by the overlay (= `pivot + 1`).
     pub fn to_block(&self) -> BlockNumber {
         self.to_block
     }
 
-    /// Iterates every overlay entry across the four CFs as `(cf, key, value)`. Used
-    /// by the reconciliation step in `commit_to_disk` to fold overlay-only entries
-    /// into the first new-chain commit.
+    /// Iterates every overlay entry across the four MPT/flat-KV CFs as
+    /// `(cf, key, value)`. Used by the reconciliation step in `commit_to_disk`
+    /// to fold overlay-only entries into the first new-chain commit.
+    ///
+    /// Binary entries are deliberately **not** included: this stream feeds a
+    /// writer that picks a column family by key length, which cannot classify a
+    /// `BitPath` key. They come out of [`Self::iter_binary_entries`] instead and
+    /// go straight to `BINARY_TRIE_NODES`.
     pub fn iter_all_entries(
         &self,
     ) -> impl Iterator<Item = (OverlayCf, &Vec<u8>, &Option<Vec<u8>>)> {
@@ -1179,6 +1310,13 @@ impl Overlay {
                     .map(|(k, v)| (OverlayCf::StorageFlat, k, v)),
             )
     }
+
+    /// Iterates the binary-trie reverse diff as `(key, value)`. The binary
+    /// counterpart of [`Self::iter_all_entries`], separate because these all
+    /// target one column family and need no classification.
+    pub fn iter_binary_entries(&self) -> impl Iterator<Item = (&Vec<u8>, &Option<Vec<u8>>)> {
+        self.binary_trie.iter()
+    }
 }
 
 #[cfg(test)]
@@ -1199,10 +1337,12 @@ mod overlay_tests {
             let entry = JournalEntry {
                 block_hash: *block_hash,
                 parent_state_root: H256::zero(),
+                parent_binary_root: H256::zero(),
                 account_trie_diff: diff.clone(),
                 storage_trie_diff: vec![],
                 account_flat_diff: vec![],
                 storage_flat_diff: vec![],
+                binary_trie_diff: vec![],
             };
             tx.put(STATE_HISTORY, &n.to_be_bytes(), &entry.encode())
                 .unwrap();
@@ -1353,10 +1493,12 @@ mod overlay_tests {
             let entry = JournalEntry {
                 block_hash: h(n as u8),
                 parent_state_root: psr,
+                parent_binary_root: H256::zero(),
                 account_trie_diff: vec![(vec![n as u8], Some(vec![n as u8]))],
                 storage_trie_diff: vec![],
                 account_flat_diff: vec![],
                 storage_flat_diff: vec![],
+                binary_trie_diff: vec![],
             };
             tx.put(STATE_HISTORY, &n.to_be_bytes(), &entry.encode())
                 .unwrap();
@@ -1496,10 +1638,12 @@ mod overlay_tests {
         let entry = JournalEntry {
             block_hash: h(0x01),
             parent_state_root: H256::zero(),
+            parent_binary_root: H256::zero(),
             account_trie_diff: vec![(vec![0x10; 4], Some(b"acct-trie".to_vec()))],
             storage_trie_diff: vec![(vec![0x20; 67], Some(b"stor-trie".to_vec()))],
             account_flat_diff: vec![(vec![0x30; 65], Some(b"acct-flat".to_vec()))],
             storage_flat_diff: vec![(vec![0x40; 131], None)],
+            binary_trie_diff: vec![],
         };
         let mut tx = backend.begin_write().unwrap();
         tx.put(STATE_HISTORY, &1u64.to_be_bytes(), &entry.encode())
@@ -1612,10 +1756,12 @@ mod overlay_tests {
         let entry = JournalEntry {
             block_hash: h(0x01),
             parent_state_root: H256::zero(),
+            parent_binary_root: H256::zero(),
             account_trie_diff: vec![(vec![0x10; 4], Some(b"at".to_vec()))],
             storage_trie_diff: vec![(vec![0x20; 67], Some(b"st".to_vec()))],
             account_flat_diff: vec![(vec![0x30; 65], None)],
             storage_flat_diff: vec![(vec![0x40; 131], Some(b"sf".to_vec()))],
+            binary_trie_diff: vec![],
         };
         let mut tx = backend.begin_write().unwrap();
         tx.put(STATE_HISTORY, &1u64.to_be_bytes(), &entry.encode())
@@ -1641,6 +1787,187 @@ mod overlay_tests {
         );
         assert_eq!(overlay.len(), 4);
         assert!(!overlay.is_empty());
+    }
+
+    // -----------------------------------------------------------------------
+    // Binary-trie coverage of the overlay.
+    // -----------------------------------------------------------------------
+
+    /// Seeds one entry carrying both an account-trie and a binary-trie
+    /// reverse-diff at the **same key bytes**.
+    ///
+    /// That collision is the whole reason the binary side has its own map: a
+    /// `BitPath` key is `4 + ceil(bits/8)` bytes, which lands inside every range
+    /// `OverlayCf::classify_by_key_length` dispatches on, so a shared map would
+    /// serve one CF's pre-image for the other's read.
+    fn seed_binary(
+        backend: &Arc<dyn StorageBackend>,
+        block: BlockNumber,
+        parent_binary_root: H256,
+        account_trie_diff: FlatDiff,
+        binary_trie_diff: FlatDiff,
+    ) {
+        let entry = JournalEntry {
+            block_hash: h(block as u8),
+            parent_state_root: h(0xf0),
+            parent_binary_root,
+            account_trie_diff,
+            storage_trie_diff: vec![],
+            account_flat_diff: vec![],
+            storage_flat_diff: vec![],
+            binary_trie_diff,
+        };
+        let mut tx = backend.begin_write().unwrap();
+        tx.put(STATE_HISTORY, &block.to_be_bytes(), &entry.encode())
+            .unwrap();
+        tx.commit().unwrap();
+    }
+
+    /// A binary key and an account-trie key that are byte-identical must resolve
+    /// to their own pre-images. Sharing a map (or classifying by key length)
+    /// would cross them, which on reconciliation writes binary nodes into
+    /// `ACCOUNT_TRIE_NODES`.
+    #[test]
+    fn binary_and_mpt_entries_do_not_cross_at_a_shared_key() {
+        let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::open().unwrap());
+        let shared = vec![0x07; 34];
+        seed_binary(
+            &backend,
+            1,
+            h(0xb0),
+            vec![(shared.clone(), Some(b"mpt".to_vec()))],
+            vec![(shared.clone(), Some(b"binary".to_vec()))],
+        );
+        let overlay = Overlay::from_journal(backend.as_ref(), 1, 1, |_| None).unwrap();
+
+        assert_eq!(
+            overlay.lookup(OverlayCf::AccountTrie, &shared),
+            Some(Some(b"mpt".to_vec()))
+        );
+        assert_eq!(
+            overlay.binary_lookup(&shared),
+            Some(Some(b"binary".to_vec()))
+        );
+        // And the binary entry is not in the CF-classified stream that feeds the
+        // length-dispatching writer.
+        assert_eq!(overlay.iter_all_entries().count(), 1);
+        assert_eq!(overlay.iter_binary_entries().count(), 1);
+        assert_eq!(overlay.len(), 2);
+    }
+
+    /// The overlay reconstructs the *pivot's* binary state, so within a key the
+    /// oldest in-range pre-image must win — the same descending-walk rule the
+    /// MPT sections follow, and the reason a multi-block unwind lands on the
+    /// pivot rather than one block above it.
+    #[test]
+    fn the_oldest_binary_pre_image_in_range_wins() {
+        let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::open().unwrap());
+        let key = vec![0x0a; 34];
+        seed_binary(
+            &backend,
+            3,
+            h(0xb3),
+            vec![],
+            vec![(key.clone(), Some(vec![0x33]))],
+        );
+        seed_binary(
+            &backend,
+            4,
+            h(0xb4),
+            vec![],
+            vec![(key.clone(), Some(vec![0x44]))],
+        );
+        seed_binary(
+            &backend,
+            5,
+            h(0xb5),
+            vec![],
+            vec![(key.clone(), Some(vec![0x55]))],
+        );
+
+        let overlay = Overlay::from_journal(backend.as_ref(), 5, 3, |_| None).unwrap();
+        assert_eq!(overlay.binary_lookup(&key), Some(Some(vec![0x33])));
+        // `serves_binary_root` comes from the entry at `to_block`, which is the
+        // one that unwinds `to_block -> pivot`.
+        assert_eq!(overlay.serves_binary_root(), h(0xb3));
+        assert_eq!(overlay.serves_root(), h(0xf0));
+    }
+
+    /// A `None` pre-image means the commit created the node, so the overlay must
+    /// answer "absent at the pivot" rather than miss. Falling through to disk
+    /// would read the abandoned branch's node, which is still there: the node
+    /// table is path-keyed and single-version.
+    #[test]
+    fn an_absent_binary_pre_image_is_served_as_absent_not_as_a_miss() {
+        let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::open().unwrap());
+        let created = vec![0x0b; 34];
+        seed_binary(&backend, 1, h(0xb1), vec![], vec![(created.clone(), None)]);
+        let overlay = Overlay::from_journal(backend.as_ref(), 1, 1, |_| None).unwrap();
+
+        assert_eq!(overlay.binary_lookup(&created), Some(None));
+        assert_eq!(overlay.binary_lookup(&[0x0c; 34]), None);
+    }
+
+    /// The read gate: only the pivot's binary root and the new-chain layers
+    /// built on top of it may see overlay values. Everything else — a historical
+    /// binary root an RPC is reading at, say — must fall through to disk, which
+    /// still holds that root's state while the overlay is alive.
+    #[test]
+    fn only_the_pivot_and_new_chain_binary_roots_are_served() {
+        let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::open().unwrap());
+        let key = vec![0x0d; 34];
+        seed_binary(&backend, 1, h(0xb1), vec![], vec![(key, Some(vec![1]))]);
+        let overlay = Overlay::from_journal(backend.as_ref(), 1, 1, |_| None).unwrap();
+
+        let mut cache = TrieLayerCache::default();
+        cache.set_overlay(Arc::new(overlay));
+        assert!(cache.overlay_serves_binary(h(0xb1)), "the pivot's own root");
+        assert!(
+            !cache.overlay_serves_binary(h(0xee)),
+            "an unrelated historical root must fall through to disk"
+        );
+
+        // A new-chain layer built on the pivot is served through the secondary
+        // index, exactly as the MPT gate serves layer roots through `layers`.
+        cache.put_batch_with_binary(
+            H256::zero(),
+            h(0x01),
+            1,
+            h(0x01),
+            vec![],
+            BinaryLayerUpdate {
+                root: h(0xb2),
+                parent_root: h(0xb1),
+                nodes: vec![(vec![0x0e; 34], vec![9])],
+            },
+        );
+        assert!(cache.overlay_serves_binary(h(0xb2)));
+    }
+
+    /// An unscheduled chain journals a zero `parent_binary_root`, and its layers
+    /// carry a zero binary root too. Without the explicit zero guard the two
+    /// would compare equal and the gate would open for every reader on a chain
+    /// that has no binary state at all.
+    #[test]
+    fn a_zero_binary_root_never_opens_the_gate() {
+        let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::open().unwrap());
+        seed_binary(&backend, 1, H256::zero(), vec![], vec![]);
+        let overlay = Overlay::from_journal(backend.as_ref(), 1, 1, |_| None).unwrap();
+        assert!(overlay.serves_binary_root().is_zero());
+
+        let mut cache = TrieLayerCache::default();
+        cache.set_overlay(Arc::new(overlay));
+        assert!(!cache.overlay_serves_binary(H256::zero()));
+    }
+
+    /// With no overlay installed nothing is served, on either side. This is the
+    /// steady state, and the property that keeps an unscheduled chain's read
+    /// path exactly as it was.
+    #[test]
+    fn no_overlay_serves_no_binary_root() {
+        let cache = TrieLayerCache::default();
+        assert!(!cache.overlay_serves_binary(h(0xb1)));
+        assert_eq!(cache.lookup_binary_overlay(&[0x0f; 34]), None);
     }
 }
 
@@ -1900,6 +2227,9 @@ mod tests {
             vec![(key(n), vec![n])],
             BinaryLayerUpdate {
                 root: h256(0x80 + n),
+                // The parent block's binary root, i.e. the previous layer's, by
+                // the same `0x80 + n` convention.
+                parent_root: h256(0x80 + n - 1),
                 nodes: binary,
             },
         );
