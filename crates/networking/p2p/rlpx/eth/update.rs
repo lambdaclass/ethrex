@@ -29,8 +29,15 @@ impl BlockRangeUpdate {
                 )))?;
         let latest_block_hash = block_header.hash();
 
+        // Announce the range we can actually serve. On a snap-synced or
+        // history-pruned node this is the pivot / prune cutoff, not 0 — claiming 0
+        // makes peers request bodies we no longer hold, and `fetch_blocks` answers
+        // those with a short response rather than an error, so they keep retrying
+        // instead of asking a peer that has the data.
+        let earliest_block = storage.get_earliest_block_number().await.unwrap_or(0);
+
         Ok(Self {
-            earliest_block: 0,
+            earliest_block,
             latest_block,
             latest_block_hash,
         })

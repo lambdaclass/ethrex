@@ -489,6 +489,15 @@ pub struct Options {
     )]
     pub precompute_witnesses: bool,
     #[arg(
+        long = "history.retention",
+        value_name = "DURATION",
+        value_parser = parse_history_retention,
+        help = "Enable history pruning. Bodies/receipts/tx-locations older than this wall-clock duration are deleted (canonical headers preserved). Example: --history.retention=30d",
+        help_heading = "Node options",
+        env = "ETHREX_HISTORY_RETENTION"
+    )]
+    pub history_retention: Option<std::time::Duration>,
+    #[arg(
         long = "max-reorg-depth",
         value_name = "MAX_REORG_DEPTH",
         help = "Optional operator override for the maximum reorg depth. Omit for finality-bounded cap. Set to 0 to disable deep reorgs entirely. Set to d to reject reorgs of depth > d.",
@@ -590,6 +599,7 @@ impl Default for Options {
             no_migrate: false,
             skip_genesis_validation: false,
             no_precompile_cache: false,
+            history_retention: None,
             no_bal_parallel_exec: false,
             no_bal_prefetch: false,
             no_bal_parallel_trie: false,
@@ -1360,11 +1370,40 @@ pub async fn export_blocks(
     );
 }
 
+fn parse_history_retention(s: &str) -> Result<std::time::Duration, String> {
+    humantime::parse_duration(s).map_err(|e| format!("invalid duration `{s}`: {e}"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use clap::Parser;
     use ethrex_rpc::RpcNamespace;
+    use std::time::Duration;
+
+    #[test]
+    fn parses_history_retention_days() {
+        let cli = CLI::try_parse_from(["ethrex", "--history.retention", "30d"]).unwrap();
+        assert_eq!(
+            cli.opts.history_retention,
+            Some(Duration::from_secs(30 * 86400))
+        );
+    }
+
+    #[test]
+    fn parses_history_retention_hours() {
+        let cli = CLI::try_parse_from(["ethrex", "--history.retention", "12h"]).unwrap();
+        assert_eq!(
+            cli.opts.history_retention,
+            Some(Duration::from_secs(12 * 3600))
+        );
+    }
+
+    #[test]
+    fn history_retention_default_is_none() {
+        let cli = CLI::try_parse_from(["ethrex"]).unwrap();
+        assert_eq!(cli.opts.history_retention, None);
+    }
 
     /// `--http.addr` must default to `127.0.0.1` so a fresh install on a public
     /// host is not exposed to the open internet.

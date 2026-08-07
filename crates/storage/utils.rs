@@ -1,3 +1,15 @@
+use ethrex_common::{H256, types::BlockNumber};
+use ethrex_rlp::encode::RLPEncode;
+
+/// Builds the `BLOCK_HASHES_BY_NUMBER` key: `BE block_number(8B) || block_hash(32B)`.
+/// BE encoding so lexicographic prefix iteration matches numeric block order.
+pub(crate) fn block_hashes_by_number_key(number: BlockNumber, hash: H256) -> [u8; 40] {
+    let mut key = [0u8; 40];
+    key[..8].copy_from_slice(&number.to_be_bytes());
+    key[8..].copy_from_slice(hash.as_bytes());
+    key
+}
+
 /// Represents the key for each unique value of the chain data stored in the db
 //  Stores chain-specific data such as chain id and latest finalized/pending/safe block number
 #[derive(Debug, Copy, Clone)]
@@ -8,6 +20,13 @@ pub enum ChainDataIndex {
     SafeBlockNumber = 3,
     LatestBlockNumber = 4,
     PendingBlockNumber = 5,
+}
+
+/// Encodes a [`ChainDataIndex`] into the byte key used for the `CHAIN_DATA`
+/// column family. Single source of truth shared by `store.rs` and
+/// `migrations.rs` so both produce identical keys.
+pub(crate) fn chain_data_key(index: ChainDataIndex) -> Vec<u8> {
+    (index as u8).encode_to_vec()
 }
 
 impl From<u8> for ChainDataIndex {

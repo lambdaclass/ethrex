@@ -173,21 +173,27 @@ pub(crate) async fn fetch_logs_with_filter(
                 .get_block_header_by_hash(block_hash)?
                 .ok_or_else(|| RpcErr::BadParams(format!("Unknown block hash {block_hash:#x}")))?;
             if bloom_matcher.matches(&block_header.logs_bloom) {
-                let block_body =
-                    storage
-                        .get_block_body_by_hash(block_hash)
-                        .await?
-                        .ok_or(RpcErr::Internal(format!(
-                            "Could not get body for block {block_hash:#x}"
-                        )))?;
-                collect_block_logs(
-                    &storage,
-                    &block_header,
-                    &block_body,
-                    &address_filter,
-                    &mut logs,
-                )
-                .await?;
+                // A known header with no body means the body was pruned (canonical
+                // headers survive pruning). There are no logs to return, which is
+                // the same answer the numeric-range path gives for a pruned range —
+                // not an internal error, which would read as a node fault.
+                match storage.get_block_body_by_hash(block_hash).await? {
+                    Some(block_body) => {
+                        collect_block_logs(
+                            &storage,
+                            &block_header,
+                            &block_body,
+                            &address_filter,
+                            &mut logs,
+                        )
+                        .await?;
+                    }
+                    None => {
+                        tracing::debug!(
+                            "eth_getLogs: body for block {block_hash:#x} is unavailable (pruned); returning no logs"
+                        );
+                    }
+                }
             }
         }
         None => {
@@ -201,8 +207,18 @@ pub(crate) async fn fetch_logs_with_filter(
                 .resolve_block_number(&storage)
                 .await?
                 .ok_or(RpcErr::WrongParam("toBlock".to_string()))?;
-            if (from..=to).is_empty() {
+            // Malformed user range (e.g. fromBlock=100, toBlock=50) — reject before
+            // clamping so we don't silently accept inverted ranges.
+            if from > to {
                 return Err(RpcErr::BadParams("Empty range".to_string()));
+            }
+            // Clamp `from` up to the earliest unpruned block so that we don't attempt
+            // to load block bodies / receipts that have already been pruned.
+            let earliest = storage.get_earliest_block_number().await?;
+            let from = from.max(earliest);
+            // Entire requested range is below the prune cutoff — no logs to return.
+            if from > to {
+                return Ok(vec![]);
             }
             // The idea here is to fetch every log and filter by address, if given.
             // For that, we'll need each block in range, and its transactions,
@@ -408,6 +424,159 @@ impl BloomFilterMatcher {
                 .iter()
                 .any(|topic| block_bloom.contains_bloom(topic))
         })
+    }
+}
+
+#[cfg(test)]
+mod pruning_log_tests {
+    use super::*;
+    use crate::test_utils::setup_store;
+    use ethrex_common::types::{Block, BlockBody, BlockHeader};
+
+    /// Build a canonical chain of empty blocks 1..=`count` on top of the genesis
+    /// block that `setup_store` already inserted, using `forkchoice_update`.
+    async fn add_empty_canonical_blocks(storage: &Store, count: u64) {
+        let mut new_canonical = vec![];
+        let mut parent = {
+            let h = storage.get_block_header(0).unwrap().unwrap();
+            h.hash()
+        };
+        for n in 1..=count {
+            let header = BlockHeader {
+                number: n,
+                parent_hash: parent,
+                ..Default::default()
+            };
+            let hash = header.hash();
+            let block = Block::new(
+                header,
+                BlockBody {
+                    transactions: vec![],
+                    ommers: vec![],
+                    withdrawals: Some(vec![]),
+                },
+            );
+            storage.add_block(block).await.unwrap();
+            new_canonical.push((n, hash));
+            parent = hash;
+        }
+        let (last_num, last_hash) = new_canonical.pop().unwrap();
+        storage
+            .forkchoice_update(new_canonical, last_num, last_hash, None, None)
+            .await
+            .unwrap();
+    }
+
+    /// When `fromBlock` is below `earliest_block_number`, the handler must clamp
+    /// `from` up to `earliest` and return logs from the unpruned range rather than
+    /// erroring on the missing pruned bodies.
+    #[tokio::test]
+    async fn get_logs_clamps_from_block_to_earliest() {
+        // setup_store() initialises genesis (block 0) and sets earliest = 0.
+        let storage = setup_store().await;
+        add_empty_canonical_blocks(&storage, 5).await;
+
+        // Prune blocks 0–2; each call advances the earliest pointer itself, leaving
+        // it at 3. No explicit write needed (and a lower one would be dropped —
+        // `advance_earliest_block_number` is advance-only).
+        for n in 0..=2u64 {
+            storage.prune_block_heights_for_test(n, 1).await.unwrap();
+        }
+        assert_eq!(storage.get_earliest_block_number().await.unwrap(), 3);
+
+        // Ask for logs from 0 to 5 — fromBlock is below earliest, so it must be
+        // clamped to 3.  Blocks 3–5 have no transactions, so the result is empty
+        // but the call must not error.
+        let filter = LogsFilter {
+            from_block: BlockIdentifier::Number(0),
+            to_block: BlockIdentifier::Number(5),
+            block_hash: None,
+            address_filters: None,
+            topics: vec![],
+        };
+        let result = fetch_logs_with_filter(&filter, storage).await;
+        assert!(result.is_ok(), "expected Ok, got {:?}", result.unwrap_err());
+        assert!(
+            result.unwrap().is_empty(),
+            "expected no logs for empty blocks"
+        );
+    }
+
+    /// The `blockHash` form must also tolerate a pruned block. The canonical header
+    /// survives pruning, so the handler gets past the unknown-hash check and then
+    /// finds no body; that used to surface as `RpcErr::Internal` (JSON-RPC -32603),
+    /// which reads to a caller as a node fault rather than "no logs here".
+    #[tokio::test]
+    async fn get_logs_by_block_hash_of_pruned_block_returns_empty() {
+        let storage = setup_store().await;
+        add_empty_canonical_blocks(&storage, 5).await;
+
+        // Capture the hash before pruning, then drop block 2's body.
+        let hash = storage.get_canonical_block_hash(2).await.unwrap().unwrap();
+        storage.prune_block_heights_for_test(2, 1).await.unwrap();
+        assert!(storage.get_block_body(2).await.unwrap().is_none());
+        // The canonical header must still be there, or this test isn't exercising
+        // the pruned path at all.
+        assert!(storage.get_block_header_by_hash(hash).unwrap().is_some());
+
+        let filter = LogsFilter {
+            from_block: BlockIdentifier::Number(0),
+            to_block: BlockIdentifier::Number(0),
+            block_hash: Some(hash),
+            address_filters: None,
+            topics: vec![],
+        };
+        let result = fetch_logs_with_filter(&filter, storage).await;
+        assert!(
+            result.is_ok(),
+            "expected Ok for pruned block, got {:?}",
+            result.unwrap_err()
+        );
+        assert!(result.unwrap().is_empty());
+    }
+
+    /// When the entire requested range is below `earliest_block_number` (from > to
+    /// after clamping), the handler must return an empty list, not an error.
+    #[tokio::test]
+    async fn get_logs_entire_range_below_earliest_returns_empty() {
+        let storage = setup_store().await;
+
+        // Set earliest to 10; ask for 0..=5 — entirely pruned.
+        storage.advance_earliest_block_number(10).await.unwrap();
+
+        let filter = LogsFilter {
+            from_block: BlockIdentifier::Number(0),
+            to_block: BlockIdentifier::Number(5),
+            block_hash: None,
+            address_filters: None,
+            topics: vec![],
+        };
+        let result = fetch_logs_with_filter(&filter, storage).await;
+        assert!(result.is_ok(), "expected Ok, got {:?}", result.unwrap_err());
+        assert!(result.unwrap().is_empty());
+    }
+
+    /// A malformed inverted range (fromBlock > toBlock) must be rejected with
+    /// `BadParams` even after the clamp logic was introduced — the clamp only
+    /// suppresses errors for ranges that fall below the prune cutoff, not for
+    /// user-supplied nonsense.
+    #[tokio::test]
+    async fn get_logs_rejects_malformed_inverted_range() {
+        let storage = setup_store().await;
+
+        let filter = LogsFilter {
+            from_block: BlockIdentifier::Number(100),
+            to_block: BlockIdentifier::Number(50),
+            block_hash: None,
+            address_filters: None,
+            topics: vec![],
+        };
+        let result = fetch_logs_with_filter(&filter, storage).await;
+        assert!(
+            matches!(result, Err(RpcErr::BadParams(_))),
+            "expected BadParams, got {:?}",
+            result
+        );
     }
 }
 

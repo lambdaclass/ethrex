@@ -24,13 +24,18 @@ use ethrex_p2p::{
     types::{Node, NodeRecord},
 };
 use ethrex_rpc::{SubscriptionManager, WebSocketConfig};
-use ethrex_storage::{Store, StoreConfig};
+use ethrex_storage::{HistoryPruner, Store, StoreConfig};
 use ethrex_storage_rollup::{EngineTypeRollup, StoreRollup};
 use eyre::OptionExt;
 use secp256k1::SecretKey;
 
 use spawned_concurrency::tasks::ActorRef;
-use std::{fs::read_to_string, path::Path, sync::Arc, time::Duration};
+use std::{
+    fs::read_to_string,
+    path::Path,
+    sync::Arc,
+    time::{Duration, SystemTime, UNIX_EPOCH},
+};
 use tokio::task::JoinSet;
 use tokio_util::{sync::CancellationToken, task::TaskTracker};
 use tracing::{info, warn};
@@ -204,6 +209,42 @@ async fn shutdown_sequencer_handles(
     }
 }
 
+/// How often the L2 history pruner re-checks the retention window.
+const L2_PRUNE_INTERVAL_SECS: u64 = 12;
+/// Upper bound on the batch walk in [`last_committed_l2_block`]. Commit normally
+/// lags sealing by a handful of batches, so the walk is short; the bound keeps a
+/// long-stalled committer from turning every pass into a full scan of all batches.
+const MAX_BATCHES_TO_SCAN_FOR_COMMIT: u64 = 1024;
+
+/// Highest L2 block belonging to a batch that has been committed to L1, or `None`
+/// if no batch within the scan window has a commit transaction yet.
+///
+/// This is the pruning cap for an L2 node: a block whose batch has not been
+/// committed is still needed in full — the committer reads its body to build the
+/// batch and the prover to prove it — so its body must not be deleted no matter
+/// how old the block is in wall-clock terms.
+async fn last_committed_l2_block(rollup_store: &StoreRollup) -> eyre::Result<Option<u64>> {
+    let Some(latest_batch) = rollup_store.get_batch_number().await? else {
+        return Ok(None);
+    };
+    let scan_floor = latest_batch.saturating_sub(MAX_BATCHES_TO_SCAN_FOR_COMMIT);
+    let mut batch = latest_batch;
+    loop {
+        if rollup_store.get_commit_tx_by_batch(batch).await?.is_some() {
+            // Batches are contiguous block ranges, so the highest block in the
+            // newest committed batch is the highest committed block.
+            return Ok(rollup_store
+                .get_block_numbers_by_batch(batch)
+                .await?
+                .and_then(|blocks| blocks.into_iter().max()));
+        }
+        if batch == 0 || batch == scan_floor {
+            return Ok(None);
+        }
+        batch -= 1;
+    }
+}
+
 pub async fn init_l2(
     opts: L2Options,
     log_filter_handler: Option<reload::Handle<EnvFilter, Registry>>,
@@ -278,6 +319,47 @@ pub async fn init_l2(
     let mut join_set = JoinSet::new();
 
     let cancel_token = tokio_util::sync::CancellationToken::new();
+
+    // History pruner — only when --history.retention is set. Unlike L1 this runs
+    // its own loop so it can additionally cap pruning at the last L1-committed
+    // block; uncommitted blocks are still needed by the committer and prover.
+    if let Some(retention) = opts.node_opts.history_retention {
+        let pruner = HistoryPruner::new(store.clone(), retention);
+        let pruner_rollup_store = rollup_store.clone();
+        let pruner_cancel = cancel_token.clone();
+        tracker.spawn(async move {
+            let mut interval =
+                tokio::time::interval(Duration::from_secs(L2_PRUNE_INTERVAL_SECS));
+            loop {
+                tokio::select! {
+                    _ = pruner_cancel.cancelled() => {
+                        tracing::debug!("L2 history pruner shutting down");
+                        return;
+                    }
+                    _ = interval.tick() => {
+                        let max_prunable = match last_committed_l2_block(&pruner_rollup_store).await {
+                            Ok(Some(block)) => block,
+                            // Nothing committed to L1 yet: everything is still needed.
+                            Ok(None) => continue,
+                            Err(err) => {
+                                tracing::error!(error = ?err, "L2 history pruner: could not determine last committed block");
+                                continue;
+                            }
+                        };
+                        let now_secs = SystemTime::now()
+                            .duration_since(UNIX_EPOCH)
+                            .map(|d| d.as_secs())
+                            .unwrap_or(0);
+                        if let Err(err) =
+                            pruner.tick_with_floor(now_secs, Some(max_prunable)).await
+                        {
+                            tracing::error!(error = ?err, "L2 history pruner pass failed");
+                        }
+                    }
+                }
+            }
+        });
+    }
 
     let (peer_handler, syncer) = if !opts.node_opts.p2p_disabled {
         if !opts.sequencer_opts.based {
