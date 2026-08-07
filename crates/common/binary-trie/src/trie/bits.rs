@@ -19,6 +19,20 @@ pub fn bytes_to_bits(data: &[u8]) -> Vec<u8> {
     bits
 }
 
+/// Whether `data`'s bits, MSB-first, begin with `bits`.
+///
+/// The same answer as `bytes_to_bits(data).starts_with(bits)`, without
+/// the intermediate vector: this runs against every leaf a prefix query
+/// reaches, and `data` there is a whole 34- or 66-byte key of which only
+/// the first few hundred bits are ever compared.
+pub(super) fn bits_start_with(data: &[u8], bits: &[u8]) -> bool {
+    bits.len() <= data.len() * 8
+        && bits
+            .iter()
+            .enumerate()
+            .all(|(i, bit)| (data[i / 8] >> (7 - i % 8)) & 1 == *bit)
+}
+
 /// Inverse of [`encode_bit_prefix`]: read the bit count, unpack that
 /// many bits, and report how many bytes were consumed.
 ///
@@ -81,6 +95,19 @@ mod tests {
         assert_eq!(bytes_to_bits(&[]), Vec::<u8>::new());
         assert_eq!(bytes_to_bits(&[0x80, 0x01])[0], 1);
         assert_eq!(bytes_to_bits(&[0x80, 0x01])[15], 1);
+    }
+
+    #[test]
+    fn bits_start_with_agrees_with_the_expanded_form() {
+        let data = [0b1010_0001u8, 0b0100_0000];
+        for len in 0..=16 {
+            let bits = &bytes_to_bits(&data)[..len];
+            assert!(bits_start_with(&data, bits), "{len} matching bits");
+        }
+        assert!(!bits_start_with(&data, &[1, 1]));
+        // A prefix longer than the data has nothing left to match against.
+        assert!(!bits_start_with(&data, &[0u8; 17]));
+        assert!(bits_start_with(&[], &[]), "the empty prefix matches all");
     }
 
     #[test]

@@ -31,6 +31,15 @@ of the removed leaf into its surviving sibling, which absorbs the bits
 the branch consumed. Correctness is pinned by the spec conformance
 vectors rather than by a second in-crate implementation.
 
+Keys can also be addressed by the bit prefix they share, through
+`trie::KeyPrefix`: `contains_prefix` answers whether any key lives under
+one — stopping at the first node whose whole subtree does, so it is a
+walk and not a scan — and `remove_prefix` takes the whole subtree away.
+These are what let the embedding's deliberate co-location pay off: an
+account's header stem, its header storage and the whole of its overflow
+storage are each one prefix, and the last of those is unbounded and not
+enumerable from outside the trie at all.
+
 `BinaryTrie::from_sorted_leaves` builds a whole trie at once from
 leaves already in bit order — which, for prefix-free keys, is plain
 ascending byte order. Because the structure is canonical, sorted input
