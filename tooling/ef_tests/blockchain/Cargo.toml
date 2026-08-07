@@ -32,13 +32,10 @@ path = "./lib.rs"
 [features]
 default = ["c-kzg"]
 c-kzg = ["ethrex-blockchain/c-kzg"]
-sp1 = ["ethrex-guest-program/sp1-build-elf", "ethrex-prover/sp1"]
-stateless = [
-    "ethrex-blockchain/eip-8025",
-    "ethrex-common/eip-8025",
-    "ethrex-guest-program/eip-8025",
-    "ethrex-prover/eip-8025",
-]
+# Selects the conformance-vector fixture root and the stateless test set in
+# tests/all.rs. No longer propagates a cargo feature: stateless validation is
+# unconditional since the feature flag was removed.
+stateless = []
 l2 = ["ethrex-guest-program/l2", "ethrex-prover/l2"]
 
 [[test]]

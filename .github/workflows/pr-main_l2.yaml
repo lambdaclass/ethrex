@@ -103,8 +103,6 @@ jobs:
       - name: Run cargo check
         run: cargo check --workspace --features l2,l2-sql
 
-      - name: Run cargo check (eip-8025 SSZ guest path)
-        run: cargo check --workspace --features eip-8025
 
       - name: Run cargo clippy
         run: |

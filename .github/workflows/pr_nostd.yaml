@@ -9,6 +9,7 @@ on:
     paths:
       - "crates/common/**"
       - "crates/vm/**"
+      - "crates/guest-program/**"
       - ".github/targets/**"
       - ".github/workflows/pr_nostd.yaml"
 
@@ -48,8 +49,38 @@ jobs:
             -p ethrex-rlp -p ethrex-crypto -p ethrex-trie --no-default-features --target "$TARGET"
           cargo +nightly-2026-06-29 -Z json-target-spec -Z build-std=core,alloc check \
             -p ethrex-crypto --no-default-features --features kzg-rs --target "$TARGET"
-          # `eip-8025` currently gates no code in ethrex-trie (empty stub kept for the
-          # ethrex-common feature chain). This mirrors the guest's feature set and
-          # guards future eip-8025-gated trie code staying no_std-clean.
-          cargo +nightly-2026-06-29 -Z json-target-spec -Z build-std=core,alloc check \
-            -p ethrex-trie --no-default-features --features eip-8025 --target "$TARGET"
+
+  stateless-validator-features:
+    # The stateless-validator guest is its own workspace, so the main CI's
+    # `cargo check --workspace` never sees it, and its zkVM crypto providers are
+    # behind features that a host build does not enable. Before this job the
+    # first thing to compile `crypto/zkvm_interface.rs` was the Ere docker build
+    # in tag_release — so a missing `extern crate alloc` cost a full guest build
+    # to discover. These checks take a couple of minutes.
+    name: stateless-validator feature check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Setup Rust Environment
+        uses: ./.github/actions/setup-rust
+
+      - name: Check each feature combination
+        working-directory: crates/guest-program/stateless-validator
+        run: |
+          set -euo pipefail
+          # `host` alone does not compile either crypto provider, which is
+          # exactly why it missed the alloc regression — check the providers too.
+          for features in host ere zkvm-interface host,ere; do
+            echo "::group::cargo check --features $features"
+            cargo check --features "$features" --all-targets
+            echo "::endgroup::"
+          done
+
+          # openvm is deliberately absent: its crates require a newer rustc than
+          # the pinned toolchain, and the openvm bin unifies the openvm source id
+          # with a `[patch]` that this crate does not carry, so a check here
+          # resolves different versions than the real build. Only the Ere docker
+          # build in tag_release checks it faithfully. `extern crate alloc` is
+          # crate-level, so the zkvm-interface check above still guards the
+          # regression that affected `crypto/openvm.rs`.

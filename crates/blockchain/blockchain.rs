@@ -55,7 +55,7 @@ pub mod vm;
 use ::tracing::{error, info, instrument, warn};
 // Every `debug!` call site lives in the rayon warmer path, so the import is
 // unused in any configuration that compiles that path out.
-#[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+#[cfg(feature = "rayon")]
 use ::tracing::debug;
 use constants::{AMSTERDAM_MAX_INITCODE_SIZE, MAX_INITCODE_SIZE, POST_OSAKA_GAS_LIMIT_CAP};
 use error::MempoolError;
@@ -97,10 +97,10 @@ use ethrex_storage::{
 };
 use ethrex_trie::node::{BranchNode, ExtensionNode, LeafNode};
 use ethrex_trie::{Nibbles, Node, NodeRef, Trie, TrieError, TrieLogger, TrieNode};
-#[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+#[cfg(feature = "rayon")]
 use ethrex_vm::backends::BLOATED_BATCH_THRESHOLD;
 use ethrex_vm::backends::CachingDatabase;
-#[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+#[cfg(feature = "rayon")]
 use ethrex_vm::backends::levm::LEVM;
 use ethrex_vm::backends::levm::db::DatabaseLogger;
 use ethrex_vm::{BlockExecutionResult, DynVmDatabase, Evm, EvmError, VmDatabase};
@@ -140,7 +140,7 @@ const MAX_MEMPOOL_SIZE_DEFAULT: usize = 10_000;
 pub const DEFAULT_GAP_ADMIT_OCCUPANCY_THRESHOLD: u8 = 90;
 
 /// Merkle write set for the trie-node prefetch: written storage slots and changed accounts.
-#[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+#[cfg(feature = "rayon")]
 type TriePrefetchInput = (Vec<(Address, H256)>, Vec<Address>);
 
 /// Background thread for dropping large tree structures off the critical path.
@@ -804,7 +804,7 @@ impl Blockchain {
         // be recorded as state accesses the canonical execution never makes,
         // polluting the witness (e.g. `engine_newPayloadWithWitnessV5`), so
         // warming is skipped entirely when a witness is being collected.
-        #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+        #[cfg(feature = "rayon")]
         if self.options.bal_prefetch_enabled
             && !collect_witness
             && let Some(bal_ref) = bal.as_ref()
@@ -831,7 +831,7 @@ impl Blockchain {
         // `prefetch_trie_nodes` reads the trie-node CFs directly via
         // `backend.begin_read()`, bypassing the witness-recording caching layer, so
         // it cannot pollute the witness.
-        #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+        #[cfg(feature = "rayon")]
         let trie_prefetch_input: Option<TriePrefetchInput> = if self.options.bal_prefetch_enabled
             && let Some(updates) = optimistic_updates.as_ref()
         {
@@ -852,17 +852,17 @@ impl Blockchain {
         };
 
         // Each thread that captures `bal` needs its own Arc clone (cheap pointer bump).
-        #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+        #[cfg(feature = "rayon")]
         let bal_warmer = bal.clone();
 
         let (execution_result, merkleization_result, warmer_duration) = std::thread::scope(
             |s| -> Result<_, ChainError> {
-                #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+                #[cfg(feature = "rayon")]
                 let vm_type = vm.vm_type;
                 let cancelled_ref = &cancelled;
-                #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+                #[cfg(feature = "rayon")]
                 let bal_prefetch_enabled = self.options.bal_prefetch_enabled;
-                #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+                #[cfg(feature = "rayon")]
                 let warm_handle = (!collect_witness)
                     .then(|| {
                         std::thread::Builder::new()
@@ -928,7 +928,7 @@ impl Blockchain {
                 // before the block returns, but it shares the trie-node cold reads with
                 // the merkleizer at higher aggregate queue depth, so it completes
                 // within the exec/merkle window rather than extending it.
-                #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+                #[cfg(feature = "rayon")]
                 let trie_prefetch_handle = match trie_prefetch_input {
                     Some((slots, accounts)) => {
                         let storage = &self.storage;
@@ -1125,7 +1125,7 @@ impl Blockchain {
                         "merkleization thread panicked".to_string(),
                     ))
                 });
-                #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+                #[cfg(feature = "rayon")]
                 let warmer_duration = warm_handle
                     .map(|handle| {
                         handle
@@ -1135,12 +1135,12 @@ impl Blockchain {
                             .unwrap_or(Duration::ZERO)
                     })
                     .unwrap_or(Duration::ZERO);
-                #[cfg(any(not(feature = "rayon"), feature = "eip-8025"))]
+                #[cfg(not(feature = "rayon"))]
                 let warmer_duration = Duration::ZERO;
                 // Best-effort prefetch: join so the scope's borrows end cleanly.
                 // The warming result is discarded, but surface a panic so a failing
                 // prefetch (e.g. a RocksDB error) is observable rather than silent.
-                #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+                #[cfg(feature = "rayon")]
                 if let Some(h) = trie_prefetch_handle
                     && let Err(e) = h.join()
                 {

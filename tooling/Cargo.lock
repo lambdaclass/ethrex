@@ -1640,19 +1640,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "bls12_381"
-version = "0.8.0"
-source = "git+https://github.com/lambdaclass/bls12_381?branch=expose-affine-constructors#78cad0378b17fc3157b83f514be192bf46edf9a1"
-dependencies = [
- "digest 0.10.7",
- "ff 0.13.1",
- "group 0.13.0",
- "pairing 0.23.0",
- "rand_core 0.6.4",
- "subtle",
-]
-
-[[package]]
 name = "blst"
 version = "0.3.16"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3421,7 +3408,6 @@ dependencies = [
 name = "ethrex-guest-program"
 version = "23.0.0"
 dependencies = [
- "bls12_381 0.8.0",
  "bytes",
  "ethereum-types",
  "ethrex-common 23.0.0",
@@ -3429,9 +3415,7 @@ dependencies = [
  "ethrex-l2-common",
  "ethrex-rlp 23.0.0",
  "ethrex-vm",
- "ff 0.13.1",
  "hex",
- "k256 0.13.4 (registry+https://github.com/rust-lang/crates.io-index)",
  "libssz",
  "libssz-derive",
  "libssz-merkle",
@@ -3439,9 +3423,6 @@ dependencies = [
  "rkyv",
  "serde",
  "serde_with",
- "sp1-build",
- "sp1-sdk",
- "substrate-bn",
  "thiserror 2.0.18",
 ]
 
@@ -3700,11 +3681,10 @@ dependencies = [
  "ethrex-guest-program",
  "ethrex-rlp 23.0.0",
  "ethrex-vm",
+ "libssz",
  "rkyv",
  "serde",
  "serde_json",
- "sp1-prover",
- "sp1-sdk",
  "spawned-concurrency",
  "thiserror 2.0.18",
  "tokio",
@@ -5261,7 +5241,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a575df5f985fe1cd5b2b05664ff6accfc46559032b954529fd225a2168d27b0f"
 dependencies = [
  "bitvec",
- "bls12_381 0.7.1",
+ "bls12_381",
  "ff 0.12.1",
  "group 0.12.1",
  "rand_core 0.6.4",
@@ -9677,19 +9657,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "substrate-bn"
-version = "0.6.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "72b5bbfa79abbae15dd642ea8176a21a635ff3c00059961d1ea27ad04e5b441c"
-dependencies = [
- "byteorder",
- "crunchy",
- "lazy_static",
- "rand 0.8.5",
- "rustc-hex",
-]
-
-[[package]]
 name = "subtle"
 version = "2.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -11635,7 +11602,7 @@ dependencies = [
  "ark-std 0.4.0",
  "bitvec",
  "blake2",
- "bls12_381 0.7.1",
+ "bls12_381",
  "byteorder",
  "cfg-if",
  "group 0.12.1",

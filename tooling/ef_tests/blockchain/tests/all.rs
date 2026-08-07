@@ -1,14 +1,9 @@
 use ef_tests_blockchain::test_runner::parse_and_execute;
-use ethrex_prover::backend::BackendType;
 use std::path::Path;
 
-// Enable only one of `sp1` or `stateless` at a time.
-#[cfg(all(feature = "sp1", feature = "stateless"))]
-compile_error!("Only one of `sp1` and `stateless` can be enabled at a time.");
-
-// test-levm / test-sp1 read snobal-devnet-6 + legacy from `vectors/`.
-// test-stateless reads zkevm@v0.6.2 (EIP-8025 canonical bundle) from a separate
-// `vectors_zkevm/` so the bundles don't overlay each other.
+// test-levm reads snobal-devnet-6 + legacy from `vectors/`.
+// test-stateless reads the generated #3248+#3278 conformance vectors from a separate
+// `vectors_stateless_3278/` so the bundles do not overlay each other.
 #[cfg(feature = "stateless")]
 const TEST_FOLDER: &str = "vectors_zkevm/";
 #[cfg(not(feature = "stateless"))]
@@ -27,18 +22,11 @@ const SKIPPED_BASE: &[&str] = &[
 ];
 
 // Extra skips added only for prover backends.
-#[cfg(all(feature = "sp1", not(feature = "stateless")))]
-const EXTRA_SKIPS: &[&str] = &[
-    // I believe these tests fail because of how much stress they put into the zkVM, they probably cause an OOM though this should be checked
-    "static_Call50000",
-    "Return50000",
-    "static_Call1MB1024Calldepth",
-];
 // The stateless run executes the zkevm@v0.6.2 bundle (`vectors_zkevm/`), filled against
 // `tests-glamsterdam-devnet@v7.2.0` — the same base as the live `vectors/` fixtures on this
 // branch. v0.6.2 fixes the EIP-8282 fill (PR ethereum/execution-specs#3157): the canonical
 // `SszExecutionRequests` now carries the builder-deposit (0x03) and builder-exit (0x04) request
-// lists, mirrored in `eip8025_ssz::ExecutionRequests`. The whole bundle re-executes cleanly, so
+// lists, mirrored in `stateless_ssz::ExecutionRequests`. The whole bundle re-executes cleanly, so
 // no blanket skip and no per-fork skip are needed. Per-fixture leniency cases
 // (`*_extra_unused_*` padding, deliberately-invalid witnesses) are handled in `test_runner.rs`.
 // Amsterdam+ fixtures are skipped in the stateless run by fork (see
@@ -48,16 +36,17 @@ const EXTRA_SKIPS: &[&str] = &[
 // fork-based (not name-based), so no per-test entries are needed here.
 #[cfg(feature = "stateless")]
 const EXTRA_SKIPS: &[&str] = &[];
-#[cfg(not(any(feature = "sp1", feature = "stateless")))]
+#[cfg(not(feature = "stateless"))]
 const EXTRA_SKIPS: &[&str] = &[];
 
-// Select backend
+// Whether to run stateless validation after the stateful run. There is no backend
+// choice any more: the in-memory paths call `validate_blocks_statelessly` and the
+// wire path calls the guest entrypoint directly, so nothing dispatches on a
+// prover backend.
 #[cfg(feature = "stateless")]
-const BACKEND: Option<BackendType> = Some(BackendType::Exec);
-#[cfg(all(feature = "sp1", not(feature = "stateless")))]
-const BACKEND: Option<BackendType> = Some(BackendType::SP1);
-#[cfg(not(any(feature = "sp1", feature = "stateless")))]
-const BACKEND: Option<BackendType> = None;
+const RUN_STATELESS: bool = true;
+#[cfg(not(feature = "stateless"))]
+const RUN_STATELESS: bool = false;
 
 fn blockchain_runner(path: &Path) -> datatest_stable::Result<()> {
     // Compose the final skip list
@@ -67,7 +56,7 @@ fn blockchain_runner(path: &Path) -> datatest_stable::Result<()> {
         .chain(EXTRA_SKIPS.iter().copied())
         .collect();
 
-    parse_and_execute(path, Some(&skips), BACKEND)
+    parse_and_execute(path, Some(&skips), RUN_STATELESS)
 }
 
 datatest_stable::harness!(blockchain_runner, TEST_FOLDER, r".*");

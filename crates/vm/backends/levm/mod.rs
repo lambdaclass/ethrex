@@ -11,13 +11,13 @@ use crate::system_contracts::{
 use crate::{EvmError, ExecutionResult};
 use bytes::Bytes;
 use ethrex_common::H256;
-#[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+#[cfg(feature = "rayon")]
 use ethrex_common::constants::EMPTY_KECCAK_HASH;
 use ethrex_common::types::Code;
-#[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+#[cfg(feature = "rayon")]
 use ethrex_common::types::TxType;
 use ethrex_common::types::block_access_list::BlockAccessList;
-#[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+#[cfg(feature = "rayon")]
 use ethrex_common::types::block_access_list::{
     BalAddressIndex, find_exact_change_balance, find_exact_change_code, find_exact_change_nonce,
     find_exact_change_storage, has_exact_change_balance, has_exact_change_code,
@@ -25,7 +25,7 @@ use ethrex_common::types::block_access_list::{
 };
 use ethrex_common::types::fee_config::FeeConfig;
 use ethrex_common::types::{AuthorizationTuple, EIP7702Transaction};
-#[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+#[cfg(feature = "rayon")]
 use ethrex_common::utils::u256_from_big_endian_const;
 use ethrex_common::{
     Address, U256,
@@ -35,23 +35,23 @@ use ethrex_common::{
         Withdrawal, requests::Requests,
     },
 };
-#[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+#[cfg(feature = "rayon")]
 use ethrex_common::{BigEndianHash, validate_block_access_list_size, validate_header_bal_indices};
 use ethrex_crypto::Crypto;
 use ethrex_levm::EVMConfig;
 use ethrex_levm::StatelessValidator;
-#[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+#[cfg(feature = "rayon")]
 use ethrex_levm::account::{AccountStatus, LevmAccount};
 use ethrex_levm::call_frame::Stack;
 use ethrex_levm::constants::{
     POST_OSAKA_GAS_LIMIT_CAP, STACK_LIMIT, SYS_CALL_GAS_LIMIT, TX_MAX_GAS_LIMIT_AMSTERDAM,
 };
 use ethrex_levm::db::gen_db::GeneralizedDatabase;
-#[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+#[cfg(feature = "rayon")]
 use ethrex_levm::db::gen_db::{
     LazyBalCursor, code_from_bal, post_value_at_or_before, seed_one_address_info_from_bal,
 };
-#[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+#[cfg(feature = "rayon")]
 use ethrex_levm::db::{Database, gen_db::CacheDB};
 use ethrex_levm::errors::{InternalError, TxValidationError};
 use ethrex_levm::memory::Memory;
@@ -66,13 +66,13 @@ use ethrex_levm::{
     errors::{ExecutionReport, TxResult, VMError},
     vm::VM,
 };
-#[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+#[cfg(feature = "rayon")]
 use rayon::iter::{IntoParallelIterator, IntoParallelRefIterator, ParallelIterator};
-#[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+#[cfg(feature = "rayon")]
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::cmp::min;
 use std::sync::Arc;
-#[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+#[cfg(feature = "rayon")]
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc::Sender;
@@ -203,7 +203,7 @@ pub fn check_2d_gas_allowance(
 ///
 /// Public so [`LEVM::validate_tx_execution`] is directly callable (and its
 /// error variants inspectable) from unit tests outside this crate.
-#[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+#[cfg(feature = "rayon")]
 #[derive(Debug, thiserror::Error)]
 pub enum BalValidationError {
     #[error("{0}")]
@@ -478,11 +478,11 @@ impl LEVM {
                     EvmError::Transaction(format!("Couldn't recover addresses with error: {error}"))
                 })?;
 
-        #[cfg(any(feature = "eip-8025", not(feature = "rayon")))]
-        // `eip-8025` does not call `execute_block_pipeline` it uses
-        // `execute_block` instead. Adding dummy let to avoid unused warnings.
+        #[cfg(not(feature = "rayon"))]
+        // Without rayon there is no parallel BAL path, so these are unused.
+        // Adding dummy let to avoid unused warnings.
         let _ = (header_bal, bal_parallel_exec_enabled);
-        #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+        #[cfg(feature = "rayon")]
         // When BAL is provided (Amsterdam+ validation path): use parallel execution.
         // The `is_amsterdam` gate is required: `execute_block_parallel` (and the
         // optimistic merkleization it feeds) is only correct on Amsterdam+; a
@@ -896,7 +896,7 @@ impl LEVM {
     /// For each account in the BAL, extracts the **final** post-block state
     /// (highest `block_access_index` entry per field) and builds an AccountUpdate.
     /// State comes entirely from the BAL — no execution needed.
-    #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+    #[cfg(feature = "rayon")]
     fn bal_to_account_updates(
         bal: &BlockAccessList,
         store: &dyn Database,
@@ -1040,7 +1040,7 @@ impl LEVM {
     /// `max_idx` is the BAL block_access_index of the last tx whose effects
     /// should be visible. BAL indexing: 0 = system calls, 1 = tx 0, 2 = tx 1, ...
     /// For tx at index `i`, pass `max_idx = i` (diffs with index <= i = system + txs 0..i-1).
-    #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+    #[cfg(feature = "rayon")]
     fn seed_db_from_bal(
         db: &mut GeneralizedDatabase,
         bal: &BlockAccessList,
@@ -1089,7 +1089,7 @@ impl LEVM {
     /// Each tx runs independently on its own database pre-seeded with BAL
     /// intermediate state (geth-style). State for the merkleizer comes from
     /// `bal_to_account_updates`, not from tx execution.
-    #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+    #[cfg(feature = "rayon")]
     #[allow(clippy::too_many_arguments, clippy::type_complexity)]
     fn execute_block_parallel(
         block: &Block,
@@ -1557,7 +1557,7 @@ impl LEVM {
 
     /// Gets the seeded balance for an account at `seed_idx` from BAL, falling
     /// back to system_seed/store if no BAL entry exists before that index.
-    #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+    #[cfg(feature = "rayon")]
     fn seeded_balance(
         seed_idx: u32,
         acct: &ethrex_common::types::block_access_list::AccountChanges,
@@ -1586,7 +1586,7 @@ impl LEVM {
 
     /// Gets the seeded code hash for an account at `seed_idx` from BAL, falling
     /// back to system_seed/store if no BAL entry exists before that index.
-    #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+    #[cfg(feature = "rayon")]
     fn seeded_code_hash(
         seed_idx: u32,
         acct: &ethrex_common::types::block_access_list::AccountChanges,
@@ -1620,7 +1620,7 @@ impl LEVM {
 
     /// Gets the seeded nonce for an account at `seed_idx` from BAL, falling
     /// back to system_seed/store if no BAL entry exists before that index.
-    #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+    #[cfg(feature = "rayon")]
     fn seeded_nonce(
         seed_idx: u32,
         acct: &ethrex_common::types::block_access_list::AccountChanges,
@@ -1654,7 +1654,7 @@ impl LEVM {
     /// `seeded_nonce` + `seeded_code_hash`, but reads the store at most once — the
     /// PART A no-op checks need all three for the same account, and an account
     /// with no BAL history before this tx would otherwise read it three times.
-    #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+    #[cfg(feature = "rayon")]
     fn seeded_account_triple(
         seed_idx: u32,
         acct: &ethrex_common::types::block_access_list::AccountChanges,
@@ -1713,7 +1713,7 @@ impl LEVM {
     /// the recorder's `tx_initial` fast-path (a slot the EVM genuinely wrote this
     /// tx), else the pre-tx state (system_seed, then store). Used by the
     /// execution->BAL check for a slot absent from `storage_changes`.
-    #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+    #[cfg(feature = "rayon")]
     fn seeded_storage_pre_value(
         addr: Address,
         key: H256,
@@ -1730,7 +1730,7 @@ impl LEVM {
 
     /// Pre-tx value for a slot from the in-memory snapshot, falling back to the
     /// store. Shared tail of the two `seeded_storage*` helpers.
-    #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+    #[cfg(feature = "rayon")]
     fn storage_from_seed_or_store(
         addr: Address,
         key: H256,
@@ -1759,7 +1759,7 @@ impl LEVM {
     /// Fast path: for a slot the EVM genuinely wrote this tx, `tx_initial` already
     /// holds the start-of-tx value it captured during execution — identical to what
     /// this function would otherwise recompute — so return it and skip the lookup.
-    #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+    #[cfg(feature = "rayon")]
     fn seeded_storage(
         seed_idx: u32,
         sc: &ethrex_common::types::block_access_list::SlotChange,
@@ -1809,7 +1809,7 @@ impl LEVM {
     /// Exposed as `pub` (rather than crate-private) solely so the direct
     /// `validate_tx_execution` unit tests in the `ethrex-test` crate
     /// (`test/tests/blockchain/bal_validate_tx_execution_tests.rs`) can call it.
-    #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+    #[cfg(feature = "rayon")]
     #[allow(clippy::too_many_arguments)]
     pub fn validate_tx_execution(
         bal_idx: u32,
@@ -2266,7 +2266,7 @@ impl LEVM {
     ///         malicious builder could omit a withdrawal recipient from the BAL,
     ///         causing the BAL-derived state root to exclude the withdrawal balance
     ///         change.
-    #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+    #[cfg(feature = "rayon")]
     fn validate_bal_withdrawal_index(
         db: &GeneralizedDatabase,
         bal: &BlockAccessList,
@@ -2572,7 +2572,7 @@ impl LEVM {
     /// state, or whose value equals the pre-block value (a no-op), is rejected.
     /// Omissions and genuine divergences change the state root and are already
     /// caught by `validate_state_root`; the no-op case is the one this closes.
-    #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+    #[cfg(feature = "rayon")]
     fn validate_bal_pre_exec_index(
         db: &GeneralizedDatabase,
         bal: &BlockAccessList,
@@ -2727,7 +2727,7 @@ impl LEVM {
     /// The `store` parameter should be a `CachingDatabase`-wrapped store so that
     /// parallel workers can benefit from shared caching. The same cache should
     /// be used by the sequential execution phase.
-    #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+    #[cfg(feature = "rayon")]
     pub fn warm_block(
         block: &Block,
         store: Arc<dyn Database>,
@@ -2781,7 +2781,7 @@ impl LEVM {
     /// transaction, so cancellation latency is bounded by one transaction's
     /// execution. Execution results are discarded — only cache population
     /// matters.
-    #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+    #[cfg(feature = "rayon")]
     pub fn warm_txs(
         txs_with_sender: &[(&Transaction, Address)],
         header: &BlockHeader,
@@ -2848,7 +2848,7 @@ impl LEVM {
 
     /// Flattened (address, slot) storage worklist for a BAL, in natural account
     /// order (slots grouped per account for storage-trie locality).
-    #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+    #[cfg(feature = "rayon")]
     pub fn bal_storage_slots(bal: &BlockAccessList) -> Vec<(Address, H256)> {
         bal.accounts()
             .iter()
@@ -2867,7 +2867,7 @@ impl LEVM {
     /// call site in `blockchain.rs`); warming them concurrently here let the
     /// executor race the warmer to the trie for SSTORE original values and cost
     /// ~22% of CPU. Keep storage warming synchronous and up front.
-    #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+    #[cfg(feature = "rayon")]
     pub fn warm_block_from_bal(
         bal: &BlockAccessList,
         store: Arc<dyn Database>,
@@ -4027,8 +4027,8 @@ fn describe_balance_diff(expected: U256, actual: U256) -> String {
 }
 
 // Exercises the rayon-parallel-BAL execution path (and shares its
-// `not(eip-8025)`-gated imports), so it only builds in the non-guest test profile.
-#[cfg(all(test, not(feature = "eip-8025")))]
+// `rayon`-gated imports), so it only builds when that feature is on.
+#[cfg(all(test, feature = "rayon"))]
 mod bal_tests {
     use super::*;
     use ethrex_common::H256;
@@ -4388,9 +4388,9 @@ mod system_call_coinbase_tests {
 
 /// Tests for EIP-8079 burned_fees computation in execute_block (LStar-gated).
 ///
-/// Shares the non-guest execution path's `not(eip-8025)`-gated imports
-/// (`EMPTY_KECCAK_HASH`, `FxHashMap`, `Database`), so it only builds in that profile.
-#[cfg(all(test, not(feature = "eip-8025")))]
+/// Shares the non-guest execution path's `rayon`-gated imports
+/// (`EMPTY_KECCAK_HASH`, `FxHashMap`, `Database`), so it only builds with rayon.
+#[cfg(all(test, feature = "rayon"))]
 mod burned_fees_tests {
     use super::*;
     use ethrex_common::{
